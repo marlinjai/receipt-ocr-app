@@ -10,7 +10,7 @@ This directory contains documentation for the Receipt OCR application.
 
 ## Contents
 
-- [Architecture](./architecture.md) - System design and integrations
+- [Architecture](./architecture) - System design and integrations
 
 ## Overview
 
@@ -45,5 +45,5 @@ pnpm dev
 
 ## Related Packages
 
-- [`@marlinjai/storage-brain-sdk`](../../storage-brain-sdk) - File storage and OCR
-- [`@marlinjai/data-table-react`](../../data-table/packages/react) - Table UI components
+- `@marlinjai/storage-brain-sdk` - File storage and OCR
+- `@marlinjai/data-table-react` - Table UI components

@@ -10,7 +10,7 @@ This directory contains documentation for the Receipt OCR application.
 
 ## Contents
 
-- [Architecture](./architecture) - System design and integrations
+- [Architecture](/projects/receipt-ocr-app/architecture) - System design and integrations
 
 ## Overview
 

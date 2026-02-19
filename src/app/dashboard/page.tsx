@@ -66,16 +66,26 @@ function DashboardContent({ tableId }: { tableId: string }) {
   useEffect(() => {
     const ingest = async () => {
       const { receiptStore } = await import('@/lib/receipt-store');
+      const { extractReceiptFields } = await import('@/lib/extract-receipt-fields');
       const pending = receiptStore.consumePending();
 
       for (const file of pending) {
         const ocrData = file.metadata?.ocrData;
+        const extracted = ocrData ? extractReceiptFields(ocrData) : null;
+
         const statusCol = columns.find((c) => c.name === 'Status');
         const statusOpts = statusCol ? selectOptions.get(statusCol.id) : undefined;
 
         const statusValue = ocrData?.fullText
           ? statusOpts?.find((o) => o.name === 'Processed')?.id
           : statusOpts?.find((o) => o.name === 'Pending')?.id;
+
+        // Resolve category select option ID from extracted category name
+        const categoryCol = columns.find((c) => c.name === 'Category');
+        const categoryOpts = categoryCol ? selectOptions.get(categoryCol.id) : undefined;
+        const categoryValue = extracted?.category
+          ? categoryOpts?.find((o) => o.name === extracted.category)?.id ?? null
+          : null;
 
         const cells: Record<string, CellValue> = {};
         for (const col of columns) {
@@ -84,13 +94,16 @@ function DashboardContent({ tableId }: { tableId: string }) {
               cells[col.id] = file.originalName;
               break;
             case 'Vendor':
-              cells[col.id] = '';
+              cells[col.id] = extracted?.vendor ?? null;
               break;
             case 'Amount':
-              cells[col.id] = 0;
+              cells[col.id] = extracted?.amount ?? null;
               break;
             case 'Date':
-              cells[col.id] = new Date().toISOString();
+              cells[col.id] = extracted?.date ?? null;
+              break;
+            case 'Category':
+              cells[col.id] = categoryValue;
               break;
             case 'Status':
               cells[col.id] = statusValue ?? '';

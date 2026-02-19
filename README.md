@@ -1,36 +1,90 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Receipt OCR App
 
-## Getting Started
+A Next.js application for uploading receipt images, extracting data via OCR, and managing receipts in a Notion-like table.
 
-First, run the development server:
+## Features
+
+- **Receipt Upload** - Drag-and-drop or click to upload receipt images
+- **OCR Processing** - Automatic text extraction via Storage Brain
+- **Intelligent Field Extraction** - Automatically extracts vendor, amount, date, and category from OCR text using regex/heuristic parsing (supports US & European formats)
+- **Notion-like Table** - Manage receipts with filtering, sorting, and inline editing
+- **Category Management** - Organize receipts by expense category
+
+## Quick Start
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+# Install dependencies
+pnpm install
+
+# Set up environment variables
+cp .env.example .env.local
+# Edit .env.local with your API keys
+
+# Run development server
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment Variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```env
+# Required
+STORAGE_BRAIN_API_KEY=sk_live_...
 
-## Learn More
+# Database (Cloudflare D1)
+DATABASE_URL=...
 
-To learn more about Next.js, take a look at the following resources:
+# Auth (optional, for multi-user)
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_...
+CLERK_SECRET_KEY=sk_...
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Tech Stack
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Framework**: [Next.js 14](https://nextjs.org/) (App Router)
+- **Styling**: [Tailwind CSS](https://tailwindcss.com/)
+- **File Storage**: [@marlinjai/storage-brain-sdk](../storage-brain-sdk)
+- **Data Table**: [@marlinjai/data-table-react](../data-table/packages/react)
+- **Database**: Cloudflare D1
+- **Auth**: Clerk (planned)
 
-## Deploy on Vercel
+## Usage
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Uploading Receipts
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Navigate to the home page
+2. Drag and drop a receipt image (or click to browse)
+3. Wait for upload and OCR processing
+4. You'll be redirected to the dashboard
+
+### Managing Receipts
+
+- **Edit**: Click any cell to edit inline
+- **Sort**: Click column headers to sort
+- **Filter**: Use the filter bar to filter by vendor, date, category
+- **Delete**: Select rows and click delete
+
+## Documentation
+
+- [Architecture](./docs/architecture.md) - System design and integrations
+
+## Development
+
+```bash
+# Run development server
+pnpm dev
+
+# Build for production
+pnpm build
+
+# Run production server
+pnpm start
+
+# Type check
+pnpm typecheck
+```
+
+## License
+
+MIT

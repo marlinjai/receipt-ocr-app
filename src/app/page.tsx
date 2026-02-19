@@ -1,12 +1,19 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import ReceiptUploader from '@/components/ReceiptUploader';
-import OcrResults from '@/components/OcrResults';
+import { receiptStore } from '@/lib/receipt-store';
 import type { FileInfo } from '@/lib/storage';
 
 export default function Home() {
-  const [uploadedFile, setUploadedFile] = useState<FileInfo | null>(null);
+  const router = useRouter();
+
+  const handleUploadComplete = useCallback((file: FileInfo) => {
+    receiptStore.addReceipt(file);
+    router.push('/dashboard');
+  }, [router]);
 
   return (
     <main className="min-h-screen py-12 px-4">
@@ -29,17 +36,16 @@ export default function Home() {
             </a>
             .
           </p>
+          <Link
+            href="/dashboard"
+            className="inline-block mt-4 px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+          >
+            View Dashboard
+          </Link>
         </div>
 
-        {/* Main Content */}
-        {uploadedFile ? (
-          <OcrResults
-            file={uploadedFile}
-            onReset={() => setUploadedFile(null)}
-          />
-        ) : (
-          <ReceiptUploader onUploadComplete={setUploadedFile} />
-        )}
+        {/* Upload */}
+        <ReceiptUploader onUploadComplete={handleUploadComplete} />
 
         {/* Footer */}
         <footer className="mt-16 text-center text-sm text-gray-500">

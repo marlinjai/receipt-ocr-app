@@ -13,7 +13,7 @@ import {
   SearchBar,
   FilterBar,
 } from '@marlinjai/data-table-react';
-import type { ColumnType, Row } from '@marlinjai/data-table-core';
+import type { ColumnType, Row, CellValue } from '@marlinjai/data-table-core';
 import { dbAdapter, getReceiptsTableId, WORKSPACE_ID } from '@/lib/receipts-table';
 
 function DashboardContent({ tableId }: { tableId: string }) {
@@ -61,6 +61,60 @@ function DashboardContent({ tableId }: { tableId: string }) {
       .filter((c) => c.type === 'select' || c.type === 'multi_select')
       .forEach((c) => loadSelectOptions(c.id));
   }, [columns, loadSelectOptions]);
+
+  // Ingest pending receipts from upload page
+  useEffect(() => {
+    const ingest = async () => {
+      const { receiptStore } = await import('@/lib/receipt-store');
+      const pending = receiptStore.consumePending();
+
+      for (const file of pending) {
+        const ocrData = file.metadata?.ocrData;
+        const statusCol = columns.find((c) => c.name === 'Status');
+        const statusOpts = statusCol ? selectOptions.get(statusCol.id) : undefined;
+
+        const statusValue = ocrData?.fullText
+          ? statusOpts?.find((o) => o.name === 'Processed')?.id
+          : statusOpts?.find((o) => o.name === 'Pending')?.id;
+
+        const cells: Record<string, CellValue> = {};
+        for (const col of columns) {
+          switch (col.name) {
+            case 'Name':
+              cells[col.id] = file.originalName;
+              break;
+            case 'Vendor':
+              cells[col.id] = '';
+              break;
+            case 'Amount':
+              cells[col.id] = 0;
+              break;
+            case 'Date':
+              cells[col.id] = new Date().toISOString();
+              break;
+            case 'Status':
+              cells[col.id] = statusValue ?? '';
+              break;
+            case 'Confidence':
+              cells[col.id] = ocrData?.confidence ? Math.round(ocrData.confidence * 100) : 0;
+              break;
+            case 'Receipt Image':
+              cells[col.id] = file.url ?? '';
+              break;
+            case 'OCR Text':
+              cells[col.id] = ocrData?.fullText ?? '';
+              break;
+          }
+        }
+
+        await addRow({ cells });
+      }
+    };
+
+    if (columns.length > 0) {
+      ingest();
+    }
+  }, [columns, selectOptions, addRow]);
 
   if (!table) return <div className="p-8 text-center text-gray-500">Loading table...</div>;
 

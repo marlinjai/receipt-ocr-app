@@ -2,19 +2,27 @@
 
 import { useState, useCallback } from 'react';
 import { getStorageClient, type FileInfo } from '@/lib/storage';
+import type { OcrResult } from '@/lib/ocr-types';
+
+export interface UploadResult {
+  file: FileInfo;
+  ocrResult: OcrResult | null;
+}
 
 interface ReceiptUploaderProps {
-  onUploadComplete: (file: FileInfo) => void;
+  onUploadComplete: (result: UploadResult) => void;
 }
 
 export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [phase, setPhase] = useState<'idle' | 'uploading' | 'ocr'>('idle');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const handleUpload = useCallback(async (file: File) => {
     setIsUploading(true);
+    setPhase('uploading');
     setProgress(0);
     setError(null);
 
@@ -22,16 +30,36 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
       const storage = getStorageClient();
 
       const result = await storage.upload(file, {
-        context: 'invoice', // This triggers OCR processing
+        context: 'receipt',
         tags: { source: 'receipt-ocr-app' },
         onProgress: (p) => setProgress(p),
       });
 
-      onUploadComplete(result);
+      // Now run OCR
+      setPhase('ocr');
+      setProgress(0);
+
+      let ocrResult: OcrResult | null = null;
+      try {
+        const ocrResponse = await fetch('/api/ocr', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileUrl: result.url }),
+        });
+
+        if (ocrResponse.ok) {
+          ocrResult = await ocrResponse.json();
+        }
+      } catch {
+        // OCR failed but upload succeeded — continue with null OCR
+      }
+
+      onUploadComplete({ file: result, ocrResult });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
       setIsUploading(false);
+      setPhase('idle');
       setProgress(0);
     }
   }, [onUploadComplete]);
@@ -39,11 +67,8 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-
     const file = e.dataTransfer.files[0];
-    if (file) {
-      handleUpload(file);
-    }
+    if (file) handleUpload(file);
   }, [handleUpload]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -58,10 +83,11 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      handleUpload(file);
-    }
+    if (file) handleUpload(file);
   }, [handleUpload]);
+
+  const phaseLabel = phase === 'uploading' ? 'Uploading receipt...' : 'Running OCR...';
+  const phaseDetail = phase === 'uploading' ? 'Storing file securely' : 'Extracting text with AI';
 
   return (
     <div className="w-full max-w-xl mx-auto">
@@ -71,10 +97,7 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
         onDragLeave={handleDragLeave}
         className={`
           border-2 border-dashed rounded-xl p-12 text-center transition-all cursor-pointer
-          ${isDragging
-            ? 'border-blue-500 bg-blue-50'
-            : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
-          }
+          ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'}
           ${isUploading ? 'pointer-events-none opacity-60' : ''}
         `}
       >
@@ -87,16 +110,20 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
               </svg>
             </div>
             <div>
-              <p className="text-lg font-medium text-gray-700">Processing receipt...</p>
-              <p className="text-sm text-gray-500 mt-1">Extracting text with OCR</p>
+              <p className="text-lg font-medium text-gray-700">{phaseLabel}</p>
+              <p className="text-sm text-gray-500 mt-1">{phaseDetail}</p>
             </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div
-                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-            <p className="text-sm text-gray-500">{progress}%</p>
+            {phase === 'uploading' && (
+              <>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+                <p className="text-sm text-gray-500">{progress}%</p>
+              </>
+            )}
           </div>
         ) : (
           <label className="cursor-pointer block">
@@ -113,16 +140,10 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
                 </svg>
               </div>
               <div>
-                <p className="text-lg font-medium text-gray-700">
-                  Drop your receipt here
-                </p>
-                <p className="text-sm text-gray-500 mt-1">
-                  or click to browse
-                </p>
+                <p className="text-lg font-medium text-gray-700">Drop your receipt here</p>
+                <p className="text-sm text-gray-500 mt-1">or click to browse</p>
               </div>
-              <p className="text-xs text-gray-400">
-                Supports JPG, PNG, WebP, GIF, AVIF, and PDF
-              </p>
+              <p className="text-xs text-gray-400">Supports JPG, PNG, WebP, GIF, AVIF, and PDF</p>
             </div>
           </label>
         )}

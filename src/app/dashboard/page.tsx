@@ -64,24 +64,26 @@ function DashboardContent({ tableId }: { tableId: string }) {
 
   // Ingest pending receipts from upload page
   useEffect(() => {
+    const statusCol = columns.find((c) => c.name === 'Status');
+    const categoryCol = columns.find((c) => c.name === 'Category');
+    const selectCols = columns.filter((c) => c.type === 'select' || c.type === 'multi_select');
+
+    const allOptsLoaded = selectCols.every((c) => selectOptions.has(c.id));
+    if (columns.length === 0 || !allOptsLoaded) return;
+
     const ingest = async () => {
       const { receiptStore } = await import('@/lib/receipt-store');
       const { extractReceiptFields } = await import('@/lib/extract-receipt-fields');
       const pending = receiptStore.consumePending();
 
-      for (const file of pending) {
-        const ocrData = file.metadata?.ocrData;
-        const extracted = ocrData ? extractReceiptFields(ocrData) : null;
+      for (const { file, ocrResult } of pending) {
+        const extracted = ocrResult ? extractReceiptFields(ocrResult) : null;
 
-        const statusCol = columns.find((c) => c.name === 'Status');
         const statusOpts = statusCol ? selectOptions.get(statusCol.id) : undefined;
-
-        const statusValue = ocrData?.fullText
+        const statusValue = ocrResult?.fullText
           ? statusOpts?.find((o) => o.name === 'Processed')?.id
           : statusOpts?.find((o) => o.name === 'Pending')?.id;
 
-        // Resolve category select option ID from extracted category name
-        const categoryCol = columns.find((c) => c.name === 'Category');
         const categoryOpts = categoryCol ? selectOptions.get(categoryCol.id) : undefined;
         const categoryValue = extracted?.category
           ? categoryOpts?.find((o) => o.name === extracted.category)?.id ?? null
@@ -91,13 +93,19 @@ function DashboardContent({ tableId }: { tableId: string }) {
         for (const col of columns) {
           switch (col.name) {
             case 'Name':
-              cells[col.id] = file.originalName;
+              cells[col.id] = extracted?.name ?? file.originalName;
               break;
             case 'Vendor':
               cells[col.id] = extracted?.vendor ?? null;
               break;
-            case 'Amount':
-              cells[col.id] = extracted?.amount ?? null;
+            case 'Gross':
+              cells[col.id] = extracted?.gross ?? null;
+              break;
+            case 'Net':
+              cells[col.id] = extracted?.net ?? null;
+              break;
+            case 'Tax Rate':
+              cells[col.id] = extracted?.taxRate ?? null;
               break;
             case 'Date':
               cells[col.id] = extracted?.date ?? null;
@@ -109,13 +117,13 @@ function DashboardContent({ tableId }: { tableId: string }) {
               cells[col.id] = statusValue ?? '';
               break;
             case 'Confidence':
-              cells[col.id] = ocrData?.confidence ? Math.round(ocrData.confidence * 100) : 0;
+              cells[col.id] = ocrResult?.confidence ? Math.round(ocrResult.confidence * 100) : 0;
               break;
             case 'Receipt Image':
               cells[col.id] = file.url ?? '';
               break;
             case 'OCR Text':
-              cells[col.id] = ocrData?.fullText ?? '';
+              cells[col.id] = ocrResult?.fullText ?? '';
               break;
           }
         }
@@ -124,9 +132,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
       }
     };
 
-    if (columns.length > 0) {
-      ingest();
-    }
+    ingest();
   }, [columns, selectOptions, addRow]);
 
   if (!table) return <div className="p-8 text-center text-gray-500">Loading table...</div>;

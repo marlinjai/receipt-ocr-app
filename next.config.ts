@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
     "@marlinjai/data-table-core",
     "@marlinjai/data-table-react",
     "@marlinjai/data-table-adapter-memory",
+    "@marlinjai/data-table-adapter-d1",
   ],
 };
 

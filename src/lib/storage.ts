@@ -1,7 +1,5 @@
 import { StorageBrain } from '@marlinjai/storage-brain-sdk';
 
-// Create a singleton instance of the Storage Brain client
-// The API key should be set in environment variables
 export function getStorageClient() {
   const apiKey = process.env.NEXT_PUBLIC_STORAGE_BRAIN_API_KEY;
 
@@ -15,5 +13,4 @@ export function getStorageClient() {
   });
 }
 
-// Export types for convenience
-export type { FileInfo, OcrResult, FileMetadata } from '@marlinjai/storage-brain-sdk';
+export type { FileInfo, FileMetadata } from '@marlinjai/storage-brain-sdk';

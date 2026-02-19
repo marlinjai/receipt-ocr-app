@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
     "@marlinjai/data-table-adapter-d1": "file:../data-table/packages/adapter-d1",
@@ -14,7 +17,8 @@
     "@marlinjai/data-table-core": "file:../data-table/packages/core",
     "@marlinjai/data-table-react": "file:../data-table/packages/react",
     "@marlinjai/storage-brain-sdk": "^0.4.0",
-    "next": "16.1.1",
+    "@opennextjs/cloudflare": "^1.16.5",
+    "next": "^16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
@@ -27,6 +31,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wrangler": "^4.67.0"
   }
 }

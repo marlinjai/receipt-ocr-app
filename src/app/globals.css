@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@marlinjai/data-table-react/styles/base.css";
 
 :root {
   --background: #ffffff;

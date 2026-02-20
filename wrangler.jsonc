@@ -15,6 +15,9 @@
       "database_id": "4e1bbc23-85ea-474d-a01f-deffe5cae31e"
     }
   ],
+  "routes": [
+    { "pattern": "receipts.lumitra.co", "custom_domain": true }
+  ],
   "vars": {
     "NEXT_PUBLIC_STORAGE_BRAIN_URL": "https://storage-brain-api.marlin-pohl.workers.dev"
   }

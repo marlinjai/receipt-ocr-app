@@ -14,10 +14,10 @@
     "docs:build": "clearify build"
   },
   "dependencies": {
-    "@marlinjai/data-table-adapter-d1": "file:../data-table/packages/adapter-d1",
-    "@marlinjai/data-table-adapter-memory": "file:../data-table/packages/adapter-memory",
-    "@marlinjai/data-table-core": "file:../data-table/packages/core",
-    "@marlinjai/data-table-react": "file:../data-table/packages/react",
+    "@marlinjai/data-table-adapter-d1": "^0.1.0",
+    "@marlinjai/data-table-adapter-memory": "^0.1.0",
+    "@marlinjai/data-table-core": "^0.1.0",
+    "@marlinjai/data-table-react": "^0.1.1",
     "@marlinjai/storage-brain-sdk": "^0.5.0",
     "@opennextjs/cloudflare": "^1.16.5",
     "next": "^16.1.6",

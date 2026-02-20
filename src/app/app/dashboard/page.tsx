@@ -205,7 +205,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
             {table.name}
           </h1>
           <Link
-            href="/"
+            href="/app"
             className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
           >
             + Upload Receipt

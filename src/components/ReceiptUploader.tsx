@@ -90,39 +90,56 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
   const phaseDetail = phase === 'uploading' ? 'Storing file securely' : 'Extracting text with AI';
 
   return (
-    <div className="w-full max-w-xl mx-auto">
+    <div className="w-full">
       <div
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
-        className={`
-          border-2 border-dashed rounded-xl p-12 text-center transition-all cursor-pointer
-          ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'}
-          ${isUploading ? 'pointer-events-none opacity-60' : ''}
-        `}
+        className="relative rounded-xl p-10 text-center transition-all duration-200 cursor-pointer overflow-hidden"
+        style={{
+          background: isDragging ? 'var(--accent-muted)' : 'var(--surface)',
+          border: `1px solid ${isDragging ? 'var(--accent)' : 'var(--border)'}`,
+          opacity: isUploading ? 0.7 : 1,
+          pointerEvents: isUploading ? 'none' : 'auto',
+        }}
+        onMouseEnter={e => {
+          if (!isUploading && !isDragging) {
+            e.currentTarget.style.borderColor = 'var(--border)';
+            e.currentTarget.style.background = 'var(--surface-elevated)';
+          }
+        }}
+        onMouseLeave={e => {
+          if (!isUploading && !isDragging) {
+            e.currentTarget.style.borderColor = 'var(--border)';
+            e.currentTarget.style.background = 'var(--surface)';
+          }
+        }}
       >
         {isUploading ? (
-          <div className="space-y-4">
-            <div className="w-16 h-16 mx-auto">
-              <svg className="animate-spin text-blue-500" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          <div className="space-y-5">
+            {/* Spinner */}
+            <div className="w-12 h-12 mx-auto" style={{ color: 'var(--accent)' }}>
+              <svg className="animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
             </div>
+
             <div>
-              <p className="text-lg font-medium text-gray-700">{phaseLabel}</p>
-              <p className="text-sm text-gray-500 mt-1">{phaseDetail}</p>
+              <p className="text-sm font-medium" style={{ color: 'var(--foreground)' }}>{phaseLabel}</p>
+              <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>{phaseDetail}</p>
             </div>
+
             {phase === 'uploading' && (
-              <>
-                <div className="w-full bg-gray-200 rounded-full h-2">
+              <div className="max-w-xs mx-auto space-y-2">
+                <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
                   <div
-                    className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${progress}%` }}
+                    className="h-full rounded-full transition-all duration-300"
+                    style={{ width: `${progress}%`, background: 'var(--accent)' }}
                   />
                 </div>
-                <p className="text-sm text-gray-500">{progress}%</p>
-              </>
+                <p className="text-xs tabular-nums" style={{ color: 'var(--muted)' }}>{progress}%</p>
+              </div>
             )}
           </div>
         ) : (
@@ -134,24 +151,45 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
               className="hidden"
             />
             <div className="space-y-4">
-              <div className="w-16 h-16 mx-auto text-gray-400">
-                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              {/* Upload icon */}
+              <div className="w-10 h-10 mx-auto" style={{ color: 'var(--muted)' }}>
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 16V4m0 0l-4 4m4-4l4 4" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 16.7V19a2 2 0 01-2 2H6a2 2 0 01-2-2v-2.3" />
                 </svg>
               </div>
+
               <div>
-                <p className="text-lg font-medium text-gray-700">Drop your receipt here</p>
-                <p className="text-sm text-gray-500 mt-1">or click to browse</p>
+                <p className="text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+                  Drop your receipt here
+                </p>
+                <p className="text-xs mt-1.5" style={{ color: 'var(--muted)' }}>
+                  or click to browse
+                </p>
               </div>
-              <p className="text-xs text-gray-400">Supports JPG, PNG, WebP, GIF, AVIF, and PDF</p>
+
+              <div className="flex flex-wrap items-center justify-center gap-1.5">
+                {['JPG', 'PNG', 'WebP', 'PDF'].map(fmt => (
+                  <span
+                    key={fmt}
+                    className="px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider"
+                    style={{ background: 'var(--border)', color: 'var(--muted)' }}
+                  >
+                    {fmt}
+                  </span>
+                ))}
+              </div>
             </div>
           </label>
         )}
       </div>
 
       {error && (
-        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-sm text-red-600">{error}</p>
+        <div
+          className="mt-4 px-4 py-3 rounded-lg text-sm"
+          style={{ background: 'var(--danger-muted)', color: 'var(--danger)', border: '1px solid rgba(229, 83, 75, 0.2)' }}
+        >
+          {error}
         </div>
       )}
     </div>

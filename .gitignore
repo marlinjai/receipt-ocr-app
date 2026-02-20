@@ -48,3 +48,6 @@ next-env.d.ts
 
 # test scripts
 test-*.mjs
+
+# docs build output
+/docs-dist

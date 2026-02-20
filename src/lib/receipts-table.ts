@@ -1,5 +1,5 @@
 import { MemoryAdapter } from '@marlinjai/data-table-adapter-memory';
-import type { ColumnType } from '@marlinjai/data-table-core';
+import type { ColumnType, DatabaseAdapter } from '@marlinjai/data-table-core';
 
 const WORKSPACE_ID = 'receipt-ocr';
 const TABLE_NAME = 'Receipts';
@@ -7,7 +7,9 @@ const TABLE_NAME = 'Receipts';
 const RECEIPT_COLUMNS: Array<{ name: string; type: ColumnType; isPrimary?: boolean }> = [
   { name: 'Name', type: 'text', isPrimary: true },
   { name: 'Vendor', type: 'text' },
-  { name: 'Amount', type: 'number' },
+  { name: 'Gross', type: 'number' },
+  { name: 'Net', type: 'number' },
+  { name: 'Tax Rate', type: 'number' },
   { name: 'Date', type: 'date' },
   { name: 'Category', type: 'select' },
   { name: 'Status', type: 'select' },
@@ -22,7 +24,27 @@ const CATEGORY_COLORS = ['#ef4444', '#3b82f6', '#f59e0b', '#10b981', '#8b5cf6', 
 const STATUS_OPTIONS = ['Pending', 'Processed', 'Rejected'];
 const STATUS_COLORS = ['#f59e0b', '#10b981', '#ef4444'];
 
-export const dbAdapter = new MemoryAdapter();
+// Adapter will be set at runtime — D1 when available, otherwise MemoryAdapter
+let _adapter: DatabaseAdapter | null = null;
+
+export function setAdapter(adapter: DatabaseAdapter) {
+  _adapter = adapter;
+}
+
+export function getAdapter(): DatabaseAdapter {
+  if (!_adapter) {
+    // Fallback to memory for local dev
+    _adapter = new MemoryAdapter();
+  }
+  return _adapter;
+}
+
+// Alias for backwards compatibility
+export const dbAdapter = new Proxy({} as DatabaseAdapter, {
+  get(_target, prop, receiver) {
+    return Reflect.get(getAdapter(), prop, receiver);
+  },
+});
 
 let initPromise: Promise<string> | null = null;
 
@@ -34,7 +56,14 @@ export function getReceiptsTableId(): Promise<string> {
 }
 
 async function initializeTable(): Promise<string> {
-  const table = await dbAdapter.createTable({
+  const adapter = getAdapter();
+
+  // Check if table already exists (for D1 persistence)
+  const existingTables = await adapter.listTables(WORKSPACE_ID);
+  const existing = existingTables.find((t) => t.name === TABLE_NAME);
+  if (existing) return existing.id;
+
+  const table = await adapter.createTable({
     workspaceId: WORKSPACE_ID,
     name: TABLE_NAME,
   });
@@ -42,7 +71,7 @@ async function initializeTable(): Promise<string> {
   const columnIds: Record<string, string> = {};
 
   for (const col of RECEIPT_COLUMNS) {
-    const column = await dbAdapter.createColumn({
+    const column = await adapter.createColumn({
       tableId: table.id,
       name: col.name,
       type: col.type,
@@ -51,35 +80,32 @@ async function initializeTable(): Promise<string> {
     columnIds[col.name] = column.id;
   }
 
-  // Create select options for Category
   const categoryColId = columnIds['Category'];
   for (let i = 0; i < CATEGORY_OPTIONS.length; i++) {
-    await dbAdapter.createSelectOption({
+    await adapter.createSelectOption({
       columnId: categoryColId,
       name: CATEGORY_OPTIONS[i],
       color: CATEGORY_COLORS[i],
     });
   }
 
-  // Create select options for Status
   const statusColId = columnIds['Status'];
   for (let i = 0; i < STATUS_OPTIONS.length; i++) {
-    await dbAdapter.createSelectOption({
+    await adapter.createSelectOption({
       columnId: statusColId,
       name: STATUS_OPTIONS[i],
       color: STATUS_COLORS[i],
     });
   }
 
-  // Create default views
-  await dbAdapter.createView({
+  await adapter.createView({
     tableId: table.id,
     name: 'Table',
     type: 'table',
     isDefault: true,
   });
 
-  await dbAdapter.createView({
+  await adapter.createView({
     tableId: table.id,
     name: 'Board',
     type: 'board',
@@ -91,7 +117,7 @@ async function initializeTable(): Promise<string> {
     },
   });
 
-  await dbAdapter.createView({
+  await adapter.createView({
     tableId: table.id,
     name: 'Calendar',
     type: 'calendar',

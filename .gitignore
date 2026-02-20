@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# opennext
+.open-next
+
+# editor/IDE
+.cursor/
+
+# test scripts
+test-*.mjs
+
+# docs build output
+/docs-dist

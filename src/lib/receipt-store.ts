@@ -1,17 +1,23 @@
 import type { FileInfo } from '@/lib/storage';
+import type { OcrResult } from '@/lib/ocr-types';
 
-type Listener = (receipt: FileInfo) => void;
+export interface PendingReceipt {
+  file: FileInfo;
+  ocrResult: OcrResult | null;
+}
+
+type Listener = (receipt: PendingReceipt) => void;
 
 const listeners = new Set<Listener>();
-const pendingReceipts: FileInfo[] = [];
+const pendingReceipts: PendingReceipt[] = [];
 
 export const receiptStore = {
-  addReceipt(receipt: FileInfo) {
+  addReceipt(receipt: PendingReceipt) {
     pendingReceipts.push(receipt);
     listeners.forEach((fn) => fn(receipt));
   },
 
-  consumePending(): FileInfo[] {
+  consumePending(): PendingReceipt[] {
     return pendingReceipts.splice(0);
   },
 

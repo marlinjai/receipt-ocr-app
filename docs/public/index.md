@@ -10,7 +10,8 @@ This directory contains documentation for the Receipt OCR application.
 
 ## Contents
 
-- [Architecture](/projects/receipt-ocr-app/architecture) - System design and integrations
+- [Architecture](./architecture) -- System design and integrations
+- [Getting Started](./getting-started) -- Set up the app locally
 
 ## Overview
 
@@ -18,8 +19,9 @@ The Receipt OCR App is a Next.js application that:
 
 1. Allows users to upload receipt images
 2. Extracts text and data via OCR (Storage Brain)
-3. Displays receipts in a Notion-like table (Data Table)
-4. Enables filtering, sorting, and editing of receipt data
+3. Stores structured receipt data via Data Brain
+4. Displays receipts in a Notion-like table (Data Table)
+5. Enables filtering, sorting, and editing of receipt data
 
 ## Quick Start
 
@@ -39,11 +41,13 @@ pnpm dev
 
 - **Receipt Upload**: Drag-and-drop or click to upload
 - **OCR Processing**: Automatic text extraction via Storage Brain
+- **Data Storage**: Structured data persistence via Data Brain
 - **Data Table**: Notion-like interface for managing receipts
 - **Filtering**: Filter by vendor, date, category
 - **Sorting**: Sort by amount, date, etc.
 
 ## Related Packages
 
-- `@marlinjai/storage-brain-sdk` - File storage and OCR
-- `@marlinjai/data-table-react` - Table UI components
+- `@marlinjai/storage-brain-sdk` -- File storage and OCR
+- `@marlinjai/data-brain-sdk` -- Structured data API
+- `@marlinjai/data-table-react` -- Table UI components

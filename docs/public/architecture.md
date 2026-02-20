@@ -11,6 +11,12 @@ This document describes the architecture of the Receipt OCR application.
 ## System Overview
 
 ```
+Receipt OCR App (Next.js)
+    ├── Storage Brain SDK → Cloudflare R2 (files/OCR)
+    └── Data Brain SDK → Data Brain API → Cloudflare D1 (structured data)
+```
+
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Receipt OCR App (Next.js)                    │
 ├─────────────────────────────────────────────────────────────────┤
@@ -33,14 +39,26 @@ This document describes the architecture of the Receipt OCR application.
                 ▼                           ▼
     ┌───────────────────────┐   ┌──────────────────────────────┐
     │     Storage Brain     │   │      Data Table Package      │
-    │  (File Storage + OCR) │   │   (Database + React Table)   │
+    │  (File Storage + OCR) │   │   (React Table UI Layer)     │
     └───────────────────────┘   └──────────────────────────────┘
                 │                           │
                 ▼                           ▼
     ┌───────────────────────┐   ┌──────────────────────────────┐
-    │    Cloudflare R2      │   │       Cloudflare D1          │
-    │    (File Storage)     │   │       (Database)             │
+    │    Cloudflare R2      │   │       Data Brain SDK         │
+    │    (File Storage)     │   │   (Structured Data Client)   │
     └───────────────────────┘   └──────────────────────────────┘
+                                            │
+                                            ▼
+                                ┌──────────────────────────────┐
+                                │       Data Brain API         │
+                                │   (Cloudflare Workers)       │
+                                └──────────────────────────────┘
+                                            │
+                                            ▼
+                                ┌──────────────────────────────┐
+                                │       Cloudflare D1          │
+                                │       (Database)             │
+                                └──────────────────────────────┘
 ```
 
 ## Page Structure
@@ -82,7 +100,7 @@ Storage Brain processes OCR
 Return file info + OCR data
       │
       ▼
-Create row in receipts table
+Create row in receipts table via Data Brain
       │
       ▼
 Redirect to dashboard
@@ -94,7 +112,7 @@ Redirect to dashboard
 Dashboard loads
       │
       ▼
-useTable hook fetches data
+useTable hook fetches data via Data Brain SDK
       │
       ▼
 TableView renders rows
@@ -106,7 +124,7 @@ User edits cell
 updateCell called
       │
       ▼
-D1 database updated
+Data Brain API updates D1
       │
       ▼
 UI re-renders
@@ -131,14 +149,17 @@ const result = await storage.upload(file, {
 });
 ```
 
-### Data Table
+### Data Table with Data Brain
 
 ```typescript
 // components/ReceiptsTable.tsx
 import { DataTableProvider, TableView, useTable } from '@marlinjai/data-table-react';
-import { D1Adapter } from '@marlinjai/data-table-adapter-d1';
+import { DataBrainAdapter } from '@marlinjai/data-table-adapter-data-brain';
 
-const adapter = new D1Adapter(db);
+const adapter = new DataBrainAdapter({
+  baseUrl: process.env.DATA_BRAIN_URL!,
+  apiKey: process.env.DATA_BRAIN_API_KEY!,
+});
 
 function ReceiptsTable() {
   const { columns, rows, updateCell, addRow } = useTable({ tableId: 'receipts' });
@@ -174,8 +195,9 @@ function ReceiptsTable() {
 # Storage Brain
 STORAGE_BRAIN_API_KEY=sk_live_...
 
-# Database (D1)
-DATABASE_URL=...
+# Data Brain
+DATA_BRAIN_API_KEY=db_live_...
+DATA_BRAIN_URL=https://data-brain.workers.dev
 
 # Auth (future)
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_...
@@ -184,12 +206,4 @@ CLERK_SECRET_KEY=sk_...
 
 ## Deployment
 
-Target: Cloudflare Pages + Workers
-
-```yaml
-# wrangler.toml (for D1 binding)
-[[d1_databases]]
-binding = "DB"
-database_name = "receipt-ocr"
-database_id = "..."
-```
+Target: Cloudflare Pages via OpenNext

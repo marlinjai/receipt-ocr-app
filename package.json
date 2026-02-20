@@ -9,7 +9,9 @@
     "lint": "eslint",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "docs:dev": "clearify dev",
+    "docs:build": "clearify build"
   },
   "dependencies": {
     "@marlinjai/data-table-adapter-d1": "file:../data-table/packages/adapter-d1",

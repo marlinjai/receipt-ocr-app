@@ -18,7 +18,7 @@
     "@marlinjai/data-table-adapter-memory": "file:../data-table/packages/adapter-memory",
     "@marlinjai/data-table-core": "file:../data-table/packages/core",
     "@marlinjai/data-table-react": "file:../data-table/packages/react",
-    "@marlinjai/storage-brain-sdk": "^0.4.0",
+    "@marlinjai/storage-brain-sdk": "^0.5.0",
     "@opennextjs/cloudflare": "^1.16.5",
     "next": "^16.1.6",
     "react": "19.2.3",

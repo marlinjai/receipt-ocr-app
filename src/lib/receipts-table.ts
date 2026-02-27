@@ -151,7 +151,7 @@ async function initializeTable(): Promise<string> {
       groupConfig: {
         columnId: categoryColId,
         direction: 'asc',
-        hideEmptyGroups: true,
+        hideEmptyGroups: false,
       },
     },
   });
@@ -165,7 +165,7 @@ async function initializeTable(): Promise<string> {
       groupConfig: {
         columnId: kontoColId,
         direction: 'asc',
-        hideEmptyGroups: true,
+        hideEmptyGroups: false,
       },
     },
   });

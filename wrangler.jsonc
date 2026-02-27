@@ -8,17 +8,11 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "receipt-ocr-db",
-      "database_id": "4e1bbc23-85ea-474d-a01f-deffe5cae31e"
-    }
-  ],
   "routes": [
     { "pattern": "receipts.lumitra.co", "custom_domain": true }
   ],
   "vars": {
-    "NEXT_PUBLIC_STORAGE_BRAIN_URL": "https://storage-brain-api.marlin-pohl.workers.dev"
+    "NEXT_PUBLIC_STORAGE_BRAIN_URL": "https://storage-brain-api.marlin-pohl.workers.dev",
+    "NEXT_PUBLIC_DATA_BRAIN_URL": "https://data-brain-api.marlin-pohl.workers.dev"
   }
 }

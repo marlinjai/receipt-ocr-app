@@ -25,12 +25,17 @@
   },
   "devDependencies": {
     "@marlinjai/clearify": "^1.7.0",
+    "@mdx-js/react": "^3.1.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "clsx": "^2.1.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
+    "flexsearch": "^0.8.212",
+    "react-router": "^7.13.1",
+    "react-router-dom": "^7.13.1",
     "tailwindcss": "^4",
     "typescript": "^5",
     "wrangler": "^4.67.0"

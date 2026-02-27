@@ -34,8 +34,8 @@ importers:
         version: 19.2.3(react@19.2.3)
     devDependencies:
       '@marlinjai/clearify':
-        specifier: ^1.6.6
-        version: 1.6.6(@types/node@20.19.33)(@types/react@19.2.14)(jiti@2.6.1)(lightningcss@1.31.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@4.59.0)(terser@5.16.9)(yaml@2.8.2)
+        specifier: ^1.7.0
+        version: 1.7.0(@types/node@20.19.33)(@types/react@19.2.14)(jiti@2.6.1)(lightningcss@1.31.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@4.59.0)(terser@5.16.9)(yaml@2.8.2)
       '@tailwindcss/postcss':
         specifier: ^4
         version: 4.2.1
@@ -1201,8 +1201,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@marlinjai/clearify@1.6.6':
-    resolution: {integrity: sha512-QVCn30jLueRgRr4ucNrzDZm86BSny0F3lsgvW2PHCXbO87l2nyiJw2UbUAjUw4irUzDPJEXp1tw4g/4avpKitg==}
+  '@marlinjai/clearify@1.7.0':
+    resolution: {integrity: sha512-I4Z2OPGt7kQfZCpRu3d+Oq+7H52h/V2U7/2Wj0QcfV0px3nmIawRJN8jIN93Tu/MQdXjqBMwh8tRVNQAxPYXdA==}
     hasBin: true
     peerDependencies:
       puppeteer: '>=22.0.0'
@@ -6304,7 +6304,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@marlinjai/clearify@1.6.6(@types/node@20.19.33)(@types/react@19.2.14)(jiti@2.6.1)(lightningcss@1.31.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@4.59.0)(terser@5.16.9)(yaml@2.8.2)':
+  '@marlinjai/clearify@1.7.0(@types/node@20.19.33)(@types/react@19.2.14)(jiti@2.6.1)(lightningcss@1.31.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@4.59.0)(terser@5.16.9)(yaml@2.8.2)':
     dependencies:
       '@mdx-js/react': 3.1.1(@types/react@19.2.14)(react@19.2.3)
       '@mdx-js/rollup': 3.1.1(rollup@4.59.0)

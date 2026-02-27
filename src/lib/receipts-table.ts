@@ -12,14 +12,50 @@ const RECEIPT_COLUMNS: Array<{ name: string; type: ColumnType; isPrimary?: boole
   { name: 'Tax Rate', type: 'number' },
   { name: 'Date', type: 'date' },
   { name: 'Category', type: 'select' },
+  { name: 'Konto', type: 'text' },
   { name: 'Status', type: 'select' },
   { name: 'Confidence', type: 'number' },
   { name: 'Receipt Image', type: 'url' },
   { name: 'OCR Text', type: 'text' },
 ];
 
-const CATEGORY_OPTIONS = ['Food', 'Travel', 'Office', 'Utilities', 'Entertainment', 'Other'];
-const CATEGORY_COLORS = ['#ef4444', '#3b82f6', '#f59e0b', '#10b981', '#8b5cf6', '#6b7280'];
+const CATEGORY_OPTIONS = [
+  'Bewirtung',
+  'Reisekosten',
+  'Bürobedarf',
+  'Software & Lizenzen',
+  'Telefon & Internet',
+  'Hardware & IT',
+  'Miete & Nebenkosten',
+  'Versicherungen',
+  'Fachliteratur',
+  'Sonstige Ausgaben',
+];
+const CATEGORY_COLORS = [
+  '#ef4444', // Bewirtung – red
+  '#3b82f6', // Reisekosten – blue
+  '#f59e0b', // Bürobedarf – amber
+  '#8b5cf6', // Software & Lizenzen – violet
+  '#06b6d4', // Telefon & Internet – cyan
+  '#ec4899', // Hardware & IT – pink
+  '#10b981', // Miete & Nebenkosten – emerald
+  '#f97316', // Versicherungen – orange
+  '#14b8a6', // Fachliteratur – teal
+  '#6b7280', // Sonstige Ausgaben – gray
+];
+
+export const CATEGORY_TO_KONTO: Record<string, string> = {
+  'Bewirtung': '4650',
+  'Reisekosten': '4670',
+  'Bürobedarf': '4930',
+  'Software & Lizenzen': '4806',
+  'Telefon & Internet': '4920',
+  'Hardware & IT': '4855',
+  'Miete & Nebenkosten': '4210',
+  'Versicherungen': '4360',
+  'Fachliteratur': '4940',
+  'Sonstige Ausgaben': '4900',
+};
 
 const STATUS_OPTIONS = ['Pending', 'Processed', 'Rejected'];
 const STATUS_COLORS = ['#f59e0b', '#10b981', '#ef4444'];
@@ -111,6 +147,27 @@ async function initializeTable(): Promise<string> {
     name: 'Table',
     type: 'table',
     isDefault: true,
+    config: {
+      groupConfig: {
+        columnId: categoryColId,
+        direction: 'asc',
+        hideEmptyGroups: true,
+      },
+    },
+  });
+
+  const kontoColId = columnIds['Konto'];
+  await adapter.createView({
+    tableId: table.id,
+    name: 'By Konto',
+    type: 'table',
+    config: {
+      groupConfig: {
+        columnId: kontoColId,
+        direction: 'asc',
+        hideEmptyGroups: true,
+      },
+    },
   });
 
   await adapter.createView({

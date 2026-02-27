@@ -13,7 +13,7 @@ import {
   SearchBar,
   FilterBar,
 } from '@marlinjai/data-table-react';
-import type { ColumnType, Row, CellValue } from '@marlinjai/data-table-core';
+import type { ColumnType, Row, CellValue, GroupConfig } from '@marlinjai/data-table-core';
 import { dbAdapter, getReceiptsTableId, WORKSPACE_ID } from '@/lib/receipts-table';
 
 function DashboardContent({ tableId }: { tableId: string }) {
@@ -113,6 +113,9 @@ function DashboardContent({ tableId }: { tableId: string }) {
             case 'Category':
               cells[col.id] = categoryValue;
               break;
+            case 'Konto':
+              cells[col.id] = extracted?.konto ?? null;
+              break;
             case 'Status':
               cells[col.id] = statusValue ?? '';
               break;
@@ -191,6 +194,14 @@ function DashboardContent({ tableId }: { tableId: string }) {
             isLoading={isRowsLoading}
             hasMore={hasMore}
             onLoadMore={loadMore}
+            groupConfig={currentView?.config?.groupConfig as GroupConfig | undefined}
+            onGroupConfigChange={(config) => {
+              if (currentView) {
+                updateView(currentView.id, {
+                  config: { ...currentView.config, groupConfig: config },
+                });
+              }
+            }}
           />
         );
     }

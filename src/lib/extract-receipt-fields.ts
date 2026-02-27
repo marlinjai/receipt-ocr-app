@@ -1,4 +1,5 @@
 import type { OcrResult } from '@/lib/ocr-types';
+import { CATEGORY_TO_KONTO } from '@/lib/receipts-table';
 
 export interface ExtractionResult {
   name: string | null; // descriptive summary
@@ -7,7 +8,8 @@ export interface ExtractionResult {
   net: number | null; // before tax
   taxRate: number | null; // percentage, e.g. 19 for 19%
   date: string | null; // ISO 8601
-  category: string | null; // matches CATEGORY_OPTIONS from receipts-table.ts
+  category: string | null; // matches CATEGORY_OPTIONS (SKR03) from receipts-table.ts
+  konto: string | null; // SKR03 account number (e.g. "4650")
 }
 
 // ── Amount Extraction ────────────────────────────────────────────────
@@ -308,42 +310,67 @@ function extractName(vendor: string | null, ocrData: OcrResult): string | null {
 // ── Category Inference ───────────────────────────────────────────────
 
 const VENDOR_CATEGORY_MAP: Record<string, string> = {
-  // Food & Beverage
-  mcdonald: 'Food', 'burger king': 'Food', wendy: 'Food', subway: 'Food',
-  starbucks: 'Food', dunkin: 'Food', chipotle: 'Food', domino: 'Food',
-  'pizza hut': 'Food', 'taco bell': 'Food', chick: 'Food', panera: 'Food',
-  'whole foods': 'Food', trader: 'Food', kroger: 'Food', safeway: 'Food',
-  walmart: 'Food', aldi: 'Food', lidl: 'Food', rewe: 'Food', edeka: 'Food',
-  costco: 'Food', target: 'Food',
-  // Travel
-  uber: 'Travel', lyft: 'Travel', delta: 'Travel', united: 'Travel',
-  american: 'Travel', southwest: 'Travel', jetblue: 'Travel', hilton: 'Travel',
-  marriott: 'Travel', airbnb: 'Travel', hertz: 'Travel', avis: 'Travel',
-  shell: 'Travel', bp: 'Travel', exxon: 'Travel', chevron: 'Travel',
-  // Office
-  staples: 'Office', 'office depot': 'Office', amazon: 'Office',
-  // Utilities
-  'at&t': 'Utilities', verizon: 'Utilities', 't-mobile': 'Utilities',
-  comcast: 'Utilities', spectrum: 'Utilities',
-  // Entertainment
-  netflix: 'Entertainment', spotify: 'Entertainment', apple: 'Entertainment',
-  google: 'Entertainment', steam: 'Entertainment', amc: 'Entertainment',
+  // Bewirtung (4650)
+  mcdonald: 'Bewirtung', 'burger king': 'Bewirtung', wendy: 'Bewirtung', subway: 'Bewirtung',
+  starbucks: 'Bewirtung', dunkin: 'Bewirtung', chipotle: 'Bewirtung', domino: 'Bewirtung',
+  'pizza hut': 'Bewirtung', 'taco bell': 'Bewirtung', chick: 'Bewirtung', panera: 'Bewirtung',
+  'whole foods': 'Bewirtung', trader: 'Bewirtung', kroger: 'Bewirtung', safeway: 'Bewirtung',
+  walmart: 'Bewirtung', aldi: 'Bewirtung', lidl: 'Bewirtung', rewe: 'Bewirtung', edeka: 'Bewirtung',
+  costco: 'Bewirtung', nordsee: 'Bewirtung', vapiano: 'Bewirtung', 'dean & david': 'Bewirtung',
+  backwerk: 'Bewirtung', 'back factory': 'Bewirtung',
+  // Reisekosten (4670)
+  uber: 'Reisekosten', lyft: 'Reisekosten', delta: 'Reisekosten', united: 'Reisekosten',
+  lufthansa: 'Reisekosten', ryanair: 'Reisekosten', easyjet: 'Reisekosten', eurowings: 'Reisekosten',
+  flixbus: 'Reisekosten', 'deutsche bahn': 'Reisekosten', bahn: 'Reisekosten',
+  southwest: 'Reisekosten', jetblue: 'Reisekosten', hilton: 'Reisekosten',
+  marriott: 'Reisekosten', airbnb: 'Reisekosten', 'booking.com': 'Reisekosten',
+  hertz: 'Reisekosten', avis: 'Reisekosten', sixt: 'Reisekosten',
+  shell: 'Reisekosten', bp: 'Reisekosten', aral: 'Reisekosten', esso: 'Reisekosten',
+  total: 'Reisekosten', jet: 'Reisekosten',
+  // Bürobedarf (4930)
+  staples: 'Bürobedarf', 'office depot': 'Bürobedarf', amazon: 'Bürobedarf',
+  viking: 'Bürobedarf', 'büro discount': 'Bürobedarf',
+  // Software & Lizenzen (4806)
+  netflix: 'Software & Lizenzen', spotify: 'Software & Lizenzen', adobe: 'Software & Lizenzen',
+  microsoft: 'Software & Lizenzen', google: 'Software & Lizenzen', apple: 'Software & Lizenzen',
+  github: 'Software & Lizenzen', vercel: 'Software & Lizenzen', cloudflare: 'Software & Lizenzen',
+  notion: 'Software & Lizenzen', figma: 'Software & Lizenzen', slack: 'Software & Lizenzen',
+  openai: 'Software & Lizenzen', anthropic: 'Software & Lizenzen', aws: 'Software & Lizenzen',
+  hetzner: 'Software & Lizenzen', digitalocean: 'Software & Lizenzen', steam: 'Software & Lizenzen',
+  // Telefon & Internet (4920)
+  'at&t': 'Telefon & Internet', verizon: 'Telefon & Internet', 't-mobile': 'Telefon & Internet',
+  comcast: 'Telefon & Internet', spectrum: 'Telefon & Internet',
+  telekom: 'Telefon & Internet', vodafone: 'Telefon & Internet', 'o2': 'Telefon & Internet',
+  '1&1': 'Telefon & Internet', congstar: 'Telefon & Internet',
+  // Hardware & IT (4855)
+  dell: 'Hardware & IT', lenovo: 'Hardware & IT', logitech: 'Hardware & IT',
+  samsung: 'Hardware & IT', 'media markt': 'Hardware & IT', saturn: 'Hardware & IT',
+  cyberport: 'Hardware & IT', notebooksbilliger: 'Hardware & IT',
+  // Versicherungen (4360)
+  allianz: 'Versicherungen', axa: 'Versicherungen', huk: 'Versicherungen',
+  ergo: 'Versicherungen', 'hanse merkur': 'Versicherungen',
 };
 
 const KEYWORD_CATEGORIES: Array<{ pattern: RegExp; category: string }> = [
-  { pattern: /\b(?:restaurant|cafe|coffee|bakery|pizza|burger|sushi|grill|diner|food|grocery|supermarket|market|meal|breakfast|lunch|dinner)\b/i, category: 'Food' },
-  { pattern: /\b(?:hotel|motel|airline|flight|airport|rental\s*car|taxi|parking|gas\s*station|fuel|petrol|travel|booking)\b/i, category: 'Travel' },
-  { pattern: /\b(?:office|supplies|paper|ink|toner|printer|desk|chair|stationery|software|license|saas|design|consulting|freelance|web\s*design|development|hosting|domain|server)\b/i, category: 'Office' },
-  { pattern: /\b(?:electric|water|gas|internet|phone|utility|telecom|broadband|mobile|wireless)\b/i, category: 'Utilities' },
-  { pattern: /\b(?:cinema|theater|theatre|movie|concert|ticket|game|streaming|music|subscription|entertainment)\b/i, category: 'Entertainment' },
+  { pattern: /\b(?:restaurant|cafe|café|coffee|bakery|pizza|burger|sushi|grill|diner|food|grocery|supermarket|market|meal|breakfast|lunch|dinner|gastronomie|essen|bewirtung|catering|imbiss|bäckerei|metzgerei)\b/i, category: 'Bewirtung' },
+  { pattern: /\b(?:hotel|motel|airline|flight|airport|rental\s*car|taxi|parking|gas\s*station|fuel|petrol|travel|booking|bahn|zug|flug|reise|tankstelle|mietwagen|fahrt|übernachtung)\b/i, category: 'Reisekosten' },
+  { pattern: /\b(?:office|supplies|paper|ink|toner|printer|desk|chair|stationery|büro|papier|ordner|schreibwaren|möbel|büromaterial)\b/i, category: 'Bürobedarf' },
+  { pattern: /\b(?:software|license|lizenz|saas|subscription|hosting|domain|server|cloud|app\s*store|play\s*store)\b/i, category: 'Software & Lizenzen' },
+  { pattern: /\b(?:phone|telefon|internet|broadband|mobile|wireless|mobilfunk|festnetz|dsl|glasfaser|handy)\b/i, category: 'Telefon & Internet' },
+  { pattern: /\b(?:computer|laptop|notebook|monitor|keyboard|mouse|tastatur|drucker|scanner|kabel|adapter|festplatte|ssd|ram|usb|hdmi|peripherie)\b/i, category: 'Hardware & IT' },
+  { pattern: /\b(?:miete|rent|nebenkosten|electric|strom|water|wasser|gas|heizung|utility|grundsteuer|hausgeld)\b/i, category: 'Miete & Nebenkosten' },
+  { pattern: /\b(?:insurance|versicherung|police|prämie|beitrag|haftpflicht|berufshaftpflicht)\b/i, category: 'Versicherungen' },
+  { pattern: /\b(?:book|buch|journal|zeitschrift|fachbuch|fachliteratur|magazine|magazin|fachzeitschrift|ebook)\b/i, category: 'Fachliteratur' },
 ];
 
 // Broader keyword scan that also checks for common receipt item patterns
 const ITEM_CATEGORY_HINTS: Array<{ pattern: RegExp; category: string }> = [
-  { pattern: /\b(?:latte|espresso|cappuccino|americano|mocha|frappuccino|tea|drink|sandwich|salad|soup|appetizer|dessert|entree|main\s+course)\b/i, category: 'Food' },
-  { pattern: /\b(?:check.?in|check.?out|room\s+\d|night|nights|stay|accommodation|boarding|layover|fare|mileage|km|miles)\b/i, category: 'Travel' },
-  { pattern: /\b(?:a4|a3|letter|legal|copy|copies|print|scan|usb|hdmi|cable|adapter|keyboard|mouse|monitor)\b/i, category: 'Office' },
-  { pattern: /\b(?:kwh|kilowatt|bandwidth|data\s+plan|gb|mbps|minutes|sms)\b/i, category: 'Utilities' },
+  { pattern: /\b(?:latte|espresso|cappuccino|americano|mocha|frappuccino|tea|drink|sandwich|salad|soup|appetizer|dessert|entree|main\s+course|menü|vorspeise|hauptgericht|nachtisch|getränk)\b/i, category: 'Bewirtung' },
+  { pattern: /\b(?:check.?in|check.?out|room\s+\d|night|nights|stay|accommodation|boarding|layover|fare|mileage|km|miles|einzelfahrt|tageskarte|hin\s*und\s*rück)\b/i, category: 'Reisekosten' },
+  { pattern: /\b(?:a4|a3|letter|legal|copy|copies|print|scan|kopierpapier|druckerpapier|briefumschlag|heftklammer)\b/i, category: 'Bürobedarf' },
+  { pattern: /\b(?:pro\s*plan|monthly|monatlich|jährlich|yearly|annual|user\s*seat|per\s*month)\b/i, category: 'Software & Lizenzen' },
+  { pattern: /\b(?:kwh|kilowatt|bandwidth|data\s+plan|gb|mbps|minutes|sms|datenvolumen|flatrate|tarif)\b/i, category: 'Telefon & Internet' },
+  { pattern: /\b(?:cpu|gpu|mainboard|grafikkarte|netzteil|gehäuse|arbeitsspeicher|laufwerk)\b/i, category: 'Hardware & IT' },
 ];
 
 function inferCategory(vendor: string | null, fullText: string): string | null {
@@ -365,7 +392,7 @@ function inferCategory(vendor: string | null, fullText: string): string | null {
     if (pattern.test(fullText)) return category;
   }
 
-  return null;
+  return 'Sonstige Ausgaben';
 }
 
 // ── Main Export ───────────────────────────────────────────────────────
@@ -376,6 +403,7 @@ export function extractReceiptFields(ocrData: OcrResult): ExtractionResult {
   const date = extractDate(ocrData.fullText);
   const category = inferCategory(vendor, ocrData.fullText);
   const name = extractName(vendor, ocrData);
+  const konto = category ? CATEGORY_TO_KONTO[category] ?? null : null;
 
   // Calculate tax rate from gross and net
   let taxRate: number | null = null;
@@ -383,5 +411,5 @@ export function extractReceiptFields(ocrData: OcrResult): ExtractionResult {
     taxRate = Math.round(((gross - net) / net) * 10000) / 100; // e.g. 19.00
   }
 
-  return { name, vendor, gross, net, taxRate, date, category };
+  return { name, vendor, gross, net, taxRate, date, category, konto };
 }

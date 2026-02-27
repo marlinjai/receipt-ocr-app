@@ -24,7 +24,7 @@
     "react-dom": "19.2.3"
   },
   "devDependencies": {
-    "@marlinjai/clearify": "^1.7.0",
+    "@marlinjai/clearify": "^1.7.3",
     "@mdx-js/react": "^3.1.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",

@@ -2,18 +2,24 @@
 @import "@marlinjai/data-table-react/dist/styles/base.css";
 
 :root {
-  --background: #0c0c0e;
+  --background: #0a0a0f;
   --foreground: #e8e6e3;
-  --surface: #16161a;
-  --surface-elevated: #1e1e23;
-  --border: #2a2a30;
-  --border-subtle: #1f1f25;
+  --surface: rgba(22, 22, 26, 0.6);
+  --surface-elevated: rgba(30, 30, 35, 0.65);
+  --border: rgba(255, 255, 255, 0.12);
+  --border-subtle: rgba(255, 255, 255, 0.04);
   --muted: #72717a;
   --accent: #e2a348;
   --accent-muted: rgba(226, 163, 72, 0.12);
   --accent-hover: #edb45c;
   --danger: #e5534b;
   --danger-muted: rgba(229, 83, 75, 0.12);
+
+  /* Glass effect tokens */
+  --glass-blur: 20px;
+  --glass-border: rgba(255, 255, 255, 0.13);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --glass-inner-glow: inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
 }
 
 @theme inline {
@@ -29,26 +35,80 @@ body {
   font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
 }
 
-/* Subtle noise texture overlay */
+/* Aurora background */
 body::before {
   content: '';
   position: fixed;
-  inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  inset: -50%;
+  width: 200%;
+  height: 200%;
+  background:
+    radial-gradient(ellipse 70% 50% at 25% 15%, rgba(226, 163, 72, 0.18) 0%, transparent 65%),
+    radial-gradient(ellipse 60% 55% at 75% 55%, rgba(140, 80, 220, 0.14) 0%, transparent 60%),
+    radial-gradient(ellipse 55% 65% at 45% 85%, rgba(50, 120, 240, 0.15) 0%, transparent 55%),
+    radial-gradient(ellipse 45% 40% at 80% 20%, rgba(226, 100, 72, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 45% at 15% 70%, rgba(80, 200, 180, 0.1) 0%, transparent 55%);
   pointer-events: none;
   z-index: 0;
+  animation: aurora-drift 25s ease-in-out infinite alternate;
+  will-change: transform, opacity;
 }
 
-/* Subtle radial glow behind the main content */
+@keyframes aurora-drift {
+  0% {
+    transform: translate(0%, 0%) rotate(0deg);
+    opacity: 1;
+  }
+  33% {
+    transform: translate(5%, -3%) rotate(1deg);
+    opacity: 0.85;
+  }
+  66% {
+    transform: translate(-3%, 5%) rotate(-1deg);
+    opacity: 0.95;
+  }
+  100% {
+    transform: translate(2%, -2%) rotate(0.5deg);
+    opacity: 0.9;
+  }
+}
+
+/* Subtle noise texture overlay */
 body::after {
   content: '';
   position: fixed;
-  top: -20%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 800px;
-  height: 600px;
-  background: radial-gradient(ellipse, rgba(226, 163, 72, 0.04) 0%, transparent 70%);
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.02'/%3E%3C/svg%3E");
   pointer-events: none;
   z-index: 0;
+  opacity: 0.5;
+}
+
+/* ==================== Glass Utility Classes ==================== */
+
+.glass-panel {
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow), var(--glass-inner-glow);
+  transition: all 200ms ease;
+}
+
+@supports (backdrop-filter: blur(1px)) {
+  .glass-panel {
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+  }
+}
+
+.glass-nav {
+  background: rgba(10, 10, 15, 0.6);
+  border-bottom: 1px solid var(--glass-border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), var(--glass-inner-glow);
+}
+
+@supports (backdrop-filter: blur(1px)) {
+  .glass-nav {
+    backdrop-filter: blur(24px) saturate(1.4);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  }
 }

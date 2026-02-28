@@ -10,21 +10,23 @@ export interface UploadResult {
 }
 
 interface ReceiptUploaderProps {
-  onUploadComplete: (result: UploadResult) => void;
+  onUploadComplete: (result: UploadResult) => void | Promise<void>;
 }
 
 export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [phase, setPhase] = useState<'idle' | 'uploading' | 'ocr'>('idle');
+  const [phase, setPhase] = useState<'idle' | 'uploading' | 'ocr' | 'saving'>('idle');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [ocrWarning, setOcrWarning] = useState<string | null>(null);
 
   const handleUpload = useCallback(async (file: File) => {
     setIsUploading(true);
     setPhase('uploading');
     setProgress(0);
     setError(null);
+    setOcrWarning(null);
 
     try {
       const storage = getStorageClient();
@@ -44,17 +46,20 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
         const ocrResponse = await fetch('/api/ocr', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileUrl: result.url }),
+          body: JSON.stringify({ fileId: result.id, fileName: result.originalName }),
         });
 
         if (ocrResponse.ok) {
           ocrResult = await ocrResponse.json();
+        } else {
+          setOcrWarning('OCR text extraction failed. Fields will need manual entry.');
         }
       } catch {
-        // OCR failed but upload succeeded — continue with null OCR
+        setOcrWarning('OCR text extraction failed. Fields will need manual entry.');
       }
 
-      onUploadComplete({ file: result, ocrResult });
+      setPhase('saving');
+      await onUploadComplete({ file: result, ocrResult });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
@@ -86,8 +91,8 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
     if (file) handleUpload(file);
   }, [handleUpload]);
 
-  const phaseLabel = phase === 'uploading' ? 'Uploading receipt...' : 'Running OCR...';
-  const phaseDetail = phase === 'uploading' ? 'Storing file securely' : 'Extracting text with AI';
+  const phaseLabel = phase === 'uploading' ? 'Uploading receipt...' : phase === 'ocr' ? 'Running OCR...' : 'Saving to database...';
+  const phaseDetail = phase === 'uploading' ? 'Storing file securely' : phase === 'ocr' ? 'Extracting text with AI' : 'Writing receipt data';
 
   return (
     <div className="w-full">
@@ -95,24 +100,12 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
-        className="relative rounded-xl p-10 text-center transition-all duration-200 cursor-pointer overflow-hidden"
+        className="glass-panel relative rounded-xl p-10 text-center transition-all duration-200 cursor-pointer overflow-hidden hover:bg-[var(--surface-elevated)]"
         style={{
-          background: isDragging ? 'var(--accent-muted)' : 'var(--surface)',
-          border: `1px solid ${isDragging ? 'var(--accent)' : 'var(--border)'}`,
+          background: isDragging ? 'var(--accent-muted)' : undefined,
+          borderColor: isDragging ? 'var(--accent)' : undefined,
           opacity: isUploading ? 0.7 : 1,
           pointerEvents: isUploading ? 'none' : 'auto',
-        }}
-        onMouseEnter={e => {
-          if (!isUploading && !isDragging) {
-            e.currentTarget.style.borderColor = 'var(--border)';
-            e.currentTarget.style.background = 'var(--surface-elevated)';
-          }
-        }}
-        onMouseLeave={e => {
-          if (!isUploading && !isDragging) {
-            e.currentTarget.style.borderColor = 'var(--border)';
-            e.currentTarget.style.background = 'var(--surface)';
-          }
         }}
       >
         {isUploading ? (
@@ -173,7 +166,7 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
                   <span
                     key={fmt}
                     className="px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider"
-                    style={{ background: 'var(--border)', color: 'var(--muted)' }}
+                    style={{ background: 'rgba(255, 255, 255, 0.06)', color: 'var(--muted)', border: '1px solid rgba(255, 255, 255, 0.06)' }}
                   >
                     {fmt}
                   </span>
@@ -190,6 +183,15 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
           style={{ background: 'var(--danger-muted)', color: 'var(--danger)', border: '1px solid rgba(229, 83, 75, 0.2)' }}
         >
           {error}
+        </div>
+      )}
+
+      {ocrWarning && (
+        <div
+          className="mt-4 px-4 py-3 rounded-lg text-sm"
+          style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'rgb(234, 179, 8)', border: '1px solid rgba(234, 179, 8, 0.2)' }}
+        >
+          {ocrWarning}
         </div>
       )}
     </div>

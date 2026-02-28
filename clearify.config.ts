@@ -3,6 +3,12 @@ import { defineConfig } from 'clearify';
 export default defineConfig({
   name: 'Receipt OCR App',
   siteUrl: 'https://docs.receipts.lumitra.co',
+  hubProject: {
+    description: 'Receipt scanning & expense tracking with AI chat',
+    status: 'active',
+    icon: '🧾',
+    tags: ['app', 'ai', 'ocr'],
+  },
   links: {
     app: 'https://receipts.lumitra.co',
   },

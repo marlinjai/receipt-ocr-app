@@ -57,6 +57,9 @@ export const CATEGORY_TO_KONTO: Record<string, string> = {
   'Sonstige Ausgaben': '4900',
 };
 
+export const ZUORDNUNG_OPTIONS = ['Universität', 'Geschäftlich', 'Privat'];
+const ZUORDNUNG_COLORS = ['#3b82f6', '#10b981', '#f59e0b'];
+
 const STATUS_OPTIONS = ['Pending', 'Processed', 'Rejected'];
 const STATUS_COLORS = ['#f59e0b', '#10b981', '#ef4444'];
 
@@ -196,4 +199,43 @@ async function initializeTable(): Promise<string> {
   return table.id;
 }
 
-export { WORKSPACE_ID };
+export { WORKSPACE_ID, CATEGORY_OPTIONS };
+
+/**
+ * Ensure the Zuordnung (assignment context) column exists on the table.
+ * Creates the column + select options if missing; returns the column ID and options.
+ */
+export async function ensureZuordnungColumn(tableId: string): Promise<{
+  columnId: string;
+  options: Array<{ id: string; name: string; color: string }>;
+}> {
+  const adapter = getAdapter();
+  const columns = await adapter.getColumns(tableId);
+  const existing = columns.find((c) => c.name === 'Zuordnung');
+
+  if (existing) {
+    const options = await adapter.getSelectOptions(existing.id);
+    return {
+      columnId: existing.id,
+      options: options.map((o) => ({ id: o.id, name: o.name, color: o.color ?? '' })),
+    };
+  }
+
+  const col = await adapter.createColumn({
+    tableId,
+    name: 'Zuordnung',
+    type: 'select',
+  });
+
+  const options: Array<{ id: string; name: string; color: string }> = [];
+  for (let i = 0; i < ZUORDNUNG_OPTIONS.length; i++) {
+    const opt = await adapter.createSelectOption({
+      columnId: col.id,
+      name: ZUORDNUNG_OPTIONS[i],
+      color: ZUORDNUNG_COLORS[i],
+    });
+    options.push({ id: opt.id, name: opt.name, color: opt.color ?? ZUORDNUNG_COLORS[i] });
+  }
+
+  return { columnId: col.id, options };
+}

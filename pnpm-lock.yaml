@@ -12,20 +12,23 @@ importers:
         specifier: ^0.2.0
         version: 0.2.0
       '@marlinjai/data-table-core':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: ^0.2.0
+        version: 0.2.0
       '@marlinjai/data-table-react':
-        specifier: ^0.1.3
-        version: 0.1.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        specifier: ^0.2.0
+        version: 0.2.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@marlinjai/storage-brain-sdk':
-        specifier: ^0.5.0
-        version: 0.5.0
+        specifier: ^0.5.1
+        version: 0.5.1
       '@opennextjs/cloudflare':
         specifier: ^1.16.5
         version: 1.17.1(next@16.1.6(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(wrangler@4.68.1(@cloudflare/workers-types@4.20260303.0))
       next:
         specifier: ^16.1.6
         version: 16.1.6(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      openai:
+        specifier: ^6.25.0
+        version: 6.25.0(ws@8.18.0)(zod@4.3.6)
       react:
         specifier: 19.2.3
         version: 19.2.3
@@ -34,8 +37,8 @@ importers:
         version: 19.2.3(react@19.2.3)
     devDependencies:
       '@marlinjai/clearify':
-        specifier: ^1.7.3
-        version: 1.7.3(@types/node@20.19.33)(@types/react@19.2.14)(jiti@2.6.1)(lightningcss@1.31.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@4.59.0)(terser@5.16.9)(yaml@2.8.2)
+        specifier: ^1.8.0
+        version: 1.8.0(@types/node@20.19.33)(@types/react@19.2.14)(jiti@2.6.1)(lightningcss@1.31.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@4.59.0)(terser@5.16.9)(yaml@2.8.2)
       '@mdx-js/react':
         specifier: ^3.1.1
         version: 3.1.1(@types/react@19.2.14)(react@19.2.3)
@@ -1216,8 +1219,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@marlinjai/clearify@1.7.3':
-    resolution: {integrity: sha512-CabrfRSVF2px6wlCZpM+nYR5BWzlJrYDXqxrSY1qpNjKJdtKrMAXQwIgveeAq1kcobToksF8Ra3+og7TIFw6hw==}
+  '@marlinjai/clearify@1.8.0':
+    resolution: {integrity: sha512-uGDlr0HNyTcI+zmY6t414qeTKQzNbjQCjeWaYDt4oUFMVv+kp3ioocp2D9Td6jFl17gX4f9Y8RlRjOkYxkgOAw==}
     hasBin: true
     peerDependencies:
       puppeteer: '>=22.0.0'
@@ -1233,14 +1236,17 @@ packages:
   '@marlinjai/data-table-core@0.1.1':
     resolution: {integrity: sha512-P2msh6+XTHAIcTG1bwAG776a7FQwHklNsc1v/QsoAxLHHuZ9gx7w6/SJHqLzodpzLD9YWbT+dpi1Xqc78J0yUQ==}
 
-  '@marlinjai/data-table-react@0.1.3':
-    resolution: {integrity: sha512-jQX3OdGXl2BospHHlZB4L34E4VSt6cwpi0RgghnttYVrWfSyhd8S8NcQBntOdUWMKNLK0hPGVc1VIz1EpTvy6w==}
+  '@marlinjai/data-table-core@0.2.0':
+    resolution: {integrity: sha512-fACvrQm8p0B6gLAesIQPcdrJ3J7xDj8czTwFUnakWBZAXMCAbKqRtot8wibowJbR85n+TQBX9CZjgqgHk2R4rw==}
+
+  '@marlinjai/data-table-react@0.2.0':
+    resolution: {integrity: sha512-SJ38fSNN8PKvmAalNpf7XxJccuyJzwgFu/GyhWjPMTBmScu3WxuozHyAY6N3jo72Jmhj2nmYesp73cu8u84NZw==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@marlinjai/storage-brain-sdk@0.5.0':
-    resolution: {integrity: sha512-dLQAadnkOrRcBfwyrugatLqr2cvbbx5pDfyBQTpnAjWme28I2NR5sPnBGpAdml97Aptxp5S+fr3MFKuqtOHQGg==}
+  '@marlinjai/storage-brain-sdk@0.5.1':
+    resolution: {integrity: sha512-J1rNm/7w8tJNjPwXcNEQkosihg/fcQsaPOtC33M4ZrRW9WfYfISKGDegtqXGkPkrAmKqLXO2b49Zb1jXeyQOnw==}
 
   '@mdx-js/mdx@3.1.1':
     resolution: {integrity: sha512-f6ZO2ifpwAQIpzGWaBQT2TXxPv6z3RBzQKpVftEWN78Vl/YweF1uwussDx8ECAXVtr3Rs89fKyG9YlzUs9DyGQ==}
@@ -4138,6 +4144,18 @@ packages:
   oniguruma-to-es@4.3.4:
     resolution: {integrity: sha512-3VhUGN3w2eYxnTzHn+ikMI+fp/96KoRSVK9/kMTcFqj1NRDh2IhQCKvYxDnWePKRXY/AqH+Fuiyb7VHSzBjHfA==}
 
+  openai@6.25.0:
+    resolution: {integrity: sha512-mEh6VZ2ds2AGGokWARo18aPISI1OhlgdEIC1ewhkZr8pSIT31dec0ecr9Nhxx0JlybyOgoAT1sWeKtwPZzJyww==}
+    hasBin: true
+    peerDependencies:
+      ws: ^8.18.0
+      zod: ^3.25 || ^4.0
+    peerDependenciesMeta:
+      ws:
+        optional: true
+      zod:
+        optional: true
+
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
     engines: {node: '>= 0.8.0'}
@@ -6319,7 +6337,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@marlinjai/clearify@1.7.3(@types/node@20.19.33)(@types/react@19.2.14)(jiti@2.6.1)(lightningcss@1.31.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@4.59.0)(terser@5.16.9)(yaml@2.8.2)':
+  '@marlinjai/clearify@1.8.0(@types/node@20.19.33)(@types/react@19.2.14)(jiti@2.6.1)(lightningcss@1.31.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@4.59.0)(terser@5.16.9)(yaml@2.8.2)':
     dependencies:
       '@mdx-js/react': 3.1.1(@types/react@19.2.14)(react@19.2.3)
       '@mdx-js/rollup': 3.1.1(rollup@4.59.0)
@@ -6369,13 +6387,15 @@ snapshots:
 
   '@marlinjai/data-table-core@0.1.1': {}
 
-  '@marlinjai/data-table-react@0.1.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@marlinjai/data-table-core@0.2.0': {}
+
+  '@marlinjai/data-table-react@0.2.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@marlinjai/data-table-core': 0.1.1
+      '@marlinjai/data-table-core': 0.2.0
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
 
-  '@marlinjai/storage-brain-sdk@0.5.0': {}
+  '@marlinjai/storage-brain-sdk@0.5.1': {}
 
   '@mdx-js/mdx@3.1.1':
     dependencies:
@@ -9974,6 +9994,11 @@ snapshots:
       oniguruma-parser: 0.12.1
       regex: 6.1.0
       regex-recursion: 6.0.2
+
+  openai@6.25.0(ws@8.18.0)(zod@4.3.6):
+    optionalDependencies:
+      ws: 8.18.0
+      zod: 4.3.6
 
   optionator@0.9.4:
     dependencies:

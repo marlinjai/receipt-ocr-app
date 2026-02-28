@@ -22,21 +22,58 @@ export default function UploadPage() {
     // Extract fields from OCR result
     const extracted = ocrResult ? extractReceiptFields(ocrResult) : null;
 
-    // Load select options for Status and Category columns
+    // Try AI classification if we have OCR text
+    let aiCategory: string | null = null;
+    let aiKonto: string | null = null;
+    let aiZuordnung: string | null = null;
+    if (extracted && ocrResult?.fullText) {
+      try {
+        const classifyRes = await fetch('/api/classify-single', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ocrText: ocrResult.fullText,
+            vendor: extracted.vendor,
+            gross: extracted.gross,
+            date: extracted.date,
+          }),
+        });
+        if (classifyRes.ok) {
+          const ai = await classifyRes.json();
+          if (ai.category) aiCategory = ai.category;
+          if (ai.konto) aiKonto = ai.konto;
+          if (ai.zuordnung) aiZuordnung = ai.zuordnung;
+        }
+      } catch {
+        // AI classification failed — fall back to rule-based
+      }
+    }
+
+    // Load select options for Status, Category, and Zuordnung columns
     const statusCol = columns.find((c) => c.name === 'Status');
     const categoryCol = columns.find((c) => c.name === 'Category');
+    const zuordnungCol = columns.find((c) => c.name === 'Zuordnung');
 
-    const [statusOpts, categoryOpts] = await Promise.all([
+    const [statusOpts, categoryOpts, zuordnungOpts] = await Promise.all([
       statusCol ? dbAdapter.getSelectOptions(statusCol.id) : Promise.resolve([]),
       categoryCol ? dbAdapter.getSelectOptions(categoryCol.id) : Promise.resolve([]),
+      zuordnungCol ? dbAdapter.getSelectOptions(zuordnungCol.id) : Promise.resolve([]),
     ]);
 
     const statusValue = ocrResult?.fullText
       ? statusOpts.find((o) => o.name === 'Processed')?.id
       : statusOpts.find((o) => o.name === 'Pending')?.id;
 
-    const categoryValue = extracted?.category
-      ? categoryOpts.find((o) => o.name === extracted.category)?.id ?? null
+    // Prefer AI classification, fall back to rule-based
+    const finalCategory = aiCategory || extracted?.category;
+    const categoryValue = finalCategory
+      ? categoryOpts.find((o) => o.name === finalCategory)?.id ?? null
+      : null;
+
+    const finalKonto = aiKonto || extracted?.konto;
+
+    const zuordnungValue = aiZuordnung
+      ? zuordnungOpts.find((o) => o.name === aiZuordnung)?.id ?? null
       : null;
 
     // Build cells record
@@ -65,7 +102,10 @@ export default function UploadPage() {
           cells[col.id] = categoryValue;
           break;
         case 'Konto':
-          cells[col.id] = extracted?.konto ?? null;
+          cells[col.id] = finalKonto ?? null;
+          break;
+        case 'Zuordnung':
+          cells[col.id] = zuordnungValue;
           break;
         case 'Status':
           cells[col.id] = statusValue ?? '';
@@ -73,9 +113,13 @@ export default function UploadPage() {
         case 'Confidence':
           cells[col.id] = ocrResult?.confidence ? Math.round(ocrResult.confidence * 100) : 0;
           break;
-        case 'Receipt Image':
-          cells[col.id] = file.id ? `/api/files/${file.id}` : '';
+        case 'Receipt Image': {
+          const isPdf = (file.fileType ?? '').includes('pdf') || (file.originalName ?? '').toLowerCase().endsWith('.pdf');
+          cells[col.id] = file.id
+            ? isPdf ? `/api/files/${file.id}/thumbnail` : `/api/files/${file.id}`
+            : '';
           break;
+        }
         case 'OCR Text':
           cells[col.id] = ocrResult?.fullText ?? '';
           break;

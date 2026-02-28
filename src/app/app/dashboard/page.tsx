@@ -13,8 +13,9 @@ import {
   SearchBar,
   FilterBar,
 } from '@marlinjai/data-table-react';
-import type { ColumnType, Row, GroupConfig, TextAlignment } from '@marlinjai/data-table-core';
+import type { ColumnType, Row, GroupConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { dbAdapter, getReceiptsTableId, WORKSPACE_ID } from '@/lib/receipts-table';
+import AiChatSidebar from '@/components/AiChatSidebar';
 
 function DashboardContent({ tableId }: { tableId: string }) {
   const {
@@ -54,6 +55,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
 
   const [searchResults, setSearchResults] = useState<Row[] | null>(null);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  const [aiSidebarOpen, setAiSidebarOpen] = useState(false);
   const displayRows = searchResults ?? rows;
 
   // Delete selected rows on Backspace/Delete key
@@ -177,13 +179,40 @@ function DashboardContent({ tableId }: { tableId: string }) {
           <h1 className="text-2xl font-bold" style={{ color: 'var(--dt-text-primary)' }}>
             {table.name}
           </h1>
-          <Link
-            href="/app"
-            className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-            style={{ boxShadow: '0 0 16px rgba(226, 163, 72, 0.25), 0 0 4px rgba(226, 163, 72, 0.15)' }}
-          >
-            + Upload Receipt
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setAiSidebarOpen((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
+              style={{
+                background: aiSidebarOpen ? 'var(--accent-muted)' : 'var(--surface)',
+                color: aiSidebarOpen ? 'var(--accent)' : 'var(--foreground)',
+                border: `1px solid ${aiSidebarOpen ? 'rgba(226, 163, 72, 0.4)' : 'var(--border)'}`,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'rgba(226, 163, 72, 0.4)';
+                e.currentTarget.style.color = 'var(--accent)';
+              }}
+              onMouseLeave={(e) => {
+                if (!aiSidebarOpen) {
+                  e.currentTarget.style.borderColor = 'var(--border)';
+                  e.currentTarget.style.color = 'var(--foreground)';
+                }
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 3l1.5 3.7 3.8.5-2.8 2.6.7 3.9L12 12l-3.2 1.7.7-3.9-2.8-2.6 3.8-.5z" />
+                <path d="M12 3v0M18.4 5.6v0M21 12v0M18.4 18.4v0M12 21v0M5.6 18.4v0M3 12v0M5.6 5.6v0" />
+              </svg>
+              AI
+            </button>
+            <Link
+              href="/app"
+              className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+              style={{ boxShadow: '0 0 16px rgba(226, 163, 72, 0.25), 0 0 4px rgba(226, 163, 72, 0.15)' }}
+            >
+              + Upload Receipt
+            </Link>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <p className="text-sm" style={{ color: 'var(--dt-text-secondary)' }}>
@@ -247,6 +276,20 @@ function DashboardContent({ tableId }: { tableId: string }) {
       <div className="flex-1 overflow-auto p-4">
         {renderView()}
       </div>
+
+      {/* AI Chat Sidebar */}
+      <AiChatSidebar
+        isOpen={aiSidebarOpen}
+        onClose={() => setAiSidebarOpen(false)}
+        rows={rows}
+        columns={columns}
+        selectOptions={selectOptions}
+        onCellChange={(rowId, columnId, value) => updateCell(rowId, columnId, value)}
+        onAddRow={async (cells?: Record<string, CellValue>) => { await addRow({ cells }); }}
+        onDeleteRow={deleteRow}
+        onCreateSelectOption={(params) => createSelectOption(params.columnId, params.name, params.color)}
+        tableId={tableId}
+      />
     </div>
   );
 }

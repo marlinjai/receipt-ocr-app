@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import {
   DataTableProvider,
@@ -159,7 +159,18 @@ function DashboardContent({ tableId }: { tableId: string }) {
   };
 
   return (
-    <div className="h-screen flex flex-col" data-theme="dark">
+    <div
+      className="h-screen flex flex-col"
+      data-theme="dark"
+      onClick={(e) => {
+        // Clicking dead space (background, header, toolbar) refocuses the table for keyboard nav
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'BUTTON' && tag !== 'SELECT' && tag !== 'A' && !(e.target as HTMLElement).isContentEditable) {
+          const tableView = document.querySelector('.dt-table-view') as HTMLElement | null;
+          tableView?.focus();
+        }
+      }}
+    >
       {/* Header */}
       <div className="px-6 pt-6 pb-2" style={{ background: 'rgba(10, 10, 15, 0.4)' }}>
         <div className="flex items-center justify-between mb-1">

@@ -274,8 +274,74 @@ function extractVendor(ocrData: OcrResult): string | null {
 // ── Name Generation ──────────────────────────────────────────────────
 
 // Lines that look like purchased items (not totals, not headers, not metadata)
-const ITEM_LINE = /^(.{3,40})\s+[$€£]?\d/;
-const SKIP_FOR_ITEMS = /(?:total|tax|subtotal|change|balance|due|paid|visa|mastercard|amex|card|cash|date|invoice|receipt|tel|phone|fax|www|straße|strasse|street|ave|blvd|road|st\s+\d|bill\s+to|ship\s+to)/i;
+// Pattern 1: item name followed by a price (e.g. "Cappuccino 3.50" or "USB Cable €12.99")
+const ITEM_LINE_PRICE = /^(.{3,50}?)\s+[$€£]?\s*(?:\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/;
+// Pattern 2: quantity + item (e.g. "2x Latte Macchiato" or "1 Chicken Sandwich")
+const ITEM_LINE_QTY = /^\d+\s*[x×*]?\s+(.{3,50})/i;
+// Pattern 3: item with article/SKU number prefix (e.g. "ART-1234 Wireless Mouse")
+const ITEM_LINE_SKU = /^(?:[A-Z]{2,5}[-.]?\d{3,10})\s+(.{3,50})/;
+
+const SKIP_FOR_ITEMS = /(?:total|tax|subtotal|sub-total|change|balance|due|paid|payment|visa|mastercard|amex|debit|credit|card|cash|bar|ec|girocard|date|datum|invoice|rechnung|receipt|beleg|quittung|bon|tel|phone|fax|www|http|email|mail|straße|strasse|street|ave|blvd|road|st\s+\d|platz|weg|gasse|bill\s+to|ship\s+to|sold\s+to|ust|mwst|vat|netto|brutto|zwischensumme|rückgeld|trinkgeld|tip|gratuity|discount|rabatt|coupon|gutschein|kundennr|customer|bedient|cashier|kasse|filiale|store|branch|vielen\s+dank|thank|danke|bitte|please|öffnungszeit|hours)/i;
+
+// Additional noise: lines that are just whitespace, dashes, equals, or decorators
+const DECORATOR_LINE = /^[\s\-=*_#.+~]{2,}$/;
+
+function cleanItemName(raw: string): string {
+  return raw
+    .replace(/\s+x?\d+\s*$/, '') // trailing quantity "x2"
+    .replace(/\s*\*+\s*$/, '') // trailing asterisks
+    .replace(/\s{2,}/g, ' ') // collapse spaces
+    .trim();
+}
+
+function extractItems(lines: string[], vendor: string | null): string[] {
+  const items: string[] = [];
+  const seen = new Set<string>();
+
+  for (const line of lines) {
+    if (items.length >= 3) break;
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.length < 3 || trimmed.length > 80) continue;
+    if (SKIP_FOR_ITEMS.test(trimmed)) continue;
+    if (DECORATOR_LINE.test(trimmed)) continue;
+    if (isNoiseLine(trimmed)) continue;
+    // Skip vendor name lines
+    if (vendor && trimmed.toLowerCase().includes(vendor.toLowerCase())) continue;
+
+    let itemName: string | null = null;
+
+    // Try quantity pattern first (most specific)
+    const qtyMatch = trimmed.match(ITEM_LINE_QTY);
+    if (qtyMatch) {
+      itemName = cleanItemName(qtyMatch[1]);
+    }
+
+    // Try SKU pattern
+    if (!itemName) {
+      const skuMatch = trimmed.match(ITEM_LINE_SKU);
+      if (skuMatch) {
+        itemName = cleanItemName(skuMatch[1]);
+      }
+    }
+
+    // Try price pattern (most common)
+    if (!itemName) {
+      const priceMatch = trimmed.match(ITEM_LINE_PRICE);
+      if (priceMatch) {
+        itemName = cleanItemName(priceMatch[1]);
+      }
+    }
+
+    if (itemName && itemName.length >= 3 && !seen.has(itemName.toLowerCase())) {
+      // Skip if the item name is just numbers or symbols
+      if (/^[\d\s.,$€£%\-+*/=]+$/.test(itemName)) continue;
+      seen.add(itemName.toLowerCase());
+      items.push(itemName);
+    }
+  }
+
+  return items;
+}
 
 function extractName(
   vendor: string | null,
@@ -284,21 +350,7 @@ function extractName(
   date: string | null,
 ): string {
   const lines = ocrData.fullText.split('\n');
-
-  // Try to find 1-3 item lines to summarize what was bought
-  const items: string[] = [];
-  for (const line of lines) {
-    if (items.length >= 3) break;
-    const trimmed = line.trim();
-    if (SKIP_FOR_ITEMS.test(trimmed)) continue;
-    // Skip lines that contain the vendor name (avoid "Vendor - Vendor" in name)
-    if (vendor && trimmed.toLowerCase().includes(vendor.toLowerCase())) continue;
-    const match = trimmed.match(ITEM_LINE);
-    if (match) {
-      const itemName = match[1].replace(/\s+x?\d+$/, '').trim();
-      if (itemName.length >= 3) items.push(itemName);
-    }
-  }
+  const items = extractItems(lines, vendor);
 
   // Build name from available parts
   const parts: string[] = [];
@@ -321,9 +373,7 @@ function extractName(
   }
 
   if (parts.length > 0) {
-    // Format: "Vendor - Item1, Item2 - €12.34 - 01.03.2026"
-    // or just "Vendor - €12.34 - 01.03.2026" if no items
-    return parts.join(' - ');
+    return parts.join(' – ');
   }
 
   // Absolute fallback: first non-noise line from OCR

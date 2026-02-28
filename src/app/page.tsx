@@ -4,7 +4,7 @@ export default function LandingPage() {
   return (
     <div className="relative z-10 min-h-screen flex flex-col">
       {/* Nav */}
-      <nav className="w-full max-w-6xl mx-auto px-6 py-6 flex items-center justify-between">
+      <nav className="glass-nav sticky top-0 z-50 w-full max-w-6xl mx-auto px-6 py-6 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div
             className="w-8 h-8 rounded-lg flex items-center justify-center"
@@ -92,11 +92,9 @@ export default function LandingPage() {
             </Link>
             <a
               href="https://docs.receipts.lumitra.co"
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all duration-200"
+              className="glass-panel inline-flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all duration-200"
               style={{
-                background: 'var(--surface)',
                 color: 'var(--foreground)',
-                border: '1px solid var(--border)',
               }}
             >
               Read the Docs
@@ -145,11 +143,7 @@ export default function LandingPage() {
           ].map((feature) => (
             <div
               key={feature.title}
-              className="rounded-xl p-6 transition-all duration-200"
-              style={{
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-              }}
+              className="glass-panel rounded-xl p-6 transition-all duration-200 hover:scale-[1.01]"
             >
               <div
                 className="w-10 h-10 rounded-lg flex items-center justify-center mb-4"
@@ -182,7 +176,7 @@ export default function LandingPage() {
             <div key={item.step} className="text-center">
               <div
                 className="w-10 h-10 rounded-full flex items-center justify-center mx-auto mb-4 text-sm font-bold"
-                style={{ background: 'var(--accent)', color: 'var(--background)' }}
+                style={{ background: 'var(--accent)', color: 'var(--background)', boxShadow: '0 0 20px rgba(226, 163, 72, 0.3), 0 0 6px rgba(226, 163, 72, 0.2)' }}
               >
                 {item.step}
               </div>
@@ -198,7 +192,7 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="w-full border-t py-8 px-6" style={{ borderColor: 'var(--border)' }}>
+      <footer className="w-full border-t py-8 px-6" style={{ borderColor: 'var(--glass-border)' }}>
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-xs" style={{ color: 'var(--muted)' }}>
             Built with{' '}

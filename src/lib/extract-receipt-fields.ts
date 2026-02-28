@@ -2,7 +2,7 @@ import type { OcrResult } from '@/lib/ocr-types';
 import { CATEGORY_TO_KONTO } from '@/lib/receipts-table';
 
 export interface ExtractionResult {
-  name: string | null; // descriptive summary
+  name: string; // descriptive summary, always generated
   vendor: string | null;
   gross: number | null; // total incl. tax
   net: number | null; // before tax
@@ -277,7 +277,12 @@ function extractVendor(ocrData: OcrResult): string | null {
 const ITEM_LINE = /^(.{3,40})\s+[$€£]?\d/;
 const SKIP_FOR_ITEMS = /(?:total|tax|subtotal|change|balance|due|paid|visa|mastercard|amex|card|cash|date|invoice|receipt|tel|phone|fax|www|straße|strasse|street|ave|blvd|road|st\s+\d|bill\s+to|ship\s+to)/i;
 
-function extractName(vendor: string | null, ocrData: OcrResult): string | null {
+function extractName(
+  vendor: string | null,
+  ocrData: OcrResult,
+  gross: number | null,
+  date: string | null,
+): string {
   const lines = ocrData.fullText.split('\n');
 
   // Try to find 1-3 item lines to summarize what was bought
@@ -295,16 +300,41 @@ function extractName(vendor: string | null, ocrData: OcrResult): string | null {
     }
   }
 
-  if (vendor && items.length > 0) {
-    return `${vendor} - ${items.join(', ')}`;
-  }
-  if (vendor) {
-    return `${vendor} Receipt`;
-  }
+  // Build name from available parts
+  const parts: string[] = [];
+
+  if (vendor) parts.push(vendor);
+
   if (items.length > 0) {
-    return items.join(', ');
+    parts.push(items.join(', '));
   }
-  return null;
+
+  if (gross !== null) {
+    parts.push(`€${gross.toFixed(2)}`);
+  }
+
+  if (date) {
+    const d = new Date(date);
+    if (!isNaN(d.getTime())) {
+      parts.push(d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }));
+    }
+  }
+
+  if (parts.length > 0) {
+    // Format: "Vendor - Item1, Item2 - €12.34 - 01.03.2026"
+    // or just "Vendor - €12.34 - 01.03.2026" if no items
+    return parts.join(' - ');
+  }
+
+  // Absolute fallback: first non-noise line from OCR
+  for (const line of lines.slice(0, 10)) {
+    const trimmed = line.trim();
+    if (trimmed.length >= 3 && !isNoiseLine(trimmed)) {
+      return trimmed;
+    }
+  }
+
+  return 'Receipt';
 }
 
 // ── Category Inference ───────────────────────────────────────────────
@@ -402,7 +432,7 @@ export function extractReceiptFields(ocrData: OcrResult): ExtractionResult {
   const { gross, net, tax } = extractAmounts(ocrData.fullText);
   const date = extractDate(ocrData.fullText);
   const category = inferCategory(vendor, ocrData.fullText);
-  const name = extractName(vendor, ocrData);
+  const name = extractName(vendor, ocrData, gross, date);
   const konto = category ? CATEGORY_TO_KONTO[category] ?? null : null;
 
   // Calculate tax rate from gross and net

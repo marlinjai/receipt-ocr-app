@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import {
   DataTableProvider,
@@ -13,7 +13,7 @@ import {
   SearchBar,
   FilterBar,
 } from '@marlinjai/data-table-react';
-import type { ColumnType, Row, CellValue, GroupConfig } from '@marlinjai/data-table-core';
+import type { ColumnType, Row, GroupConfig, TextAlignment } from '@marlinjai/data-table-core';
 import { dbAdapter, getReceiptsTableId, WORKSPACE_ID } from '@/lib/receipts-table';
 
 function DashboardContent({ tableId }: { tableId: string }) {
@@ -53,7 +53,30 @@ function DashboardContent({ tableId }: { tableId: string }) {
   } = useViews({ tableId });
 
   const [searchResults, setSearchResults] = useState<Row[] | null>(null);
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const displayRows = searchResults ?? rows;
+
+  // Delete selected rows on Backspace/Delete key
+  const handleDeleteSelected = useCallback(() => {
+    if (selectedRows.size === 0) return;
+    selectedRows.forEach((id) => deleteRow(id));
+    setSelectedRows(new Set());
+  }, [selectedRows, deleteRow]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (selectedRows.size === 0) return;
+      // Don't trigger if user is typing in an input/textarea
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return;
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        handleDeleteSelected();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [selectedRows, handleDeleteSelected]);
 
   // Load select options for all select columns
   useEffect(() => {
@@ -61,82 +84,6 @@ function DashboardContent({ tableId }: { tableId: string }) {
       .filter((c) => c.type === 'select' || c.type === 'multi_select')
       .forEach((c) => loadSelectOptions(c.id));
   }, [columns, loadSelectOptions]);
-
-  // Ingest pending receipts from upload page
-  useEffect(() => {
-    const statusCol = columns.find((c) => c.name === 'Status');
-    const categoryCol = columns.find((c) => c.name === 'Category');
-    const selectCols = columns.filter((c) => c.type === 'select' || c.type === 'multi_select');
-
-    const allOptsLoaded = selectCols.every((c) => selectOptions.has(c.id));
-    if (columns.length === 0 || !allOptsLoaded) return;
-
-    const ingest = async () => {
-      const { receiptStore } = await import('@/lib/receipt-store');
-      const { extractReceiptFields } = await import('@/lib/extract-receipt-fields');
-      const pending = receiptStore.consumePending();
-
-      for (const { file, ocrResult } of pending) {
-        const extracted = ocrResult ? extractReceiptFields(ocrResult) : null;
-
-        const statusOpts = statusCol ? selectOptions.get(statusCol.id) : undefined;
-        const statusValue = ocrResult?.fullText
-          ? statusOpts?.find((o) => o.name === 'Processed')?.id
-          : statusOpts?.find((o) => o.name === 'Pending')?.id;
-
-        const categoryOpts = categoryCol ? selectOptions.get(categoryCol.id) : undefined;
-        const categoryValue = extracted?.category
-          ? categoryOpts?.find((o) => o.name === extracted.category)?.id ?? null
-          : null;
-
-        const cells: Record<string, CellValue> = {};
-        for (const col of columns) {
-          switch (col.name) {
-            case 'Name':
-              cells[col.id] = extracted?.name ?? file.originalName;
-              break;
-            case 'Vendor':
-              cells[col.id] = extracted?.vendor ?? null;
-              break;
-            case 'Gross':
-              cells[col.id] = extracted?.gross ?? null;
-              break;
-            case 'Net':
-              cells[col.id] = extracted?.net ?? null;
-              break;
-            case 'Tax Rate':
-              cells[col.id] = extracted?.taxRate ?? null;
-              break;
-            case 'Date':
-              cells[col.id] = extracted?.date ?? null;
-              break;
-            case 'Category':
-              cells[col.id] = categoryValue;
-              break;
-            case 'Konto':
-              cells[col.id] = extracted?.konto ?? null;
-              break;
-            case 'Status':
-              cells[col.id] = statusValue ?? '';
-              break;
-            case 'Confidence':
-              cells[col.id] = ocrResult?.confidence ? Math.round(ocrResult.confidence * 100) : 0;
-              break;
-            case 'Receipt Image':
-              cells[col.id] = file.url ?? '';
-              break;
-            case 'OCR Text':
-              cells[col.id] = ocrResult?.fullText ?? '';
-              break;
-          }
-        }
-
-        await addRow({ cells });
-      }
-    };
-
-    ingest();
-  }, [columns, selectOptions, addRow]);
 
   if (!table) return <div className="p-8 text-center text-gray-500">Loading table...</div>;
 
@@ -183,12 +130,16 @@ function DashboardContent({ tableId }: { tableId: string }) {
             onAddRow={() => addRow()}
             onDeleteRow={deleteRow}
             onColumnResize={(columnId, width) => updateColumn(columnId, { width })}
+            onColumnAlignmentChange={(columnId, alignment: TextAlignment) => updateColumn(columnId, { alignment })}
+            enableKeyboardNav
             onAddProperty={(name, type: ColumnType) => addColumn({ name, type })}
             onCreateSelectOption={createSelectOption}
             onUpdateSelectOption={updateSelectOption}
             onDeleteSelectOption={deleteSelectOption}
             onUploadFile={uploadFile}
             onDeleteFile={deleteFile}
+            selectedRows={selectedRows}
+            onSelectionChange={setSelectedRows}
             sorts={sorts}
             onSortChange={setSorts}
             isLoading={isRowsLoading}
@@ -208,9 +159,9 @@ function DashboardContent({ tableId }: { tableId: string }) {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-[var(--dt-bg-primary)]" data-theme="dark">
+    <div className="h-screen flex flex-col" data-theme="dark">
       {/* Header */}
-      <div className="px-6 pt-6 pb-2">
+      <div className="px-6 pt-6 pb-2" style={{ background: 'rgba(10, 10, 15, 0.4)' }}>
         <div className="flex items-center justify-between mb-1">
           <h1 className="text-2xl font-bold" style={{ color: 'var(--dt-text-primary)' }}>
             {table.name}
@@ -218,13 +169,42 @@ function DashboardContent({ tableId }: { tableId: string }) {
           <Link
             href="/app"
             className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+            style={{ boxShadow: '0 0 16px rgba(226, 163, 72, 0.25), 0 0 4px rgba(226, 163, 72, 0.15)' }}
           >
             + Upload Receipt
           </Link>
         </div>
-        <p className="text-sm" style={{ color: 'var(--dt-text-secondary)' }}>
-          {rows.length} items · {columns.length} properties
-        </p>
+        <div className="flex items-center gap-3">
+          <p className="text-sm" style={{ color: 'var(--dt-text-secondary)' }}>
+            {rows.length} items · {columns.length} properties
+          </p>
+          {selectedRows.size > 0 && (
+            <button
+              onClick={handleDeleteSelected}
+              className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-all duration-150"
+              style={{
+                background: 'rgba(239, 68, 68, 0.12)',
+                color: '#f87171',
+                border: '1px solid rgba(239, 68, 68, 0.2)',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)';
+                e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.35)';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)';
+                e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.2)';
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="2 4 14 4" />
+                <path d="M5.5 4V2.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V4" />
+                <path d="M3.5 4l.7 9.1a1 1 0 0 0 1 .9h5.6a1 1 0 0 0 1-.9L12.5 4" />
+              </svg>
+              {selectedRows.size} selected
+            </button>
+          )}
+        </div>
       </div>
 
       {/* View Switcher */}
@@ -238,7 +218,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
       />
 
       {/* Search & Filter */}
-      <div className="px-4 py-2 flex gap-2 items-center" style={{ borderBottom: '1px solid var(--dt-border-color)' }}>
+      <div className="px-4 py-2 flex gap-2 items-center" style={{ borderBottom: '1px solid var(--dt-border-color)', background: 'rgba(10, 10, 15, 0.3)' }}>
         <SearchBar
           rows={rows}
           columns={columns}
@@ -253,7 +233,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
       </div>
 
       {/* Table/Board/Calendar */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto p-4">
         {renderView()}
       </div>
     </div>

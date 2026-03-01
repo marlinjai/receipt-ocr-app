@@ -4,6 +4,8 @@ export default defineConfig({
   name: 'Receipt OCR App',
   siteUrl: 'https://docs.receipts.lumitra.co',
   hubProject: {
+    hubUrl: 'https://docs.lumitra.co',
+    hubName: 'ERP Suite',
     description: 'Receipt scanning & expense tracking with AI chat',
     status: 'active',
     icon: '🧾',

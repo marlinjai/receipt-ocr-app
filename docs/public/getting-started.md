@@ -2,7 +2,7 @@
 title: Getting Started
 description: Set up the Receipt OCR App locally
 order: 2
-icon: rocket
+icon: "🚀"
 ---
 
 # Getting Started

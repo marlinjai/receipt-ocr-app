@@ -44,7 +44,7 @@ CLERK_SECRET_KEY=sk_...
 
 - **Framework**: [Next.js 14](https://nextjs.org/) (App Router)
 - **Styling**: [Tailwind CSS](https://tailwindcss.com/)
-- **File Storage**: [@marlinjai/storage-brain-sdk](../storage-brain-sdk)
+- **File Storage**: [@marlinjai/storage-brain-sdk](https://www.npmjs.com/package/@marlinjai/storage-brain-sdk)
 - **Data Table**: [@marlinjai/data-table-react](../data-table/packages/react)
 - **Database**: Cloudflare D1
 - **Auth**: Clerk (planned)

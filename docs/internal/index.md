@@ -2,7 +2,7 @@
 title: Internal Documentation
 description: Planning and development notes
 order: 0
-icon: lock
+icon: "🔒"
 ---
 
 # Internal Documentation

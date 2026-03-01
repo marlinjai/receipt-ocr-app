@@ -8,6 +8,7 @@ export default defineConfig({
     status: 'active',
     icon: '🧾',
     tags: ['app', 'ai', 'ocr'],
+    group: 'Applications',
   },
   links: {
     app: 'https://receipts.lumitra.co',

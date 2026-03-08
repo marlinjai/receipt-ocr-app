@@ -4,7 +4,7 @@ summary: Design document for overhauling the Receipt OCR app after Storage Brain
 category: plan
 tags: [receipt-ocr, design, ocr, cloudflare, google-cloud-vision]
 projects: [receipt-ocr-app, storage-brain]
-status: active
+status: superseded
 date: 2026-02-20
 ---
 

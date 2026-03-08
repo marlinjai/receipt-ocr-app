@@ -4,7 +4,7 @@ summary: Design document for integrating @marlinjai/data-table-react into the Re
 category: plan
 tags: [receipt-ocr, data-table, dashboard, clearify, design]
 projects: [receipt-ocr-app, data-table, clearify]
-status: active
+status: superseded
 date: 2026-02-19
 ---
 

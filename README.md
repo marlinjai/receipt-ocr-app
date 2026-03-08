@@ -1,3 +1,12 @@
+---
+title: Receipt OCR App
+summary: README for the Receipt OCR App, a Next.js application for uploading receipt images, extracting vendor/amount/date/category via Google Cloud Vision OCR, and managing receipts in a Notion-like table with filtering and inline editing.
+category: documentation
+tags: [receipt-ocr, nextjs, ocr, expense-tracking, data-table]
+status: active
+date: 2026-01-11
+---
+
 # Receipt OCR App
 
 A Next.js application for uploading receipt images, extracting data via OCR, and managing receipts in a Notion-like table.
@@ -5,9 +14,11 @@ A Next.js application for uploading receipt images, extracting data via OCR, and
 ## Features
 
 - **Receipt Upload** - Drag-and-drop or click to upload receipt images
-- **OCR Processing** - Automatic text extraction via Storage Brain
-- **Intelligent Field Extraction** - Automatically extracts vendor, amount, date, and category from OCR text using regex/heuristic parsing (supports US & European formats)
+- **OCR Processing** - Automatic text extraction via Google Cloud Vision API
+- **AI Classification** - AI-powered field extraction and expense categorization via OpenRouter
+- **AI Chat Sidebar** - Query expenses using natural language with tool_use support
 - **Notion-like Table** - Manage receipts with filtering, sorting, and inline editing
+- **SKR03 Accounting** - German accounting standard category mapping
 - **Category Management** - Organize receipts by expense category
 
 ## Quick Start
@@ -24,36 +35,40 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open [http://localhost:3004](http://localhost:3004) in your browser.
 
 ## Environment Variables
 
 ```env
-# Required
-STORAGE_BRAIN_API_KEY=sk_live_...
+# Storage Brain (file uploads)
+NEXT_PUBLIC_STORAGE_BRAIN_API_KEY=sk_live_...
+NEXT_PUBLIC_STORAGE_BRAIN_URL=https://storage-brain-api.marlin-pohl.workers.dev
 
-# Database (Cloudflare D1)
-DATABASE_URL=...
+# Data Brain (structured data storage)
+NEXT_PUBLIC_DATA_BRAIN_API_KEY=sk_live_...
+NEXT_PUBLIC_DATA_BRAIN_URL=https://data-brain-api.marlin-pohl.workers.dev
 
-# Auth (optional, for multi-user)
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_...
-CLERK_SECRET_KEY=sk_...
+# OCR
+GOOGLE_CLOUD_VISION_API_KEY=...
+
+# AI (classification + chat)
+OPENROUTER_API_KEY=sk-or-...
 ```
 
 ## Tech Stack
 
-- **Framework**: [Next.js 14](https://nextjs.org/) (App Router)
+- **Framework**: [Next.js 16](https://nextjs.org/) (App Router)
 - **Styling**: [Tailwind CSS](https://tailwindcss.com/)
 - **File Storage**: [@marlinjai/storage-brain-sdk](https://www.npmjs.com/package/@marlinjai/storage-brain-sdk)
 - **Data Table**: [@marlinjai/data-table-react](../data-table/packages/react)
-- **Database**: Cloudflare D1
-- **Auth**: Clerk (planned)
+- **Database**: Data Brain API (via SDK)
+- **Deployment**: Cloudflare Pages via @opennextjs/cloudflare
 
 ## Usage
 
 ### Uploading Receipts
 
-1. Navigate to the home page
+1. Navigate to `/app`
 2. Drag and drop a receipt image (or click to browse)
 3. Wait for upload and OCR processing
 4. You'll be redirected to the dashboard
@@ -67,7 +82,7 @@ CLERK_SECRET_KEY=sk_...
 
 ## Documentation
 
-- [Architecture](./docs/architecture.md) - System design and integrations
+- [Architecture](./docs/public/architecture.md) - System design and integrations
 
 ## Development
 
@@ -80,9 +95,6 @@ pnpm build
 
 # Run production server
 pnpm start
-
-# Type check
-pnpm typecheck
 ```
 
 ## License

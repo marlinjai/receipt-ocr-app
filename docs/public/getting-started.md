@@ -3,6 +3,11 @@ title: Getting Started
 description: Set up the Receipt OCR App locally
 order: 2
 icon: "🚀"
+summary: Setup guide for running the Receipt OCR App locally, covering environment variables, dependencies, and development server configuration.
+category: documentation
+tags: [receipt-ocr, getting-started, setup, local-development]
+projects: [receipt-ocr-app]
+status: active
 ---
 
 # Getting Started

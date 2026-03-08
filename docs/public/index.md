@@ -2,6 +2,11 @@
 title: Receipt OCR App
 description: Next.js expense tracking with AI-powered receipt scanning and classification
 order: 0
+summary: Landing page for Receipt OCR App documentation, a Next.js expense tracking application with AI-powered receipt scanning via Google Cloud Vision and OpenRouter classification.
+category: documentation
+tags: [receipt-ocr, index, expense-tracking, ai]
+projects: [receipt-ocr-app]
+status: active
 ---
 
 # Receipt OCR App Documentation

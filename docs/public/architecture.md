@@ -2,6 +2,11 @@
 title: Architecture
 description: System design, data flow, and integrations
 order: 1
+summary: System architecture documentation for the Receipt OCR App covering Next.js structure, Google Cloud Vision OCR integration, OpenRouter AI classification, Storage Brain file handling, and D1 persistence.
+category: documentation
+tags: [receipt-ocr, architecture, ocr, nextjs, cloudflare]
+projects: [receipt-ocr-app]
+status: active
 ---
 
 # Architecture

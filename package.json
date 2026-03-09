@@ -11,7 +11,8 @@
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "docs:dev": "clearify dev",
-    "docs:build": "clearify build"
+    "docs:build": "clearify build",
+    "prepare": "husky"
   },
   "dependencies": {
     "@marlinjai/data-brain-sdk": "^0.2.0",
@@ -26,6 +27,8 @@
   },
   "packageManager": "pnpm@9.15.0",
   "devDependencies": {
+    "@commitlint/cli": "^20.4.3",
+    "@commitlint/config-conventional": "^20.4.3",
     "@marlinjai/clearify": "^1.11.0",
     "@mdx-js/react": "^3.1.1",
     "@tailwindcss/postcss": "^4",
@@ -36,6 +39,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
     "flexsearch": "^0.8.212",
+    "husky": "^9.1.7",
     "react-router": "^7.13.1",
     "react-router-dom": "^7.13.1",
     "tailwindcss": "^4",

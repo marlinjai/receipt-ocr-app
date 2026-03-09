@@ -1,12 +1,3 @@
----
-title: Receipt OCR App Changelog
-summary: Version history for the Receipt OCR App, covering releases from v0.1.0 through v0.5.0 including OCR processing, Data Brain integration, SKR03 accounting categories, Liquid Glass UI, and direct-to-DB receipt uploads.
-category: changelog
-tags: [receipt-ocr, changelog, releases, ocr]
-status: active
-date: 2026-02-28
----
-
 # Changelog
 
 All notable changes to this project will be documented in this file.

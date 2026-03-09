@@ -1,12 +1,3 @@
----
-title: Receipt OCR App
-summary: README for the Receipt OCR App, a Next.js application for uploading receipt images, extracting vendor/amount/date/category via Google Cloud Vision OCR, and managing receipts in a Notion-like table with filtering and inline editing.
-category: documentation
-tags: [receipt-ocr, nextjs, ocr, expense-tracking, data-table]
-status: active
-date: 2026-01-11
----
-
 # Receipt OCR App
 
 A Next.js application for uploading receipt images, extracting data via OCR, and managing receipts in a Notion-like table.

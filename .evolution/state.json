@@ -1,0 +1,15 @@
+{
+  "product_summary": "Receipt OCR App is a Next.js 16 web application for uploading receipt images, extracting structured data via Google Cloud Vision OCR, and managing expenses in a Notion-like table interface. It features AI-powered field extraction and expense categorization via OpenRouter, an AI chat sidebar for querying expenses with natural language (tool_use support), SKR03 German accounting standard category mapping, and deploys to Cloudflare Pages via OpenNext. The app uses @marlinjai/storage-brain-sdk for file uploads and @marlinjai/data-table-react with a D1 adapter for the interactive data table. It is part of the MarlinJai ERP Suite.",
+  "current_cycle": 1,
+  "current_phase": "dry-run-complete",
+  "config": {
+    "max_cycles": 1,
+    "value_threshold": 5,
+    "dry_run": true,
+    "max_research_agents": 3,
+    "max_worker_agents": 3,
+    "max_tasks_per_cycle": 5
+  },
+  "last_updated": "2026-03-22T12:00:00Z",
+  "cycles_completed": 0
+}

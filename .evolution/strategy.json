@@ -1,0 +1,104 @@
+{
+  "cycle": 1,
+  "timestamp": "2026-03-22T12:05:00Z",
+  "opportunities": [
+    {
+      "id": "opp-user-needs-2",
+      "title": "Receipt image preview in dashboard table rows",
+      "description": "The thumbnail/file proxy routes already exist but are not wired into the dashboard UI. Adding a clickable thumbnail column or row-expand preview is a quick win that immediately improves usability — users can verify OCR accuracy at a glance.",
+      "value": 7,
+      "cost": 2,
+      "ratio": 3.5,
+      "rationale": "Highest ratio opportunity. Infrastructure (API routes for file proxy and thumbnails) already exists. Only UI work needed — add an image column to the data table or a lightbox on row click. Minimal risk.",
+      "source_ids": ["opp-user-needs-2"],
+      "tags": ["ux"]
+    },
+    {
+      "id": "opp-competitor-3",
+      "title": "CSV/DATEV export for accounting handoff",
+      "description": "Add export functionality to download receipt data as CSV (with DATEV-compatible format for German bookkeeping). The data is already structured with SKR03 categories and Konto numbers — just needs serialization and a download button.",
+      "value": 8,
+      "cost": 3,
+      "ratio": 2.67,
+      "rationale": "High value for the target audience (German business users needing SKR03/DATEV integration). All data fields already exist in the table. Implementation is straightforward CSV generation + download trigger.",
+      "source_ids": ["opp-competitor-3"],
+      "tags": ["feature", "dx"]
+    },
+    {
+      "id": "opp-competitor-1",
+      "title": "PDF receipt scanning support",
+      "description": "Accept PDF uploads alongside images. Convert PDF pages to images for OCR processing, or extract text directly from text-layer PDFs. Critical feature gap vs. every major competitor.",
+      "value": 9,
+      "cost": 4,
+      "ratio": 2.25,
+      "rationale": "Very high value — PDF receipts are ubiquitous (email invoices, digital purchases). Moderate cost: need PDF rendering (pdf.js or server-side conversion), but the downstream OCR + classification pipeline stays the same.",
+      "source_ids": ["opp-competitor-1"],
+      "tags": ["feature", "ux"]
+    },
+    {
+      "id": "opp-user-needs-3",
+      "title": "Error handling and retry for failed OCR/classification",
+      "description": "Add visible error states, retry buttons, and partial-result handling to the upload flow. Currently failures are silent or opaque.",
+      "value": 6,
+      "cost": 3,
+      "ratio": 2.0,
+      "rationale": "Solid ratio. Improves perceived reliability without major architectural changes. Touches upload page and API route error handling.",
+      "source_ids": ["opp-user-needs-3"],
+      "tags": ["ux", "dx"]
+    },
+    {
+      "id": "opp-technical-2",
+      "title": "Add unit tests for extraction and classification logic",
+      "description": "The project has zero tests. Add unit tests for extract-receipt-fields.ts and classification-rules.ts — both are pure functions with clear inputs/outputs. Enables confident refactoring for future evolution cycles.",
+      "value": 7,
+      "cost": 4,
+      "ratio": 1.75,
+      "rationale": "Testing infrastructure is a force multiplier for all future work. These two files are pure functions — ideal test targets. No mocking needed for the core logic.",
+      "source_ids": ["opp-technical-2"],
+      "tags": ["dx", "security"]
+    },
+    {
+      "id": "opp-competitor-2",
+      "title": "Batch/multi-receipt upload",
+      "description": "Allow uploading multiple receipt files at once and processing them in parallel. Reduces friction for bulk expense entry.",
+      "value": 8,
+      "cost": 5,
+      "ratio": 1.6,
+      "rationale": "High value but moderate cost — needs queue management, parallel processing, progress UI for multiple items. Worth doing after single-receipt flow is more robust (tests, error handling).",
+      "source_ids": ["opp-competitor-2"],
+      "tags": ["feature", "ux"]
+    },
+    {
+      "id": "opp-technical-1",
+      "title": "Evaluate multimodal LLM as single-call OCR+classification replacement",
+      "description": "Replace the two-step Google Vision OCR + OpenRouter classification pipeline with a single multimodal LLM call (e.g., Claude, GPT-4o) that processes the receipt image and returns structured JSON directly.",
+      "value": 8,
+      "cost": 6,
+      "ratio": 1.33,
+      "rationale": "High value (fewer API calls, better accuracy, simpler code) but significant cost — requires testing accuracy across receipt types, fallback handling, and potentially changing API providers. Best done as a spike/evaluation first.",
+      "source_ids": ["opp-technical-1"],
+      "tags": ["performance", "dx"]
+    },
+    {
+      "id": "opp-technical-3",
+      "title": "PWA manifest and mobile camera capture",
+      "description": "Add service worker, manifest.json, and camera-capture input for mobile-first receipt scanning. Enable install-to-homescreen.",
+      "value": 7,
+      "cost": 5,
+      "ratio": 1.4,
+      "rationale": "Strong value for the use case (receipt scanning is mobile-first) but moderate effort for proper PWA implementation with offline support.",
+      "source_ids": ["opp-technical-3"],
+      "tags": ["feature", "ux"]
+    }
+  ],
+  "filtered_out": [
+    {
+      "id": "opp-competitor-4",
+      "reason": "Fraud detection / duplicate flagging (value 6, cost 4, ratio 1.5) — reasonable but lower priority than core feature gaps. ML-based fraud detection is over-scoped for a single cycle. Simple duplicate detection could be a quick add-on to export or upload flow later."
+    },
+    {
+      "id": "opp-user-needs-1",
+      "reason": "Multi-currency support (value 6, cost 5, ratio 1.2) — requires currency API integration, exchange rate lookups, and UI changes across the table. Deferred until core features (PDF, export, batch) are solid."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "task_id": "task-1-4",
+  "status": "completed",
+  "files_changed": [
+    "src/app/app/page.tsx",
+    "src/components/ReceiptUploader.tsx"
+  ],
+  "files_created": [],
+  "summary": "Added comprehensive error state tracking and retry mechanism to the upload flow. ReceiptUploader now tracks which step failed (upload, OCR, classification, saving) and displays a descriptive error banner with a retry button. Retry re-runs only the failed step: classification retries use cached context without re-uploading, while upload/OCR failures re-run the full flow from the stored file. Partial-result handling ensures that when OCR succeeds but AI classification fails, the row is still saved with OCR-extracted data and 'Pending' status. The page.tsx was refactored to extract classifyReceipt and saveRow into separate functions to support targeted retry, and errors are now thrown back to the uploader component for display rather than silently swallowed.",
+  "tests_run": true,
+  "tests_passed": true,
+  "build_passed": false,
+  "issues": [
+    "Pre-existing build failure: `getCloudflareContext` called in sync mode in dashboard layout causes export error. Unrelated to this task's changes."
+  ],
+  "notes": "TypeScript compilation passes with zero errors (npx tsc --noEmit). The build failure is pre-existing in the dashboard route and not caused by these changes. The retry for classification creates a new row with the corrected data rather than updating the existing partial row, since the codebase has no row-update pattern in the upload flow. The error banner uses the existing --danger CSS variables for visual consistency."
+}

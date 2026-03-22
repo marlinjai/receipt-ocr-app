@@ -1,0 +1,203 @@
+{
+  "cycle": 1,
+  "timestamp": "2026-03-22T18:15:00.000Z",
+  "overall_quality": 7,
+  "task_evaluations": [
+    {
+      "task_id": "task-1-1",
+      "title": "Receipt image thumbnails + lightbox",
+      "criteria_met": [
+        "Receipt Image column renders an <img> thumbnail (not raw URL text) for each row that has an image",
+        "Rows without images show a placeholder or empty cell (shows '--' placeholder)",
+        "Modal can be closed with Escape key or clicking outside"
+      ],
+      "criteria_failed": [
+        "Clicking the thumbnail opens a modal/lightbox with the full-resolution image — PARTIALLY FAILED: the lightbox opens, but PDF receipts will render as broken <img> tags instead of the intended <iframe>. The getFullUrl() function at line 31 of ReceiptImagePreview.tsx strips '/thumbnail' from the URL, but the lightbox at line 212 checks lightboxUrl.includes('/thumbnail') to decide iframe vs img. Since the URL has already been stripped, the iframe branch is dead code."
+      ],
+      "quality_score": 6,
+      "issues": [
+        {
+          "severity": "high",
+          "file": "src/components/ReceiptImagePreview.tsx",
+          "lines": "30-34 and 212",
+          "description": "PDF lightbox is broken. getFullUrl() strips '/thumbnail' from the URL (line 31-32), but the lightbox condition at line 212 checks lightboxUrl.includes('/thumbnail') to decide between iframe and img rendering. Since the URL has been transformed, this condition is always false. PDFs will show a broken <img> instead of an <iframe>. Fix: either check the original URL before transformation, or use a different detection method (e.g., store a boolean flag alongside the URL)."
+        },
+        {
+          "severity": "medium",
+          "file": "src/components/ReceiptImagePreview.tsx",
+          "lines": "136-139",
+          "description": "MutationObserver watches the entire .h-screen container with subtree:true. Any DOM change anywhere in the dashboard (typing in search, opening AI sidebar, filter changes) will trigger requestAnimationFrame(transformCells). The early-exit guard at line 57 prevents infinite loops, but this is still wasteful — every keystroke in the search bar triggers a full table scan of tbody rows. Consider narrowing the observer to just the table element, or debouncing the callback."
+        },
+        {
+          "severity": "low",
+          "file": "src/components/ReceiptImagePreview.tsx",
+          "lines": "40",
+          "description": "Brittle DOM selector: containerRef.current?.closest('.h-screen') relies on the CSS class name of an ancestor element. If the dashboard layout class changes, the component silently breaks with no error."
+        },
+        {
+          "severity": "low",
+          "file": "src/components/ReceiptImagePreview.tsx",
+          "lines": "84-118",
+          "description": "DOM manipulation approach (createElement, appendChild) works around the data-table library's lack of custom cell renderers, but it is fragile and will break if the library changes its internal DOM structure (e.g., changes class names like .dt-cell-url, or adds/removes wrapper elements). This is acknowledged as a limitation in the worker report."
+        }
+      ],
+      "suggestions": [
+        "Fix the PDF lightbox by passing the original (pre-transformation) URL or a boolean isPdf flag to the lightbox state instead of checking the transformed URL.",
+        "Narrow the MutationObserver scope to the <table> element itself rather than the entire .h-screen container.",
+        "Consider requesting a custom cell renderer API from the data-table library as a future opportunity, which would eliminate the need for DOM manipulation entirely."
+      ]
+    },
+    {
+      "task_id": "task-1-2",
+      "title": "CSV/DATEV export",
+      "criteria_met": [
+        "Export button visible in dashboard toolbar",
+        "Clicking export downloads a .csv file with DATEV-compatible format",
+        "CSV uses semicolon delimiters and German number formatting (comma decimal)",
+        "File includes UTF-8 BOM for proper Excel opening",
+        "All visible/filtered rows are included in the export (uses displayRows at line 186 of dashboard/page.tsx)",
+        "Date column formatted as DD.MM.YYYY"
+      ],
+      "criteria_failed": [],
+      "quality_score": 9,
+      "issues": [
+        {
+          "severity": "low",
+          "file": "src/lib/export-csv.ts",
+          "lines": "184-191",
+          "description": "exportCSV() does not revoke the object URL in a guaranteed way if the click or download fails. The URL.revokeObjectURL call at line 191 runs synchronously after link.click(), but the download may not have started yet. In practice this is unlikely to cause a memory leak since the blob is small, but a setTimeout for revocation would be more robust."
+        },
+        {
+          "severity": "info",
+          "file": "src/lib/export-csv.ts",
+          "lines": "148-149",
+          "description": "Row ID is used as Belegnummer (line 148-149). Row IDs from the data-table library are UUIDs (e.g., 'a1b2c3d4-...'), which are not typical DATEV Belegnummer values. This is technically correct per the spec but may confuse accountants expecting sequential receipt numbers."
+        }
+      ],
+      "suggestions": [
+        "Consider generating a sequential Belegnummer (e.g., row index + 1) or allowing the user to configure the Belegnummer source column.",
+        "Add a small delay before URL.revokeObjectURL to ensure the browser has initiated the download."
+      ]
+    },
+    {
+      "task_id": "task-1-3",
+      "title": "PDF support (already implemented)",
+      "criteria_met": [
+        "ReceiptUploader accepts .pdf files (drag-and-drop and file picker)",
+        "PDF first page is converted to an image and processed through the existing OCR pipeline",
+        "Extracted text and fields populate the dashboard row correctly",
+        "Multi-page PDFs process at least the first page",
+        "Error message shown if PDF conversion fails"
+      ],
+      "criteria_failed": [],
+      "quality_score": 8,
+      "issues": [],
+      "suggestions": [
+        "The worker correctly identified that all acceptance criteria were already met and made no changes. This is the right call — no unnecessary modifications."
+      ]
+    },
+    {
+      "task_id": "task-1-4",
+      "title": "Error states and retry mechanism",
+      "criteria_met": [
+        "Failed OCR shows a descriptive error message (not a silent failure)",
+        "Failed AI classification falls back gracefully — row is created with OCR data and 'Pending' status",
+        "A retry button appears on failure that re-attempts the failed step",
+        "Upload progress and error states are visually distinct"
+      ],
+      "criteria_failed": [],
+      "quality_score": 7,
+      "issues": [
+        {
+          "severity": "high",
+          "file": "src/app/app/page.tsx",
+          "lines": "179 and 199-204",
+          "description": "Classification retry creates a DUPLICATE ROW. When classification fails, handleUploadComplete saves a partial row at line 179 (with 'Pending' status). When the user clicks retry, handleRetryClassification at line 200 calls saveRow() again, which calls dbAdapter.createRow(), creating a second row with the full data. The original partial row is never updated or deleted. The worker report acknowledges this: 'The retry for classification creates a new row with the corrected data rather than updating the existing partial row.' This means a single receipt upload + failed classification + successful retry = 2 rows in the database."
+        },
+        {
+          "severity": "medium",
+          "file": "src/components/ReceiptUploader.tsx",
+          "lines": "96-98",
+          "description": "Error step detection is fragile: it checks if the error message string contains the word 'classification' (case-insensitive) to decide the step. If the error message wording changes or a non-classification error happens to contain the word 'classification', the step will be misidentified. Consider passing the step explicitly from the parent rather than inferring it from the message text."
+        },
+        {
+          "severity": "low",
+          "file": "src/components/ReceiptUploader.tsx",
+          "lines": "103-106",
+          "description": "After the onUploadComplete callback completes (or throws), the finally block at line 103-106 always sets phase to 'idle' and isUploading to false. This means the success case (navigation to dashboard) briefly shows an idle state before the router navigates away. Not a bug, but a minor flash of the upload UI between successful save and navigation."
+        }
+      ],
+      "suggestions": [
+        "Fix the duplicate row issue by either: (a) storing the created row ID and using an update operation on retry, or (b) deleting the partial row before creating the new one on retry, or (c) not saving the partial row until the retry window is closed/skipped.",
+        "Pass the error step explicitly from page.tsx to ReceiptUploader instead of inferring it from the error message string. For example, throw a custom error class with a 'step' property.",
+        "Consider adding a 'Skip' button alongside 'Retry' in the classification error banner, which would navigate to the dashboard without retrying (the partial row is already saved)."
+      ]
+    },
+    {
+      "task_id": "task-1-5",
+      "title": "Unit tests for extract-receipt-fields and classification-rules",
+      "criteria_met": [
+        "vitest is configured and pnpm test runs successfully (for 2 of 3 test files)",
+        "extract-receipt-fields.test.ts covers: amount parsing (US/EU formats), date extraction (ISO/US/EU/named month), vendor extraction, category inference, and full extractReceiptFields with at least 4 sample receipts",
+        "No changes to source files — tests only"
+      ],
+      "criteria_failed": [
+        "classification-rules.test.ts crashes at startup: the test file uses @vitest-environment jsdom but jsdom is NOT installed as a dependency. Running vitest reports 'Cannot find package jsdom'. The test file exists and appears well-written (20 tests covering CRUD operations and prompt text generation), but it cannot execute.",
+        "All tests pass — PARTIALLY FAILED: 56 tests pass across 2 files, but vitest reports 1 error (the jsdom crash for classification-rules.test.ts). The overall vitest run exits with code 1."
+      ],
+      "quality_score": 6,
+      "issues": [
+        {
+          "severity": "high",
+          "file": "src/lib/__tests__/classification-rules.test.ts",
+          "lines": "1-3",
+          "description": "Test file uses @vitest-environment jsdom (line 3) but jsdom is not installed as a devDependency in package.json. Vitest fails with 'Cannot find package jsdom'. The overall vitest run exits with code 1 due to this unhandled error. Fix: add jsdom to devDependencies (pnpm add -D jsdom)."
+        },
+        {
+          "severity": "medium",
+          "file": "vitest.config.ts",
+          "lines": "10-12",
+          "description": "The vitest config only includes 'src/**/*.test.ts' files. This is fine, but the config does not set a default environment, so test files that need jsdom must use the @vitest-environment directive. This is acceptable but should be documented."
+        },
+        {
+          "severity": "info",
+          "file": "src/lib/__tests__/export-csv.test.ts",
+          "lines": "5-15",
+          "description": "The makeColumn helper uses 'as Column' type assertion (line 15) to avoid providing all required Column fields. This is a common test pattern but could mask type errors if the Column interface changes."
+        }
+      ],
+      "suggestions": [
+        "Install jsdom: pnpm add -D jsdom. Then re-run vitest to verify all 3 test files pass.",
+        "Add a 'test' script to package.json: \"test\": \"vitest run\" for convenience.",
+        "Consider adding coverage reporting (vitest --coverage) to track the >90% line coverage target mentioned in the task strategy."
+      ]
+    }
+  ],
+  "cross_task_issues": [
+    {
+      "severity": "medium",
+      "description": "Both task-1-1 (thumbnails) and task-1-2 (CSV export) modified dashboard/page.tsx. The final merged file is coherent — the export button appears at line 186 and ReceiptImagePreview is rendered at line 307. No conflicts detected in the merged output. However, neither worker was aware of the other's changes, so this could have caused merge conflicts in a less fortunate case.",
+      "files": ["src/app/app/dashboard/page.tsx"]
+    },
+    {
+      "severity": "medium",
+      "description": "Task-1-4 (error handling) modified both page.tsx and ReceiptUploader.tsx, adding the onRetryClassification prop. Task-1-1's worker report noted a pre-existing build error about 'onRetryClassification prop does not exist on ReceiptUploaderProps' — this was actually caused by task-1-4's changes being applied first. The final state is correct (the prop exists in ReceiptUploaderProps), but this shows the workers ran into each other's partially-applied changes.",
+      "files": ["src/app/app/page.tsx", "src/components/ReceiptUploader.tsx"]
+    },
+    {
+      "severity": "low",
+      "description": "Task-1-2 and task-1-5 both created vitest.config.ts. The final file is a single coherent config, so no conflict exists, but it indicates the workers were not aware of each other's scaffolding work.",
+      "files": ["vitest.config.ts"]
+    }
+  ],
+  "improvement_opportunities": [
+    "Add a custom cell renderer API to @marlinjai/data-table-react so that components like ReceiptImagePreview don't need DOM manipulation hacks. This would eliminate the MutationObserver overhead and fragile DOM queries.",
+    "Implement row update capability in the upload flow (dbAdapter.updateRow) so that classification retry can update the existing partial row instead of creating a duplicate.",
+    "Add jsdom as a devDependency and verify that classification-rules.test.ts passes before declaring task-1-5 complete.",
+    "Consider adding an e2e or integration test for the upload-OCR-classify-save flow, even if just a mock-based one, to catch issues like the duplicate row bug.",
+    "The DATEV CSV export could be extended to support configurable Belegnummer (sequential numbering vs. row ID) and additional DATEV metadata fields for more professional accounting integration.",
+    "The ReceiptImagePreview lightbox could support keyboard navigation (left/right arrows) to browse between receipt images, improving the accountant review workflow."
+  ],
+  "recommendation": "revise",
+  "summary": "Cycle 1 delivered 4 features (thumbnails, CSV export, error handling, tests) with one correctly identified as already-implemented (PDF support). The CSV export (task-1-2) is the strongest deliverable: clean code, thorough tests, correct DATEV formatting, and all acceptance criteria met. The error handling (task-1-4) meets all acceptance criteria but introduces a duplicate-row bug when classification retry succeeds — the partial row is saved first, then a second full row is created on retry. The thumbnail component (task-1-1) has a broken PDF lightbox due to a URL transformation bug where getFullUrl() strips the '/thumbnail' suffix that the lightbox later checks for. The test suite (task-1-5) is well-written but classification-rules.test.ts crashes because jsdom is not installed. Two issues require revision before merge: (1) the PDF lightbox dead-code bug in ReceiptImagePreview.tsx, and (2) the missing jsdom dependency that prevents classification-rules tests from running. The duplicate-row-on-retry issue in task-1-4 is a functional bug that should be tracked but could be deferred if row deduplication is planned."
+}

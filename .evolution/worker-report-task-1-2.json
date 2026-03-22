@@ -1,0 +1,16 @@
+{
+  "task_id": "task-1-2",
+  "status": "completed",
+  "files_changed": ["src/app/app/dashboard/page.tsx"],
+  "files_created": [
+    "src/lib/export-csv.ts",
+    "src/lib/__tests__/export-csv.test.ts",
+    "vitest.config.ts"
+  ],
+  "summary": "Added DATEV-compatible CSV export functionality. Created src/lib/export-csv.ts with generateCSV() and exportCSV() functions that produce semicolon-delimited CSV with German number formatting (comma decimal), DD.MM.YYYY dates, UTF-8 BOM for Excel compatibility, and DATEV standard column headers (Datum, Belegnummer, Buchungstext, Betrag Brutto, Betrag Netto, Steuersatz, Konto, Gegenkonto, Kategorie, Zuordnung). Added an 'Export CSV' button to the dashboard toolbar next to the AI button, styled consistently with the existing AI button. The button exports all currently visible/filtered rows. Installed vitest as dev dependency and wrote 11 unit tests covering headers, delimiters, date formatting, German number formatting, null handling, semicolon escaping, and row ID mapping.",
+  "tests_run": true,
+  "tests_passed": true,
+  "build_passed": false,
+  "issues": ["Build has pre-existing failure unrelated to this change (Cloudflare getCloudflareContext sync mode error in app/layout). TypeScript compilation passes cleanly for all modified files."],
+  "notes": "Column name mapping supports both English and German column names (e.g., 'Date'/'Datum', 'Gross'/'Brutto', 'Name'/'Buchungstext') for flexibility. The Belegnummer field uses the row ID as specified. vitest was added as a dev dependency since no test framework existed in the project."
+}

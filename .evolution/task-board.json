@@ -1,0 +1,146 @@
+{
+  "tasks": [
+    {
+      "id": "task-1-1",
+      "opportunity_id": "opp-user-needs-2",
+      "title": "Add receipt image thumbnail column to dashboard table",
+      "description": "The 'Receipt Image' column already stores URLs like `/api/files/{fileId}` and `/api/files/{fileId}/thumbnail`, but the data-table renders them as plain text. Add a custom cell renderer or use the existing `url` column type with image preview support. When a user clicks the thumbnail, open a lightbox/modal showing the full-resolution receipt image. The thumbnail proxy route already exists at `src/app/api/files/[fileId]/thumbnail/route.ts`.",
+      "priority": 1,
+      "status": "pending",
+      "dependencies": [],
+      "estimated_value": 7,
+      "estimated_cost": 2,
+      "files_to_modify": [
+        "src/app/app/dashboard/page.tsx"
+      ],
+      "files_to_create": [
+        "src/components/ReceiptImagePreview.tsx"
+      ],
+      "test_strategy": "Manual verification: upload a receipt, navigate to dashboard, confirm thumbnail renders in the table row, confirm clicking it opens a full-size preview modal.",
+      "acceptance_criteria": [
+        "Receipt Image column renders an <img> thumbnail (not raw URL text) for each row that has an image",
+        "Clicking the thumbnail opens a modal/lightbox with the full-resolution image",
+        "Rows without images show a placeholder or empty cell",
+        "Modal can be closed with Escape key or clicking outside"
+      ],
+      "worker_report": null,
+      "created_cycle": 1,
+      "completed_cycle": null
+    },
+    {
+      "id": "task-1-2",
+      "opportunity_id": "opp-competitor-3",
+      "title": "Add CSV export with DATEV-compatible format",
+      "description": "Add an 'Export CSV' button to the dashboard toolbar (next to the AI button). When clicked, serialize all visible rows into a CSV file with columns: Datum (Date), Belegnummer (row ID), Buchungstext (Name), Betrag Brutto (Gross), Betrag Netto (Net), Steuersatz (Tax Rate), Konto (SKR03 account), Gegenkonto, Kategorie (Category), Zuordnung. Use the DATEV standard semicolon delimiter and German number formatting (comma as decimal separator). Trigger a browser download of the file.",
+      "priority": 2,
+      "status": "pending",
+      "dependencies": [],
+      "estimated_value": 8,
+      "estimated_cost": 3,
+      "files_to_modify": [
+        "src/app/app/dashboard/page.tsx"
+      ],
+      "files_to_create": [
+        "src/lib/export-csv.ts"
+      ],
+      "test_strategy": "Unit test export-csv.ts with mock row data. Verify CSV output has correct headers, semicolon delimiters, German number formatting, and proper UTF-8 BOM for Excel compatibility.",
+      "acceptance_criteria": [
+        "Export button visible in dashboard toolbar",
+        "Clicking export downloads a .csv file with DATEV-compatible format",
+        "CSV uses semicolon delimiters and German number formatting (comma decimal)",
+        "File includes UTF-8 BOM for proper Excel opening",
+        "All visible/filtered rows are included in the export",
+        "Date column formatted as DD.MM.YYYY"
+      ],
+      "worker_report": null,
+      "created_cycle": 1,
+      "completed_cycle": null
+    },
+    {
+      "id": "task-1-3",
+      "opportunity_id": "opp-competitor-1",
+      "title": "Accept PDF uploads and convert to image for OCR pipeline",
+      "description": "Extend ReceiptUploader.tsx to accept `.pdf` files in addition to images. On the server side, add PDF-to-image conversion in the OCR API route (`src/app/api/ocr/route.ts`). Use pdf.js (pdfjs-dist) to render the first page of the PDF to a canvas/image buffer, then pass it to the existing Google Cloud Vision OCR pipeline. The upload page already has partial PDF awareness (line 117 in page.tsx checks `isPdf`), but the actual PDF processing is missing.",
+      "priority": 3,
+      "status": "pending",
+      "dependencies": [],
+      "estimated_value": 9,
+      "estimated_cost": 4,
+      "files_to_modify": [
+        "src/components/ReceiptUploader.tsx",
+        "src/app/api/ocr/route.ts",
+        "src/app/app/page.tsx"
+      ],
+      "files_to_create": [
+        "src/lib/pdf-to-image.ts"
+      ],
+      "test_strategy": "Unit test pdf-to-image.ts with a sample PDF. Integration test: upload a PDF receipt through the UI, verify OCR text is extracted and fields are populated in the dashboard.",
+      "acceptance_criteria": [
+        "ReceiptUploader accepts .pdf files (drag-and-drop and file picker)",
+        "PDF first page is converted to an image and processed through the existing OCR pipeline",
+        "Extracted text and fields populate the dashboard row correctly",
+        "Multi-page PDFs process at least the first page",
+        "Error message shown if PDF conversion fails"
+      ],
+      "worker_report": null,
+      "created_cycle": 1,
+      "completed_cycle": null
+    },
+    {
+      "id": "task-1-4",
+      "opportunity_id": "opp-user-needs-3",
+      "title": "Add error states and retry mechanism to upload flow",
+      "description": "The upload page's handleUploadComplete callback has a bare `catch {}` block for AI classification (line 47-49 in page.tsx) with no user feedback. Add: (1) error state tracking in ReceiptUploader for upload/OCR/classification failures, (2) a visible error banner with the failure reason, (3) a retry button that re-runs the failed step without requiring a new file upload, (4) partial-result handling — if OCR succeeds but classification fails, still create the row with OCR data and mark status as 'Pending'.",
+      "priority": 4,
+      "status": "pending",
+      "dependencies": [],
+      "estimated_value": 6,
+      "estimated_cost": 3,
+      "files_to_modify": [
+        "src/app/app/page.tsx",
+        "src/components/ReceiptUploader.tsx"
+      ],
+      "files_to_create": [],
+      "test_strategy": "Manual testing: simulate API failures (e.g., invalid API key, network timeout) and verify error states display correctly. Verify retry re-processes without re-uploading the file. Verify partial results are saved.",
+      "acceptance_criteria": [
+        "Failed OCR shows a descriptive error message (not a silent failure)",
+        "Failed AI classification falls back gracefully — row is created with OCR data and 'Pending' status",
+        "A retry button appears on failure that re-attempts the failed step",
+        "Upload progress and error states are visually distinct"
+      ],
+      "worker_report": null,
+      "created_cycle": 1,
+      "completed_cycle": null
+    },
+    {
+      "id": "task-1-5",
+      "opportunity_id": "opp-technical-2",
+      "title": "Add unit tests for extract-receipt-fields.ts and classification-rules.ts",
+      "description": "Set up vitest (or the project's preferred test runner) and write unit tests for the two core pure-function modules: (1) `extract-receipt-fields.ts` — test extractAmounts, extractDate, extractVendor, inferCategory, and the main extractReceiptFields function with representative receipt OCR text samples (German grocery, US restaurant, airline boarding pass, software invoice). (2) `classification-rules.ts` — test getRules, addRule, deleteRule, and rulesToPromptText. Mock localStorage for browser-dependent functions.",
+      "priority": 5,
+      "status": "pending",
+      "dependencies": [],
+      "estimated_value": 7,
+      "estimated_cost": 4,
+      "files_to_modify": [
+        "package.json"
+      ],
+      "files_to_create": [
+        "vitest.config.ts",
+        "src/lib/__tests__/extract-receipt-fields.test.ts",
+        "src/lib/__tests__/classification-rules.test.ts"
+      ],
+      "test_strategy": "The tests ARE the deliverable. Run `pnpm test` and verify all tests pass. Aim for >90% line coverage on these two files.",
+      "acceptance_criteria": [
+        "vitest is configured and `pnpm test` runs successfully",
+        "extract-receipt-fields.test.ts covers: amount parsing (US/EU formats), date extraction (ISO/US/EU/named month), vendor extraction, category inference, and full extractReceiptFields with at least 4 sample receipts",
+        "classification-rules.test.ts covers: CRUD operations and prompt text generation",
+        "All tests pass",
+        "No changes to source files — tests only"
+      ],
+      "worker_report": null,
+      "created_cycle": 1,
+      "completed_cycle": null
+    }
+  ]
+}

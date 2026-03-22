@@ -1,0 +1,105 @@
+{
+  "cycle": 1,
+  "opportunities": [
+    {
+      "id": "opp-competitor-1",
+      "source": "competitor",
+      "title": "PDF receipt scanning support",
+      "description": "All major competitors (Dext, Expensify, Veryfi, Receipt-Wrangler) support PDF receipt uploads alongside image files. The app currently only handles image uploads. PDF receipts are increasingly common as digital invoices arrive via email. Adding PDF-to-image conversion or direct PDF text extraction would close a significant feature gap.",
+      "evidence": "https://github.com/ChamikaCSA/receipt-tracker supports PDF via Claude/GPT-4; Dext and Expensify handle PDFs natively; https://receiptmake.com/blog/best-receipt-scanning-apps",
+      "estimated_value": 9,
+      "estimated_effort": 4,
+      "tags": ["feature", "ux"]
+    },
+    {
+      "id": "opp-competitor-2",
+      "source": "competitor",
+      "title": "Batch/multi-receipt upload and processing",
+      "description": "Competitors like ScanRelief and Dext allow users to upload multiple receipts at once and process them in parallel. The app currently handles single-receipt uploads. Batch processing would dramatically reduce friction for users catching up on expense entry.",
+      "evidence": "https://www.rho.co/blog/best-receipt-scanner-app; ScanRelief batch processing; Dext multi-source capture",
+      "estimated_value": 8,
+      "estimated_effort": 5,
+      "tags": ["feature", "ux"]
+    },
+    {
+      "id": "opp-competitor-3",
+      "source": "competitor",
+      "title": "Export to CSV/PDF for accounting handoff",
+      "description": "Expensify, Smart Receipts, and QuickBooks all offer export functionality (CSV, PDF reports) for handing off expense data to accountants or importing into bookkeeping tools. The app has no export capability. For a German SKR03-focused app, DATEV-compatible CSV export would be particularly valuable.",
+      "evidence": "https://thecfoclub.com/tools/best-receipt-scanner-app/; Smart Receipts generates CSV/PDF reports; QuickBooks receipt-to-transaction export",
+      "estimated_value": 8,
+      "estimated_effort": 3,
+      "tags": ["feature", "dx"]
+    },
+    {
+      "id": "opp-competitor-4",
+      "source": "competitor",
+      "title": "Fraud detection and duplicate receipt flagging",
+      "description": "Veryfi uses ML to flag unusual receipt patterns and inconsistencies. At minimum, detecting duplicate receipts (same vendor, amount, date) would prevent double-entry errors. This is a differentiator that most smaller tools lack.",
+      "evidence": "https://www.volopay.com/blog/best-receipt-scanning-apps/ - Veryfi fraud detection; spending pattern analysis",
+      "estimated_value": 6,
+      "estimated_effort": 4,
+      "tags": ["feature", "security"]
+    },
+    {
+      "id": "opp-user-needs-1",
+      "source": "user-needs",
+      "title": "Multi-currency support with automatic conversion",
+      "description": "The app targets German accounting (SKR03) but has no multi-currency handling. Users traveling internationally need receipts in EUR, USD, GBP etc. to be recognized and optionally converted. Zoho Expense and Expensify both handle this natively.",
+      "evidence": "Product uses German SKR03 categories suggesting business users who likely travel; https://www.klippa.com/en/blog/information/receipt-scanning-software/ - multi-currency as standard feature",
+      "estimated_value": 6,
+      "estimated_effort": 5,
+      "tags": ["feature", "ux"]
+    },
+    {
+      "id": "opp-user-needs-2",
+      "source": "user-needs",
+      "title": "Receipt image preview in dashboard table rows",
+      "description": "Users currently upload receipts but the dashboard only shows extracted text data. Adding a thumbnail preview or lightbox for the original receipt image directly from table rows would let users verify OCR accuracy without leaving the dashboard. The file proxy routes already exist at /api/files/[fileId] and /api/files/[fileId]/thumbnail.",
+      "evidence": "Existing routes: src/app/api/files/[fileId]/route.ts, src/app/api/files/[fileId]/thumbnail/route.ts — infrastructure exists but is not surfaced in the UI",
+      "estimated_value": 7,
+      "estimated_effort": 2,
+      "tags": ["ux"]
+    },
+    {
+      "id": "opp-user-needs-3",
+      "source": "user-needs",
+      "title": "Improved error handling and retry for failed OCR/classification",
+      "description": "The upload flow has no visible retry mechanism if OCR or AI classification fails. Users see no feedback on what went wrong. Adding error states, retry buttons, and partial-result handling would improve reliability perception.",
+      "evidence": "Code review: src/app/app/page.tsx upload flow, src/app/api/ocr/route.ts, src/app/api/classify-single/route.ts — no retry logic visible",
+      "estimated_value": 6,
+      "estimated_effort": 3,
+      "tags": ["ux", "dx"]
+    },
+    {
+      "id": "opp-technical-1",
+      "source": "technical",
+      "title": "Replace Google Cloud Vision + OpenRouter with direct multimodal LLM for end-to-end extraction",
+      "description": "The current pipeline uses Google Cloud Vision for OCR then OpenRouter for AI classification — two API calls and a lossy text-extraction step. In 2026, multimodal LLMs (GPT-4o, Claude, Gemini 2.5 Pro) can process receipt images directly and extract structured JSON in a single call with 95%+ accuracy, eliminating the OCR intermediary entirely. This reduces latency, cost, and complexity.",
+      "evidence": "https://photes.io/blog/posts/ocr-research-trend - multimodal LLMs replacing traditional OCR pipelines; GPT-5 at 95% on printed text; Azure Document Intelligence at 96%",
+      "estimated_value": 8,
+      "estimated_effort": 6,
+      "tags": ["performance", "dx"]
+    },
+    {
+      "id": "opp-technical-2",
+      "source": "technical",
+      "title": "Add end-to-end tests for the upload-to-dashboard flow",
+      "description": "The project has zero test files. The upload -> OCR -> classify -> persist -> display pipeline is complex and touches multiple APIs. Adding integration tests (at minimum for the extraction logic and classification rules) would catch regressions and enable confident refactoring.",
+      "evidence": "No test files found in src/; no test script in package.json; extract-receipt-fields.ts and classification-rules.ts are pure functions ideal for unit testing",
+      "estimated_value": 7,
+      "estimated_effort": 4,
+      "tags": ["dx", "security"]
+    },
+    {
+      "id": "opp-technical-3",
+      "source": "technical",
+      "title": "Add PWA/mobile-responsive optimizations for phone-based receipt capture",
+      "description": "Receipt scanning is inherently mobile-first — users take photos on their phone. The app could add a service worker, manifest.json, and camera-capture input to enable install-to-homescreen and direct camera access on mobile devices, competing with native apps.",
+      "evidence": "https://getfinny.app/blog/best-receipt-scanner-apps-2026 - mobile-first is table stakes; Budget-Lens and SparkReceipt offer mobile-optimized capture",
+      "estimated_value": 7,
+      "estimated_effort": 5,
+      "tags": ["feature", "ux"]
+    }
+  ]
+}

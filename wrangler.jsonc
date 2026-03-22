@@ -15,12 +15,11 @@
     "NEXT_PUBLIC_STORAGE_BRAIN_URL": "https://storage-brain-api.marlin-pohl.workers.dev",
     "NEXT_PUBLIC_STORAGE_BRAIN_API_KEY": "sk_live_xdGLKNVSOCvHY3G2Y-4TnSoIvtbVu7y8"
   },
-  // TODO: run `wrangler d1 create receipt-ocr-db` to get the real database_id and replace the placeholder below
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "receipt-ocr-db",
-      "database_id": "TODO-run-wrangler-d1-create-receipt-ocr-db"
+      "database_id": "4e1bbc23-85ea-474d-a01f-deffe5cae31e"
     }
   ]
 }

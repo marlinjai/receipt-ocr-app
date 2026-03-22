@@ -5,154 +5,17 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import ReceiptUploader from '@/components/ReceiptUploader';
 import type { UploadResult, BatchStats } from '@/components/ReceiptUploader';
-import { extractReceiptFields } from '@/lib/extract-receipt-fields';
-import { dbAdapter, getReceiptsTableId } from '@/lib/receipts-table';
-import type { CellValue } from '@marlinjai/data-table-core';
+import { processReceipt } from './actions';
 
 export default function UploadPage() {
   const router = useRouter();
 
-  const classifyReceipt = useCallback(async (
-    extracted: ReturnType<typeof extractReceiptFields>,
-    fullText: string,
-  ): Promise<{ aiCategory: string | null; aiKonto: string | null; aiZuordnung: string | null }> => {
-    try {
-      const res = await fetch('/api/classify-single', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ocrText: fullText,
-          vendor: extracted.vendor,
-          gross: extracted.gross,
-          date: extracted.date,
-        }),
-      });
-      if (res.ok) {
-        const ai = await res.json();
-        return {
-          aiCategory: ai.category ?? null,
-          aiKonto: ai.konto ?? null,
-          aiZuordnung: ai.zuordnung ?? null,
-        };
-      }
-    } catch {}
-    return { aiCategory: null, aiKonto: null, aiZuordnung: null };
-  }, []);
-
-  const buildCells = useCallback(async (
-    file: UploadResult['file'],
-    ocrResult: UploadResult['ocrResult'],
-    extracted: ReturnType<typeof extractReceiptFields> | null,
-    aiCategory: string | null,
-    aiKonto: string | null,
-    aiZuordnung: string | null,
-    classificationFailed: boolean,
-  ) => {
-    const tableId = await getReceiptsTableId();
-    const columns = await dbAdapter.getColumns(tableId);
-
-    const statusCol = columns.find((c) => c.name === 'Status');
-    const categoryCol = columns.find((c) => c.name === 'Category');
-    const zuordnungCol = columns.find((c) => c.name === 'Zuordnung');
-
-    const [statusOpts, categoryOpts, zuordnungOpts] = await Promise.all([
-      statusCol ? dbAdapter.getSelectOptions(statusCol.id) : Promise.resolve([]),
-      categoryCol ? dbAdapter.getSelectOptions(categoryCol.id) : Promise.resolve([]),
-      zuordnungCol ? dbAdapter.getSelectOptions(zuordnungCol.id) : Promise.resolve([]),
-    ]);
-
-    const statusValue = classificationFailed
-      ? statusOpts.find((o) => o.name === 'Pending')?.id
-      : ocrResult?.fullText
-        ? statusOpts.find((o) => o.name === 'Processed')?.id
-        : statusOpts.find((o) => o.name === 'Pending')?.id;
-
-    const finalCategory = aiCategory || extracted?.category;
-    const categoryValue = finalCategory
-      ? categoryOpts.find((o) => o.name === finalCategory)?.id ?? null
-      : null;
-
-    const finalKonto = aiKonto || extracted?.konto;
-
-    const zuordnungValue = aiZuordnung
-      ? zuordnungOpts.find((o) => o.name === aiZuordnung)?.id ?? null
-      : null;
-
-    const cells: Record<string, CellValue> = {};
-    for (const col of columns) {
-      switch (col.name) {
-        case 'Name':
-          cells[col.id] = extracted?.name || file.originalName;
-          break;
-        case 'Vendor':
-          cells[col.id] = extracted?.vendor ?? null;
-          break;
-        case 'Gross':
-          cells[col.id] = extracted?.gross ?? null;
-          break;
-        case 'Net':
-          cells[col.id] = extracted?.net ?? null;
-          break;
-        case 'Tax Rate':
-          cells[col.id] = extracted?.taxRate ?? null;
-          break;
-        case 'Date':
-          cells[col.id] = extracted?.date ?? null;
-          break;
-        case 'Category':
-          cells[col.id] = categoryValue;
-          break;
-        case 'Konto':
-          cells[col.id] = finalKonto ?? null;
-          break;
-        case 'Zuordnung':
-          cells[col.id] = zuordnungValue;
-          break;
-        case 'Status':
-          cells[col.id] = statusValue ?? '';
-          break;
-        case 'Confidence':
-          cells[col.id] = ocrResult?.confidence ? Math.round(ocrResult.confidence * 100) : 0;
-          break;
-        case 'Receipt Image': {
-          const isPdf = (file.fileType ?? '').includes('pdf') || (file.originalName ?? '').toLowerCase().endsWith('.pdf');
-          cells[col.id] = file.id
-            ? isPdf ? `/api/files/${file.id}/thumbnail` : `/api/files/${file.id}`
-            : '';
-          break;
-        }
-        case 'OCR Text':
-          cells[col.id] = ocrResult?.fullText ?? '';
-          break;
-      }
-    }
-
-    return { tableId, cells };
-  }, []);
-
   const processFile = useCallback(async (result: UploadResult) => {
-    const { file, ocrResult } = result;
-    const extracted = ocrResult ? extractReceiptFields(ocrResult) : null;
-
-    let aiCategory: string | null = null;
-    let aiKonto: string | null = null;
-    let aiZuordnung: string | null = null;
-    let classificationFailed = false;
-
-    if (extracted && ocrResult?.fullText) {
-      const ai = await classifyReceipt(extracted, ocrResult.fullText);
-      aiCategory = ai.aiCategory;
-      aiKonto = ai.aiKonto;
-      aiZuordnung = ai.aiZuordnung;
-      classificationFailed = !aiCategory && !aiKonto && !aiZuordnung;
-    }
-
-    const { tableId, cells } = await buildCells(
-      file, ocrResult, extracted,
-      aiCategory, aiKonto, aiZuordnung, classificationFailed,
+    await processReceipt(
+      { id: result.file.id, originalName: result.file.originalName, fileType: result.file.fileType },
+      result.ocrResult,
     );
-    await dbAdapter.createRow({ tableId, cells });
-  }, [classifyReceipt, buildCells]);
+  }, []);
 
   const handleAllComplete = useCallback((stats: BatchStats) => {
     if (stats.succeeded > 0) {

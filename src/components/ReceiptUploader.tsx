@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { getStorageClient, type FileInfo } from '@/lib/storage';
 import type { OcrResult } from '@/lib/ocr-types';
 
@@ -9,150 +9,122 @@ export interface UploadResult {
   ocrResult: OcrResult | null;
 }
 
+export interface BatchStats {
+  total: number;
+  succeeded: number;
+  failed: number;
+}
+
 interface ReceiptUploaderProps {
-  onUploadComplete: (result: UploadResult) => void | Promise<void>;
-  onRetryClassification?: () => Promise<void>;
+  onProcessFile: (result: UploadResult) => Promise<void>;
+  onAllComplete: (stats: BatchStats) => void;
 }
 
-type FailedStep = 'upload' | 'ocr' | 'classification' | 'saving';
+type ItemPhase = 'pending' | 'uploading' | 'ocr' | 'saving' | 'done' | 'error';
 
-interface ErrorState {
-  step: FailedStep;
-  message: string;
+interface QueueItem {
+  id: string;
+  fileName: string;
+  phase: ItemPhase;
+  progress: number;
+  error?: string;
 }
 
-export default function ReceiptUploader({ onUploadComplete, onRetryClassification }: ReceiptUploaderProps) {
+let nextId = 0;
+
+const phaseLabels: Record<ItemPhase, string> = {
+  pending: 'Waiting',
+  uploading: 'Uploading',
+  ocr: 'OCR',
+  saving: 'Saving',
+  done: 'Done',
+  error: 'Failed',
+};
+
+export default function ReceiptUploader({ onProcessFile, onAllComplete }: ReceiptUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [phase, setPhase] = useState<'idle' | 'uploading' | 'ocr' | 'saving'>('idle');
-  const [progress, setProgress] = useState(0);
-  const [error, setError] = useState<ErrorState | null>(null);
-  const [ocrWarning, setOcrWarning] = useState<string | null>(null);
-  const [isRetrying, setIsRetrying] = useState(false);
-  const [lastFile, setLastFile] = useState<File | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const pendingRef = useRef<{ id: string; file: File }[]>([]);
+  const processingRef = useRef(false);
+  const callbackRefs = useRef({ onProcessFile, onAllComplete });
+  callbackRefs.current = { onProcessFile, onAllComplete };
 
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 768px) and (pointer: coarse)');
-    setIsMobile(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
+  const updateItem = useCallback((id: string, updates: Partial<QueueItem>) => {
+    setQueue(prev => prev.map(q => q.id === id ? { ...q, ...updates } : q));
   }, []);
 
-  const handleUpload = useCallback(async (file: File) => {
-    setIsUploading(true);
-    setPhase('uploading');
-    setProgress(0);
-    setError(null);
-    setOcrWarning(null);
-    setLastFile(file);
+  const processQueue = useCallback(async () => {
+    if (processingRef.current) return;
+    processingRef.current = true;
 
-    try {
-      const storage = getStorageClient();
+    while (pendingRef.current.length > 0) {
+      const { id, file } = pendingRef.current.shift()!;
 
-      let result: FileInfo;
+      updateItem(id, { phase: 'uploading', progress: 0 });
       try {
-        result = await storage.upload(file, {
+        const storage = getStorageClient();
+        const fileInfo = await storage.upload(file, {
           context: 'receipt',
           tags: { source: 'receipt-ocr-app' },
-          onProgress: (p) => setProgress(p),
+          onProgress: (p: number) => updateItem(id, { progress: p }),
         });
-      } catch (err) {
-        setError({
-          step: 'upload',
-          message: err instanceof Error ? err.message : 'File upload failed',
-        });
-        return;
-      }
 
-      // Now run OCR
-      setPhase('ocr');
-      setProgress(0);
-
-      let ocrResult: OcrResult | null = null;
-      try {
-        const ocrResponse = await fetch('/api/ocr', {
+        updateItem(id, { phase: 'ocr' });
+        const ocrRes = await fetch('/api/ocr', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileId: result.id, fileName: result.originalName }),
+          body: JSON.stringify({ fileId: fileInfo.id, fileName: fileInfo.originalName }),
         });
 
-        if (ocrResponse.ok) {
-          ocrResult = await ocrResponse.json();
-        } else {
-          const errText = await ocrResponse.text().catch(() => '');
-          setError({
-            step: 'ocr',
-            message: `OCR extraction failed (${ocrResponse.status})${errText ? ': ' + errText : ''}`,
-          });
-          return;
+        if (!ocrRes.ok) {
+          const errText = await ocrRes.text().catch(() => '');
+          throw new Error(`OCR failed (${ocrRes.status})${errText ? ': ' + errText : ''}`);
         }
+
+        const ocrResult: OcrResult = await ocrRes.json();
+
+        updateItem(id, { phase: 'saving' });
+        await callbackRefs.current.onProcessFile({ file: fileInfo, ocrResult });
+        updateItem(id, { phase: 'done' });
       } catch (err) {
-        setError({
-          step: 'ocr',
-          message: err instanceof Error ? err.message : 'OCR request failed',
-        });
-        return;
+        updateItem(id, { phase: 'error', error: err instanceof Error ? err.message : 'Processing failed' });
       }
-
-      setPhase('saving');
-      try {
-        await onUploadComplete({ file: result, ocrResult });
-      } catch (err) {
-        // Classification or saving error thrown by the parent
-        const message = err instanceof Error ? err.message : 'Failed to save receipt';
-        const isClassification = message.toLowerCase().includes('classification');
-        setError({
-          step: isClassification ? 'classification' : 'saving',
-          message,
-        });
-        return;
-      }
-    } finally {
-      setIsUploading(false);
-      setPhase('idle');
-      setProgress(0);
     }
-  }, [onUploadComplete]);
 
-  const handleRetry = useCallback(async () => {
-    if (!error) return;
-    setIsRetrying(true);
+    processingRef.current = false;
 
-    try {
-      if (error.step === 'classification' && onRetryClassification) {
-        // Retry just the classification step (no re-upload needed)
-        setError(null);
-        setPhase('saving');
-        setIsUploading(true);
-        try {
-          await onRetryClassification();
-        } catch (err) {
-          setError({
-            step: 'classification',
-            message: err instanceof Error ? err.message : 'Classification retry failed',
-          });
-        } finally {
-          setIsUploading(false);
-          setPhase('idle');
-        }
-      } else if (lastFile) {
-        // Re-run the full upload flow from the beginning
-        setError(null);
-        await handleUpload(lastFile);
+    setQueue(prev => {
+      const total = prev.length;
+      const succeeded = prev.filter(q => q.phase === 'done').length;
+      const failed = prev.filter(q => q.phase === 'error').length;
+      if (total > 0 && succeeded + failed === total) {
+        setTimeout(() => callbackRefs.current.onAllComplete({ total, succeeded, failed }), 1200);
       }
-    } finally {
-      setIsRetrying(false);
-    }
-  }, [error, lastFile, handleUpload, onRetryClassification]);
+      return prev;
+    });
+  }, [updateItem]);
+
+  const addFiles = useCallback((files: File[]) => {
+    const valid = files.filter(f => f.type.startsWith('image/') || f.type === 'application/pdf');
+    if (!valid.length) return;
+
+    const items: QueueItem[] = valid.map(f => ({
+      id: `q-${++nextId}`,
+      fileName: f.name,
+      phase: 'pending' as const,
+      progress: 0,
+    }));
+
+    pendingRef.current.push(...valid.map((f, i) => ({ id: items[i].id, file: f })));
+    setQueue(prev => [...prev, ...items]);
+    processQueue();
+  }, [processQueue]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleUpload(file);
-  }, [handleUpload]);
+    addFiles(Array.from(e.dataTransfer.files));
+  }, [addFiles]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -165,88 +137,51 @@ export default function ReceiptUploader({ onUploadComplete, onRetryClassificatio
   }, []);
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) handleUpload(file);
-  }, [handleUpload]);
+    addFiles(Array.from(e.target.files || []));
+    e.target.value = '';
+  }, [addFiles]);
 
-  const phaseLabel = phase === 'uploading' ? 'Uploading receipt...' : phase === 'ocr' ? 'Running OCR...' : 'Saving to database...';
-  const phaseDetail = phase === 'uploading' ? 'Storing file securely' : phase === 'ocr' ? 'Extracting text with AI' : 'Writing receipt data';
+  const isProcessing = queue.some(q => ['pending', 'uploading', 'ocr', 'saving'].includes(q.phase));
+  const completedCount = queue.filter(q => q.phase === 'done' || q.phase === 'error').length;
+  const failedCount = queue.filter(q => q.phase === 'error').length;
 
-  const stepLabels: Record<FailedStep, string> = {
-    upload: 'Upload',
-    ocr: 'OCR',
-    classification: 'AI Classification',
-    saving: 'Saving',
-  };
-
-  return (
-    <div className="w-full">
-      <div
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        className="glass-panel relative rounded-xl p-10 text-center transition-all duration-200 cursor-pointer overflow-hidden hover:bg-[var(--surface-elevated)]"
-        style={{
-          background: isDragging ? 'var(--accent-muted)' : undefined,
-          borderColor: isDragging ? 'var(--accent)' : undefined,
-          opacity: isUploading ? 0.7 : 1,
-          pointerEvents: isUploading ? 'none' : 'auto',
-        }}
-      >
-        {isUploading ? (
-          <div className="space-y-5">
-            {/* Spinner */}
-            <div className="w-12 h-12 mx-auto" style={{ color: 'var(--accent)' }}>
-              <svg className="animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-            </div>
-
-            <div>
-              <p className="text-sm font-medium" style={{ color: 'var(--foreground)' }}>{phaseLabel}</p>
-              <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>{phaseDetail}</p>
-            </div>
-
-            {phase === 'uploading' && (
-              <div className="max-w-xs mx-auto space-y-2">
-                <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
-                  <div
-                    className="h-full rounded-full transition-all duration-300"
-                    style={{ width: `${progress}%`, background: 'var(--accent)' }}
-                  />
-                </div>
-                <p className="text-xs tabular-nums" style={{ color: 'var(--muted)' }}>{progress}%</p>
-              </div>
-            )}
-          </div>
-        ) : (
+  // Empty state — full drop zone
+  if (queue.length === 0) {
+    return (
+      <div className="w-full">
+        <div
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          className="glass-panel relative rounded-xl p-10 text-center transition-all duration-200 cursor-pointer overflow-hidden hover:bg-[var(--surface-elevated)]"
+          style={{
+            background: isDragging ? 'var(--accent-muted)' : undefined,
+            borderColor: isDragging ? 'var(--accent)' : undefined,
+          }}
+        >
           <label className="cursor-pointer block">
             <input
               type="file"
               accept="image/*,application/pdf"
-              {...(isMobile ? { capture: 'environment' as const } : {})}
+              multiple
               onChange={handleFileInput}
               className="hidden"
             />
             <div className="space-y-4">
-              {/* Upload icon */}
               <div className="w-10 h-10 mx-auto" style={{ color: 'var(--muted)' }}>
                 <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 16V4m0 0l-4 4m4-4l4 4" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M20 16.7V19a2 2 0 01-2 2H6a2 2 0 01-2-2v-2.3" />
                 </svg>
               </div>
-
               <div>
                 <p className="text-sm font-medium" style={{ color: 'var(--foreground)' }}>
-                  Drop your receipt here
+                  Drop your receipts here
                 </p>
                 <p className="text-xs mt-1.5" style={{ color: 'var(--muted)' }}>
-                  or click to browse
+                  or click to browse — select multiple files at once
                 </p>
               </div>
-
               <div className="flex flex-wrap items-center justify-center gap-1.5">
                 {['JPG', 'PNG', 'WebP', 'PDF'].map(fmt => (
                   <span
@@ -260,48 +195,102 @@ export default function ReceiptUploader({ onUploadComplete, onRetryClassificatio
               </div>
             </div>
           </label>
+        </div>
+      </div>
+    );
+  }
+
+  // Queue UI
+  return (
+    <div className="w-full space-y-3">
+      {/* Overall progress */}
+      <div className="glass-panel rounded-xl px-5 py-4">
+        <div className="flex items-center justify-between mb-2.5">
+          <p className="text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+            {isProcessing ? 'Processing receipts' : failedCount > 0 ? 'Processing complete' : 'All receipts processed'}
+          </p>
+          <span className="text-xs font-medium tabular-nums" style={{ color: 'var(--muted)' }}>
+            {completedCount} of {queue.length}
+          </span>
+        </div>
+        <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
+          <div
+            className="h-full rounded-full transition-all duration-500 ease-out"
+            style={{
+              width: `${(completedCount / queue.length) * 100}%`,
+              background: !isProcessing && failedCount > 0 ? 'var(--danger)' : 'var(--accent)',
+            }}
+          />
+        </div>
+        {!isProcessing && failedCount > 0 && (
+          <p className="text-xs mt-2" style={{ color: 'var(--danger)' }}>
+            {failedCount} {failedCount === 1 ? 'file' : 'files'} failed
+          </p>
         )}
       </div>
 
-      {error && (
-        <div
-          className="mt-4 px-4 py-3 rounded-lg text-sm"
-          style={{ background: 'var(--danger-muted)', color: 'var(--danger)', border: '1px solid rgba(229, 83, 75, 0.2)' }}
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex-1 min-w-0">
-              <p className="font-medium">{stepLabels[error.step]} failed</p>
-              <p className="mt-1 text-xs opacity-80 break-words">{error.message}</p>
-              {error.step === 'classification' && (
-                <p className="mt-1 text-xs opacity-70">Row was saved with OCR data and Pending status.</p>
-              )}
-            </div>
-            <button
-              onClick={handleRetry}
-              disabled={isRetrying}
-              className="shrink-0 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200"
-              style={{
-                background: 'rgba(229, 83, 75, 0.15)',
-                color: 'var(--danger)',
-                border: '1px solid rgba(229, 83, 75, 0.3)',
-                opacity: isRetrying ? 0.6 : 1,
-                cursor: isRetrying ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {isRetrying ? 'Retrying...' : 'Retry'}
-            </button>
-          </div>
-        </div>
-      )}
+      {/* File list */}
+      <div className="space-y-1.5">
+        {queue.map(item => (
+          <div key={item.id} className="glass-panel rounded-lg px-4 py-2.5">
+            <div className="flex items-center gap-3">
+              {/* Phase icon */}
+              <div className="shrink-0 w-5 h-5 flex items-center justify-center">
+                {item.phase === 'done' ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" stroke="#22c55e" />
+                  </svg>
+                ) : item.phase === 'error' ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" stroke="var(--danger)" />
+                    <line x1="6" y1="6" x2="18" y2="18" stroke="var(--danger)" />
+                  </svg>
+                ) : item.phase === 'pending' ? (
+                  <div className="w-2.5 h-2.5 rounded-full" style={{ background: 'var(--border)' }} />
+                ) : (
+                  <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--accent)' }}>
+                    <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                    <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                )}
+              </div>
 
-      {ocrWarning && (
-        <div
-          className="mt-4 px-4 py-3 rounded-lg text-sm"
-          style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'rgb(234, 179, 8)', border: '1px solid rgba(234, 179, 8, 0.2)' }}
-        >
-          {ocrWarning}
-        </div>
-      )}
+              {/* File name + upload progress */}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm truncate" style={{ color: 'var(--foreground)' }}>
+                  {item.fileName}
+                </p>
+                {item.phase === 'uploading' && (
+                  <div className="mt-1 flex items-center gap-2">
+                    <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
+                      <div
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{ width: `${item.progress}%`, background: 'var(--accent)' }}
+                      />
+                    </div>
+                    <span className="text-[10px] tabular-nums shrink-0" style={{ color: 'var(--muted)' }}>
+                      {item.progress}%
+                    </span>
+                  </div>
+                )}
+                {item.error && (
+                  <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--danger)' }}>{item.error}</p>
+                )}
+              </div>
+
+              {/* Phase label */}
+              <span
+                className="shrink-0 text-xs"
+                style={{
+                  color: item.phase === 'error' ? 'var(--danger)' : item.phase === 'done' ? '#22c55e' : 'var(--muted)',
+                }}
+              >
+                {phaseLabels[item.phase]}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -6,7 +6,7 @@
       "title": "Fix duplicate row on classification retry",
       "description": "When classification fails in the upload flow, a partial row is saved with OCR data and 'Pending' status (page.tsx ~line 179). When the user clicks retry and classification succeeds, a second full row is created (~line 200) instead of updating the existing partial row. Fix by storing the partial row's ID and updating it on retry instead of creating a new row.",
       "priority": 1,
-      "status": "pending",
+      "status": "done",
       "dependencies": [],
       "estimated_value": 7,
       "estimated_cost": 2,
@@ -21,7 +21,7 @@
       ],
       "worker_report": null,
       "created_cycle": 2,
-      "completed_cycle": null
+      "completed_cycle": 2
     },
     {
       "id": "task-2-2",
@@ -43,7 +43,7 @@
       ],
       "worker_report": null,
       "created_cycle": 2,
-      "completed_cycle": null
+      "completed_cycle": 2
     },
     {
       "id": "task-2-3",
@@ -51,7 +51,7 @@
       "title": "Add multi-receipt batch upload with queue UI",
       "description": "Allow uploading multiple receipt files at once. Extend ReceiptUploader.tsx to accept multiple files via drag-and-drop and file picker. Process them sequentially with a queue UI showing individual progress per file. Each file goes through the existing upload -> OCR -> classify -> save pipeline independently. Failed files do not block others. Redirect to dashboard when all are processed.",
       "priority": 3,
-      "status": "pending",
+      "status": "done",
       "dependencies": ["task-2-1"],
       "estimated_value": 8,
       "estimated_cost": 5,
@@ -67,7 +67,7 @@
       ],
       "worker_report": null,
       "created_cycle": 2,
-      "completed_cycle": null
+      "completed_cycle": 2
     },
     {
       "id": "task-2-4",

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { OcrResult, OcrBlock } from '@/lib/ocr-types';
+import { multimodalOcr } from '@/lib/multimodal-ocr';
 
 interface VisionTextAnnotation {
   description: string;
@@ -70,8 +71,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'fileId or fileUrl is required' }, { status: 400 });
   }
 
+  const useMultimodal = process.env.USE_MULTIMODAL_OCR === 'true' || process.env.USE_MULTIMODAL_OCR === '1';
   const visionApiKey = process.env.GOOGLE_CLOUD_VISION_API_KEY;
-  if (!visionApiKey) {
+  if (!visionApiKey && !useMultimodal) {
     return NextResponse.json({ error: 'OCR service not configured' }, { status: 500 });
   }
 
@@ -109,6 +111,20 @@ export async function POST(request: NextRequest) {
   const isPdf = contentType.includes('pdf') || (body.fileName ?? '').toLowerCase().endsWith('.pdf');
   const imageBuffer = await imageResponse.arrayBuffer();
   const base64Content = Buffer.from(imageBuffer).toString('base64');
+
+  // ── Multimodal LLM pipeline (single-call alternative) ──────────────
+  // When USE_MULTIMODAL_OCR is set, bypass the Google Vision two-step pipeline
+  // and send the image directly to a multimodal LLM.
+  if (useMultimodal) {
+    try {
+      const mimeType = isPdf ? 'application/pdf' : (contentType || 'image/jpeg');
+      const { ocrResult, extraction } = await multimodalOcr(base64Content, mimeType);
+      return NextResponse.json({ ...ocrResult, extraction });
+    } catch (err) {
+      console.error('[OCR] Multimodal OCR failed, falling back to Vision API:', err);
+      // Fall through to the standard Vision API pipeline
+    }
+  }
 
   let ocrResult: OcrResult;
 

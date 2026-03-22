@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { getStorageClient, type FileInfo } from '@/lib/storage';
 import type { OcrResult } from '@/lib/ocr-types';
 
@@ -30,6 +30,15 @@ export default function ReceiptUploader({ onUploadComplete, onRetryClassificatio
   const [ocrWarning, setOcrWarning] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
   const [lastFile, setLastFile] = useState<File | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px) and (pointer: coarse)');
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
 
   const handleUpload = useCallback(async (file: File) => {
     setIsUploading(true);
@@ -216,6 +225,7 @@ export default function ReceiptUploader({ onUploadComplete, onRetryClassificatio
             <input
               type="file"
               accept="image/*,application/pdf"
+              {...(isMobile ? { capture: 'environment' as const } : {})}
               onChange={handleFileInput}
               className="hidden"
             />

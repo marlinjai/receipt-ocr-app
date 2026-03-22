@@ -127,15 +127,17 @@ export default function ReceiptImagePreview({ columns, rows }: ReceiptImagePrevi
     // Initial transform after the table renders
     const timeout = setTimeout(transformCells, 100);
 
-    // Watch for DOM changes (new rows, re-renders)
+    // Watch only the table tbody for DOM changes (new rows, re-renders)
+    // This avoids firing on unrelated mutations (e.g. search input keystrokes)
     const dashboard = containerRef.current?.closest('.h-screen');
-    if (!dashboard) return () => clearTimeout(timeout);
+    const tbody = dashboard?.querySelector('table tbody');
+    if (!tbody) return () => clearTimeout(timeout);
 
     const observer = new MutationObserver(() => {
       requestAnimationFrame(transformCells);
     });
 
-    observer.observe(dashboard, {
+    observer.observe(tbody, {
       childList: true,
       subtree: true,
     });

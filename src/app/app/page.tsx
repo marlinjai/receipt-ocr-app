@@ -14,6 +14,7 @@ interface ClassificationContext {
   file: UploadResult['file'];
   ocrResult: UploadResult['ocrResult'];
   extracted: ReturnType<typeof extractReceiptFields> | null;
+  rowId: string | null;
 }
 
 export default function UploadPage() {
@@ -57,8 +58,8 @@ export default function UploadPage() {
     }
   }, []);
 
-  /** Build cells and save the row */
-  const saveRow = useCallback(async (
+  /** Build cells for a receipt row (does NOT create or update the row) */
+  const buildCells = useCallback(async (
     file: UploadResult['file'],
     ocrResult: UploadResult['ocrResult'],
     extracted: ReturnType<typeof extractReceiptFields> | null,
@@ -80,7 +81,6 @@ export default function UploadPage() {
       zuordnungCol ? dbAdapter.getSelectOptions(zuordnungCol.id) : Promise.resolve([]),
     ]);
 
-    // If classification failed but OCR succeeded, mark as Pending
     const statusValue = classificationFailed
       ? statusOpts.find((o) => o.name === 'Pending')?.id
       : ocrResult?.fullText
@@ -147,7 +147,7 @@ export default function UploadPage() {
       }
     }
 
-    await dbAdapter.createRow({ tableId, cells });
+    return { tableId, cells };
   }, []);
 
   const handleUploadComplete = useCallback(async (result: UploadResult) => {
@@ -155,7 +155,7 @@ export default function UploadPage() {
     const extracted = ocrResult ? extractReceiptFields(ocrResult) : null;
 
     // Store context for potential retry
-    lastContextRef.current = { file, ocrResult, extracted };
+    lastContextRef.current = { file, ocrResult, extracted, rowId: null };
 
     let aiCategory: string | null = null;
     let aiKonto: string | null = null;
@@ -176,15 +176,20 @@ export default function UploadPage() {
     }
 
     // Save the row even if classification failed (partial result handling)
-    await saveRow(file, ocrResult, extracted, aiCategory, aiKonto, aiZuordnung, classificationFailed);
+    const { tableId, cells } = await buildCells(file, ocrResult, extracted, aiCategory, aiKonto, aiZuordnung, classificationFailed);
+    const row = await dbAdapter.createRow({ tableId, cells });
 
     if (classificationFailed) {
+      // Store the row ID so retry can update instead of creating a duplicate
+      if (lastContextRef.current) {
+        lastContextRef.current.rowId = row.id;
+      }
       // Throw so ReceiptUploader can show the error with retry
       throw new Error(`AI classification failed: ${classificationError}. Row saved with OCR data and Pending status.`);
     }
 
     router.push('/app/dashboard');
-  }, [router, classifyReceipt, saveRow]);
+  }, [router, classifyReceipt, buildCells]);
 
   /** Retry just the classification step, then navigate */
   const handleRetryClassification = useCallback(async () => {
@@ -196,15 +201,23 @@ export default function UploadPage() {
       throw new Error(`AI classification retry failed: ${classResult.error}`);
     }
 
-    // Classification succeeded — save a new row with full data
-    await saveRow(
+    // Classification succeeded — build updated cells
+    const { tableId, cells } = await buildCells(
       ctx.file, ctx.ocrResult, ctx.extracted,
       classResult.aiCategory, classResult.aiKonto, classResult.aiZuordnung,
       false,
     );
 
+    if (ctx.rowId) {
+      // Update the existing partial row instead of creating a duplicate
+      await dbAdapter.updateRow(ctx.rowId, cells);
+    } else {
+      // Fallback: create a new row if no ID was stored
+      await dbAdapter.createRow({ tableId, cells });
+    }
+
     router.push('/app/dashboard');
-  }, [router, classifyReceipt, saveRow]);
+  }, [router, classifyReceipt, buildCells]);
 
   return (
     <main className="relative z-10 min-h-screen flex flex-col items-center justify-center px-4 py-16">

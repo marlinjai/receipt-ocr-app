@@ -18,7 +18,6 @@ This guide walks you through setting up the Receipt OCR App for local developmen
 - **Node.js** 18+ installed
 - **pnpm** package manager
 - **Storage Brain API key** -- for file uploads to Cloudflare R2
-- **Data Brain API key** -- **Archived 2026-03-22.** No longer required for new setups; migration to adapter-d1 pending.
 - **Google Cloud Vision API key** -- for OCR text extraction
 - **OpenRouter API key** -- for AI classification and chat
 
@@ -42,10 +41,6 @@ Create a `.env.local` file in the project root:
 NEXT_PUBLIC_STORAGE_BRAIN_API_KEY=sk_live_your_key_here
 NEXT_PUBLIC_STORAGE_BRAIN_URL=https://storage-brain-api.marlin-pohl.workers.dev
 
-# Data Brain -- ARCHIVED 2026-03-22. Pending migration to adapter-d1. Remove after migration.
-# NEXT_PUBLIC_DATA_BRAIN_API_KEY=db_live_your_key_here
-# NEXT_PUBLIC_DATA_BRAIN_URL=https://data-brain.workers.dev
-
 # Google Cloud Vision -- OCR for images and PDFs
 GOOGLE_CLOUD_VISION_API_KEY=AIza_your_key_here
 
@@ -56,6 +51,8 @@ OPENROUTER_API_KEY=sk-or-v1-your_key_here
 # AI_MODEL=anthropic/claude-sonnet-4-20250514
 # AI_CLASSIFY_MODEL=anthropic/claude-sonnet-4-20250514
 ```
+
+Database connectivity uses the Cloudflare D1 binding (`DB`) configured in `wrangler.jsonc` -- no environment variables needed for the database.
 
 ## Run the Dev Server
 
@@ -68,8 +65,8 @@ The app will be available at [http://localhost:3004](http://localhost:3004).
 ## Upload Your First Receipt
 
 1. Open the app in your browser
-2. Drag and drop a receipt image or PDF onto the upload zone (or click to browse)
-3. The upload goes through three phases: uploading to Storage Brain, OCR via Google Cloud Vision, and saving extracted fields to the database (currently via local DataBrainAdapter, pending migration to adapter-d1)
+2. Drag and drop one or more receipt images or PDFs onto the upload zone (or click to browse and select multiple files)
+3. Each file goes through the pipeline sequentially: upload to Storage Brain, OCR via Google Cloud Vision, AI classification, and saving to D1. Per-file progress indicators show the current phase.
 4. Fields like vendor, amounts, date, category, and SKR03 konto are extracted automatically
 5. You will be redirected to the dashboard once complete
 

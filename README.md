@@ -1,14 +1,14 @@
 # Receipt OCR App
 
-A Next.js application for uploading receipt images, extracting data via OCR, and managing receipts in a Notion-like table.
+A Next.js application for uploading receipt images, extracting data via OCR, and managing receipts in an interactive dashboard.
 
 ## Features
 
-- **Receipt Upload** - Drag-and-drop or click to upload receipt images
+- **Multi-Receipt Batch Upload** - Drag-and-drop or click to upload multiple receipt images at once with queue UI, per-file progress indicators, and sequential processing (failed files don't block others)
 - **OCR Processing** - Automatic text extraction via Google Cloud Vision API
-- **AI Classification** - AI-powered field extraction and expense categorization via OpenRouter
+- **AI Classification** - AI-powered field extraction and expense categorization via OpenRouter (category, Konto/SKR03, Zuordnung)
 - **AI Chat Sidebar** - Query expenses using natural language with tool_use support
-- **Notion-like Table** - Manage receipts with filtering, sorting, and inline editing
+- **Interactive Dashboard** - Manage receipts with filtering, sorting, inline editing, and 4 switchable views (Table, By Konto, Board, Calendar)
 - **SKR03 Accounting** - German accounting standard category mapping
 - **Category Management** - Organize receipts by expense category
 
@@ -31,13 +31,9 @@ Open [http://localhost:3004](http://localhost:3004) in your browser.
 ## Environment Variables
 
 ```env
-# Storage Brain (file uploads)
+# Storage Brain (file uploads to Cloudflare R2)
 NEXT_PUBLIC_STORAGE_BRAIN_API_KEY=sk_live_...
 NEXT_PUBLIC_STORAGE_BRAIN_URL=https://storage-brain-api.marlin-pohl.workers.dev
-
-# Data Brain (archived 2026-03-22 — migrate to adapter-d1; these vars unused after migration)
-# NEXT_PUBLIC_DATA_BRAIN_API_KEY=sk_live_...
-# NEXT_PUBLIC_DATA_BRAIN_URL=https://data-brain-api.marlin-pohl.workers.dev
 
 # OCR
 GOOGLE_CLOUD_VISION_API_KEY=...
@@ -50,19 +46,20 @@ OPENROUTER_API_KEY=sk-or-...
 
 - **Framework**: [Next.js 16](https://nextjs.org/) (App Router)
 - **Styling**: [Tailwind CSS](https://tailwindcss.com/)
-- **File Storage**: [@marlinjai/storage-brain-sdk](https://www.npmjs.com/package/@marlinjai/storage-brain-sdk)
+- **Database**: [@marlinjai/data-table-adapter-d1](https://www.npmjs.com/package/@marlinjai/data-table-adapter-d1) (Cloudflare D1)
+- **File Storage**: [@marlinjai/storage-brain-sdk](https://www.npmjs.com/package/@marlinjai/storage-brain-sdk) (Cloudflare R2)
 - **Data Table**: [@marlinjai/data-table-react](../data-table/packages/react)
-- **Database**: Pending migration to `@marlinjai/data-table-adapter-d1` directly (Data Brain archived 2026-03-22)
-- **Deployment**: Cloudflare Pages via @opennextjs/cloudflare
+- **Deployment**: Cloudflare Workers via @opennextjs/cloudflare
 
 ## Usage
 
 ### Uploading Receipts
 
 1. Navigate to `/app`
-2. Drag and drop a receipt image (or click to browse)
-3. Wait for upload and OCR processing
-4. You'll be redirected to the dashboard
+2. Drag and drop one or more receipt images (or click to browse and select multiple files)
+3. Each file is processed sequentially through the upload, OCR, classify, and save pipeline with per-file progress indicators
+4. Failed files do not block the remaining queue
+5. Once all files complete, you'll be redirected to the dashboard
 
 ### Managing Receipts
 

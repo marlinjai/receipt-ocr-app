@@ -4,12 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Multi-receipt batch upload with queue UI — select multiple files at once, sequential processing with per-file progress indicators (uploading, OCR, classifying, done/error), overall X/Y progress counter
+- Failed files show per-file errors without blocking other uploads
+
+### Changed
+
+- Migrated from HTTP API layer to direct D1 adapter (`@marlinjai/data-table-adapter-d1`) for database access
+- Classification failures are soft — row saved with Pending status, no upload blocking
+
 ## [0.5.0] - 2026-02-28
 
 ### Added
 
 - Liquid Glass UI aesthetic with aurora background, glass-panel surfaces, and backdrop-filter blur
-- Direct-to-DB receipt uploads — receipts persist immediately via Data Brain on upload
+- Direct-to-DB receipt uploads — receipts persist immediately on upload
 - Row selection with backspace/delete keyboard deletion
 - Column alignment and keyboard navigation (arrow keys, Tab)
 - Improved receipt name extraction with 3 item detection patterns (price-based, quantity-based, SKU-based)
@@ -26,30 +38,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
-- Receipt-store polling module — replaced by immediate persistence via Data Brain
+- Receipt-store polling module — replaced by immediate database persistence
 
 ## [0.4.0] - 2026-02-27
 
 ### Added
 
-- Data Brain integration as single persistent storage backend for all environments
+- Database integration as persistent storage backend for all environments
 - SKR03 accounting categories (Bewirtung, Reisekosten, Bürobedarf, etc.) for German Vorkontierung
 - Konto column with SKR03 account numbers
 - Notion-style grouping by category/konto in table views
 - German vendor and keyword inference maps for category detection
 
-### Changed
-
-- Replaced D1Adapter and MemoryAdapter with DataBrainAdapter as unified data layer
-
 ### Fixed
 
 - Exclude clearify.config.ts from TypeScript build check
-
-### Removed
-
-- D1 adapter and memory adapter dependencies
-- D1 binding from wrangler deployment config
 
 ## [0.3.0] - 2026-02-20
 

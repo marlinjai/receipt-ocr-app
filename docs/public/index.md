@@ -15,13 +15,14 @@ projects: [receipt-ocr-app]
 
 ## Overview
 
-The Receipt OCR App is a Next.js application for scanning receipts, extracting structured data, and managing expenses with AI assistance. It runs on Cloudflare Workers via `@opennextjs/cloudflare` and uses Google Cloud Vision for OCR, OpenRouter for AI classification and chat, Storage Brain for file storage, and a local `DataBrainAdapter` (pending migration to `adapter-d1` directly — Data Brain archived 2026-03-22) for structured data persistence.
+The Receipt OCR App is a Next.js application for scanning receipts, extracting structured data, and managing expenses with AI assistance. It runs on Cloudflare Workers via `@opennextjs/cloudflare` and uses Google Cloud Vision for OCR, OpenRouter for AI classification and chat, Storage Brain for file storage (R2), and `@marlinjai/data-table-adapter-d1` for structured data persistence (Cloudflare D1).
 
 ## Key Features
 
 ### Upload Pipeline
-- Drag-and-drop for images and PDFs
-- Three-phase upload flow: uploading, OCR, saving
+- **Multi-receipt batch upload**: select multiple files at once, processed sequentially through the full pipeline
+- Queue UI with per-file progress indicators (upload, OCR, classify, save phases)
+- Failed files do not block the remaining queue
 - Storage Brain SDK for R2 file storage
 - Google Cloud Vision OCR (images + PDFs up to 5 pages)
 
@@ -50,7 +51,7 @@ A ~500-line heuristic engine (`src/lib/extract-receipt-fields.ts`) extracts stru
 - "Apply All" batch approval for multi-tool responses
 
 ### Multi-View Dashboard
-- Powered by `@marlinjai/data-table-react` with a local `DataBrainAdapter` (pending migration to adapter-d1)
+- Powered by `@marlinjai/data-table-react` with `@marlinjai/data-table-adapter-d1` (Cloudflare D1)
 - 4 views: **Table** (grouped by Category), **By Konto**, **Board** (by Status), **Calendar** (by Date)
 - Column management, multi-row selection, search, filter, pagination
 
@@ -70,6 +71,6 @@ pnpm dev
 ## Related Packages
 
 - `@marlinjai/storage-brain-sdk` -- File uploads to Cloudflare R2
-- `@marlinjai/data-brain-sdk` -- **Archived 2026-03-22.** Was used by the local DataBrainAdapter; migration to `adapter-d1` pending.
+- `@marlinjai/data-table-adapter-d1` -- D1 database adapter for structured data persistence
 - `@marlinjai/data-table-core` -- Table types, interfaces, base classes
 - `@marlinjai/data-table-react` -- React table UI components

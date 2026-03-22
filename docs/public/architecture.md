@@ -8,18 +8,16 @@ tags: [receipt-ocr, architecture, ocr, nextjs, cloudflare]
 projects: [receipt-ocr-app]
 ---
 
-> **Note (2026-03-22):** Data Brain has been archived. The app uses a local `DataBrainAdapter` that delegates to the Data Brain SDK. This should be migrated to use `adapter-d1` directly. References to `Data Brain API → D1` in the diagrams below reflect the previous architecture.
-
 # Architecture
 
 ## System Overview
 
 ```
 Receipt OCR App (Next.js on Cloudflare Workers)
-    ├── Storage Brain SDK  → Cloudflare R2  (file uploads)
-    ├── Google Cloud Vision → OCR           (text extraction)
-    ├── OpenRouter          → LLM           (classification + chat)
-    └── Local DataBrainAdapter → Data Brain API → Cloudflare D1 (structured data)
+    ├── Storage Brain SDK           → Cloudflare R2  (file uploads)
+    ├── Google Cloud Vision         → OCR            (text extraction)
+    ├── OpenRouter                  → LLM            (classification + chat)
+    └── @marlinjai/data-table-adapter-d1 → Cloudflare D1  (structured data)
 ```
 
 ```
@@ -47,15 +45,14 @@ Receipt OCR App (Next.js on Cloudflare Workers)
       ▼              ▼                   ▼
 ┌───────────┐  ┌───────────────┐  ┌──────────────┐  ┌───────────────┐
 │ Storage   │  │ Data Table    │  │ OpenRouter   │  │ Google Cloud  │
-│ Brain SDK │  │ React + Local │  │ (LLM API)   │  │ Vision API    │
-│           │  │ DataBrain     │  │              │  │ (OCR)         │
-│           │  │ Adapter       │  │              │  │               │
+│ Brain SDK │  │ React +       │  │ (LLM API)   │  │ Vision API    │
+│           │  │ D1 Adapter    │  │              │  │ (OCR)         │
 └─────┬─────┘  └───────┬───────┘  └──────────────┘  └───────────────┘
       │                │
       ▼                ▼
 ┌───────────┐  ┌───────────────┐
-│ Cloudflare│  │ Data Brain    │
-│ R2        │  │ API → D1      │
+│ Cloudflare│  │ Cloudflare    │
+│ R2        │  │ D1            │
 └───────────┘  └───────────────┘
 ```
 
@@ -63,10 +60,11 @@ Receipt OCR App (Next.js on Cloudflare Workers)
 
 ### Upload Page (`/`)
 
-- Drag-and-drop zone for images and PDFs
-- Three-phase progress: uploading, OCR processing, saving
-- File type validation (images + PDF)
-- Automatic redirect to dashboard on success
+- Drag-and-drop zone for images and PDFs (multi-file selection supported)
+- **Batch upload queue**: files are processed sequentially through upload, OCR, classify, and save phases
+- Per-file progress indicators with phase-level detail
+- Failed files do not block the remaining queue
+- Automatic redirect to dashboard when all files complete
 
 ### Dashboard (`/dashboard`)
 
@@ -82,34 +80,45 @@ Receipt OCR App (Next.js on Cloudflare Workers)
 
 ## Data Flow
 
-### Upload Flow
+### Upload Flow (Batch)
+
+Users can select multiple files at once. Each file is added to a queue and processed sequentially through the full pipeline. Failed files do not block subsequent files.
 
 ```
-User drops image or PDF
+User drops one or more images/PDFs (or clicks to browse)
       │
       ▼
-Upload to Storage Brain (R2)
+Files added to upload queue (QueueItem[])
       │
       ▼
-POST /api/ocr with fileId
+┌─── For each file in queue (sequential) ───────────────────────┐
+│                                                                │
+│  Phase 1: Upload to Storage Brain (R2)                         │
+│        │                                                       │
+│        ▼                                                       │
+│  Phase 2: POST /api/ocr with fileId                            │
+│        │   Fetch file from Storage Brain →                     │
+│        │   send to Google Cloud Vision API                     │
+│        │   (images: images:annotate, PDFs: files:annotate)     │
+│        ▼                                                       │
+│  Return OcrResult { fullText, blocks, confidence }             │
+│        │                                                       │
+│        ▼                                                       │
+│  extractReceiptFields(ocrResult) — heuristic extraction        │
+│        │   → vendor, gross, net, taxRate, date, category,      │
+│        │     konto, name                                       │
+│        ▼                                                       │
+│  Phase 3: POST /api/classify-single (AI classification)        │
+│        │   → category, konto, zuordnung, confidence, reasoning │
+│        ▼                                                       │
+│  Phase 4: Create row in receipts table via D1 adapter          │
+│        │                                                       │
+│        ▼                                                       │
+│  File marked done (or error) — next file begins                │
+└────────────────────────────────────────────────────────────────┘
       │
       ▼
-Fetch file from Storage Brain → send to Google Cloud Vision API
-      │         (images: images:annotate, PDFs: files:annotate up to 5 pages)
-      ▼
-Return OcrResult { fullText, blocks (with bounding boxes), confidence }
-      │
-      ▼
-extractReceiptFields(ocrResult) — heuristic field extraction
-      │   → vendor, gross, net, taxRate, date, category, konto, name
-      ▼
-POST /api/classify-single (optional AI classification)
-      │   → category, konto, zuordnung, confidence, reasoning
-      ▼
-Create row in receipts table via DataBrainAdapter
-      │
-      ▼
-Redirect to dashboard
+All files processed → redirect to dashboard
 ```
 
 ### AI Chat Flow
@@ -169,24 +178,18 @@ Located at `src/lib/extract-receipt-fields.ts` (~500 lines). Returns an `Extract
 3. **Item patterns**: checks for specific line-item hints (e.g., "cappuccino" -> Bewirtung)
 4. Falls back to "Sonstige Ausgaben" if no match
 
-## Local DataBrainAdapter
+## D1 Adapter
 
-The app uses a **local** `DataBrainAdapter` at `src/lib/data-brain-adapter.ts` (not imported from the npm package `@marlinjai/data-table-adapter-data-brain`). It extends `BaseDatabaseAdapter` from `@marlinjai/data-table-core` and delegates all calls to a `DataBrain` SDK client.
+The app uses `@marlinjai/data-table-adapter-d1` to persist structured data directly in Cloudflare D1. The adapter is initialized in the app layout using the Cloudflare D1 binding:
 
 ```typescript
-// src/lib/data-brain-adapter.ts
-import { BaseDatabaseAdapter } from '@marlinjai/data-table-core';
-import { DataBrain } from '@marlinjai/data-brain-sdk';
+// src/app/app/layout.tsx
+import { D1Adapter } from '@marlinjai/data-table-adapter-d1';
 
-export class DataBrainAdapter extends BaseDatabaseAdapter {
-  private readonly client: DataBrain;
-  constructor(config: { baseUrl: string; apiKey: string; workspaceId?: string }) {
-    super();
-    this.client = new DataBrain({ apiKey: config.apiKey, baseUrl: config.baseUrl });
-  }
-  // ... delegates ~30 methods to this.client
-}
+setAdapter(new D1Adapter(env.DB));
 ```
+
+The D1 binding (`DB`) is configured in `wrangler.jsonc` and the database schema lives in `migrations/0001_initial.sql`.
 
 ## Receipt Table Schema
 
@@ -237,10 +240,6 @@ export class DataBrainAdapter extends BaseDatabaseAdapter {
 NEXT_PUBLIC_STORAGE_BRAIN_API_KEY=sk_live_...
 NEXT_PUBLIC_STORAGE_BRAIN_URL=https://storage-brain-api.marlin-pohl.workers.dev
 
-# Data Brain (structured data persistence)
-NEXT_PUBLIC_DATA_BRAIN_API_KEY=db_live_...
-NEXT_PUBLIC_DATA_BRAIN_URL=https://data-brain.workers.dev
-
 # Google Cloud Vision (OCR)
 GOOGLE_CLOUD_VISION_API_KEY=AIza...
 
@@ -251,6 +250,8 @@ OPENROUTER_API_KEY=sk-or-v1-...
 # AI_MODEL=anthropic/claude-sonnet-4-20250514
 # AI_CLASSIFY_MODEL=anthropic/claude-sonnet-4-20250514
 ```
+
+Database connectivity is handled via the Cloudflare D1 binding (`DB`) configured in `wrangler.jsonc` -- no environment variables needed.
 
 ## Deployment
 

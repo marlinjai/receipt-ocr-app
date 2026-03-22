@@ -35,9 +35,9 @@ Open [http://localhost:3004](http://localhost:3004) in your browser.
 NEXT_PUBLIC_STORAGE_BRAIN_API_KEY=sk_live_...
 NEXT_PUBLIC_STORAGE_BRAIN_URL=https://storage-brain-api.marlin-pohl.workers.dev
 
-# Data Brain (structured data storage)
-NEXT_PUBLIC_DATA_BRAIN_API_KEY=sk_live_...
-NEXT_PUBLIC_DATA_BRAIN_URL=https://data-brain-api.marlin-pohl.workers.dev
+# Data Brain (archived 2026-03-22 — migrate to adapter-d1; these vars unused after migration)
+# NEXT_PUBLIC_DATA_BRAIN_API_KEY=sk_live_...
+# NEXT_PUBLIC_DATA_BRAIN_URL=https://data-brain-api.marlin-pohl.workers.dev
 
 # OCR
 GOOGLE_CLOUD_VISION_API_KEY=...
@@ -52,7 +52,7 @@ OPENROUTER_API_KEY=sk-or-...
 - **Styling**: [Tailwind CSS](https://tailwindcss.com/)
 - **File Storage**: [@marlinjai/storage-brain-sdk](https://www.npmjs.com/package/@marlinjai/storage-brain-sdk)
 - **Data Table**: [@marlinjai/data-table-react](../data-table/packages/react)
-- **Database**: D1 via local DataBrainAdapter (Data Brain archived 2026-03-22; adapter migration to adapter-d1 pending)
+- **Database**: Pending migration to `@marlinjai/data-table-adapter-d1` directly (Data Brain archived 2026-03-22)
 - **Deployment**: Cloudflare Pages via @opennextjs/cloudflare
 
 ## Usage

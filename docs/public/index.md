@@ -3,10 +3,9 @@ title: Receipt OCR App
 description: Next.js expense tracking with AI-powered receipt scanning and classification
 order: 0
 summary: Landing page for Receipt OCR App documentation, a Next.js expense tracking application with AI-powered receipt scanning via Google Cloud Vision and OpenRouter classification.
-category: documentation
+type: documentation
 tags: [receipt-ocr, index, expense-tracking, ai]
 projects: [receipt-ocr-app]
-status: active
 ---
 
 # Receipt OCR App Documentation
@@ -16,7 +15,7 @@ status: active
 
 ## Overview
 
-The Receipt OCR App is a Next.js application for scanning receipts, extracting structured data, and managing expenses with AI assistance. It runs on Cloudflare Workers via `@opennextjs/cloudflare` and uses Google Cloud Vision for OCR, OpenRouter for AI classification and chat, and the Data Brain / Storage Brain services for persistence.
+The Receipt OCR App is a Next.js application for scanning receipts, extracting structured data, and managing expenses with AI assistance. It runs on Cloudflare Workers via `@opennextjs/cloudflare` and uses Google Cloud Vision for OCR, OpenRouter for AI classification and chat, Storage Brain for file storage, and a local `DataBrainAdapter` (pending migration to `adapter-d1` directly — Data Brain archived 2026-03-22) for structured data persistence.
 
 ## Key Features
 
@@ -51,7 +50,7 @@ A ~500-line heuristic engine (`src/lib/extract-receipt-fields.ts`) extracts stru
 - "Apply All" batch approval for multi-tool responses
 
 ### Multi-View Dashboard
-- Powered by `@marlinjai/data-table-react` with a local `DataBrainAdapter`
+- Powered by `@marlinjai/data-table-react` with a local `DataBrainAdapter` (pending migration to adapter-d1)
 - 4 views: **Table** (grouped by Category), **By Konto**, **Board** (by Status), **Calendar** (by Date)
 - Column management, multi-row selection, search, filter, pagination
 
@@ -71,6 +70,6 @@ pnpm dev
 ## Related Packages
 
 - `@marlinjai/storage-brain-sdk` -- File uploads to Cloudflare R2
-- `@marlinjai/data-brain-sdk` -- Structured data API (used by the local DataBrainAdapter)
+- `@marlinjai/data-brain-sdk` -- **Archived 2026-03-22.** Was used by the local DataBrainAdapter; migration to `adapter-d1` pending.
 - `@marlinjai/data-table-core` -- Table types, interfaces, base classes
 - `@marlinjai/data-table-react` -- React table UI components

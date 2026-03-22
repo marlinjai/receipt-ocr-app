@@ -1,4 +1,4 @@
-const CACHE_NAME = 'receipt-ocr-v1';
+const CACHE_NAME = 'receipt-ocr-v2';
 
 const APP_SHELL = [
   '/',

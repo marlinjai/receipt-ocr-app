@@ -1,32 +1,17 @@
 'use server';
 
-import { D1Adapter } from '@marlinjai/data-table-adapter-d1';
-import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
 import { getAiClient, getClassifyModel } from '@/lib/ai-client';
-import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-table';
+import { dbAdapter, getReceiptsTableId, CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-table';
 import type { CellValue } from '@marlinjai/data-table-core';
 import type { OcrResult } from '@/lib/ocr-types';
 
 const CATEGORY_NAMES = Object.keys(CATEGORY_TO_KONTO);
-const WORKSPACE_ID = 'receipt-ocr';
 
 interface FileData {
   id: string;
   originalName: string;
   fileType?: string;
-}
-
-async function getAdapter() {
-  const { env } = await getCloudflareContext({ async: true });
-  return new D1Adapter(env.DB);
-}
-
-async function getTableId(adapter: D1Adapter) {
-  const tables = await adapter.listTables(WORKSPACE_ID);
-  const table = tables.find(t => t.name === 'Receipts');
-  if (!table) throw new Error('Receipts table not found');
-  return table.id;
 }
 
 async function classifyReceipt(
@@ -76,27 +61,36 @@ Respond with ONLY a JSON object (no markdown, no explanation):
   }
 }
 
-async function buildCells(
-  adapter: D1Adapter,
-  tableId: string,
+export async function processReceipt(
   file: FileData,
   ocrResult: OcrResult | null,
-  extracted: ReturnType<typeof extractReceiptFields> | null,
-  aiCategory: string | null,
-  aiKonto: string | null,
-  aiZuordnung: string | null,
-  classificationFailed: boolean,
 ) {
-  const columns = await adapter.getColumns(tableId);
+  const tableId = await getReceiptsTableId();
+  const extracted = ocrResult ? extractReceiptFields(ocrResult) : null;
+
+  let aiCategory: string | null = null;
+  let aiKonto: string | null = null;
+  let aiZuordnung: string | null = null;
+  let classificationFailed = false;
+
+  if (extracted && ocrResult?.fullText) {
+    const ai = await classifyReceipt(extracted, ocrResult.fullText);
+    aiCategory = ai.aiCategory;
+    aiKonto = ai.aiKonto;
+    aiZuordnung = ai.aiZuordnung;
+    classificationFailed = !aiCategory && !aiKonto && !aiZuordnung;
+  }
+
+  const columns = await dbAdapter.getColumns(tableId);
 
   const statusCol = columns.find((c) => c.name === 'Status');
   const categoryCol = columns.find((c) => c.name === 'Category');
   const zuordnungCol = columns.find((c) => c.name === 'Zuordnung');
 
   const [statusOpts, categoryOpts, zuordnungOpts] = await Promise.all([
-    statusCol ? adapter.getSelectOptions(statusCol.id) : Promise.resolve([]),
-    categoryCol ? adapter.getSelectOptions(categoryCol.id) : Promise.resolve([]),
-    zuordnungCol ? adapter.getSelectOptions(zuordnungCol.id) : Promise.resolve([]),
+    statusCol ? dbAdapter.getSelectOptions(statusCol.id) : Promise.resolve([]),
+    categoryCol ? dbAdapter.getSelectOptions(categoryCol.id) : Promise.resolve([]),
+    zuordnungCol ? dbAdapter.getSelectOptions(zuordnungCol.id) : Promise.resolve([]),
   ]);
 
   const statusValue = classificationFailed
@@ -109,9 +103,7 @@ async function buildCells(
   const categoryValue = finalCategory
     ? categoryOpts.find((o) => o.name === finalCategory)?.id ?? null
     : null;
-
   const finalKonto = aiKonto || extracted?.konto;
-
   const zuordnungValue = aiZuordnung
     ? zuordnungOpts.find((o) => o.name === aiZuordnung)?.id ?? null
     : null;
@@ -165,33 +157,5 @@ async function buildCells(
     }
   }
 
-  return cells;
-}
-
-export async function processReceipt(
-  file: FileData,
-  ocrResult: OcrResult | null,
-) {
-  const adapter = await getAdapter();
-  const tableId = await getTableId(adapter);
-  const extracted = ocrResult ? extractReceiptFields(ocrResult) : null;
-
-  let aiCategory: string | null = null;
-  let aiKonto: string | null = null;
-  let aiZuordnung: string | null = null;
-  let classificationFailed = false;
-
-  if (extracted && ocrResult?.fullText) {
-    const ai = await classifyReceipt(extracted, ocrResult.fullText);
-    aiCategory = ai.aiCategory;
-    aiKonto = ai.aiKonto;
-    aiZuordnung = ai.aiZuordnung;
-    classificationFailed = !aiCategory && !aiKonto && !aiZuordnung;
-  }
-
-  const cells = await buildCells(
-    adapter, tableId, file, ocrResult, extracted,
-    aiCategory, aiKonto, aiZuordnung, classificationFailed,
-  );
-  await adapter.createRow({ tableId, cells });
+  await dbAdapter.createRow({ tableId, cells });
 }

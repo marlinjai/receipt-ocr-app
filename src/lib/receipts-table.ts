@@ -1,7 +1,11 @@
-import type { ColumnType, DatabaseAdapter } from '@marlinjai/data-table-core';
+import type { ColumnType } from '@marlinjai/data-table-core';
+import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
+import { prisma } from './prisma';
 
 const WORKSPACE_ID = 'receipt-ocr';
 const TABLE_NAME = 'Receipts';
+
+export const dbAdapter = new PrismaAdapter({ prisma });
 
 const RECEIPT_COLUMNS: Array<{ name: string; type: ColumnType; isPrimary?: boolean }> = [
   { name: 'Name', type: 'text', isPrimary: true },
@@ -62,29 +66,6 @@ const ZUORDNUNG_COLORS = ['#3b82f6', '#10b981', '#f59e0b'];
 const STATUS_OPTIONS = ['Pending', 'Processed', 'Rejected'];
 const STATUS_COLORS = ['#f59e0b', '#10b981', '#ef4444'];
 
-// Adapter is set at runtime via setAdapter() in AppLayout using the D1 Cloudflare binding
-let _adapter: DatabaseAdapter | null = null;
-
-export function setAdapter(adapter: DatabaseAdapter) {
-  _adapter = adapter;
-}
-
-export function getAdapter(): DatabaseAdapter {
-  if (!_adapter) {
-    throw new Error(
-      'Database adapter not initialized. Ensure setAdapter() is called before accessing data (e.g., in AppLayout).'
-    );
-  }
-  return _adapter;
-}
-
-// Alias for backwards compatibility
-export const dbAdapter = new Proxy({} as DatabaseAdapter, {
-  get(_target, prop, receiver) {
-    return Reflect.get(getAdapter(), prop, receiver);
-  },
-});
-
 let initPromise: Promise<string> | null = null;
 
 export function getReceiptsTableId(): Promise<string> {
@@ -95,7 +76,7 @@ export function getReceiptsTableId(): Promise<string> {
 }
 
 async function initializeTable(): Promise<string> {
-  const adapter = getAdapter();
+  const adapter = dbAdapter;
 
   // Check if table already exists (for D1 persistence)
   const existingTables = await adapter.listTables(WORKSPACE_ID);
@@ -201,7 +182,7 @@ export async function ensureZuordnungColumn(tableId: string): Promise<{
   columnId: string;
   options: Array<{ id: string; name: string; color: string }>;
 }> {
-  const adapter = getAdapter();
+  const adapter = dbAdapter;
   const columns = await adapter.getColumns(tableId);
   const existing = columns.find((c) => c.name === 'Zuordnung');
 

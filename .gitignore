@@ -51,3 +51,4 @@ test-*.mjs
 
 # docs build output
 /docs-dist
+.wrangler/

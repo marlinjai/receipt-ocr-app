@@ -4,10 +4,9 @@ description: Planning and development notes
 order: 0
 icon: "🔒"
 summary: Index page for Receipt OCR App internal documentation containing planning documents and development notes.
-category: internal
+type: documentation
 tags: [receipt-ocr, internal, index, planning]
 projects: [receipt-ocr-app]
-status: active
 ---
 
 # Internal Documentation

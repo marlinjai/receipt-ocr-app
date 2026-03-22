@@ -11,15 +11,25 @@ export interface UploadResult {
 
 interface ReceiptUploaderProps {
   onUploadComplete: (result: UploadResult) => void | Promise<void>;
+  onRetryClassification?: () => Promise<void>;
 }
 
-export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderProps) {
+type FailedStep = 'upload' | 'ocr' | 'classification' | 'saving';
+
+interface ErrorState {
+  step: FailedStep;
+  message: string;
+}
+
+export default function ReceiptUploader({ onUploadComplete, onRetryClassification }: ReceiptUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [phase, setPhase] = useState<'idle' | 'uploading' | 'ocr' | 'saving'>('idle');
   const [progress, setProgress] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ErrorState | null>(null);
   const [ocrWarning, setOcrWarning] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [lastFile, setLastFile] = useState<File | null>(null);
 
   const handleUpload = useCallback(async (file: File) => {
     setIsUploading(true);
@@ -27,15 +37,25 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
     setProgress(0);
     setError(null);
     setOcrWarning(null);
+    setLastFile(file);
 
     try {
       const storage = getStorageClient();
 
-      const result = await storage.upload(file, {
-        context: 'receipt',
-        tags: { source: 'receipt-ocr-app' },
-        onProgress: (p) => setProgress(p),
-      });
+      let result: FileInfo;
+      try {
+        result = await storage.upload(file, {
+          context: 'receipt',
+          tags: { source: 'receipt-ocr-app' },
+          onProgress: (p) => setProgress(p),
+        });
+      } catch (err) {
+        setError({
+          step: 'upload',
+          message: err instanceof Error ? err.message : 'File upload failed',
+        });
+        return;
+      }
 
       // Now run OCR
       setPhase('ocr');
@@ -52,22 +72,71 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
         if (ocrResponse.ok) {
           ocrResult = await ocrResponse.json();
         } else {
-          setOcrWarning('OCR text extraction failed. Fields will need manual entry.');
+          const errText = await ocrResponse.text().catch(() => '');
+          setError({
+            step: 'ocr',
+            message: `OCR extraction failed (${ocrResponse.status})${errText ? ': ' + errText : ''}`,
+          });
+          return;
         }
-      } catch {
-        setOcrWarning('OCR text extraction failed. Fields will need manual entry.');
+      } catch (err) {
+        setError({
+          step: 'ocr',
+          message: err instanceof Error ? err.message : 'OCR request failed',
+        });
+        return;
       }
 
       setPhase('saving');
-      await onUploadComplete({ file: result, ocrResult });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed');
+      try {
+        await onUploadComplete({ file: result, ocrResult });
+      } catch (err) {
+        // Classification or saving error thrown by the parent
+        const message = err instanceof Error ? err.message : 'Failed to save receipt';
+        const isClassification = message.toLowerCase().includes('classification');
+        setError({
+          step: isClassification ? 'classification' : 'saving',
+          message,
+        });
+        return;
+      }
     } finally {
       setIsUploading(false);
       setPhase('idle');
       setProgress(0);
     }
   }, [onUploadComplete]);
+
+  const handleRetry = useCallback(async () => {
+    if (!error) return;
+    setIsRetrying(true);
+
+    try {
+      if (error.step === 'classification' && onRetryClassification) {
+        // Retry just the classification step (no re-upload needed)
+        setError(null);
+        setPhase('saving');
+        setIsUploading(true);
+        try {
+          await onRetryClassification();
+        } catch (err) {
+          setError({
+            step: 'classification',
+            message: err instanceof Error ? err.message : 'Classification retry failed',
+          });
+        } finally {
+          setIsUploading(false);
+          setPhase('idle');
+        }
+      } else if (lastFile) {
+        // Re-run the full upload flow from the beginning
+        setError(null);
+        await handleUpload(lastFile);
+      }
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [error, lastFile, handleUpload, onRetryClassification]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -93,6 +162,13 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
 
   const phaseLabel = phase === 'uploading' ? 'Uploading receipt...' : phase === 'ocr' ? 'Running OCR...' : 'Saving to database...';
   const phaseDetail = phase === 'uploading' ? 'Storing file securely' : phase === 'ocr' ? 'Extracting text with AI' : 'Writing receipt data';
+
+  const stepLabels: Record<FailedStep, string> = {
+    upload: 'Upload',
+    ocr: 'OCR',
+    classification: 'AI Classification',
+    saving: 'Saving',
+  };
 
   return (
     <div className="w-full">
@@ -182,7 +258,29 @@ export default function ReceiptUploader({ onUploadComplete }: ReceiptUploaderPro
           className="mt-4 px-4 py-3 rounded-lg text-sm"
           style={{ background: 'var(--danger-muted)', color: 'var(--danger)', border: '1px solid rgba(229, 83, 75, 0.2)' }}
         >
-          {error}
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="font-medium">{stepLabels[error.step]} failed</p>
+              <p className="mt-1 text-xs opacity-80 break-words">{error.message}</p>
+              {error.step === 'classification' && (
+                <p className="mt-1 text-xs opacity-70">Row was saved with OCR data and Pending status.</p>
+              )}
+            </div>
+            <button
+              onClick={handleRetry}
+              disabled={isRetrying}
+              className="shrink-0 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200"
+              style={{
+                background: 'rgba(229, 83, 75, 0.15)',
+                color: 'var(--danger)',
+                border: '1px solid rgba(229, 83, 75, 0.3)',
+                opacity: isRetrying ? 0.6 : 1,
+                cursor: isRetrying ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {isRetrying ? 'Retrying...' : 'Retry'}
+            </button>
+          </div>
         </div>
       )}
 

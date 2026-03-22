@@ -16,6 +16,8 @@ import {
 import type { ColumnType, Row, GroupConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { dbAdapter, getReceiptsTableId, WORKSPACE_ID } from '@/lib/receipts-table';
 import AiChatSidebar from '@/components/AiChatSidebar';
+import ReceiptImagePreview from '@/components/ReceiptImagePreview';
+import { exportCSV } from '@/lib/export-csv';
 
 function DashboardContent({ tableId }: { tableId: string }) {
   const {
@@ -181,6 +183,30 @@ function DashboardContent({ tableId }: { tableId: string }) {
           </h1>
           <div className="flex items-center gap-2">
             <button
+              onClick={() => exportCSV({ columns, rows: displayRows })}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
+              style={{
+                background: 'var(--surface)',
+                color: 'var(--foreground)',
+                border: '1px solid var(--border)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'rgba(226, 163, 72, 0.4)';
+                e.currentTarget.style.color = 'var(--accent)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = 'var(--border)';
+                e.currentTarget.style.color = 'var(--foreground)';
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Export CSV
+            </button>
+            <button
               onClick={() => setAiSidebarOpen((v) => !v)}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
               style={{
@@ -276,6 +302,9 @@ function DashboardContent({ tableId }: { tableId: string }) {
       <div className="flex-1 overflow-auto p-4">
         {renderView()}
       </div>
+
+      {/* Receipt Image Thumbnails */}
+      <ReceiptImagePreview columns={columns} rows={displayRows} />
 
       {/* AI Chat Sidebar */}
       <AiChatSidebar

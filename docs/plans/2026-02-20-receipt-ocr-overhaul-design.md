@@ -1,7 +1,7 @@
 ---
 title: Receipt OCR App Overhaul — Design Document
 summary: Design document for overhauling the Receipt OCR app after Storage Brain v0.4.0 breaking changes, adding Google Cloud Vision OCR, D1 persistence, and Cloudflare Pages deployment via OpenNext.
-category: plan
+type: plan
 tags: [receipt-ocr, design, ocr, cloudflare, google-cloud-vision]
 projects: [receipt-ocr-app, storage-brain]
 status: superseded

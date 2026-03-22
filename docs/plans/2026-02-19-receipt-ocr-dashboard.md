@@ -1,10 +1,10 @@
 ---
 title: Receipt OCR Dashboard Implementation Plan
 summary: Step-by-step implementation plan for integrating data-table-react into the Receipt OCR app with in-memory adapter and adding Clearify documentation to three projects.
-category: plan
+type: plan
 tags: [receipt-ocr, data-table, implementation, clearify]
 projects: [receipt-ocr-app, data-table, clearify]
-status: active
+status: draft
 date: 2026-02-19
 ---
 

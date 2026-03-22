@@ -1,7 +1,7 @@
 ---
 title: Receipt OCR App — Data Table Dashboard + Clearify Docs
 summary: Design document for integrating @marlinjai/data-table-react into the Receipt OCR app as a dashboard page, using in-memory adapter, with Clearify docs setup for three projects.
-category: plan
+type: plan
 tags: [receipt-ocr, data-table, dashboard, clearify, design]
 projects: [receipt-ocr-app, data-table, clearify]
 status: superseded

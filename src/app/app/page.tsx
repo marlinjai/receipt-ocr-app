@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import ReceiptUploader from '@/components/ReceiptUploader';
@@ -9,47 +9,67 @@ import { extractReceiptFields } from '@/lib/extract-receipt-fields';
 import { dbAdapter, getReceiptsTableId, WORKSPACE_ID } from '@/lib/receipts-table';
 import type { CellValue } from '@marlinjai/data-table-core';
 
+/** Data needed to retry classification without re-uploading */
+interface ClassificationContext {
+  file: UploadResult['file'];
+  ocrResult: UploadResult['ocrResult'];
+  extracted: ReturnType<typeof extractReceiptFields> | null;
+}
+
 export default function UploadPage() {
   const router = useRouter();
+  const lastContextRef = useRef<ClassificationContext | null>(null);
 
-  const handleUploadComplete = useCallback(async (result: UploadResult) => {
-    const { file, ocrResult } = result;
+  /** Attempt AI classification; returns result or null on failure (+ error message) */
+  const classifyReceipt = useCallback(async (
+    extracted: ReturnType<typeof extractReceiptFields>,
+    fullText: string,
+  ): Promise<{ aiCategory: string | null; aiKonto: string | null; aiZuordnung: string | null; error: string | null }> => {
+    try {
+      const classifyRes = await fetch('/api/classify-single', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ocrText: fullText,
+          vendor: extracted.vendor,
+          gross: extracted.gross,
+          date: extracted.date,
+        }),
+      });
+      if (classifyRes.ok) {
+        const ai = await classifyRes.json();
+        return {
+          aiCategory: ai.category ?? null,
+          aiKonto: ai.konto ?? null,
+          aiZuordnung: ai.zuordnung ?? null,
+          error: null,
+        };
+      }
+      const errText = await classifyRes.text().catch(() => '');
+      return { aiCategory: null, aiKonto: null, aiZuordnung: null, error: `Classification failed (${classifyRes.status})${errText ? ': ' + errText : ''}` };
+    } catch (err) {
+      return {
+        aiCategory: null,
+        aiKonto: null,
+        aiZuordnung: null,
+        error: err instanceof Error ? err.message : 'Classification request failed',
+      };
+    }
+  }, []);
 
-    // Get table ID and columns
+  /** Build cells and save the row */
+  const saveRow = useCallback(async (
+    file: UploadResult['file'],
+    ocrResult: UploadResult['ocrResult'],
+    extracted: ReturnType<typeof extractReceiptFields> | null,
+    aiCategory: string | null,
+    aiKonto: string | null,
+    aiZuordnung: string | null,
+    classificationFailed: boolean,
+  ) => {
     const tableId = await getReceiptsTableId();
     const columns = await dbAdapter.getColumns(tableId);
 
-    // Extract fields from OCR result
-    const extracted = ocrResult ? extractReceiptFields(ocrResult) : null;
-
-    // Try AI classification if we have OCR text
-    let aiCategory: string | null = null;
-    let aiKonto: string | null = null;
-    let aiZuordnung: string | null = null;
-    if (extracted && ocrResult?.fullText) {
-      try {
-        const classifyRes = await fetch('/api/classify-single', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ocrText: ocrResult.fullText,
-            vendor: extracted.vendor,
-            gross: extracted.gross,
-            date: extracted.date,
-          }),
-        });
-        if (classifyRes.ok) {
-          const ai = await classifyRes.json();
-          if (ai.category) aiCategory = ai.category;
-          if (ai.konto) aiKonto = ai.konto;
-          if (ai.zuordnung) aiZuordnung = ai.zuordnung;
-        }
-      } catch {
-        // AI classification failed — fall back to rule-based
-      }
-    }
-
-    // Load select options for Status, Category, and Zuordnung columns
     const statusCol = columns.find((c) => c.name === 'Status');
     const categoryCol = columns.find((c) => c.name === 'Category');
     const zuordnungCol = columns.find((c) => c.name === 'Zuordnung');
@@ -60,11 +80,13 @@ export default function UploadPage() {
       zuordnungCol ? dbAdapter.getSelectOptions(zuordnungCol.id) : Promise.resolve([]),
     ]);
 
-    const statusValue = ocrResult?.fullText
-      ? statusOpts.find((o) => o.name === 'Processed')?.id
-      : statusOpts.find((o) => o.name === 'Pending')?.id;
+    // If classification failed but OCR succeeded, mark as Pending
+    const statusValue = classificationFailed
+      ? statusOpts.find((o) => o.name === 'Pending')?.id
+      : ocrResult?.fullText
+        ? statusOpts.find((o) => o.name === 'Processed')?.id
+        : statusOpts.find((o) => o.name === 'Pending')?.id;
 
-    // Prefer AI classification, fall back to rule-based
     const finalCategory = aiCategory || extracted?.category;
     const categoryValue = finalCategory
       ? categoryOpts.find((o) => o.name === finalCategory)?.id ?? null
@@ -76,7 +98,6 @@ export default function UploadPage() {
       ? zuordnungOpts.find((o) => o.name === aiZuordnung)?.id ?? null
       : null;
 
-    // Build cells record
     const cells: Record<string, CellValue> = {};
     for (const col of columns) {
       switch (col.name) {
@@ -126,12 +147,64 @@ export default function UploadPage() {
       }
     }
 
-    // Write directly to Data Brain
     await dbAdapter.createRow({ tableId, cells });
+  }, []);
 
-    // Navigate to dashboard — row is already persisted
+  const handleUploadComplete = useCallback(async (result: UploadResult) => {
+    const { file, ocrResult } = result;
+    const extracted = ocrResult ? extractReceiptFields(ocrResult) : null;
+
+    // Store context for potential retry
+    lastContextRef.current = { file, ocrResult, extracted };
+
+    let aiCategory: string | null = null;
+    let aiKonto: string | null = null;
+    let aiZuordnung: string | null = null;
+    let classificationFailed = false;
+    let classificationError: string | null = null;
+
+    // Try AI classification if we have OCR text
+    if (extracted && ocrResult?.fullText) {
+      const classResult = await classifyReceipt(extracted, ocrResult.fullText);
+      aiCategory = classResult.aiCategory;
+      aiKonto = classResult.aiKonto;
+      aiZuordnung = classResult.aiZuordnung;
+      if (classResult.error) {
+        classificationFailed = true;
+        classificationError = classResult.error;
+      }
+    }
+
+    // Save the row even if classification failed (partial result handling)
+    await saveRow(file, ocrResult, extracted, aiCategory, aiKonto, aiZuordnung, classificationFailed);
+
+    if (classificationFailed) {
+      // Throw so ReceiptUploader can show the error with retry
+      throw new Error(`AI classification failed: ${classificationError}. Row saved with OCR data and Pending status.`);
+    }
+
     router.push('/app/dashboard');
-  }, [router]);
+  }, [router, classifyReceipt, saveRow]);
+
+  /** Retry just the classification step, then navigate */
+  const handleRetryClassification = useCallback(async () => {
+    const ctx = lastContextRef.current;
+    if (!ctx || !ctx.extracted || !ctx.ocrResult?.fullText) return;
+
+    const classResult = await classifyReceipt(ctx.extracted, ctx.ocrResult.fullText);
+    if (classResult.error) {
+      throw new Error(`AI classification retry failed: ${classResult.error}`);
+    }
+
+    // Classification succeeded — save a new row with full data
+    await saveRow(
+      ctx.file, ctx.ocrResult, ctx.extracted,
+      classResult.aiCategory, classResult.aiKonto, classResult.aiZuordnung,
+      false,
+    );
+
+    router.push('/app/dashboard');
+  }, [router, classifyReceipt, saveRow]);
 
   return (
     <main className="relative z-10 min-h-screen flex flex-col items-center justify-center px-4 py-16">
@@ -179,7 +252,10 @@ export default function UploadPage() {
         </div>
 
         {/* Upload */}
-        <ReceiptUploader onUploadComplete={handleUploadComplete} />
+        <ReceiptUploader
+          onUploadComplete={handleUploadComplete}
+          onRetryClassification={handleRetryClassification}
+        />
 
         {/* Dashboard link */}
         <div className="text-center mt-8">

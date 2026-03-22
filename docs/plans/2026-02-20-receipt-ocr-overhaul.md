@@ -1,10 +1,10 @@
 ---
 title: Receipt OCR App Overhaul — Implementation Plan
 summary: Step-by-step implementation plan to fix the Receipt OCR app after Storage Brain v0.4.0 breaking changes, integrating Google Cloud Vision OCR, D1 persistence via data-table adapter, and Cloudflare Pages deployment.
-category: plan
+type: plan
 tags: [receipt-ocr, implementation, ocr, cloudflare-d1, opennext]
 projects: [receipt-ocr-app, storage-brain, data-table]
-status: active
+status: draft
 date: 2026-02-20
 ---
 

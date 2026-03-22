@@ -4,13 +4,19 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@marlinjai/data-table-adapter-shared': file:/tmp/marlinjai-data-table-adapter-shared-0.2.0-patched.tgz
+
 importers:
 
   .:
     dependencies:
-      '@marlinjai/data-brain-sdk':
-        specifier: ^0.2.0
-        version: 0.2.0
+      '@marlinjai/data-table-adapter-d1':
+        specifier: file:/tmp/marlinjai-data-table-adapter-d1-0.2.0-patched.tgz
+        version: file:../../../../../../tmp/marlinjai-data-table-adapter-d1-0.2.0-patched.tgz(@cloudflare/workers-types@4.20260303.0)
+      '@marlinjai/data-table-adapter-shared':
+        specifier: file:/tmp/marlinjai-data-table-adapter-shared-0.2.0-patched.tgz
+        version: file:../../../../../../tmp/marlinjai-data-table-adapter-shared-0.2.0-patched.tgz
       '@marlinjai/data-table-core':
         specifier: ^0.2.0
         version: 0.2.0
@@ -1288,11 +1294,15 @@ packages:
       puppeteer:
         optional: true
 
-  '@marlinjai/data-brain-sdk@0.2.0':
-    resolution: {integrity: sha512-woU98JmLNNMZN+a0QDGZnbhO0Jbcuv5Kxm0u9igfGwock/mBo3Ww9+uK745aCvSVteEkDlQMECKOnI7vR8JWNg==}
+  '@marlinjai/data-table-adapter-d1@file:../../../../../../tmp/marlinjai-data-table-adapter-d1-0.2.0-patched.tgz':
+    resolution: {integrity: sha512-qUMvqSr65dvfDmlirpNwbw0/aZCtdTD8WbQz7OK7ZOx7gjSIDoTfDBLaG08Q1nI03uFtftboyoG2G91fr+wEgA==, tarball: file:../../../../../../tmp/marlinjai-data-table-adapter-d1-0.2.0-patched.tgz}
+    version: 0.2.0
+    peerDependencies:
+      '@cloudflare/workers-types': ^4.0.0
 
-  '@marlinjai/data-table-core@0.1.1':
-    resolution: {integrity: sha512-P2msh6+XTHAIcTG1bwAG776a7FQwHklNsc1v/QsoAxLHHuZ9gx7w6/SJHqLzodpzLD9YWbT+dpi1Xqc78J0yUQ==}
+  '@marlinjai/data-table-adapter-shared@file:../../../../../../tmp/marlinjai-data-table-adapter-shared-0.2.0-patched.tgz':
+    resolution: {integrity: sha512-tg/dJazu8sDQOm83Js4bnUIs3hlYyEvPO0YnFs/2jYL/2+CMDjBAR6n3X21JaEeHwPGbdes9YELtUI1DDdcO5Q==, tarball: file:../../../../../../tmp/marlinjai-data-table-adapter-shared-0.2.0-patched.tgz}
+    version: 0.2.0
 
   '@marlinjai/data-table-core@0.2.0':
     resolution: {integrity: sha512-fACvrQm8p0B6gLAesIQPcdrJ3J7xDj8czTwFUnakWBZAXMCAbKqRtot8wibowJbR85n+TQBX9CZjgqgHk2R4rw==}
@@ -6059,8 +6069,7 @@ snapshots:
   '@cloudflare/workerd-windows-64@1.20260302.0':
     optional: true
 
-  '@cloudflare/workers-types@4.20260303.0':
-    optional: true
+  '@cloudflare/workers-types@4.20260303.0': {}
 
   '@commitlint/cli@20.4.3(@types/node@20.19.33)(typescript@5.9.3)':
     dependencies:
@@ -6674,11 +6683,15 @@ snapshots:
       - tsx
       - yaml
 
-  '@marlinjai/data-brain-sdk@0.2.0':
+  '@marlinjai/data-table-adapter-d1@file:../../../../../../tmp/marlinjai-data-table-adapter-d1-0.2.0-patched.tgz(@cloudflare/workers-types@4.20260303.0)':
     dependencies:
-      '@marlinjai/data-table-core': 0.1.1
+      '@cloudflare/workers-types': 4.20260303.0
+      '@marlinjai/data-table-adapter-shared': file:../../../../../../tmp/marlinjai-data-table-adapter-shared-0.2.0-patched.tgz
+      '@marlinjai/data-table-core': 0.2.0
 
-  '@marlinjai/data-table-core@0.1.1': {}
+  '@marlinjai/data-table-adapter-shared@file:../../../../../../tmp/marlinjai-data-table-adapter-shared-0.2.0-patched.tgz':
+    dependencies:
+      '@marlinjai/data-table-core': 0.2.0
 
   '@marlinjai/data-table-core@0.2.0': {}
 

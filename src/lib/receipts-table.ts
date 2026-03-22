@@ -1,4 +1,3 @@
-import { DataBrainAdapter } from '@/lib/data-brain-adapter';
 import type { ColumnType, DatabaseAdapter } from '@marlinjai/data-table-core';
 
 const WORKSPACE_ID = 'receipt-ocr';
@@ -63,7 +62,7 @@ const ZUORDNUNG_COLORS = ['#3b82f6', '#10b981', '#f59e0b'];
 const STATUS_OPTIONS = ['Pending', 'Processed', 'Rejected'];
 const STATUS_COLORS = ['#f59e0b', '#10b981', '#ef4444'];
 
-// Adapter will be set at runtime — D1 when on Cloudflare, otherwise Data Brain HTTP adapter
+// Adapter is set at runtime via setAdapter() in AppLayout using the D1 Cloudflare binding
 let _adapter: DatabaseAdapter | null = null;
 
 export function setAdapter(adapter: DatabaseAdapter) {
@@ -72,16 +71,9 @@ export function setAdapter(adapter: DatabaseAdapter) {
 
 export function getAdapter(): DatabaseAdapter {
   if (!_adapter) {
-    // Fallback to Data Brain HTTP adapter for local dev (persistent storage)
-    const apiKey = process.env.NEXT_PUBLIC_DATA_BRAIN_API_KEY;
-    const baseUrl = process.env.NEXT_PUBLIC_DATA_BRAIN_URL;
-    if (apiKey && baseUrl) {
-      _adapter = new DataBrainAdapter({ apiKey, baseUrl });
-    } else {
-      throw new Error(
-        'Data Brain environment variables not set: NEXT_PUBLIC_DATA_BRAIN_API_KEY and NEXT_PUBLIC_DATA_BRAIN_URL are required'
-      );
-    }
+    throw new Error(
+      'Database adapter not initialized. Ensure setAdapter() is called before accessing data (e.g., in AppLayout).'
+    );
   }
   return _adapter;
 }

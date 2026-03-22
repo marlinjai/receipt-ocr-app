@@ -3,11 +3,12 @@ title: Architecture
 description: System design, data flow, and integrations
 order: 1
 summary: System architecture documentation for the Receipt OCR App covering Next.js structure, Google Cloud Vision OCR integration, OpenRouter AI classification, Storage Brain file handling, and D1 persistence.
-category: documentation
+type: documentation
 tags: [receipt-ocr, architecture, ocr, nextjs, cloudflare]
 projects: [receipt-ocr-app]
-status: active
 ---
+
+> **Note (2026-03-22):** Data Brain has been archived. The app uses a local `DataBrainAdapter` that delegates to the Data Brain SDK. This should be migrated to use `adapter-d1` directly. References to `Data Brain API → D1` in the diagrams below reflect the previous architecture.
 
 # Architecture
 

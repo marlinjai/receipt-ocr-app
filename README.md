@@ -52,7 +52,7 @@ OPENROUTER_API_KEY=sk-or-...
 - **Styling**: [Tailwind CSS](https://tailwindcss.com/)
 - **File Storage**: [@marlinjai/storage-brain-sdk](https://www.npmjs.com/package/@marlinjai/storage-brain-sdk)
 - **Data Table**: [@marlinjai/data-table-react](../data-table/packages/react)
-- **Database**: Data Brain API (via SDK)
+- **Database**: D1 via local DataBrainAdapter (Data Brain archived 2026-03-22; adapter migration to adapter-d1 pending)
 - **Deployment**: Cloudflare Pages via @opennextjs/cloudflare
 
 ## Usage

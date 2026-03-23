@@ -108,12 +108,7 @@ export async function getRow(rowId: string): Promise<Row | null> {
 }
 
 export async function getRows(tableId: string, query?: QueryOptions): Promise<QueryResult<Row>> {
-  const result = await getAdapter().getRows(tableId, query);
-  console.log('[getRows]', tableId, 'total:', result.total, 'items:', result.items.length, 'query:', JSON.stringify(query));
-  if (result.items.length > 0) {
-    console.log('[getRows] first row cells:', Object.keys(result.items[0].cells), 'sample:', Object.entries(result.items[0].cells).slice(0, 3));
-  }
-  return result;
+  return getAdapter().getRows(tableId, query);
 }
 
 export async function updateRow(rowId: string, cells: Record<string, CellValue>): Promise<Row> {

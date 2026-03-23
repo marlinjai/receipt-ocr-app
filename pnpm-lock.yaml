@@ -13,8 +13,8 @@ importers:
   .:
     dependencies:
       '@marlinjai/data-table-adapter-prisma':
-        specifier: ^0.2.0
-        version: 0.2.0(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
+        specifier: ^0.2.1
+        version: 0.2.1(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
       '@marlinjai/data-table-core':
         specifier: ^0.2.0
         version: 0.2.0
@@ -735,8 +735,8 @@ packages:
       puppeteer:
         optional: true
 
-  '@marlinjai/data-table-adapter-prisma@0.2.0':
-    resolution: {integrity: sha512-VsDqnf2JPqKB3J7BkabyCTvqnybzd1JXn4EcoOwwzyWDYovTeeSJfDDRZpuJW1pzVYxGo9/9xon3922+duVRgA==}
+  '@marlinjai/data-table-adapter-prisma@0.2.1':
+    resolution: {integrity: sha512-79RWp6VzUFt10Wl+jeaoDfvP2Bse8+YyVDwdcq6Fz4jHYYluEVnU1Jt3qbq5tkHsA+XMt6kt3Vv2f0hZoJt9og==}
 
   '@marlinjai/data-table-adapter-shared@0.2.1':
     resolution: {integrity: sha512-DJbgFnTXbXTbI4nmBErPi2h31pqwXNMagI9PXVASc3IHSfJi5DlqEFpGf8W2IwKeIj/BmR6fHWr5jlQGjRw0XQ==}
@@ -4791,7 +4791,7 @@ snapshots:
       - tsx
       - yaml
 
-  '@marlinjai/data-table-adapter-prisma@0.2.0(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)':
+  '@marlinjai/data-table-adapter-prisma@0.2.1(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)':
     dependencies:
       '@marlinjai/data-table-adapter-shared': 0.2.1
       '@marlinjai/data-table-core': 0.2.0

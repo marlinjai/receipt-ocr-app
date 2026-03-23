@@ -1,11 +1,26 @@
-import type { ColumnType } from '@marlinjai/data-table-core';
-import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
-import { prisma } from './prisma';
+import type { ColumnType, DatabaseAdapter } from '@marlinjai/data-table-core';
 
 const WORKSPACE_ID = 'receipt-ocr';
 const TABLE_NAME = 'Receipts';
 
-export const dbAdapter = new PrismaAdapter({ prisma });
+let _adapter: DatabaseAdapter | null = null;
+
+export function getDbAdapter(): DatabaseAdapter {
+  if (!_adapter) {
+    // Lazy import to avoid PrismaClient being bundled into the client
+    const { PrismaAdapter } = require('@marlinjai/data-table-adapter-prisma');
+    const { prisma } = require('./prisma');
+    _adapter = new PrismaAdapter({ prisma });
+  }
+  return _adapter;
+}
+
+/** @deprecated Use getDbAdapter() — kept for import compatibility */
+export const dbAdapter = new Proxy({} as DatabaseAdapter, {
+  get(_target, prop, receiver) {
+    return Reflect.get(getDbAdapter(), prop, receiver);
+  },
+});
 
 const RECEIPT_COLUMNS: Array<{ name: string; type: ColumnType; isPrimary?: boolean }> = [
   { name: 'Name', type: 'text', isPrimary: true },

@@ -12,6 +12,11 @@ RUN pnpm prisma generate
 # --- Build ---
 FROM base AS builder
 WORKDIR /app
+
+# NEXT_PUBLIC_ vars are inlined into the client bundle at build time
+ARG NEXT_PUBLIC_STORAGE_BRAIN_URL
+ARG NEXT_PUBLIC_STORAGE_BRAIN_API_KEY
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN pnpm build
@@ -24,12 +29,8 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Copy public assets
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
-
-# Next.js standalone output preserves the workspace path structure
-# Copy the app files from the nested path to /app
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone/projects/receipt-ocr-app ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static

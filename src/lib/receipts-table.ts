@@ -8,11 +8,13 @@ let _adapter: DatabaseAdapter | null = null;
 export function getDbAdapter(): DatabaseAdapter {
   if (!_adapter) {
     // Lazy import to avoid PrismaClient being bundled into the client
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { PrismaAdapter } = require('@marlinjai/data-table-adapter-prisma');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { prisma } = require('./prisma');
-    _adapter = new PrismaAdapter({ prisma });
+    _adapter = new PrismaAdapter({ prisma }) as DatabaseAdapter;
   }
-  return _adapter;
+  return _adapter!;
 }
 
 /** @deprecated Use getDbAdapter() — kept for import compatibility */

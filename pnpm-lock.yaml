@@ -25,7 +25,7 @@ importers:
         specifier: ^0.5.1
         version: 0.5.1
       '@prisma/client':
-        specifier: ^6.9.0
+        specifier: ^6.19.2
         version: 6.19.2(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
       next:
         specifier: ^16.1.6
@@ -47,28 +47,28 @@ importers:
         specifier: ^20.4.3
         version: 20.4.3
       '@marlinjai/clearify':
-        specifier: ^1.11.0
+        specifier: ^1.11.1
         version: 1.11.1(@types/node@20.19.33)(@types/react@19.2.14)(jiti@2.6.1)(lightningcss@1.31.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@4.59.0)(terser@5.16.9)(yaml@2.8.2)
       '@mdx-js/react':
         specifier: ^3.1.1
         version: 3.1.1(@types/react@19.2.14)(react@19.2.3)
       '@tailwindcss/postcss':
-        specifier: ^4
+        specifier: ^4.2.1
         version: 4.2.1
       '@types/node':
-        specifier: ^20
+        specifier: ^20.19.33
         version: 20.19.33
       '@types/react':
-        specifier: ^19
+        specifier: ^19.2.14
         version: 19.2.14
       '@types/react-dom':
-        specifier: ^19
+        specifier: ^19.2.3
         version: 19.2.3(@types/react@19.2.14)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
       eslint:
-        specifier: ^9
+        specifier: ^9.39.3
         version: 9.39.3(jiti@2.6.1)
       eslint-config-next:
         specifier: 16.1.1
@@ -83,7 +83,7 @@ importers:
         specifier: ^29.0.1
         version: 29.0.1(@noble/hashes@1.8.0)
       prisma:
-        specifier: ^6.9.0
+        specifier: ^6.19.2
         version: 6.19.2(typescript@5.9.3)
       react-router:
         specifier: ^7.13.1
@@ -92,10 +92,10 @@ importers:
         specifier: ^7.13.1
         version: 7.13.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       tailwindcss:
-        specifier: ^4
+        specifier: ^4.2.1
         version: 4.2.1
       typescript:
-        specifier: ^5
+        specifier: ^5.9.3
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
@@ -735,8 +735,8 @@ packages:
   '@marlinjai/data-table-adapter-prisma@0.2.0':
     resolution: {integrity: sha512-VsDqnf2JPqKB3J7BkabyCTvqnybzd1JXn4EcoOwwzyWDYovTeeSJfDDRZpuJW1pzVYxGo9/9xon3922+duVRgA==}
 
-  '@marlinjai/data-table-adapter-shared@0.2.0':
-    resolution: {integrity: sha512-96LhtjqYClmTZzd/lqVUzqLPvaNwsgStPHd/crxNO8XLXsTB85NqGKshZxP/dmQNv6ifCI9P+BIrZGsMd/j0cw==}
+  '@marlinjai/data-table-adapter-shared@0.2.1':
+    resolution: {integrity: sha512-DJbgFnTXbXTbI4nmBErPi2h31pqwXNMagI9PXVASc3IHSfJi5DlqEFpGf8W2IwKeIj/BmR6fHWr5jlQGjRw0XQ==}
 
   '@marlinjai/data-table-core@0.2.0':
     resolution: {integrity: sha512-fACvrQm8p0B6gLAesIQPcdrJ3J7xDj8czTwFUnakWBZAXMCAbKqRtot8wibowJbR85n+TQBX9CZjgqgHk2R4rw==}
@@ -4787,14 +4787,14 @@ snapshots:
 
   '@marlinjai/data-table-adapter-prisma@0.2.0(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)':
     dependencies:
-      '@marlinjai/data-table-adapter-shared': 0.2.0
+      '@marlinjai/data-table-adapter-shared': 0.2.1
       '@marlinjai/data-table-core': 0.2.0
       '@prisma/client': 6.19.2(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
     transitivePeerDependencies:
       - prisma
       - typescript
 
-  '@marlinjai/data-table-adapter-shared@0.2.0':
+  '@marlinjai/data-table-adapter-shared@0.2.1':
     dependencies:
       '@marlinjai/data-table-core': 0.2.0
 

@@ -1,5 +1,5 @@
 import { getAiClient, getClassifyModel } from '@/lib/ai-client';
-import { CATEGORY_TO_KONTO, CATEGORY_OPTIONS } from '@/lib/receipts-table';
+import { CATEGORY_TO_KONTO, CATEGORY_OPTIONS } from '@/lib/receipts-constants';
 import type { ExtractionResult } from '@/lib/extract-receipt-fields';
 import type { OcrResult } from '@/lib/ocr-types';
 

@@ -1,5 +1,5 @@
 import type { OcrResult } from '@/lib/ocr-types';
-import { CATEGORY_TO_KONTO } from '@/lib/receipts-table';
+import { CATEGORY_TO_KONTO } from '@/lib/receipts-constants';
 
 export interface ExtractionResult {
   name: string; // descriptive summary, always generated

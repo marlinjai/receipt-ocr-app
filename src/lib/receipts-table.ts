@@ -1,13 +1,17 @@
 import type { ColumnType, DatabaseAdapter } from '@marlinjai/data-table-core';
+import {
+  CATEGORY_OPTIONS,
+  CATEGORY_TO_KONTO,
+  ZUORDNUNG_OPTIONS,
+  WORKSPACE_ID,
+} from './receipts-constants';
 
-const WORKSPACE_ID = 'receipt-ocr';
 const TABLE_NAME = 'Receipts';
 
+// Lazy-initialized to prevent PrismaClient from being bundled into the client
 let _adapter: DatabaseAdapter | null = null;
-
-export function getDbAdapter(): DatabaseAdapter {
+function getAdapter(): DatabaseAdapter {
   if (!_adapter) {
-    // Lazy import to avoid PrismaClient being bundled into the client
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { PrismaAdapter } = require('@marlinjai/data-table-adapter-prisma');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -17,10 +21,9 @@ export function getDbAdapter(): DatabaseAdapter {
   return _adapter!;
 }
 
-/** @deprecated Use getDbAdapter() — kept for import compatibility */
 export const dbAdapter = new Proxy({} as DatabaseAdapter, {
   get(_target, prop, receiver) {
-    return Reflect.get(getDbAdapter(), prop, receiver);
+    return Reflect.get(getAdapter(), prop, receiver);
   },
 });
 
@@ -39,45 +42,11 @@ const RECEIPT_COLUMNS: Array<{ name: string; type: ColumnType; isPrimary?: boole
   { name: 'OCR Text', type: 'text' },
 ];
 
-const CATEGORY_OPTIONS = [
-  'Bewirtung',
-  'Reisekosten',
-  'Bürobedarf',
-  'Software & Lizenzen',
-  'Telefon & Internet',
-  'Hardware & IT',
-  'Miete & Nebenkosten',
-  'Versicherungen',
-  'Fachliteratur',
-  'Sonstige Ausgaben',
-];
 const CATEGORY_COLORS = [
-  '#ef4444', // Bewirtung – red
-  '#3b82f6', // Reisekosten – blue
-  '#f59e0b', // Bürobedarf – amber
-  '#8b5cf6', // Software & Lizenzen – violet
-  '#06b6d4', // Telefon & Internet – cyan
-  '#ec4899', // Hardware & IT – pink
-  '#10b981', // Miete & Nebenkosten – emerald
-  '#f97316', // Versicherungen – orange
-  '#14b8a6', // Fachliteratur – teal
-  '#6b7280', // Sonstige Ausgaben – gray
+  '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6', '#06b6d4',
+  '#ec4899', '#10b981', '#f97316', '#14b8a6', '#6b7280',
 ];
 
-export const CATEGORY_TO_KONTO: Record<string, string> = {
-  'Bewirtung': '4650',
-  'Reisekosten': '4670',
-  'Bürobedarf': '4930',
-  'Software & Lizenzen': '4806',
-  'Telefon & Internet': '4920',
-  'Hardware & IT': '4855',
-  'Miete & Nebenkosten': '4210',
-  'Versicherungen': '4360',
-  'Fachliteratur': '4940',
-  'Sonstige Ausgaben': '4900',
-};
-
-export const ZUORDNUNG_OPTIONS = ['Universität', 'Geschäftlich', 'Privat'];
 const ZUORDNUNG_COLORS = ['#3b82f6', '#10b981', '#f59e0b'];
 
 const STATUS_OPTIONS = ['Pending', 'Processed', 'Rejected'];
@@ -93,14 +62,11 @@ export function getReceiptsTableId(): Promise<string> {
 }
 
 async function initializeTable(): Promise<string> {
-  const adapter = dbAdapter;
-
-  // Check if table already exists (for D1 persistence)
-  const existingTables = await adapter.listTables(WORKSPACE_ID);
+  const existingTables = await dbAdapter.listTables(WORKSPACE_ID);
   const existing = existingTables.find((t) => t.name === TABLE_NAME);
   if (existing) return existing.id;
 
-  const table = await adapter.createTable({
+  const table = await dbAdapter.createTable({
     workspaceId: WORKSPACE_ID,
     name: TABLE_NAME,
   });
@@ -108,7 +74,7 @@ async function initializeTable(): Promise<string> {
   const columnIds: Record<string, string> = {};
 
   for (const col of RECEIPT_COLUMNS) {
-    const column = await adapter.createColumn({
+    const column = await dbAdapter.createColumn({
       tableId: table.id,
       name: col.name,
       type: col.type,
@@ -119,7 +85,7 @@ async function initializeTable(): Promise<string> {
 
   const categoryColId = columnIds['Category'];
   for (let i = 0; i < CATEGORY_OPTIONS.length; i++) {
-    await adapter.createSelectOption({
+    await dbAdapter.createSelectOption({
       columnId: categoryColId,
       name: CATEGORY_OPTIONS[i],
       color: CATEGORY_COLORS[i],
@@ -128,14 +94,14 @@ async function initializeTable(): Promise<string> {
 
   const statusColId = columnIds['Status'];
   for (let i = 0; i < STATUS_OPTIONS.length; i++) {
-    await adapter.createSelectOption({
+    await dbAdapter.createSelectOption({
       columnId: statusColId,
       name: STATUS_OPTIONS[i],
       color: STATUS_COLORS[i],
     });
   }
 
-  await adapter.createView({
+  await dbAdapter.createView({
     tableId: table.id,
     name: 'Table',
     type: 'table',
@@ -150,7 +116,7 @@ async function initializeTable(): Promise<string> {
   });
 
   const kontoColId = columnIds['Konto'];
-  await adapter.createView({
+  await dbAdapter.createView({
     tableId: table.id,
     name: 'By Konto',
     type: 'table',
@@ -163,7 +129,7 @@ async function initializeTable(): Promise<string> {
     },
   });
 
-  await adapter.createView({
+  await dbAdapter.createView({
     tableId: table.id,
     name: 'Board',
     type: 'board',
@@ -175,7 +141,7 @@ async function initializeTable(): Promise<string> {
     },
   });
 
-  await adapter.createView({
+  await dbAdapter.createView({
     tableId: table.id,
     name: 'Calendar',
     type: 'calendar',
@@ -189,29 +155,22 @@ async function initializeTable(): Promise<string> {
   return table.id;
 }
 
-export { WORKSPACE_ID, CATEGORY_OPTIONS };
-
-/**
- * Ensure the Zuordnung (assignment context) column exists on the table.
- * Creates the column + select options if missing; returns the column ID and options.
- */
 export async function ensureZuordnungColumn(tableId: string): Promise<{
   columnId: string;
   options: Array<{ id: string; name: string; color: string }>;
 }> {
-  const adapter = dbAdapter;
-  const columns = await adapter.getColumns(tableId);
+  const columns = await dbAdapter.getColumns(tableId);
   const existing = columns.find((c) => c.name === 'Zuordnung');
 
   if (existing) {
-    const options = await adapter.getSelectOptions(existing.id);
+    const options = await dbAdapter.getSelectOptions(existing.id);
     return {
       columnId: existing.id,
       options: options.map((o) => ({ id: o.id, name: o.name, color: o.color ?? '' })),
     };
   }
 
-  const col = await adapter.createColumn({
+  const col = await dbAdapter.createColumn({
     tableId,
     name: 'Zuordnung',
     type: 'select',
@@ -219,7 +178,7 @@ export async function ensureZuordnungColumn(tableId: string): Promise<{
 
   const options: Array<{ id: string; name: string; color: string }> = [];
   for (let i = 0; i < ZUORDNUNG_OPTIONS.length; i++) {
-    const opt = await adapter.createSelectOption({
+    const opt = await dbAdapter.createSelectOption({
       columnId: col.id,
       name: ZUORDNUNG_OPTIONS[i],
       color: ZUORDNUNG_COLORS[i],
@@ -229,3 +188,6 @@ export async function ensureZuordnungColumn(tableId: string): Promise<{
 
   return { columnId: col.id, options };
 }
+
+// Re-export constants for server-side consumers that import from this file
+export { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS, WORKSPACE_ID, CATEGORY_OPTIONS } from './receipts-constants';

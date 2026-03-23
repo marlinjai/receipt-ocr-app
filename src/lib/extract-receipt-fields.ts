@@ -477,6 +477,17 @@ function inferCategory(vendor: string | null, fullText: string): string | null {
 
 // ── Main Export ───────────────────────────────────────────────────────
 
+// Categories that qualify for the reduced 7% German MwSt rate
+const REDUCED_RATE_CATEGORIES = new Set([
+  'Bewirtung',      // Food/groceries qualify for 7%, restaurant dine-in is 19%
+  'Fachliteratur',  // Books/publications are 7%
+]);
+
+function defaultTaxRate(category: string | null): number {
+  if (category && REDUCED_RATE_CATEGORIES.has(category)) return 7;
+  return 19; // Standard German MwSt
+}
+
 export function extractReceiptFields(ocrData: OcrResult): ExtractionResult {
   const vendor = extractVendor(ocrData);
   const { gross, net, tax } = extractAmounts(ocrData.fullText);
@@ -485,11 +496,19 @@ export function extractReceiptFields(ocrData: OcrResult): ExtractionResult {
   const name = extractName(vendor, ocrData, gross, date);
   const konto = category ? CATEGORY_TO_KONTO[category] ?? null : null;
 
-  // Calculate tax rate from gross and net
+  // Calculate tax rate from gross and net, or default based on category
   let taxRate: number | null = null;
   if (gross !== null && net !== null && net > 0) {
-    taxRate = Math.round(((gross - net) / net) * 10000) / 100; // e.g. 19.00
+    taxRate = Math.round(((gross - net) / net) * 10000) / 100;
+  } else {
+    taxRate = defaultTaxRate(category);
   }
 
-  return { name, vendor, gross, net, taxRate, date, category, konto };
+  // Always calculate net from gross if not explicitly found
+  let finalNet = net;
+  if (finalNet === null && gross !== null && taxRate !== null) {
+    finalNet = Math.round((gross / (1 + taxRate / 100)) * 100) / 100;
+  }
+
+  return { name, vendor, gross, net: finalNet, taxRate, date, category, konto };
 }

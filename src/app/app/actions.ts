@@ -3,8 +3,8 @@
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
-import { getAiClient, getClassifyModel } from '@/lib/ai-client';
 import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
+import { classifyWithWebSearch } from '@/lib/web-search';
 import type { CellValue } from '@marlinjai/data-table-core';
 import type { OcrResult } from '@/lib/ocr-types';
 
@@ -30,50 +30,37 @@ interface FileData {
   fileType?: string;
 }
 
+interface ClassificationResult {
+  aiCategory: string | null;
+  aiKonto: string | null;
+  aiZuordnung: string | null;
+  aiTaxRate: number | null;
+}
+
 async function classifyReceipt(
   extracted: ReturnType<typeof extractReceiptFields>,
   fullText: string,
-): Promise<{ aiCategory: string | null; aiKonto: string | null; aiZuordnung: string | null }> {
+): Promise<ClassificationResult> {
   try {
-    const client = getAiClient();
-    const systemPrompt = `You are a receipt classification assistant for German business expense tracking (SKR03).
-
-Given a receipt's OCR text, vendor, and amount, classify it into:
-1. **Category** — one of: ${CATEGORY_NAMES.join(', ')}
-2. **Konto** — the SKR03 account number (mapped from category):
-${CATEGORY_NAMES.map((c) => `   ${c} → ${CATEGORY_TO_KONTO[c]}`).join('\n')}
-3. **Zuordnung** (assignment context) — one of: ${ZUORDNUNG_OPTIONS.join(', ')}
-
-Respond with ONLY a JSON object (no markdown, no explanation):
-{ "category": "...", "konto": "...", "zuordnung": "...", "confidence": 0.0-1.0, "reasoning": "..." }`;
-
-    const userContent = [
-      extracted.vendor && `Vendor: ${extracted.vendor}`,
-      extracted.gross && `Amount: €${extracted.gross}`,
-      extracted.date && `Date: ${extracted.date}`,
-      `\nOCR Text (first 2000 chars):\n${fullText.slice(0, 2000)}`,
-    ].filter(Boolean).join('\n');
-
-    const response = await client.chat.completions.create({
-      model: getClassifyModel(),
-      max_tokens: 256,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userContent },
-      ],
+    const result = await classifyWithWebSearch({
+      vendor: extracted.vendor,
+      gross: extracted.gross,
+      date: extracted.date,
+      fullText,
+      categoryNames: CATEGORY_NAMES,
+      categoryToKonto: CATEGORY_TO_KONTO,
+      zuordnungOptions: ZUORDNUNG_OPTIONS,
     });
 
-    const text = response.choices[0]?.message?.content ?? '';
-    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-    const parsed = JSON.parse(cleaned);
-
     return {
-      aiCategory: CATEGORY_NAMES.includes(parsed.category) ? parsed.category : null,
-      aiKonto: parsed.konto || (parsed.category ? CATEGORY_TO_KONTO[parsed.category] : null),
-      aiZuordnung: ZUORDNUNG_OPTIONS.includes(parsed.zuordnung) ? parsed.zuordnung : null,
+      aiCategory: result.category,
+      aiKonto: result.konto,
+      aiZuordnung: result.zuordnung,
+      aiTaxRate: result.taxRate,
     };
-  } catch {
-    return { aiCategory: null, aiKonto: null, aiZuordnung: null };
+  } catch (err) {
+    console.error('[classifyReceipt] Classification failed:', err);
+    return { aiCategory: null, aiKonto: null, aiZuordnung: null, aiTaxRate: null };
   }
 }
 
@@ -87,6 +74,7 @@ export async function processReceipt(
   let aiCategory: string | null = null;
   let aiKonto: string | null = null;
   let aiZuordnung: string | null = null;
+  let aiTaxRate: number | null = null;
   let classificationFailed = false;
 
   if (extracted && ocrResult?.fullText) {
@@ -94,7 +82,17 @@ export async function processReceipt(
     aiCategory = ai.aiCategory;
     aiKonto = ai.aiKonto;
     aiZuordnung = ai.aiZuordnung;
+    aiTaxRate = ai.aiTaxRate;
     classificationFailed = !aiCategory && !aiKonto && !aiZuordnung;
+  }
+
+  // Always ensure net and taxRate are populated
+  const finalTaxRate = extracted?.taxRate ?? aiTaxRate ?? 19; // Default 19% standard
+  let finalNet = extracted?.net ?? null;
+  const finalGross = extracted?.gross ?? null;
+
+  if (finalGross !== null && finalNet === null) {
+    finalNet = Math.round((finalGross / (1 + finalTaxRate / 100)) * 100) / 100;
   }
 
   const columns = await adapter.getColumns(tableId);
@@ -134,13 +132,13 @@ export async function processReceipt(
         cells[col.id] = extracted?.vendor ?? null;
         break;
       case 'Gross':
-        cells[col.id] = extracted?.gross ?? null;
+        cells[col.id] = finalGross;
         break;
       case 'Net':
-        cells[col.id] = extracted?.net ?? null;
+        cells[col.id] = finalNet;
         break;
       case 'Tax Rate':
-        cells[col.id] = extracted?.taxRate ?? null;
+        cells[col.id] = finalTaxRate;
         break;
       case 'Date':
         cells[col.id] = extracted?.date ?? null;

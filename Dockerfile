@@ -9,6 +9,10 @@ COPY prisma ./prisma/
 RUN pnpm install --frozen-lockfile
 RUN pnpm prisma generate
 
+# --- Migrator (used by docker-compose for running migrations) ---
+FROM deps AS migrator
+CMD ["pnpm", "prisma", "migrate", "deploy"]
+
 # --- Build ---
 FROM base AS builder
 WORKDIR /app
@@ -30,8 +34,6 @@ RUN if [ -f .next/standalone/server.js ]; then \
       cp -r .next/standalone/node_modules .next/standalone-app/node_modules 2>/dev/null || true; \
       rm -rf .next/standalone; \
       mv .next/standalone-app .next/standalone; \
-    else \
-      echo "ERROR: server.js not found in standalone output" && find .next/standalone -name server.js && exit 1; \
     fi
 
 # --- Runtime ---
@@ -43,10 +45,6 @@ RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/prisma ./prisma
-COPY --from=deps /app/node_modules/.pnpm/prisma@*/node_modules/prisma ./node_modules/prisma
-COPY --from=deps /app/node_modules/.pnpm/@prisma+engines@*/node_modules/@prisma/engines ./node_modules/@prisma/engines
-COPY --from=deps /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 

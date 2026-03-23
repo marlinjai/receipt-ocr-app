@@ -6,13 +6,13 @@ import OpenAI from 'openai';
  *
  * Env vars:
  *   OPENROUTER_API_KEY  — your OpenRouter key (required)
- *   AI_MODEL            — model for chat/tool-use  (default: anthropic/claude-sonnet-4-20250514)
+ *   AI_MODEL            — model for chat/tool-use  (default: anthropic/claude-sonnet-4.6)
  *   AI_CLASSIFY_MODEL   — cheaper model for single-receipt classification (falls back to AI_MODEL)
  *   AI_BASE_URL         — override base URL (default: https://openrouter.ai/api/v1)
  */
 
 const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1';
-const DEFAULT_MODEL = 'anthropic/claude-sonnet-4-20250514';
+const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
 
 export function getAiClient(): OpenAI {
   const apiKey = process.env.OPENROUTER_API_KEY;

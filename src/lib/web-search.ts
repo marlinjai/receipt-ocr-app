@@ -4,12 +4,12 @@
  *
  * Env vars:
  *   ANTHROPIC_API_KEY — Anthropic API key (required)
- *   ANTHROPIC_CLASSIFY_MODEL — model for classification (default: claude-sonnet-4-20250514)
+ *   ANTHROPIC_CLASSIFY_MODEL — model for classification (default: claude-sonnet-4-6-20250610)
  */
 
 import Anthropic from '@anthropic-ai/sdk';
 
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+const DEFAULT_MODEL = 'claude-sonnet-4-6-20250610';
 
 function getClassifyModel(): string {
   return process.env.ANTHROPIC_CLASSIFY_MODEL || DEFAULT_MODEL;

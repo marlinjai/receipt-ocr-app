@@ -1,4 +1,4 @@
-name: Deploy
+name: Build, Test & Deploy
 
 on:
   push:
@@ -6,23 +6,38 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  quality-gate:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
-      - name: Load SSH key from 1Password
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm prisma generate
+
+      - name: Build
+        run: pnpm build
+
+  deploy:
+    needs: quality-gate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Load Coolify webhook from 1Password
         uses: 1password/load-secrets-action@v2
         with:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          SSH_PRIVATE_KEY: op://Dev Secrets/Hetzner Receipt OCR/private key
+          COOLIFY_WEBHOOK: op://Dev Secrets/Coolify Receipt OCR/webhook-url
 
-      - name: Deploy via SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -H 178.104.60.43 >> ~/.ssh/known_hosts
-          ssh -i ~/.ssh/id_deploy root@178.104.60.43 "/opt/receipt-ocr/deploy.sh"
+      - name: Trigger Coolify deploy
+        run: curl -sf "$COOLIFY_WEBHOOK" || exit 1

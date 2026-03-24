@@ -31,13 +31,16 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     steps:
-      - name: Load Coolify webhook from 1Password
+      - name: Load Coolify secrets from 1Password
         uses: 1password/load-secrets-action@v2
         with:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           COOLIFY_WEBHOOK: op://Dev Secrets/Coolify Receipt OCR/webhook-url
+          COOLIFY_TOKEN: op://Dev Secrets/Coolify Receipt OCR/api-token
 
       - name: Trigger Coolify deploy
-        run: curl -sf "$COOLIFY_WEBHOOK" || exit 1
+        run: |
+          curl -sf "$COOLIFY_WEBHOOK" \
+            -H "Authorization: Bearer $COOLIFY_TOKEN" || exit 1

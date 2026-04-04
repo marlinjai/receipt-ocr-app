@@ -41,7 +41,10 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
-RUN apk add --no-cache curl
+# Install curl (healthcheck) + Infisical CLI (runtime secret injection)
+RUN apk add --no-cache bash curl && \
+    curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.alpine.sh' | bash && \
+    apk add --no-cache infisical
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
@@ -49,6 +52,7 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --chown=nextjs:nodejs entrypoint.sh ./entrypoint.sh
 
 USER nextjs
 
@@ -56,4 +60,7 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["node", "server.js"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=3 \
+  CMD curl -f http://localhost:3000/api/health || exit 1
+
+CMD ["sh", "entrypoint.sh"]

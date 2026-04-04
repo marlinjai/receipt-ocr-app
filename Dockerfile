@@ -1,3 +1,5 @@
+FROM infisical/cli:0.43.69 AS infisical
+
 FROM node:22-alpine AS base
 RUN corepack enable pnpm
 
@@ -41,10 +43,10 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Install curl (healthcheck) + Infisical CLI (runtime secret injection)
-RUN apk add --no-cache bash curl && \
-    curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.alpine.sh' | bash && \
-    apk add --no-cache infisical
+# Infisical CLI from official image (pinned version, no curl|bash)
+COPY --from=infisical /bin/infisical /usr/local/bin/infisical
+# curl for healthcheck
+RUN apk add --no-cache curl
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs

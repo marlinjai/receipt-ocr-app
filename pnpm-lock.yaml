@@ -25,8 +25,8 @@ importers:
         specifier: ^0.2.0
         version: 0.2.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@marlinjai/storage-brain-sdk':
-        specifier: ^0.5.1
-        version: 0.5.1
+        specifier: ^0.7.0
+        version: 0.7.0(zod@4.3.6)
       '@prisma/client':
         specifier: ^6.19.2
         version: 6.19.2(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
@@ -740,6 +740,17 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
+  '@marlinjai/brain-core@0.1.0':
+    resolution: {integrity: sha512-1Ot/3uDM4Ewf18dlzgkAterIa2H5o8+V7IaknR5L4odI+zgMlPPtQ8CbjxU8Z/JnhwF3R+dqIxW+k/o0ithZPg==}
+    peerDependencies:
+      hono: ^4.0.0
+      zod: ^3.22.4
+    peerDependenciesMeta:
+      hono:
+        optional: true
+      zod:
+        optional: true
+
   '@marlinjai/clearify@1.11.1':
     resolution: {integrity: sha512-/KMGiq6mazxQBVkfEd7fAwwDKO6FPE+JjUe9pown2LNgAYNyc0CF4cHBN9cBurWgCTZBltVe1IxWJXn+7JxmKA==}
     hasBin: true
@@ -766,8 +777,8 @@ packages:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@marlinjai/storage-brain-sdk@0.5.1':
-    resolution: {integrity: sha512-J1rNm/7w8tJNjPwXcNEQkosihg/fcQsaPOtC33M4ZrRW9WfYfISKGDegtqXGkPkrAmKqLXO2b49Zb1jXeyQOnw==}
+  '@marlinjai/storage-brain-sdk@0.7.0':
+    resolution: {integrity: sha512-3YTAQoM279UDg58AhOUMU91Qg8oqoaMze+26CppVvNwzi8P9VJtr7qfxIEDAWPF5P88wsrtcWKYG0RWMtPAbPw==}
 
   '@mdx-js/mdx@3.1.1':
     resolution: {integrity: sha512-f6ZO2ifpwAQIpzGWaBQT2TXxPv6z3RBzQKpVftEWN78Vl/YweF1uwussDx8ECAXVtr3Rs89fKyG9YlzUs9DyGQ==}
@@ -4778,6 +4789,10 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
+  '@marlinjai/brain-core@0.1.0(zod@4.3.6)':
+    optionalDependencies:
+      zod: 4.3.6
+
   '@marlinjai/clearify@1.11.1(@types/node@20.19.33)(@types/react@19.2.14)(jiti@2.6.1)(lightningcss@1.31.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@4.59.0)(terser@5.16.9)(yaml@2.8.2)':
     dependencies:
       '@mdx-js/react': 3.1.1(@types/react@19.2.14)(react@19.2.3)
@@ -4843,7 +4858,12 @@ snapshots:
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
 
-  '@marlinjai/storage-brain-sdk@0.5.1': {}
+  '@marlinjai/storage-brain-sdk@0.7.0(zod@4.3.6)':
+    dependencies:
+      '@marlinjai/brain-core': 0.1.0(zod@4.3.6)
+    transitivePeerDependencies:
+      - hono
+      - zod
 
   '@mdx-js/mdx@3.1.1':
     dependencies:

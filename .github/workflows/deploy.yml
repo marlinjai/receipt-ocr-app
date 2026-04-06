@@ -32,7 +32,6 @@ jobs:
             ghcr.io/marlinjai/receipt-ocr-app:${{ github.sha }}
           build-args: |
             NEXT_PUBLIC_STORAGE_BRAIN_URL=https://api.storage-brain.lumitra.co
-            NEXT_PUBLIC_STORAGE_BRAIN_API_KEY=${{ secrets.STORAGE_BRAIN_API_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

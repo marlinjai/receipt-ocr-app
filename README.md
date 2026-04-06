@@ -32,7 +32,7 @@ Open [http://localhost:3004](http://localhost:3004) in your browser.
 
 ```env
 # Storage Brain (file uploads to Cloudflare R2)
-NEXT_PUBLIC_STORAGE_BRAIN_API_KEY=sk_live_...
+STORAGE_BRAIN_API_KEY=sk_live_...
 NEXT_PUBLIC_STORAGE_BRAIN_URL=https://storage-brain-api.marlin-pohl.workers.dev
 
 # OCR

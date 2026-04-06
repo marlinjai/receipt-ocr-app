@@ -15,7 +15,7 @@ export async function GET(
 ) {
   const { fileId } = await params;
 
-  const apiKey = process.env.NEXT_PUBLIC_STORAGE_BRAIN_API_KEY;
+  const apiKey = process.env.STORAGE_BRAIN_API_KEY;
   if (!apiKey) {
     return NextResponse.json({ error: 'Storage Brain API key not configured' }, { status: 500 });
   }

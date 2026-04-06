@@ -1,8 +1,39 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { getStorageClient, type FileInfo } from '@/lib/storage';
+import type { FileInfo } from '@/lib/storage';
 import type { OcrResult } from '@/lib/ocr-types';
+
+function uploadToPresignedUrl(
+  presignedUrl: string,
+  file: File,
+  onProgress: (progress: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', presignedUrl);
+    xhr.setRequestHeader('Content-Type', file.type);
+
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    });
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`Upload failed with status ${xhr.status}`));
+      }
+    });
+
+    xhr.addEventListener('error', () => reject(new Error('Upload network error')));
+    xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
+
+    xhr.send(file);
+  });
+}
 
 export interface UploadResult {
   file: FileInfo;
@@ -62,12 +93,30 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete }: Receip
 
       updateItem(id, { phase: 'uploading', progress: 0 });
       try {
-        const storage = getStorageClient();
-        const fileInfo = await storage.upload(file, {
-          context: 'receipt',
-          tags: { source: 'receipt-ocr-app' },
-          onProgress: (p: number) => updateItem(id, { progress: p }),
+        // Step 1: Request presigned URL from our server
+        const handshakeRes = await fetch('/api/upload/request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: file.name,
+            fileType: file.type,
+            fileSize: file.size,
+            context: 'receipt',
+            tags: { source: 'receipt-ocr-app' },
+          }),
         });
+        if (!handshakeRes.ok) throw new Error('Upload request failed');
+        const { presignedUrl, fileId } = await handshakeRes.json();
+
+        // Step 2: Upload directly to presigned URL with progress
+        await uploadToPresignedUrl(presignedUrl, file, (progress) => {
+          updateItem(id, { progress });
+        });
+
+        // Step 3: Get file info from our server
+        const fileInfoRes = await fetch(`/api/upload/complete/${fileId}`);
+        if (!fileInfoRes.ok) throw new Error('Failed to get file info');
+        const fileInfo: FileInfo = await fileInfoRes.json();
 
         updateItem(id, { phase: 'ocr' });
         const ocrRes = await fetch('/api/ocr', {

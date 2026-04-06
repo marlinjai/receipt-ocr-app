@@ -21,7 +21,6 @@ WORKDIR /app
 
 # NEXT_PUBLIC_ vars are inlined into the client bundle at build time
 ARG NEXT_PUBLIC_STORAGE_BRAIN_URL
-ARG NEXT_PUBLIC_STORAGE_BRAIN_API_KEY
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

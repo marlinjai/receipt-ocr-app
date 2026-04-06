@@ -13,7 +13,7 @@
   ],
   "vars": {
     "NEXT_PUBLIC_STORAGE_BRAIN_URL": "https://storage-brain-api.marlin-pohl.workers.dev",
-    "NEXT_PUBLIC_STORAGE_BRAIN_API_KEY": "sk_live_xdGLKNVSOCvHY3G2Y-4TnSoIvtbVu7y8"
+    "STORAGE_BRAIN_API_KEY": "sk_live_xdGLKNVSOCvHY3G2Y-4TnSoIvtbVu7y8"
   },
   "d1_databases": [
     {

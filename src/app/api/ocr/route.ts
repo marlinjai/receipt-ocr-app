@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
   }
 
   const storageBrainBaseUrl = process.env.NEXT_PUBLIC_STORAGE_BRAIN_URL || 'https://storage-brain-api.marlin-pohl.workers.dev';
-  const storageBrainApiKey = process.env.NEXT_PUBLIC_STORAGE_BRAIN_API_KEY;
+  const storageBrainApiKey = process.env.STORAGE_BRAIN_API_KEY;
 
   // Build the correct download URL:
   // The Storage Brain download route is GET /api/v1/files/:fileId/download

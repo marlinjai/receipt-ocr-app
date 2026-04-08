@@ -91,21 +91,6 @@ function DashboardContent({ tableId }: { tableId: string }) {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [selectedRows, handleDeleteSelected]);
 
-  // Open detail panel on row double-click (event delegation on the table wrapper)
-  const handleTableDoubleClick = useCallback(
-    (e: React.MouseEvent) => {
-      const target = e.target as HTMLElement;
-      // Walk up to find the table row
-      const tr = target.closest('tr[data-row-id]');
-      if (!tr) return;
-      const rowId = tr.getAttribute('data-row-id');
-      if (!rowId) return;
-      const row = displayRows.find((r) => r.id === rowId);
-      if (row) setDetailRow(row);
-    },
-    [displayRows],
-  );
-
   // Load select options for all select columns
   useEffect(() => {
     columns
@@ -160,6 +145,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
             onColumnResize={(columnId, width) => updateColumn(columnId, { width })}
             onColumnAlignmentChange={(columnId, alignment: TextAlignment) => updateColumn(columnId, { alignment })}
             enableKeyboardNav
+            onRowOpen={(row) => setDetailRow(row)}
             onAddProperty={(name, type: ColumnType) => addColumn({ name, type })}
             onCreateSelectOption={createSelectOption}
             onUpdateSelectOption={updateSelectOption}
@@ -323,7 +309,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
       </div>
 
       {/* Table/Board/Calendar */}
-      <div className="flex-1 overflow-auto p-4" onDoubleClick={handleTableDoubleClick}>
+      <div className="flex-1 overflow-auto p-4">
         {renderView()}
       </div>
 

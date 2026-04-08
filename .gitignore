@@ -52,3 +52,5 @@ test-*.mjs
 # docs build output
 /docs-dist
 .wrangler/
+wrangler.jsonc
+.infisical.json

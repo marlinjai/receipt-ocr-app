@@ -55,7 +55,7 @@ Return a JSON object with these exact fields:
 {
   "fullText": "the complete OCR text you read from the image, preserving line breaks",
   "confidence": 0.0-1.0,
-  "name": "descriptive summary: Vendor - Items - Amount - Date",
+  "name": "descriptive summary: Item/Service – Vendor – €Amount – DD.MM.YYYY (lead with the ITEM, not the vendor)",
   "vendor": "business/store name or null",
   "gross": 0.00 or null,
   "net": 0.00 or null,
@@ -75,7 +75,7 @@ Rules:
 - "date" must be ISO 8601 format (e.g. "2024-03-15T00:00:00.000Z")
 - "category" must be exactly one of: ${categoryList}
 - "konto" must match the category mapping above
-- "name" should be a human-readable summary: "Vendor - Top items - Amount - Date"
+- "name" should be a human-readable summary with the ITEM first: "Item/Service – Vendor – €Amount – DD.MM.YYYY". Example: "Aquarium Heater 200W – Brightener GmbH – €34.99 – 08.04.2026"
 - "fullText" should contain ALL readable text from the receipt
 - "confidence" reflects how confident you are in the OCR quality (0.0-1.0)
 - If you cannot determine a field, use null

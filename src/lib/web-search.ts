@@ -27,6 +27,7 @@ interface ClassifyInput {
 }
 
 export interface WebSearchClassificationResult {
+  name: string | null;
   category: string | null;
   konto: string | null;
   zuordnung: string | null;
@@ -49,17 +50,19 @@ export async function classifyWithWebSearch(
 
 You have access to web_search. You MUST search for the vendor to understand what they sell before classifying. This is mandatory.
 
-After searching, classify the receipt into:
-1. **Category** — one of: ${input.categoryNames.join(', ')}
-2. **Konto** — the SKR03 account number (mapped from category):
+After searching, classify the receipt and generate a descriptive name.
+
+1. **Name** — a human-readable summary of what was purchased. Format: "Item/Service description – Vendor – €Amount – DD.MM.YYYY". Lead with the ITEM, not the vendor. Example: "Aquarium Heater 200W – Brightener GmbH – €34.99 – 08.04.2026". If multiple items, pick the most important one or summarize briefly.
+2. **Category** — one of: ${input.categoryNames.join(', ')}
+3. **Konto** — the SKR03 account number (mapped from category):
 ${input.categoryNames.map((c) => `   ${c} → ${input.categoryToKonto[c]}`).join('\n')}
-3. **Zuordnung** (assignment context) — one of: ${input.zuordnungOptions.join(', ')}
-4. **Tax rate** — the applicable German MwSt rate (19 for standard, 7 for reduced: food/books/public transport)
+4. **Zuordnung** (assignment context) — one of: ${input.zuordnungOptions.join(', ')}
+5. **Tax rate** — the applicable German MwSt rate (19 for standard, 7 for reduced: food/books/public transport)
 
 ${input.userRules || ''}
 
 After your web search, respond with ONLY a JSON object (no markdown, no explanation):
-{ "category": "...", "konto": "...", "zuordnung": "...", "taxRate": 19, "confidence": 0.0-1.0, "reasoning": "..." }`;
+{ "name": "...", "category": "...", "konto": "...", "zuordnung": "...", "taxRate": 19, "confidence": 0.0-1.0, "reasoning": "..." }`;
 
   const userContent = [
     input.vendor && `Vendor: ${input.vendor}`,
@@ -92,6 +95,7 @@ After your web search, respond with ONLY a JSON object (no markdown, no explanat
   try {
     const parsed = JSON.parse(cleaned);
     return {
+      name: typeof parsed.name === 'string' && parsed.name ? parsed.name : null,
       category: input.categoryNames.includes(parsed.category) ? parsed.category : null,
       konto: parsed.konto || (parsed.category ? input.categoryToKonto[parsed.category] : null),
       zuordnung: input.zuordnungOptions.includes(parsed.zuordnung) ? parsed.zuordnung : null,
@@ -101,6 +105,6 @@ After your web search, respond with ONLY a JSON object (no markdown, no explanat
     };
   } catch {
     console.error('[classifyWithWebSearch] Failed to parse response:', cleaned);
-    return { category: null, konto: null, zuordnung: null, taxRate: null, confidence: 0, reasoning: 'Failed to parse classification response' };
+    return { name: null, category: null, konto: null, zuordnung: null, taxRate: null, confidence: 0, reasoning: 'Failed to parse classification response' };
   }
 }

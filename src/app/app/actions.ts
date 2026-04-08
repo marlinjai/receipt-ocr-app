@@ -31,6 +31,7 @@ interface FileData {
 }
 
 interface ClassificationResult {
+  aiName: string | null;
   aiCategory: string | null;
   aiKonto: string | null;
   aiZuordnung: string | null;
@@ -53,6 +54,7 @@ async function classifyReceipt(
     });
 
     return {
+      aiName: result.name,
       aiCategory: result.category,
       aiKonto: result.konto,
       aiZuordnung: result.zuordnung,
@@ -60,7 +62,7 @@ async function classifyReceipt(
     };
   } catch (err) {
     console.error('[classifyReceipt] Classification failed:', err);
-    return { aiCategory: null, aiKonto: null, aiZuordnung: null, aiTaxRate: null };
+    return { aiName: null, aiCategory: null, aiKonto: null, aiZuordnung: null, aiTaxRate: null };
   }
 }
 
@@ -71,6 +73,7 @@ export async function processReceipt(
   const { adapter, tableId } = await getTableId();
   const extracted = ocrResult ? extractReceiptFields(ocrResult) : null;
 
+  let aiName: string | null = null;
   let aiCategory: string | null = null;
   let aiKonto: string | null = null;
   let aiZuordnung: string | null = null;
@@ -79,6 +82,7 @@ export async function processReceipt(
 
   if (extracted && ocrResult?.fullText) {
     const ai = await classifyReceipt(extracted, ocrResult.fullText);
+    aiName = ai.aiName;
     aiCategory = ai.aiCategory;
     aiKonto = ai.aiKonto;
     aiZuordnung = ai.aiZuordnung;
@@ -126,7 +130,7 @@ export async function processReceipt(
   for (const col of columns) {
     switch (col.name) {
       case 'Name':
-        cells[col.id] = extracted?.name || file.originalName;
+        cells[col.id] = aiName || extracted?.name || file.originalName;
         break;
       case 'Vendor':
         cells[col.id] = extracted?.vendor ?? null;

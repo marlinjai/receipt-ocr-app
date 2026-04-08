@@ -17,6 +17,7 @@ import type { ColumnType, Row, GroupConfig, TextAlignment, CellValue } from '@ma
 import { createServerActionsAdapter } from './server-actions-adapter';
 import AiChatSidebar from '@/components/AiChatSidebar';
 import ReceiptImagePreview from '@/components/ReceiptImagePreview';
+import ReceiptDetailPanel from '@/components/ReceiptDetailPanel';
 import { exportCSV } from '@/lib/export-csv';
 
 const dbAdapter = createServerActionsAdapter();
@@ -65,6 +66,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
   const [searchResults, setSearchResults] = useState<Row[] | null>(null);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [aiSidebarOpen, setAiSidebarOpen] = useState(false);
+  const [detailRow, setDetailRow] = useState<Row | null>(null);
   const displayRows = searchResults ?? rows;
 
   // Delete selected rows on Backspace/Delete key
@@ -88,6 +90,21 @@ function DashboardContent({ tableId }: { tableId: string }) {
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [selectedRows, handleDeleteSelected]);
+
+  // Open detail panel on row double-click (event delegation on the table wrapper)
+  const handleTableDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Walk up to find the table row
+      const tr = target.closest('tr[data-row-id]');
+      if (!tr) return;
+      const rowId = tr.getAttribute('data-row-id');
+      if (!rowId) return;
+      const row = displayRows.find((r) => r.id === rowId);
+      if (row) setDetailRow(row);
+    },
+    [displayRows],
+  );
 
   // Load select options for all select columns
   useEffect(() => {
@@ -306,12 +323,22 @@ function DashboardContent({ tableId }: { tableId: string }) {
       </div>
 
       {/* Table/Board/Calendar */}
-      <div className="flex-1 overflow-auto p-4">
+      <div className="flex-1 overflow-auto p-4" onDoubleClick={handleTableDoubleClick}>
         {renderView()}
       </div>
 
       {/* Receipt Image Thumbnails */}
       <ReceiptImagePreview columns={columns} rows={displayRows} />
+
+      {/* Receipt Detail Panel */}
+      {detailRow && (
+        <ReceiptDetailPanel
+          row={detailRow}
+          columns={columns}
+          selectOptions={selectOptions}
+          onClose={() => setDetailRow(null)}
+        />
+      )}
 
       {/* AI Chat Sidebar */}
       <AiChatSidebar

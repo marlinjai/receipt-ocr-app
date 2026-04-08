@@ -44,5 +44,12 @@ export async function POST(request: NextRequest) {
   }
 
   const data = await upstream.json();
+
+  // Storage Brain returns a relative presigned URL (e.g. /_internal/upload/...).
+  // Make it absolute so the browser uploads to Storage Brain, not this app.
+  if (data.presignedUrl && data.presignedUrl.startsWith('/')) {
+    data.presignedUrl = `${STORAGE_BRAIN_URL}${data.presignedUrl}`;
+  }
+
   return NextResponse.json(data);
 }

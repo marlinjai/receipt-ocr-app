@@ -12,15 +12,16 @@ jobs:
       deployments: write
     steps:
       - uses: actions/checkout@v4
-      - name: Load Cloudflare credentials from 1Password
-        uses: 1password/load-secrets-action@v2
+      - name: Load Cloudflare credentials from Infisical
+        uses: Infisical/secrets-action@v1
         with:
-          export-env: true
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          CLOUDFLARE_API_KEY: op://Dev Secrets/Cloudflare Global API Key/credential
-          CLOUDFLARE_EMAIL: op://Dev Secrets/Cloudflare Global API Key/email
-          CLOUDFLARE_ACCOUNT_ID: op://Dev Secrets/Cloudflare Global API Key/account-id
+          domain: https://infisical.lumitra.co
+          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          project-slug: infra
+          env-slug: prod
+          secret-path: /providers
+          export-type: env
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:

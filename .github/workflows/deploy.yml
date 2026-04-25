@@ -35,12 +35,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy:
+  deploy-verify:
     needs: build-and-push
-    runs-on: ubuntu-24.04-arm
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Trigger Coolify deploy
-        run: |
-          curl -sf "${{ secrets.COOLIFY_WEBHOOK }}" \
-            -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" || exit 1
+    permissions:
+      contents: read
+      deployments: write
+    uses: marlinjai/actions-shared/.github/workflows/coolify-deploy-verify.yml@v1
+    with:
+      health_url: https://receipts.lumitra.co/api/health
+      environment: production
+    secrets:
+      coolify_webhook: ${{ secrets.COOLIFY_WEBHOOK }}
+      coolify_token: ${{ secrets.COOLIFY_TOKEN }}

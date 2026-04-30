@@ -13,7 +13,7 @@ import {
   SearchBar,
   FilterBar,
 } from '@marlinjai/data-table-react';
-import type { ColumnType, Row, GroupConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
+import type { ColumnType, Row, GroupConfig, FooterConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
 import AiChatSidebar from '@/components/AiChatSidebar';
 import ReceiptImagePreview from '@/components/ReceiptImagePreview';
@@ -164,6 +164,15 @@ function DashboardContent({ tableId }: { tableId: string }) {
               if (currentView) {
                 updateView(currentView.id, {
                   config: { ...currentView.config, groupConfig: config },
+                });
+              }
+            }}
+            showFooter
+            footerConfig={(currentView?.config?.footerConfig as FooterConfig | undefined) ?? { calculations: {} }}
+            onFooterConfigChange={(config) => {
+              if (currentView) {
+                updateView(currentView.id, {
+                  config: { ...currentView.config, footerConfig: config },
                 });
               }
             }}

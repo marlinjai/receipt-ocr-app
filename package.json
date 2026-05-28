@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
-    "dev": "infisical run --domain https://infisical.lumitra.co -- next dev",
+    "dev": "infisical run --token=\"$($HOME/software-dev/infra/scripts/infisical-mi-token.sh)\" --projectId=95d42533-3157-4b66-a49b-cc386ec1214d --domain=https://infisical.lumitra.co -- next dev",
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",

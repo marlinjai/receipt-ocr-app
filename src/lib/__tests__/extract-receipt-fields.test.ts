@@ -110,6 +110,40 @@ describe('extractAmounts (via extractReceiptFields)', () => {
   });
 });
 
+// ── Currency Extraction ──────────────────────────────────────────────
+
+describe('extractCurrency (via extractReceiptFields)', () => {
+  it('detects USD from an explicit ISO code', () => {
+    const ocr = makeOcr('ElevenLabs Inc.\nAmount: 22.00 USD\nTotal: $22.00');
+    const result = extractReceiptFields(ocr);
+    expect(result.currency).toBe('USD');
+  });
+
+  it('detects USD from dollar-sign frequency', () => {
+    const ocr = makeOcr('Vercel Inc.\nSubscription: $20.00\nUsage: $5.00\nTotal: $25.00');
+    const result = extractReceiptFields(ocr);
+    expect(result.currency).toBe('USD');
+  });
+
+  it('detects GBP from the pound symbol', () => {
+    const ocr = makeOcr('UK Vendor Ltd\nTotal: £42.00');
+    const result = extractReceiptFields(ocr);
+    expect(result.currency).toBe('GBP');
+  });
+
+  it('defaults to EUR when no currency signal is present', () => {
+    const ocr = makeOcr('Vendor\nTotal: 42.00');
+    const result = extractReceiptFields(ocr);
+    expect(result.currency).toBe('EUR');
+  });
+
+  it('defaults to EUR for euro-symbol receipts', () => {
+    const ocr = makeOcr('REWE\nGesamt: 8,06 €');
+    const result = extractReceiptFields(ocr);
+    expect(result.currency).toBe('EUR');
+  });
+});
+
 // ── Date Extraction ──────────────────────────────────────────────────
 
 describe('extractDate (via extractReceiptFields)', () => {
@@ -315,6 +349,26 @@ describe('inferCategory (via extractReceiptFields)', () => {
     const result = extractReceiptFields(ocr);
     expect(result.category).toBe('Sonstige Ausgaben');
     expect(result.konto).toBe('4900');
+  });
+
+  it('categorizes known vendor (ElevenLabs → Software & Lizenzen)', () => {
+    const ocr = makeOcrWithBlocks(
+      'ElevenLabs Inc.\nCreator Plan - Monthly\nTotal: $22.00',
+      ['ElevenLabs Inc.', 'Creator Plan - Monthly', 'Total: $22.00'],
+    );
+    const result = extractReceiptFields(ocr);
+    expect(result.category).toBe('Software & Lizenzen');
+    expect(result.konto).toBe('4806');
+  });
+
+  it('categorizes known vendor (Resend → Software & Lizenzen)', () => {
+    const ocr = makeOcrWithBlocks(
+      'Resend\nEmail API - Pro Plan\nTotal: $20.00',
+      ['Resend', 'Email API - Pro Plan', 'Total: $20.00'],
+    );
+    const result = extractReceiptFields(ocr);
+    expect(result.category).toBe('Software & Lizenzen');
+    expect(result.konto).toBe('4806');
   });
 });
 

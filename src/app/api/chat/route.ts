@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { getAiClient, getChatModel } from '@/lib/ai-client';
 import { TABLE_TOOLS } from '@/lib/ai-chat-tools';
-import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-table';
+import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
 import type OpenAI from 'openai';
 
 const CATEGORY_NAMES = Object.keys(CATEGORY_TO_KONTO);

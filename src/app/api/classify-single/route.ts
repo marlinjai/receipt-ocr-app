@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-table';
+import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
 import { classifyWithWebSearch } from '@/lib/web-search';
 
 const CATEGORY_NAMES = Object.keys(CATEGORY_TO_KONTO);

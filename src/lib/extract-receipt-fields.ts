@@ -10,6 +10,7 @@ export interface ExtractionResult {
   date: string | null; // ISO 8601
   category: string | null; // matches CATEGORY_OPTIONS (SKR03) from receipts-table.ts
   konto: string | null; // SKR03 account number (e.g. "4650")
+  currency: string; // ISO 4217 code, e.g. "EUR", "USD", "GBP" — defaults to "EUR" when ambiguous
 }
 
 // ── Amount Extraction ────────────────────────────────────────────────
@@ -136,6 +137,26 @@ function extractAmounts(text: string): AmountBreakdown {
   }
 
   return { gross, net, tax };
+}
+
+// ── Currency Extraction ──────────────────────────────────────────────
+
+const CURRENCY_CODE_PATTERN = /\b(USD|EUR|GBP)\b/;
+
+// Explicit ISO codes win; otherwise pick the most frequent currency symbol in the
+// document. Defaults to EUR when no signal is found, matching prior implicit behavior.
+function extractCurrency(text: string): string {
+  const codeMatch = text.match(CURRENCY_CODE_PATTERN);
+  if (codeMatch) return codeMatch[1];
+
+  const dollarCount = (text.match(/\$/g) ?? []).length;
+  const euroCount = (text.match(/€/g) ?? []).length;
+  const poundCount = (text.match(/£/g) ?? []).length;
+
+  if (dollarCount === 0 && euroCount === 0 && poundCount === 0) return 'EUR';
+  if (dollarCount >= euroCount && dollarCount >= poundCount) return 'USD';
+  if (poundCount >= euroCount) return 'GBP';
+  return 'EUR';
 }
 
 // ── Date Extraction ──────────────────────────────────────────────────
@@ -417,6 +438,7 @@ const VENDOR_CATEGORY_MAP: Record<string, string> = {
   notion: 'Software & Lizenzen', figma: 'Software & Lizenzen', slack: 'Software & Lizenzen',
   openai: 'Software & Lizenzen', anthropic: 'Software & Lizenzen', aws: 'Software & Lizenzen',
   hetzner: 'Software & Lizenzen', digitalocean: 'Software & Lizenzen', steam: 'Software & Lizenzen',
+  elevenlabs: 'Software & Lizenzen', resend: 'Software & Lizenzen',
   // Telefon & Internet (4920)
   'at&t': 'Telefon & Internet', verizon: 'Telefon & Internet', 't-mobile': 'Telefon & Internet',
   comcast: 'Telefon & Internet', spectrum: 'Telefon & Internet',
@@ -495,6 +517,7 @@ export function extractReceiptFields(ocrData: OcrResult): ExtractionResult {
   const category = inferCategory(vendor, ocrData.fullText);
   const name = extractName(vendor, ocrData, gross, date);
   const konto = category ? CATEGORY_TO_KONTO[category] ?? null : null;
+  const currency = extractCurrency(ocrData.fullText);
 
   // Calculate tax rate from gross and net, or default based on category
   let taxRate: number | null = null;
@@ -510,5 +533,5 @@ export function extractReceiptFields(ocrData: OcrResult): ExtractionResult {
     finalNet = Math.round((gross / (1 + taxRate / 100)) * 100) / 100;
   }
 
-  return { name, vendor, gross, net: finalNet, taxRate, date, category, konto };
+  return { name, vendor, gross, net: finalNet, taxRate, date, category, konto, currency };
 }

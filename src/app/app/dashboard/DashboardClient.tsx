@@ -15,6 +15,7 @@ import {
 } from '@marlinjai/data-table-react';
 import type { ColumnType, Row, GroupConfig, FooterConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
+import FxRecomputePanel from './FxRecomputePanel';
 import AiChatSidebar from '@/components/AiChatSidebar';
 import ReceiptImagePreview from '@/components/ReceiptImagePreview';
 import ReceiptDetailPanel from '@/components/ReceiptDetailPanel';
@@ -225,6 +226,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
               </svg>
               Export CSV
             </button>
+            <FxRecomputePanel />
             <button
               onClick={() => setAiSidebarOpen((v) => !v)}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"

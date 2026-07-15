@@ -1,5 +1,5 @@
 import { getAiClient, getClassifyModel } from '@/lib/ai-client';
-import { CATEGORY_TO_KONTO, CATEGORY_OPTIONS } from '@/lib/receipts-constants';
+import { CATEGORY_TO_KONTO, CATEGORY_OPTIONS, CURRENCY_OPTIONS } from '@/lib/receipts-constants';
 import type { ExtractionResult } from '@/lib/extract-receipt-fields';
 import type { OcrResult } from '@/lib/ocr-types';
 
@@ -62,7 +62,8 @@ Return a JSON object with these exact fields:
   "taxRate": 19 or null,
   "date": "ISO 8601 date string or null",
   "category": "one of the categories below, or null",
-  "konto": "SKR03 account number or null"
+  "konto": "SKR03 account number or null",
+  "currency": "ISO 4217 currency code, one of: ${CURRENCY_OPTIONS.join(', ')}"
 }
 
 Categories (with SKR03 Konto):
@@ -75,6 +76,7 @@ Rules:
 - "date" must be ISO 8601 format (e.g. "2024-03-15T00:00:00.000Z")
 - "category" must be exactly one of: ${categoryList}
 - "konto" must match the category mapping above
+- "currency" must be exactly one of: ${CURRENCY_OPTIONS.join(', ')}; infer it from the amount's currency symbol/code, defaulting to EUR if ambiguous
 - "name" should be a human-readable summary with the ITEM first: "Item/Service – Vendor – €Amount – DD.MM.YYYY". Example: "Aquarium Heater 200W – Brightener GmbH – €34.99 – 08.04.2026"
 - "fullText" should contain ALL readable text from the receipt
 - "confidence" reflects how confident you are in the OCR quality (0.0-1.0)
@@ -112,6 +114,7 @@ Rules:
   // Validate and normalize the parsed response
   const category = CATEGORY_OPTIONS.includes(parsed.category) ? parsed.category : null;
   const konto = category ? CATEGORY_TO_KONTO[category] ?? null : null;
+  const currency = CURRENCY_OPTIONS.includes(parsed.currency) ? parsed.currency : 'EUR';
 
   const extraction: ExtractionResult = {
     name: typeof parsed.name === 'string' && parsed.name ? parsed.name : 'Receipt',
@@ -122,6 +125,7 @@ Rules:
     date: typeof parsed.date === 'string' ? parsed.date : null,
     category,
     konto,
+    currency,
   };
 
   const ocrResult: OcrResult = {

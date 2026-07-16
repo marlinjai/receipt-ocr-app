@@ -21,6 +21,12 @@ export function devFallbackWorkspaceId(): string {
  * May `session` touch data in `workspaceId`? Membership of the owning
  * workspace is required; the dev bypass (no memberships, development only)
  * may touch only the local dev workspace. Fail-closed.
+ *
+ * Cross-package invariant this relies on (verified against
+ * @marlinjai/auth-brain-nextjs 0.1.0): a zero-membership session can ONLY be
+ * the NODE_ENV=development bypass. In production, getSession() returns null
+ * for a verified user with no receipts-* membership (never an empty-
+ * membership session), so the dev branch below is unreachable in prod.
  */
 export function sessionMayAccessWorkspace(
   session: SessionLike,

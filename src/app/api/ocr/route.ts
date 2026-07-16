@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guardFileAccess } from '@/lib/file-access';
 import type { OcrResult, OcrBlock } from '@/lib/ocr-types';
 import { multimodalOcr } from '@/lib/multimodal-ocr';
 
@@ -63,13 +64,18 @@ function visionToOcrResult(visionResponse: VisionResponse): OcrResult {
 export async function POST(request: NextRequest) {
   const body = await request.json();
 
-  // Accept either fileId (preferred) or fileUrl (legacy)
+  // fileId only. The legacy fileUrl path is gone: nothing sends it anymore,
+  // and fetching a caller-supplied URL with the Storage Brain bearer attached
+  // was an SSRF hole.
   const fileId: string | undefined = body.fileId;
-  const fileUrl: string | undefined = body.fileUrl;
 
-  if (!fileId && !fileUrl) {
-    return NextResponse.json({ error: 'fileId or fileUrl is required' }, { status: 400 });
+  if (!fileId) {
+    return NextResponse.json({ error: 'fileId is required' }, { status: 400 });
   }
+
+  // Cross-company isolation (also validates the id shape).
+  const denied = await guardFileAccess(request, fileId);
+  if (denied) return denied;
 
   const useMultimodal = process.env.USE_MULTIMODAL_OCR === 'true' || process.env.USE_MULTIMODAL_OCR === '1';
   const visionApiKey = process.env.GOOGLE_CLOUD_VISION_API_KEY;
@@ -84,14 +90,7 @@ export async function POST(request: NextRequest) {
   // The Storage Brain download route is GET /api/v1/files/:fileId/download
   // The `url` field from the SDK is broken (uses a non-existent route pattern),
   // so we always construct from fileId when available.
-  let downloadUrl: string;
-  if (fileId) {
-    downloadUrl = `${storageBrainBaseUrl}/api/v1/files/${fileId}/download`;
-  } else if (fileUrl!.startsWith('http')) {
-    downloadUrl = fileUrl!;
-  } else {
-    downloadUrl = `${storageBrainBaseUrl}${decodeURIComponent(fileUrl!)}`;
-  }
+  const downloadUrl = `${storageBrainBaseUrl}/api/v1/files/${fileId}/download`;
 
   // Fetch the file from Storage Brain
   const imageResponse = await fetch(downloadUrl, {

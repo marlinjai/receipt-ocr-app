@@ -26,12 +26,6 @@ export const CATEGORY_TO_KONTO: Record<string, string> = {
 
 export const ZUORDNUNG_OPTIONS = ['Universität', 'Geschäftlich', 'Privat'];
 
-// The pre-multi-tenant data-table workspace id. Live rows under this id are
-// migrated to the receipts-marlinjai auth-brain workspace (Phase 4 of the
-// 2026-07-16 plan); the constant remains only for the migration script and
-// the local dev-bypass fallback.
-export const LEGACY_WORKSPACE_ID = 'receipt-ocr';
-
 export const CURRENCY_OPTIONS = ['EUR', 'USD', 'GBP'];
 
 export const PROJECT_OPTIONS = ['Lola Stories'];

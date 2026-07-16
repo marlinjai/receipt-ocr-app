@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guardFileAccess } from '@/lib/file-access';
 
 const STORAGE_BRAIN_URL =
   process.env.NEXT_PUBLIC_STORAGE_BRAIN_URL || 'https://storage-brain-api.marlin-pohl.workers.dev';
@@ -10,10 +11,15 @@ const STORAGE_BRAIN_URL =
  * The browser never needs the API key — it just hits this route.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ fileId: string }> },
 ) {
   const { fileId } = await params;
+
+  // Cross-company isolation: only members of a workspace referencing this
+  // file (or service callers) may pull the bytes.
+  const denied = await guardFileAccess(request, fileId);
+  if (denied) return denied;
 
   const apiKey = process.env.STORAGE_BRAIN_API_KEY;
   if (!apiKey) {
@@ -36,7 +42,7 @@ export async function GET(
     headers: {
       'Content-Type': contentType,
       'Content-Disposition': 'inline',
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': 'private, max-age=86400',
     },
   });
 }

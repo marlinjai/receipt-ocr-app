@@ -12,10 +12,12 @@ import {
   getDefaultBusinessSharePercent,
 } from '@/lib/receipts-constants';
 import { classifyWithWebSearch } from '@/lib/web-search';
+import { auth } from '@/lib/auth';
+import { requireReceiptsSession } from '@/lib/auth-guards';
+import { sessionWorkspaceId } from '@/lib/auth-workspace';
 import type { CellValue, FooterConfig, ViewConfig } from '@marlinjai/data-table-core';
 import type { OcrResult } from '@/lib/ocr-types';
 
-const WORKSPACE_ID = 'receipt-ocr';
 const TABLE_NAME = 'Receipts';
 const CATEGORY_NAMES = Object.keys(CATEGORY_TO_KONTO);
 
@@ -23,9 +25,9 @@ function getAdapter() {
   return new PrismaAdapter({ prisma });
 }
 
-async function getTableId() {
+async function getTableId(workspaceId: string) {
   const adapter = getAdapter();
-  const tables = await adapter.listTables(WORKSPACE_ID);
+  const tables = await adapter.listTables(workspaceId);
   const existing = tables.find(t => t.name === TABLE_NAME);
   if (existing) return { adapter, tableId: existing.id };
   throw new Error('Receipts table not initialized. Visit the dashboard first.');
@@ -77,7 +79,11 @@ export async function processReceipt(
   file: FileData,
   ocrResult: OcrResult | null,
 ) {
-  const { adapter, tableId } = await getTableId();
+  // Inner check (the middleware is the outer fence): the session must hold
+  // receipts.upload on its ACTIVE workspace. The workspace id is resolved
+  // server-side from the verified session, never from the browser.
+  const session = await auth.requireAction('receipts.upload');
+  const { adapter, tableId } = await getTableId(sessionWorkspaceId(session));
   const extracted = ocrResult ? extractReceiptFields(ocrResult) : null;
 
   let aiName: string | null = null;
@@ -215,7 +221,8 @@ export async function recomputeFxRates(
   startDate: string,
   endDate: string,
 ): Promise<{ updated: number; failed: number; skippedEur: number }> {
-  const { adapter, tableId } = await getTableId();
+  const session = await auth.requireAction('receipts.fx.recompute');
+  const { adapter, tableId } = await getTableId(sessionWorkspaceId(session));
   const columns = await adapter.getColumns(tableId);
   const dateCol = columns.find((c) => c.name === 'Date');
   const currencyCol = columns.find((c) => c.name === 'Currency');
@@ -320,11 +327,15 @@ const COLUMNS: ColumnDef[] = [
  * production table that predates a given column/view (self-heals schema drift).
  */
 export async function initializeReceiptsTable() {
+  // Per-workspace lazy init: each company workspace gets its own Receipts
+  // table on first visit, keyed by the session's ACTIVE workspace UUID.
+  const session = await requireReceiptsSession();
+  const workspaceId = sessionWorkspaceId(session);
   const adapter = getAdapter();
-  const tables = await adapter.listTables(WORKSPACE_ID);
+  const tables = await adapter.listTables(workspaceId);
   let table = tables.find((t) => t.name === TABLE_NAME);
   if (!table) {
-    table = await adapter.createTable({ workspaceId: WORKSPACE_ID, name: TABLE_NAME });
+    table = await adapter.createTable({ workspaceId, name: TABLE_NAME });
   }
 
   const existingColumns = await adapter.getColumns(table.id);

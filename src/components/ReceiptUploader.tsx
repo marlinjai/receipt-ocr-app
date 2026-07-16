@@ -78,7 +78,9 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete }: Receip
   const pendingRef = useRef<{ id: string; file: File }[]>([]);
   const processingRef = useRef(false);
   const callbackRefs = useRef({ onProcessFile, onAllComplete });
-  callbackRefs.current = { onProcessFile, onAllComplete };
+  useEffect(() => {
+    callbackRefs.current = { onProcessFile, onAllComplete };
+  }, [onProcessFile, onAllComplete]);
 
   const updateItem = useCallback((id: string, updates: Partial<QueueItem>) => {
     setQueue(prev => prev.map(q => q.id === id ? { ...q, ...updates } : q));

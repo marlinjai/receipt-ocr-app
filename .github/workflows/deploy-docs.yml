@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Load Cloudflare credentials from Infisical
-        uses: Infisical/secrets-action@v1
+        uses: Infisical/secrets-action@v1.0.16
         with:
           domain: https://infisical.lumitra.co
           client-id: ${{ secrets.INFISICAL_CLIENT_ID }}

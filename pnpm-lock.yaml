@@ -15,6 +15,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.80.0
         version: 0.80.0(zod@4.3.6)
+      '@marlinjai/auth-brain-nextjs':
+        specifier: ^0.1.0
+        version: 0.1.0(next@16.1.6(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(zod@4.3.6)
       '@marlinjai/data-table-adapter-prisma':
         specifier: ^0.2.1
         version: 0.2.1(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
@@ -740,8 +743,35 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
+  '@marlinjai/auth-brain-nextjs@0.1.0':
+    resolution: {integrity: sha512-3a2DJtKSs7ZYphhm03EblF+TfDg+yVh1AhOM+l3aDCNEzd7mV5uwscbhl1iXm8k7M0NZTzxJJkjkbygSLUVl6w==}
+    peerDependencies:
+      next: '>=15.0.0'
+
+  '@marlinjai/auth-brain-sdk@1.2.0':
+    resolution: {integrity: sha512-bKwnzb6k77RAK3lkI1eDZEXtnj5fS+Nxt71uJlN70zep2uOPTtk01ItRa9n4n7HK98f3ceEaNIdrNCbJYCzDcQ==}
+    peerDependencies:
+      hono: '>=4.0.0'
+    peerDependenciesMeta:
+      hono:
+        optional: true
+
+  '@marlinjai/auth-brain-shared@1.1.0':
+    resolution: {integrity: sha512-zQQ4l783ao+7DJHi3G9PWh1KUEGr33eDUWt6ptfys20R6h3Qn9qDW/5XQ7nzWK4bxllMJY8GCghk/gqc7L8zqw==}
+
   '@marlinjai/brain-core@0.1.0':
     resolution: {integrity: sha512-1Ot/3uDM4Ewf18dlzgkAterIa2H5o8+V7IaknR5L4odI+zgMlPPtQ8CbjxU8Z/JnhwF3R+dqIxW+k/o0ithZPg==}
+    peerDependencies:
+      hono: ^4.0.0
+      zod: ^3.22.4
+    peerDependenciesMeta:
+      hono:
+        optional: true
+      zod:
+        optional: true
+
+  '@marlinjai/brain-core@0.2.1':
+    resolution: {integrity: sha512-lWLkn+X0ovN8RqIhz64BO86ECGWXs7wmc5youCb0PFJbvpWPTgELB9S+vTs/TLDPTShXc7KYoHr7UyCBYHBGVw==}
     peerDependencies:
       hono: ^4.0.0
       zod: ^3.22.4
@@ -4195,6 +4225,9 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
   zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
@@ -4789,7 +4822,31 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
+  '@marlinjai/auth-brain-nextjs@0.1.0(next@16.1.6(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(zod@4.3.6)':
+    dependencies:
+      '@marlinjai/auth-brain-sdk': 1.2.0(zod@4.3.6)
+      '@marlinjai/auth-brain-shared': 1.1.0
+      next: 16.1.6(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+    transitivePeerDependencies:
+      - hono
+      - zod
+
+  '@marlinjai/auth-brain-sdk@1.2.0(zod@4.3.6)':
+    dependencies:
+      '@marlinjai/auth-brain-shared': 1.1.0
+      '@marlinjai/brain-core': 0.2.1(zod@4.3.6)
+    transitivePeerDependencies:
+      - zod
+
+  '@marlinjai/auth-brain-shared@1.1.0':
+    dependencies:
+      zod: 3.25.76
+
   '@marlinjai/brain-core@0.1.0(zod@4.3.6)':
+    optionalDependencies:
+      zod: 4.3.6
+
+  '@marlinjai/brain-core@0.2.1(zod@4.3.6)':
     optionalDependencies:
       zod: 4.3.6
 
@@ -8988,6 +9045,8 @@ snapshots:
   zod-validation-error@4.0.2(zod@4.3.6):
     dependencies:
       zod: 4.3.6
+
+  zod@3.25.76: {}
 
   zod@4.3.6: {}
 

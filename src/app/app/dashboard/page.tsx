@@ -1,15 +1,20 @@
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
-import { WORKSPACE_ID } from '@/lib/receipts-constants';
+import { auth } from '@/lib/auth';
+import { sessionWorkspaceId } from '@/lib/auth-guards';
 import DashboardClient from './DashboardClient';
 
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
-  const adapter = new PrismaAdapter({ prisma });
+  // The middleware gates the route; requireSession resolves the verified
+  // session (or redirects) so the table lookup is scoped to the ACTIVE
+  // workspace, server-side.
+  const session = await auth.requireSession('/app/dashboard');
+  const workspaceId = sessionWorkspaceId(session);
 
-  // Find the Receipts table
-  const tables = await adapter.listTables(WORKSPACE_ID);
+  const adapter = new PrismaAdapter({ prisma });
+  const tables = await adapter.listTables(workspaceId);
   const table = tables.find((t) => t.name === 'Receipts');
 
   if (!table) {
@@ -30,7 +35,7 @@ export default async function DashboardPage() {
   return (
     <DashboardClient
       tableId={table.id}
-      workspaceId={WORKSPACE_ID}
+      workspaceId={workspaceId}
     />
   );
 }

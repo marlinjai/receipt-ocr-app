@@ -26,8 +26,6 @@ export const CATEGORY_TO_KONTO: Record<string, string> = {
 
 export const ZUORDNUNG_OPTIONS = ['Universität', 'Geschäftlich', 'Privat'];
 
-export const WORKSPACE_ID = 'receipt-ocr';
-
 export const CURRENCY_OPTIONS = ['EUR', 'USD', 'GBP'];
 
 export const PROJECT_OPTIONS = ['Lola Stories'];

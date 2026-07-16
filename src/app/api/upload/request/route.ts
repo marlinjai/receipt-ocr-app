@@ -16,7 +16,9 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { fileName, fileType, fileSize, context, tags, workspaceId } = body;
+  // workspaceId is intentionally NOT read from the browser (client-controlled
+  // values never pick a workspace anywhere in this app).
+  const { fileName, fileType, fileSize, context, tags } = body;
 
   const upstream = await fetch(`${STORAGE_BRAIN_URL}/api/v1/upload/request`, {
     method: 'POST',
@@ -30,7 +32,6 @@ export async function POST(request: NextRequest) {
       fileSizeBytes: fileSize,
       context,
       tags,
-      workspaceId,
     }),
   });
 

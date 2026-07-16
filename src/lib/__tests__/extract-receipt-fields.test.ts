@@ -387,10 +387,12 @@ describe('taxRate calculation', () => {
     expect(result.taxRate).toBeCloseTo(7.0, 1);
   });
 
-  it('returns null taxRate when net is not available', () => {
+  it('falls back to the category-default tax rate when net is not available', () => {
+    // Since the multi-currency work, a missing net no longer yields null:
+    // defaultTaxRate(category) fills in (19% standard when no category).
     const ocr = makeOcr('Total: $50.00');
     const result = extractReceiptFields(ocr);
-    expect(result.taxRate).toBeNull();
+    expect(result.taxRate).toBe(19);
   });
 });
 

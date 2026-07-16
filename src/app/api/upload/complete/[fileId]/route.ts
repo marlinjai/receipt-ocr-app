@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guardFileAccess } from '@/lib/file-access';
 
 const STORAGE_BRAIN_URL =
   process.env.NEXT_PUBLIC_STORAGE_BRAIN_URL || 'https://api.storage-brain.lumitra.co';
@@ -10,10 +11,13 @@ const STORAGE_BRAIN_URL =
  * The browser never needs the API key — it just hits this route.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ fileId: string }> },
 ) {
   const { fileId } = await params;
+
+  const denied = await guardFileAccess(request, fileId);
+  if (denied) return denied;
 
   const apiKey = process.env.STORAGE_BRAIN_API_KEY;
   if (!apiKey) {

@@ -112,6 +112,60 @@ model DtRow {
   @@map("dt_rows")
 }
 
+// Per-user Google connection for the Sheets importer. One row per auth-brain
+// user; the refresh token is stored AES-256-GCM encrypted (never in plaintext).
+// The token authorizes reading the user's own Sheets (spreadsheets.readonly);
+// it is unrelated to auth-brain, which governs who may use Receipts at all.
+model GoogleSheetsCredential {
+  id                    String   @id @default(uuid())
+  authUserId            String   @unique @map("auth_user_id")
+  googleEmail           String?  @map("google_email")
+  refreshTokenEncrypted String   @map("refresh_token_encrypted")
+  scopes                String
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@map("google_sheets_credentials")
+}
+
+// A saved Sheets import for one workspace (company book): which spreadsheet/tab,
+// how its columns map onto the Receipts fields, and which fields form the dedup
+// identity. Scoped by the auth-brain workspace UUID (the same value that
+// partitions dt_tables.workspace_id), so each company's import is isolated.
+model SheetImportConfig {
+  id              String    @id @default(uuid())
+  authWorkspaceId String    @map("auth_workspace_id")
+  spreadsheetId   String    @map("spreadsheet_id")
+  sheetName       String    @map("sheet_name")
+  headerRow       Int       @default(1) @map("header_row")
+  columnMapping   Json      @map("column_mapping")
+  dedupKeyFields  Json      @map("dedup_key_fields")
+  createdByUserId String    @map("created_by_user_id")
+  lastRunAt       DateTime? @map("last_run_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  rows            SheetImportRow[]
+
+  @@unique([authWorkspaceId, spreadsheetId, sheetName])
+  @@map("sheet_import_configs")
+}
+
+// Dedup ledger mapping an imported sheet row (by stable key) to the dt_rows row
+// it produced, so a re-run upserts instead of duplicating. Kept separate from
+// dt_rows to leave the generic data-table schema untouched.
+model SheetImportRow {
+  id        String            @id @default(uuid())
+  configId  String            @map("config_id")
+  dedupKey  String            @map("dedup_key")
+  dtRowId   String            @map("dt_row_id")
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+  config    SheetImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@unique([configId, dedupKey])
+  @@map("sheet_import_rows")
+}
+
 // Historical ECB reference-rate cache (via api.frankfurter.dev), keyed by invoice
 // date so the same currency/date pair is never fetched twice.
 model FxRate {

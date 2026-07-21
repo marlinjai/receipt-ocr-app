@@ -22,6 +22,7 @@ export const auth = createAuthBrainNextjs({
     'receipts.row.write': 'workspace.member',
     'receipts.schema.write': 'workspace.member',
     'receipts.fx.recompute': 'workspace.member',
+    'receipts.import': 'workspace.member',
   },
   publicPaths: ['/api/health'],
   publicUrl: 'https://receipts.lumitra.co',
@@ -31,4 +32,5 @@ export type ReceiptsAction =
   | 'receipts.upload'
   | 'receipts.row.write'
   | 'receipts.schema.write'
-  | 'receipts.fx.recompute';
+  | 'receipts.fx.recompute'
+  | 'receipts.import';

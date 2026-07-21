@@ -27,16 +27,38 @@ const inputStyle = {
   color: 'var(--foreground)',
 } as const;
 
+// Extra header aliases per field, so common invoice-sheet columns map without
+// hand-wiring (e.g. "Amount" -> Gross, "Lola Share" -> Business Share %).
+const FIELD_ALIASES: Partial<Record<ImportableField, string[]>> = {
+  Gross: ['amount', 'betrag', 'total', 'bruttobetrag', 'gross'],
+  Net: ['nettobetrag', 'netamount'],
+  'Business Share %': ['share', 'lolashare', 'businessshare', 'anteil'],
+  Name: ['invoice', 'invoiceno', 'invoicenumber', 'rechnungsnr', 'description', 'beschreibung'],
+  Date: ['rechnungsdatum', 'invoicedate'],
+  Vendor: ['lieferant', 'supplier', 'merchant'],
+  Konto: ['account', 'konto'],
+};
+
 // Best-effort initial mapping: match each field to a header by (case/space-
-// insensitive) equality, else a substring hit. The user adjusts from there.
+// insensitive) equality, then a substring hit, then a known alias. The user
+// adjusts from there; the mapping is saved server-side on first import.
 function guessMapping(headers: string[]): ColumnMapping {
-  const norm = (s: string) => s.toLowerCase().replace(/[\s._%-]/g, '');
+  const norm = (s: string) => s.toLowerCase().replace(/[\s._%#()-]/g, '');
+  const used = new Set<string>();
   const out: ColumnMapping = {};
+  const pick = (h: string | undefined, field: ImportableField) => {
+    if (h && !used.has(h)) {
+      out[field] = h;
+      used.add(h);
+    }
+  };
   for (const field of IMPORTABLE_FIELD_NAMES) {
     const nf = norm(field);
-    const exact = headers.find((h) => norm(h) === nf);
-    const partial = exact ?? headers.find((h) => norm(h).includes(nf) || nf.includes(norm(h)));
-    if (partial) out[field] = partial;
+    const exact = headers.find((h) => norm(h) === nf && !used.has(h));
+    const partial = exact ?? headers.find((h) => !used.has(h) && (norm(h).includes(nf) || nf.includes(norm(h))));
+    const aliases = FIELD_ALIASES[field] ?? [];
+    const aliased = partial ?? headers.find((h) => !used.has(h) && aliases.some((a) => norm(h).includes(a)));
+    pick(aliased, field);
   }
   return out;
 }

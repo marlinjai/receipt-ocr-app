@@ -42,6 +42,13 @@ describe('parseDate', () => {
     expect(parseDate('01.02.26')).toBe('2026-02-01');
     expect(parseDate('01.02.99')).toBe('1999-02-01');
   });
+  it('parses long month-name dates (the Lola sheet format)', () => {
+    expect(parseDate('January 11, 2026')).toBe('2026-01-11');
+    expect(parseDate('February 20, 2026')).toBe('2026-02-20');
+    expect(parseDate('Jan 11 2026')).toBe('2026-01-11');
+    expect(parseDate('11 January 2026')).toBe('2026-01-11');
+    expect(parseDate('11 Jan 2026')).toBe('2026-01-11');
+  });
   it('returns null for unparseable', () => {
     expect(parseDate('')).toBeNull();
     expect(parseDate('last tuesday')).toBeNull();

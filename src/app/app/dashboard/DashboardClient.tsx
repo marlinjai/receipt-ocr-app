@@ -203,6 +203,19 @@ function DashboardContent({ tableId }: { tableId: string }) {
             {table.name}
           </h1>
           <div className="flex items-center gap-2">
+            <Link
+              href="/app/overview"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
+              style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 3v18h18" />
+                <rect x="7" y="10" width="3" height="8" />
+                <rect x="12" y="6" width="3" height="12" />
+                <rect x="17" y="13" width="3" height="5" />
+              </svg>
+              Overview
+            </Link>
             <button
               onClick={() => exportCSV({ columns, rows: displayRows })}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"

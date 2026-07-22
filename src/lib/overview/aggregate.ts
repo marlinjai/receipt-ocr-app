@@ -1,0 +1,176 @@
+/**
+ * Pure aggregation for the financial overview (the "Vendor Spend Ledger").
+ * Input is a plain list of invoice records; output is every KPI/series the
+ * overview page renders. No I/O, so the multi-currency + attribution math is
+ * unit-testable in isolation.
+ *
+ * Per record: eurEquivalent = amountNative * fxRate (raw, 100%);
+ *             attributedEur  = eurEquivalent * businessShare/100.
+ */
+
+export interface InvoiceRecord {
+  vendor: string;
+  currency: string;
+  amountNative: number;
+  fxRate: number;
+  businessShare: number; // 0-100
+  date: string | null; // ISO YYYY-MM-DD
+}
+
+export interface VendorEurTotal {
+  vendor: string;
+  attributedEur: number;
+  rawEur: number;
+}
+
+export interface VendorNativeTotal {
+  vendor: string;
+  currency: string;
+  amountNative: number;
+}
+
+export interface MonthlyPoint {
+  month: string; // YYYY-MM
+  // Attributed amount per vendor that month, in the SERIES' NATIVE currency
+  // (each CurrencySeries renders on its own scale, so a USD series carries USD
+  // numbers; for EUR this equals attributed EUR since fxRate is 1).
+  byVendor: Record<string, number>;
+}
+
+export interface CurrencySeries {
+  currency: string;
+  vendors: string[]; // vendors in this currency, sorted by total desc
+  months: MonthlyPoint[]; // chronological
+}
+
+export interface CurrencyTotal {
+  currency: string;
+  amountNative: number;
+  attributedEur: number;
+  invoiceCount: number;
+  vendorCount: number;
+}
+
+export interface OverviewData {
+  totals: {
+    attributedEur: number;
+    rawEur: number;
+    invoiceCount: number;
+    blendedAttributionPct: number; // attributed / raw * 100
+    byCurrency: CurrencyTotal[]; // sorted by attributedEur desc
+    firstDate: string | null;
+    lastDate: string | null;
+  };
+  byVendorEur: VendorEurTotal[]; // all vendors, attributed desc
+  byVendorNative: VendorNativeTotal[]; // vendor×currency, native desc
+  monthlyByCurrency: CurrencySeries[]; // one series per currency (separate scales)
+  vendors: string[]; // all vendors, attributed desc (legend order)
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const monthOf = (iso: string | null): string | null => (iso && /^\d{4}-\d{2}/.test(iso) ? iso.slice(0, 7) : null);
+
+export function aggregateOverview(invoices: InvoiceRecord[]): OverviewData {
+  let attributedEur = 0;
+  let rawEur = 0;
+  let firstDate: string | null = null;
+  let lastDate: string | null = null;
+
+  const vendorEur = new Map<string, { attributedEur: number; rawEur: number }>();
+  const vendorNative = new Map<string, number>(); // `${vendor}\u0000${currency}` -> amountNative
+  const currency = new Map<string, { amountNative: number; attributedEur: number; count: number; vendors: Set<string> }>();
+  // currency -> month -> vendor -> attributed NATIVE amount (per-series scale)
+  const monthly = new Map<string, Map<string, Map<string, number>>>();
+
+  for (const inv of invoices) {
+    const eur = inv.amountNative * inv.fxRate;
+    const attr = eur * (inv.businessShare / 100);
+    attributedEur += eur * (inv.businessShare / 100);
+    rawEur += eur;
+
+    if (inv.date) {
+      if (!firstDate || inv.date < firstDate) firstDate = inv.date;
+      if (!lastDate || inv.date > lastDate) lastDate = inv.date;
+    }
+
+    const ve = vendorEur.get(inv.vendor) ?? { attributedEur: 0, rawEur: 0 };
+    ve.attributedEur += attr;
+    ve.rawEur += eur;
+    vendorEur.set(inv.vendor, ve);
+
+    const vnKey = `${inv.vendor}\u0000${inv.currency}`;
+    vendorNative.set(vnKey, (vendorNative.get(vnKey) ?? 0) + inv.amountNative);
+
+    const c = currency.get(inv.currency) ?? { amountNative: 0, attributedEur: 0, count: 0, vendors: new Set<string>() };
+    c.amountNative += inv.amountNative;
+    c.attributedEur += attr;
+    c.count += 1;
+    c.vendors.add(inv.vendor);
+    currency.set(inv.currency, c);
+
+    const m = monthOf(inv.date);
+    if (m) {
+      const attrNative = inv.amountNative * (inv.businessShare / 100);
+      const perCur = monthly.get(inv.currency) ?? new Map();
+      const perMonth = perCur.get(m) ?? new Map<string, number>();
+      perMonth.set(inv.vendor, (perMonth.get(inv.vendor) ?? 0) + attrNative);
+      perCur.set(m, perMonth);
+      monthly.set(inv.currency, perCur);
+    }
+  }
+
+  const byVendorEur: VendorEurTotal[] = [...vendorEur.entries()]
+    .map(([vendor, v]) => ({ vendor, attributedEur: round2(v.attributedEur), rawEur: round2(v.rawEur) }))
+    .sort((a, b) => b.attributedEur - a.attributedEur);
+
+  const byVendorNative: VendorNativeTotal[] = [...vendorNative.entries()]
+    .map(([key, amt]) => {
+      const [vendor, cur] = key.split('\u0000');
+      return { vendor: vendor!, currency: cur!, amountNative: round2(amt) };
+    })
+    .sort((a, b) => b.amountNative - a.amountNative);
+
+  const byCurrency: CurrencyTotal[] = [...currency.entries()]
+    .map(([cur, c]) => ({
+      currency: cur,
+      amountNative: round2(c.amountNative),
+      attributedEur: round2(c.attributedEur),
+      invoiceCount: c.count,
+      vendorCount: c.vendors.size,
+    }))
+    .sort((a, b) => b.attributedEur - a.attributedEur);
+
+  const monthlyByCurrency: CurrencySeries[] = [...monthly.entries()]
+    .map(([cur, perCur]) => {
+      const vendorTotals = new Map<string, number>();
+      for (const perMonth of perCur.values()) {
+        for (const [vendor, v] of perMonth) vendorTotals.set(vendor, (vendorTotals.get(vendor) ?? 0) + v);
+      }
+      const vendors = [...vendorTotals.entries()].sort((a, b) => b[1] - a[1]).map(([v]) => v);
+      const months: MonthlyPoint[] = [...perCur.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([month, perMonth]) => {
+          const byVendor: Record<string, number> = {};
+          for (const [vendor, v] of perMonth) byVendor[vendor] = round2(v);
+          return { month, byVendor };
+        });
+      return { currency: cur, vendors, months };
+    })
+    .sort((a, b) => (byCurrency.findIndex((c) => c.currency === a.currency) - byCurrency.findIndex((c) => c.currency === b.currency)));
+
+  return {
+    totals: {
+      attributedEur: round2(attributedEur),
+      rawEur: round2(rawEur),
+      invoiceCount: invoices.length,
+      blendedAttributionPct: rawEur > 0 ? round2((attributedEur / rawEur) * 100) : 0,
+      byCurrency,
+      firstDate,
+      lastDate,
+    },
+    byVendorEur,
+    byVendorNative,
+    monthlyByCurrency,
+    vendors: byVendorEur.map((v) => v.vendor),
+  };
+}

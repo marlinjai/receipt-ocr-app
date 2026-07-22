@@ -166,6 +166,50 @@ model SheetImportRow {
   @@map("sheet_import_rows")
 }
 
+// Workspace-editable per-vendor attribution %, the configurable replacement for
+// the hardcoded VENDOR_BUSINESS_SHARE_DEFAULTS. `share` is 0-100. The reserved
+// vendor `*` row carries the workspace default for unlisted vendors (else 100).
+// "Apply to ledger" writes these onto each matching row's Business Share %.
+model WorkspaceVendorAttribution {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  vendor          String
+  share           Int
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, vendor])
+  @@map("workspace_vendor_attribution")
+}
+
+// A named, saved chart selection on the overview: time frame (preset or custom
+// range), vendor/currency filters, and explicit invoice include/exclude sets,
+// stored as one JSON definition per workspace. Filter-based parts stay "live"
+// (new imports join automatically); id-based parts are frozen sets.
+model OverviewSelection {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  name            String
+  definition      Json
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, name])
+  @@map("overview_selections")
+}
+
+// The overview's editable notes block (reconciliation / attribution commentary),
+// one per workspace.
+model WorkspaceNotes {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @unique @map("auth_workspace_id")
+  body            String   @default("")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("workspace_notes")
+}
+
 // Historical ECB reference-rate cache (via api.frankfurter.dev), keyed by invoice
 // date so the same currency/date pair is never fetched twice.
 model FxRate {

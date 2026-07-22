@@ -62,6 +62,14 @@ Attribution is data-driven: each vendor's share (e.g. Anthropic 30%) is the per-
 - **Notes block**: editable markdown, saved per workspace.
 - Link back to the ledger (table view). Nav link added on the dashboard.
 
+## v2 (same PR, Marlin-requested): time frames, invoice selection, saved selections
+
+Architecture flip: the page now ships the normalized `LedgerInvoice[]` (record + row id + name) and runs `aggregateOverview` CLIENT-side over the filtered subset, so every control re-charts instantly with no round trip.
+
+- **Time frames**: preset chips 1W / 1M / 3M / 6M / YTD / 1Y / All + a custom from→to range. Undated invoices drop out whenever a date bound is active.
+- **Selection** (`selection.ts`, pure + tested): a `SelectionDef` combines the time frame, living vendor/currency filters (new imports that match join automatically), and frozen `includeIds`/`excludeIds` sets. All parts AND together. UI: vendor + currency chips, and an invoice picker with two modes — "exclude unchecked" (live) vs "only checked" (frozen).
+- **Saved selections** (migration 0005, `overview_selections`): named definitions per workspace, unique by name; dropdown to load, inline save/delete. `POST|DELETE /api/overview/selections` (gated `receipts.row.write`), definitions sanitized on write AND on read.
+
 ## Out of scope (v1)
 - The artifact's hand-written reconciliation prose becomes the editable notes block (not auto-generated).
 - No CSV/PDF export of the overview (the table view already exports CSV).

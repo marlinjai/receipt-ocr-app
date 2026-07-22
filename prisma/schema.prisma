@@ -182,6 +182,22 @@ model WorkspaceVendorAttribution {
   @@map("workspace_vendor_attribution")
 }
 
+// A named, saved chart selection on the overview: time frame (preset or custom
+// range), vendor/currency filters, and explicit invoice include/exclude sets,
+// stored as one JSON definition per workspace. Filter-based parts stay "live"
+// (new imports join automatically); id-based parts are frozen sets.
+model OverviewSelection {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  name            String
+  definition      Json
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, name])
+  @@map("overview_selections")
+}
+
 // The overview's editable notes block (reconciliation / attribution commentary),
 // one per workspace.
 model WorkspaceNotes {

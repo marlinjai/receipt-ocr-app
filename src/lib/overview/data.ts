@@ -2,7 +2,7 @@ import 'server-only';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { Row, Column } from '@marlinjai/data-table-core';
 import { prisma } from '@/lib/prisma';
-import { aggregateOverview, type InvoiceRecord, type OverviewData } from './aggregate';
+import type { LedgerInvoice } from './selection';
 
 const TABLE_NAME = 'Receipts';
 
@@ -30,14 +30,19 @@ async function allRows(adapter: PrismaAdapter, tableId: string): Promise<Row[]> 
   return out;
 }
 
-/** The full aggregated overview for a workspace (empty if no Receipts table). */
-export async function loadOverview(workspaceId: string): Promise<OverviewData> {
+/**
+ * The workspace's ledger as normalized invoice records (with row identity for
+ * the picker). Aggregation happens CLIENT-side over these, so time-frame and
+ * selection controls re-chart instantly without a round trip.
+ */
+export async function loadInvoices(workspaceId: string): Promise<LedgerInvoice[]> {
   const adapter = new PrismaAdapter({ prisma });
   const table = await receiptsTable(adapter, workspaceId);
-  if (!table) return aggregateOverview([]);
+  if (!table) return [];
 
   const columns: Column[] = await adapter.getColumns(table.id);
   const col = (name: string) => columns.find((c) => c.name === name);
+  const nameCol = col('Name');
   const vendorCol = col('Vendor');
   const grossCol = col('Gross');
   const fxCol = col('FX Rate');
@@ -49,11 +54,13 @@ export async function loadOverview(workspaceId: string): Promise<OverviewData> {
   const currencyName = new Map(currencyOpts.map((o) => [o.id, o.name]));
 
   const rows = await allRows(adapter, table.id);
-  const invoices: InvoiceRecord[] = rows.map((r) => {
+  return rows.map((r) => {
     const cells = r.cells;
     const curId = currencyCol ? cells[currencyCol.id] : null;
     const currency = (typeof curId === 'string' ? currencyName.get(curId) : null) ?? 'EUR';
     return {
+      id: r.id,
+      name: nameCol ? str(cells[nameCol.id]) : null,
       vendor: (vendorCol ? str(cells[vendorCol.id]) : null) ?? 'Unknown',
       currency,
       amountNative: grossCol ? num(cells[grossCol.id]) : 0,
@@ -62,6 +69,4 @@ export async function loadOverview(workspaceId: string): Promise<OverviewData> {
       date: dateCol ? str(cells[dateCol.id]) : null,
     };
   });
-
-  return aggregateOverview(invoices);
 }

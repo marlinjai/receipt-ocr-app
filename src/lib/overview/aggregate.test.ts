@@ -41,13 +41,17 @@ describe('aggregateOverview', () => {
     expect(d.byVendorEur[0].rawEur).toBeCloseTo(344.25, 1); // raw, before attribution
   });
 
-  it('keeps native totals per vendor+currency (pre-FX)', () => {
+  it('keeps native totals per vendor+currency (pre-FX), incl. vendors with spaces', () => {
     const el = d.byVendorNative.find((v) => v.vendor === 'ElevenLabs')!;
     expect(el.currency).toBe('USD');
     expect(el.amountNative).toBeCloseTo(13.09, 2);
+    // Vendor names contain spaces/parens; the vendor↔currency key split must survive them.
+    const anth = d.byVendorNative.find((v) => v.vendor === 'Anthropic (Claude)')!;
+    expect(anth.currency).toBe('EUR');
+    expect(anth.amountNative).toBeCloseTo(344.25, 2);
   });
 
-  it('builds monthly series per currency (separate scales)', () => {
+  it('builds monthly series per currency in that currency (separate scales)', () => {
     const eur = d.monthlyByCurrency.find((s) => s.currency === 'EUR')!;
     expect(eur.months.map((m) => m.month)).toEqual(['2026-01', '2026-02']);
     // Jan EUR attributed: Anthropic 49.275 + Google 20.4
@@ -55,6 +59,8 @@ describe('aggregateOverview', () => {
     expect(eur.months[0].byVendor['Google Workspace']).toBeCloseTo(20.4, 2);
     const usd = d.monthlyByCurrency.find((s) => s.currency === 'USD')!;
     expect(usd.months).toHaveLength(1);
+    // USD series carries NATIVE USD (13.09 at 100%), not the EUR conversion.
+    expect(usd.months[0].byVendor['ElevenLabs']).toBeCloseTo(13.09, 2);
   });
 
   it('handles an empty ledger', () => {

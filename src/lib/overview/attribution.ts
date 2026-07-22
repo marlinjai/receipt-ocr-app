@@ -77,21 +77,30 @@ export async function applyAttributionToLedger(workspaceId: string): Promise<num
   const shareCol = columns.find((c) => c.name === 'Business Share %');
   if (!vendorCol || !shareCol) return 0;
 
-  let updated = 0;
+  // Page through FIRST, then mutate: updating rows while offset-paginating can
+  // skip/repeat rows if the adapter's ordering shifts under the updates.
+  const rows: { id: string; vendor: string | null; current: unknown }[] = [];
   let offset = 0;
   for (;;) {
     const page = await adapter.getRows(table.id, { limit: 500, offset });
     for (const row of page.items) {
-      const vendor = typeof row.cells[vendorCol.id] === 'string' ? (row.cells[vendorCol.id] as string) : null;
-      const want = resolveShare(vendor, rules, defaultShare);
-      const current = row.cells[shareCol.id];
-      if (Number(current) !== want) {
-        await adapter.updateRow(row.id, { [shareCol.id]: want });
-        updated++;
-      }
+      rows.push({
+        id: row.id,
+        vendor: typeof row.cells[vendorCol.id] === 'string' ? (row.cells[vendorCol.id] as string) : null,
+        current: row.cells[shareCol.id],
+      });
     }
     if (!page.hasMore || page.items.length === 0) break;
     offset += page.items.length;
+  }
+
+  let updated = 0;
+  for (const row of rows) {
+    const want = resolveShare(row.vendor, rules, defaultShare);
+    if (Number(row.current) !== want) {
+      await adapter.updateRow(row.id, { [shareCol.id]: want });
+      updated++;
+    }
   }
   return updated;
 }

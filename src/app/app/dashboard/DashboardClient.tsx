@@ -17,6 +17,7 @@ import type { ColumnType, Row, GroupConfig, FooterConfig, TextAlignment, CellVal
 import { createServerActionsAdapter } from './server-actions-adapter';
 import FxRecomputePanel from './FxRecomputePanel';
 import SheetImportPanel from './SheetImportPanel';
+import BulkEditBar from './BulkEditBar';
 import AiChatSidebar from '@/components/AiChatSidebar';
 import ReceiptImagePreview from '@/components/ReceiptImagePreview';
 import ReceiptDetailPanel from '@/components/ReceiptDetailPanel';
@@ -280,6 +281,13 @@ function DashboardContent({ tableId }: { tableId: string }) {
           <p className="text-sm" style={{ color: 'var(--dt-text-secondary)' }}>
             {rows.length} items · {columns.length} properties
           </p>
+          <BulkEditBar
+            columns={columns}
+            selectOptions={selectOptions}
+            loadSelectOptions={loadSelectOptions}
+            selectedRows={selectedRows}
+            updateCell={updateCell}
+          />
           {selectedRows.size > 0 && (
             <button
               onClick={handleDeleteSelected}

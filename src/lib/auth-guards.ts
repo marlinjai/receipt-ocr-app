@@ -1,6 +1,7 @@
 import 'server-only';
 
 import type { AppSession } from '@marlinjai/auth-brain-nextjs';
+import { safeTableName } from '@marlinjai/data-table-adapter-shared';
 import { prisma } from '@/lib/prisma';
 import { auth, type ReceiptsAction } from '@/lib/auth';
 import { sessionMayAccessWorkspace, sessionWorkspaceId } from '@/lib/auth-workspace';
@@ -69,11 +70,49 @@ export async function requireTableAccess(
   return { session, workspaceId: table.workspaceId };
 }
 
+/**
+ * Map row ids to their owning table ids across BOTH storage layouts. Once the
+ * adapter migrates a dt table (`dtTable.migrated`), its rows live in a
+ * per-table PHYSICAL table (`tbl_<id>`), not in the legacy shared dt_rows —
+ * a dt_rows-only lookup therefore reported every such row as nonexistent and
+ * 404'd all row writes (the 2026-07-24 "can't set Project" incident). Table
+ * ids come from our own dtTable rows and pass safeTableName's identifier
+ * validation; row ids are parameterized.
+ */
+export async function resolveRowTableIds(rowIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = [...new Set(rowIds)];
+  if (unique.length === 0) return out;
+
+  const legacy = await prisma.dtRow.findMany({
+    where: { id: { in: unique } },
+    select: { id: true, tableId: true },
+  });
+  for (const r of legacy) out.set(r.id, r.tableId);
+
+  if (out.size < unique.length) {
+    const migrated = await prisma.dtTable.findMany({ where: { migrated: true }, select: { id: true } });
+    for (const { id: tableId } of migrated) {
+      const remaining = unique.filter((id) => !out.has(id));
+      if (remaining.length === 0) break;
+      const params = remaining.map((_, i) => `$${i + 1}`).join(', ');
+      const hits = await prisma
+        .$queryRawUnsafe<Array<{ id: string }>>(
+          `SELECT id FROM ${safeTableName(tableId)} WHERE id IN (${params})`,
+          ...remaining,
+        )
+        .catch(() => [] as Array<{ id: string }>);
+      for (const h of hits) out.set(h.id, tableId);
+    }
+  }
+  return out;
+}
+
 /** Resolve a row to its table and authorize like {@link requireTableAccess}. */
 export async function requireRowAccess(rowId: string, write?: ReceiptsAction) {
-  const row = await prisma.dtRow.findUnique({ where: { id: rowId }, select: { tableId: true } });
-  if (!row) throw new ReceiptsAuthError(404);
-  return requireTableAccess(row.tableId, write);
+  const tableId = (await resolveRowTableIds([rowId])).get(rowId);
+  if (!tableId) throw new ReceiptsAuthError(404);
+  return requireTableAccess(tableId, write);
 }
 
 /** Resolve a column to its table and authorize. */

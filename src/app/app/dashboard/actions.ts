@@ -11,6 +11,7 @@ import {
   requireSelectOptionAccess,
   requireViewAccess,
   requireFileRefAccess,
+  resolveRowTableIds,
   sessionWorkspaceId,
   ReceiptsAuthError,
 } from '@/lib/auth-guards';
@@ -195,13 +196,11 @@ export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<Row[]> {
 }
 
 async function requireRowsAccess(rowIds: string[]): Promise<void> {
-  // Resolve every row's table once; authorize each distinct table.
-  const rows = await prisma.dtRow.findMany({
-    where: { id: { in: rowIds } },
-    select: { id: true, tableId: true },
-  });
-  if (rows.length !== rowIds.length) throw new ReceiptsAuthError(404);
-  const tableIds = [...new Set(rows.map((r) => r.tableId))];
+  // Resolve every row's table once (across BOTH row-storage layouts — see
+  // resolveRowTableIds); authorize each distinct table.
+  const resolved = await resolveRowTableIds(rowIds);
+  if (resolved.size !== new Set(rowIds).size) throw new ReceiptsAuthError(404);
+  const tableIds = [...new Set(resolved.values())];
   for (const tableId of tableIds) {
     await requireTableAccess(tableId, 'receipts.row.write');
   }

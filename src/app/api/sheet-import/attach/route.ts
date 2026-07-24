@@ -44,6 +44,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   } catch (e) {
     if (e instanceof AttachError) {
+      // Upstream detail (e.g. the Storage Brain error body) never reaches the
+      // client, but it must reach the logs or failures are undiagnosable.
+      if (e.code.startsWith('storage_brain')) console.error('[sheet-import/attach]', e.code, e.message);
       return NextResponse.json({ error: e.code }, { status: ERROR_STATUS[e.code] ?? 400 });
     }
     if (e instanceof DriveApiError || e instanceof SheetsApiError) {

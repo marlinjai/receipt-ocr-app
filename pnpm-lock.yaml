@@ -22,7 +22,7 @@ importers:
         specifier: ^0.2.1
         version: 0.2.1(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
       '@marlinjai/data-table-adapter-shared':
-        specifier: ^0.2.1
+        specifier: ^0.2.0
         version: 0.2.1
       '@marlinjai/data-table-core':
         specifier: ^0.2.0

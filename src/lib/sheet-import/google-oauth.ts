@@ -8,6 +8,14 @@
  */
 
 export const GOOGLE_SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly';
+export const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+/**
+ * Scopes requested on connect: Sheets (import) + Drive read-only (attach the
+ * source PDFs referenced by the sheet). Users who connected before Drive was
+ * added must reconnect once to grant it; the attach endpoint surfaces that as
+ * `drive_scope_missing` instead of failing opaquely.
+ */
+export const GOOGLE_OAUTH_SCOPES = `${GOOGLE_SHEETS_SCOPE} ${GOOGLE_DRIVE_SCOPE}`;
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 
@@ -39,7 +47,7 @@ export function buildAuthUrl(p: {
   u.searchParams.set('client_id', p.clientId);
   u.searchParams.set('redirect_uri', p.redirectUri);
   u.searchParams.set('response_type', 'code');
-  u.searchParams.set('scope', p.scope ?? GOOGLE_SHEETS_SCOPE);
+  u.searchParams.set('scope', p.scope ?? GOOGLE_OAUTH_SCOPES);
   u.searchParams.set('access_type', 'offline');
   u.searchParams.set('prompt', 'consent');
   u.searchParams.set('include_granted_scopes', 'true');

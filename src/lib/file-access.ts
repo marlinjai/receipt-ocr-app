@@ -2,9 +2,11 @@ import 'server-only';
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import { safeColumnName, safeTableName } from '@marlinjai/data-table-adapter-shared';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
 import { sessionMayAccessWorkspace } from '@/lib/auth-workspace';
+import { resolveRowTableIds } from '@/lib/auth-guards';
 
 /**
  * Workspace-ownership guard for the fileId proxy routes (/api/files/:id,
@@ -53,7 +55,11 @@ export async function guardFileAccess(
   // Dev bypass (development only): no real memberships to check against.
   if (principal.memberships.length === 0) return null;
 
-  // Every table that references this file, via dt_files or a cells URL.
+  // Every table that references this file, via dt_files or a URL cell. Rows
+  // live in the legacy shared dt_rows OR in per-table physical tables once a
+  // dt table is `migrated`, so BOTH layouts must be scanned — the dt_rows-only
+  // scan silently found nothing for migrated rows, turning this check into an
+  // allow-by-default for their files.
   const [fileRefs, cellRefs] = await Promise.all([
     prisma.dtFile.findMany({ where: { fileId }, select: { rowId: true } }),
     prisma.$queryRaw<Array<{ table_id: string }>>`
@@ -63,11 +69,28 @@ export async function guardFileAccess(
 
   const tableIds = new Set<string>(cellRefs.map((r) => r.table_id));
   if (fileRefs.length > 0) {
-    const rows = await prisma.dtRow.findMany({
-      where: { id: { in: fileRefs.map((r) => r.rowId) } },
-      select: { tableId: true },
+    const resolved = await resolveRowTableIds(fileRefs.map((r) => r.rowId));
+    for (const tableId of resolved.values()) tableIds.add(tableId);
+  }
+
+  // URL cells on migrated tables (e.g. Receipt Image's /api/files/<id>): the
+  // value sits in that table's physical url columns, not in dt_rows.
+  const migrated = await prisma.dtTable.findMany({ where: { migrated: true }, select: { id: true } });
+  for (const { id: tableId } of migrated) {
+    if (tableIds.has(tableId)) continue;
+    const urlCols = await prisma.dtColumn.findMany({
+      where: { tableId, type: 'url' },
+      select: { id: true },
     });
-    for (const r of rows) tableIds.add(r.tableId);
+    if (urlCols.length === 0) continue;
+    const clause = urlCols.map((c) => `${safeColumnName(c.id)} LIKE $1`).join(' OR ');
+    const hits = await prisma
+      .$queryRawUnsafe<unknown[]>(
+        `SELECT 1 FROM ${safeTableName(tableId)} WHERE ${clause} LIMIT 1`,
+        `%${fileId}%`,
+      )
+      .catch(() => [] as unknown[]);
+    if (hits.length > 0) tableIds.add(tableId);
   }
 
   // Unreferenced = the fresh-upload window; see module docblock.

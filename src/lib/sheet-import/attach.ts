@@ -57,7 +57,7 @@ async function uploadToStorageBrain(name: string, bytes: ArrayBuffer): Promise<s
       fileType: contentType(name),
       fileSizeBytes: bytes.byteLength,
       context: 'receipt',
-      tags: ['drive-attach'],
+      tags: { source: 'drive-attach' },
     }),
   });
   if (!handshake.ok) throw new AttachError('storage_brain_request_failed', await handshake.text().catch(() => ''));

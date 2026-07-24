@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { IMPORTABLE_FIELD_NAMES, type ImportableField, type ColumnMapping } from '@/lib/sheet-import/fields';
 
 /**
@@ -20,6 +20,22 @@ interface PreviewData {
 }
 
 const DEFAULT_DEDUP: ImportableField[] = ['Vendor', 'Date', 'Gross'];
+
+// Server error codes → human-readable messages (the generic fallback hides
+// what actually went wrong; that's how the 2026-07-24 migration gap looked
+// like a mystery "Failed to load sheet").
+const ERROR_LABELS: Record<string, string> = {
+  invalid_spreadsheet: 'That does not look like a Google Sheets URL or id.',
+  no_tabs: 'That spreadsheet has no tabs.',
+  sheets_api: 'Google could not read that sheet. Does the connected Google account have access to it?',
+  forbidden: 'You lack import permission in this workspace.',
+  not_connected: 'Connect your Google account first.',
+  empty_mapping: 'Map at least one column before importing.',
+  no_dedup_fields: 'Pick at least one dedup field.',
+  table_not_initialized: 'The Receipts table is not initialized yet — open the dashboard once first.',
+};
+const errorLabel = (code: string | undefined, fallback: string) =>
+  (code && ERROR_LABELS[code]) || (code ? `${fallback} (${code})` : fallback);
 
 const inputStyle = {
   background: 'var(--background)',
@@ -72,6 +88,48 @@ export default function SheetImportPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ imported: number; updated: number; skipped: number; total: number } | null>(null);
+  // null = unknown (not yet checked); the panel checks proactively on open so
+  // the Connect Google step is visible BEFORE the first load attempt.
+  const [connected, setConnected] = useState<boolean | null>(null);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+
+  const refreshStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/google/oauth/status');
+      if (!res.ok) return;
+      const s = (await res.json()) as { connected: boolean; googleEmail: string | null };
+      setConnected(s.connected);
+      setGoogleEmail(s.googleEmail);
+    } catch {
+      /* status is advisory; load() still handles the not-connected case */
+    }
+  }, []);
+
+  // Returning from the Google consent screen: the callback redirects to
+  // /app/dashboard?google=connected|error. Reopen the panel, surface the
+  // outcome, and clean the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const google = params.get('google');
+    if (!google) return;
+    setOpen(true);
+    if (google === 'connected') {
+      setError(null);
+    } else {
+      const reason = params.get('reason');
+      setError(reason === 'access_denied' ? 'Google connection was cancelled.' : `Google connection failed${reason ? ` (${reason})` : ''}.`);
+    }
+    void refreshStatus();
+    params.delete('google');
+    params.delete('reason');
+    const qs = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
+  }, [refreshStatus]);
+
+  // First open: learn the connection state up front.
+  useEffect(() => {
+    if (open && connected === null) void refreshStatus();
+  }, [open, connected, refreshStatus]);
 
   const load = useCallback(
     async (tab?: string) => {
@@ -85,17 +143,18 @@ export default function SheetImportPanel() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ spreadsheet, tab }),
         });
-        const data = (await res.json()) as PreviewData & { error?: string };
+        const data = (await res.json().catch(() => ({}))) as PreviewData & { error?: string };
         if (!res.ok) {
-          setError(data.error ?? 'Failed to load sheet');
+          setError(errorLabel(data.error, 'Failed to load sheet'));
           return;
         }
         setPreview(data);
+        setConnected(data.connected);
         if (data.connected && data.headers && Object.keys(mapping).length === 0) {
           setMapping(guessMapping(data.headers));
         }
       } catch {
-        setError('Failed to load sheet');
+        setError('Failed to load sheet (network error)');
       } finally {
         setBusy(false);
       }
@@ -120,20 +179,20 @@ export default function SheetImportPanel() {
           dedupKeyFields: dedup.filter((f) => mapping[f]),
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error ?? 'Import failed');
+        setError(errorLabel(data.error, 'Import failed'));
         return;
       }
       setResult(data);
     } catch {
-      setError('Import failed');
+      setError('Import failed (network error)');
     } finally {
       setBusy(false);
     }
   }, [spreadsheet, preview, mapping, dedup]);
 
-  const notConnected = preview?.connected === false;
+  const notConnected = connected === false || preview?.connected === false;
   const headers = preview?.headers ?? [];
 
   return (
@@ -184,7 +243,10 @@ export default function SheetImportPanel() {
 
           {notConnected && (
             <div className="rounded-md p-3 mb-3 text-xs" style={{ background: 'var(--accent-muted)', color: 'var(--foreground)' }}>
-              <p className="mb-2">Connect your Google account to read your Sheets (read-only).</p>
+              <p className="mb-2">
+                First, connect your Google account so the app can read your Sheets (read-only). You&rsquo;ll be
+                sent to Google&rsquo;s consent screen and returned here.
+              </p>
               <a
                 href="/api/google/oauth/start"
                 className="inline-block px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700"
@@ -192,6 +254,11 @@ export default function SheetImportPanel() {
                 Connect Google
               </a>
             </div>
+          )}
+          {connected === true && (
+            <p className="text-[11px] mb-3" style={{ color: 'var(--dt-text-secondary)' }}>
+              Google connected{googleEmail ? ` as ${googleEmail}` : ''}. Paste a sheet URL and Load to pick a tab.
+            </p>
           )}
 
           {/* Step 2: tab + mapping */}

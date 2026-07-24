@@ -13,13 +13,13 @@ export const dynamic = 'force-dynamic';
  * Google redirects here with `code` + `state`. We verify the state against the
  * cookie (CSRF), exchange the code for tokens, and store the sealed refresh
  * token against the auth-brain user. Always ends in a redirect back to the
- * dashboard with a `google=connected|error` flag the UI can surface; the state
- * cookie is cleared either way.
+ * import page with a `google=connected|error` flag the UI can surface; the
+ * state cookie is cleared either way.
  */
 export async function GET(req: NextRequest) {
   const origin = publicOrigin(req);
   const back = (ok: boolean, reason?: string) => {
-    const dest = new URL('/app/dashboard', origin);
+    const dest = new URL('/app/import', origin);
     dest.searchParams.set('google', ok ? 'connected' : 'error');
     if (reason) dest.searchParams.set('reason', reason);
     const res = NextResponse.redirect(dest.toString());

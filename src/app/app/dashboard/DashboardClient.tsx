@@ -16,7 +16,6 @@ import {
 import type { ColumnType, Row, GroupConfig, FooterConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
 import FxRecomputePanel from './FxRecomputePanel';
-import SheetImportPanel from './SheetImportPanel';
 import BulkEditBar from './BulkEditBar';
 import AiChatSidebar from '@/components/AiChatSidebar';
 import ReceiptImagePreview from '@/components/ReceiptImagePreview';
@@ -247,7 +246,18 @@ function DashboardContent({ tableId }: { tableId: string }) {
               Export CSV
             </button>
             <FxRecomputePanel />
-            <SheetImportPanel />
+            <Link
+              href="/app/import"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
+              style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+                <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
+                <path d="M9 13h6M9 17h6" />
+              </svg>
+              Import from Sheets
+            </Link>
             <button
               onClick={() => setAiSidebarOpen((v) => !v)}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"

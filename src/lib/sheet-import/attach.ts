@@ -5,6 +5,7 @@ import { getAccessTokenForUser } from './google-credentials';
 import { readSheetValues, gridToRows } from './sheets-client';
 import { mapRow, computeDedupKey, type ColumnMapping, type ImportableField } from './normalize';
 import { listDriveFiles, findFolderByName, matchSourceFile, downloadDriveFile, DriveApiError } from './drive-client';
+import { receiptImageUrl, repairedImageUrl } from './image-url';
 
 const TABLE_NAME = 'Receipts';
 const STORAGE_BRAIN_URL = process.env.NEXT_PUBLIC_STORAGE_BRAIN_URL || 'https://api.storage-brain.lumitra.co';
@@ -23,13 +24,17 @@ export interface AttachInput {
   authUserId: string;
   /** Sheet column holding the source filename (default "Source File"). */
   sourceFileHeader?: string;
-  /** Drive folder name to search in (default "Rechnungen"). */
+  /** Drive folder id (from the browser UI); preferred over folderName. */
+  folderId?: string;
+  /** Drive folder name to search for when no id is given (default "Rechnungen"). */
   folderName?: string;
 }
 
 export interface AttachResult {
   attached: number;
   alreadyAttached: number;
+  /** Old-convention PDF URLs upgraded in place (no re-upload). */
+  repaired: number;
   missingInDrive: string[];
   unmatchedRows: number;
   noSourceFile: number;
@@ -93,16 +98,24 @@ export async function attachSourceFiles(input: AttachInput): Promise<AttachResul
   const accessToken = await getAccessTokenForUser(input.authUserId);
   if (!accessToken) throw new AttachError('not_connected');
 
-  // Drive folder + listing (a 403 on Drive = the pre-Drive-scope connection).
-  let folder;
+  // Drive folder + listing (a 403 on Drive = the pre-Drive-scope connection,
+  // or the Drive API being disabled on the OAuth project).
+  let folderId = input.folderId;
+  let folderName = input.folderName;
+  let driveFiles;
   try {
-    folder = await findFolderByName(accessToken, input.folderName ?? 'Rechnungen');
+    if (!folderId) {
+      const folder = await findFolderByName(accessToken, input.folderName ?? 'Rechnungen');
+      if (!folder) throw new AttachError('folder_not_found');
+      folderId = folder.id;
+      folderName = folder.name;
+    }
+    driveFiles = await listDriveFiles(accessToken, folderId);
   } catch (e) {
     if (e instanceof DriveApiError && e.status === 403) throw new AttachError('drive_scope_missing');
+    if (e instanceof DriveApiError && e.status === 404) throw new AttachError('folder_not_found');
     throw e;
   }
-  if (!folder) throw new AttachError('folder_not_found');
-  const driveFiles = await listDriveFiles(accessToken, folder.id);
 
   // Sheet rows + the import ledger.
   const values = await readSheetValues(accessToken, config.spreadsheetId, config.sheetName);
@@ -125,7 +138,7 @@ export async function attachSourceFiles(input: AttachInput): Promise<AttachResul
   if (!imageCol) throw new AttachError('image_column_missing');
 
   const sourceHeader = input.sourceFileHeader ?? 'Source File';
-  const result: AttachResult = { attached: 0, alreadyAttached: 0, missingInDrive: [], unmatchedRows: 0, noSourceFile: 0 };
+  const result: AttachResult = { attached: 0, alreadyAttached: 0, repaired: 0, missingInDrive: [], unmatchedRows: 0, noSourceFile: 0 };
   const seen = new Set<string>();
 
   for (const raw of rows) {
@@ -151,7 +164,15 @@ export async function attachSourceFiles(input: AttachInput): Promise<AttachResul
     }
     const existing = row.cells[imageCol.id];
     if (typeof existing === 'string' && existing.trim()) {
-      result.alreadyAttached++;
+      // Rows attached before the URL-convention fix hold bare /api/files/<id>
+      // for PDFs; upgrade them in place (no re-download, no re-upload).
+      const repaired = repairedImageUrl(existing, sourceFile);
+      if (repaired) {
+        await adapter.updateRow(dtRowId, { [imageCol.id]: repaired });
+        result.repaired++;
+      } else {
+        result.alreadyAttached++;
+      }
       continue;
     }
 
@@ -163,9 +184,19 @@ export async function attachSourceFiles(input: AttachInput): Promise<AttachResul
 
     const bytes = await downloadDriveFile(accessToken, driveFile.id);
     const fileId = await uploadToStorageBrain(driveFile.name, bytes);
-    await adapter.updateRow(dtRowId, { [imageCol.id]: `/api/files/${fileId}` });
+    await adapter.updateRow(dtRowId, { [imageCol.id]: receiptImageUrl(fileId, driveFile.name) });
     result.attached++;
   }
+
+  // Remember the working attach setup so the import page prefills it next time.
+  await prisma.sheetImportConfig.update({
+    where: { id: config.id },
+    data: {
+      attachFolderId: folderId,
+      attachFolderName: folderName ?? null,
+      sourceFileHeader: sourceHeader,
+    },
+  });
 
   return result;
 }

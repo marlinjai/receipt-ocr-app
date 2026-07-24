@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchSourceFile, type DriveFile } from './drive-client';
+import { matchSourceFile, classifyBrowseEntries, FOLDER_MIME, SPREADSHEET_MIME, type DriveFile } from './drive-client';
 
 // Mirrors the real Rechnungen folder drift observed 2026-07-24.
 const FILES: DriveFile[] = [
@@ -25,5 +25,20 @@ describe('matchSourceFile', () => {
   it('handles blanks', () => {
     expect(matchSourceFile('', FILES)).toBeNull();
     expect(matchSourceFile('   ', FILES)).toBeNull();
+  });
+});
+
+describe('classifyBrowseEntries', () => {
+  it('splits folders from usable files and drops the rest', () => {
+    const { folders, files } = classifyBrowseEntries([
+      { id: 'f1', name: 'Rechnungen', mimeType: FOLDER_MIME },
+      { id: 's1', name: 'Lola Invoices', mimeType: SPREADSHEET_MIME },
+      { id: 'p1', name: 'invoice.pdf', mimeType: 'application/pdf' },
+      { id: 'i1', name: 'scan.png', mimeType: 'image/png' },
+      { id: 'x1', name: 'notes.gdoc', mimeType: 'application/vnd.google-apps.document' },
+      { id: 'x2', name: 'movie.mp4', mimeType: 'video/mp4' },
+    ]);
+    expect(folders.map((f) => f.id)).toEqual(['f1']);
+    expect(files.map((f) => f.id)).toEqual(['s1', 'p1', 'i1']);
   });
 });

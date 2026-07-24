@@ -33,13 +33,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'forbidden' }, { status: (e as { status?: number }).status ?? 403 });
   }
 
-  const body = (await req.json().catch(() => ({}))) as { sourceFileHeader?: unknown; folderName?: unknown };
+  const body = (await req.json().catch(() => ({}))) as { sourceFileHeader?: unknown; folderId?: unknown; folderName?: unknown };
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
   try {
     const result = await attachSourceFiles({
       authWorkspaceId: sessionWorkspaceId(principal),
       authUserId: principal.userId,
-      sourceFileHeader: typeof body.sourceFileHeader === 'string' && body.sourceFileHeader.trim() ? body.sourceFileHeader.trim() : undefined,
-      folderName: typeof body.folderName === 'string' && body.folderName.trim() ? body.folderName.trim() : undefined,
+      sourceFileHeader: str(body.sourceFileHeader),
+      folderId: str(body.folderId),
+      folderName: str(body.folderName),
     });
     return NextResponse.json(result);
   } catch (e) {

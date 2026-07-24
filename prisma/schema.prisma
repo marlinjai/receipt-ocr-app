@@ -140,6 +140,11 @@ model SheetImportConfig {
   headerRow       Int       @default(1) @map("header_row")
   columnMapping   Json      @map("column_mapping")
   dedupKeyFields  Json      @map("dedup_key_fields")
+  // Attach preferences, persisted by a successful attach run so the import page
+  // can prefill them for returning users. Nullable: configs predate the feature.
+  attachFolderId   String?  @map("attach_folder_id")
+  attachFolderName String?  @map("attach_folder_name")
+  sourceFileHeader String?  @map("source_file_header")
   createdByUserId String    @map("created_by_user_id")
   lastRunAt       DateTime? @map("last_run_at")
   createdAt       DateTime  @default(now()) @map("created_at")

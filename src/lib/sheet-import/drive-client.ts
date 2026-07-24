@@ -77,6 +77,57 @@ export async function downloadDriveFile(accessToken: string, fileId: string): Pr
   return res.arrayBuffer();
 }
 
+export const FOLDER_MIME = 'application/vnd.google-apps.folder';
+export const SPREADSHEET_MIME = 'application/vnd.google-apps.spreadsheet';
+/** File types the import flow cares about besides spreadsheets. */
+const INVOICE_MIMES = new Set(['application/pdf', 'image/png', 'image/jpeg']);
+
+/**
+ * List the children of a Drive location for the browse UI. `parent` is a folder
+ * id, `'root'` (My Drive), or `'shared'` (the Shared-with-me pseudo-folder,
+ * which is a query, not a real folder).
+ */
+export async function listChildren(accessToken: string, parent: string): Promise<DriveFile[]> {
+  const q =
+    parent === 'shared'
+      ? 'sharedWithMe = true and trashed = false'
+      : `'${parent.replace(/'/g, "\\'")}' in parents and trashed = false`;
+  const out: DriveFile[] = [];
+  let pageToken: string | undefined;
+  do {
+    const url = new URL(`${DRIVE_BASE}/files`);
+    url.searchParams.set('q', q);
+    url.searchParams.set('fields', 'nextPageToken, files(id, name, mimeType)');
+    url.searchParams.set('pageSize', '1000');
+    url.searchParams.set('orderBy', 'folder,name');
+    url.searchParams.set('supportsAllDrives', 'true');
+    url.searchParams.set('includeItemsFromAllDrives', 'true');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!res.ok) throw new DriveApiError(res.status, await res.text().catch(() => ''));
+    const data = (await res.json()) as { files?: DriveFile[]; nextPageToken?: string };
+    out.push(...(data.files ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return out;
+}
+
+/**
+ * Split a raw children listing into what the browse UI shows: folders, plus
+ * only the file types the import flow can use (spreadsheets to import,
+ * PDF/PNG/JPEG invoices for context in folder-pick mode). Everything else is
+ * noise and is dropped.
+ */
+export function classifyBrowseEntries(files: DriveFile[]): { folders: DriveFile[]; files: DriveFile[] } {
+  const folders: DriveFile[] = [];
+  const rest: DriveFile[] = [];
+  for (const f of files) {
+    if (f.mimeType === FOLDER_MIME) folders.push(f);
+    else if (f.mimeType === SPREADSHEET_MIME || INVOICE_MIMES.has(f.mimeType ?? '')) rest.push(f);
+  }
+  return { folders, files: rest };
+}
+
 /** Normalize a filename for fuzzy matching: lowercase, alnum+dots only. */
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9.]/g, '');
 

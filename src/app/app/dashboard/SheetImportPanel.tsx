@@ -33,6 +33,10 @@ const ERROR_LABELS: Record<string, string> = {
   empty_mapping: 'Map at least one column before importing.',
   no_dedup_fields: 'Pick at least one dedup field.',
   table_not_initialized: 'The Receipts table is not initialized yet — open the dashboard once first.',
+  no_import_config: 'Run an import first — attach works on the imported rows.',
+  drive_scope_missing: 'Reconnect Google to grant Drive read access (the connection predates it).',
+  folder_not_found: 'No Drive folder with that name was found.',
+  image_column_missing: 'The Receipts table has no Receipt Image column.',
 };
 const errorLabel = (code: string | undefined, fallback: string) =>
   (code && ERROR_LABELS[code]) || (code ? `${fallback} (${code})` : fallback);
@@ -92,6 +96,39 @@ export default function SheetImportPanel() {
   // the Connect Google step is visible BEFORE the first load attempt.
   const [connected, setConnected] = useState<boolean | null>(null);
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  // Drive attach step
+  const [attachFolder, setAttachFolder] = useState('Rechnungen');
+  const [attachColumn, setAttachColumn] = useState('Source File');
+  const [attachResult, setAttachResult] = useState<{
+    attached: number;
+    alreadyAttached: number;
+    missingInDrive: string[];
+    unmatchedRows: number;
+    noSourceFile: number;
+  } | null>(null);
+
+  const runAttach = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    setAttachResult(null);
+    try {
+      const res = await fetch('/api/sheet-import/attach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderName: attachFolder, sourceFileHeader: attachColumn }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(errorLabel(data.error, 'Attach failed'));
+        return;
+      }
+      setAttachResult(data);
+    } catch {
+      setError('Attach failed (network error)');
+    } finally {
+      setBusy(false);
+    }
+  }, [attachFolder, attachColumn]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -334,6 +371,49 @@ export default function SheetImportPanel() {
             <p className="text-xs mt-2" style={{ color: 'var(--dt-text-secondary)' }}>
               Imported {result.imported}, updated {result.updated}, skipped {result.skipped} of {result.total}.
             </p>
+          )}
+
+          {/* Attach source PDFs from Drive (works on already-imported rows) */}
+          {connected === true && (
+            <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
+              <p className="text-xs mb-2" style={{ color: 'var(--dt-text-secondary)' }}>
+                Attach source PDFs from Drive to the imported rows (matches the sheet&rsquo;s file column
+                against the folder; rows with an image already are skipped).
+              </p>
+              <div className="flex items-center gap-2 mb-2">
+                <input
+                  value={attachFolder}
+                  onChange={(e) => setAttachFolder(e.target.value)}
+                  placeholder="Drive folder"
+                  className="flex-1 px-2 py-1 text-xs rounded-md"
+                  style={inputStyle}
+                  aria-label="Drive folder name"
+                />
+                <input
+                  value={attachColumn}
+                  onChange={(e) => setAttachColumn(e.target.value)}
+                  placeholder="Sheet file column"
+                  className="flex-1 px-2 py-1 text-xs rounded-md"
+                  style={inputStyle}
+                  aria-label="Sheet source-file column"
+                />
+                <button
+                  onClick={runAttach}
+                  disabled={busy}
+                  className="px-2.5 py-1.5 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {busy ? '…' : 'Attach PDFs'}
+                </button>
+              </div>
+              {attachResult && (
+                <p className="text-xs" style={{ color: 'var(--dt-text-secondary)' }}>
+                  Attached {attachResult.attached}, already had one {attachResult.alreadyAttached}
+                  {attachResult.missingInDrive.length > 0 && `, not found in Drive: ${attachResult.missingInDrive.join(', ')}`}
+                  {attachResult.unmatchedRows > 0 && `, ${attachResult.unmatchedRows} rows not from this import`}
+                  {attachResult.noSourceFile > 0 && `, ${attachResult.noSourceFile} without a file entry`}.
+                </p>
+              )}
+            </div>
           )}
           {error && <p className="text-xs mt-2" style={{ color: '#f87171' }}>{error}</p>}
         </div>

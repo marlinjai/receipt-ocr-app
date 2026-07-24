@@ -5,6 +5,7 @@ import {
   refreshAccessToken,
   GoogleOAuthError,
   GOOGLE_SHEETS_SCOPE,
+  GOOGLE_OAUTH_SCOPES,
 } from './google-oauth';
 
 afterEach(() => vi.restoreAllMocks());
@@ -19,7 +20,9 @@ describe('buildAuthUrl', () => {
     expect(p.get('client_id')).toBe('cid');
     expect(p.get('redirect_uri')).toBe('https://receipts.lumitra.co/api/google/oauth/callback');
     expect(p.get('response_type')).toBe('code');
-    expect(p.get('scope')).toBe(GOOGLE_SHEETS_SCOPE);
+    // Sheets (import) + Drive read-only (source-PDF attach)
+    expect(p.get('scope')).toBe(GOOGLE_OAUTH_SCOPES);
+    expect(GOOGLE_OAUTH_SCOPES).toContain(GOOGLE_SHEETS_SCOPE);
     expect(p.get('access_type')).toBe('offline');
     expect(p.get('prompt')).toBe('consent'); // forces refresh_token issuance
     expect(p.get('state')).toBe('st');

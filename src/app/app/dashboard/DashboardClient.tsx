@@ -68,6 +68,10 @@ function DashboardContent({ tableId }: { tableId: string }) {
 
   const [searchResults, setSearchResults] = useState<Row[] | null>(null);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  // The keyboard-focused row (Notion-style implicit selection): bulk edits
+  // apply to it when nothing is checkbox-selected. Destructive actions
+  // (delete) intentionally still require an explicit selection.
+  const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const [aiSidebarOpen, setAiSidebarOpen] = useState(false);
   const [detailRow, setDetailRow] = useState<Row | null>(null);
   const displayRows = searchResults ?? rows;
@@ -157,6 +161,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
             onDeleteFile={deleteFile}
             selectedRows={selectedRows}
             onSelectionChange={setSelectedRows}
+            onActiveRowChange={setActiveRowId}
             sorts={sorts}
             onSortChange={setSorts}
             isLoading={isRowsLoading}
@@ -285,7 +290,13 @@ function DashboardContent({ tableId }: { tableId: string }) {
             columns={columns}
             selectOptions={selectOptions}
             loadSelectOptions={loadSelectOptions}
-            selectedRows={selectedRows}
+            selectedRows={
+              selectedRows.size > 0
+                ? selectedRows
+                : activeRowId
+                  ? new Set([activeRowId])
+                  : selectedRows
+            }
             updateCell={updateCell}
           />
           {selectedRows.size > 0 && (

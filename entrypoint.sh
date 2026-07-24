@@ -12,11 +12,13 @@ INFISICAL_TOKEN=$(infisical login \
   --domain "$DOMAIN" \
   --silent --plain)
 
-# Inject secrets and start the app
-# NEXT_PUBLIC_* are baked in at build time — runtime injection is for server-side secrets only
+# Inject secrets, then hand off to start.sh, which applies pending schema
+# migrations (with a one-time baseline for the pre-ledger prod DB) before
+# starting the server. NEXT_PUBLIC_* are baked in at build time — runtime
+# injection is for server-side secrets only.
 exec infisical run \
   --env=prod \
   --projectId="$PROJECT_ID" \
   --domain "$DOMAIN" \
   --token "$INFISICAL_TOKEN" \
-  -- node server.js
+  -- sh start.sh

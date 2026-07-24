@@ -11,10 +11,6 @@ COPY prisma ./prisma/
 RUN pnpm install --frozen-lockfile
 RUN pnpm prisma generate
 
-# --- Migrator (used by docker-compose for running migrations) ---
-FROM deps AS migrator
-CMD ["pnpm", "prisma", "migrate", "deploy"]
-
 # --- Build ---
 FROM base AS builder
 WORKDIR /app
@@ -46,6 +42,11 @@ ENV NODE_ENV=production
 COPY --from=infisical /bin/infisical /usr/local/bin/infisical
 # curl for healthcheck
 RUN apk add --no-cache curl
+# Prisma CLI (pinned to the app's version) so the entrypoint can run
+# `prisma migrate deploy` at boot — engines are fetched at BUILD time here,
+# not at container start. Without this, schema migrations silently never ran
+# in prod (the P2021 missing-table incident of 2026-07-24).
+RUN npm install -g prisma@6.19.2
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
@@ -53,7 +54,9 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-COPY --chown=nextjs:nodejs entrypoint.sh ./entrypoint.sh
+# Schema + migrations for the boot-time `prisma migrate deploy`
+COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
+COPY --chown=nextjs:nodejs entrypoint.sh start.sh ./
 
 USER nextjs
 

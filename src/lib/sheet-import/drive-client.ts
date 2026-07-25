@@ -83,15 +83,39 @@ export const SPREADSHEET_MIME = 'application/vnd.google-apps.spreadsheet';
 const INVOICE_MIMES = new Set(['application/pdf', 'image/png', 'image/jpeg']);
 
 /**
- * List the children of a Drive location for the browse UI. `parent` is a folder
- * id, `'root'` (My Drive), or `'shared'` (the Shared-with-me pseudo-folder,
- * which is a query, not a real folder).
+ * List the user's shared drives (Team Drives). These are separate corpora:
+ * they appear in neither My Drive nor Shared-with-me, so the browse UI lists
+ * them explicitly at the root.
+ */
+export async function listSharedDrives(accessToken: string): Promise<DriveFile[]> {
+  const out: DriveFile[] = [];
+  let pageToken: string | undefined;
+  do {
+    const url = new URL(`${DRIVE_BASE}/drives`);
+    url.searchParams.set('pageSize', '100');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!res.ok) throw new DriveApiError(res.status, await res.text().catch(() => ''));
+    const data = (await res.json()) as { drives?: { id: string; name: string }[]; nextPageToken?: string };
+    out.push(...(data.drives ?? []).map((d) => ({ id: d.id, name: d.name })));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return out;
+}
+
+/**
+ * List the children of a Drive location for the browse UI. `parent` is a
+ * folder id, `'root'` (My Drive), `'shared'` (the Shared-with-me pseudo-folder,
+ * which is a query, not a real folder), or `'drive:<id>'` (the root of a
+ * shared drive, which needs the drive corpus).
  */
 export async function listChildren(accessToken: string, parent: string): Promise<DriveFile[]> {
+  const driveId = parent.startsWith('drive:') ? parent.slice('drive:'.length) : null;
+  const effectiveParent = driveId ?? parent;
   const q =
     parent === 'shared'
       ? 'sharedWithMe = true and trashed = false'
-      : `'${parent.replace(/'/g, "\\'")}' in parents and trashed = false`;
+      : `'${effectiveParent.replace(/'/g, "\\'")}' in parents and trashed = false`;
   const out: DriveFile[] = [];
   let pageToken: string | undefined;
   do {
@@ -102,6 +126,16 @@ export async function listChildren(accessToken: string, parent: string): Promise
     url.searchParams.set('orderBy', 'folder,name');
     url.searchParams.set('supportsAllDrives', 'true');
     url.searchParams.set('includeItemsFromAllDrives', 'true');
+    if (driveId) {
+      // Shared-drive root: scope the query to that drive's corpus.
+      url.searchParams.set('corpora', 'drive');
+      url.searchParams.set('driveId', driveId);
+    } else if (parent !== 'shared' && parent !== 'root') {
+      // A plain folder id may live in My Drive OR inside a shared drive;
+      // allDrives covers both. (sharedWithMe queries reject this corpus, and
+      // 'root' is an alias only valid in the user corpus.)
+      url.searchParams.set('corpora', 'allDrives');
+    }
     if (pageToken) url.searchParams.set('pageToken', pageToken);
     const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!res.ok) throw new DriveApiError(res.status, await res.text().catch(() => ''));

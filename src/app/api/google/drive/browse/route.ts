@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { getAccessTokenForUser } from '@/lib/sheet-import/google-credentials';
-import { listChildren, classifyBrowseEntries, DriveApiError } from '@/lib/sheet-import/drive-client';
+import { listChildren, listSharedDrives, classifyBrowseEntries, DriveApiError } from '@/lib/sheet-import/drive-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +10,9 @@ export const dynamic = 'force-dynamic';
  *
  * One level of the user's Drive hierarchy for the import page's pickers:
  * child folders plus the files the flow can use (spreadsheets, PDF/PNG/JPEG).
- * `shared` is the Shared-with-me pseudo-folder.
+ * `shared` is the Shared-with-me pseudo-folder; `drive:<id>` is a shared
+ * drive's root. At `root`, the response also carries the user's shared drives
+ * (they are a separate corpus, invisible from My Drive and Shared-with-me).
  */
 export async function GET(req: NextRequest) {
   let principal;
@@ -24,15 +26,18 @@ export async function GET(req: NextRequest) {
   if (!accessToken) return NextResponse.json({ error: 'not_connected' }, { status: 428 });
 
   const parent = req.nextUrl.searchParams.get('parent')?.trim() || 'root';
-  // Drive file ids are URL-safe tokens; anything else would end up inside a
-  // Drive query string, so reject it up front.
-  if (parent !== 'root' && parent !== 'shared' && !/^[A-Za-z0-9_-]+$/.test(parent)) {
+  // Drive file/drive ids are URL-safe tokens; anything else would end up
+  // inside a Drive query string, so reject it up front.
+  if (parent !== 'root' && parent !== 'shared' && !/^(drive:)?[A-Za-z0-9_-]+$/.test(parent)) {
     return NextResponse.json({ error: 'invalid_parent' }, { status: 400 });
   }
 
   try {
-    const entries = await listChildren(accessToken, parent);
-    return NextResponse.json(classifyBrowseEntries(entries));
+    const [entries, sharedDrives] = await Promise.all([
+      listChildren(accessToken, parent),
+      parent === 'root' ? listSharedDrives(accessToken) : Promise.resolve([]),
+    ]);
+    return NextResponse.json({ ...classifyBrowseEntries(entries), sharedDrives });
   } catch (e) {
     if (e instanceof DriveApiError) {
       if (e.status === 403) return NextResponse.json({ error: 'drive_scope_missing' }, { status: 428 });

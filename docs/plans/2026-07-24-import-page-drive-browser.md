@@ -40,8 +40,13 @@ hierarchy instead of pasting URLs / typing folder names.
 
 ## Non-goals
 
-Shared-drive enumeration (drives.list) — "My Drive" + "Shared with me" covers the
-current corpus; scheduled auto-sync stays out (manual re-run v1 per earlier decision).
+Scheduled auto-sync stays out (manual re-run v1 per earlier decision).
+
+Update 2026-07-25: shared-drive enumeration (drives.list) moved INTO scope — the
+invoices live in the "Founders" shared drive, which is invisible from both My Drive
+and Shared-with-me. Shared drives now appear at the browser root; their roots are
+navigated as `drive:<id>` (drive corpus), and plain folder ids use the allDrives
+corpus so folders inside shared drives list correctly.
 
 ## Tests
 

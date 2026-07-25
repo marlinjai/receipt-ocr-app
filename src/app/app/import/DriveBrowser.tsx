@@ -4,8 +4,10 @@ import { useState, useEffect, useCallback } from 'react';
 
 /**
  * Minimal Google Drive browser for the import page. Navigates the folder
- * hierarchy (My Drive root + a Shared-with-me pseudo-folder) one level at a
- * time via /api/google/drive/browse.
+ * hierarchy (My Drive root, shared drives, and a Shared-with-me pseudo-folder)
+ * one level at a time via /api/google/drive/browse. Shared-drive roots are
+ * tracked as `drive:<id>` path entries (the API needs the drive corpus); the
+ * prefix is stripped before a folder selection leaves this component.
  *
  * Two modes:
  * - `pick="spreadsheet"`: folders navigate, spreadsheets are selectable.
@@ -65,6 +67,7 @@ export default function DriveBrowser({ pick, selected, onSelect, onAuthError }: 
   // Breadcrumb path; the tail is the folder currently listed.
   const [path, setPath] = useState<{ id: string; name: string }[]>([{ id: 'root', name: 'My Drive' }]);
   const [folders, setFolders] = useState<DriveEntry[]>([]);
+  const [sharedDrives, setSharedDrives] = useState<DriveEntry[]>([]);
   const [files, setFiles] = useState<DriveEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,17 +80,24 @@ export default function DriveBrowser({ pick, selected, onSelect, onAuthError }: 
       setError(null);
       try {
         const res = await fetch(`/api/google/drive/browse?parent=${encodeURIComponent(parent)}`);
-        const data = (await res.json().catch(() => ({}))) as { folders?: DriveEntry[]; files?: DriveEntry[]; error?: string };
+        const data = (await res.json().catch(() => ({}))) as {
+          folders?: DriveEntry[];
+          sharedDrives?: DriveEntry[];
+          files?: DriveEntry[];
+          error?: string;
+        };
         if (!res.ok) {
           if (data.error === 'not_connected' || data.error === 'drive_scope_missing') {
             onAuthError?.(data.error);
           }
           setError(data.error ?? 'browse_failed');
           setFolders([]);
+          setSharedDrives([]);
           setFiles([]);
           return;
         }
         setFolders(data.folders ?? []);
+        setSharedDrives(data.sharedDrives ?? []);
         setFiles(data.files ?? []);
       } catch {
         setError('network_error');
@@ -125,11 +135,11 @@ export default function DriveBrowser({ pick, selected, onSelect, onAuthError }: 
         ))}
         {pick === 'folder' && current.id !== 'shared' && (
           <button
-            onClick={() => onSelect(current)}
-            disabled={selected?.id === current.id}
+            onClick={() => onSelect({ id: current.id.replace(/^drive:/, ''), name: current.name })}
+            disabled={selected?.id === current.id.replace(/^drive:/, '')}
             className="ml-auto px-2 py-1 rounded-md text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
           >
-            {selected?.id === current.id ? 'Selected' : 'Use this folder'}
+            {selected?.id === current.id.replace(/^drive:/, '') ? 'Selected' : 'Use this folder'}
           </button>
         )}
       </div>
@@ -152,6 +162,22 @@ export default function DriveBrowser({ pick, selected, onSelect, onAuthError }: 
                 Shared with me
               </button>
             )}
+            {current.id === 'root' &&
+              sharedDrives.map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => setPath((prev) => [...prev, { id: `drive:${d.id}`, name: d.name }])}
+                  style={rowStyle}
+                  className="hover:bg-white/5"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2z" />
+                    <circle cx="12" cy="13" r="2.5" />
+                  </svg>
+                  <span className="truncate">{d.name}</span>
+                  <span className="ml-auto text-[10px]" style={{ color: 'var(--dt-text-secondary)' }}>Shared drive</span>
+                </button>
+              ))}
             {folders.map((f) => (
               <button key={f.id} onClick={() => setPath((prev) => [...prev, { id: f.id, name: f.name }])} style={rowStyle} className="hover:bg-white/5">
                 <EntryIcon kind="folder" />

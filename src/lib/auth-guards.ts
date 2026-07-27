@@ -16,8 +16,8 @@ export { sessionMayAccessWorkspace, sessionWorkspaceId };
  * action that touches dt_* rows: the browser addresses resources by opaque
  * ids (tableId / rowId / columnId / viewId / optionId), so each id is
  * resolved server-side to its OWNING workspace and checked against the
- * verified membership set. A member of receipts-lola-stories can never read
- * or write receipts-marlinjai data by guessing ids.
+ * verified membership set. A member of the lola-stories workspace can never
+ * read or write marlinjai data by guessing ids.
  *
  * Fail-closed: no session, unknown resource, non-member workspace, and any
  * OpenFGA error all deny. The dev-bypass session (no memberships,

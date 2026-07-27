@@ -6,6 +6,8 @@
     "dev": "infisical run --token=\"$($HOME/software-dev/infra/scripts/infisical-mi-token.sh)\" --projectId=95d42533-3157-4b66-a49b-cc386ec1214d --domain=https://infisical.lumitra.co -- next dev",
     "build": "prisma generate && next build",
     "start": "next start",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "docs:dev": "clearify dev",
     "docs:build": "clearify build",
@@ -19,7 +21,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
-    "@marlinjai/auth-brain-nextjs": "^0.1.0",
+    "@marlinjai/auth-brain-nextjs": "^0.2.0",
     "@marlinjai/data-table-adapter-prisma": "^0.2.1",
     "@marlinjai/data-table-adapter-shared": "^0.2.0",
     "@marlinjai/data-table-core": "^0.2.0",
@@ -36,6 +38,7 @@
   "devDependencies": {
     "@commitlint/cli": "^20.4.3",
     "@commitlint/config-conventional": "^20.4.3",
+    "@marlinjai/auth-brain-shared": "^1.4.0",
     "@marlinjai/clearify": "^1.11.1",
     "@mdx-js/react": "^3.1.1",
     "@tailwindcss/postcss": "^4.2.1",

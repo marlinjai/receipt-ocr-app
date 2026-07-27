@@ -3,9 +3,10 @@ import { auth } from '@/lib/auth';
 /**
  * Auth middleware for the whole app (see @marlinjai/auth-brain-nextjs).
  *
- * PAGE navigation: a verified auth-brain session with >=1 `receipts-*`
- * workspace passes; a verified session with none goes to /no-access; anything
- * else redirects to the hosted login at auth.lumitra.co with return_to.
+ * PAGE navigation: a verified auth-brain session whose tenants hold the
+ * `receipts` app grant (>=1 matched workspace) passes; a verified session with
+ * none goes to /no-access; anything else redirects to the hosted login at
+ * auth.lumitra.co with return_to.
  *
  * /api/* keeps the dual gate: a valid SERVICE_TOKEN bearer (machine callers,
  * e.g. smoke tests against /api/ocr) OR the session cookie (browser fetches,

@@ -23,9 +23,9 @@ export function devFallbackWorkspaceId(): string {
  * may touch only the local dev workspace. Fail-closed.
  *
  * Cross-package invariant this relies on (verified against
- * @marlinjai/auth-brain-nextjs 0.1.0): a zero-membership session can ONLY be
+ * @marlinjai/auth-brain-nextjs 0.2.0): a zero-membership session can ONLY be
  * the NODE_ENV=development bypass. In production, getSession() returns null
- * for a verified user with no receipts-* membership (never an empty-
+ * for a verified user whose tenants hold no `receipts` grant (never an empty-
  * membership session), so the dev branch below is unreachable in prod.
  */
 export function sessionMayAccessWorkspace(
@@ -46,7 +46,12 @@ export function sessionWorkspaceId(session: SessionLike): string {
   return session.activeWorkspace?.id ?? devFallbackWorkspaceId();
 }
 
-/** Human label for a `receipts-<company>` workspace slug. */
+/**
+ * Human label for a company workspace slug. In app-grant mode a slug is the
+ * plain company slug (`lola-stories`), so we title-case it as-is; the legacy
+ * `receipts-` prefix is stripped ONLY when still present, purely for
+ * back-compat display of workspaces provisioned before the door flip.
+ */
 export function workspaceLabel(slug: string): string {
   const company = slug.replace(/^receipts-/, '');
   return company

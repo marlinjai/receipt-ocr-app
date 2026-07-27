@@ -9,8 +9,10 @@ import {
 
 afterEach(() => vi.unstubAllEnvs());
 
-const WS_LOLA = { id: 'ws_lola', slug: 'receipts-lola-stories', role: 'member' };
-const WS_MJ = { id: 'ws_mj', slug: 'receipts-marlinjai', role: 'member' };
+// App-grant mode: workspace slugs are plain company slugs (no `receipts-`
+// prefix); access is decided by the tenant's `receipts` grant, not the name.
+const WS_LOLA = { id: 'ws_lola', slug: 'lola-stories', role: 'member' };
+const WS_MJ = { id: 'ws_mj', slug: 'marlinjai', role: 'member' };
 
 function session(overrides: Partial<SessionLike> = {}): SessionLike {
   return { memberships: [WS_LOLA, WS_MJ], activeWorkspace: WS_LOLA, ...overrides };
@@ -54,9 +56,14 @@ describe('sessionWorkspaceId', () => {
 });
 
 describe('workspaceLabel', () => {
-  it('prettifies receipts-<company> slugs', () => {
+  it('title-cases a plain company slug (app-grant mode, no prefix)', () => {
+    expect(workspaceLabel('lola-stories')).toBe('Lola Stories');
+    expect(workspaceLabel('marlinjai')).toBe('Marlinjai');
+    expect(workspaceLabel('lumitra')).toBe('Lumitra');
+  });
+
+  it('still strips a legacy `receipts-` prefix if present (back-compat)', () => {
     expect(workspaceLabel('receipts-lola-stories')).toBe('Lola Stories');
     expect(workspaceLabel('receipts-marlinjai')).toBe('Marlinjai');
-    expect(workspaceLabel('receipts-lumitra')).toBe('Lumitra');
   });
 });

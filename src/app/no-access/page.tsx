@@ -1,9 +1,10 @@
 import { auth } from '@/lib/auth';
 
 /**
- * Public page shown to a VERIFIED auth-brain session that is a member of no
- * `receipts-*` workspace. Bouncing such a session to login would loop (the
- * session is valid); an explicit dead-end with a next action is the fix.
+ * Public page shown to a VERIFIED auth-brain session whose tenants hold no
+ * `receipts` app grant (so it matches zero workspaces). Bouncing such a session
+ * to login would loop (the session is valid); an explicit dead-end with a next
+ * action is the fix.
  */
 export default function NoAccessPage() {
   return (
@@ -13,9 +14,10 @@ export default function NoAccessPage() {
           No access to Receipts
         </h1>
         <p className="text-sm leading-relaxed mb-6" style={{ color: 'var(--muted)' }}>
-          Your account is signed in, but it is not a member of any receipts
-          workspace. Ask Marlin to invite your email to the right company
-          workspace in the auth-brain console, then reload this page.
+          Your account is signed in, but none of your companies has Receipts
+          enabled. Ask Marlin to enable the Receipts app for your company in the
+          auth-brain console (and add your email to its workspace), then reload
+          this page.
         </p>
         <a
           href={auth.logoutUrl()}

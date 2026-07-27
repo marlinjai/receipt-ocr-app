@@ -52,7 +52,7 @@ SERVICE_TOKEN=...            # machine bearer for /api/* (>= 32 chars)
 
 ## Authentication
 
-The app is a relying party of [auth-brain](https://auth.lumitra.co) (shared `lumitra_session` cookie on `.lumitra.co`). Access = membership of an auth-brain workspace whose slug starts with `receipts-` (one workspace per company: Lola Stories, marlinjai, Lumitra). All data is partitioned by the active workspace's UUID (`dt_tables.workspace_id`); the switcher in the header changes the active company (validated `receipts_ws` cookie). Mutations additionally pass fail-closed OpenFGA checks (`@marlinjai/auth-brain-nextjs`).
+The app is a relying party of [auth-brain](https://auth.lumitra.co) (shared `lumitra_session` cookie on `.lumitra.co`). Access = one of your companies (tenants) holds the `receipts` app grant; the openable workspaces are then every workspace owned by a granted company (Lola Stories, marlinjai, Lumitra). All data is partitioned by the active workspace's UUID (`dt_tables.workspace_id`); the switcher in the header changes the active company (validated `receipts_ws` cookie). Mutations additionally pass fail-closed OpenFGA checks (`@marlinjai/auth-brain-nextjs`).
 
 **Local dev bypasses auth by design:** set `AUTH_DEV_USER_EMAIL` (dev env in Infisical). The bypass only works with `NODE_ENV=development` and scopes data to the local `receipt-ocr` workspace (`AUTH_DEV_WORKSPACE_ID` to override). Machine callers hit `/api/*` with `Authorization: Bearer $SERVICE_TOKEN`; `/api/health` stays public.
 

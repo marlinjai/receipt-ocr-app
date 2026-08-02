@@ -3,7 +3,7 @@
 import { useState, useRef } from 'react';
 import type { Row, Column, SelectOption } from '@marlinjai/data-table-core';
 import { receiptImageUrl } from '@/lib/sheet-import/image-url';
-import ReceiptLightbox from './ReceiptLightbox';
+import ReceiptLightbox, { lightboxTarget } from './ReceiptLightbox';
 
 interface ReceiptDetailPanelProps {
   row: Row;
@@ -288,19 +288,39 @@ export default function ReceiptDetailPanel({
               }}
             />
             {receiptImage && String(receiptImage) ? (
-              <div className="flex justify-center">
-                <button
-                  onClick={() => setLightboxOpen(true)}
-                  className="cursor-zoom-in rounded-lg transition-opacity hover:opacity-80"
-                  aria-label="Open full-size preview"
-                >
-                  <img
-                    src={String(receiptImage)}
-                    alt="Receipt"
-                    className="max-h-64 rounded-lg object-contain"
-                  />
-                </button>
-              </div>
+              // Inline preview of the ACTUAL file: PDFs render in an embedded
+              // viewer, images full-width. The expand button (and, for images,
+              // clicking the preview) opens the fullscreen lightbox — an iframe
+              // swallows clicks, so PDFs need the explicit button.
+              (() => {
+                const { fullUrl, isPdf } = lightboxTarget(String(receiptImage));
+                return (
+                  <div className="relative">
+                    {isPdf ? (
+                      <iframe
+                        src={`${fullUrl}#toolbar=0&navpanes=0`}
+                        title="Receipt preview"
+                        className="h-[420px] w-full rounded-lg border-0 bg-[#1e1e2e]"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => setLightboxOpen(true)}
+                        className="flex w-full cursor-zoom-in justify-center rounded-lg transition-opacity hover:opacity-80"
+                        aria-label="Open full-size preview"
+                      >
+                        <img src={fullUrl} alt="Receipt" className="max-h-[420px] rounded-lg object-contain" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setLightboxOpen(true)}
+                      className="absolute right-2 top-2 rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-xs text-gray-300 hover:bg-black/80 hover:text-white"
+                      aria-label="Open full-size preview"
+                    >
+                      ⤢ Expand
+                    </button>
+                  </div>
+                );
+              })()
             ) : (
               <p className="text-xs text-gray-500">
                 No file attached yet. Upload a PDF, PNG, or JPEG for this row.

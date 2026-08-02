@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react';
 import type { Row, Column, SelectOption } from '@marlinjai/data-table-core';
 import { receiptImageUrl } from '@/lib/sheet-import/image-url';
+import ReceiptLightbox from './ReceiptLightbox';
 
 interface ReceiptDetailPanelProps {
   row: Row;
@@ -73,6 +74,7 @@ export default function ReceiptDetailPanel({
   const [ocrExpanded, setOcrExpanded] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Upload a file straight into THIS row's Receipt Image (no new row, no OCR
@@ -287,11 +289,17 @@ export default function ReceiptDetailPanel({
             />
             {receiptImage && String(receiptImage) ? (
               <div className="flex justify-center">
-                <img
-                  src={String(receiptImage)}
-                  alt="Receipt"
-                  className="max-h-64 rounded-lg object-contain"
-                />
+                <button
+                  onClick={() => setLightboxOpen(true)}
+                  className="cursor-zoom-in rounded-lg transition-opacity hover:opacity-80"
+                  aria-label="Open full-size preview"
+                >
+                  <img
+                    src={String(receiptImage)}
+                    alt="Receipt"
+                    className="max-h-64 rounded-lg object-contain"
+                  />
+                </button>
               </div>
             ) : (
               <p className="text-xs text-gray-500">
@@ -300,6 +308,10 @@ export default function ReceiptDetailPanel({
             )}
             {uploadError && <p className="mt-2 text-xs text-red-400">{uploadError}</p>}
           </div>
+
+          {lightboxOpen && receiptImage && String(receiptImage) && (
+            <ReceiptLightbox url={String(receiptImage)} onClose={() => setLightboxOpen(false)} />
+          )}
 
           {/* Fields grid */}
           <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">

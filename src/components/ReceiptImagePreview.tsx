@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Column, Row } from '@marlinjai/data-table-core';
+import ReceiptLightbox from './ReceiptLightbox';
 
 interface ReceiptImagePreviewProps {
   columns: Column[];
@@ -16,24 +17,11 @@ interface ReceiptImagePreviewProps {
  * the URL anchor tags in the Receipt Image column with <img> thumbnails.
  */
 export default function ReceiptImagePreview({ columns, rows }: ReceiptImagePreviewProps) {
+  // The raw CELL url; ReceiptLightbox derives the real file url + PDF-ness.
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
-  const [lightboxIsPdf, setLightboxIsPdf] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const lightboxUrlRef = useRef<string | null>(null);
-
-  // Keep ref in sync for use in DOM event handlers
-  useEffect(() => {
-    lightboxUrlRef.current = lightboxUrl;
-  }, [lightboxUrl]);
 
   const receiptImageColIndex = columns.findIndex((c) => c.name === 'Receipt Image');
-
-  const getFullUrl = useCallback((url: string): string => {
-    if (url.endsWith('/thumbnail')) {
-      return url.replace(/\/thumbnail$/, '');
-    }
-    return url;
-  }, []);
 
   const transformCells = useCallback(() => {
     if (receiptImageColIndex < 0) return;
@@ -105,13 +93,10 @@ export default function ReceiptImagePreview({ columns, rows }: ReceiptImagePrevi
 
       wrapper.appendChild(img);
 
-      const fullUrl = getFullUrl(url);
-
       wrapper.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        setLightboxUrl(fullUrl);
-        setLightboxIsPdf(url.endsWith('/thumbnail'));
+        setLightboxUrl(url);
       });
 
       urlCell.innerHTML = '';
@@ -119,7 +104,7 @@ export default function ReceiptImagePreview({ columns, rows }: ReceiptImagePrevi
       (urlCell as HTMLElement).style.overflow = 'visible';
       (urlCell as HTMLElement).style.padding = '0';
     });
-  }, [receiptImageColIndex, columns.length, getFullUrl]);
+  }, [receiptImageColIndex, columns.length]);
 
   useEffect(() => {
     if (receiptImageColIndex < 0) return;
@@ -148,102 +133,12 @@ export default function ReceiptImagePreview({ columns, rows }: ReceiptImagePrevi
     };
   }, [receiptImageColIndex, transformCells, rows]);
 
-  // Close lightbox on Escape key
-  useEffect(() => {
-    if (!lightboxUrl) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setLightboxUrl(null);
-    };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [lightboxUrl]);
-
   return (
     <>
       {/* Invisible anchor for DOM queries */}
       <div ref={containerRef} style={{ display: 'none' }} />
 
-      {/* Lightbox Modal */}
-      {lightboxUrl && (
-        <div
-          onClick={() => setLightboxUrl(null)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-            backdropFilter: 'blur(4px)',
-            cursor: 'zoom-out',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'relative',
-              maxWidth: '90vw',
-              maxHeight: '90vh',
-              cursor: 'default',
-            }}
-          >
-            {/* Close button */}
-            <button
-              onClick={() => setLightboxUrl(null)}
-              style={{
-                position: 'absolute',
-                top: -12,
-                right: -12,
-                width: 32,
-                height: 32,
-                borderRadius: '50%',
-                border: '1px solid rgba(255,255,255,0.2)',
-                background: 'rgba(0,0,0,0.6)',
-                color: '#fff',
-                fontSize: 18,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 1,
-              }}
-              aria-label="Close preview"
-            >
-              &times;
-            </button>
-
-            {lightboxIsPdf ? (
-              // For PDFs, open the actual file in an iframe
-              <iframe
-                src={lightboxUrl}
-                title="Receipt preview"
-                style={{
-                  width: '80vw',
-                  height: '85vh',
-                  maxWidth: 900,
-                  border: 'none',
-                  borderRadius: 8,
-                  background: '#1e1e2e',
-                }}
-              />
-            ) : (
-              // For images, show the full-resolution image
-              <img
-                src={lightboxUrl}
-                alt="Receipt full size"
-                style={{
-                  maxWidth: '90vw',
-                  maxHeight: '90vh',
-                  objectFit: 'contain',
-                  borderRadius: 8,
-                  boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-                }}
-              />
-            )}
-          </div>
-        </div>
-      )}
+      {lightboxUrl && <ReceiptLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
     </>
   );
 }

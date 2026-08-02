@@ -1,14 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import type { Row, Column, SelectOption } from '@marlinjai/data-table-core';
+import { receiptImageUrl } from '@/lib/sheet-import/image-url';
 
 interface ReceiptDetailPanelProps {
   row: Row;
   columns: Column[];
   selectOptions: Map<string, SelectOption[]>;
   onClose: () => void;
+  /** Set the row's Receipt Image cell (upload-into-row / replace-file). */
+  onSetReceiptImage?: (rowId: string, url: string) => Promise<void>;
 }
+
+const ACCEPTED_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 function getCellDisplay(
   col: Column,
@@ -62,8 +68,56 @@ export default function ReceiptDetailPanel({
   columns,
   selectOptions,
   onClose,
+  onSetReceiptImage,
 }: ReceiptDetailPanelProps) {
   const [ocrExpanded, setOcrExpanded] = useState(false);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Upload a file straight into THIS row's Receipt Image (no new row, no OCR
+  // run). Replacing only re-points the cell; the previous Storage Brain object
+  // is kept because nothing guarantees it isn't referenced by another row.
+  const handleFilePicked = async (file: File) => {
+    if (!onSetReceiptImage) return;
+    if (!ACCEPTED_TYPES.includes(file.type)) {
+      setUploadError('Only PDF, PNG, or JPEG files are supported.');
+      return;
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      setUploadError('File is larger than 20 MB.');
+      return;
+    }
+    setUploadBusy(true);
+    setUploadError(null);
+    try {
+      const handshake = await fetch('/api/upload/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: file.name,
+          fileType: file.type,
+          fileSize: file.size,
+          context: 'receipt',
+          tags: { source: 'row-attach' },
+        }),
+      });
+      if (!handshake.ok) throw new Error('Upload request failed');
+      const { presignedUrl, fileId } = (await handshake.json()) as { presignedUrl: string; fileId: string };
+      const put = await fetch(presignedUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type },
+        body: file,
+      });
+      if (!put.ok) throw new Error(`Upload failed (${put.status})`);
+      await onSetReceiptImage(row.id, receiptImageUrl(fileId, file.name));
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setUploadBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   const getCol = (name: string) => columns.find((c) => c.name === name);
   const getVal = (name: string) => {
@@ -205,30 +259,47 @@ export default function ReceiptDetailPanel({
 
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-          {/* Receipt image */}
-          {receiptImage && String(receiptImage) && (
-            <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-              <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">
+          {/* Receipt image (view + upload-into-row / replace) */}
+          <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-xs font-medium uppercase tracking-wider text-gray-500">
                 Receipt Image
               </h3>
-              <div className="flex justify-center">
-                {String(receiptImage).includes('thumbnail') ||
-                String(receiptImage).endsWith('.pdf') ? (
-                  <img
-                    src={String(receiptImage)}
-                    alt="Receipt"
-                    className="max-h-64 rounded-lg object-contain"
-                  />
-                ) : (
-                  <img
-                    src={String(receiptImage)}
-                    alt="Receipt"
-                    className="max-h-64 rounded-lg object-contain"
-                  />
-                )}
-              </div>
+              {onSetReceiptImage && (
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadBusy}
+                  className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {uploadBusy ? 'Uploading…' : receiptImage ? 'Replace file' : 'Upload file'}
+                </button>
+              )}
             </div>
-          )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void handleFilePicked(file);
+              }}
+            />
+            {receiptImage && String(receiptImage) ? (
+              <div className="flex justify-center">
+                <img
+                  src={String(receiptImage)}
+                  alt="Receipt"
+                  className="max-h-64 rounded-lg object-contain"
+                />
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500">
+                No file attached yet. Upload a PDF, PNG, or JPEG for this row.
+              </p>
+            )}
+            {uploadError && <p className="mt-2 text-xs text-red-400">{uploadError}</p>}
+          </div>
 
           {/* Fields grid */}
           <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">

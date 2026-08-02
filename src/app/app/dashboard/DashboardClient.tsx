@@ -371,13 +371,22 @@ function DashboardContent({ tableId }: { tableId: string }) {
       {/* Receipt Image Thumbnails */}
       <ReceiptImagePreview columns={columns} rows={displayRows} />
 
-      {/* Receipt Detail Panel */}
+      {/* Receipt Detail Panel — row is re-resolved from live rows so an
+          upload/replace inside the panel shows up without reopening it */}
       {detailRow && (
         <ReceiptDetailPanel
-          row={detailRow}
+          row={rows.find((r) => r.id === detailRow.id) ?? detailRow}
           columns={columns}
           selectOptions={selectOptions}
           onClose={() => setDetailRow(null)}
+          onSetReceiptImage={(() => {
+            const imageColId = columns.find((c) => c.name === 'Receipt Image')?.id;
+            return imageColId
+              ? async (rowId: string, url: string) => {
+                  await updateCell(rowId, imageColId, url);
+                }
+              : undefined;
+          })()}
         />
       )}
 

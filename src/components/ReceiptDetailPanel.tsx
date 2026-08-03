@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import type { Row, Column, SelectOption } from '@marlinjai/data-table-core';
-import { receiptImageUrl } from '@/lib/sheet-import/image-url';
+import { uploadReceiptFile, validateReceiptFile } from '@/lib/receipt-file-upload';
 import ReceiptLightbox, { lightboxTarget } from './ReceiptLightbox';
 
 interface ReceiptDetailPanelProps {
@@ -14,8 +14,6 @@ interface ReceiptDetailPanelProps {
   onSetReceiptImage?: (rowId: string, url: string) => Promise<void>;
 }
 
-const ACCEPTED_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
-const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 function getCellDisplay(
   col: Column,
@@ -75,51 +73,49 @@ export default function ReceiptDetailPanel({
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Upload a file straight into THIS row's Receipt Image (no new row, no OCR
   // run). Replacing only re-points the cell; the previous Storage Brain object
   // is kept because nothing guarantees it isn't referenced by another row.
-  const handleFilePicked = async (file: File) => {
+  const handleFilePicked = useCallback(
+    async (file: File) => {
+      if (!onSetReceiptImage) return;
+      const rejection = validateReceiptFile(file);
+      if (rejection) {
+        setUploadError(rejection);
+        return;
+      }
+      setUploadBusy(true);
+      setUploadError(null);
+      try {
+        await onSetReceiptImage(row.id, await uploadReceiptFile(file));
+      } catch (e) {
+        setUploadError(e instanceof Error ? e.message : 'Upload failed');
+      } finally {
+        setUploadBusy(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    },
+    [onSetReceiptImage, row.id],
+  );
+
+  // Cmd/Ctrl+V a file anywhere while the panel is open (unless typing in a
+  // field) uploads it into this row.
+  useEffect(() => {
     if (!onSetReceiptImage) return;
-    if (!ACCEPTED_TYPES.includes(file.type)) {
-      setUploadError('Only PDF, PNG, or JPEG files are supported.');
-      return;
-    }
-    if (file.size > MAX_FILE_BYTES) {
-      setUploadError('File is larger than 20 MB.');
-      return;
-    }
-    setUploadBusy(true);
-    setUploadError(null);
-    try {
-      const handshake = await fetch('/api/upload/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileName: file.name,
-          fileType: file.type,
-          fileSize: file.size,
-          context: 'receipt',
-          tags: { source: 'row-attach' },
-        }),
-      });
-      if (!handshake.ok) throw new Error('Upload request failed');
-      const { presignedUrl, fileId } = (await handshake.json()) as { presignedUrl: string; fileId: string };
-      const put = await fetch(presignedUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': file.type },
-        body: file,
-      });
-      if (!put.ok) throw new Error(`Upload failed (${put.status})`);
-      await onSetReceiptImage(row.id, receiptImageUrl(fileId, file.name));
-    } catch (e) {
-      setUploadError(e instanceof Error ? e.message : 'Upload failed');
-    } finally {
-      setUploadBusy(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
+    const onPaste = (e: ClipboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return;
+      const file = e.clipboardData?.files?.[0];
+      if (!file) return;
+      e.preventDefault();
+      void handleFilePicked(file);
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [onSetReceiptImage, handleFilePicked]);
 
   const getCol = (name: string) => columns.find((c) => c.name === name);
   const getVal = (name: string) => {
@@ -227,8 +223,26 @@ export default function ReceiptDetailPanel({
         onClick={onClose}
       />
 
-      {/* Panel */}
-      <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-l border-gray-800 bg-gray-950 shadow-2xl">
+      {/* Panel — the whole surface is a drop target for the receipt file */}
+      <div
+        className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-l border-gray-800 bg-gray-950 shadow-2xl"
+        onDragOver={(e) => {
+          if (!onSetReceiptImage || !e.dataTransfer.types.includes('Files')) return;
+          e.preventDefault();
+          setDragActive(true);
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          setDragActive(false);
+        }}
+        onDrop={(e) => {
+          if (!onSetReceiptImage) return;
+          e.preventDefault();
+          setDragActive(false);
+          const file = e.dataTransfer.files?.[0];
+          if (file) void handleFilePicked(file);
+        }}
+      >
         {/* Header */}
         <div className="flex items-start justify-between border-b border-gray-800 px-6 py-5">
           <div className="min-w-0 flex-1 pr-4">
@@ -262,7 +276,7 @@ export default function ReceiptDetailPanel({
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
           {/* Receipt image (view + upload-into-row / replace) */}
-          <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+          <div className={`rounded-xl border bg-gray-900 p-4 ${dragActive ? 'border-blue-500 ring-1 ring-blue-500/40' : 'border-gray-800'}`}>
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-xs font-medium uppercase tracking-wider text-gray-500">
                 Receipt Image
@@ -323,7 +337,7 @@ export default function ReceiptDetailPanel({
               })()
             ) : (
               <p className="text-xs text-gray-500">
-                No file attached yet. Upload a PDF, PNG, or JPEG for this row.
+                No file attached yet. Upload, paste (Cmd+V), or drop a PDF, PNG, or JPEG here.
               </p>
             )}
             {uploadError && <p className="mt-2 text-xs text-red-400">{uploadError}</p>}

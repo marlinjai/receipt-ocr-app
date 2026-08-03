@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: completed
 title: Migrate Receipt Image from url column to the native file column (multi-file rows)
 summary: Convert the Receipt Image column to the data-table file type so rows can hold multiple files, retiring the DOM-overlay thumbnail layer, the /thumbnail URL convention, and the hand-rolled upload surfaces.
 tags: [data-table, file-column, migration, storage-brain]

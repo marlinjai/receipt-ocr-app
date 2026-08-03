@@ -2,17 +2,22 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { Row, Column, SelectOption } from '@marlinjai/data-table-core';
-import { uploadReceiptFile, validateReceiptFile } from '@/lib/receipt-file-upload';
-import ReceiptLightbox, { lightboxTarget } from './ReceiptLightbox';
+import type { FileReference } from '@marlinjai/data-table-core';
+import { validateReceiptFile } from '@/lib/presigned-file-adapter';
+import ReceiptLightbox from './ReceiptLightbox';
 
 interface ReceiptDetailPanelProps {
   row: Row;
   columns: Column[];
   selectOptions: Map<string, SelectOption[]>;
   onClose: () => void;
-  /** Set the row's Receipt Image cell (upload-into-row / replace-file). */
-  onSetReceiptImage?: (rowId: string, url: string) => Promise<void>;
+  /** Upload a file into the row's Receipt Image column (appends a reference). */
+  onUploadFile?: (rowId: string, columnId: string, file: File) => Promise<unknown>;
+  /** Remove one file reference from the row (the storage object is kept). */
+  onDeleteFile?: (rowId: string, columnId: string, fileId: string) => Promise<void>;
 }
+
+const MAX_FILES_PER_ROW = 10;
 
 
 function getCellDisplay(
@@ -67,21 +72,25 @@ export default function ReceiptDetailPanel({
   columns,
   selectOptions,
   onClose,
-  onSetReceiptImage,
+  onUploadFile,
+  onDeleteFile,
 }: ReceiptDetailPanelProps) {
   const [ocrExpanded, setOcrExpanded] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxFile, setLightboxFile] = useState<FileReference | null>(null);
+  const [previewIdx, setPreviewIdx] = useState(0);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Upload a file straight into THIS row's Receipt Image (no new row, no OCR
   // run). Replacing only re-points the cell; the previous Storage Brain object
   // is kept because nothing guarantees it isn't referenced by another row.
+  const imageColId = columns.find((c) => c.name === 'Receipt Image')?.id;
+
   const handleFilePicked = useCallback(
     async (file: File) => {
-      if (!onSetReceiptImage) return;
+      if (!onUploadFile || !imageColId) return;
       const rejection = validateReceiptFile(file);
       if (rejection) {
         setUploadError(rejection);
@@ -90,7 +99,7 @@ export default function ReceiptDetailPanel({
       setUploadBusy(true);
       setUploadError(null);
       try {
-        await onSetReceiptImage(row.id, await uploadReceiptFile(file));
+        await onUploadFile(row.id, imageColId, file);
       } catch (e) {
         setUploadError(e instanceof Error ? e.message : 'Upload failed');
       } finally {
@@ -98,13 +107,13 @@ export default function ReceiptDetailPanel({
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
     },
-    [onSetReceiptImage, row.id],
+    [onUploadFile, imageColId, row.id],
   );
 
   // Cmd/Ctrl+V a file anywhere while the panel is open (unless typing in a
   // field) uploads it into this row.
   useEffect(() => {
-    if (!onSetReceiptImage) return;
+    if (!onUploadFile) return;
     const onPaste = (e: ClipboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return;
@@ -115,7 +124,7 @@ export default function ReceiptDetailPanel({
     };
     document.addEventListener('paste', onPaste);
     return () => document.removeEventListener('paste', onPaste);
-  }, [onSetReceiptImage, handleFilePicked]);
+  }, [onUploadFile, handleFilePicked]);
 
   const getCol = (name: string) => columns.find((c) => c.name === name);
   const getVal = (name: string) => {
@@ -133,8 +142,10 @@ export default function ReceiptDetailPanel({
   const konto = getVal('Konto');
   const status = getVal('Status');
   const confidence = getVal('Confidence');
-  const receiptImage = getVal('Receipt Image');
   const ocrText = getVal('OCR Text');
+  const rawFiles = imageColId ? row.cells[imageColId] : null;
+  const files: FileReference[] = Array.isArray(rawFiles) ? (rawFiles as FileReference[]) : [];
+  const previewFile = files[Math.min(previewIdx, files.length - 1)] ?? null;
   const zuordnung = getVal('Zuordnung');
 
   const categoryCol = getCol('Category');
@@ -227,7 +238,7 @@ export default function ReceiptDetailPanel({
       <div
         className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-l border-gray-800 bg-gray-950 shadow-2xl"
         onDragOver={(e) => {
-          if (!onSetReceiptImage || !e.dataTransfer.types.includes('Files')) return;
+          if (!onUploadFile || !e.dataTransfer.types.includes('Files')) return;
           e.preventDefault();
           setDragActive(true);
         }}
@@ -236,7 +247,7 @@ export default function ReceiptDetailPanel({
           setDragActive(false);
         }}
         onDrop={(e) => {
-          if (!onSetReceiptImage) return;
+          if (!onUploadFile) return;
           e.preventDefault();
           setDragActive(false);
           const file = e.dataTransfer.files?.[0];
@@ -275,19 +286,19 @@ export default function ReceiptDetailPanel({
 
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-          {/* Receipt image (view + upload-into-row / replace) */}
+          {/* Receipt files: multi-file list + inline preview of the selected one */}
           <div className={`rounded-xl border bg-gray-900 p-4 ${dragActive ? 'border-blue-500 ring-1 ring-blue-500/40' : 'border-gray-800'}`}>
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-xs font-medium uppercase tracking-wider text-gray-500">
-                Receipt Image
+                Receipt Files{files.length > 0 ? ` (${files.length})` : ''}
               </h3>
-              {onSetReceiptImage && (
+              {onUploadFile && imageColId && (
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={uploadBusy}
+                  disabled={uploadBusy || files.length >= MAX_FILES_PER_ROW}
                   className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {uploadBusy ? 'Uploading…' : receiptImage ? 'Replace file' : 'Upload file'}
+                  {uploadBusy ? 'Uploading…' : '+ Add file'}
                 </button>
               )}
             </div>
@@ -301,50 +312,88 @@ export default function ReceiptDetailPanel({
                 if (file) void handleFilePicked(file);
               }}
             />
-            {receiptImage && String(receiptImage) ? (
+            {previewFile ? (
               // Inline preview of the ACTUAL file: PDFs render in an embedded
               // viewer, images full-width. The expand button (and, for images,
               // clicking the preview) opens the fullscreen lightbox — an iframe
               // swallows clicks, so PDFs need the explicit button.
-              (() => {
-                const { fullUrl, isPdf } = lightboxTarget(String(receiptImage));
-                return (
-                  <div className="relative">
-                    {isPdf ? (
-                      <iframe
-                        src={`${fullUrl}#toolbar=0&navpanes=0`}
-                        title="Receipt preview"
-                        className="h-[420px] w-full rounded-lg border-0 bg-[#1e1e2e]"
-                      />
-                    ) : (
-                      <button
-                        onClick={() => setLightboxOpen(true)}
-                        className="flex w-full cursor-zoom-in justify-center rounded-lg transition-opacity hover:opacity-80"
-                        aria-label="Open full-size preview"
-                      >
-                        <img src={fullUrl} alt="Receipt" className="max-h-[420px] rounded-lg object-contain" />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setLightboxOpen(true)}
-                      className="absolute right-2 top-2 rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-xs text-gray-300 hover:bg-black/80 hover:text-white"
-                      aria-label="Open full-size preview"
-                    >
-                      ⤢ Expand
-                    </button>
-                  </div>
-                );
-              })()
+              <div className="relative">
+                {previewFile.mimeType === 'application/pdf' ? (
+                  <iframe
+                    src={`${previewFile.fileUrl}#toolbar=0&navpanes=0`}
+                    title="Receipt preview"
+                    className="h-[420px] w-full rounded-lg border-0 bg-[#1e1e2e]"
+                  />
+                ) : (
+                  <button
+                    onClick={() => setLightboxFile(previewFile)}
+                    className="flex w-full cursor-zoom-in justify-center rounded-lg transition-opacity hover:opacity-80"
+                    aria-label="Open full-size preview"
+                  >
+                    <img src={previewFile.fileUrl} alt={previewFile.originalName} className="max-h-[420px] rounded-lg object-contain" />
+                  </button>
+                )}
+                <button
+                  onClick={() => setLightboxFile(previewFile)}
+                  className="absolute right-2 top-2 rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-xs text-gray-300 hover:bg-black/80 hover:text-white"
+                  aria-label="Open full-size preview"
+                >
+                  ⤢ Expand
+                </button>
+              </div>
             ) : (
               <p className="text-xs text-gray-500">
-                No file attached yet. Upload, paste (Cmd+V), or drop a PDF, PNG, or JPEG here.
+                No files attached yet. Upload, paste (Cmd+V), or drop PDF, PNG, or JPEG files here.
               </p>
+            )}
+            {files.length > 0 && (
+              <ul className="mt-3 space-y-1">
+                {files.map((f, idx) => (
+                  <li
+                    key={f.id}
+                    className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-xs ${idx === previewIdx ? 'bg-gray-800 text-gray-100' : 'text-gray-400 hover:bg-gray-800/60'}`}
+                  >
+                    <button onClick={() => setPreviewIdx(idx)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                      <span aria-hidden>{f.mimeType === 'application/pdf' ? '📄' : '🖼️'}</span>
+                      <span className="truncate">{f.originalName}</span>
+                      {f.sizeBytes ? (
+                        <span className="shrink-0 text-[10px] text-gray-500">{(f.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>
+                      ) : null}
+                    </button>
+                    <button
+                      onClick={() => setLightboxFile(f)}
+                      className="shrink-0 rounded px-1.5 py-0.5 text-gray-500 hover:bg-gray-700 hover:text-gray-200"
+                      aria-label={`Preview ${f.originalName}`}
+                    >
+                      ⤢
+                    </button>
+                    {onDeleteFile && imageColId && (
+                      <button
+                        onClick={() => {
+                          void onDeleteFile(row.id, imageColId, f.fileId).catch((e: unknown) =>
+                            setUploadError(e instanceof Error ? e.message : 'Delete failed'),
+                          );
+                          setPreviewIdx(0);
+                        }}
+                        className="shrink-0 rounded px-1.5 py-0.5 text-gray-500 hover:bg-gray-700 hover:text-red-400"
+                        aria-label={`Remove ${f.originalName}`}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
             {uploadError && <p className="mt-2 text-xs text-red-400">{uploadError}</p>}
           </div>
 
-          {lightboxOpen && receiptImage && String(receiptImage) && (
-            <ReceiptLightbox url={String(receiptImage)} onClose={() => setLightboxOpen(false)} />
+          {lightboxFile && (
+            <ReceiptLightbox
+              fileUrl={lightboxFile.fileUrl}
+              isPdf={lightboxFile.mimeType === 'application/pdf'}
+              onClose={() => setLightboxFile(null)}
+            />
           )}
 
           {/* Fields grid */}

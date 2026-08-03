@@ -4,19 +4,17 @@ import { useEffect } from 'react';
 
 /**
  * Fullscreen receipt preview: PDFs load into an iframe, raster images render
- * full-size. The single lightbox implementation, shared by the table cells
- * (ReceiptImagePreview) and the row detail panel.
- *
- * `url` is the CELL value: `/api/files/<id>/thumbnail` for PDFs (the suffix is
- * stripped to reach the real file) or a bare image URL.
+ * full-size. Mime-driven — callers pass the real file URL.
  */
-export function lightboxTarget(url: string): { fullUrl: string; isPdf: boolean } {
-  const isPdf = url.endsWith('/thumbnail');
-  return { fullUrl: isPdf ? url.replace(/\/thumbnail$/, '') : url, isPdf };
-}
-
-export default function ReceiptLightbox({ url, onClose }: { url: string; onClose: () => void }) {
-  const { fullUrl, isPdf } = lightboxTarget(url);
+export default function ReceiptLightbox({
+  fileUrl,
+  isPdf,
+  onClose,
+}: {
+  fileUrl: string;
+  isPdf: boolean;
+  onClose: () => void;
+}) {
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -71,7 +69,7 @@ export default function ReceiptLightbox({ url, onClose }: { url: string; onClose
 
         {isPdf ? (
           <iframe
-            src={fullUrl}
+            src={fileUrl}
             title="Receipt preview"
             style={{
               width: '80vw',
@@ -84,7 +82,7 @@ export default function ReceiptLightbox({ url, onClose }: { url: string; onClose
           />
         ) : (
           <img
-            src={fullUrl}
+            src={fileUrl}
             alt="Receipt full size"
             style={{
               maxWidth: '90vw',

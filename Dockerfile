@@ -56,6 +56,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Schema + migrations for the boot-time `prisma migrate deploy`
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
+# One-shot data migrations run by start.sh (use the standalone node_modules)
+COPY --chown=nextjs:nodejs scripts ./scripts
 COPY --chown=nextjs:nodejs entrypoint.sh start.sh ./
 
 USER nextjs

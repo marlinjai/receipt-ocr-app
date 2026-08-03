@@ -94,14 +94,29 @@ export default function ReceiptImagePreview({ columns, rows, onUploadFile }: Rec
       const td = cells[cellIndex];
       if (!td) return;
 
-      // Skip if already transformed
-      if (td.querySelector('.receipt-thumbnail')) return;
-
-      const urlCell = td.querySelector('.dt-cell-url');
+      const urlCell = td.querySelector('.dt-cell-url') as HTMLElement | null;
       if (!urlCell) return;
 
       const anchor = urlCell.querySelector('a');
       const url = anchor?.getAttribute('href') || '';
+
+      // Already transformed and still current? Done. If the underlying URL
+      // changed (upload/replace re-rendered the cell), rebuild OUR overlay.
+      const existingOverlay = urlCell.querySelector(':scope > .receipt-thumbnail') as HTMLElement | null;
+      if (existingOverlay) {
+        if (existingOverlay.dataset.url === url) return;
+        existingOverlay.remove();
+      }
+
+      // CRITICAL: React owns this cell's children. Never remove them
+      // (innerHTML = '' here made React's later reconciliation crash with
+      // "removeChild ... not a child of this node" and took the whole page
+      // down). Hide them and append our overlay alongside instead.
+      for (const child of Array.from(urlCell.children)) {
+        if (!(child as HTMLElement).classList.contains('receipt-thumbnail')) {
+          (child as HTMLElement).style.display = 'none';
+        }
+      }
 
       const rowId = tr.getAttribute('data-row-id');
 
@@ -120,7 +135,7 @@ export default function ReceiptImagePreview({ columns, rows, onUploadFile }: Rec
         icon.textContent = canUpload ? '+' : '--';
         placeholder.appendChild(icon);
         if (canUpload) wireUpload(placeholder, rowId!, true);
-        urlCell.innerHTML = '';
+        placeholder.dataset.url = '';
         urlCell.appendChild(placeholder);
         (urlCell as HTMLElement).style.overflow = 'visible';
         (urlCell as HTMLElement).style.padding = '0';
@@ -160,7 +175,7 @@ export default function ReceiptImagePreview({ columns, rows, onUploadFile }: Rec
       // Dropping a file on a filled cell replaces the row's file.
       if (rowId) wireUpload(wrapper, rowId, false);
 
-      urlCell.innerHTML = '';
+      wrapper.dataset.url = url;
       urlCell.appendChild(wrapper);
       (urlCell as HTMLElement).style.overflow = 'visible';
       (urlCell as HTMLElement).style.padding = '0';

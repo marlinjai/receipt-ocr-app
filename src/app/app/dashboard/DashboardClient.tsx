@@ -20,6 +20,7 @@ import BulkEditBar from './BulkEditBar';
 import AiChatSidebar from '@/components/AiChatSidebar';
 import ReceiptImagePreview from '@/components/ReceiptImagePreview';
 import ReceiptDetailPanel from '@/components/ReceiptDetailPanel';
+import { uploadReceiptFile, validateReceiptFile } from '@/lib/receipt-file-upload';
 import { exportCSV } from '@/lib/export-csv';
 
 const dbAdapter = createServerActionsAdapter();
@@ -369,7 +370,20 @@ function DashboardContent({ tableId }: { tableId: string }) {
       </div>
 
       {/* Receipt Image Thumbnails */}
-      <ReceiptImagePreview columns={columns} rows={displayRows} />
+      <ReceiptImagePreview
+        columns={columns}
+        rows={displayRows}
+        onUploadFile={(() => {
+          const imageColId = columns.find((c) => c.name === 'Receipt Image')?.id;
+          return imageColId
+            ? async (rowId: string, file: File) => {
+                const rejection = validateReceiptFile(file);
+                if (rejection) throw new Error(rejection);
+                await updateCell(rowId, imageColId, await uploadReceiptFile(file));
+              }
+            : undefined;
+        })()}
+      />
 
       {/* Receipt Detail Panel — row is re-resolved from live rows so an
           upload/replace inside the panel shows up without reopening it */}

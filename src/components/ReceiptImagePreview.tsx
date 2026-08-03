@@ -7,6 +7,8 @@ import ReceiptLightbox from './ReceiptLightbox';
 interface ReceiptImagePreviewProps {
   columns: Column[];
   rows: Row[];
+  /** Upload a file into a row's Receipt Image (cell click-to-upload + drop). */
+  onUploadFile?: (rowId: string, file: File) => Promise<void>;
 }
 
 /**
@@ -16,12 +18,62 @@ interface ReceiptImagePreviewProps {
  * This component observes the DOM after the data-table renders and replaces
  * the URL anchor tags in the Receipt Image column with <img> thumbnails.
  */
-export default function ReceiptImagePreview({ columns, rows }: ReceiptImagePreviewProps) {
+export default function ReceiptImagePreview({ columns, rows, onUploadFile }: ReceiptImagePreviewProps) {
   // The raw CELL url; ReceiptLightbox derives the real file url + PDF-ness.
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const receiptImageColIndex = columns.findIndex((c) => c.name === 'Receipt Image');
+
+  // Wire drag&drop (and, for empty cells, click-to-upload) onto a cell. The
+  // element shows '…' while uploading and '!' with the reason on failure; a
+  // successful upload updates the row, which re-renders the cell as a
+  // thumbnail via the normal transform pass.
+  const wireUpload = useCallback(
+    (el: HTMLElement, rowId: string, clickToPick: boolean) => {
+      if (!onUploadFile) return;
+      const run = (file: File) => {
+        const label = el.querySelector('.receipt-upload-label') as HTMLElement | null;
+        if (label) label.textContent = '…';
+        onUploadFile(rowId, file).catch((err: unknown) => {
+          if (label) label.textContent = '!';
+          el.title = err instanceof Error ? err.message : 'Upload failed';
+        });
+      };
+      if (clickToPick) {
+        el.style.cursor = 'pointer';
+        el.title = 'Upload a receipt file (or drop one here)';
+        el.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = '.pdf,.png,.jpg,.jpeg';
+          input.onchange = () => {
+            if (input.files?.[0]) run(input.files[0]);
+          };
+          input.click();
+        });
+      }
+      el.addEventListener('dragover', (e) => {
+        if (!e.dataTransfer?.types.includes('Files')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        el.style.outline = '1px solid #3b82f6';
+      });
+      el.addEventListener('dragleave', () => {
+        el.style.outline = '';
+      });
+      el.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        el.style.outline = '';
+        const file = e.dataTransfer?.files?.[0];
+        if (file) run(file);
+      });
+    },
+    [onUploadFile],
+  );
 
   const transformCells = useCallback(() => {
     if (receiptImageColIndex < 0) return;
@@ -51,17 +103,23 @@ export default function ReceiptImagePreview({ columns, rows }: ReceiptImagePrevi
       const anchor = urlCell.querySelector('a');
       const url = anchor?.getAttribute('href') || '';
 
+      const rowId = tr.getAttribute('data-row-id');
+
       if (!url) {
-        // No image — show placeholder
+        // No image — an upload affordance (click or drop) when wired, else a
+        // plain placeholder.
+        const canUpload = Boolean(onUploadFile && rowId);
         const placeholder = document.createElement('div');
         placeholder.className = 'receipt-thumbnail';
         placeholder.style.cssText =
           'display:flex;align-items:center;justify-content:center;padding:4px 8px;height:100%;';
         const icon = document.createElement('div');
+        icon.className = 'receipt-upload-label';
         icon.style.cssText =
-          'width:28px;height:36px;border-radius:4px;background:rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:center;color:#555;font-size:10px;';
-        icon.textContent = '--';
+          'width:28px;height:36px;border-radius:4px;background:rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:center;color:#555;font-size:12px;';
+        icon.textContent = canUpload ? '+' : '--';
         placeholder.appendChild(icon);
+        if (canUpload) wireUpload(placeholder, rowId!, true);
         urlCell.innerHTML = '';
         urlCell.appendChild(placeholder);
         (urlCell as HTMLElement).style.overflow = 'visible';
@@ -99,12 +157,15 @@ export default function ReceiptImagePreview({ columns, rows }: ReceiptImagePrevi
         setLightboxUrl(url);
       });
 
+      // Dropping a file on a filled cell replaces the row's file.
+      if (rowId) wireUpload(wrapper, rowId, false);
+
       urlCell.innerHTML = '';
       urlCell.appendChild(wrapper);
       (urlCell as HTMLElement).style.overflow = 'visible';
       (urlCell as HTMLElement).style.padding = '0';
     });
-  }, [receiptImageColIndex, columns.length]);
+  }, [receiptImageColIndex, columns.length, onUploadFile, wireUpload]);
 
   useEffect(() => {
     if (receiptImageColIndex < 0) return;

@@ -18,12 +18,12 @@ import { createServerActionsAdapter } from './server-actions-adapter';
 import FxRecomputePanel from './FxRecomputePanel';
 import BulkEditBar from './BulkEditBar';
 import AiChatSidebar from '@/components/AiChatSidebar';
-import ReceiptImagePreview from '@/components/ReceiptImagePreview';
 import ReceiptDetailPanel from '@/components/ReceiptDetailPanel';
-import { uploadReceiptFile, validateReceiptFile } from '@/lib/receipt-file-upload';
+import { PresignedStorageBrainAdapter } from '@/lib/presigned-file-adapter';
 import { exportCSV } from '@/lib/export-csv';
 
 const dbAdapter = createServerActionsAdapter();
+const fileAdapter = new PresignedStorageBrainAdapter();
 
 interface DashboardClientProps {
   tableId: string;
@@ -369,22 +369,6 @@ function DashboardContent({ tableId }: { tableId: string }) {
         {renderView()}
       </div>
 
-      {/* Receipt Image Thumbnails */}
-      <ReceiptImagePreview
-        columns={columns}
-        rows={displayRows}
-        onUploadFile={(() => {
-          const imageColId = columns.find((c) => c.name === 'Receipt Image')?.id;
-          return imageColId
-            ? async (rowId: string, file: File) => {
-                const rejection = validateReceiptFile(file);
-                if (rejection) throw new Error(rejection);
-                await updateCell(rowId, imageColId, await uploadReceiptFile(file));
-              }
-            : undefined;
-        })()}
-      />
-
       {/* Receipt Detail Panel — row is re-resolved from live rows so an
           upload/replace inside the panel shows up without reopening it */}
       {detailRow && (
@@ -393,14 +377,8 @@ function DashboardContent({ tableId }: { tableId: string }) {
           columns={columns}
           selectOptions={selectOptions}
           onClose={() => setDetailRow(null)}
-          onSetReceiptImage={(() => {
-            const imageColId = columns.find((c) => c.name === 'Receipt Image')?.id;
-            return imageColId
-              ? async (rowId: string, url: string) => {
-                  await updateCell(rowId, imageColId, url);
-                }
-              : undefined;
-          })()}
+          onUploadFile={uploadFile}
+          onDeleteFile={deleteFile}
         />
       )}
 
@@ -423,7 +401,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
 
 export default function DashboardClient({ tableId, workspaceId }: DashboardClientProps) {
   return (
-    <DataTableProvider dbAdapter={dbAdapter} workspaceId={workspaceId}>
+    <DataTableProvider dbAdapter={dbAdapter} fileAdapter={fileAdapter} workspaceId={workspaceId}>
       <DashboardContent tableId={tableId} />
     </DataTableProvider>
   );

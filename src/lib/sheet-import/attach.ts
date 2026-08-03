@@ -5,7 +5,6 @@ import { getAccessTokenForUser } from './google-credentials';
 import { readSheetValues, gridToRows } from './sheets-client';
 import { mapRow, computeDedupKey, type ColumnMapping, type ImportableField } from './normalize';
 import { listDriveFiles, findFolderByName, matchSourceFile, downloadDriveFile, DriveApiError } from './drive-client';
-import { receiptImageUrl, repairedImageUrl } from './image-url';
 
 const TABLE_NAME = 'Receipts';
 const STORAGE_BRAIN_URL = process.env.NEXT_PUBLIC_STORAGE_BRAIN_URL || 'https://api.storage-brain.lumitra.co';
@@ -33,8 +32,6 @@ export interface AttachInput {
 export interface AttachResult {
   attached: number;
   alreadyAttached: number;
-  /** Old-convention PDF URLs upgraded in place (no re-upload). */
-  repaired: number;
   missingInDrive: string[];
   unmatchedRows: number;
   noSourceFile: number;
@@ -138,7 +135,7 @@ export async function attachSourceFiles(input: AttachInput): Promise<AttachResul
   if (!imageCol) throw new AttachError('image_column_missing');
 
   const sourceHeader = input.sourceFileHeader ?? 'Source File';
-  const result: AttachResult = { attached: 0, alreadyAttached: 0, repaired: 0, missingInDrive: [], unmatchedRows: 0, noSourceFile: 0 };
+  const result: AttachResult = { attached: 0, alreadyAttached: 0, missingInDrive: [], unmatchedRows: 0, noSourceFile: 0 };
   const seen = new Set<string>();
 
   for (const raw of rows) {
@@ -157,22 +154,12 @@ export async function attachSourceFiles(input: AttachInput): Promise<AttachResul
       continue;
     }
 
-    const row = await adapter.getRow(dtRowId);
-    if (!row) {
-      result.unmatchedRows++;
-      continue;
-    }
-    const existing = row.cells[imageCol.id];
-    if (typeof existing === 'string' && existing.trim()) {
-      // Rows attached before the URL-convention fix hold bare /api/files/<id>
-      // for PDFs; upgrade them in place (no re-download, no re-upload).
-      const repaired = repairedImageUrl(existing, sourceFile);
-      if (repaired) {
-        await adapter.updateRow(dtRowId, { [imageCol.id]: repaired });
-        result.repaired++;
-      } else {
-        result.alreadyAttached++;
-      }
+    // Idempotency: a row that already holds any file on the column is done.
+    // (A row whose file was deliberately deleted gets re-attached on re-run;
+    // that is the documented restore-from-Drive semantic.)
+    const existingRefs = await adapter.getFileReferences(dtRowId, imageCol.id);
+    if (existingRefs.length > 0) {
+      result.alreadyAttached++;
       continue;
     }
 
@@ -184,7 +171,16 @@ export async function attachSourceFiles(input: AttachInput): Promise<AttachResul
 
     const bytes = await downloadDriveFile(accessToken, driveFile.id);
     const fileId = await uploadToStorageBrain(driveFile.name, bytes);
-    await adapter.updateRow(dtRowId, { [imageCol.id]: receiptImageUrl(fileId, driveFile.name) });
+    await adapter.addFileReference({
+      rowId: dtRowId,
+      columnId: imageCol.id,
+      fileId,
+      fileUrl: `/api/files/${fileId}`,
+      originalName: driveFile.name,
+      mimeType: contentType(driveFile.name),
+      sizeBytes: bytes.byteLength,
+      metadata: { source: 'drive-attach' },
+    });
     result.attached++;
   }
 

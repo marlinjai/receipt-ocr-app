@@ -133,7 +133,6 @@ export default function ImportClient() {
   const [attachResult, setAttachResult] = useState<{
     attached: number;
     alreadyAttached: number;
-    repaired?: number;
     missingInDrive: string[];
     unmatchedRows: number;
     noSourceFile: number;
@@ -429,7 +428,6 @@ export default function ImportClient() {
                 {attachResult && (
                   <p className="text-xs mt-3" style={{ color: 'var(--dt-text-secondary)' }}>
                     Attached {attachResult.attached}, already had one {attachResult.alreadyAttached}
-                    {(attachResult.repaired ?? 0) > 0 && `, repaired ${attachResult.repaired} previews`}
                     {attachResult.missingInDrive.length > 0 && `, not found in Drive: ${attachResult.missingInDrive.join(', ')}`}
                     {attachResult.unmatchedRows > 0 && `, ${attachResult.unmatchedRows} rows not from this import`}
                     {attachResult.noSourceFile > 0 && `, ${attachResult.noSourceFile} without a file entry`}.

@@ -184,13 +184,8 @@ export async function processReceipt(
       case 'Confidence':
         cells[col.id] = ocrResult?.confidence ? Math.round(ocrResult.confidence * 100) : 0;
         break;
-      case 'Receipt Image': {
-        const isPdf = (file.fileType ?? '').includes('pdf') || (file.originalName ?? '').toLowerCase().endsWith('.pdf');
-        cells[col.id] = file.id
-          ? isPdf ? `/api/files/${file.id}/thumbnail` : `/api/files/${file.id}`
-          : '';
-        break;
-      }
+      // 'Receipt Image' is a file column: the uploaded file is attached as a
+      // file reference after the row exists (below), not via a cell value.
       case 'OCR Text':
         cells[col.id] = ocrResult?.fullText ?? '';
         break;
@@ -209,7 +204,20 @@ export async function processReceipt(
     }
   }
 
-  await adapter.createRow({ tableId, cells });
+  const row = await adapter.createRow({ tableId, cells });
+
+  const imageCol = columns.find((c) => c.name === 'Receipt Image');
+  if (imageCol && file.id) {
+    await adapter.addFileReference({
+      rowId: row.id,
+      columnId: imageCol.id,
+      fileId: file.id,
+      fileUrl: `/api/files/${file.id}`,
+      originalName: file.originalName ?? 'receipt',
+      mimeType: file.fileType ?? 'application/octet-stream',
+      metadata: { source: 'ocr-upload' },
+    });
+  }
 }
 
 /**
@@ -302,7 +310,15 @@ const COLUMNS: ColumnDef[] = [
   { name: 'Konto', type: 'text' },
   { name: 'Status', type: 'select', options: STATUS_OPTIONS, optionColors: STATUS_COLORS },
   { name: 'Confidence', type: 'number' },
-  { name: 'Receipt Image', type: 'url' },
+  {
+    name: 'Receipt Image',
+    type: 'file',
+    config: {
+      maxFiles: 10,
+      allowedTypes: ['application/pdf', 'image/png', 'image/jpeg'],
+      maxSizeBytes: 20 * 1024 * 1024,
+    },
+  },
   { name: 'OCR Text', type: 'text' },
   { name: 'Zuordnung', type: 'select', options: ZUORDNUNG_OPTIONS, optionColors: ZUORDNUNG_COLORS },
   { name: 'Currency', type: 'select', options: CURRENCY_OPTIONS, optionColors: DEFAULT_OPTION_COLORS },

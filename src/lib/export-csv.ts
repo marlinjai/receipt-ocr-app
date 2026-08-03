@@ -88,7 +88,15 @@ function cellToString(value: CellValue): string {
   if (typeof value === 'boolean') return value ? 'Ja' : 'Nein';
   if (value instanceof Date) return formatDateDE(value);
   if (Array.isArray(value)) {
-    return value.map((v) => (typeof v === 'string' ? v : (v as { displayValue?: string }).displayValue ?? '')).join(', ');
+    return value
+      .map((v) =>
+        typeof v === 'string'
+          ? v
+          : ((v as { originalName?: string }).originalName ??
+            (v as { displayValue?: string }).displayValue ??
+            ''),
+      )
+      .join(', ');
   }
   return String(value);
 }

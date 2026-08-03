@@ -2,7 +2,6 @@ import 'server-only';
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { safeColumnName, safeTableName } from '@marlinjai/data-table-adapter-shared';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
 import { sessionMayAccessWorkspace } from '@/lib/auth-workspace';
@@ -15,11 +14,9 @@ import { resolveRowTableIds } from '@/lib/auth-guards';
  * workspace must not pull another company's invoice bytes by supplying a
  * foreign fileId.
  *
- * Ownership resolution: receipt images are recorded as `/api/files/<id>` URL
- * strings inside dt_rows.cells (processReceipt writes a url cell, not a
- * dt_files reference), so we look in BOTH places: dt_files.file_id and a
- * cells-JSON containment scan. Every referencing table's workspace is
- * collected; access requires membership of at least one.
+ * Ownership resolution: every file lives in the dt_files reference junction
+ * (the Receipt Image column is a native file column). Every referencing
+ * table's workspace is collected; access requires membership of at least one.
  *
  * The fresh-upload window: /api/ocr and /api/upload/complete run BEFORE
  * processReceipt creates the row, so a brand-new fileId has no reference yet.
@@ -55,42 +52,14 @@ export async function guardFileAccess(
   // Dev bypass (development only): no real memberships to check against.
   if (principal.memberships.length === 0) return null;
 
-  // Every table that references this file, via dt_files or a URL cell. Rows
-  // live in the legacy shared dt_rows OR in per-table physical tables once a
-  // dt table is `migrated`, so BOTH layouts must be scanned — the dt_rows-only
-  // scan silently found nothing for migrated rows, turning this check into an
-  // allow-by-default for their files.
-  const [fileRefs, cellRefs] = await Promise.all([
-    prisma.dtFile.findMany({ where: { fileId }, select: { rowId: true } }),
-    prisma.$queryRaw<Array<{ table_id: string }>>`
-      SELECT DISTINCT table_id FROM dt_rows WHERE cells::text LIKE ${'%' + fileId + '%'}
-    `,
-  ]);
-
-  const tableIds = new Set<string>(cellRefs.map((r) => r.table_id));
+  // Every table that references this file. Since the Receipt Image column
+  // migrated to the native file type (2026-08-03), the file-reference junction
+  // is the single source of truth: nothing records fileIds in cells anymore.
+  const fileRefs = await prisma.dtFile.findMany({ where: { fileId }, select: { rowId: true } });
+  const tableIds = new Set<string>();
   if (fileRefs.length > 0) {
     const resolved = await resolveRowTableIds(fileRefs.map((r) => r.rowId));
     for (const tableId of resolved.values()) tableIds.add(tableId);
-  }
-
-  // URL cells on migrated tables (e.g. Receipt Image's /api/files/<id>): the
-  // value sits in that table's physical url columns, not in dt_rows.
-  const migrated = await prisma.dtTable.findMany({ where: { migrated: true }, select: { id: true } });
-  for (const { id: tableId } of migrated) {
-    if (tableIds.has(tableId)) continue;
-    const urlCols = await prisma.dtColumn.findMany({
-      where: { tableId, type: 'url' },
-      select: { id: true },
-    });
-    if (urlCols.length === 0) continue;
-    const clause = urlCols.map((c) => `${safeColumnName(c.id)} LIKE $1`).join(' OR ');
-    const hits = await prisma
-      .$queryRawUnsafe<unknown[]>(
-        `SELECT 1 FROM ${safeTableName(tableId)} WHERE ${clause} LIMIT 1`,
-        `%${fileId}%`,
-      )
-      .catch(() => [] as unknown[]);
-    if (hits.length > 0) tableIds.add(tableId);
   }
 
   // Unreferenced = the fresh-upload window; see module docblock.

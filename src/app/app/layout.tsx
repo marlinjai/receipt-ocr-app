@@ -31,15 +31,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               className="px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wide"
               style={{ background: 'var(--accent-muted)', color: 'var(--accent)' }}
             >
-              {workspaceLabel(active.slug)}
+              {active.tenantName || workspaceLabel(active.slug)}
             </span>
           )}
         </div>
         <div className="flex items-center gap-4">
-          <WorkspaceSwitcher
-            memberships={session.memberships.map((m) => ({ id: m.id, slug: m.slug }))}
-            activeWorkspaceId={active?.id ?? null}
-          />
+          <WorkspaceSwitcher session={session} />
           <a
             href={auth.logoutUrl()}
             className="text-xs transition-colors hover:underline"

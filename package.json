@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
-    "@marlinjai/auth-brain-nextjs": "^0.2.0",
+    "@marlinjai/auth-brain-nextjs": "^0.4.1",
     "@marlinjai/data-table-adapter-prisma": "^0.2.1",
     "@marlinjai/data-table-adapter-shared": "^0.2.0",
     "@marlinjai/data-table-core": "^0.3.1",

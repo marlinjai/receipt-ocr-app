@@ -2,9 +2,9 @@
 title: Architecture
 description: System design, data flow, and integrations
 order: 1
-summary: System architecture documentation for the Receipt OCR App covering Next.js structure, Google Cloud Vision OCR integration, OpenRouter AI classification, Storage Brain file handling, and D1 persistence.
+summary: System architecture documentation for the Receipt OCR App covering Next.js structure, Google Cloud Vision OCR integration, OpenRouter AI classification, Storage Brain file handling, and PostgreSQL persistence via Prisma.
 type: documentation
-tags: [receipt-ocr, architecture, ocr, nextjs, cloudflare]
+tags: [receipt-ocr, architecture, ocr, nextjs, postgres, prisma]
 projects: [receipt-ocr-app]
 ---
 
@@ -13,16 +13,23 @@ projects: [receipt-ocr-app]
 ## System Overview
 
 ```
-Receipt OCR App (Next.js on Cloudflare Workers)
-    ├── Storage Brain SDK           → Cloudflare R2  (file uploads)
-    ├── Google Cloud Vision         → OCR            (text extraction)
-    ├── OpenRouter                  → LLM            (classification + chat)
-    └── @marlinjai/data-table-adapter-d1 → Cloudflare D1  (structured data)
+Receipt OCR App (Next.js, deployed as a Docker image)
+    ├── Storage Brain SDK               → object storage (file uploads)
+    ├── Google Cloud Vision             → OCR            (text extraction)
+    ├── OpenRouter                      → LLM            (classification + chat)
+    └── @marlinjai/data-table-adapter-prisma → PostgreSQL (structured data)
 ```
+
+> **Stack note.** This app ran on Cloudflare Workers with D1 and
+> `@opennextjs/cloudflare` earlier in its life. That is retired: persistence is
+> PostgreSQL through Prisma, and the app ships as a Docker image. This document
+> described the old stack long after the move, which is corrected here. The only
+> surviving Cloudflare dependency is the DOCS site, deployed to Cloudflare Pages
+> by `.github/workflows/deploy-docs.yml`.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                 Receipt OCR App (Next.js / Cloudflare Workers)       │
+│                 Receipt OCR App (Next.js, Docker image)             │
 ├──────────────────────────────────────────────────────────────────────┤
 │                                                                      │
 │  ┌────────────┐  ┌──────────────┐  ┌──────────────┐  ┌───────────┐  │
@@ -46,13 +53,13 @@ Receipt OCR App (Next.js on Cloudflare Workers)
 ┌───────────┐  ┌───────────────┐  ┌──────────────┐  ┌───────────────┐
 │ Storage   │  │ Data Table    │  │ OpenRouter   │  │ Google Cloud  │
 │ Brain SDK │  │ React +       │  │ (LLM API)   │  │ Vision API    │
-│           │  │ D1 Adapter    │  │              │  │ (OCR)         │
+│           │  │ Prisma Adapter│  │              │  │ (OCR)         │
 └─────┬─────┘  └───────┬───────┘  └──────────────┘  └───────────────┘
       │                │
       ▼                ▼
 ┌───────────┐  ┌───────────────┐
-│ Cloudflare│  │ Cloudflare    │
-│ R2        │  │ D1            │
+│ Object    │  │ PostgreSQL    │
+│ storage   │  │               │
 └───────────┘  └───────────────┘
 ```
 
@@ -111,7 +118,7 @@ Files added to upload queue (QueueItem[])
 │  Phase 3: POST /api/classify-single (AI classification)        │
 │        │   → category, konto, zuordnung, confidence, reasoning │
 │        ▼                                                       │
-│  Phase 4: Create row in receipts table via D1 adapter          │
+│  Phase 4: Create row in receipts table via Prisma adapter      │
 │        │                                                       │
 │        ▼                                                       │
 │  File marked done (or error) — next file begins                │
@@ -178,18 +185,20 @@ Located at `src/lib/extract-receipt-fields.ts` (~500 lines). Returns an `Extract
 3. **Item patterns**: checks for specific line-item hints (e.g., "cappuccino" -> Bewirtung)
 4. Falls back to "Sonstige Ausgaben" if no match
 
-## D1 Adapter
+## Prisma Adapter
 
-The app uses `@marlinjai/data-table-adapter-d1` to persist structured data directly in Cloudflare D1. The adapter is initialized in the app layout using the Cloudflare D1 binding:
+The app uses `@marlinjai/data-table-adapter-prisma` to persist the dynamic `dt_*`
+tables in PostgreSQL. The adapter is constructed with the shared Prisma client:
 
 ```typescript
 // src/app/app/layout.tsx
-import { D1Adapter } from '@marlinjai/data-table-adapter-d1';
+import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
+import { prisma } from '@/lib/prisma';
 
-setAdapter(new D1Adapter(env.DB));
+const adapter = new PrismaAdapter({ prisma });
 ```
 
-The D1 binding (`DB`) is configured in `wrangler.jsonc` and the database schema lives in `migrations/0001_initial.sql`.
+The connection comes from `DATABASE_URL`, and the schema plus its migrations live in `prisma/schema.prisma` and `prisma/migrations/`.
 
 ## Receipt Table Schema
 
@@ -251,10 +260,10 @@ OPENROUTER_API_KEY=sk-or-v1-...
 # AI_CLASSIFY_MODEL=anthropic/claude-sonnet-4-20250514
 ```
 
-Database connectivity is handled via the Cloudflare D1 binding (`DB`) configured in `wrangler.jsonc` -- no environment variables needed.
+Database connectivity comes from the `DATABASE_URL` environment variable, injected at runtime by the Infisical CLI (see `Dockerfile`).
 
 ## Deployment
 
-**Target**: Cloudflare Workers via `@opennextjs/cloudflare`
+**Target**: Docker image (see `Dockerfile`)
 
-The app is deployed at `receipts.lumitra.co`. Server-side secrets (`GOOGLE_CLOUD_VISION_API_KEY`, `OPENROUTER_API_KEY`) are configured as Cloudflare Workers secrets. Client-side env vars use the `NEXT_PUBLIC_` prefix.
+The app is deployed at `receipts.lumitra.co`. Server-side secrets (`DATABASE_URL`, `GOOGLE_CLOUD_VISION_API_KEY`, `OPENROUTER_API_KEY`, the OpenFGA credentials) live in Infisical and are injected into the container at start, never baked into the image. Client-side env vars use the `NEXT_PUBLIC_` prefix.

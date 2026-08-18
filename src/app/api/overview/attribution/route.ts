@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { AppSession } from '@marlinjai/auth-brain-nextjs';
 import { auth } from '@/lib/auth';
-import { sessionWorkspaceId } from '@/lib/auth-workspace';
+import { requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { setAttribution, applyAttributionToLedger, type VendorShare } from '@/lib/overview/attribution';
 
 export const dynamic = 'force-dynamic';
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     : [];
   const defaultShare = Number.isFinite(Number(body.defaultShare)) ? Number(body.defaultShare) : 100;
 
-  await setAttribution(ws, rules, defaultShare);
+  await setAttribution(ws, rules, defaultShare, requireSessionTenantId(principal, ws));
   const applied = body.apply ? await applyAttributionToLedger(ws) : 0;
   return NextResponse.json({ ok: true, applied });
 }

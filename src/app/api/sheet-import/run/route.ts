@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { AppSession } from '@marlinjai/auth-brain-nextjs';
 import { auth } from '@/lib/auth';
-import { sessionWorkspaceId } from '@/lib/auth-workspace';
+import { requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { runSheetImport, SheetImportError } from '@/lib/sheet-import/run';
 import { SheetsApiError } from '@/lib/sheet-import/sheets-client';
 import { IMPORTABLE_FIELDS, type ColumnMapping, type ImportableField } from '@/lib/sheet-import/normalize';
@@ -51,8 +51,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const ws = sessionWorkspaceId(principal);
     const result = await runSheetImport({
-      authWorkspaceId: sessionWorkspaceId(principal),
+      authWorkspaceId: ws,
+      authTenantId: requireSessionTenantId(principal, ws),
       authUserId: principal.userId,
       spreadsheet: String(body.spreadsheet ?? ''),
       tab: String(body.tab ?? ''),

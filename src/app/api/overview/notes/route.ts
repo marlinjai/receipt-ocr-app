@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { AppSession } from '@marlinjai/auth-brain-nextjs';
 import { auth } from '@/lib/auth';
-import { sessionWorkspaceId } from '@/lib/auth-workspace';
+import { requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { setNotes } from '@/lib/overview/notes';
 
 export const dynamic = 'force-dynamic';
@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'forbidden' }, { status: (e as { status?: number }).status ?? 403 });
   }
   const body = (await req.json().catch(() => ({}))) as { body?: unknown };
-  await setNotes(sessionWorkspaceId(principal), String(body.body ?? ''));
+  const ws = sessionWorkspaceId(principal);
+  await setNotes(ws, String(body.body ?? ''), requireSessionTenantId(principal, ws));
   return NextResponse.json({ ok: true });
 }

@@ -20,6 +20,12 @@ export class SheetImportError extends Error {
 
 export interface RunImportInput {
   authWorkspaceId: string;
+  /**
+   * Company owning the workspace above. Resolved by the caller from the verified
+   * session, never from the request body: it decides who the imported rows
+   * belong to. Null only for the development bypass.
+   */
+  authTenantId: string | null;
   authUserId: string;
   spreadsheet: string; // URL or id
   tab: string;
@@ -84,6 +90,7 @@ export async function runSheetImport(input: RunImportInput): Promise<RunImportRe
     },
     create: {
       authWorkspaceId: input.authWorkspaceId,
+      authTenantId: input.authTenantId,
       spreadsheetId,
       sheetName: input.tab,
       headerRow: input.headerRow,

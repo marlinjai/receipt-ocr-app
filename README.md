@@ -31,7 +31,10 @@ Open [http://localhost:3004](http://localhost:3004) in your browser.
 ## Environment Variables
 
 ```env
-# Storage Brain (file uploads to Cloudflare R2)
+# Database (PostgreSQL)
+DATABASE_URL=postgresql://...
+
+# Storage Brain (file uploads)
 STORAGE_BRAIN_API_KEY=sk_live_...
 NEXT_PUBLIC_STORAGE_BRAIN_URL=https://storage-brain-api.marlin-pohl.workers.dev
 
@@ -52,7 +55,7 @@ SERVICE_TOKEN=...            # machine bearer for /api/* (>= 32 chars)
 
 ## Authentication
 
-The app is a relying party of [auth-brain](https://auth.lumitra.co) (shared `lumitra_session` cookie on `.lumitra.co`). Access = one of your companies (tenants) holds the `receipts` app grant; the openable workspaces are then every workspace owned by a granted company (Lola Stories, marlinjai, Lumitra). All data is partitioned by the active workspace's UUID (`dt_tables.workspace_id`); the switcher in the header changes the active company (validated `receipts_ws` cookie). Mutations additionally pass fail-closed OpenFGA checks (`@marlinjai/auth-brain-nextjs`).
+The app is a relying party of [auth-brain](https://auth.lumitra.co) (shared `lumitra_session` cookie on `.lumitra.co`). Access = one of your companies (tenants) holds the `receipts` app grant; the openable workspaces are then every workspace owned by a granted company (Lola Stories, marlinjai, Lumitra). All data is partitioned by the active workspace's UUID (`dt_tables.workspace_id`), and every row additionally carries the owning company on `auth_tenant_id`, so a row is attributable to exactly one company without asking auth-brain. The company follows the WORKSPACE, not the session default: those two legitimately differ when the active workspace belongs to a company other than the session's active one. The switcher in the header changes the active company (validated `receipts_ws` cookie). Mutations additionally pass fail-closed OpenFGA checks (`@marlinjai/auth-brain-nextjs`).
 
 **Local dev bypasses auth by design:** set `AUTH_DEV_USER_EMAIL` (dev env in Infisical). The bypass only works with `NODE_ENV=development` and scopes data to the local `receipt-ocr` workspace (`AUTH_DEV_WORKSPACE_ID` to override). Machine callers hit `/api/*` with `Authorization: Bearer $SERVICE_TOKEN`; `/api/health` stays public.
 
@@ -60,10 +63,15 @@ The app is a relying party of [auth-brain](https://auth.lumitra.co) (shared `lum
 
 - **Framework**: [Next.js 16](https://nextjs.org/) (App Router)
 - **Styling**: [Tailwind CSS](https://tailwindcss.com/)
-- **Database**: [@marlinjai/data-table-adapter-d1](https://www.npmjs.com/package/@marlinjai/data-table-adapter-d1) (Cloudflare D1)
-- **File Storage**: [@marlinjai/storage-brain-sdk](https://www.npmjs.com/package/@marlinjai/storage-brain-sdk) (Cloudflare R2)
+- **Database**: PostgreSQL via [Prisma](https://www.prisma.io/), with [@marlinjai/data-table-adapter-prisma](https://www.npmjs.com/package/@marlinjai/data-table-adapter-prisma) backing the dynamic `dt_*` tables
+- **File Storage**: [@marlinjai/storage-brain-sdk](https://www.npmjs.com/package/@marlinjai/storage-brain-sdk)
 - **Data Table**: [@marlinjai/data-table-react](../data-table/packages/react)
-- **Deployment**: Cloudflare Workers via @opennextjs/cloudflare
+- **Deployment**: Docker image (see `Dockerfile`), secrets injected at runtime by the Infisical CLI
+
+> The app ran on Cloudflare D1 and Workers via `@opennextjs/cloudflare` earlier in
+> its life, and this section described that stack long after it was retired. The
+> remaining `wrangler` usage is the DOCS site only (`.github/workflows/deploy-docs.yml`
+> deploys to Cloudflare Pages); the application itself no longer touches Cloudflare.
 
 ## Usage
 

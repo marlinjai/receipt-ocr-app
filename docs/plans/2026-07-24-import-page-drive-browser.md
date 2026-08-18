@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: completed
 title: Dedicated import page with Google Drive browser
 summary: Move the Sheets import out of the toolbar popover onto a full /app/import page, add a Drive folder/file browser for picking the spreadsheet and the invoices folder, and fix the PDF preview convention the attach step broke.
 tags: [sheets-import, drive, ui]

@@ -2,7 +2,7 @@
 title: Import from Google Sheets (Receipts)
 summary: A repeatable, per-workspace "Import from Sheets" feature in the Receipts app. The user connects Google via OAuth, points at a sheet + tab, maps columns to the 19 Receipts fields once, and imports. Re-runnable with dedup so it doubles as a sync.
 type: plan
-status: draft
+status: completed
 tags: [receipt-ocr, google-sheets, import, oauth, multi-tenant]
 projects: [receipt-ocr-app]
 date: 2026-07-20

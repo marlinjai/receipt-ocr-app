@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { AppSession } from '@marlinjai/auth-brain-nextjs';
 import { Prisma } from '@prisma/client';
 import { auth } from '@/lib/auth';
-import { sessionWorkspaceId } from '@/lib/auth-workspace';
+import { requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
 import { sanitizeSelectionDef } from '@/lib/overview/selection';
 
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     } else {
       await prisma.overviewSelection.upsert({
         where: { authWorkspaceId_name: { authWorkspaceId: ws, name } },
-        create: { authWorkspaceId: ws, name, definition },
+        create: { authWorkspaceId: ws, authTenantId: requireSessionTenantId(principal, ws), name, definition },
         update: { definition },
       });
     }

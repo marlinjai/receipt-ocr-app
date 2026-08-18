@@ -4,7 +4,7 @@ summary: Wire the receipt-ocr-app (currently zero authentication) into auth-brai
 type: plan
 tags: [auth, auth-brain, openfga, multi-tenant, receipt-ocr, sdk, nextjs, governance]
 projects: [receipt-ocr-app, auth-brain, lumitra-studio, analytics-platform]
-status: in-progress
+status: completed
 date: 2026-07-16
 ---
 

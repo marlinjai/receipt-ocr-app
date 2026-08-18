@@ -48,14 +48,30 @@ export async function setAttribution(
   workspaceId: string,
   rules: VendorShare[],
   defaultShare: number,
+  tenantId: string | null,
 ): Promise<void> {
   const clean = rules
     .filter((r) => r.vendor.trim())
-    .map((r) => ({ authWorkspaceId: workspaceId, vendor: r.vendor.trim(), share: clampPct(r.share) }));
+    .map((r) => ({
+      authWorkspaceId: workspaceId,
+      authTenantId: tenantId,
+      vendor: r.vendor.trim(),
+      share: clampPct(r.share),
+    }));
+  // This is delete-then-recreate, so every row here is genuinely new and all of
+  // them carry the company. There is no update path to leave alone.
   await prisma.$transaction([
     prisma.workspaceVendorAttribution.deleteMany({ where: { authWorkspaceId: workspaceId } }),
     prisma.workspaceVendorAttribution.createMany({
-      data: [{ authWorkspaceId: workspaceId, vendor: DEFAULT_KEY, share: clampPct(defaultShare) }, ...clean],
+      data: [
+        {
+          authWorkspaceId: workspaceId,
+          authTenantId: tenantId,
+          vendor: DEFAULT_KEY,
+          share: clampPct(defaultShare),
+        },
+        ...clean,
+      ],
     }),
   ]);
 }

@@ -9,6 +9,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
+    "check:roadmap": "npx --yes github:marlinjai/actions-shared#roadmap-check-v1 --root .",
     "docs:dev": "clearify dev",
     "docs:build": "clearify build",
     "prepare": "husky"

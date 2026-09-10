@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { getAccessTokenForUser } from './google-credentials';
 import { readSheetValues, gridToRows } from './sheets-client';
 import { mapRow, computeDedupKey, type ColumnMapping, type ImportableField } from './normalize';
-import { listDriveFiles, findFolderByName, matchSourceFile, downloadDriveFile, DriveApiError } from './drive-client';
+import { listDriveFiles, findFolderByName, matchSourceFile, downloadDriveFile, DriveApiError, isDriveApiDisabled } from './drive-client';
 
 const TABLE_NAME = 'Receipts';
 const STORAGE_BRAIN_URL = process.env.NEXT_PUBLIC_STORAGE_BRAIN_URL || 'https://api.storage-brain.lumitra.co';
@@ -109,7 +109,9 @@ export async function attachSourceFiles(input: AttachInput): Promise<AttachResul
     }
     driveFiles = await listDriveFiles(accessToken, folderId);
   } catch (e) {
-    if (e instanceof DriveApiError && e.status === 403) throw new AttachError('drive_scope_missing');
+    if (e instanceof DriveApiError && e.status === 403) {
+      throw new AttachError(isDriveApiDisabled(e.detail) ? 'drive_api_disabled' : 'drive_scope_missing');
+    }
     if (e instanceof DriveApiError && e.status === 404) throw new AttachError('folder_not_found');
     throw e;
   }

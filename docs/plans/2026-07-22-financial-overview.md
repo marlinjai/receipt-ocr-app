@@ -2,11 +2,16 @@
 title: Financial Overview (Vendor Spend Ledger) + configurable attribution
 summary: A charts/KPI overview page on the receipts app that mirrors the "Vendor Spend Ledger" artifact, reading the same dt_rows. Adds workspace-editable per-vendor attribution percentages (replacing the hardcoded VENDOR_BUSINESS_SHARE_DEFAULTS) and a workspace-editable notes block.
 type: plan
-status: decided
+status: completed
 tags: [receipt-ocr, dashboard, charts, attribution, multi-tenant]
 projects: [receipt-ocr-app]
 date: 2026-07-22
 ---
+
+> Retroactively marked completed 2026-09-10 (work-down session): the `/app/overview`
+> page, `src/app/api/overview`, and `src/lib/overview/` (attribution + selections) are
+> all shipped. The plan was left at `status: decided` with no roadmap line ever
+> pointing at it, which `roadmap-check` flagged as drift.
 
 # Financial Overview + configurable attribution
 

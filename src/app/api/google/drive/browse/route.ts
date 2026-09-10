@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { getAccessTokenForUser } from '@/lib/sheet-import/google-credentials';
-import { listChildren, listSharedDrives, classifyBrowseEntries, DriveApiError } from '@/lib/sheet-import/drive-client';
+import { listChildren, listSharedDrives, classifyBrowseEntries, DriveApiError, isDriveApiDisabled } from '@/lib/sheet-import/drive-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,7 +40,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ...classifyBrowseEntries(entries), sharedDrives });
   } catch (e) {
     if (e instanceof DriveApiError) {
-      if (e.status === 403) return NextResponse.json({ error: 'drive_scope_missing' }, { status: 428 });
+      if (e.status === 403) {
+        const error = isDriveApiDisabled(e.detail) ? 'drive_api_disabled' : 'drive_scope_missing';
+        return NextResponse.json({ error }, { status: 428 });
+      }
       if (e.status === 404) return NextResponse.json({ error: 'folder_not_found' }, { status: 404 });
       return NextResponse.json({ error: 'google_api', upstreamStatus: e.status }, { status: 502 });
     }

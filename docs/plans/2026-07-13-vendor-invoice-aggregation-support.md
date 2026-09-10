@@ -4,9 +4,16 @@ summary: Extend the Receipt OCR App so it can natively replace the manual Lola S
 type: plan
 tags: [receipt-ocr, invoices, currency, fx, attribution, lola-stories, saas-billing]
 projects: [receipt-ocr-app, lola-stories]
-status: decided
+status: completed
 date: 2026-07-13
 ---
+
+> Retroactively marked completed 2026-09-10 (work-down session): the app already has
+> currency detection, historical FX (foreign exchange) conversion (`src/lib/fx-rates.ts`,
+> `FxRecomputePanel.tsx`), and per-vendor attribution (`src/lib/overview/attribution.ts`,
+> `VENDOR_BUSINESS_SHARE_DEFAULTS` in `src/lib/receipts-constants.ts`). The plan was left
+> at `status: decided` with no roadmap line ever pointing at it, which `roadmap-check`
+> flagged as drift.
 
 # Vendor/SaaS Invoice Aggregation Support
 

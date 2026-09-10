@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchSourceFile, classifyBrowseEntries, FOLDER_MIME, SPREADSHEET_MIME, type DriveFile } from './drive-client';
+import { matchSourceFile, classifyBrowseEntries, isDriveApiDisabled, FOLDER_MIME, SPREADSHEET_MIME, type DriveFile } from './drive-client';
 
 // Mirrors the real Rechnungen folder drift observed 2026-07-24.
 const FILES: DriveFile[] = [
@@ -40,5 +40,33 @@ describe('classifyBrowseEntries', () => {
     ]);
     expect(folders.map((f) => f.id)).toEqual(['f1']);
     expect(files.map((f) => f.id)).toEqual(['s1', 'p1', 'i1']);
+  });
+});
+
+// Regression for the 2026-07-24 rollout: a 403 with the Drive API disabled
+// on the GCP (Google Cloud Platform) project was mapped to the same
+// "missing scope" advice as a genuine consent-scope 403, sending the user
+// through a useless OAuth (OAuth 2.0 authorization) reconnect loop. Google
+// distinguishes the two in the error body's `reason`/`status` fields.
+describe('isDriveApiDisabled', () => {
+  it('recognizes an accessNotConfigured body', () => {
+    const body = JSON.stringify({
+      error: {
+        code: 403,
+        message: 'Google Drive API has not been used in project 123 before or it is disabled.',
+        errors: [{ reason: 'accessNotConfigured' }],
+      },
+    });
+    expect(isDriveApiDisabled(body)).toBe(true);
+  });
+  it('recognizes a SERVICE_DISABLED status body', () => {
+    const body = JSON.stringify({ error: { status: 'SERVICE_DISABLED' } });
+    expect(isDriveApiDisabled(body)).toBe(true);
+  });
+  it('does not flag a genuine missing-scope 403', () => {
+    const body = JSON.stringify({
+      error: { code: 403, message: 'Insufficient Permission', errors: [{ reason: 'insufficientPermissions' }] },
+    });
+    expect(isDriveApiDisabled(body)).toBe(false);
   });
 });

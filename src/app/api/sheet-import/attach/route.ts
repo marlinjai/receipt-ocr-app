@@ -12,6 +12,7 @@ const ERROR_STATUS: Record<string, number> = {
   no_import_config: 409,
   not_connected: 428,
   drive_scope_missing: 428,
+  drive_api_disabled: 428,
   folder_not_found: 404,
   table_not_initialized: 409,
   image_column_missing: 409,

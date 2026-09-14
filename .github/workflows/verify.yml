@@ -1,0 +1,15 @@
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  roadmap-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: marlinjai/actions-shared/roadmap-check@roadmap-check-v1
+        with:
+          max-age: 30

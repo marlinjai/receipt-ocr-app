@@ -48,6 +48,7 @@ const ERROR_LABELS: Record<string, string> = {
   table_not_initialized: 'The Receipts table is not initialized yet — open the dashboard once first.',
   no_import_config: 'Run an import first — attach works on the imported rows.',
   drive_scope_missing: 'Reconnect Google to grant Drive read access (the connection predates it).',
+  drive_api_disabled: 'The Google Drive API is not enabled on the connected Google Cloud project. Enable it in the Google Cloud Console, then retry (reconnecting will not help).',
   folder_not_found: 'That Drive folder does not exist (anymore).',
   image_column_missing: 'The Receipts table has no Receipt Image column.',
 };

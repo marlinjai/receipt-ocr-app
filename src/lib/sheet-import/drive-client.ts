@@ -8,11 +8,26 @@
 
 export class DriveApiError extends Error {
   readonly status: number;
+  /** Raw response body text, kept so callers can branch on Google's error reason. */
+  readonly detail: string;
   constructor(status: number, detail: string) {
     super(`Google Drive API error ${status}: ${detail}`);
     this.name = 'DriveApiError';
     this.status = status;
+    this.detail = detail;
   }
+}
+
+/**
+ * True when a 403 body carries Google's "API not enabled on this GCP
+ * (Google Cloud Platform) project" reason (`accessNotConfigured` /
+ * `SERVICE_DISABLED`), as opposed to a genuine missing-scope 403. The two
+ * look identical at the HTTP-status level but need different user advice:
+ * the former means "enable the Drive API in the console", the latter means
+ * "reconnect Google to grant Drive access".
+ */
+export function isDriveApiDisabled(detail: string): boolean {
+  return /accessNotConfigured|SERVICE_DISABLED/.test(detail);
 }
 
 export interface DriveFile {

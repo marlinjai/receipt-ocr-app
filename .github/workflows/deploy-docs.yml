@@ -38,4 +38,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec clearify build
-      - run: npx wrangler pages deploy docs-dist --project-name=receipt-ocr-docs --branch=main
+      # --branch is explicit: wrangler otherwise infers it from git, and a detached
+      # checkout silently deploys a preview. main (push) is the
+      # Pages production branch; a dispatch from any other ref publishes a
+      # preview, never production.
+      - run: npx wrangler pages deploy docs-dist --project-name=receipt-ocr-docs --branch=${{ github.ref_name }}

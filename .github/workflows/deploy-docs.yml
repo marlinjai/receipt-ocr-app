@@ -1,8 +1,14 @@
 name: Deploy Docs
 
+# Cloudflare token: Infisical project "infrastructure", prod, /ci-cd/docs-deploy,
+# the only folder the docs-deploy-ci machine identity can read. Its
+# universal-auth pair must exist as INFISICAL_CLIENT_ID / INFISICAL_CLIENT_SECRET
+# repo secrets, written by Terraform in marlinjai/infra (never by hand).
+
 on:
   push:
     branches: [main]
+  workflow_dispatch: {}
 
 jobs:
   deploy:
@@ -10,17 +16,20 @@ jobs:
     permissions:
       contents: read
       deployments: write
+    env:
+      # Not a secret; lets wrangler skip the account lookup.
+      CLOUDFLARE_ACCOUNT_ID: afe1136796a1aaacf06fd5e0d1ffa0a7
     steps:
       - uses: actions/checkout@v4
       - name: Load Cloudflare credentials from Infisical
-        uses: Infisical/secrets-action@v1.0.16
+        uses: Infisical/secrets-action@v1.0.18
         with:
           domain: https://infisical.lumitra.co
           client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
           client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          project-slug: infra
+          project-slug: infrastructure
           env-slug: prod
-          secret-path: /providers
+          secret-path: /ci-cd/docs-deploy
           export-type: env
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -29,4 +38,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec clearify build
-      - run: npx wrangler pages deploy docs-dist --project-name=receipt-ocr-docs
+      # --branch is explicit: wrangler otherwise infers it from git, and a detached
+      # checkout silently deploys a preview. main (push) is the
+      # Pages production branch; a dispatch from any other ref publishes a
+      # preview, never production.
+      - run: npx wrangler pages deploy docs-dist --project-name=receipt-ocr-docs --branch=${{ github.ref_name }}

@@ -4,6 +4,23 @@
 
 <!-- Decided features, ready to be worked on -->
 
+- [ ] Bank connection and item-level receipts: write the plan (status draft) before any
+  code. Scope: (1) link bank accounts through Enable Banking, using the registered
+  application "Lumitra Receipts" (id `306d872b-bf50-4a18-95cb-3f17790470b7`, restricted
+  production; key and the four session ids are in Infisical, project Receipt OCR, as
+  `ENABLE_BANKING_*`), plus importers for sources with no usable interface: Advanzia
+  statement PDFs, the Klarna purchase list and N26's own export (the bank interface
+  omits recipient names); (2) a payments table with categories, counting each payment
+  where it was spent and excluding settlements (Klarna debits, Advanzia repayments,
+  transfers between own accounts); (3) line items per receipt with sub-categories;
+  (4) linking receipt to payment by payment reference, never by merchant name or amount
+  (the Klarna app mislabels merchants and adds fees), and a "payments without a receipt"
+  list; (5) a Receipts section in the lumitra.co privacy policy before anyone but the
+  operator links a bank account; (6) consent renewal every 180 days with a warning.
+  Must fit the Books plan (`docs/plans/2026-08-15-books-integration-pointer.md`).
+  A validated prototype (matching, ledger, categories) is in
+  `~/Library/Mobile Documents/com~apple~CloudDocs/Documents/personal/Finance/Banking/_pipeline-2026-10/`. (2026-10-03)
+
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a

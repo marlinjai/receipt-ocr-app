@@ -4,6 +4,33 @@
 
 <!-- Decided features, ready to be worked on -->
 
+- [ ] Bank connection and item-level receipts: write the plan (status draft) before any
+  code. Scope: (1) link bank accounts through Enable Banking, using the registered
+  application "Lumitra Receipts" (id `306d872b-bf50-4a18-95cb-3f17790470b7`, restricted
+  production, which only returns data for accounts linked to the application itself, so
+  it serves the operator's own accounts only; key and the four session ids are in
+  Infisical, project Receipt OCR, as `ENABLE_BANKING_*`), plus importers for sources with no usable interface: Advanzia
+  statement PDFs, the Klarna purchase list and N26's own export (the bank interface
+  omits recipient names); (2) a payments table with categories, counting each payment
+  where it was spent and excluding settlements (Klarna debits, Advanzia repayments,
+  transfers between own accounts); (3) line items per receipt with sub-categories;
+  (4) linking receipt to payment by payment reference, never by merchant name or amount
+  (the Klarna app mislabels merchants and adds fees), and a "payments without a receipt"
+  list. Before building, confirm per source whether Enable Banking's `entry_reference`
+  is the reference field and how well it is covered: some banks omit it or return
+  duplicates, and it is usually set only for booked (not pending) transactions, so
+  match booked transactions only. Define the fallback for a payment without a unique
+  reference (manual link by the user, never a guess from merchant or amount);
+  (5) before anyone but the operator links a bank account: a Receipts section in the
+  lumitra.co privacy policy AND public Enable Banking access (signed contract and
+  completed company KYB, i.e. know-your-business verification); (6) track each
+  session's `valid_until` (at most 180 days for most banks) and warn users before it
+  expires so they can reauthorize, and handle `EXPIRED_SESSION` by prompting a new
+  authorization.
+  Must fit the Books plan (`docs/plans/2026-08-15-books-integration-pointer.md`).
+  A validated prototype (matching, ledger, categories) is in
+  `~/Library/Mobile Documents/com~apple~CloudDocs/Documents/personal/Finance/Banking/_pipeline-2026-10/`. (2026-10-03)
+
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a

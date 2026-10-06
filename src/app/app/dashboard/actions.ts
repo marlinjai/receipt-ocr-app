@@ -3,6 +3,7 @@
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
+import { deleteGuestsForRows } from '@/lib/meals/service';
 import {
   requireReceiptsSession,
   requireTableAccess,
@@ -174,7 +175,10 @@ export async function updateRow(rowId: string, cells: Record<string, CellValue>)
 
 export async function deleteRow(rowId: string): Promise<void> {
   await requireRowAccess(rowId, 'receipts.row.write');
-  return getAdapter().deleteRow(rowId);
+  await getAdapter().deleteRow(rowId);
+  // The meal guests of a receipt hang off its row id without a foreign key
+  // (rows live in two storage layouts), so they are removed here.
+  await deleteGuestsForRows(prisma, [rowId]);
 }
 
 export async function archiveRow(rowId: string): Promise<void> {
@@ -208,7 +212,8 @@ async function requireRowsAccess(rowIds: string[]): Promise<void> {
 
 export async function bulkDeleteRows(rowIds: string[]): Promise<void> {
   await requireRowsAccess(rowIds);
-  return getAdapter().bulkDeleteRows(rowIds);
+  await getAdapter().bulkDeleteRows(rowIds);
+  await deleteGuestsForRows(prisma, rowIds);
 }
 
 export async function bulkArchiveRows(rowIds: string[]): Promise<void> {

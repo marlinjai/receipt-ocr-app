@@ -49,7 +49,7 @@ const COLUMN_NAME_MAP: Record<string, string> = {
 /**
  * Format a date value as DD.MM.YYYY
  */
-function formatDateDE(value: CellValue): string {
+export function formatDateDE(value: CellValue): string {
   if (!value) return '';
   const date = value instanceof Date ? value : new Date(String(value));
   if (isNaN(date.getTime())) return String(value);
@@ -62,7 +62,7 @@ function formatDateDE(value: CellValue): string {
 /**
  * Format a number with German locale (comma as decimal separator)
  */
-function formatNumberDE(value: CellValue): string {
+export function formatNumberDE(value: CellValue): string {
   if (value === null || value === undefined || value === '') return '';
   const num = typeof value === 'number' ? value : parseFloat(String(value));
   if (isNaN(num)) return String(value);
@@ -73,7 +73,7 @@ function formatNumberDE(value: CellValue): string {
  * Escape a CSV field value for semicolon-delimited CSV.
  * Wraps in quotes if the value contains semicolons, quotes, or newlines.
  */
-function escapeCSVField(value: string): string {
+export function escapeCSVField(value: string): string {
   if (value.includes(';') || value.includes('"') || value.includes('\n') || value.includes('\r')) {
     return `"${value.replace(/"/g, '""')}"`;
   }

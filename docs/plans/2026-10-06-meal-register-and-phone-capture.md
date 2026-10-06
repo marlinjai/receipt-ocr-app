@@ -53,7 +53,12 @@ they cannot go stale when one of those changes.
   `src/lib/extract-receipt-fields.ts`.
 - **Two fallback rules are wrong for a register**: `VENDOR_CATEGORY_MAP` files
   supermarkets under "Bewirtung", and `REDUCED_RATE_CATEGORIES` defaults "Bewirtung"
-  to 7 percent value-added tax (VAT), while a restaurant meal eaten in is 19 percent.
+  to a single fixed value-added tax (VAT) rate. The rate depends on the receipt date
+  and the item: until 31 December 2025 food eaten in a restaurant is taxed at 19
+  percent; from 1 January 2026 restaurant and catering food is taxed at 7 percent,
+  while drinks stay at 19 percent. One receipt can therefore carry both rates, so the
+  rate is read from the receipt's own tax lines and its date, never from the category
+  alone.
 - **Data**: receipts are rows of the generic data table (`dt_rows`, cells stored as JavaScript Object Notation, JSON,
   `prisma/schema.prisma`). The column list `COLUMNS` in `src/app/app/actions.ts` is
   applied additively by `initializeReceiptsTable` on every dashboard load, so new
@@ -87,7 +92,7 @@ New columns on the Receipts table, added to `COLUMNS` (self-healing, no migratio
 | Place | text | Restaurant name and address, prefilled from Vendor and the OCR text. |
 | Tip | number | In the receipt currency, entered separately from Gross. |
 | Host | text | Prefilled with the signed-in user's display name. |
-| Consumption | select | "Vor Ort" or "Außer Haus"; drives the 19 or 7 percent default. |
+| Consumption | select | "Vor Ort" or "Außer Haus". Only a hint for the VAT default when the receipt shows no tax lines; the receipt date and tax lines take precedence (see the VAT rule below). |
 | Meal Details At | date | When the details were last saved (a true timestamp, never backdated). |
 
 Guest count is derived from the lines in Guests, not stored. The file's SHA-256
@@ -118,6 +123,13 @@ One module `src/lib/meals/rules.ts` holds the two pure functions every surface u
   base is net plus tip and the input VAT is listed in full beside it; when it does
   not (small-business rule) the base is gross plus tip. Amounts in euros via the
   existing FX Rate (foreign exchange rate) column. The existing Business Share column is not applied on top.
+- **VAT rate and split.** The input VAT and net amounts come from the tax lines read
+  from the receipt (rate, net, tax per line), so a receipt with 7 percent food and 19
+  percent drinks is summed per rate. Only when no tax lines were read does the app
+  fall back to a default chosen by receipt date (before 1 January 2026: 19 percent
+  for food eaten in; from that date: 7 percent for food, 19 percent for drinks) and
+  by Consumption, and the entry is flagged "VAT estimated" instead of presented as
+  exact.
 - **Tip** counts into the base only when entered; the form reminds that it must be
   noted on the receipt.
 - Above the threshold in the settings the receipt must name the host; the form shows
@@ -210,7 +222,9 @@ tests of the form and queue with jsdom. The four paths, all part of done:
    upload or a retake never produces a second row; the same file again hits the hash
    check; a new export after an edit reflects the edit.
 
-Plus: one test that feeds a real recorded classifier response through the real
+Plus: VAT tests for a 2025 receipt (19 percent), a 2026 receipt with 7 percent food
+and 19 percent drinks on one receipt, and a receipt without tax lines (estimated and
+flagged); a test that `Guests` never appears in model-bound `get_rows` results; one test that feeds a real recorded classifier response through the real
 parser (not a mock), a test per row of the unhappy-path table, a workspace isolation
 test on the register route, and a manual pass on a real iPhone and a real Android
 phone for camera, home-screen install and the offline queue.
@@ -232,12 +246,16 @@ phone for camera, home-screen install and the offline queue.
 
 1. **Meal fields, rules, form, queue.** Columns, `rules.ts`, the form in the detail
    panel, `/app/meals` with the queue. The backlog already in the app can be worked.
+   Also in this slice: exclude `Guests` from the rows that the chat read tools hand to
+   the model, with a regression test that guest values are absent from model-bound
+   `get_rows` results.
 2. **Register and export.** Register tab, tax settings model, CSV and PDF route.
 3. **Backlog import.** One-receipt-per-page split, content hash and duplicate checks.
 4. **Phone capture.** Camera button, image conversion, `processReceipt` return
    value, bottom sheet, retake, row kept on OCR failure.
-5. **Classifier.** Meal type, consumption and tip in the Anthropic prompt, supermarket
-   and 7 percent fallback fixes.
+5. **Classifier.** Meal type, consumption, tip and per-line tax rates in the Anthropic
+   prompt, supermarket fix, and a date- and item-aware VAT fallback replacing the
+   fixed 7 percent default.
 6. **Offline queue.** Only after 4 is in daily use.
 
 Slices 1 to 3 are what the tax return needs; 4 to 6 are the capture comfort.

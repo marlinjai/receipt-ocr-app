@@ -56,6 +56,16 @@
 
 <!-- Currently being implemented -->
 
+- [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: record guests
+  (from a contact list), occasion, place, tip and host per meal, derive completeness
+  and the 70 percent deductible amount, export the register per year as PDF
+  (Portable Document Format) and CSV (comma-separated values), and add camera
+  capture, a share target and an offline queue on the phone. Plan approved and
+  decided on 2026-10-06, in progress as two pull requests (slices 1 to 3, then 4 to
+  6): `docs/plans/2026-10-06-meal-register-and-phone-capture.md`. Backlog waiting on
+  it: 17 meal receipts from 2025 and about 15 from 2026 without guests or occasion.
+  (2026-10-06)
+
 ## Completed
 
 <!-- Done — move to CHANGELOG.md on release -->

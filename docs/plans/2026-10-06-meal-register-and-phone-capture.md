@@ -103,7 +103,7 @@ New columns on the Receipts table, added to `COLUMNS` (self-healing, no migratio
 The file's SHA-256 content hash goes into the existing `dt_files.metadata` JSON
 (duplicate detection).
 
-Three new Prisma models (migration `0008_meal_register`), all carrying
+Four new Prisma models (migration `0008_meal_register`), all carrying
 `authWorkspaceId` and `authTenantId` like the existing workspace models:
 
 - `Contact`: the contact list. Stable id, `name`, `companyOrRole`, optional `note`,
@@ -113,8 +113,15 @@ Three new Prisma models (migration `0008_meal_register`), all carrying
   (`displayName`, `displayCompany`). The copy means the register prints without
   asking the contact store. Correcting a contact updates the copies; archiving a
   contact leaves them. Deleting a receipt row deletes its guests.
-- `WorkspaceTaxSettings`: `smallBusiness` (nullable boolean: no answer yet, yes, no)
-  and `hostAddressThresholdEur` (default 250).
+- `WorkspaceTaxSettings`: `hostAddressThresholdEur` (default 250).
+- `SmallBusinessStatus`: the section 19 (Kleinunternehmer) status as effective-dated
+  entries, never a single flag. Each entry has `effectiveFrom` (a date, or none for
+  "from the beginning") and `smallBusiness` (yes or no). The status for a meal is the
+  latest entry whose `effectiveFrom` is on or before the meal date; with no entry the
+  answer is "not set yet". Changing the status, for example when the turnover threshold
+  is crossed and regular taxation begins, adds a new entry from a given date and never
+  edits an old one, so earlier meals keep their gross or net basis and historical
+  register and export totals do not move.
 
 **The seam for a later shared contact service.** Everything that reads or writes
 contacts goes through one interface, `ContactStore` in `src/lib/contacts/store.ts`
@@ -134,9 +141,9 @@ One module `src/lib/meals/rules.ts` holds the two pure functions every surface u
 
 - `mealStatus(row, guests)`: `not_a_meal`, `excluded` (with reason), `incomplete` (with the
   list of missing fields) or `complete`.
-- `mealDeduction(row, settings)`: base, 70 percent deductible, 30 percent
-  non-deductible, input VAT; or "setting missing" when the section 19 question has
-  not been answered.
+- `mealDeduction(row, settings, statuses)`: base, 70 percent deductible, 30 percent
+  non-deductible, input VAT, using the section 19 status in force on the meal date;
+  or "setting missing" when no status entry covers that date.
 
 ## Rules
 
@@ -194,14 +201,23 @@ One module `src/lib/meals/rules.ts` holds the two pure functions every surface u
   "Verzeichnis" (the register) and "Kontakte" (the contact list: add, correct,
   archive). The dashboard shows a badge with the open count.
 - The section 19 question is asked on the register tab the first time it is opened
-  and can be changed later in the same place.
+  and can be changed later in the same place. A later change asks "from which date"
+  and adds a dated entry, with a note that meals before that date keep their earlier
+  status.
 
 **Sharing from another app (share target)**
 
 - On Android, the installed app appears in the system share sheet for images and
   PDFs. A shared file is taken by the service worker, put into the same in-browser
   queue the offline capture uses, and the app opens on the capture screen and
-  processes it like a photo taken there.
+  processes it like a photo taken there. Every queue entry is stamped with the
+  workspace and user that were active when it was captured or shared. Before sending,
+  the app compares the stamp with the current session: on a match it sends, on a
+  mismatch (another workspace or another user logged in meanwhile) it never sends into
+  the active workspace, and shows the entry as "belongs to another workspace" with the
+  choices to send it into the workspace it came from after switching back, or to
+  discard it. A share that arrives while logged out is stamped after login with the
+  workspace the user explicitly confirms.
 - iOS does not offer web apps as share targets at all. On an iPhone the paths are
   the camera button and the file picker (which includes the photo library). The plan
   does not pretend otherwise; a native share extension would be a separate project.
@@ -240,7 +256,7 @@ sum, outside the register.
 | Same file uploaded twice | Hash match in the workspace: nothing is uploaded, the uploader shows "already there" with a link to the existing row and an explicit "upload anyway". |
 | Same receipt photographed twice | Different hash, so a soft check on vendor, date and gross warns after OCR and offers to discard the new row. |
 | Offline on the phone | Photos wait in an in-browser queue (IndexedDB) with a visible "n waiting" counter, and are sent when the connection returns or the app is next opened. A failed send stays in the queue with a retry button. Meal details need the row, so they follow after sync. |
-| Session expired while capturing | The queue keeps the photo, the app sends the user to login and resumes after return. |
+| Session expired while capturing | The queue keeps the photo, the app sends the user to login and resumes after return, sending only entries whose workspace stamp matches the session that comes back. |
 | Reclassified away from meal after details were entered | The row leaves the register and the queue at once (status is derived). The details stay stored and the panel says "kept, not in the register". Switching back restores the entry unchanged. |
 | Meal changed to "Privat" or guests cleared | Same mechanism: excluded or incomplete on the next read. |
 | Section 19 question unanswered | Register lists the entries without amounts and asks the question; exports refuse with the same message. |
@@ -275,7 +291,10 @@ around one rule: **it never stores or serves application pages or `/_next/` file
 ## Test plan
 
 Unit tests (Vitest, already in the repo) for `mealStatus`, `mealDeduction`, the
-register builder and both exports, including rounding and the two VAT bases. Flow
+register builder and both exports, including rounding and the two VAT bases. `mealDeduction`
+is also tested across a status change (a meal before the change date keeps its old
+basis), and the queue across a workspace or user change (a mismatched entry is never
+sent). Flow
 tests of the form and queue with jsdom. The four paths, all part of done:
 
 1. **Forward**: capture, classified as meal, details entered, row complete, appears

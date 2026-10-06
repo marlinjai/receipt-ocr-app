@@ -1,9 +1,9 @@
 ---
 title: Business-meal register (Bewirtungsverzeichnis) and phone capture
-summary: Record guests, occasion, place, tip and host per business meal, derive completeness and the 70 percent deductible amount, export a per-year register as PDF and CSV, and add a camera capture path on the phone that leads straight into the meal details. Draft, no code yet.
+summary: Record guests, occasion, place, tip and host per business meal, derive completeness and the 70 percent deductible amount, export a per-year register as PDF and CSV, and add a camera capture path on the phone that leads straight into the meal details.
 type: plan
-status: draft
-tags: [receipts, bewirtung, tax, register, export, phone-capture, stateful-flow]
+status: in-progress
+tags: [receipts, bewirtung, tax, register, export, contacts, phone-capture, share-target, service-worker, stateful-flow]
 projects: [receipt-ocr-app]
 date: 2026-10-06
 ---
@@ -75,7 +75,12 @@ they cannot go stale when one of those changes.
   `receipts.upload`.
 - **Phone shell**: `public/manifest.json` makes the app installable. `public/sw.js`
   is a service worker that deliberately deletes its caches and unregisters itself, so
-  there is no offline support and no share target today.
+  there is no offline support and no share target today. **Why it was removed**
+  (commit `1484707`, 23 March 2026): the earlier worker cached the app pages and every
+  `/_next/` script file and served scripts cache-first. After the move from Cloudflare
+  Workers to the Node.js server, browsers kept running the old cached scripts, which
+  still contained database client code that no longer worked. The replacement clears
+  everything and removes itself.
 - **Gaps found on the way**: no duplicate detection anywhere; when OCR fails the
   uploader throws before `processReceipt`, so the uploaded file ends up with no row;
   `processReceipt` returns nothing, so the caller cannot know which row was created.
@@ -88,27 +93,50 @@ New columns on the Receipts table, added to `COLUMNS` (self-healing, no migratio
 |---|---|---|
 | Meal Type | select | "Geschäftsessen (extern)", "Mitarbeiterbewirtung (intern)", "Verpflegung auf Reise", "Keine Bewirtung". Maps to the earlier automation's `hospitality.type` values `business_meal_external`, `staff_meal_internal`, `travel_meal`. |
 | Occasion | text | The concrete business reason. |
-| Guests | text | One person per line: name, then company or role. |
 | Place | text | Restaurant name and address, prefilled from Vendor and the OCR text. |
 | Tip | number | In the receipt currency, entered separately from Gross. |
 | Host | text | Prefilled with the signed-in user's display name. |
 | Consumption | select | "Vor Ort" or "Außer Haus". Only a hint for the VAT default when the receipt shows no tax lines; the receipt date and tax lines take precedence (see the VAT rule below). |
 | Meal Details At | date | When the details were last saved (a true timestamp, never backdated). |
+| Tax Lines | text | The receipt's own tax lines as JSON: rate, net and tax per rate. Filled by the classifier, editable in the form. |
 
-Guest count is derived from the lines in Guests, not stored. The file's SHA-256
-content hash goes into the existing `dt_files.metadata` JSON (duplicate detection).
+The file's SHA-256 content hash goes into the existing `dt_files.metadata` JSON
+(duplicate detection).
 
-One new Prisma model `WorkspaceTaxSettings` (migration `0008`): `authWorkspaceId`
-unique, `authTenantId`, `deductsInputVat` boolean, `hostAddressThresholdEur`
-(default 250). It decides the base of the 70 percent (see Rules).
+Three new Prisma models (migration `0008_meal_register`), all carrying
+`authWorkspaceId` and `authTenantId` like the existing workspace models:
+
+- `Contact`: the contact list. Stable id, `name`, `companyOrRole`, optional `note`,
+  `archivedAt`. Unique per workspace on name plus company or role.
+- `MealGuest`: one guest on one meal. `rowId` (the receipt row), `contactId`,
+  `position`, and a copy of the name and company as they are printed
+  (`displayName`, `displayCompany`). The copy means the register prints without
+  asking the contact store. Correcting a contact updates the copies; archiving a
+  contact leaves them. Deleting a receipt row deletes its guests.
+- `WorkspaceTaxSettings`: `smallBusiness` (nullable boolean: no answer yet, yes, no)
+  and `hostAddressThresholdEur` (default 250).
+
+**The seam for a later shared contact service.** Everything that reads or writes
+contacts goes through one interface, `ContactStore` in `src/lib/contacts/store.ts`
+(search, get, create, update, archive), with the Prisma table as its only
+implementation today. The meal model only ever holds a contact id plus the printed
+copy. Replacing the storage with a suite-wide customer relationship management (CRM)
+service later means a second implementation of that interface and an id mapping,
+with no change to meals, rules, register or export. A suite-wide CRM model and any
+synchronisation are out of scope here and tracked on their own roadmap line outside
+this repo.
+
+Guest names are therefore never stored in table cells, so the chat sidebar's tools,
+which read cells, cannot hand them to the language model.
 
 One module `src/lib/meals/rules.ts` holds the two pure functions every surface uses
 (detail panel, queue, register, both exports), so the rule exists exactly once:
 
-- `mealStatus(row)`: `not_a_meal`, `excluded` (with reason), `incomplete` (with the
+- `mealStatus(row, guests)`: `not_a_meal`, `excluded` (with reason), `incomplete` (with the
   list of missing fields) or `complete`.
 - `mealDeduction(row, settings)`: base, 70 percent deductible, 30 percent
-  non-deductible, input VAT.
+  non-deductible, input VAT; or "setting missing" when the section 19 question has
+  not been answered.
 
 ## Rules
 
@@ -119,9 +147,13 @@ One module `src/lib/meals/rules.ts` holds the two pure functions every surface u
   no guest the form says so and offers "Verpflegung auf Reise" or "Keine Bewirtung".
 - Occasion must be specific. Reject empty text and generic one-word entries
   ("Geschäftsessen", "Meeting", "Besprechung") with a hint to name the topic.
-- **Deductible amount**: base times 0.70. When the workspace deducts input VAT the
-  base is net plus tip and the input VAT is listed in full beside it; when it does
-  not (small-business rule) the base is gross plus tip. Amounts in euros via the
+- **Deductible amount**: base times 0.70. The base follows from one question per
+  workspace: "Is this business a small business under section 19 of the value-added
+  tax act (Kleinunternehmer)?" Yes: no input VAT is deducted, the base is gross plus
+  tip. No: the base is net plus tip and the input VAT is listed in full beside it.
+  There is no default. Until the question is answered the register shows the entries
+  but no deductible amounts or totals, with a prompt to answer it, and both exports
+  refuse with the same prompt. Amounts in euros via the
   existing FX Rate (foreign exchange rate) column. The existing Business Share column is not applied on top.
 - **VAT rate and split.** The input VAT and net amounts come from the tax lines read
   from the receipt (rate, net, tax per line), so a receipt with 7 percent food and 19
@@ -149,17 +181,33 @@ One module `src/lib/meals/rules.ts` holds the two pure functions every surface u
    and classification run as today. `processReceipt` now returns row id, category and
    meal type.
 3. If the row is a business meal, a bottom sheet opens with Place, amount and date
-   prefilled and four inputs: guests (with suggestions from earlier entries),
-   occasion, tip, consumption. "Save" completes it; "Later" leaves it in the queue.
+   prefilled and four inputs: guests (picked from the contact list, with "new
+   contact" inline), occasion, tip, consumption. "Save" completes it; "Later" leaves it in the queue.
 4. Otherwise a short confirmation with the category and "next photo". No redirect
    while capturing.
 
 **Desktop**
 
 - The detail panel gets a "Bewirtung" section with the same form (one component).
-- A new page `/app/meals` with a year picker and two tabs: "Unvollständig" (the
-  queue, oldest first, each row opens the form with the receipt image beside it) and
-  "Verzeichnis" (the register). The dashboard shows a badge with the open count.
+- A new page `/app/meals` with a year picker and three tabs: "Unvollständig" (the
+  queue, oldest first, each row opens the form with the receipt image beside it),
+  "Verzeichnis" (the register) and "Kontakte" (the contact list: add, correct,
+  archive). The dashboard shows a badge with the open count.
+- The section 19 question is asked on the register tab the first time it is opened
+  and can be changed later in the same place.
+
+**Sharing from another app (share target)**
+
+- On Android, the installed app appears in the system share sheet for images and
+  PDFs. A shared file is taken by the service worker, put into the same in-browser
+  queue the offline capture uses, and the app opens on the capture screen and
+  processes it like a photo taken there.
+- iOS does not offer web apps as share targets at all. On an iPhone the paths are
+  the camera button and the file picker (which includes the photo library). The plan
+  does not pretend otherwise; a native share extension would be a separate project.
+- If a share arrives before the service worker controls the page (first run), the
+  server answers the request with a page that says so and how to retry, instead of
+  dropping the file silently.
 
 ## Register view and export
 
@@ -167,7 +215,8 @@ Per year, register entries sorted by date, numbered: date, place, guests, occasi
 gross, tip, net, input VAT, deductible 70 percent, non-deductible 30 percent, link to
 the receipt. Footer with totals (the two sums that go to accounts 4650 and 4654).
 Incomplete entries are listed in their own block, counted in a warning, and not in
-the totals.
+the totals. Staff meals and travel meals are shown as a separate count with their
+sum, outside the register.
 
 - **CSV**: `GET /api/meals/register?year=2025&format=csv`, reusing the formatting
   helpers of `src/lib/export-csv.ts`, plus the original automation's columns
@@ -175,8 +224,9 @@ the totals.
   `consumption_type`, `deductibility_hint`) so old sheets and new export line up.
 - **PDF**: same route with `format=pdf`, rendered on the server. A summary table for
   the year, then one sheet per meal with the required facts, the receipt image, and a
-  line for place, date and signature. The app cannot sign: the signature is by hand
-  on the print, or the sheet is signed digitally outside the app.
+  blank line for place, date and signature. The entry timestamp is not printed; it
+  stays in the data and the CSV. The app cannot sign: the signature is by hand on the
+  print, or the sheet is signed digitally outside the app.
 - Both are generated from the same register builder and carry the generation time.
   Exporting with open incomplete entries is allowed after an explicit confirmation
   that names the count.
@@ -193,13 +243,34 @@ the totals.
 | Session expired while capturing | The queue keeps the photo, the app sends the user to login and resumes after return. |
 | Reclassified away from meal after details were entered | The row leaves the register and the queue at once (status is derived). The details stay stored and the panel says "kept, not in the register". Switching back restores the entry unchanged. |
 | Meal changed to "Privat" or guests cleared | Same mechanism: excluded or incomplete on the next read. |
+| Section 19 question unanswered | Register lists the entries without amounts and asks the question; exports refuse with the same message. |
+| Shared file of an unsupported type, or share before the service worker is active | A visible message naming the reason and the next step; nothing is lost silently. |
+| A new app version is deployed while the old service worker is installed | The worker caches no application scripts, so it cannot serve old code; see "Service worker" below. |
 | Wrong workspace | The register only ever reads the active workspace; the workspace name is printed on the PDF header. |
 | Receipt in a foreign currency without a rate | Entry is incomplete with reason "exchange rate missing" instead of exporting a zero. |
 
-Guest names are personal data of third parties: they stay in workspace-scoped cells,
-are not sent to the classifier, and the Guests column is withheld from the rows that
-the chat sidebar's read tools (`src/lib/ai-chat-tools.ts`, run from
-`src/components/AiChatSidebar.tsx`) hand to the language model.
+Guest names are personal data of third parties: they live in the workspace-scoped
+contact and guest tables, never in table cells, are not sent to the classifier, and
+are therefore out of reach of the chat sidebar's tools (`src/lib/ai-chat-tools.ts`),
+which only read cells.
+
+## Service worker
+
+The new `public/sw.js` must not bring back the stale-script problem, so it is built
+around one rule: **it never stores or serves application pages or `/_next/` files.**
+
+- It handles exactly two things: the share-target request (a POST to
+  `/share-target`, which it turns into queue entries and a redirect into the app),
+  and a failed page navigation while offline, for which it serves one small,
+  self-contained page (`/offline.html`, plain markup and inline script, no
+  application scripts) that can take photos into the queue.
+- Every other request passes through to the network untouched.
+- Its cache holds that one file only, under a name that carries a version; activating
+  a new version deletes every other cache, including any left by the 2026 worker.
+- It takes control at once (`skipWaiting`, `clients.claim`) and does not reload open
+  tabs.
+- The registration code keeps a kill switch: a server-side flag makes the client
+  unregister the worker, so a bad worker can be withdrawn with a deploy.
 
 ## Test plan
 
@@ -224,7 +295,12 @@ tests of the form and queue with jsdom. The four paths, all part of done:
 
 Plus: VAT tests for a 2025 receipt (19 percent), a 2026 receipt with 7 percent food
 and 19 percent drinks on one receipt, and a receipt without tax lines (estimated and
-flagged); a test that `Guests` never appears in model-bound `get_rows` results; one test that feeds a real recorded classifier response through the real
+flagged); a test that saving meal details writes no guest name into any cell (so model-bound
+`get_rows` results cannot contain one); contact tests (create, duplicate name,
+correct a name and see the printed copies follow, archive and see old meals keep
+their guests); service worker tests (share request becomes queue entries, an
+application script request is never answered from a cache, an old cache is deleted
+on activation); one test that feeds a real recorded classifier response through the real
 parser (not a mock), a test per row of the unhappy-path table, a workspace isolation
 test on the register route, and a manual pass on a real iPhone and a real Android
 phone for camera, home-screen install and the offline queue.
@@ -237,48 +313,51 @@ phone for camera, home-screen install and the offline queue.
 - Receipts **only on disk as scans**: the uploader gets a switch "one receipt per
   page". The PDF is split in the browser into one-page PDFs, and each runs through
   the normal per-file pipeline. This avoids the five-page limit and the merged text.
-- Entering 32 meals fast: guest suggestions from earlier entries, "same guests as
-  previous", keyboard-only save-and-next in the queue.
+- Entering 32 meals fast: guests picked from the contact list by typing, "same
+  guests as previous", keyboard-only save-and-next in the queue.
 - The details timestamp is the true entry time. Details recorded long after the meal
   are weaker evidence than timely ones; the app does not hide or alter that.
 
 ## Slices in build order
 
-1. **Meal fields, rules, form, queue.** Columns, `rules.ts`, the form in the detail
-   panel, `/app/meals` with the queue. The backlog already in the app can be worked.
-   Also in this slice: exclude `Guests` from the rows that the chat read tools hand to
-   the model, with a regression test that guest values are absent from model-bound
-   `get_rows` results.
-2. **Register and export.** Register tab, tax settings model, CSV and PDF route.
+Two pull requests: slices 1 to 3, then slices 4 to 6.
+
+1. **Meal fields, rules, contact list, form, queue.** Columns, migration `0008`,
+   `rules.ts`, the contact store and "Kontakte" tab, the form in the detail panel,
+   `/app/meals` with the queue. The backlog already in the app can be worked.
+2. **Register and export.** Register tab, the section 19 question, CSV and PDF route.
 3. **Backlog import.** One-receipt-per-page split, content hash and duplicate checks.
 4. **Phone capture.** Camera button, image conversion, `processReceipt` return
    value, bottom sheet, retake, row kept on OCR failure.
 5. **Classifier.** Meal type, consumption, tip and per-line tax rates in the Anthropic
    prompt, supermarket fix, and a date- and item-aware VAT fallback replacing the
    fixed 7 percent default.
-6. **Offline queue.** Only after 4 is in daily use.
+6. **Offline queue, service worker, share target.** The in-browser queue, the new
+   worker as described above, the manifest's share target and the offline page.
 
 Slices 1 to 3 are what the tax return needs; 4 to 6 are the capture comfort.
 
-## Open decisions
+## Decisions (2026-10-06)
 
-1. **Base of the 70 percent.** Net (input VAT deducted in full) or gross
-   (small-business rule, no input VAT)? Recommendation: a workspace setting, as
-   planned, with the owner stating once which applies; no default is guessed.
-2. **Guests as text or as a contact list.** Recommendation: text, one person per
-   line, with suggestions from earlier entries. The register only prints names; a
-   contacts table can be added later through the data table's relation column.
-3. **Shape of the PDF.** Table only, or summary table plus one signed sheet per meal?
-   Recommendation: summary plus one sheet per meal with the receipt image, built with
-   the `pdf-lib` package, which the page split in slice 3 needs anyway.
-4. **Share target ("share to Receipts" from the photo app).** It needs a working
-   service worker, and the current one was removed on purpose. Recommendation: not in
-   this plan; camera button and home-screen install first, decide after two weeks of
-   use.
-5. **Entry date on the printed sheet.** Recommendation: keep the true timestamp in
-   the data and the CSV, and leave the printed sheet with a blank date and signature
-   line that is filled in by hand.
-6. **Staff and travel meals.** Recommendation: record the type, keep them out of the
-   70 percent register, and show them as a separate count so nothing is lost.
-7. **Blocking export while entries are incomplete.** Recommendation: do not block;
-   confirm with the count and list the incomplete ones in their own block.
+Approved by the owner on 2026-10-06, all six slices to be built.
+
+1. **Base of the 70 percent.** One question per workspace, whether the business is a
+   small business under section 19 of the value-added tax act. Yes gives gross, no
+   gives net. No default; totals and exports wait for the answer.
+2. **Guests.** A contact list from the start, as a small self-contained table behind
+   the `ContactStore` interface. A suite-wide CRM model gets its own plan elsewhere;
+   no synchronisation is built here.
+3. **Shape of the PDF.** Summary table plus one sheet per meal with the receipt image
+   and a signature line, built with the `pdf-lib` package.
+4. **Share target.** Included (the draft had recommended leaving it out). It brings
+   back a service worker, designed as described under "Service worker". Android
+   only, because iOS offers no share target to web apps.
+5. **Entry date.** True timestamp in the data and the CSV; the printed sheet has a
+   blank date and signature line.
+6. **Staff and travel meals.** Recorded, kept out of the 70 percent register, shown
+   as a separate count.
+7. **Export with incomplete entries.** Allowed after a confirmation that names the
+   count; incomplete entries in their own block outside the totals.
+
+Still to confirm with the tax advisor before the first export is filed: the amount
+above which the receipt must name the host (default 250 euros in the settings).

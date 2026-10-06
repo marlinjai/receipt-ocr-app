@@ -232,3 +232,64 @@ model FxRate {
   @@unique([date, currency])
   @@map("fx_rates")
 }
+
+// The contact list behind the business-meal register: the people who can be
+// named as guests on a meal. Deliberately small and self-contained. Every read
+// and write goes through the ContactStore interface (src/lib/contacts/store.ts),
+// so a later suite-wide contact service can replace this table without touching
+// the meal model. `companyOrRole` is an empty string rather than NULL so the
+// uniqueness below actually holds (Postgres treats NULLs as distinct).
+model Contact {
+  id              String    @id @default(uuid())
+  authWorkspaceId String    @map("auth_workspace_id")
+  authTenantId    String?   @map("auth_tenant_id")
+  name            String
+  companyOrRole   String    @default("") @map("company_or_role")
+  note            String?
+  archivedAt      DateTime? @map("archived_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, name, companyOrRole])
+  @@map("contacts")
+}
+
+// One guest on one meal. `rowId` is the receipt row; it cannot be a foreign
+// key because receipt rows live either in dt_rows or in a per-table physical
+// table (see resolveRowTableIds), so the delete paths clean up in code.
+// `displayName` / `displayCompany` are the copy that gets printed on the
+// register: the register never has to ask the contact store, and an archived
+// contact keeps its place on old meals.
+model MealGuest {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  rowId           String   @map("row_id")
+  contactId       String   @map("contact_id")
+  position        Int      @default(0)
+  displayName     String   @map("display_name")
+  displayCompany  String   @default("") @map("display_company")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([rowId, contactId])
+  @@index([authWorkspaceId, rowId])
+  @@index([contactId])
+  @@map("meal_guests")
+}
+
+// Per-workspace tax facts the meal register needs. `smallBusiness` answers one
+// question, "is this business a small business under section 19 of the
+// value-added tax act (Kleinunternehmer)?": NULL = not answered yet (the
+// register shows no amounts until it is), true = no input tax, the 70 percent
+// is taken from gross; false = taken from net.
+model WorkspaceTaxSettings {
+  id                      String   @id @default(uuid())
+  authWorkspaceId         String   @unique @map("auth_workspace_id")
+  authTenantId            String?  @map("auth_tenant_id")
+  smallBusiness           Boolean? @map("small_business")
+  hostAddressThresholdEur Int      @default(250) @map("host_address_threshold_eur")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  @@map("workspace_tax_settings")
+}

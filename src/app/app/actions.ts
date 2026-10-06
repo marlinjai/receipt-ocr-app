@@ -9,6 +9,9 @@ import {
   ZUORDNUNG_OPTIONS,
   CURRENCY_OPTIONS,
   PROJECT_OPTIONS,
+  MEAL_TYPE_OPTIONS,
+  CONSUMPTION_OPTIONS,
+  MEAL_COLUMNS,
   getDefaultBusinessSharePercent,
 } from '@/lib/receipts-constants';
 import { classifyWithWebSearch } from '@/lib/web-search';
@@ -335,6 +338,17 @@ const COLUMNS: ColumnDef[] = [
     config: { formula: 'round(prop("EUR Equivalent") * prop("Business Share %") / 100, 2)', resultType: 'number' },
   },
   { name: 'Project', type: 'select', options: PROJECT_OPTIONS, optionColors: DEFAULT_OPTION_COLORS },
+  // Business-meal register (Bewirtungsverzeichnis). Guests are NOT a column:
+  // they live in the meal_guests table, so no guest name ever sits in a cell.
+  { name: MEAL_COLUMNS.mealType, type: 'select', options: MEAL_TYPE_OPTIONS, optionColors: DEFAULT_OPTION_COLORS },
+  { name: MEAL_COLUMNS.occasion, type: 'text' },
+  { name: MEAL_COLUMNS.place, type: 'text' },
+  { name: MEAL_COLUMNS.tip, type: 'number', config: { format: 'number', precision: 2, min: 0 } },
+  { name: MEAL_COLUMNS.host, type: 'text' },
+  { name: MEAL_COLUMNS.consumption, type: 'select', options: CONSUMPTION_OPTIONS, optionColors: DEFAULT_OPTION_COLORS },
+  { name: MEAL_COLUMNS.detailsAt, type: 'date', config: { includeTime: true } },
+  // The receipt's own tax lines as JSON: [{ rate, net, tax }].
+  { name: MEAL_COLUMNS.taxLines, type: 'text' },
 ];
 
 /**

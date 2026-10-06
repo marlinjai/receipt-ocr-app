@@ -31,6 +31,14 @@
   A validated prototype (matching, ledger, categories) is in
   `~/Library/Mobile Documents/com~apple~CloudDocs/Documents/personal/Finance/Banking/_pipeline-2026-10/`. (2026-10-03)
 
+- [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: record guests,
+  occasion, place, tip and host per meal, derive completeness and the 70 percent
+  deductible amount, export the register per year as PDF and CSV, and add a camera
+  capture path on the phone that leads into the meal details. Draft plan with seven
+  open decisions for Marlin: `docs/plans/2026-10-06-meal-register-and-phone-capture.md`.
+  Backlog waiting on it: 17 meal receipts from 2025 and about 15 from 2026 without
+  guests or occasion. (2026-10-06)
+
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a

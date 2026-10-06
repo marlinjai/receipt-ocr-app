@@ -7,6 +7,7 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "test": "vitest run",
+    "test:db": "vitest run --config vitest.db.config.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "check:roadmap": "npx --yes github:marlinjai/actions-shared#roadmap-check-v1 --root .",
@@ -31,6 +32,7 @@
     "@prisma/client": "^6.19.2",
     "next": "^16.1.6",
     "openai": "^6.25.0",
+    "pdf-lib": "^1.17.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "server-only": "^0.0.1"

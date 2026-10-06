@@ -9,6 +9,9 @@ export default defineConfig({
       // unit tests never touch the middleware, and vitest's node resolver cannot
       // follow Next's subpath export. Point it at a bare stub for tests only.
       'next/server': path.resolve(__dirname, 'test/stubs/next-server.ts'),
+      // `server-only` throws outside a React server build; the stub lets the
+      // server-side modules load under node for tests.
+      'server-only': path.resolve(__dirname, 'test/stubs/server-only.ts'),
     },
   },
   test: {

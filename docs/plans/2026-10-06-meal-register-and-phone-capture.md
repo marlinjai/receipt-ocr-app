@@ -54,7 +54,7 @@ they cannot go stale when one of those changes.
 - **Two fallback rules are wrong for a register**: `VENDOR_CATEGORY_MAP` files
   supermarkets under "Bewirtung", and `REDUCED_RATE_CATEGORIES` defaults "Bewirtung"
   to 7 percent value-added tax (VAT), while a restaurant meal eaten in is 19 percent.
-- **Data**: receipts are rows of the generic data table (`dt_rows`, cells as JSON,
+- **Data**: receipts are rows of the generic data table (`dt_rows`, cells stored as JavaScript Object Notation, JSON,
   `prisma/schema.prisma`). The column list `COLUMNS` in `src/app/app/actions.ts` is
   applied additively by `initializeReceiptsTable` on every dashboard load, so new
   columns reach every workspace without a migration. Category "Bewirtung" maps to
@@ -117,7 +117,7 @@ One module `src/lib/meals/rules.ts` holds the two pure functions every surface u
 - **Deductible amount**: base times 0.70. When the workspace deducts input VAT the
   base is net plus tip and the input VAT is listed in full beside it; when it does
   not (small-business rule) the base is gross plus tip. Amounts in euros via the
-  existing FX Rate column. The existing Business Share column is not applied on top.
+  existing FX Rate (foreign exchange rate) column. The existing Business Share column is not applied on top.
 - **Tip** counts into the base only when entered; the form reminds that it must be
   noted on the receipt.
 - Above the threshold in the settings the receipt must name the host; the form shows

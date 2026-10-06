@@ -33,7 +33,8 @@
 
 - [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: record guests,
   occasion, place, tip and host per meal, derive completeness and the 70 percent
-  deductible amount, export the register per year as PDF and CSV, and add a camera
+  deductible amount, export the register per year as PDF (Portable Document Format) and CSV
+  (comma-separated values), and add a camera
   capture path on the phone that leads into the meal details. Draft plan with seven
   open decisions for Marlin: `docs/plans/2026-10-06-meal-register-and-phone-capture.md`.
   Backlog waiting on it: 17 meal receipts from 2025 and about 15 from 2026 without

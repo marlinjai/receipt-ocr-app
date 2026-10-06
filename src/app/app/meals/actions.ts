@@ -10,12 +10,15 @@ import {
   MealServiceError,
   contactStore,
   getTaxSettings,
+  TaxSettingsError,
   lastUsedHost,
+  loadLastUsedHost,
   loadMealRecord,
   loadMealRecords,
   saveMealDetails,
-  setSmallBusiness,
+  saveTaxSettings,
   type MealContext,
+  type TaxSettingsInput,
 } from '@/lib/meals/service';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { prisma } from '@/lib/prisma';
@@ -119,12 +122,12 @@ export async function getMealForRow(rowId: string): Promise<Result<MealForRow>> 
     const record = await loadMealRecord(prisma, workspaceId, String(rowId));
     // A row of another workspace the user is also a member of: not this workspace's meal.
     if (!record) return { ok: false, error: 'not_found' };
-    const [contacts, settings, records] = await Promise.all([
+    const [contacts, settings, defaultHost] = await Promise.all([
       contactStore(prisma, { workspaceId, tenantId: null }).list({ includeArchived: true }),
       getTaxSettings(prisma, workspaceId),
-      loadMealRecords(prisma, workspaceId),
+      loadLastUsedHost(prisma, workspaceId),
     ]);
-    return { ok: true, value: { record, contacts, settings, defaultHost: lastUsedHost(records) } };
+    return { ok: true, value: { record, contacts, settings, defaultHost } };
   } catch (e) {
     return failure(e);
   }
@@ -170,13 +173,14 @@ export async function setContactArchived(id: string, archived: boolean): Promise
   }
 }
 
-/** Answer the section 19 question for the active workspace. */
-export async function answerSmallBusiness(smallBusiness: boolean): Promise<Result<MealTaxSettings>> {
+/** Answer the section 19 question (and optionally set the host-name threshold) for the active workspace. */
+export async function saveMealTaxSettings(input: TaxSettingsInput): Promise<Result<MealTaxSettings>> {
   try {
-    if (typeof smallBusiness !== 'boolean') return { ok: false, error: 'invalid_input' };
+    if (typeof input?.smallBusiness !== 'boolean') return { ok: false, error: 'invalid_input' };
     const ctx = await writeContext();
-    return { ok: true, value: await setSmallBusiness(prisma, ctx, smallBusiness) };
+    return { ok: true, value: await saveTaxSettings(prisma, ctx, input) };
   } catch (e) {
+    if (e instanceof TaxSettingsError) return { ok: false, error: 'invalid_input', detail: 'invalid_threshold' };
     return failure(e);
   }
 }

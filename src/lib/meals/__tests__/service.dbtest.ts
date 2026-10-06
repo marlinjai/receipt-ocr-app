@@ -10,7 +10,8 @@ import {
   loadMealRecord,
   loadMealRecords,
   saveMealDetails,
-  setSmallBusiness,
+  loadLastUsedHost,
+  saveTaxSettings,
   type MealContext,
 } from '../service';
 import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../../../../test/db-helpers';
@@ -208,6 +209,34 @@ describe('re-entry', () => {
   });
 });
 
+describe('receipt files', () => {
+  it('a file attached to the row arrives on the meal record, single and listed (the export depends on it)', async () => {
+    const rowId = await ws.addReceipt(plainMealReceipt());
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    const imageCol = columns.find((c) => c.name === 'Receipt Image')!;
+    await ws.adapter.addFileReference({
+      rowId,
+      columnId: imageCol.id,
+      fileId: '11111111-2222-4333-8444-555555555555',
+      fileUrl: '/api/files/11111111-2222-4333-8444-555555555555',
+      originalName: 'beleg.jpg',
+      mimeType: 'image/jpeg',
+      metadata: { source: 'test' },
+    });
+    const expected = [
+      {
+        fileId: '11111111-2222-4333-8444-555555555555',
+        fileUrl: '/api/files/11111111-2222-4333-8444-555555555555',
+        mimeType: 'image/jpeg',
+        originalName: 'beleg.jpg',
+      },
+    ];
+    expect((await loadMealRecord(db, ws.workspaceId, rowId))!.files).toEqual(expected);
+    const listed = (await loadMealRecords(db, ws.workspaceId)).find((r) => r.rowId === rowId);
+    expect(listed!.files).toEqual(expected);
+  });
+});
+
 describe('contacts', () => {
   it('refuses a duplicate name plus company, case-insensitively, and hands back the existing contact', async () => {
     const store = contactStore(db, ctx);
@@ -307,11 +336,35 @@ describe('workspace isolation', () => {
 
   it('the section 19 answer is per workspace and starts unanswered', async () => {
     expect(await getTaxSettings(db, ws.workspaceId)).toEqual({ smallBusiness: null, hostAddressThresholdEur: 250 });
-    await setSmallBusiness(db, ctx, true);
+    await saveTaxSettings(db, ctx, { smallBusiness: true });
     expect((await getTaxSettings(db, ws.workspaceId)).smallBusiness).toBe(true);
     expect((await getTaxSettings(db, other.workspaceId)).smallBusiness).toBeNull();
-    await setSmallBusiness(db, ctx, false);
+    await saveTaxSettings(db, ctx, { smallBusiness: false });
     expect((await getTaxSettings(db, ws.workspaceId)).smallBusiness).toBe(false);
+  });
+
+  it('the host-name threshold can be changed and survives a later answer without it', async () => {
+    const fresh = await createWorkspace();
+    const freshCtx = { workspaceId: fresh.workspaceId, tenantId: fresh.tenantId };
+    await saveTaxSettings(db, freshCtx, { smallBusiness: true, hostAddressThresholdEur: 300 });
+    await saveTaxSettings(db, freshCtx, { smallBusiness: false });
+    expect(await getTaxSettings(db, fresh.workspaceId)).toEqual({ smallBusiness: false, hostAddressThresholdEur: 300 });
+    await expect(
+      saveTaxSettings(db, freshCtx, { smallBusiness: true, hostAddressThresholdEur: -5 }),
+    ).rejects.toThrow('invalid_threshold');
+  });
+
+  it('the last used host is found per workspace, newest first', async () => {
+    const fresh = await createWorkspace();
+    const freshCtx = { workspaceId: fresh.workspaceId, tenantId: fresh.tenantId };
+    expect(await loadLastUsedHost(db, fresh.workspaceId)).toBe('');
+    const first = await fresh.addReceipt(plainMealReceipt());
+    const second = await fresh.addReceipt(plainMealReceipt());
+    await fresh.addReceipt(plainMealReceipt()); // never annotated
+    await saveMealDetails(db, freshCtx, first, details({ host: 'Erste Gastgeberin' }), () => new Date('2025-01-01T10:00:00Z'));
+    await saveMealDetails(db, freshCtx, second, details({ host: 'Zweiter Gastgeber' }), () => new Date('2025-02-01T10:00:00Z'));
+    expect(await loadLastUsedHost(db, fresh.workspaceId)).toBe('Zweiter Gastgeber');
+    expect(await loadLastUsedHost(db, other.workspaceId)).not.toBe('Zweiter Gastgeber');
   });
 });
 

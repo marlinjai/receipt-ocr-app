@@ -139,6 +139,14 @@ export async function loadMealRecord(
   return loadWithContext(db, workspaceId, ctx, rowId);
 }
 
+/**
+ * Assumption worth knowing: `adapter.getRow` only searches tables the adapter
+ * has migrated to their own physical table. Every Receipts table is migrated
+ * the first time its rows are listed (`getRows` does it), and nothing reaches
+ * a single meal without the dashboard or the meals page having listed rows
+ * first, so this holds in practice. A row in a never-listed table reads as
+ * "not found", which is the safe direction.
+ */
 async function loadWithContext(
   db: PrismaClient,
   workspaceId: string,
@@ -270,24 +278,67 @@ export async function getTaxSettings(db: PrismaClient, workspaceId: string): Pro
   return { smallBusiness: row.smallBusiness, hostAddressThresholdEur: row.hostAddressThresholdEur };
 }
 
-/** Answer (or change the answer to) the section 19 question. */
-export async function setSmallBusiness(
+export interface TaxSettingsInput {
+  smallBusiness: boolean;
+  /** Optional: the receipt total above which the receipt must name the host. */
+  hostAddressThresholdEur?: number;
+}
+
+export class TaxSettingsError extends Error {
+  constructor() {
+    super('invalid_threshold');
+    this.name = 'TaxSettingsError';
+  }
+}
+
+/** Answer (or change the answer to) the section 19 question, and optionally the host-name threshold. */
+export async function saveTaxSettings(
   db: PrismaClient,
   ctx: MealContext,
-  smallBusiness: boolean,
+  input: TaxSettingsInput,
 ): Promise<MealTaxSettings> {
+  const threshold = input.hostAddressThresholdEur;
+  if (threshold !== undefined && (!Number.isInteger(threshold) || threshold < 0 || threshold > 100_000)) {
+    throw new TaxSettingsError();
+  }
+  const data = {
+    smallBusiness: input.smallBusiness,
+    ...(threshold !== undefined ? { hostAddressThresholdEur: threshold } : {}),
+  };
   const row = await db.workspaceTaxSettings.upsert({
     where: { authWorkspaceId: ctx.workspaceId },
-    create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, smallBusiness },
-    update: { smallBusiness },
+    create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, ...data },
+    update: data,
   });
   return { smallBusiness: row.smallBusiness, hostAddressThresholdEur: row.hostAddressThresholdEur };
 }
 
-/** The host name used most recently in this workspace, to prefill the form. */
+/** The host name used most recently among already loaded records, to prefill the form. */
 export function lastUsedHost(records: MealRecord[]): string {
   const withHost = records
     .filter((r) => r.host.trim() && r.detailsAt)
     .sort((a, b) => (a.detailsAt! < b.detailsAt! ? 1 : -1));
   return withHost[0]?.host.trim() ?? '';
+}
+
+/**
+ * The same, as one small query (for the detail panel, which has no reason to
+ * load every row of the workspace just to prefill one field).
+ */
+export async function loadLastUsedHost(db: PrismaClient, workspaceId: string): Promise<string> {
+  const ctx = await tableContext(db, workspaceId);
+  if (!ctx) return '';
+  const hostCol = ctx.columns.find((c) => c.name === MEAL_COLUMNS.host);
+  const atCol = ctx.columns.find((c) => c.name === MEAL_COLUMNS.detailsAt);
+  if (!hostCol || !atCol) return '';
+  const page = await ctx.adapter.getRows(ctx.tableId, {
+    filters: [
+      { columnId: hostCol.id, operator: 'isNotEmpty', value: null },
+      { columnId: atCol.id, operator: 'isNotEmpty', value: null },
+    ],
+    sorts: [{ columnId: atCol.id, direction: 'desc' }],
+    limit: 1,
+  });
+  const value = page.items[0]?.cells[hostCol.id];
+  return typeof value === 'string' ? value.trim() : '';
 }

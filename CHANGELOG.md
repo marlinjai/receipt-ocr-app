@@ -13,13 +13,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Contact list behind a `ContactStore` interface (migration `0008_meal_register`: `contacts`, `meal_guests`, `workspace_tax_settings`)
 - Upload: the same file is recognised by its content hash before anything is uploaded; a receipt photographed twice gets a warning with "keep both" or "discard"; multi-page scans can be split into one receipt per page
 - `pnpm test:db`: database-backed tests against a throwaway Postgres (requires `TEST_DATABASE_URL`)
+- Phone capture on the upload page: a camera button, one photo at a time, no redirect; a business meal is followed by the question for guests and occasion; a badly read photo can be retaken onto the same receipt
+- Photos are scaled to 2000 pixels and converted to JPEG in the browser before upload (also in the batch uploader)
+- Offline capture queue in the browser: photos taken without a connection, on a lost connection or with an expired session are kept and sent later, visibly counted
+- Service worker that caches no application code: it only serves a self-contained offline page when a navigation fails, with a server-side kill switch (`DISABLE_SERVICE_WORKER`)
+- Share target (Android): a file shared to the installed app is processed like a photo taken there
+- Classifier reads meal type, eaten in or taken away, tip, tax lines and the restaurant address; continuous integration now runs typecheck, lint, unit tests and the database tests
 - Multi-receipt batch upload with queue UI — select multiple files at once, sequential processing with per-file progress indicators (uploading, OCR, classifying, done/error), overall X/Y progress counter
 - Failed files show per-file errors without blocking other uploads
 
 ### Changed
 
+- A failed text recognition no longer loses the upload: the receipt is saved without text, flagged, for a retake or manual entry
+- Supermarket receipts are no longer filed as "Bewirtung" by the fallback rules; the default tax rate for a meal follows the receipt date (19 percent until the end of 2025, 7 percent from 2026)
+
 - Migrated from HTTP API layer to direct D1 adapter (`@marlinjai/data-table-adapter-d1`) for database access
 - Classification failures are soft — row saved with Pending status, no upload blocking
+
+### Fixed
+
+- The manifest, its icons, the service worker script and the offline page are public: behind the login they answered with a redirect, so the app could not be installed to the home screen
+- The exchange-rate recompute filtered the date column with strings, which the database rejected; it now binds dates
 
 ## [0.5.0] - 2026-02-28
 

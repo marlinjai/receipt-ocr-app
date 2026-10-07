@@ -99,6 +99,16 @@ The app is a relying party of [auth-brain](https://auth.lumitra.co) (shared `lum
 3. "Verzeichnis" asks once whether the business is a small business under section 19 of the value-added tax act, then shows the year's register with totals and exports it as CSV or PDF
 4. For a stack of scanned receipts in one PDF, tick "One receipt per page" on the upload page before dropping the file
 
+### On the phone
+
+1. Open the app in the phone's browser and add it to the home screen
+2. "Foto aufnehmen" opens the camera. The photo is scaled, uploaded, read and filed. For a business meal the app asks for guests and occasion right away; "Später" leaves it in the queue of open meals
+3. A photo that was read badly can be retaken: the new photo replaces the old one on the same receipt
+4. Without a connection the photo is kept on the phone and sent when the connection is back; the screen shows how many are waiting. If the app cannot be reached at all, a small offline page still takes photos
+5. On Android the installed app also appears in the share sheet for images and PDFs. iOS does not offer this to web apps
+
+The service worker (`public/sw.js`) never caches application code. To withdraw it, set `DISABLE_SERVICE_WORKER=1` and restart: every browser unregisters it on its next page load.
+
 The rules (what counts as complete, how the deductible amount is computed) live in one module, `src/lib/meals/rules.ts`, and the plan is `docs/plans/2026-10-06-meal-register-and-phone-capture.md`.
 
 ## Documentation

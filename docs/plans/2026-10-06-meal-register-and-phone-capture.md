@@ -382,6 +382,39 @@ Built as planned, with these differences and facts worth knowing:
 - **Still open from the unhappy-path table, by plan in slice 4:** a failed text
   recognition still leaves the uploaded file without a row.
 
+## Reality after slices 4 to 6 (2026-10-07)
+
+- **The app could not be installed before.** The draft said the manifest already
+  made the app installable. In production the manifest, its icons and the worker
+  script sat behind the login and answered a browser's cookie-less request with a
+  redirect. They are public now (they carry no data).
+- **Receipt reading is one routine** (`readReceipt` in `src/app/app/actions.ts`) used
+  by the first save and by a retake. A failed text recognition still creates the
+  row, with the file, status "Pending".
+- **Retake** (`retakeReceipt`) swaps the captured photo on the same row and keeps
+  meal details and files attached by hand.
+- **Queue.** `src/lib/capture/offline-queue.ts` (IndexedDB) is written by three
+  parties: the app, the service worker (shared files) and the offline page. A photo
+  leaves the queue only after the server has it. A photo that keeps failing can be
+  removed by hand after a confirmation.
+- **A retake is not queued offline**: it needs its row, so it stays on screen with
+  "retry" instead.
+- **Service worker** as designed: one cached file, no application code, kill switch
+  through `GET /api/client-config` and the `DISABLE_SERVICE_WORKER` variable.
+- **Classifier fixture.** The parser test runs a full answer through the real
+  parser, but the answer is written to the prompt's contract, not recorded from a
+  live call: no model credentials are available where the tests run.
+- **Found on the way and fixed:** the exchange-rate recompute filtered the date
+  column with strings, which the database rejects; and a review fix on the first
+  pull request made the same mistake in the look-alike check. Continuous integration
+  now runs typecheck, lint, the unit tests and the database tests.
+- **Not verified by a machine, still to do by hand:** camera, home-screen install,
+  offline queue and (on Android) sharing on a real phone, and one real upload
+  through text recognition and classification in production.
+- **Share target** is the last commit of the second pull request so it can be
+  reverted on its own. The owner uses an iPhone, where it has no effect; whether to
+  keep it is his call.
+
 ## Decisions (2026-10-06)
 
 Approved by the owner on 2026-10-06, all six slices to be built.

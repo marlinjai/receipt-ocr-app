@@ -28,6 +28,13 @@
   and public bank data access exist. After stage 2. Plan:
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
 
+- [ ] A newly created Receipts table gets no company id: `createTable` in
+  `src/lib/receipts-table.ts` and in `src/app/app/dashboard/actions.ts` passes only the
+  workspace, so `dt_tables.auth_tenant_id` stays empty for every workspace created
+  after the tenant backfill until the backfill is run again. Pass the session's
+  company id at creation and add a database test. Found on 2026-10-07 while checking
+  the state of the Books plan; fix it with slice 1 of the finance dashboard, whose
+  new tables all carry the company id. (2026-10-07)
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a

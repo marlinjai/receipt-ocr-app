@@ -28,9 +28,11 @@ const fileAdapter = new PresignedStorageBrainAdapter();
 interface DashboardClientProps {
   tableId: string;
   workspaceId: string;
+  /** Business meals that still lack guests or occasion (see /app/meals). */
+  openMealCount: number;
 }
 
-function DashboardContent({ tableId }: { tableId: string }) {
+function DashboardContent({ tableId, openMealCount }: { tableId: string; openMealCount: number }) {
   const {
     table,
     columns,
@@ -55,6 +57,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
     loadMore,
     isRowsLoading,
     loadSelectOptions,
+    refresh,
   } = useTable({ tableId });
 
   const {
@@ -222,6 +225,31 @@ function DashboardContent({ tableId }: { tableId: string }) {
               </svg>
               Overview
             </Link>
+            <Link
+              href="/app/meals"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
+              style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
+              title={
+                openMealCount > 0
+                  ? `${openMealCount} Bewirtungen ohne Teilnehmer oder Anlass`
+                  : 'Bewirtungsverzeichnis'
+              }
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M7 3v8a2 2 0 0 0 2 2v8M5 3v5M9 3v5" />
+                <path d="M17 3c-1.7 1.5-2.5 3.5-2.5 6s.8 4 2.5 4v8" />
+              </svg>
+              Bewirtung
+              {openMealCount > 0 && (
+                <span
+                  className="rounded-full px-1.5 py-0.5 text-xs font-semibold tabular-nums"
+                  style={{ background: 'var(--accent-muted)', color: 'var(--accent)' }}
+                  aria-label={`${openMealCount} offen`}
+                >
+                  {openMealCount}
+                </span>
+              )}
+            </Link>
             <button
               onClick={() => exportCSV({ columns, rows: displayRows })}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
@@ -379,6 +407,7 @@ function DashboardContent({ tableId }: { tableId: string }) {
           onClose={() => setDetailRow(null)}
           onUploadFile={uploadFile}
           onDeleteFile={deleteFile}
+          onMealSaved={() => void refresh()}
         />
       )}
 
@@ -399,10 +428,10 @@ function DashboardContent({ tableId }: { tableId: string }) {
   );
 }
 
-export default function DashboardClient({ tableId, workspaceId }: DashboardClientProps) {
+export default function DashboardClient({ tableId, workspaceId, openMealCount }: DashboardClientProps) {
   return (
     <DataTableProvider dbAdapter={dbAdapter} fileAdapter={fileAdapter} workspaceId={workspaceId}>
-      <DashboardContent tableId={tableId} />
+      <DashboardContent tableId={tableId} openMealCount={openMealCount} />
     </DataTableProvider>
   );
 }

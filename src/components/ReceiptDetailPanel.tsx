@@ -5,6 +5,8 @@ import type { Row, Column, SelectOption } from '@marlinjai/data-table-core';
 import type { FileReference } from '@marlinjai/data-table-core';
 import { validateReceiptFile } from '@/lib/presigned-file-adapter';
 import ReceiptLightbox from './ReceiptLightbox';
+import MealPanelSection from './meals/MealPanelSection';
+import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 
 interface ReceiptDetailPanelProps {
   row: Row;
@@ -15,6 +17,8 @@ interface ReceiptDetailPanelProps {
   onUploadFile?: (rowId: string, columnId: string, file: File) => Promise<unknown>;
   /** Remove one file reference from the row (the storage object is kept). */
   onDeleteFile?: (rowId: string, columnId: string, fileId: string) => Promise<void>;
+  /** Reload the table after the meal details of this row were saved. */
+  onMealSaved?: () => void;
 }
 
 const MAX_FILES_PER_ROW = 10;
@@ -74,6 +78,7 @@ export default function ReceiptDetailPanel({
   onClose,
   onUploadFile,
   onDeleteFile,
+  onMealSaved,
 }: ReceiptDetailPanelProps) {
   const [ocrExpanded, setOcrExpanded] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -149,6 +154,11 @@ export default function ReceiptDetailPanel({
   const zuordnung = getVal('Zuordnung');
 
   const categoryCol = getCol('Category');
+  // The meal section shows for a "Bewirtung" row, and also for a row that was
+  // reclassified away but still carries meal details (so they stay reachable).
+  const categoryName = categoryCol ? getCellDisplay(categoryCol, category, selectOptions) : '';
+  const hasMealDetails = Boolean(getVal(MEAL_COLUMNS.detailsAt));
+  const showMealSection = categoryName === MEAL_CATEGORY || hasMealDetails;
   const statusCol = getCol('Status');
   const zuordnungCol = getCol('Zuordnung');
 
@@ -422,6 +432,11 @@ export default function ReceiptDetailPanel({
               ))}
             </div>
           </div>
+
+          {showMealSection && (
+            // Keyed on the category: after a reclassification the section reloads.
+            <MealPanelSection key={`${row.id}:${categoryName}`} rowId={row.id} onSaved={onMealSaved} />
+          )}
 
           {/* OCR Text */}
           {ocrText && String(ocrText) && (

@@ -2,6 +2,8 @@ import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
 import { sessionWorkspaceId } from '@/lib/auth-guards';
+import { incompleteQueue } from '@/lib/meals/register';
+import { loadMealRecords } from '@/lib/meals/service';
 import DashboardClient from './DashboardClient';
 
 export const dynamic = 'force-dynamic';
@@ -32,10 +34,20 @@ export default async function DashboardPage() {
     );
   }
 
+  // The badge on the "Bewirtung" link. A failure here must not take the whole
+  // dashboard down: the count is a convenience, the page behind it has the truth.
+  let openMealCount = 0;
+  try {
+    openMealCount = incompleteQueue(await loadMealRecords(prisma, workspaceId)).length;
+  } catch (e) {
+    console.error('[dashboard] open meal count failed', e);
+  }
+
   return (
     <DashboardClient
       tableId={table.id}
       workspaceId={workspaceId}
+      openMealCount={openMealCount}
     />
   );
 }

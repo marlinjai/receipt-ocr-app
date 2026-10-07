@@ -427,8 +427,10 @@ describe('extractReceiptFields — full receipt samples', () => {
     expect(result.vendor).toBe('REWE');
     expect(result.gross).toBe(8.06);
     expect(result.net).toBe(7.53);
-    expect(result.category).toBe('Bewirtung');
-    expect(result.konto).toBe('4650');
+    // Groceries are not a business meal: a supermarket receipt must not land
+    // in the business-meal register (it used to be filed as Bewirtung).
+    expect(result.category).toBe('Sonstige Ausgaben');
+    expect(result.konto).toBe('4900');
     expect(result.date).toBeTruthy();
     const d = new Date(result.date!);
     expect(d.getFullYear()).toBe(2024);

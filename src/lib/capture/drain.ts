@@ -52,11 +52,9 @@ export async function drainQueue(
       break;
     }
     options.onProgress?.(index, entries.length);
+    let outcome: PipelineOutcome;
     try {
-      const outcome = await send(queuedFile(entry), entry);
-      // Saved, or already there: either way the server has this file now.
-      await store.remove(entry.id);
-      sent.push({ entry, outcome });
+      outcome = await send(queuedFile(entry), entry);
     } catch (err) {
       const kind = uploadFailureKind(err);
       const message = err instanceof Error ? err.message : 'Sending failed';
@@ -71,6 +69,17 @@ export async function drainQueue(
       }
       failed += 1;
       await store.update(entry.id, { attempts: entry.attempts + 1, lastError: message });
+      continue;
+    }
+    // Saved, or already there: either way the server has this file now. A
+    // failed removal must not look like a failed send (that would upload the
+    // receipt again), so it is counted as sent and reported as a failure.
+    sent.push({ entry, outcome });
+    try {
+      await store.remove(entry.id);
+    } catch (err) {
+      failed += 1;
+      await store.update(entry.id, { lastError: err instanceof Error ? err.message : 'Could not clear the sent photo' }).catch(() => undefined);
     }
   }
 

@@ -171,7 +171,9 @@ async function readReceipt(
   const finalTaxRate =
     meal?.taxLines?.length === 1
       ? meal.taxLines[0].rate
-      : (extracted?.taxRate ?? ai?.aiTaxRate ?? defaultTaxRate(finalCategory, date, meal?.consumption ?? null));
+      : meal?.taxLines && ai?.aiTaxRate != null
+        ? ai.aiTaxRate
+        : (extracted?.taxRate ?? ai?.aiTaxRate ?? defaultTaxRate(finalCategory, date, meal?.consumption ?? null));
   let finalNet = lineNet !== null ? Math.round(lineNet * 100) / 100 : (extracted?.net ?? null);
   if (finalGross !== null && finalNet === null) {
     finalNet = Math.round((finalGross / (1 + finalTaxRate / 100)) * 100) / 100;

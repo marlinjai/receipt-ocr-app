@@ -125,3 +125,189 @@ body::after {
     -webkit-backdrop-filter: blur(24px) saturate(1.4);
   }
 }
+
+/* ==================== Shared form and dialog pieces ==================== */
+/* Used by the meal register. Brand: near-black surfaces with the brushed-gold
+   accent; no blue, no light mode. */
+
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.875rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out;
+}
+.ui-btn:hover:not(:disabled) {
+  border-color: rgba(226, 163, 72, 0.4);
+  color: var(--accent);
+}
+.ui-btn:focus-visible,
+.ui-input:focus-visible,
+.ui-seg button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ui-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ui-btn-primary {
+  background: linear-gradient(180deg, #edb45c 0%, #d99a3d 100%);
+  border-color: rgba(226, 163, 72, 0.7);
+  color: #17120a;
+  font-weight: 600;
+}
+.ui-btn-primary:hover:not(:disabled) {
+  color: #17120a;
+  border-color: #f3c880;
+  background: linear-gradient(180deg, #f3c172 0%, #e2a348 100%);
+}
+.ui-btn-danger:hover:not(:disabled) {
+  border-color: rgba(229, 83, 75, 0.5);
+  color: var(--danger);
+}
+.ui-btn-sm {
+  min-height: 2rem;
+  padding: 0.25rem 0.625rem;
+  font-size: 0.8125rem;
+}
+
+.ui-input {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: rgba(10, 10, 15, 0.55);
+  color: var(--foreground);
+  /* 16px: below that, iOS zooms the page when the field is focused. */
+  font-size: 1rem;
+  line-height: 1.35;
+  transition: border-color 150ms ease-out;
+}
+.ui-input::placeholder {
+  color: var(--muted);
+}
+.ui-input:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.ui-input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+textarea.ui-input {
+  resize: vertical;
+}
+
+.ui-label {
+  display: block;
+  margin-bottom: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Segmented choice (meal type, consumption) */
+.ui-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.ui-seg button {
+  min-height: 2.5rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: border-color 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out;
+}
+.ui-seg button[aria-pressed='true'] {
+  background: var(--accent-muted);
+  border-color: rgba(226, 163, 72, 0.55);
+  color: var(--accent);
+}
+
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.625rem;
+  border-radius: 999px;
+  border: 1px solid rgba(226, 163, 72, 0.3);
+  background: var(--accent-muted);
+  color: var(--foreground);
+  font-size: 0.8125rem;
+}
+
+.ui-note {
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.625rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+.ui-note-warn {
+  border-color: rgba(226, 163, 72, 0.4);
+  background: var(--accent-muted);
+}
+.ui-note-danger {
+  border-color: rgba(229, 83, 75, 0.45);
+  background: var(--danger-muted);
+  color: #f1a29d;
+}
+.ui-note-ok {
+  border-color: rgba(125, 190, 140, 0.35);
+  background: rgba(125, 190, 140, 0.08);
+}
+
+/* Dialog: short ease-out entrance, never ease-in; none at all on reduced motion. */
+@keyframes ui-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ui-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.ui-dialog-backdrop {
+  animation: ui-fade-in 160ms ease-out;
+}
+.ui-dialog {
+  animation: ui-dialog-in 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-dialog-backdrop,
+  .ui-dialog {
+    animation: none;
+  }
+  .ui-btn,
+  .ui-input,
+  .ui-seg button {
+    transition: none;
+  }
+}

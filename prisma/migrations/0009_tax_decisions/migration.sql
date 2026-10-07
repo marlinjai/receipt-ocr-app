@@ -26,7 +26,9 @@ CREATE TABLE "tax_vendor_rules" (
     CONSTRAINT "tax_vendor_rules_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "tax_vendor_rules_auth_workspace_id_vendor_key_effective_from_key"
+-- The name is the one Prisma derives: Postgres limits identifiers to 63
+-- characters, so "effective_from" is cut to "effective_fro".
+CREATE UNIQUE INDEX "tax_vendor_rules_auth_workspace_id_vendor_key_effective_fro_key"
     ON "tax_vendor_rules"("auth_workspace_id", "vendor_key", "effective_from");
 
 -- A decision for one receipt row. row_id has NO foreign key: a receipt row

@@ -4,33 +4,37 @@
 
 <!-- Decided features, ready to be worked on -->
 
-- [ ] Bank connection and item-level receipts: write the plan (status draft) before any
-  code. Scope: (1) link bank accounts through Enable Banking, using the registered
-  application "Lumitra Receipts" (id `306d872b-bf50-4a18-95cb-3f17790470b7`, restricted
-  production, which only returns data for accounts linked to the application itself, so
-  it serves the operator's own accounts only; key and the four session ids are in
-  Infisical, project Receipt OCR, as `ENABLE_BANKING_*`), plus importers for sources with no usable interface: Advanzia
-  statement PDFs, the Klarna purchase list and N26's own export (the bank interface
-  omits recipient names); (2) a payments table with categories, counting each payment
-  where it was spent and excluding settlements (Klarna debits, Advanzia repayments,
-  transfers between own accounts); (3) line items per receipt with sub-categories;
-  (4) linking receipt to payment by payment reference, never by merchant name or amount
-  (the Klarna app mislabels merchants and adds fees), and a "payments without a receipt"
-  list. Before building, confirm per source whether Enable Banking's `entry_reference`
-  is the reference field and how well it is covered: some banks omit it or return
-  duplicates, and it is usually set only for booked (not pending) transactions, so
-  match booked transactions only. Define the fallback for a payment without a unique
-  reference (manual link by the user, never a guess from merchant or amount);
-  (5) before anyone but the operator links a bank account: a Receipts section in the
-  lumitra.co privacy policy AND public Enable Banking access (signed contract and
-  completed company KYB, i.e. know-your-business verification); (6) track each
-  session's `valid_until` (at most 180 days for most banks) and warn users before it
-  expires so they can reauthorize, and handle `EXPIRED_SESSION` by prompting a new
-  authorization.
-  Must fit the Books plan (`docs/plans/2026-08-15-books-integration-pointer.md`).
-  A validated prototype (matching, ledger, categories) is in
-  `~/Library/Mobile Documents/com~apple~CloudDocs/Documents/personal/Finance/Banking/_pipeline-2026-10/`. (2026-10-03)
+- [ ] Finance and tax dashboard, stage 1 (data foundation and live dashboard): plan
+  decided by the owner on 2026-10-07, nothing built yet. Eight slices: tax rules per
+  year and the income-surplus statement from receipts, assets and receipt lines,
+  payments (file imports and the Enable Banking daily sync, matching by reference,
+  payments without a receipt), revenue by payment date with a forecast of the
+  small-business limits, regular value-added taxation, the income tax estimate, the
+  year-end entry sheet with a filed-year snapshot, and reading the expenses mailbox.
+  Slices 1 to 5 are built first. This line
+  absorbs the earlier "Bank connection and item-level receipts" item; its facts
+  (registered application, session rules, import sources, the two gates before anyone
+  but the operator links an account) are in the plan's "Bank data" section. Plan:
+  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
+- [ ] Finance and tax dashboard, stage 2 (scenario engine): "what if I buy X on date
+  Z at share S" and "what if revenue is R", computed by the same tax module as the
+  dashboard, saved as inputs and never as results. After stage 1. Plan:
+  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
+- [ ] Finance and tax dashboard, stage 3 (advisory layer): deterministic hints that
+  each show inputs, rule, source and euro effect, the legal form comparison (sole
+  proprietor against a company with limited liability or a partnership) with a
+  hand-off to a tax advisor, and last an optional language model that may only quote
+  computed figures. Operator only until a lawyer's opinion on the tax advisory act
+  and public bank data access exist. After stage 2. Plan:
+  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
 
+- [ ] A newly created Receipts table gets no company id: `createTable` in
+  `src/lib/receipts-table.ts` and in `src/app/app/dashboard/actions.ts` passes only the
+  workspace, so `dt_tables.auth_tenant_id` stays empty for every workspace created
+  after the tenant backfill until the backfill is run again. Pass the session's
+  company id at creation and add a database test. Found on 2026-10-07 while checking
+  the state of the Books plan; fix it with slice 1 of the finance dashboard, whose
+  new tables all carry the company id. (2026-10-07)
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a

@@ -37,6 +37,7 @@ describe('validateTreatment', () => {
       allocations: [{ purpose: 'business', shareBp: 5000 }, { purpose: 'study', shareBp: 3000 }],
       formLineKey: 'euer.telecom',
       employmentLineKey: 'employment.study_costs',
+      severalLowValueItems: false,
     });
   });
 
@@ -46,7 +47,7 @@ describe('validateTreatment', () => {
         { allocations: [{ purpose: 'private', shareBp: 10000 }], formLineKey: 'euer.telecom', employmentLineKey: 'employment.study_costs' },
         rules,
       ),
-    ).toEqual({ allocations: [{ purpose: 'private', shareBp: 10000 }], formLineKey: null, employmentLineKey: null });
+    ).toEqual({ allocations: [{ purpose: 'private', shareBp: 10000 }], formLineKey: null, employmentLineKey: null, severalLowValueItems: false });
   });
 
   it.each([
@@ -70,6 +71,23 @@ describe('validateTreatment', () => {
   it('rejects null and garbage without throwing anything else', () => {
     expect(code(() => validateTreatment(null, rules))).toBe('invalid_allocation');
     expect(code(() => validateTreatment('x', rules))).toBe('invalid_allocation');
+  });
+});
+
+describe('validateTreatment: several low-value items on one receipt', () => {
+  const treatment = (formLineKey: string, severalLowValueItems: unknown) =>
+    validateTreatment({ allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey, severalLowValueItems }, rules);
+
+  it('keeps the statement only on the low-value asset line and only when it is exactly true', () => {
+    expect(treatment('euer.low_value_assets', true).severalLowValueItems).toBe(true);
+    expect(treatment('euer.low_value_assets', 'yes').severalLowValueItems).toBe(false);
+    expect(treatment('euer.telecom', true).severalLowValueItems).toBe(false);
+  });
+
+  it('cannot put a receipt on a line only the asset register fills', () => {
+    for (const key of ['euer.depreciation_movable', 'euer.depreciation_intangible', 'euer.pool_release', 'euer.remaining_book_value']) {
+      expect(code(() => treatment(key, false))).toBe('form_line_invalid');
+    }
   });
 });
 

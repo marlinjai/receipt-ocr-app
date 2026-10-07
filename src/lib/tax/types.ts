@@ -70,6 +70,8 @@ export interface LedgerItem {
    * expense of its own: the asset register decides what is deducted and when.
    */
   assetId?: string | null;
+  /** The owner stated that the receipt holds several assets, each within the low-value limit on its own. */
+  severalLowValueItems?: boolean;
   /** The line of the income-surplus statement the business share goes to. */
   formLineKey: FormLineKey | null;
   /** The line of the employment annex the study and employment shares go to. */

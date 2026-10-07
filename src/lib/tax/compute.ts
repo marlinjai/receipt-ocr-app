@@ -67,7 +67,7 @@ function computeItem(item: LedgerItem, assetRules: AssetRules): ItemResult {
 
   // A receipt on the low-value asset line must be allowed to be one: the limit
   // is a net amount, decided from the gross amount only where that is conclusive.
-  if (item.formLineKey === 'euer.low_value_assets' && businessBp > 0 && item.amountCents !== null) {
+  if (item.formLineKey === 'euer.low_value_assets' && businessBp > 0 && item.amountCents !== null && !item.severalLowValueItems) {
     const limit = assetRules.lowValueNetLimitCents.value;
     if (item.netCents !== null && item.netCents !== undefined) {
       if (item.netCents > limit) block('needs_asset');

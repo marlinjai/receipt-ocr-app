@@ -3,6 +3,8 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { rowToMealRecord } from '@/lib/meals/record';
 import { allRows, getTaxSettings, guestsByRow, tableContext } from '@/lib/meals/service';
 import type { MealGuestEntry } from '@/lib/meals/types';
+import { AssetInputError, validateAssetInput, validateDisposalInput, type AssetInput } from './asset-input';
+import { assetSchedule, type AssetCheck, type AssetFact, type AssetKind, type AssetMethod, type AssetYearRow, type DisposalKind } from './assets';
 import { computeYear } from './compute';
 import {
   TreatmentError,
@@ -16,6 +18,7 @@ import {
 } from './decisions';
 import { resolveItem, type ReceiptFacts, type ResolvedItem, type TreatmentOrigin } from './facts';
 import { RULE_YEARS, isFormLineKey, rulesForYear, type FormLine } from './rules';
+import type { FormLineKey } from './rules/types';
 import type { ItemPart, LineResult, OpenCheck } from './types';
 
 /**
@@ -34,7 +37,16 @@ export interface TaxContext {
   tenantId: string | null;
 }
 
-export type TaxServiceErrorCode = 'not_initialized' | 'row_not_found' | 'meal_row' | 'no_vendor' | 'invalid_date' | 'rule_not_found';
+export type TaxServiceErrorCode =
+  | 'not_initialized'
+  | 'row_not_found'
+  | 'meal_row'
+  | 'no_vendor'
+  | 'invalid_date'
+  | 'rule_not_found'
+  | 'asset_not_found'
+  | 'asset_row'
+  | 'row_in_other_asset';
 
 export class TaxServiceError extends Error {
   readonly code: TaxServiceErrorCode;
@@ -47,7 +59,12 @@ export class TaxServiceError extends Error {
 
 const BUSINESS_SHARE_COLUMN = 'Business Share %';
 
-function storedTreatment(row: { allocations: Prisma.JsonValue; formLineKey: string | null; employmentLineKey: string | null }): TreatmentInput | null {
+function storedTreatment(row: {
+  allocations: Prisma.JsonValue;
+  formLineKey: string | null;
+  employmentLineKey: string | null;
+  severalLowValueItems?: boolean;
+}): TreatmentInput | null {
   const allocations = parseAllocations(row.allocations);
   // A stored value that no longer parses (a purpose or line that was removed)
   // is treated as no decision: the item goes back to the queue instead of
@@ -59,6 +76,7 @@ function storedTreatment(row: { allocations: Prisma.JsonValue; formLineKey: stri
     allocations,
     formLineKey: row.formLineKey as TreatmentInput['formLineKey'],
     employmentLineKey: row.employmentLineKey as TreatmentInput['employmentLineKey'],
+    severalLowValueItems: row.severalLowValueItems === true,
   };
 }
 
@@ -130,10 +148,13 @@ export interface StatementItem {
   formLineKey: TreatmentInput['formLineKey'];
   formLineOrigin: TreatmentOrigin | null;
   employmentLineKey: TreatmentInput['employmentLineKey'];
+  severalLowValueItems: boolean;
   /** True when the item has its own decision (which can be removed again). */
   hasDecision: boolean;
   vendorRuleId: string | null;
   isMeal: boolean;
+  /** The asset this receipt is part of, if any. */
+  assetId: string | null;
   counted: boolean;
   parts: ItemPart[];
   privateCents: number;
@@ -161,6 +182,20 @@ export interface StatementView {
   blockedItems: number;
   /** Items of the year plus undated items, which belong to every year's queue. */
   items: StatementItem[];
+  /** Every asset of the workspace that exists in this year or needs attention. */
+  assets: AssetView[];
+  /** The limits a person needs to see when choosing a method, for purchases of this year. */
+  assetLimits: {
+    lowValueNetLimitCents: number;
+    poolMinExclusiveNetCents: number;
+    poolMaxNetCents: number;
+    poolYears: number;
+    decliningFrom: string;
+    decliningTo: string;
+    decliningMaxRateBp: number;
+    decliningMaxMultiple: number;
+  };
+  businessRevenueCents: number;
   vendorRules: VendorRule[];
   /** False until the Receipts table exists (first dashboard visit). */
   initialized: boolean;
@@ -184,9 +219,11 @@ function toStatementItem(resolved: ResolvedItem, facts: ReceiptFacts, result: { 
     formLineKey: item.formLineKey,
     formLineOrigin: resolved.formLineOrigin,
     employmentLineKey: item.employmentLineKey,
+    severalLowValueItems: item.severalLowValueItems === true,
     hasDecision: facts.decision !== null,
     vendorRuleId: resolved.vendorRuleId,
     isMeal: resolved.isMeal,
+    assetId: item.assetId ?? null,
     counted: result.counted,
     parts: result.parts,
     privateCents: result.privateCents,
@@ -195,15 +232,24 @@ function toStatementItem(resolved: ResolvedItem, facts: ReceiptFacts, result: { 
 }
 
 export async function loadStatement(db: PrismaClient, workspaceId: string, year: number): Promise<StatementView> {
-  const [loaded, vendorRules, settings] = await Promise.all([
+  const [loaded, vendorRules, settings, storedAssets] = await Promise.all([
     loadReceipts(db, workspaceId),
     listVendorRules(db, workspaceId),
     getTaxSettings(db, workspaceId),
+    db.taxAsset.findMany({ where: { authWorkspaceId: workspaceId }, include: { parts: true }, orderBy: [{ acquisitionDate: 'asc' }, { createdAt: 'asc' }] }),
   ]);
   const resolvedRules = rulesForYear(year);
   const facts = loaded?.facts ?? [];
-  const resolved = facts.map((f) => resolveItem(f, vendorRules, settings));
-  const result = computeYear({ year, items: resolved.map((r) => r.item) }, resolvedRules);
+  const assetByRow = new Map<string, string>();
+  for (const asset of storedAssets) for (const part of asset.parts) assetByRow.set(part.rowId, asset.id);
+  const resolved = facts.map((f) => {
+    const r = resolveItem(f, vendorRules, settings);
+    const assetId = assetByRow.get(r.item.id);
+    return assetId ? { ...r, item: { ...r.item, assetId } } : r;
+  });
+  const itemById = new Map(resolved.map((r) => [r.item.id, r.item]));
+  const assetFacts = storedAssets.map((a) => toAssetFact(a, itemById, settings.smallBusiness));
+  const result = computeYear({ year, items: resolved.map((r) => r.item), assets: assetFacts }, resolvedRules);
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));
 
   const items: StatementItem[] = [];
@@ -218,6 +264,41 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   items.sort((a, b) => (a.date ?? '') < (b.date ?? '') ? -1 : (a.date ?? '') > (b.date ?? '') ? 1 : a.label.localeCompare(b.label, 'de'));
 
   const { rules } = resolvedRules;
+  const assetResults = new Map(result.assets.map((a) => [a.assetId, a]));
+  const assets: AssetView[] = [];
+  storedAssets.forEach((stored, index) => {
+    const fact = assetFacts[index];
+    const yearResult = assetResults.get(stored.id);
+    // Not yet bought in this year and nothing wrong with it: not this year's business.
+    if (!yearResult) return;
+    const firstYear = fact.opening ? fact.opening.year : fact.acquisitionDate ? Number(fact.acquisitionDate.slice(0, 4)) : year;
+    assets.push({
+      id: stored.id,
+      label: fact.label,
+      kind: fact.kind,
+      acquisitionDate: fact.acquisitionDate,
+      method: fact.method,
+      usefulLifeMonths: fact.usefulLifeMonths,
+      decliningRateBp: fact.decliningRateBp,
+      businessShareBp: fact.businessShareBp,
+      reminderCents: fact.reminderCents,
+      opening: fact.opening,
+      disposal: fact.disposal,
+      costCents: fact.costCents,
+      netCostCents: fact.netCostCents,
+      rowIds: stored.parts.map((p) => p.rowId),
+      counted: yearResult.counted,
+      checks: yearResult.checks,
+      row: yearResult.row,
+      parts: yearResult.parts,
+      // The whole schedule up to this year, for the register.
+      schedule: yearResult.counted ? assetSchedule(fact, rulesForYear(firstYear).rules.assets, year) : [],
+    });
+  });
+  for (const asset of storedAssets) {
+    const y = asset.openingYear ?? (asset.acquisitionDate ? Number(asset.acquisitionDate.slice(0, 4)) : null);
+    if (y !== null) years.add(y);
+  }
   return {
     year,
     years: [...years].sort((a, b) => b - a),
@@ -235,9 +316,200 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     countedItems: result.countedItems,
     blockedItems: result.blockedItems,
     items,
+    assets,
+    assetLimits: {
+      lowValueNetLimitCents: rules.assets.lowValueNetLimitCents.value,
+      poolMinExclusiveNetCents: rules.assets.pool.value.minExclusiveNetCents,
+      poolMaxNetCents: rules.assets.pool.value.maxNetCents,
+      poolYears: rules.assets.pool.value.years,
+      decliningFrom: rules.assets.declining.value.acquiredFrom,
+      decliningTo: rules.assets.declining.value.acquiredTo,
+      decliningMaxRateBp: rules.assets.declining.value.maxRateBp,
+      decliningMaxMultiple: rules.assets.declining.value.maxMultipleOfLinear,
+    },
+    businessRevenueCents: result.businessRevenueCents,
     vendorRules,
     initialized: loaded !== null,
   };
+}
+
+/** An asset as the finance screens show it for one year. */
+export interface AssetView {
+  id: string;
+  label: string;
+  kind: AssetKind;
+  acquisitionDate: string | null;
+  method: AssetMethod;
+  usefulLifeMonths: number | null;
+  decliningRateBp: number | null;
+  businessShareBp: number;
+  reminderCents: number;
+  opening: AssetFact['opening'];
+  disposal: AssetFact['disposal'];
+  /** The sum of the linked receipts; null when one of them has no usable amount, or there are none. */
+  costCents: number | null;
+  netCostCents: number | null;
+  rowIds: string[];
+  counted: boolean;
+  checks: AssetCheck[];
+  /** This year's row of the schedule, before the business share. */
+  row: AssetYearRow | null;
+  parts: Array<{ lineKey: FormLineKey; cents: number }>;
+  schedule: AssetYearRow[];
+}
+
+interface StoredAsset {
+  id: string;
+  label: string;
+  kind: string;
+  acquisitionDate: string | null;
+  method: string;
+  usefulLifeMonths: number | null;
+  decliningRateBp: number | null;
+  businessShareBp: number;
+  reminderCents: number;
+  openingYear: number | null;
+  openingBookValueCents: number | null;
+  openingRemainingMonths: number | null;
+  disposalDate: string | null;
+  disposalKind: string | null;
+  disposalProceedsCents: number | null;
+  parts: Array<{ rowId: string }>;
+}
+
+function toAssetFact(
+  stored: StoredAsset,
+  itemById: Map<string, { amountCents: number | null; netCents?: number | null }>,
+  smallBusiness: boolean | null,
+): AssetFact {
+  const opening =
+    stored.openingYear !== null && stored.openingBookValueCents !== null && stored.openingRemainingMonths !== null
+      ? { year: stored.openingYear, bookValueCents: stored.openingBookValueCents, remainingMonths: stored.openingRemainingMonths }
+      : null;
+  // The cost is the sum of the linked receipts. One receipt without a usable
+  // amount, or a link to a receipt that is gone, makes the cost unknown rather
+  // than too low.
+  let cost: number | null = stored.parts.length > 0 ? 0 : null;
+  let net: number | null = stored.parts.length > 0 ? 0 : null;
+  for (const part of stored.parts) {
+    const item = itemById.get(part.rowId);
+    if (!item || item.amountCents === null) {
+      cost = null;
+      net = null;
+      break;
+    }
+    cost = (cost as number) + item.amountCents;
+    net = net === null || item.netCents === null || item.netCents === undefined ? null : net + item.netCents;
+  }
+  const disposal =
+    stored.disposalDate !== null && (stored.disposalKind === 'sold' || stored.disposalKind === 'scrapped' || stored.disposalKind === 'private')
+      ? { date: stored.disposalDate, kind: stored.disposalKind as DisposalKind, proceedsCents: stored.disposalProceedsCents ?? 0 }
+      : null;
+  return {
+    id: stored.id,
+    label: stored.label,
+    kind: stored.kind === 'intangible' ? 'intangible' : 'movable',
+    acquisitionDate: stored.acquisitionDate,
+    costCents: cost,
+    netCostCents: net,
+    // A stored method the code no longer knows falls back to equal amounts,
+    // which then asks for a useful life instead of computing something odd.
+    method: (['low_value', 'pool', 'linear', 'computer_one_year', 'declining'] as const).includes(stored.method as AssetMethod)
+      ? (stored.method as AssetMethod)
+      : 'linear',
+    usefulLifeMonths: stored.usefulLifeMonths,
+    decliningRateBp: stored.decliningRateBp,
+    businessShareBp: stored.businessShareBp,
+    reminderCents: stored.reminderCents,
+    opening,
+    disposal,
+    smallBusiness,
+  };
+}
+
+/**
+ * The receipts that may make up an asset: rows of THIS workspace, not judged
+ * by the meal register, and not already part of another asset.
+ */
+async function requireAssetRows(db: PrismaClient, ctx: TaxContext, rowIds: string[], ownAssetId: string | null): Promise<void> {
+  if (rowIds.length === 0) return;
+  const settings = await getTaxSettings(db, ctx.workspaceId);
+  for (const rowId of rowIds) {
+    const loaded = await loadReceipts(db, ctx.workspaceId, rowId);
+    if (!loaded) throw new TaxServiceError('not_initialized');
+    const facts = loaded.facts[0];
+    if (!facts) throw new TaxServiceError('row_not_found');
+    if (resolveItem(facts, [], settings).isMeal) throw new TaxServiceError('meal_row');
+  }
+  const taken = await db.taxAssetPart.findMany({ where: { rowId: { in: rowIds } } });
+  if (taken.some((p) => p.assetId !== ownAssetId)) throw new TaxServiceError('row_in_other_asset');
+}
+
+function assetData(input: AssetInput) {
+  return {
+    label: input.label,
+    kind: input.kind,
+    acquisitionDate: input.acquisitionDate,
+    method: input.method,
+    usefulLifeMonths: input.usefulLifeMonths,
+    decliningRateBp: input.decliningRateBp,
+    businessShareBp: input.businessShareBp,
+    reminderCents: input.reminderCents,
+    openingYear: input.opening?.year ?? null,
+    openingBookValueCents: input.opening?.bookValueCents ?? null,
+    openingRemainingMonths: input.opening?.remainingMonths ?? null,
+  };
+}
+
+/** Create an asset from receipts (or carry one in from before the app). Returns its id. */
+export async function createAsset(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<string> {
+  const input = validateAssetInput(raw);
+  await requireAssetRows(db, ctx, input.rowIds, null);
+  const asset = await db.taxAsset.create({
+    data: {
+      authWorkspaceId: ctx.workspaceId,
+      authTenantId: ctx.tenantId,
+      ...assetData(input),
+      parts: { create: input.rowIds.map((rowId) => ({ rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId })) },
+    },
+  });
+  return asset.id;
+}
+
+/** Change what was stated about an asset, including which receipts make up its cost. */
+export async function updateAsset(db: PrismaClient, ctx: TaxContext, assetId: string, raw: unknown): Promise<void> {
+  const input = validateAssetInput(raw);
+  const existing = await db.taxAsset.findFirst({ where: { id: assetId, authWorkspaceId: ctx.workspaceId } });
+  if (!existing) throw new TaxServiceError('asset_not_found');
+  await requireAssetRows(db, ctx, input.rowIds, assetId);
+  await db.$transaction([
+    db.taxAssetPart.deleteMany({ where: { assetId, rowId: { notIn: input.rowIds } } }),
+    db.taxAsset.update({ where: { id: assetId }, data: assetData(input) }),
+    db.taxAssetPart.createMany({
+      data: input.rowIds.map((rowId) => ({ assetId, rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId })),
+      skipDuplicates: true,
+    }),
+  ]);
+}
+
+/** Remove an asset. Its receipts are ordinary receipts again, with whatever was decided about them before. */
+export async function deleteAsset(db: PrismaClient, ctx: TaxContext, assetId: string): Promise<void> {
+  const { count } = await db.taxAsset.deleteMany({ where: { id: assetId, authWorkspaceId: ctx.workspaceId } });
+  if (count === 0) throw new TaxServiceError('asset_not_found');
+}
+
+/** Record that an asset left the register, or (with null) take that back. */
+export async function setAssetDisposal(db: PrismaClient, ctx: TaxContext, assetId: string, raw: unknown | null): Promise<void> {
+  const disposal = raw === null ? null : validateDisposalInput(raw);
+  const { count } = await db.taxAsset.updateMany({
+    where: { id: assetId, authWorkspaceId: ctx.workspaceId },
+    data: {
+      disposalDate: disposal?.date ?? null,
+      disposalKind: disposal?.kind ?? null,
+      disposalProceedsCents: disposal ? disposal.proceedsCents : null,
+    },
+  });
+  if (count === 0) throw new TaxServiceError('asset_not_found');
 }
 
 async function requireOrdinaryRow(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<ReceiptFacts> {
@@ -248,6 +520,8 @@ async function requireOrdinaryRow(db: PrismaClient, ctx: TaxContext, rowId: stri
   const settings = await getTaxSettings(db, ctx.workspaceId);
   // What a meal is worth is decided by the meal register alone.
   if (resolveItem(facts, [], settings).isMeal) throw new TaxServiceError('meal_row');
+  // A receipt that is part of an asset is treated by the asset register.
+  if ((await db.taxAssetPart.count({ where: { rowId } })) > 0) throw new TaxServiceError('asset_row');
   return facts;
 }
 
@@ -270,6 +544,7 @@ export async function saveItemDecision(db: PrismaClient, ctx: TaxContext, rowId:
     allocations: treatment.allocations as unknown as Prisma.InputJsonValue,
     formLineKey: treatment.formLineKey,
     employmentLineKey: treatment.employmentLineKey,
+    severalLowValueItems: treatment.severalLowValueItems === true,
   };
   await db.taxItemDecision.upsert({
     where: { rowId },
@@ -315,7 +590,7 @@ export async function saveVendorRule(db: PrismaClient, ctx: TaxContext, input: V
     create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, vendorKey: key, effectiveFrom, ...data },
     update: data,
   });
-  return { id: row.id, vendorKey: key, vendorLabel: row.vendorLabel, effectiveFrom, ...treatment };
+  return { id: row.id, vendorKey: key, vendorLabel: row.vendorLabel, effectiveFrom, ...treatment, severalLowValueItems: false };
 }
 
 /**
@@ -387,6 +662,9 @@ export async function deleteVendorRule(db: PrismaClient, ctx: TaxContext, ruleId
 export async function deleteDecisionsForRows(db: PrismaClient, rowIds: string[]): Promise<void> {
   if (rowIds.length === 0) return;
   await db.taxItemDecision.deleteMany({ where: { rowId: { in: rowIds } } });
+  // An asset keeps existing without the receipt; with no receipt left it shows
+  // up as "no cost" and asks for one, instead of vanishing with its history.
+  await db.taxAssetPart.deleteMany({ where: { rowId: { in: rowIds } } });
 }
 
-export { TreatmentError };
+export { AssetInputError, TreatmentError };

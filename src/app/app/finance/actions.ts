@@ -6,13 +6,18 @@ import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '
 import { prisma } from '@/lib/prisma';
 import { RULE_YEARS } from '@/lib/tax/rules';
 import {
+  AssetInputError,
   TaxServiceError,
   TreatmentError,
   clearItemDecision,
+  createAsset,
   decideForVendor,
+  deleteAsset,
   deleteVendorRule,
   loadStatement,
   saveItemDecision,
+  setAssetDisposal,
+  updateAsset,
   type StatementView,
   type TaxContext,
 } from '@/lib/tax/service';
@@ -47,8 +52,11 @@ function failure(e: unknown): { ok: false; error: FinanceActionError; detail?: s
   if (status === 403) return { ok: false, error: 'forbidden' };
   if (e instanceof MissingTenantError) return { ok: false, error: 'forbidden' };
   if (e instanceof TreatmentError) return { ok: false, error: 'invalid_input', detail: e.code };
+  if (e instanceof AssetInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof TaxServiceError) {
-    if (e.code === 'row_not_found' || e.code === 'rule_not_found') return { ok: false, error: 'not_found', detail: e.code };
+    if (e.code === 'row_not_found' || e.code === 'rule_not_found' || e.code === 'asset_not_found') {
+      return { ok: false, error: 'not_found', detail: e.code };
+    }
     if (e.code === 'not_initialized') return { ok: false, error: 'not_initialized' };
     return { ok: false, error: 'invalid_input', detail: e.code };
   }
@@ -125,6 +133,39 @@ export async function removeVendorRule(year: number, ruleId: string): Promise<Re
   try {
     const ctx = await writeContext();
     await deleteVendorRule(prisma, ctx, String(ruleId));
+    return { ok: true, value: await loadStatement(prisma, ctx.workspaceId, safeYear(year)) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Create an asset (`assetId` null) or change one. The body is checked on the server; see `validateAssetInput`. */
+export async function saveAsset(year: number, assetId: string | null, input: unknown): Promise<Result<StatementView>> {
+  try {
+    const ctx = await writeContext();
+    if (assetId === null) await createAsset(prisma, ctx, input);
+    else await updateAsset(prisma, ctx, String(assetId), input);
+    return { ok: true, value: await loadStatement(prisma, ctx.workspaceId, safeYear(year)) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+export async function removeAsset(year: number, assetId: string): Promise<Result<StatementView>> {
+  try {
+    const ctx = await writeContext();
+    await deleteAsset(prisma, ctx, String(assetId));
+    return { ok: true, value: await loadStatement(prisma, ctx.workspaceId, safeYear(year)) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Record that an asset left the register; `disposal` null takes that back. */
+export async function disposeAsset(year: number, assetId: string, disposal: unknown | null): Promise<Result<StatementView>> {
+  try {
+    const ctx = await writeContext();
+    await setAssetDisposal(prisma, ctx, String(assetId), disposal);
     return { ok: true, value: await loadStatement(prisma, ctx.workspaceId, safeYear(year)) };
   } catch (e) {
     return failure(e);

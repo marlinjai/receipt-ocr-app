@@ -44,8 +44,9 @@
 - [ ] Finance and tax dashboard, stage 1 (data foundation and live dashboard): slice 1
   of 8 is built (the tax module with rule sets for 2025 and 2026, shares for several
   purposes per receipt, vendor rules, the queue of open checks and the
-  income-surplus statement at `/app/finance`). Next: slice 2, assets and receipt
-  lines. Then payments (file imports and the Enable Banking daily sync, matching by
+  income-surplus statement at `/app/finance`), and the first half of slice 2 (the
+  asset register with depreciation schedules, disposal and assets carried in from
+  earlier years). Next: receipt lines, the second half of slice 2. Then payments (file imports and the Enable Banking daily sync, matching by
   reference), revenue with a forecast of the small-business limits, regular
   value-added taxation, the income tax estimate, the year-end entry sheet, reading
   the expenses mailbox. Open inside slice 1, each described in the plan's "Reality

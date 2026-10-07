@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Business-meal register (Bewirtungsverzeichnis) at `/app/meals`: meal type, guests from a contact list, occasion, place, tip and host per receipt; completeness and the 70 percent deductible amount derived on read; a queue of incomplete meals; a per-year register with export as CSV (comma-separated values) and PDF (Portable Document Format, summary plus one sheet per meal with the receipt and a signature line)
+- One question per workspace decides the base of the 70 percent: small business under section 19 of the value-added tax act (gross) or not (net); no amounts or exports until it is answered
+- Contact list behind a `ContactStore` interface (migration `0008_meal_register`: `contacts`, `meal_guests`, `workspace_tax_settings`)
+- Upload: the same file is recognised by its content hash before anything is uploaded; a receipt photographed twice gets a warning with "keep both" or "discard"; multi-page scans can be split into one receipt per page
+- `pnpm test:db`: database-backed tests against a throwaway Postgres (requires `TEST_DATABASE_URL`)
 - Multi-receipt batch upload with queue UI — select multiple files at once, sequential processing with per-file progress indicators (uploading, OCR, classifying, done/error), overall X/Y progress counter
 - Failed files show per-file errors without blocking other uploads
 

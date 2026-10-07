@@ -46,3 +46,61 @@ export function getDefaultBusinessSharePercent(vendor: string | null): number {
   }
   return 100;
 }
+
+// ── Business-meal register (Bewirtungsverzeichnis) ──────────────────────────
+
+export const MEAL_CATEGORY = 'Bewirtung';
+export const PRIVATE_ZUORDNUNG = 'Privat';
+
+/**
+ * Meal types. `key` is the stable value used in code and in the export (it
+ * matches the `hospitality.type` values of the earlier spreadsheet automation);
+ * `label` is the select option name stored on the row and shown in the app.
+ */
+export const MEAL_TYPES = [
+  { key: 'business_meal_external', label: 'Geschäftsessen (extern)' },
+  { key: 'staff_meal_internal', label: 'Mitarbeiterbewirtung (intern)' },
+  { key: 'travel_meal', label: 'Verpflegung auf Reise' },
+  { key: 'not_a_meal', label: 'Keine Bewirtung' },
+] as const;
+
+export type MealTypeKey = (typeof MEAL_TYPES)[number]['key'];
+
+export const MEAL_TYPE_OPTIONS: string[] = MEAL_TYPES.map((t) => t.label);
+
+export const CONSUMPTION_TYPES = [
+  { key: 'dine_in', label: 'Vor Ort' },
+  { key: 'takeaway', label: 'Außer Haus' },
+] as const;
+
+export type ConsumptionKey = (typeof CONSUMPTION_TYPES)[number]['key'];
+
+export const CONSUMPTION_OPTIONS: string[] = CONSUMPTION_TYPES.map((t) => t.label);
+
+export function mealTypeKeyFromLabel(label: string | null | undefined): MealTypeKey | null {
+  return MEAL_TYPES.find((t) => t.label === label)?.key ?? null;
+}
+
+export function mealTypeLabel(key: MealTypeKey): string {
+  return MEAL_TYPES.find((t) => t.key === key)!.label;
+}
+
+export function consumptionKeyFromLabel(label: string | null | undefined): ConsumptionKey | null {
+  return CONSUMPTION_TYPES.find((t) => t.label === label)?.key ?? null;
+}
+
+export function consumptionLabel(key: ConsumptionKey): string {
+  return CONSUMPTION_TYPES.find((t) => t.key === key)!.label;
+}
+
+/** Names of the meal columns on the Receipts table (see COLUMNS in app/actions.ts). */
+export const MEAL_COLUMNS = {
+  mealType: 'Meal Type',
+  occasion: 'Occasion',
+  place: 'Place',
+  tip: 'Tip',
+  host: 'Host',
+  consumption: 'Consumption',
+  detailsAt: 'Meal Details At',
+  taxLines: 'Tax Lines',
+} as const;

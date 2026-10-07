@@ -356,6 +356,32 @@ Two pull requests: slices 1 to 3, then slices 4 to 6.
 
 Slices 1 to 3 are what the tax return needs; 4 to 6 are the capture comfort.
 
+## Reality after slices 1 to 3 (2026-10-07)
+
+Built as planned, with these differences and facts worth knowing:
+
+- **Host prefill.** The plan promised the signed-in user's display name. The session
+  carries only an email address and a user id, so the form prefills the host used
+  most recently in the workspace instead; the first entry is typed once.
+- **Rules module.** `src/lib/meals/rules.ts` works on a normalized record built by
+  one mapper (`src/lib/meals/record.ts`), not on raw rows, because the rules need
+  select option names and the rows hold option ids.
+- **Register route.** `GET /api/meals/register` refuses an export with incomplete
+  entries until the request acknowledges exactly the current count (`ack=N`); the
+  page turns that refusal into the confirmation dialog.
+- **PDF font.** The built-in font covers German text. A character outside it (for
+  example in a foreign name) is reduced to its base letter or "?", and the export
+  reports how many characters were simplified.
+- **Duplicate check.** A new endpoint `POST /api/upload/check` answers before the
+  upload; receipts stored before this change carry no hash and are only caught by
+  the soft check on vendor, date and total.
+- **Tests.** Unit and component tests run with `pnpm test`. The Prisma queries, the
+  migration and workspace isolation are tested against a real Postgres with
+  `pnpm test:db`, which needs a local throwaway database and is not part of
+  continuous integration (the verify workflow only runs the roadmap check).
+- **Still open from the unhappy-path table, by plan in slice 4:** a failed text
+  recognition still leaves the uploaded file without a row.
+
 ## Decisions (2026-10-06)
 
 Approved by the owner on 2026-10-06, all six slices to be built.

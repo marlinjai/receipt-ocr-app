@@ -6,16 +6,20 @@ import Link from 'next/link';
 import ReceiptUploader from '@/components/ReceiptUploader';
 import type { UploadResult, BatchStats } from '@/components/ReceiptUploader';
 import { processReceipt } from './actions';
+import { deleteRow } from './dashboard/actions';
 
 export default function UploadPage() {
   const router = useRouter();
 
-  const processFile = useCallback(async (result: UploadResult) => {
-    await processReceipt(
-      { id: result.file.id, originalName: result.file.originalName, fileType: result.file.fileType },
-      result.ocrResult,
-    );
-  }, []);
+  const processFile = useCallback(
+    (result: UploadResult, options: { sha256: string }) =>
+      processReceipt(
+        { id: result.file.id, originalName: result.file.originalName, fileType: result.file.fileType },
+        result.ocrResult,
+        options,
+      ),
+    [],
+  );
 
   const handleAllComplete = useCallback((stats: BatchStats) => {
     if (stats.succeeded > 0) {
@@ -72,6 +76,7 @@ export default function UploadPage() {
         <ReceiptUploader
           onProcessFile={processFile}
           onAllComplete={handleAllComplete}
+          onDiscardRow={deleteRow}
         />
 
         {/* Dashboard link */}

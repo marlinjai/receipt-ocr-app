@@ -246,6 +246,25 @@ describe('offline, lost connection, expired session', () => {
   });
 });
 
+describe('a photo that keeps failing', () => {
+  it('can be removed from the queue, after an in-page confirmation', async () => {
+    await store.add(newQueuedCapture(photo('kaputt.jpg'), 'camera', 1));
+    steps.upload.mockRejectedValue(new UploadStepError('server', 'Upload request failed'));
+    const { user } = mount();
+    await screen.findByText(/kaputt.jpg: Upload request failed/);
+    await user.click(screen.getByRole('button', { name: 'kaputt.jpg aus der Warteschlange entfernen' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.textContent).toMatch(/noch nicht gesendet/);
+    // Cancelling keeps it.
+    await user.click(screen.getByRole('button', { name: 'Abbrechen' }));
+    expect(await store.list()).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'kaputt.jpg aus der Warteschlange entfernen' }));
+    await user.click(screen.getByRole('button', { name: 'Entfernen' }));
+    await waitFor(async () => expect(await store.list()).toEqual([]));
+    expect(screen.queryByText(/wartet auf den Versand/)).toBeNull();
+  });
+});
+
 describe('other failures', () => {
   it('a server error shows the reason, says no receipt was created, and retries the same photo', async () => {
     steps.upload.mockRejectedValueOnce(new UploadStepError('server', 'Upload request failed'));

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import MealPanelSection from '@/components/meals/MealPanelSection';
 import BottomSheet from '@/components/ui/BottomSheet';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { drainQueue, singleFlight, type DrainResult } from '@/lib/capture/drain';
 import { newQueuedCapture, openCaptureStore, type CaptureStore, type QueuedCapture } from '@/lib/capture/offline-queue';
 import { createBrowserDeps, type SaveReceipt } from '@/lib/upload/browser-deps';
@@ -57,6 +58,7 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
   const [draining, setDraining] = useState(false);
   const [mealRowId, setMealRowId] = useState<string | null>(null);
   const [discarding, setDiscarding] = useState(false);
+  const [removing, setRemoving] = useState<QueuedCapture | null>(null);
 
   const store = useMemo<CaptureStore | null>(() => {
     if (injectedStore) return injectedStore;
@@ -217,6 +219,19 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
     } finally {
       setDiscarding(false);
     }
+  };
+
+  /** Drop one waiting photo for good (a file that keeps failing would otherwise wait forever). */
+  const removeWaiting = async (entry: QueuedCapture) => {
+    setRemoving(null);
+    if (!store) return;
+    try {
+      await store.remove(entry.id);
+      setQueueNote(`„${entry.name}“ wurde aus der Warteschlange entfernt.`);
+    } catch {
+      setQueueBroken(true);
+    }
+    await refreshWaiting();
   };
 
   const busy = view.kind === 'working';
@@ -398,8 +413,19 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
           {waiting.some((w) => w.lastError) && (
             <ul className="mt-2 space-y-1 text-xs" style={{ color: 'var(--muted)' }}>
               {waiting.filter((w) => w.lastError).map((w) => (
-                <li key={w.id}>
-                  {w.name}: {w.lastError}
+                <li key={w.id} className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 break-words">
+                    {w.name}: {w.lastError}
+                  </span>
+                  <button
+                    type="button"
+                    className="ui-btn ui-btn-sm ui-btn-danger shrink-0"
+                    disabled={draining}
+                    aria-label={`${w.name} aus der Warteschlange entfernen`}
+                    onClick={() => setRemoving(w)}
+                  >
+                    Entfernen
+                  </button>
                 </li>
               ))}
             </ul>
@@ -422,6 +448,22 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={removing !== null}
+        title="Foto aus der Warteschlange entfernen?"
+        confirmLabel="Entfernen"
+        danger
+        onCancel={() => setRemoving(null)}
+        onConfirm={() => removing && void removeWaiting(removing)}
+      >
+        {removing && (
+          <p>
+            „{removing.name}“ wurde noch nicht gesendet und wird von diesem Gerät gelöscht. Der Beleg muss dann neu
+            fotografiert werden.
+          </p>
+        )}
+      </ConfirmDialog>
 
       <BottomSheet open={mealRowId !== null} title="Bewirtung: Teilnehmer und Anlass" onClose={() => setMealRowId(null)}>
         {mealRowId && (

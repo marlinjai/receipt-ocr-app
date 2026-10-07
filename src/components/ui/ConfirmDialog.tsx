@@ -39,9 +39,11 @@ export default function ConfirmDialog({
   const panelRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const onCancelRef = useRef(onCancel);
+  const busyRef = useRef(busy);
   useEffect(() => {
     onCancelRef.current = onCancel;
-  }, [onCancel]);
+    busyRef.current = busy;
+  }, [onCancel, busy]);
 
   useEffect(() => {
     if (!open) return;
@@ -52,7 +54,8 @@ export default function ConfirmDialog({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onCancelRef.current();
+        // A confirmed action is still running: closing now would look like a cancel.
+        if (!busyRef.current) onCancelRef.current();
         return;
       }
       if (e.key !== 'Tab' || !panelRef.current) return;

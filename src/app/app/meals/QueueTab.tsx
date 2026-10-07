@@ -86,7 +86,13 @@ export default function QueueTab({
                       {record.vendor || record.name || 'Beleg ohne Namen'}
                     </span>
                     <span className="shrink-0 text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
-                      {record.gross ? formatEuro(record.gross * (record.currency === 'EUR' ? 1 : (record.fxRate ?? 1))) : ''}
+                      {!record.gross
+                        ? ''
+                        : record.currency === 'EUR'
+                          ? formatEuro(record.gross)
+                          : record.fxRate
+                            ? formatEuro(record.gross * record.fxRate)
+                            : `${record.gross.toFixed(2).replace('.', ',')} ${record.currency}`}
                     </span>
                   </span>
                   <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>

@@ -75,11 +75,11 @@ function dateDE(isoDay: string | null): string {
 }
 
 function guestList(record: MealRecord): string {
-  return record.guests.map((g) => formatGuest(g.name, g.company)).join(', ');
+  return record.guests.map((g) => csvSafeText(formatGuest(g.name, g.company))).join(', ');
 }
 
 function receiptRef(record: MealRecord): string {
-  return record.files.map((f) => f.originalName).join(', ') || record.rowId;
+  return record.files.map((f) => csvSafeText(f.originalName)).join(', ') || record.rowId;
 }
 
 export function registerCsv(register: MealRegister): string {

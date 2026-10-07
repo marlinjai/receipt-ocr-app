@@ -10,6 +10,11 @@ import { RECEIPTS_TABLE_NAME } from '@/lib/receipts-table';
  * Two checks, deliberately different in strength:
  *  - the SAME FILE (content hash) is certain and is checked before anything is
  *    uploaded;
+ *    Identical files in one batch are caught too, because the upload queue runs
+ *    one file at a time and each saved row carries its hash before the next
+ *    file is checked. Across browser tabs it is a soft check; "upload anyway"
+ *    is a deliberate way to hold the same file twice, so no uniqueness
+ *    constraint backs it.
  *  - the same RECEIPT photographed twice has a different hash, so after text
  *    recognition a soft check on vendor, date and total can only warn.
  */
@@ -25,6 +30,12 @@ async function receiptsTable(db: PrismaClient, workspaceId: string) {
   if (!table) return null;
   const columns = await adapter.getColumns(table.id);
   return { adapter, tableId: table.id, columns };
+}
+
+function shiftDay(day: string, delta: number): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
 }
 
 function rowName(cells: Record<string, unknown>, columns: Array<{ id: string; name: string }>): string {
@@ -43,20 +54,29 @@ export async function findFileDuplicate(
 ): Promise<ExistingReceipt | null> {
   const ctx = await receiptsTable(db, workspaceId);
   if (!ctx) return null;
-  const refs = await db.dtFile.findMany({
-    where: { metadata: { path: ['sha256'], equals: sha256 } },
-    select: { rowId: true },
-    take: 50,
-  });
-  for (const rowId of new Set(refs.map((r) => r.rowId))) {
-    // Only rows of this workspace's own table count; a hit in another
-    // workspace must stay invisible (it would leak that someone holds the file).
-    const row = await ctx.adapter.getRow(rowId);
-    if (row && row.tableId === ctx.tableId && !row.archived) {
-      return { rowId, name: rowName(row.cells, ctx.columns) };
+  const pageSize = 50;
+  let cursorId: string | undefined;
+  // Page through every hash match: the first page may hold only other
+  // workspaces' copies of the same file.
+  for (;;) {
+    const refs = await db.dtFile.findMany({
+      where: { metadata: { path: ['sha256'], equals: sha256 } },
+      select: { id: true, rowId: true },
+      orderBy: { id: 'asc' },
+      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      take: pageSize,
+    });
+    for (const rowId of new Set(refs.map((r) => r.rowId))) {
+      // Only rows of this workspace's own table count; a hit in another
+      // workspace must stay invisible (it would leak that someone holds the file).
+      const row = await ctx.adapter.getRow(rowId);
+      if (row && row.tableId === ctx.tableId && !row.archived) {
+        return { rowId, name: rowName(row.cells, ctx.columns) };
+      }
     }
+    if (refs.length < pageSize) return null;
+    cursorId = refs[refs.length - 1].id;
   }
-  return null;
 }
 
 export interface ReceiptIdentity {
@@ -91,7 +111,17 @@ export async function findSimilarReceipt(
   let offset = 0;
   const limit = 500;
   for (;;) {
-    const page = await ctx.adapter.getRows(ctx.tableId, { limit, offset });
+    // The database narrows to the day plus a day either side (a cell may carry
+    // a time or offset); the checks below stay the exact test (date, vendor
+    // case, total in cents).
+    const page = await ctx.adapter.getRows(ctx.tableId, {
+      filters: [
+        { columnId: dateCol.id, operator: 'greaterThanOrEquals', value: shiftDay(day, -1) },
+        { columnId: dateCol.id, operator: 'lessThanOrEquals', value: `${shiftDay(day, 1)}T23:59:59.999Z` },
+      ],
+      limit,
+      offset,
+    });
     for (const row of page.items) {
       if (row.id === excludeRowId || row.archived) continue;
       if (isoDay(row.cells[dateCol.id]) !== day) continue;

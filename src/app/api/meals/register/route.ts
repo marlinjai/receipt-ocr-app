@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
     if (!apiKey) return null;
     const res = await fetch(`${STORAGE_BRAIN_URL}/api/v1/files/${file.fileId}/download`, {
       headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) {
       console.error('[meals/register] receipt download failed', file.fileId, res.status);

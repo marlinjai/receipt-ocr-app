@@ -116,8 +116,11 @@ export async function findSimilarReceipt(
     // case, total in cents).
     const page = await ctx.adapter.getRows(ctx.tableId, {
       filters: [
-        { columnId: dateCol.id, operator: 'greaterThanOrEquals', value: shiftDay(day, -1) },
-        { columnId: dateCol.id, operator: 'lessThanOrEquals', value: `${shiftDay(day, 1)}T23:59:59.999Z` },
+        // Date objects, not strings: the Date column is a timestamp in the
+        // database, and a string bound as text has no comparison with it (the
+        // query then fails outright, which would silently disable this check).
+        { columnId: dateCol.id, operator: 'greaterThanOrEquals', value: new Date(`${shiftDay(day, -1)}T00:00:00.000Z`) },
+        { columnId: dateCol.id, operator: 'lessThanOrEquals', value: new Date(`${shiftDay(day, 1)}T23:59:59.999Z`) },
       ],
       limit,
       offset,

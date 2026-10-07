@@ -6,6 +6,7 @@ import MealPanelSection from '@/components/meals/MealPanelSection';
 import BottomSheet from '@/components/ui/BottomSheet';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { drainQueue, singleFlight, type DrainResult } from '@/lib/capture/drain';
+import { captureErrorText } from '@/lib/capture/messages';
 import { newQueuedCapture, openCaptureStore, type CaptureStore, type QueuedCapture } from '@/lib/capture/offline-queue';
 import { createBrowserDeps, type SaveReceipt } from '@/lib/upload/browser-deps';
 import { uploadFailureKind } from '@/lib/upload/errors';
@@ -193,9 +194,7 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
               ? 'Keine Verbindung zum Server.'
               : kind === 'auth'
                 ? 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und erneut anmelden.'
-                : err instanceof Error && err.message
-                  ? err.message
-                  : 'Das Foto konnte nicht verarbeitet werden.',
+                : captureErrorText(err instanceof Error ? err.message : null),
         });
       }
     },
@@ -289,7 +288,7 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
             <div className="ui-note ui-note-warn" role="alert">
               <p className="font-medium">Der Beleg ist gespeichert, konnte aber nicht gelesen werden.</p>
               <p className="mt-1">
-                {saved.ocrError ? `Grund: ${saved.ocrError}. ` : ''}
+                {saved.ocrError ? `Grund: ${captureErrorText(saved.ocrError)} ` : ''}
                 Neu aufnehmen ersetzt das Foto auf demselben Beleg. Oder die Angaben später im Dashboard von Hand
                 eintragen.
               </p>
@@ -415,7 +414,7 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
               {waiting.filter((w) => w.lastError).map((w) => (
                 <li key={w.id} className="flex items-center justify-between gap-2">
                   <span className="min-w-0 break-words">
-                    {w.name}: {w.lastError}
+                    {w.name}: {captureErrorText(w.lastError)}
                   </span>
                   <button
                     type="button"

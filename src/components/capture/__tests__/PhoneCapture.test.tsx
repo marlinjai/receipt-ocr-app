@@ -151,7 +151,7 @@ describe('blurry photo and failed recognition: retake on the SAME receipt', () =
     take(camera);
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toMatch(/gespeichert, konnte aber nicht gelesen werden/);
-    expect(alert.textContent).toMatch(/OCR failed \(502\)/);
+    expect(alert.textContent).toMatch(/Die Texterkennung ist fehlgeschlagen \(Fehler 502\)/);
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ id: 'file-1' }), null, { sha256: 'a'.repeat(64) });
   });
 });
@@ -238,7 +238,7 @@ describe('offline, lost connection, expired session', () => {
     await store.add(newQueuedCapture(photo('kaputt.jpg'), 'camera', 1));
     steps.upload.mockRejectedValue(new UploadStepError('server', 'Upload request failed'));
     const { user } = mount();
-    expect(await screen.findByText(/kaputt.jpg: Upload request failed/)).toBeTruthy();
+    expect(await screen.findByText(/kaputt.jpg: Der Upload wurde vom Server abgelehnt/)).toBeTruthy();
     expect(screen.getByText('1 Foto wartet auf den Versand.')).toBeTruthy();
     steps.upload.mockResolvedValue({ id: 'file-9', originalName: 'kaputt.jpg', fileType: 'image/jpeg' });
     await user.click(screen.getByRole('button', { name: 'Jetzt senden' }));
@@ -251,7 +251,7 @@ describe('a photo that keeps failing', () => {
     await store.add(newQueuedCapture(photo('kaputt.jpg'), 'camera', 1));
     steps.upload.mockRejectedValue(new UploadStepError('server', 'Upload request failed'));
     const { user } = mount();
-    await screen.findByText(/kaputt.jpg: Upload request failed/);
+    await screen.findByText(/kaputt.jpg: Der Upload wurde vom Server abgelehnt/);
     await user.click(screen.getByRole('button', { name: 'kaputt.jpg aus der Warteschlange entfernen' }));
     const dialog = screen.getByRole('dialog');
     expect(dialog.textContent).toMatch(/noch nicht gesendet/);
@@ -271,10 +271,21 @@ describe('other failures', () => {
     const { camera, user } = mount();
     take(camera);
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toMatch(/Upload request failed/);
+    expect(alert.textContent).toMatch(/Der Upload wurde vom Server abgelehnt/);
     expect(alert.textContent).toMatch(/Es wurde kein Beleg angelegt/);
     await user.click(screen.getByRole('button', { name: 'Erneut versuchen' }));
     expect(await screen.findByText('Bewirtungsformular für row-1')).toBeTruthy();
     expect(steps.upload).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('wording', () => {
+  it('known upload failures are shown in German, unknown ones as they are', async () => {
+    const { captureErrorText } = await import('@/lib/capture/messages');
+    expect(captureErrorText('This image format cannot be read by the browser. Take the photo again or save it as JPEG.')).toMatch(/Bildformat/);
+    expect(captureErrorText('Upload network error')).toBe('Keine Verbindung zum Server.');
+    expect(captureErrorText('Upload failed with status 413')).toMatch(/Fehler 413/);
+    expect(captureErrorText('Etwas ganz anderes')).toBe('Etwas ganz anderes');
+    expect(captureErrorText(null)).toBe('Das Foto konnte nicht verarbeitet werden.');
   });
 });

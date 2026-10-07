@@ -3,40 +3,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { FileInfo } from '@/lib/storage';
 import type { OcrResult } from '@/lib/ocr-types';
-import { sha256Hex } from '@/lib/upload/hash';
-import { runUploadPipeline, type ExistingReceiptRef, type PipelineDeps } from '@/lib/upload/pipeline';
+import { createBrowserDeps } from '@/lib/upload/browser-deps';
+import { runUploadPipeline, type ExistingReceiptRef, type SavedReceipt } from '@/lib/upload/pipeline';
 import { SplitPdfError, splitPdfMessage, splitPdfPages } from '@/lib/upload/split-pdf';
-
-function uploadToPresignedUrl(
-  presignedUrl: string,
-  file: File,
-  onProgress: (progress: number) => void,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', presignedUrl);
-    xhr.setRequestHeader('Content-Type', file.type);
-
-    xhr.upload.addEventListener('progress', (e) => {
-      if (e.lengthComputable) {
-        onProgress(Math.round((e.loaded / e.total) * 100));
-      }
-    });
-
-    xhr.addEventListener('load', () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve();
-      } else {
-        reject(new Error(`Upload failed with status ${xhr.status}`));
-      }
-    });
-
-    xhr.addEventListener('error', () => reject(new Error('Upload network error')));
-    xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
-
-    xhr.send(file);
-  });
-}
 
 export interface UploadResult {
   file: FileInfo;
@@ -49,10 +18,7 @@ export interface BatchStats {
   failed: number;
 }
 
-export interface ProcessedReceipt {
-  rowId: string;
-  possibleDuplicateOf: ExistingReceiptRef | null;
-}
+export type ProcessedReceipt = SavedReceipt;
 
 interface ReceiptUploaderProps {
   /** Save one recognized file as a receipt row. Receives the file's content hash. */
@@ -75,6 +41,8 @@ interface QueueItem {
   /** phase 'done': a look-alike receipt (same vendor, day, total) awaiting the user's call. */
   similar?: ExistingReceiptRef;
   rowId?: string;
+  /** phase 'done', but the text could not be read: saved for manual entry. */
+  notice?: string;
   /** Set once the user dealt with `existing` or `similar`. */
   resolution?: 'skipped' | 'kept' | 'discarded';
   busy?: boolean;
@@ -101,63 +69,6 @@ function needsAttention(item: QueueItem): boolean {
   return item.phase === 'duplicate' || (item.phase === 'done' && Boolean(item.similar));
 }
 
-/** The real endpoints behind the pipeline. */
-function createDeps(
-  save: (result: UploadResult, options: { sha256: string }) => Promise<ProcessedReceipt>,
-): PipelineDeps {
-  return {
-    hash: sha256Hex,
-    async checkDuplicate(sha256) {
-      const res = await fetch('/api/upload/check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sha256 }),
-      });
-      if (res.status === 401) throw new Error('Your session has expired. Reload the page and sign in again.');
-      if (!res.ok) throw new Error(`Duplicate check failed (${res.status}). Nothing was uploaded; try again.`);
-      const body = (await res.json()) as { duplicate: ExistingReceiptRef | null };
-      return body.duplicate ?? null;
-    },
-    async upload(file, onProgress) {
-      // Step 1: Request presigned URL from our server
-      const handshakeRes = await fetch('/api/upload/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileName: file.name,
-          fileType: file.type,
-          fileSize: file.size,
-          context: 'receipt',
-          tags: { source: 'receipt-ocr-app' },
-        }),
-      });
-      if (!handshakeRes.ok) throw new Error('Upload request failed');
-      const { presignedUrl, fileId } = await handshakeRes.json();
-
-      // Step 2: Upload directly to presigned URL with progress
-      await uploadToPresignedUrl(presignedUrl, file, onProgress);
-
-      // Step 3: Get file info from our server
-      const fileInfoRes = await fetch(`/api/upload/complete/${fileId}`);
-      if (!fileInfoRes.ok) throw new Error('Failed to get file info');
-      return (await fileInfoRes.json()) as FileInfo;
-    },
-    async recognize(file) {
-      const ocrRes = await fetch('/api/ocr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileId: file.id, fileName: file.originalName }),
-      });
-      if (!ocrRes.ok) {
-        const errText = await ocrRes.text().catch(() => '');
-        throw new Error(`OCR failed (${ocrRes.status})${errText ? ': ' + errText : ''}`);
-      }
-      return (await ocrRes.json()) as OcrResult;
-    },
-    save: (file, ocr, options) => save({ file: file as FileInfo, ocrResult: ocr }, options),
-  };
-}
-
 export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscardRow }: ReceiptUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -180,7 +91,9 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscar
   const processQueue = useCallback(async () => {
     if (processingRef.current) return;
     processingRef.current = true;
-    const deps = createDeps((result, options) => callbackRefs.current.onProcessFile(result, options));
+    const deps = createBrowserDeps((file, ocr, options) =>
+      callbackRefs.current.onProcessFile({ file: file as FileInfo, ocrResult: ocr }, options),
+    );
 
     while (pendingRef.current.length > 0) {
       const { id, file, allowDuplicate } = pendingRef.current.shift()!;
@@ -196,7 +109,17 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscar
           heldFilesRef.current.set(id, file);
           updateItem(id, { phase: 'duplicate', existing: outcome.existing });
         } else {
-          updateItem(id, { phase: 'done', rowId: outcome.rowId, similar: outcome.similar ?? undefined });
+          updateItem(id, {
+            phase: 'done',
+            rowId: outcome.rowId,
+            similar: outcome.similar ?? undefined,
+            notice:
+              outcome.attention === 'ocr_failed'
+                ? 'Saved without text: the receipt could not be read. Open it in the dashboard to fill in the fields.'
+                : outcome.attention === 'low_quality'
+                  ? 'Saved, but hard to read: check amount and date in the dashboard.'
+                  : undefined,
+          });
         }
       } catch (err) {
         updateItem(id, { phase: 'error', error: err instanceof Error ? err.message : 'Processing failed' });
@@ -508,6 +431,9 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscar
                 )}
                 {item.error && (
                   <p className="text-xs mt-0.5" style={{ color: 'var(--danger)' }} role="alert">{item.error}</p>
+                )}
+                {item.notice && (
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--accent)' }} role="status">{item.notice}</p>
                 )}
                 {item.phase === 'duplicate' && item.existing && (
                   <div className="mt-1.5 text-xs" style={{ color: 'var(--muted)' }}>

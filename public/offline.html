@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#e2a348">
+<title>Belege: keine Verbindung</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; background: #0a0a0f; color: #e8e6e3; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { min-height: 100svh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; text-align: center; }
+  .card { width: 100%; max-width: 26rem; border: 1px solid rgba(255,255,255,0.13); border-radius: 14px; background: rgba(22,22,26,0.7); padding: 24px; box-sizing: border-box; }
+  h1 { font-size: 1.25rem; margin: 0 0 8px; }
+  p { color: #a3a2aa; font-size: 0.9375rem; line-height: 1.5; margin: 0 0 16px; }
+  button, a.btn { display: inline-flex; align-items: center; justify-content: center; min-height: 3rem; padding: 0 1.25rem; border-radius: 10px; font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; box-sizing: border-box; width: 100%; }
+  button.primary { background: linear-gradient(180deg, #edb45c 0%, #d99a3d 100%); border: 1px solid rgba(226,163,72,0.7); color: #17120a; }
+  a.btn { margin-top: 10px; background: transparent; border: 1px solid rgba(255,255,255,0.16); color: #e8e6e3; font-weight: 500; }
+  button:focus-visible, a.btn:focus-visible { outline: 2px solid #e2a348; outline-offset: 2px; }
+  #status { margin: 16px 0 0; min-height: 1.5em; color: #e8e6e3; }
+  #status.error { color: #f1a29d; }
+  input[type="file"] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>Keine Verbindung</h1>
+    <p>Die App ist gerade nicht erreichbar. Belege lassen sich trotzdem fotografieren: Sie werden auf diesem Gerät gespeichert und gesendet, sobald die App wieder geöffnet wird und eine Verbindung besteht.</p>
+    <input id="camera" type="file" accept="image/*" capture="environment">
+    <button id="take" class="primary" type="button">Foto aufnehmen</button>
+    <a class="btn" href="/app">Erneut verbinden</a>
+    <p id="status" role="status" aria-live="polite"></p>
+  </div>
+</main>
+<script>
+// Self-contained on purpose: no application script is loaded here, so this page
+// can never run code that is out of step with the server. The three names below
+// must match src/lib/capture/offline-queue.ts (a test compares them).
+(function () {
+  var DB_NAME = 'receipt-capture';
+  var DB_VERSION = 1;
+  var STORE_NAME = 'queue';
+  var status = document.getElementById('status');
+  var camera = document.getElementById('camera');
+
+  function say(text, isError) {
+    status.textContent = text;
+    status.className = isError ? 'error' : '';
+  }
+
+  function withStore(mode, work) {
+    return new Promise(function (resolve, reject) {
+      if (!('indexedDB' in window)) { reject(new Error('no indexedDB')); return; }
+      var open = indexedDB.open(DB_NAME, DB_VERSION);
+      open.onupgradeneeded = function () {
+        if (!open.result.objectStoreNames.contains(STORE_NAME)) open.result.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      };
+      open.onerror = function () { reject(open.error); };
+      open.onsuccess = function () {
+        var db = open.result;
+        try {
+          var tx = db.transaction(STORE_NAME, mode);
+          var request = work(tx.objectStore(STORE_NAME));
+          tx.oncomplete = function () { db.close(); resolve(request ? request.result : undefined); };
+          tx.onerror = tx.onabort = function () { db.close(); reject(tx.error); };
+        } catch (e) { db.close(); reject(e); }
+      };
+    });
+  }
+
+  function showCount() {
+    return withStore('readonly', function (store) { return store.count(); }).then(function (n) {
+      if (n > 0) say(n === 1 ? '1 Foto wartet auf den Versand.' : n + ' Fotos warten auf den Versand.');
+    });
+  }
+
+  document.getElementById('take').addEventListener('click', function () { camera.click(); });
+
+  camera.addEventListener('change', function () {
+    var file = camera.files && camera.files[0];
+    camera.value = '';
+    if (!file) return;
+    var now = Date.now();
+    var entry = {
+      id: now + '-' + Math.random().toString(36).slice(2, 10),
+      name: file.name || ('foto-' + now + '.jpg'),
+      type: file.type || 'image/jpeg',
+      blob: file,
+      addedAt: now,
+      source: 'offline-page',
+      attempts: 0,
+      lastError: null
+    };
+    withStore('readwrite', function (store) { return store.put(entry); })
+      .then(showCount)
+      .catch(function () {
+        say('Das Foto konnte auf diesem Gerät nicht gespeichert werden (zum Beispiel im privaten Modus). Bitte mit Verbindung erneut aufnehmen.', true);
+      });
+  });
+
+  showCount().catch(function () {});
+  // Back online: return to the app, which sends what is waiting.
+  window.addEventListener('online', function () { window.location.href = '/app'; });
+})();
+</script>
+</body>
+</html>

@@ -29,7 +29,12 @@ export const auth = createAuthBrainNextjs({
     'receipts.fx.recompute': 'workspace.member',
     'receipts.import': 'workspace.member',
   },
-  publicPaths: ['/api/health'],
+  // Public: the liveness probe, and the static files a browser fetches WITHOUT
+  // the session cookie when it installs the app or its service worker (the
+  // manifest and its icons, the worker script, the offline page). They carry no
+  // data. Behind the login they answered with a redirect, which made the app
+  // impossible to install to the home screen.
+  publicPaths: ['/api/health', '/manifest.json', '/icons/*', '/sw.js', '/offline.html'],
   publicUrl: 'https://receipts.lumitra.co',
 });
 

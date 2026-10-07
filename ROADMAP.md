@@ -56,17 +56,16 @@
 
 <!-- Currently being implemented -->
 
-- [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: record guests
-  (from a contact list), occasion, place, tip and host per meal, derive completeness
-  and the 70 percent deductible amount, export the register per year as PDF
-  (Portable Document Format) and CSV (comma-separated values), and add camera
-  capture, a share target and an offline queue on the phone. Plan approved and
-  decided on 2026-10-06, in progress as two pull requests: slices 1 to 3 (register,
-  contact list, export, duplicate checks, page split) are built, slices 4 to 6
-  (phone capture, classifier, offline queue, share target) follow:
-  `docs/plans/2026-10-06-meal-register-and-phone-capture.md`. Backlog waiting on
-  it: 17 meal receipts from 2025 and about 15 from 2026 without guests or occasion.
-  (2026-10-07)
+- [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: all six
+  slices are built (register, contact list, export, duplicate checks, page split,
+  phone capture, classifier, offline queue, service worker, share target). Left
+  before this can be ticked: (1) a pass by hand on a real phone (camera,
+  home-screen install, offline queue) and one real upload through text recognition
+  in production; (2) the owner's decision whether to keep the share target, which
+  only works on Android (it is the last commit of the second pull request and can
+  be reverted on its own); (3) confirm with the tax advisor the amount above which
+  the receipt must name the host (set to 250 euros). Plan:
+  `docs/plans/2026-10-06-meal-register-and-phone-capture.md`. (2026-10-07)
 
 ## Completed
 

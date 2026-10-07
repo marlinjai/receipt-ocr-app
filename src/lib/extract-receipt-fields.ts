@@ -1,5 +1,6 @@
 import type { OcrResult } from '@/lib/ocr-types';
 import { CATEGORY_TO_KONTO } from '@/lib/receipts-constants';
+import { defaultTaxRate } from '@/lib/meals/classify';
 
 export interface ExtractionResult {
   name: string; // descriptive summary, always generated
@@ -415,10 +416,16 @@ const VENDOR_CATEGORY_MAP: Record<string, string> = {
   mcdonald: 'Bewirtung', 'burger king': 'Bewirtung', wendy: 'Bewirtung', subway: 'Bewirtung',
   starbucks: 'Bewirtung', dunkin: 'Bewirtung', chipotle: 'Bewirtung', domino: 'Bewirtung',
   'pizza hut': 'Bewirtung', 'taco bell': 'Bewirtung', chick: 'Bewirtung', panera: 'Bewirtung',
-  'whole foods': 'Bewirtung', trader: 'Bewirtung', kroger: 'Bewirtung', safeway: 'Bewirtung',
-  walmart: 'Bewirtung', aldi: 'Bewirtung', lidl: 'Bewirtung', rewe: 'Bewirtung', edeka: 'Bewirtung',
-  costco: 'Bewirtung', nordsee: 'Bewirtung', vapiano: 'Bewirtung', 'dean & david': 'Bewirtung',
+  nordsee: 'Bewirtung', vapiano: 'Bewirtung', 'dean & david': 'Bewirtung',
   backwerk: 'Bewirtung', 'back factory': 'Bewirtung',
+  // Supermarkets and grocers are deliberately NOT here. Groceries are not a
+  // business meal, and filing them under Bewirtung put them into the
+  // business-meal register. They fall through to "Sonstige Ausgaben".
+  'whole foods': 'Sonstige Ausgaben', trader: 'Sonstige Ausgaben', kroger: 'Sonstige Ausgaben',
+  safeway: 'Sonstige Ausgaben', walmart: 'Sonstige Ausgaben', aldi: 'Sonstige Ausgaben',
+  lidl: 'Sonstige Ausgaben', rewe: 'Sonstige Ausgaben', edeka: 'Sonstige Ausgaben',
+  costco: 'Sonstige Ausgaben', penny: 'Sonstige Ausgaben', netto: 'Sonstige Ausgaben',
+  kaufland: 'Sonstige Ausgaben',
   // Reisekosten (4670)
   uber: 'Reisekosten', lyft: 'Reisekosten', delta: 'Reisekosten', united: 'Reisekosten',
   lufthansa: 'Reisekosten', ryanair: 'Reisekosten', easyjet: 'Reisekosten', eurowings: 'Reisekosten',
@@ -454,7 +461,7 @@ const VENDOR_CATEGORY_MAP: Record<string, string> = {
 };
 
 const KEYWORD_CATEGORIES: Array<{ pattern: RegExp; category: string }> = [
-  { pattern: /\b(?:restaurant|cafe|café|coffee|bakery|pizza|burger|sushi|grill|diner|food|grocery|supermarket|market|meal|breakfast|lunch|dinner|gastronomie|essen|bewirtung|catering|imbiss|bäckerei|metzgerei)\b/i, category: 'Bewirtung' },
+  { pattern: /\b(?:restaurant|ristorante|trattoria|osteria|pizzeria|bistro|brasserie|gasthaus|gasthof|wirtshaus|biergarten|cafe|café|coffee|bakery|pizza|pasta|burger|sushi|grill|diner|meal|breakfast|lunch|dinner|gastronomie|bewirtung|catering|imbiss|bäckerei)\b/i, category: 'Bewirtung' },
   { pattern: /\b(?:hotel|motel|airline|flight|airport|rental\s*car|taxi|parking|gas\s*station|fuel|petrol|travel|booking|bahn|zug|flug|reise|tankstelle|mietwagen|fahrt|übernachtung)\b/i, category: 'Reisekosten' },
   { pattern: /\b(?:office|supplies|paper|ink|toner|printer|desk|chair|stationery|büro|papier|ordner|schreibwaren|möbel|büromaterial)\b/i, category: 'Bürobedarf' },
   { pattern: /\b(?:software|license|lizenz|saas|subscription|hosting|domain|server|cloud|app\s*store|play\s*store)\b/i, category: 'Software & Lizenzen' },
@@ -499,16 +506,9 @@ function inferCategory(vendor: string | null, fullText: string): string | null {
 
 // ── Main Export ───────────────────────────────────────────────────────
 
-// Categories that qualify for the reduced 7% German MwSt rate
-const REDUCED_RATE_CATEGORIES = new Set([
-  'Bewirtung',      // Food/groceries qualify for 7%, restaurant dine-in is 19%
-  'Fachliteratur',  // Books/publications are 7%
-]);
-
-function defaultTaxRate(category: string | null): number {
-  if (category && REDUCED_RATE_CATEGORIES.has(category)) return 7;
-  return 19; // Standard German MwSt
-}
+// The rate to assume when the receipt shows none: date-aware for meals
+// (restaurant food is 19 percent until the end of 2025 and 7 percent from
+// 2026), 7 percent for books, 19 percent otherwise. See src/lib/meals/classify.ts.
 
 export function extractReceiptFields(ocrData: OcrResult): ExtractionResult {
   const vendor = extractVendor(ocrData);
@@ -524,7 +524,7 @@ export function extractReceiptFields(ocrData: OcrResult): ExtractionResult {
   if (gross !== null && net !== null && net > 0) {
     taxRate = Math.round(((gross - net) / net) * 10000) / 100;
   } else {
-    taxRate = defaultTaxRate(category);
+    taxRate = defaultTaxRate(category, date, null);
   }
 
   // Always calculate net from gross if not explicitly found

@@ -4,18 +4,6 @@
 
 <!-- Decided features, ready to be worked on -->
 
-- [ ] Finance and tax dashboard, stage 1 (data foundation and live dashboard): plan
-  decided by the owner on 2026-10-07, nothing built yet. Eight slices: tax rules per
-  year and the income-surplus statement from receipts, assets and receipt lines,
-  payments (file imports and the Enable Banking daily sync, matching by reference,
-  payments without a receipt), revenue by payment date with a forecast of the
-  small-business limits, regular value-added taxation, the income tax estimate, the
-  year-end entry sheet with a filed-year snapshot, and reading the expenses mailbox.
-  Slices 1 to 5 are built first. This line
-  absorbs the earlier "Bank connection and item-level receipts" item; its facts
-  (registered application, session rules, import sources, the two gates before anyone
-  but the operator links an account) are in the plan's "Bank data" section. Plan:
-  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
 - [ ] Finance and tax dashboard, stage 2 (scenario engine): "what if I buy X on date
   Z at share S" and "what if revenue is R", computed by the same tax module as the
   dashboard, saved as inputs and never as results. After stage 1. Plan:
@@ -28,13 +16,6 @@
   and public bank data access exist. After stage 2. Plan:
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
 
-- [ ] A newly created Receipts table gets no company id: `createTable` in
-  `src/lib/receipts-table.ts` and in `src/app/app/dashboard/actions.ts` passes only the
-  workspace, so `dt_tables.auth_tenant_id` stays empty for every workspace created
-  after the tenant backfill until the backfill is run again. Pass the session's
-  company id at creation and add a database test. Found on 2026-10-07 while checking
-  the state of the Books plan; fix it with slice 1 of the finance dashboard, whose
-  new tables all carry the company id. (2026-10-07)
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a
@@ -60,6 +41,22 @@
 
 <!-- Currently being implemented -->
 
+- [ ] Finance and tax dashboard, stage 1 (data foundation and live dashboard): slice 1
+  of 8 is built (the tax module with rule sets for 2025 and 2026, shares for several
+  purposes per receipt, vendor rules, the queue of open checks and the
+  income-surplus statement at `/app/finance`). Next: slice 2, assets and receipt
+  lines. Then payments (file imports and the Enable Banking daily sync, matching by
+  reference), revenue with a forecast of the small-business limits, regular
+  value-added taxation, the income tax estimate, the year-end entry sheet, reading
+  the expenses mailbox. Open inside slice 1, each described in the plan's "Reality
+  after slice 1": (1) the two older receipt columns "Business Share %" and
+  "Zuordnung" and the per-vendor share table of the overview page are still read as
+  a starting point and are removed only after the owner has finished entering the
+  2025 meals and the session preparing the 2025 return has been told; (2) the line
+  numbers of the 2026 form and of the employment annex are not yet compared with
+  the official forms, so the app shows those lines without numbers; (3) the 2027
+  rule set is due before 1 December 2026, when a test starts failing without it.
+  Plan: `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
 - [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: all six
   slices are built (register, contact list, export, duplicate checks, page split,
   phone capture, classifier, offline queue, service worker, share target). Left
@@ -75,6 +72,11 @@
 
 <!-- Done — move to CHANGELOG.md on release -->
 
+- [x] A newly created Receipts table now carries its company from the first moment
+  (`ensureReceiptsTable` and the dashboard's `createTable` stamp it right after
+  creation, never overwriting an owner), with a database test. Before, a workspace
+  created after the tenant backfill stayed without a company until the backfill was
+  run again. (2026-10-07)
 - [x] Branch the Drive-attach and Drive-browse 403 error mapping on Google's
   error body so an API-disabled GCP (Google Cloud Platform) project gets its own
   `drive_api_disabled` code/label instead of the misleading "reconnect Google"

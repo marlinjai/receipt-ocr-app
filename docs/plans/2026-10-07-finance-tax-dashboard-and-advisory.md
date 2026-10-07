@@ -312,9 +312,17 @@ The rules it implements, each in plain words:
   invoices marked as declared in an earlier year. An invoice not yet paid is shown as
   outstanding and is not revenue.
 - **Statement.** Lines by form line key, totals, profit or loss, the asset annex.
-- **Section 19 limits and their forecast.** Revenue of the previous year against the
-  previous-year limit and running revenue against the current-year limit. The
-  forecast projects revenue forward (invoices issued and unpaid, the run rate of the
+- **Section 19 turnover.** The limits are tested against their own figure, the
+  section 19 total turnover (`Gesamtumsatz`), not the generic revenue above. It sums
+  the consideration actually received in the calendar year (net of tax, by receipt
+  date), excluding sales of fixed assets and the exempt transactions the statute
+  names (for example the ones listed in section 19 paragraph 3). An unpaid invoice is
+  a forecast value until payment arrives, and the invoice issue date alone never
+  changes the status.
+- **Section 19 limits and their forecast.** Section 19 turnover of the previous year
+  against the previous-year limit and running section 19 turnover against the
+  current-year limit. The
+  forecast projects turnover forward (invoices issued and unpaid, the run rate of the
   last months, and what the owner states he expects) and names the date each limit
   is expected to be reached, as a range. It then says what follows: crossing the
   previous-year limit changes the status from 1 January of the next year; crossing

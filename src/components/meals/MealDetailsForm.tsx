@@ -177,7 +177,6 @@ function MealDetailsFormInner({
               onCreateContact={onCreateContact}
               onContactCreated={onContactCreated}
               disabled={saving}
-              invalid={isMissing('guests')}
               describedBy={fieldId('guests-hint')}
             />
             {previousGuests && previousGuests.length > 0 && draft.guests.length === 0 && (
@@ -212,7 +211,7 @@ function MealDetailsFormInner({
               rows={2}
               value={draft.occasion}
               aria-invalid={isMissing('occasionTooGeneric') || undefined}
-              placeholder="Worum ging es konkret? Zum Beispiel: Abstimmung Angebot Fotoproduktion Frühjahr"
+              placeholder="Worum ging es konkret?"
               onChange={(e) => set('occasion', e.target.value)}
             />
             {isMissing('occasionTooGeneric') && (
@@ -254,7 +253,7 @@ function MealDetailsFormInner({
             </div>
             <div>
               <label className="ui-label" htmlFor={fieldId('gross')}>
-                Rechnungsbetrag {record.currency !== 'EUR' ? `(${record.currency})` : ''}
+                Betrag {record.currency !== 'EUR' ? `(${record.currency})` : '(brutto)'}
               </label>
               <input
                 id={fieldId('gross')}

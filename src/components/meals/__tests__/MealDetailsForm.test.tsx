@@ -166,7 +166,7 @@ describe('resume', () => {
   it('a partially saved entry opens with what was saved and says exactly what is missing', () => {
     setup(meal({ occasion: '', guests: [], host: 'Andere Gastgeberin' }));
     expect(screen.getByLabelText('Gastgeber')).toHaveProperty('value', 'Andere Gastgeberin');
-    expect(screen.getByLabelText('Trinkgeld')).toHaveProperty('value', '11');
+    expect(screen.getByLabelText('Trinkgeld')).toHaveProperty('value', '11,00');
     expect(screen.getByText(/Es fehlt: Anlass, Teilnehmer/)).toBeTruthy();
     expect(screen.queryByText('Ungespeicherte Änderungen')).toBeNull();
   });

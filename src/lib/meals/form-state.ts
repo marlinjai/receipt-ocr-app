@@ -34,8 +34,14 @@ export interface DraftDefaults {
   host: string;
 }
 
+/** A money amount as the inputs show it: German decimal comma, always two decimals. */
 function amountText(value: number | null): string {
-  return value === null || value === undefined ? '' : String(value).replace('.', ',');
+  return value === null || value === undefined ? '' : value.toFixed(2).replace('.', ',');
+}
+
+/** A tax rate: whole numbers stay whole ("19"), others keep their decimals ("5,5"). */
+function rateText(value: number): string {
+  return String(value).replace('.', ',');
 }
 
 /**
@@ -56,7 +62,7 @@ export function draftFromRecord(record: MealRecord, defaults: DraftDefaults): Me
     date: record.date ?? '',
     gross: amountText(record.gross),
     taxLines: (record.taxLines ?? []).map((l) => ({
-      rate: amountText(l.rate),
+      rate: rateText(l.rate),
       net: amountText(l.net),
       tax: amountText(l.tax),
     })),

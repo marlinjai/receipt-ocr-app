@@ -129,7 +129,7 @@ describe('resume', () => {
   it('a partially saved entry reopens with exactly what was saved, prefills only where nothing is stored', () => {
     const partial = meal({ occasion: '', host: 'Andere Gastgeberin', guests: [], place: 'Eigener Ort 5' });
     const draft = draftFromRecord(partial, DEFAULTS);
-    expect(draft).toMatchObject({ host: 'Andere Gastgeberin', place: 'Eigener Ort 5', occasion: '', tip: '11' });
+    expect(draft).toMatchObject({ host: 'Andere Gastgeberin', place: 'Eigener Ort 5', occasion: '', tip: '11,00' });
     expect(isDraftDirty(partial, draft)).toBe(false);
     expect(mealStatus(previewRecord(partial, draft))).toEqual({
       kind: 'incomplete',

@@ -342,8 +342,8 @@ export default function RegisterTab({ records, settings, onSettingsChanged, onOp
             {confirm.count === 1
               ? `1 Bewirtung aus ${activeYear} ist unvollständig.`
               : `${confirm.count} Bewirtungen aus ${activeYear} sind unvollständig.`}{' '}
-            Sie werden in der Datei gesondert aufgeführt und zählen nicht in die Summen. Abziehbar sind sie erst, wenn
-            Teilnehmer und Anlass erfasst sind.
+            Unvollständige Einträge werden in der Datei gesondert aufgeführt und zählen nicht in die Summen. Abziehbar
+            sind sie erst, wenn Teilnehmer und Anlass erfasst sind.
           </p>
         )}
       </ConfirmDialog>

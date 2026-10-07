@@ -60,7 +60,7 @@ export default function QueueTab({
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
       <nav aria-label="Offene Bewirtungen">
         <p className="mb-2 text-xs" style={{ color: 'var(--muted)' }} role="status">
           {lastSaved ? `${lastSaved} ` : ''}
@@ -135,7 +135,7 @@ export default function QueueTab({
               }}
             />
           </div>
-          <div>
+          <div className="xl:sticky xl:top-4 xl:self-start">
             <ReceiptPreview key={selected.record.rowId} files={selected.record.files} />
           </div>
         </section>

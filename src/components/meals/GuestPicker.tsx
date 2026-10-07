@@ -204,7 +204,7 @@ export default function GuestPicker({
             aria-label="Teilnehmer suchen oder anlegen"
             aria-invalid={invalid || undefined}
             aria-describedby={describedBy}
-            placeholder={guests.length === 0 ? 'Name eingeben, um Teilnehmer hinzuzufügen' : 'Weiteren Teilnehmer hinzufügen'}
+            placeholder={guests.length === 0 ? 'Name eingeben' : 'Weiteren Namen eingeben'}
             value={query}
             disabled={disabled}
             autoComplete="off"

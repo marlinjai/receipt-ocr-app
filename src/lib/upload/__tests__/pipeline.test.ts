@@ -2,14 +2,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 import { isSha256Hex, sha256Hex } from '../hash';
 import { runUploadPipeline, type PipelineDeps, type PipelinePhase } from '../pipeline';
+import { PrepareImageError, needsConversion, prepareImage, targetSize, type ImageCodec } from '../prepare-image';
 import { SplitPdfError, splitPdfPages } from '../split-pdf';
 
 const OCR = { fullText: 'Testlokal 12,50', blocks: [], confidence: 0.9 };
+const SAVED = { rowId: 'row-1', possibleDuplicateOf: null, category: 'Bewirtung', isMeal: true, attention: null };
+const DONE = { kind: 'done', rowId: 'row-1', similar: null, category: 'Bewirtung', isMeal: true, attention: null, ocrError: null };
 
 function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps & { calls: string[] } {
   const calls: string[] = [];
   return {
     calls,
+    prepare: vi.fn(async (f: File) => {
+      calls.push('prepare');
+      return f;
+    }),
     hash: vi.fn(async () => {
       calls.push('hash');
       return 'a'.repeat(64);
@@ -29,7 +36,7 @@ function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps & { calls: st
     }),
     save: vi.fn(async () => {
       calls.push('save');
-      return { rowId: 'row-1', possibleDuplicateOf: null };
+      return { ...SAVED, rowId: 'row-1' };
     }),
     ...overrides,
   };
@@ -42,8 +49,8 @@ describe('runUploadPipeline', () => {
     const d = deps();
     const phases: PipelinePhase[] = [];
     const outcome = await runUploadPipeline(file, d, { onPhase: (p) => phases.push(p) });
-    expect(outcome).toEqual({ kind: 'done', rowId: 'row-1', similar: null });
-    expect(d.calls).toEqual(['hash', 'check', 'upload', 'ocr', 'save']);
+    expect(outcome).toEqual(DONE);
+    expect(d.calls).toEqual(['prepare', 'hash', 'check', 'upload', 'ocr', 'save']);
     expect(phases).toEqual(['checking', 'uploading', 'ocr', 'saving']);
     expect(d.save).toHaveBeenCalledWith(expect.objectContaining({ id: 'file-1' }), OCR, { sha256: 'a'.repeat(64) });
   });
@@ -67,10 +74,10 @@ describe('runUploadPipeline', () => {
 
   it('the same receipt photographed twice: saved, with the similar receipt handed back for a warning', async () => {
     const d = deps({
-      save: vi.fn(async () => ({ rowId: 'row-2', possibleDuplicateOf: { rowId: 'row-1', name: 'Testlokal' } })),
+      save: vi.fn(async () => ({ ...SAVED, rowId: 'row-2', possibleDuplicateOf: { rowId: 'row-1', name: 'Testlokal' } })),
     });
     expect(await runUploadPipeline(file, d)).toEqual({
-      kind: 'done',
+      ...DONE,
       rowId: 'row-2',
       similar: { rowId: 'row-1', name: 'Testlokal' },
     });
@@ -86,14 +93,102 @@ describe('runUploadPipeline', () => {
     expect(d.upload).not.toHaveBeenCalled();
   });
 
-  it('an error in any later step surfaces, it is not swallowed', async () => {
+  it('text recognition fails: the receipt is STILL saved (no orphaned file), flagged, with the reason', async () => {
+    const save = vi.fn(async () => ({ ...SAVED, category: null, isMeal: false, attention: 'ocr_failed' as const }));
     const d = deps({
       recognize: vi.fn(async () => {
         throw new Error('OCR failed (502)');
       }),
+      save,
     });
-    await expect(runUploadPipeline(file, d)).rejects.toThrow('OCR failed (502)');
-    expect(d.save).not.toHaveBeenCalled();
+    const outcome = await runUploadPipeline(file, d);
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ id: 'file-1' }), null, { sha256: 'a'.repeat(64) });
+    expect(outcome).toEqual({ ...DONE, category: null, isMeal: false, attention: 'ocr_failed', ocrError: 'OCR failed (502)' });
+  });
+
+  it('an upload or save error surfaces, it is not swallowed', async () => {
+    const failingUpload = deps({
+      upload: vi.fn(async () => {
+        throw new Error('Upload network error');
+      }),
+    });
+    await expect(runUploadPipeline(file, failingUpload)).rejects.toThrow('Upload network error');
+    expect(failingUpload.save).not.toHaveBeenCalled();
+    const failingSave = deps({
+      save: vi.fn(async () => {
+        throw new Error('save failed');
+      }),
+    });
+    await expect(runUploadPipeline(file, failingSave)).rejects.toThrow('save failed');
+  });
+
+  it('uploads and hashes the PREPARED file (the scaled photo), not the original', async () => {
+    const scaled = new File([new Uint8Array([9])], 'beleg.jpg', { type: 'image/jpeg' });
+    const d = deps({ prepare: vi.fn(async () => scaled) });
+    await runUploadPipeline(file, d);
+    expect(d.hash).toHaveBeenCalledWith(scaled);
+    expect((d.upload as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(scaled);
+  });
+
+  it('a photo the browser cannot read stops before anything is uploaded', async () => {
+    const d = deps({
+      prepare: vi.fn(async () => {
+        throw new PrepareImageError('undecodable');
+      }),
+    });
+    await expect(runUploadPipeline(file, d)).rejects.toThrow(/cannot be read by the browser/);
+    expect(d.upload).not.toHaveBeenCalled();
+  });
+});
+
+describe('prepareImage', () => {
+  const codec = (width: number, height: number, encoded: Blob | null = new Blob(['jpeg'])): ImageCodec & { released: number } => {
+    const c = {
+      released: 0,
+      decode: vi.fn(async () => ({ width, height, source: 'bitmap', release: () => { c.released += 1; } })),
+      encodeJpeg: vi.fn(async () => encoded),
+    };
+    return c;
+  };
+  const photo = (type: string, name = 'IMG_0001.HEIC') => new File([new Uint8Array(10)], name, { type });
+
+  it('scales a large photo to 2000 pixels on the long edge, as JPEG, keeping the aspect ratio', async () => {
+    const c = codec(4032, 3024);
+    const out = await prepareImage(photo('image/jpeg', 'foto.jpeg'), c);
+    expect(c.encodeJpeg).toHaveBeenCalledWith('bitmap', 2000, 1500, 0.85);
+    expect(out.type).toBe('image/jpeg');
+    expect(out.name).toBe('foto.jpg');
+    expect(c.released).toBe(1);
+  });
+
+  it('converts a type the file column does not accept (HEIC, WebP) even when it is small', async () => {
+    const c = codec(800, 600);
+    const out = await prepareImage(photo('image/heic'), c);
+    expect(c.encodeJpeg).toHaveBeenCalledWith('bitmap', 800, 600, 0.85);
+    expect(out.name).toBe('IMG_0001.jpg');
+  });
+
+  it('leaves a small JPEG or PNG and any PDF untouched', async () => {
+    const small = photo('image/png', 'scan.png');
+    expect(await prepareImage(small, codec(1200, 900))).toBe(small);
+    const pdf = new File([new Uint8Array(4)], 'scan.pdf', { type: 'application/pdf' });
+    const c = codec(1, 1);
+    expect(await prepareImage(pdf, c)).toBe(pdf);
+    expect(c.decode).not.toHaveBeenCalled();
+  });
+
+  it('reports a photo that cannot be decoded or encoded', async () => {
+    const undecodable: ImageCodec = { decode: async () => { throw new Error('unsupported'); }, encodeJpeg: async () => null };
+    await expect(prepareImage(photo('image/heic'), undecodable)).rejects.toMatchObject({ code: 'undecodable' });
+    await expect(prepareImage(photo('image/heic'), codec(100, 100, null))).rejects.toMatchObject({ code: 'encode_failed' });
+  });
+
+  it('targetSize never enlarges and handles portrait', () => {
+    expect(targetSize(1000, 500)).toEqual({ width: 1000, height: 500 });
+    expect(targetSize(3000, 6000)).toEqual({ width: 1000, height: 2000 });
+    expect(needsConversion('image/jpeg', 2000, 1000)).toBe(false);
+    expect(needsConversion('image/jpeg', 2001, 1000)).toBe(true);
+    expect(needsConversion('image/webp', 10, 10)).toBe(true);
   });
 });
 

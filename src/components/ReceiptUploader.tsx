@@ -4,7 +4,8 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { FileInfo } from '@/lib/storage';
 import type { OcrResult } from '@/lib/ocr-types';
 import { sha256Hex } from '@/lib/upload/hash';
-import { runUploadPipeline, type ExistingReceiptRef, type PipelineDeps } from '@/lib/upload/pipeline';
+import { runUploadPipeline, type ExistingReceiptRef, type PipelineDeps, type SavedReceipt } from '@/lib/upload/pipeline';
+import { prepareImage } from '@/lib/upload/prepare-image';
 import { SplitPdfError, splitPdfMessage, splitPdfPages } from '@/lib/upload/split-pdf';
 
 function uploadToPresignedUrl(
@@ -49,10 +50,7 @@ export interface BatchStats {
   failed: number;
 }
 
-export interface ProcessedReceipt {
-  rowId: string;
-  possibleDuplicateOf: ExistingReceiptRef | null;
-}
+export type ProcessedReceipt = SavedReceipt;
 
 interface ReceiptUploaderProps {
   /** Save one recognized file as a receipt row. Receives the file's content hash. */
@@ -75,6 +73,8 @@ interface QueueItem {
   /** phase 'done': a look-alike receipt (same vendor, day, total) awaiting the user's call. */
   similar?: ExistingReceiptRef;
   rowId?: string;
+  /** phase 'done', but the text could not be read: saved for manual entry. */
+  notice?: string;
   /** Set once the user dealt with `existing` or `similar`. */
   resolution?: 'skipped' | 'kept' | 'discarded';
   busy?: boolean;
@@ -106,6 +106,7 @@ function createDeps(
   save: (result: UploadResult, options: { sha256: string }) => Promise<ProcessedReceipt>,
 ): PipelineDeps {
   return {
+    prepare: prepareImage,
     hash: sha256Hex,
     async checkDuplicate(sha256) {
       const res = await fetch('/api/upload/check', {
@@ -196,7 +197,17 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscar
           heldFilesRef.current.set(id, file);
           updateItem(id, { phase: 'duplicate', existing: outcome.existing });
         } else {
-          updateItem(id, { phase: 'done', rowId: outcome.rowId, similar: outcome.similar ?? undefined });
+          updateItem(id, {
+            phase: 'done',
+            rowId: outcome.rowId,
+            similar: outcome.similar ?? undefined,
+            notice:
+              outcome.attention === 'ocr_failed'
+                ? 'Saved without text: the receipt could not be read. Open it in the dashboard to fill in the fields.'
+                : outcome.attention === 'low_quality'
+                  ? 'Saved, but hard to read: check amount and date in the dashboard.'
+                  : undefined,
+          });
         }
       } catch (err) {
         updateItem(id, { phase: 'error', error: err instanceof Error ? err.message : 'Processing failed' });
@@ -508,6 +519,9 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscar
                 )}
                 {item.error && (
                   <p className="text-xs mt-0.5" style={{ color: 'var(--danger)' }} role="alert">{item.error}</p>
+                )}
+                {item.notice && (
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--accent)' }} role="status">{item.notice}</p>
                 )}
                 {item.phase === 'duplicate' && item.existing && (
                   <div className="mt-1.5 text-xs" style={{ color: 'var(--muted)' }}>

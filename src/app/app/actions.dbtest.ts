@@ -22,7 +22,7 @@ vi.mock('@/lib/fx-rates', () => ({ getFxRate: vi.fn(async () => 0.9) }));
 
 import { contactStore, loadMealRecord, saveMealDetails } from '@/lib/meals/service';
 import { mealStatus } from '@/lib/meals/rules';
-import { processReceipt, retakeReceipt } from './actions';
+import { processReceipt, recomputeFxRates, retakeReceipt } from './actions';
 
 let ws: TestWorkspace;
 let other: TestWorkspace;
@@ -188,5 +188,17 @@ describe('retakeReceipt: never a second row', () => {
     const first = await processReceipt(file(17), ocr('unscharf', 0.2), {});
     const again = await retakeReceipt(first.rowId, file(18), null, {});
     expect(again).toMatchObject({ rowId: first.rowId, attention: 'ocr_failed' });
+  });
+});
+
+describe('recomputeFxRates', () => {
+  it('filters by receipt date against the real timestamp column (string bounds used to fail the query)', async () => {
+    const fresh = await createWorkspace();
+    await use(fresh);
+    await fresh.addReceipt({ Name: 'USD im Zeitraum', Gross: 10, Date: '2025-05-05', Currency: 'USD', 'FX Rate': null });
+    await fresh.addReceipt({ Name: 'USD außerhalb', Gross: 10, Date: '2024-05-05', Currency: 'USD', 'FX Rate': null });
+    await fresh.addReceipt({ Name: 'EUR im Zeitraum', Gross: 10, Date: '2025-06-06', Currency: 'EUR', 'FX Rate': 1 });
+    expect(await recomputeFxRates('2025-01-01', '2025-12-31')).toEqual({ updated: 1, failed: 0, skippedEur: 1 });
+    await expect(recomputeFxRates('gestern', 'heute')).rejects.toThrow(/YYYY-MM-DD/);
   });
 });

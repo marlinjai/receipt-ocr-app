@@ -356,6 +356,15 @@ export async function recomputeFxRates(
   const currencyOpts = await adapter.getSelectOptions(currencyCol.id);
   const currencyNameById = new Map(currencyOpts.map((o) => [o.id, o.name]));
 
+  // Date objects, not strings: the Date column is a timestamp in the database
+  // and a string bound as text cannot be compared with it. With strings this
+  // query failed outright ("timestamp with time zone >= text").
+  const from = new Date(`${String(startDate).slice(0, 10)}T00:00:00.000Z`);
+  const to = new Date(`${String(endDate).slice(0, 10)}T23:59:59.999Z`);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    throw new Error('Start and end must be dates in the form YYYY-MM-DD.');
+  }
+
   let updated = 0;
   let failed = 0;
   let skippedEur = 0;
@@ -365,8 +374,8 @@ export async function recomputeFxRates(
   for (;;) {
     const { items, hasMore } = await adapter.getRows(tableId, {
       filters: [
-        { columnId: dateCol.id, operator: 'greaterThanOrEquals', value: startDate },
-        { columnId: dateCol.id, operator: 'lessThanOrEquals', value: endDate },
+        { columnId: dateCol.id, operator: 'greaterThanOrEquals', value: from },
+        { columnId: dateCol.id, operator: 'lessThanOrEquals', value: to },
       ],
       limit,
       offset,

@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import ReceiptUploader from '@/components/ReceiptUploader';
 import type { UploadResult, BatchStats } from '@/components/ReceiptUploader';
-import { processReceipt } from './actions';
+import PhoneCapture from '@/components/capture/PhoneCapture';
+import type { SaveReceipt } from '@/lib/upload/browser-deps';
+import { processReceipt, retakeReceipt } from './actions';
 import { deleteRow } from './dashboard/actions';
 
 export default function UploadPage() {
@@ -21,6 +23,19 @@ export default function UploadPage() {
     [],
   );
 
+  // Phone capture: the same save, plus a retake that reads a new photo into an existing receipt.
+  const saveCapture = useCallback<SaveReceipt>(
+    (file, ocr, options) =>
+      processReceipt({ id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, options),
+    [],
+  );
+  const retakeCapture = useCallback(
+    (rowId: string): SaveReceipt =>
+      (file, ocr, options) =>
+        retakeReceipt(rowId, { id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, options),
+    [],
+  );
+
   const handleAllComplete = useCallback((stats: BatchStats) => {
     if (stats.succeeded > 0) {
       router.push('/app/dashboard');
@@ -28,7 +43,7 @@ export default function UploadPage() {
   }, [router]);
 
   return (
-    <main className="relative z-10 min-h-screen flex flex-col items-center justify-center px-4 py-16">
+    <main className="relative z-10 min-h-svh flex flex-col items-center justify-center px-4 py-16">
       <div className="w-full max-w-lg mx-auto">
         {/* Header */}
         <div className="text-center mb-10">
@@ -70,6 +85,11 @@ export default function UploadPage() {
               Storage Brain
             </a>.
           </p>
+        </div>
+
+        {/* Phone capture: one photo at a time, no redirect */}
+        <div className="mb-4">
+          <PhoneCapture onSave={saveCapture} onRetake={retakeCapture} onDiscardRow={deleteRow} />
         </div>
 
         {/* Upload */}

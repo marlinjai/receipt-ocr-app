@@ -311,3 +311,23 @@ textarea.ui-input {
     transition: none;
   }
 }
+
+/* Bottom sheet (phone capture): rises from the bottom edge, ease-out, short. */
+@keyframes ui-sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.ui-sheet {
+  animation: ui-sheet-in 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-sheet {
+    animation: none;
+  }
+}

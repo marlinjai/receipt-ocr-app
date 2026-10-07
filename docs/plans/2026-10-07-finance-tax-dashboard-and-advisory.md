@@ -423,8 +423,8 @@ is assisted instead: a coding session drives the owner's logged-in browser, type
 machine-readable entry sheet into the ELSTER forms field by field, saves the draft
 and compares ELSTER's own draft view against the sheet. Every mismatch is listed. The
 same applies to an advance return period. Sending the return is a legally binding
-declaration and stays the owner's own click after he has read the comparison; the
-session stops at the saved draft unless he says otherwise in that session.
+declaration: the session always stops at the saved draft, and the owner sends it
+himself after he has read the comparison (decided 2026-10-07).
 
 ## Year lifecycle (a stateful flow)
 
@@ -881,7 +881,8 @@ Answered by the owner on the decision page on 2026-10-07.
     recommended waiting), together with a forecast that names when a section 19 limit
     will be reached and prepares the owner for the change.
 11. **Filing**: the entry sheet, typed into ELSTER with browser assistance for the
-    owner's own returns (see "Filing"). Submission through the tax office's software
+    owner's own returns (see "Filing"). The session only saves the draft; the owner
+    sends the return himself. Submission through the tax office's software
     interface is planned only once customers use the product.
 12. **Mail-in**: yes, as the last slice of stage 1, reading the dedicated expenses
     mailbox that already exists instead of creating a new address.

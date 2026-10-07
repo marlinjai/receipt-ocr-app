@@ -38,7 +38,7 @@ describe('validateAssetInput', () => {
 
   it('accepts an asset carried in from before the app without receipts or date', () => {
     const carried = validateAssetInput({
-      label: 'Stativ',
+      label: 'Schreibtisch',
       kind: 'movable',
       method: 'linear',
       reminderCents: 100,

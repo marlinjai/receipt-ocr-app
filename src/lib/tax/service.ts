@@ -632,6 +632,7 @@ export async function decideForVendor(
     allocations: forItem.allocations as unknown as Prisma.InputJsonValue,
     formLineKey: forItem.formLineKey,
     employmentLineKey: forItem.employmentLineKey,
+    severalLowValueItems: forItem.severalLowValueItems === true,
   };
   const [row] = await db.$transaction([
     db.taxVendorRule.upsert({
@@ -648,7 +649,8 @@ export async function decideForVendor(
         }),
   ]);
   return {
-    rule: { id: row.id, vendorKey: key, vendorLabel: row.vendorLabel, effectiveFrom, ...forRule },
+    // The statement about several small items belongs to one receipt, never to a rule.
+    rule: { id: row.id, vendorKey: key, vendorLabel: row.vendorLabel, effectiveFrom, ...forRule, severalLowValueItems: false },
     receiptFollowsRule,
   };
 }

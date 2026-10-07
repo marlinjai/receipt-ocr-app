@@ -125,7 +125,7 @@ describe('forward: receipt above the limit, asset, schedule', () => {
   it('an asset from before the app keeps its reminder value and needs no receipt', async () => {
     const { ws, ctx } = await workspace();
     await createAsset(db, ctx, {
-      label: 'Stativ',
+      label: 'Schreibtisch',
       kind: 'movable',
       method: 'linear',
       reminderCents: 100,

@@ -363,13 +363,13 @@ describe('FinanceClient: assets', () => {
     render(<FinanceClient initial={view([])} />);
     await user.click(screen.getByRole('tab', { name: /Anlagen/ }));
     await user.click(screen.getByRole('button', { name: 'Neue Anlage' }));
-    await user.type(screen.getByLabelText('Bezeichnung'), 'Stativ');
+    await user.type(screen.getByLabelText('Bezeichnung'), 'Schreibtisch');
     await user.click(screen.getByRole('button', { name: 'Aus früheren Jahren übernommen' }));
     await user.type(screen.getByLabelText('Buchwert in €'), '1,00');
     await user.click(screen.getByRole('checkbox', { name: 'Erinnerungswert von 1 € stehen lassen' }));
     await user.click(screen.getByRole('button', { name: 'Anlage anlegen' }));
     expect(actions.saveAsset.mock.calls[0][2]).toMatchObject({
-      label: 'Stativ',
+      label: 'Schreibtisch',
       acquisitionDate: null,
       method: 'linear',
       reminderCents: 100,

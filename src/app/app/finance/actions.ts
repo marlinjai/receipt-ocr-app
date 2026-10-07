@@ -9,10 +9,10 @@ import {
   TaxServiceError,
   TreatmentError,
   clearItemDecision,
+  decideForVendor,
   deleteVendorRule,
   loadStatement,
   saveItemDecision,
-  saveVendorRule,
   type StatementView,
   type TaxContext,
 } from '@/lib/tax/service';
@@ -88,23 +88,20 @@ export interface DecisionRequest {
 
 /**
  * Decide one receipt, or its whole vendor. With `applyToVendor` the treatment
- * becomes the vendor rule and the receipt's own decision is removed, so the
- * receipt follows the rule like every other receipt of that vendor.
+ * becomes the vendor rule; the receipt then follows the rule, or keeps the
+ * decision as its own when the rule starts after the receipt's date (see
+ * `decideForVendor`).
  */
 export async function decideItem(year: number, request: DecisionRequest): Promise<Result<StatementView>> {
   try {
     const ctx = await writeContext();
     const rowId = String(request?.rowId ?? '');
     if (request?.applyToVendor) {
-      // Checked against this workspace's row first, so a rule can only be
-      // made from a receipt the caller can actually see.
-      await saveItemDecision(prisma, ctx, rowId, request.treatment);
-      await saveVendorRule(prisma, ctx, {
+      await decideForVendor(prisma, ctx, rowId, {
         vendor: String(request.applyToVendor.vendor ?? ''),
         effectiveFrom: request.applyToVendor.effectiveFrom,
         treatment: request.treatment,
       });
-      await clearItemDecision(prisma, ctx, rowId);
     } else {
       await saveItemDecision(prisma, ctx, rowId, request?.treatment);
     }

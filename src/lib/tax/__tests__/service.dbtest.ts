@@ -4,6 +4,7 @@ import { TreatmentError } from '../decisions';
 import {
   TaxServiceError,
   clearItemDecision,
+  decideForVendor,
   deleteDecisionsForRows,
   deleteVendorRule,
   loadStatement,
@@ -173,6 +174,72 @@ describe('backtrack and revise', () => {
     view = await loadStatement(db, fresh.workspaceId, 2025);
     expect(item(view, a).allocationOrigin).toBe('legacy_columns');
     expect(item(view, b).allocationOrigin).toBe('legacy_columns');
+  });
+});
+
+describe('deciding a receipt for its whole vendor', () => {
+  async function setup() {
+    const fresh = await createWorkspace();
+    const freshCtx = { workspaceId: fresh.workspaceId, tenantId: fresh.tenantId };
+    await saveTaxSettings(db, freshCtx, { smallBusiness: true });
+    return { fresh, freshCtx };
+  }
+
+  it('a rule that covers the receipt replaces its own decision', async () => {
+    const { fresh, freshCtx } = await setup();
+    const rowId = await fresh.addReceipt(receipt({ Date: '2025-08-14' }));
+    await saveItemDecision(db, freshCtx, rowId, { allocations: [{ purpose: 'private', shareBp: 10000 }] });
+    const result = await decideForVendor(db, freshCtx, rowId, { vendor: 'Netzwerk Nord GmbH', effectiveFrom: '2025-07-01', treatment: HALF_AND_STUDY });
+    expect(result.receiptFollowsRule).toBe(true);
+    const view = await loadStatement(db, fresh.workspaceId, 2025);
+    expect(item(view, rowId)).toMatchObject({ allocationOrigin: 'vendor_rule', hasDecision: false });
+    expect(item(view, rowId).parts.map((p) => p.cents)).toEqual([2000, 1200]);
+  });
+
+  it('a rule that starts after the receipt leaves the decision on the receipt, so it is not lost', async () => {
+    const { fresh, freshCtx } = await setup();
+    const early = await fresh.addReceipt(receipt({ Date: '2025-03-14' }));
+    const late = await fresh.addReceipt(receipt({ Date: '2025-09-14' }));
+    const result = await decideForVendor(db, freshCtx, early, { vendor: 'Netzwerk Nord GmbH', effectiveFrom: '2025-07-01', treatment: HALF_AND_STUDY });
+    expect(result.receiptFollowsRule).toBe(false);
+    const view = await loadStatement(db, fresh.workspaceId, 2025);
+    // The receipt the person decided is treated as decided ...
+    expect(item(view, early)).toMatchObject({ allocationOrigin: 'item', hasDecision: true });
+    expect(item(view, early).parts.map((p) => p.cents)).toEqual([2000, 1200]);
+    // ... and the later receipt of the vendor follows the new rule.
+    expect(item(view, late).allocationOrigin).toBe('vendor_rule');
+  });
+
+  it('an undated receipt keeps its decision under a rule with a start date', async () => {
+    const { fresh, freshCtx } = await setup();
+    const rowId = await fresh.addReceipt({ Name: 'Ohne Datum', Vendor: 'Netzwerk Nord GmbH', Gross: 39.99, Category: 'Telefon & Internet', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    const result = await decideForVendor(db, freshCtx, rowId, { vendor: 'Netzwerk Nord GmbH', effectiveFrom: '2025-07-01', treatment: HALF_AND_STUDY });
+    expect(result.receiptFollowsRule).toBe(false);
+    expect(await db.taxItemDecision.count({ where: { rowId } })).toBe(1);
+  });
+
+  it('writes nothing at all when any part of the request is invalid', async () => {
+    const { fresh, freshCtx } = await setup();
+    const rowId = await fresh.addReceipt(receipt());
+    const attempts: Array<[Parameters<typeof decideForVendor>[3], string]> = [
+      [{ vendor: 'Netzwerk Nord GmbH', effectiveFrom: '2025-02-30', treatment: HALF_AND_STUDY }, 'invalid_date'],
+      [{ vendor: '  ', treatment: HALF_AND_STUDY }, 'no_vendor'],
+      [{ vendor: 'Netzwerk Nord GmbH', treatment: { allocations: [{ purpose: 'business', shareBp: 5000 }] } }, 'form_line_required'],
+    ];
+    for (const [input, expected] of attempts) {
+      expect(await code(decideForVendor(db, freshCtx, rowId, input))).toBe(expected);
+    }
+    expect(await db.taxItemDecision.count({ where: { rowId } })).toBe(0);
+    expect(await db.taxVendorRule.count({ where: { authWorkspaceId: fresh.workspaceId } })).toBe(0);
+  });
+
+  it('cannot be started from a row of another workspace or from a meal', async () => {
+    const { fresh, freshCtx } = await setup();
+    const foreign = await other.addReceipt(receipt());
+    expect(await code(decideForVendor(db, freshCtx, foreign, { vendor: 'Netzwerk Nord GmbH', treatment: HALF_AND_STUDY }))).toBe('row_not_found');
+    const meal = await fresh.addReceipt(plainMealReceipt());
+    expect(await code(decideForVendor(db, freshCtx, meal, { vendor: 'Testlokal', treatment: HALF_AND_STUDY }))).toBe('meal_row');
+    expect(await db.taxVendorRule.count({ where: { authWorkspaceId: fresh.workspaceId } })).toBe(0);
   });
 });
 

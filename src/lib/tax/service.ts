@@ -318,6 +318,66 @@ export async function saveVendorRule(db: PrismaClient, ctx: TaxContext, input: V
   return { id: row.id, vendorKey: key, vendorLabel: row.vendorLabel, effectiveFrom, ...treatment };
 }
 
+/**
+ * Decide one receipt AND make that its vendor's treatment from a date on.
+ *
+ * Everything is checked before anything is written, and the writes happen
+ * together or not at all. Whether the receipt keeps a decision of its own
+ * depends on the rule: when the new rule is in force on the receipt's date, the
+ * receipt follows it like every other receipt of the vendor and its own
+ * decision is removed. When the rule starts later than the receipt (or the
+ * receipt has no date and the rule has a start date), the rule does not cover
+ * this receipt, so the receipt keeps the decision; otherwise it would silently
+ * fall back to its defaults after the person just decided it.
+ */
+export async function decideForVendor(
+  db: PrismaClient,
+  ctx: TaxContext,
+  rowId: string,
+  input: VendorRuleInput,
+): Promise<{ rule: VendorRule; receiptFollowsRule: boolean }> {
+  const facts = await requireOrdinaryRow(db, ctx, rowId);
+  const key = vendorKey(input?.vendor);
+  if (!key) throw new TaxServiceError('no_vendor');
+  const effectiveFrom = input.effectiveFrom ?? '';
+  if (effectiveFrom !== '' && !isIsoDay(effectiveFrom)) throw new TaxServiceError('invalid_date');
+  // The same treatment is stored twice in the worst case, so it has to pass
+  // the rules of both dates it is judged on.
+  const forRule = validateTreatment(input.treatment, rulesFor(effectiveFrom || null));
+  const forItem = validateTreatment(input.treatment, rulesFor(facts.record.date));
+
+  const receiptFollowsRule = effectiveFrom === '' || (facts.record.date !== null && effectiveFrom <= facts.record.date);
+  const ruleData = {
+    vendorLabel: input.vendor.trim(),
+    allocations: forRule.allocations as unknown as Prisma.InputJsonValue,
+    formLineKey: forRule.formLineKey,
+    employmentLineKey: forRule.employmentLineKey,
+  };
+  const itemData = {
+    allocations: forItem.allocations as unknown as Prisma.InputJsonValue,
+    formLineKey: forItem.formLineKey,
+    employmentLineKey: forItem.employmentLineKey,
+  };
+  const [row] = await db.$transaction([
+    db.taxVendorRule.upsert({
+      where: { authWorkspaceId_vendorKey_effectiveFrom: { authWorkspaceId: ctx.workspaceId, vendorKey: key, effectiveFrom } },
+      create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, vendorKey: key, effectiveFrom, ...ruleData },
+      update: ruleData,
+    }),
+    receiptFollowsRule
+      ? db.taxItemDecision.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId } })
+      : db.taxItemDecision.upsert({
+          where: { rowId },
+          create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, rowId, ...itemData },
+          update: itemData,
+        }),
+  ]);
+  return {
+    rule: { id: row.id, vendorKey: key, vendorLabel: row.vendorLabel, effectiveFrom, ...forRule },
+    receiptFollowsRule,
+  };
+}
+
 export async function deleteVendorRule(db: PrismaClient, ctx: TaxContext, ruleId: string): Promise<void> {
   const { count } = await db.taxVendorRule.deleteMany({ where: { id: ruleId, authWorkspaceId: ctx.workspaceId } });
   if (count === 0) throw new TaxServiceError('rule_not_found');

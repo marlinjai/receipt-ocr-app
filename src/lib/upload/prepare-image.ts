@@ -51,8 +51,15 @@ export interface ImageCodec {
 /** The browser's own decoder and a canvas. */
 export const browserCodec: ImageCodec = {
   async decode(file) {
-    // `from-image` applies the camera's rotation flag, so a portrait photo stays portrait.
-    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    // `from-image` applies the camera's rotation flag, so a portrait photo stays
+    // portrait. A browser that does not know the option throws on it; the plain
+    // call is tried before giving up, so an unknown option never blocks every photo.
+    let bitmap: ImageBitmap;
+    try {
+      bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    } catch {
+      bitmap = await createImageBitmap(file);
+    }
     return { width: bitmap.width, height: bitmap.height, source: bitmap, release: () => bitmap.close() };
   },
   async encodeJpeg(source, width, height, quality) {

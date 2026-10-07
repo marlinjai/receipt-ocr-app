@@ -159,7 +159,7 @@ describe('retakeReceipt: never a second row', () => {
     const guest = await contactStore(db, ctx).create({ name: 'Rita Retake', companyOrRole: 'Probe GmbH' });
     await saveMealDetails(db, ctx, first.rowId, {
       mealType: 'business_meal_external', occasion: 'Abnahme Fotoproduktion', place: 'Eigener Ort', host: 'Inhaber Beispiel',
-      tip: null, consumption: null, taxLines: null, guestContactIds: [guest.id], date: null, gross: null,
+      tip: 7, consumption: 'takeaway', taxLines: null, guestContactIds: [guest.id], date: null, gross: null,
     });
     const columns = await ws.adapter.getColumns(ws.tableId);
     const imageCol = columns.find((c) => c.name === 'Receipt Image')!;
@@ -170,7 +170,19 @@ describe('retakeReceipt: never a second row', () => {
 
     await retakeReceipt(first.rowId, file(14), ocr(RESTAURANT), {});
     const record = await loadMealRecord(db, ws.workspaceId, first.rowId);
-    expect(record).toMatchObject({ occasion: 'Abnahme Fotoproduktion', host: 'Inhaber Beispiel' });
+    // What the user typed stays, even though the classifier read other values
+    // (tip 5, eaten in, the restaurant's address) on the retake.
+    expect(record).toMatchObject({
+      occasion: 'Abnahme Fotoproduktion',
+      host: 'Inhaber Beispiel',
+      place: 'Eigener Ort',
+      tip: 7,
+      consumption: 'takeaway',
+      mealType: 'business_meal_external',
+    });
+    // What was blank is filled from the new reading.
+    expect(record!.taxLines).toEqual([{ rate: 19, net: 40.76, tax: 7.74 }]);
+    expect(record!.gross).toBe(48.5);
     expect(record!.guests).toEqual([{ contactId: guest.id, name: 'Rita Retake', company: 'Probe GmbH' }]);
     const names = (await files(ws, first.rowId)).map((f) => f.originalName).sort();
     expect(names).toEqual(['foto-14.jpg', 'von-hand.pdf']);

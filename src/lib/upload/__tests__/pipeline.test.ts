@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 import { isSha256Hex, sha256Hex } from '../hash';
 import { runUploadPipeline, type PipelineDeps, type PipelinePhase } from '../pipeline';
-import { PrepareImageError, needsConversion, prepareImage, targetSize, type ImageCodec } from '../prepare-image';
+import { PrepareImageError, browserCodec, needsConversion, prepareImage, targetSize, type ImageCodec } from '../prepare-image';
 import { SplitPdfError, splitPdfPages } from '../split-pdf';
 
 const OCR = { fullText: 'Testlokal 12,50', blocks: [], confidence: 0.9 };
@@ -181,6 +181,28 @@ describe('prepareImage', () => {
     const undecodable: ImageCodec = { decode: async () => { throw new Error('unsupported'); }, encodeJpeg: async () => null };
     await expect(prepareImage(photo('image/heic'), undecodable)).rejects.toMatchObject({ code: 'undecodable' });
     await expect(prepareImage(photo('image/heic'), codec(100, 100, null))).rejects.toMatchObject({ code: 'encode_failed' });
+  });
+
+  it('the browser decoder falls back to the plain call when the orientation option is unknown', async () => {
+    const bitmap = { width: 10, height: 20, close: vi.fn() };
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to read the 'imageOrientation' property"))
+      .mockResolvedValueOnce(bitmap);
+    vi.stubGlobal('createImageBitmap', create);
+    try {
+      const decoded = await browserCodec.decode(photo('image/jpeg'));
+      expect(decoded).toMatchObject({ width: 10, height: 20 });
+      expect(create).toHaveBeenCalledTimes(2);
+      expect(create.mock.calls[1]).toHaveLength(1);
+      decoded.release?.();
+      expect(bitmap.close).toHaveBeenCalled();
+      // Both calls failing is a real "cannot decode".
+      create.mockRejectedValue(new Error('unsupported'));
+      await expect(prepareImage(photo('image/heic'))).rejects.toMatchObject({ code: 'undecodable' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('targetSize never enlarges and handles portrait', () => {

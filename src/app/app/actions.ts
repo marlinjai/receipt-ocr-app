@@ -104,12 +104,26 @@ export interface ProcessReceiptResult {
 
 type ReceiptsAdapter = ReturnType<typeof getAdapter>;
 
-/** Columns a (re)read of the receipt fills. Meal details and anything else the user typed are never in here. */
+/**
+ * Columns a (re)read of the receipt fills. Guests, occasion and host are never
+ * in here. The five meal columns at the end ARE: the classifier reads them on
+ * the first save. On a retake they are only written where the row is still
+ * blank (see MEAL_READ_COLUMNS), so nothing the user typed is overwritten.
+ */
 const OCR_DERIVED_COLUMNS = new Set([
   'Name', 'Vendor', 'Gross', 'Net', 'Tax Rate', 'Date', 'Category', 'Konto', 'Zuordnung', 'Status',
   'Confidence', 'OCR Text', 'Currency', 'FX Rate', 'Business Share %',
   MEAL_COLUMNS.mealType, MEAL_COLUMNS.consumption, MEAL_COLUMNS.tip, MEAL_COLUMNS.taxLines, MEAL_COLUMNS.place,
 ]);
+
+/** Meal facts the classifier can read but the user may also have typed: a retake fills blanks only. */
+const MEAL_READ_COLUMNS: string[] = [
+  MEAL_COLUMNS.mealType,
+  MEAL_COLUMNS.consumption,
+  MEAL_COLUMNS.tip,
+  MEAL_COLUMNS.taxLines,
+  MEAL_COLUMNS.place,
+];
 
 interface ReadReceipt {
   cells: Record<string, CellValue>;
@@ -306,6 +320,16 @@ export async function retakeReceipt(
   if (!row || row.tableId !== tableId) throw new Error('Receipt not found');
 
   const read = await readReceipt(adapter, tableId, file, ocrResult);
+
+  // Date, amount, category and the like are re-read: that is what a retake is
+  // for. Meal facts the user (or an earlier reading) already filled in stay.
+  const columns = await adapter.getColumns(tableId);
+  for (const name of MEAL_READ_COLUMNS) {
+    const columnId = columns.find((c) => c.name === name)?.id;
+    if (!columnId) continue;
+    const current = row.cells[columnId];
+    if (current !== null && current !== undefined && current !== '') delete read.cells[columnId];
+  }
   await adapter.updateRow(row.id, read.cells);
 
   if (read.imageColumnId && file.id) {

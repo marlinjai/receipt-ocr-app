@@ -1,8 +1,8 @@
 ---
 title: Live finance and tax dashboard, scenario engine and advisory layer
-summary: Turn the receipts app into the place where a sole proprietor sees profit, loss, depreciation and the expected income tax effect every day, can ask "what if" questions answered by the same tax code, and gets checkable hints (each with its inputs, its rule, its source and its euro effect) including a legal form comparison. Three stages, thirteen slices. Absorbs the bank connection and item-level receipts item.
+summary: Turn the receipts app into the place where a sole proprietor sees profit, loss, depreciation and the expected income tax effect every day, can ask "what if" questions answered by the same tax code, and gets checkable hints (each with its inputs, its rule, its source and its euro effect) including a legal form comparison. Three stages, fourteen slices. Absorbs the bank connection and item-level receipts item.
 type: plan
-status: draft
+status: decided
 tags: [receipts, tax, euer, dashboard, bank, enable-banking, assets, depreciation, scenario, advisory, legal-form, stateful-flow]
 projects: [receipt-ocr-app]
 date: 2026-10-07
@@ -112,7 +112,8 @@ receipts: write the plan before any code". That item is folded into stage 1 (see
 
 ## Decisions this plan takes
 
-Each is a recommendation until the owner confirms it on the decision page.
+All confirmed by the owner on 2026-10-07; his answers and the changes they caused are
+under "Decisions (2026-10-07)" at the end.
 
 1. **The bank connection item is folded in.** Payments, matching and receipt lines
    are slices 2 and 3 of stage 1. Two plans describing the same payments table would
@@ -134,9 +135,11 @@ Each is a recommendation until the owner confirms it on the decision page.
    in the law is a pull request with tests and a history, not an edit in a database.
 5. **Stage 3 starts deterministic.** Rules and the scenario engine first. A language
    model that explains and answers questions is the last slice and its own decision.
-6. **Operator only.** Every stage is built for the owner's own workspace. The data
-   model stays workspace-scoped like everything else, but nothing here is offered to
-   other people until the two gates in "Legal boundary" are passed.
+6. **Operator only, for now.** Every stage is built for the owner's own workspace.
+   The owner expects to offer it to customers later, so the data model stays
+   workspace-scoped like everything else and the wording contract of stage 3 is
+   followed from the first build, but nothing here is offered to other people until
+   the gates in "Legal boundary" are passed.
 7. **No real figures in this repository.** The repository is public. Tests use a
    synthetic year; the real 2025 data is read from the owner's machine by a test that
    is skipped everywhere else.
@@ -146,15 +149,17 @@ Each is a recommendation until the owner confirms it on the decision page.
 Stated so the app can say "not covered" instead of computing something wrong:
 
 - Covered: one natural person, single assessment, a business with a cash-basis
-  statement under section 19, optionally employment income from a wage statement,
+  statement, under section 19 or (from slice 5) under regular value-added taxation,
+  optionally employment income from a wage statement,
   study or training costs, special expenses (loan interest for education, church tax,
   donations), insurance contributions.
 - Recorded but computed only as far as marked: church tax and solidarity surcharge
   (simple), insurance deductions (see "Income tax estimate").
 - Not covered, and the estimate says so when such data is entered: joint assessment,
   children, rental income, capital income, trade tax above the allowance for
-  partnerships, regular value-added taxation (see unhappy paths), balance sheet
-  accounting.
+  partnerships, balance sheet accounting, value-added tax special cases (supplies
+  to other countries, margin schemes, partial input tax deduction beyond the
+  business share).
 
 ---
 
@@ -218,7 +223,8 @@ cents, one migration per slice.
 **Revenue**
 
 - `IssuedInvoice`: number, issue date, client (a `Contact`, reusing the contact
-  store), amount, an optional file, and `declaredInYear` for invoices that an earlier
+  store), amount (net, tax rate, tax, gross, and the tax treatment: section 19,
+  standard, reduced, reverse charge), an optional file, and `declaredInYear` for invoices that an earlier
   return already declared under a different method, so they are never counted twice.
   Incoming payments link to issued invoices through `PaymentLink`.
 
@@ -245,6 +251,10 @@ cents, one migration per slice.
 - `TaxYear`: per year the status `open`, `exported`, `filed`, `assessed`; for a filed
   year a frozen snapshot of the figures with a hash of the inputs; for an assessed
   year the key figures of the assessment notice.
+- `VatPeriod`: per advance return period (month or quarter, as the tax office set
+  it) the status `open` or `filed`, and for a filed period the frozen figures with a
+  hash of the inputs, like `TaxYear`. The period's figures themselves are computed on
+  read.
 - `ChangeLog`: who changed which fact of a filed year, when, from what to what.
 
 Names of clients and private counterparties live in typed tables, never in table
@@ -302,8 +312,30 @@ The rules it implements, each in plain words:
   invoices marked as declared in an earlier year. An invoice not yet paid is shown as
   outstanding and is not revenue.
 - **Statement.** Lines by form line key, totals, profit or loss, the asset annex.
-- **Section 19 limits.** Revenue of the previous year against the previous-year limit
-  and running revenue against the current-year limit, with a projection to year end.
+- **Section 19 limits and their forecast.** Revenue of the previous year against the
+  previous-year limit and running revenue against the current-year limit. The
+  forecast projects revenue forward (invoices issued and unpaid, the run rate of the
+  last months, and what the owner states he expects) and names the date each limit
+  is expected to be reached, as a range. It then says what follows: crossing the
+  previous-year limit changes the status from 1 January of the next year; crossing
+  the current-year limit changes it at once, starting with the invoice that crosses
+  it. From a set lead time before that date the dashboard shows a preparation list:
+  invoices must show the tax from the change date, the advance return period the tax
+  office will expect, which running contracts and prices are quoted gross, and which
+  recent purchases would have carried deductible tax. The forecast adds a planned
+  dated entry to nothing by itself: the status entry is written by the owner when the
+  change is real.
+- **Regular value-added taxation.** For any date on which `SmallBusinessStatus` says
+  "not a small business": costs count net, the tax on a purchase is input tax as far
+  as the business share reaches (the private and study shares carry no input tax),
+  issued invoices carry output tax, and under the cash-basis statement tax received
+  is revenue and tax paid (to suppliers and to the tax office) is expense in the year
+  it flows, on their own form lines. Per advance return period the app computes
+  output tax, input tax and the amount due, and at year end the figures of the
+  annual value-added tax return. Whether tax is owed by payment date or by invoice
+  date is a setting (the tax office grants the first on request); it is asked once
+  and is required before any period is computed. Tax owed by the buyer on services
+  from abroad is listed per item for both statuses.
 - **Profit intention.** A plain notice when the pattern a tax office questions is
   present: losses in several years, or a loss large against revenue, offset against
   other income. It states what the tax office looks at (a forecast of total profit
@@ -357,7 +389,8 @@ Kept from the roadmap item and the prototype:
 A new area `/app/finance` (German labels in the interface, as elsewhere):
 
 - **Today** (`Übersicht`): year picker; revenue, expenses, profit or loss, expected
-  refund or payment with "estimate" and its missing inputs; the section 19 meter; the
+  refund or payment with "estimate" and its missing inputs; the section 19 meter
+  with its forecast date and, when due, the preparation list; the
   profit intention notice when it applies; open checks by kind; freshness per source
   with its complete-through date.
 - **Statement** (`EÜR`): every form line with its total, opening to the items behind
@@ -371,12 +404,27 @@ A new area `/app/finance` (German labels in the interface, as elsewhere):
   book value at start and end, across years.
 - **Revenue** (`Einnahmen`): issued invoices with payment date, outstanding ones,
   incoming payments without an invoice.
+- **Value-added tax** (`Umsatzsteuer`): under section 19 the limits, the forecast
+  and the tax on purchases that could not be deducted; under regular taxation the
+  advance return periods with output tax, input tax, amount due, due date and the
+  items behind each figure, plus the annual figures.
 - **Years** (`Jahre`): revenue, expenses by line, result and tax estimate side by
   side for all years in the app.
 - **Year end** (`Abschluss`): the entry sheet in the order of the tax office's online
   forms (ELSTER), one block per form with German labels, value and source, as a page,
-  a PDF and a spreadsheet file; with the count of open checks named in a confirmation
-  before export.
+  a PDF, a spreadsheet file and a machine-readable file keyed by form and field; with
+  the count of open checks named in a confirmation before export.
+
+## Filing
+
+The app does not submit returns through the tax office's software interface; that is
+planned only once customers use the product. For the owner's own returns the entry
+is assisted instead: a coding session drives the owner's logged-in browser, types the
+machine-readable entry sheet into the ELSTER forms field by field, saves the draft
+and compares ELSTER's own draft view against the sheet. Every mismatch is listed. The
+same applies to an advance return period. Sending the return is a legally binding
+declaration and stays the owner's own click after he has read the comparison; the
+session stops at the saved draft unless he says otherwise in that session.
 
 ## Year lifecycle (a stateful flow)
 
@@ -423,7 +471,13 @@ A new area `/app/finance` (German labels in the interface, as elsewhere):
 | Foreign currency without a rate and without a payment | Item incomplete with reason "exchange rate missing", never exported as zero. |
 | No rule set for the running year yet | Computed with the latest year's rules under a banner "computed with the rules of <year>"; a test fails in continuous integration from 1 December when next year's module is missing. |
 | A law changes within the year | The rule value carries a validity range; the rule set's "checked on" date is shown; items are evaluated by their own date. |
-| Section 19 limit crossed, or regular taxation chosen | The status entry changes from a date. For periods under regular taxation the statement is not computed and the page says so with the reason: that mode (net amounts, value-added tax as its own lines, periodic returns) is a separate build, triggered by this event, see open decisions. |
+| Section 19 limit crossed, or regular taxation chosen | The owner adds a status entry from a date. Items before the date keep gross as cost, items from the date are computed net with input tax; a year can contain both and the statement shows them on their respective lines. |
+| Forecast says a limit will be crossed | Preparation list and date range on the dashboard; nothing changes in the books until the status entry is written. A forecast built on fewer than three months of data says so. |
+| Limit already crossed but no status entry | A blocking notice on the Today and Value-added tax views naming the invoice that crossed it; invoices issued after it without tax are listed as needing correction. |
+| Invoice issued with the wrong tax treatment for its date | Open check on the invoice; the tax shown on an invoice is owed even when shown in error, and the check says so. |
+| Asset bought under section 19, status changes later (or the reverse) | Listed as "input tax correction to review" with the rule cited, for a tax advisor to confirm; no correction is computed silently. |
+| Advance return period filed, then a fact of that period changes | Period shows "differs from the filed return" with the difference, the basis for a corrected return. |
+| Taxation method (by payment or by invoice date) not set | No period figures; the view asks the question. |
 | Wage data missing in the running year | Estimate shown without the employment part, labelled "business only", with the prompt to enter one pay slip. |
 | Profile not covered (see above) | Estimate withheld for the uncovered part with the reason. |
 | Wrong workspace | Every query is scoped to the active workspace; the workspace name is printed on every export. |
@@ -433,7 +487,9 @@ A new area `/app/finance` (German labels in the interface, as elsewhere):
 
 - **Unit tests** for every rule in `src/lib/tax/`: rounding per item, shares, cash
   basis and the ten-day rule, each asset method by month, disposal, section 19 on and
-  off, the tariff against the finance ministry's published calculator values for each
+  off, a status change in the middle of a year, input tax limited to the business
+  share, an advance return period by payment date and by invoice date, the forecast
+  date for a steady and for a jumping revenue path, the tariff against the finance ministry's published calculator values for each
   rule year, the meter, the profit intention notice (fires, does not fire).
 - **Properties**: a higher deductible expense never raises the tax; a scenario with no
   changes equals the baseline; line totals sum to the result; allocations never
@@ -481,18 +537,28 @@ A new area `/app/finance` (German labels in the interface, as elsewhere):
 3. **Payments.** `Account`, `ImportBatch`, `Payment`, `PaymentLink`, the importers,
    then the Enable Banking sync with the daily schedule, matching, settlements,
    freshness, the remaining open check kinds.
-4. **Revenue.** `IssuedInvoice` behind `InvoiceSource`, the Revenue view, the section
-   19 meter, the profit intention notice.
-5. **Income tax estimate.** `WageStatement`, `ReturnItem`, `TaxSettings`, the
+4. **Revenue and the limit forecast.** `IssuedInvoice` behind `InvoiceSource`, the
+   Revenue view, the section 19 meter with its forecast and preparation list, the
+   profit intention notice.
+5. **Regular value-added taxation.** Net and input tax in `computeYear`, the tax
+   form lines, `VatPeriod`, the Value-added tax view, the status change inside a
+   year, the annual figures.
+6. **Income tax estimate.** `WageStatement`, `ReturnItem`, `TaxSettings`, the
    estimate, the Today view.
-6. **Year end.** Entry sheet export, `TaxYear` lifecycle, snapshot, change log,
-   assessment figures and track record, the Years view.
-7. **Mail-in.** A dedicated address that invoices are forwarded to, feeding the
-   normal upload pipeline (sender allow-list, attachments only, the same duplicate
-   checks).
+7. **Year end.** Entry sheet export including the machine-readable file for assisted
+   entry, `TaxYear` lifecycle, snapshot, change log, assessment figures and track
+   record, the Years view.
+8. **Mail-in.** The owner already collects invoice mail in one dedicated expenses
+   mailbox and is moving his vendors' billing addresses to it. The app reads that
+   mailbox (no new address): each attachment from an allowed sender goes through the
+   normal upload pipeline with the same duplicate checks, the message is marked as
+   taken, and a mail that could not be read stays in the mailbox and appears as an
+   open check.
 
-Slices 1 to 4 make the next return a matter of working off a queue. Slice 5 is what
-turns the statement into "my tax situation today".
+Build order decided: slices 1 to 5 now (the owner asked for the regular mode and the
+forecast to be part of the first build), slices 6 and 7 before the 2026 return, slice
+8 after. Slices 1 to 4 make the next return a matter of working off a queue. Slice 6
+is what turns the statement into "my tax situation today".
 
 ---
 
@@ -514,8 +580,8 @@ plus a list of typed changes; the answer is the difference between two runs of
 - **Changes** (a closed, typed list): add a purchase (amount, date, business share,
   kind: expense, low-value asset, asset with a method), move a planned purchase to
   another date, change revenue, change wage, add a pension contribution, add or remove
-  a recurring cost, change a share, dispose of an asset, change the legal form (stage
-  3 uses this one).
+  a recurring cost, change a share, dispose of an asset, change the value-added tax
+  status from a date, change the legal form (stage 3 uses this one).
 - **Result.** Per change and in total: lines that move, profit or loss, tax, and the
   two numbers that matter for a decision: **tax effect** and **net cost** (price minus
   tax effect). Across years where a change reaches further (an asset written off over
@@ -554,8 +620,8 @@ filed snapshot and says so).
 
 ## Slices
 
-8. **Projection and the change types** in `src/lib/tax/scenario.ts`, pure and tested.
-9. **Scenario view**, saved scenarios, comparison.
+9. **Projection and the change types** in `src/lib/tax/scenario.ts`, pure and tested.
+10. **Scenario view**, saved scenarios, comparison.
 
 ---
 
@@ -603,11 +669,13 @@ it must fire and one where it must not.
    not happen.
 4. **Depreciation method per asset**: the allowed methods side by side over the
    asset's life.
-5. **Section 19 limits**: the projection approaching a limit, what changes when it is
-   crossed, and the month it is expected.
-6. **Section 19 the other way**: the value-added tax paid on purchases that could not
-   be deducted this year, against the tax that would have been charged to clients who
-   cannot deduct it, the periodic returns it brings, and the five-year binding.
+5. **Section 19 limits**: the stage 1 forecast as a hint with its euro effect: what
+   crossing costs or brings, computed as a scenario with the status changed from the
+   forecast date.
+6. **Section 19 the other way**: choosing regular taxation on purpose, computed as a
+   scenario with the status changed from 1 January: the tax on purchases that
+   becomes deductible, against the tax charged to clients who cannot deduct it, the
+   periodic returns it brings, and the five-year binding.
 7. **Foreign services**: purchases from suppliers abroad where the buyer may owe the
    value-added tax himself even under section 19. A compliance notice with the items
    listed, explicitly for a tax advisor to confirm.
@@ -692,7 +760,7 @@ years.
 
 ## The language model, last and optional
 
-What it may do, as slice 13:
+What it may do, as slice 14:
 
 - Explain a computed hint in plain language.
 - Answer a question by calling tools: `get_year_summary`, `run_scenario`,
@@ -723,7 +791,8 @@ others. That gives two regimes:
   euro effects. It still shows inputs, rule, source and uncertainty, and still hands
   off the legal form question, because that is what makes the output worth trusting,
   not because the law demands it here.
-- **Anyone else.** Not offered. Before that changes: (1) a written opinion from a
+- **Anyone else.** Not offered yet; the owner intends to offer it to customers later.
+  Before that changes: (1) a written opinion from a
   lawyer on where calculation software ends and individual tax advice begins for
   exactly this feature set; (2) the wording contract below enforced in the interface;
   (3) the two bank data gates above. Likely outcome to plan for: calculations,
@@ -761,11 +830,12 @@ private name is impossible by the tool's own tests.
 
 ## Slices
 
-10. **Hint framework and the first hints** (numbers 1, 2, 5, 9, 10, 12, 13, 14, 16):
-    the ones that need nothing beyond stages 1 and 2.
-11. **Remaining hints** (3, 4, 6, 7, 8, 11, 15, 17), each with its sources entered.
-12. **Legal form comparison** and the advisor brief.
-13. **Language model layer** with the number check. Own decision.
+11. **Hint framework and the first hints** (numbers 1, 2, 5, 6, 9, 10, 12, 13, 14,
+    16): the ones that need nothing beyond stages 1 and 2.
+12. **Remaining hints** (3, 4, 7, 8, 11, 15, 17), each with its sources entered.
+13. **Legal form comparison** and the advisor brief.
+14. **Language model layer** with the number check. Own decision, taken after one
+    return has been prepared with the rule-based hints.
 
 ---
 
@@ -784,32 +854,38 @@ private name is impossible by the tool's own tests.
   This plan is the receipts half of the first and depends on the second for its
   constants.
 
-## Open decisions for the owner
+## Decisions (2026-10-07)
 
-Each with a recommendation; answers are recorded below once given.
+Answered by the owner on the decision page on 2026-10-07.
 
-1. **Approve the direction and the order of stages.** Recommended: yes.
-2. **How much to build now.** The owner's first goal is recurring revenue from the
-   Studio product, and this app is kept as an internal tool. Recommended: slices 1 to
-   4 now, because the 2026 books are already nine months behind and each month adds to
-   the pass by hand; slice 5 and 6 before the 2026 return; stages 2 and 3 after.
-3. **Fold the bank connection item into this plan.** Recommended: yes.
-4. **Revenue before Books exists.** Recommended: the minimal invoice list here.
-5. **Tests with real figures.** Recommended: synthetic year in the public repository,
-   real 2025 only locally.
-6. **Who the app is for.** Recommended: operator only for all stages.
-7. **Advisory wording for own use.** Recommended: frank ranking by euro effect under
-   the wording contract.
-8. **Language model in the advisory layer.** Recommended: decide after the
-   deterministic hints have been used for one return.
-9. **What may reach a language model.** Recommended: aggregates and business items
-   only, never payments classified private, no model on raw bank lines.
-10. **Regular value-added taxation mode.** Recommended: build when a status change is
-    actually planned; until then the app states plainly that it does not compute it.
-11. **Filing through the tax office's interface.** Recommended: no; the entry sheet is
-    typed in by hand, as for 2025.
-12. **Mail-in address.** Recommended: yes, as slice 7.
-13. **One session with a tax advisor** to confirm the judgment calls collected under
-    "what a tax advisor should confirm" (asset limit under section 19, foreign
-    services, the profit intention picture, study costs beside a salary) before the
-    first return is filed from the app. Recommended: yes.
+1. **Direction and order of stages**: approved as drafted.
+2. **How much to build now**: slices 1 to 4 now, the estimate and the year-end export
+   before the 2026 return, stages 2 and 3 after. With decision 10 the regular
+   value-added tax mode joins the first build as slice 5.
+3. **Bank connection item**: folded into this plan.
+4. **Revenue before Books exists**: the minimal invoice list here, replaced by the
+   Books tier later. The owner also asked for the state of the Books build in
+   framer-clone to be checked so it can be built in parallel; that work has its home
+   on the framer-clone roadmap, not here.
+5. **Tests with real figures**: a synthetic year in this public repository, the real
+   2025 data only as a local test.
+6. **Who the app is for**: the owner only, all stages, for now. Offering it to
+   customers later is intended; the gates in "Legal boundary" apply then.
+7. **Wording of hints**: frank ranking by euro effect, fixed vocabulary, proof
+   attached to every hint.
+8. **Language model in the advisory layer**: decided after one return with the
+   rule-based hints.
+9. **What may reach a language model**: totals and business items only, never
+   payments classified private, no model on raw bank lines.
+10. **Regular value-added taxation**: built in stage 1 (changed from the draft, which
+    recommended waiting), together with a forecast that names when a section 19 limit
+    will be reached and prepares the owner for the change.
+11. **Filing**: the entry sheet, typed into ELSTER with browser assistance for the
+    owner's own returns (see "Filing"). Submission through the tax office's software
+    interface is planned only once customers use the product.
+12. **Mail-in**: yes, as the last slice of stage 1, reading the dedicated expenses
+    mailbox that already exists instead of creating a new address.
+13. **Session with a tax advisor**: not now; to be decided when the legal form
+    question becomes real. Until then the points collected under "what a tax advisor
+    should confirm" stay visibly unconfirmed in the app, each on the item or hint it
+    concerns.

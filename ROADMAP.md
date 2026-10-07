@@ -4,12 +4,14 @@
 
 <!-- Decided features, ready to be worked on -->
 
-- [ ] Finance and tax dashboard, stage 1 (data foundation and live dashboard): draft
-  plan, waiting for the owner's approval before any code. Seven slices: tax rules per
+- [ ] Finance and tax dashboard, stage 1 (data foundation and live dashboard): plan
+  decided by the owner on 2026-10-07, nothing built yet. Eight slices: tax rules per
   year and the income-surplus statement from receipts, assets and receipt lines,
   payments (file imports and the Enable Banking daily sync, matching by reference,
-  payments without a receipt), revenue by payment date, the income tax estimate, the
-  year-end entry sheet with a filed-year snapshot, and a mail-in address. This line
+  payments without a receipt), revenue by payment date with a forecast of the
+  small-business limits, regular value-added taxation, the income tax estimate, the
+  year-end entry sheet with a filed-year snapshot, and reading the expenses mailbox.
+  Slices 1 to 5 are built first. This line
   absorbs the earlier "Bank connection and item-level receipts" item; its facts
   (registered application, session rules, import sources, the two gates before anyone
   but the operator links an account) are in the plan's "Bank data" section. Plan:

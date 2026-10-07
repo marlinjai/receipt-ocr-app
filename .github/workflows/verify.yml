@@ -13,3 +13,44 @@ jobs:
       - uses: marlinjai/actions-shared/roadmap-check@roadmap-check-v1
         with:
           max-age: 30
+
+  # Typecheck, lint, unit and component tests, and the database-backed tests
+  # against a throwaway Postgres. Added after a review fix broke a database
+  # query that only `pnpm test:db` could catch: without this job nothing ran
+  # the tests before a merge.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          # Throwaway credentials for a database that exists only for this job.
+          POSTGRES_USER: receipts
+          POSTGRES_PASSWORD: receipts
+          POSTGRES_DB: receipts_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U receipts -d receipts_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://receipts:receipts@localhost:5432/receipts_test
+      TEST_DATABASE_URL: postgresql://receipts:receipts@localhost:5432/receipts_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prisma generate
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - name: Apply migrations to the test database
+        run: pnpm prisma migrate deploy
+      - run: pnpm test:db

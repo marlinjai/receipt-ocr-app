@@ -23,6 +23,8 @@ interface PhoneCaptureProps {
   onDiscardRow: (rowId: string) => Promise<void>;
   /** Injected in tests; the real IndexedDB queue otherwise. */
   store?: CaptureStore;
+  /** Shown once after a share into the app (see sharedNotice). */
+  notice?: { tone: 'info' | 'error'; text: string } | null;
 }
 
 type View =
@@ -49,7 +51,7 @@ const PHASE_LABELS: Record<PipelinePhase, string> = {
  * into a queue in the browser and is sent later, visibly counted. Every
  * failure says what happened and offers the next step.
  */
-export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: injectedStore }: PhoneCaptureProps) {
+export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: injectedStore, notice }: PhoneCaptureProps) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const retakeRef = useRef<HTMLInputElement>(null);
   const [view, setView] = useState<View>({ kind: 'idle' });
@@ -248,6 +250,12 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
         className="hidden"
         onChange={(e) => pick(e, retakeRowId ?? undefined)}
       />
+
+      {notice && (
+        <p className={`ui-note mb-3 ${notice.tone === 'error' ? 'ui-note-danger' : 'ui-note-ok'}`} role={notice.tone === 'error' ? 'alert' : 'status'}>
+          {notice.text}
+        </p>
+      )}
 
       {view.kind === 'idle' && (
         <div className="text-center">

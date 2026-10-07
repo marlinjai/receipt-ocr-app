@@ -1,17 +1,29 @@
 'use client';
 
-import { useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import ReceiptUploader from '@/components/ReceiptUploader';
 import type { UploadResult, BatchStats } from '@/components/ReceiptUploader';
 import PhoneCapture from '@/components/capture/PhoneCapture';
+import { sharedNotice } from '@/lib/capture/shared-notice';
 import type { SaveReceipt } from '@/lib/upload/browser-deps';
 import { processReceipt, retakeReceipt } from './actions';
 import { deleteRow } from './dashboard/actions';
 
 export default function UploadPage() {
+  // useSearchParams needs a Suspense boundary above it.
+  return (
+    <Suspense fallback={null}>
+      <UploadPageContent />
+    </Suspense>
+  );
+}
+
+function UploadPageContent() {
   const router = useRouter();
+  // Set by the share target after a file was shared into the app.
+  const notice = sharedNotice(useSearchParams().get('shared'));
 
   const processFile = useCallback(
     (result: UploadResult, options: { sha256: string }) =>
@@ -89,7 +101,7 @@ export default function UploadPage() {
 
         {/* Phone capture: one photo at a time, no redirect */}
         <div className="mb-4">
-          <PhoneCapture onSave={saveCapture} onRetake={retakeCapture} onDiscardRow={deleteRow} />
+          <PhoneCapture onSave={saveCapture} onRetake={retakeCapture} onDiscardRow={deleteRow} notice={notice} />
         </div>
 
         {/* Upload */}

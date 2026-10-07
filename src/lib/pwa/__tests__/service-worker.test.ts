@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { IDBFactory } from 'fake-indexeddb';
+import { openCaptureStore } from '@/lib/capture/offline-queue';
+import { sharedNotice } from '@/lib/capture/shared-notice';
 import { CAPTURE_DB_NAME, CAPTURE_DB_VERSION, CAPTURE_STORE_NAME } from '@/lib/capture/offline-queue';
 import { syncServiceWorker } from '../service-worker';
 
@@ -62,7 +65,8 @@ function loadWorker(options: { online?: boolean; existingCaches?: string[] } = {
     }
   }
 
-  new Function('self', 'caches', 'fetch', 'Request', SW_SOURCE)(scope, caches, network, ScopedRequest);
+  const idb = new IDBFactory();
+  new Function('self', 'caches', 'fetch', 'Request', 'indexedDB', SW_SOURCE)(scope, caches, network, ScopedRequest, idb);
 
   async function lifecycle(type: 'install' | 'activate') {
     let pending: Promise<unknown> = Promise.resolve();
@@ -71,18 +75,22 @@ function loadWorker(options: { online?: boolean; existingCaches?: string[] } = {
   }
 
   /** Dispatch a fetch event; resolves to the worker's response, or null when it did not handle the request. */
-  async function request(pathname: string, init: { method?: string; mode?: string; origin?: string } = {}) {
+  async function request(
+    pathname: string,
+    init: { method?: string; mode?: string; origin?: string; formData?: () => Promise<FormData> } = {},
+  ) {
     let responded: Promise<Response> | null = null;
     const req = {
       url: `${init.origin ?? scope.location.origin}${pathname}`,
       method: init.method ?? 'GET',
       mode: init.mode ?? 'no-cors',
+      formData: init.formData,
     };
     listeners.get('fetch')!({ request: req, respondWith: (p: Promise<Response>) => (responded = p) });
     return responded ? await (responded as Promise<Response>) : null;
   }
 
-  return { scope, caches, stores, network, lifecycle, request, setOnline: (v: boolean) => (online = v) };
+  return { scope, caches, stores, network, lifecycle, request, idb, setOnline: (v: boolean) => (online = v) };
 }
 
 describe('public/sw.js: it never serves application code', () => {
@@ -124,7 +132,9 @@ describe('public/sw.js: it never serves application code', () => {
   });
 
   it('the source contains no cache.put and no cache-first lookup for scripts', () => {
-    expect(SW_SOURCE).not.toMatch(/\.put\(/);
+    // The only `.put(` is the IndexedDB write of a shared file into the capture queue.
+    expect(SW_SOURCE.match(/\.put\(/g)).toHaveLength(1);
+    expect(SW_SOURCE).toMatch(/store\.put\(/);
     expect(SW_SOURCE).not.toMatch(/addAll/);
     expect(SW_SOURCE.match(/caches\.match\(/g)).toHaveLength(1);
   });
@@ -165,6 +175,80 @@ describe('public/sw.js: navigation and lifecycle', () => {
     const worker = loadWorker({ online: false });
     await expect(worker.lifecycle('install')).rejects.toThrow();
     expect(worker.scope.skipWaiting).not.toHaveBeenCalled();
+  });
+});
+
+describe('public/sw.js: share target', () => {
+  function shared(...files: File[]) {
+    return async () => {
+      const form = new FormData();
+      for (const f of files) form.append('files', f);
+      return form;
+    };
+  }
+  const image = (name: string) => new File([new Uint8Array([1, 2, 3])], name, { type: 'image/jpeg' });
+
+  it('uses the same queue names as the app', () => {
+    expect(SW_SOURCE).toContain("const DB_NAME = 'receipt-capture';");
+    expect(SW_SOURCE).toContain('const DB_VERSION = 1;');
+    expect(SW_SOURCE).toContain("const STORE_NAME = 'queue';");
+  });
+
+  it('a shared image and PDF become queue entries, in order, and the browser is sent to the app', async () => {
+    const worker = loadWorker();
+    const pdf = new File([new Uint8Array([4, 5])], 'scan.pdf', { type: 'application/pdf' });
+    const res = await worker.request('/share-target', { method: 'POST', mode: 'navigate', formData: shared(image('foto.jpg'), pdf) });
+    expect(res!.status).toBe(303);
+    expect(res!.headers.get('location')).toBe('https://receipts.example.invalid/app?shared=2');
+    // Read back through the APP's own queue code: the two sides agree on the shape.
+    const entries = await openCaptureStore(worker.idb).list();
+    expect(entries.map((e) => [e.name, e.type, e.source, e.attempts, e.lastError])).toEqual([
+      ['foto.jpg', 'image/jpeg', 'share', 0, null],
+      ['scan.pdf', 'application/pdf', 'share', 0, null],
+    ]);
+    expect(worker.network).not.toHaveBeenCalled();
+  });
+
+  it('a share with nothing usable is reported, not dropped silently, and queues nothing', async () => {
+    const worker = loadWorker();
+    const video = new File([new Uint8Array([1])], 'clip.mp4', { type: 'video/mp4' });
+    const res = await worker.request('/share-target', { method: 'POST', formData: shared(video) });
+    expect(res!.headers.get('location')).toBe('https://receipts.example.invalid/app?shared=unsupported');
+    expect(await openCaptureStore(worker.idb).list()).toEqual([]);
+    const empty = await worker.request('/share-target', { method: 'POST', formData: async () => new FormData() });
+    expect(empty!.headers.get('location')).toContain('shared=unsupported');
+  });
+
+  it('a mixed share keeps the usable files and leaves out the rest', async () => {
+    const worker = loadWorker();
+    const text = new File(['hallo'], 'notiz.txt', { type: 'text/plain' });
+    const res = await worker.request('/share-target', { method: 'POST', formData: shared(text, image('beleg.jpg')) });
+    expect(res!.headers.get('location')).toContain('shared=1');
+    expect((await openCaptureStore(worker.idb).list()).map((e) => e.name)).toEqual(['beleg.jpg']);
+  });
+
+  it('a share that cannot be read ends in the app with an error, never a blank page', async () => {
+    const worker = loadWorker();
+    const res = await worker.request('/share-target', {
+      method: 'POST',
+      formData: async () => {
+        throw new Error('body unreadable');
+      },
+    });
+    expect(res!.headers.get('location')).toBe('https://receipts.example.invalid/app?shared=failed');
+  });
+
+  it('only POST /share-target is taken: no other POST and no GET to that path', async () => {
+    const worker = loadWorker();
+    expect(await worker.request('/api/upload/request', { method: 'POST' })).toBeNull();
+    expect(await worker.request('/share-target')).toBeNull();
+  });
+
+  it('every outcome has wording for the user', () => {
+    expect(sharedNotice('2')).toEqual({ tone: 'info', text: '2 geteilte Dateien wurden übernommen und werden jetzt verarbeitet.' });
+    expect(sharedNotice('1')!.text).toMatch(/1 geteilte Datei wurde übernommen/);
+    for (const code of ['unsupported', 'unavailable', 'failed']) expect(sharedNotice(code)!.tone).toBe('error');
+    for (const none of [null, '', '0', 'anything-else']) expect(sharedNotice(none)).toBeNull();
   });
 });
 

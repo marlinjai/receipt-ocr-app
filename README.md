@@ -11,6 +11,8 @@ A Next.js application for uploading receipt images, extracting data via OCR, and
 - **Interactive Dashboard** - Manage receipts with filtering, sorting, inline editing, and 4 switchable views (Table, By Konto, Board, Calendar)
 - **SKR03 Accounting** - German accounting standard category mapping
 - **Category Management** - Organize receipts by expense category
+- **Business-Meal Register (Bewirtungsverzeichnis)** - Guests, occasion, place, tip and host per meal, a queue of incomplete meals, and a per-year register with the 70 percent deductible amount, exported as CSV or PDF
+- **Duplicate Detection and Page Split** - The same file is caught before upload, a receipt photographed twice gets a warning, and a multi-page scan can be split into one receipt per page
 
 ## Quick Start
 
@@ -90,6 +92,15 @@ The app is a relying party of [auth-brain](https://auth.lumitra.co) (shared `lum
 - **Filter**: Use the filter bar to filter by vendor, date, category
 - **Delete**: Select rows and click delete
 
+### Business meals
+
+1. Open `/app/meals` (the "Bewirtung" link on the dashboard shows how many meals still lack facts)
+2. "Unvollständig" lists every receipt categorised as Bewirtung that lacks guests, occasion, place or host. Pick guests from the contact list (typing a new name creates the contact), name the occasion, save. A half-filled entry stays in the list
+3. "Verzeichnis" asks once whether the business is a small business under section 19 of the value-added tax act, then shows the year's register with totals and exports it as CSV or PDF
+4. For a stack of scanned receipts in one PDF, tick "One receipt per page" on the upload page before dropping the file
+
+The rules (what counts as complete, how the deductible amount is computed) live in one module, `src/lib/meals/rules.ts`, and the plan is `docs/plans/2026-10-06-meal-register-and-phone-capture.md`.
+
 ## Documentation
 
 - [Architecture](./docs/public/architecture.md) - System design and integrations
@@ -105,6 +116,13 @@ pnpm build
 
 # Run production server
 pnpm start
+
+# Unit and component tests
+pnpm test
+
+# Database-backed tests: need a throwaway local Postgres with the migrations applied
+DATABASE_URL=postgresql://... pnpm prisma migrate deploy
+TEST_DATABASE_URL=postgresql://... pnpm test:db
 ```
 
 ## License

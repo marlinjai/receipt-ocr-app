@@ -11,6 +11,8 @@ import {
 } from '@/lib/receipts-constants';
 import { classifyWithWebSearch } from '@/lib/web-search';
 import { ensureReceiptsTable } from '@/lib/receipts-table';
+import { findSimilarReceipt, type ExistingReceipt } from '@/lib/upload/duplicates';
+import { isSha256Hex } from '@/lib/upload/hash';
 import { auth } from '@/lib/auth';
 import { requireReceiptsSession } from '@/lib/auth-guards';
 import { sessionWorkspaceId } from '@/lib/auth-workspace';
@@ -74,10 +76,22 @@ async function classifyReceipt(
   }
 }
 
+export interface ProcessReceiptOptions {
+  /** SHA-256 of the uploaded bytes (hex), stored on the file reference for duplicate detection. */
+  sha256?: string;
+}
+
+export interface ProcessReceiptResult {
+  rowId: string;
+  /** Another receipt with the same vendor, day and total: a warning, never a block. */
+  possibleDuplicateOf: ExistingReceipt | null;
+}
+
 export async function processReceipt(
   file: FileData,
   ocrResult: OcrResult | null,
-) {
+  options: ProcessReceiptOptions = {},
+): Promise<ProcessReceiptResult> {
   // Inner check (the middleware is the outer fence): the session must hold
   // receipts.upload on its ACTIVE workspace. The workspace id is resolved
   // server-side from the verified session, never from the browser.
@@ -214,9 +228,29 @@ export async function processReceipt(
       fileUrl: `/api/files/${file.id}`,
       originalName: file.originalName ?? 'receipt',
       mimeType: file.fileType ?? 'application/octet-stream',
-      metadata: { source: 'ocr-upload' },
+      metadata: {
+        source: 'ocr-upload',
+        // Only a well-formed hash is stored; anything else from the browser is dropped.
+        ...(isSha256Hex(options.sha256) ? { sha256: options.sha256 } : {}),
+      },
     });
   }
+
+  // The same receipt photographed twice has a different file hash, so this is
+  // the soft check. A failure here must not fail the upload that just succeeded.
+  let possibleDuplicateOf: ExistingReceipt | null = null;
+  try {
+    possibleDuplicateOf = await findSimilarReceipt(
+      prisma,
+      sessionWorkspaceId(session),
+      { vendor: extracted?.vendor ?? null, date: extracted?.date ?? null, gross: finalGross },
+      row.id,
+    );
+  } catch (err) {
+    console.error('[processReceipt] similar-receipt check failed:', err);
+  }
+
+  return { rowId: row.id, possibleDuplicateOf };
 }
 
 /**

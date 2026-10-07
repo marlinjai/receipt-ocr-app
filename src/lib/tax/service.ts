@@ -603,7 +603,8 @@ export async function saveVendorRule(db: PrismaClient, ctx: TaxContext, input: V
  * decision is removed. When the rule starts later than the receipt (or the
  * receipt has no date and the rule has a start date), the rule does not cover
  * this receipt, so the receipt keeps the decision; otherwise it would silently
- * fall back to its defaults after the person just decided it.
+ * fall back to its defaults after the person just decided it. The same holds
+ * for a receipt with the "several small items" statement, which no rule carries.
  */
 export async function decideForVendor(
   db: PrismaClient,
@@ -621,7 +622,12 @@ export async function decideForVendor(
   const forRule = validateTreatment(input.treatment, rulesFor(effectiveFrom || null));
   const forItem = validateTreatment(input.treatment, rulesFor(facts.record.date));
 
-  const receiptFollowsRule = effectiveFrom === '' || (facts.record.date !== null && effectiveFrom <= facts.record.date);
+  // The statement "several small items on this receipt" belongs to the one
+  // receipt and a rule cannot carry it, so a receipt that has it keeps its own
+  // decision even when the rule covers its date.
+  const receiptFollowsRule =
+    forItem.severalLowValueItems !== true &&
+    (effectiveFrom === '' || (facts.record.date !== null && effectiveFrom <= facts.record.date));
   const ruleData = {
     vendorLabel: input.vendor.trim(),
     allocations: forRule.allocations as unknown as Prisma.InputJsonValue,

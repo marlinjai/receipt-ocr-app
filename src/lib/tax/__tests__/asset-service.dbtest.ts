@@ -5,6 +5,7 @@ import { TreatmentError } from '../decisions';
 import {
   TaxServiceError,
   createAsset,
+  decideForVendor,
   deleteAsset,
   deleteDecisionsForRows,
   loadStatement,
@@ -291,6 +292,24 @@ describe('unhappy paths', () => {
     view = await loadStatement(db, ws.workspaceId, 2025);
     expect(item(view, rowId).checks.map((c) => c.kind)).toEqual(['needs_asset']);
     expect(line(view, 'euer.low_value_assets')).toBe(0);
+  });
+
+  it('the several-items statement survives making the treatment the vendor rule', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await ws.addReceipt(hardware({ Name: 'Zubehör, vier Teile', Gross: 1100, Net: 924.37 }));
+    const other = await ws.addReceipt(hardware({ Name: 'Kabel', Gross: 40, Net: 33.61, Date: '2025-04-01' }));
+    const result = await decideForVendor(db, ctx, rowId, {
+      vendor: 'Fotohaus Beispiel',
+      treatment: { allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.low_value_assets', severalLowValueItems: true },
+    });
+    expect(result.receiptFollowsRule).toBe(false);
+    expect(result.rule.severalLowValueItems).toBe(false);
+    const view = await loadStatement(db, ws.workspaceId, 2025);
+    // The receipt that was decided keeps its statement and counts ...
+    expect(item(view, rowId)).toMatchObject({ counted: true, checks: [], allocationOrigin: 'item', severalLowValueItems: true });
+    // ... the vendor's other receipt follows the rule, without the statement.
+    expect(item(view, other)).toMatchObject({ allocationOrigin: 'vendor_rule', severalLowValueItems: false });
+    expect(line(view, 'euer.low_value_assets')).toBe(110_000 + 4_000);
   });
 
   it('rejects a malformed asset and writes nothing', async () => {

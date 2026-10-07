@@ -12,11 +12,11 @@ date: 2026-10-07
 
 ## Goal
 
-The owner of this app is a sole proprietor in Germany, a small business under section
-19 of the value-added tax act (Umsatzsteuergesetz, the "Kleinunternehmer" rule: no
-value-added tax on invoices, none deducted from purchases), run next to a salaried
-job. He files his own return. Preparing the 2025 return took a pass by hand of several
-days over bank exports, invoices, receipts and three marketplaces.
+The reference user of this app is a sole proprietor in Germany, a small business under
+section 19 of the value-added tax act (Umsatzsteuergesetz, the "Kleinunternehmer" rule:
+no value-added tax on invoices, none deducted from purchases), run next to other
+income. They file their own return. Preparing a yearly return by hand takes days over
+bank exports, invoices, receipts and several marketplaces.
 
 The app should replace that pass with three things, built in this order:
 
@@ -323,8 +323,8 @@ The rules it implements, each in plain words:
 
 Kept from the roadmap item and the prototype:
 
-- **Interface.** Enable Banking, registered application "Lumitra Receipts" (id
-  `306d872b-bf50-4a18-95cb-3f17790470b7`), restricted production: it returns data only
+- **Interface.** Enable Banking, registered application "Lumitra Receipts" (id in
+  Infisical as `ENABLE_BANKING_APP_ID`, never written into this repository), restricted production: it returns data only
   for accounts linked to the application itself, so it serves the operator's own
   accounts. Key and session ids are in Infisical (project Receipt OCR,
   `ENABLE_BANKING_*`).
@@ -696,8 +696,13 @@ What it may do, as slice 13:
 
 - Explain a computed hint in plain language.
 - Answer a question by calling tools: `get_year_summary`, `run_scenario`,
-  `list_hints`, `compare_legal_forms`. Tools return aggregates and business items
-  only; private payments and names of private persons are never in a tool result.
+  `list_hints`, `compare_legal_forms`. Every tool has an allowlisted response
+  schema of aggregates and business item fields only (amounts, dates, categories,
+  rule ids). Names of natural persons never appear in a schema, including client
+  names from `Contact` records: contacts are referenced by an opaque id. Each tool's
+  serialized output is validated against its schema before it reaches the model, and
+  a tool without a schema and validator is not enabled. Private payments are never
+  in a tool result.
 - Suggest ideas the rule list does not cover, shown under "unverified ideas", with no
   euro figure unless a tool computed it.
 

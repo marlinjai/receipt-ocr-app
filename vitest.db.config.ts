@@ -20,6 +20,7 @@ export default defineConfig({
   },
   test: {
     include: ['src/**/*.dbtest.ts'],
+    server: { deps: { inline: ['@marlinjai/auth-brain-nextjs'] } },
     setupFiles: ['test/db-setup.ts'],
     fileParallelism: false,
     testTimeout: 30_000,

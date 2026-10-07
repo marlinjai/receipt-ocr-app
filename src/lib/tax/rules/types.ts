@@ -39,8 +39,12 @@ export const FORM_LINE_KEYS = [
   'euer.revenue_small_business',
   'euer.goods',
   'euer.external_services',
+  'euer.asset_disposal',
+  'euer.depreciation_intangible',
   'euer.depreciation_movable',
   'euer.low_value_assets',
+  'euer.pool_release',
+  'euer.remaining_book_value',
   'euer.rent_business_premises',
   'euer.telecom',
   'euer.travel_lodging',
@@ -83,6 +87,8 @@ export interface FormLine {
   /** The German label as printed on the form. */
   label: string;
   kind: 'revenue' | 'expense';
+  /** True for lines only the asset register may fill: they cannot be chosen for a receipt by hand. */
+  assetOnly?: boolean;
   /**
    * True for lines of the form that have a "not deductible" column beside the
    * deductible one (gifts, business meals).
@@ -104,4 +110,29 @@ export interface YearRules {
   formLines: readonly FormLine[];
   /** The deductible part of a business meal, in basis points. */
   mealDeductibleShareBp: Sourced<number>;
+  assets: AssetRules;
+}
+
+/** The limits and methods for assets bought in this year. All limits are NET amounts (without value-added tax). */
+export interface AssetRules {
+  /** Up to this net cost an asset may be expensed in full in the year it is bought. */
+  lowValueNetLimitCents: Sourced<number>;
+  /** Above this net cost a low-value asset has to be listed in a register. */
+  lowValueRegisterAboveNetCents: Sourced<number>;
+  /** The pool: net cost above `minExclusive` up to `max`, released in equal parts over `years`. */
+  pool: Sourced<{ minExclusiveNetCents: number; maxNetCents: number; years: number }>;
+  /**
+   * Computer hardware and software: the useful life that may be assumed, and
+   * whether the whole cost may be taken in the year of purchase instead of
+   * month by month.
+   */
+  computer: Sourced<{ usefulLifeMonths: number; fullAmountInFirstYear: boolean }>;
+  /** Declining-balance depreciation of movable assets: the purchase dates it is open for and its caps. */
+  declining: Sourced<{ acquiredFrom: string; acquiredTo: string; maxRateBp: number; maxMultipleOfLinear: number }>;
+  /**
+   * The highest standard rate of value-added tax in basis points. Used only to
+   * decide a net limit from a gross amount when the net amount is unknown: a
+   * gross amount above limit times (1 + this rate) is certainly above the limit.
+   */
+  highestVatRateBp: Sourced<number>;
 }

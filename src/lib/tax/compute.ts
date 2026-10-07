@@ -1,7 +1,10 @@
+import { assetChecks, assetSchedule, assetYearParts } from './assets';
 import { WHOLE_BP, shareOf } from './money';
-import { formLine, type ResolvedRules } from './rules';
+import { formLine, rulesForYear, type ResolvedRules } from './rules';
+import type { AssetRules } from './rules/types';
 import type { FormLineKey } from './rules/types';
 import type {
+  AssetYearResult,
   ItemPart,
   ItemResult,
   LedgerItem,
@@ -28,7 +31,11 @@ function yearOf(isoDay: string): number {
   return Number(isoDay.slice(0, 4));
 }
 
-function computeItem(item: LedgerItem): ItemResult {
+function computeItem(item: LedgerItem, assetRules: AssetRules): ItemResult {
+  // Part of an asset's cost: not an expense of its own. Whatever is missing on
+  // the receipt is reported on the asset, where it matters.
+  if (item.assetId) return { itemId: item.id, counted: true, parts: [], privateCents: 0, checks: [] };
+
   const checks: OpenCheck[] = [];
   const block = (kind: OpenCheckKind) => checks.push({ itemId: item.id, kind, blocking: true });
   const note = (kind: OpenCheckKind) => checks.push({ itemId: item.id, kind, blocking: false });
@@ -57,6 +64,19 @@ function computeItem(item: LedgerItem): ItemResult {
 
   if (businessBp > 0 && item.formLineKey === null) block('no_form_line');
   if (employmentBp > 0 && item.employmentLineKey === null) block('no_employment_line');
+
+  // A receipt on the low-value asset line must be allowed to be one: the limit
+  // is a net amount, decided from the gross amount only where that is conclusive.
+  if (item.formLineKey === 'euer.low_value_assets' && businessBp > 0 && item.amountCents !== null) {
+    const limit = assetRules.lowValueNetLimitCents.value;
+    if (item.netCents !== null && item.netCents !== undefined) {
+      if (item.netCents > limit) block('needs_asset');
+    } else if (item.amountCents > limit + shareOf(limit, assetRules.highestVatRateBp.value)) {
+      block('needs_asset');
+    } else if (item.amountCents > limit) {
+      block('net_amount_needed');
+    }
+  }
 
   const isMeal = item.formLineKey === MEAL_LINE && businessBp > 0;
   if (isMeal) {
@@ -129,7 +149,7 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
     }
     if (yearOf(item.date) !== facts.year) continue;
 
-    const result = computeItem(item);
+    const result = computeItem(item, rules.assets);
     items.push(result);
     checks.push(...result.checks);
 
@@ -146,12 +166,41 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
           cents: 0,
           nonDeductibleCents: 0,
           itemIds: [],
+          assetIds: [],
         };
         byLine.set(part.lineKey, line);
       }
       line.cents += part.cents;
       line.nonDeductibleCents += part.nonDeductibleCents;
       if (!line.itemIds.includes(item.id)) line.itemIds.push(item.id);
+    }
+  }
+
+  const assets: AssetYearResult[] = [];
+  for (const asset of facts.assets ?? []) {
+    const firstYear = asset.opening ? asset.opening.year : asset.acquisitionDate ? Number(asset.acquisitionDate.slice(0, 4)) : null;
+    // The limits and methods that apply are those of the year the asset was bought.
+    const assetRules = rulesForYear(firstYear ?? facts.year).rules.assets;
+    const found = assetChecks(asset, assetRules);
+    if (found.length > 0) {
+      // An asset without a date belongs to every year's queue, like a receipt
+      // without one; a dated asset only to its own year and the years after.
+      if (firstYear === null || firstYear <= facts.year) assets.push({ assetId: asset.id, counted: false, row: null, parts: [], checks: found });
+      continue;
+    }
+    if ((firstYear as number) > facts.year) continue;
+    const row = assetSchedule(asset, assetRules, facts.year).find((r) => r.year === facts.year) ?? null;
+    const parts = row ? assetYearParts(asset, row) : [];
+    assets.push({ assetId: asset.id, counted: true, row, parts, checks: [] });
+    for (const part of parts) {
+      let line = byLine.get(part.lineKey);
+      if (!line) {
+        const def = formLine(rules, part.lineKey);
+        line = { key: def.key, form: def.form, line: rules.formLinesVerified ? def.line : null, label: def.label, kind: def.kind, cents: 0, nonDeductibleCents: 0, itemIds: [], assetIds: [] };
+        byLine.set(part.lineKey, line);
+      }
+      line.cents += part.cents;
+      if (!line.assetIds.includes(asset.id)) line.assetIds.push(asset.id);
     }
   }
 
@@ -167,10 +216,13 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
     formLinesVerified: rules.formLinesVerified,
     lines,
     businessExpenseCents: sum('euer'),
+    businessRevenueCents: lines.filter((l) => l.form === 'euer' && l.kind === 'revenue').reduce((total, l) => total + l.cents, 0),
     employmentCostCents: sum('employment'),
     privateCents: items.reduce((total, i) => total + i.privateCents, 0),
     items,
     checks,
+    assets,
+    assetChecks: assets.flatMap((a) => a.checks),
     countedItems: items.filter((i) => i.counted).length,
     blockedItems: items.filter((i) => !i.counted).length,
   };

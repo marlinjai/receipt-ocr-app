@@ -1,4 +1,4 @@
-import { EUER_FORM_2025, FORM_LINES_2025 } from './2025';
+import { ASSET_RULES_2025, EUER_FORM_2025, FORM_LINES_2025 } from './2025';
 import type { YearRules } from './types';
 
 /**
@@ -25,4 +25,7 @@ export const RULES_2026: YearRules = {
       checkedOn: '2026-10-07',
     },
   },
+  // The asset limits and methods are unchanged for purchases of 2026 (statute
+  // text checked on the days named in the sources).
+  assets: ASSET_RULES_2025,
 };

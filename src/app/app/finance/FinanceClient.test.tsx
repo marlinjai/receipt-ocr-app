@@ -69,6 +69,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
             cents: counted.reduce((s, i) => s + i.parts.reduce((p, x) => p + x.cents, 0), 0),
             nonDeductibleCents: 0,
             itemIds: counted.map((i) => i.rowId),
+            assetIds: [],
           },
         ]
       : [],

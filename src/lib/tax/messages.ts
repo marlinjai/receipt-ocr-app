@@ -1,4 +1,5 @@
 import type { TreatmentOrigin } from './facts';
+import type { AssetCheckKind, AssetMethod, DisposalKind } from './assets';
 import type { OpenCheckKind, Purpose } from './types';
 
 /** German wording for the finance screens, in one place. */
@@ -16,6 +17,37 @@ export const CHECK_LABELS: Record<OpenCheckKind, string> = {
   regular_taxation_not_computed: 'Regelbesteuerung wird noch nicht berechnet',
   meal_incomplete: 'Bewirtung unvollständig (Teilnehmer, Anlass oder Ort fehlen)',
   meal_without_register_facts: 'Bewirtung ohne Angaben aus dem Verzeichnis',
+  needs_asset: 'Über der Grenze für geringwertige Wirtschaftsgüter: als Anlage führen',
+  net_amount_needed: 'Nettobetrag fehlt: nahe an der Grenze für geringwertige Wirtschaftsgüter',
+};
+
+export const ASSET_CHECK_LABELS: Record<AssetCheckKind, string> = {
+  asset_no_date: 'Anschaffungsdatum fehlt',
+  asset_no_cost: 'Ein zugeordneter Beleg hat keinen Betrag',
+  asset_small_business_unanswered: 'Frage zur Kleinunternehmerregelung offen',
+  asset_regular_taxation_not_computed: 'Regelbesteuerung wird noch nicht berechnet',
+  asset_net_unknown: 'Nettobetrag fehlt: die Grenze lässt sich aus dem Bruttobetrag nicht sicher entscheiden',
+  asset_low_value_over_limit: 'Über der Grenze für geringwertige Wirtschaftsgüter: andere Methode wählen',
+  asset_pool_out_of_range: 'Außerhalb der Grenzen für den Sammelposten',
+  asset_no_useful_life: 'Nutzungsdauer fehlt (mehr als ein Jahr)',
+  asset_declining_not_allowed: 'Degressive Abschreibung ist für dieses Anschaffungsdatum oder diese Art nicht zulässig',
+  asset_declining_rate_too_high: 'Satz der degressiven Abschreibung fehlt oder liegt über dem zulässigen Höchstsatz',
+  asset_opening_method: 'Übernommene Anlagen werden linear über die Restnutzungsdauer abgeschrieben',
+  asset_disposal_before_acquisition: 'Abgang liegt vor der Anschaffung',
+};
+
+export const ASSET_METHOD_LABELS: Record<AssetMethod, string> = {
+  low_value: 'Geringwertiges Wirtschaftsgut, sofort abziehen',
+  pool: 'Sammelposten, über fünf Jahre auflösen',
+  linear: 'Linear über die Nutzungsdauer',
+  computer_one_year: 'Computerhardware oder Software, ein Jahr',
+  declining: 'Degressiv (fester Satz vom Restwert)',
+};
+
+export const DISPOSAL_LABELS: Record<DisposalKind, string> = {
+  sold: 'Verkauft',
+  scrapped: 'Ausgeschieden ohne Erlös',
+  private: 'Ins Privatvermögen übernommen',
 };
 
 export const PURPOSE_LABELS: Record<Purpose, string> = {

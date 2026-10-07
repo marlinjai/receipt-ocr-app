@@ -895,6 +895,14 @@ Built as planned, with these differences and facts worth knowing:
   letter of 29 August 2025. The 2026 form (letter of 1 September 2026) and the
   employment annex are not compared yet: the app shows those lines by label and
   says the numbers are unverified. Due with slice 7.
+- **Hardware lands on the low-value asset line until slice 2.** The category
+  "Hardware & IT" defaults to line 36. A laptop or anything else above the limit
+  therefore shows there, in full, until the asset register exists or the receipt is
+  moved to the depreciation line by hand. The totals are the same either way for
+  hardware written off within one year; the line is not.
+- **The form source link is a copy.** The 2025 line numbers were read from a copy
+  of the ministry's letter on a tax site, named as such in the rule set. It is
+  replaced by the ministry's own address when the 2026 lines are compared.
 - **Rule sets hold only what slice 1 computes** (form lines, the meal percentage).
   Asset limits, the tariff and the other values enter with the slice that uses
   them, each with its source, so no unverified constant sits in the code.

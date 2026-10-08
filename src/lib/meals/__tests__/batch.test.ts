@@ -60,6 +60,17 @@ describe('batchOutcomeNotice', () => {
     expect(notice.tone).toBe('danger');
     expect(notice.text).toContain('Bei 1 Beleg ließ sich die gespeicherte Datei nicht löschen.');
     expect(notice.text).toContain('nicht gelöscht');
+    expect(notice.text).not.toContain('ausgewählt');
+  });
+
+  it('says the kept receipts stay selected only where the view has a selection', () => {
+    const notice = batchOutcomeNotice(
+      'delete',
+      result({ skipped: [{ rowId: 'b', reason: 'file_delete_failed' }] }),
+      undefined,
+      true,
+    );
+    expect(notice.text).toContain('bleibt ausgewählt');
   });
 
   it('nothing done at all is said plainly', () => {

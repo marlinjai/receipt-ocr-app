@@ -351,7 +351,9 @@ export interface DeleteReceiptsDeps {
  * succeeded: when the file store refuses, the receipt is reported as
  * `file_delete_failed` and stays complete, instead of the row vanishing while
  * its file lives on with nothing pointing at it. A retry then finds the row
- * again (and a file that is already gone counts as removed).
+ * again (and a file that is already gone counts as removed). With several
+ * files, the ones already removed before a later one failed lose their
+ * references, so the kept receipt never points at a file that no longer exists.
  *
  * A stored file that another row still references (the same upload attached
  * twice) is kept; only this row's reference to it goes with the row.
@@ -386,10 +388,12 @@ export async function deleteReceiptRows(
           })
         : [];
       const shared = new Set(sharedRefs.map((r) => r.fileId));
+      const removed: string[] = [];
       for (const fileId of fileIds) {
         if (shared.has(fileId)) continue;
         try {
           await deps.deleteStoredFile(fileId);
+          removed.push(fileId);
         } catch (e) {
           console.error('[meals] deleting a stored file failed, the receipt is kept', { rowId, fileId }, e);
           skip = { rowId, reason: 'file_delete_failed' };
@@ -397,6 +401,11 @@ export async function deleteReceiptRows(
         }
       }
       if (skip) {
+        // A deleted file cannot be brought back, so the kept receipt must not keep pointing at it:
+        // drop the references to the files that are gone, leaving only ones that still exist.
+        if (removed.length > 0) {
+          await db.dtFile.deleteMany({ where: { rowId, fileId: { in: removed } } });
+        }
         result.skipped.push(skip);
         continue;
       }

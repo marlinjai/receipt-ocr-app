@@ -64,7 +64,7 @@ export default function QueueTab({
   const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [previousGuests, setPreviousGuests] = useState<MealGuestEntry[]>([]);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
-  const actions = useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint: DISMISSED_HINT });
+  const actions = useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint: DISMISSED_HINT, hasSelection: true });
 
   const queueIds = useMemo(() => queue.map((e) => e.record.rowId), [queue]);
   // Derived on every render: an entry that left the queue can never stay checked.

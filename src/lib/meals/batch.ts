@@ -57,7 +57,13 @@ export interface MealBatchNotice {
 }
 
 /** What to tell the user after a batch, including everything that was skipped. */
-export function batchOutcomeNotice(kind: MealBatchKind, result: MealBatchResult, singleLabel?: string): MealBatchNotice {
+export function batchOutcomeNotice(
+  kind: MealBatchKind,
+  result: MealBatchResult,
+  singleLabel?: string,
+  /** Whether the view has a selection the kept receipts stay in; the register has none. */
+  hasSelection = false,
+): MealBatchNotice {
   const n = result.done.length;
   const count = (reason: MealBatchSkipReason) => result.skipped.filter((s) => s.reason === reason).length;
   const gone = count('not_found');
@@ -93,7 +99,9 @@ export function batchOutcomeNotice(kind: MealBatchKind, result: MealBatchResult,
   if (fileFailed > 0) {
     parts.push(
       `Bei ${receiptCount(fileFailed)} ließ sich die gespeicherte Datei nicht löschen. ` +
-        `${fileFailed === 1 ? 'Dieser Beleg wurde' : 'Diese Belege wurden'} deshalb nicht gelöscht und ${fileFailed === 1 ? 'bleibt' : 'bleiben'} ausgewählt. Bitte erneut versuchen.`,
+        `${fileFailed === 1 ? 'Dieser Beleg wurde' : 'Diese Belege wurden'} deshalb nicht gelöscht` +
+        (hasSelection ? ` und ${fileFailed === 1 ? 'bleibt' : 'bleiben'} ausgewählt` : '') +
+        '. Bitte erneut versuchen.',
     );
   }
   if (failed > 0) {

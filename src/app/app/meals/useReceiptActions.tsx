@@ -30,6 +30,8 @@ interface UseReceiptActionsOptions {
   onRecordsRemoved: (rowIds: string[]) => void;
   /** Where "Keine Bewirtung" receipts are found again, as it reads from this tab. */
   dismissedHint: string;
+  /** Whether this tab keeps a checkbox selection, so a notice may say kept receipts stay selected. */
+  hasSelection?: boolean;
 }
 
 const ACTIONS: Record<MealBatchKind, (rowIds: string[]) => Promise<Result<MealBatchResult>>> = {
@@ -51,7 +53,7 @@ function label(record: MealRecord): string {
  * dropped (the lock is a ref, so two clicks in the same tick cannot both
  * pass), and `busy` lets the caller disable its buttons meanwhile.
  */
-export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint }: UseReceiptActionsOptions) {
+export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint, hasSelection = false }: UseReceiptActionsOptions) {
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
   const [notice, setNotice] = useState<ActionNoticeState | null>(null);
@@ -81,7 +83,7 @@ export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedH
           if (value.records.length > 0) onRecordsSaved(value.records);
           if (gone.length > 0) onRecordsRemoved(gone);
         }
-        show(batchOutcomeNotice(kind, value, records.length === 1 ? label(records[0]) : undefined));
+        show(batchOutcomeNotice(kind, value, records.length === 1 ? label(records[0]) : undefined, hasSelection));
       } catch {
         // A thrown action: the network is down or the server unreachable. Nothing is assumed done.
         show({ tone: 'danger', text: mealActionMessage('failed') });
@@ -91,7 +93,7 @@ export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedH
         setConfirm(null);
       }
     },
-    [onRecordsSaved, onRecordsRemoved],
+    [onRecordsSaved, onRecordsRemoved, hasSelection],
   );
 
   /** "Keine Bewirtung". With `confirm`, an in-page dialog names the count first. */

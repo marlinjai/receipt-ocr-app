@@ -239,7 +239,7 @@ describe('deleting receipts', () => {
     expect(await ws.adapter.getRow(stuck)).toBeNull();
   });
 
-  it('a receipt with two files where the second cannot be deleted is kept, with its references', async () => {
+  it('a receipt with two files where the second cannot be deleted is kept, without a reference to the file already gone', async () => {
     const rowId = await ws.addReceipt(plainMealReceipt());
     const first = await attachFile(ws, imageColumnId, rowId);
     const second = await attachFile(ws, imageColumnId, rowId);
@@ -249,7 +249,13 @@ describe('deleting receipts', () => {
     expect(result.skipped).toEqual([{ rowId, reason: 'file_delete_failed' }]);
     expect(failing.deleted).toEqual([first]);
     expect(await ws.adapter.getRow(rowId)).not.toBeNull();
-    expect(await db.dtFile.count({ where: { rowId } })).toBe(2);
+    const refs = await db.dtFile.findMany({ where: { rowId }, select: { fileId: true } });
+    expect(refs.map((r) => r.fileId)).toEqual([second]);
+
+    // A retry once the file store works again deletes the remaining file and the receipt.
+    const retry = fileStore();
+    expect((await deleteReceiptRows(db, ctx, [rowId], retry.deps)).done).toEqual([rowId]);
+    expect(retry.deleted).toEqual([second]);
   });
 
   it('a stored file another receipt still uses is kept; it goes with the last receipt that uses it', async () => {

@@ -54,14 +54,15 @@ export class MealServiceError extends Error {
   }
 }
 
-interface TableContext {
+export interface TableContext {
   adapter: PrismaAdapter;
   tableId: string;
   columns: Column[];
   selectOptions: SelectOptionsByColumn;
 }
 
-async function tableContext(db: PrismaClient, workspaceId: string): Promise<TableContext | null> {
+/** The workspace's Receipts table with its columns and select options, or null before the first dashboard visit. */
+export async function tableContext(db: PrismaClient, workspaceId: string): Promise<TableContext | null> {
   const adapter = new PrismaAdapter({ prisma: db });
   const tables = await adapter.listTables(workspaceId);
   const table = tables.find((t) => t.name === TABLE_NAME);
@@ -78,7 +79,7 @@ async function tableContext(db: PrismaClient, workspaceId: string): Promise<Tabl
   return { adapter, tableId: table.id, columns, selectOptions };
 }
 
-async function allRows(adapter: PrismaAdapter, tableId: string): Promise<Row[]> {
+export async function allRows(adapter: PrismaAdapter, tableId: string): Promise<Row[]> {
   const out: Row[] = [];
   let offset = 0;
   const limit = 500;
@@ -91,7 +92,7 @@ async function allRows(adapter: PrismaAdapter, tableId: string): Promise<Row[]> 
   return out;
 }
 
-async function guestsByRow(
+export async function guestsByRow(
   db: PrismaClient,
   workspaceId: string,
   rowIds: string[],
@@ -452,6 +453,10 @@ export async function deleteReceiptRows(
       }
 
       await ctx.adapter.deleteRow(rowId);
+      // TaxItemDecision.rowId has no foreign key, and a retry cannot find the deleted row again, so
+      // this runs before the guest cleanup: a guest failure must not orphan the decisions.
+      // Same cleanup as the other deletion paths (tax/service imports this module, so no helper import).
+      await db.taxItemDecision.deleteMany({ where: { rowId } });
       await deleteGuestsForRows(db, [rowId]);
       result.done.push(rowId);
     } catch (e) {

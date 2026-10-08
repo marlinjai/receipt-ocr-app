@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Finance area at `/app/finance`: the income-surplus statement (Einnahmenüberschussrechnung, EÜR) computed from the receipts, line by line with the receipts behind each line; a queue of open checks for receipts that still need a decision; a list of vendor rules
+- Shares for several purposes per receipt (for example 50 percent business plus 30 percent study), decided per receipt or once per vendor from a date on; the business part goes to the statement, the study and employment part to the employment annex (migration `0009_tax_decisions`: `tax_item_decisions`, `tax_vendor_rules`)
+- Tax module `src/lib/tax`: one `computeYear` over integer cents, rule sets per year with a source and check date for every legal value; form lines of 2025 read off the official form
 - Business-meal register (Bewirtungsverzeichnis) at `/app/meals`: meal type, guests from a contact list, occasion, place, tip and host per receipt; completeness and the 70 percent deductible amount derived on read; a queue of incomplete meals; a per-year register with export as CSV (comma-separated values) and PDF (Portable Document Format, summary plus one sheet per meal with the receipt and a signature line)
 - One question per workspace decides the base of the 70 percent: small business under section 19 of the value-added tax act (gross) or not (net); no amounts or exports until it is answered
 - Contact list behind a `ContactStore` interface (migration `0008_meal_register`: `contacts`, `meal_guests`, `workspace_tax_settings`)
@@ -24,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- A newly created Receipts table carries its company id from the first moment instead of waiting for the backfill script
 - A failed text recognition no longer loses the upload: the receipt is saved without text, flagged, for a retake or manual entry
 - Supermarket receipts are no longer filed as "Bewirtung" by the fallback rules; the default tax rate for a meal follows the receipt date (19 percent until the end of 2025, 7 percent from 2026)
 

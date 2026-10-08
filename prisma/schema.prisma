@@ -293,3 +293,52 @@ model WorkspaceTaxSettings {
 
   @@map("workspace_tax_settings")
 }
+
+// ── Finance and tax dashboard ────────────────────────────────────────────────
+//
+// What a person DECIDED about how an item is treated for tax. Only decisions
+// are stored; every figure (deductible amount, line totals) is computed on
+// read from the receipt row, these decisions and the year's rule set
+// (src/lib/tax), so it cannot go stale.
+
+// How a vendor is treated by default: who bears its invoices (allocations, a
+// JSON list of { purpose, shareBp } in basis points) and which form lines they
+// go to. Entries are dated: `effectiveFrom` is an ISO day, or '' for "from the
+// beginning" (a string, not a nullable date, so the uniqueness below holds).
+// An item follows the latest entry on or before its own date. A changed
+// treatment is a NEW entry from a date; an entry is only rewritten to correct
+// a mistake in that same entry.
+model TaxVendorRule {
+  id                String   @id @default(uuid())
+  authWorkspaceId   String   @map("auth_workspace_id")
+  authTenantId      String?  @map("auth_tenant_id")
+  vendorKey         String   @map("vendor_key")
+  vendorLabel       String   @map("vendor_label")
+  effectiveFrom     String   @default("") @map("effective_from")
+  allocations       Json
+  formLineKey       String?  @map("form_line_key")
+  employmentLineKey String?  @map("employment_line_key")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, vendorKey, effectiveFrom])
+  @@map("tax_vendor_rules")
+}
+
+// A decision for ONE receipt row that overrides the vendor rule. `rowId` has
+// no foreign key for the same reason as meal_guests.row_id; the row delete
+// paths remove the decision in code.
+model TaxItemDecision {
+  id                String   @id @default(uuid())
+  authWorkspaceId   String   @map("auth_workspace_id")
+  authTenantId      String?  @map("auth_tenant_id")
+  rowId             String   @unique @map("row_id")
+  allocations       Json
+  formLineKey       String?  @map("form_line_key")
+  employmentLineKey String?  @map("employment_line_key")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([authWorkspaceId])
+  @@map("tax_item_decisions")
+}

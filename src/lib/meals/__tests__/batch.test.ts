@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MEAL_BATCH_MAX, batchOutcomeNotice, normalizeRowIds, type MealBatchResult } from '../batch';
+import { missingList, missingSummary } from '../messages';
 
 function result(overrides: Partial<MealBatchResult> = {}): MealBatchResult {
   return { done: [], records: [], skipped: [], ...overrides };
@@ -36,6 +37,7 @@ describe('batchOutcomeNotice', () => {
     expect(many.tone).toBe('ok');
     expect(many.text).toContain('2 Belege werden nicht mehr als Bewirtung geführt.');
     expect(many.text).toContain('unter „Keine Bewirtung“');
+    expect(many.text).toContain('bleiben im Dashboard');
     expect(many.text).toContain('wieder aufnehmen');
     const one = batchOutcomeNotice('not_meal', result({ done: ['a'] }), 'Testlokal');
     expect(one.text).toContain('„Testlokal“ wird nicht mehr als Bewirtung geführt.');
@@ -84,5 +86,18 @@ describe('batchOutcomeNotice', () => {
     expect(batchOutcomeNotice('restore', result({ done: ['a'] }), 'Testlokal').text).toBe(
       '„Testlokal“ wird wieder als Bewirtung geführt, mit den zuvor erfassten Angaben.',
     );
+  });
+});
+
+describe('missingSummary', () => {
+  it('names up to two missing facts, beyond that their number', () => {
+    expect(missingSummary(['guests'])).toBe('fehlt: Teilnehmer');
+    expect(missingSummary(['occasion', 'guests'])).toBe('fehlt: Anlass, Teilnehmer');
+    expect(missingSummary(['mealType', 'place', 'occasion', 'host', 'guests'])).toBe('5 Angaben fehlen');
+    expect(missingSummary([])).toBe('vollständig');
+  });
+
+  it('the full list names every fact', () => {
+    expect(missingList(['mealType', 'place', 'guests'])).toBe('Art der Bewirtung, Ort, Teilnehmer');
   });
 });

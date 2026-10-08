@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -22,6 +23,10 @@ const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select
  * The app's in-page confirmation dialog (never the browser's own
  * confirm/alert). Modal: focus moves in and is kept in, Escape and a click on
  * the backdrop cancel, and focus returns to where it was when it closes.
+ *
+ * Rendered into the document body: a page section with its own stacking
+ * order (the app's `main` has one) would otherwise keep the dialog below
+ * anything that floats above the page, such as the batch bar in the dock.
  */
 export default function ConfirmDialog({
   open,
@@ -78,9 +83,9 @@ export default function ConfirmDialog({
     };
   }, [open]);
 
-  if (!open) return null;
+  if (!open || typeof document === 'undefined') return null;
 
-  return (
+  return createPortal(
     <div
       className="ui-dialog-backdrop fixed inset-0 z-[70] flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm sm:items-center"
       onMouseDown={(e) => {
@@ -116,6 +121,7 @@ export default function ConfirmDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

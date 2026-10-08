@@ -3,12 +3,19 @@
 import { useMemo, useState } from 'react';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatGuest } from '@/lib/contacts/store';
-import { DISMISSED_HINT, EXCLUSION_LABELS, formatDay, formatEuro, mealActionMessage } from '@/lib/meals/messages';
+import {
+  DISMISSED_HINT,
+  EXCLUSION_LABELS,
+  formatDay,
+  formatEuro,
+  mealActionMessage,
+  missingList,
+  missingSummary,
+} from '@/lib/meals/messages';
 import { buildRegister, registerYears } from '@/lib/meals/register';
-import { MISSING_FIELD_LABELS } from '@/lib/meals/rules';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { saveMealTaxSettings } from './actions';
-import { ActionNotice, useReceiptActions } from './useReceiptActions';
+import { useReceiptActions } from './useReceiptActions';
 
 interface RegisterTabProps {
   records: MealRecord[];
@@ -234,8 +241,6 @@ export default function RegisterTab({
         </div>
       )}
 
-      <ActionNotice notice={actions.notice} />
-
       {register.entries.length === 0 ? (
         <div className="glass-panel rounded-xl p-8 text-center text-sm" style={{ color: 'var(--muted)' }}>
           Für {activeYear} gibt es noch keine vollständige Bewirtung.
@@ -280,11 +285,11 @@ export default function RegisterTab({
                   <td className="whitespace-nowrap px-3 py-2.5 text-right font-medium tabular-nums">{formatEuro(deduction?.deductible)}</td>
                   <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums">{formatEuro(deduction?.nonDeductible)}</td>
                   <td className="px-3 py-2">
-                    <div className="flex justify-end gap-1.5">
+                    <div className="flex justify-end gap-0.5">
                       {/* A complete entry carries tax weight: taking it out of the register always asks first. */}
                       <button
                         type="button"
-                        className="ui-btn ui-btn-sm whitespace-nowrap"
+                        className="ui-btn ui-btn-sm ui-btn-ghost whitespace-nowrap"
                         disabled={actions.busy}
                         aria-label={`Keine Bewirtung: Nr. ${no}, ${record.place}, ${formatDay(record.date)}`}
                         onClick={() => actions.markNotMeal([record], { confirm: true })}
@@ -293,7 +298,7 @@ export default function RegisterTab({
                       </button>
                       <button
                         type="button"
-                        className="ui-btn ui-btn-sm ui-btn-danger"
+                        className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-danger"
                         disabled={actions.busy}
                         aria-label={`Löschen: Nr. ${no}, ${record.place}, ${formatDay(record.date)}`}
                         onClick={() => actions.requestDelete([record])}
@@ -342,7 +347,10 @@ export default function RegisterTab({
                 <span>
                   {formatDay(record.date)} · {record.vendor || record.name || 'Beleg'}
                 </span>
-                <span style={{ color: 'var(--muted)' }}>fehlt: {missing.map((m) => MISSING_FIELD_LABELS[m]).join(', ')}</span>
+                <span style={{ color: 'var(--muted)' }} title={`fehlt: ${missingList(missing)}`}>
+                  {missingSummary(missing)}
+                  <span className="sr-only">: {missingList(missing)}</span>
+                </span>
               </li>
             ))}
           </ul>
@@ -387,7 +395,7 @@ export default function RegisterTab({
           </p>
         )}
       </ConfirmDialog>
-      {actions.dialogs}
+      {actions.overlays}
     </div>
   );
 }

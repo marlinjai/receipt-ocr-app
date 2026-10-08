@@ -453,6 +453,37 @@ page.
 - **Not verified by a machine:** the page in a real browser at phone width, and a
   delete against the real file store.
 
+## Reality after the visual polish (2026-10-08)
+
+The owner's review of the batch actions: the checkbox was ugly, ticking one moved the
+list, the scroll bars were ugly, the page read as unprofessional.
+
+- **What caused it.** The check box was the browser's own. The batch bar was part of
+  the page flow and pushed the list down by 126 pixels when it appeared. The app never
+  declared its dark colour scheme, so browsers drew light scroll bars and light native
+  controls on a black page. Screen-reader-only labels inside the scrolling list were
+  positioned against the page and made the document about 1000 pixels taller than its
+  content, which gave the page a scroll bar with nothing to scroll to.
+- **Checkbox.** `src/components/ui/Checkbox.tsx`: a real input stretched invisibly over
+  a 40 pixel hit area with a drawn box beside it, brushed gold when checked, the mark
+  drawn in 140 milliseconds, a mixed state for "Alle auswählen".
+- **Nothing moves on selection.** The batch bar and the outcome of an action are
+  rendered into a dock fixed to the bottom edge (`src/components/ui/Dock.tsx`); a
+  notice without a failure leaves after 8 seconds, a failure stays until closed. Queue
+  rows are a fixed two-line grid; opening or checking one changes colours only.
+  Measured in a headless browser at 1440 and 390 pixels width: 0 pixels shift of the
+  first three rows, the list and the form after checking one entry, all entries, and
+  unchecking.
+- **Scroll bars.** App-wide in `src/app/globals.css`: `color-scheme: dark`, thin scroll
+  bars without a track, gold under the pointer in lists, room reserved where a scroll
+  bar appearing would shift content.
+- **The confirmation dialog** is rendered into the document body. Inside the page's
+  own stacking order it ended up underneath the floating bar on a phone.
+- **Kept on purpose:** the queue list still scrolls on its own (capped height on a
+  phone, sticky beside the form on a desktop), because with 17 entries the form would
+  otherwise sit far below the list. The dashboard table (blue accents, the table
+  package's own check boxes) is another page and was not restyled.
+
 ## Decisions (2026-10-06)
 
 Approved by the owner on 2026-10-06, all six slices to be built.

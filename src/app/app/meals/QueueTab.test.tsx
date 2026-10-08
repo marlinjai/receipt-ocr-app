@@ -79,14 +79,15 @@ describe('QueueTab: selection', () => {
 
     await user.click(box('Lokal A, 10.01.2025 auswählen'));
     const bar = screen.getByRole('group', { name: 'Aktionen für die Auswahl' });
-    expect(within(bar).getByText('1 von 3 ausgewählt')).toBeTruthy();
+    expect(bar.textContent).toContain('1von 3ausgewählt');
+    expect(screen.getByText('1 von 3 ausgewählt')).toBeTruthy();
     expect(within(bar).getByRole('button', { name: 'Keine Bewirtung' })).toBeTruthy();
     expect(within(bar).getByRole('button', { name: 'Löschen' })).toBeTruthy();
     // Announced through a live region that is in the page before the change.
     expect(screen.getByText(/1 Beleg ausgewählt\. Sammelaktionen/).getAttribute('role')).toBe('status');
 
     await user.click(box('Lokal C, 10.03.2025 auswählen'));
-    expect(within(bar).getByText('2 von 3 ausgewählt')).toBeTruthy();
+    expect(screen.getByText('2 von 3 ausgewählt')).toBeTruthy();
 
     await user.click(within(bar).getByRole('button', { name: 'Auswahl aufheben' }));
     expect(screen.queryByRole('group', { name: 'Aktionen für die Auswahl' })).toBeNull();
@@ -120,6 +121,55 @@ describe('QueueTab: selection', () => {
     await user.keyboard(' ');
     expect(second.checked).toBe(true);
     expect(screen.getByTestId('form').textContent).toBe('a');
+  });
+});
+
+describe('QueueTab: nothing moves when an entry is checked', () => {
+  it('the batch bar and the outcome notice are rendered into the dock, outside the list and the page flow', async () => {
+    const user = userEvent.setup();
+    markMealsNotMeal.mockResolvedValue(ok({ done: ['b'], records: [{ ...THREE[1], mealType: 'not_a_meal' }] }));
+    const { container } = render(<Harness initial={THREE} />);
+    await user.click(box('Lokal A, 10.01.2025 auswählen'));
+    const bar = screen.getByRole('group', { name: 'Aktionen für die Auswahl' });
+    const dock = document.getElementById('ui-dock')!;
+    expect(dock.contains(bar)).toBe(true);
+    expect(container.contains(bar)).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'Keine Bewirtung: Lokal B, 10.02.2025' }));
+    const notice = await screen.findByText(/„Lokal B“ wird nicht mehr/);
+    expect(dock.contains(notice)).toBe(true);
+    expect(container.contains(notice)).toBe(false);
+  });
+
+  it('checking an entry changes nothing in the list but the state of that row', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<Harness initial={THREE} />);
+    const snapshot = () =>
+      [...container.querySelectorAll('nav li')].map((li) => ({
+        children: li.children.length,
+        classes: li.className,
+        text: li.textContent,
+        buttons: li.querySelectorAll('button').length,
+      }));
+    const toolbarChildren = () => container.querySelector('nav')!.parentElement!.children.length;
+    const before = snapshot();
+    const columnBefore = toolbarChildren();
+
+    await user.click(box('Lokal A, 10.01.2025 auswählen'));
+    expect(snapshot()).toEqual(before);
+    expect(toolbarChildren()).toBe(columnBefore);
+    expect(container.querySelector('nav li')!.getAttribute('data-checked')).toBe('true');
+
+    await user.click(box('Alle auswählen'));
+    expect(snapshot()).toEqual(before);
+    expect(toolbarChildren()).toBe(columnBefore);
+  });
+
+  it('a row says how much is missing in a few words and keeps the full list for screen readers and the tooltip', () => {
+    render(<Harness initial={[open('a', 'Lokal A', '2025-01-10'), { ...open('b', 'Lokal B', '2025-02-10'), occasion: 'Abstimmung Relaunch' }]} />);
+    const rows = screen.getAllByRole('listitem');
+    expect(rows[0].textContent).toContain('fehlt: Anlass, Teilnehmer');
+    expect(rows[1].textContent).toContain('fehlt: Teilnehmer');
   });
 });
 
@@ -178,6 +228,8 @@ describe('QueueTab: batch delete', () => {
     expect(deleteMealReceipts).not.toHaveBeenCalled();
     // The safe choice has the focus, so Enter does not delete by accident.
     expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Abbrechen' }));
+    // The destructive button looks destructive at rest, not only under the pointer.
+    expect(within(dialog).getByRole('button', { name: '3 Belege löschen' }).className).toContain('ui-btn-danger');
 
     await user.click(within(dialog).getByRole('button', { name: '3 Belege löschen' }));
     await waitFor(() => expect(screen.getByText('Keine offenen Bewirtungen.')).toBeTruthy());

@@ -484,6 +484,14 @@ textarea.ui-input {
   z-index: 1;
 }
 
+/* A strip that scrolls sideways by swipe or wheel (the tab bar on a narrow phone) without drawing a bar under it. */
+.ui-scroll-bare {
+  scrollbar-width: none;
+}
+.ui-scroll-bare::-webkit-scrollbar {
+  display: none;
+}
+
 /* A scrolling list: keeps room for its scroll bar and does not pull the page along at its ends. */
 .ui-scroll {
   overflow-y: auto;

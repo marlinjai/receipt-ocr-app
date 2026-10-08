@@ -1,12 +1,11 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 const DOCK_ID = 'ui-dock';
 
-function dockHost(): HTMLElement | null {
-  if (typeof document === 'undefined') return null;
+function dockHost(): HTMLElement {
   let host = document.getElementById(DOCK_ID);
   if (!host) {
     host = document.createElement('div');
@@ -24,10 +23,16 @@ function dockHost(): HTMLElement | null {
  * and several pieces from different parts of the page stack instead of
  * covering each other.
  *
- * Only ever rendered in response to something the user did, so it has no
- * server-rendered counterpart to match.
+ * The host element is looked up (or created once) after mount, never during
+ * render. Children therefore mount one frame later, already inside the dock,
+ * so an effect of theirs can rely on their elements being in the document.
  */
 export default function Dock({ children }: { children: ReactNode }) {
-  const host = dockHost();
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    // The dock element is an external system this component synchronizes with.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHost(dockHost());
+  }, []);
   return host ? createPortal(children, host) : null;
 }

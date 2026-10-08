@@ -93,7 +93,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
           </div>
         </div>
 
-        <div role="tablist" aria-label="Bereiche des Bewirtungsverzeichnisses" className="mt-6 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style={{ borderColor: 'var(--border)' }}>
+        <div role="tablist" aria-label="Bereiche des Bewirtungsverzeichnisses" className="ui-scroll-bare mt-6 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style={{ borderColor: 'var(--border)' }}>
           {tabs.map((t) => (
             <button
               key={t.key}

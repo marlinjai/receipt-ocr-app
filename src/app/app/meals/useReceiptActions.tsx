@@ -185,7 +185,16 @@ const NOTICE_LIFETIME_MS = 8000;
  * failure is announced as an alert and stays until it is closed. Anything
  * else leaves on its own, but never while the focus is still on it.
  */
-export function ActionNotice({ notice, onDismiss }: { notice: ActionNoticeState; onDismiss: () => void }) {
+export function ActionNotice(props: { notice: ActionNoticeState; onDismiss: () => void }) {
+  return (
+    <Dock>
+      <NoticeCard {...props} />
+    </Dock>
+  );
+}
+
+/** Mounts only once it is inside the dock, so its focus effect finds its element in the document. */
+function NoticeCard({ notice, onDismiss }: { notice: ActionNoticeState; onDismiss: () => void }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLParagraphElement>(null);
   const expired = useRef(false);
@@ -204,29 +213,27 @@ export function ActionNotice({ notice, onDismiss }: { notice: ActionNoticeState;
   }, [notice.tone, onDismiss]);
 
   return (
-    <Dock>
-      <div
-        ref={cardRef}
-        className="ui-dock-card ui-dock-notice flex items-start gap-2 py-2.5 pl-4 pr-2"
-        data-tone={notice.tone}
-        onBlur={(e) => {
-          if (expired.current && !cardRef.current?.contains(e.relatedTarget as Node | null)) onDismiss();
-        }}
+    <div
+      ref={cardRef}
+      className="ui-dock-card ui-dock-notice flex items-start gap-2 py-2.5 pl-4 pr-2"
+      data-tone={notice.tone}
+      onBlur={(e) => {
+        if (expired.current && !cardRef.current?.contains(e.relatedTarget as Node | null)) onDismiss();
+      }}
+    >
+      <p
+        ref={textRef}
+        tabIndex={-1}
+        role={notice.tone === 'danger' ? 'alert' : 'status'}
+        className="min-w-0 flex-1 py-1 text-sm leading-relaxed outline-none"
       >
-        <p
-          ref={textRef}
-          tabIndex={-1}
-          role={notice.tone === 'danger' ? 'alert' : 'status'}
-          className="min-w-0 flex-1 py-1 text-sm leading-relaxed outline-none"
-        >
-          {notice.text}
-        </p>
-        <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon shrink-0" aria-label="Hinweis schließen" onClick={onDismiss}>
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
-            <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        </button>
-      </div>
-    </Dock>
+        {notice.text}
+      </p>
+      <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon shrink-0" aria-label="Hinweis schließen" onClick={onDismiss}>
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+          <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </button>
+    </div>
   );
 }

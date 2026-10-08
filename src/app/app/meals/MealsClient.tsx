@@ -4,9 +4,11 @@ import { useCallback, useId, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Contact } from '@/lib/contacts/store';
 import { incompleteQueue } from '@/lib/meals/register';
+import { isDismissedMeal } from '@/lib/meals/rules';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import type { MealsPageData } from './actions';
 import ContactsTab from './ContactsTab';
+import DismissedMeals from './DismissedMeals';
 import QueueTab from './QueueTab';
 import RegisterTab from './RegisterTab';
 
@@ -18,13 +20,27 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
   const [contacts, setContacts] = useState<Contact[]>(initial.contacts);
   const [settings, setSettings] = useState<MealTaxSettings>(initial.settings);
   const [defaultHost, setDefaultHost] = useState(initial.defaultHost);
-  const [tab, setTab] = useState<TabKey>(() => (incompleteQueue(initial.records).length > 0 ? 'queue' : 'register'));
+  const [tab, setTab] = useState<TabKey>(() => (incompleteQueue(initial.records.filter((r) => !isDismissedMeal(r))).length > 0 ? 'queue' : 'register'));
 
-  const queue = useMemo(() => incompleteQueue(records), [records]);
+  // `records` also holds the receipts marked "Keine Bewirtung"; they are listed
+  // on their own and never reach the queue, the register or the year picker.
+  const mealRecords = useMemo(() => records.filter((r) => !isDismissedMeal(r)), [records]);
+  const dismissed = useMemo(() => records.filter(isDismissedMeal), [records]);
+  const queue = useMemo(() => incompleteQueue(mealRecords), [mealRecords]);
 
   const onRecordSaved = useCallback((record: MealRecord) => {
     setRecords((list) => list.map((r) => (r.rowId === record.rowId ? record : r)));
     if (record.host.trim()) setDefaultHost(record.host.trim());
+  }, []);
+
+  const onRecordsSaved = useCallback((saved: MealRecord[]) => {
+    const byId = new Map(saved.map((r) => [r.rowId, r]));
+    setRecords((list) => list.map((r) => byId.get(r.rowId) ?? r));
+  }, []);
+
+  const onRecordsRemoved = useCallback((rowIds: string[]) => {
+    const gone = new Set(rowIds);
+    setRecords((list) => list.filter((r) => !gone.has(r.rowId)));
   }, []);
 
   const onContactUpserted = useCallback((contact: Contact) => {
@@ -114,20 +130,28 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
               settings={settings}
               defaultHost={defaultHost}
               onRecordSaved={onRecordSaved}
+              onRecordsSaved={onRecordsSaved}
+              onRecordsRemoved={onRecordsRemoved}
               onContactCreated={onContactUpserted}
               onOpenRegister={() => setTab('register')}
             />
           )}
           {tab === 'register' && (
             <RegisterTab
-              records={records}
+              records={mealRecords}
               settings={settings}
               onSettingsChanged={setSettings}
+              onRecordsSaved={onRecordsSaved}
+              onRecordsRemoved={onRecordsRemoved}
               onOpenQueue={() => setTab('queue')}
             />
           )}
           {tab === 'contacts' && <ContactsTab contacts={contacts} onContactChanged={onContactUpserted} />}
         </div>
+
+        {tab !== 'contacts' && (
+          <DismissedMeals records={dismissed} onRecordsSaved={onRecordsSaved} onRecordsRemoved={onRecordsRemoved} />
+        )}
       </div>
     </main>
   );

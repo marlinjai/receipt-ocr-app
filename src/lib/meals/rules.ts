@@ -124,6 +124,15 @@ export function isMealRelated(record: MealRecord): boolean {
   return mealStatus(record).kind !== 'not_a_meal';
 }
 
+/**
+ * True for a "Bewirtung" receipt that was explicitly marked "Keine Bewirtung".
+ * It is out of the queue and the register, its details stay stored, and the
+ * meals page lists it so it can be taken back.
+ */
+export function isDismissedMeal(record: MealRecord): boolean {
+  return record.category === MEAL_CATEGORY && record.mealType === 'not_a_meal';
+}
+
 // ── Money ───────────────────────────────────────────────────────────────────
 
 /** Round half away from zero to whole cents. */

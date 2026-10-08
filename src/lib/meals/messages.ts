@@ -26,6 +26,10 @@ export function mealActionMessage(error: string, detail?: string): string {
   }
 }
 
+/** Where a receipt marked "Keine Bewirtung" is found again; shown in the confirmation before it is marked. */
+export const DISMISSED_HINT =
+  'Die Belege stehen danach unten auf dieser Seite unter „Keine Bewirtung“ und lassen sich dort mit einem Klick wieder aufnehmen.';
+
 export const EXCLUSION_LABELS: Record<ExclusionReason, string> = {
   private: 'Privat zugeordnet',
   staff_meal_internal: 'Mitarbeiterbewirtung',

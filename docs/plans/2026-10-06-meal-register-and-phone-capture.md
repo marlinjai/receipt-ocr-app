@@ -415,6 +415,44 @@ Built as planned, with these differences and facts worth knowing:
   reverted on its own. The owner uses an iPhone, where it has no effect; whether to
   keep it is his call.
 
+## Reality after the batch actions (2026-10-08)
+
+Asked for by the owner after the first real use, with 17 entries in the queue: take
+receipts that were never a business meal out in one go, and delete receipts from the
+page.
+
+- **Queue.** Every entry has a checkbox, there is "Alle auswählen", and a bar with
+  the count appears once something is checked. The checked entries and the opened
+  entry (the form) are two separate things. Selection logic is pure
+  (`src/lib/meals/selection.ts`) and is cut down to the entries still in the list on
+  every render, so an entry that left the queue cannot be hit by the next batch.
+- **"Keine Bewirtung" for many.** `setMealTypeForRows` in `src/lib/meals/service.ts`
+  writes through the same routine as the form save, so the stored state is identical
+  to choosing the option in the form: the receipt stays in the books, guests,
+  occasion and place stay stored. **Where they are found again:** the meals page
+  lists them under "Keine Bewirtung" below the queue and the register, and
+  "Wieder aufnehmen" sets the meal type back to an external business meal. The entry
+  then returns to the register or the queue exactly as its details stand. The earlier
+  meal type itself is not remembered: a receipt that had no type yet comes back as an
+  external business meal with its other facts still missing.
+- **Delete.** `deleteReceiptRows` removes the stored file first and the row (with its
+  file references, selections and guests) only after that succeeded. When the file
+  store refuses, the receipt stays complete and is reported, so a row never vanishes
+  while its file lives on unreferenced. A file that another row still references is
+  kept. The dashboard's own delete still leaves the stored file behind (see the
+  roadmap).
+- **One receipt at a time without the form.** Both actions sit on every queue entry
+  and every register entry. On a queue entry "Keine Bewirtung" acts at once and the
+  notice says where the receipt went; on a register entry it asks first, because a
+  complete entry carries tax weight. Deleting always asks, names the count and says
+  it cannot be undone.
+- **A batch never stops at one receipt.** A receipt deleted in another tab and a
+  receipt of another workspace are the same to the server (not in this workspace's
+  table): skipped, reported, the rest carried out. At most 200 receipts per request.
+- **No migration.** Everything is existing cells and existing tables.
+- **Not verified by a machine:** the page in a real browser at phone width, and a
+  delete against the real file store.
+
 ## Decisions (2026-10-06)
 
 Approved by the owner on 2026-10-06, all six slices to be built.

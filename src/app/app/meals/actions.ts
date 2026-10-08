@@ -4,11 +4,14 @@ import type { AppSession } from '@marlinjai/auth-brain-nextjs';
 import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession, requireRowAccess } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
+import { FileNotFoundError } from '@marlinjai/storage-brain-sdk';
 import { ContactError, type Contact, type ContactInput } from '@/lib/contacts/store';
+import { normalizeRowIds, type MealBatchResult } from '@/lib/meals/batch';
 import { MealInputError, type MealDetailsInput } from '@/lib/meals/input';
 import {
   MealServiceError,
   contactStore,
+  deleteReceiptRows,
   getTaxSettings,
   TaxSettingsError,
   lastUsedHost,
@@ -17,11 +20,13 @@ import {
   loadMealRecords,
   saveMealDetails,
   saveTaxSettings,
+  setMealTypeForRows,
   type MealContext,
   type TaxSettingsInput,
 } from '@/lib/meals/service';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { prisma } from '@/lib/prisma';
+import { getStorageClient } from '@/lib/storage';
 
 /**
  * Server actions of the meal register.
@@ -85,6 +90,7 @@ async function writeContext(): Promise<MealContext> {
 }
 
 export interface MealsPageData {
+  /** Register entries, incomplete meals, separately counted meals, and the receipts marked "Keine Bewirtung". */
   records: MealRecord[];
   contacts: Contact[];
   settings: MealTaxSettings;
@@ -97,7 +103,7 @@ export async function getMealsPageData(): Promise<Result<MealsPageData>> {
     const session = await requireReceiptsSession();
     const workspaceId = readContext(session);
     const [records, contacts, settings] = await Promise.all([
-      loadMealRecords(prisma, workspaceId),
+      loadMealRecords(prisma, workspaceId, { includeDismissed: true }),
       contactStore(prisma, { workspaceId, tenantId: null }).list({ includeArchived: true }),
       getTaxSettings(prisma, workspaceId),
     ]);
@@ -143,6 +149,51 @@ export async function saveMeal(
   } catch (e) {
     return failure(e);
   }
+}
+
+/**
+ * The three list actions. Each takes row ids from the browser, cleans them,
+ * and works only inside the ACTIVE workspace's Receipts table: an id of
+ * another workspace is reported back as skipped, never touched. One receipt
+ * that cannot be handled does not stop the others; the result names each.
+ */
+async function runBatch(
+  rawRowIds: unknown,
+  run: (ctx: MealContext, rowIds: string[]) => Promise<MealBatchResult>,
+): Promise<Result<MealBatchResult>> {
+  try {
+    const rowIds = normalizeRowIds(rawRowIds);
+    if (!rowIds) return { ok: false, error: 'invalid_input', detail: 'row_ids' };
+    const ctx = await writeContext();
+    return { ok: true, value: await run(ctx, rowIds) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** "Keine Bewirtung" for several receipts: the same state the form's option sets, details kept. */
+export async function markMealsNotMeal(rowIds: string[]): Promise<Result<MealBatchResult>> {
+  return runBatch(rowIds, (ctx, ids) => setMealTypeForRows(prisma, ctx, ids, 'not_a_meal'));
+}
+
+/** Take receipts marked "Keine Bewirtung" back as business meals, with the details they had. */
+export async function restoreMeals(rowIds: string[]): Promise<Result<MealBatchResult>> {
+  return runBatch(rowIds, (ctx, ids) => setMealTypeForRows(prisma, ctx, ids, 'business_meal_external'));
+}
+
+/** Remove one object from the file store. Already gone counts as removed; anything else rejects. */
+async function deleteStoredFile(fileId: string): Promise<void> {
+  try {
+    await getStorageClient().deleteFile(fileId);
+  } catch (e) {
+    if (e instanceof FileNotFoundError || (e as { statusCode?: number })?.statusCode === 404) return;
+    throw e;
+  }
+}
+
+/** Delete receipts for good: stored file, row and meal guests. Cannot be undone. */
+export async function deleteMealReceipts(rowIds: string[]): Promise<Result<MealBatchResult>> {
+  return runBatch(rowIds, (ctx, ids) => deleteReceiptRows(prisma, ctx, ids, { deleteStoredFile }));
 }
 
 export async function createContact(input: ContactInput): Promise<Result<Contact>> {

@@ -9,9 +9,11 @@ import {
   consumptionLabel,
   mealTypeLabel,
 } from '@/lib/receipts-constants';
+import type { MealTypeKey } from '@/lib/receipts-constants';
+import type { MealBatchResult, MealBatchSkip } from './batch';
 import { inputFromRecord, normalizeMealInput, sameMealInput, type MealDetailsInput } from './input';
 import { rowToMealRecord, type SelectOptionsByColumn } from './record';
-import { isMealRelated, serializeTaxLines } from './rules';
+import { isDismissedMeal, isMealRelated, serializeTaxLines } from './rules';
 import { DEFAULT_TAX_SETTINGS, type MealGuestEntry, type MealRecord, type MealTaxSettings } from './types';
 
 /**
@@ -114,8 +116,16 @@ export function contactStore(db: PrismaClient, ctx: MealContext): ContactStore {
  * Every row of the workspace that has anything to do with the register: the
  * register entries, the incomplete ones, and the meals recorded separately.
  * Rows of other categories are left out.
+ *
+ * `includeDismissed` adds the "Bewirtung" receipts marked "Keine Bewirtung",
+ * which the meals page lists so they can be taken back. The register, its
+ * exports and the open count never ask for them.
  */
-export async function loadMealRecords(db: PrismaClient, workspaceId: string): Promise<MealRecord[]> {
+export async function loadMealRecords(
+  db: PrismaClient,
+  workspaceId: string,
+  options: { includeDismissed?: boolean } = {},
+): Promise<MealRecord[]> {
   const ctx = await tableContext(db, workspaceId);
   if (!ctx) return [];
   const rows = await allRows(ctx.adapter, ctx.tableId);
@@ -123,7 +133,7 @@ export async function loadMealRecords(db: PrismaClient, workspaceId: string): Pr
   const candidates = rows
     .filter((r) => !r.archived)
     .map((r) => rowToMealRecord(r, ctx.columns, ctx.selectOptions, noGuests))
-    .filter(isMealRelated);
+    .filter((r) => isMealRelated(r) || (options.includeDismissed === true && isDismissedMeal(r)));
   const guests = await guestsByRow(db, workspaceId, candidates.map((r) => r.rowId));
   return candidates.map((r) => ({ ...r, guests: guests.get(r.rowId) ?? [] }));
 }
@@ -192,6 +202,24 @@ export async function saveMealDetails(
     date: input.date ?? stored.date,
     gross: input.gross ?? stored.gross,
   };
+  return writeMealInput(db, mealCtx, ctx, current, merged, now);
+}
+
+/**
+ * Write `merged` (already normalized, date and gross resolved) onto the row
+ * of `current`. Shared by the form save and the batch actions, so "Keine
+ * Bewirtung" set from a list is exactly the state the form's option sets.
+ */
+async function writeMealInput(
+  db: PrismaClient,
+  mealCtx: MealContext,
+  ctx: TableContext,
+  current: MealRecord,
+  merged: MealDetailsInput,
+  now: () => Date,
+): Promise<SaveMealResult> {
+  const rowId = current.rowId;
+  const stored = inputFromRecord(current);
   if (sameMealInput(merged, stored)) return { record: current, changed: false };
 
   // Guests: every id must be a contact of this workspace. An archived contact
@@ -264,6 +292,124 @@ export async function saveMealDetails(
   const record = await loadWithContext(db, mealCtx.workspaceId, ctx, rowId);
   if (!record) throw new MealServiceError('row_not_found');
   return { record, changed: true };
+}
+
+/**
+ * Set the meal type of several receipts and leave every other detail as it
+ * is stored. `not_a_meal` takes a receipt out of queue and register (it stays
+ * in the books as an ordinary receipt, guests and occasion kept);
+ * `business_meal_external` takes it back.
+ *
+ * A row that is not in this workspace's Receipts table (deleted meanwhile, or
+ * an id of another workspace) is skipped as `not_found` and the rest is
+ * carried out. Setting the type a row already has counts as done, so a
+ * repeated request changes nothing.
+ */
+export async function setMealTypeForRows(
+  db: PrismaClient,
+  mealCtx: MealContext,
+  rowIds: string[],
+  mealType: MealTypeKey,
+  now: () => Date = () => new Date(),
+): Promise<MealBatchResult> {
+  const ctx = await tableContext(db, mealCtx.workspaceId);
+  if (!ctx) throw new MealServiceError('not_initialized');
+  const result: MealBatchResult = { done: [], records: [], skipped: [] };
+  for (const rowId of [...new Set(rowIds)]) {
+    try {
+      const current = await loadWithContext(db, mealCtx.workspaceId, ctx, rowId);
+      if (!current) {
+        result.skipped.push({ rowId, reason: 'not_found' });
+        continue;
+      }
+      const { record } = await writeMealInput(db, mealCtx, ctx, current, { ...inputFromRecord(current), mealType }, now);
+      result.done.push(rowId);
+      result.records.push(record);
+    } catch (e) {
+      // The table itself is behind (missing column or option): that is true for every row.
+      if (e instanceof MealServiceError && e.code === 'schema_outdated') throw e;
+      console.error('[meals] setting the meal type failed', { rowId }, e);
+      result.skipped.push({ rowId, reason: 'failed' });
+    }
+  }
+  return result;
+}
+
+export interface DeleteReceiptsDeps {
+  /**
+   * Remove one stored file for good. Must resolve when the file is already
+   * gone and reject when it could not be removed.
+   */
+  deleteStoredFile: (fileId: string) => Promise<void>;
+}
+
+/**
+ * Delete receipts entirely: the stored file, the row with its file references
+ * and selections, and its meal guests.
+ *
+ * Order matters. The stored file goes FIRST and the row only after that
+ * succeeded: when the file store refuses, the receipt is reported as
+ * `file_delete_failed` and stays complete, instead of the row vanishing while
+ * its file lives on with nothing pointing at it. A retry then finds the row
+ * again (and a file that is already gone counts as removed).
+ *
+ * A stored file that another row still references (the same upload attached
+ * twice) is kept; only this row's reference to it goes with the row.
+ *
+ * Rows outside this workspace's Receipts table are skipped as `not_found`,
+ * exactly like rows deleted meanwhile, and the rest is carried out.
+ */
+export async function deleteReceiptRows(
+  db: PrismaClient,
+  mealCtx: MealContext,
+  rowIds: string[],
+  deps: DeleteReceiptsDeps,
+): Promise<MealBatchResult> {
+  const ctx = await tableContext(db, mealCtx.workspaceId);
+  if (!ctx) throw new MealServiceError('not_initialized');
+  const result: MealBatchResult = { done: [], records: [], skipped: [] };
+  for (const rowId of [...new Set(rowIds)]) {
+    let skip: MealBatchSkip | null = null;
+    try {
+      const row = await ctx.adapter.getRow(rowId);
+      if (!row || row.tableId !== ctx.tableId) {
+        result.skipped.push({ rowId, reason: 'not_found' });
+        continue;
+      }
+
+      const refs = await db.dtFile.findMany({ where: { rowId }, select: { fileId: true } });
+      const fileIds = [...new Set(refs.map((r) => r.fileId))];
+      const sharedRefs = fileIds.length
+        ? await db.dtFile.findMany({
+            where: { fileId: { in: fileIds }, rowId: { not: rowId } },
+            select: { fileId: true },
+          })
+        : [];
+      const shared = new Set(sharedRefs.map((r) => r.fileId));
+      for (const fileId of fileIds) {
+        if (shared.has(fileId)) continue;
+        try {
+          await deps.deleteStoredFile(fileId);
+        } catch (e) {
+          console.error('[meals] deleting a stored file failed, the receipt is kept', { rowId, fileId }, e);
+          skip = { rowId, reason: 'file_delete_failed' };
+          break;
+        }
+      }
+      if (skip) {
+        result.skipped.push(skip);
+        continue;
+      }
+
+      await ctx.adapter.deleteRow(rowId);
+      await deleteGuestsForRows(db, [rowId]);
+      result.done.push(rowId);
+    } catch (e) {
+      console.error('[meals] deleting a receipt failed', { rowId }, e);
+      result.skipped.push({ rowId, reason: 'failed' });
+    }
+  }
+  return result;
 }
 
 /** Remove the guests of deleted receipt rows. The caller has already authorized the row delete. */

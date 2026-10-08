@@ -40,6 +40,14 @@
   lost when the upload page was left, and the duplicate stayed saved without a trace in
   the queue; (7) the meal register year picker offers only the current year until a meal
   is complete, so a prior-year backlog looks empty. (2026-10-08)
+- [ ] Deleting a receipt in the dashboard table leaves its stored file behind: `deleteRow`
+  and `bulkDeleteRows` in `src/app/app/dashboard/actions.ts` remove the row, its file
+  references and its guests, but never the object in the file store (the table's file
+  adapter treats deletion as reference-only on purpose). The meals page now deletes
+  the stored file too (`deleteReceiptRows` in `src/lib/meals/service.ts`, file first,
+  row second, shared files kept). Needs the owner's decision whether the dashboard
+  should delete for good the same way; if yes, route both dashboard actions through
+  `deleteReceiptRows`. Found on 2026-10-08 while building the batch actions. (2026-10-08)
 - [ ] A newly created Receipts table gets no company id: `createTable` in
   `src/lib/receipts-table.ts` and in `src/app/app/dashboard/actions.ts` passes only the
   workspace, so `dt_tables.auth_tenant_id` stays empty for every workspace created
@@ -82,6 +90,14 @@
   be reverted on its own); (3) confirm with the tax advisor the amount above which
   the receipt must name the host (set to 250 euros). Plan:
   `docs/plans/2026-10-06-meal-register-and-phone-capture.md`. (2026-10-07)
+  - [x] Batch actions on the meals page, asked for after the first real use with 17
+    open entries: a checkbox per entry and "select all" in the queue, a batch bar with
+    "Keine Bewirtung" (out of queue and register, kept as a receipt, taken back from
+    the new "Keine Bewirtung" list on the same page) and "Löschen" (row, stored file
+    and guests, after an in-page confirmation), the same two actions on a single
+    queue entry and on a register entry. A batch finishes the rest when one receipt
+    is gone or belongs to another workspace, and a receipt whose stored file cannot
+    be deleted is kept and reported. (2026-10-08)
 
 ## Completed
 

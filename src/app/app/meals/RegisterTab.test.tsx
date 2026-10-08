@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -6,7 +7,16 @@ import { SMALL_BUSINESS, UNANSWERED, meal } from '@/lib/meals/__tests__/fixtures
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 
 const saveMealTaxSettings = vi.fn();
-vi.mock('./actions', () => ({ saveMealTaxSettings: (...a: unknown[]) => saveMealTaxSettings(...a) }));
+const markMealsNotMeal = vi.fn();
+const deleteMealReceipts = vi.fn();
+vi.mock('./actions', () => ({
+  saveMealTaxSettings: (...a: unknown[]) => saveMealTaxSettings(...a),
+  markMealsNotMeal: (...a: unknown[]) => markMealsNotMeal(...a),
+  deleteMealReceipts: (...a: unknown[]) => deleteMealReceipts(...a),
+  restoreMeals: vi.fn(),
+  saveMeal: vi.fn(),
+  createContact: vi.fn(),
+}));
 
 import RegisterTab from './RegisterTab';
 
@@ -20,6 +30,8 @@ const records = [
 beforeEach(() => {
   fetchMock.mockReset();
   saveMealTaxSettings.mockReset();
+  markMealsNotMeal.mockReset();
+  deleteMealReceipts.mockReset();
   vi.stubGlobal('fetch', fetchMock);
   URL.createObjectURL = vi.fn(() => 'blob:test');
   URL.revokeObjectURL = vi.fn();
@@ -38,7 +50,7 @@ function file(headers: Record<string, string> = {}) {
 describe('RegisterTab: section 19 question', () => {
   it('unanswered: asks the question, lists the entry without amounts, locks both exports', async () => {
     const onSettingsChanged = vi.fn();
-    render(<RegisterTab records={records} settings={UNANSWERED} onSettingsChanged={onSettingsChanged} onOpenQueue={vi.fn()} />);
+    render(<RegisterTab records={records} settings={UNANSWERED} onSettingsChanged={onSettingsChanged} onRecordsSaved={vi.fn()} onRecordsRemoved={vi.fn()} onOpenQueue={vi.fn()} />);
     expect(screen.getByRole('heading', { name: /Kleinunternehmer nach § 19/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Als CSV exportieren' })).toHaveProperty('disabled', true);
     expect(screen.getByRole('button', { name: 'Als PDF exportieren' })).toHaveProperty('disabled', true);
@@ -55,7 +67,7 @@ describe('RegisterTab: section 19 question', () => {
 
   it('a failed answer is shown and nothing changes', async () => {
     const onSettingsChanged = vi.fn();
-    render(<RegisterTab records={records} settings={UNANSWERED} onSettingsChanged={onSettingsChanged} onOpenQueue={vi.fn()} />);
+    render(<RegisterTab records={records} settings={UNANSWERED} onSettingsChanged={onSettingsChanged} onRecordsSaved={vi.fn()} onRecordsRemoved={vi.fn()} onOpenQueue={vi.fn()} />);
     saveMealTaxSettings.mockResolvedValue({ ok: false, error: 'forbidden' });
     await userEvent.setup().click(screen.getByRole('button', { name: 'Nein, mit Vorsteuerabzug' }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/Berechtigung/);
@@ -63,7 +75,7 @@ describe('RegisterTab: section 19 question', () => {
   });
 
   it('answered: shows totals, the incomplete block and the separate count', () => {
-    render(<RegisterTab records={records} settings={SMALL_BUSINESS} onSettingsChanged={vi.fn()} onOpenQueue={vi.fn()} />);
+    render(<RegisterTab records={records} settings={SMALL_BUSINESS} onSettingsChanged={vi.fn()} onRecordsSaved={vi.fn()} onRecordsRemoved={vi.fn()} onOpenQueue={vi.fn()} />);
     expect(screen.queryByRole('heading', { name: /Kleinunternehmer nach § 19/ })).toBeNull();
     const table = screen.getByRole('table');
     expect(within(table).getByText('Summe')).toBeTruthy();
@@ -75,7 +87,7 @@ describe('RegisterTab: section 19 question', () => {
 
 describe('RegisterTab: export', () => {
   function mount() {
-    render(<RegisterTab records={records} settings={SMALL_BUSINESS} onSettingsChanged={vi.fn()} onOpenQueue={vi.fn()} />);
+    render(<RegisterTab records={records} settings={SMALL_BUSINESS} onSettingsChanged={vi.fn()} onRecordsSaved={vi.fn()} onRecordsRemoved={vi.fn()} onOpenQueue={vi.fn()} />);
     return userEvent.setup();
   }
 
@@ -169,5 +181,76 @@ describe('ConfirmDialog', () => {
     rerender(<Harness open={false} />);
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).toBe(trigger);
+  });
+});
+
+describe('RegisterTab: actions on a register entry', () => {
+  function Stateful() {
+    const [list, setList] = useState(records);
+    return (
+      <RegisterTab
+        records={list}
+        settings={SMALL_BUSINESS}
+        onSettingsChanged={vi.fn()}
+        onRecordsSaved={(saved) => setList((l) => l.map((r) => saved.find((x) => x.rowId === r.rowId) ?? r))}
+        onRecordsRemoved={(ids) => setList((l) => l.filter((r) => !ids.includes(r.rowId)))}
+        onOpenQueue={vi.fn()}
+      />
+    );
+  }
+
+  it('"Keine Bewirtung" always asks first on a complete entry, then the entry leaves the register and its totals', async () => {
+    const user = userEvent.setup();
+    markMealsNotMeal.mockResolvedValue({
+      ok: true,
+      value: { done: ['a'], records: [{ ...records[0], mealType: 'not_a_meal' }], skipped: [] },
+    });
+    render(<Stateful />);
+    expect(within(screen.getByRole('table')).getByText('Summe')).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: /^Keine Bewirtung: Nr\. 1, Testlokal/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Beleg als „Keine Bewirtung“ führen?' });
+    expect(within(dialog).getByText(/Das lässt sich rückgängig machen/)).toBeTruthy();
+    expect(markMealsNotMeal).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Keine Bewirtung' }));
+
+    const notice = await screen.findByText(/„Testlokal“ wird nicht mehr als Bewirtung geführt/);
+    expect(markMealsNotMeal).toHaveBeenCalledWith(['a']);
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.getByText('Für 2025 gibt es noch keine vollständige Bewirtung.')).toBeTruthy();
+    expect(document.activeElement).toBe(notice);
+  });
+
+  it('"Löschen" names the entry, says it cannot be undone, and removes it after the confirmation', async () => {
+    const user = userEvent.setup();
+    deleteMealReceipts.mockResolvedValue({ ok: true, value: { done: ['a'], records: [], skipped: [] } });
+    render(<Stateful />);
+    await user.click(screen.getByRole('button', { name: /^Löschen: Nr\. 1, Testlokal/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Beleg endgültig löschen?' });
+    expect(within(dialog).getByText('Das kann nicht rückgängig gemacht werden.')).toBeTruthy();
+    await user.click(within(dialog).getByRole('button', { name: 'Abbrechen' }));
+    expect(deleteMealReceipts).not.toHaveBeenCalled();
+    expect(screen.getByRole('table')).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: /^Löschen: Nr\. 1, Testlokal/ }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Beleg löschen' }));
+    await screen.findByText('„Testlokal“ gelöscht.');
+    expect(deleteMealReceipts).toHaveBeenCalledWith(['a']);
+    expect(screen.queryByRole('table')).toBeNull();
+  });
+
+  it('a failed delete of the stored file keeps the entry and shows the error', async () => {
+    const user = userEvent.setup();
+    deleteMealReceipts.mockResolvedValue({
+      ok: true,
+      value: { done: [], records: [], skipped: [{ rowId: 'a', reason: 'file_delete_failed' }] },
+    });
+    render(<Stateful />);
+    await user.click(screen.getByRole('button', { name: /^Löschen: Nr\. 1, Testlokal/ }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Beleg löschen' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Es wurde kein Beleg gelöscht.');
+    expect(alert.textContent).toContain('ließ sich die gespeicherte Datei nicht löschen');
+    expect(screen.getByRole('table')).toBeTruthy();
   });
 });

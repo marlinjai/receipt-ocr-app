@@ -24,12 +24,12 @@ export default function DismissedMeals({ records, onRecordsSaved, onRecordsRemov
   const sorted = [...records].sort((a, b) => ((a.date ?? '') < (b.date ?? '') ? 1 : -1));
 
   return (
-    <section aria-labelledby="dismissed-title" className="mt-8">
+    <section aria-label="Keine Bewirtung" className="mt-8">
       <ActionNotice notice={actions.notice} className="mb-2" />
       {records.length > 0 && (
         <details className="glass-panel rounded-xl">
           <summary className="cursor-pointer rounded-xl px-4 py-3 text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-            <span id="dismissed-title">Keine Bewirtung ({records.length})</span>
+            Keine Bewirtung ({records.length})
           </summary>
           <div className="px-4 pb-4">
             <p className="mb-3 max-w-2xl text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>

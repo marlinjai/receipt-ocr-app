@@ -188,6 +188,17 @@ describe('deleting receipts', () => {
     expect(await loadMealRecord(db, ws.workspaceId, rowId)).toBeNull();
   });
 
+  it('takes the receipt\'s tax decision with it', async () => {
+    const rowId = await completeMeal(ws, ctx, 'Erika Entscheidung');
+    await db.taxItemDecision.create({
+      data: { authWorkspaceId: ws.workspaceId, rowId, allocations: [{ purpose: 'business', shareBp: 10000 }] },
+    });
+
+    const result = await deleteReceiptRows(db, ctx, [rowId], fileStore().deps);
+    expect(result.done).toEqual([rowId]);
+    expect(await db.taxItemDecision.count({ where: { rowId } })).toBe(0);
+  });
+
   it('deleting every open receipt leaves an empty queue', async () => {
     const w = await createWorkspace();
     const c: MealContext = { workspaceId: w.workspaceId, tenantId: w.tenantId };

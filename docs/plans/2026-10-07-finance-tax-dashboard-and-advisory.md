@@ -2,7 +2,7 @@
 title: Live finance and tax dashboard, scenario engine and advisory layer
 summary: Turn the receipts app into the place where a sole proprietor sees profit, loss, depreciation and the expected income tax effect every day, can ask "what if" questions answered by the same tax code, and gets checkable hints (each with its inputs, its rule, its source and its euro effect) including a legal form comparison. Three stages, fourteen slices. Absorbs the bank connection and item-level receipts item.
 type: plan
-status: decided
+status: in-progress
 tags: [receipts, tax, euer, dashboard, bank, enable-banking, assets, depreciation, scenario, advisory, legal-form, stateful-flow]
 projects: [receipt-ocr-app]
 date: 2026-10-07
@@ -861,6 +861,67 @@ private name is impossible by the tool's own tests.
   and invoicing into one tax and accounting plan, and the item to verify tax figures.
   This plan is the receipts half of the first and depends on the second for its
   constants.
+
+## Reality after slice 1 (2026-10-07)
+
+Built as planned, with these differences and facts worth knowing:
+
+- **Only decisions are stored, even less than planned.** The draft had an
+  `Allocation` table with an origin per row. Built instead: `TaxItemDecision` (one
+  per receipt, only when a person overrode something) and `TaxVendorRule` (dated
+  entries per vendor), migration `0009_tax_decisions`. The treatment of a receipt
+  is resolved on read, strongest first: its own decision, the vendor rule in force
+  on its date, then the older columns and the category default. Nothing derived
+  from a rule is ever written, so a changed rule needs no rewrite of items.
+- **The older columns are still read, not yet removed.** "Business Share %" and
+  "Zuordnung" serve as the starting point for receipts nobody has decided in the
+  new way, and the overview page still uses them and `WorkspaceVendorAttribution`.
+  Removing them touches the overview page, the sheet import and the chat tools,
+  and the owner is entering 2025 meals in the live app right now. The removal is a
+  separate step, tracked on the roadmap line, announced to the session preparing
+  the 2025 return before it ships.
+- **There is no dated section 19 status yet.** This plan assumed the meal register
+  had built `SmallBusinessStatus` as dated entries. It built one yes or no answer per
+  workspace (`WorkspaceTaxSettings.smallBusiness`). The tax module already takes
+  the status per item; it is fed from that one answer for every date. Dated entries
+  arrive with slice 5 (regular taxation), which is the first thing that needs them,
+  and the meal register is switched over in the same change.
+- **Business meals are the register's alone.** A receipt the meal register judges
+  goes to the meal line with the register's figure. A vendor rule or a decision
+  cannot change it, and the finance screen sends an incomplete meal to
+  `/app/meals` instead of offering a form. The statement and the register cannot
+  show two different amounts for one meal.
+- **Form lines come from the official 2025 form.** Read off the finance ministry's
+  letter of 29 August 2025. The 2026 form (letter of 1 September 2026) and the
+  employment annex are not compared yet: the app shows those lines by label and
+  says the numbers are unverified. Due with slice 7.
+- **Hardware lands on the low-value asset line until slice 2.** The category
+  "Hardware & IT" defaults to line 36. A laptop or anything else above the limit
+  therefore shows there, in full, until the asset register exists or the receipt is
+  moved to the depreciation line by hand. The totals are the same either way for
+  hardware written off within one year; the line is not.
+- **The form source link is a copy.** The 2025 line numbers were read from a copy
+  of the ministry's letter on a tax site, named as such in the rule set. It is
+  replaced by the ministry's own address when the 2026 lines are compared.
+- **Rule sets hold only what slice 1 computes** (form lines, the meal percentage).
+  Asset limits, the tariff and the other values enter with the slice that uses
+  them, each with its source, so no unverified constant sits in the code.
+- **Default line for software is "Arbeitsmittel" (line 51)**, matching how the
+  owner filed 2025. The form also has "Laufende EDV-Kosten" (line 50) and
+  "Miete/Leasing für bewegliche Wirtschaftsgüter" (line 47, a leased phone); each
+  can be chosen per receipt or per vendor.
+- **Not computed yet, and said so on the screen:** revenue (slice 4), so no profit
+  or loss is shown; regular taxation (slice 5), where receipts are reported instead
+  of computed on the wrong basis; payment dates (slice 3), so every receipt counts
+  on its document date for now.
+- **The local test against the real 2025 file passes**: every claimed amount and
+  every line sum of the worked return is reproduced from paid amount and share.
+  It pins no fixed total because that file still changes until the return is filed.
+- **Found on the way and fixed:** a newly created Receipts table got no company id
+  (see the roadmap's completed section).
+- **Not verified by a machine, still to do by hand:** the page in the live app
+  with the owner's real receipts. Tests cover the service against a real database
+  and the screen in a simulated browser, not a deployed build.
 
 ## Decisions (2026-10-07)
 

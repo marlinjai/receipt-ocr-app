@@ -4,6 +4,9 @@ import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
 import { deleteGuestsForRows } from '@/lib/meals/service';
+import { deleteDecisionsForRows } from '@/lib/tax/service';
+import { tenantIdForWorkspace } from '@/lib/auth-workspace';
+import { stampTableOwner } from '@/lib/receipts-table';
 import {
   requireReceiptsSession,
   requireTableAccess,
@@ -67,7 +70,9 @@ export async function createTable(input: CreateTableInput): Promise<Table> {
     await auth.requireAction('receipts.schema.write', workspaceId);
   }
   // The workspace is ALWAYS the session's active one, never client-supplied.
-  return getAdapter().createTable({ ...input, workspaceId });
+  const table = await getAdapter().createTable({ ...input, workspaceId });
+  await stampTableOwner(table.id, { db: prisma, tenantId: tenantIdForWorkspace(session, workspaceId) });
+  return table;
 }
 
 export async function getTable(tableId: string): Promise<Table | null> {
@@ -179,6 +184,8 @@ export async function deleteRow(rowId: string): Promise<void> {
   // The meal guests of a receipt hang off its row id without a foreign key
   // (rows live in two storage layouts), so they are removed here.
   await deleteGuestsForRows(prisma, [rowId]);
+  // Same for the tax decision on the row.
+  await deleteDecisionsForRows(prisma, [rowId]);
 }
 
 export async function archiveRow(rowId: string): Promise<void> {
@@ -214,6 +221,7 @@ export async function bulkDeleteRows(rowIds: string[]): Promise<void> {
   await requireRowsAccess(rowIds);
   await getAdapter().bulkDeleteRows(rowIds);
   await deleteGuestsForRows(prisma, rowIds);
+  await deleteDecisionsForRows(prisma, rowIds);
 }
 
 export async function bulkArchiveRows(rowIds: string[]): Promise<void> {

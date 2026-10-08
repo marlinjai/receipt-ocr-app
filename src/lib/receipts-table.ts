@@ -1,6 +1,7 @@
 import 'server-only';
 import type { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { FooterConfig, ViewConfig } from '@marlinjai/data-table-core';
+import type { PrismaClient } from '@prisma/client';
 import {
   CATEGORY_TO_KONTO,
   ZUORDNUNG_OPTIONS,
@@ -85,16 +86,36 @@ const COLUMNS: ColumnDef[] = [
   { name: MEAL_COLUMNS.taxLines, type: 'text' },
 ];
 
+/** Record the owning company on a table that was just created. Never overwrites an existing owner. */
+export async function stampTableOwner(
+  tableId: string,
+  owner: { db: PrismaClient; tenantId: string | null } | undefined,
+): Promise<void> {
+  if (!owner?.tenantId) return;
+  await owner.db.dtTable.updateMany({ where: { id: tableId, authTenantId: null }, data: { authTenantId: owner.tenantId } });
+}
+
 /**
  * Idempotently ensures the Receipts table, all COLUMNS, and the standard views exist.
  * Additive only: safe to call on every page load, including against an already-live
  * production table that predates a given column/view (self-heals schema drift).
  */
-export async function ensureReceiptsTable(adapter: PrismaAdapter, workspaceId: string) {
+export async function ensureReceiptsTable(
+  adapter: PrismaAdapter,
+  workspaceId: string,
+  /**
+   * The company the workspace belongs to, with the client to write it. The
+   * adapter knows nothing about companies, so a table it creates is stamped
+   * right after: without this a workspace created after the tenant backfill
+   * would stay without a company until the backfill is run again.
+   */
+  owner?: { db: PrismaClient; tenantId: string | null },
+) {
   const tables = await adapter.listTables(workspaceId);
   let table = tables.find((t) => t.name === RECEIPTS_TABLE_NAME);
   if (!table) {
     table = await adapter.createTable({ workspaceId, name: RECEIPTS_TABLE_NAME });
+    await stampTableOwner(table.id, owner);
   }
 
   const existingColumns = await adapter.getColumns(table.id);

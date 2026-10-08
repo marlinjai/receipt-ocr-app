@@ -22,7 +22,7 @@ import { findSimilarReceipt, type ExistingReceipt } from '@/lib/upload/duplicate
 import { isSha256Hex } from '@/lib/upload/hash';
 import { auth } from '@/lib/auth';
 import { requireReceiptsSession } from '@/lib/auth-guards';
-import { sessionWorkspaceId } from '@/lib/auth-workspace';
+import { sessionWorkspaceId, tenantIdForWorkspace } from '@/lib/auth-workspace';
 import type { CellValue } from '@marlinjai/data-table-core';
 import type { OcrResult } from '@/lib/ocr-types';
 
@@ -440,5 +440,6 @@ export async function initializeReceiptsTable() {
   // Per-workspace lazy init: each company workspace gets its own Receipts
   // table on first visit, keyed by the session's ACTIVE workspace UUID.
   const session = await requireReceiptsSession();
-  await ensureReceiptsTable(getAdapter(), sessionWorkspaceId(session));
+  const workspaceId = sessionWorkspaceId(session);
+  await ensureReceiptsTable(getAdapter(), workspaceId, { db: prisma, tenantId: tenantIdForWorkspace(session, workspaceId) });
 }

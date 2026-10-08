@@ -21,7 +21,7 @@ export async function createWorkspace(): Promise<TestWorkspace> {
   const workspaceId = `test-ws-${randomUUID()}`;
   const tenantId = `test-tenant-${randomUUID()}`;
   const adapter = new PrismaAdapter({ prisma: db });
-  await ensureReceiptsTable(adapter, workspaceId);
+  await ensureReceiptsTable(adapter, workspaceId, { db, tenantId });
   const table = (await adapter.listTables(workspaceId)).find((t) => t.name === 'Receipts');
   if (!table) throw new Error('Receipts table was not created');
   const columns = await adapter.getColumns(table.id);

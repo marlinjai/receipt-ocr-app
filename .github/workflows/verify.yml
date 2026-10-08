@@ -53,4 +53,9 @@ jobs:
       - run: pnpm test
       - name: Apply migrations to the test database
         run: pnpm prisma migrate deploy
+      # The migrations are written by hand. This fails when the database they
+      # produce differs from prisma/schema.prisma (a missed column, an index
+      # name Postgres truncated differently), which no test would notice.
+      - name: Check that the migrations produce the schema
+        run: pnpm prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
       - run: pnpm test:db

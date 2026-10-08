@@ -518,6 +518,13 @@ browser's autofill wiped the place.
   a host typed on one receipt is offered on the next even before the first save.
 - **Layout.** List, form, receipt, with the receipt the widest column at the full
   height of the window; below that width the receipt comes above the form.
+- **Batch bar.** The first version floated in the middle of the bottom edge and lay
+  on top of the form's date, amount and tip fields. On a desktop it now has a slot of
+  fixed height at the foot of the queue column (there whether or not anything is
+  checked, kept in view at the bottom of the window), so it covers no field and still
+  moves nothing. On a phone it is a full-width bar fixed to the bottom edge, and the
+  page keeps more padding below than the bar is tall. Outcome notices appear above
+  the queue column as well.
 - **Not verified by a machine:** real browser autofill and a real password manager
   (a headless browser has neither), and the place parser on the owner's own receipts.
 

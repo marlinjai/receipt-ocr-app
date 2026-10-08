@@ -126,19 +126,25 @@ describe('QueueTab: selection', () => {
 });
 
 describe('QueueTab: nothing moves when an entry is checked', () => {
-  it('the batch bar and the outcome notice are rendered into the dock, outside the list and the page flow', async () => {
+  it('the batch bar appears in a slot that is reserved before anything is checked; the outcome notice floats in the dock', async () => {
     const user = userEvent.setup();
     markMealsNotMeal.mockResolvedValue(ok({ done: ['b'], records: [{ ...THREE[1], mealType: 'not_a_meal' }] }));
     const { container } = render(<Harness initial={THREE} />);
+    // The slot is there, empty, under the list and outside the form.
+    const slot = container.querySelector('[data-batch-slot]')!;
+    expect(slot).toBeTruthy();
+    expect(slot.children.length).toBe(0);
+    expect(container.querySelector('nav')!.parentElement!.contains(slot)).toBe(true);
+    expect(container.querySelector('section[aria-label="Angaben zur Bewirtung"]')!.contains(slot)).toBe(false);
+
     await user.click(box('Lokal A, 10.01.2025 auswählen'));
     const bar = screen.getByRole('group', { name: 'Aktionen für die Auswahl' });
-    const dock = document.getElementById('ui-dock')!;
-    expect(dock.contains(bar)).toBe(true);
-    expect(container.contains(bar)).toBe(false);
+    expect(slot.contains(bar)).toBe(true);
+    expect(container.querySelector('[data-batch-slot]')).toBe(slot);
 
     await user.click(screen.getByRole('button', { name: 'Keine Bewirtung: Lokal B, 10.02.2025' }));
     const notice = await screen.findByText(/„Lokal B“ wird nicht mehr/);
-    expect(dock.contains(notice)).toBe(true);
+    expect(document.getElementById('ui-dock')!.contains(notice)).toBe(true);
     expect(container.contains(notice)).toBe(false);
   });
 

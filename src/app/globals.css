@@ -543,8 +543,47 @@ textarea.ui-input {
 .ui-dock-card[data-tone='ok'] {
   border-color: var(--glass-border);
 }
-.ui-dock-bar {
-  order: 2;
+/* The batch bar: in its reserved slot under the queue on a desktop, fixed to the bottom edge on a phone. */
+.ui-batchbar-slot {
+  height: 0;
+}
+.ui-batchbar {
+  position: fixed;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: max(0.75rem, env(safe-area-inset-bottom));
+  z-index: 40;
+}
+@media (min-width: 64rem) {
+  .ui-batchbar-slot {
+    /* Sticks to the bottom edge of the window while the queue column runs on below it, so the bar is always in view. */
+    position: sticky;
+    bottom: 1rem;
+    z-index: 2;
+    height: 3rem;
+    margin-top: 0.5rem;
+  }
+  .ui-batchbar {
+    position: static;
+    height: 100%;
+    animation-name: ui-batchbar-in-place;
+  }
+  /* Outcome notices sit above the queue column too, not over the form. */
+  .ui-dock {
+    left: max(1.5rem, calc((100vw - 88rem) / 2 + 1.5rem));
+    bottom: 4.5rem;
+    width: 22rem;
+    transform: none;
+    align-items: stretch;
+  }
+}
+@keyframes ui-batchbar-in-place {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 /* Only the newest outcome is shown: two parts of the page reporting at once must not pile up over the content. */
 .ui-dock-notice:has(~ .ui-dock-notice) {

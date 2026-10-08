@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react';
 import MealDetailsForm from '@/components/meals/MealDetailsForm';
 import ReceiptViewer from '@/components/meals/ReceiptViewer';
 import Checkbox from '@/components/ui/Checkbox';
-import Dock from '@/components/ui/Dock';
 import type { Contact } from '@/lib/contacts/store';
 import { receiptCount } from '@/lib/meals/batch';
 import { DISMISSED_HINT, formatDay, formatEuro, missingList, missingSummary } from '@/lib/meals/messages';
@@ -67,8 +66,8 @@ function TrashIcon() {
  * separate things.
  *
  * Nothing in the list changes size or position when an entry is checked: the
- * batch bar and the outcome of an action float in the dock at the bottom
- * edge, and every row is a fixed grid.
+ * batch bar has a reserved slot at the foot of the queue column, the outcome
+ * of an action floats in the dock, and every row is a fixed grid.
  */
 export default function QueueTab({
   queue,
@@ -149,7 +148,7 @@ export default function QueueTab({
         </p>
 
         <nav aria-label="Offene Bewirtungen">
-          <ul className="ui-scroll max-h-[46svh] space-y-1.5 pr-1 lg:max-h-[calc(100svh-5.5rem)]">
+          <ul className="ui-scroll max-h-[46svh] space-y-1.5 pr-1 lg:max-h-[calc(100svh-9rem)]">
             {queue.map(({ record, missing }) => {
               const isOpen = opened?.record.rowId === record.rowId;
               const isChecked = checked.has(record.rowId);
@@ -217,6 +216,53 @@ export default function QueueTab({
             })}
           </ul>
         </nav>
+
+        {/*
+          The batch bar's place. On a desktop it is a slot of fixed height at
+          the foot of the queue column, there whether or not anything is
+          checked, so the bar appearing moves nothing and can never lie on top
+          of a field of the form. On a phone the bar is fixed to the bottom
+          edge at full width, and the page keeps that much padding below.
+        */}
+        <div className="ui-batchbar-slot" data-batch-slot>
+          {checked.size > 0 && (
+            <div role="group" aria-label="Aktionen für die Auswahl" className="ui-dock-card ui-batchbar flex items-center gap-1.5 py-1.5 pl-3 pr-1.5">
+              <p className="mr-auto flex items-center gap-2 pr-2 text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+                <span className="ui-count">{checked.size}</span>
+                <span className="sr-only">von {queue.length}</span>
+                <span className="max-[400px]:sr-only lg:sr-only">ausgewählt</span>
+              </p>
+              <button
+                type="button"
+                className="ui-btn ui-btn-sm whitespace-nowrap"
+                disabled={busy}
+                onClick={() => actions.markNotMeal(checkedRecords, { confirm: true })}
+              >
+                Keine Bewirtung
+              </button>
+              <button
+                type="button"
+                className="ui-btn ui-btn-sm ui-btn-danger"
+                disabled={busy}
+                onClick={() => actions.requestDelete(checkedRecords)}
+              >
+                Löschen
+              </button>
+              <button
+                type="button"
+                className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon"
+                disabled={busy}
+                aria-label="Auswahl aufheben"
+                title="Auswahl aufheben"
+                onClick={() => setCheckedIds(new Set())}
+              >
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+                  <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {opened && (
@@ -286,45 +332,6 @@ export default function QueueTab({
         </section>
       )}
 
-      {checked.size > 0 && (
-        <Dock>
-          <div role="group" aria-label="Aktionen für die Auswahl" className="ui-dock-card ui-dock-bar flex items-center gap-1.5 py-1.5 pl-3 pr-1.5">
-            <p className="mr-auto flex items-center gap-2 pr-2 text-sm font-medium" style={{ color: 'var(--foreground)' }}>
-              <span className="ui-count">{checked.size}</span>
-              <span className="sr-only">von {queue.length}</span>
-              <span className="max-[400px]:sr-only">ausgewählt</span>
-            </p>
-            <button
-              type="button"
-              className="ui-btn ui-btn-sm"
-              disabled={busy}
-              onClick={() => actions.markNotMeal(checkedRecords, { confirm: true })}
-            >
-              Keine Bewirtung
-            </button>
-            <button
-              type="button"
-              className="ui-btn ui-btn-sm ui-btn-danger"
-              disabled={busy}
-              onClick={() => actions.requestDelete(checkedRecords)}
-            >
-              Löschen
-            </button>
-            <button
-              type="button"
-              className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon"
-              disabled={busy}
-              aria-label="Auswahl aufheben"
-              title="Auswahl aufheben"
-              onClick={() => setCheckedIds(new Set())}
-            >
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
-                <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            </button>
-          </div>
-        </Dock>
-      )}
       {actions.overlays}
     </div>
   );

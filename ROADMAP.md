@@ -97,8 +97,8 @@
     be deleted is kept and reported. (2026-10-08)
   - [x] Visual polish of the meals page after the owner's review of the batch actions:
     a reusable custom checkbox (`src/components/ui/Checkbox.tsx`, real input, mixed
-    state, 40 pixel hit area), no layout shift when an entry is checked (batch bar and
-    outcome notices float in a dock at the bottom edge, rows are a fixed grid; measured
+    state, 40 pixel hit area), no layout shift when an entry is checked (the batch bar
+    has a reserved slot under the queue, outcome notices float, rows are a fixed grid; measured
     0 pixels at desktop and phone width), thin on-brand scroll bars and the dark colour
     scheme app-wide, quieter row actions, a destructive button that looks destructive
     at rest. Checked in a headless browser with screenshots. (2026-10-08)

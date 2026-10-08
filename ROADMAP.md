@@ -16,6 +16,18 @@
   and public bank data access exist. After stage 2. Plan:
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
 
+- [ ] Extraction defects found in the first live upload (2026-10-08, a 21-page scan of
+  restaurant receipts uploaded with "One receipt per page"): (1) a receipt number was read
+  as the total (916,752.88 instead of 61.40), so a total needs a plausibility check against
+  the line items and the tax lines; (2) tax rates come out as nonsense (526.37, 844.06)
+  when the net amount is misread; (3) 2 of 21 pages were saved as an empty "Receipt" row
+  with no vendor, date or amount and no hint that reading failed; (4) a bar receipt was
+  categorised as software and a restaurant receipt as "other", so neither reached the meal
+  queue; (5) vendor names are taken from the first printed line ("Since 2016", "+ mit
+  Haferdrink", "Indisches") instead of the business name; (6) the look-alike prompt was
+  lost when the upload page was left, and the duplicate stayed saved without a trace in
+  the queue; (7) the meal register year picker offers only the current year until a meal
+  is complete, so a prior-year backlog looks empty. (2026-10-08)
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a

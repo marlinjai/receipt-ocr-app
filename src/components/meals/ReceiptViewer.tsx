@@ -161,6 +161,7 @@ function FileView({
   /** Whether the user (or a stored value) decided the rotation; the shape-based guess applies only before that. */
   const decided = useRef(file.rotation !== null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSave = useRef<(() => void) | null>(null);
 
   /**
    * The picture is there and its size is known. Without a stored rotation, a
@@ -216,9 +217,11 @@ function FileView({
     return () => observer.disconnect();
   }, []);
 
+  // Closing the viewer inside the debounce window must not drop the rotation: flush it.
   useEffect(
     () => () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
+      pendingSave.current?.();
     },
     [],
   );
@@ -232,12 +235,16 @@ function FileView({
         if (onRotate) {
           // Several quick turns are one stored value: the last one.
           if (saveTimer.current) clearTimeout(saveTimer.current);
-          saveTimer.current = setTimeout(() => {
+          const run = () => {
+            pendingSave.current = null;
+            saveTimer.current = null;
             onRotate(file, next).then(
               (ok) => setSaveFailed(!ok),
               () => setSaveFailed(true),
             );
-          }, 350);
+          };
+          pendingSave.current = run;
+          saveTimer.current = setTimeout(run, 350);
         }
       }
       // A step from a button or a key eases; dragging and the wheel follow the hand directly.

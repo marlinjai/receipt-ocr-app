@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import ReceiptViewer, { type ViewerFile } from './meals/ReceiptViewer';
 import type { Rotation } from '@/lib/meals/viewer-state';
 
@@ -17,6 +17,15 @@ export default function ReceiptLightbox({
   onRotate?: (file: ViewerFile, rotation: Rotation) => Promise<boolean>;
   onClose: () => void;
 }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  // Move focus into the dialog on open and hand it back to the opener on close.
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeRef.current?.focus();
+    return () => opener?.focus();
+  }, []);
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -47,6 +56,7 @@ export default function ReceiptLightbox({
         style={{ position: 'relative', width: 'min(92vw, 1100px)', height: '90vh' }}
       >
         <button
+          ref={closeRef}
           onClick={onClose}
           style={{
             position: 'absolute',

@@ -12,6 +12,7 @@ const requireAction = vi.fn();
 const setMealTypeForRows = vi.fn();
 const deleteReceiptRows = vi.fn();
 const deleteFile = vi.fn();
+const setReceiptFileRotation = vi.fn();
 
 vi.mock('@/lib/auth', () => ({ auth: { requireAction: (...a: unknown[]) => requireAction(...a) } }));
 vi.mock('@/lib/auth-guards', () => {
@@ -36,11 +37,12 @@ vi.mock('@/lib/meals/service', () => {
     TaxSettingsError,
     setMealTypeForRows: (...a: unknown[]) => setMealTypeForRows(...a),
     deleteReceiptRows: (...a: unknown[]) => deleteReceiptRows(...a),
+    setReceiptFileRotation: (...a: unknown[]) => setReceiptFileRotation(...a),
   };
 });
 
 import { MealServiceError } from '@/lib/meals/service';
-import { deleteMealReceipts, markMealsNotMeal, restoreMeals } from './actions';
+import { deleteMealReceipts, markMealsNotMeal, restoreMeals, saveReceiptRotation } from './actions';
 
 const WS = { id: 'ws-a', slug: 'beispiel-studio', role: 'member', tenantId: 't-a' };
 const SESSION = { memberships: [WS], activeWorkspace: WS };
@@ -51,6 +53,7 @@ beforeEach(() => {
   setMealTypeForRows.mockReset();
   deleteReceiptRows.mockReset();
   deleteFile.mockReset();
+  setReceiptFileRotation.mockReset();
   requireAction.mockResolvedValue(SESSION);
   setMealTypeForRows.mockResolvedValue(EMPTY);
   deleteReceiptRows.mockResolvedValue(EMPTY);
@@ -136,5 +139,34 @@ describe('batch delete: the stored file', () => {
     await expect(remove('file-1')).rejects.toThrow('store down');
     deleteFile.mockRejectedValueOnce(new Error('network'));
     await expect(remove('file-1')).rejects.toThrow('network');
+  });
+});
+
+describe('saveReceiptRotation', () => {
+  it('refuses anything but a quarter turn and missing ids, before any permission check or write', async () => {
+    for (const bad of [45, 360, -90, NaN, 'abc', null, undefined]) {
+      expect(await saveReceiptRotation('row-1', 'ref-1', bad as never)).toEqual({ ok: false, error: 'invalid_input', detail: 'rotation' });
+    }
+    expect(await saveReceiptRotation('', 'ref-1', 90)).toMatchObject({ ok: false, error: 'invalid_input' });
+    expect(await saveReceiptRotation('row-1', '', 90)).toMatchObject({ ok: false, error: 'invalid_input' });
+    expect(requireAction).not.toHaveBeenCalled();
+    expect(setReceiptFileRotation).not.toHaveBeenCalled();
+  });
+
+  it('needs the write permission and works in the active workspace of the session', async () => {
+    setReceiptFileRotation.mockResolvedValue({ rowId: 'row-1' });
+    expect(await saveReceiptRotation('row-1', 'ref-1', 270)).toEqual({ ok: true, value: { record: { rowId: 'row-1' } } });
+    expect(requireAction).toHaveBeenCalledWith('receipts.row.write');
+    expect(setReceiptFileRotation).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, 'row-1', 'ref-1', 270);
+
+    requireAction.mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }));
+    setReceiptFileRotation.mockClear();
+    expect(await saveReceiptRotation('row-1', 'ref-1', 90)).toEqual({ ok: false, error: 'forbidden' });
+    expect(setReceiptFileRotation).not.toHaveBeenCalled();
+  });
+
+  it('a receipt of another workspace or a deleted one reads as not found', async () => {
+    setReceiptFileRotation.mockRejectedValue(new (MealServiceError as never as new (c: string) => Error)('row_not_found'));
+    expect(await saveReceiptRotation('row-x', 'ref-x', 90)).toEqual({ ok: false, error: 'not_found', detail: 'row_not_found' });
   });
 });

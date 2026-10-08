@@ -1,4 +1,4 @@
-import type { ExclusionReason } from './rules';
+import { MISSING_FIELD_LABELS, type ExclusionReason, type MissingField } from './rules';
 
 /** Wording for the error codes the meal server actions return. */
 export function mealActionMessage(error: string, detail?: string): string {
@@ -46,4 +46,19 @@ export function formatDay(isoDay: string | null): string {
   if (!isoDay) return 'ohne Datum';
   const [y, m, d] = isoDay.split('-');
   return `${d}.${m}.${y}`;
+}
+
+/**
+ * What an incomplete entry lacks, short enough for one line of a list row:
+ * up to two facts by name, beyond that their number. The full list goes into
+ * `missingList` for a tooltip and for screen readers.
+ */
+export function missingSummary(missing: MissingField[]): string {
+  if (missing.length === 0) return 'vollständig';
+  if (missing.length <= 2) return `fehlt: ${missingList(missing)}`;
+  return `${missing.length} fehlen`;
+}
+
+export function missingList(missing: MissingField[]): string {
+  return missing.map((m) => MISSING_FIELD_LABELS[m]).join(', ');
 }

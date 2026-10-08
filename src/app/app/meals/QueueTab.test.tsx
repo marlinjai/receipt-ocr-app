@@ -21,6 +21,7 @@ const restoreMeals = vi.fn();
 vi.mock('./actions', () => ({
   saveMeal: vi.fn(),
   createContact: vi.fn(),
+  saveReceiptRotation: vi.fn(),
   markMealsNotMeal: (...a: unknown[]) => markMealsNotMeal(...a),
   deleteMealReceipts: (...a: unknown[]) => deleteMealReceipts(...a),
   restoreMeals: (...a: unknown[]) => restoreMeals(...a),
@@ -28,7 +29,7 @@ vi.mock('./actions', () => ({
 vi.mock('@/components/meals/MealDetailsForm', () => ({
   default: ({ record }: { record: MealRecord }) => <div data-testid="form">{record.rowId}</div>,
 }));
-vi.mock('@/components/meals/ReceiptPreview', () => ({ default: () => null }));
+vi.mock('@/components/meals/ReceiptViewer', () => ({ default: () => null }));
 
 import QueueTab from './QueueTab';
 
@@ -79,14 +80,15 @@ describe('QueueTab: selection', () => {
 
     await user.click(box('Lokal A, 10.01.2025 auswählen'));
     const bar = screen.getByRole('group', { name: 'Aktionen für die Auswahl' });
-    expect(within(bar).getByText('1 von 3 ausgewählt')).toBeTruthy();
+    expect(bar.textContent).toContain('1von 3ausgewählt');
+    expect(screen.getByText('1 von 3 ausgewählt')).toBeTruthy();
     expect(within(bar).getByRole('button', { name: 'Keine Bewirtung' })).toBeTruthy();
     expect(within(bar).getByRole('button', { name: 'Löschen' })).toBeTruthy();
     // Announced through a live region that is in the page before the change.
     expect(screen.getByText(/1 Beleg ausgewählt\. Sammelaktionen/).getAttribute('role')).toBe('status');
 
     await user.click(box('Lokal C, 10.03.2025 auswählen'));
-    expect(within(bar).getByText('2 von 3 ausgewählt')).toBeTruthy();
+    expect(screen.getByText('2 von 3 ausgewählt')).toBeTruthy();
 
     await user.click(within(bar).getByRole('button', { name: 'Auswahl aufheben' }));
     expect(screen.queryByRole('group', { name: 'Aktionen für die Auswahl' })).toBeNull();
@@ -123,6 +125,61 @@ describe('QueueTab: selection', () => {
   });
 });
 
+describe('QueueTab: nothing moves when an entry is checked', () => {
+  it('the batch bar appears in a slot that is reserved before anything is checked; the outcome notice floats in the dock', async () => {
+    const user = userEvent.setup();
+    markMealsNotMeal.mockResolvedValue(ok({ done: ['b'], records: [{ ...THREE[1], mealType: 'not_a_meal' }] }));
+    const { container } = render(<Harness initial={THREE} />);
+    // The slot is there, empty, under the list and outside the form.
+    const slot = container.querySelector('[data-batch-slot]')!;
+    expect(slot).toBeTruthy();
+    expect(slot.children.length).toBe(0);
+    expect(container.querySelector('nav')!.parentElement!.contains(slot)).toBe(true);
+    expect(container.querySelector('section[aria-label="Angaben zur Bewirtung"]')!.contains(slot)).toBe(false);
+
+    await user.click(box('Lokal A, 10.01.2025 auswählen'));
+    const bar = screen.getByRole('group', { name: 'Aktionen für die Auswahl' });
+    expect(slot.contains(bar)).toBe(true);
+    expect(container.querySelector('[data-batch-slot]')).toBe(slot);
+
+    await user.click(screen.getByRole('button', { name: 'Keine Bewirtung: Lokal B, 10.02.2025' }));
+    const notice = await screen.findByText(/„Lokal B“ wird nicht mehr/);
+    expect(document.getElementById('ui-dock')!.contains(notice)).toBe(true);
+    expect(container.contains(notice)).toBe(false);
+  });
+
+  it('checking an entry changes nothing in the list but the state of that row', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<Harness initial={THREE} />);
+    const snapshot = () =>
+      [...container.querySelectorAll('nav li')].map((li) => ({
+        children: li.children.length,
+        classes: li.className,
+        text: li.textContent,
+        buttons: li.querySelectorAll('button').length,
+      }));
+    const toolbarChildren = () => container.querySelector('nav')!.parentElement!.children.length;
+    const before = snapshot();
+    const columnBefore = toolbarChildren();
+
+    await user.click(box('Lokal A, 10.01.2025 auswählen'));
+    expect(snapshot()).toEqual(before);
+    expect(toolbarChildren()).toBe(columnBefore);
+    expect(container.querySelector('nav li')!.getAttribute('data-checked')).toBe('true');
+
+    await user.click(box('Alle auswählen'));
+    expect(snapshot()).toEqual(before);
+    expect(toolbarChildren()).toBe(columnBefore);
+  });
+
+  it('a row says how much is missing in a few words and keeps the full list for screen readers and the tooltip', () => {
+    render(<Harness initial={[open('a', 'Lokal A', '2025-01-10'), { ...open('b', 'Lokal B', '2025-02-10'), occasion: 'Abstimmung Relaunch' }]} />);
+    const rows = screen.getAllByRole('listitem');
+    expect(rows[0].textContent).toContain('fehlt: Anlass, Teilnehmer');
+    expect(rows[1].textContent).toContain('fehlt: Teilnehmer');
+  });
+});
+
 describe('QueueTab: batch "Keine Bewirtung"', () => {
   it('asks in the page, names the count, says how to undo it, then takes the receipts out of the queue', async () => {
     const user = userEvent.setup();
@@ -148,9 +205,9 @@ describe('QueueTab: batch "Keine Bewirtung"', () => {
     expect(screen.queryByRole('checkbox', { name: /Lokal B/ })).toBeNull();
     expect(box('Lokal C, 10.03.2025 auswählen').checked).toBe(false);
     expect(screen.queryByRole('group', { name: 'Aktionen für die Auswahl' })).toBeNull();
-    const notice = screen.getByText(/2 Belege werden nicht mehr als Bewirtung geführt/);
+    const notice = await screen.findByText(/2 Belege werden nicht mehr als Bewirtung geführt/);
     // The bar that held the button is gone: the focus lands on the outcome, not on the page top.
-    expect(document.activeElement).toBe(notice);
+    await waitFor(() => expect(document.activeElement).toBe(notice));
   });
 
   it('cancelling the dialog changes nothing and keeps the selection', async () => {
@@ -178,13 +235,15 @@ describe('QueueTab: batch delete', () => {
     expect(deleteMealReceipts).not.toHaveBeenCalled();
     // The safe choice has the focus, so Enter does not delete by accident.
     expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Abbrechen' }));
+    // The destructive button looks destructive at rest, not only under the pointer.
+    expect(within(dialog).getByRole('button', { name: '3 Belege löschen' }).className).toContain('ui-btn-danger');
 
     await user.click(within(dialog).getByRole('button', { name: '3 Belege löschen' }));
     await waitFor(() => expect(screen.getByText('Keine offenen Bewirtungen.')).toBeTruthy());
     expect(deleteMealReceipts).toHaveBeenCalledWith(['a', 'b', 'c']);
     // Deleting the last entries: the empty state, with the outcome still on screen and focused.
-    const notice = screen.getByText('3 Belege gelöscht.');
-    expect(document.activeElement).toBe(notice);
+    const notice = await screen.findByText('3 Belege gelöscht.');
+    await waitFor(() => expect(document.activeElement).toBe(notice));
     expect(screen.queryByRole('checkbox')).toBeNull();
   });
 
@@ -273,7 +332,7 @@ describe('QueueTab: actions on a single entry, without opening the form', () => 
     const notice = await screen.findByText(/„Lokal B“ wird nicht mehr als Bewirtung geführt\..*unter „Keine Bewirtung“/);
     expect(markMealsNotMeal).toHaveBeenCalledWith(['b']);
     expect(screen.queryByRole('checkbox', { name: /Lokal B/ })).toBeNull();
-    expect(document.activeElement).toBe(notice);
+    await waitFor(() => expect(document.activeElement).toBe(notice));
   });
 
   it('a double click on an entry action sends one request', async () => {
@@ -308,7 +367,7 @@ describe('QueueTab: actions on a single entry, without opening the form', () => 
     await user.click(screen.getByRole('button', { name: 'Löschen: Lokal A, 10.01.2025' }));
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Beleg löschen' }));
     expect(await screen.findByText('Keine offenen Bewirtungen.')).toBeTruthy();
-    expect(screen.getByText('„Lokal A“ gelöscht.')).toBeTruthy();
+    expect(await screen.findByText('„Lokal A“ gelöscht.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Zum Verzeichnis' })).toBeTruthy();
   });
 

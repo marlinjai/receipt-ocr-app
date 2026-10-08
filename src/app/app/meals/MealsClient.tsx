@@ -72,7 +72,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
   ];
 
   return (
-    <main className="relative z-10 min-h-svh px-4 pb-16 pt-6 sm:px-6" data-theme="dark">
+    <main className="relative z-10 min-h-svh px-4 pb-40 pt-6 sm:px-6" data-theme="dark">
       <div className="mx-auto w-full max-w-[88rem]">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -93,7 +93,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
           </div>
         </div>
 
-        <div role="tablist" aria-label="Bereiche des Bewirtungsverzeichnisses" className="mt-6 flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
+        <div role="tablist" aria-label="Bereiche des Bewirtungsverzeichnisses" className="ui-scroll-bare mt-6 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style={{ borderColor: 'var(--border)' }}>
           {tabs.map((t) => (
             <button
               key={t.key}

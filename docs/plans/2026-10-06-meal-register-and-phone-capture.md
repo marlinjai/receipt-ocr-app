@@ -453,6 +453,81 @@ page.
 - **Not verified by a machine:** the page in a real browser at phone width, and a
   delete against the real file store.
 
+## Reality after the visual polish (2026-10-08)
+
+The owner's review of the batch actions: the checkbox was ugly, ticking one moved the
+list, the scroll bars were ugly, the page read as unprofessional.
+
+- **What caused it.** The check box was the browser's own. The batch bar was part of
+  the page flow and pushed the list down by 126 pixels when it appeared. The app never
+  declared its dark colour scheme, so browsers drew light scroll bars and light native
+  controls on a black page. Screen-reader-only labels inside the scrolling list were
+  positioned against the page and made the document about 1000 pixels taller than its
+  content, which gave the page a scroll bar with nothing to scroll to.
+- **Checkbox.** `src/components/ui/Checkbox.tsx`: a real input stretched invisibly over
+  a 40 pixel hit area with a drawn box beside it, brushed gold when checked, the mark
+  drawn in 140 milliseconds, a mixed state for "Alle auswählen".
+- **Nothing moves on selection.** The batch bar and the outcome of an action are
+  rendered into a dock fixed to the bottom edge (`src/components/ui/Dock.tsx`); a
+  notice without a failure leaves after 8 seconds, a failure stays until closed. Queue
+  rows are a fixed two-line grid; opening or checking one changes colours only.
+  Measured in a headless browser at 1440 and 390 pixels width: 0 pixels shift of the
+  first three rows, the list and the form after checking one entry, all entries, and
+  unchecking.
+- **Scroll bars.** App-wide in `src/app/globals.css`: `color-scheme: dark`, thin scroll
+  bars without a track, gold under the pointer in lists, room reserved where a scroll
+  bar appearing would shift content.
+- **The confirmation dialog** is rendered into the document body. Inside the page's
+  own stacking order it ended up underneath the floating bar on a phone.
+- **Kept on purpose:** the queue list still scrolls on its own (capped height on a
+  phone, sticky beside the form on a desktop), because with 17 entries the form would
+  otherwise sit far below the list. The dashboard table (blue accents, the table
+  package's own check boxes) is another page and was not restyled.
+
+## Reality after the receipt viewer and the form fixes (2026-10-08)
+
+From the owner's live use of the queue: receipts scanned sideways could not be turned,
+the place stayed empty although the receipt prints it, and choosing the host from the
+browser's autofill wiped the place.
+
+- **Why the receipt was a strip in a dark box.** Receipts uploaded with "one receipt
+  per page" are one-page PDFs, and the page showed a PDF in a browser frame, which
+  cannot be turned, zoomed or fitted. The viewer (`src/components/meals/ReceiptViewer.tsx`)
+  draws the PDF page to a picture in the browser with pdf.js (`pdfjs-dist`, loaded
+  only when a PDF is opened) and then treats it like a photographed receipt.
+- **Rotation** is stored as `rotation` (0, 90, 180, 270, clockwise) in the metadata of
+  the file reference (`dt_files.metadata`, next to the content hash). No migration,
+  and the stored file is never rewritten. The dashboard's detail panel and its
+  fullscreen view use the same viewer and the same stored value; the register export
+  turns an appended PDF page and a drawn picture by it.
+- **The first-open guess.** Without a stored rotation a page clearly wider than tall
+  opens turned a quarter clockwise, because a till receipt is tall. Which way round a
+  sideways scan lies cannot be told from its shape, so the guess can be upside down;
+  it is not stored, and the first turn the user makes is.
+- **Place.** The classifier's answer for the place arrives only when it gives one and
+  only on rows filed as a meal at upload. `src/lib/meals/place.ts` reads name, street
+  and postal code with town from the header of the recognized text without a model. It
+  is the fallback at upload and the prefill of the form for stored receipts with an
+  empty place; a stored place is never replaced, it gets the action "Aus Beleg
+  übernehmen" instead. Without both a street and a postal code with town nothing is
+  offered and the field opens with the vendor name alone. No model call, no cost.
+- **Autofill.** The host field carried `autocomplete="name"`, so browsers and password
+  managers took host and place for "my name, my address". Both fields now opt out and
+  carry names that say what they are, and a change to the place that arrives while
+  the focus is elsewhere is dropped. The host is prefilled from the last one used, and
+  a host typed on one receipt is offered on the next even before the first save.
+- **Layout.** List, form, receipt, with the receipt the widest column at the full
+  height of the window; below that width the receipt comes above the form.
+- **Batch bar.** The first version floated in the middle of the bottom edge and lay
+  on top of the form's date, amount and tip fields. On a desktop it now has a slot of
+  fixed height at the foot of the queue column (there whether or not anything is
+  checked, kept in view at the bottom of the window), so it covers no field and still
+  moves nothing. On a phone it is a full-width bar fixed to the bottom edge, and the
+  page keeps more padding below than the bar is tall. Outcome notices appear above
+  the queue column as well.
+- **Not verified by a machine:** real browser autofill and a real password manager
+  (a headless browser has neither), and the place parser on the owner's own receipts.
+
 ## Decisions (2026-10-06)
 
 Approved by the owner on 2026-10-06, all six slices to be built.

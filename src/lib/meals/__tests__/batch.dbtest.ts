@@ -10,6 +10,8 @@ import {
   loadMealRecords,
   saveMealDetails,
   setMealTypeForRows,
+  setReceiptFileRotation,
+  MealServiceError,
   type MealContext,
 } from '../service';
 import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../../../../test/db-helpers';
@@ -332,5 +334,87 @@ describe('deleting receipts', () => {
     const again = await deleteReceiptRows(db, ctx, [rowId, rowId], store.deps);
     expect(again).toEqual({ done: [], records: [], skipped: [{ rowId, reason: 'not_found' }] });
     expect(store.deleted).toEqual([fileId]);
+  });
+});
+
+describe('rotation of a receipt file', () => {
+  async function refOf(w: TestWorkspace, columnId: string, rowId: string): Promise<string> {
+    return (await w.adapter.getFileReferences(rowId, columnId))[0].id;
+  }
+
+  it('is stored with the file reference, read back on the record, and leaves the content hash and the file alone', async () => {
+    const rowId = await ws.addReceipt(plainMealReceipt());
+    const fileId = randomUUID();
+    await ws.adapter.addFileReference({
+      rowId, columnId: imageColumnId, fileId, fileUrl: `/api/files/${fileId}`, originalName: 'beleg.pdf', mimeType: 'application/pdf',
+      metadata: { source: 'ocr-upload', sha256: 'a'.repeat(64) },
+    });
+    const refId = await refOf(ws, imageColumnId, rowId);
+    expect((await loadMealRecord(db, ws.workspaceId, rowId))!.files[0]).toMatchObject({ refId, rotation: null });
+
+    const record = await setReceiptFileRotation(db, ctx, rowId, refId, 90);
+    expect(record.files[0]).toMatchObject({ refId, fileId, rotation: 90 });
+    // Resume: a fresh read (the next visit, the dashboard, the export) sees the same.
+    expect((await loadMealRecord(db, ws.workspaceId, rowId))!.files[0].rotation).toBe(90);
+    const stored = await db.dtFile.findUnique({ where: { id: refId } });
+    expect(stored!.metadata).toEqual({ source: 'ocr-upload', sha256: 'a'.repeat(64), rotation: 90 });
+    expect(stored!.fileId).toBe(fileId);
+    expect(stored!.fileUrl).toBe(`/api/files/${fileId}`);
+  });
+
+  it('can be changed and set back to upright, and each file of a receipt keeps its own', async () => {
+    const rowId = await ws.addReceipt(plainMealReceipt());
+    await attachFile(ws, imageColumnId, rowId);
+    await attachFile(ws, imageColumnId, rowId);
+    const refs = await ws.adapter.getFileReferences(rowId, imageColumnId);
+    await setReceiptFileRotation(db, ctx, rowId, refs[0].id, 270);
+    await setReceiptFileRotation(db, ctx, rowId, refs[1].id, 180);
+    const again = await setReceiptFileRotation(db, ctx, rowId, refs[0].id, 0);
+    expect(again.files.map((f) => f.rotation)).toEqual([0, 180]);
+  });
+
+  it('refuses a value that is not a quarter turn', async () => {
+    const rowId = await ws.addReceipt(plainMealReceipt());
+    await attachFile(ws, imageColumnId, rowId);
+    const refId = await refOf(ws, imageColumnId, rowId);
+    await expect(setReceiptFileRotation(db, ctx, rowId, refId, 45 as never)).rejects.toMatchObject({ code: 'invalid_rotation' });
+    expect((await loadMealRecord(db, ws.workspaceId, rowId))!.files[0].rotation).toBeNull();
+  });
+
+  it('workspace isolation: a file of another workspace cannot be turned, by its own row or through an own row', async () => {
+    const foreign = await other.addReceipt(plainMealReceipt());
+    await attachFile(other, otherImageColumnId, foreign);
+    const foreignRef = await refOf(other, otherImageColumnId, foreign);
+    const mine = await ws.addReceipt(plainMealReceipt());
+
+    await expect(setReceiptFileRotation(db, ctx, foreign, foreignRef, 90)).rejects.toBeInstanceOf(MealServiceError);
+    await expect(setReceiptFileRotation(db, ctx, mine, foreignRef, 90)).rejects.toMatchObject({ code: 'row_not_found' });
+    const stored = await db.dtFile.findUnique({ where: { id: foreignRef } });
+    expect((stored!.metadata as Record<string, unknown> | null)?.rotation).toBeUndefined();
+    expect((await loadMealRecord(db, other.workspaceId, foreign))!.files[0].rotation).toBeNull();
+  });
+
+  it('a deleted receipt or an unknown file reference is reported, not swallowed', async () => {
+    const rowId = await ws.addReceipt(plainMealReceipt());
+    await attachFile(ws, imageColumnId, rowId);
+    const refId = await refOf(ws, imageColumnId, rowId);
+    await expect(setReceiptFileRotation(db, ctx, rowId, randomUUID(), 90)).rejects.toMatchObject({ code: 'row_not_found' });
+    await ws.adapter.deleteRow(rowId);
+    await expect(setReceiptFileRotation(db, ctx, rowId, refId, 90)).rejects.toMatchObject({ code: 'row_not_found' });
+  });
+});
+
+describe('place read from the receipt text', () => {
+  it('a stored receipt with recognized text but no place offers name and address; a receipt without text offers nothing', async () => {
+    const withText = await ws.addReceipt(
+      plainMealReceipt({ Vendor: 'Testlokal Beispiel', 'OCR Text': 'Testlokal Beispiel\nMusterstraße 69\n12345 Musterstadt\nTotal 63,80' }),
+    );
+    const withoutText = await ws.addReceipt(plainMealReceipt());
+    const record = (await loadMealRecord(db, ws.workspaceId, withText))!;
+    expect(record.place).toBe('');
+    expect(record.placeSuggestion).toBe('Testlokal Beispiel, Musterstraße 69, 12345 Musterstadt');
+    expect((await loadMealRecord(db, ws.workspaceId, withoutText))!.placeSuggestion).toBeNull();
+    // Nothing was written by reading.
+    expect((await loadMealRecord(db, ws.workspaceId, withText))!.place).toBe('');
   });
 });

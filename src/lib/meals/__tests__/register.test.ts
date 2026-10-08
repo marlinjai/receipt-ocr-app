@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, degrees } from 'pdf-lib';
 import { buildRegister, exportRefusal, incompleteQueue, registerYears } from '../register';
 import { CSV_BOM, REGISTER_CSV_HEADERS, csvSafeText, registerCsv } from '../register-csv';
-import { SUMMARY_TABLE_WIDTH, registerPdf, summaryColumns } from '../register-pdf';
+import { SUMMARY_TABLE_WIDTH, registerPdf, rotatedImagePlacement, summaryColumns } from '../register-pdf';
 import { GUEST_A, GUEST_B, REGULAR_BUSINESS, SMALL_BUSINESS, UNANSWERED, meal } from './fixtures';
 
 // A 1x1 PNG, the smallest valid receipt "photo".
@@ -181,7 +181,7 @@ describe('registerPdf', () => {
   it('renders a summary page plus one sheet per meal, with the receipt image on the sheet', async () => {
     const withFiles = records.map((r) =>
       r.rowId === 'a'
-        ? { ...r, files: [{ fileId: 'f1', fileUrl: '/api/files/f1', mimeType: 'image/png', originalName: 'beleg.png' }] }
+        ? { ...r, files: [{ refId: 'ref-1', rotation: null, fileId: 'f1', fileUrl: '/api/files/f1', mimeType: 'image/png', originalName: 'beleg.png' }] }
         : r,
     );
     const { bytes, warnings } = await registerPdf({
@@ -202,7 +202,7 @@ describe('registerPdf', () => {
     receipt.addPage();
     receipt.addPage();
     const receiptBytes = await receipt.save();
-    const one = [meal({ files: [{ fileId: 'f1', fileUrl: '/api/files/f1', mimeType: 'application/pdf', originalName: 'scan.pdf' }] })];
+    const one = [meal({ files: [{ refId: 'ref-1', rotation: null, fileId: 'f1', fileUrl: '/api/files/f1', mimeType: 'application/pdf', originalName: 'scan.pdf' }] })];
     const { bytes, warnings } = await registerPdf({
       register: buildRegister(one, SMALL_BUSINESS, 2025),
       workspaceLabel: 'Beispiel Studio',
@@ -213,8 +213,68 @@ describe('registerPdf', () => {
     expect(warnings).toEqual([]);
   });
 
+  it('a PDF receipt is printed the way it was turned in the viewer, on top of its own page rotation', async () => {
+    const receipt = await PDFDocument.create();
+    receipt.addPage([600, 200]);
+    receipt.addPage([600, 200]).setRotation(degrees(90));
+    const receiptBytes = await receipt.save();
+    const file = { refId: 'ref-1', rotation: 90 as const, fileId: 'f1', fileUrl: '/api/files/f1', mimeType: 'application/pdf', originalName: 'quer.pdf' };
+    const print = async (rotation: 0 | 90 | null) =>
+      PDFDocument.load(
+        (
+          await registerPdf({
+            register: buildRegister([meal({ files: [{ ...file, rotation }] })], SMALL_BUSINESS, 2025),
+            workspaceLabel: 'Beispiel Studio',
+            generatedAt,
+            loadFile: async () => ({ bytes: receiptBytes, mimeType: 'application/pdf' }),
+          })
+        ).bytes,
+      );
+    const turned = (await print(90)).getPages().slice(-2).map((p) => p.getRotation().angle);
+    expect(turned).toEqual([90, 180]);
+    // No rotation chosen: the pages are appended exactly as they are.
+    const plain = (await print(null)).getPages().slice(-2).map((p) => p.getRotation().angle);
+    expect(plain).toEqual([0, 90]);
+    expect((await print(0)).getPages().slice(-2).map((p) => p.getRotation().angle)).toEqual([0, 90]);
+  });
+
+  it('a picture turned by a quarter is placed so that it covers exactly the box it would cover upright', () => {
+    const box = { x: 100, y: 200, width: 60, height: 180 };
+    // Corners of the drawn picture: the format turns it counter-clockwise by `rotate` around (x, y).
+    const corners = (p: ReturnType<typeof rotatedImagePlacement>) => {
+      const a = (p.rotate.angle * Math.PI) / 180;
+      const pt = (dx: number, dy: number) => [p.x + dx * Math.cos(a) - dy * Math.sin(a), p.y + dx * Math.sin(a) + dy * Math.cos(a)];
+      const pts = [pt(0, 0), pt(p.width, 0), pt(0, p.height), pt(p.width, p.height)];
+      const xs = pts.map((c) => c[0]);
+      const ys = pts.map((c) => c[1]);
+      return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+    };
+    for (const rotation of [0, 90, 180, 270] as const) {
+      const covered = corners(rotatedImagePlacement(box, rotation));
+      expect(covered.x).toBeCloseTo(box.x);
+      expect(covered.y).toBeCloseTo(box.y);
+      expect(covered.width).toBeCloseTo(box.width);
+      expect(covered.height).toBeCloseTo(box.height);
+    }
+    // Clockwise for the viewer is the negative angle in the format; the picture's own sides swap on a quarter turn.
+    expect(rotatedImagePlacement(box, 90)).toMatchObject({ width: 180, height: 60 });
+    expect(rotatedImagePlacement(box, 90).rotate.angle).toBe(-90);
+  });
+
+  it('a sideways receipt photo turned upright still gets a readable size on its sheet', async () => {
+    const file = { refId: 'ref-1', rotation: 90 as const, fileId: 'f1', fileUrl: '/api/files/f1', mimeType: 'image/png', originalName: 'quer.png' };
+    const { bytes, warnings } = await registerPdf({
+      register: buildRegister([meal({ files: [file] })], SMALL_BUSINESS, 2025),
+      workspaceLabel: 'Beispiel Studio',
+      generatedAt,
+      loadFile: async () => ({ bytes: PNG_1PX, mimeType: 'image/png' }),
+    });
+    expect(warnings).toEqual([]);
+    expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThanOrEqual(2);
+  });
+
   it('a receipt that cannot be loaded or is corrupt becomes a warning, never a crash', async () => {
-    const file = { fileId: 'f1', fileUrl: '/api/files/f1', mimeType: 'image/jpeg', originalName: 'kaputt.jpg' };
+    const file = { refId: 'ref-1', rotation: null, fileId: 'f1', fileUrl: '/api/files/f1', mimeType: 'image/jpeg', originalName: 'kaputt.jpg' };
     const one = [meal({ files: [file] })];
     const missing = await registerPdf({
       register: buildRegister(one, SMALL_BUSINESS, 2025),

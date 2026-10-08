@@ -95,6 +95,22 @@
     queue entry and on a register entry. A batch finishes the rest when one receipt
     is gone or belongs to another workspace, and a receipt whose stored file cannot
     be deleted is kept and reported. (2026-10-08)
+  - [x] Visual polish of the meals page after the owner's review of the batch actions:
+    a reusable custom checkbox (`src/components/ui/Checkbox.tsx`, real input, mixed
+    state, 40 pixel hit area), no layout shift when an entry is checked (the batch bar
+    has a reserved slot under the queue, outcome notices float, rows are a fixed grid; measured
+    0 pixels at desktop and phone width), thin on-brand scroll bars and the dark colour
+    scheme app-wide, quieter row actions, a destructive button that looks destructive
+    at rest. Checked in a headless browser with screenshots. (2026-10-08)
+  - [x] Receipt viewer and form fixes from the owner's live use: the receipt beside the
+    form can be turned in quarter steps (stored with the file reference, so it is the
+    same in the dashboard and on the exported register sheet; the stored file is never
+    rewritten), zoomed, dragged and fitted, with keys R, plus, minus and 0. A PDF
+    receipt is drawn to a picture in the browser (new dependency `pdfjs-dist`), so a
+    sideways scan no longer sits as a strip in a browser frame. The place field opens
+    with name and address read from the receipt text when a complete address is found
+    there ("Aus Beleg übernehmen" for receipts that already have a place), and picking
+    the host from browser autofill no longer overwrites the place. (2026-10-08)
 
 ## Completed
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useMemo, useState } from 'react';
+import { useId, useMemo, useState, type ChangeEvent } from 'react';
 import type { Contact, ContactInput } from '@/lib/contacts/store';
 import { CONSUMPTION_TYPES, MEAL_CATEGORY, MEAL_TYPES } from '@/lib/receipts-constants';
 import {
@@ -43,6 +43,8 @@ interface MealDetailsFormProps {
   saveLabel?: string;
   /** Shown next to save, e.g. "Später" on the capture sheet. */
   secondaryAction?: { label: string; onClick: () => void };
+  /** The host as typed, when the field is left: the queue offers it on the next receipt even before a save. */
+  onHostEntered?: (host: string) => void;
 }
 
 /**
@@ -54,6 +56,25 @@ interface MealDetailsFormProps {
  * entry will be in the register once saved. Saving is allowed at any degree
  * of completeness: a half-filled entry simply stays in the queue.
  */
+/** Attributes that keep browser autofill and the common password managers out of a field. */
+const NO_AUTOFILL = {
+  autoComplete: 'off',
+  autoCorrect: 'off',
+  'data-1p-ignore': true,
+  'data-lpignore': 'true',
+  'data-bwignore': true,
+  'data-form-type': 'other',
+} as const;
+
+/**
+ * True when a change event comes from the user working in that very field
+ * (typing, pasting, dictating, choosing a suggestion there). Autofill started
+ * from another field writes its value while the focus is somewhere else.
+ */
+function isUserEdit(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>): boolean {
+  return typeof document === 'undefined' || document.activeElement === e.target;
+}
+
 export default function MealDetailsForm(props: MealDetailsFormProps) {
   // Keyed on the row: another receipt (queue advance) starts a fresh draft,
   // while a refreshed copy of the SAME row never wipes what is being typed.
@@ -72,6 +93,7 @@ function MealDetailsFormInner({
   previousGuests,
   saveLabel = 'Speichern',
   secondaryAction,
+  onHostEntered,
 }: MealDetailsFormProps) {
   const ids = useId();
   const [draft, setDraft] = useState<MealDraft>(() => draftFromRecord(record, { host: defaultHost }));
@@ -221,19 +243,66 @@ function MealDetailsFormInner({
             )}
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="ui-label" htmlFor={fieldId('place')}>
+          {/*
+            Place and host are NOT a contact form, and must not be filled like
+            one. With `autocomplete="name"` on the host, browsers and password
+            managers took the pair for "my name, my address" and wrote the
+            user's own address over the restaurant's when the host was picked
+            from autofill. Both fields therefore opt out of autofill and carry
+            names that say what they are; the host is prefilled from the last
+            one used instead.
+          */}
+          <div>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+              <label className="ui-label" htmlFor={fieldId('venue')}>
                 Ort (Name und Anschrift)
               </label>
-              <input id={fieldId('place')} className="ui-input" value={draft.place} onChange={(e) => set('place', e.target.value)} />
+              {record.placeSuggestion && record.placeSuggestion !== draft.place.trim() && (
+                <button
+                  type="button"
+                  className="mb-1.5 text-xs underline underline-offset-2"
+                  style={{ color: 'var(--accent)' }}
+                  title={record.placeSuggestion}
+                  onClick={() => set('place', record.placeSuggestion ?? '')}
+                >
+                  Aus Beleg übernehmen
+                </button>
+              )}
             </div>
-            <div>
-              <label className="ui-label" htmlFor={fieldId('host')}>
-                Gastgeber
-              </label>
-              <input id={fieldId('host')} className="ui-input" value={draft.host} autoComplete="name" onChange={(e) => set('host', e.target.value)} />
-            </div>
+            {/* Two lines: a name with street, postal code and town does not fit one. */}
+            <textarea
+              id={fieldId('venue')}
+              name="meal-venue"
+              className="ui-input"
+              rows={2}
+              value={draft.place}
+              placeholder="Name des Lokals, Straße, Postleitzahl und Stadt"
+              {...NO_AUTOFILL}
+              onChange={(e) => {
+                // Only what the user does in THIS field counts. A value written
+                // into it while the focus is elsewhere (autofill triggered from
+                // another field) is dropped, and React puts the draft back.
+                if (!isUserEdit(e)) return;
+                // The place is one line wherever it is printed.
+                set('place', e.target.value.replace(/\s*\n+\s*/g, ' '));
+              }}
+            />
+          </div>
+          <div>
+            <label className="ui-label" htmlFor={fieldId('host')}>
+              Gastgeber
+            </label>
+            <input
+              id={fieldId('host')}
+              name="meal-host"
+              className="ui-input sm:max-w-sm"
+              value={draft.host}
+              {...NO_AUTOFILL}
+              onChange={(e) => set('host', e.target.value)}
+              onBlur={() => {
+                if (draft.host.trim()) onHostEntered?.(draft.host.trim());
+              }}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">

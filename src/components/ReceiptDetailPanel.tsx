@@ -5,6 +5,9 @@ import type { Row, Column, SelectOption } from '@marlinjai/data-table-core';
 import type { FileReference } from '@marlinjai/data-table-core';
 import { validateReceiptFile } from '@/lib/presigned-file-adapter';
 import ReceiptLightbox from './ReceiptLightbox';
+import ReceiptViewer, { type ViewerFile } from './meals/ReceiptViewer';
+import { parseRotation, type Rotation } from '@/lib/meals/viewer-state';
+import { saveReceiptRotation } from '@/app/app/meals/actions';
 import MealPanelSection from './meals/MealPanelSection';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 
@@ -84,6 +87,24 @@ export default function ReceiptDetailPanel({
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [lightboxFile, setLightboxFile] = useState<FileReference | null>(null);
+  // Rotations chosen in this panel, so the fullscreen view opens the way the inline one was left.
+  const [rotations, setRotations] = useState<Record<string, Rotation>>({});
+  const viewerFile = (f: FileReference): ViewerFile => ({
+    refId: f.id,
+    fileId: f.fileId,
+    fileUrl: f.fileUrl,
+    mimeType: f.mimeType,
+    originalName: f.originalName,
+    rotation: rotations[f.id] ?? parseRotation((f.metadata as Record<string, unknown> | null | undefined)?.rotation),
+  });
+  const rotateFile = async (file: ViewerFile, rotation: Rotation): Promise<boolean> => {
+    setRotations((r) => ({ ...r, [file.refId]: rotation }));
+    try {
+      return (await saveReceiptRotation(row.id, file.refId, rotation)).ok;
+    } catch {
+      return false;
+    }
+  };
   const [previewIdx, setPreviewIdx] = useState(0);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -323,29 +344,20 @@ export default function ReceiptDetailPanel({
               }}
             />
             {previewFile ? (
-              // Inline preview of the ACTUAL file: PDFs render in an embedded
-              // viewer, images full-width. The expand button (and, for images,
-              // clicking the preview) opens the fullscreen lightbox — an iframe
-              // swallows clicks, so PDFs need the explicit button.
-              <div className="relative">
-                {previewFile.mimeType === 'application/pdf' ? (
-                  <iframe
-                    src={`${previewFile.fileUrl}#toolbar=0&navpanes=0`}
-                    title="Receipt preview"
-                    className="h-[420px] w-full rounded-lg border-0 bg-[#1e1e2e]"
-                  />
-                ) : (
-                  <button
-                    onClick={() => setLightboxFile(previewFile)}
-                    className="flex w-full cursor-zoom-in justify-center rounded-lg transition-opacity hover:opacity-80"
-                    aria-label="Open full-size preview"
-                  >
-                    <img src={previewFile.fileUrl} alt={previewFile.originalName} className="max-h-[420px] rounded-lg object-contain" />
-                  </button>
-                )}
+              // The receipt viewer on the ACTUAL file: rotate, zoom, drag, fit.
+              // A rotation chosen here is stored with the file reference, so
+              // it is the same on the meals page and in the register export.
+              <div className="relative" data-theme="dark">
+                <ReceiptViewer
+                  key={previewFile.id}
+                  files={[viewerFile(previewFile)]}
+                  onRotate={rotateFile}
+                  lang="en"
+                  className="h-[420px]"
+                />
                 <button
                   onClick={() => setLightboxFile(previewFile)}
-                  className="absolute right-2 top-2 rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-xs text-gray-300 hover:bg-black/80 hover:text-white"
+                  className="absolute bottom-2 right-2 rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-xs text-gray-300 hover:bg-black/80 hover:text-white"
                   aria-label="Open full-size preview"
                 >
                   ⤢ Expand
@@ -400,8 +412,8 @@ export default function ReceiptDetailPanel({
 
           {lightboxFile && (
             <ReceiptLightbox
-              fileUrl={lightboxFile.fileUrl}
-              isPdf={lightboxFile.mimeType === 'application/pdf'}
+              file={viewerFile(lightboxFile)}
+              onRotate={rotateFile}
               onClose={() => setLightboxFile(null)}
             />
           )}

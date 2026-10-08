@@ -4,7 +4,9 @@ import {
   consumptionKeyFromLabel,
   mealTypeKeyFromLabel,
 } from '@/lib/receipts-constants';
+import { placeFromReceiptText } from './place';
 import { parseTaxLines } from './rules';
+import { parseRotation } from './viewer-state';
 import type { MealGuestEntry, MealRecord } from './types';
 
 /**
@@ -72,10 +74,12 @@ export function rowToMealRecord(
     ? (rawFiles as FileReference[])
         .filter((f) => f && typeof f === 'object' && typeof f.fileId === 'string')
         .map((f) => ({
+          refId: f.id,
           fileId: f.fileId,
           fileUrl: f.fileUrl,
           mimeType: f.mimeType,
           originalName: f.originalName,
+          rotation: parseRotation((f.metadata as Record<string, unknown> | null | undefined)?.rotation),
         }))
     : [];
 
@@ -102,5 +106,6 @@ export function rowToMealRecord(
     confidence: numberOrNull(cell('Confidence')),
     guests,
     files,
+    placeSuggestion: placeFromReceiptText(text(cell('OCR Text')), textOrNull(cell('Vendor'))),
   };
 }

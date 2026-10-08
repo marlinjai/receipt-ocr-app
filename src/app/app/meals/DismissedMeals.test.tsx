@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { meal } from '@/lib/meals/__tests__/fixtures';
 import type { MealRecord } from '@/lib/meals/types';
@@ -60,7 +60,7 @@ describe('DismissedMeals: where "Keine Bewirtung" is undone', () => {
     const notice = await screen.findByText('„Supermarkt Beispiel“ wird wieder als Bewirtung geführt, mit den zuvor erfassten Angaben.');
     expect(restoreMeals).toHaveBeenCalledWith(['x']);
     expect(screen.getByText('Keine Bewirtung (1)')).toBeTruthy();
-    expect(document.activeElement).toBe(notice);
+    await waitFor(() => expect(document.activeElement).toBe(notice));
   });
 
   it('taking back the last one keeps the outcome on screen', async () => {

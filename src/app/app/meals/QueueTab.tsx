@@ -2,16 +2,17 @@
 
 import { useMemo, useState } from 'react';
 import MealDetailsForm from '@/components/meals/MealDetailsForm';
-import ReceiptPreview from '@/components/meals/ReceiptPreview';
+import ReceiptViewer from '@/components/meals/ReceiptViewer';
+import Checkbox from '@/components/ui/Checkbox';
 import type { Contact } from '@/lib/contacts/store';
 import { receiptCount } from '@/lib/meals/batch';
-import { DISMISSED_HINT, formatDay, formatEuro } from '@/lib/meals/messages';
+import { DISMISSED_HINT, formatDay, formatEuro, missingList, missingSummary } from '@/lib/meals/messages';
 import type { IncompleteEntry } from '@/lib/meals/register';
-import { MISSING_FIELD_LABELS, mealStatus } from '@/lib/meals/rules';
+import { mealStatus } from '@/lib/meals/rules';
 import { pruneSelection, selectAllState, toggleAll, toggleSelected } from '@/lib/meals/selection';
 import type { MealGuestEntry, MealRecord, MealTaxSettings } from '@/lib/meals/types';
-import { createContact, saveMeal } from './actions';
-import { ActionNotice, useReceiptActions } from './useReceiptActions';
+import { createContact, saveMeal, saveReceiptRotation } from './actions';
+import { useReceiptActions } from './useReceiptActions';
 
 interface QueueTabProps {
   queue: IncompleteEntry[];
@@ -38,6 +39,21 @@ function entryAmount(record: MealRecord): string {
   return `${record.gross.toFixed(2).replace('.', ',')} ${record.currency}`;
 }
 
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" className="shrink-0" aria-hidden="true" focusable="false">
+      <path
+        d="M2.75 4.25h10.5M6.25 4.25V3a.75.75 0 0 1 .75-.75h2a.75.75 0 0 1 .75.75v1.25M4.25 4.25l.5 8.3a1 1 0 0 0 1 .95h4.5a1 1 0 0 0 1-.95l.5-8.3M6.75 7v3.75M9.25 7v3.75"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /**
  * The work queue: every meal that would be a register entry but lacks facts,
  * oldest first. This one list is the resume path (a half-filled entry is
@@ -48,6 +64,10 @@ function entryAmount(record: MealRecord): string {
  * "Keine Bewirtung" and "Löschen", and checked entries get both as a batch.
  * The opened entry (the form on the right) and the checked entries are two
  * separate things.
+ *
+ * Nothing in the list changes size or position when an entry is checked: the
+ * batch bar has a reserved slot at the foot of the queue column, the outcome
+ * of an action floats in the dock, and every row is a fixed grid.
  */
 export default function QueueTab({
   queue,
@@ -64,7 +84,9 @@ export default function QueueTab({
   const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [previousGuests, setPreviousGuests] = useState<MealGuestEntry[]>([]);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
-  const actions = useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint: DISMISSED_HINT, hasSelection: true });
+  // The host typed on one receipt is offered on the next, even before anything was saved.
+  const [sessionHost, setSessionHost] = useState('');
+  const actions = useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint: DISMISSED_HINT });
 
   const queueIds = useMemo(() => queue.map((e) => e.record.rowId), [queue]);
   // Derived on every render: an entry that left the queue can never stay checked.
@@ -79,62 +101,140 @@ export default function QueueTab({
 
   if (queue.length === 0) {
     return (
-      <div className="space-y-4">
-        <ActionNotice notice={actions.notice} />
-        <div className="glass-panel rounded-xl p-8 text-center">
-          <p className="text-base font-medium" style={{ color: 'var(--foreground)' }}>
-            Keine offenen Bewirtungen.
-          </p>
-          <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: 'var(--muted)' }}>
-            {lastSaved ? `${lastSaved} ` : ''}
-            Jeder als Bewirtung kategorisierte Beleg hat Teilnehmer und Anlass. Neue Belege erscheinen hier, sobald
-            Angaben fehlen.
-          </p>
-          <button type="button" className="ui-btn ui-btn-primary mt-4" onClick={onOpenRegister}>
-            Zum Verzeichnis
-          </button>
-        </div>
-        {actions.dialogs}
+      <div className="glass-panel rounded-xl px-6 py-12 text-center">
+        <p className="text-base font-medium" style={{ color: 'var(--foreground)' }}>
+          Keine offenen Bewirtungen.
+        </p>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+          {lastSaved ? `${lastSaved} ` : ''}
+          Jeder als Bewirtung kategorisierte Beleg hat Teilnehmer und Anlass. Neue Belege erscheinen hier, sobald
+          Angaben fehlen.
+        </p>
+        <button type="button" className="ui-btn ui-btn-primary mt-5" onClick={onOpenRegister}>
+          Zum Verzeichnis
+        </button>
+        {actions.overlays}
       </div>
     );
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
-      <div className="min-w-0">
-        <p className="mb-2 text-xs" style={{ color: 'var(--muted)' }} role="status">
-          {lastSaved ? `${lastSaved} ` : ''}
-          {queue.length === 1 ? 'Noch 1 Beleg offen.' : `Noch ${queue.length} Belege offen.`}
-        </p>
-        <ActionNotice notice={actions.notice} className="mb-2" />
-
-        <label className="mb-2 flex min-h-8 cursor-pointer items-center gap-2 px-1 text-sm" style={{ color: 'var(--foreground)' }}>
-          <input
-            type="checkbox"
-            className="ui-check"
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:items-start">
+      <div className="min-w-0 lg:sticky lg:top-4">
+        {/* One fixed-height line: what it says changes, its size does not. */}
+        <div className="mb-2 flex h-10 items-center justify-between gap-3">
+          <Checkbox
+            className="-ml-[0.6875rem]"
             checked={allState === 'all'}
-            ref={(el) => {
-              if (el) el.indeterminate = allState === 'some';
-            }}
+            indeterminate={allState === 'some'}
             disabled={busy}
             onChange={() => setCheckedIds(toggleAll(checked, queueIds))}
+            label="Alle auswählen"
           />
-          Alle auswählen
-        </label>
+          <p
+            className="min-w-0 truncate text-xs tabular-nums"
+            style={{ color: checked.size > 0 ? 'var(--accent)' : 'var(--muted)' }}
+            role="status"
+          >
+            {checked.size > 0
+              ? `${checked.size} von ${queue.length} ausgewählt`
+              : `${lastSaved ? `${lastSaved} ` : ''}${queue.length === 1 ? 'Noch 1 Beleg offen.' : `Noch ${queue.length} Belege offen.`}`}
+          </p>
+        </div>
 
         {/* Always in the page, so a screen reader hears the selection change. */}
         <p className="sr-only" role="status">
           {checked.size > 0 ? `${receiptCount(checked.size)} ausgewählt. Sammelaktionen: Keine Bewirtung oder Löschen.` : ''}
         </p>
-        {checked.size > 0 && (
-          <div role="group" aria-label="Aktionen für die Auswahl" className="ui-batchbar sticky top-2 z-10 mb-2">
-            <p className="text-sm font-medium" style={{ color: 'var(--foreground)' }}>
-              {checked.size} von {queue.length} ausgewählt
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
+
+        <nav aria-label="Offene Bewirtungen">
+          <ul className="ui-scroll max-h-[46svh] space-y-1.5 pr-1 lg:max-h-[calc(100svh-9rem)]">
+            {queue.map(({ record, missing }) => {
+              const isOpen = opened?.record.rowId === record.rowId;
+              const isChecked = checked.has(record.rowId);
+              const name = entryLabel(record);
+              const spoken = `${name}, ${formatDay(record.date)}`;
+              return (
+                <li key={record.rowId} className="ui-row" data-open={isOpen} data-checked={isChecked}>
+                  <Checkbox
+                    className="ui-row-above row-span-2 self-center"
+                    checked={isChecked}
+                    disabled={busy}
+                    onChange={() => setCheckedIds(toggleSelected(checked, record.rowId))}
+                    label={`${spoken} auswählen`}
+                    hideLabel
+                  />
+                  <button
+                    type="button"
+                    aria-current={isOpen ? 'true' : undefined}
+                    onClick={() => setOpenId(record.rowId)}
+                    className="ui-row-open flex min-w-0 items-baseline justify-between gap-3 pb-0.5 pr-3 pt-2.5"
+                  >
+                    <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+                      {name}
+                    </span>
+                    <span className="shrink-0 text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
+                      {entryAmount(record)}
+                    </span>
+                  </button>
+                  <div className="flex min-w-0 items-center justify-between gap-2 pb-1.5 pr-1.5">
+                    <span className="min-w-0 truncate text-xs" style={{ color: 'var(--muted)' }} title={`fehlt: ${missingList(missing)}`}>
+                      {formatDay(record.date)} ·{' '}
+                      {missing.length > 2 ? (
+                        <>
+                          {missing.length} fehlen
+                          <span className="sr-only">: {missingList(missing)}</span>
+                        </>
+                      ) : (
+                        missingSummary(missing)
+                      )}
+                    </span>
+                    <span className="ui-row-above flex shrink-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        className="ui-btn ui-btn-sm ui-btn-ghost px-2 text-xs"
+                        disabled={busy}
+                        aria-label={`Keine Bewirtung: ${spoken}`}
+                        onClick={() => actions.markNotMeal([record], { confirm: false })}
+                      >
+                        Keine Bewirtung
+                      </button>
+                      <button
+                        type="button"
+                        className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-danger ui-btn-icon"
+                        disabled={busy}
+                        aria-label={`Löschen: ${spoken}`}
+                        title="Löschen"
+                        onClick={() => actions.requestDelete([record])}
+                      >
+                        <TrashIcon />
+                      </button>
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        {/*
+          The batch bar's place. On a desktop it is a slot of fixed height at
+          the foot of the queue column, there whether or not anything is
+          checked, so the bar appearing moves nothing and can never lie on top
+          of a field of the form. On a phone the bar is fixed to the bottom
+          edge at full width, and the page keeps that much padding below.
+        */}
+        <div className="ui-batchbar-slot" data-batch-slot>
+          {checked.size > 0 && (
+            <div role="group" aria-label="Aktionen für die Auswahl" className="ui-dock-card ui-batchbar flex items-center gap-1.5 py-1.5 pl-3 pr-1.5">
+              <p className="mr-auto flex items-center gap-2 pr-2 text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+                <span className="ui-count">{checked.size}</span>
+                <span className="sr-only">von {queue.length}</span>
+                <span className="max-[400px]:sr-only lg:sr-only">ausgewählt</span>
+              </p>
               <button
                 type="button"
-                className="ui-btn ui-btn-sm"
+                className="ui-btn ui-btn-sm whitespace-nowrap"
                 disabled={busy}
                 onClick={() => actions.markNotMeal(checkedRecords, { confirm: true })}
               >
@@ -148,102 +248,44 @@ export default function QueueTab({
               >
                 Löschen
               </button>
-              <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => setCheckedIds(new Set())}>
-                Auswahl aufheben
+              <button
+                type="button"
+                className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon"
+                disabled={busy}
+                aria-label="Auswahl aufheben"
+                title="Auswahl aufheben"
+                onClick={() => setCheckedIds(new Set())}
+              >
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+                  <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
               </button>
             </div>
-          </div>
-        )}
-
-        <nav aria-label="Offene Bewirtungen">
-          <ul className="max-h-[48svh] space-y-1.5 overflow-y-auto pr-1 lg:max-h-[75svh]">
-            {queue.map(({ record, missing }) => {
-              const isOpen = opened?.record.rowId === record.rowId;
-              const isChecked = checked.has(record.rowId);
-              const name = entryLabel(record);
-              const spoken = `${name}, ${formatDay(record.date)}`;
-              return (
-                <li
-                  key={record.rowId}
-                  className="rounded-lg border transition-colors duration-150"
-                  style={{
-                    borderColor: isOpen ? 'rgba(226, 163, 72, 0.55)' : 'var(--border)',
-                    background: isOpen ? 'var(--accent-muted)' : 'var(--surface)',
-                  }}
-                >
-                  <div className="flex items-start">
-                    <label className="flex cursor-pointer items-center self-stretch py-2.5 pl-3 pr-1">
-                      <input
-                        type="checkbox"
-                        className="ui-check"
-                        checked={isChecked}
-                        disabled={busy}
-                        onChange={() => setCheckedIds(toggleSelected(checked, record.rowId))}
-                      />
-                      <span className="sr-only">{spoken} auswählen</span>
-                    </label>
-                    <button
-                      type="button"
-                      aria-current={isOpen ? 'true' : undefined}
-                      onClick={() => setOpenId(record.rowId)}
-                      className="min-w-0 flex-1 rounded-lg px-2 py-2.5 text-left"
-                    >
-                      <span className="flex items-baseline justify-between gap-2">
-                        <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
-                          {name}
-                        </span>
-                        <span className="shrink-0 text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
-                          {entryAmount(record)}
-                        </span>
-                      </span>
-                      <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>
-                        {formatDay(record.date)} · fehlt: {missing.map((m) => MISSING_FIELD_LABELS[m]).join(', ')}
-                      </span>
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap justify-end gap-1.5 px-2 pb-2">
-                    <button
-                      type="button"
-                      className="ui-btn ui-btn-sm"
-                      disabled={busy}
-                      aria-label={`Keine Bewirtung: ${spoken}`}
-                      onClick={() => actions.markNotMeal([record], { confirm: false })}
-                    >
-                      Keine Bewirtung
-                    </button>
-                    <button
-                      type="button"
-                      className="ui-btn ui-btn-sm ui-btn-danger"
-                      disabled={busy}
-                      aria-label={`Löschen: ${spoken}`}
-                      onClick={() => actions.requestDelete([record])}
-                    >
-                      Löschen
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
+          )}
+        </div>
       </div>
 
       {opened && (
-        <section aria-label="Angaben zur Bewirtung" className="grid min-w-0 gap-6 xl:grid-cols-2">
-          <div className="glass-panel rounded-xl p-4 sm:p-5">
-            <h2 className="mb-1 text-base font-semibold" style={{ color: 'var(--foreground)' }}>
-              {opened.record.name || opened.record.vendor || 'Beleg'}
-            </h2>
-            <p className="mb-4 text-xs" style={{ color: 'var(--muted)' }}>
-              {formatDay(opened.record.date)}
-              {opened.record.gross ? ` · ${opened.record.gross.toFixed(2).replace('.', ',')} ${opened.record.currency}` : ''}
-              {' · '}Strg oder Cmd + Enter speichert
-            </p>
+        <section
+          aria-label="Angaben zur Bewirtung"
+          className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] xl:items-start 2xl:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]"
+        >
+          <div className="glass-panel rounded-xl p-4 sm:p-6">
+            <div className="mb-5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b pb-4" style={{ borderColor: 'var(--border-subtle)' }}>
+              <h2 className="min-w-0 text-lg font-semibold leading-snug" style={{ color: 'var(--foreground)' }}>
+                {opened.record.name || opened.record.vendor || 'Beleg'}
+              </h2>
+              <p className="text-sm tabular-nums" style={{ color: 'var(--muted)' }}>
+                {formatDay(opened.record.date)}
+                {opened.record.gross ? ` · ${opened.record.gross.toFixed(2).replace('.', ',')} ${opened.record.currency}` : ''}
+              </p>
+            </div>
             <MealDetailsForm
               record={opened.record}
               contacts={contacts}
               settings={settings}
-              defaultHost={defaultHost}
+              defaultHost={sessionHost || defaultHost}
+              onHostEntered={setSessionHost}
               previousGuests={previousGuests}
               saveLabel="Speichern und weiter"
               onSave={saveMeal}
@@ -263,13 +305,34 @@ export default function QueueTab({
                 onRecordSaved(record);
               }}
             />
+            <p className="mt-3 text-xs" style={{ color: 'var(--muted)' }}>
+              Strg oder Cmd + Enter speichert.
+            </p>
           </div>
-          <div className="xl:sticky xl:top-4 xl:self-start">
-            <ReceiptPreview key={opened.record.rowId} files={opened.record.files} />
-          </div>
+          {/*
+            The receipt is what gets read while typing guests and occasion, so
+            it has the widest column and the full height of the window. Below
+            the two-column width it comes FIRST, above the form.
+          */}
+          <ReceiptViewer
+            key={opened.record.rowId}
+            className="h-[62svh] max-xl:order-first xl:sticky xl:top-4 xl:h-[calc(100svh-2rem)]"
+            files={opened.record.files}
+            onRotate={async (file, rotation) => {
+              try {
+                const result = await saveReceiptRotation(opened.record.rowId, file.refId, rotation);
+                if (!result.ok) return false;
+                onRecordsSaved([result.value.record]);
+                return true;
+              } catch {
+                return false;
+              }
+            }}
+          />
         </section>
       )}
-      {actions.dialogs}
+
+      {actions.overlays}
     </div>
   );
 }

@@ -1,20 +1,30 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import ReceiptViewer, { type ViewerFile } from './meals/ReceiptViewer';
+import type { Rotation } from '@/lib/meals/viewer-state';
 
 /**
- * Fullscreen receipt preview: PDFs load into an iframe, raster images render
- * full-size. Mime-driven — callers pass the real file URL.
+ * Fullscreen receipt preview: the receipt viewer (rotate, zoom, drag, fit) at
+ * the size of the window. Escape or a click on the backdrop closes it.
  */
 export default function ReceiptLightbox({
-  fileUrl,
-  isPdf,
+  file,
+  onRotate,
   onClose,
 }: {
-  fileUrl: string;
-  isPdf: boolean;
+  file: ViewerFile;
+  onRotate?: (file: ViewerFile, rotation: Rotation) => Promise<boolean>;
   onClose: () => void;
 }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  // Move focus into the dialog on open and hand it back to the opener on close.
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeRef.current?.focus();
+    return () => opener?.focus();
+  }, []);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -36,14 +46,17 @@ export default function ReceiptLightbox({
         justifyContent: 'center',
         backgroundColor: 'rgba(0, 0, 0, 0.8)',
         backdropFilter: 'blur(4px)',
-        cursor: 'zoom-out',
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Receipt preview"
         onClick={(e) => e.stopPropagation()}
-        style={{ position: 'relative', maxWidth: '90vw', maxHeight: '90vh', cursor: 'default' }}
+        style={{ position: 'relative', width: 'min(92vw, 1100px)', height: '90vh' }}
       >
         <button
+          ref={closeRef}
           onClick={onClose}
           style={{
             position: 'absolute',
@@ -66,33 +79,7 @@ export default function ReceiptLightbox({
         >
           &times;
         </button>
-
-        {isPdf ? (
-          <iframe
-            src={fileUrl}
-            title="Receipt preview"
-            style={{
-              width: '80vw',
-              height: '85vh',
-              maxWidth: 900,
-              border: 'none',
-              borderRadius: 8,
-              background: '#1e1e2e',
-            }}
-          />
-        ) : (
-          <img
-            src={fileUrl}
-            alt="Receipt full size"
-            style={{
-              maxWidth: '90vw',
-              maxHeight: '90vh',
-              objectFit: 'contain',
-              borderRadius: 8,
-              boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-            }}
-          />
-        )}
+        <ReceiptViewer files={[file]} onRotate={onRotate} lang="en" className="h-full" />
       </div>
     </div>
   );

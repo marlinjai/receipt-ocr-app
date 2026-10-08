@@ -14,6 +14,7 @@ import type { MealBatchResult, MealBatchSkip } from './batch';
 import { inputFromRecord, normalizeMealInput, sameMealInput, type MealDetailsInput } from './input';
 import { rowToMealRecord, type SelectOptionsByColumn } from './record';
 import { isDismissedMeal, isMealRelated, serializeTaxLines } from './rules';
+import { parseRotation, type Rotation } from './viewer-state';
 import { DEFAULT_TAX_SETTINGS, type MealGuestEntry, type MealRecord, type MealTaxSettings } from './types';
 
 /**
@@ -41,7 +42,8 @@ export type MealServiceErrorCode =
   | 'row_not_found'
   | 'unknown_contact'
   | 'archived_contact'
-  | 'schema_outdated';
+  | 'schema_outdated'
+  | 'invalid_rotation';
 
 export class MealServiceError extends Error {
   readonly code: MealServiceErrorCode;
@@ -334,6 +336,45 @@ export async function setMealTypeForRows(
     }
   }
   return result;
+}
+
+/**
+ * Remember how far a receipt file is turned for viewing and printing.
+ *
+ * The rotation is stored in the metadata of the file REFERENCE (next to the
+ * content hash), so it travels with the receipt into the dashboard and the
+ * register export. The stored file itself is never touched.
+ *
+ * The reference must hang on a row of this workspace's Receipts table;
+ * anything else (another workspace, a deleted row, a reference of another
+ * row) is `row_not_found`. Returns the record as it is stored now.
+ */
+export async function setReceiptFileRotation(
+  db: PrismaClient,
+  mealCtx: MealContext,
+  rowId: string,
+  fileRefId: string,
+  rotation: Rotation,
+): Promise<MealRecord> {
+  if (parseRotation(rotation) === null) throw new MealServiceError('invalid_rotation');
+  const ctx = await tableContext(db, mealCtx.workspaceId);
+  if (!ctx) throw new MealServiceError('not_initialized');
+  const row = await ctx.adapter.getRow(rowId);
+  if (!row || row.tableId !== ctx.tableId) throw new MealServiceError('row_not_found');
+  const ref = await db.dtFile.findUnique({ where: { id: fileRefId }, select: { rowId: true, metadata: true } });
+  if (!ref || ref.rowId !== rowId) throw new MealServiceError('row_not_found');
+
+  const metadata =
+    ref.metadata && typeof ref.metadata === 'object' && !Array.isArray(ref.metadata)
+      ? (ref.metadata as Record<string, unknown>)
+      : {};
+  if (parseRotation(metadata.rotation) !== rotation) {
+    // Merge: the content hash and the upload source stay.
+    await db.dtFile.update({ where: { id: fileRefId }, data: { metadata: { ...metadata, rotation } } });
+  }
+  const record = await loadWithContext(db, mealCtx.workspaceId, ctx, rowId);
+  if (!record) throw new MealServiceError('row_not_found');
+  return record;
 }
 
 export interface DeleteReceiptsDeps {

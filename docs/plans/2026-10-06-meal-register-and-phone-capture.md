@@ -484,6 +484,43 @@ list, the scroll bars were ugly, the page read as unprofessional.
   otherwise sit far below the list. The dashboard table (blue accents, the table
   package's own check boxes) is another page and was not restyled.
 
+## Reality after the receipt viewer and the form fixes (2026-10-08)
+
+From the owner's live use of the queue: receipts scanned sideways could not be turned,
+the place stayed empty although the receipt prints it, and choosing the host from the
+browser's autofill wiped the place.
+
+- **Why the receipt was a strip in a dark box.** Receipts uploaded with "one receipt
+  per page" are one-page PDFs, and the page showed a PDF in a browser frame, which
+  cannot be turned, zoomed or fitted. The viewer (`src/components/meals/ReceiptViewer.tsx`)
+  draws the PDF page to a picture in the browser with pdf.js (`pdfjs-dist`, loaded
+  only when a PDF is opened) and then treats it like a photographed receipt.
+- **Rotation** is stored as `rotation` (0, 90, 180, 270, clockwise) in the metadata of
+  the file reference (`dt_files.metadata`, next to the content hash). No migration,
+  and the stored file is never rewritten. The dashboard's detail panel and its
+  fullscreen view use the same viewer and the same stored value; the register export
+  turns an appended PDF page and a drawn picture by it.
+- **The first-open guess.** Without a stored rotation a page clearly wider than tall
+  opens turned a quarter clockwise, because a till receipt is tall. Which way round a
+  sideways scan lies cannot be told from its shape, so the guess can be upside down;
+  it is not stored, and the first turn the user makes is.
+- **Place.** The classifier's answer for the place arrives only when it gives one and
+  only on rows filed as a meal at upload. `src/lib/meals/place.ts` reads name, street
+  and postal code with town from the header of the recognized text without a model. It
+  is the fallback at upload and the prefill of the form for stored receipts with an
+  empty place; a stored place is never replaced, it gets the action "Aus Beleg
+  übernehmen" instead. Without both a street and a postal code with town nothing is
+  offered and the field opens with the vendor name alone. No model call, no cost.
+- **Autofill.** The host field carried `autocomplete="name"`, so browsers and password
+  managers took host and place for "my name, my address". Both fields now opt out and
+  carry names that say what they are, and a change to the place that arrives while
+  the focus is elsewhere is dropped. The host is prefilled from the last one used, and
+  a host typed on one receipt is offered on the next even before the first save.
+- **Layout.** List, form, receipt, with the receipt the widest column at the full
+  height of the window; below that width the receipt comes above the form.
+- **Not verified by a machine:** real browser autofill and a real password manager
+  (a headless browser has neither), and the place parser on the owner's own receipts.
+
 ## Decisions (2026-10-06)
 
 Approved by the owner on 2026-10-06, all six slices to be built.

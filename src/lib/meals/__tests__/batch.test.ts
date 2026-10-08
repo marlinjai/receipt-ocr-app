@@ -93,7 +93,7 @@ describe('missingSummary', () => {
   it('names up to two missing facts, beyond that their number', () => {
     expect(missingSummary(['guests'])).toBe('fehlt: Teilnehmer');
     expect(missingSummary(['occasion', 'guests'])).toBe('fehlt: Anlass, Teilnehmer');
-    expect(missingSummary(['mealType', 'place', 'occasion', 'host', 'guests'])).toBe('5 Angaben fehlen');
+    expect(missingSummary(['mealType', 'place', 'occasion', 'host', 'guests'])).toBe('5 fehlen');
     expect(missingSummary([])).toBe('vollständig');
   });
 

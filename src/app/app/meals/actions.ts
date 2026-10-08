@@ -21,10 +21,12 @@ import {
   saveMealDetails,
   saveTaxSettings,
   setMealTypeForRows,
+  setReceiptFileRotation,
   type MealContext,
   type TaxSettingsInput,
 } from '@/lib/meals/service';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
+import { parseRotation } from '@/lib/meals/viewer-state';
 import { prisma } from '@/lib/prisma';
 import { getStorageClient } from '@/lib/storage';
 
@@ -71,6 +73,7 @@ function failure(e: unknown): { ok: false; error: MealActionError; detail?: stri
   if (e instanceof MealServiceError) {
     if (e.code === 'row_not_found' || e.code === 'unknown_contact') return { ok: false, error: 'not_found', detail: e.code };
     if (e.code === 'archived_contact') return { ok: false, error: 'contact_archived' };
+    if (e.code === 'invalid_rotation') return { ok: false, error: 'invalid_input', detail: e.code };
     if (e.code === 'not_initialized' || e.code === 'schema_outdated') {
       return { ok: false, error: 'not_initialized', detail: e.code };
     }
@@ -194,6 +197,27 @@ async function deleteStoredFile(fileId: string): Promise<void> {
 /** Delete receipts for good: stored file, row and meal guests. Cannot be undone. */
 export async function deleteMealReceipts(rowIds: string[]): Promise<Result<MealBatchResult>> {
   return runBatch(rowIds, (ctx, ids) => deleteReceiptRows(prisma, ctx, ids, { deleteStoredFile }));
+}
+
+/**
+ * Store how far a receipt file is turned (0, 90, 180 or 270 degrees
+ * clockwise). View metadata on the file reference; the file is not rewritten.
+ */
+export async function saveReceiptRotation(
+  rowId: string,
+  fileRefId: string,
+  rotation: number,
+): Promise<Result<{ record: MealRecord }>> {
+  try {
+    const parsed = parseRotation(rotation);
+    if (parsed === null || typeof rowId !== 'string' || typeof fileRefId !== 'string' || !rowId || !fileRefId) {
+      return { ok: false, error: 'invalid_input', detail: 'rotation' };
+    }
+    const ctx = await writeContext();
+    return { ok: true, value: { record: await setReceiptFileRotation(prisma, ctx, rowId, fileRefId, parsed) } };
+  } catch (e) {
+    return failure(e);
+  }
 }
 
 export async function createContact(input: ContactInput): Promise<Result<Contact>> {

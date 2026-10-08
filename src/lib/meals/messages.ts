@@ -56,7 +56,7 @@ export function formatDay(isoDay: string | null): string {
 export function missingSummary(missing: MissingField[]): string {
   if (missing.length === 0) return 'vollständig';
   if (missing.length <= 2) return `fehlt: ${missingList(missing)}`;
-  return `${missing.length} Angaben fehlen`;
+  return `${missing.length} fehlen`;
 }
 
 export function missingList(missing: MissingField[]): string {

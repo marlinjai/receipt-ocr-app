@@ -33,6 +33,7 @@ export function meal(overrides: Partial<MealRecord> = {}): MealRecord {
     confidence: 95,
     guests: [GUEST_A],
     files: [],
+    placeSuggestion: null,
     ...overrides,
   };
 }

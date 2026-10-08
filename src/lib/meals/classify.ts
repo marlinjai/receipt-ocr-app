@@ -5,6 +5,7 @@ import {
   type ConsumptionKey,
   type MealTypeKey,
 } from '@/lib/receipts-constants';
+import { placeFromReceiptText } from './place';
 import { estimatedVatRate, sanitizeTaxLines } from './rules';
 import type { TaxLine } from './types';
 
@@ -67,11 +68,15 @@ export function extractTipFromText(text: string): number | null {
 export function mealFactsFromClassification(
   classified: { meal?: MealClassification | null } | null | undefined,
   fullText: string,
+  vendor: string | null = null,
 ): MealClassification {
   const meal = classified?.meal ?? EMPTY_MEAL_CLASSIFICATION;
   return {
     ...meal,
     tip: meal.tip ?? extractTipFromText(fullText),
+    // The classifier's answer wins; when it gave none, the address printed in
+    // the receipt header is taken, and only when it is complete.
+    place: meal.place ?? placeFromReceiptText(fullText, vendor),
   };
 }
 

@@ -21,6 +21,7 @@ const restoreMeals = vi.fn();
 vi.mock('./actions', () => ({
   saveMeal: vi.fn(),
   createContact: vi.fn(),
+  saveReceiptRotation: vi.fn(),
   markMealsNotMeal: (...a: unknown[]) => markMealsNotMeal(...a),
   deleteMealReceipts: (...a: unknown[]) => deleteMealReceipts(...a),
   restoreMeals: (...a: unknown[]) => restoreMeals(...a),
@@ -28,7 +29,7 @@ vi.mock('./actions', () => ({
 vi.mock('@/components/meals/MealDetailsForm', () => ({
   default: ({ record }: { record: MealRecord }) => <div data-testid="form">{record.rowId}</div>,
 }));
-vi.mock('@/components/meals/ReceiptPreview', () => ({ default: () => null }));
+vi.mock('@/components/meals/ReceiptViewer', () => ({ default: () => null }));
 
 import QueueTab from './QueueTab';
 

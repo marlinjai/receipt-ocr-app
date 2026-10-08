@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import MealDetailsForm from '@/components/meals/MealDetailsForm';
-import ReceiptPreview from '@/components/meals/ReceiptPreview';
+import ReceiptViewer from '@/components/meals/ReceiptViewer';
 import Checkbox from '@/components/ui/Checkbox';
 import Dock from '@/components/ui/Dock';
 import type { Contact } from '@/lib/contacts/store';
@@ -12,7 +12,7 @@ import type { IncompleteEntry } from '@/lib/meals/register';
 import { mealStatus } from '@/lib/meals/rules';
 import { pruneSelection, selectAllState, toggleAll, toggleSelected } from '@/lib/meals/selection';
 import type { MealGuestEntry, MealRecord, MealTaxSettings } from '@/lib/meals/types';
-import { createContact, saveMeal } from './actions';
+import { createContact, saveMeal, saveReceiptRotation } from './actions';
 import { useReceiptActions } from './useReceiptActions';
 
 interface QueueTabProps {
@@ -85,6 +85,8 @@ export default function QueueTab({
   const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [previousGuests, setPreviousGuests] = useState<MealGuestEntry[]>([]);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
+  // The host typed on one receipt is offered on the next, even before anything was saved.
+  const [sessionHost, setSessionHost] = useState('');
   const actions = useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint: DISMISSED_HINT });
 
   const queueIds = useMemo(() => queue.map((e) => e.record.rowId), [queue]);
@@ -118,7 +120,7 @@ export default function QueueTab({
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,25rem)_minmax(0,1fr)] lg:items-start">
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:items-start">
       <div className="min-w-0 lg:sticky lg:top-4">
         {/* One fixed-height line: what it says changes, its size does not. */}
         <div className="mb-2 flex h-10 items-center justify-between gap-3">
@@ -181,7 +183,7 @@ export default function QueueTab({
                       {formatDay(record.date)} ·{' '}
                       {missing.length > 2 ? (
                         <>
-                          {missing.length} <span className="max-sm:hidden">Angaben </span>fehlen
+                          {missing.length} fehlen
                           <span className="sr-only">: {missingList(missing)}</span>
                         </>
                       ) : (
@@ -218,7 +220,10 @@ export default function QueueTab({
       </div>
 
       {opened && (
-        <section aria-label="Angaben zur Bewirtung" className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)] xl:items-start">
+        <section
+          aria-label="Angaben zur Bewirtung"
+          className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] xl:items-start 2xl:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]"
+        >
           <div className="glass-panel rounded-xl p-4 sm:p-6">
             <div className="mb-5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b pb-4" style={{ borderColor: 'var(--border-subtle)' }}>
               <h2 className="min-w-0 text-lg font-semibold leading-snug" style={{ color: 'var(--foreground)' }}>
@@ -233,7 +238,8 @@ export default function QueueTab({
               record={opened.record}
               contacts={contacts}
               settings={settings}
-              defaultHost={defaultHost}
+              defaultHost={sessionHost || defaultHost}
+              onHostEntered={setSessionHost}
               previousGuests={previousGuests}
               saveLabel="Speichern und weiter"
               onSave={saveMeal}
@@ -257,9 +263,26 @@ export default function QueueTab({
               Strg oder Cmd + Enter speichert.
             </p>
           </div>
-          <div className="xl:sticky xl:top-4">
-            <ReceiptPreview key={opened.record.rowId} files={opened.record.files} />
-          </div>
+          {/*
+            The receipt is what gets read while typing guests and occasion, so
+            it has the widest column and the full height of the window. Below
+            the two-column width it comes FIRST, above the form.
+          */}
+          <ReceiptViewer
+            key={opened.record.rowId}
+            className="h-[62svh] max-xl:order-first xl:sticky xl:top-4 xl:h-[calc(100svh-2rem)]"
+            files={opened.record.files}
+            onRotate={async (file, rotation) => {
+              try {
+                const result = await saveReceiptRotation(opened.record.rowId, file.refId, rotation);
+                if (!result.ok) return false;
+                onRecordsSaved([result.value.record]);
+                return true;
+              } catch {
+                return false;
+              }
+            }}
+          />
         </section>
       )}
 

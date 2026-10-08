@@ -218,7 +218,7 @@ describe('RegisterTab: actions on a register entry', () => {
     expect(markMealsNotMeal).toHaveBeenCalledWith(['a']);
     expect(screen.queryByRole('table')).toBeNull();
     expect(screen.getByText('Für 2025 gibt es noch keine vollständige Bewirtung.')).toBeTruthy();
-    expect(document.activeElement).toBe(notice);
+    await waitFor(() => expect(document.activeElement).toBe(notice));
   });
 
   it('"Löschen" names the entry, says it cannot be undone, and removes it after the confirmation', async () => {

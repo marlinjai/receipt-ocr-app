@@ -199,9 +199,9 @@ describe('QueueTab: batch "Keine Bewirtung"', () => {
     expect(screen.queryByRole('checkbox', { name: /Lokal B/ })).toBeNull();
     expect(box('Lokal C, 10.03.2025 auswählen').checked).toBe(false);
     expect(screen.queryByRole('group', { name: 'Aktionen für die Auswahl' })).toBeNull();
-    const notice = screen.getByText(/2 Belege werden nicht mehr als Bewirtung geführt/);
+    const notice = await screen.findByText(/2 Belege werden nicht mehr als Bewirtung geführt/);
     // The bar that held the button is gone: the focus lands on the outcome, not on the page top.
-    expect(document.activeElement).toBe(notice);
+    await waitFor(() => expect(document.activeElement).toBe(notice));
   });
 
   it('cancelling the dialog changes nothing and keeps the selection', async () => {
@@ -236,8 +236,8 @@ describe('QueueTab: batch delete', () => {
     await waitFor(() => expect(screen.getByText('Keine offenen Bewirtungen.')).toBeTruthy());
     expect(deleteMealReceipts).toHaveBeenCalledWith(['a', 'b', 'c']);
     // Deleting the last entries: the empty state, with the outcome still on screen and focused.
-    const notice = screen.getByText('3 Belege gelöscht.');
-    expect(document.activeElement).toBe(notice);
+    const notice = await screen.findByText('3 Belege gelöscht.');
+    await waitFor(() => expect(document.activeElement).toBe(notice));
     expect(screen.queryByRole('checkbox')).toBeNull();
   });
 
@@ -326,7 +326,7 @@ describe('QueueTab: actions on a single entry, without opening the form', () => 
     const notice = await screen.findByText(/„Lokal B“ wird nicht mehr als Bewirtung geführt\..*unter „Keine Bewirtung“/);
     expect(markMealsNotMeal).toHaveBeenCalledWith(['b']);
     expect(screen.queryByRole('checkbox', { name: /Lokal B/ })).toBeNull();
-    expect(document.activeElement).toBe(notice);
+    await waitFor(() => expect(document.activeElement).toBe(notice));
   });
 
   it('a double click on an entry action sends one request', async () => {
@@ -361,7 +361,7 @@ describe('QueueTab: actions on a single entry, without opening the form', () => 
     await user.click(screen.getByRole('button', { name: 'Löschen: Lokal A, 10.01.2025' }));
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Beleg löschen' }));
     expect(await screen.findByText('Keine offenen Bewirtungen.')).toBeTruthy();
-    expect(screen.getByText('„Lokal A“ gelöscht.')).toBeTruthy();
+    expect(await screen.findByText('„Lokal A“ gelöscht.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Zum Verzeichnis' })).toBeTruthy();
   });
 

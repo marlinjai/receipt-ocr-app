@@ -412,9 +412,11 @@ export async function deleteReceiptRows(
       }
 
       await ctx.adapter.deleteRow(rowId);
-      await deleteGuestsForRows(db, [rowId]);
+      // TaxItemDecision.rowId has no foreign key, and a retry cannot find the deleted row again, so
+      // this runs before the guest cleanup: a guest failure must not orphan the decisions.
       // Same cleanup as the other deletion paths (tax/service imports this module, so no helper import).
       await db.taxItemDecision.deleteMany({ where: { rowId } });
+      await deleteGuestsForRows(db, [rowId]);
       result.done.push(rowId);
     } catch (e) {
       console.error('[meals] deleting a receipt failed', { rowId }, e);

@@ -413,6 +413,8 @@ export async function deleteReceiptRows(
 
       await ctx.adapter.deleteRow(rowId);
       await deleteGuestsForRows(db, [rowId]);
+      // Same cleanup as the other deletion paths (tax/service imports this module, so no helper import).
+      await db.taxItemDecision.deleteMany({ where: { rowId } });
       result.done.push(rowId);
     } catch (e) {
       console.error('[meals] deleting a receipt failed', { rowId }, e);

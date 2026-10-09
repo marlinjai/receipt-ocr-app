@@ -78,10 +78,11 @@
 
 <!-- Currently being implemented -->
 
-- [ ] Shared contact list, wave 2: the business-meal guests move to the suite's shared
+- [x] Shared contact list, wave 2: the business-meal guests moved to the suite's shared
   contacts database (company-scoped, behind the `CONTACTS_STORE=shared` switch, default
-  off), with a merge-aware data move that Marlin reviews before anything is dropped. Plan:
-  `docs/plans/2026-10-09-shared-contacts-wave2.md`. (2026-10-09)
+  off), with a merge-aware data move that Marlin reviews before anything is dropped. Done
+  2026-10-09: the switch is on in production. Waves 3 to 5 are open in the knowledge-base
+  roadmap. Plan: `docs/plans/2026-10-09-shared-contacts-wave2.md`. (2026-10-09)
 - [ ] Finance and tax dashboard, stage 1 (data foundation and live dashboard): slice 1
   of 8 is built (the tax module with rule sets for 2025 and 2026, shares for several
   purposes per receipt, vendor rules, the queue of open checks and the

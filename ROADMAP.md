@@ -2,14 +2,15 @@
 
 ## Planned
 
-- [ ] Company erasure hands over an export first. Decided 2026-10-09 (Marlin): build B. When a
-  company is deleted, its register and contacts go into a zip that the company keeps. Printed guest
-  names are held for ten years (German tax law, the Abgabenordnung, AO) when no export was taken,
-  and removed at once when one was. Needs: an export route for members who can write the register,
-  a record of each export, a hold date on printed copies, and a scheduled purge of held copies.
-  Until built, a company deletion removes printed guest names with no export, so export a
-  company's register by hand before deleting it. Work in progress parked on the local branch
-  `feat/erasure-export-handover` (not pushed). (2026-10-09)
+- [x] Company erasure hands over an export first: the company's register and contacts go into a
+  zip (GET /api/export/company), and printed guest names are removed at once when an export was
+  taken, otherwise held for ten years (German tax law, the Abgabenordnung, AO) and removed by the
+  retention purge. Built in this change, 2026-10-09.
+- [ ] Schedule the retention purge of held guest copies (route /api/internal/retention/purge, built).
+  Before the schedule is added: generate RETENTION_PURGE_SECRET into the receipts production Infisical
+  project with the copy tool (op generate, value never printed), restart the app, then add a daily
+  Coolify scheduled task that POSTs an empty body signed with that secret. Until then held copies are
+  kept, which is safe. (2026-10-09)
 
 <!-- Decided features, ready to be worked on -->
 

@@ -131,7 +131,7 @@ export function draftToInput(draft: MealDraft): DraftParse {
       tip: tip === null || tip === 0 ? null : Math.round(tip * 100) / 100,
       consumption: draft.consumption,
       taxLines: taxLines.length > 0 ? taxLines : null,
-      guestContactIds: draft.guests.map((g) => g.contactId),
+      guestContactIds: draft.guests.flatMap((g) => (g.contactId ? [g.contactId] : [])),
       date: date || null,
       gross: gross === null ? null : Math.round(gross * 100) / 100,
     },

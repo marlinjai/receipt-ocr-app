@@ -39,6 +39,7 @@ export const auth = createAuthBrainNextjs({
   publicPaths: [
     '/api/health',
     '/api/internal/erasure',
+    '/api/internal/retention/purge',
     '/manifest.json',
     '/icons/*',
     '/sw.js',

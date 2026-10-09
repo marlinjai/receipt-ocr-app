@@ -179,6 +179,7 @@ export async function reconcileGuestCopies(db: PrismaClient, contacts: Contact[]
   });
   const drifted = new Set<string>();
   for (const copy of copies) {
+    if (copy.contactId === null) continue;
     const contact = byId.get(copy.contactId);
     if (!contact) continue;
     if (copy.displayName !== contact.name || copy.displayCompany !== contact.companyOrRole) {

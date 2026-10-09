@@ -27,15 +27,47 @@ import { verifyErasureSignature } from './erasure-signature';
  */
 
 export interface ErasureCounts {
+  /** Printed guest copies removed now (the company already holds an export). */
   guestCopies: number;
+  /** Printed guest copies kept until `RETENTION_YEARS` have passed (no export yet). */
+  guestCopiesHeld: number;
   ownContacts: number;
   sharedContacts: number;
 }
 
+/**
+ * How long a printed guest copy is kept when no export has been handed over.
+ * Ten years is the usual period for business records under German tax law (the
+ * Abgabenordnung, AO); a lawyer should confirm the period before go-live.
+ */
+export const RETENTION_YEARS = 10;
+
+/** When a copy held today may be removed. */
+export function retainUntilFrom(now: Date): Date {
+  const until = new Date(now);
+  until.setUTCFullYear(until.getUTCFullYear() + RETENTION_YEARS);
+  return until;
+}
+
+/**
+ * Erase one company's contact data. Order and rules:
+ *
+ * 1. The contacts (app table and shared database) are removed, and so are the
+ *    links from meals to them. Those links are not records the business must keep.
+ * 2. The printed guest copies on meals (name and company as printed on the
+ *    register) are the one tax-relevant part. If the company already has an
+ *    export on record, they are removed too, because the company holds the
+ *    export. If not, they are held (contact link cleared, `retain_until` set)
+ *    until the retention period has passed; `purgeExpiredRetainedGuests` removes them.
+ *
+ * Repeat-safe: a second run does not restart a hold, because only copies still
+ * linked to a contact are given one.
+ */
 export async function eraseCompanyContacts(
   db: PrismaClient,
   tenantId: string,
   workspaceIds: readonly string[],
+  now: Date = new Date(),
 ): Promise<ErasureCounts> {
   // The shared step needs the layout. Start-up applies it only while the switch
   // is on, so apply it here too: migrate() is idempotent under a lock, and without
@@ -45,29 +77,48 @@ export async function eraseCompanyContacts(
   const shared = configured ? companyContacts(tenantId) : null;
   const sharedIds = shared ? (await shared.list({ includeArchived: true })).map((c) => c.id) : [];
 
-  const scope = [
-    { authTenantId: tenantId },
-    ...(workspaceIds.length > 0 ? [{ authWorkspaceId: { in: [...workspaceIds] } }] : []),
-    ...(sharedIds.length > 0 ? [{ contactId: { in: sharedIds } }] : []),
-  ];
+  const workspaceScope = workspaceIds.length > 0 ? [{ authWorkspaceId: { in: [...workspaceIds] } }] : [];
+  const scope = [{ authTenantId: tenantId }, ...workspaceScope, ...(sharedIds.length > 0 ? [{ contactId: { in: sharedIds } }] : [])];
 
-  // Printed copies first, so no name outlives the contact it was printed from.
-  const guestCopies = await db.mealGuest.deleteMany({ where: { OR: scope } });
+  const exported = (await db.companyExport.count({ where: { authTenantId: tenantId } })) > 0;
+
+  let guestCopies = 0;
+  let guestCopiesHeld = 0;
+  if (exported) {
+    // The company holds the export, so nothing of its guest data is kept here.
+    guestCopies = (await db.mealGuest.deleteMany({ where: { OR: scope } })).count;
+  } else {
+    // Hold only copies still linked to a contact; a copy already held keeps its date.
+    guestCopiesHeld = (
+      await db.mealGuest.updateMany({
+        where: { OR: scope, contactId: { not: null } },
+        data: { contactId: null, retainUntil: retainUntilFrom(now) },
+      })
+    ).count;
+  }
+
   const ownContacts = await db.contact.deleteMany({
-    where: {
-      OR: [
-        { authTenantId: tenantId },
-        ...(workspaceIds.length > 0 ? [{ authWorkspaceId: { in: [...workspaceIds] } }] : []),
-      ],
-    },
+    where: { OR: [{ authTenantId: tenantId }, ...workspaceScope] },
   });
   const sharedRemoved = shared ? await shared.eraseAll() : 0;
 
   return {
-    guestCopies: guestCopies.count,
+    guestCopies,
+    guestCopiesHeld,
     ownContacts: ownContacts.count,
     sharedContacts: sharedRemoved,
   };
+}
+
+/**
+ * Remove held printed copies whose retention period has passed. Returns how many.
+ * Run it on a schedule; copies that still have a contact are never touched.
+ */
+export async function purgeExpiredRetainedGuests(db: PrismaClient, now: Date = new Date()): Promise<number> {
+  const removed = await db.mealGuest.deleteMany({
+    where: { contactId: null, retainUntil: { lt: now } },
+  });
+  return removed.count;
 }
 
 export interface ErasureDelivery {
@@ -123,7 +174,7 @@ export async function receiveErasureDelivery(input: {
   try {
     const counts = await input.erase(tenantId, workspaceIds);
     log(
-      `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, ${counts.ownContacts} own contacts, ${counts.sharedContacts} shared contacts`,
+      `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld}, ${counts.ownContacts} own contacts, ${counts.sharedContacts} shared contacts`,
     );
     return { status: 200, body: { ok: true, erased: counts } };
   } catch (e) {

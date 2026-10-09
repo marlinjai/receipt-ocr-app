@@ -143,7 +143,12 @@ describe('requireSessionTenantId', () => {
     );
   });
 
-  it('allows the dev bypass (no memberships) to write a null company', () => {
-    expect(requireSessionTenantId({ memberships: [], activeWorkspace: null })).toBeNull();
+  it('gives the dev bypass (no memberships) its fixed development company', () => {
+    expect(requireSessionTenantId({ memberships: [], activeWorkspace: null })).toBe('dev-tenant');
+  });
+
+  it('lets AUTH_DEV_TENANT_ID override the development company', () => {
+    vi.stubEnv('AUTH_DEV_TENANT_ID', 'tnt_local');
+    expect(requireSessionTenantId({ memberships: [], activeWorkspace: null })).toBe('tnt_local');
   });
 });

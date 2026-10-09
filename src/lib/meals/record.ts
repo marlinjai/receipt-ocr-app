@@ -4,6 +4,7 @@ import {
   consumptionKeyFromLabel,
   mealTypeKeyFromLabel,
 } from '@/lib/receipts-constants';
+import { firstColumnIdByName } from '@/lib/column-lookup';
 import { placeFromReceiptText } from './place';
 import { parseTaxLines } from './rules';
 import { parseRotation } from './viewer-state';
@@ -56,7 +57,7 @@ export function rowToMealRecord(
   selectOptions: SelectOptionsByColumn,
   guests: MealGuestEntry[],
 ): MealRecord {
-  const byName = new Map(columns.map((c) => [c.name, c.id]));
+  const byName = firstColumnIdByName(columns);
   const cell = (name: string): unknown => {
     const id = byName.get(name);
     return id ? row.cells[id] : undefined;

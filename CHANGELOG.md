@@ -8,8 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Revenue in the finance area: a list of issued invoices with their payments; revenue counts on the day the money arrived, an unpaid invoice is shown as outstanding, and profit or loss is shown once invoices are recorded (migration `0012_tax_revenue_vat`)
+- Forecast of the small-business limits (25,000 euros for the previous year, 100,000 for the running year, both by money received): a range to year end, the month a limit would be passed, and a preparation list for the change to regular taxation
+- Regular value-added taxation: the status is a first answer plus dated changes, and every receipt, invoice and asset is judged by the status on its own date; under regular taxation costs count net, the tax is input tax at the business share, invoices carry output tax; advance return periods (monthly or quarterly, by issue or by payment date) and payments to the tax office
 - Asset register in the finance area: an asset is built from the receipts that make up its cost (purchase, shipping, customs) or carried in with its book value; depreciation by method (low-value, pool, equal amounts by month, one year for computer hardware and software, declining) with each limit checked against its legal source; disposal with remaining book value and proceeds; book values per year (migration `0011_tax_assets`)
 - A receipt above the low-value asset limit is an open check that leads into a new asset, instead of being expensed at once
+- Verified production database recovery: six-hourly backups, 30 days of off-server copies, an isolated restoration verifier, and a recovery runbook.
 - Finance area at `/app/finance`: the income-surplus statement (Einnahmenüberschussrechnung, EÜR) computed from the receipts, line by line with the receipts behind each line; a queue of open checks for receipts that still need a decision; a list of vendor rules
 - Shares for several purposes per receipt (for example 50 percent business plus 30 percent study), decided per receipt or once per vendor from a date on; the business part goes to the statement, the study and employment part to the employment annex (migration `0009_tax_decisions`: `tax_item_decisions`, `tax_vendor_rules`)
 - Tax module `src/lib/tax`: one `computeYear` over integer cents, rule sets per year with a source and check date for every legal value; form lines of 2025 read off the official form

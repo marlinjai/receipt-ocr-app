@@ -988,6 +988,59 @@ not yet.
 - This closes the slice 1 item "the 2026 line numbers are not yet compared" for the
   income-surplus statement. Open: the employment annex of 2026.
 
+## Reality after slices 4 and 5: revenue, limit forecast, regular taxation (2026-10-10)
+
+Built before payments (slice 3) and receipt lines, because neither needs the other
+and both were asked for now.
+
+- **Issued invoices are a list, and hold no client name.** `TaxIssuedInvoice`
+  (number, date, total, tax, how it is taxed, optionally the year an earlier return
+  already declared it) with `TaxInvoicePayment` rows (day and amount), migration
+  `0012_tax_revenue_vat`. Names of clients are personal data and belong to the
+  contact store; linking an invoice to a contact waits for that store's owner. The
+  `InvoiceSource` seam of this plan is the mapping into `InvoiceFact` in the
+  finance service: the Books tier later replaces the two tables, not the rules.
+- **Payment days are typed in for now.** Until bank payments exist (slice 3) the
+  owner enters the day money arrived. Slice 3 links real payments instead.
+- **Revenue is unknown until one invoice exists.** A workspace without any invoice
+  shows no revenue and no profit, never a zero. With invoices, profit or loss is
+  revenue minus expenses of the statement.
+- **The limits count money received without the tax in it**, per the statute. An
+  invoice an earlier return already declared is no revenue again but still counts
+  for the limits.
+- **The forecast is a range, not a number.** Low: received plus invoiced and
+  unpaid. High: plus a monthly rate for the remaining months, the owner's own
+  expectation if he stated one, otherwise the average of the complete months. It
+  names the month a limit would be passed, says when it rests on fewer than three
+  months, and never changes a status. The preparation list appears when a limit is
+  in reach.
+- **The status over time is the first answer plus dated changes**
+  (`TaxStatusChange`). The meal register's first answer stays where it is;
+  `smallBusinessOn(settings, day)` in the meal rules is the one lookup, used by the
+  register and by the statement, so a meal and its statement line can never be on
+  two bases.
+- **Regular taxation as built:** a receipt counts with its net amount, the tax at
+  the business share is input tax on its own line, the study and private shares
+  keep their tax as cost. A receipt without a net amount waits in the queue. Meals
+  take the register's net figures and their input tax in full. An asset is written
+  off from its net cost, its tax is input tax of the purchase year. Invoices with
+  tax split every payment into net revenue and tax received, so partial payments
+  add up to exactly the tax on the invoice.
+- **Advance return periods** need two statements first (how often, and whether tax
+  is owed with the invoice or with the payment). Without them no figure is shown.
+- **Tax paid to and refunded by the tax office** is entered by hand for now and
+  lands on its lines of the statement; slice 3 can recognise these payments.
+- **Reported, never computed:** an invoice whose tax treatment does not fit the
+  status on its date; an asset bought under one status and still in the register
+  under the other (a possible input tax correction, for a tax advisor).
+- **Not built yet:** tax the buyer owes on services from abroad, per receipt, for
+  both statuses (needs a flag on the vendor; the screen says it is not included);
+  the annual value-added tax return figures as an export (with slice 7); a filed
+  period's frozen snapshot (`VatPeriod` of this plan; periods are computed on read
+  only).
+- **Amount entry** reads German notation ("1.234,56", "5.000"); a bug that read
+  "5.000" as five euros was caught by a test before release.
+
 ## Decisions (2026-10-07)
 
 Answered by the owner on the decision page on 2026-10-07.

@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+exec /usr/bin/rrsync -ro /data/coolify/backups/databases/root-team-0/receipts-postgres-zmnnqmxbksrj5vzy6ffy1wod

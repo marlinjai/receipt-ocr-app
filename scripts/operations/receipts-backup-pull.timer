@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly check and off-server copy of receipts database backups
+
+[Timer]
+OnCalendar=*-*-* *:30:00 UTC
+Persistent=true
+RandomizedDelaySec=60
+Unit=receipts-backup-pull.service
+
+[Install]
+WantedBy=timers.target

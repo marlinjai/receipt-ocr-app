@@ -2,6 +2,15 @@
 
 ## Planned
 
+- [ ] Company erasure hands over an export first. Decided 2026-10-09 (Marlin): build B. When a
+  company is deleted, its register and contacts go into a zip that the company keeps. Printed guest
+  names are held for ten years (German tax law, the Abgabenordnung, AO) when no export was taken,
+  and removed at once when one was. Needs: an export route for members who can write the register,
+  a record of each export, a hold date on printed copies, and a scheduled purge of held copies.
+  Until built, a company deletion removes printed guest names with no export, so export a
+  company's register by hand before deleting it. Work in progress parked on the local branch
+  `feat/erasure-export-handover` (not pushed). (2026-10-09)
+
 <!-- Decided features, ready to be worked on -->
 
 - [ ] Finance and tax dashboard, stage 2 (scenario engine): "what if I buy X on date

@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
+import { PrismaClient } from '@prisma/client';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { Column } from '@marlinjai/data-table-core';
+import { withoutStatementCache } from '../prisma-url';
 import { ensureReceiptsTable, receiptsSchemaIsCurrent } from '../receipts-table';
 import { loadMealRecord, saveMealDetails, type MealContext } from '../meals/service';
 import type { MealDetailsInput } from '../meals/input';
@@ -175,6 +177,30 @@ describe('ensureReceiptsTable called by several requests at once', () => {
     expect(namesOnce(columns.map((c) => c.name))).toBe(true);
     expect(namesOnce(views.map((v) => v.name))).toBe(true);
     expect(receiptsSchemaIsCurrent(columns, views)).toBe(true);
+  });
+
+  it('does so on a pool of three connections: a waiting request holds none', async () => {
+    // Requests that queued on the lock inside a transaction each kept a
+    // connection, and the one doing the work ran out of them.
+    const address = new URL(process.env.TEST_DATABASE_URL!);
+    address.searchParams.set('connection_limit', '3');
+    const small = new PrismaClient({ datasourceUrl: withoutStatementCache(address.toString()) });
+    try {
+      const workspaceId = `test-ws-${randomUUID()}`;
+      await Promise.all(
+        Array.from({ length: 8 }, () =>
+          ensureReceiptsTable(new PrismaAdapter({ prisma: small }), workspaceId, { db: small, tenantId: 'tenant-a' }),
+        ),
+      );
+      const adapter = new PrismaAdapter({ prisma: small });
+      const tables = (await adapter.listTables(workspaceId)).filter((t) => t.name === 'Receipts');
+      expect(tables).toHaveLength(1);
+      const columns = await adapter.getColumns(tables[0].id);
+      expect(namesOnce(columns.map((c) => c.name))).toBe(true);
+      expect(receiptsSchemaIsCurrent(columns, await adapter.getViews(tables[0].id))).toBe(true);
+    } finally {
+      await small.$disconnect();
+    }
   });
 
   it('adds a column a live table lacks exactly once', async () => {

@@ -125,20 +125,50 @@ export function receiptsSchemaIsCurrent(
   });
 }
 
+/** How long a request waits for another one that is bringing the table up to date. */
+const SCHEMA_WAIT_MS = 60_000;
+const SCHEMA_POLL_MS = 150;
+/** Upper bound for the work itself. A Receipts table is small: this is far above what it takes. */
+const SCHEMA_WORK_MS = 120_000;
+
 /**
- * Run `work` while holding the workspace's schema lock. Two page loads that
- * both find a column missing must not both create it: the second waits here,
- * then sees the first one's column. The lock lives on one connection for the
- * length of the transaction; `work` itself runs on the pool as usual.
+ * Run `work` under the workspace's schema lock, unless another request already
+ * holds it: then wait until `isCurrent` says that request has finished.
+ *
+ * Two page loads that both find a column missing must not both create it. The
+ * one that gets the lock keeps it on a single connection for the length of the
+ * transaction, while `work` itself runs on the pool as usual. The others do
+ * NOT queue on the lock: a waiter parked inside a transaction would hold a
+ * connection each, and a handful of them starve the request doing the work of
+ * the connections it needs. They release at once and poll instead.
  */
-async function withSchemaLock<T>(db: PrismaClient, workspaceId: string, work: () => Promise<T>): Promise<T> {
-  return db.$transaction(
-    async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`receipts-schema:${workspaceId}`}, 0))`;
-      return work();
-    },
-    { maxWait: 15_000, timeout: 60_000 },
-  );
+async function underSchemaLock(
+  db: PrismaClient,
+  workspaceId: string,
+  isCurrent: () => Promise<boolean>,
+  work: () => Promise<void>,
+): Promise<void> {
+  const key = `receipts-schema:${workspaceId}`;
+  const deadline = Date.now() + SCHEMA_WAIT_MS;
+  for (;;) {
+    const done = await db.$transaction(
+      async (tx) => {
+        const [{ locked }] = await tx.$queryRaw<{ locked: boolean }[]>`
+          SELECT pg_try_advisory_xact_lock(hashtextextended(${key}, 0)) AS locked`;
+        if (!locked) return false;
+        await work();
+        return true;
+      },
+      { maxWait: SCHEMA_WAIT_MS, timeout: SCHEMA_WORK_MS },
+    );
+    if (done) return;
+
+    await new Promise((resolve) => setTimeout(resolve, SCHEMA_POLL_MS));
+    if (await isCurrent()) return;
+    if (Date.now() > deadline) {
+      throw new Error(`The Receipts table of workspace ${workspaceId} is still being set up by another request.`);
+    }
+  }
 }
 
 /**
@@ -147,7 +177,8 @@ async function withSchemaLock<T>(db: PrismaClient, workspaceId: string, work: ()
  * table that predates a given column/view (self-heals schema drift), and safe to
  * call from several requests at once: whatever has to be created is created under
  * the workspace's schema lock, and a column that an earlier race created twice is
- * folded back into one (see `mergeDuplicateColumns`).
+ * folded back into one (see `mergeDuplicateColumns`). That repair is the one step
+ * that is not additive: it removes a doubled column once its values are moved.
  */
 export async function ensureReceiptsTable(
   adapter: PrismaAdapter,
@@ -160,12 +191,14 @@ export async function ensureReceiptsTable(
    */
   owner: { db: PrismaClient; tenantId: string | null },
 ) {
-  const existing = (await adapter.listTables(workspaceId)).find((t) => t.name === RECEIPTS_TABLE_NAME);
-  if (existing) {
+  const isCurrent = async (): Promise<boolean> => {
+    const existing = (await adapter.listTables(workspaceId)).find((t) => t.name === RECEIPTS_TABLE_NAME);
+    if (!existing) return false;
     const [columns, views] = await Promise.all([adapter.getColumns(existing.id), adapter.getViews(existing.id)]);
-    if (receiptsSchemaIsCurrent(columns, views)) return;
-  }
-  await withSchemaLock(owner.db, workspaceId, () => bringReceiptsTableUpToDate(adapter, workspaceId, owner));
+    return receiptsSchemaIsCurrent(columns, views);
+  };
+  if (await isCurrent()) return;
+  await underSchemaLock(owner.db, workspaceId, isCurrent, () => bringReceiptsTableUpToDate(adapter, workspaceId, owner));
 }
 
 /** The work of `ensureReceiptsTable`. Only ever runs under the workspace's schema lock. */

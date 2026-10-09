@@ -36,6 +36,23 @@
   row second, shared files kept). Needs the owner's decision whether the dashboard
   should delete for good the same way; if yes, route both dashboard actions through
   `deleteReceiptRows`. Found on 2026-10-08 while building the batch actions. (2026-10-08)
+- [ ] The production database `receipts-postgres` on Coolify has no backup schedule at
+  all (checked 2026-10-09 through the Coolify interface: zero schedules). It holds the
+  receipts, the business-meal register and the tax figures. Needs the owner's decision
+  on frequency, retention and where the dumps are kept (on the server only, or also in
+  object storage); then one schedule on that database and one restore tried from it.
+  Found while repairing the doubled meal columns, which removes columns from a live
+  table. (2026-10-09)
+- [ ] Three defects in the shared table adapter (`@marlinjai/data-table-adapter-prisma`
+  0.2.1) that this app now works around and that belong fixed there: (1) nothing stops
+  two columns of one table from carrying the same name, so a check-then-create race
+  doubles a column (here: a per-workspace lock in `ensureReceiptsTable`; there: a unique
+  index on table and name, or a lock in `createColumn`); (2) `getRow` reads with a
+  prepared `SELECT *` and swallows every error, so after any column was added or
+  dropped Postgres answers "cached plan must not change result type" and the adapter
+  reports "Row not found" (here: `statement_cache_size=0` in `src/lib/prisma-url.ts`;
+  there: list the columns, and let the error through); (3) `updateRow` silently skips a
+  cell whose column it does not know and still reports success. (2026-10-09)
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a

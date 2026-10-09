@@ -161,4 +161,25 @@ describe('moveCompany against the real databases', () => {
     expect(resumed).toMatchObject({ created: 1, alreadyMoved: 1 });
     await expectMovedState(f);
   });
+
+  it('reports entries that the move will re-spell on old meals (dry run, nothing written)', async () => {
+    const tenant = `test-mv-${randomUUID()}`;
+    const ws1 = `test-ws-${randomUUID()}`;
+    const ws2 = `test-ws-${randomUUID()}`;
+    const winner = randomUUID();
+    const loser = randomUUID();
+    const t = (day: number) => new Date(Date.UTC(2026, 1, day));
+    await db.contact.createMany({
+      data: [
+        { id: winner, authWorkspaceId: ws1, authTenantId: tenant, name: 'Ada Respell', companyOrRole: 'Engines', createdAt: t(1) },
+        { id: loser, authWorkspaceId: ws2, authTenantId: tenant, name: 'ada respell', companyOrRole: 'Engines', createdAt: t(2) },
+      ],
+    });
+    await db.mealGuest.create({
+      data: { authWorkspaceId: ws2, authTenantId: tenant, rowId: `row-${randomUUID()}`, contactId: loser, position: 0, displayName: 'ada respell', displayCompany: 'Engines' },
+    });
+    const counts = await moveCompany(await groupsFor(tenant), { shared: companyContacts(tenant), db, apply: false });
+    expect(counts).toMatchObject({ merged: 1, spellingDiffers: 1, guestCopiesRespelled: 1, guestRowsPending: 1 });
+    expect(await companyContacts(tenant).list({ includeArchived: true })).toEqual([]);
+  });
 });

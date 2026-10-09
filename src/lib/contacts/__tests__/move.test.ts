@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planMove, type OldContact } from '../../../../scripts/lib/contacts-move';
+import { planMove, spellingDiffers, type OldContact } from '../../../../scripts/lib/contacts-move';
 
 function old(over: Partial<OldContact> & { id: string }): OldContact {
   return {
@@ -79,5 +79,12 @@ describe('planMove (which old rows become one contact)', () => {
     const backward = planMove([...rows].reverse(), new Map());
     expect(forward.groups.get('tnt_a')![0].winner.id).toBe('c1');
     expect(backward.groups.get('tnt_a')![0].winner.id).toBe('c1');
+  });
+
+  it('flags an entry spelled differently from its winner (capitals or spacing), and not an identical one', () => {
+    const winner = old({ id: 'w', name: 'Ada Lovelace', companyOrRole: 'Engines' });
+    expect(spellingDiffers(winner, old({ id: 'l1', name: 'ada lovelace', companyOrRole: 'Engines' }))).toBe(true);
+    expect(spellingDiffers(winner, old({ id: 'l2', name: 'Ada Lovelace', companyOrRole: 'engines' }))).toBe(true);
+    expect(spellingDiffers(winner, old({ id: 'l3', name: 'Ada Lovelace', companyOrRole: 'Engines' }))).toBe(false);
   });
 });

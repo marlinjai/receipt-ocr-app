@@ -11,6 +11,8 @@ import {
   CONSUMPTION_OPTIONS,
   MEAL_COLUMNS,
 } from '@/lib/receipts-constants';
+import { firstColumnIdByName } from '@/lib/column-lookup';
+import { mergeDuplicateColumns } from '@/lib/receipts-duplicate-columns';
 
 /**
  * The Receipts table definition (columns and standard views) and the
@@ -95,21 +97,82 @@ export async function stampTableOwner(
   await owner.db.dtTable.updateMany({ where: { id: tableId, authTenantId: null }, data: { authTenantId: owner.tenantId } });
 }
 
+const STANDARD_VIEWS = ['Table', 'By Konto', 'By Vendor', 'Board', 'Calendar'] as const;
+/** The views whose footer sums the attributed amount. */
+const FOOTER_SUM_VIEWS: readonly string[] = ['Table', 'By Vendor'];
+
+/**
+ * True when a table already is what `ensureReceiptsTable` would make of it:
+ * every column of COLUMNS exactly once, every standard view, the footer sums.
+ * Pure, so the common page load decides it from two reads and takes no lock.
+ */
+export function receiptsSchemaIsCurrent(
+  columns: readonly { id: string; name: string }[],
+  views: readonly { name: string; config?: ViewConfig }[],
+): boolean {
+  const count = new Map<string, number>();
+  for (const c of columns) count.set(c.name, (count.get(c.name) ?? 0) + 1);
+  if (COLUMNS.some((col) => count.get(col.name) !== 1)) return false;
+
+  const viewByName = new Map(views.map((v) => [v.name, v]));
+  if (STANDARD_VIEWS.some((name) => !viewByName.has(name))) return false;
+
+  const attributedEurColId = firstColumnIdByName(columns).get('Attributed EUR');
+  if (!attributedEurColId) return false;
+  return FOOTER_SUM_VIEWS.every((name) => {
+    const footer = viewByName.get(name)?.config?.footerConfig as FooterConfig | undefined;
+    return footer?.calculations?.[attributedEurColId] === 'sum';
+  });
+}
+
+/**
+ * Run `work` while holding the workspace's schema lock. Two page loads that
+ * both find a column missing must not both create it: the second waits here,
+ * then sees the first one's column. The lock lives on one connection for the
+ * length of the transaction; `work` itself runs on the pool as usual.
+ */
+async function withSchemaLock<T>(db: PrismaClient, workspaceId: string, work: () => Promise<T>): Promise<T> {
+  return db.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`receipts-schema:${workspaceId}`}, 0))`;
+      return work();
+    },
+    { maxWait: 15_000, timeout: 60_000 },
+  );
+}
+
 /**
  * Idempotently ensures the Receipts table, all COLUMNS, and the standard views exist.
- * Additive only: safe to call on every page load, including against an already-live
- * production table that predates a given column/view (self-heals schema drift).
+ * Safe to call on every page load, including against an already-live production
+ * table that predates a given column/view (self-heals schema drift), and safe to
+ * call from several requests at once: whatever has to be created is created under
+ * the workspace's schema lock, and a column that an earlier race created twice is
+ * folded back into one (see `mergeDuplicateColumns`).
  */
 export async function ensureReceiptsTable(
   adapter: PrismaAdapter,
   workspaceId: string,
   /**
-   * The company the workspace belongs to, with the client to write it. The
-   * adapter knows nothing about companies, so a table it creates is stamped
-   * right after: without this a workspace created after the tenant backfill
-   * would stay without a company until the backfill is run again.
+   * The database client, for the schema lock, and the company the workspace
+   * belongs to. The adapter knows nothing about companies, so a table it
+   * creates is stamped right after: without this a workspace created after the
+   * tenant backfill would stay without a company until the backfill is run again.
    */
-  owner?: { db: PrismaClient; tenantId: string | null },
+  owner: { db: PrismaClient; tenantId: string | null },
+) {
+  const existing = (await adapter.listTables(workspaceId)).find((t) => t.name === RECEIPTS_TABLE_NAME);
+  if (existing) {
+    const [columns, views] = await Promise.all([adapter.getColumns(existing.id), adapter.getViews(existing.id)]);
+    if (receiptsSchemaIsCurrent(columns, views)) return;
+  }
+  await withSchemaLock(owner.db, workspaceId, () => bringReceiptsTableUpToDate(adapter, workspaceId, owner));
+}
+
+/** The work of `ensureReceiptsTable`. Only ever runs under the workspace's schema lock. */
+async function bringReceiptsTableUpToDate(
+  adapter: PrismaAdapter,
+  workspaceId: string,
+  owner: { db: PrismaClient; tenantId: string | null },
 ) {
   const tables = await adapter.listTables(workspaceId);
   let table = tables.find((t) => t.name === RECEIPTS_TABLE_NAME);
@@ -118,9 +181,14 @@ export async function ensureReceiptsTable(
     await stampTableOwner(table.id, owner);
   }
 
+  const merged = await mergeDuplicateColumns(adapter, table.id, COLUMNS.map((c) => c.name));
+  if (merged.length > 0) {
+    // Names and counts only: no cell value ever reaches the log.
+    console.warn('[receipts-table] merged duplicate columns', JSON.stringify({ workspaceId, tableId: table.id, merged }));
+  }
+
   const existingColumns = await adapter.getColumns(table.id);
-  const columnIds: Record<string, string> = {};
-  for (const c of existingColumns) columnIds[c.name] = c.id;
+  const columnIds: Record<string, string> = Object.fromEntries(firstColumnIdByName(existingColumns));
 
   for (const col of COLUMNS) {
     if (columnIds[col.name]) continue;

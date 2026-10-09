@@ -3,10 +3,12 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { CellValue } from '@marlinjai/data-table-core';
 import { ensureReceiptsTable } from '@/lib/receipts-table';
+import { withoutStatementCache } from '@/lib/prisma-url';
 
 /** Helpers for the database tests: a fresh workspace with a real Receipts table. */
 
-export const db = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL });
+// The same client settings as the app's own (src/lib/prisma.ts), so the tests meet what production meets.
+export const db = new PrismaClient({ datasourceUrl: withoutStatementCache(process.env.TEST_DATABASE_URL) });
 
 export interface TestWorkspace {
   workspaceId: string;

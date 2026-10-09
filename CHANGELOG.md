@@ -38,6 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - The manifest, its icons, the service worker script and the offline page are public: behind the login they answered with a redirect, so the app could not be installed to the home screen
 - The exchange-rate recompute filtered the date column with strings, which the database rejected; it now binds dates
+- A saved occasion, place or host of a business meal read back empty while the page said "Gespeichert": two page loads had each created the meal columns, so the table held them twice, the save wrote one and the read took the other. Readers and writers now resolve a column name the same way, the next page load folds a doubled column back into one (every value is moved over first; a column holding a differing value is renamed, never deleted), and the columns are created under a per-workspace lock so two requests cannot both create one
+- After a column was added to or removed from a table while the app was running, saves could fail with "row not found" until the next restart: Postgres refuses a prepared `SELECT *` once the table's shape changed. The database client no longer keeps prepared statements
 
 ## [0.5.0] - 2026-02-28
 

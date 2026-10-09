@@ -6,18 +6,21 @@ import { useRouter } from 'next/navigation';
 import { formatDay } from '@/lib/meals/messages';
 import { CHECK_LABELS, ORIGIN_LABELS, PURPOSE_LABELS, financeActionMessage } from '@/lib/tax/messages';
 import { formatCents } from '@/lib/tax/money';
-import type { StatementItem, StatementView } from '@/lib/tax/service';
+import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service';
 import type { OpenCheckKind } from '@/lib/tax/types';
-import { decideItem, removeVendorRule, resetItem, type Result } from './actions';
+import { decideItem, disposeAsset, removeAsset, removeVendorRule, resetItem, saveAsset, type Result } from './actions';
+import AssetsTab, { type AssetDraft, type DisposalDraft } from './AssetsTab';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 
-type TabKey = 'open' | 'statement' | 'vendors';
+type TabKey = 'open' | 'statement' | 'assets' | 'vendors';
 
 /** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
 const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered', 'regular_taxation_not_computed'];
 /** Checks that are resolved on the receipt itself or in the meal register, not with a decision here. */
 const MEAL_CHECKS: OpenCheckKind[] = ['meal_incomplete', 'meal_without_register_facts'];
 const RECEIPT_CHECKS: OpenCheckKind[] = ['no_date', 'no_amount', 'no_exchange_rate'];
+/** Checks that are resolved by making the receipt part of an asset (or by adding its net amount). */
+const ASSET_CHECKS: OpenCheckKind[] = ['needs_asset', 'net_amount_needed'];
 
 function euro(cents: number): string {
   return `${formatCents(cents)} €`;
@@ -41,6 +44,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [openLine, setOpenLine] = useState<string | null>(null);
+  const [assetFromRow, setAssetFromRow] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -53,6 +57,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
     setSelectedId(null);
     setEditingId(null);
     setOpenLine(null);
+    setAssetFromRow(null);
     setError(null);
     setNotice(null);
   }
@@ -60,6 +65,8 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
   const queue = useMemo(() => openQueue(view), [view]);
   const selected = queue.find((i) => i.rowId === selectedId) ?? queue[0] ?? null;
   const itemsById = useMemo(() => new Map(view.items.map((i) => [i.rowId, i])), [view]);
+  const assetsById = useMemo(() => new Map(view.assets.map((a) => [a.id, a])), [view]);
+  const openAssets = view.assets.filter((a) => a.checks.length > 0).length;
   const estimated = view.items.filter((i) => i.checks.some((c) => c.kind === 'amount_estimated')).length;
   const blockedBySetting =
     view.items.filter((i) => i.checks.some((c) => WORKSPACE_CHECKS.includes(c.kind))).length;
@@ -107,9 +114,20 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
     );
   }
 
+  const saveAssetDraft = (assetId: string | null, draft: AssetDraft, done: () => void) =>
+    run(() => saveAsset(view.year, assetId, draft), `${draft.label}: Anlage gespeichert.`, done);
+  const deleteAssetView = (asset: AssetView) => run(() => removeAsset(view.year, asset.id), `${asset.label}: Anlage gelöscht.`);
+  const disposeAssetView = (asset: AssetView, disposal: DisposalDraft | null, done: () => void) =>
+    run(
+      () => disposeAsset(view.year, asset.id, disposal),
+      disposal ? `${asset.label}: Abgang gespeichert.` : `${asset.label}: Abgang zurückgenommen.`,
+      done,
+    );
+
   const tabs: Array<{ key: TabKey; label: string; count?: number }> = [
     { key: 'open', label: 'Offen', count: queue.length },
     { key: 'statement', label: 'EÜR' },
+    { key: 'assets', label: 'Anlagen', count: view.assets.length },
     { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length },
   ];
 
@@ -185,15 +203,23 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               {view.rulesYear}.
             </p>
           )}
-          {view.rulesExact && !view.formLinesVerified && (
+          {view.rulesExact && view.lines.some((l) => l.numbering === 'unverified') && (
             <p className="ui-note">
-              Die Zeilennummern des Formulars {view.year} sind noch nicht mit dem amtlichen Vordruck abgeglichen.
-              Angezeigt werden deshalb nur die Bezeichnungen.
+              Für einige Zeilen der Anlage N {view.year} sind die Zeilennummern noch nicht mit dem amtlichen Vordruck
+              abgeglichen. Dort wird nur die Bezeichnung angezeigt, keine Nummer eines anderen Jahres.
+            </p>
+          )}
+          {view.lines.some((l) => l.numbering === 'structured') && (
+            <p className="ui-note">
+              Für Fahrten zur Tätigkeitsstätte und die Tagespauschale fragt das Formular Tage und Entfernungen ab,
+              keinen Betrag. Die hier gezeigte Summe dient der Übersicht und wird nicht in eine Formularzeile
+              eingetragen.
             </p>
           )}
           <p className="ui-note">
-            Einnahmen werden noch nicht erfasst. Diese Ansicht zeigt die Ausgabenseite; ein Gewinn oder Verlust wird
-            erst ausgewiesen, wenn Rechnungen und Zahlungseingänge vorliegen.
+            Einnahmen aus Rechnungen werden noch nicht erfasst. Diese Ansicht zeigt die Ausgabenseite (und Erlöse aus
+            dem Verkauf von Anlagen); ein Gewinn oder Verlust wird erst ausgewiesen, wenn Rechnungen und
+            Zahlungseingänge vorliegen.
           </p>
         </div>
 
@@ -204,7 +230,10 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
             {
               label: 'Offene Prüfungen',
               value: String(queue.length),
-              hint: estimated > 0 ? `dazu ${estimated} mit geschätztem Betrag` : 'Belege, die eine Entscheidung brauchen',
+              hint:
+                [estimated > 0 ? `${estimated} mit geschätztem Betrag` : '', openAssets > 0 ? `${openAssets} Anlagen mit offener Prüfung` : '']
+                  .filter(Boolean)
+                  .join(', ') || 'Belege, die eine Entscheidung brauchen',
             },
           ].map((tile) => (
             <div key={tile.label} className="glass-panel rounded-xl p-4">
@@ -248,7 +277,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
         <div role="status" aria-live="polite" className="mt-4 min-h-5 text-sm" style={{ color: 'var(--muted)' }}>
           {notice}
         </div>
-        {error && tab !== 'open' && (
+        {error && tab !== 'open' && tab !== 'assets' && (
           <p className="ui-note ui-note-danger mt-2" role="alert">
             {error}
           </p>
@@ -324,6 +353,11 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                       busy={pending}
                       error={error}
                       onSubmit={(submit) => decide(selected, submit)}
+                      onMakeAsset={() => {
+                        setAssetFromRow(selected.rowId);
+                        setError(null);
+                        setTab('assets');
+                      }}
                     />
                   </section>
                 )}
@@ -338,13 +372,19 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                   {queue.length > 0 ? ' Offene Belege stehen unter „Offen“.' : ''}
                 </div>
               ) : (
-                (['euer', 'employment'] as const).map((form) => {
-                  const lines = view.lines.filter((l) => l.form === form);
+                (
+                  [
+                    { id: 'revenue', form: 'euer', kind: 'revenue', title: 'Anlage EÜR: Betriebseinnahmen (bisher nur aus Anlagen)', total: view.businessRevenueCents },
+                    { id: 'expense', form: 'euer', kind: 'expense', title: 'Anlage EÜR: Betriebsausgaben', total: view.businessExpenseCents },
+                    { id: 'employment', form: 'employment', kind: 'expense', title: 'Anlage N: Kosten aus Studium und Anstellung', total: view.employmentCostCents },
+                  ] as const
+                ).map((group) => {
+                  const lines = view.lines.filter((l) => l.form === group.form && l.kind === group.kind);
                   if (lines.length === 0) return null;
                   return (
-                    <section key={form} className="glass-panel overflow-hidden rounded-xl">
+                    <section key={group.id} className="glass-panel overflow-hidden rounded-xl">
                       <h2 className="px-4 pt-4 text-base font-semibold" style={{ color: 'var(--foreground)' }}>
-                        {form === 'euer' ? 'Anlage EÜR: Betriebsausgaben' : 'Anlage N: Kosten aus Studium und Anstellung'}
+                        {group.title}
                       </h2>
                       <ul className="mt-2">
                         {lines.map((line) => {
@@ -365,7 +405,12 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                                   )}
                                   {line.label}
                                   <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                                    {line.itemIds.length === 1 ? '1 Beleg' : `${line.itemIds.length} Belege`}
+                                    {[
+                                      line.itemIds.length === 1 ? '1 Beleg' : line.itemIds.length > 1 ? `${line.itemIds.length} Belege` : '',
+                                      line.assetIds.length === 1 ? '1 Anlage' : line.assetIds.length > 1 ? `${line.assetIds.length} Anlagen` : '',
+                                    ]
+                                      .filter(Boolean)
+                                      .join(', ')}
                                   </span>
                                 </span>
                                 <span className="shrink-0 text-sm font-medium tabular-nums" style={{ color: 'var(--foreground)' }}>
@@ -379,6 +424,28 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                               </button>
                               {open && (
                                 <ul className="pb-2">
+                                  {line.assetIds.map((id) => {
+                                    const asset = assetsById.get(id);
+                                    if (!asset) return null;
+                                    const part = asset.parts.filter((p) => p.lineKey === line.key).reduce((s, p) => s + p.cents, 0);
+                                    return (
+                                      <li key={id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-t px-4 py-2.5" style={{ borderColor: 'var(--border)' }}>
+                                        <span className="text-sm" style={{ color: 'var(--foreground)' }}>
+                                          {asset.label}
+                                          <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                                            Anlage{asset.acquisitionDate ? `, angeschafft ${formatDay(asset.acquisitionDate)}` : ''}
+                                            {asset.businessShareBp < 10000 ? ` · ${asset.businessShareBp / 100} % betrieblich` : ''}
+                                          </span>
+                                        </span>
+                                        <span className="flex items-baseline gap-3">
+                                          <span className="text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>{euro(part)}</span>
+                                          <button type="button" className="ui-btn ui-btn-sm" onClick={() => setTab('assets')}>
+                                            Anlagen
+                                          </button>
+                                        </span>
+                                      </li>
+                                    );
+                                  })}
                                   {line.itemIds.map((id) => {
                                     const item = itemsById.get(id);
                                     if (!item) return null;
@@ -464,7 +531,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                             Summe
                           </span>
                           <span className="text-sm font-semibold tabular-nums" style={{ color: 'var(--foreground)' }}>
-                            {euro(form === 'euer' ? view.businessExpenseCents : view.employmentCostCents)}
+                            {euro(group.total)}
                           </span>
                         </li>
                       </ul>
@@ -473,11 +540,34 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                 })
               )}
               <p className="text-xs" style={{ color: 'var(--muted)' }}>
-                Formularzeilen nach: {view.formLinesSource.citation}. Abgeglichen am {formatDay(view.formLinesSource.checkedOn)},
+                {(['euer', 'employment'] as const)
+                  .map((form) => {
+                    const source = view.formSources[form];
+                    const name = form === 'euer' ? 'Anlage EÜR' : 'Anlage N';
+                    return source
+                      ? `${name} nach: ${source.citation}, abgeglichen am ${formatDay(source.checkedOn)}.`
+                      : `${name} ${view.year}: noch nicht mit einer amtlichen Quelle abgeglichen.`;
+                  })
+                  .join(' ')}{' '}
                 Regeln zuletzt durchgesehen am {formatDay(view.rulesReviewedOn)}. Beträge sind Berechnungen aus den
                 eigenen Belegen und ersetzen keine steuerliche Beratung.
               </p>
             </div>
+          )}
+
+          {tab === 'assets' && (
+            <AssetsTab
+              // Coming from the queue with a receipt opens a fresh form for it.
+              key={assetFromRow ?? 'assets'}
+              view={view}
+              busy={pending}
+              error={error}
+              startFromRowId={assetFromRow}
+              onStartHandled={() => setAssetFromRow(null)}
+              onSave={saveAssetDraft}
+              onDelete={deleteAssetView}
+              onDispose={disposeAssetView}
+            />
           )}
 
           {tab === 'vendors' &&
@@ -542,12 +632,14 @@ function OpenItemBody({
   busy,
   error,
   onSubmit,
+  onMakeAsset,
 }: {
   item: StatementItem;
   view: StatementView;
   busy: boolean;
   error: string | null;
   onSubmit: (submit: TreatmentSubmit) => void;
+  onMakeAsset: () => void;
 }) {
   const blocking = item.checks.filter((c) => c.blocking).map((c) => c.kind);
   if (blocking.some((k) => MEAL_CHECKS.includes(k))) {
@@ -564,8 +656,26 @@ function OpenItemBody({
     );
   }
   const onReceipt = blocking.filter((k) => RECEIPT_CHECKS.includes(k));
+  const assetCheck = blocking.find((k) => ASSET_CHECKS.includes(k));
+  const limit = `${formatCents(view.assetLimits.lowValueNetLimitCents)} €`;
   return (
     <div className="space-y-4">
+      {assetCheck && (
+        <div className="ui-note ui-note-warn">
+          <p>
+            {assetCheck === 'needs_asset'
+              ? `Dieser Beleg steht auf der Zeile für geringwertige Wirtschaftsgüter, kostet aber mehr als ${limit} netto. Er kann nicht sofort abgezogen werden, sondern wird als Anlage über die Nutzungsdauer abgeschrieben (Computerhardware: im Jahr der Anschaffung).`
+              : `Dieser Beleg liegt nahe an der Grenze von ${limit} netto, und der Nettobetrag fehlt. Entweder den Nettobetrag im Dashboard am Beleg ergänzen oder den Beleg als Anlage führen.`}
+          </p>
+          <button type="button" className="ui-btn ui-btn-primary ui-btn-sm mt-2" onClick={onMakeAsset}>
+            Als Anlage führen
+          </button>
+          <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
+            Ist es kein Wirtschaftsgut (zum Beispiel eine Sammelrechnung über mehrere kleine Teile), unten eine andere
+            Zeile wählen.
+          </p>
+        </div>
+      )}
       {onReceipt.length > 0 && (
         <div className="ui-note ui-note-warn">
           <p>

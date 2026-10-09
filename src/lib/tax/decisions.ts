@@ -11,6 +11,12 @@ export interface TreatmentInput {
   allocations: Allocation[];
   formLineKey: FormLineKey | null;
   employmentLineKey: FormLineKey | null;
+  /**
+   * Only on the low-value asset line: the receipt holds several assets, each
+   * within the limit on its own, so its total may exceed the limit. A statement
+   * about one receipt; a vendor rule never carries it.
+   */
+  severalLowValueItems?: boolean;
 }
 
 export type TreatmentErrorCode =
@@ -60,7 +66,7 @@ export function parseAllocations(raw: unknown): Allocation[] | null {
  *   carries a line that plays no role.
  */
 export function validateTreatment(raw: unknown, rules: YearRules): TreatmentInput {
-  const input = (raw ?? {}) as { allocations?: unknown; formLineKey?: unknown; employmentLineKey?: unknown };
+  const input = (raw ?? {}) as { allocations?: unknown; formLineKey?: unknown; employmentLineKey?: unknown; severalLowValueItems?: unknown };
   const allocations = parseAllocations(input.allocations);
   if (allocations === null) throw new TreatmentError('invalid_allocation');
   const total = allocations.reduce((sum, a) => sum + a.shareBp, 0);
@@ -78,7 +84,9 @@ export function validateTreatment(raw: unknown, rules: YearRules): TreatmentInpu
     }
     if (!isFormLineKey(input.formLineKey)) throw new TreatmentError('form_line_invalid');
     const def = rules.formLines.find((l) => l.key === input.formLineKey);
-    if (!def || def.form !== 'euer' || def.kind !== 'expense' || def.key === 'euer.meals') {
+    // Lines the asset register fills (depreciation, pool, remaining book
+    // value) cannot be chosen by hand either.
+    if (!def || def.form !== 'euer' || def.kind !== 'expense' || def.key === 'euer.meals' || def.assetOnly) {
       throw new TreatmentError('form_line_invalid');
     }
     formLineKey = def.key;
@@ -95,13 +103,15 @@ export function validateTreatment(raw: unknown, rules: YearRules): TreatmentInpu
     employmentLineKey = def.key;
   }
 
-  return { allocations, formLineKey, employmentLineKey };
+  const severalLowValueItems = formLineKey === 'euer.low_value_assets' && input.severalLowValueItems === true;
+  return { allocations, formLineKey, employmentLineKey, severalLowValueItems };
 }
 
 export function sameTreatment(a: TreatmentInput, b: TreatmentInput): boolean {
   return (
     a.formLineKey === b.formLineKey &&
     a.employmentLineKey === b.employmentLineKey &&
+    (a.severalLowValueItems ?? false) === (b.severalLowValueItems ?? false) &&
     a.allocations.length === b.allocations.length &&
     a.allocations.every((x, i) => x.purpose === b.allocations[i].purpose && x.shareBp === b.allocations[i].shareBp)
   );

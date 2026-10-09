@@ -37,10 +37,20 @@ export type FormId =
  */
 export const FORM_LINE_KEYS = [
   'euer.revenue_small_business',
+  'euer.revenue_taxable',
+  'euer.revenue_not_taxable',
+  'euer.vat_received',
+  'euer.vat_refunded',
+  'euer.input_vat',
+  'euer.vat_paid',
   'euer.goods',
   'euer.external_services',
+  'euer.asset_disposal',
+  'euer.depreciation_intangible',
   'euer.depreciation_movable',
   'euer.low_value_assets',
+  'euer.pool_release',
+  'euer.remaining_book_value',
   'euer.rent_business_premises',
   'euer.telecom',
   'euer.travel_lodging',
@@ -71,18 +81,30 @@ export function isFormLineKey(value: unknown): value is FormLineKey {
   return typeof value === 'string' && (FORM_LINE_KEYS as readonly string[]).includes(value);
 }
 
+/**
+ * What is known about a line's number on that year's form.
+ * - `verified`: compared with the official form; the number is printed.
+ * - `unverified`: not compared yet; the app shows the label alone and says so,
+ *   instead of printing a guess or another year's number.
+ * - `structured`: the form has no single amount field for this (it asks for
+ *   days, distances or several entries), so there is no line a euro total could
+ *   go on and none is ever printed.
+ */
+export type LineNumbering = 'verified' | 'unverified' | 'structured';
+
 export interface FormLine {
   key: FormLineKey;
   form: FormId;
-  /**
-   * The line number printed on that year's form. Null when it has not been
-   * compared with the official form yet: the app then shows the label alone
-   * and says the number is unverified, instead of printing a guess.
-   */
+  /** The line number printed on that year's form; set only when `numbering` is `verified`. */
   line: number | null;
+  numbering: LineNumbering;
+  /** For a `structured` line: what the form asks for instead of an amount. */
+  structuredNote?: string;
   /** The German label as printed on the form. */
   label: string;
   kind: 'revenue' | 'expense';
+  /** True for lines only the asset register may fill: they cannot be chosen for a receipt by hand. */
+  assetOnly?: boolean;
   /**
    * True for lines of the form that have a "not deductible" column beside the
    * deductible one (gifts, business meals).
@@ -94,14 +116,38 @@ export interface YearRules {
   year: number;
   /** ISO day a person last went through the whole rule set. */
   reviewedOn: string;
-  /** Where the form line catalog comes from. */
-  formLinesSource: Source;
   /**
-   * False when the line numbers were carried over from another year's form
-   * and not yet compared with this year's.
+   * Where each form's lines come from. The two forms are published by
+   * different documents, so one source for the whole year could not cite both.
+   * Null: that form of that year has not been compared with an official source.
    */
-  formLinesVerified: boolean;
+  formSources: Record<FormId, Source | null>;
   formLines: readonly FormLine[];
   /** The deductible part of a business meal, in basis points. */
   mealDeductibleShareBp: Sourced<number>;
+  assets: AssetRules;
+}
+
+/** The limits and methods for assets bought in this year. All limits are NET amounts (without value-added tax). */
+export interface AssetRules {
+  /** Up to this net cost an asset may be expensed in full in the year it is bought. */
+  lowValueNetLimitCents: Sourced<number>;
+  /** Above this net cost a low-value asset has to be listed in a register. */
+  lowValueRegisterAboveNetCents: Sourced<number>;
+  /** The pool: net cost above `minExclusive` up to `max`, released in equal parts over `years`. */
+  pool: Sourced<{ minExclusiveNetCents: number; maxNetCents: number; years: number }>;
+  /**
+   * Computer hardware and software: the useful life that may be assumed, and
+   * whether the whole cost may be taken in the year of purchase instead of
+   * month by month.
+   */
+  computer: Sourced<{ usefulLifeMonths: number; fullAmountInFirstYear: boolean }>;
+  /** Declining-balance depreciation of movable assets: the purchase dates it is open for and its caps. */
+  declining: Sourced<{ acquiredFrom: string; acquiredTo: string; maxRateBp: number; maxMultipleOfLinear: number }>;
+  /**
+   * The highest standard rate of value-added tax in basis points. Used only to
+   * decide a net limit from a gross amount when the net amount is unknown: a
+   * gross amount above limit times (1 + this rate) is certainly above the limit.
+   */
+  highestVatRateBp: Sourced<number>;
 }

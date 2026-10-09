@@ -900,9 +900,8 @@ Built as planned, with these differences and facts worth knowing:
   therefore shows there, in full, until the asset register exists or the receipt is
   moved to the depreciation line by hand. The totals are the same either way for
   hardware written off within one year; the line is not.
-- **The form source link is a copy.** The 2025 line numbers were read from a copy
-  of the ministry's letter on a tax site, named as such in the rule set. It is
-  replaced by the ministry's own address when the 2026 lines are compared.
+- **The form source link was a copy** of the ministry's letter on a tax site. It
+  has since been replaced by the ministry's own address (see the 2026-10-10 section).
 - **Rule sets hold only what slice 1 computes** (form lines, the meal percentage).
   Asset limits, the tariff and the other values enter with the slice that uses
   them, each with its source, so no unverified constant sits in the code.
@@ -922,6 +921,72 @@ Built as planned, with these differences and facts worth knowing:
 - **Not verified by a machine, still to do by hand:** the page in the live app
   with the owner's real receipts. Tests cover the service against a real database
   and the screen in a simulated browser, not a deployed build.
+
+## Reality after the first half of slice 2: the asset register (2026-10-07)
+
+Slice 2 is assets and receipt lines. The asset register is built; receipt lines are
+not yet.
+
+- **An asset's cost is never typed in.** `TaxAsset` holds what a person states
+  (label, kind, date, method, useful life, business share), and `TaxAssetPart`
+  links the receipts that make up its cost: the purchase, shipping, customs
+  (migration `0011_tax_assets`). The cost is their sum, read on every computation,
+  so a corrected receipt moves the whole schedule. A linked receipt is no expense
+  of its own. A receipt without an amount makes the cost unknown, not lower.
+- **Limits are checked on read, with their sources.** Low-value limit, pool range,
+  the one-year life for computer hardware and software, and the declining method
+  with its purchase window and caps are values of the rule set (statute text and
+  the ministry letter checked on 2026-10-07). An asset whose method its cost does
+  not allow contributes nothing and says why. Because limits are net and a small
+  business books gross, the limit is decided from the gross amount only where that
+  is conclusive; in between the app asks for the net amount.
+- **A receipt above the low-value limit can no longer sit on line 36.** It is an
+  open check with a button that starts an asset from it. This replaces the
+  slice 1 behaviour where a laptop showed on the low-value line.
+- **Several small items on one receipt** stay on the low-value line by an explicit
+  statement on that receipt. This is the stand-in for receipt lines: once lines
+  exist, each line is its own item and the statement is not needed.
+- **Schedule rules as built:** equal amounts by month from the month of purchase;
+  computer hardware and software in full in the year of purchase; the pool in
+  fifths whether or not the asset leaves; declining with the switch to equal
+  amounts when those are higher; in the year an asset leaves, depreciation for the
+  full months before that month and the rest as remaining book value. Yearly
+  amounts are differences of cumulative figures, so they always add up to the cost.
+- **Disposal**: sold, scrapped or taken private. Proceeds are revenue on the
+  form's line for asset disposals, the only revenue the app computes so far. A
+  private withdrawal is treated like a sale at the stated value, with a note that
+  the value is a tax advisor's call.
+- **Assets from before the app** are entered with their book value on 1 January of
+  a year and the months left, without receipts; the old assets held at one euro
+  stay there.
+- **Business share on an asset** is applied to depreciation, remaining book value
+  and proceeds alike. Whether a partly private asset belongs in the register at
+  all is a judgment for a tax advisor; the app does not decide it.
+- **Found on the way and fixed in slice 1's pull request:** an index name one
+  character past what Postgres allows, and a new check in continuous integration
+  that the hand-written migrations produce the schema.
+- **Not built yet:** receipt lines and the classifier reading them (second half of
+  this slice); useful lives from the official tables as a pick list (the owner
+  types the years); the asset annex as an export (with the year-end entry sheet,
+  slice 7).
+
+## Reality: official form lines per year and per form (2026-10-10)
+
+- **Each year has its own line numbers, listed key by key.** The 2026 form was
+  renumbered against 2025 and not by one constant step (goods moved from line 27
+  to 29, the other expense lines by one, the revenue lines not at all). The 2026
+  numbers were read off the ministry's own file; a test pins every key in both
+  years, so a year can never inherit a number from another.
+- **Sources are per form.** The income-surplus statement cites the ministry's
+  letter of its year; the employment annex of 2025 cites the tax portal's official
+  help. The employment annex of 2026 is not compared yet: its two amount lines show
+  without a number.
+- **Days and distances have no amount line.** The form asks for home-office days
+  and for commuting distance, days and transport, not for a euro total. Those two
+  employment lines are marked as structured: the app shows their sum for overview
+  and never prints a line number for it.
+- This closes the slice 1 item "the 2026 line numbers are not yet compared" for the
+  income-surplus statement. Open: the employment annex of 2026.
 
 ## Decisions (2026-10-07)
 

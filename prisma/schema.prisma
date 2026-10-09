@@ -350,9 +350,67 @@ model TaxItemDecision {
   allocations       Json
   formLineKey       String?  @map("form_line_key")
   employmentLineKey String?  @map("employment_line_key")
+  // The owner's statement that a receipt on the low-value asset line holds
+  // several assets, each within the limit on its own, although their sum is not.
+  severalLowValueItems Boolean @default(false) @map("several_low_value_items")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   @@index([authWorkspaceId])
   @@map("tax_item_decisions")
+}
+
+// An asset: something bought for the business that is written off instead of
+// being expensed like an ordinary receipt. Its COST is not stored: it is the
+// sum of the receipts linked through TaxAssetPart (the purchase, shipping,
+// customs), read on every computation. Its schedule and book values are
+// computed on read as well (src/lib/tax/assets.ts). Dates are ISO days as
+// text, like effective_from on the vendor rules.
+//
+// The three `opening*` columns are set together for an asset from before the
+// app: its book value on 1 January of `openingYear` and the months of useful
+// life left from then. The three `disposal*` columns are set together when it
+// leaves the register.
+model TaxAsset {
+  id                     String   @id @default(uuid())
+  authWorkspaceId        String   @map("auth_workspace_id")
+  authTenantId           String?  @map("auth_tenant_id")
+  label                  String
+  kind                   String
+  acquisitionDate        String?  @map("acquisition_date")
+  method                 String
+  usefulLifeMonths       Int?     @map("useful_life_months")
+  decliningRateBp        Int?     @map("declining_rate_bp")
+  businessShareBp        Int      @default(10000) @map("business_share_bp")
+  reminderCents          Int      @default(0) @map("reminder_cents")
+  openingYear            Int?     @map("opening_year")
+  openingBookValueCents  Int?     @map("opening_book_value_cents")
+  openingRemainingMonths Int?     @map("opening_remaining_months")
+  disposalDate           String?  @map("disposal_date")
+  disposalKind           String?  @map("disposal_kind")
+  disposalProceedsCents  Int?     @map("disposal_proceeds_cents")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  parts TaxAssetPart[]
+
+  @@index([authWorkspaceId])
+  @@map("tax_assets")
+}
+
+// One receipt that is part of an asset's cost. A receipt belongs to at most
+// one asset. `rowId` has no foreign key (see meal_guests.row_id); the row
+// delete paths remove the link in code.
+model TaxAssetPart {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  assetId         String   @map("asset_id")
+  rowId           String   @unique @map("row_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  asset TaxAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+  @@map("tax_asset_parts")
 }

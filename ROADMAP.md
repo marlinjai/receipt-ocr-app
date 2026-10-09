@@ -105,8 +105,9 @@
 - [ ] Finance and tax dashboard, stage 1 (data foundation and live dashboard): slice 1
   of 8 is built (the tax module with rule sets for 2025 and 2026, shares for several
   purposes per receipt, vendor rules, the queue of open checks and the
-  income-surplus statement at `/app/finance`). Next: slice 2, assets and receipt
-  lines. Then payments (file imports and the Enable Banking daily sync, matching by
+  income-surplus statement at `/app/finance`), and the first half of slice 2 (the
+  asset register with depreciation schedules, disposal and assets carried in from
+  earlier years). Next: receipt lines, the second half of slice 2. Then payments (file imports and the Enable Banking daily sync, matching by
   reference), revenue with a forecast of the small-business limits, regular
   value-added taxation, the income tax estimate, the year-end entry sheet, reading
   the expenses mailbox. Open inside slice 1, each described in the plan's "Reality
@@ -114,10 +115,11 @@
   "Zuordnung" and the per-vendor share table of the overview page are still read as
   a starting point and are removed only after the owner has finished entering the
   2025 meals and the session preparing the 2025 return has been told; (2) the line
-  numbers of the 2026 form and of the employment annex are not yet compared with
-  the official forms, so the app shows those lines without numbers; (3) the 2027
+  numbers of the employment annex of 2026 are not yet compared with an official
+  source, so those two lines show without numbers (the income-surplus statement of
+  2025 and 2026 and the employment annex of 2025 are compared); (3) the 2027
   rule set is due before 1 December 2026, when a test starts failing without it.
-  Plan: `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
+  Plan: `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-10)
 - [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: all six
   slices are built (register, contact list, export, duplicate checks, page split,
   phone capture, classifier, offline queue, service worker, share target). Left

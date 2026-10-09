@@ -38,6 +38,15 @@ export interface ResolvedItem {
   isMeal: boolean;
 }
 
+/** The receipt's net amount in euro cents, when it states one that fits its total. */
+function netOf(record: MealRecord): number | null {
+  if (record.net === null || !Number.isFinite(record.net) || record.net <= 0) return null;
+  if (record.gross === null || record.net > record.gross) return null;
+  if (record.currency === 'EUR') return toCents(record.net);
+  if (record.fxRate === null || !(record.fxRate > 0)) return null;
+  return Math.round(toCents(record.net) * record.fxRate);
+}
+
 function amountOf(record: MealRecord): Pick<LedgerItem, 'amountCents' | 'amountBasis' | 'missingAmount'> {
   if (record.gross === null || !Number.isFinite(record.gross) || record.gross === 0) {
     return { amountCents: null, amountBasis: 'document', missingAmount: 'no_amount' };
@@ -90,6 +99,7 @@ export function resolveItem(
     date: record.date,
     dateBasis: 'document' as const,
     ...amountOf(record),
+    netCents: netOf(record),
     smallBusiness: settings.smallBusiness,
   };
 
@@ -139,7 +149,14 @@ export function resolveItem(
   }
 
   return {
-    item: { ...base, formLineKey, employmentLineKey, allocations, meal: null },
+    item: {
+      ...base,
+      formLineKey,
+      employmentLineKey,
+      allocations,
+      meal: null,
+      severalLowValueItems: decision?.severalLowValueItems === true && formLineKey === 'euer.low_value_assets',
+    },
     vendorKey: key,
     allocationOrigin,
     formLineOrigin,

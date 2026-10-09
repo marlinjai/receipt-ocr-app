@@ -1,4 +1,5 @@
-import type { FormId, FormLineKey } from './rules/types';
+import type { AssetCheck, AssetFact, AssetYearRow } from './assets';
+import type { FormId, FormLineKey, LineNumbering } from './rules/types';
 
 /**
  * The facts of a year, as the tax rules see them. Everything that reads table
@@ -62,6 +63,15 @@ export interface LedgerItem {
   amountBasis: 'payment' | 'document' | 'reference_rate';
   /** Why `amountCents` is null. */
   missingAmount?: 'no_amount' | 'no_exchange_rate';
+  /** The same amount without value-added tax, when the receipt states it. The asset limits are net amounts. */
+  netCents?: number | null;
+  /**
+   * Set when the receipt is part of the cost of an asset. It is then not an
+   * expense of its own: the asset register decides what is deducted and when.
+   */
+  assetId?: string | null;
+  /** The owner stated that the receipt holds several assets, each within the low-value limit on its own. */
+  severalLowValueItems?: boolean;
   /** The line of the income-surplus statement the business share goes to. */
   formLineKey: FormLineKey | null;
   /** The line of the employment annex the study and employment shares go to. */
@@ -80,6 +90,7 @@ export interface LedgerItem {
 export interface YearFacts {
   year: number;
   items: LedgerItem[];
+  assets?: AssetFact[];
 }
 
 /** Why an item needs a person. One list of these is the queue the dashboard is worked from. */
@@ -95,7 +106,11 @@ export type OpenCheckKind =
   | 'small_business_unanswered'
   | 'regular_taxation_not_computed'
   | 'meal_incomplete'
-  | 'meal_without_register_facts';
+  | 'meal_without_register_facts'
+  /** On the low-value asset line but above what a low-value asset may cost: it has to become an asset. */
+  | 'needs_asset'
+  /** On the low-value asset line and possibly above the limit; the net amount would tell. */
+  | 'net_amount_needed';
 
 export interface OpenCheck {
   itemId: string;
@@ -126,13 +141,27 @@ export interface ItemResult {
 export interface LineResult {
   key: FormLineKey;
   form: FormId;
-  /** Null when this year's line number is not verified. */
+  /** The printed line number; null unless `numbering` is `verified`. */
   line: number | null;
+  numbering: LineNumbering;
   label: string;
   kind: 'revenue' | 'expense';
   cents: number;
   nonDeductibleCents: number;
   itemIds: string[];
+  /** Assets that contribute to the line. */
+  assetIds: string[];
+}
+
+/** One asset in one year: its place in the register and what it puts on the statement. */
+export interface AssetYearResult {
+  assetId: string;
+  /** False when a check keeps the asset out of every total. */
+  counted: boolean;
+  /** The year's row of the schedule, before the business share. Null when not counted or not yet bought. */
+  row: AssetYearRow | null;
+  parts: Array<{ lineKey: FormLineKey; cents: number }>;
+  checks: AssetCheck[];
 }
 
 export interface YearResult {
@@ -140,16 +169,19 @@ export interface YearResult {
   /** The year of the rule set used, and whether it is that year's own. */
   rulesYear: number;
   rulesExact: boolean;
-  formLinesVerified: boolean;
   /** Lines with at least one item, in form order. */
   lines: LineResult[];
   /** Sum of the expense lines of the income-surplus statement. */
   businessExpenseCents: number;
+  /** Sum of its revenue lines that can be computed so far (what was received for assets). */
+  businessRevenueCents: number;
   /** Sum of the lines of the employment annex. */
   employmentCostCents: number;
   privateCents: number;
   items: ItemResult[];
   checks: OpenCheck[];
+  assets: AssetYearResult[];
+  assetChecks: AssetCheck[];
   /** Items of the year that are in the totals, and those kept out by a blocking check. */
   countedItems: number;
   blockedItems: number;

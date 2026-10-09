@@ -37,6 +37,12 @@ export type FormId =
  */
 export const FORM_LINE_KEYS = [
   'euer.revenue_small_business',
+  'euer.revenue_taxable',
+  'euer.revenue_not_taxable',
+  'euer.vat_received',
+  'euer.vat_refunded',
+  'euer.input_vat',
+  'euer.vat_paid',
   'euer.goods',
   'euer.external_services',
   'euer.asset_disposal',
@@ -75,15 +81,25 @@ export function isFormLineKey(value: unknown): value is FormLineKey {
   return typeof value === 'string' && (FORM_LINE_KEYS as readonly string[]).includes(value);
 }
 
+/**
+ * What is known about a line's number on that year's form.
+ * - `verified`: compared with the official form; the number is printed.
+ * - `unverified`: not compared yet; the app shows the label alone and says so,
+ *   instead of printing a guess or another year's number.
+ * - `structured`: the form has no single amount field for this (it asks for
+ *   days, distances or several entries), so there is no line a euro total could
+ *   go on and none is ever printed.
+ */
+export type LineNumbering = 'verified' | 'unverified' | 'structured';
+
 export interface FormLine {
   key: FormLineKey;
   form: FormId;
-  /**
-   * The line number printed on that year's form. Null when it has not been
-   * compared with the official form yet: the app then shows the label alone
-   * and says the number is unverified, instead of printing a guess.
-   */
+  /** The line number printed on that year's form; set only when `numbering` is `verified`. */
   line: number | null;
+  numbering: LineNumbering;
+  /** For a `structured` line: what the form asks for instead of an amount. */
+  structuredNote?: string;
   /** The German label as printed on the form. */
   label: string;
   kind: 'revenue' | 'expense';
@@ -100,13 +116,12 @@ export interface YearRules {
   year: number;
   /** ISO day a person last went through the whole rule set. */
   reviewedOn: string;
-  /** Where the form line catalog comes from. */
-  formLinesSource: Source;
   /**
-   * False when the line numbers were carried over from another year's form
-   * and not yet compared with this year's.
+   * Where each form's lines come from. The two forms are published by
+   * different documents, so one source for the whole year could not cite both.
+   * Null: that form of that year has not been compared with an official source.
    */
-  formLinesVerified: boolean;
+  formSources: Record<FormId, Source | null>;
   formLines: readonly FormLine[];
   /** The deductible part of a business meal, in basis points. */
   mealDeductibleShareBp: Sourced<number>;

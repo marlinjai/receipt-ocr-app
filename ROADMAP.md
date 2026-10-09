@@ -112,10 +112,11 @@
   "Zuordnung" and the per-vendor share table of the overview page are still read as
   a starting point and are removed only after the owner has finished entering the
   2025 meals and the session preparing the 2025 return has been told; (2) the line
-  numbers of the 2026 form and of the employment annex are not yet compared with
-  the official forms, so the app shows those lines without numbers; (3) the 2027
+  numbers of the employment annex of 2026 are not yet compared with an official
+  source, so those two lines show without numbers (the income-surplus statement of
+  2025 and 2026 and the employment annex of 2025 are compared); (3) the 2027
   rule set is due before 1 December 2026, when a test starts failing without it.
-  Plan: `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
+  Plan: `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-10)
 - [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: all six
   slices are built (register, contact list, export, duplicate checks, page split,
   phone capture, classifier, offline queue, service worker, share target). Left

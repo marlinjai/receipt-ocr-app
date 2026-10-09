@@ -170,8 +170,8 @@ export interface StatementView {
   rulesYear: number;
   rulesExact: boolean;
   rulesReviewedOn: string;
-  formLinesVerified: boolean;
-  formLinesSource: { citation: string; url: string; checkedOn: string };
+  /** Per form: where its lines come from, or null when that form of this year is not compared with an official source. */
+  formSources: Record<'euer' | 'employment', { citation: string; url: string; checkedOn: string } | null>;
   /** The lines a person can choose, in form order. */
   formLines: FormLine[];
   lines: LineResult[];
@@ -306,9 +306,8 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     rulesYear: result.rulesYear,
     rulesExact: result.rulesExact,
     rulesReviewedOn: rules.reviewedOn,
-    formLinesVerified: result.formLinesVerified,
-    formLinesSource: rules.formLinesSource,
-    formLines: rules.formLines.map((l) => ({ ...l, line: rules.formLinesVerified ? l.line : null })),
+    formSources: rules.formSources,
+    formLines: rules.formLines.map((l) => ({ ...l, line: l.numbering === 'verified' ? l.line : null })),
     lines: result.lines,
     businessExpenseCents: result.businessExpenseCents,
     employmentCostCents: result.employmentCostCents,

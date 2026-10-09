@@ -34,9 +34,10 @@ describe('forecastYear', () => {
   });
 
   it('names the month the limit that decides next year is reached at the projected rate', () => {
-    // 6 x 3,000.00 received, 3,000.00 a month projected: 25,000.00 is passed in September.
+    // 18,000.00 received by June, nothing yet in the running month of July. The projection
+    // adds 3,000.00 from August on: 21,000, 24,000, then 27,000 in October passes 25,000.00.
     const f = forecastYear(input({ receivedByMonthCents: [300_000, 300_000, 300_000, 300_000, 300_000, 300_000, 0], outstandingCents: 0 }), RULES);
-    expect(f.nextYear).toEqual({ state: 'possible', month: 9 });
+    expect(f.nextYear).toEqual({ state: 'possible', month: 10 });
     expect(f.currentYear).toEqual({ state: 'not_reached' });
   });
 

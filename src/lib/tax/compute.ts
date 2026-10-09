@@ -160,7 +160,8 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
         line = {
           key: def.key,
           form: def.form,
-          line: rules.formLinesVerified ? def.line : null,
+          line: def.numbering === 'verified' ? def.line : null,
+          numbering: def.numbering,
           label: def.label,
           kind: def.kind,
           cents: 0,
@@ -196,7 +197,7 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
       let line = byLine.get(part.lineKey);
       if (!line) {
         const def = formLine(rules, part.lineKey);
-        line = { key: def.key, form: def.form, line: rules.formLinesVerified ? def.line : null, label: def.label, kind: def.kind, cents: 0, nonDeductibleCents: 0, itemIds: [], assetIds: [] };
+        line = { key: def.key, form: def.form, line: def.numbering === 'verified' ? def.line : null, numbering: def.numbering, label: def.label, kind: def.kind, cents: 0, nonDeductibleCents: 0, itemIds: [], assetIds: [] };
         byLine.set(part.lineKey, line);
       }
       line.cents += part.cents;
@@ -213,7 +214,6 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
     year: facts.year,
     rulesYear: rules.year,
     rulesExact: exact,
-    formLinesVerified: rules.formLinesVerified,
     lines,
     businessExpenseCents: sum('euer'),
     businessRevenueCents: lines.filter((l) => l.form === 'euer' && l.kind === 'revenue').reduce((total, l) => total + l.cents, 0),

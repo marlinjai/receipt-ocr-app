@@ -1,5 +1,5 @@
 import type { AssetCheck, AssetFact, AssetYearRow } from './assets';
-import type { FormId, FormLineKey } from './rules/types';
+import type { FormId, FormLineKey, LineNumbering } from './rules/types';
 
 /**
  * The facts of a year, as the tax rules see them. Everything that reads table
@@ -141,8 +141,9 @@ export interface ItemResult {
 export interface LineResult {
   key: FormLineKey;
   form: FormId;
-  /** Null when this year's line number is not verified. */
+  /** The printed line number; null unless `numbering` is `verified`. */
   line: number | null;
+  numbering: LineNumbering;
   label: string;
   kind: 'revenue' | 'expense';
   cents: number;
@@ -168,7 +169,6 @@ export interface YearResult {
   /** The year of the rule set used, and whether it is that year's own. */
   rulesYear: number;
   rulesExact: boolean;
-  formLinesVerified: boolean;
   /** Lines with at least one item, in form order. */
   lines: LineResult[];
   /** Sum of the expense lines of the income-surplus statement. */

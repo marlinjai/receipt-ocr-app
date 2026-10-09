@@ -250,9 +250,13 @@ describe('resume and re-entry', () => {
     const first = await loadStatement(db, ws.workspaceId, 2026);
     const second = await loadStatement(db, ws.workspaceId, 2026);
     expect(second.lines).toEqual(first.lines);
-    // 2026: the form's line numbers are not verified, so none are shown.
-    expect(first.formLinesVerified).toBe(false);
-    expect(first.lines.every((l) => l.line === null)).toBe(true);
+    // 2026 has its own numbers on the statement; its employment annex is not compared yet.
+    expect(first.lines.map((l) => [l.key, l.line, l.numbering])).toEqual([
+      ['euer.telecom', 44, 'verified'],
+      ['employment.study_costs', null, 'unverified'],
+    ]);
+    expect(first.formSources.employment).toBeNull();
+    expect(first.formSources.euer?.url).toContain('2026');
 
     await saveItemDecision(db, ctx, rowId, { allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.telecom' });
     expect(await db.taxItemDecision.count({ where: { rowId } })).toBe(1);

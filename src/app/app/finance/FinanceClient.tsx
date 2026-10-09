@@ -203,10 +203,17 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               {view.rulesYear}.
             </p>
           )}
-          {view.rulesExact && !view.formLinesVerified && (
+          {view.rulesExact && view.lines.some((l) => l.numbering === 'unverified') && (
             <p className="ui-note">
-              Die Zeilennummern des Formulars {view.year} sind noch nicht mit dem amtlichen Vordruck abgeglichen.
-              Angezeigt werden deshalb nur die Bezeichnungen.
+              Für einige Zeilen der Anlage N {view.year} sind die Zeilennummern noch nicht mit dem amtlichen Vordruck
+              abgeglichen. Dort wird nur die Bezeichnung angezeigt, keine Nummer eines anderen Jahres.
+            </p>
+          )}
+          {view.lines.some((l) => l.numbering === 'structured') && (
+            <p className="ui-note">
+              Für Fahrten zur Tätigkeitsstätte und die Tagespauschale fragt das Formular Tage und Entfernungen ab,
+              keinen Betrag. Die hier gezeigte Summe dient der Übersicht und wird nicht in eine Formularzeile
+              eingetragen.
             </p>
           )}
           <p className="ui-note">
@@ -533,7 +540,15 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                 })
               )}
               <p className="text-xs" style={{ color: 'var(--muted)' }}>
-                Formularzeilen nach: {view.formLinesSource.citation}. Abgeglichen am {formatDay(view.formLinesSource.checkedOn)},
+                {(['euer', 'employment'] as const)
+                  .map((form) => {
+                    const source = view.formSources[form];
+                    const name = form === 'euer' ? 'Anlage EÜR' : 'Anlage N';
+                    return source
+                      ? `${name} nach: ${source.citation}, abgeglichen am ${formatDay(source.checkedOn)}.`
+                      : `${name} ${view.year}: noch nicht mit einer amtlichen Quelle abgeglichen.`;
+                  })
+                  .join(' ')}{' '}
                 Regeln zuletzt durchgesehen am {formatDay(view.rulesReviewedOn)}. Beträge sind Berechnungen aus den
                 eigenen Belegen und ersetzen keine steuerliche Beratung.
               </p>

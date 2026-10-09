@@ -900,9 +900,8 @@ Built as planned, with these differences and facts worth knowing:
   therefore shows there, in full, until the asset register exists or the receipt is
   moved to the depreciation line by hand. The totals are the same either way for
   hardware written off within one year; the line is not.
-- **The form source link is a copy.** The 2025 line numbers were read from a copy
-  of the ministry's letter on a tax site, named as such in the rule set. It is
-  replaced by the ministry's own address when the 2026 lines are compared.
+- **The form source link was a copy** of the ministry's letter on a tax site. It
+  has since been replaced by the ministry's own address (see the 2026-10-10 section).
 - **Rule sets hold only what slice 1 computes** (form lines, the meal percentage).
   Asset limits, the tariff and the other values enter with the slice that uses
   them, each with its source, so no unverified constant sits in the code.
@@ -970,6 +969,24 @@ not yet.
   this slice); useful lives from the official tables as a pick list (the owner
   types the years); the asset annex as an export (with the year-end entry sheet,
   slice 7).
+
+## Reality: official form lines per year and per form (2026-10-10)
+
+- **Each year has its own line numbers, listed key by key.** The 2026 form was
+  renumbered against 2025 and not by one constant step (goods moved from line 27
+  to 29, the other expense lines by one, the revenue lines not at all). The 2026
+  numbers were read off the ministry's own file; a test pins every key in both
+  years, so a year can never inherit a number from another.
+- **Sources are per form.** The income-surplus statement cites the ministry's
+  letter of its year; the employment annex of 2025 cites the tax portal's official
+  help. The employment annex of 2026 is not compared yet: its two amount lines show
+  without a number.
+- **Days and distances have no amount line.** The form asks for home-office days
+  and for commuting distance, days and transport, not for a euro total. Those two
+  employment lines are marked as structured: the app shows their sum for overview
+  and never prints a line number for it.
+- This closes the slice 1 item "the 2026 line numbers are not yet compared" for the
+  income-surplus statement. Open: the employment annex of 2026.
 
 ## Decisions (2026-10-07)
 

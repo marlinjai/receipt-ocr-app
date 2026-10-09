@@ -64,8 +64,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     rulesYear: 2025,
     rulesExact: true,
     rulesReviewedOn: rules.reviewedOn,
-    formLinesVerified: true,
-    formLinesSource: rules.formLinesSource,
+    formSources: rules.formSources,
     formLines: [...rules.formLines],
     lines: counted.length
       ? [
@@ -73,6 +72,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
             key: 'euer.telecom',
             form: 'euer',
             line: 43,
+            numbering: 'verified',
             label: 'Aufwendungen für Telekommunikation (z. B. Telefon, Internet)',
             kind: 'expense',
             cents: counted.reduce((s, i) => s + i.parts.reduce((p, x) => p + x.cents, 0), 0),

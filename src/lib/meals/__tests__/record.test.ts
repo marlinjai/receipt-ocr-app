@@ -64,7 +64,7 @@ describe('rowToMealRecord', () => {
       taxLines: [{ rate: 19, net: 50, tax: 9.5 }],
       detailsAt: '2025-03-15T08:00:00.000Z',
       guests: [GUEST_A],
-      files: [{ fileId: 'f-1', fileUrl: '/api/files/f-1', mimeType: 'image/jpeg', originalName: 'a.jpg' }],
+      files: [{ refId: 'ref-1', fileId: 'f-1', fileUrl: '/api/files/f-1', mimeType: 'image/jpeg', originalName: 'a.jpg', rotation: null }],
     });
     expect(mealStatus(record)).toEqual({ kind: 'complete' });
   });

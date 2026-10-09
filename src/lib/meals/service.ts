@@ -3,15 +3,21 @@ import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { CellValue, Column, Row } from '@marlinjai/data-table-core';
 import type { PrismaClient } from '@prisma/client';
 import { PrismaContactStore } from '@/lib/contacts/prisma-store';
+import { companyContacts, sharedContactsEnabled } from '@/lib/contacts/db';
+import { SharedContactStore } from '@/lib/contacts/shared-store';
+import { MissingTenantError } from '@/lib/auth-workspace';
 import type { ContactStore } from '@/lib/contacts/store';
 import {
   MEAL_COLUMNS,
   consumptionLabel,
   mealTypeLabel,
 } from '@/lib/receipts-constants';
+import type { MealTypeKey } from '@/lib/receipts-constants';
+import type { MealBatchResult, MealBatchSkip } from './batch';
 import { inputFromRecord, normalizeMealInput, sameMealInput, type MealDetailsInput } from './input';
 import { rowToMealRecord, type SelectOptionsByColumn } from './record';
-import { isMealRelated, serializeTaxLines } from './rules';
+import { isDismissedMeal, isMealRelated, serializeTaxLines } from './rules';
+import { parseRotation, type Rotation } from './viewer-state';
 import { DEFAULT_TAX_SETTINGS, type MealGuestEntry, type MealRecord, type MealTaxSettings } from './types';
 
 /**
@@ -39,7 +45,8 @@ export type MealServiceErrorCode =
   | 'row_not_found'
   | 'unknown_contact'
   | 'archived_contact'
-  | 'schema_outdated';
+  | 'schema_outdated'
+  | 'invalid_rotation';
 
 export class MealServiceError extends Error {
   readonly code: MealServiceErrorCode;
@@ -107,16 +114,31 @@ export async function guestsByRow(
   return out;
 }
 
+/**
+ * The contact list for this request. The suite's shared database when the
+ * `CONTACTS_STORE=shared` switch is on (scoped to the company), otherwise the
+ * app's own table. The switch is read per call, so it is one place to change.
+ */
 export function contactStore(db: PrismaClient, ctx: MealContext): ContactStore {
-  return new PrismaContactStore(db, ctx.workspaceId, ctx.tenantId);
+  if (!sharedContactsEnabled()) return new PrismaContactStore(db, ctx.workspaceId, ctx.tenantId);
+  if (!ctx.tenantId) throw new MissingTenantError();
+  return new SharedContactStore(companyContacts(ctx.tenantId), db);
 }
 
 /**
  * Every row of the workspace that has anything to do with the register: the
  * register entries, the incomplete ones, and the meals recorded separately.
  * Rows of other categories are left out.
+ *
+ * `includeDismissed` adds the "Bewirtung" receipts marked "Keine Bewirtung",
+ * which the meals page lists so they can be taken back. The register, its
+ * exports and the open count never ask for them.
  */
-export async function loadMealRecords(db: PrismaClient, workspaceId: string): Promise<MealRecord[]> {
+export async function loadMealRecords(
+  db: PrismaClient,
+  workspaceId: string,
+  options: { includeDismissed?: boolean } = {},
+): Promise<MealRecord[]> {
   const ctx = await tableContext(db, workspaceId);
   if (!ctx) return [];
   const rows = await allRows(ctx.adapter, ctx.tableId);
@@ -124,7 +146,7 @@ export async function loadMealRecords(db: PrismaClient, workspaceId: string): Pr
   const candidates = rows
     .filter((r) => !r.archived)
     .map((r) => rowToMealRecord(r, ctx.columns, ctx.selectOptions, noGuests))
-    .filter(isMealRelated);
+    .filter((r) => isMealRelated(r) || (options.includeDismissed === true && isDismissedMeal(r)));
   const guests = await guestsByRow(db, workspaceId, candidates.map((r) => r.rowId));
   return candidates.map((r) => ({ ...r, guests: guests.get(r.rowId) ?? [] }));
 }
@@ -193,6 +215,24 @@ export async function saveMealDetails(
     date: input.date ?? stored.date,
     gross: input.gross ?? stored.gross,
   };
+  return writeMealInput(db, mealCtx, ctx, current, merged, now);
+}
+
+/**
+ * Write `merged` (already normalized, date and gross resolved) onto the row
+ * of `current`. Shared by the form save and the batch actions, so "Keine
+ * Bewirtung" set from a list is exactly the state the form's option sets.
+ */
+async function writeMealInput(
+  db: PrismaClient,
+  mealCtx: MealContext,
+  ctx: TableContext,
+  current: MealRecord,
+  merged: MealDetailsInput,
+  now: () => Date,
+): Promise<SaveMealResult> {
+  const rowId = current.rowId;
+  const stored = inputFromRecord(current);
   if (sameMealInput(merged, stored)) return { record: current, changed: false };
 
   // Guests: every id must be a contact of this workspace. An archived contact
@@ -200,7 +240,7 @@ export async function saveMealDetails(
   const store = contactStore(db, mealCtx);
   const contacts = await store.getMany(merged.guestContactIds);
   const contactById = new Map(contacts.map((c) => [c.id, c]));
-  const alreadyOnMeal = new Set(current.guests.map((g) => g.contactId));
+  const alreadyOnMeal = new Set(current.guests.flatMap((g) => (g.contactId ? [g.contactId] : [])));
   for (const id of merged.guestContactIds) {
     const contact = contactById.get(id);
     if (!contact) throw new MealServiceError('unknown_contact', id);
@@ -240,11 +280,12 @@ export async function saveMealDetails(
 
   await ctx.adapter.updateRow(rowId, cells);
 
-  const guestsChanged =
-    JSON.stringify(merged.guestContactIds) !== JSON.stringify(current.guests.map((g) => g.contactId));
+  const linkedBefore = current.guests.flatMap((g) => (g.contactId ? [g.contactId] : []));
+  const guestsChanged = JSON.stringify(merged.guestContactIds) !== JSON.stringify(linkedBefore);
   if (guestsChanged) {
     await db.$transaction([
-      db.mealGuest.deleteMany({ where: { authWorkspaceId: mealCtx.workspaceId, rowId } }),
+      // Only linked guests are replaced; held copies (contact erased) stay as they are.
+      db.mealGuest.deleteMany({ where: { authWorkspaceId: mealCtx.workspaceId, rowId, contactId: { not: null } } }),
       db.mealGuest.createMany({
         data: merged.guestContactIds.map((contactId, position) => {
           const contact = contactById.get(contactId)!;
@@ -265,6 +306,178 @@ export async function saveMealDetails(
   const record = await loadWithContext(db, mealCtx.workspaceId, ctx, rowId);
   if (!record) throw new MealServiceError('row_not_found');
   return { record, changed: true };
+}
+
+/**
+ * Set the meal type of several receipts and leave every other detail as it
+ * is stored. `not_a_meal` takes a receipt out of queue and register (it stays
+ * in the books as an ordinary receipt, guests and occasion kept);
+ * `business_meal_external` takes it back.
+ *
+ * A row that is not in this workspace's Receipts table (deleted meanwhile, or
+ * an id of another workspace) is skipped as `not_found` and the rest is
+ * carried out. Setting the type a row already has counts as done, so a
+ * repeated request changes nothing.
+ */
+export async function setMealTypeForRows(
+  db: PrismaClient,
+  mealCtx: MealContext,
+  rowIds: string[],
+  mealType: MealTypeKey,
+  now: () => Date = () => new Date(),
+): Promise<MealBatchResult> {
+  const ctx = await tableContext(db, mealCtx.workspaceId);
+  if (!ctx) throw new MealServiceError('not_initialized');
+  const result: MealBatchResult = { done: [], records: [], skipped: [] };
+  for (const rowId of [...new Set(rowIds)]) {
+    try {
+      const current = await loadWithContext(db, mealCtx.workspaceId, ctx, rowId);
+      if (!current) {
+        result.skipped.push({ rowId, reason: 'not_found' });
+        continue;
+      }
+      const { record } = await writeMealInput(db, mealCtx, ctx, current, { ...inputFromRecord(current), mealType }, now);
+      result.done.push(rowId);
+      result.records.push(record);
+    } catch (e) {
+      // The table itself is behind (missing column or option): that is true for every row.
+      if (e instanceof MealServiceError && e.code === 'schema_outdated') throw e;
+      console.error('[meals] setting the meal type failed', { rowId }, e);
+      result.skipped.push({ rowId, reason: 'failed' });
+    }
+  }
+  return result;
+}
+
+/**
+ * Remember how far a receipt file is turned for viewing and printing.
+ *
+ * The rotation is stored in the metadata of the file REFERENCE (next to the
+ * content hash), so it travels with the receipt into the dashboard and the
+ * register export. The stored file itself is never touched.
+ *
+ * The reference must hang on a row of this workspace's Receipts table;
+ * anything else (another workspace, a deleted row, a reference of another
+ * row) is `row_not_found`. Returns the record as it is stored now.
+ */
+export async function setReceiptFileRotation(
+  db: PrismaClient,
+  mealCtx: MealContext,
+  rowId: string,
+  fileRefId: string,
+  rotation: Rotation,
+): Promise<MealRecord> {
+  if (parseRotation(rotation) === null) throw new MealServiceError('invalid_rotation');
+  const ctx = await tableContext(db, mealCtx.workspaceId);
+  if (!ctx) throw new MealServiceError('not_initialized');
+  const row = await ctx.adapter.getRow(rowId);
+  if (!row || row.tableId !== ctx.tableId) throw new MealServiceError('row_not_found');
+  const ref = await db.dtFile.findUnique({ where: { id: fileRefId }, select: { rowId: true, metadata: true } });
+  if (!ref || ref.rowId !== rowId) throw new MealServiceError('row_not_found');
+
+  const metadata =
+    ref.metadata && typeof ref.metadata === 'object' && !Array.isArray(ref.metadata)
+      ? (ref.metadata as Record<string, unknown>)
+      : {};
+  if (parseRotation(metadata.rotation) !== rotation) {
+    // Merge: the content hash and the upload source stay.
+    await db.dtFile.update({ where: { id: fileRefId }, data: { metadata: { ...metadata, rotation } } });
+  }
+  const record = await loadWithContext(db, mealCtx.workspaceId, ctx, rowId);
+  if (!record) throw new MealServiceError('row_not_found');
+  return record;
+}
+
+export interface DeleteReceiptsDeps {
+  /**
+   * Remove one stored file for good. Must resolve when the file is already
+   * gone and reject when it could not be removed.
+   */
+  deleteStoredFile: (fileId: string) => Promise<void>;
+}
+
+/**
+ * Delete receipts entirely: the stored file, the row with its file references
+ * and selections, and its meal guests.
+ *
+ * Order matters. The stored file goes FIRST and the row only after that
+ * succeeded: when the file store refuses, the receipt is reported as
+ * `file_delete_failed` and stays complete, instead of the row vanishing while
+ * its file lives on with nothing pointing at it. A retry then finds the row
+ * again (and a file that is already gone counts as removed). With several
+ * files, the ones already removed before a later one failed lose their
+ * references, so the kept receipt never points at a file that no longer exists.
+ *
+ * A stored file that another row still references (the same upload attached
+ * twice) is kept; only this row's reference to it goes with the row.
+ *
+ * Rows outside this workspace's Receipts table are skipped as `not_found`,
+ * exactly like rows deleted meanwhile, and the rest is carried out.
+ */
+export async function deleteReceiptRows(
+  db: PrismaClient,
+  mealCtx: MealContext,
+  rowIds: string[],
+  deps: DeleteReceiptsDeps,
+): Promise<MealBatchResult> {
+  const ctx = await tableContext(db, mealCtx.workspaceId);
+  if (!ctx) throw new MealServiceError('not_initialized');
+  const result: MealBatchResult = { done: [], records: [], skipped: [] };
+  for (const rowId of [...new Set(rowIds)]) {
+    let skip: MealBatchSkip | null = null;
+    try {
+      const row = await ctx.adapter.getRow(rowId);
+      if (!row || row.tableId !== ctx.tableId) {
+        result.skipped.push({ rowId, reason: 'not_found' });
+        continue;
+      }
+
+      const refs = await db.dtFile.findMany({ where: { rowId }, select: { fileId: true } });
+      const fileIds = [...new Set(refs.map((r) => r.fileId))];
+      const sharedRefs = fileIds.length
+        ? await db.dtFile.findMany({
+            where: { fileId: { in: fileIds }, rowId: { not: rowId } },
+            select: { fileId: true },
+          })
+        : [];
+      const shared = new Set(sharedRefs.map((r) => r.fileId));
+      const removed: string[] = [];
+      for (const fileId of fileIds) {
+        if (shared.has(fileId)) continue;
+        try {
+          await deps.deleteStoredFile(fileId);
+          removed.push(fileId);
+        } catch (e) {
+          console.error('[meals] deleting a stored file failed, the receipt is kept', { rowId, fileId }, e);
+          skip = { rowId, reason: 'file_delete_failed' };
+          break;
+        }
+      }
+      if (skip) {
+        // A deleted file cannot be brought back, so the kept receipt must not keep pointing at it:
+        // drop the references to the files that are gone, leaving only ones that still exist.
+        if (removed.length > 0) {
+          await db.dtFile.deleteMany({ where: { rowId, fileId: { in: removed } } });
+        }
+        result.skipped.push(skip);
+        continue;
+      }
+
+      await ctx.adapter.deleteRow(rowId);
+      // TaxItemDecision.rowId has no foreign key, and a retry cannot find the deleted row again, so
+      // this runs before the guest cleanup: a guest failure must not orphan the decisions.
+      // Same cleanup as the other deletion paths (tax/service imports this module, so no helper import).
+      await db.taxItemDecision.deleteMany({ where: { rowId } });
+      // Same for a link into an asset's cost: the asset then asks for its cost again.
+      await db.taxAssetPart.deleteMany({ where: { rowId } });
+      await deleteGuestsForRows(db, [rowId]);
+      result.done.push(rowId);
+    } catch (e) {
+      console.error('[meals] deleting a receipt failed', { rowId }, e);
+      result.skipped.push({ rowId, reason: 'failed' });
+    }
+  }
+  return result;
 }
 
 /** Remove the guests of deleted receipt rows. The caller has already authorized the row delete. */

@@ -4,9 +4,12 @@ import { useCallback, useId, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Contact } from '@/lib/contacts/store';
 import { incompleteQueue } from '@/lib/meals/register';
+import { isDismissedMeal } from '@/lib/meals/rules';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import type { MealsPageData } from './actions';
 import ContactsTab from './ContactsTab';
+import DirectoryPanel from './DirectoryPanel';
+import DismissedMeals from './DismissedMeals';
 import QueueTab from './QueueTab';
 import RegisterTab from './RegisterTab';
 
@@ -18,13 +21,27 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
   const [contacts, setContacts] = useState<Contact[]>(initial.contacts);
   const [settings, setSettings] = useState<MealTaxSettings>(initial.settings);
   const [defaultHost, setDefaultHost] = useState(initial.defaultHost);
-  const [tab, setTab] = useState<TabKey>(() => (incompleteQueue(initial.records).length > 0 ? 'queue' : 'register'));
+  const [tab, setTab] = useState<TabKey>(() => (incompleteQueue(initial.records.filter((r) => !isDismissedMeal(r))).length > 0 ? 'queue' : 'register'));
 
-  const queue = useMemo(() => incompleteQueue(records), [records]);
+  // `records` also holds the receipts marked "Keine Bewirtung"; they are listed
+  // on their own and never reach the queue, the register or the year picker.
+  const mealRecords = useMemo(() => records.filter((r) => !isDismissedMeal(r)), [records]);
+  const dismissed = useMemo(() => records.filter(isDismissedMeal), [records]);
+  const queue = useMemo(() => incompleteQueue(mealRecords), [mealRecords]);
 
   const onRecordSaved = useCallback((record: MealRecord) => {
     setRecords((list) => list.map((r) => (r.rowId === record.rowId ? record : r)));
     if (record.host.trim()) setDefaultHost(record.host.trim());
+  }, []);
+
+  const onRecordsSaved = useCallback((saved: MealRecord[]) => {
+    const byId = new Map(saved.map((r) => [r.rowId, r]));
+    setRecords((list) => list.map((r) => byId.get(r.rowId) ?? r));
+  }, []);
+
+  const onRecordsRemoved = useCallback((rowIds: string[]) => {
+    const gone = new Set(rowIds);
+    setRecords((list) => list.filter((r) => !gone.has(r.rowId)));
   }, []);
 
   const onContactUpserted = useCallback((contact: Contact) => {
@@ -56,7 +73,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
   ];
 
   return (
-    <main className="relative z-10 min-h-svh px-4 pb-16 pt-6 sm:px-6" data-theme="dark">
+    <main className="relative z-10 min-h-svh px-4 pb-40 pt-6 sm:px-6" data-theme="dark">
       <div className="mx-auto w-full max-w-[88rem]">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -77,7 +94,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
           </div>
         </div>
 
-        <div role="tablist" aria-label="Bereiche des Bewirtungsverzeichnisses" className="mt-6 flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
+        <div role="tablist" aria-label="Bereiche des Bewirtungsverzeichnisses" className="ui-scroll-bare mt-6 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style={{ borderColor: 'var(--border)' }}>
           {tabs.map((t) => (
             <button
               key={t.key}
@@ -114,20 +131,33 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
               settings={settings}
               defaultHost={defaultHost}
               onRecordSaved={onRecordSaved}
+              onRecordsSaved={onRecordsSaved}
+              onRecordsRemoved={onRecordsRemoved}
               onContactCreated={onContactUpserted}
               onOpenRegister={() => setTab('register')}
             />
           )}
           {tab === 'register' && (
             <RegisterTab
-              records={records}
+              records={mealRecords}
               settings={settings}
               onSettingsChanged={setSettings}
+              onRecordsSaved={onRecordsSaved}
+              onRecordsRemoved={onRecordsRemoved}
               onOpenQueue={() => setTab('queue')}
             />
           )}
-          {tab === 'contacts' && <ContactsTab contacts={contacts} onContactChanged={onContactUpserted} />}
+          {tab === 'contacts' && (
+            <>
+              <ContactsTab contacts={contacts} onContactChanged={onContactUpserted} />
+              <DirectoryPanel />
+            </>
+          )}
         </div>
+
+        {tab !== 'contacts' && (
+          <DismissedMeals records={dismissed} onRecordsSaved={onRecordsSaved} onRecordsRemoved={onRecordsRemoved} />
+        )}
       </div>
     </main>
   );

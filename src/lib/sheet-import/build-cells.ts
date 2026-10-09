@@ -1,5 +1,6 @@
 import type { NormalizedRow, ImportableField } from './normalize';
 import { CATEGORY_TO_KONTO } from '@/lib/receipts-constants';
+import { firstColumnByName } from '@/lib/column-lookup';
 
 /** The dt_rows cell values this importer produces (a subset of the adapter's CellValue). */
 export type ImportCellValue = string | number | null;
@@ -32,7 +33,7 @@ export function buildCells(
   extra?: { fxRate?: number | null; statusOptionId?: string | null },
 ): Record<string, ImportCellValue> {
   const cells: Record<string, ImportCellValue> = {};
-  const byName = new Map(columns.map((c) => [c.name, c]));
+  const byName = firstColumnByName(columns);
 
   const kontoMapped = mapped.Konto != null && String(mapped.Konto).trim() !== '';
   const konto = kontoMapped

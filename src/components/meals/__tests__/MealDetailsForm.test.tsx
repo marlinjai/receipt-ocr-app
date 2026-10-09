@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Contact } from '@/lib/contacts/store';
 import type { MealDetailsInput } from '@/lib/meals/input';
@@ -258,5 +258,94 @@ describe('settings', () => {
   it('warns when the total is above the host-name threshold', () => {
     setup(meal({ gross: 300 }));
     expect(screen.getByText(/muss die\s+Rechnung Namen und Anschrift des Gastgebers tragen/)).toBeTruthy();
+  });
+});
+
+describe('place and host: no cross-field autofill, place read from the receipt', () => {
+  const place = () => screen.getByLabelText('Ort (Name und Anschrift)') as HTMLTextAreaElement;
+  const host = () => screen.getByLabelText('Gastgeber') as HTMLInputElement;
+
+  it('neither field looks like a personal contact form to a browser or a password manager', () => {
+    setup(untouched);
+    for (const input of [place(), host()]) {
+      expect(input.getAttribute('autocomplete')).toBe('off');
+      expect(input.hasAttribute('data-1p-ignore')).toBe(true);
+      expect(input.getAttribute('data-lpignore')).toBe('true');
+      expect(input.getAttribute('data-form-type')).toBe('other');
+      // No field name or id an address form would use.
+      expect(`${input.name} ${input.id}`).not.toMatch(/address|street|city|place|ort|name\b/i);
+    }
+    expect(place().name).toBe('meal-venue');
+    expect(host().name).toBe('meal-host');
+  });
+
+  it('autofill started on the host writes into the place field: the place is untouched and still what gets saved', async () => {
+    const record = meal({ place: 'Testlokal, Musterstraße 1, 12345 Musterstadt', host: '' });
+    const { user, onSave } = setup(record, { defaultHost: '' });
+    await user.click(host());
+    // What a browser's contact autofill does from the host field: it sets
+    // both values and fires change events, with the focus still on the host.
+    fireEvent.change(host(), { target: { value: 'Inhaber Beispiel' } });
+    fireEvent.change(place(), { target: { value: 'Privatweg 7, 99999 Wohnort' } });
+    expect(host().value).toBe('Inhaber Beispiel');
+    expect(place().value).toBe('Testlokal, Musterstraße 1, 12345 Musterstadt');
+
+    // The same with an emptying fill.
+    fireEvent.change(place(), { target: { value: '' } });
+    expect(place().value).toBe('Testlokal, Musterstraße 1, 12345 Musterstadt');
+
+    await user.click(screen.getByRole('button', { name: 'Speichern' }));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect((onSave as ReturnType<typeof vi.fn>).mock.calls[0][1]).toMatchObject({
+      place: 'Testlokal, Musterstraße 1, 12345 Musterstadt',
+      host: 'Inhaber Beispiel',
+    });
+  });
+
+  it('typing in the place field itself still works, and a line break becomes a space', async () => {
+    const { user } = setup(meal({ place: '' , vendor: null }));
+    await user.click(place());
+    await user.keyboard('Neues Lokal{Enter}Musterweg 1');
+    expect(place().value).toBe('Neues Lokal Musterweg 1');
+    await user.clear(place());
+    expect(place().value).toBe('');
+  });
+
+  it('an empty place opens with name and address read from the receipt, and nothing is stored before the save', () => {
+    const { onSave } = setup(meal({ place: '', vendor: 'Testlokal', placeSuggestion: 'Testlokal, Musterstraße 69, 12345 Musterstadt' }));
+    expect(place().value).toBe('Testlokal, Musterstraße 69, 12345 Musterstadt');
+    expect(screen.queryByRole('button', { name: 'Aus Beleg übernehmen' })).toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('without a complete address on the receipt the place opens with the name only', () => {
+    setup(meal({ place: '', vendor: 'Testlokal', placeSuggestion: null }));
+    expect(place().value).toBe('Testlokal');
+    expect(screen.queryByRole('button', { name: 'Aus Beleg übernehmen' })).toBeNull();
+  });
+
+  it('a place the user stored is never replaced; the address from the receipt is offered as one click', async () => {
+    const { user } = setup(meal({ place: 'Mein eigener Text', placeSuggestion: 'Testlokal, Musterstraße 69, 12345 Musterstadt' }));
+    expect(place().value).toBe('Mein eigener Text');
+    await user.click(screen.getByRole('button', { name: 'Aus Beleg übernehmen' }));
+    expect(place().value).toBe('Testlokal, Musterstraße 69, 12345 Musterstadt');
+    expect(screen.queryByRole('button', { name: 'Aus Beleg übernehmen' })).toBeNull();
+  });
+
+  it('a stored name-only place gets the offer too (receipts saved before the address was read)', () => {
+    setup(meal({ place: 'Testlokal', vendor: 'Testlokal', placeSuggestion: 'Testlokal, Musterstraße 69, 12345 Musterstadt' }));
+    expect(place().value).toBe('Testlokal');
+    expect(screen.getByRole('button', { name: 'Aus Beleg übernehmen' })).toBeTruthy();
+  });
+
+  it('the host is prefilled with the one used last, and a typed host is handed on when the field is left', async () => {
+    const onHostEntered = vi.fn();
+    const { user } = setup(untouched, { onHostEntered });
+    expect(host().value).toBe('Inhaber Beispiel');
+    await user.clear(host());
+    await user.type(host(), 'Neue Gastgeberin');
+    expect(onHostEntered).not.toHaveBeenCalled();
+    await user.tab();
+    expect(onHostEntered).toHaveBeenCalledWith('Neue Gastgeberin');
   });
 });

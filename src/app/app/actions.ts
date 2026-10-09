@@ -161,7 +161,7 @@ async function readReceipt(
 
   const finalCategory = ai?.aiCategory || extracted?.category || null;
   const date = extracted?.date ?? null;
-  const meal = finalCategory === MEAL_CATEGORY ? mealFactsFromClassification(ai, ocrResult?.fullText ?? '') : null;
+  const meal = finalCategory === MEAL_CATEGORY ? mealFactsFromClassification(ai, ocrResult?.fullText ?? '', extracted?.vendor ?? null) : null;
 
   // Gross, net and tax rate. The receipt's own tax lines win; without them the
   // rate falls back to what was read, then to a default that knows the date

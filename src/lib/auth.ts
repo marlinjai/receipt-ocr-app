@@ -34,7 +34,17 @@ export const auth = createAuthBrainNextjs({
   // manifest and its icons, the worker script, the offline page). They carry no
   // data. Behind the login they answered with a redirect, which made the app
   // impossible to install to the home screen.
-  publicPaths: ['/api/health', '/manifest.json', '/icons/*', '/sw.js', '/offline.html'],
+  // /api/internal/erasure is auth-brain's signed erasure webhook: a machine caller
+  // that authenticates by HMAC over the raw body (see src/lib/erasure.ts).
+  publicPaths: [
+    '/api/health',
+    '/api/internal/erasure',
+    '/api/internal/retention/purge',
+    '/manifest.json',
+    '/icons/*',
+    '/sw.js',
+    '/offline.html',
+  ],
   publicUrl: 'https://receipts.lumitra.co',
 });
 

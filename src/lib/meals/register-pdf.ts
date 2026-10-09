@@ -1,8 +1,9 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
+import { PDFDocument, StandardFonts, degrees, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
 import { formatGuest } from '@/lib/contacts/store';
 import { MISSING_FIELD_LABELS } from './rules';
 import type { MealRegister, RegisterEntry } from './register';
 import type { MealFile } from './types';
+import { rotatedSize, type Rotation } from './viewer-state';
 
 /**
  * The register as a Portable Document Format (PDF) file: a summary table for
@@ -17,6 +18,31 @@ import type { MealFile } from './types';
  * reduced to its base letter where possible and to "?" otherwise, and the
  * result carries a warning naming the count, so nothing changes silently.
  */
+
+/**
+ * Where to draw a picture so that, turned clockwise by `rotation`, it exactly
+ * covers `box` (given in page coordinates, origin bottom left).
+ *
+ * The PDF format turns a picture counter-clockwise around its own bottom-left
+ * corner, so a clockwise view rotation is the negative angle, and the corner
+ * has to be moved to where it ends up after the turn.
+ */
+export function rotatedImagePlacement(
+  box: { x: number; y: number; width: number; height: number },
+  rotation: Rotation,
+): { x: number; y: number; width: number; height: number; rotate: ReturnType<typeof degrees> } {
+  switch (rotation) {
+    case 90:
+      // Unrotated the picture is box.height wide and box.width tall; its corner goes to the box's top left.
+      return { x: box.x, y: box.y + box.height, width: box.height, height: box.width, rotate: degrees(-90) };
+    case 180:
+      return { x: box.x + box.width, y: box.y + box.height, width: box.width, height: box.height, rotate: degrees(-180) };
+    case 270:
+      return { x: box.x + box.width, y: box.y, width: box.height, height: box.width, rotate: degrees(-270) };
+    default:
+      return { x: box.x, y: box.y, width: box.width, height: box.height, rotate: degrees(0) };
+  }
+}
 
 export type LoadedFile = { bytes: Uint8Array; mimeType: string };
 export type ReceiptFileLoader = (file: MealFile) => Promise<LoadedFile | null>;
@@ -398,7 +424,11 @@ async function drawMealSheet(w: Writer, input: RegisterPdfInput, entry: Register
       if (mime.includes('pdf')) {
         const source = await PDFDocument.load(loaded.bytes, { ignoreEncryption: true });
         const copied = await w.doc.copyPages(source, source.getPageIndices());
-        copied.forEach((p) => w.doc.addPage(p));
+        copied.forEach((p) => {
+          // The rotation chosen in the viewer, on top of the page's own.
+          if (file.rotation) p.setRotation(degrees((p.getRotation().angle + file.rotation) % 360));
+          w.doc.addPage(p);
+        });
         continue;
       }
       let image: PDFImage;
@@ -410,21 +440,22 @@ async function drawMealSheet(w: Writer, input: RegisterPdfInput, entry: Register
       }
       const availableOnSheet = y - MARGIN;
       const maxW = A4.w - 2 * MARGIN;
+      // The picture as it is LOOKED AT: a quarter turn swaps its sides.
+      const turned = rotatedSize({ width: image.width, height: image.height }, file.rotation ?? 0);
       // On the sheet only when the receipt stays readable there: a long till
       // receipt squeezed under the facts would be a thin unreadable strip, so
       // it gets its own page instead.
-      const widthOnSheet = image.width * Math.min(maxW / image.width, availableOnSheet / image.height);
+      const widthOnSheet = turned.width * Math.min(maxW / turned.width, availableOnSheet / turned.height);
       const onSheet = imageIndex === 0 && availableOnSheet > 220 && widthOnSheet >= maxW * 0.5;
       const target = onSheet ? page : w.doc.addPage([A4.w, A4.h]);
       const maxH = onSheet ? availableOnSheet : A4.h - 2 * MARGIN - 16;
-      const scale = Math.min(maxW / image.width, maxH / image.height, 1.5);
-      const drawW = image.width * scale;
-      const drawH = image.height * scale;
+      const scale = Math.min(maxW / turned.width, maxH / turned.height, 1.5);
       const top = onSheet ? y : A4.h - MARGIN - 16;
       if (!onSheet) {
         w.text(target, `Beleg zu Bewirtungsbeleg Nr. ${entry.no} / ${input.register.year}`, MARGIN, A4.h - MARGIN, 8.5, { muted: true });
       }
-      target.drawImage(image, { x: MARGIN + (maxW - drawW) / 2, y: top - drawH, width: drawW, height: drawH });
+      const box = { x: MARGIN + (maxW - turned.width * scale) / 2, y: top - turned.height * scale, width: turned.width * scale, height: turned.height * scale };
+      target.drawImage(image, rotatedImagePlacement(box, file.rotation ?? 0));
       imageIndex += 1;
     } catch {
       warnings.push(`Nr. ${entry.no}: Beleg "${file.originalName}" konnte nicht in das Dokument übernommen werden.`);

@@ -931,7 +931,7 @@ not yet.
 - **An asset's cost is never typed in.** `TaxAsset` holds what a person states
   (label, kind, date, method, useful life, business share), and `TaxAssetPart`
   links the receipts that make up its cost: the purchase, shipping, customs
-  (migration `0010_tax_assets`). The cost is their sum, read on every computation,
+  (migration `0011_tax_assets`). The cost is their sum, read on every computation,
   so a corrected receipt moves the whole schedule. A linked receipt is no expense
   of its own. A receipt without an amount makes the cost unknown, not lower.
 - **Limits are checked on read, with their sources.** Low-value limit, pool range,

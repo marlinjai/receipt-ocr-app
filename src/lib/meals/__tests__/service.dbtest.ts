@@ -225,6 +225,8 @@ describe('receipt files', () => {
     });
     const expected = [
       {
+        refId: expect.any(String),
+        rotation: null,
         fileId: '11111111-2222-4333-8444-555555555555',
         fileUrl: '/api/files/11111111-2222-4333-8444-555555555555',
         mimeType: 'image/jpeg',

@@ -118,7 +118,7 @@ export function inputFromRecord(record: MealRecord): MealDetailsInput {
     tip: record.tip && record.tip > 0 ? Math.round(record.tip * 100) / 100 : null,
     consumption: record.consumption,
     taxLines: sanitizeTaxLines(record.taxLines),
-    guestContactIds: record.guests.map((g) => g.contactId),
+    guestContactIds: record.guests.flatMap((g) => (g.contactId ? [g.contactId] : [])),
     date: record.date,
     gross: record.gross !== null && record.gross > 0 ? Math.round(record.gross * 100) / 100 : null,
   };

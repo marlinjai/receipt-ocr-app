@@ -36,11 +36,36 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
+      # The suite's shared contacts database, as in production (PostgreSQL 17).
+      contacts-postgres:
+        image: postgres:17-alpine
+        env:
+          # Throwaway credentials for a database that exists only for this job.
+          POSTGRES_USER: contacts
+          POSTGRES_PASSWORD: contacts
+          POSTGRES_DB: contacts_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U contacts -d contacts_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     env:
       DATABASE_URL: postgresql://receipts:receipts@localhost:5432/receipts_test
       TEST_DATABASE_URL: postgresql://receipts:receipts@localhost:5432/receipts_test
+      CONTACTS_TEST_DATABASE_URL: postgresql://contacts:contacts@localhost:5433/contacts_test
     steps:
       - uses: actions/checkout@v4
+      # The contact tables are opened only through @marlinjai/contacts-core, which
+      # keeps every query scoped to one company. A statement that names them
+      # directly, in raw SQL, would bypass that scope, so it fails the job.
+      - name: Guard against raw SQL on the contact tables
+        run: |
+          if git grep -nIE '(FROM|INTO|UPDATE|JOIN|TABLE)[[:space:]]+"?(contacts|tenant_counters)"?([^[:alnum:]_]|$)' -- src scripts test; then
+            echo "Raw SQL on the shared contact tables found. Go through @marlinjai/contacts-core instead."
+            exit 1
+          fi
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:

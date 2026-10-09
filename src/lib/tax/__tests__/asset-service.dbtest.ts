@@ -16,7 +16,7 @@ import {
 } from '../service';
 import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../../../../test/db-helpers';
 
-/** The asset register against a real database (migration 0010). Run with `pnpm test:db`. */
+/** The asset register against a real database (migration 0011). Run with `pnpm test:db`. */
 
 let other: TestWorkspace;
 let otherCtx: TaxContext;

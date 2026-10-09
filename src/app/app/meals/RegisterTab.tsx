@@ -3,16 +3,28 @@
 import { useMemo, useState } from 'react';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatGuest } from '@/lib/contacts/store';
-import { EXCLUSION_LABELS, formatDay, formatEuro, mealActionMessage } from '@/lib/meals/messages';
+import {
+  DISMISSED_HINT,
+  EXCLUSION_LABELS,
+  formatDay,
+  formatEuro,
+  mealActionMessage,
+  missingList,
+  missingSummary,
+} from '@/lib/meals/messages';
 import { buildRegister, registerYears } from '@/lib/meals/register';
-import { MISSING_FIELD_LABELS } from '@/lib/meals/rules';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { saveMealTaxSettings } from './actions';
+import { useReceiptActions } from './useReceiptActions';
 
 interface RegisterTabProps {
   records: MealRecord[];
   settings: MealTaxSettings;
   onSettingsChanged: (settings: MealTaxSettings) => void;
+  /** Records changed by a list action (now "Keine Bewirtung"). */
+  onRecordsSaved: (records: MealRecord[]) => void;
+  /** Receipts that no longer exist. */
+  onRecordsRemoved: (rowIds: string[]) => void;
   onOpenQueue: () => void;
 }
 
@@ -32,7 +44,15 @@ function saveBlob(blob: Blob, fileName: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function RegisterTab({ records, settings, onSettingsChanged, onOpenQueue }: RegisterTabProps) {
+export default function RegisterTab({
+  records,
+  settings,
+  onSettingsChanged,
+  onRecordsSaved,
+  onRecordsRemoved,
+  onOpenQueue,
+}: RegisterTabProps) {
+  const actions = useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint: DISMISSED_HINT });
   const years = useMemo(() => {
     const found = registerYears(records);
     return found.length > 0 ? found : [new Date().getFullYear()];
@@ -227,7 +247,7 @@ export default function RegisterTab({ records, settings, onSettingsChanged, onOp
         </div>
       ) : (
         <div className="glass-panel overflow-x-auto rounded-xl">
-          <table className="w-full min-w-[56rem] text-left text-sm">
+          <table className="w-full min-w-[66rem] text-left text-sm">
             <caption className="sr-only">Bewirtungsverzeichnis {activeYear}</caption>
             <thead>
               <tr className="text-xs uppercase tracking-wide" style={{ color: 'var(--muted)' }}>
@@ -242,6 +262,7 @@ export default function RegisterTab({ records, settings, onSettingsChanged, onOp
                 {net && <th scope="col" className="px-3 py-2.5 text-right font-medium">Vorsteuer</th>}
                 <th scope="col" className="px-3 py-2.5 text-right font-medium">Abziehbar 70 %</th>
                 <th scope="col" className="px-3 py-2.5 text-right font-medium">Nicht abziehbar</th>
+                <th scope="col" className="px-3 py-2.5 text-right font-medium">Aktionen</th>
               </tr>
             </thead>
             <tbody>
@@ -263,6 +284,29 @@ export default function RegisterTab({ records, settings, onSettingsChanged, onOp
                   {net && <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums">{formatEuro(deduction?.inputVat)}</td>}
                   <td className="whitespace-nowrap px-3 py-2.5 text-right font-medium tabular-nums">{formatEuro(deduction?.deductible)}</td>
                   <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums">{formatEuro(deduction?.nonDeductible)}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex justify-end gap-0.5">
+                      {/* A complete entry carries tax weight: taking it out of the register always asks first. */}
+                      <button
+                        type="button"
+                        className="ui-btn ui-btn-sm ui-btn-ghost whitespace-nowrap"
+                        disabled={actions.busy}
+                        aria-label={`Keine Bewirtung: Nr. ${no}, ${record.place}, ${formatDay(record.date)}`}
+                        onClick={() => actions.markNotMeal([record], { confirm: true })}
+                      >
+                        Keine Bewirtung
+                      </button>
+                      <button
+                        type="button"
+                        className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-danger"
+                        disabled={actions.busy}
+                        aria-label={`Löschen: Nr. ${no}, ${record.place}, ${formatDay(record.date)}`}
+                        onClick={() => actions.requestDelete([record])}
+                      >
+                        Löschen
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -276,6 +320,7 @@ export default function RegisterTab({ records, settings, onSettingsChanged, onOp
                   {net && <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{formatEuro(register.totals.inputVat)}</td>}
                   <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums" style={{ color: 'var(--accent)' }}>{formatEuro(register.totals.deductible)}</td>
                   <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{formatEuro(register.totals.nonDeductible)}</td>
+                  <td />
                 </tr>
               </tfoot>
             )}
@@ -302,7 +347,10 @@ export default function RegisterTab({ records, settings, onSettingsChanged, onOp
                 <span>
                   {formatDay(record.date)} · {record.vendor || record.name || 'Beleg'}
                 </span>
-                <span style={{ color: 'var(--muted)' }}>fehlt: {missing.map((m) => MISSING_FIELD_LABELS[m]).join(', ')}</span>
+                <span style={{ color: 'var(--muted)' }} title={`fehlt: ${missingList(missing)}`}>
+                  {missingSummary(missing)}
+                  <span className="sr-only">: {missingList(missing)}</span>
+                </span>
               </li>
             ))}
           </ul>
@@ -347,6 +395,7 @@ export default function RegisterTab({ records, settings, onSettingsChanged, onOp
           </p>
         )}
       </ConfirmDialog>
+      {actions.overlays}
     </div>
   );
 }

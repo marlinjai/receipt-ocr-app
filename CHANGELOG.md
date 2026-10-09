@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Asset register in the finance area: an asset is built from the receipts that make up its cost (purchase, shipping, customs) or carried in with its book value; depreciation by method (low-value, pool, equal amounts by month, one year for computer hardware and software, declining) with each limit checked against its legal source; disposal with remaining book value and proceeds; book values per year (migration `0010_tax_assets`)
+- Asset register in the finance area: an asset is built from the receipts that make up its cost (purchase, shipping, customs) or carried in with its book value; depreciation by method (low-value, pool, equal amounts by month, one year for computer hardware and software, declining) with each limit checked against its legal source; disposal with remaining book value and proceeds; book values per year (migration `0011_tax_assets`)
 - A receipt above the low-value asset limit is an open check that leads into a new asset, instead of being expensed at once
 - Finance area at `/app/finance`: the income-surplus statement (Einnahmenüberschussrechnung, EÜR) computed from the receipts, line by line with the receipts behind each line; a queue of open checks for receipts that still need a decision; a list of vendor rules
 - Shares for several purposes per receipt (for example 50 percent business plus 30 percent study), decided per receipt or once per vendor from a date on; the business part goes to the statement, the study and employment part to the employment annex (migration `0009_tax_decisions`: `tax_item_decisions`, `tax_vendor_rules`)
@@ -40,6 +40,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - The manifest, its icons, the service worker script and the offline page are public: behind the login they answered with a redirect, so the app could not be installed to the home screen
 - The exchange-rate recompute filtered the date column with strings, which the database rejected; it now binds dates
+- A saved occasion, place or host of a business meal read back empty while the page said "Gespeichert": two page loads had each created the meal columns, so the table held them twice, the save wrote one and the read took the other. Readers and writers now resolve a column name the same way, the next page load folds a doubled column back into one (every value is moved over first; a column holding a differing value is renamed, never deleted), and the columns are created under a per-workspace lock so two requests cannot both create one
+- After a column was added to or removed from a table while the app was running, saves could fail with "row not found" until the next restart: Postgres refuses a prepared `SELECT *` once the table's shape changed. The database client no longer keeps prepared statements
 
 ## [0.5.0] - 2026-02-28
 

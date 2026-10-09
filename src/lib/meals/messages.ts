@@ -1,4 +1,4 @@
-import type { ExclusionReason } from './rules';
+import { MISSING_FIELD_LABELS, type ExclusionReason, type MissingField } from './rules';
 
 /** Wording for the error codes the meal server actions return. */
 export function mealActionMessage(error: string, detail?: string): string {
@@ -17,6 +17,8 @@ export function mealActionMessage(error: string, detail?: string): string {
       return 'Diesen Kontakt gibt es bereits.';
     case 'contact_invalid':
       return detail === 'too_long' ? 'Der Text ist zu lang.' : 'Bitte einen Namen eingeben.';
+    case 'contact_stale':
+      return 'Dieser Kontakt wurde inzwischen von jemand anderem geändert. Bitte die Seite neu laden und die Änderung erneut vornehmen.';
     case 'contact_archived':
       return 'Ein archivierter Kontakt kann nicht neu hinzugefügt werden. Bitte den Kontakt zuerst wiederherstellen.';
     case 'not_initialized':
@@ -25,6 +27,10 @@ export function mealActionMessage(error: string, detail?: string): string {
       return 'Das hat nicht geklappt. Bitte erneut versuchen; wenn es wieder scheitert, die Verbindung prüfen.';
   }
 }
+
+/** Where a receipt marked "Keine Bewirtung" is found again; shown in the confirmation before it is marked. */
+export const DISMISSED_HINT =
+  'Die Belege stehen danach unten auf dieser Seite unter „Keine Bewirtung“ und lassen sich dort mit einem Klick wieder aufnehmen.';
 
 export const EXCLUSION_LABELS: Record<ExclusionReason, string> = {
   private: 'Privat zugeordnet',
@@ -42,4 +48,19 @@ export function formatDay(isoDay: string | null): string {
   if (!isoDay) return 'ohne Datum';
   const [y, m, d] = isoDay.split('-');
   return `${d}.${m}.${y}`;
+}
+
+/**
+ * What an incomplete entry lacks, short enough for one line of a list row:
+ * up to two facts by name, beyond that their number. The full list goes into
+ * `missingList` for a tooltip and for screen readers.
+ */
+export function missingSummary(missing: MissingField[]): string {
+  if (missing.length === 0) return 'vollständig';
+  if (missing.length <= 2) return `fehlt: ${missingList(missing)}`;
+  return `${missing.length} fehlen`;
+}
+
+export function missingList(missing: MissingField[]): string {
+  return missing.map((m) => MISSING_FIELD_LABELS[m]).join(', ');
 }

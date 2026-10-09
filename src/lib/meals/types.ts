@@ -1,4 +1,5 @@
 import type { ConsumptionKey, MealTypeKey } from '@/lib/receipts-constants';
+import type { Rotation } from './viewer-state';
 
 /** One tax line as printed on a receipt: the rate and the net and tax amount at that rate. */
 export interface TaxLine {
@@ -10,17 +11,26 @@ export interface TaxLine {
 
 /** A guest as it is printed on the register. */
 export interface MealGuestEntry {
-  contactId: string;
+  /** Null for a held printed copy whose contact was erased. */
+  contactId: string | null;
   name: string;
   /** Company or role; empty string when unknown. */
   company: string;
 }
 
 export interface MealFile {
+  /** Id of the file REFERENCE (the link between this row and the stored file); view settings hang on it. */
+  refId: string;
   fileId: string;
   fileUrl: string;
   mimeType: string;
   originalName: string;
+  /**
+   * How far the receipt is turned for viewing and printing, clockwise. Null
+   * when nothing was chosen yet. View metadata only: the stored file is never
+   * rewritten.
+   */
+  rotation: Rotation | null;
 }
 
 /**
@@ -57,6 +67,12 @@ export interface MealRecord {
   confidence: number | null;
   guests: MealGuestEntry[];
   files: MealFile[];
+  /**
+   * Name and postal address of the place as read from the receipt's
+   * recognized text, when a street and a postal code with town were found
+   * there. Offered for the place field; never stored by itself.
+   */
+  placeSuggestion: string | null;
 }
 
 /** The per-workspace tax facts (see the WorkspaceTaxSettings model). */

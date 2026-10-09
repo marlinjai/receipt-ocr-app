@@ -264,17 +264,31 @@ model MealGuest {
   id              String   @id @default(uuid())
   authWorkspaceId String   @map("auth_workspace_id")
   authTenantId    String?  @map("auth_tenant_id")
-  rowId           String   @map("row_id")
-  contactId       String   @map("contact_id")
-  position        Int      @default(0)
-  displayName     String   @map("display_name")
-  displayCompany  String   @default("") @map("display_company")
-  createdAt       DateTime @default(now()) @map("created_at")
+  rowId           String    @map("row_id")
+  // Null once the contact is erased: the printed copy is then held until retainUntil.
+  contactId       String?   @map("contact_id")
+  position        Int       @default(0)
+  displayName     String    @map("display_name")
+  displayCompany  String    @default("") @map("display_company")
+  retainUntil     DateTime? @map("retain_until")
+  createdAt       DateTime  @default(now()) @map("created_at")
 
   @@unique([rowId, contactId])
   @@index([authWorkspaceId, rowId])
   @@index([contactId])
   @@map("meal_guests")
+}
+
+// One row per data export handed to a company (see src/lib/company-export.ts).
+model CompanyExport {
+  id            String   @id @default(uuid())
+  authTenantId  String   @map("auth_tenant_id")
+  fileCount     Int      @map("file_count")
+  sha256        String
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([authTenantId])
+  @@map("company_exports")
 }
 
 // Per-workspace tax facts the meal register needs. `smallBusiness` answers one

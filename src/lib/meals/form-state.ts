@@ -47,14 +47,16 @@ function rateText(value: number): string {
 /**
  * The draft a record opens with. Three fields are PREFILLED when the record
  * has nothing stored: meal type (external business meal, the common case),
- * place (from the vendor) and host (the one used last). Prefills are part of
- * the draft only; nothing is stored until the user saves.
+ * place (name and address read from the receipt when a complete address was
+ * found there, else the vendor name alone) and host (the one used last).
+ * Prefills are part of the draft only; nothing is stored until the user
+ * saves, and a stored place is never replaced.
  */
 export function draftFromRecord(record: MealRecord, defaults: DraftDefaults): MealDraft {
   return {
     mealType: record.mealType ?? 'business_meal_external',
     occasion: record.occasion,
-    place: record.place || record.vendor || '',
+    place: record.place || record.placeSuggestion || record.vendor || '',
     host: record.host || defaults.host,
     tip: amountText(record.tip),
     consumption: record.consumption,
@@ -129,7 +131,7 @@ export function draftToInput(draft: MealDraft): DraftParse {
       tip: tip === null || tip === 0 ? null : Math.round(tip * 100) / 100,
       consumption: draft.consumption,
       taxLines: taxLines.length > 0 ? taxLines : null,
-      guestContactIds: draft.guests.map((g) => g.contactId),
+      guestContactIds: draft.guests.flatMap((g) => (g.contactId ? [g.contactId] : [])),
       date: date || null,
       gross: gross === null ? null : Math.round(gross * 100) / 100,
     },

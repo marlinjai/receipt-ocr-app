@@ -2,12 +2,11 @@
  * The contact list behind the business-meal register.
  *
  * THE SEAM. Everything that reads or writes contacts goes through the
- * `ContactStore` interface below; the Prisma table (prisma-store.ts) is its
- * only implementation today. Meals hold nothing but a contact id plus a
- * printed copy of name and company, so a later suite-wide contact service
- * means a second implementation of this interface, with no change to meals,
- * rules, register or export. A shared customer relationship management model
- * and any synchronisation are deliberately out of scope here.
+ * `ContactStore` interface below. Two implementations exist: the app's own
+ * `contacts` table (prisma-store.ts, the default) and the suite's shared
+ * contacts database (shared-store.ts, behind the `CONTACTS_STORE=shared`
+ * switch). Meals hold a contact id plus a printed copy of name and company,
+ * so neither implementation changes meals, rules, register or export.
  *
  * This file is pure (types, validation, errors) and safe to import anywhere.
  */
@@ -28,11 +27,11 @@ export interface ContactInput {
   note?: string | null;
 }
 
-export type ContactErrorCode = 'invalid_name' | 'too_long' | 'duplicate' | 'not_found';
+export type ContactErrorCode = 'invalid_name' | 'too_long' | 'duplicate' | 'not_found' | 'stale';
 
 export class ContactError extends Error {
   readonly code: ContactErrorCode;
-  /** For `duplicate`: the contact that already carries this name and company. */
+  /** For `duplicate`: the contact that already carries this name and company. For `stale`: the current record. */
   readonly existing?: Contact;
   constructor(code: ContactErrorCode, existing?: Contact) {
     super(code);
@@ -45,11 +44,11 @@ export class ContactError extends Error {
 export interface ContactStore {
   /** Active contacts by default, sorted by name; archived ones on request. */
   list(options?: { includeArchived?: boolean }): Promise<Contact[]>;
-  /** The given ids that exist in THIS workspace (archived included). Unknown and foreign ids are simply absent. */
+  /** The given ids that exist for THIS company (archived included). Unknown and foreign ids are simply absent. */
   getMany(ids: string[]): Promise<Contact[]>;
   /** Throws `duplicate` (carrying the existing contact) when name plus company already exists. */
   create(input: ContactInput): Promise<Contact>;
-  /** Corrects a contact. The printed copies on existing meals follow the correction. */
+  /** Corrects a contact. The printed copies on existing meals follow the correction. Throws `stale` when the record changed since it was read. */
   update(id: string, input: ContactInput): Promise<Contact>;
   /** Hides the contact from pickers. Meals that already name it keep their guest. */
   archive(id: string): Promise<Contact>;

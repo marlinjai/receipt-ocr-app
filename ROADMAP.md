@@ -83,6 +83,12 @@
   a production data change/audit in the auth-brain multi-tenant service, not a
   code fix in this repo. Needs Marlin or a data audit before touching it. (2026-09-10)
 
+- [ ] Contact screen, wave 3: the Kontakte tab manages organizations with address, legal form and
+  VAT ID, links people to organizations, merges duplicates, assigns customer numbers and exports one
+  contact. Erasing one contact shows but is not available until the company erasure build lands; custom
+  fields and the preferred contact method wait for contacts-core 0.2.0. Plan:
+  `docs/plans/2026-10-09-contact-screen.md`. (2026-10-09)
+
 ## In Progress
 
 <!-- Currently being implemented -->

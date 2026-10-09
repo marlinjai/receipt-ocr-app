@@ -356,3 +356,30 @@ model TaxItemDecision {
   @@index([authWorkspaceId])
   @@map("tax_item_decisions")
 }
+
+// What still needs a person's eye on ONE receipt, and what a person has
+// already settled about it.
+//
+// `flags` are the doubts the reader recorded when it read the receipt (a total
+// it could not confirm, a failed classification). `checkedAt` is a person
+// saying "I looked, it is right", which hides those flags until the receipt is
+// read again. `distinctFrom` lists the receipts a person confirmed are NOT the
+// same purchase, so a look-alike warning is settled once and does not come
+// back. Facts that can be seen on the row itself (no amount, no date) are not
+// stored here: they are worked out on read and end when the row is completed.
+//
+// `rowId` has no foreign key for the same reason as meal_guests.row_id; the
+// row delete paths remove the review in code.
+model ReceiptReview {
+  rowId           String    @id @map("row_id")
+  authWorkspaceId String    @map("auth_workspace_id")
+  authTenantId    String?   @map("auth_tenant_id")
+  flags           String[]  @default([])
+  distinctFrom    String[]  @default([]) @map("distinct_from")
+  checkedAt       DateTime? @map("checked_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([authWorkspaceId])
+  @@map("receipt_reviews")
+}

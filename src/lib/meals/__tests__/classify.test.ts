@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
 import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
 import { receiptAttention } from '@/lib/upload/quality';
-import { parseClassificationResponse } from '@/lib/web-search';
+import { parseClassificationResponse } from '@/lib/receipt-classifier';
 import { defaultTaxRate, extractTipFromText, mealFactsFromClassification, parseMealClassification } from '../classify';
 
 const INPUT = {
@@ -12,7 +12,7 @@ const INPUT = {
 };
 
 /**
- * An answer in the exact shape the prompt in web-search.ts asks for, as the
+ * An answer in the exact shape the prompt in receipt-classifier.ts asks for, as the
  * model returns it: prose from the web search first, then the object in a code
  * fence. It runs through the REAL parser, not a mock. (It is written to the
  * contract, not captured from a live call: no model credentials are available

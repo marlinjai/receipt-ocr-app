@@ -17,7 +17,10 @@ vi.mock('@/lib/auth', () => ({
     getSession: vi.fn(async () => session.current),
   },
 }));
-vi.mock('@/lib/web-search', () => ({ classifyWithWebSearch: (...a: unknown[]) => classify(...a) }));
+vi.mock('@/lib/receipt-classifier', async (original) => ({
+  ...(await original<typeof import('@/lib/receipt-classifier')>()),
+  classifyReceiptText: (...a: unknown[]) => classify(...a),
+}));
 vi.mock('@/lib/fx-rates', () => ({ getFxRate: vi.fn(async () => 0.9) }));
 
 import { contactStore, loadMealRecord, saveMealDetails } from '@/lib/meals/service';

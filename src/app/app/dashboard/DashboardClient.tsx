@@ -15,10 +15,15 @@ import {
 } from '@marlinjai/data-table-react';
 import type { ColumnType, Row, GroupConfig, FooterConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
+import { deleteReceiptsForGood } from './actions';
+import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, type ReviewActionError, type ReviewResult } from './review-actions';
 import FxRecomputePanel from './FxRecomputePanel';
 import BulkEditBar from './BulkEditBar';
 import AiChatSidebar from '@/components/AiChatSidebar';
 import ReceiptDetailPanel from '@/components/ReceiptDetailPanel';
+import ReviewPanel from '@/components/review/ReviewPanel';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import type { ReviewEntry } from '@/lib/review/service';
 import { PresignedStorageBrainAdapter } from '@/lib/presigned-file-adapter';
 import { exportCSV } from '@/lib/export-csv';
 
@@ -30,9 +35,23 @@ interface DashboardClientProps {
   workspaceId: string;
   /** Business meals that still lack guests or occasion (see /app/meals). */
   openMealCount: number;
+  /** Receipts that need a look, as loaded with the page. Null when loading them failed. */
+  initialReview: ReviewEntry[] | null;
 }
 
-function DashboardContent({ tableId, openMealCount }: { tableId: string; openMealCount: number }) {
+const REVIEW_ERROR: Record<ReviewActionError, string> = {
+  unauthorized: 'Die Sitzung ist abgelaufen. Bitte neu anmelden.',
+  forbidden: 'Dafür fehlt die Berechtigung.',
+  not_found: 'Der Beleg wurde nicht gefunden. Die Liste wurde neu geladen.',
+  not_initialized: 'Die Belegtabelle ist noch nicht eingerichtet.',
+  failed: 'Das hat nicht geklappt. Es wurde nichts geändert.',
+};
+
+function receipts(n: number): string {
+  return n === 1 ? '1 Beleg' : `${n} Belege`;
+}
+
+function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: string; openMealCount: number; initialReview: ReviewEntry[] | null }) {
   const {
     table,
     columns,
@@ -40,7 +59,6 @@ function DashboardContent({ tableId, openMealCount }: { tableId: string; openMea
     selectOptions,
     updateCell,
     addRow,
-    deleteRow,
     addColumn,
     updateColumn,
     deleteColumn,
@@ -79,12 +97,87 @@ function DashboardContent({ tableId, openMealCount }: { tableId: string; openMea
   const [detailRow, setDetailRow] = useState<Row | null>(null);
   const displayRows = searchResults ?? rows;
 
+  // Deleting is for good (stored file, row, guests, tax decision), so it is
+  // always asked first, in the page, and its outcome is said in the page.
+  const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
+  const [working, setWorking] = useState(false);
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'danger'; text: string } | null>(null);
+  const [review, setReview] = useState<ReviewEntry[]>(initialReview ?? []);
+  const [reviewError, setReviewError] = useState<string | null>(
+    initialReview === null ? 'Die Prüfliste konnte nicht geladen werden. Die Belege unten sind vollständig.' : null,
+  );
+
+  const requestDelete = useCallback((rowIds: string[]) => {
+    const ids = [...new Set(rowIds)];
+    if (ids.length > 0) setPendingDelete(ids);
+  }, []);
+
+  const applyReview = useCallback((result: ReviewResult<ReviewEntry[]>) => {
+    if (result.ok) {
+      setReview(result.value);
+      setReviewError(null);
+    } else {
+      setReviewError(REVIEW_ERROR[result.error]);
+    }
+  }, []);
+
+  const reloadReview = useCallback(async () => {
+    try {
+      applyReview(await getReviewQueue());
+    } catch {
+      setReviewError(REVIEW_ERROR.failed);
+    }
+  }, [applyReview]);
+
+  const runReviewAction = useCallback(
+    async (action: () => Promise<ReviewResult<ReviewEntry[]>>) => {
+      if (working) return;
+      setWorking(true);
+      try {
+        const result = await action();
+        applyReview(result);
+        // The receipt behind a failed action may be gone: show what is there now.
+        if (!result.ok) await reloadReview();
+      } catch {
+        setReviewError(REVIEW_ERROR.failed);
+      } finally {
+        setWorking(false);
+      }
+    },
+    [working, applyReview, reloadReview],
+  );
+
+  const confirmDelete = useCallback(async () => {
+    if (!pendingDelete || working) return;
+    setWorking(true);
+    try {
+      const outcome = await deleteReceiptsForGood(pendingDelete);
+      const gone = new Set(outcome.deleted);
+      setSelectedRows((current) => new Set([...current].filter((id) => !gone.has(id))));
+      setDetailRow((current) => (current && gone.has(current.id) ? null : current));
+      const fileKept = outcome.kept.filter((k) => k.reason === 'file_delete_failed').length;
+      const failed = outcome.kept.filter((k) => k.reason === 'failed').length;
+      const parts: string[] = [];
+      if (outcome.deleted.length > 0) parts.push(`${receipts(outcome.deleted.length)} gelöscht.`);
+      if (fileKept > 0) parts.push(`${receipts(fileKept)} behalten: Die gespeicherte Datei ließ sich nicht löschen. Bitte später noch einmal versuchen.`);
+      if (failed > 0) parts.push(`${receipts(failed)} behalten: Das Löschen ist fehlgeschlagen.`);
+      if (parts.length === 0) parts.push('Die Belege waren schon gelöscht.');
+      setNotice({ tone: fileKept + failed > 0 ? 'warn' : 'ok', text: parts.join(' ') });
+    } catch {
+      setNotice({ tone: 'danger', text: 'Das Löschen ist fehlgeschlagen. Es wurde nichts gelöscht, was nicht oben als gelöscht steht.' });
+    } finally {
+      setPendingDelete(null);
+      setWorking(false);
+      await Promise.all([refresh(), reloadReview()]);
+    }
+  }, [pendingDelete, working, refresh, reloadReview]);
+
   // Delete selected rows on Backspace/Delete key
   const handleDeleteSelected = useCallback(() => {
     if (selectedRows.size === 0) return;
-    selectedRows.forEach((id) => deleteRow(id));
-    setSelectedRows(new Set());
-  }, [selectedRows, deleteRow]);
+    requestDelete([...selectedRows]);
+  }, [selectedRows, requestDelete]);
+  const deleteOne = useCallback((rowId: string) => requestDelete([rowId]), [requestDelete]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -127,7 +220,7 @@ function DashboardContent({ tableId, openMealCount }: { tableId: string; openMea
             }}
             onCellChange={(rowId, columnId, value) => updateCell(rowId, columnId, value)}
             onAddRow={(cells) => addRow({ cells })}
-            onDeleteRow={deleteRow}
+            onDeleteRow={deleteOne}
             onCreateSelectOption={createSelectOption}
             onUpdateSelectOption={updateSelectOption}
             onDeleteSelectOption={deleteSelectOption}
@@ -151,7 +244,7 @@ function DashboardContent({ tableId, openMealCount }: { tableId: string; openMea
             selectOptions={selectOptions}
             onCellChange={(rowId, columnId, value) => updateCell(rowId, columnId, value)}
             onAddRow={() => addRow()}
-            onDeleteRow={deleteRow}
+            onDeleteRow={deleteOne}
             onColumnResize={(columnId, width) => updateColumn(columnId, { width })}
             onColumnAlignmentChange={(columnId, alignment: TextAlignment) => updateColumn(columnId, { alignment })}
             enableKeyboardNav
@@ -379,6 +472,42 @@ function DashboardContent({ tableId, openMealCount }: { tableId: string; openMea
         </div>
       </div>
 
+      {notice && (
+        <p role={notice.tone === 'ok' ? 'status' : 'alert'} className={`ui-note ui-note-${notice.tone} mx-4 mt-3 flex items-start justify-between gap-3`}>
+          <span>{notice.text}</span>
+          <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost shrink-0" onClick={() => setNotice(null)}>
+            Schließen
+          </button>
+        </p>
+      )}
+
+      <ReviewPanel
+        entries={review}
+        busy={working}
+        error={reviewError}
+        onOpen={(rowId) => {
+          const row = rows.find((r) => r.id === rowId);
+          if (row) setDetailRow(row);
+          else setReviewError('Der Beleg ist in dieser Ansicht nicht geladen. Bitte Filter und Suche leeren.');
+        }}
+        onConfirm={(rowId) => void runReviewAction(() => confirmReceiptChecked(rowId))}
+        onKeepBoth={(rowId, otherRowId) => void runReviewAction(() => keepBothLookAlikes(rowId, otherRowId))}
+        onDelete={deleteOne}
+      />
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={pendingDelete ? `${receipts(pendingDelete.length)} endgültig löschen?` : ''}
+        confirmLabel="Endgültig löschen"
+        danger
+        busy={working}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setPendingDelete(null)}
+      >
+        Der Beleg wird mit seiner gespeicherten Datei, seinen Gästen und seiner steuerlichen Zuordnung gelöscht. Das lässt sich nicht
+        rückgängig machen.
+      </ConfirmDialog>
+
       {/* View Switcher */}
       <ViewSwitcher
         views={views}
@@ -419,7 +548,10 @@ function DashboardContent({ tableId, openMealCount }: { tableId: string; openMea
           onClose={() => setDetailRow(null)}
           onUploadFile={uploadFile}
           onDeleteFile={deleteFile}
-          onMealSaved={() => void refresh()}
+          onMealSaved={() => {
+            void refresh();
+            void reloadReview();
+          }}
         />
       )}
 
@@ -432,7 +564,7 @@ function DashboardContent({ tableId, openMealCount }: { tableId: string; openMea
         selectOptions={selectOptions}
         onCellChange={(rowId, columnId, value) => updateCell(rowId, columnId, value)}
         onAddRow={async (cells?: Record<string, CellValue>) => { await addRow({ cells }); }}
-        onDeleteRow={deleteRow}
+        onDeleteRow={deleteOne}
         onCreateSelectOption={(params) => createSelectOption(params.columnId, params.name, params.color)}
         tableId={tableId}
       />
@@ -440,10 +572,10 @@ function DashboardContent({ tableId, openMealCount }: { tableId: string; openMea
   );
 }
 
-export default function DashboardClient({ tableId, workspaceId, openMealCount }: DashboardClientProps) {
+export default function DashboardClient({ tableId, workspaceId, openMealCount, initialReview }: DashboardClientProps) {
   return (
     <DataTableProvider dbAdapter={dbAdapter} fileAdapter={fileAdapter} workspaceId={workspaceId}>
-      <DashboardContent tableId={tableId} openMealCount={openMealCount} />
+      <DashboardContent tableId={tableId} openMealCount={openMealCount} initialReview={initialReview} />
     </DataTableProvider>
   );
 }

@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Review list "Belege prüfen" on the dashboard: receipts that need a look, with the reasons in plain words (not readable, amount or date missing, impossible tax figures, not classified, total not confirmed, possible duplicate) and the actions "Beleg öffnen", "Geprüft, stimmt so", "Beide behalten" and "Löschen". Worked out from the stored receipts on every load, so a warning no longer depends on the upload page that first showed it (migration `0011_receipt_reviews`, additive)
+- Business-meal register: the current year is always offered, the register opens on the newest year that has a meal, and meals without a date are counted instead of being invisible
 - Finance area at `/app/finance`: the income-surplus statement (Einnahmenüberschussrechnung, EÜR) computed from the receipts, line by line with the receipts behind each line; a queue of open checks for receipts that still need a decision; a list of vendor rules
 - Shares for several purposes per receipt (for example 50 percent business plus 30 percent study), decided per receipt or once per vendor from a date on; the business part goes to the statement, the study and employment part to the employment annex (migration `0009_tax_decisions`: `tax_item_decisions`, `tax_vendor_rules`)
 - Tax module `src/lib/tax`: one `computeYear` over integer cents, rule sets per year with a source and check date for every legal value; form lines of 2025 read off the official form
@@ -36,6 +38,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Receipt reading: the classifier had never run in production (it asked for an Anthropic key that is not set there, and the error was swallowed), so every receipt was filed by pattern matching alone. It now runs through the OpenRouter key production has, uses a valid model name and the current web search tool when a direct key exists, and a missing or failed classification is recorded on the receipt
+- Receipt reading: a receipt number was read as the total (916,752.88 instead of 58.70) and tax amounts as the net (rates of 526 and 844 percent). Total, net and tax now come from the tax groups the receipt prints and are confirmed by its own arithmetic; a printed tip is split off the total; a total only a label vouches for is put up for a look; nothing is guessed from the largest number
+- Receipt reading: the vendor was the first printed line (a slogan, an item extra, one word of a three-line name). Slogans, item lines, contact lines and misread logos are no longer names, a name set in several lines is joined, and a cropped head gives no name instead of a wrong one
+- Receipt reading: a bar was filed as software and a taverna as "other". A table, a waiter, a tip line or the printed hospitality form now make a restaurant receipt, and vendor names in the category list match as whole words only
+- Receipt reading: the receipt date depended on the server's time zone (a receipt of the 9th became the 8th at 23:00 UTC outside UTC)
+- A page nothing could be read from was saved as an empty row named "Receipt". It is now named "Nicht lesbar: <file>" and stands in the review list
+- Deleting a receipt in the dashboard removed the row and left its stored file behind. It now deletes the stored file first and keeps the receipt complete, with a message, when the file store refuses; a file another receipt still shows is kept
+- The dashboard deleted the selected receipts on Backspace without asking. It now asks first, in the page, and says what was deleted and what was kept
 - The manifest, its icons, the service worker script and the offline page are public: behind the login they answered with a redirect, so the app could not be installed to the home screen
 - The exchange-rate recompute filtered the date column with strings, which the database rejected; it now binds dates
 - A saved occasion, place or host of a business meal read back empty while the page said "Gespeichert": two page loads had each created the meal columns, so the table held them twice, the save wrote one and the read took the other. Readers and writers now resolve a column name the same way, the next page load folds a doubled column back into one (every value is moved over first; a column holding a differing value is renamed, never deleted), and the columns are created under a per-workspace lock so two requests cannot both create one

@@ -76,7 +76,11 @@ function byDate(a: MealRecord, b: MealRecord): number {
   return a.rowId < b.rowId ? -1 : a.rowId > b.rowId ? 1 : 0;
 }
 
-/** The years that have any meal record, newest first. */
+/**
+ * The years that have any meal record, newest first. A meal counts whether it
+ * is complete or not: a backlog of last year's receipts that still lack
+ * guests must offer last year, or the register looks empty.
+ */
 export function registerYears(records: MealRecord[]): number[] {
   const years = new Set<number>();
   for (const r of records) {
@@ -84,6 +88,26 @@ export function registerYears(records: MealRecord[]): number[] {
     if (y) years.add(y);
   }
   return [...years].sort((a, b) => b - a);
+}
+
+/**
+ * The years the register's picker offers: every year with a meal record plus
+ * the current one (a new year can be opened before its first meal). The year
+ * shown first is the newest one that has a record, so opening the register
+ * with only last year's receipts lands on last year.
+ */
+export function registerYearChoices(records: MealRecord[], currentYear: number): { years: number[]; initial: number } {
+  const withRecords = registerYears(records);
+  const years = [...new Set([...withRecords, currentYear])].sort((a, b) => b - a);
+  return { years, initial: withRecords[0] ?? currentYear };
+}
+
+/**
+ * Meal receipts without a date. They belong to no year, so no register shows
+ * them; the page says how many there are instead of leaving them invisible.
+ */
+export function undatedMeals(records: MealRecord[]): MealRecord[] {
+  return records.filter((r) => !r.date && mealStatus(r).kind !== 'not_a_meal');
 }
 
 /**

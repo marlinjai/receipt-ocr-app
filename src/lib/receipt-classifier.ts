@@ -39,7 +39,7 @@ export class ClassifierUnavailableError extends Error {
 export type ClassifierProvider = 'anthropic_web_search' | 'openrouter';
 
 /** Which provider a classification would use right now, or null when none is configured. */
-export function classifierProvider(env: NodeJS.ProcessEnv = process.env): ClassifierProvider | null {
+export function classifierProvider(env: Record<string, string | undefined> = process.env): ClassifierProvider | null {
   if (env.ANTHROPIC_API_KEY) return 'anthropic_web_search';
   if (env.OPENROUTER_API_KEY) return 'openrouter';
   return null;

@@ -125,7 +125,9 @@ export function reviewReasons(
 ): ReviewReason[] {
   const derived = derivedReasons(snapshot);
   if (derived.includes('read_failed')) return ['read_failed'];
-  const flags = stored && !stored.checkedAt ? stored.flags.filter(isReadFlag) : [];
+  // In the order of READ_FLAGS, whatever order they were recorded in.
+  const recorded = stored && !stored.checkedAt ? stored.flags : [];
+  const flags = READ_FLAGS.filter((f) => recorded.includes(f));
   // A doubt about the total is moot once there is no total at all.
   const kept = flags.filter((f) => !(derived.includes('amount_missing') && (f === 'total_unconfirmed' || f === 'total_conflict')));
   return [...derived, ...kept, ...(duplicates.length > 0 ? (['possible_duplicate'] as const) : [])];

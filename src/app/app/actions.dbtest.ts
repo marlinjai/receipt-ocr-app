@@ -139,6 +139,87 @@ describe('processReceipt', () => {
   });
 });
 
+describe('processReceipt: what the reader cannot settle is recorded, never silent', () => {
+  const cell = async (rowId: string, name: string) => {
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    return (await ws.adapter.getRow(rowId))!.cells[columns.find((c) => c.name === name)!.id];
+  };
+  const stored = async (rowId: string) => (await db.receiptReview.findUnique({ where: { rowId } }))?.flags ?? [];
+
+  // The layout that produced a total of 916,752.88: receipt numbers with a decimal point, a tip on top.
+  const CAFE = [
+    'Cafe Morgenrot', 'Laufkunde', '* RECHNUNG *', 'Duplikat C916752.448', 'A916752.8837', '19.02.25, 17:04:11',
+    'Co Working, Tisch 30', 'Rechnung für Quittung R916752.8746', 'Kräutertee', '3.50 3.50', '€ 58.70', 'Summe',
+    'Trinkgeld', '| Bezahlter Betrag', 'MwSt. 19% auf 49.33: € 9.37 (58.70)', '€ 61.40', '€ 2.70', '€ 58.70',
+  ].join('\n');
+
+  it('a failed classification is on the receipt and in the review list, and the receipt is still filed from its text', async () => {
+    classify.mockRejectedValue(new Error('model unavailable'));
+    const result = await processReceipt(file(20), ocr(CAFE), {});
+
+    expect(result.reviewFlags).toEqual(['not_classified']);
+    expect(await stored(result.rowId)).toEqual(['not_classified']);
+    // The text alone: the right total (not the receipt number), the tip apart, a restaurant.
+    expect(result).toMatchObject({ category: 'Bewirtung', isMeal: true });
+    const record = await loadMealRecord(db, ws.workspaceId, result.rowId);
+    expect(record).toMatchObject({ gross: 58.7, net: 49.33, taxRate: 19, tip: 2.7, vendor: 'Cafe Morgenrot' });
+    expect(record!.taxLines).toEqual([{ rate: 19, net: 49.33, tax: 9.37 }]);
+  });
+
+  it('a clean reading records nothing', async () => {
+    const result = await processReceipt(file(21), ocr(CAFE), {});
+    expect(result.reviewFlags).toEqual([]);
+    expect(await db.receiptReview.count({ where: { rowId: result.rowId } })).toBe(0);
+  });
+
+  it("the model's total never overrules the receipt's own arithmetic, and the disagreement is recorded", async () => {
+    classify.mockResolvedValue({ ...MEAL_ANSWER, gross: 916752.88, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null } });
+    const result = await processReceipt(file(22), ocr(CAFE), {});
+    expect(await cell(result.rowId, 'Gross')).toBe(58.7);
+    expect(result.reviewFlags).toEqual(['total_conflict']);
+    expect(await stored(result.rowId)).toEqual(['total_conflict']);
+  });
+
+  it("the model's vendor is taken when the receipt shows it, and refused when it does not", async () => {
+    const text = ['Since 2016', 'Fantastic Foodbar Inh.', 'Beispielallee 126, 10437 Musterstadt', 'Rechnung Nr.2-42883', 'Summe 11,90', 'Netto 10,00', 'MwSt 19% 1,90', '21.03.2025'].join('\n');
+    classify.mockResolvedValue({ ...MEAL_ANSWER, vendor: 'Fantastic Foodbar', gross: 11.9, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null } });
+    const taken = await processReceipt(file(23), ocr(text), {});
+    expect(await cell(taken.rowId, 'Vendor')).toBe('Fantastic Foodbar');
+
+    classify.mockResolvedValue({ ...MEAL_ANSWER, vendor: 'Some Other Chain', gross: 11.9, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null } });
+    const refused = await processReceipt(file(24), ocr(text), {});
+    expect(await cell(refused.rowId, 'Vendor')).toBe('Fantastic Foodbar');
+  });
+
+  it('a restaurant receipt the model filed elsewhere keeps the model\'s category and is put up for a look', async () => {
+    classify.mockResolvedValue({ ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', meal: { mealType: null, consumption: null, tip: null, taxLines: null, place: null } });
+    const result = await processReceipt(file(25), ocr(CAFE), {});
+    expect(result.category).toBe('Software & Lizenzen');
+    expect(result.reviewFlags).toContain('category_doubt');
+  });
+
+  it('a page nothing could be read from says so in its name and is not named "Receipt"', async () => {
+    const empty = await processReceipt(file(26), ocr(''), {});
+    const failed = await processReceipt(file(27), null, {});
+    expect(await cell(empty.rowId, 'Name')).toBe('Nicht lesbar: foto-26.jpg');
+    expect(await cell(failed.rowId, 'Name')).toBe('Nicht lesbar: foto-27.jpg');
+    expect(empty.attention).toBe('ocr_failed');
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it('a retake replaces the recorded doubts with those of the new reading', async () => {
+    classify.mockRejectedValue(new Error('model unavailable'));
+    const first = await processReceipt(file(28), ocr(CAFE), {});
+    expect(await stored(first.rowId)).toEqual(['not_classified']);
+
+    classify.mockResolvedValue({ ...MEAL_ANSWER, gross: 58.7, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null } });
+    const again = await retakeReceipt(first.rowId, file(29), ocr(CAFE), {});
+    expect(again.rowId).toBe(first.rowId);
+    expect(again.reviewFlags).toEqual([]);
+    expect(await stored(first.rowId)).toEqual([]);
+  });
+});
+
 describe('retakeReceipt: never a second row', () => {
   it('replaces the photo and re-reads the receipt on the same row', async () => {
     const first = await processReceipt(file(10), ocr('unscharf', 0.2), { sha256: HASH('a') });

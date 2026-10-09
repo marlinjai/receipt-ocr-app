@@ -4,7 +4,6 @@ import type { AppSession } from '@marlinjai/auth-brain-nextjs';
 import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession, requireRowAccess } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
-import { FileNotFoundError } from '@marlinjai/storage-brain-sdk';
 import { sharedContactsEnabled } from '@/lib/contacts/db';
 import { ContactError, type Contact, type ContactInput } from '@/lib/contacts/store';
 import { normalizeRowIds, type MealBatchResult } from '@/lib/meals/batch';
@@ -29,7 +28,7 @@ import {
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { parseRotation } from '@/lib/meals/viewer-state';
 import { prisma } from '@/lib/prisma';
-import { getStorageClient } from '@/lib/storage';
+import { deleteStoredFile } from '@/lib/stored-files';
 
 /**
  * Server actions of the meal register.
@@ -196,16 +195,6 @@ export async function markMealsNotMeal(rowIds: string[]): Promise<Result<MealBat
 /** Take receipts marked "Keine Bewirtung" back as business meals, with the details they had. */
 export async function restoreMeals(rowIds: string[]): Promise<Result<MealBatchResult>> {
   return runBatch(rowIds, (ctx, ids) => setMealTypeForRows(prisma, ctx, ids, 'business_meal_external'));
-}
-
-/** Remove one object from the file store. Already gone counts as removed; anything else rejects. */
-async function deleteStoredFile(fileId: string): Promise<void> {
-  try {
-    await getStorageClient().deleteFile(fileId);
-  } catch (e) {
-    if (e instanceof FileNotFoundError || (e as { statusCode?: number })?.statusCode === 404) return;
-    throw e;
-  }
 }
 
 /** Delete receipts for good: stored file, row and meal guests. Cannot be undone. */

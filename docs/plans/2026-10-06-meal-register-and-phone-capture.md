@@ -528,6 +528,37 @@ browser's autofill wiped the place.
 - **Not verified by a machine:** real browser autofill and a real password manager
   (a headless browser has neither), and the place parser on the owner's own receipts.
 
+## Reality after the first live upload was worked through (2026-10-10)
+
+The first real upload (a 21-page scan, one receipt per page) went badly: wrong totals,
+tax rates of several hundred percent, vendors named after a slogan, two pages saved as
+empty rows, a bar filed as software. The 21 receipts were restored from the verified
+database backup into a local database and the reader was rebuilt against them.
+
+- **The classifier had never run in production.** It asked for an Anthropic key that
+  production does not hold, the call threw, and the caller swallowed the error. Every
+  receipt was filed by pattern matching alone. It now uses the OpenRouter key production
+  has (`src/lib/receipt-classifier.ts`); direct access with web search stays the first
+  choice when a key exists. A failed or missing classification is recorded on the receipt.
+- **Amounts come from the receipt's arithmetic, not from labels.** Text recognition does
+  not keep a label next to its value, so "the amount on the Total line" was a receipt
+  number, a tip or a net amount. `src/lib/extraction/amounts.ts` finds the net and tax
+  amounts that belong together at a rate in force on the receipt date and whose sum is
+  printed, and takes the total from them. A printed tip is split off (the register counts
+  the tip on its own). What only a label vouches for is stored and put up for a look;
+  with no total on the receipt none is stored.
+- **Vendor and category** are read by `vendor.ts` and `meal-evidence.ts` (see the
+  roadmap line for the rules). A cropped scan gives no vendor instead of a wrong one.
+- **Review list.** `src/lib/review/`: what needs a look is worked out on read from the
+  stored receipts (not readable, fields missing, impossible tax figures, look-alikes),
+  plus the doubts the reader recorded. A person's decisions ("Geprüft", "Beide behalten")
+  are stored in `receipt_reviews` (migration 0011, additive). It is shown on the dashboard.
+- **Deleting in the dashboard** is now the same safe delete as on the meals page, behind
+  an in-page confirmation.
+- **Not done here:** the receipts of that first upload keep their old readings until a
+  new reading of the stored text is offered per receipt (roadmap). The checks on a real
+  phone are unchanged and still open.
+
 ## Decisions (2026-10-06)
 
 Approved by the owner on 2026-10-06, all six slices to be built.

@@ -259,8 +259,27 @@ export type MealDeduction =
  * receipts are converted with the row's exchange rate. The Business Share
  * column is deliberately not applied on top.
  */
+/**
+ * The section 19 status on a day: the first answer, replaced by the latest
+ * change that starts on or before that day. A receipt without a date is judged
+ * by the first answer. null while the question is unanswered.
+ */
+export function smallBusinessOn(settings: MealTaxSettings, isoDay: string | null): boolean | null {
+  if (settings.smallBusiness === null) return null;
+  let status = settings.smallBusiness;
+  let from = '';
+  for (const change of settings.statusChanges ?? []) {
+    if (isoDay !== null && change.effectiveFrom <= isoDay && change.effectiveFrom >= from) {
+      status = change.smallBusiness;
+      from = change.effectiveFrom;
+    }
+  }
+  return status;
+}
+
 export function mealDeduction(record: MealRecord, settings: MealTaxSettings): MealDeduction {
-  if (settings.smallBusiness === null) return { kind: 'setting_missing' };
+  const smallBusiness = smallBusinessOn(settings, record.date);
+  if (smallBusiness === null) return { kind: 'setting_missing' };
   if (!isPositive(record.gross)) return { kind: 'no_amount' };
   const fx = record.currency === 'EUR' ? 1 : record.fxRate;
   if (!isPositive(fx)) return { kind: 'no_amount' };
@@ -269,7 +288,7 @@ export function mealDeduction(record: MealRecord, settings: MealTaxSettings): Me
   const grossCents = toEurCents(toCents(record.gross));
   const tipCents = isPositive(record.tip) ? toEurCents(toCents(record.tip)) : 0;
 
-  if (settings.smallBusiness) {
+  if (smallBusiness) {
     const baseCents = grossCents + tipCents;
     const deductibleCents = Math.round(baseCents * DEDUCTIBLE_SHARE);
     return {

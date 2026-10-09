@@ -102,24 +102,25 @@
   off), with a merge-aware data move that Marlin reviews before anything is dropped. Done
   2026-10-09: the switch is on in production. Waves 3 to 5 are open in the knowledge-base
   roadmap. Plan: `docs/plans/2026-10-09-shared-contacts-wave2.md`. (2026-10-09)
-- [ ] Finance and tax dashboard, stage 1 (data foundation and live dashboard): slice 1
-  of 8 is built (the tax module with rule sets for 2025 and 2026, shares for several
-  purposes per receipt, vendor rules, the queue of open checks and the
-  income-surplus statement at `/app/finance`), and the first half of slice 2 (the
-  asset register with depreciation schedules, disposal and assets carried in from
-  earlier years). Next: receipt lines, the second half of slice 2. Then payments (file imports and the Enable Banking daily sync, matching by
-  reference), revenue with a forecast of the small-business limits, regular
-  value-added taxation, the income tax estimate, the year-end entry sheet, reading
-  the expenses mailbox. Open inside slice 1, each described in the plan's "Reality
-  after slice 1": (1) the two older receipt columns "Business Share %" and
-  "Zuordnung" and the per-vendor share table of the overview page are still read as
-  a starting point and are removed only after the owner has finished entering the
-  2025 meals and the session preparing the 2025 return has been told; (2) the line
-  numbers of the employment annex of 2026 are not yet compared with an official
-  source, so those two lines show without numbers (the income-surplus statement of
-  2025 and 2026 and the employment annex of 2025 are compared); (3) the 2027
-  rule set is due before 1 December 2026, when a test starts failing without it.
-  Plan: `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-10)
+- [ ] Finance and tax dashboard, stage 1 (data foundation and live dashboard). Built:
+  slice 1 (tax module with rule sets for 2025 and 2026, shares for several purposes
+  per receipt, vendor rules, the queue of open checks, the income-surplus statement
+  at `/app/finance`), the asset register of slice 2, slice 4 (issued invoices,
+  revenue by payment day, profit or loss, forecast of the small-business limits) and
+  slice 5 (dated status changes, regular value-added taxation, advance return
+  periods). Open, in this order: receipt lines (second half of slice 2); payments
+  with imports, bank sync and matching (slice 3); the income tax estimate; the
+  year-end entry sheet; reading the expenses mailbox. Open inside what is built,
+  each described in the plan's "Reality" sections: (1) the two older receipt columns
+  "Business Share %" and "Zuordnung" and the per-vendor share table of the overview
+  page are still read as a starting point and are removed only after the owner has
+  finished entering the 2025 meals and the session preparing the 2025 return has
+  been told; (2) the line numbers of the employment annex of 2026 are not yet
+  compared with an official source, so those two lines show without numbers;
+  (3) the 2027 rule set is due before 1 December 2026, when a test starts failing
+  without it; (4) tax the buyer owes on services from abroad is not computed;
+  (5) invoices carry no link to a contact yet. Plan:
+  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-10)
 - [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: all six
   slices are built (register, contact list, export, duplicate checks, page split,
   phone capture, classifier, offline queue, service worker, share target). Left

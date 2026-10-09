@@ -215,6 +215,16 @@ export const ASSET_RULES_2025: AssetRules = {
   },
 };
 
+/** The limits in force since 1 January 2025. */
+export const SMALL_BUSINESS_LIMITS_2025: YearRules['smallBusinessLimits'] = {
+  value: { previousYearLimitCents: 2_500_000, currentYearLimitCents: 10_000_000 },
+  source: {
+    citation: '§ 19 Abs. 1 und 2 Umsatzsteuergesetz',
+    url: 'https://www.gesetze-im-internet.de/ustg_1980/__19.html',
+    checkedOn: '2026-10-10',
+  },
+};
+
 export const RULES_2025: YearRules = {
   year: 2025,
   reviewedOn: '2026-10-07',
@@ -229,4 +239,5 @@ export const RULES_2025: YearRules = {
     },
   },
   assets: ASSET_RULES_2025,
+  smallBusinessLimits: SMALL_BUSINESS_LIMITS_2025,
 };

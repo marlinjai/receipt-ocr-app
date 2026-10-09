@@ -173,7 +173,7 @@ describe('assetChecks', () => {
     ['no date', { acquisitionDate: null }, ['asset_no_date']],
     ['no cost', { costCents: null, netCostCents: null }, ['asset_no_cost']],
     ['section 19 unanswered', { smallBusiness: null }, ['asset_small_business_unanswered']],
-    ['regular taxation', { smallBusiness: false }, ['asset_regular_taxation_not_computed']],
+    ['regular taxation without a net cost', { smallBusiness: false, netCostCents: null }, ['asset_net_unknown']],
     ['a life of a year or less', { usefulLifeMonths: 12 }, ['asset_no_useful_life']],
     ['no life', { usefulLifeMonths: null }, ['asset_no_useful_life']],
     ['low-value above the net limit', { method: 'low_value' as const, netCostCents: 80_001 }, ['asset_low_value_over_limit']],

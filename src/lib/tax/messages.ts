@@ -1,6 +1,6 @@
 import type { TreatmentOrigin } from './facts';
 import type { AssetCheckKind, AssetMethod, DisposalKind } from './assets';
-import type { OpenCheckKind, Purpose } from './types';
+import type { InvoiceCheckKind, InvoiceTreatment, OpenCheckKind, Purpose } from './types';
 
 /** German wording for the finance screens, in one place. */
 
@@ -14,7 +14,7 @@ export const CHECK_LABELS: Record<OpenCheckKind, string> = {
   no_form_line: 'Zeile der EÜR fehlt',
   no_employment_line: 'Zeile der Anlage N fehlt',
   small_business_unanswered: 'Frage zur Kleinunternehmerregelung offen',
-  regular_taxation_not_computed: 'Regelbesteuerung wird noch nicht berechnet',
+  net_amount_missing: 'Nettobetrag fehlt (unter Regelbesteuerung zählt der Nettobetrag, die Umsatzsteuer ist Vorsteuer)',
   meal_incomplete: 'Bewirtung unvollständig (Teilnehmer, Anlass oder Ort fehlen)',
   meal_without_register_facts: 'Bewirtung ohne Angaben aus dem Verzeichnis',
   needs_asset: 'Über der Grenze für geringwertige Wirtschaftsgüter: als Anlage führen',
@@ -25,7 +25,7 @@ export const ASSET_CHECK_LABELS: Record<AssetCheckKind, string> = {
   asset_no_date: 'Anschaffungsdatum fehlt',
   asset_no_cost: 'Kein Beleg mit Betrag zugeordnet (Beleg fehlt oder hat keinen Betrag)',
   asset_small_business_unanswered: 'Frage zur Kleinunternehmerregelung offen',
-  asset_regular_taxation_not_computed: 'Regelbesteuerung wird noch nicht berechnet',
+  asset_input_tax_correction_review: 'Unter anderem Umsatzsteuerstatus angeschafft: eine Vorsteuerberichtigung kann nötig sein (mit Steuerberater klären)',
   asset_net_unknown: 'Nettobetrag fehlt: die Grenze lässt sich aus dem Bruttobetrag nicht sicher entscheiden',
   asset_low_value_over_limit: 'Über der Grenze für geringwertige Wirtschaftsgüter: andere Methode wählen',
   asset_pool_out_of_range: 'Außerhalb der Grenzen für den Sammelposten',
@@ -48,6 +48,20 @@ export const DISPOSAL_LABELS: Record<DisposalKind, string> = {
   sold: 'Verkauft',
   scrapped: 'Ausgeschieden ohne Erlös',
   private: 'Ins Privatvermögen übernommen',
+};
+
+export const INVOICE_CHECK_LABELS: Record<InvoiceCheckKind, string> = {
+  invoice_treatment_mismatch:
+    'Ausweis der Umsatzsteuer passt nicht zum Status am Rechnungsdatum (ausgewiesene Steuer wird geschuldet, auch wenn sie zu Unrecht ausgewiesen ist)',
+  invoice_no_date: 'Rechnungsdatum fehlt',
+  invoice_overpaid: 'Mehr erhalten als der Rechnungsbetrag',
+};
+
+export const INVOICE_TREATMENT_LABELS: Record<InvoiceTreatment, string> = {
+  small_business: 'Ohne Umsatzsteuer (Kleinunternehmer, § 19)',
+  standard: 'Mit Umsatzsteuer, Regelsatz',
+  reduced: 'Mit Umsatzsteuer, ermäßigter Satz',
+  not_taxable: 'Ohne Umsatzsteuer (steuerfrei, nicht steuerbar oder Steuerschuld beim Kunden)',
 };
 
 export const PURPOSE_LABELS: Record<Purpose, string> = {
@@ -115,6 +129,32 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Eine übernommene Anlage hat einen Buchwert und keine Belege, sonst würden die Kosten doppelt zählen.';
         case 'invalid_opening':
           return 'Bitte Jahr, Buchwert und Restnutzungsdauer der übernommenen Anlage prüfen.';
+        case 'number_required':
+          return 'Bitte die Rechnungsnummer eingeben.';
+        case 'number_too_long':
+          return 'Die Rechnungsnummer ist zu lang.';
+        case 'invoice_number_taken':
+          return 'Diese Rechnungsnummer gibt es bereits.';
+        case 'invalid_amount':
+          return 'Bitte den Rechnungsbetrag als Betrag größer als null eingeben.';
+        case 'invalid_vat':
+          return 'Bitte die enthaltene Umsatzsteuer prüfen: bei einer Rechnung mit Umsatzsteuer größer als null und kleiner als der Rechnungsbetrag.';
+        case 'vat_without_treatment':
+          return 'Eine Rechnung ohne Umsatzsteuer kann keinen Steuerbetrag enthalten.';
+        case 'invalid_payment':
+          return 'Bitte Datum und Betrag jedes Zahlungseingangs prüfen.';
+        case 'invalid_year':
+          return 'Bitte das Jahr prüfen, in dem die Rechnung bereits erklärt wurde.';
+        case 'status_unanswered':
+          return 'Zuerst muss die Frage zur Kleinunternehmerregelung beantwortet sein (im Bewirtungsverzeichnis unter „Verzeichnis“).';
+        case 'invalid_status':
+          return 'Bitte ein gültiges Datum für die Statusänderung eingeben.';
+        case 'invalid_vat_settings':
+          return 'Bitte Abgabezeitraum und Besteuerungsart wählen.';
+        case 'invalid_settlement':
+          return 'Bitte Datum und Betrag der Zahlung prüfen.';
+        case 'invalid_expectation':
+          return 'Bitte den erwarteten Monatsumsatz als Betrag eingeben.';
         case 'invalid_disposal':
           return 'Bitte Datum, Art und Erlös des Abgangs prüfen. Bei einem Abgang ohne Erlös bleibt der Erlös leer.';
         case 'no_vendor':

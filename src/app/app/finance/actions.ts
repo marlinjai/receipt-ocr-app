@@ -7,15 +7,24 @@ import { prisma } from '@/lib/prisma';
 import { RULE_YEARS } from '@/lib/tax/rules';
 import {
   AssetInputError,
+  RevenueInputError,
   TaxServiceError,
   TreatmentError,
   clearItemDecision,
   createAsset,
   decideForVendor,
   deleteAsset,
+  deleteInvoice,
+  deleteStatusChange,
+  deleteVatSettlement,
   deleteVendorRule,
   loadStatement,
+  saveInvoice,
   saveItemDecision,
+  saveRevenueExpectation,
+  saveStatusChange,
+  saveVatSettings,
+  saveVatSettlement,
   setAssetDisposal,
   updateAsset,
   type StatementView,
@@ -53,8 +62,16 @@ function failure(e: unknown): { ok: false; error: FinanceActionError; detail?: s
   if (e instanceof MissingTenantError) return { ok: false, error: 'forbidden' };
   if (e instanceof TreatmentError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof AssetInputError) return { ok: false, error: 'invalid_input', detail: e.code };
+  if (e instanceof RevenueInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof TaxServiceError) {
-    if (e.code === 'row_not_found' || e.code === 'rule_not_found' || e.code === 'asset_not_found') {
+    if (
+      e.code === 'row_not_found' ||
+      e.code === 'rule_not_found' ||
+      e.code === 'asset_not_found' ||
+      e.code === 'invoice_not_found' ||
+      e.code === 'status_not_found' ||
+      e.code === 'settlement_not_found'
+    ) {
       return { ok: false, error: 'not_found', detail: e.code };
     }
     if (e.code === 'not_initialized') return { ok: false, error: 'not_initialized' };
@@ -170,4 +187,49 @@ export async function disposeAsset(year: number, assetId: string, disposal: unkn
   } catch (e) {
     return failure(e);
   }
+}
+
+/** Run one write for the active workspace and answer with the freshly computed statement. */
+async function write(year: number, run: (ctx: TaxContext) => Promise<unknown>): Promise<Result<StatementView>> {
+  try {
+    const ctx = await writeContext();
+    await run(ctx);
+    return { ok: true, value: await loadStatement(prisma, ctx.workspaceId, safeYear(year)) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Record an issued invoice (`invoiceId` null) or change one; the body is checked by `validateInvoiceInput`. */
+export async function saveIssuedInvoice(year: number, invoiceId: string | null, input: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => saveInvoice(prisma, ctx, invoiceId === null ? null : String(invoiceId), input));
+}
+
+export async function removeIssuedInvoice(year: number, invoiceId: string): Promise<Result<StatementView>> {
+  return write(year, (ctx) => deleteInvoice(prisma, ctx, String(invoiceId)));
+}
+
+/** Record that the small-business status changes from a day on. */
+export async function recordStatusChange(year: number, input: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => saveStatusChange(prisma, ctx, input));
+}
+
+export async function removeStatusChange(year: number, changeId: string): Promise<Result<StatementView>> {
+  return write(year, (ctx) => deleteStatusChange(prisma, ctx, String(changeId)));
+}
+
+export async function setVatSettings(year: number, input: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => saveVatSettings(prisma, ctx, input));
+}
+
+export async function setRevenueExpectation(year: number, cents: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => saveRevenueExpectation(prisma, ctx, cents));
+}
+
+export async function recordVatSettlement(year: number, input: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => saveVatSettlement(prisma, ctx, input));
+}
+
+export async function removeVatSettlement(year: number, settlementId: string): Promise<Result<StatementView>> {
+  return write(year, (ctx) => deleteVatSettlement(prisma, ctx, String(settlementId)));
 }

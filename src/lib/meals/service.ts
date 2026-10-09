@@ -3,6 +3,9 @@ import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { CellValue, Column, Row } from '@marlinjai/data-table-core';
 import type { PrismaClient } from '@prisma/client';
 import { PrismaContactStore } from '@/lib/contacts/prisma-store';
+import { companyContacts, sharedContactsEnabled } from '@/lib/contacts/db';
+import { SharedContactStore } from '@/lib/contacts/shared-store';
+import { MissingTenantError } from '@/lib/auth-workspace';
 import type { ContactStore } from '@/lib/contacts/store';
 import {
   MEAL_COLUMNS,
@@ -111,8 +114,15 @@ export async function guestsByRow(
   return out;
 }
 
+/**
+ * The contact list for this request. The suite's shared database when the
+ * `CONTACTS_STORE=shared` switch is on (scoped to the company), otherwise the
+ * app's own table. The switch is read per call, so it is one place to change.
+ */
 export function contactStore(db: PrismaClient, ctx: MealContext): ContactStore {
-  return new PrismaContactStore(db, ctx.workspaceId, ctx.tenantId);
+  if (!sharedContactsEnabled()) return new PrismaContactStore(db, ctx.workspaceId, ctx.tenantId);
+  if (!ctx.tenantId) throw new MissingTenantError();
+  return new SharedContactStore(companyContacts(ctx.tenantId), db);
 }
 
 /**

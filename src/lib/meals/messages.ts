@@ -17,6 +17,8 @@ export function mealActionMessage(error: string, detail?: string): string {
       return 'Diesen Kontakt gibt es bereits.';
     case 'contact_invalid':
       return detail === 'too_long' ? 'Der Text ist zu lang.' : 'Bitte einen Namen eingeben.';
+    case 'contact_stale':
+      return 'Dieser Kontakt wurde inzwischen von jemand anderem geändert. Bitte die Seite neu laden und die Änderung erneut vornehmen.';
     case 'contact_archived':
       return 'Ein archivierter Kontakt kann nicht neu hinzugefügt werden. Bitte den Kontakt zuerst wiederherstellen.';
     case 'not_initialized':

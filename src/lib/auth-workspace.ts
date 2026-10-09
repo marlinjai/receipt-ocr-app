@@ -34,6 +34,15 @@ export function devFallbackWorkspaceId(): string {
 }
 
 /**
+ * The company id for the development bypass (local dev with `AUTH_DEV_USER_EMAIL`,
+ * no real memberships), overridable via `AUTH_DEV_TENANT_ID`. Contacts are
+ * company-scoped, so the bypass needs a company to write them under.
+ */
+export function devFallbackTenantId(): string {
+  return process.env.AUTH_DEV_TENANT_ID?.trim() || 'dev-tenant';
+}
+
+/**
  * May `session` touch data in `workspaceId`? Membership of the owning
  * workspace is required; the dev bypass (no memberships, development only)
  * may touch only the local dev workspace. Fail-closed.
@@ -125,7 +134,8 @@ export function tenantIdForWorkspace(
  * exactly the state tenant scoping exists to make impossible. It fails loudly
  * at the write instead.
  *
- * The development bypass is the single exception and returns null. It is
+ * The development bypass is the single exception and returns its fixed company
+ * (`devFallbackTenantId`, previously null). It is
  * identified the same way the rest of this module identifies it, by having no
  * memberships at all, an invariant the package guarantees: in production
  * `getSession()` returns null rather than a zero-membership session, so this
@@ -142,6 +152,6 @@ export function requireSessionTenantId(
     ? tenantIdForWorkspace(session, workspaceId)
     : sessionTenantId(session);
   if (tenantId) return tenantId;
-  if (session.memberships.length === 0) return null;
+  if (session.memberships.length === 0) return devFallbackTenantId();
   throw new MissingTenantError();
 }

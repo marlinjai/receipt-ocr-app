@@ -5,6 +5,7 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession, requireRowAccess } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { FileNotFoundError } from '@marlinjai/storage-brain-sdk';
+import { sharedContactsEnabled } from '@/lib/contacts/db';
 import { ContactError, type Contact, type ContactInput } from '@/lib/contacts/store';
 import { normalizeRowIds, type MealBatchResult } from '@/lib/meals/batch';
 import { MealInputError, type MealDetailsInput } from '@/lib/meals/input';
@@ -51,6 +52,7 @@ export type MealActionError =
   | 'contact_duplicate'
   | 'contact_invalid'
   | 'contact_archived'
+  | 'contact_stale'
   | 'not_initialized'
   | 'failed';
 
@@ -68,6 +70,7 @@ function failure(e: unknown): { ok: false; error: MealActionError; detail?: stri
   if (e instanceof ContactError) {
     if (e.code === 'duplicate') return { ok: false, error: 'contact_duplicate', detail: e.existing?.id };
     if (e.code === 'not_found') return { ok: false, error: 'not_found' };
+    if (e.code === 'stale') return { ok: false, error: 'contact_stale' };
     return { ok: false, error: 'contact_invalid', detail: e.code };
   }
   if (e instanceof MealServiceError) {
@@ -84,6 +87,15 @@ function failure(e: unknown): { ok: false; error: MealActionError; detail?: stri
 
 function readContext(session: AppSession): string {
   return sessionWorkspaceId(session);
+}
+
+/**
+ * The company a contact READ is scoped to. Only the shared store needs it, so
+ * with the switch off the register reads the app's own table exactly as before,
+ * and a workspace without a company on its membership cannot break the page.
+ */
+function contactReadTenant(session: AppSession, workspaceId: string): string | null {
+  return sharedContactsEnabled() ? requireSessionTenantId(session, workspaceId) : null;
 }
 
 async function writeContext(): Promise<MealContext> {
@@ -105,9 +117,10 @@ export async function getMealsPageData(): Promise<Result<MealsPageData>> {
   try {
     const session = await requireReceiptsSession();
     const workspaceId = readContext(session);
+    const tenantId = contactReadTenant(session, workspaceId);
     const [records, contacts, settings] = await Promise.all([
       loadMealRecords(prisma, workspaceId, { includeDismissed: true }),
-      contactStore(prisma, { workspaceId, tenantId: null }).list({ includeArchived: true }),
+      contactStore(prisma, { workspaceId, tenantId }).list({ includeArchived: true }),
       getTaxSettings(prisma, workspaceId),
     ]);
     return { ok: true, value: { records, contacts, settings, defaultHost: lastUsedHost(records) } };
@@ -131,8 +144,9 @@ export async function getMealForRow(rowId: string): Promise<Result<MealForRow>> 
     const record = await loadMealRecord(prisma, workspaceId, String(rowId));
     // A row of another workspace the user is also a member of: not this workspace's meal.
     if (!record) return { ok: false, error: 'not_found' };
+    const tenantId = contactReadTenant(session, workspaceId);
     const [contacts, settings, defaultHost] = await Promise.all([
-      contactStore(prisma, { workspaceId, tenantId: null }).list({ includeArchived: true }),
+      contactStore(prisma, { workspaceId, tenantId }).list({ includeArchived: true }),
       getTaxSettings(prisma, workspaceId),
       loadLastUsedHost(prisma, workspaceId),
     ]);

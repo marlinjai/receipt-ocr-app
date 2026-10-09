@@ -18,6 +18,9 @@ importers:
       '@marlinjai/auth-brain-nextjs':
         specifier: ^0.4.1
         version: 0.4.1(next@16.1.6(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)(zod@4.3.6)
+      '@marlinjai/contacts-core':
+        specifier: ^0.1.0
+        version: 0.1.0(postgres@3.4.9)
       '@marlinjai/data-table-adapter-prisma':
         specifier: ^0.2.1
         version: 0.2.1(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
@@ -48,6 +51,9 @@ importers:
       pdfjs-dist:
         specifier: 6.3.289
         version: 6.3.289
+      postgres:
+        specifier: ^3.4.5
+        version: 3.4.9
       react:
         specifier: 19.2.3
         version: 19.2.3
@@ -819,6 +825,12 @@ packages:
     peerDependenciesMeta:
       puppeteer:
         optional: true
+
+  '@marlinjai/contacts-core@0.1.0':
+    resolution: {integrity: sha512-IUEY6CdgMcDqOYaVQNm3tEhB5gD1Ncj/xIEZz9VrUmIpUD3U3JWLVaxzMeBVK3+/VxnHy+vMTkI2kRDh0fIgAQ==}
+    hasBin: true
+    peerDependencies:
+      postgres: '>=3.4.5'
 
   '@marlinjai/data-table-adapter-prisma@0.2.1':
     resolution: {integrity: sha512-79RWp6VzUFt10Wl+jeaoDfvP2Bse8+YyVDwdcq6Fz4jHYYluEVnU1Jt3qbq5tkHsA+XMt6kt3Vv2f0hZoJt9og==}
@@ -3065,6 +3077,16 @@ packages:
     resolution: {integrity: sha512-dcS1ul+9tmeD95T+x28/ehLgd9mENa3LsvDTtzm3vyBEO7RPptvAD+t44WVXaUjTBRcrpFeFlC8WCruUR456hw==}
     engines: {node: '>=0.10.0'}
 
+  kysely-postgres-js@2.0.0:
+    resolution: {integrity: sha512-R1tWx6/x3tSatWvsmbHJxpBZYhNNxcnMw52QzZaHKg7ZOWtHib4iZyEaw4gb2hNKVctWQ3jfMxZT/ZaEMK6kBQ==}
+    peerDependencies:
+      kysely: '>= 0.24.0 < 1'
+      postgres: '>= 3.4.0 < 4'
+
+  kysely@0.27.6:
+    resolution: {integrity: sha512-FIyV/64EkKhJmjgC0g2hygpBv5RNWVPyNCqSAD7eTCv6eFWNIi4PN1UvdSJGicN/o35bnevgis4Y0UDC0qi8jQ==}
+    engines: {node: '>=14.0.0'}
+
   langium@4.2.1:
     resolution: {integrity: sha512-zu9QWmjpzJcomzdJQAHgDVhLGq5bLosVak1KVa40NzQHXfqr4eAHupvnPOVXEoLkg6Ocefvf/93d//SB7du4YQ==}
     engines: {node: '>=20.10.0', npm: '>=10.2.3'}
@@ -3634,6 +3656,10 @@ packages:
   postcss@8.5.6:
     resolution: {integrity: sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg==}
     engines: {node: ^10 || ^12 || >=14}
+
+  postgres@3.4.9:
+    resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
+    engines: {node: '>=12'}
 
   prelude-ls@1.2.1:
     resolution: {integrity: sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g==}
@@ -5068,6 +5094,12 @@ snapshots:
       - terser
       - tsx
       - yaml
+
+  '@marlinjai/contacts-core@0.1.0(postgres@3.4.9)':
+    dependencies:
+      kysely: 0.27.6
+      kysely-postgres-js: 2.0.0(kysely@0.27.6)(postgres@3.4.9)
+      postgres: 3.4.9
 
   '@marlinjai/data-table-adapter-prisma@0.2.1(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)':
     dependencies:
@@ -7565,6 +7597,13 @@ snapshots:
 
   kind-of@6.0.3: {}
 
+  kysely-postgres-js@2.0.0(kysely@0.27.6)(postgres@3.4.9):
+    dependencies:
+      kysely: 0.27.6
+      postgres: 3.4.9
+
+  kysely@0.27.6: {}
+
   langium@4.2.1:
     dependencies:
       chevrotain: 11.1.1
@@ -8413,6 +8452,8 @@ snapshots:
       nanoid: 3.3.11
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  postgres@3.4.9: {}
 
   prelude-ls@1.2.1: {}
 

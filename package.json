@@ -24,6 +24,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
     "@marlinjai/auth-brain-nextjs": "^0.4.1",
+    "@marlinjai/contacts-core": "^0.1.0",
     "@marlinjai/data-table-adapter-prisma": "^0.2.1",
     "@marlinjai/data-table-adapter-shared": "^0.2.0",
     "@marlinjai/data-table-core": "^0.3.1",
@@ -34,6 +35,7 @@
     "openai": "^6.25.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "6.3.289",
+    "postgres": "^3.4.5",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "server-only": "^0.0.1"

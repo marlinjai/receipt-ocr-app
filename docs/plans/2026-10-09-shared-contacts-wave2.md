@@ -96,6 +96,22 @@ review in one pass.
 8. **Erasure receiver.** As in decision 6, with tests for an unsigned request (401 and nothing
    deleted), a repeat (no second deletion) and a missing secret (503).
 
+## Running the data move
+
+The command is `scripts/move-contacts.ts`, with the logic in `scripts/lib/contacts-move.ts`. The
+production image ships `scripts/` (not `src/`), so it runs inside the receipts container.
+
+1. `--layout` applies the shared database layout (additive only). Nothing is moved.
+2. The dry run (no flag) reads both databases and prints counts per company. It writes nothing.
+   A row that names no company, and whose workspace is not given with `--map <workspaceId>=<companyId>`,
+   stops the run before anything is written.
+3. Marlin reads the dry-run report. Only then `--apply`. Re-running `--apply` is safe: a finished
+   company reports zero created and zero repointed.
+
+The report carries company ids and counts only, never a name. Both connection strings come from the
+receipts production secret project, injected in the container; they are never printed or passed on
+the command line.
+
 ## Four-path coverage (stateful-flow standard)
 
 - **Pick and create:** forward (create, then pick it on a meal); change an earlier input (correct

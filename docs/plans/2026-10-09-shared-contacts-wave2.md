@@ -52,8 +52,11 @@ register prints the same names it printed when it was written.
 6. **Erasure receiver.** `POST /api/internal/erasure` copies the verified pattern of
    social-planner (raw body verified with HMAC-SHA256 before parsing, constant-time compare, fail
    closed with 503 when the secret is unset). It erases the company's contacts and its meal guest
-   rows. It is repeat-safe. Registration in auth-brain's `suite-apps.ts` is a separate pull request
-   in another repository, and only after the same real secret sits in both Infisical projects.
+   rows. It is repeat-safe. The secret is `RECEIPTS_ERASURE_WEBHOOK_SECRET`; until it is set the
+   route answers 503 and deletes nothing. Registration in auth-brain's `suite-apps.ts` is a separate
+   pull request in another repository, and only after the same real secret sits in both Infisical
+   projects. The erasure step reaches the shared database whenever it is configured, not only when
+   the switch is on, because the data move writes there while the switch is still off.
 7. **Data move, dry run first.** A script copies the old contacts into the shared database, one
    company at a time. Identical entries of one company (same kind, name and company or role, by the
    package's identity key) merge into one contact. The winner is an active entry over an archived

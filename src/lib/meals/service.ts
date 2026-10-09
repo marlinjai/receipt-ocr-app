@@ -240,7 +240,7 @@ async function writeMealInput(
   const store = contactStore(db, mealCtx);
   const contacts = await store.getMany(merged.guestContactIds);
   const contactById = new Map(contacts.map((c) => [c.id, c]));
-  const alreadyOnMeal = new Set(current.guests.map((g) => g.contactId));
+  const alreadyOnMeal = new Set(current.guests.flatMap((g) => (g.contactId ? [g.contactId] : [])));
   for (const id of merged.guestContactIds) {
     const contact = contactById.get(id);
     if (!contact) throw new MealServiceError('unknown_contact', id);
@@ -280,11 +280,12 @@ async function writeMealInput(
 
   await ctx.adapter.updateRow(rowId, cells);
 
-  const guestsChanged =
-    JSON.stringify(merged.guestContactIds) !== JSON.stringify(current.guests.map((g) => g.contactId));
+  const linkedBefore = current.guests.flatMap((g) => (g.contactId ? [g.contactId] : []));
+  const guestsChanged = JSON.stringify(merged.guestContactIds) !== JSON.stringify(linkedBefore);
   if (guestsChanged) {
     await db.$transaction([
-      db.mealGuest.deleteMany({ where: { authWorkspaceId: mealCtx.workspaceId, rowId } }),
+      // Only linked guests are replaced; held copies (contact erased) stay as they are.
+      db.mealGuest.deleteMany({ where: { authWorkspaceId: mealCtx.workspaceId, rowId, contactId: { not: null } } }),
       db.mealGuest.createMany({
         data: merged.guestContactIds.map((contactId, position) => {
           const contact = contactById.get(contactId)!;

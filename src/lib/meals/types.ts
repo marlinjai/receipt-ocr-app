@@ -11,7 +11,8 @@ export interface TaxLine {
 
 /** A guest as it is printed on the register. */
 export interface MealGuestEntry {
-  contactId: string;
+  /** Null for a held printed copy whose contact was erased. */
+  contactId: string | null;
   name: string;
   /** Company or role; empty string when unknown. */
   company: string;

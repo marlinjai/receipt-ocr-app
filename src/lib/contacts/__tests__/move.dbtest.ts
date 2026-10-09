@@ -83,7 +83,7 @@ async function expectMovedState(f: Fixture) {
   // Meal rowB: the Ada loser's copy was removed because the Ada winner was already on the meal.
   const guests = await db.mealGuest.findMany({ where: { authTenantId: f.tenant }, select: { rowId: true, contactId: true } });
   const byRow = new Map<string, string[]>();
-  for (const g of guests) byRow.set(g.rowId, [...(byRow.get(g.rowId) ?? []), g.contactId].sort());
+  for (const g of guests) if (g.contactId) byRow.set(g.rowId, [...(byRow.get(g.rowId) ?? []), g.contactId].sort());
   const rowsWithGuests = [...byRow.values()].sort((a, b) => a.join().localeCompare(b.join()));
   expect(rowsWithGuests).toEqual(
     [[f.ada, f.grace].sort(), [f.ada]].sort((a, b) => a.join().localeCompare(b.join())),

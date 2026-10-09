@@ -123,13 +123,13 @@ export default function GuestPicker({
     <div>
       {guests.length > 0 && (
         <ul className="mb-2 flex flex-wrap gap-1.5" aria-label="Ausgewählte Teilnehmer">
-          {guests.map((g) => (
-            <li key={g.contactId} className="ui-chip">
-              <span>{formatGuest(g.name, g.company)}</span>
+          {guests.map((g, i) => (
+            <li key={g.contactId ?? `held-${i}`} className="ui-chip">
+              <span>{g.contactId === null ? `${formatGuest(g.name, g.company)} (Kontakt entfernt)` : formatGuest(g.name, g.company)}</span>
               <button
                 type="button"
-                onClick={() => remove(g.contactId)}
-                disabled={disabled}
+                onClick={() => g.contactId !== null && remove(g.contactId)}
+                disabled={disabled || g.contactId === null}
                 aria-label={`${g.name} entfernen`}
                 className="flex h-6 w-6 items-center justify-center rounded-full hover:bg-white/10"
                 style={{ color: 'var(--muted)' }}
@@ -230,7 +230,8 @@ export default function GuestPicker({
                 e.stopPropagation();
                 setOpen(false);
               } else if (e.key === 'Backspace' && !query && guests.length > 0) {
-                remove(guests[guests.length - 1].contactId);
+                const last = [...guests].reverse().find((g) => g.contactId !== null);
+                if (last?.contactId) remove(last.contactId);
               }
             }}
           />

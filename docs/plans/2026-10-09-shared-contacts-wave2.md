@@ -2,7 +2,7 @@
 title: Receipts app on the shared contact list (wave 2)
 summary: Move the business-meal guest list of the receipts app onto the suite's shared contacts database (one PostgreSQL instance, one package, company-scoped), behind an explicit switch, with a merge-aware data move that Marlin reviews before anything is dropped.
 type: plan
-status: decided
+status: completed
 tags: [receipts, contacts, shared-model, meals, migration, erasure, stateful-flow]
 projects: [receipt-ocr-app, contacts, knowledge-base]
 date: 2026-10-09

@@ -103,6 +103,19 @@ export interface CompanyCounts {
   guestRowsDeduplicated: number;
   /** Guest rows that a dry run would repoint or remove. */
   guestRowsPending: number;
+  /** Merged entries whose name or company or role is spelled differently from the winner's (exact comparison). */
+  spellingDiffers: number;
+  /**
+   * Printed guest copies on meals that will read differently from the contact
+   * after the move. The next contact-list load rewrites them to the winner's
+   * spelling (the same person and amount; only capitals or spacing change).
+   */
+  guestCopiesRespelled: number;
+}
+
+/** Exact comparison, the same one the reconcile on contact-list load uses. */
+export function spellingDiffers(winner: OldContact, loser: OldContact): boolean {
+  return winner.name !== loser.name || winner.companyOrRole !== loser.companyOrRole;
 }
 
 export interface MoveDeps {
@@ -150,11 +163,25 @@ export async function moveCompany(groups: readonly MoveGroup[], deps: MoveDeps):
     guestRowsRepointed: 0,
     guestRowsDeduplicated: 0,
     guestRowsPending: 0,
+    spellingDiffers: 0,
+    guestCopiesRespelled: 0,
   };
 
   for (const group of groups) {
     counts.merged += group.losers.length;
     const winner = group.winner;
+
+    // Counted before any write, in both modes, so the dry run shows the same numbers the apply produces.
+    const differing = group.losers.filter((l) => spellingDiffers(winner, l));
+    counts.spellingDiffers += differing.length;
+    if (differing.length > 0) {
+      counts.guestCopiesRespelled += await deps.db.mealGuest.count({
+        where: {
+          contactId: { in: differing.map((l) => l.id) },
+          OR: [{ displayName: { not: winner.name } }, { displayCompany: { not: winner.companyOrRole } }],
+        },
+      });
+    }
 
     if (!deps.apply) {
       // Only the losers' rows move; the winner's rows already name the winner.

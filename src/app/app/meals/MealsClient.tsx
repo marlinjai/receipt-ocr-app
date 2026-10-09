@@ -8,6 +8,7 @@ import { isDismissedMeal } from '@/lib/meals/rules';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import type { MealsPageData } from './actions';
 import ContactsTab from './ContactsTab';
+import DirectoryPanel from './DirectoryPanel';
 import DismissedMeals from './DismissedMeals';
 import QueueTab from './QueueTab';
 import RegisterTab from './RegisterTab';
@@ -146,7 +147,12 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
               onOpenQueue={() => setTab('queue')}
             />
           )}
-          {tab === 'contacts' && <ContactsTab contacts={contacts} onContactChanged={onContactUpserted} />}
+          {tab === 'contacts' && (
+            <>
+              <ContactsTab contacts={contacts} onContactChanged={onContactUpserted} />
+              <DirectoryPanel />
+            </>
+          )}
         </div>
 
         {tab !== 'contacts' && (

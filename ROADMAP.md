@@ -84,11 +84,18 @@
   a production data change/audit in the auth-brain multi-tenant service, not a
   code fix in this repo. Needs Marlin or a data audit before touching it. (2026-09-10)
 
-- [ ] Contact screen, wave 3: the Kontakte tab manages organizations with address, legal form and
+- [x] Contact screen, wave 3: the Kontakte tab manages organizations with address, legal form and
   VAT ID, links people to organizations, merges duplicates, assigns customer numbers and exports one
-  contact. Erasing one contact shows but is not available until the company erasure build lands; custom
-  fields and the preferred contact method wait for contacts-core 0.2.0. Plan:
+  contact. Completed 2026-10-10 on `@marlinjai/contacts-core` 0.2.0: the company defines its own
+  fields (text, number, date, yes or no, one or several options, link), every contact carries a
+  value for each and a preferred contact method, and one contact can be erased. Its printed names
+  on meals follow the rule of the company erasure (removed when an export exists, otherwise held).
+  The tab badge counts persons and organizations. Plan:
   `docs/plans/2026-10-09-contact-screen.md`. (2026-10-09)
+- [ ] Business data belongs under the company Whiz-Art Media, which has the receipts grant, a
+  workspace and its imported customers, while the business meal register and its guests still sit
+  under the company marlinjai. Moving the register is a production data move: write the plan first,
+  and run it only against a verified backup. (2026-10-10)
 
 ## In Progress
 

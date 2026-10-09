@@ -25,6 +25,8 @@ function person(over: Partial<SharedContact> = {}): SharedContact {
     city: 'London',
     country: 'GB',
     vatId: null,
+    preferredContact: null,
+    customFields: {},
     customerNumber: null,
     version: 3,
     archived: false,
@@ -94,6 +96,7 @@ function fakeContacts(initial: SharedContact[]) {
           city: input.city ?? null,
           country: input.country ?? null,
           vatId: input.vatId ?? null,
+          preferredContact: input.preferredContact ?? null,
           version: current.version + 1,
         };
         rows.set(id, written);

@@ -7,17 +7,24 @@ import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '
 import { companyContacts, sharedContactsEnabled } from '@/lib/contacts/db';
 import {
   DirectoryError,
+  archiveDirectoryField,
   assignDirectoryCustomerNumber,
   createDirectoryContact,
+  createDirectoryField,
   eraseDirectoryContact,
   exportDirectoryContact,
   linkPerson,
   listDirectory,
+  listDirectoryFields,
   mergeDirectoryContacts,
+  previewEraseContact,
   updateDirectoryContact,
   type DirectoryContact,
+  type DirectoryField,
   type DirectoryInput,
   type DirectoryKind,
+  type ErasePreview,
+  type EraseResult,
   type MergeOutcome,
   type RepointResult,
 } from '@/lib/contacts/directory';
@@ -38,10 +45,11 @@ export type DirectoryActionError =
   | 'forbidden'
   | 'failed';
 
-export type DirectoryResult<T> = { ok: true; value: T } | { ok: false; error: DirectoryActionError };
+/** `field` names the input or custom field key the error is about, when there is one. */
+export type DirectoryResult<T> = { ok: true; value: T } | { ok: false; error: DirectoryActionError; field?: string };
 
-function failure(e: unknown): { ok: false; error: DirectoryActionError } {
-  if (e instanceof DirectoryError) return { ok: false, error: e.code };
+function failure(e: unknown): { ok: false; error: DirectoryActionError; field?: string } {
+  if (e instanceof DirectoryError) return { ok: false, error: e.code, field: e.field };
   if (e instanceof ReceiptsAuthError) return { ok: false, error: e.status === 401 ? 'unauthorized' : 'forbidden' };
   const status = (e as { status?: number })?.status;
   if (status === 401) return { ok: false, error: 'unauthorized' };
@@ -142,13 +150,62 @@ export async function exportDirectoryAction(id: string): Promise<DirectoryResult
   }
 }
 
-/** Erasing one contact is not available yet; this refuses and writes nothing. */
-export async function eraseDirectoryAction(): Promise<DirectoryResult<never>> {
+/** The company's custom fields, archived ones included so the screen can show them as such. */
+export async function listFieldsAction(): Promise<DirectoryResult<DirectoryField[]>> {
   try {
-    await writeContacts();
-    eraseDirectoryContact();
+    return { ok: true, value: await listDirectoryFields(await readContacts(), { includeArchived: true }) };
   } catch (e) {
     return failure(e);
   }
-  return { ok: false, error: 'unavailable' };
+}
+
+export async function createFieldAction(input: {
+  key: string;
+  label: string;
+  type: string;
+  options?: string[] | null;
+}): Promise<DirectoryResult<DirectoryField>> {
+  try {
+    return {
+      ok: true,
+      value: await createDirectoryField(await writeContacts(), {
+        key: String(input?.key ?? ''),
+        label: String(input?.label ?? ''),
+        type: String(input?.type ?? ''),
+        options: Array.isArray(input?.options) ? input.options.map(String) : null,
+      }),
+    };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+export async function archiveFieldAction(key: string): Promise<DirectoryResult<DirectoryField>> {
+  try {
+    return { ok: true, value: await archiveDirectoryField(await writeContacts(), String(key)) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** What erasing this contact would do. Writes nothing; shown before the confirmation. */
+export async function previewEraseAction(id: string): Promise<DirectoryResult<ErasePreview>> {
+  try {
+    return { ok: true, value: await previewEraseContact(await writeContacts(), prisma, String(id)) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/**
+ * Erase one contact for good. Its printed names on meals follow the same rule as
+ * the company erasure (src/lib/erasure.ts): removed when the company holds an
+ * export, otherwise held. Repeating it changes nothing more.
+ */
+export async function eraseDirectoryAction(id: string): Promise<DirectoryResult<EraseResult>> {
+  try {
+    return { ok: true, value: await eraseDirectoryContact(await writeContacts(), prisma, String(id)) };
+  } catch (e) {
+    return failure(e);
+  }
 }

@@ -4,8 +4,9 @@ import { useId, useState } from 'react';
 import { formatDay } from '@/lib/meals/messages';
 import type { AssetKind, AssetMethod, DisposalKind } from '@/lib/tax/assets';
 import { ASSET_CHECK_LABELS, ASSET_METHOD_LABELS, DISPOSAL_LABELS } from '@/lib/tax/messages';
-import { eurosToCents, formatCents } from '@/lib/tax/money';
+import { formatCents } from '@/lib/tax/money';
 import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service';
+import { euro, parseEuro } from './amounts';
 
 export interface AssetDraft {
   label: string;
@@ -36,17 +37,6 @@ interface Props {
   onSave: (assetId: string | null, draft: AssetDraft, done: () => void) => void;
   onDelete: (asset: AssetView) => void;
   onDispose: (asset: AssetView, disposal: DisposalDraft | null, done: () => void) => void;
-}
-
-const euro = (cents: number) => `${formatCents(cents)} €`;
-
-/** A typed euro amount ("1.234,56" or "1234.56") to cents; null when it is not an amount. */
-function parseEuro(text: string): number | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  const normalized = trimmed.includes(',') ? trimmed.replace(/\./g, '').replace(',', '.') : trimmed;
-  const n = Number(normalized);
-  return Number.isFinite(n) && n >= 0 ? eurosToCents(n) : null;
 }
 
 function parseNumber(text: string): number | null {

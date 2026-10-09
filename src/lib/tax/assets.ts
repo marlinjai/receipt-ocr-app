@@ -65,7 +65,8 @@ export type AssetCheckKind =
   | 'asset_no_date'
   | 'asset_no_cost'
   | 'asset_small_business_unanswered'
-  | 'asset_regular_taxation_not_computed'
+  /** Bought under one value-added tax status, used under the other: an input tax correction may be due. */
+  | 'asset_input_tax_correction_review'
   | 'asset_net_unknown'
   | 'asset_low_value_over_limit'
   | 'asset_pool_out_of_range'
@@ -78,8 +79,8 @@ export type AssetCheckKind =
 export interface AssetCheck {
   assetId: string;
   kind: AssetCheckKind;
-  /** Every asset check is blocking: an asset that fails one contributes nothing until it is resolved. */
-  blocking: true;
+  /** A blocking check keeps the asset out of every total until it is resolved; a note does not. */
+  blocking: boolean;
 }
 
 /** One year of an asset, before the business share is applied. */
@@ -123,7 +124,10 @@ export function assetChecks(asset: AssetFact, rules: AssetRules): AssetCheck[] {
   const add = (kind: AssetCheckKind) => checks.push({ assetId: asset.id, kind, blocking: true });
 
   if (asset.smallBusiness === null) add('asset_small_business_unanswered');
-  if (asset.smallBusiness === false) add('asset_regular_taxation_not_computed');
+  // Under regular taxation the cost is the net amount, which must be known.
+  if (asset.smallBusiness === false && asset.opening === null && asset.costCents !== null && asset.netCostCents === null) {
+    add('asset_net_unknown');
+  }
   if (asset.acquisitionDate === null && asset.opening === null) add('asset_no_date');
   if (asset.costCents === null && asset.opening === null) add('asset_no_cost');
   if (asset.disposal) {
@@ -139,16 +143,21 @@ export function assetChecks(asset: AssetFact, rules: AssetRules): AssetCheck[] {
   }
   if (asset.costCents === null || asset.acquisitionDate === null) return checks;
 
+  const has = (kind: AssetCheckKind) => checks.some((c) => c.kind === kind);
   if (asset.method === 'low_value') {
     const within = withinNetLimit(asset, rules.lowValueNetLimitCents.value, rules);
-    if (within === 'unknown') add('asset_net_unknown');
+    if (within === 'unknown') {
+      if (!has('asset_net_unknown')) add('asset_net_unknown');
+    }
     else if (!within) add('asset_low_value_over_limit');
   }
   if (asset.method === 'pool') {
     const { minExclusiveNetCents, maxNetCents } = rules.pool.value;
     const belowMax = withinNetLimit(asset, maxNetCents, rules);
     const belowMin = withinNetLimit(asset, minExclusiveNetCents, rules);
-    if (belowMax === 'unknown' || belowMin === 'unknown') add('asset_net_unknown');
+    if (belowMax === 'unknown' || belowMin === 'unknown') {
+      if (!has('asset_net_unknown')) add('asset_net_unknown');
+    }
     else if (!belowMax || belowMin) add('asset_pool_out_of_range');
   }
   if (asset.method === 'linear' || asset.method === 'declining') {

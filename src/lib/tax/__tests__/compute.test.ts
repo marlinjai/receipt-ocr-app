@@ -71,7 +71,7 @@ describe('computeYear: open checks', () => {
     ['no amount', { amountCents: null, missingAmount: 'no_amount' }, 'no_amount'],
     ['foreign currency without a rate', { amountCents: null, missingAmount: 'no_exchange_rate' }, 'no_exchange_rate'],
     ['section 19 unanswered', { smallBusiness: null }, 'small_business_unanswered'],
-    ['regular taxation', { smallBusiness: false }, 'regular_taxation_not_computed'],
+    ['regular taxation without a net amount', { smallBusiness: false, netCents: null }, 'net_amount_missing'],
     ['no allocation', { allocations: null }, 'no_allocation'],
     ['shares above the whole', { allocations: [{ purpose: 'business', shareBp: 7000 }, { purpose: 'study', shareBp: 4000 }], employmentLineKey: 'employment.study_costs' }, 'allocation_exceeds_whole'],
     ['business share without a form line', { formLineKey: null }, 'no_form_line'],

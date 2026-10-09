@@ -1,4 +1,4 @@
-import { mealDeduction, mealStatus, toCents } from '@/lib/meals/rules';
+import { mealDeduction, mealStatus, smallBusinessOn, toCents } from '@/lib/meals/rules';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { ruleInForce, type TreatmentInput, type VendorRule, vendorKey } from './decisions';
 import { CATEGORY_FORM_LINE, DEFAULT_EMPLOYMENT_LINE, DEFAULT_STUDY_LINE, legacyAllocations } from './defaults';
@@ -73,6 +73,8 @@ function mealFact(record: MealRecord, settings: MealTaxSettings): MealFact | nul
     status: 'complete',
     deductibleCents: toCents(deduction.deductible),
     nonDeductibleCents: toCents(deduction.nonDeductible),
+    // On the net basis the meal's input tax is deductible in full beside the 70 percent.
+    ...(deduction.inputVat !== null ? { inputVatCents: toCents(deduction.inputVat) } : {}),
   };
 }
 
@@ -100,7 +102,8 @@ export function resolveItem(
     dateBasis: 'document' as const,
     ...amountOf(record),
     netCents: netOf(record),
-    smallBusiness: settings.smallBusiness,
+    // The status on the receipt's own date: a later change leaves earlier receipts alone.
+    smallBusiness: smallBusinessOn(settings, record.date),
   };
 
   // A row the meal register judges is treated by the register alone: its line

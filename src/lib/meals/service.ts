@@ -487,9 +487,16 @@ export async function deleteGuestsForRows(db: PrismaClient, rowIds: string[]): P
 }
 
 export async function getTaxSettings(db: PrismaClient, workspaceId: string): Promise<MealTaxSettings> {
-  const row = await db.workspaceTaxSettings.findUnique({ where: { authWorkspaceId: workspaceId } });
-  if (!row) return { ...DEFAULT_TAX_SETTINGS };
-  return { smallBusiness: row.smallBusiness, hostAddressThresholdEur: row.hostAddressThresholdEur };
+  const [row, changes] = await Promise.all([
+    db.workspaceTaxSettings.findUnique({ where: { authWorkspaceId: workspaceId } }),
+    // Later changes of the section 19 status, each from a day on (recorded in the finance area).
+    db.taxStatusChange.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: { effectiveFrom: 'asc' } }),
+  ]);
+  // Present only when there is a change: a workspace without one reads exactly as before.
+  const statusChanges =
+    changes.length > 0 ? { statusChanges: changes.map((c) => ({ effectiveFrom: c.effectiveFrom, smallBusiness: c.smallBusiness })) } : {};
+  if (!row) return { ...DEFAULT_TAX_SETTINGS, ...statusChanges };
+  return { smallBusiness: row.smallBusiness, hostAddressThresholdEur: row.hostAddressThresholdEur, ...statusChanges };
 }
 
 export interface TaxSettingsInput {

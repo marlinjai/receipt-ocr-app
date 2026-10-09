@@ -126,6 +126,12 @@ export interface YearRules {
   /** The deductible part of a business meal, in basis points. */
   mealDeductibleShareBp: Sourced<number>;
   assets: AssetRules;
+  /**
+   * The small-business limits of section 19 of the value-added tax act, both
+   * measured by money received: the previous year must not have exceeded the
+   * first, the running year must not exceed the second.
+   */
+  smallBusinessLimits: Sourced<{ previousYearLimitCents: number; currentYearLimitCents: number }>;
 }
 
 /** The limits and methods for assets bought in this year. All limits are NET amounts (without value-added tax). */

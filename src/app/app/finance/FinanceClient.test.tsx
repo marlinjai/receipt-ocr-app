@@ -6,6 +6,14 @@ import { rulesForYear } from '@/lib/tax/rules';
 import type { StatementItem, StatementView } from '@/lib/tax/service';
 
 const actions = vi.hoisted(() => ({
+  saveIssuedInvoice: vi.fn(),
+  removeIssuedInvoice: vi.fn(),
+  recordStatusChange: vi.fn(),
+  removeStatusChange: vi.fn(),
+  setVatSettings: vi.fn(),
+  setRevenueExpectation: vi.fn(),
+  recordVatSettlement: vi.fn(),
+  removeVatSettlement: vi.fn(),
   decideItem: vi.fn(),
   resetItem: vi.fn(),
   removeVendorRule: vi.fn(),
@@ -100,6 +108,28 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
       decliningMaxMultiple: 3,
     },
     businessRevenueCents: 0,
+    profitCents: null,
+    revenue: { recorded: false, receivedCents: 0, turnoverCents: 0, outstandingCents: 0, invoices: [] },
+    forecast: {
+      year: 2025,
+      monthsElapsed: 12,
+      receivedCents: 0,
+      outstandingCents: 0,
+      lowCents: 0,
+      highCents: 0,
+      monthlyRateCents: 0,
+      rateBasis: 'none',
+      basisMonths: 0,
+      thinBasis: false,
+      currentYear: { state: 'not_reached' },
+      nextYear: { state: 'not_reached' },
+      previousYearWithinLimit: null,
+    },
+    limits: { previousYearLimitCents: 2_500_000, currentYearLimitCents: 10_000_000, source: rules.smallBusinessLimits.source },
+    expectedMonthlyRevenueCents: null,
+    smallBusinessAtYearEnd: true,
+    statusChanges: [],
+    vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, settlements: [] },
     vendorRules: [],
     initialized: true,
     ...overrides,
@@ -242,7 +272,7 @@ describe('FinanceClient: notices and statement', () => {
       />,
     );
     expect(screen.getByText(/Kleinunternehmerregelung \(§ 19 Umsatzsteuergesetz\) ist noch nicht beantwortet/)).toBeTruthy();
-    expect(screen.getByText(/Einnahmen aus Rechnungen werden noch nicht erfasst/)).toBeTruthy();
+    expect(screen.getByText(/Es ist noch keine Rechnung erfasst/)).toBeTruthy();
   });
 
   it('shows the statement lines, opens the receipts behind one and lets a decision be removed', async () => {

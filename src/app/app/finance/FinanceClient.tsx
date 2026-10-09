@@ -8,14 +8,32 @@ import { CHECK_LABELS, ORIGIN_LABELS, PURPOSE_LABELS, financeActionMessage } fro
 import { formatCents } from '@/lib/tax/money';
 import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service';
 import type { OpenCheckKind } from '@/lib/tax/types';
-import { decideItem, disposeAsset, removeAsset, removeVendorRule, resetItem, saveAsset, type Result } from './actions';
+import {
+  decideItem,
+  disposeAsset,
+  recordStatusChange,
+  recordVatSettlement,
+  removeAsset,
+  removeIssuedInvoice,
+  removeStatusChange,
+  removeVatSettlement,
+  removeVendorRule,
+  resetItem,
+  saveAsset,
+  saveIssuedInvoice,
+  setRevenueExpectation,
+  setVatSettings,
+  type Result,
+} from './actions';
+import RevenueTab from './RevenueTab';
+import VatTab from './VatTab';
 import AssetsTab, { type AssetDraft, type DisposalDraft } from './AssetsTab';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 
-type TabKey = 'open' | 'statement' | 'assets' | 'vendors';
+type TabKey = 'open' | 'statement' | 'revenue' | 'assets' | 'vat' | 'vendors';
 
 /** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
-const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered', 'regular_taxation_not_computed'];
+const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
 /** Checks that are resolved on the receipt itself or in the meal register, not with a decision here. */
 const MEAL_CHECKS: OpenCheckKind[] = ['meal_incomplete', 'meal_without_register_facts'];
 const RECEIPT_CHECKS: OpenCheckKind[] = ['no_date', 'no_amount', 'no_exchange_rate'];
@@ -127,7 +145,9 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
   const tabs: Array<{ key: TabKey; label: string; count?: number }> = [
     { key: 'open', label: 'Offen', count: queue.length },
     { key: 'statement', label: 'EÜR' },
+    { key: 'revenue', label: 'Einnahmen', count: view.revenue.invoices.length },
     { key: 'assets', label: 'Anlagen', count: view.assets.length },
+    { key: 'vat', label: 'Umsatzsteuer' },
     { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length },
   ];
 
@@ -190,11 +210,10 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               unter „Verzeichnis“ gestellt.
             </p>
           )}
-          {view.smallBusiness === false && (
-            <p className="ui-note ui-note-warn">
-              Für diesen Arbeitsbereich gilt die Regelbesteuerung. Nettobeträge und Vorsteuer werden hier noch nicht
-              gerechnet, deshalb bleiben {blockedBySetting} Belege außerhalb der Summen. Es wird nichts auf falscher
-              Grundlage geschätzt.
+          {view.vat.applies && (
+            <p className="ui-note">
+              In {view.year} gilt (zumindest zeitweise) die Regelbesteuerung: Belege aus dieser Zeit zählen mit ihrem
+              Nettobetrag, die Umsatzsteuer darin ist Vorsteuer. Ein Beleg ohne Nettobetrag steht unter „Offen“.
             </p>
           )}
           {!view.rulesExact && (
@@ -216,15 +235,24 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               eingetragen.
             </p>
           )}
-          <p className="ui-note">
-            Einnahmen aus Rechnungen werden noch nicht erfasst. Diese Ansicht zeigt die Ausgabenseite (und Erlöse aus
-            dem Verkauf von Anlagen); ein Gewinn oder Verlust wird erst ausgewiesen, wenn Rechnungen und
-            Zahlungseingänge vorliegen.
-          </p>
+          {!view.revenue.recorded && (
+            <p className="ui-note">
+              Es ist noch keine Rechnung erfasst. Diese Ansicht zeigt deshalb nur die Ausgabenseite; ein Gewinn oder
+              Verlust wird erst ausgewiesen, wenn unter „Einnahmen“ Rechnungen mit ihren Zahlungseingängen stehen.
+            </p>
+          )}
         </div>
 
-        <dl className="mt-4 grid gap-3 sm:grid-cols-3">
+        <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
+            {
+              label: view.profitCents === null ? `Ergebnis ${view.year}` : view.profitCents < 0 ? `Verlust ${view.year}` : `Gewinn ${view.year}`,
+              value: view.profitCents === null ? 'offen' : euro(Math.abs(view.profitCents)),
+              hint:
+                view.profitCents === null
+                  ? 'erst mit erfassten Rechnungen'
+                  : `Einnahmen ${euro(view.businessRevenueCents)}${queue.length > 0 ? `, ${queue.length} Belege noch offen` : ''}`,
+            },
             { label: `Betriebsausgaben ${view.year}`, value: euro(view.businessExpenseCents), hint: `${view.countedItems} Belege gerechnet` },
             { label: 'Kosten für die Anlage N', value: euro(view.employmentCostCents), hint: 'Studium und Anstellung' },
             {
@@ -277,7 +305,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
         <div role="status" aria-live="polite" className="mt-4 min-h-5 text-sm" style={{ color: 'var(--muted)' }}>
           {notice}
         </div>
-        {error && tab !== 'open' && tab !== 'assets' && (
+        {error && tab === 'statement' && (
           <p className="ui-note ui-note-danger mt-2" role="alert">
             {error}
           </p>
@@ -374,7 +402,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               ) : (
                 (
                   [
-                    { id: 'revenue', form: 'euer', kind: 'revenue', title: 'Anlage EÜR: Betriebseinnahmen (bisher nur aus Anlagen)', total: view.businessRevenueCents },
+                    { id: 'revenue', form: 'euer', kind: 'revenue', title: 'Anlage EÜR: Betriebseinnahmen', total: view.businessRevenueCents },
                     { id: 'expense', form: 'euer', kind: 'expense', title: 'Anlage EÜR: Betriebsausgaben', total: view.businessExpenseCents },
                     { id: 'employment', form: 'employment', kind: 'expense', title: 'Anlage N: Kosten aus Studium und Anstellung', total: view.employmentCostCents },
                   ] as const
@@ -553,6 +581,30 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                 eigenen Belegen und ersetzen keine steuerliche Beratung.
               </p>
             </div>
+          )}
+
+          {tab === 'revenue' && (
+            <RevenueTab
+              view={view}
+              busy={pending}
+              error={error}
+              onSave={(invoiceId, draft, done) => run(() => saveIssuedInvoice(view.year, invoiceId, draft), `Rechnung ${draft.number}: gespeichert.`, done)}
+              onDelete={(invoice) => run(() => removeIssuedInvoice(view.year, invoice.id), `Rechnung ${invoice.number}: gelöscht.`)}
+              onExpectation={(cents) => run(() => setRevenueExpectation(view.year, cents), 'Erwartung für die Hochrechnung übernommen.')}
+            />
+          )}
+
+          {tab === 'vat' && (
+            <VatTab
+              view={view}
+              busy={pending}
+              error={error}
+              onStatusChange={(input, done) => run(() => recordStatusChange(view.year, input), 'Statuswechsel eingetragen.', done)}
+              onRemoveStatusChange={(changeId) => run(() => removeStatusChange(view.year, changeId), 'Statuswechsel gelöscht.')}
+              onSettings={(input) => run(() => setVatSettings(view.year, input), 'Angaben zur Voranmeldung gespeichert.')}
+              onSettlement={(input, done) => run(() => recordVatSettlement(view.year, input), 'Zahlung eingetragen.', done)}
+              onRemoveSettlement={(settlementId) => run(() => removeVatSettlement(view.year, settlementId), 'Zahlung gelöscht.')}
+            />
           )}
 
           {tab === 'assets' && (

@@ -1,4 +1,4 @@
-import { ASSET_RULES_2025, employmentLines, euerLines, type EuerKey } from './2025';
+import { ASSET_RULES_2025, SMALL_BUSINESS_LIMITS_2025, employmentLines, euerLines, type EuerKey } from './2025';
 import type { Source, YearRules } from './types';
 
 /**
@@ -71,4 +71,5 @@ export const RULES_2026: YearRules = {
   // The asset limits and methods are unchanged for purchases of 2026 (statute
   // text checked on the days named in the sources).
   assets: ASSET_RULES_2025,
+  smallBusinessLimits: SMALL_BUSINESS_LIMITS_2025,
 };

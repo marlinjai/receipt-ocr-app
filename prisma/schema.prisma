@@ -302,6 +302,14 @@ model WorkspaceTaxSettings {
   authTenantId            String?  @map("auth_tenant_id")
   smallBusiness           Boolean? @map("small_business")
   hostAddressThresholdEur Int      @default(250) @map("host_address_threshold_eur")
+  // Regular value-added taxation, asked once and required before any advance
+  // return period is computed: how often a return is filed ('monthly' or
+  // 'quarterly') and when the tax on an invoice is owed ('issued' or 'received').
+  vatFrequency            String?  @map("vat_frequency")
+  vatMethod               String?  @map("vat_method")
+  // What the owner expects to receive per month from now on, for the forecast
+  // of the small-business limits. NULL: the forecast uses the run rate.
+  expectedMonthlyRevenueCents Int? @map("expected_monthly_revenue_cents")
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
 
@@ -413,4 +421,75 @@ model TaxAssetPart {
 
   @@index([assetId])
   @@map("tax_asset_parts")
+}
+
+// A change of the section 19 status from a day on (crossing a limit, or
+// choosing regular taxation). The first answer stays in
+// workspace_tax_settings.small_business and applies from the beginning; a
+// receipt, an invoice or an asset is judged by the status on its own date, so
+// a change never moves earlier figures. `effectiveFrom` is an ISO day.
+model TaxStatusChange {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  effectiveFrom   String   @map("effective_from")
+  smallBusiness   Boolean  @map("small_business")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([authWorkspaceId, effectiveFrom])
+  @@map("tax_status_changes")
+}
+
+// An invoice the business issued: a list entry, not a document (no template,
+// no numbering, no rendering; that tier is the Books plan's). It holds no
+// client name: names of clients are personal data and belong to the contact
+// store. Revenue counts on the days of its payments.
+model TaxIssuedInvoice {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  number          String
+  issueDate       String?  @map("issue_date")
+  grossCents      Int      @map("gross_cents")
+  vatCents        Int      @default(0) @map("vat_cents")
+  treatment       String
+  declaredInYear  Int?     @map("declared_in_year")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  payments TaxInvoicePayment[]
+
+  @@unique([authWorkspaceId, number])
+  @@map("tax_issued_invoices")
+}
+
+// Money received for an issued invoice, with its day.
+model TaxInvoicePayment {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  invoiceId       String   @map("invoice_id")
+  paidOn          String   @map("paid_on")
+  cents           Int
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  invoice TaxIssuedInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("tax_invoice_payments")
+}
+
+// A payment of value-added tax to the tax office ('paid') or a refund from it
+// ('refunded'). Under the cash-basis statement both are lines of their own.
+model TaxVatSettlement {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  settledOn       String   @map("settled_on")
+  cents           Int
+  direction       String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([authWorkspaceId])
+  @@map("tax_vat_settlements")
 }

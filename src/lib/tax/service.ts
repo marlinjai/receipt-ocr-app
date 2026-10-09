@@ -1,6 +1,7 @@
 import 'server-only';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { rowToMealRecord } from '@/lib/meals/record';
+import { smallBusinessOn } from '@/lib/meals/rules';
 import { allRows, getTaxSettings, guestsByRow, tableContext } from '@/lib/meals/service';
 import type { MealGuestEntry } from '@/lib/meals/types';
 import { AssetInputError, validateAssetInput, validateDisposalInput, type AssetInput } from './asset-input';
@@ -17,9 +18,19 @@ import {
   type VendorRule,
 } from './decisions';
 import { resolveItem, type ReceiptFacts, type ResolvedItem, type TreatmentOrigin } from './facts';
+import { forecastYear, type Forecast } from './forecast';
+import {
+  RevenueInputError,
+  validateExpectation,
+  validateInvoiceInput,
+  validateSettlement,
+  validateStatusChange,
+  validateVatSettings,
+} from './revenue-input';
 import { RULE_YEARS, isFormLineKey, rulesForYear, type FormLine } from './rules';
 import type { FormLineKey } from './rules/types';
-import type { ItemPart, LineResult, OpenCheck } from './types';
+import type { InvoiceCheckKind, InvoiceFact, InvoiceTreatment, ItemPart, LineResult, OpenCheck, VatSettlementFact } from './types';
+import { vatYear, type VatFrequency, type VatMethod, type VatYear } from './vat';
 
 /**
  * Server-side reads and writes for the finance area.
@@ -46,7 +57,12 @@ export type TaxServiceErrorCode =
   | 'rule_not_found'
   | 'asset_not_found'
   | 'asset_row'
-  | 'row_in_other_asset';
+  | 'row_in_other_asset'
+  | 'invoice_not_found'
+  | 'invoice_number_taken'
+  | 'status_not_found'
+  | 'status_unanswered'
+  | 'settlement_not_found';
 
 export class TaxServiceError extends Error {
   readonly code: TaxServiceErrorCode;
@@ -196,6 +212,35 @@ export interface StatementView {
     decliningMaxMultiple: number;
   };
   businessRevenueCents: number;
+  /** Revenue minus expenses; null until at least one invoice is recorded for the workspace. */
+  profitCents: number | null;
+  revenue: {
+    /** False while the workspace has no issued invoice at all: revenue is then unknown, not zero. */
+    recorded: boolean;
+    receivedCents: number;
+    turnoverCents: number;
+    outstandingCents: number;
+    /** Every invoice that touches the year: issued in it, paid in it, or still unpaid at its end. */
+    invoices: InvoiceView[];
+  };
+  /** Where the year is heading against the small-business limits, as of today. */
+  forecast: Forecast;
+  limits: { previousYearLimitCents: number; currentYearLimitCents: number; source: { citation: string; url: string; checkedOn: string } };
+  expectedMonthlyRevenueCents: number | null;
+  /** The status on the last day of the year, and every recorded change. */
+  smallBusinessAtYearEnd: boolean | null;
+  statusChanges: Array<{ id: string; effectiveFrom: string; smallBusiness: boolean }>;
+  vat: {
+    frequency: VatFrequency | null;
+    method: VatMethod | null;
+    /** True when any day of the year is under regular taxation. */
+    applies: boolean;
+    /** The advance return periods; null until frequency and method are set. */
+    year: VatYear | null;
+    /** Tax on purchases of the year that could not be deducted under the small-business rule. */
+    undeductedInputVatCents: number;
+    settlements: Array<{ id: string; date: string; cents: number; direction: 'paid' | 'refunded' }>;
+  };
   vendorRules: VendorRule[];
   /** False until the Receipts table exists (first dashboard visit). */
   initialized: boolean;
@@ -238,6 +283,32 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     getTaxSettings(db, workspaceId),
     db.taxAsset.findMany({ where: { authWorkspaceId: workspaceId }, include: { parts: true }, orderBy: [{ acquisitionDate: 'asc' }, { createdAt: 'asc' }] }),
   ]);
+  const [storedInvoices, storedSettlements, storedChanges, settingsRow] = await Promise.all([
+    db.taxIssuedInvoice.findMany({ where: { authWorkspaceId: workspaceId }, include: { payments: true }, orderBy: [{ issueDate: 'asc' }, { number: 'asc' }] }),
+    db.taxVatSettlement.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: { settledOn: 'asc' } }),
+    db.taxStatusChange.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: { effectiveFrom: 'asc' } }),
+    db.workspaceTaxSettings.findUnique({ where: { authWorkspaceId: workspaceId } }),
+  ]);
+  const invoiceFacts: InvoiceFact[] = storedInvoices.map((i) => ({
+    id: i.id,
+    number: i.number,
+    issueDate: i.issueDate,
+    grossCents: i.grossCents,
+    vatCents: i.vatCents,
+    treatment: (['small_business', 'standard', 'reduced', 'not_taxable'] as const).includes(i.treatment as InvoiceTreatment)
+      ? (i.treatment as InvoiceTreatment)
+      : 'not_taxable',
+    payments: i.payments.map((p) => ({ date: p.paidOn, cents: p.cents })),
+    declaredInYear: i.declaredInYear,
+    smallBusinessOnIssue: smallBusinessOn(settings, i.issueDate),
+  }));
+  const settlementFacts: VatSettlementFact[] = storedSettlements.map((s) => ({
+    id: s.id,
+    date: s.settledOn,
+    cents: s.cents,
+    direction: s.direction === 'refunded' ? 'refunded' : 'paid',
+  }));
+  const smallBusinessAtYearEnd = smallBusinessOn(settings, `${year}-12-31`);
   const resolvedRules = rulesForYear(year);
   const facts = loaded?.facts ?? [];
   const assetByRow = new Map<string, string>();
@@ -248,8 +319,53 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     return assetId ? { ...r, item: { ...r.item, assetId } } : r;
   });
   const itemById = new Map(resolved.map((r) => [r.item.id, r.item]));
-  const assetFacts = storedAssets.map((a) => toAssetFact(a, itemById, settings.smallBusiness));
-  const result = computeYear({ year, items: resolved.map((r) => r.item), assets: assetFacts }, resolvedRules);
+  const assetFacts = storedAssets.map((a) => toAssetFact(a, itemById, smallBusinessOn(settings, a.acquisitionDate)));
+  const ledgerItems = resolved.map((r) => r.item);
+  // No invoice in the workspace at all means revenue was never recorded, which
+  // is different from a year without revenue.
+  const revenueRecorded = invoiceFacts.length > 0;
+  const result = computeYear(
+    {
+      year,
+      items: ledgerItems,
+      assets: assetFacts,
+      invoices: revenueRecorded ? invoiceFacts : undefined,
+      vatSettlements: settlementFacts,
+      smallBusinessAtYearEnd,
+    },
+    resolvedRules,
+  );
+  // The previous year's turnover decides whether this year's status stands.
+  const previous = revenueRecorded ? computeYear({ year: year - 1, items: [], invoices: invoiceFacts }, rulesForYear(year - 1)) : null;
+  const limits = resolvedRules.rules.smallBusinessLimits;
+  const expectedMonthlyRevenueCents = settingsRow?.expectedMonthlyRevenueCents ?? null;
+  const forecast = forecastYear(
+    {
+      year,
+      today: today(),
+      receivedByMonthCents: result.revenue.turnoverByMonthCents,
+      previousYearReceivedCents: previous ? previous.revenue.turnoverCents : null,
+      outstandingCents: result.revenue.outstandingCents,
+      expectedMonthlyCents: expectedMonthlyRevenueCents,
+    },
+    limits.value,
+  );
+  const vatFrequency: VatFrequency | null = settingsRow?.vatFrequency === 'monthly' || settingsRow?.vatFrequency === 'quarterly' ? settingsRow.vatFrequency : null;
+  const vatMethod: VatMethod | null = settingsRow?.vatMethod === 'issued' || settingsRow?.vatMethod === 'received' ? settingsRow.vatMethod : null;
+  const regularInYear =
+    smallBusinessOn(settings, `${year}-01-01`) === false ||
+    smallBusinessAtYearEnd === false ||
+    storedChanges.some((c) => !c.smallBusiness && c.effectiveFrom.startsWith(`${year}-`));
+  // What the small-business rule cost in input tax this year: the tax in the
+  // business share of every counted receipt that stated a net amount.
+  let undeductedInputVatCents = 0;
+  for (const item of ledgerItems) {
+    if (item.smallBusiness !== true || item.date === null || !item.date.startsWith(`${year}-`)) continue;
+    if (item.amountCents === null || item.netCents === null || item.netCents === undefined || item.assetId) continue;
+    const businessBp = (item.allocations ?? []).filter((a) => a.purpose === 'business').reduce((s, a) => s + a.shareBp, 0);
+    if (businessBp > 0) undeductedInputVatCents += Math.round(((item.amountCents - item.netCents) * businessBp) / 10_000);
+  }
+  const invoiceResults = new Map(result.revenue.invoices.map((i) => [i.invoiceId, i]));
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));
 
   const items: StatementItem[] = [];
@@ -315,6 +431,54 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     countedItems: result.countedItems,
     blockedItems: result.blockedItems,
     items,
+    profitCents: result.profitCents,
+    revenue: {
+      recorded: result.revenue.recorded,
+      receivedCents: result.revenue.receivedCents,
+      turnoverCents: result.revenue.turnoverCents,
+      outstandingCents: result.revenue.outstandingCents,
+      invoices: storedInvoices.flatMap((stored, index): InvoiceView[] => {
+        const r = invoiceResults.get(stored.id);
+        if (!r) return [];
+        const fact = invoiceFacts[index];
+        return [
+          {
+            id: stored.id,
+            number: fact.number,
+            issueDate: fact.issueDate,
+            grossCents: fact.grossCents,
+            vatCents: fact.vatCents,
+            treatment: fact.treatment,
+            declaredInYear: fact.declaredInYear,
+            payments: [...fact.payments].sort((a, b) => (a.date < b.date ? -1 : 1)),
+            receivedCents: r.receivedCents,
+            excludedCents: r.excludedCents,
+            outstandingCents: r.outstandingCents,
+            checks: r.checks,
+          },
+        ];
+      }),
+    },
+    forecast,
+    limits: { ...limits.value, source: limits.source },
+    expectedMonthlyRevenueCents,
+    smallBusinessAtYearEnd,
+    statusChanges: storedChanges.map((c) => ({ id: c.id, effectiveFrom: c.effectiveFrom, smallBusiness: c.smallBusiness })),
+    vat: {
+      frequency: vatFrequency,
+      method: vatMethod,
+      applies: regularInYear,
+      year:
+        vatFrequency && vatMethod
+          ? vatYear(year, vatFrequency, vatMethod, {
+              inputVat: result.inputVatEvents,
+              outputVatByIssue: result.outputVatByIssue,
+              outputVatByPayment: result.outputVatByPayment,
+            })
+          : null,
+      undeductedInputVatCents,
+      settlements: settlementFacts.filter((s) => s.date.startsWith(`${year}-`)),
+    },
     assets,
     assetLimits: {
       lowValueNetLimitCents: rules.assets.lowValueNetLimitCents.value,
@@ -330,6 +494,120 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     vendorRules,
     initialized: loaded !== null,
   };
+}
+
+/** The ISO day "today" in the business's time zone; one place, so tests can see what the forecast used. */
+function today(): string {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date());
+}
+
+/** An issued invoice as the finance screens show it for one year. */
+export interface InvoiceView {
+  id: string;
+  number: string;
+  issueDate: string | null;
+  grossCents: number;
+  vatCents: number;
+  treatment: InvoiceTreatment;
+  declaredInYear: number | null;
+  /** Every payment of the invoice, whatever year. */
+  payments: Array<{ date: string; cents: number }>;
+  /** Received in the viewed year, and what of that another year's return already declared. */
+  receivedCents: number;
+  excludedCents: number;
+  outstandingCents: number;
+  checks: InvoiceCheckKind[];
+}
+
+/** Record an issued invoice (`invoiceId` null) or change one, payments included. Returns its id. */
+export async function saveInvoice(db: PrismaClient, ctx: TaxContext, invoiceId: string | null, raw: unknown): Promise<string> {
+  const input = validateInvoiceInput(raw);
+  const sameNumber = await db.taxIssuedInvoice.findFirst({ where: { authWorkspaceId: ctx.workspaceId, number: input.number } });
+  if (sameNumber && sameNumber.id !== invoiceId) throw new TaxServiceError('invoice_number_taken');
+  const data = {
+    number: input.number,
+    issueDate: input.issueDate,
+    grossCents: input.grossCents,
+    vatCents: input.vatCents,
+    treatment: input.treatment,
+    declaredInYear: input.declaredInYear,
+  };
+  const payments = input.payments.map((p) => ({ paidOn: p.date, cents: p.cents, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId }));
+  if (invoiceId === null) {
+    const created = await db.taxIssuedInvoice.create({
+      data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, ...data, payments: { create: payments } },
+    });
+    return created.id;
+  }
+  const existing = await db.taxIssuedInvoice.findFirst({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId } });
+  if (!existing) throw new TaxServiceError('invoice_not_found');
+  // The payments of an invoice are few and have no identity of their own, so a
+  // save replaces them as one set, together with the invoice or not at all.
+  await db.$transaction([
+    db.taxInvoicePayment.deleteMany({ where: { invoiceId } }),
+    db.taxIssuedInvoice.update({ where: { id: invoiceId }, data }),
+    db.taxInvoicePayment.createMany({ data: payments.map((p) => ({ ...p, invoiceId })) }),
+  ]);
+  return invoiceId;
+}
+
+export async function deleteInvoice(db: PrismaClient, ctx: TaxContext, invoiceId: string): Promise<void> {
+  const { count } = await db.taxIssuedInvoice.deleteMany({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId } });
+  if (count === 0) throw new TaxServiceError('invoice_not_found');
+}
+
+/**
+ * Record that the section 19 status changes from a day on. The first answer
+ * must exist (it is the status "from the beginning"); a change on a day that
+ * already has one corrects that entry.
+ */
+export async function saveStatusChange(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<void> {
+  const input = validateStatusChange(raw);
+  const settings = await db.workspaceTaxSettings.findUnique({ where: { authWorkspaceId: ctx.workspaceId } });
+  if (!settings || settings.smallBusiness === null) throw new TaxServiceError('status_unanswered');
+  await db.taxStatusChange.upsert({
+    where: { authWorkspaceId_effectiveFrom: { authWorkspaceId: ctx.workspaceId, effectiveFrom: input.effectiveFrom } },
+    create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, ...input },
+    update: { smallBusiness: input.smallBusiness },
+  });
+}
+
+export async function deleteStatusChange(db: PrismaClient, ctx: TaxContext, changeId: string): Promise<void> {
+  const { count } = await db.taxStatusChange.deleteMany({ where: { id: changeId, authWorkspaceId: ctx.workspaceId } });
+  if (count === 0) throw new TaxServiceError('status_not_found');
+}
+
+/** How often a value-added tax return is filed and when the tax on an invoice is owed. */
+export async function saveVatSettings(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<void> {
+  const input = validateVatSettings(raw);
+  await db.workspaceTaxSettings.upsert({
+    where: { authWorkspaceId: ctx.workspaceId },
+    create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, vatFrequency: input.frequency, vatMethod: input.method },
+    update: { vatFrequency: input.frequency, vatMethod: input.method },
+  });
+}
+
+/** What the owner expects to receive per month from now on (null: use the run rate). */
+export async function saveRevenueExpectation(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<void> {
+  const cents = validateExpectation(raw);
+  await db.workspaceTaxSettings.upsert({
+    where: { authWorkspaceId: ctx.workspaceId },
+    create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, expectedMonthlyRevenueCents: cents },
+    update: { expectedMonthlyRevenueCents: cents },
+  });
+}
+
+export async function saveVatSettlement(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<string> {
+  const input = validateSettlement(raw);
+  const row = await db.taxVatSettlement.create({
+    data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, settledOn: input.date, cents: input.cents, direction: input.direction },
+  });
+  return row.id;
+}
+
+export async function deleteVatSettlement(db: PrismaClient, ctx: TaxContext, settlementId: string): Promise<void> {
+  const { count } = await db.taxVatSettlement.deleteMany({ where: { id: settlementId, authWorkspaceId: ctx.workspaceId } });
+  if (count === 0) throw new TaxServiceError('settlement_not_found');
 }
 
 /** An asset as the finance screens show it for one year. */
@@ -674,4 +952,4 @@ export async function deleteDecisionsForRows(db: PrismaClient, rowIds: string[])
   await db.taxAssetPart.deleteMany({ where: { rowId: { in: rowIds } } });
 }
 
-export { AssetInputError, TreatmentError };
+export { AssetInputError, RevenueInputError, TreatmentError };

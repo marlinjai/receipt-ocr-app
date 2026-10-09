@@ -6,11 +6,12 @@
   zip (GET /api/export/company), and printed guest names are removed at once when an export was
   taken, otherwise held for ten years (German tax law, the Abgabenordnung, AO) and removed by the
   retention purge. Built in this change, 2026-10-09.
-- [ ] Schedule the retention purge of held guest copies (route /api/internal/retention/purge, built).
-  Before the schedule is added: generate RETENTION_PURGE_SECRET into the receipts production Infisical
-  project with the copy tool (op generate, value never printed), restart the app, then add a daily
-  Coolify scheduled task that POSTs an empty body signed with that secret. Until then held copies are
-  kept, which is safe. (2026-10-09)
+- [ ] Enable the retention purge of held guest copies only after recorded legal confirmation
+  of the retention policy. The implementation explicitly requires that review before go-live.
+  The production `RETENTION_PURGE_SECRET` was generated securely in Infisical on 2026-10-09;
+  no schedule was enabled. The backup and scratch restoration prerequisite is complete.
+  Once the legal policy is confirmed, run the signed purge verification and enable its daily
+  Coolify schedule. Preparation: `docs/operations/retention-purge.md`. (2026-10-09)
 
 <!-- Decided features, ready to be worked on -->
 
@@ -46,13 +47,15 @@
   row second, shared files kept). Needs the owner's decision whether the dashboard
   should delete for good the same way; if yes, route both dashboard actions through
   `deleteReceiptRows`. Found on 2026-10-08 while building the batch actions. (2026-10-08)
-- [ ] The production database `receipts-postgres` on Coolify has no backup schedule at
-  all (checked 2026-10-09 through the Coolify interface: zero schedules). It holds the
-  receipts, the business-meal register and the tax figures. Needs the owner's decision
-  on frequency, retention and where the dumps are kept (on the server only, or also in
-  object storage); then one schedule on that database and one restore tried from it.
-  Found while repairing the doubled meal columns, which removes columns from a live
-  table. (2026-10-09)
+- [x] Production database backups verified: six-hourly Coolify dumps, 28 copies
+  locally for seven days, native European Union R2 copies for 30 days, and an hourly
+  additional copy to Hermes with 30-day retention.
+  A scheduled dump restored in an isolated PostgreSQL container with matching counts
+  for all 28 public tables (639 rows), logical column definitions, constraints and
+  indexes, including a fresh copy downloaded from R2. Production health stayed green.
+  No new fixed hosting cost; normal existing object-storage usage applies.
+  Plan: `docs/plans/2026-10-09-production-backups.md`.
+  Recovery: `docs/operations/production-recovery.md`. (2026-10-09)
 - [ ] Three defects in the shared table adapter (`@marlinjai/data-table-adapter-prisma`
   0.2.1) that this app now works around and that belong fixed there: (1) nothing stops
   two columns of one table from carrying the same name, so a check-then-create race

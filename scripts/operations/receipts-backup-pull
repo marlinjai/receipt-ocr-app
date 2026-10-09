@@ -1,0 +1,28 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+archive=/var/lib/receipts-backups
+mkdir -p "$archive"
+exec 9>/run/lock/receipts-backup-pull.lock
+flock -n 9 || exit 0
+rsync -a --checksum --chmod=D700,F600 \
+  --include='/pg-dump-receipts-*.dmp' --exclude='*' \
+  -e 'ssh -i /root/.ssh/id_rsa -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/root/.ssh/receipts-backup-known-hosts -o ConnectTimeout=15' \
+  root@157.90.119.98:./ "$archive/"
+python3 - "$archive" <<'PY'
+import pathlib,time,hashlib,json,sys
+root=pathlib.Path(sys.argv[1]); files=sorted(root.glob('pg-dump-receipts-*.dmp'))
+if not files: raise SystemExit('No receipts backup files present')
+latest=max(files,key=lambda p:p.stat().st_mtime)
+age=time.time()-latest.stat().st_mtime
+if age>8*3600: raise SystemExit('Latest receipts backup exceeds eight-hour freshness limit')
+if latest.stat().st_size<100: raise SystemExit('Latest receipts backup is unexpectedly small')
+with latest.open('rb') as dump:
+ if dump.read(5)!=b'PGDMP': raise SystemExit('Latest receipts backup is not a PostgreSQL custom-format dump')
+report={'verified_at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'latest_dump':latest.name,'bytes':latest.stat().st_size,'sha256':hashlib.sha256(latest.read_bytes()).hexdigest(),'age_seconds':round(age),'retention_days':30}
+for file in files:
+ if time.time()-file.stat().st_mtime>30*86400:file.unlink()
+report['retained_files']=len(list(root.glob('pg-dump-receipts-*.dmp')))
+(root/'last-success.json').write_text(json.dumps(report,indent=2)+'\n')
+print(json.dumps(report))
+PY

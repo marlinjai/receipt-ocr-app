@@ -245,6 +245,16 @@ describe('unhappy paths and isolation', () => {
     expect(await db.taxAssetPart.count({ where: { rowId: whole } })).toBe(1);
   });
 
+  it('the lines of a receipt stay together and in their stored order, whatever their names and whatever else has the same day', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await ws.addReceipt(order({ Name: 'Bestellung' }));
+    // A second receipt of the same day whose name sorts between the two line names.
+    await ws.addReceipt(order({ Name: 'Bestellung: M', Gross: 10, Category: 'Bürobedarf' }));
+    await saveReceiptLines(db, ctx, rowId, [{ description: 'Z zuerst', grossCents: 60_000 }, { description: 'A danach', grossCents: 50_000 }]);
+    const view = await loadStatement(db, ws.workspaceId, 2025);
+    expect(view.items.map((i) => i.lineDescription ?? i.label)).toEqual(['Z zuerst', 'A danach', 'Bestellung: M']);
+  });
+
   it('lines of another workspace do not exist here', async () => {
     const { ctx } = await workspace();
     const foreignRow = await other.addReceipt(order());

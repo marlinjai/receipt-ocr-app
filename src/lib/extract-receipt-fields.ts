@@ -24,8 +24,19 @@ export interface TextExtraction extends ExtractionResult {
   tip: number | null;
   /** The tax groups the receipt prints, largest first. */
   taxGroups: TaxGroup[];
-  /** True when the tax rate is printed on the receipt; false when it is the default for this kind of receipt. */
+  /**
+   * True when the tax rate is printed on the receipt. False when it is the
+   * default for this kind of receipt (the check 'tax_estimated' says so), and
+   * for a receipt in another currency that prints no tax: its rate is 0 and
+   * nothing is estimated.
+   */
   taxRatePrinted: boolean;
+  /**
+   * True when the text itself settles the currency: an ISO code, or one kind
+   * of currency sign only. False for the euro assumed where it shows none, and
+   * for a majority among mixed signs.
+   */
+  currencyShown: boolean;
   amountChecks: AmountCheck[];
   vendorConfidence: VendorConfidence;
   mealEvidence: MealEvidence;
@@ -37,18 +48,21 @@ const CURRENCY_CODE_PATTERN = /\b(USD|EUR|GBP)\b/;
 
 // Explicit ISO codes win; otherwise pick the most frequent currency symbol in the
 // document. Defaults to EUR when no signal is found, matching prior implicit behavior.
-function extractCurrency(text: string): string {
+// `shown` says whether the text settles it (a code, or one kind of sign only):
+// only then is the currency offered over what a stored receipt holds.
+function extractCurrency(text: string): { currency: string; shown: boolean } {
   const codeMatch = text.match(CURRENCY_CODE_PATTERN);
-  if (codeMatch) return codeMatch[1];
+  if (codeMatch) return { currency: codeMatch[1], shown: true };
 
   const dollarCount = (text.match(/\$/g) ?? []).length;
   const euroCount = (text.match(/€/g) ?? []).length;
   const poundCount = (text.match(/£/g) ?? []).length;
+  const kinds = [dollarCount, euroCount, poundCount].filter((count) => count > 0).length;
 
-  if (dollarCount === 0 && euroCount === 0 && poundCount === 0) return 'EUR';
-  if (dollarCount >= euroCount && dollarCount >= poundCount) return 'USD';
-  if (poundCount >= euroCount) return 'GBP';
-  return 'EUR';
+  if (kinds === 0) return { currency: 'EUR', shown: false };
+  if (dollarCount >= euroCount && dollarCount >= poundCount) return { currency: 'USD', shown: kinds === 1 };
+  if (poundCount >= euroCount) return { currency: 'GBP', shown: kinds === 1 };
+  return { currency: 'EUR', shown: kinds === 1 };
 }
 
 // ── Date Extraction ──────────────────────────────────────────────────
@@ -377,13 +391,15 @@ function inferCategory(vendor: string | null, fullText: string, evidence: MealEv
 // The rate to assume when the receipt shows none: date-aware for meals
 // (restaurant food is 19 percent until the end of 2025 and 7 percent from
 // 2026), 7 percent for books, 19 percent otherwise. See src/lib/meals/classify.ts.
+// These are German rates. A receipt in another currency never reaches the
+// default: readAmounts gives it the tax its label names, or rate 0.
 
 export function extractReceiptFields(ocrData: OcrResult): TextExtraction {
   const text = ocrData.fullText;
   const reading = readVendor(text);
   const vendor = reading.vendor;
   const date = extractDate(text);
-  const currency = extractCurrency(text);
+  const { currency, shown: currencyShown } = extractCurrency(text);
   const amounts = readAmounts(text, { date, currency });
   const evidence = mealEvidence(text);
   const category = inferCategory(vendor, text, evidence);
@@ -409,7 +425,8 @@ export function extractReceiptFields(ocrData: OcrResult): TextExtraction {
     currency,
     tip: amounts.tip,
     taxGroups: amounts.taxGroups,
-    taxRatePrinted: amounts.taxRate !== null,
+    taxRatePrinted: amounts.taxPrinted,
+    currencyShown,
     amountChecks: amounts.checks,
     vendorConfidence: reading.confidence,
     mealEvidence: evidence,

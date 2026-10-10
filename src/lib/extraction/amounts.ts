@@ -14,6 +14,10 @@
  * printed as well. This module looks for those groups first and only falls
  * back to labels when the receipt prints none. Whatever it cannot confirm
  * is reported as a check for a person, never silently stored as fact.
+ *
+ * That arithmetic is German. A receipt in another currency carries no German
+ * value-added tax, so nothing German is worked out for it: its tax is what a
+ * tax label on it names, and where it names none the bill is the net.
  */
 
 export interface TaxGroup {
@@ -38,8 +42,15 @@ export interface AmountReading {
   /** The amount of the bill, without a tip. */
   gross: number | null;
   net: number | null;
-  /** The rate that carries the largest part of the bill, percent. Null when it is not printed and must be defaulted. */
+  /**
+   * The rate that carries the largest part of the bill, percent. Null when it
+   * is not printed and must be defaulted. 0, with the net equal to the total,
+   * for a receipt in another currency that prints no tax: nothing is estimated
+   * there.
+   */
   taxRate: number | null;
+  /** True when net and rate come from tax figures the receipt prints. */
+  taxPrinted: boolean;
   /** The tax groups the receipt prints, largest first. Empty when it prints none. */
   taxGroups: TaxGroup[];
   /** A tip printed on the receipt, on top of the bill. */
@@ -103,6 +114,8 @@ function isTaxOf(netCents: number, taxCents: number, rate: number): boolean {
 }
 
 const TIP_WORD = /trinkgeld|\btip\b|gratuity|service\s*charge/i;
+/** A line that names a discount ("Rabatt", "Sofortrabatt", "Discount: SPRING"), not one that only mentions the word ("rabattfähig"). */
+const DISCOUNT_WORD = /(?:rabatte?|nachl(?:a|ä)sse?|discounts?|coupons?|gutscheine?)(?![\p{L}])/iu;
 const TAX_WORD = /mwst|ust|vat|steuer|\btax\b/i;
 const TOTAL_LABEL = /(?:^|[^\p{L}])(?:summe|gesamt(?:betrag|summe)?|total|endbetrag|rechnungsbetrag|zu\s+zahlen|betrag|brutto|order\s+total|amount\s+due|balance\s+due|grand\s+total)(?![\p{L}])/iu;
 const NOT_A_TOTAL = /zwischensumme|sub\s*-?\s*total|item\s*\(?s?\)?\s*total|netto|steuer|mwst|ust\b|vat|gegeben|zur(?:ü|u)ck|r(?:ü|u)ckgeld|trinkgeld|\btip\b|rabatt|discount|shipping|versand/i;
@@ -115,23 +128,28 @@ const NOT_A_TOTAL = /zwischensumme|sub\s*-?\s*total|item\s*\(?s?\)?\s*total|nett
  * printed (alone, or with a printed tip on top), or the sum of ALL pairs
  * found is (a receipt that lists two groups at one rate and only their
  * common total).
+ *
+ * `notTax` are the amounts the receipt itself names as something else (a
+ * tip, a discount); `tipCandidates` the amounts that can be a tip on top.
  */
-function taxGroupsIn(values: Set<number>, rates: number[], tips: { labelled: number[]; candidates: number[] }): TaxGroup[] {
-  const printed = (sum: number) => values.has(sum) || tips.candidates.some((tip) => tip < sum && values.has(sum + tip));
+function taxGroupsIn(values: Set<number>, rates: number[], named: { notTax: number[]; tipCandidates: number[] }): TaxGroup[] {
+  const printed = (sum: number) => values.has(sum) || named.tipCandidates.some((tip) => tip < sum && values.has(sum + tip));
   const sorted = [...values].sort((x, y) => y - x);
   const pairs: Array<{ rate: number; net: number; tax: number; confirmed: boolean }> = [];
   const used = new Set<number>();
   // Pairs the printed total vouches for are settled first, so that a chance
   // match (an item price that happens to be 7 percent of another) cannot take
   // an amount a real tax line needs. An amount the receipt labels as the tip
-  // is never a tax amount, however well it fits a rate.
+  // or as a discount is never a tax amount, however well it fits a rate: a
+  // coupon of 5,00 on a bill of 31,32 is 19 percent of what is left, and the
+  // bill before the coupon is printed right above it.
   for (const wantConfirmed of [true, false]) {
     for (const net of sorted) {
       if (used.has(net)) continue;
       let hit: { rate: number; tax: number } | null = null;
       for (const rate of rates) {
         const tax = sorted.find(
-          (t) => t < net && !used.has(t) && !tips.labelled.includes(t) && isTaxOf(net, t, rate) && printed(net + t) === wantConfirmed,
+          (t) => t < net && !used.has(t) && !named.notTax.includes(t) && isTaxOf(net, t, rate) && printed(net + t) === wantConfirmed,
         );
         if (tax !== undefined) {
           hit = { rate, tax };
@@ -154,12 +172,15 @@ function taxGroupsIn(values: Set<number>, rates: number[], tips: { labelled: num
   return chosen.map((p) => ({ rate: p.rate, net: euros(p.net), tax: euros(p.tax), gross: euros(p.net + p.tax) }));
 }
 
-/** A total printed together with the tax it contains: the net is not printed, the pair still proves the rate. */
-function grossWithTax(values: Set<number>, rates: number[], candidates: number[]): TaxGroup | null {
+/**
+ * A total printed together with the tax it contains: the net is not printed, the pair still proves the rate.
+ * A discount is never that tax (`discounts`): the bill before it would come out as the total.
+ */
+function grossWithTax(values: Set<number>, rates: number[], candidates: number[], discounts: number[]): TaxGroup | null {
   for (const gross of candidates) {
     for (const rate of rates) {
       for (const tax of values) {
-        if (tax >= gross) continue;
+        if (tax >= gross || discounts.includes(tax)) continue;
         if (isTaxOf(gross - tax, tax, rate)) {
           return { rate, net: euros(gross - tax), tax: euros(tax), gross: euros(gross) };
         }
@@ -192,17 +213,66 @@ function labelledTotals(text: string): number[] {
 const NET_LABEL = /(?:^|[^\p{L}])(?:sub\s*-?\s*total|zwischensumme|netto(?:betrag|umsatz)?|net(?:\s+amount)?|before\s+tax)(?![\p{L}])/iu;
 const TAX_LABEL = /(?:^|[^\p{L}])(?:(?:sales\s+)?tax|vat|mwst\.?|ust\.?|mehrwertsteuer|umsatzsteuer|tva|iva|gst|hst)(?![\p{L}])/iu;
 
-/** The amount a label on the same line names. Zero counts here: "Tax (0%): 0.00" is a statement. */
+const SUBTOTAL_LABEL = /(?:^|[^\p{L}])(?:sub\s*-?\s*total|zwischensumme)(?![\p{L}])/iu;
+/** A tax label that does not name the tax amount: a net figure, a tax number, the heading "Tax invoice". */
+const NOT_A_TAX_AMOUNT = /sub\s*-?\s*total|zwischensumme|netto|(?:tax|vat|gst|hst|iva|tva|ust|mwst)[\s.-]*(?:id|no\b|nr\b|number|nummer|reg|invoice|receipt|#)/i;
+
+const LINE_END_AMOUNT = /(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})(?![\p{L}\p{N}%]|[.,:/-]\d)\s*(?:€|eur|usd|gbp|\$|£)?\s*$/iu;
+/** A line that is one amount and nothing else ("$360.00", "-90,00 €"): the value of a label that stands alone above it. */
+const BARE_AMOUNT_LINE = /^[-\u2212+]?\s*(?:€|eur|usd|gbp|\$|£)?\s*[-\u2212]?\s*(?:\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})\s*(?:€|eur|usd|gbp|\$|£)?$/iu;
+
+/** The minus many tills print behind a deduction ("5,00-"). */
+const TRAILING_MINUS = /\s*[-\u2212]$/;
+
+/** The amount a line ends with, in cents. Zero counts here: "Tax (0%): 0.00" is a statement. */
+function lineEndAmount(line: string): number | null {
+  const match = LINE_END_AMOUNT.exec(line.trim());
+  if (!match) return null;
+  const raw = match[1];
+  const lastSeparator = Math.max(raw.lastIndexOf(','), raw.lastIndexOf('.'));
+  return Number(raw.slice(0, lastSeparator).replace(/[.,]/g, '')) * 100 + Number(raw.slice(lastSeparator + 1));
+}
+
+/** The amount a label on the same line names. */
 function statedAmount(text: string, label: RegExp, exclude?: RegExp): number | null {
   for (const line of text.split('\n')) {
     if (!label.test(line) || (exclude && exclude.test(line))) continue;
-    const match = /(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})(?![\p{L}\p{N}%]|[.,:/-]\d)\s*(?:€|eur|usd|gbp|\$|£)?\s*$/iu.exec(line.trim());
-    if (!match) continue;
-    const raw = match[1];
-    const lastSeparator = Math.max(raw.lastIndexOf(','), raw.lastIndexOf('.'));
-    return Number(raw.slice(0, lastSeparator).replace(/[.,]/g, '')) * 100 + Number(raw.slice(lastSeparator + 1));
+    const amount = lineEndAmount(line);
+    if (amount !== null) return amount;
   }
   return null;
+}
+
+/**
+ * Every amount the lines matching `label` name, in the order of the receipt:
+ * at the end of the label's own line, or on the line below when the label
+ * stands alone and that line is nothing but an amount (an invoice that sets
+ * every label above its value).
+ */
+function namedAmounts(text: string, label: RegExp, exclude?: RegExp): number[] {
+  const lines = text.split('\n');
+  const out: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!label.test(line) || (exclude && exclude.test(line))) continue;
+    const own = line.trim().replace(TRAILING_MINUS, '');
+    const below = (lines[i + 1] ?? '').trim().replace(TRAILING_MINUS, '');
+    const amount = lineEndAmount(own) ?? (!AMOUNT_TEST.test(line) && BARE_AMOUNT_LINE.test(below) ? lineEndAmount(below) : null);
+    if (amount !== null) out.push(amount);
+  }
+  return out;
+}
+
+/**
+ * The rate `tax` is of `net`, percent: to a whole percent where the figures
+ * allow it (7.0, 8.25 stays 8.25). Null for a rate no receipt carries.
+ */
+function rateOf(netCents: number, taxCents: number): number | null {
+  if (netCents <= 0) return null;
+  const rate = Math.round((taxCents / netCents) * 10000) / 100;
+  // No receipt carries a rate above the highest standard rate in the European Union.
+  if (rate < 0 || rate > 27.5) return null;
+  return Math.abs(rate - Math.round(rate)) < 0.06 ? Math.round(rate) : rate;
 }
 
 /**
@@ -218,13 +288,47 @@ function statedNetAndTax(text: string, grossCents: number): { net: number; tax: 
   if (net !== null && tax !== null && Math.abs(net + tax - grossCents) <= 1) [n, t] = [net, tax];
   else if (tax !== null && net === null && tax < grossCents) [n, t] = [grossCents - tax, tax];
   else if (net !== null && tax === null && net <= grossCents) [n, t] = [net, grossCents - net];
-  if (n === null || t === null || n <= 0) return null;
-  const rate = Math.round((t / n) * 10000) / 100;
-  // No receipt carries a rate above the highest standard rate in the European Union.
-  if (rate < 0 || rate > 27.5) return null;
-  // To a whole or half percent where the figures allow it (7.0, 8.25 stays 8.25).
-  const rounded = Math.abs(rate - Math.round(rate)) < 0.06 ? Math.round(rate) : rate;
-  return { net: n, tax: t, rate: rounded };
+  if (n === null || t === null) return null;
+  const rate = rateOf(n, t);
+  return rate === null ? null : { net: n, tax: t, rate };
+}
+
+/** Every discount the receipt names, added up. */
+function discountsNamed(text: string): number {
+  return namedAmounts(text, DISCOUNT_WORD).reduce((sum, discount) => sum + discount, 0);
+}
+
+/**
+ * The tax of a receipt in another currency: the amount a tax label on it
+ * names, and the net that leaves. Nothing is worked out from a rate, and a
+ * subtotal alone states no tax (a discount, shipping or a tip can stand
+ * between it and the total). Null when the receipt names no tax amount.
+ *
+ * `addsUp` says whether the receipt's figures bear this total out: it names
+ * no subtotal to check against, or its subtotal, less any discount, plus the
+ * tax is the total. A total that includes a tip does not add up.
+ */
+function labelledTax(text: string, grossCents: number): { net: number; tax: number; rate: number; addsUp: boolean } | null {
+  for (const tax of namedAmounts(text, TAX_LABEL, NOT_A_TAX_AMOUNT)) {
+    // "Total before tax: 100.00" carries the word too: an amount that is no tax of this total is passed over.
+    const rate = tax < grossCents ? rateOf(grossCents - tax, tax) : null;
+    if (rate === null) continue;
+    const subtotal = namedAmounts(text, NET_LABEL)[0];
+    const addsUp = subtotal === undefined || Math.abs(subtotal - discountsNamed(text) + tax - grossCents) <= 1;
+    return { net: grossCents - tax, tax, rate, addsUp };
+  }
+  return null;
+}
+
+/**
+ * True when the receipt's own discount arithmetic gives this total: the
+ * subtotal it states, less every discount it states. Three labelled figures
+ * that add up are the receipt's proof of its total, in any currency.
+ */
+function discountConfirms(text: string, totalCents: number): boolean {
+  const subtotal = namedAmounts(text, SUBTOTAL_LABEL)[0];
+  const off = discountsNamed(text);
+  return subtotal !== undefined && off > 0 && Math.abs(subtotal - off - totalCents) <= 1;
 }
 
 export interface AmountHints {
@@ -240,8 +344,9 @@ export interface AmountHints {
 
 /**
  * Read the amounts of a receipt. Order of trust: the receipt's own tax
- * arithmetic, then a labelled total that a second reading agrees with, then a
- * labelled total alone (reported as unconfirmed), then nothing.
+ * arithmetic, then a labelled total that a second reading or the receipt's
+ * discount arithmetic agrees with, then a labelled total alone (reported as
+ * unconfirmed), then nothing.
  */
 export function readAmounts(text: string, hints: AmountHints = {}): AmountReading {
   const found = amountsInText(text);
@@ -260,17 +365,31 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   // On the tip line itself, or on the line after it when the label stands alone
   // and is not part of a block of labels whose values follow in another order.
   const bareLabel = (l: string | undefined) => l !== undefined && !AMOUNT_TEST.test(l) && (TOTAL_LABEL.test(l) || NOT_A_TOTAL.test(l));
-  const tipOnLine = found
-    .filter(
-      (a) =>
-        tipLine(lines[a.line]) ||
-        (a.line > 0 && tipLine(lines[a.line - 1]) && !AMOUNT_TEST.test(lines[a.line - 1]) && !bareLabel(lines[a.line - 2])),
-    )
-    .map((a) => a.cents);
+  const namedOn = (isLabel: (l: string) => boolean) =>
+    found
+      .filter(
+        (a) =>
+          isLabel(lines[a.line]) ||
+          (a.line > 0 && isLabel(lines[a.line - 1]) && !AMOUNT_TEST.test(lines[a.line - 1]) && !bareLabel(lines[a.line - 2])),
+      )
+      .map((a) => a.cents);
+  const tipOnLine = namedOn(tipLine);
+  // A discount is named the same way. Subtracted from the bill it leaves a
+  // printed sum, exactly as a tip added to it gives one, and it can be 19
+  // percent of what is left: without its label it would pass for either.
+  const discounts = namedOn((l) => DISCOUNT_WORD.test(l));
   // Cash handed over minus the bill is the change, not a tip: with change on the
   // receipt only an amount the receipt itself labels as the tip is taken.
   const hasChange = /zur(?:ü|u)ck|r(?:ü|u)ckgeld|wechselgeld|\bchange\b/i.test(text);
-  const tipCandidates = !hasTipWord ? [] : hasChange ? tipOnLine : [...new Set([...tipOnLine, ...values])];
+  const unnamed = [...values].filter((v) => !discounts.includes(v));
+  const tipCandidates = !hasTipWord ? [] : hasChange ? tipOnLine : [...new Set([...tipOnLine, ...unnamed])];
+  // Net and tax by their labels, where they bear a total out. German figures
+  // must add up to it; in another currency the tax a label names must fit it.
+  const readStated = (grossCents: number) => {
+    if (german) return statedNetAndTax(text, grossCents);
+    const named = labelledTax(text, grossCents);
+    return named?.addsUp ? named : null;
+  };
 
   let groups: TaxGroup[] = [];
   if (german) {
@@ -278,7 +397,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       .map((l) => ({ rate: l.rate, net: cents(l.net), tax: cents(l.tax) }))
       .filter((l) => rates.includes(l.rate) && l.net > 0 && l.tax > 0 && isTaxOf(l.net, l.tax, l.rate))
       .map((l) => ({ rate: l.rate, net: euros(l.net), tax: euros(l.tax), gross: euros(l.net + l.tax) }));
-    groups = taxGroupsIn(values, rates, { labelled: tipOnLine, candidates: tipCandidates });
+    groups = taxGroupsIn(values, rates, { notTax: [...tipOnLine, ...discounts], tipCandidates });
     if (groups.length === 0 && modelGroups.length > 0) groups = modelGroups;
   }
 
@@ -298,24 +417,26 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     // Largest first: the total is the largest amount a printed tax amount fits.
     const withTax =
       german && TAX_WORD.test(text)
-        ? grossWithTax(values, rates, [...values].filter((v) => v <= SANE_TOTAL_CENTS && !tipOnLine.includes(v)).sort((x, y) => y - x))
+        ? grossWithTax(values, rates, unnamed.filter((v) => v <= SANE_TOTAL_CENTS && !tipOnLine.includes(v)).sort((x, y) => y - x), discounts)
         : null;
     if (withTax) {
       groups = [withTax];
       gross = withTax.gross;
     } else if (labelled.length > 0 && model !== null && labelled.includes(model)) {
       gross = euros(model);
-      stated = statedNetAndTax(text, model);
-    } else if (labelled.length > 0 && statedNetAndTax(text, labelled[labelled.length - 1])) {
+      stated = readStated(model);
+    } else if (labelled.length > 0 && readStated(labelled[labelled.length - 1])) {
       // A receipt that states net, tax and total and whose three figures add up
       // has confirmed its own total, at whatever rate its country uses.
       gross = euros(labelled[labelled.length - 1]);
-      stated = statedNetAndTax(text, labelled[labelled.length - 1]);
+      stated = readStated(labelled[labelled.length - 1]);
     } else if (labelled.length > 0) {
       // The last labelled total is the one after discounts and shipping.
       const pick = labelled[labelled.length - 1];
       gross = euros(pick);
-      checks.push(model !== null && model !== pick ? 'total_conflict' : 'total_unconfirmed');
+      if (model !== null && model !== pick) checks.push('total_conflict');
+      // Subtotal less discount is this total: the receipt has confirmed it itself.
+      else if (!discountConfirms(text, pick)) checks.push('total_unconfirmed');
     } else if (model !== null && values.has(model) && model <= SANE_TOTAL_CENTS) {
       gross = euros(model);
       checks.push('total_unconfirmed');
@@ -330,10 +451,21 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   }
 
   if (groups.length === 0 && stated && gross !== null) {
-    return { gross, net: euros(stated.net), taxRate: stated.rate, taxGroups: [], tip, checks };
+    return { gross, net: euros(stated.net), taxRate: stated.rate, taxPrinted: true, taxGroups: [], tip, checks };
+  }
+  if (!german) {
+    // Another currency. The tax a label names is kept also where it could not
+    // confirm the total (a total only the second reading gave, figures that do
+    // not add up): the doubt about the total is in the checks.
+    const named = gross !== null ? labelledTax(text, cents(gross)) : null;
+    if (named) return { gross, net: euros(named.net), taxRate: named.rate, taxPrinted: true, taxGroups: [], tip, checks };
+    // No tax amount on the receipt: no German rate is assumed for it (a
+    // dollar invoice was given 19 percent). The bill is the net, the rate 0,
+    // and nothing here is an estimate that would need a look.
+    return { gross, net: gross, taxRate: 0, taxPrinted: false, taxGroups: [], tip, checks };
   }
   const net = groups.length > 0 ? euros(groups.reduce((sum, g) => sum + cents(g.net), 0)) : null;
   const taxRate = groups.length > 0 ? groups[0].rate : null;
   if (gross !== null && groups.length === 0) checks.push('tax_estimated');
-  return { gross, net, taxRate, taxGroups: groups, tip, checks };
+  return { gross, net, taxRate, taxPrinted: groups.length > 0, taxGroups: groups, tip, checks };
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
+import * as F from '@/lib/extraction/__tests__/fixtures';
 import type { OcrResult } from '@/lib/ocr-types';
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -393,9 +394,60 @@ describe('taxRate calculation', () => {
   it('falls back to the category-default tax rate when net is not available', () => {
     // Since the multi-currency work, a missing net no longer yields null:
     // defaultTaxRate(category) fills in (19% standard when no category).
-    const ocr = makeOcr('Total: $50.00');
+    const ocr = makeOcr('Total: 50,00 €');
     const result = extractReceiptFields(ocr);
     expect(result.taxRate).toBe(19);
+    expect(result.net).toBe(42.02);
+  });
+
+  it('never falls back to a German rate for a receipt in another currency', () => {
+    // This expectation used to read 19 for "Total: $50.00": German value-added
+    // tax estimated on a dollar receipt that prints no tax.
+    const result = extractReceiptFields(makeOcr('Total: $50.00'));
+    expect(result.currency).toBe('USD');
+    expect(result.taxRate).toBe(0);
+    expect(result.net).toBe(50);
+    expect(result.taxRatePrinted).toBe(false);
+    expect(result.amountChecks).not.toContain('tax_estimated');
+  });
+});
+
+// ── Another Currency, and Discounts ──────────────────────────────────
+
+describe('a receipt in another currency, and a discount above the total', () => {
+  it('a dollar course invoice with 20 percent off: 360 paid, in dollars, net 360, no tax estimated', () => {
+    const result = extractReceiptFields(makeOcr(F.DOLLAR_INVOICE_WITH_DISCOUNT));
+    expect(result.gross).toBe(360);
+    expect(result.currency).toBe('USD');
+    expect(result.net).toBe(360);
+    expect(result.taxRate).toBe(0);
+    expect(result.taxRatePrinted).toBe(false);
+    expect(result.amountChecks).toEqual([]);
+    expect(result.tip).toBeNull();
+    expect(result.taxGroups).toEqual([]);
+  });
+
+  it('a foreign receipt that prints its tax keeps what it states', () => {
+    const stated = extractReceiptFields(makeOcr(F.DOLLAR_INVOICE_WITH_TAX));
+    expect(stated).toMatchObject({ gross: 428.4, net: 360, taxRate: 19, currency: 'USD', taxRatePrinted: true, amountChecks: [] });
+
+    const pounds = extractReceiptFields(makeOcr('Shop Ltd\nNet £100.00\nVAT £20.00\nTotal £120.00'));
+    expect(pounds).toMatchObject({ gross: 120, net: 100, taxRate: 20, currency: 'GBP', taxRatePrinted: true });
+  });
+
+  it('a euro receipt with a discount line keeps its total, its tax group and no tip', () => {
+    const result = extractReceiptFields(makeOcr(F.SHOP_WITH_DISCOUNT));
+    expect(result).toMatchObject({ gross: 25, net: 21.01, taxRate: 19, currency: 'EUR', tip: null, taxRatePrinted: true, amountChecks: [] });
+    expect(result.taxGroups).toEqual([{ rate: 19, net: 21.01, tax: 3.99, gross: 25 }]);
+  });
+
+  it('says whether the text itself shows the currency', () => {
+    expect(extractReceiptFields(makeOcr('Shop Inc\nTotal: $50.00'))).toMatchObject({ currency: 'USD', currencyShown: true });
+    expect(extractReceiptFields(makeOcr('Laden\nSumme 12,00 EUR'))).toMatchObject({ currency: 'EUR', currencyShown: true });
+    // The euro assumed for a receipt that shows no currency is not a reading.
+    expect(extractReceiptFields(makeOcr('Laden\nSumme 12,00'))).toMatchObject({ currency: 'EUR', currencyShown: false });
+    // A majority among mixed signs is a guess.
+    expect(extractReceiptFields(makeOcr('Shop\nUS$ Adapter\nSumme 12,00 €'))).toMatchObject({ currencyShown: false });
   });
 });
 

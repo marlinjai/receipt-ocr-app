@@ -425,6 +425,55 @@ Discount: BLACKFRIDAY (20% off)
 Total
 $360.00`;
 
+/** The same invoice layout with value-added tax charged in dollars: the tax label stands above its amount as well. */
+export const DOLLAR_INVOICE_WITH_TAX = `Example Courses
+Details
+Invoice #29905833
+Nov 27, 2025
+From
+Example Courses
+Items
+Item
+Offer
+Amount
+Premium Package
+Single payment
+$450.00
+Summary
+Subtotal
+$450.00
+Discount: BLACKFRIDAY (20% off)
+-$90.00
+VAT (19%)
+$68.40
+Total
+$428.40`;
+
+/** A shop receipt in euros: a discount above the total, its minus glued to the amount, and one tax group. */
+export const SHOP_WITH_DISCOUNT = `Laden Beispiel GmbH
+Beispielweg 4
+10115 Musterstadt
+02.05.2025 11:42
+Notizbuch A5 12,00
+Füllfederhalter 18,00
+Zwischensumme 30,00
+Rabatt -5,00
+Summe 25,00
+Netto 21,01
+MwSt 19% 3,99
+Gegeben EC 25,00
+St.-Nr. 27/000/00000`;
+
+/** A total by its label alone: no tax line, no subtotal, nothing on the receipt to check it against. */
+export const PARKING_LABEL_ONLY = `Parkhaus Beispiel
+Beispielplatz 1
+10117 Musterstadt
+Parkschein 004711
+12.06.2025 14:02
+Parkdauer 2:14 Std.
+Betrag 7,50 €
+Gute Fahrt`;
+
 /** A total with the tax table in one row: rate, gross, net, and the tax above it. */
 export const THAI_TAX_TABLE_ROW = `ThaiHaus
 ito d

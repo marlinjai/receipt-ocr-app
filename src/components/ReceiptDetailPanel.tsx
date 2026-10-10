@@ -107,6 +107,21 @@ export default function ReceiptDetailPanel({
   };
   const [previewIdx, setPreviewIdx] = useState(0);
   const [dragActive, setDragActive] = useState(false);
+
+  // Escape closes the panel, as it closes every other layer of the app. With
+  // the fullscreen preview open, Escape belongs to the preview.
+  const lightboxOpen = lightboxFile !== null;
+  useEffect(() => {
+    if (lightboxOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      // A dialog opened from inside the panel (a confirmation) handles its own Escape first.
+      if (document.querySelector('.ui-dialog-backdrop')) return;
+      onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [lightboxOpen, onClose]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Upload a file straight into THIS row's Receipt Image (no new row, no OCR
@@ -267,6 +282,9 @@ export default function ReceiptDetailPanel({
 
       {/* Panel — the whole surface is a drop target for the receipt file */}
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={name ? `Beleg: ${String(name)}` : 'Beleg'}
         className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-l border-gray-800 bg-gray-950 shadow-2xl"
         onDragOver={(e) => {
           if (!onUploadFile || !e.dataTransfer.types.includes('Files')) return;
@@ -289,14 +307,16 @@ export default function ReceiptDetailPanel({
         <div className="flex items-start justify-between border-b border-gray-800 px-6 py-5">
           <div className="min-w-0 flex-1 pr-4">
             <h2 className="text-lg font-semibold text-gray-100 leading-tight">
-              {name ? String(name) : 'Receipt'}
+              {name ? String(name) : 'Beleg ohne Namen'}
             </h2>
             {vendor && (
               <p className="mt-1 text-sm text-gray-500">{String(vendor)}</p>
             )}
           </div>
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Schließen"
             className="shrink-0 rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-800 hover:text-gray-300"
           >
             <svg

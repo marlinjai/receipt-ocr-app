@@ -24,7 +24,8 @@ export const MEAL_EVIDENCE_THRESHOLD = 4;
 const SIGNS: Array<{ name: string; weight: number; pattern: RegExp; headOnly?: boolean }> = [
   // The form German restaurants print for the business-meal deduction.
   { name: 'hospitality_form', weight: 4, pattern: /bewirtungsaufw(?:and|endungen)|bewirtete\s+person|anlass\s+d(?:er|\.)\s+bewirtung|bewirtungsbeleg/i },
-  { name: 'table', weight: 2, pattern: /(?:^|\n)\s*(?:tisch|table)\b\s*[:#]?\s*(?:\d|to\s*go|theke)/i },
+  // Anywhere on a line: "Co Working, Tisch 30" names the table as much as "Tisch: 12" does.
+  { name: 'table', weight: 2, pattern: /(?<![\p{L}])(?:tisch|table)\s*[:#]?\s*(?:\d|to\s*go|theke)/iu },
   { name: 'service', weight: 2, pattern: /es\s+bediente\s+sie|bedient\s+von|\bbediener\b|\bkellner(?:in)?\b|\bserver\s*:|\bguests?\s*:\s*\d/i },
   { name: 'venue', weight: 2, headOnly: true, pattern: /\b(?:restaurant|ristorante|ristoranty|trattoria|osteria|pizzeria|taverna?|bistro|brasserie|gasthaus|gasthof|gastst(?:ä|ae)tte|wirtshaus|biergarten|brauhaus|brauerei|brewery|caf(?:é|e)|coffee|kaffeehaus|foodbar|food\s*bar|imbiss|grill|sushi|kitchen|k(?:ü|ue)che|eatery|diner|gastronomie\w*|cantina|tapas|ramen|pho|burger)\b/i },
   { name: 'tip_line', weight: 1, pattern: /trinkgeld|\btip\b|gratuity/i },

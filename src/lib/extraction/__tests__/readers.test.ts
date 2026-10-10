@@ -153,6 +153,12 @@ describe('defect 4: a bar filed as software, a taverna as "other"', () => {
     expect(extractReceiptFields(ocr(F.TAVERNA))).toMatchObject({ category: 'Bewirtung', konto: '4650' });
   });
 
+  it('a table named in the middle of a line counts, a word that only contains "tisch" does not', () => {
+    expect(mealEvidence(F.CAFE_WITH_RECEIPT_NUMBERS)).toMatchObject({ strong: true });
+    expect(mealEvidence(F.CAFE_WITH_RECEIPT_NUMBERS).signs).toContain('table');
+    expect(mealEvidence('Schreibtisch 3 Stück\nSumme 300,00').signs).not.toContain('table');
+  });
+
   it('the printed hospitality form alone decides', () => {
     expect(mealEvidence('Beispiel\nSumme 20,00\nBewirtungsaufwand-Angaben\nBewirtete Personen:\nAnlass der Bewirtung:').strong).toBe(true);
   });

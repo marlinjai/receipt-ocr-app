@@ -155,6 +155,12 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
       const gone = new Set(outcome.deleted);
       setSelectedRows((current) => new Set([...current].filter((id) => !gone.has(id))));
       setDetailRow((current) => (current && gone.has(current.id) ? null : current));
+      // The list drops them at once; the reload below then brings what the server says.
+      setReview((list) =>
+        list
+          .filter((entry) => !gone.has(entry.rowId))
+          .map((entry) => ({ ...entry, duplicates: entry.duplicates.filter((d) => !gone.has(d.rowId)) })),
+      );
       const fileKept = outcome.kept.filter((k) => k.reason === 'file_delete_failed').length;
       const failed = outcome.kept.filter((k) => k.reason === 'failed').length;
       const parts: string[] = [];

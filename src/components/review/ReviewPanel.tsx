@@ -91,7 +91,7 @@ export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, o
       )}
 
       {open && (
-        <ul id={`${panelId}-list`} className="m-0 list-none space-y-2 px-4 pb-4">
+        <ul id={`${panelId}-list`} className="ui-scroll m-0 max-h-[60vh] list-none space-y-2 overflow-y-auto px-4 pb-4">
           {entries.map((entry) => (
             <li key={entry.rowId} className="rounded-lg p-3" style={{ background: 'rgba(10, 10, 15, 0.55)', border: '1px solid var(--border)' }}>
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">

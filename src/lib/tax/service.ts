@@ -1001,7 +1001,7 @@ async function boundaryCashDay(db: PrismaClient, ctx: TaxContext, kind: Boundary
     const facts = loaded.facts[0];
     if (!facts) throw new TaxServiceError('boundary_subject_not_found');
     if (resolveItem(facts, [], await getTaxSettings(db, ctx.workspaceId)).isMeal) throw new TaxServiceError('meal_row');
-    if ((await db.taxAssetPart.count({ where: { rowId: subjectId } })) > 0) throw new TaxServiceError('asset_row');
+    if ((await db.taxAssetPart.count({ where: { authWorkspaceId: ctx.workspaceId, rowId: subjectId } })) > 0) throw new TaxServiceError('asset_row');
     cashDay = (await paymentDayOfRow(db, ctx, subjectId)) ?? facts.record.date;
   }
   if (otherYearOf(cashDay) === null) throw new TaxServiceError('not_in_year_boundary');
@@ -1211,7 +1211,7 @@ async function requireAssetRows(db: PrismaClient, ctx: TaxContext, itemIds: stri
   }
   // A receipt is in an asset as a whole or by lines, never both, and each
   // receipt or line in one asset only.
-  const taken = await db.taxAssetPart.findMany({ where: { rowId: { in: parts.map((p) => p.rowId) } } });
+  const taken = await db.taxAssetPart.findMany({ where: { authWorkspaceId: ctx.workspaceId, rowId: { in: parts.map((p) => p.rowId) } } });
   for (const part of parts) {
     const conflict = taken.some(
       (p) => p.rowId === part.rowId && (p.assetId !== ownAssetId ? p.lineId === part.lineId || p.lineId === '' || part.lineId === '' : false),
@@ -1303,7 +1303,7 @@ export async function saveReceiptLines(db: PrismaClient, ctx: TaxContext, rowId:
   const kept = lines.flatMap((l) => (l.id ? [l.id] : []));
   const dropped = [...existing].filter((id) => !kept.includes(id));
   await db.$transaction([
-    db.taxAssetPart.deleteMany({ where: { rowId, lineId: { in: dropped } } }),
+    db.taxAssetPart.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId, lineId: { in: dropped } } }),
     db.taxReceiptLine.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId, id: { in: dropped } } }),
     ...lines.map((line, position) =>
       line.id
@@ -1319,7 +1319,7 @@ export async function saveReceiptLines(db: PrismaClient, ctx: TaxContext, rowId:
 export async function clearReceiptLines(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<void> {
   await requireOrdinaryRow(db, ctx, rowId, { allowLinesInAsset: true });
   await db.$transaction([
-    db.taxAssetPart.deleteMany({ where: { rowId, lineId: { not: '' } } }),
+    db.taxAssetPart.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId, lineId: { not: '' } } }),
     db.taxReceiptLine.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId } }),
   ]);
 }
@@ -1328,7 +1328,7 @@ export async function clearReceiptLines(db: PrismaClient, ctx: TaxContext, rowId
 export async function saveLineDecision(db: PrismaClient, ctx: TaxContext, lineId: string, raw: unknown | null): Promise<void> {
   const line = await db.taxReceiptLine.findFirst({ where: { id: lineId, authWorkspaceId: ctx.workspaceId } });
   if (!line) throw new TaxServiceError('line_not_found');
-  if ((await db.taxAssetPart.count({ where: { rowId: line.rowId, lineId: { in: ['', lineId] } } })) > 0) throw new TaxServiceError('asset_row');
+  if ((await db.taxAssetPart.count({ where: { authWorkspaceId: ctx.workspaceId, rowId: line.rowId, lineId: { in: ['', lineId] } } })) > 0) throw new TaxServiceError('asset_row');
   if (raw === null) {
     await db.taxReceiptLine.update({ where: { id: lineId }, data: { allocations: Prisma.DbNull, formLineKey: null, employmentLineKey: null } });
     return;
@@ -1366,7 +1366,7 @@ async function requireOrdinaryRow(
   if (resolveItem(facts, [], settings).isMeal) throw new TaxServiceError('meal_row');
   // A receipt that is part of an asset is treated by the asset register. A
   // split receipt may have single lines in an asset while the others are decided.
-  const inAsset = await db.taxAssetPart.count({ where: options.allowLinesInAsset ? { rowId, lineId: '' } : { rowId } });
+  const inAsset = await db.taxAssetPart.count({ where: { authWorkspaceId: ctx.workspaceId, rowId, ...(options.allowLinesInAsset ? { lineId: '' } : {}) } });
   if (inAsset > 0) throw new TaxServiceError('asset_row');
   return facts;
 }

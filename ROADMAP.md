@@ -6,10 +6,22 @@
   (241 receipts with the 20 that were there), 12 private ones under "marlinjai". Two files were
   already present and were not added again. Missing dates were filled from the tax session's
   table, and assignment and share were set from its draft expense table. Done 2026-10-10.
-- [ ] Vendor rules for shares the assignment column cannot hold: the 12 Freenet invoices of the
-  second mobile contract (50 percent employment costs; they still say "Privat"), and the 30
-  percent study part of the Telekom home internet and of Notion next to their 50 percent
-  business part. Set them as vendor rules in the finance area. (2026-10-10)
+- [x] Shares the assignment column cannot hold are set: 50 percent business plus 30 percent
+  study on the 12 Telekom home internet and the 12 Notion invoices (per receipt, in the finance
+  area, study part on "Fortbildungskosten"), and 50 percent study on the 12 invoices of the older
+  mobile contract (Marlin's answers of 2026-10-06 to the tax decision page). Done 2026-10-10.
+- [ ] Sub rows in the receipts table, like sub-items in Notion: a group Marlin creates (a parent
+  row as a container, its receipts underneath, the parent showing their sum and never counting
+  as a receipt itself). Second use, later: a receipt with its parts. The table package already
+  has nested rows (`subItemsConfig`, `parent_row_id`); the app never switched them on. The tax
+  module and the meal register must not count a parent row. Plan first. (2026-10-11)
+- [ ] Explain the gap between the finance area and the tax session's draft for 2025: the app
+  shows about 7,530 euros of business expenses, the draft table (`entwurf-ausgaben-2025.csv` in
+  the 2025 tax folder) claims 14,344.35. First reading, not verified: the draft's low-value
+  assets (4,463, mostly Amazon and eBay order pages that are not among the imported documents),
+  the MacBook (2,849, in the app an open check that leads to an asset, none recorded yet) and
+  the phone lease from bank payments (577) account for most of it. Reconcile line by line and
+  bring in what is missing. (2026-10-11)
 - [ ] The reader misses the invoice date on Google, Adobe, Apple and Microsoft invoices (53 of
   235 imported documents had none; filled by hand on 2026-10-10). Teach it those date formats
   and add them as fixtures. Two imported documents also have no total (one Cursor invoice, the

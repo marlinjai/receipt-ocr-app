@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import {
   DataTableProvider,
@@ -13,12 +13,15 @@ import {
   SearchBar,
   FilterBar,
 } from '@marlinjai/data-table-react';
-import type { ColumnType, Row, GroupConfig, FooterConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
+import type { Column, ColumnType, Row, GroupConfig, FooterConfig, SubItemsConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
 import { deleteReceiptsForGood } from './actions';
 import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
 import FxRecomputePanel from './FxRecomputePanel';
 import BulkEditBar from './BulkEditBar';
+import GroupBar from './GroupBar';
+import GroupPanel from './GroupPanel';
+import { createReceiptGroup, moveReceiptsIntoGroup, removeReceiptsFromGroup, type GroupActionError, type GroupResult } from './group-actions';
 import AiChatSidebar from '@/components/AiChatSidebar';
 import ReceiptDetailPanel from '@/components/ReceiptDetailPanel';
 import ReviewPanel from '@/components/review/ReviewPanel';
@@ -26,6 +29,8 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import type { ReviewEntry } from '@/lib/review/service';
 import { PresignedStorageBrainAdapter } from '@/lib/presigned-file-adapter';
 import { exportCSV } from '@/lib/export-csv';
+import { isGroupRow, receiptsOnly, visibleColumns } from '@/lib/receipts-kind';
+import { deleteWording, deletedWording, groupCellValue, groupsOf, receiptsInGroup, searchWithGroupReceipts, selectionKinds } from '@/lib/groups/view';
 
 const dbAdapter = createServerActionsAdapter();
 const fileAdapter = new PresignedStorageBrainAdapter();
@@ -45,6 +50,18 @@ const REVIEW_ERROR: Record<ReviewActionError, string> = {
   not_found: 'Der Beleg wurde nicht gefunden. Die Liste wurde neu geladen.',
   not_initialized: 'Die Belegtabelle ist noch nicht eingerichtet.',
   failed: 'Das hat nicht geklappt. Es wurde nichts geändert.',
+};
+
+const GROUP_ERROR: Record<GroupActionError, string> = {
+  unauthorized: 'Die Sitzung ist abgelaufen. Bitte neu anmelden.',
+  forbidden: 'Dafür fehlt die Berechtigung.',
+  failed: 'Das hat nicht geklappt. Es wurde nichts geändert.',
+  not_initialized: 'Die Belegtabelle ist noch nicht für Gruppen eingerichtet. Bitte die Seite neu laden.',
+  group_not_found: 'Die Gruppe gibt es nicht mehr. Die Ansicht wurde neu geladen.',
+  row_not_found: 'Ein Beleg wurde nicht gefunden. Es wurde nichts verschoben, die Ansicht wurde neu geladen.',
+  group_in_group: 'Eine Gruppe kann nicht in einer Gruppe liegen. Bitte nur Belege auswählen.',
+  invalid_name: 'Bitte einen Namen mit höchstens 120 Zeichen eingeben.',
+  not_writable: 'Eine Gruppe hat nur ihren Namen und ihre Zuordnung. Beträge und Dateien stehen auf den Belegen.',
 };
 
 function receipts(n: number): string {
@@ -95,11 +112,41 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const [aiSidebarOpen, setAiSidebarOpen] = useState(false);
   const [detailRow, setDetailRow] = useState<Row | null>(null);
-  const displayRows = searchResults ?? rows;
+  const [groupPanelId, setGroupPanelId] = useState<string | null>(null);
+  // A search that finds a group shows the group's receipts with it (see `searchWithGroupReceipts`).
+  const displayRows = useMemo(
+    () => (searchResults ? searchWithGroupReceipts(searchResults, rows, columns) : rows),
+    [searchResults, rows, columns],
+  );
+
+  // A group is a row that holds receipts and is never one itself (see
+  // `lib/receipts-kind.ts`). The table draws groups; everything that counts,
+  // edits in bulk, exports or hands rows to the assistant works on receipts.
+  // The column that says which rows are groups is not shown or edited.
+  const tableColumns = useMemo(() => visibleColumns(columns), [columns]);
+  const receiptRows = useMemo(() => receiptsOnly(rows, columns), [rows, columns]);
+  const displayReceiptRows = useMemo(() => receiptsOnly(displayRows, columns), [displayRows, columns]);
+  const groups = useMemo(() => groupsOf(rows, columns), [rows, columns]);
+  const selection = useMemo(() => selectionKinds(selectedRows, rows, columns), [selectedRows, rows, columns]);
+  const isCountedRow = useCallback((row: Row) => !isGroupRow(row, columns), [columns]);
+  const groupSummary = useCallback(
+    (row: Row, children: Row[], column: Column) => groupCellValue(row, children, column, columns),
+    [columns],
+  );
 
   // Deleting is for good (stored file, row, guests, tax decision), so it is
   // always asked first, in the page, and its outcome is said in the page.
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
+  // Of the rows about to be deleted, the groups: they are dissolved (their receipts stay), which the question has to say.
+  const pendingGroupIds = useMemo(
+    () => new Set(selectionKinds(pendingDelete ?? [], rows, columns).groupIds),
+    [pendingDelete, rows, columns],
+  );
+  const pendingWording = useMemo(() => {
+    const ids = new Set(pendingDelete ?? []);
+    const leftBehind = [...pendingGroupIds].flatMap((id) => receiptsInGroup(id, rows, columns)).filter((r) => !ids.has(r.id)).length;
+    return deleteWording(ids.size - pendingGroupIds.size, pendingGroupIds.size, leftBehind);
+  }, [pendingDelete, pendingGroupIds, rows, columns]);
   const [working, setWorking] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'danger'; text: string } | null>(null);
   const [review, setReview] = useState<ReviewEntry[]>(initialReview ?? []);
@@ -167,10 +214,14 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
           .filter((entry) => !gone.has(entry.rowId))
           .map((entry) => ({ ...entry, duplicates: entry.duplicates.filter((d) => !gone.has(d.rowId)) })),
       );
+      setGroupPanelId((current) => (current && gone.has(current) ? null : current));
       const fileKept = outcome.kept.filter((k) => k.reason === 'file_delete_failed').length;
       const failed = outcome.kept.filter((k) => k.reason === 'failed').length;
       const parts: string[] = [];
-      if (outcome.deleted.length > 0) parts.push(`${receipts(outcome.deleted.length)} gelöscht.`);
+      // A group is dissolved, not deleted as a receipt, and the notice says which was which.
+      const goneGroups = outcome.deleted.filter((id) => pendingGroupIds.has(id)).length;
+      const done = deletedWording(outcome.deleted.length - goneGroups, goneGroups);
+      if (done) parts.push(done);
       if (fileKept > 0) parts.push(`${receipts(fileKept)} behalten: Die gespeicherte Datei ließ sich nicht löschen. Bitte später noch einmal versuchen.`);
       if (failed > 0) parts.push(`${receipts(failed)} behalten: Das Löschen ist fehlgeschlagen.`);
       if (parts.length === 0) parts.push('Die Belege waren schon gelöscht.');
@@ -188,7 +239,98 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
         setReviewError('Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.');
       }
     }
-  }, [pendingDelete, working, refresh, reloadReview]);
+  }, [pendingDelete, pendingGroupIds, working, refresh, reloadReview]);
+
+  // --- Groups ---
+
+  // What a group action did is said in the page; the rows are loaded again
+  // either way, because a refusal usually means the view was out of date.
+  const runGroupAction = useCallback(
+    async <T,>(action: () => Promise<GroupResult<T>>, done: (value: T) => string): Promise<boolean> => {
+      if (working) return false;
+      setWorking(true);
+      let ok = false;
+      try {
+        const result = await action();
+        ok = result.ok;
+        setNotice(result.ok ? { tone: 'ok', text: done(result.value) } : { tone: 'danger', text: GROUP_ERROR[result.error] });
+      } catch {
+        setNotice({ tone: 'danger', text: GROUP_ERROR.failed });
+      } finally {
+        setWorking(false);
+        try {
+          await refresh();
+        } catch {
+          setReviewError('Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.');
+        }
+      }
+      return ok;
+    },
+    [working, refresh],
+  );
+
+  const createGroup = useCallback(
+    async (name: string) => {
+      const members = selection.receiptIds;
+      const ok = await runGroupAction(
+        () => createReceiptGroup(name, members),
+        () => (members.length > 0 ? `Gruppe angelegt, ${receipts(members.length)} hineingelegt.` : 'Leere Gruppe angelegt.'),
+      );
+      if (ok) setSelectedRows(new Set());
+      return ok;
+    },
+    [selection.receiptIds, runGroupAction],
+  );
+
+  const moveIntoGroup = useCallback(
+    async (groupId: string, rowIds: string[]) => {
+      const ok = await runGroupAction(
+        () => moveReceiptsIntoGroup(groupId, rowIds),
+        ({ moved }) => (moved === 0 ? 'Die Belege liegen schon in dieser Gruppe.' : `${receipts(moved)} in die Gruppe gelegt.`),
+      );
+      if (ok) setSelectedRows(new Set());
+    },
+    [runGroupAction],
+  );
+
+  const takeOutOfGroup = useCallback(
+    async (rowIds: string[]) => {
+      await runGroupAction(
+        () => removeReceiptsFromGroup(rowIds),
+        ({ moved }) => (moved === 0 ? 'Die Belege liegen in keiner Gruppe.' : `${receipts(moved)} aus der Gruppe genommen.`),
+      );
+    },
+    [runGroupAction],
+  );
+
+  // A cell edit the server refuses (an amount typed onto a group through another
+  // path, a lost session) must not look saved: say so and show what is stored.
+  const saveCell = useCallback(
+    (rowId: string, columnId: string, value: CellValue) => {
+      updateCell(rowId, columnId, value).catch(() => {
+        setNotice({ tone: 'danger', text: 'Die Änderung wurde nicht gespeichert. Die Tabelle zeigt wieder den gespeicherten Stand.' });
+        void refresh().catch(() => setReviewError('Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.'));
+      });
+    },
+    [updateCell, refresh],
+  );
+
+  // Which groups are folded is kept with the view, like its folded sections, so a reload shows the same table.
+  const subItemsConfig = useMemo<SubItemsConfig>(
+    () => ({ enabled: true, collapsedParents: (currentView?.config?.subItemsConfig as SubItemsConfig | undefined)?.collapsedParents ?? [] }),
+    [currentView?.config?.subItemsConfig],
+  );
+  const setGroupFolded = useCallback(
+    (rowId: string, folded: boolean) => {
+      if (!currentView) return;
+      const before = subItemsConfig.collapsedParents ?? [];
+      const collapsedParents = folded ? [...new Set([...before, rowId])] : before.filter((id) => id !== rowId);
+      void updateView(currentView.id, { config: { ...currentView.config, subItemsConfig: { enabled: true, collapsedParents } } }).catch(() =>
+        setNotice({ tone: 'warn', text: 'Die Ansicht konnte nicht gespeichert werden. Nach dem Neuladen sind die Gruppen wieder wie zuvor auf- oder zugeklappt.' }),
+      );
+    },
+    [currentView, subItemsConfig, updateView],
+  );
 
   // Delete selected rows on Backspace/Delete key
   const handleDeleteSelected = useCallback(() => {
@@ -228,6 +370,10 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
 
   if (!table) return <div className="p-8 text-center text-gray-500">Loading table...</div>;
 
+  // Re-resolved from the live rows: the panel closes by itself when its group is gone.
+  const groupPanelRow = groupPanelId ? rows.find((r) => r.id === groupPanelId) : undefined;
+  const groupPanel = groupPanelRow && isGroupRow(groupPanelRow, columns) ? groupPanelRow : null;
+
   const statusColumn = columns.find((c) => c.name === 'Status');
   const dateColumn = columns.find((c) => c.name === 'Date');
 
@@ -236,14 +382,14 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
       case 'board':
         return (
           <BoardView
-            columns={columns}
-            rows={displayRows}
+            columns={tableColumns}
+            rows={displayReceiptRows}
             selectOptions={selectOptions}
             config={{
               groupByColumnId: statusColumn?.id ?? '',
               showEmptyGroups: true,
             }}
-            onCellChange={(rowId, columnId, value) => updateCell(rowId, columnId, value)}
+            onCellChange={saveCell}
             onAddRow={(cells) => addRow({ cells })}
             onDeleteRow={deleteOne}
             onCreateSelectOption={createSelectOption}
@@ -256,24 +402,29 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
       case 'calendar':
         return (
           <CalendarView
-            columns={columns}
-            rows={displayRows}
+            columns={tableColumns}
+            rows={displayReceiptRows}
             config={{ dateColumnId: dateColumn?.id ?? '' }}
           />
         );
       default:
         return (
           <TableView
-            columns={columns}
+            columns={tableColumns}
             rows={displayRows}
             selectOptions={selectOptions}
-            onCellChange={(rowId, columnId, value) => updateCell(rowId, columnId, value)}
+            onCellChange={saveCell}
+            subItemsConfig={subItemsConfig}
+            onCollapseRow={(rowId) => setGroupFolded(rowId, true)}
+            onExpandRow={(rowId) => setGroupFolded(rowId, false)}
+            getSubItemSummary={groupSummary}
+            isCountedRow={isCountedRow}
             onAddRow={() => addRow()}
             onDeleteRow={deleteOne}
             onColumnResize={(columnId, width) => updateColumn(columnId, { width })}
             onColumnAlignmentChange={(columnId, alignment: TextAlignment) => updateColumn(columnId, { alignment })}
             enableKeyboardNav
-            onRowOpen={(row) => setDetailRow(row)}
+            onRowOpen={(row) => (isGroupRow(row, columns) ? setGroupPanelId(row.id) : setDetailRow(row))}
             onAddProperty={(name, type: ColumnType) => addColumn({ name, type })}
             onCreateSelectOption={createSelectOption}
             onUpdateSelectOption={updateSelectOption}
@@ -464,20 +615,30 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
         </div>
         <div className="flex items-center gap-3">
           <p className="text-sm" style={{ color: 'var(--dt-text-secondary)' }}>
-            {rows.length} items · {columns.length} properties
+            {receiptRows.length} items · {tableColumns.length} properties
           </p>
+          {/* Bulk edits set fields of receipts; a group in the selection is left alone. */}
           <BulkEditBar
-            columns={columns}
+            columns={tableColumns}
             selectOptions={selectOptions}
             loadSelectOptions={loadSelectOptions}
             selectedRows={
               selectedRows.size > 0
-                ? selectedRows
-                : activeRowId
+                ? new Set(selection.receiptIds)
+                : activeRowId && receiptRows.some((r) => r.id === activeRowId)
                   ? new Set([activeRowId])
                   : selectedRows
             }
             updateCell={updateCell}
+          />
+          <GroupBar
+            groups={groups}
+            receiptCount={selection.receiptIds.length}
+            inGroupCount={selection.inGroupIds.length}
+            busy={working}
+            onCreate={createGroup}
+            onMoveInto={(groupId) => void moveIntoGroup(groupId, selection.receiptIds)}
+            onTakeOut={() => void takeOutOfGroup(selection.inGroupIds)}
           />
           {selectedRows.size > 0 && (
             <button
@@ -541,15 +702,14 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
 
       <ConfirmDialog
         open={pendingDelete !== null}
-        title={pendingDelete ? `${receipts(pendingDelete.length)} endgültig löschen?` : ''}
-        confirmLabel="Endgültig löschen"
+        title={pendingDelete ? pendingWording.title : ''}
+        confirmLabel={pendingWording.confirmLabel}
         danger
         busy={working}
         onConfirm={() => void confirmDelete()}
         onCancel={() => setPendingDelete(null)}
       >
-        Der Beleg wird mit seiner gespeicherten Datei, seinen Gästen und seiner steuerlichen Zuordnung gelöscht. Das lässt sich nicht
-        rückgängig machen.
+        {pendingWording.body}
       </ConfirmDialog>
 
       {/* View Switcher */}
@@ -566,11 +726,11 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
       <div className="px-4 py-2 flex gap-2 items-center" style={{ borderBottom: '1px solid var(--dt-border-color)', background: 'rgba(10, 10, 15, 0.3)' }}>
         <SearchBar
           rows={rows}
-          columns={columns}
+          columns={tableColumns}
           onSearchResults={(results, term) => setSearchResults(term ? results : null)}
         />
         <FilterBar
-          columns={columns}
+          columns={tableColumns}
           filters={filters}
           selectOptions={selectOptions}
           onFiltersChange={setFilters}
@@ -599,12 +759,29 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
         />
       )}
 
-      {/* AI Chat Sidebar */}
+      {/* A group opens its own small panel: its receipts, their sum, take one out, dissolve it. */}
+      {groupPanel && (
+        <GroupPanel
+          group={groupPanel}
+          receipts={receiptsInGroup(groupPanel.id, rows, columns)}
+          columns={columns}
+          busy={working}
+          onClose={() => setGroupPanelId(null)}
+          onOpenReceipt={(row) => {
+            setGroupPanelId(null);
+            setDetailRow(row);
+          }}
+          onTakeOut={(rowId) => void takeOutOfGroup([rowId])}
+          onDissolve={() => requestDelete([groupPanel.id])}
+        />
+      )}
+
+      {/* AI Chat Sidebar. It works on receipts: a group is not handed to it. */}
       <AiChatSidebar
         isOpen={aiSidebarOpen}
         onClose={() => setAiSidebarOpen(false)}
-        rows={rows}
-        columns={columns}
+        rows={receiptRows}
+        columns={tableColumns}
         selectOptions={selectOptions}
         onCellChange={(rowId, columnId, value) => updateCell(rowId, columnId, value)}
         onAddRow={async (cells?: Record<string, CellValue>) => { await addRow({ cells }); }}

@@ -8,6 +8,10 @@ import { deleteReceiptRows } from '@/lib/meals/service';
 import { deleteStoredFile } from '@/lib/stored-files';
 import { tenantIdForWorkspace } from '@/lib/auth-workspace';
 import { stampTableOwner } from '@/lib/receipts-table';
+import { GROUP_KIND, ROW_KIND_COLUMN, rowKindColumnId } from '@/lib/receipts-kind';
+import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
+import { rowKind } from '@/lib/groups/service';
+import { readRowLinks } from '@/lib/groups/links';
 import {
   requireReceiptsSession,
   requireTableAccess,
@@ -115,13 +119,25 @@ export async function getColumn(columnId: string): Promise<Column | null> {
   return getAdapter().getColumn(columnId);
 }
 
+/**
+ * The kind column says which rows are groups and therefore no receipts. Renamed,
+ * retyped or deleted, every group would turn into a receipt without an amount,
+ * so it cannot be changed from the table.
+ */
+async function requireNotKindColumn(columnId: string): Promise<void> {
+  const column = await getAdapter().getColumn(columnId);
+  if (column?.name === ROW_KIND_COLUMN) throw new GroupError('not_writable');
+}
+
 export async function updateColumn(columnId: string, updates: UpdateColumnInput): Promise<Column> {
   await requireColumnAccess(columnId, 'receipts.schema.write');
+  await requireNotKindColumn(columnId);
   return getAdapter().updateColumn(columnId, updates);
 }
 
 export async function deleteColumn(columnId: string): Promise<void> {
   await requireColumnAccess(columnId, 'receipts.schema.write');
+  await requireNotKindColumn(columnId);
   return getAdapter().deleteColumn(columnId);
 }
 
@@ -159,11 +175,26 @@ export async function reorderSelectOptions(columnId: string, optionIds: string[]
 
 // --- Row operations ---
 
+/**
+ * A row created from the table is a receipt. It cannot name its own kind (a
+ * group is only made by `createGroup`), and when it is created underneath
+ * another row, that row must be a group of the same table.
+ */
+async function requireCreatableRow(input: CreateRowInput, columns: Column[]): Promise<void> {
+  assertCellsWritable(columns, null, input.cells ?? {});
+  if (input.parentRowId === undefined || input.parentRowId === null) return;
+  const kindColumnId = rowKindColumnId(columns);
+  const parent = kindColumnId ? (await readRowLinks(prisma, input.tableId, kindColumnId, [input.parentRowId])).get(input.parentRowId) : undefined;
+  if (!parent || parent.kind !== GROUP_KIND || parent.archived) throw new GroupError('group_not_found');
+}
+
 export async function createRow(input: CreateRowInput): Promise<Row> {
   await requireTableAccess(input.tableId, 'receipts.row.write');
   const adapter = getAdapter();
+  const columns = await adapter.getColumns(input.tableId);
+  await requireCreatableRow(input, columns);
   if (!input.cells) return adapter.createRow(input);
-  return adapter.createRow({ ...input, cells: withTaxRates(await adapter.getColumns(input.tableId), input.cells) as Record<string, CellValue> });
+  return adapter.createRow({ ...input, cells: withTaxRates(columns, input.cells) as Record<string, CellValue> });
 }
 
 export async function getRow(rowId: string): Promise<Row | null> {
@@ -184,6 +215,8 @@ export async function updateRow(rowId: string, cells: Record<string, CellValue>)
   // `lib/tax-rates.ts`). Every edit reads the columns to know whether it is
   // one; only an edit of the rate or the tax lines also reads the stored row.
   const columns = await adapter.getColumns(tableId);
+  // A group takes its name and the columns the views sort by; no row takes a kind (see `assertCellsWritable`).
+  assertCellsWritable(columns, await rowKind(prisma, tableId, columns, rowId), cells);
   if (!touchesTaxRates(columns, cells)) return adapter.updateRow(rowId, cells);
   const stored = await adapter.getRow(rowId);
   return adapter.updateRow(rowId, withTaxRates(columns, cells, stored?.cells) as Record<string, CellValue>);
@@ -289,6 +322,7 @@ export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<Row[]> {
   const adapter = getAdapter();
   // The columns of each table once, not once per row.
   const columnsByTable = new Map(await Promise.all(tableIds.map(async (tableId) => [tableId, await adapter.getColumns(tableId)] as const)));
+  for (const input of inputs) await requireCreatableRow(input, columnsByTable.get(input.tableId) ?? []);
   return adapter.bulkCreateRows(
     inputs.map((i) => (i.cells ? { ...i, cells: withTaxRates(columnsByTable.get(i.tableId) ?? [], i.cells) as Record<string, CellValue> } : i)),
   );
@@ -357,6 +391,9 @@ export async function addFileReference(input: {
   metadata?: Record<string, unknown>;
 }): Promise<FileReference> {
   await requireRowAccess(input.rowId, 'receipts.row.write');
+  // A group holds receipts and has no document of its own: a file on it would be a receipt nothing counts.
+  const { tableId } = await rowTable(input.rowId);
+  if ((await rowKind(prisma, tableId, await getAdapter().getColumns(tableId), input.rowId)) === GROUP_KIND) throw new GroupError('not_writable');
   return getAdapter().addFileReference(input);
 }
 

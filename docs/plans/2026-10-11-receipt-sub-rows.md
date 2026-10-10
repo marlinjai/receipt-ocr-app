@@ -48,10 +48,12 @@ Later, not built now: a receipt with its parts as sub rows. The design leaves ro
 7. Deleting a group releases its receipts to the top level first and then removes the group. The
    receipts are never deleted with it. Receipts that were selected together with the group are
    deleted, because they were chosen.
-8. A group only accepts its name and the columns the views group by (Category, Konto, Vendor,
+8. A search that finds a group shows the group with its receipts. With a filter set, a group shows
+   the sum of its receipts that match the filter, like every other number on the filtered table.
+9. A group only accepts its name and the columns the views group by (Category, Konto, Vendor,
    Project, Zuordnung). Amounts, dates, files and the kind itself are refused on the server, so no
    amount can ever sit on a group.
-9. A group never reaches the reader: no file can be attached to it, it cannot be retaken, and it is
+10. A group never reaches the reader: no file can be attached to it, it cannot be retaken, and it is
    not offered a new reading.
 
 ## Where receipts are counted, and how a group stays out

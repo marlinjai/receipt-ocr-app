@@ -130,6 +130,23 @@ describe('GET /api/meals/register: output', () => {
     expect(lines[3]).toContain('unvollständig');
   });
 
+  it('an entry edited between two exports reads as edited in the second: every export loads the records again', async () => {
+    // The second line of the file is entry number 1.
+    const entry = async (res: Response) => new TextDecoder().decode(await res.arrayBuffer()).split('\r\n')[1];
+    const first = await entry(await GET(request('year=2025&format=csv&ack=1')));
+    expect(first).toContain('Abstimmung Relaunch Webshop, Angebot Phase 2');
+
+    loadMealRecords.mockResolvedValue([
+      meal({ rowId: 'a', occasion: 'Abnahme Fotoproduktion Herbst', tip: 21 }),
+      meal({ rowId: 'b', date: '2025-08-01', guests: [] }),
+    ]);
+    const second = await entry(await GET(request('year=2025&format=csv&ack=1')));
+    expect(second).toContain('Abnahme Fotoproduktion Herbst');
+    expect(second).not.toContain('Abstimmung Relaunch Webshop');
+    expect(second).toContain('21,00');
+    expect(loadMealRecords).toHaveBeenCalledTimes(2);
+  });
+
   it('PDF: a real document, with the warnings in a header', async () => {
     getTaxSettings.mockResolvedValue(REGULAR_BUSINESS);
     const res = await GET(request('year=2025&format=pdf&ack=1'));

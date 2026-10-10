@@ -1,8 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import MealDetailsForm from '@/components/meals/MealDetailsForm';
-import ReceiptViewer from '@/components/meals/ReceiptViewer';
 import Checkbox from '@/components/ui/Checkbox';
 import type { Contact } from '@/lib/contacts/store';
 import { receiptCount } from '@/lib/meals/batch';
@@ -11,7 +9,7 @@ import type { IncompleteEntry } from '@/lib/meals/register';
 import { mealStatus } from '@/lib/meals/rules';
 import { pruneSelection, selectAllState, toggleAll, toggleSelected } from '@/lib/meals/selection';
 import type { MealGuestEntry, MealRecord, MealTaxSettings } from '@/lib/meals/types';
-import { createContact, saveMeal, saveReceiptRotation } from './actions';
+import MealEditor from './MealEditor';
 import { useReceiptActions } from './useReceiptActions';
 
 interface QueueTabProps {
@@ -266,70 +264,30 @@ export default function QueueTab({
       </div>
 
       {opened && (
-        <section
-          aria-label="Angaben zur Bewirtung"
-          className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] xl:items-start 2xl:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]"
-        >
-          <div className="glass-panel rounded-xl p-4 sm:p-6">
-            <div className="mb-5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b pb-4" style={{ borderColor: 'var(--border-subtle)' }}>
-              <h2 className="min-w-0 text-lg font-semibold leading-snug" style={{ color: 'var(--foreground)' }}>
-                {opened.record.name || opened.record.vendor || 'Beleg'}
-              </h2>
-              <p className="text-sm tabular-nums" style={{ color: 'var(--muted)' }}>
-                {formatDay(opened.record.date)}
-                {opened.record.gross ? ` · ${opened.record.gross.toFixed(2).replace('.', ',')} ${opened.record.currency}` : ''}
-              </p>
-            </div>
-            <MealDetailsForm
-              record={opened.record}
-              contacts={contacts}
-              settings={settings}
-              defaultHost={sessionHost || defaultHost}
-              onHostEntered={setSessionHost}
-              previousGuests={previousGuests}
-              saveLabel="Speichern und weiter"
-              onSave={saveMeal}
-              onCreateContact={createContact}
-              onContactCreated={onContactCreated}
-              onSaved={(record) => {
-                if (record.guests.length > 0) setPreviousGuests(record.guests);
-                const stillOpen = mealStatus(record).kind === 'incomplete';
-                const label = record.vendor || record.name || 'Beleg';
-                setLastSaved(stillOpen ? `${label}: gespeichert, noch unvollständig.` : `${label}: gespeichert.`);
-                if (!stillOpen) {
-                  // Advance to the entry after this one (or the first, at the end).
-                  const index = queue.findIndex((e) => e.record.rowId === record.rowId);
-                  const next = queue[index + 1] ?? queue.find((e) => e.record.rowId !== record.rowId) ?? null;
-                  setOpenId(next ? next.record.rowId : null);
-                }
-                onRecordSaved(record);
-              }}
-            />
-            <p className="mt-3 text-xs" style={{ color: 'var(--muted)' }}>
-              Strg oder Cmd + Enter speichert.
-            </p>
-          </div>
-          {/*
-            The receipt is what gets read while typing guests and occasion, so
-            it has the widest column and the full height of the window. Below
-            the two-column width it comes FIRST, above the form.
-          */}
-          <ReceiptViewer
-            key={opened.record.rowId}
-            className="h-[62svh] max-xl:order-first xl:sticky xl:top-4 xl:h-[calc(100svh-2rem)]"
-            files={opened.record.files}
-            onRotate={async (file, rotation) => {
-              try {
-                const result = await saveReceiptRotation(opened.record.rowId, file.refId, rotation);
-                if (!result.ok) return false;
-                onRecordsSaved([result.value.record]);
-                return true;
-              } catch {
-                return false;
-              }
-            }}
-          />
-        </section>
+        <MealEditor
+          record={opened.record}
+          contacts={contacts}
+          settings={settings}
+          defaultHost={sessionHost || defaultHost}
+          onHostEntered={setSessionHost}
+          previousGuests={previousGuests}
+          saveLabel="Speichern und weiter"
+          onContactCreated={onContactCreated}
+          onRecordsSaved={onRecordsSaved}
+          onSaved={(record) => {
+            if (record.guests.length > 0) setPreviousGuests(record.guests);
+            const stillOpen = mealStatus(record).kind === 'incomplete';
+            const label = record.vendor || record.name || 'Beleg';
+            setLastSaved(stillOpen ? `${label}: gespeichert, noch unvollständig.` : `${label}: gespeichert.`);
+            if (!stillOpen) {
+              // Advance to the entry after this one (or the first, at the end).
+              const index = queue.findIndex((e) => e.record.rowId === record.rowId);
+              const next = queue[index + 1] ?? queue.find((e) => e.record.rowId !== record.rowId) ?? null;
+              setOpenId(next ? next.record.rowId : null);
+            }
+            onRecordSaved(record);
+          }}
+        />
       )}
 
       {actions.overlays}

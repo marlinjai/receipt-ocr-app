@@ -13,6 +13,7 @@ const setMealTypeForRows = vi.fn();
 const deleteReceiptRows = vi.fn();
 const deleteFile = vi.fn();
 const setReceiptFileRotation = vi.fn();
+const saveMealDetails = vi.fn();
 
 vi.mock('@/lib/auth', () => ({ auth: { requireAction: (...a: unknown[]) => requireAction(...a) } }));
 vi.mock('@/lib/auth-guards', () => {
@@ -38,11 +39,14 @@ vi.mock('@/lib/meals/service', () => {
     setMealTypeForRows: (...a: unknown[]) => setMealTypeForRows(...a),
     deleteReceiptRows: (...a: unknown[]) => deleteReceiptRows(...a),
     setReceiptFileRotation: (...a: unknown[]) => setReceiptFileRotation(...a),
+    saveMealDetails: (...a: unknown[]) => saveMealDetails(...a),
   };
 });
 
+import { ContactError } from '@/lib/contacts/store';
+import { MealInputError, type MealDetailsInput } from '@/lib/meals/input';
 import { MealServiceError } from '@/lib/meals/service';
-import { deleteMealReceipts, markMealsNotMeal, restoreMeals, saveReceiptRotation } from './actions';
+import { deleteMealReceipts, markMealsNotMeal, restoreMeals, saveMeal, saveReceiptRotation } from './actions';
 
 const WS = { id: 'ws-a', slug: 'beispiel-studio', role: 'member', tenantId: 't-a' };
 const SESSION = { memberships: [WS], activeWorkspace: WS };
@@ -54,6 +58,7 @@ beforeEach(() => {
   deleteReceiptRows.mockReset();
   deleteFile.mockReset();
   setReceiptFileRotation.mockReset();
+  saveMealDetails.mockReset();
   requireAction.mockResolvedValue(SESSION);
   setMealTypeForRows.mockResolvedValue(EMPTY);
   deleteReceiptRows.mockResolvedValue(EMPTY);
@@ -168,5 +173,69 @@ describe('saveReceiptRotation', () => {
   it('a receipt of another workspace or a deleted one reads as not found', async () => {
     setReceiptFileRotation.mockRejectedValue(new (MealServiceError as never as new (c: string) => Error)('row_not_found'));
     expect(await saveReceiptRotation('row-x', 'ref-x', 90)).toEqual({ ok: false, error: 'not_found', detail: 'row_not_found' });
+  });
+});
+
+describe('saveMeal: the form save, also for an entry that is already in the register', () => {
+  const INPUT: MealDetailsInput = {
+    mealType: 'business_meal_external',
+    occasion: 'Abnahme Fotoproduktion Herbst',
+    place: 'Testlokal, Musterstraße 1, 12345 Musterstadt',
+    host: 'Inhaber Beispiel',
+    tip: 21,
+    consumption: 'dine_in',
+    taxLines: null,
+    guestContactIds: ['c-1', 'c-2'],
+    date: null,
+    gross: null,
+  };
+  const serviceError = (code: string) => new (MealServiceError as never as new (c: string) => Error)(code);
+
+  it('needs the write permission, works in the active workspace of the session and hands back the stored record', async () => {
+    const stored = { record: { rowId: 'row-1', occasion: INPUT.occasion }, changed: true };
+    saveMealDetails.mockResolvedValue(stored);
+    expect(await saveMeal('row-1', INPUT)).toEqual({ ok: true, value: stored });
+    expect(requireAction).toHaveBeenCalledWith('receipts.row.write');
+    expect(saveMealDetails).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, 'row-1', INPUT);
+  });
+
+  it('an edit that leaves the entry incomplete is stored like any other: the action refuses nothing on completeness', async () => {
+    const emptied = { ...INPUT, guestContactIds: [], occasion: 'Geschäftsessen' };
+    saveMealDetails.mockResolvedValue({ record: { rowId: 'row-1', guests: [] }, changed: true });
+    expect(await saveMeal('row-1', emptied)).toMatchObject({ ok: true, value: { changed: true } });
+    expect(saveMealDetails.mock.calls[0][3]).toEqual(emptied);
+  });
+
+  it('saving what is already stored reports that nothing changed', async () => {
+    saveMealDetails.mockResolvedValue({ record: { rowId: 'row-1' }, changed: false });
+    expect(await saveMeal('row-1', INPUT)).toEqual({ ok: true, value: { record: { rowId: 'row-1' }, changed: false } });
+  });
+
+  it('without the write permission or with an expired session nothing is written', async () => {
+    requireAction.mockRejectedValueOnce(Object.assign(new Error('forbidden'), { status: 403 }));
+    expect(await saveMeal('row-1', INPUT)).toEqual({ ok: false, error: 'forbidden' });
+    requireAction.mockRejectedValueOnce(Object.assign(new Error('unauthorized'), { status: 401 }));
+    expect(await saveMeal('row-1', INPUT)).toEqual({ ok: false, error: 'unauthorized' });
+    expect(saveMealDetails).not.toHaveBeenCalled();
+  });
+
+  it('every failure of the save comes back as a code the form can word, never as a thrown error', async () => {
+    const cases: Array<[Error, object]> = [
+      [serviceError('row_not_found'), { ok: false, error: 'not_found', detail: 'row_not_found' }],
+      [serviceError('unknown_contact'), { ok: false, error: 'not_found', detail: 'unknown_contact' }],
+      [serviceError('archived_contact'), { ok: false, error: 'contact_archived' }],
+      [serviceError('schema_outdated'), { ok: false, error: 'not_initialized', detail: 'schema_outdated' }],
+      [new MealInputError('invalid_tip'), { ok: false, error: 'invalid_input', detail: 'invalid_tip' }],
+      [new ContactError('stale'), { ok: false, error: 'contact_stale' }],
+      [new Error('database down'), { ok: false, error: 'failed' }],
+    ];
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const [thrown, expected] of cases) {
+      saveMealDetails.mockRejectedValueOnce(thrown);
+      expect(await saveMeal('row-1', INPUT)).toEqual(expected);
+    }
+    // Only the unexpected one is logged.
+    expect(logged).toHaveBeenCalledTimes(1);
+    logged.mockRestore();
   });
 });

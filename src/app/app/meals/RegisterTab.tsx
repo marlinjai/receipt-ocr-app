@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
-import { formatGuest } from '@/lib/contacts/store';
+import { formatGuest, type Contact } from '@/lib/contacts/store';
 import {
   DISMISSED_HINT,
   EXCLUSION_LABELS,
@@ -11,22 +11,33 @@ import {
   mealActionMessage,
   missingList,
   missingSummary,
+  registerEditNotice,
 } from '@/lib/meals/messages';
 import { buildRegister, registerYearChoices, undatedMeals } from '@/lib/meals/register';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { saveMealTaxSettings } from './actions';
+import MealEditor from './MealEditor';
 import { useReceiptActions } from './useReceiptActions';
 
 interface RegisterTabProps {
   records: MealRecord[];
+  /** The guest picker of the editor offers these. */
+  contacts: Contact[];
   settings: MealTaxSettings;
+  defaultHost: string;
   onSettingsChanged: (settings: MealTaxSettings) => void;
+  /** An entry saved from the editor. */
+  onRecordSaved: (record: MealRecord) => void;
   /** Records changed by a list action (now "Keine Bewirtung"). */
   onRecordsSaved: (records: MealRecord[]) => void;
   /** Receipts that no longer exist. */
   onRecordsRemoved: (rowIds: string[]) => void;
+  onContactCreated: (contact: Contact) => void;
   onOpenQueue: () => void;
 }
+
+/** Where the focus goes once the next render is on the page. */
+type FocusRequest = { to: 'editor' } | { to: 'row'; rowId: string };
 
 type ExportFormat = 'csv' | 'pdf';
 
@@ -46,10 +57,14 @@ function saveBlob(blob: Blob, fileName: string) {
 
 export default function RegisterTab({
   records,
+  contacts,
   settings,
+  defaultHost,
   onSettingsChanged,
+  onRecordSaved,
   onRecordsSaved,
   onRecordsRemoved,
+  onContactCreated,
   onOpenQueue,
 }: RegisterTabProps) {
   const actions = useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint: DISMISSED_HINT });
@@ -66,6 +81,81 @@ export default function RegisterTab({
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportWarnings, setExportWarnings] = useState<string[]>([]);
   const [confirm, setConfirm] = useState<{ format: ExportFormat; count: number } | null>(null);
+
+  // Editing one entry. Only the row id is kept: the entry itself is looked up
+  // in the register on every render, so an entry that leaves the shown table
+  // (deleted, taken out, no longer complete) closes its editor by itself.
+  const editorId = useId();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDirty, setEditDirty] = useState(false);
+  const [pendingDiscard, setPendingDiscard] = useState<{ run: () => void } | null>(null);
+  const [savedNote, setSavedNote] = useState('');
+  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+  const editorHeading = useRef<HTMLHeadingElement>(null);
+  const editButtons = useRef(new Map<string, HTMLButtonElement>());
+  const editing = register.entries.find((e) => e.record.rowId === editingId) ?? null;
+  const unsaved = editing !== null && editDirty;
+  // Forget an entry that is gone, so it does not open again by itself should it
+  // return to the register later (taken back from "Keine Bewirtung", say).
+  if (editingId !== null && !editing) {
+    setEditingId(null);
+    setEditDirty(false);
+  }
+
+  // Runs after the render that opened or closed the editor, and after a
+  // closing dialog has handed the focus back, so this is what finally holds.
+  useEffect(() => {
+    if (!focusRequest) return;
+    if (focusRequest.to === 'editor') {
+      editorHeading.current?.scrollIntoView?.({ block: 'nearest' });
+      editorHeading.current?.focus({ preventScroll: true });
+    } else {
+      editButtons.current.get(focusRequest.rowId)?.focus();
+    }
+  }, [focusRequest]);
+
+  /** Close the editor without saving. With a row id the focus returns to that row's button. */
+  const closeEditor = (returnTo: string | null) => {
+    setEditingId(null);
+    setEditDirty(false);
+    if (returnTo) setFocusRequest({ to: 'row', rowId: returnTo });
+  };
+
+  /** Do something that drops the open draft: straight away when nothing is unsaved, else after asking. */
+  const afterDiscard = (run: () => void) => {
+    if (unsaved) setPendingDiscard({ run });
+    else run();
+  };
+
+  const startEdit = (rowId: string) => {
+    if (editing?.record.rowId === rowId) {
+      setFocusRequest({ to: 'editor' });
+      return;
+    }
+    afterDiscard(() => {
+      setEditingId(rowId);
+      setEditDirty(false);
+      setSavedNote('');
+      setFocusRequest({ to: 'editor' });
+    });
+  };
+
+  const onEditSaved = (record: MealRecord, changed: boolean) => {
+    onRecordSaved(record);
+    // Nothing was written: the form says so itself, and the editor stays open.
+    if (!changed) return;
+    const moved = registerEditNotice(record, activeYear);
+    if (moved) {
+      // The row is gone from this table, so the notice takes the focus instead of its button.
+      closeEditor(null);
+      actions.notify(moved);
+      return;
+    }
+    setSavedNote(`„${record.vendor || record.name || 'Beleg'}“: gespeichert.`);
+    closeEditor(record.rowId);
+  };
+
+  const onEditDirty = useCallback((dirty: boolean) => setEditDirty(dirty), []);
 
   const answer = async (smallBusiness: boolean) => {
     if (settingBusy) return;
@@ -188,7 +278,16 @@ export default function RegisterTab({
       <div className="flex flex-wrap items-end justify-between gap-3">
         <label className="block">
           <span className="ui-label">Jahr</span>
-          <select className="ui-input" style={{ minWidth: '7rem' }} value={activeYear} onChange={(e) => setYear(Number(e.target.value))}>
+          <select className="ui-input" style={{ minWidth: '7rem' }} value={activeYear}
+            onChange={(e) => {
+              // Another year has another table: the entry being edited is not in it.
+              const next = Number(e.target.value);
+              afterDiscard(() => {
+                closeEditor(null);
+                setYear(next);
+              });
+            }}
+          >
             {years.map((y) => (
               <option key={y} value={y}>
                 {y}
@@ -252,6 +351,41 @@ export default function RegisterTab({
         </div>
       )}
 
+      {/*
+        Always in the page and never hidden, so a screen reader hears a save that
+        left the entry where it is. Its line is reserved: the table does not move.
+      */}
+      <p role="status" className="min-h-4 text-xs" style={{ color: 'var(--muted)' }}>
+        {savedNote}
+      </p>
+
+      {/*
+        The editor sits above the table and appears without any motion. Its
+        row stays marked below, and Escape or "Abbrechen" lead back to it.
+      */}
+      {editing && (
+        <MealEditor
+          id={editorId}
+          headingRef={editorHeading}
+          title={`Nr. ${editing.no} bearbeiten: ${editing.record.name || editing.record.vendor || 'Beleg'}`}
+          record={editing.record}
+          contacts={contacts}
+          settings={settings}
+          defaultHost={defaultHost}
+          secondaryAction={{ label: 'Abbrechen', onClick: () => closeEditor(editing.record.rowId) }}
+          onSaved={onEditSaved}
+          onRecordsSaved={onRecordsSaved}
+          onContactCreated={onContactCreated}
+          onDirtyChange={onEditDirty}
+          onKeyDown={(e) => {
+            // The guest picker closes its own list on Escape and stops the key there.
+            if (e.key !== 'Escape' || e.defaultPrevented) return;
+            const rowId = editing.record.rowId;
+            afterDiscard(() => closeEditor(rowId));
+          }}
+        />
+      )}
+
       {register.entries.length === 0 ? (
         <div className="glass-panel rounded-xl p-8 text-center text-sm" style={{ color: 'var(--muted)' }}>
           Für {activeYear} gibt es noch keine vollständige Bewirtung.
@@ -277,8 +411,17 @@ export default function RegisterTab({
               </tr>
             </thead>
             <tbody>
-              {register.entries.map(({ no, record, deduction }) => (
-                <tr key={record.rowId} className="border-t align-top" style={{ borderColor: 'var(--border-subtle)', color: 'var(--foreground)' }}>
+              {register.entries.map(({ no, record, deduction }) => {
+                const isEditing = editing?.record.rowId === record.rowId;
+                const spoken = `Nr. ${no}, ${record.place}, ${formatDay(record.date)}`;
+                return (
+                <tr
+                  key={record.rowId}
+                  className="ui-table-row border-t align-top"
+                  data-editing={isEditing}
+                  aria-current={isEditing ? 'true' : undefined}
+                  style={{ borderColor: 'var(--border-subtle)', color: 'var(--foreground)' }}
+                >
                   <td className="px-3 py-2.5 tabular-nums">{no}</td>
                   <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{formatDay(record.date)}</td>
                   <td className="px-3 py-2.5">{record.place}</td>
@@ -297,12 +440,28 @@ export default function RegisterTab({
                   <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums">{formatEuro(deduction?.nonDeductible)}</td>
                   <td className="px-3 py-2">
                     <div className="flex justify-end gap-0.5">
+                      {/* The words change too, so the row being edited is not marked by colour alone. */}
+                      <button
+                        type="button"
+                        ref={(el) => {
+                          if (el) editButtons.current.set(record.rowId, el);
+                          else editButtons.current.delete(record.rowId);
+                        }}
+                        className="ui-btn ui-btn-sm ui-btn-ghost whitespace-nowrap"
+                        disabled={actions.busy}
+                        aria-expanded={isEditing}
+                        aria-controls={isEditing ? editorId : undefined}
+                        aria-label={`${isEditing ? 'Wird bearbeitet' : 'Bearbeiten'}: ${spoken}`}
+                        onClick={() => startEdit(record.rowId)}
+                      >
+                        {isEditing ? 'Wird bearbeitet' : 'Bearbeiten'}
+                      </button>
                       {/* A complete entry carries tax weight: taking it out of the register always asks first. */}
                       <button
                         type="button"
                         className="ui-btn ui-btn-sm ui-btn-ghost whitespace-nowrap"
                         disabled={actions.busy}
-                        aria-label={`Keine Bewirtung: Nr. ${no}, ${record.place}, ${formatDay(record.date)}`}
+                        aria-label={`Keine Bewirtung: ${spoken}`}
                         onClick={() => actions.markNotMeal([record], { confirm: true })}
                       >
                         Keine Bewirtung
@@ -311,7 +470,7 @@ export default function RegisterTab({
                         type="button"
                         className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-danger"
                         disabled={actions.busy}
-                        aria-label={`Löschen: Nr. ${no}, ${record.place}, ${formatDay(record.date)}`}
+                        aria-label={`Löschen: ${spoken}`}
                         onClick={() => actions.requestDelete([record])}
                       >
                         Löschen
@@ -319,7 +478,8 @@ export default function RegisterTab({
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
             {register.totals && (
               <tfoot>
@@ -403,6 +563,26 @@ export default function RegisterTab({
               : `${confirm.count} Bewirtungen aus ${activeYear} sind unvollständig.`}{' '}
             Unvollständige Einträge werden in der Datei gesondert aufgeführt und zählen nicht in die Summen. Abziehbar
             sind sie erst, wenn Teilnehmer und Anlass erfasst sind.
+          </p>
+        )}
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={pendingDiscard !== null}
+        title="Ungespeicherte Änderungen verwerfen?"
+        confirmLabel="Änderungen verwerfen"
+        cancelLabel="Weiter bearbeiten"
+        danger
+        onCancel={() => setPendingDiscard(null)}
+        onConfirm={() => {
+          const pending = pendingDiscard;
+          setPendingDiscard(null);
+          pending?.run();
+        }}
+      >
+        {editing && (
+          <p>
+            Die Änderungen an Nr. {editing.no} ({editing.record.name || editing.record.vendor || 'Beleg'}) sind noch
+            nicht gespeichert. Der Eintrag bleibt dann so, wie er im Verzeichnis steht.
           </p>
         )}
       </ConfirmDialog>

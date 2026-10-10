@@ -153,8 +153,12 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
           {tab === 'register' && (
             <RegisterTab
               records={mealRecords}
+              contacts={contacts}
               settings={settings}
+              defaultHost={defaultHost}
               onSettingsChanged={setSettings}
+              onRecordSaved={onRecordSaved}
+              onContactCreated={onContactUpserted}
               onRecordsSaved={onRecordsSaved}
               onRecordsRemoved={onRecordsRemoved}
               onOpenQueue={() => setTab('queue')}

@@ -24,15 +24,13 @@
   yet proven on production: dragging a group from one section into another. (2026-10-11)
 - [ ] A receipt with its parts as sub rows, the second use of sub rows (further values of the
   hidden `Row Kind` column). Not built; the group design leaves room for it. (2026-10-11)
-- [ ] Read receipts with a model that sees the page, not only the recognized text. The wrong
-  totals of the 2025 import (net stored for gross on 26 receipts) came from text recognition
-  that returns labels and amounts in separate runs, after which the reader believed a language
-  model that had only that text, cut at 6,000 characters. The fixes of 2026-10-11 settle the
-  total from the invoice's own arithmetic; what they cannot settle (a total that only its
-  position on the page pairs with its label, such as the customs invoice) needs either the
-  word positions the text recognition already returns or a vision model given the image. Write
-  the plan: which model, what it costs per receipt, and how its answer is checked against the
-  arithmetic. Asked for by Marlin on 2026-10-11. (2026-10-11)
+- [ ] Read receipts with a model that sees the page, not only the recognized text. Text
+  recognition returns labels and amounts in separate runs, so 26 receipts of the 2025 import
+  stored the net for the gross. The classification call now gets the page itself and also reads
+  date, total, currency, net and tax lines; the invoice's arithmetic and the recognized text
+  check its answer, and a stored receipt can be read again ("Seite neu lesen"). Open until it is
+  deployed and the wrong receipts of the import are read again on production. Plan:
+  [docs/plans/2026-10-11-vision-reading.md](docs/plans/2026-10-11-vision-reading.md). (2026-10-11)
 - [ ] Bring the app up to the tax session's draft for 2025. The gap is explained to one cent
   (2026-10-11): the app showed 7,547.54 euros of business expenses, the draft table
   (`entwurf-ausgaben-2025.csv` in the 2025 tax folder) 14,344.35. The steps: the MacBook waits

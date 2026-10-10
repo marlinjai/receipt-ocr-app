@@ -176,12 +176,27 @@ the admin key from the secrets proxy; `actor_email` is Marlin's account.
    `whiz-art-media-retired-20261010`, name "Main (retired 2026-10-10)".
 5. `DELETE` that workspace (auth-brain marks it deleted; its one membership is revoked).
 6. `PATCH` workspace `019fa320-8e10-7978-b0a6-0b0d3bad83c3`: `tenant_id`
-   `019fa877-1771-7ab8-9696-c804bc32d5f3`, slug `whiz-art-media`, name "Main".
+   `019fa877-1771-7ab8-9696-c804bc32d5f3`, slug `whiz-art-media`, name "Main". If the database
+   still refuses the slug (a server error; the route cannot see retired workspaces, so it cannot
+   be checked beforehand), use the slug `receipts` instead. Nothing in the receipts or contacts
+   database has been touched at that point.
 7. Signed `apply`, at once, with the same body as step 3. A 502 with `step: "rows"` is repeated.
+   Before sending it, the newest "Build & Deploy" run of the receipts app must not be in
+   progress: a restart of the app in the middle of the apply is the one realistic way to stop it
+   half way.
 8. Signed `dry_run` again: `rows.restamp` 0, `contacts.move` 0, `contacts.alreadyAtTarget` 4.
 9. `POST` a fresh workspace for "marlinjai" (`tenant_id` `019f6a90-8b72-7de9-946f-e81b2ddf3f60`,
-   name "Main", slug `main`, which step 6 freed).
+   name "Main", slug `main`, which step 6 freed; if the database refuses it, slug `personal`).
 10. The browser checks below.
+11. Afterwards: tick the roadmap line and set this plan to completed; on
+    `knowledge-base/ROADMAP.md`, change the admin line on the receipts queues so it says the 13
+    open business meals of 2025 and the review list now live under Whiz-Art Media (asked for by
+    the session that wrote that line); enter the guests and occasions of those 13 meals once
+    Marlin has given them (answer page `~/software-dev/decision-pages/2026-10-10-business-meals-2025.html`).
+
+The signed dry run of step 3 was sent once on 2026-10-10 against production and answered exactly
+the expected numbers with no blocker; a read of both databases afterwards showed nothing changed.
+It is sent again as the gate when the move is run.
 
 ## Verification (in the browser, by the session that runs the move)
 

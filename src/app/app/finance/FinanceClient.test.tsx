@@ -6,6 +6,9 @@ import { rulesForYear } from '@/lib/tax/rules';
 import type { StatementItem, StatementView } from '@/lib/tax/service';
 
 const actions = vi.hoisted(() => ({
+  saveLines: vi.fn(),
+  removeLines: vi.fn(),
+  decideLine: vi.fn(),
   saveIssuedInvoice: vi.fn(),
   removeIssuedInvoice: vi.fn(),
   recordStatusChange: vi.fn(),
@@ -35,6 +38,13 @@ beforeEach(() => {
 
 function item(overrides: Partial<StatementItem> & { rowId: string }): StatementItem {
   return {
+    itemId: overrides.rowId,
+    lineId: null,
+    lineDescription: null,
+    lineGrossCents: null,
+    lineNetCents: null,
+    receiptGrossCents: 3999,
+    receiptLines: [],
     label: `Rechnung ${overrides.rowId}`,
     vendor: 'Netzwerk Nord GmbH',
     vendorKey: 'netzwerk nord',
@@ -130,7 +140,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     smallBusinessAtYearEnd: true,
     statusChanges: [],
     vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, settlements: [] },
-    payments: { accounts: [], yearCount: 0, linkedCount: 0, unclassified: [], treatments: [], open: [], links: [] },
+    payments: { accounts: [], yearCount: 0, linkedCount: 0, unclassified: [], treatments: [], open: [], overridden: [], receiptTargets: [], invoiceTargets: [], links: [] },
     vendorRules: [],
     initialized: true,
     ...overrides,
@@ -292,6 +302,50 @@ describe('FinanceClient: notices and statement', () => {
     expect(await screen.findByText('Netzwerk Nord GmbH: Einzelentscheidung entfernt.')).toBeTruthy();
   });
 
+  it('a decided receipt can be split from the statement, and a split can be changed or undone there', async () => {
+    const user = userEvent.setup();
+    actions.saveLines.mockResolvedValue({ ok: true, value: view([decided('a')]) });
+    render(<FinanceClient initial={view([{ ...decided('a'), receiptGrossCents: 3999 }])} />);
+    await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
+    const row = screen.getByText('Netzwerk Nord GmbH').closest('li') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: 'Ändern' }));
+    await user.click(within(row).getByRole('button', { name: 'In Positionen aufteilen' }));
+    await user.type(within(row).getByLabelText('Position 1'), 'Anschluss');
+    await user.type(within(row).getAllByLabelText('Betrag')[0], '30');
+    await user.type(within(row).getByLabelText('Position 2'), 'Gerät');
+    await user.type(within(row).getAllByLabelText('Betrag')[1], '9,99');
+    await user.click(within(row).getByRole('button', { name: 'Positionen speichern' }));
+    expect(actions.saveLines).toHaveBeenCalledWith(2025, 'a', [
+      { description: 'Anschluss', grossCents: 3000, netCents: null },
+      { description: 'Gerät', grossCents: 999, netCents: null },
+    ]);
+  });
+
+  it('re-entry: a split that no longer adds up opens with its stored lines and their ids, and cannot be skipped', async () => {
+    const user = userEvent.setup();
+    actions.saveLines.mockResolvedValue({ ok: true, value: view([decided('a')]) });
+    const broken = item({
+      rowId: 'a',
+      receiptGrossCents: 4999,
+      receiptLines: [
+        { id: 'l-1', description: 'Anschluss', grossCents: 3000, netCents: null },
+        { id: 'l-2', description: 'Gerät', grossCents: 999, netCents: null },
+      ],
+      checks: [{ itemId: 'a', kind: 'lines_do_not_sum', blocking: true }],
+    });
+    render(<FinanceClient initial={view([broken])} />);
+    expect(screen.getByText(/nicht mehr seinen Betrag ergeben/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Abbrechen' })).toBeNull();
+    expect((screen.getByLabelText('Position 2') as HTMLInputElement).value).toBe('Gerät');
+    await user.clear(screen.getAllByLabelText('Betrag')[1]);
+    await user.type(screen.getAllByLabelText('Betrag')[1], '19,99');
+    await user.click(screen.getByRole('button', { name: 'Positionen speichern' }));
+    expect(actions.saveLines).toHaveBeenCalledWith(2025, 'a', [
+      { id: 'l-1', description: 'Anschluss', grossCents: 3000, netCents: null },
+      { id: 'l-2', description: 'Gerät', grossCents: 1999, netCents: null },
+    ]);
+  });
+
   it('changing the year navigates, so the server computes the other year', async () => {
     const user = userEvent.setup();
     render(<FinanceClient initial={view([])} />);
@@ -329,7 +383,7 @@ describe('FinanceClient: assets', () => {
     disposal: null,
     costCents: 150000,
     netCostCents: 126050,
-    rowIds: ['cam'],
+    itemIds: ['cam'],
     counted: true,
     checks: [],
     row: { year: 2025, bookValueStartCents: 0, additionCents: 150000, depreciationCents: 25000, disposalBookValueCents: 0, bookValueEndCents: 125000 },
@@ -365,7 +419,7 @@ describe('FinanceClient: assets', () => {
       businessShareBp: 10000,
       reminderCents: 0,
       opening: null,
-      rowIds: ['cam'],
+      itemIds: ['cam'],
     });
     expect(await screen.findByText('Kamera: Anlage gespeichert.')).toBeTruthy();
     expect(screen.getByText('1.250,00 €')).toBeTruthy();
@@ -405,7 +459,7 @@ describe('FinanceClient: assets', () => {
       method: 'linear',
       reminderCents: 100,
       opening: { year: 2025, bookValueCents: 100, remainingMonths: 0 },
-      rowIds: [],
+      itemIds: [],
     });
   });
 

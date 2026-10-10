@@ -6,7 +6,7 @@ import type { MatchStrength } from '@/lib/tax/payments/match';
 import type { AccountKind, CounterpartyTreatment, ImportResult } from '@/lib/tax/payments/service';
 import { PAYMENT_FORMAT_LABELS } from '@/lib/tax/payments/types';
 import type { OpenPayment, StatementView } from '@/lib/tax/service';
-import { euro } from './amounts';
+import { euro, parseEuro } from './amounts';
 
 interface Props {
   view: StatementView;
@@ -17,9 +17,11 @@ interface Props {
   onImport: (accountId: string, text: string, done: () => void) => void;
   onUndoImport: (batchId: string) => void;
   onTreat: (counterparty: string, treatment: CounterpartyTreatment | null) => void;
-  onLink: (input: { paymentId: string; rowId?: string; invoiceId?: string }) => void;
+  onLink: (input: { paymentId: string; rowId?: string; invoiceId?: string; cents?: number }) => void;
   onUnlink: (linkId: string) => void;
   onNotIncome: (payment: OpenPayment) => void;
+  /** Re-label one payment (private, refund), or with null put it back to what its file says. */
+  onKind: (paymentId: string, kind: 'private' | 'refund' | null) => void;
 }
 
 const ACCOUNT_KIND_LABELS: Record<AccountKind, string> = { bank: 'Bankkonto', card: 'Kreditkarte', payment_service: 'Zahlungsdienst' };
@@ -41,7 +43,7 @@ const SKIP_LABELS: Record<string, string> = {
  * a counterparty is treated, and linking payments to receipts and invoices.
  * A link is only made on a reference or by a person's confirmation.
  */
-export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onNotIncome }: Props) {
+export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onNotIncome, onKind }: Props) {
   const id = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState('');
@@ -238,7 +240,9 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
                   {payment.check === 'income_without_invoice'
                     ? 'Geldeingang ohne Rechnung: Einnahme (dann fehlt die Rechnung unter „Einnahmen“) oder privat?'
-                    : 'Betriebliche Zahlung ohne Beleg: Beleg hochladen und zuordnen.'}
+                    : payment.check === 'refund_without_receipt'
+                      ? 'Erstattung: dem Beleg zuordnen, dessen Kauf sie rückgängig macht; sie wird dann von seinen Kosten abgezogen.'
+                      : 'Betriebliche Zahlung ohne Beleg: Beleg hochladen und zuordnen.'}
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {payment.proposals.map((proposal) => (
@@ -257,17 +261,45 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                       Keine Einnahme (Erstattung oder Umbuchung)
                     </button>
                   )}
-                  {payment.counterparty && (
+                  {payment.counterparty ? (
                     <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onTreat(payment.counterparty, 'private')}>
                       Gegenseite ist privat
                     </button>
+                  ) : (
+                    <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onKind(payment.id, 'private')}>
+                      Diese Zahlung ist privat
+                    </button>
                   )}
                 </div>
+                <ManualLink
+                  payment={payment}
+                  receipts={payment.check === 'income_without_invoice' ? [] : p.receiptTargets}
+                  invoices={payment.check === 'income_without_invoice' ? p.invoiceTargets : []}
+                  busy={busy}
+                  onLink={onLink}
+                />
               </li>
             ))}
           </ul>
         )}
       </section>
+
+      {p.overridden.length > 0 && (
+        <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Umgewidmete Zahlungen">
+          <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Von dir umgewidmete Zahlungen</h2>
+          <ul className="mt-3 space-y-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
+            {p.overridden.map((payment) => (
+              <li key={payment.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                <span>
+                  {formatDay(payment.bookingDay)} {payment.counterparty || 'ohne Namen'} {euro(Math.abs(payment.amountCents))}:{' '}
+                  {payment.kind === 'private' ? 'privat' : payment.kind === 'refund' ? 'Erstattung oder Umbuchung' : payment.kind}
+                </span>
+                <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onKind(payment.id, null)}>Zurücksetzen</button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {(p.links.length > 0 || p.treatments.length > 0) && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Zuordnungen">
@@ -298,5 +330,66 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         </section>
       )}
     </div>
+  );
+}
+
+/**
+ * Linking by hand, for everything no proposal covers: an amount that differs
+ * (a foreign-currency receipt, a fee kept on the way), a receipt of last year
+ * paid this year, one payment for two receipts.
+ */
+function ManualLink({
+  payment,
+  receipts,
+  invoices,
+  busy,
+  onLink,
+}: {
+  payment: OpenPayment;
+  receipts: StatementView['payments']['receiptTargets'];
+  invoices: StatementView['payments']['invoiceTargets'];
+  busy: boolean;
+  onLink: Props['onLink'];
+}) {
+  const id = useId();
+  const [target, setTarget] = useState('');
+  const [amount, setAmount] = useState('');
+  const [localError, setLocalError] = useState<string | null>(null);
+  if (receipts.length === 0 && invoices.length === 0) return null;
+  return (
+    <form
+      className="mt-2 flex flex-wrap items-end gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!target) return setLocalError('Bitte einen Beleg oder eine Rechnung wählen.');
+        const cents = amount.trim() === '' ? undefined : (parseEuro(amount) ?? -1);
+        if (cents !== undefined && (cents <= 0 || cents > payment.freeCents)) {
+          return setLocalError('Der Betrag muss größer als null sein und darf nicht über dem liegen, was von der Zahlung noch offen ist.');
+        }
+        setLocalError(null);
+        onLink({ paymentId: payment.id, ...(invoices.length > 0 ? { invoiceId: target } : { rowId: target }), ...(cents !== undefined ? { cents } : {}) });
+      }}
+    >
+      <div>
+        <label className="ui-label" htmlFor={`${id}-target`}>{invoices.length > 0 ? 'Rechnung von Hand wählen' : 'Beleg von Hand wählen'}</label>
+        <select id={`${id}-target`} className="ui-input" value={target} onChange={(e) => setTarget(e.target.value)}>
+          <option value="">Bitte wählen</option>
+          {invoices.map((i) => (
+            <option key={i.id} value={i.id}>{i.label} (offen {euro(i.openCents)})</option>
+          ))}
+          {receipts.map((r) => (
+            <option key={r.id} value={r.id}>
+              {formatDay(r.day)} {r.label.slice(0, 60)}{r.amountCents !== null ? ` (${euro(r.amountCents)})` : ''}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="ui-label" htmlFor={`${id}-amount`}>Teilbetrag in € (leer: alles Offene)</label>
+        <input id={`${id}-amount`} className="ui-input tabular-nums" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+      </div>
+      <button type="submit" className="ui-btn ui-btn-sm" disabled={busy}>Zuordnen</button>
+      {localError && <p className="ui-note ui-note-danger w-full" role="alert">{localError}</p>}
+    </form>
   );
 }

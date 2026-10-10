@@ -1,6 +1,6 @@
 import 'server-only';
 import { createHash } from 'node:crypto';
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { vendorKey } from '../decisions';
 import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from './match';
 import { parsePaymentFile } from './parse';
@@ -24,6 +24,8 @@ export type PaymentServiceErrorCode =
   | 'account_label_taken'
   | 'invalid_account_kind'
   | 'file_already_imported'
+  | 'format_mismatch'
+  | 'batch_has_later_overlap'
   | 'batch_not_found'
   | 'payment_not_found'
   | 'link_not_found'
@@ -31,7 +33,8 @@ export type PaymentServiceErrorCode =
   | 'invalid_kind'
   | 'invalid_link'
   | 'link_exceeds_payment'
-  | 'target_not_found';
+  | 'target_not_found'
+  | 'target_fully_paid';
 
 export class PaymentServiceError extends Error {
   readonly code: PaymentServiceErrorCode;
@@ -90,12 +93,19 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
   if (await db.taxImportBatch.findFirst({ where: { accountId, contentHash } })) throw new PaymentServiceError('file_already_imported');
 
   const parsed = parsePaymentFile(text);
-  const existing = new Set(
-    (await db.taxPayment.findMany({ where: { accountId, sourceHash: { in: parsed.payments.map((p) => p.sourceHash) } }, select: { sourceHash: true } })).map((p) => p.sourceHash),
-  );
-  const fresh = parsed.payments.filter((p) => !existing.has(p.sourceHash));
+  // One account, one source: the identity of a movement is built from the text
+  // of its source, so the same account imported once as a bank export and once
+  // through the bank interface would hold every movement twice.
+  const earlier = await db.taxImportBatch.findFirst({ where: { accountId } });
+  if (earlier && earlier.format !== parsed.format) throw new PaymentServiceError('format_mismatch');
 
-  const batch = await db.$transaction(async (tx) => {
+  // Everything from here on happens together or not at all, including the
+  // automatic links: a failure leaves no batch behind that would refuse a retry.
+  const { batch, added, autoLinked } = await db.$transaction(async (tx) => {
+    const existing = new Set(
+      (await tx.taxPayment.findMany({ where: { accountId, sourceHash: { in: parsed.payments.map((p) => p.sourceHash) } }, select: { sourceHash: true } })).map((p) => p.sourceHash),
+    );
+    const fresh = parsed.payments.filter((p) => !existing.has(p.sourceHash));
     const created = await tx.taxImportBatch.create({
       data: {
         authWorkspaceId: ctx.workspaceId,
@@ -109,8 +119,12 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
         lastDay: parsed.lastDay,
       },
     });
+    let inserted = 0;
     if (fresh.length > 0) {
-      await tx.taxPayment.createMany({
+      const result = await tx.taxPayment.createMany({
+        // A second import running at the same moment may have stored some of
+        // these already; they are skipped, not an error.
+        skipDuplicates: true,
         data: fresh.map((p) => ({
           authWorkspaceId: ctx.workspaceId,
           authTenantId: ctx.tenantId,
@@ -127,17 +141,19 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
           sourceHash: p.sourceHash,
         })),
       });
+      inserted = result.count;
+      if (inserted !== fresh.length) await tx.taxImportBatch.update({ where: { id: created.id }, data: { newCount: inserted } });
     }
-    return created;
-  });
+    return { batch: created, added: inserted, autoLinked: await linkByReference(tx, ctx, created.id) };
+    // A year of payments on a busy server takes longer than the five seconds a transaction gets by default.
+  }, { maxWait: 20_000, timeout: 120_000 });
 
-  const autoLinked = await linkByReference(db, ctx, batch.id);
   return {
     batchId: batch.id,
     format: parsed.format,
     total: parsed.payments.length,
-    added: fresh.length,
-    alreadyThere: parsed.payments.length - fresh.length,
+    added,
+    alreadyThere: parsed.payments.length - added,
     skipped: parsed.skipped,
     autoLinked,
     firstDay: parsed.firstDay,
@@ -150,15 +166,18 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
  * number is in the payment's text, the amount is exactly what is open, and
  * neither side could mean another. Everything else waits for a person.
  */
-async function linkByReference(db: PrismaClient, ctx: PaymentContext, batchId: string): Promise<number> {
-  const payments = await db.taxPayment.findMany({ where: { batchId, authWorkspaceId: ctx.workspaceId, amountCents: { gt: 0 } }, include: { links: true } });
+async function linkByReference(db: Prisma.TransactionClient, ctx: PaymentContext, batchId: string): Promise<number> {
+  // Whether a link is unambiguous is judged against every unlinked incoming
+  // payment of the workspace, not only this file's: an earlier payment naming
+  // the same invoice makes the new one ambiguous too.
+  const payments = await db.taxPayment.findMany({ where: { authWorkspaceId: ctx.workspaceId, amountCents: { gt: 0 } }, include: { links: true } });
   const invoices = await db.taxIssuedInvoice.findMany({ where: { authWorkspaceId: ctx.workspaceId }, include: { payments: true, paymentLinks: true } });
   const proposals = unambiguousReferenceMatches(
     proposeMatches(
       payments.filter((p) => p.links.length === 0 && effectiveKind(p) === 'income').map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, reference: p.reference, counterparty: p.counterparty })),
       invoices.map((i) => ({ id: i.id, number: i.number, day: i.issueDate, openCents: invoiceOpenCents(i) })),
     ),
-  );
+  ).filter((proposal) => payments.find((p) => p.id === proposal.paymentId)?.batchId === batchId);
   for (const proposal of proposals) {
     const payment = payments.find((p) => p.id === proposal.paymentId)!;
     await db.taxPaymentLink.create({
@@ -180,8 +199,18 @@ export function effectiveKind(payment: { sourceKind: string; kindOverride: strin
 
 /** Undo an import: the batch goes, with the payments it added and their links. */
 export async function deleteImportBatch(db: PrismaClient, ctx: PaymentContext, batchId: string): Promise<void> {
-  const { count } = await db.taxImportBatch.deleteMany({ where: { id: batchId, authWorkspaceId: ctx.workspaceId } });
-  if (count === 0) throw new PaymentServiceError('batch_not_found');
+  const batch = await db.taxImportBatch.findFirst({ where: { id: batchId, authWorkspaceId: ctx.workspaceId } });
+  if (!batch) throw new PaymentServiceError('batch_not_found');
+  // A payment belongs to the file that brought it first. A later file covering
+  // the same days relied on those payments being there, so undoing this import
+  // would silently take days out of that later file. Imports are undone newest first.
+  if (batch.firstDay !== null && batch.lastDay !== null) {
+    const later = await db.taxImportBatch.findFirst({
+      where: { accountId: batch.accountId, createdAt: { gt: batch.createdAt }, firstDay: { lte: batch.lastDay }, lastDay: { gte: batch.firstDay } },
+    });
+    if (later) throw new PaymentServiceError('batch_has_later_overlap');
+  }
+  await db.taxImportBatch.deleteMany({ where: { id: batchId, authWorkspaceId: ctx.workspaceId } });
 }
 
 /** Say once how a counterparty is treated; `null` takes the answer back. */
@@ -235,21 +264,36 @@ export async function linkPayment(
   const rowId = typeof input.rowId === 'string' && input.rowId ? input.rowId : null;
   const invoiceId = typeof input.invoiceId === 'string' && input.invoiceId ? input.invoiceId : null;
   if (typeof input.paymentId !== 'string' || (rowId === null) === (invoiceId === null)) throw new PaymentServiceError('invalid_link');
-  const payment = await db.taxPayment.findFirst({ where: { id: input.paymentId, authWorkspaceId: ctx.workspaceId }, include: { links: true } });
-  if (!payment) throw new PaymentServiceError('payment_not_found');
-  if (invoiceId !== null && !(await db.taxIssuedInvoice.findFirst({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId } }))) {
-    throw new PaymentServiceError('target_not_found');
-  }
   if (rowId !== null && !(await rowBelongsToWorkspace(rowId))) throw new PaymentServiceError('target_not_found');
 
-  const free = Math.abs(payment.amountCents) - payment.links.reduce((s, l) => s + l.cents, 0);
-  const cents = input.cents === undefined || input.cents === null ? free : input.cents;
-  if (!Number.isInteger(cents) || cents <= 0) throw new PaymentServiceError('invalid_link');
-  if (cents > free) throw new PaymentServiceError('link_exceeds_payment');
-  const link = await db.taxPaymentLink.create({
-    data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, paymentId: payment.id, rowId, invoiceId, cents, method: 'manual' },
+  return db.$transaction(async (tx) => {
+    // Lock the payment so two confirmations at the same moment cannot both use its free amount.
+    await tx.$queryRaw`SELECT id FROM tax_payments WHERE id = ${input.paymentId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
+    const payment = await tx.taxPayment.findFirst({ where: { id: input.paymentId, authWorkspaceId: ctx.workspaceId }, include: { links: true } });
+    if (!payment) throw new PaymentServiceError('payment_not_found');
+    let free = Math.abs(payment.amountCents) - payment.links.reduce((s, l) => s + l.cents, 0);
+    if (invoiceId !== null) {
+      // The invoice is locked too (always after the payment): two payments
+      // confirmed for it at the same moment cannot both use what it has open.
+      await tx.$queryRaw`SELECT id FROM tax_issued_invoices WHERE id = ${invoiceId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
+      const invoice = await tx.taxIssuedInvoice.findFirst({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId }, include: { payments: true, paymentLinks: true } });
+      if (!invoice) throw new PaymentServiceError('target_not_found');
+      // Only money received as income pays an invoice: no money going out, no refund, no own transfer.
+      if (payment.amountCents <= 0 || effectiveKind(payment) !== 'income') throw new PaymentServiceError('invalid_link');
+      // Never more than the invoice still has open: what was typed in by hand
+      // and what other payments already cover is not counted a second time.
+      const open = invoiceOpenCents(invoice);
+      if (open <= 0) throw new PaymentServiceError('target_fully_paid');
+      free = Math.min(free, open);
+    }
+    const cents = input.cents === undefined || input.cents === null ? free : input.cents;
+    if (!Number.isInteger(cents) || cents <= 0) throw new PaymentServiceError('invalid_link');
+    if (cents > free) throw new PaymentServiceError('link_exceeds_payment');
+    const link = await tx.taxPaymentLink.create({
+      data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, paymentId: payment.id, rowId, invoiceId, cents, method: 'manual' },
+    });
+    return link.id;
   });
-  return link.id;
 }
 
 export async function unlinkPayment(db: PrismaClient, ctx: PaymentContext, linkId: string): Promise<void> {

@@ -17,6 +17,7 @@ export const CHECK_LABELS: Record<OpenCheckKind, string> = {
   net_amount_missing: 'Nettobetrag fehlt (unter Regelbesteuerung zählt der Nettobetrag, die Umsatzsteuer ist Vorsteuer)',
   meal_incomplete: 'Bewirtung unvollständig (Teilnehmer, Anlass oder Ort fehlen)',
   meal_without_register_facts: 'Bewirtung ohne Angaben aus dem Verzeichnis',
+  lines_do_not_sum: 'Die Positionen ergeben nicht mehr den Belegbetrag',
   needs_asset: 'Über der Grenze für geringwertige Wirtschaftsgüter: als Anlage führen',
   net_amount_needed: 'Nettobetrag fehlt: nahe an der Grenze für geringwertige Wirtschaftsgüter',
 };
@@ -77,6 +78,7 @@ export const ORIGIN_LABELS: Record<TreatmentOrigin, string> = {
   vendor_rule: 'Regel für den Lieferanten',
   legacy_columns: 'aus Zuordnung und Geschäftsanteil des Belegs',
   category_default: 'Vorgabe der Kategorie',
+  line: 'für diese Position entschieden',
   meal_register: 'laut Bewirtungsverzeichnis',
 };
 
@@ -90,6 +92,8 @@ export function financeActionMessage(error: string, detail?: string): string {
     case 'not_found':
       return detail === 'rule_not_found'
         ? 'Diese Regel gibt es nicht mehr. Die Ansicht wurde vermutlich in einem anderen Fenster geändert; bitte neu laden.'
+        : detail === 'line_not_found'
+          ? 'Diese Position gibt es nicht mehr. Die Ansicht wurde vermutlich in einem anderen Fenster geändert; bitte neu laden.'
         : detail === 'asset_not_found'
           ? 'Diese Anlage gibt es nicht mehr. Die Ansicht wurde vermutlich in einem anderen Fenster geändert; bitte neu laden.'
         : 'Dieser Beleg wurde nicht gefunden. Er wurde möglicherweise gelöscht oder gehört zu einem anderen Arbeitsbereich.';
@@ -156,6 +160,20 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Bitte Datum und Betrag der Zahlung prüfen.';
         case 'invalid_expectation':
           return 'Bitte den erwarteten Monatsumsatz als Betrag eingeben.';
+        case 'lines_required':
+          return 'Eine Aufteilung braucht mindestens zwei Positionen.';
+        case 'lines_do_not_sum':
+          return 'Die Positionen ergeben zusammen nicht den Belegbetrag.';
+        case 'line_description_required':
+          return 'Bitte jede Position benennen.';
+        case 'invalid_line_amount':
+          return 'Bitte für jede Position einen Betrag größer als null eingeben.';
+        case 'invalid_line_net':
+          return 'Der Nettobetrag einer Position muss größer als null und höchstens so groß wie ihr Betrag sein.';
+        case 'line_cannot_hold_several_items':
+          return 'Eine einzelne Position kann nicht „mehrere kleine Teile“ sein; dafür den Beleg weiter aufteilen.';
+        case 'receipt_without_total':
+          return 'Der Beleg hat keinen Betrag; ohne ihn lässt er sich nicht aufteilen.';
         case 'account_label_required':
           return 'Bitte einen Namen für das Konto eingeben.';
         case 'account_label_taken':
@@ -168,6 +186,12 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Die Datei enthält keine Umsätze.';
         case 'too_large':
           return 'Die Datei ist zu groß für einen Kontoexport (mehr als 8 MB).';
+        case 'format_mismatch':
+          return 'Dieses Konto wurde bisher aus einer anderen Quelle eingelesen. Damit keine Zahlung doppelt entsteht, bleibt ein Konto bei einer Quelle; für die andere Quelle bitte ein eigenes Konto anlegen.';
+        case 'batch_has_later_overlap':
+          return 'Ein später eingelesener Export deckt dieselben Tage ab. Bitte zuerst den späteren Import rückgängig machen.';
+        case 'target_fully_paid':
+          return 'Diese Rechnung ist bereits vollständig bezahlt.';
         case 'link_exceeds_payment':
           return 'Der Betrag ist größer als das, was von dieser Zahlung noch nicht zugeordnet ist.';
         case 'invalid_link':

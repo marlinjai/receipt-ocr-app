@@ -20,9 +20,9 @@ Personal Account,2026-02-04,2026-02-04,Kunde Beispiel,DE00,Payment,Honorar R-202
 
 const PAYPAL_HEADER =
   'Datum,Uhrzeit,Zeitzone,Name,Typ,Status,Währung,Brutto,Gebühr,Netto,Absender E-Mail-Adresse,Empfänger E-Mail-Adresse,Transaktionscode,Lieferadresse,Adress-Status,Artikelbezeichnung,Artikelnummer,Versand- und Bearbeitungsgebühr,Versicherungsbetrag,Umsatzsteuer,Option 1 Name,Option 1 Wert,Option 2 Name,Option 2 Wert,Zugehöriger Transaktionscode,Rechnungsnummer,Zollnummer,Anzahl,Empfangsnummer,Guthaben,Adresszeile 1,Adresszusatz,Ort,Bundesland,PLZ,Land,Telefon,Betreff,Hinweis,Ländervorwahl,Auswirkung auf Guthaben';
-const paypalRow = (o: { date: string; name: string; type: string; status: string; currency: string; gross: string; code: string; item?: string; effect: string }) => {
+const paypalRow = (o: { date: string; name: string; type: string; status: string; currency: string; gross: string; code: string; item?: string; effect: string; related?: string }) => {
   const cells = Array(41).fill('');
-  Object.assign(cells, { 0: o.date, 3: o.name, 4: o.type, 5: o.status, 6: o.currency, 7: o.gross, 12: o.code, 15: o.item ?? '', 40: o.effect });
+  Object.assign(cells, { 0: o.date, 3: o.name, 4: o.type, 5: o.status, 6: o.currency, 7: o.gross, 12: o.code, 15: o.item ?? '', 24: o.related ?? '', 40: o.effect });
   return cells.map((c: string) => `"${c}"`).join(',');
 };
 const PAYPAL = [
@@ -117,6 +117,70 @@ describe('parsePaymentFile: layouts', () => {
     ]);
     expect(file.skipped).toEqual({ not_booked: 1, other_currency: 1 });
     expect(parsePaymentFile(JSON.stringify({ transactions: [bankEntry({})] })).payments).toHaveLength(1);
+  });
+});
+
+describe('parsePaymentFile: a PayPal purchase in another currency', () => {
+  const rows = (...extra: string[]) =>
+    [
+      PAYPAL_HEADER,
+      paypalRow({ date: '04.03.2026', name: 'Cloud Beispiel', type: 'Zahlung im Einzugsverfahren mit Zahlungsrechnung', status: 'Abgeschlossen', currency: 'USD', gross: '-20,00', code: 'TX3', item: 'Speicher März', effect: 'Soll' }),
+      paypalRow({ date: '04.03.2026', name: '', type: 'Allgemeine Währungsumrechnung', status: 'Abgeschlossen', currency: 'EUR', gross: '-18,73', code: 'TX3A', related: 'TX3', effect: 'Soll' }),
+      paypalRow({ date: '04.03.2026', name: '', type: 'Allgemeine Währungsumrechnung', status: 'Abgeschlossen', currency: 'USD', gross: '20,00', code: 'TX3B', related: 'TX3', effect: 'Haben' }),
+      ...extra,
+    ].join('\n');
+
+  it('the euro conversion is the spend, under the name and text of the purchase', () => {
+    const file = parsePaymentFile(rows());
+    expect(file.payments.map((p) => [p.counterparty, p.amountCents, p.kind, p.reference])).toEqual([['Cloud Beispiel', -1873, 'spend', 'Speicher März']]);
+    expect(file.skipped).toEqual({ other_currency: 2 });
+  });
+
+  it('money back on such a purchase is a refund; a conversion that belongs to no purchase only moves money', () => {
+    const file = parsePaymentFile(
+      rows(
+        paypalRow({ date: '09.03.2026', name: 'Cloud Beispiel', type: 'Rückzahlung', status: 'Abgeschlossen', currency: 'USD', gross: '20,00', code: 'TX6', effect: 'Haben' }),
+        paypalRow({ date: '09.03.2026', name: '', type: 'Allgemeine Währungsumrechnung', status: 'Abgeschlossen', currency: 'EUR', gross: '18,10', code: 'TX6A', related: 'TX6', effect: 'Haben' }),
+        paypalRow({ date: '10.03.2026', name: '', type: 'Allgemeine Währungsumrechnung', status: 'Abgeschlossen', currency: 'EUR', gross: '-5,00', code: 'TX7A', related: 'GONE', effect: 'Soll' }),
+      ),
+    );
+    expect(file.payments.map((p) => [p.counterparty, p.amountCents, p.kind])).toEqual([
+      ['Cloud Beispiel', -1873, 'spend'],
+      ['Cloud Beispiel', 1810, 'refund'],
+      ['', -500, 'own_transfer'],
+    ]);
+  });
+});
+
+describe('parsePaymentFile: PayPal income in another currency', () => {
+  it('the euro side of a payment received in dollars is income from the payer, not a refund', () => {
+    const file = parsePaymentFile(
+      [
+        PAYPAL_HEADER,
+        paypalRow({ date: '11.03.2026', name: 'Kunde Übersee', type: 'Website-Zahlung', status: 'Abgeschlossen', currency: 'USD', gross: '1.000,00', code: 'TX8', item: 'Rechnung R-2026-009', effect: 'Haben' }),
+        paypalRow({ date: '11.03.2026', name: '', type: 'Allgemeine Währungsumrechnung', status: 'Abgeschlossen', currency: 'USD', gross: '-1.000,00', code: 'TX8B', related: 'TX8', effect: 'Soll' }),
+        paypalRow({ date: '11.03.2026', name: '', type: 'Allgemeine Währungsumrechnung', status: 'Abgeschlossen', currency: 'EUR', gross: '921,40', code: 'TX8A', related: 'TX8', effect: 'Haben' }),
+      ].join('\n'),
+    );
+    expect(file.payments.map((p) => [p.counterparty, p.amountCents, p.kind, p.reference])).toEqual([['Kunde Übersee', 92_140, 'income', 'Rechnung R-2026-009']]);
+  });
+});
+
+describe('toCents: nothing is guessed', () => {
+  it.each(['1,234.56', '1.234', '12.345', '1,234', '1.23.456,00', '12,3,4', '1e3', '20000000', '20.000.000,00'])('rejects %s', (text) => {
+    expect(toCents(text)).toBeNull();
+  });
+
+  it.each([
+    ['1.234,56', 123_456],
+    ['-1.234.567,8', -123_456_780],
+    ['1234,5', 123_450],
+    ['-49.9', -4_990],
+    ['1000', 100_000],
+    ['0.07', 7],
+    ['9999999,99', 999_999_999],
+  ])('reads %s', (text, cents) => {
+    expect(toCents(text)).toBe(cents);
   });
 });
 

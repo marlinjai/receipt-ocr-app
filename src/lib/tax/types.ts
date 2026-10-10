@@ -78,6 +78,8 @@ export interface LedgerItem {
   assetId?: string | null;
   /** The owner stated that the receipt holds several assets, each within the low-value limit on its own. */
   severalLowValueItems?: boolean;
+  /** The receipt was split into lines that no longer add up to its total: nothing of it is computed until they do. */
+  linesMismatch?: boolean;
   /** The line of the income-surplus statement the business share goes to. */
   formLineKey: FormLineKey | null;
   /** The line of the employment annex the study and employment shares go to. */
@@ -163,6 +165,8 @@ export type OpenCheckKind =
   | 'meal_without_register_facts'
   /** On the low-value asset line but above what a low-value asset may cost: it has to become an asset. */
   | 'needs_asset'
+  /** The lines of a split receipt do not add up to its total any more. */
+  | 'lines_do_not_sum'
   /** On the low-value asset line and possibly above the limit; the net amount would tell. */
   | 'net_amount_needed';
 

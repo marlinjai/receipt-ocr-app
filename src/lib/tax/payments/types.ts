@@ -28,9 +28,11 @@ export type PaymentKind =
   /** A bank or service fee. */
   | 'fee'
   /** Moving money between the owner's own accounts, or funding a payment service: neither spend nor income. */
-  | 'own_transfer';
+  | 'own_transfer'
+  /** Nothing to do with the business. Only ever set by a person, for one payment. */
+  | 'private';
 
-export const PAYMENT_KINDS: readonly PaymentKind[] = ['spend', 'income', 'refund', 'fee', 'own_transfer'];
+export const PAYMENT_KINDS: readonly PaymentKind[] = ['spend', 'income', 'refund', 'fee', 'own_transfer', 'private'];
 
 export interface NormalizedPayment {
   /** ISO day the movement was booked. */

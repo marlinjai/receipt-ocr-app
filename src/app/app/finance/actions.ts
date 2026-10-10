@@ -19,10 +19,12 @@ import { PaymentParseError } from '@/lib/tax/payments/types';
 import { RULE_YEARS } from '@/lib/tax/rules';
 import {
   AssetInputError,
+  LinesInputError,
   RevenueInputError,
   TaxServiceError,
   TreatmentError,
   clearItemDecision,
+  clearReceiptLines,
   createAsset,
   decideForVendor,
   deleteAsset,
@@ -33,6 +35,8 @@ import {
   loadStatement,
   saveInvoice,
   saveItemDecision,
+  saveLineDecision,
+  saveReceiptLines,
   saveRevenueExpectation,
   saveStatusChange,
   saveVatSettings,
@@ -76,6 +80,7 @@ function failure(e: unknown): { ok: false; error: FinanceActionError; detail?: s
   if (e instanceof TreatmentError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof AssetInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof RevenueInputError) return { ok: false, error: 'invalid_input', detail: e.code };
+  if (e instanceof LinesInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof PaymentParseError) return { ok: false, error: 'invalid_input', detail: e.row === null ? e.code : `${e.code}:${e.row}` };
   if (e instanceof PaymentServiceError) {
     const missing = ['account_not_found', 'batch_not_found', 'payment_not_found', 'link_not_found', 'target_not_found'];
@@ -88,7 +93,8 @@ function failure(e: unknown): { ok: false; error: FinanceActionError; detail?: s
       e.code === 'asset_not_found' ||
       e.code === 'invoice_not_found' ||
       e.code === 'status_not_found' ||
-      e.code === 'settlement_not_found'
+      e.code === 'settlement_not_found' ||
+      e.code === 'line_not_found'
     ) {
       return { ok: false, error: 'not_found', detail: e.code };
     }
@@ -288,4 +294,18 @@ export async function confirmPaymentLink(year: number, input: unknown): Promise<
 
 export async function removePaymentLink(year: number, linkId: string): Promise<Result<StatementView>> {
   return write(year, (ctx) => unlinkPayment(prisma, ctx, String(linkId)));
+}
+
+/** Split a receipt into lines, or change its split; checked by `validateLines` against the receipt's total. */
+export async function saveLines(year: number, rowId: string, lines: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => saveReceiptLines(prisma, ctx, String(rowId), lines));
+}
+
+export async function removeLines(year: number, rowId: string): Promise<Result<StatementView>> {
+  return write(year, (ctx) => clearReceiptLines(prisma, ctx, String(rowId)));
+}
+
+/** Decide one line of a split receipt; `treatment` null lets it follow its receipt again. */
+export async function decideLine(year: number, lineId: string, treatment: unknown | null): Promise<Result<StatementView>> {
+  return write(year, (ctx) => saveLineDecision(prisma, ctx, String(lineId), treatment));
 }

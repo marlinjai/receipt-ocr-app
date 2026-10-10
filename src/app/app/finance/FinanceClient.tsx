@@ -10,6 +10,9 @@ import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service'
 import type { OpenCheckKind } from '@/lib/tax/types';
 import {
   addAccount,
+  decideLine,
+  removeLines,
+  saveLines,
   confirmPaymentLink,
   correctPaymentKind,
   decideItem,
@@ -32,6 +35,7 @@ import {
   undoImport,
   type Result,
 } from './actions';
+import LinesForm, { type LineDraft } from './LinesForm';
 import PaymentsTab from './PaymentsTab';
 import type { ImportResult } from '@/lib/tax/payments/service';
 import RevenueTab from './RevenueTab';
@@ -70,6 +74,12 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
   const [tab, setTab] = useState<TabKey>(() => (openQueue(initial).length > 0 ? 'open' : 'statement'));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The item of the statement tab whose receipt is being split (its lines change the item ids, so both close together).
+  const [splittingId, setSplittingId] = useState<string | null>(null);
+  const closeEditing = () => {
+    setEditingId(null);
+    setSplittingId(null);
+  };
   const [openLine, setOpenLine] = useState<string | null>(null);
   const [assetFromRow, setAssetFromRow] = useState<string | null>(null);
   const [lastImport, setLastImport] = useState<ImportResult | null>(null);
@@ -92,8 +102,8 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
   }
 
   const queue = useMemo(() => openQueue(view), [view]);
-  const selected = queue.find((i) => i.rowId === selectedId) ?? queue[0] ?? null;
-  const itemsById = useMemo(() => new Map(view.items.map((i) => [i.rowId, i])), [view]);
+  const selected = queue.find((i) => i.itemId === selectedId) ?? queue[0] ?? null;
+  const itemsById = useMemo(() => new Map(view.items.map((i) => [i.itemId, i])), [view]);
   const assetsById = useMemo(() => new Map(view.assets.map((a) => [a.id, a])), [view]);
   const openAssets = view.assets.filter((a) => a.checks.length > 0).length;
   const estimated = view.items.filter((i) => i.checks.some((c) => c.kind === 'amount_estimated')).length;
@@ -126,19 +136,21 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
     const label = item.vendor || item.label;
     run(
       () =>
-        decideItem(view.year, {
-          rowId: item.rowId,
-          treatment: submit.treatment,
-          applyToVendor: submit.applyToVendor ?? undefined,
-        }),
+        item.lineId
+          ? decideLine(view.year, item.lineId, submit.treatment)
+          : decideItem(view.year, {
+              rowId: item.rowId,
+              treatment: submit.treatment,
+              applyToVendor: submit.applyToVendor ?? undefined,
+            }),
       submit.applyToVendor ? `${label}: Regel für den Lieferanten gespeichert.` : `${label}: gespeichert.`,
       (next) => {
         setEditingId(null);
         // Advance to the entry after this one, as the meal queue does.
-        const before = queue.findIndex((i) => i.rowId === item.rowId);
+        const before = queue.findIndex((i) => i.itemId === item.itemId);
         const nextQueue = openQueue(next);
-        const following = queue.slice(before + 1).find((i) => nextQueue.some((n) => n.rowId === i.rowId));
-        setSelectedId(following?.rowId ?? nextQueue[0]?.rowId ?? null);
+        const following = queue.slice(before + 1).find((i) => nextQueue.some((n) => n.itemId === i.itemId));
+        setSelectedId(following?.itemId ?? nextQueue[0]?.itemId ?? null);
       },
     );
   }
@@ -346,14 +358,14 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                   </p>
                   <ul className="max-h-[40svh] space-y-1.5 overflow-y-auto pr-1 lg:max-h-[75svh]">
                     {queue.map((item) => {
-                      const isSelected = selected?.rowId === item.rowId;
+                      const isSelected = selected?.itemId === item.itemId;
                       return (
-                        <li key={item.rowId}>
+                        <li key={item.itemId}>
                           <button
                             type="button"
                             aria-current={isSelected ? 'true' : undefined}
                             onClick={() => {
-                              setSelectedId(item.rowId);
+                              setSelectedId(item.itemId);
                               setError(null);
                             }}
                             className="w-full rounded-lg border px-3 py-2.5 text-left transition-colors duration-150"
@@ -365,6 +377,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                             <span className="flex items-baseline justify-between gap-2">
                               <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
                                 {item.vendor || item.label}
+                                {item.lineDescription && item.vendor ? `: ${item.lineDescription}` : ''}
                               </span>
                               <span className="shrink-0 text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
                                 {item.amountCents !== null ? euro(item.amountCents) : ''}
@@ -388,17 +401,19 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                     <ItemHeader item={selected} />
                     <OpenItemBody
                       // A fresh form per receipt: nothing typed for one leaks into the next.
-                      key={selected.rowId}
+                      key={selected.itemId}
                       item={selected}
                       view={view}
                       busy={pending}
                       error={error}
                       onSubmit={(submit) => decide(selected, submit)}
                       onMakeAsset={() => {
-                        setAssetFromRow(selected.rowId);
+                        setAssetFromRow(selected.itemId);
                         setError(null);
                         setTab('assets');
                       }}
+                      onSaveLines={(lines, done) => run(() => saveLines(view.year, selected.rowId, lines), `${selected.vendor || selected.label}: Positionen gespeichert.`, done)}
+                      onRemoveLines={() => run(() => removeLines(view.year, selected.rowId), `${selected.vendor || selected.label}: Aufteilung aufgehoben.`)}
                     />
                   </section>
                 )}
@@ -497,6 +512,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                                         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                                           <span className="text-sm" style={{ color: 'var(--foreground)' }}>
                                             {item.vendor || item.label}
+                                            {item.lineDescription && item.vendor ? `: ${item.lineDescription}` : ''}
                                             <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
                                               {formatDay(item.date)} · {allocationText(item)}
                                               {item.allocationOrigin ? ` (${ORIGIN_LABELS[item.allocationOrigin]})` : ''}
@@ -523,6 +539,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                                                 aria-expanded={editing}
                                                 onClick={() => {
                                                   setEditingId(editing ? null : `${line.key}:${id}`);
+                                                  setSplittingId(null);
                                                   setError(null);
                                                 }}
                                               >
@@ -533,22 +550,37 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                                         </div>
                                         {editing && (
                                           <div className="mt-3 rounded-lg border p-3" style={{ borderColor: 'var(--border)' }}>
-                                            <TreatmentForm
-                                              item={item}
-                                              formLines={view.formLines}
-                                              busy={pending}
-                                              error={error}
-                                              submitLabel="Speichern"
-                                              onSubmit={(submit) => decide(item, submit)}
-                                            />
-                                            {item.hasDecision && (
+                                            {splittingId === id ? (
+                                              <LinesForm
+                                                item={item}
+                                                existing={item.receiptLines}
+                                                busy={pending}
+                                                error={error}
+                                                onCancel={() => setSplittingId(null)}
+                                                onSubmit={(lines) => run(() => saveLines(view.year, item.rowId, lines), `${item.vendor || item.label}: Positionen gespeichert.`, closeEditing)}
+                                                onRemove={item.receiptLines.length > 0 ? () => run(() => removeLines(view.year, item.rowId), `${item.vendor || item.label}: Aufteilung aufgehoben.`, closeEditing) : null}
+                                              />
+                                            ) : (
+                                              <>
+                                                <TreatmentForm
+                                                  item={item}
+                                                  formLines={view.formLines}
+                                                  busy={pending}
+                                                  error={error}
+                                                  submitLabel="Speichern"
+                                                  onSubmit={(submit) => decide(item, submit)}
+                                                />
+                                                <SplitOffer item={item} onSplit={() => setSplittingId(id)} />
+                                              </>
+                                            )}
+                                            {splittingId !== id && (item.lineId ? item.allocationOrigin === 'line' : item.hasDecision) && (
                                               <button
                                                 type="button"
                                                 className="ui-btn ui-btn-sm mt-3"
                                                 disabled={pending}
                                                 onClick={() =>
                                                   run(
-                                                    () => resetItem(view.year, item.rowId),
+                                                    () => (item.lineId ? decideLine(view.year, item.lineId, null) : resetItem(view.year, item.rowId)),
                                                     `${item.vendor || item.label}: Einzelentscheidung entfernt.`,
                                                     () => setEditingId(null),
                                                   )
@@ -634,7 +666,8 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               onTreat={(counterparty, treatment) => run(() => treatCounterparty(view.year, { counterparty, treatment }), `${counterparty}: ${treatment === null ? 'Antwort zurückgenommen' : 'gespeichert'}.`)}
               onLink={(input) => run(() => confirmPaymentLink(view.year, input), 'Zahlung zugeordnet.')}
               onUnlink={(linkId) => run(() => removePaymentLink(view.year, linkId), 'Zuordnung gelöst.')}
-              onNotIncome={(payment) => run(() => correctPaymentKind(view.year, payment.id, 'refund'), 'Als Erstattung oder Umbuchung vermerkt.')}
+              onNotIncome={(payment) => run(() => correctPaymentKind(view.year, payment.id, 'refund'), 'Als Erstattung oder Umbuchung vermerkt. Unter „Von dir umgewidmete Zahlungen“ lässt sich das zurücksetzen.')}
+              onKind={(paymentId, kind) => run(() => correctPaymentKind(view.year, paymentId, kind), kind === null ? 'Zahlung zurückgesetzt.' : 'Zahlung umgewidmet.')}
             />
           )}
 
@@ -722,6 +755,21 @@ function ItemHeader({ item }: { item: StatementItem }) {
   );
 }
 
+/** The way into splitting a receipt, or into changing its split, under a treatment form. */
+function SplitOffer({ item, onSplit }: { item: StatementItem; onSplit: () => void }) {
+  if (item.receiptGrossCents === null) return null;
+  return (
+    <p className="mt-3 text-xs" style={{ color: 'var(--muted)' }}>
+      {item.lineId
+        ? 'Diese Position gehört zu einem aufgeteilten Beleg.'
+        : 'Enthält der Beleg Positionen, die unterschiedlich zu behandeln sind (zum Beispiel eine betrieblich, eine privat)?'}{' '}
+      <button type="button" className="underline underline-offset-2" style={{ color: 'var(--accent)' }} onClick={onSplit}>
+        {item.lineId ? 'Aufteilung ändern' : 'In Positionen aufteilen'}
+      </button>
+    </p>
+  );
+}
+
 function OpenItemBody({
   item,
   view,
@@ -729,6 +777,8 @@ function OpenItemBody({
   error,
   onSubmit,
   onMakeAsset,
+  onSaveLines,
+  onRemoveLines,
 }: {
   item: StatementItem;
   view: StatementView;
@@ -736,8 +786,12 @@ function OpenItemBody({
   error: string | null;
   onSubmit: (submit: TreatmentSubmit) => void;
   onMakeAsset: () => void;
+  onSaveLines: (lines: LineDraft[], done: () => void) => void;
+  onRemoveLines: () => void;
 }) {
+  const [splitting, setSplitting] = useState(false);
   const blocking = item.checks.filter((c) => c.blocking).map((c) => c.kind);
+  const mismatch = blocking.includes('lines_do_not_sum');
   if (blocking.some((k) => MEAL_CHECKS.includes(k))) {
     return (
       <div className="space-y-3">
@@ -748,6 +802,27 @@ function OpenItemBody({
         <Link href="/app/meals" className="ui-btn ui-btn-primary">
           Im Bewirtungsverzeichnis ergänzen
         </Link>
+      </div>
+    );
+  }
+  if (mismatch || splitting) {
+    return (
+      <div className="space-y-3">
+        {mismatch && (
+          <p className="ui-note ui-note-warn">
+            Dieser Beleg wurde in Positionen aufgeteilt, die nicht mehr seinen Betrag ergeben (der Belegbetrag wurde
+            wohl nachträglich geändert). Bis das stimmt, wird nichts davon gerechnet.
+          </p>
+        )}
+        <LinesForm
+          item={item}
+          existing={item.receiptLines}
+          busy={busy}
+          error={error}
+          onCancel={mismatch ? null : () => setSplitting(false)}
+          onSubmit={(lines) => onSaveLines(lines, () => setSplitting(false))}
+          onRemove={item.receiptLines.length > 0 ? onRemoveLines : null}
+        />
       </div>
     );
   }
@@ -784,6 +859,7 @@ function OpenItemBody({
         </div>
       )}
       <TreatmentForm item={item} formLines={view.formLines} busy={busy} error={error} submitLabel="Speichern und weiter" onSubmit={onSubmit} />
+      <SplitOffer item={item} onSplit={() => setSplitting(true)} />
     </div>
   );
 }

@@ -25,7 +25,7 @@ const open = (o: Partial<OpenPayment> = {}): OpenPayment => ({
 function view(payments: Partial<PaymentsView> = {}): StatementView {
   return {
     year: 2026,
-    payments: { accounts: [account], yearCount: 3, linkedCount: 1, unclassified: [], treatments: [], open: [], links: [], ...payments },
+    payments: { accounts: [account], yearCount: 3, linkedCount: 1, unclassified: [], treatments: [], open: [], overridden: [], receiptTargets: [], invoiceTargets: [], links: [], ...payments },
   } as StatementView;
 }
 
@@ -40,6 +40,7 @@ const props = () => ({
   onLink: vi.fn(),
   onUnlink: vi.fn(),
   onNotIncome: vi.fn(),
+  onKind: vi.fn(),
 });
 
 describe('PaymentsTab', () => {
@@ -138,5 +139,53 @@ describe('PaymentsTab', () => {
     expect(p.onUnlink).toHaveBeenCalledWith('l-1');
     await user.click(screen.getByRole('button', { name: 'Antwort zurücknehmen' }));
     expect(p.onTreat).toHaveBeenCalledWith('Vermieter Beispiel', null);
+  });
+
+  it('links by hand: a chosen receipt, optionally with a part of the amount, checked before anything is sent', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const receiptTargets = [{ id: 'r-9', label: 'Bestellung 4711', day: '2025-12-28', amountCents: 10_000 }];
+    render(<PaymentsTab view={view({ open: [open()], receiptTargets })} {...p} />);
+    await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
+    expect(screen.getByRole('alert').textContent).toContain('Bitte einen Beleg');
+    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r-9');
+    await user.type(screen.getByLabelText(/Teilbetrag/), '200');
+    await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
+    expect(screen.getByRole('alert').textContent).toContain('noch offen');
+    expect(p.onLink).not.toHaveBeenCalled();
+    await user.clear(screen.getByLabelText(/Teilbetrag/));
+    await user.type(screen.getByLabelText(/Teilbetrag/), '100');
+    await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
+    expect(p.onLink).toHaveBeenCalledWith({ paymentId: 'p-1', rowId: 'r-9', cents: 10_000 });
+  });
+
+  it('money received is linked by hand to an invoice with something open; without an amount all that is open', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const income = open({ amountCents: 50_000, freeCents: 50_000, kind: 'income', check: 'income_without_invoice' });
+    render(<PaymentsTab view={view({ open: [income], invoiceTargets: [{ id: 'i-1', label: 'Rechnung R-2026-050', openCents: 20_000 }], receiptTargets: [{ id: 'r-9', label: 'x', day: null, amountCents: null }] })} {...p} />);
+    expect(screen.queryByLabelText('Beleg von Hand wählen')).toBeNull();
+    await user.selectOptions(screen.getByLabelText('Rechnung von Hand wählen'), 'i-1');
+    await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
+    expect(p.onLink).toHaveBeenCalledWith({ paymentId: 'p-1', invoiceId: 'i-1' });
+  });
+
+  it('a payment without a name can be marked private, and what was re-labelled can be put back', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const overridden = [{ id: 'p-7', bookingDay: '2026-01-09', amountCents: -1_230, counterparty: '', kind: 'private' as const }];
+    render(<PaymentsTab view={view({ open: [open({ counterparty: '' })], overridden })} {...p} />);
+    expect(screen.queryByRole('button', { name: 'Gegenseite ist privat' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Diese Zahlung ist privat' }));
+    expect(p.onKind).toHaveBeenCalledWith('p-1', 'private');
+    const section = screen.getByRole('region', { name: 'Umgewidmete Zahlungen' });
+    expect(section.textContent).toContain('privat');
+    await user.click(within(section).getByRole('button', { name: 'Zurücksetzen' }));
+    expect(p.onKind).toHaveBeenCalledWith('p-7', null);
+  });
+
+  it('a refund asks for the receipt it belongs to', () => {
+    render(<PaymentsTab view={view({ open: [open({ amountCents: 750, freeCents: 750, kind: 'refund', check: 'refund_without_receipt' })] })} {...props()} />);
+    expect(screen.getByText(/Erstattung: dem Beleg zuordnen/)).toBeTruthy();
   });
 });

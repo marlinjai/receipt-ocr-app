@@ -44,6 +44,7 @@ function computeItem(item: LedgerItem, assetRules: AssetRules): ItemResult {
   const block = (kind: OpenCheckKind) => checks.push({ itemId: item.id, kind, blocking: true });
   const note = (kind: OpenCheckKind) => checks.push({ itemId: item.id, kind, blocking: false });
 
+  if (item.linesMismatch) block('lines_do_not_sum');
   if (item.amountCents === null) block(item.missingAmount === 'no_exchange_rate' ? 'no_exchange_rate' : 'no_amount');
   if (item.smallBusiness === null) block('small_business_unanswered');
   // Under regular taxation the cost is the net amount and the tax in the

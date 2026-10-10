@@ -8,7 +8,7 @@ const base = {
   method: 'linear',
   usefulLifeMonths: 60,
   decliningRateBp: 3000,
-  rowIds: ['r-1', 'r-1', 'r-2'],
+  itemIds: ['r-1', 'r-1', 'r-2'],
 };
 const code = (fn: () => unknown) => {
   try {
@@ -31,7 +31,7 @@ describe('validateAssetInput', () => {
       businessShareBp: 10000,
       reminderCents: 0,
       opening: null,
-      rowIds: ['r-1', 'r-2'],
+      itemIds: ['r-1', 'r-2'],
     });
     expect(validateAssetInput({ ...base, method: 'computer_one_year' })).toMatchObject({ usefulLifeMonths: null, decliningRateBp: null });
   });
@@ -43,9 +43,9 @@ describe('validateAssetInput', () => {
       method: 'linear',
       reminderCents: 100,
       opening: { year: 2025, bookValueCents: 100, remainingMonths: 0 },
-      rowIds: [],
+      itemIds: [],
     });
-    expect(carried).toMatchObject({ acquisitionDate: null, opening: { year: 2025, bookValueCents: 100, remainingMonths: 0 }, rowIds: [] });
+    expect(carried).toMatchObject({ acquisitionDate: null, opening: { year: 2025, bookValueCents: 100, remainingMonths: 0 }, itemIds: [] });
   });
 
   it.each([
@@ -59,9 +59,9 @@ describe('validateAssetInput', () => {
     ['a rate above the whole', { method: 'declining', decliningRateBp: 10001 }, 'invalid_rate'],
     ['a share of zero', { businessShareBp: 0 }, 'invalid_share'],
     ['a reminder above one euro', { reminderCents: 101 }, 'invalid_reminder'],
-    ['no receipts on a new asset', { rowIds: [] }, 'receipts_required'],
+    ['no receipts on a new asset', { itemIds: [] }, 'receipts_required'],
     ['receipts on a carried-in asset', { opening: { year: 2025, bookValueCents: 100, remainingMonths: 0 } }, 'receipts_and_opening'],
-    ['a broken opening', { rowIds: [], opening: { year: 2025, bookValueCents: -1, remainingMonths: 0 } }, 'invalid_opening'],
+    ['a broken opening', { itemIds: [], opening: { year: 2025, bookValueCents: -1, remainingMonths: 0 } }, 'invalid_opening'],
   ])('rejects %s', (_name, overrides, expected) => {
     expect(code(() => validateAssetInput({ ...base, ...overrides }))).toBe(expected);
   });

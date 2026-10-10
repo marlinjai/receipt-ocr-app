@@ -5,7 +5,8 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession, requireRowAccess } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { FileNotFoundError } from '@marlinjai/storage-brain-sdk';
-import { sharedContactsEnabled } from '@/lib/contacts/db';
+import { companyContacts, sharedContactsEnabled } from '@/lib/contacts/db';
+import { countDirectoryOrganizations } from '@/lib/contacts/directory';
 import { ContactError, type Contact, type ContactInput } from '@/lib/contacts/store';
 import { normalizeRowIds, type MealBatchResult } from '@/lib/meals/batch';
 import { MealInputError, type MealDetailsInput } from '@/lib/meals/input';
@@ -108,6 +109,12 @@ export interface MealsPageData {
   /** Register entries, incomplete meals, separately counted meals, and the receipts marked "Keine Bewirtung". */
   records: MealRecord[];
   contacts: Contact[];
+  /**
+   * Organizations in the company's directory. The Kontakte tab lists them next to
+   * the persons, so its badge counts both; the guest picker offers persons only.
+   * Zero while the shared contact database is off.
+   */
+  organizationCount: number;
   settings: MealTaxSettings;
   /** The host name used most recently, to prefill a new entry. */
   defaultHost: string;
@@ -118,12 +125,13 @@ export async function getMealsPageData(): Promise<Result<MealsPageData>> {
     const session = await requireReceiptsSession();
     const workspaceId = readContext(session);
     const tenantId = contactReadTenant(session, workspaceId);
-    const [records, contacts, settings] = await Promise.all([
+    const [records, contacts, settings, organizationCount] = await Promise.all([
       loadMealRecords(prisma, workspaceId, { includeDismissed: true }),
       contactStore(prisma, { workspaceId, tenantId }).list({ includeArchived: true }),
       getTaxSettings(prisma, workspaceId),
+      tenantId ? countDirectoryOrganizations(companyContacts(tenantId)) : Promise.resolve(0),
     ]);
-    return { ok: true, value: { records, contacts, settings, defaultHost: lastUsedHost(records) } };
+    return { ok: true, value: { records, contacts, organizationCount, settings, defaultHost: lastUsedHost(records) } };
   } catch (e) {
     return failure(e);
   }

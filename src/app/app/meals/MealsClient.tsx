@@ -3,6 +3,8 @@
 import { useCallback, useId, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Contact } from '@/lib/contacts/store';
+import type { DirectoryContact } from '@/lib/contacts/directory';
+import { contactsTabCount } from '@/lib/contacts/field-form';
 import { incompleteQueue } from '@/lib/meals/register';
 import { isDismissedMeal } from '@/lib/meals/rules';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
@@ -19,6 +21,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
   const tabsId = useId();
   const [records, setRecords] = useState<MealRecord[]>(initial.records);
   const [contacts, setContacts] = useState<Contact[]>(initial.contacts);
+  const [organizationCount, setOrganizationCount] = useState(initial.organizationCount);
   const [settings, setSettings] = useState<MealTaxSettings>(initial.settings);
   const [defaultHost, setDefaultHost] = useState(initial.defaultHost);
   const [tab, setTab] = useState<TabKey>(() => (incompleteQueue(initial.records.filter((r) => !isDismissedMeal(r))).length > 0 ? 'queue' : 'register'));
@@ -66,10 +69,18 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
     );
   }, []);
 
+  // The directory lists organizations too and can erase a person, so the badge
+  // and the guest list follow what it shows.
+  const onDirectoryChanged = useCallback((listed: DirectoryContact[]) => {
+    setOrganizationCount(listed.filter((c) => c.kind === 'organization').length);
+    const ids = new Set(listed.map((c) => c.id));
+    setContacts((prev) => prev.filter((c) => c.archived || ids.has(c.id)));
+  }, []);
+
   const tabs: Array<{ key: TabKey; label: string; count?: number }> = [
     { key: 'queue', label: 'Unvollständig', count: queue.length },
     { key: 'register', label: 'Verzeichnis' },
-    { key: 'contacts', label: 'Kontakte', count: contacts.filter((c) => !c.archived).length },
+    { key: 'contacts', label: 'Kontakte', count: contactsTabCount(contacts, organizationCount) },
   ];
 
   return (
@@ -150,7 +161,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
           {tab === 'contacts' && (
             <>
               <ContactsTab contacts={contacts} onContactChanged={onContactUpserted} />
-              <DirectoryPanel />
+              <DirectoryPanel onChanged={onDirectoryChanged} />
             </>
           )}
         </div>

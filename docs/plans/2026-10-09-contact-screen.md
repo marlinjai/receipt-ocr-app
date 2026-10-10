@@ -1,8 +1,8 @@
 ---
 title: Contact screen in the receipts app (wave 3)
-summary: The contacts tab grows from a guest picker into a directory of people and organizations, with company details, links between them, merges, customer numbers, and a single-contact export. Erasure of one contact is shown but disabled until the company erasure build (the export and hold rule) lands.
+summary: The contacts tab grows from a guest picker into a directory of people and organizations, with company details, links between them, merges, customer numbers, and a single-contact export. Completed 2026-10-10 with custom fields, the preferred contact method and the erasure of one contact, which follows the export and hold rule of the company erasure.
 type: plan
-status: decided
+status: completed
 tags: [receipts, contacts, shared-model, screen, stateful-flow]
 projects: [receipt-ocr-app, contacts]
 date: 2026-10-09
@@ -63,6 +63,33 @@ Terms used here:
 - Unit tests with a fake of the package's per-company contacts, covering the four paths above.
 - Database tests against a throwaway contacts database and receipts database.
 - Typecheck, lint, unit tests, database tests green.
+
+## Completed on 2026-10-10: fields, contact method, erase, badge
+
+Built on `@marlinjai/contacts-core` 0.2.0, which applies the additive contacts migration 0002 when the
+app starts.
+
+- **Custom fields.** The company defines fields in the tab (text, number, date, yes or no, one option,
+  several options, link). A field key is derived from its label and stays taken after archiving. An
+  archived field keeps its stored values and refuses new ones. The form sends only the fields that
+  changed, and an error the package returns is shown under the input it names.
+- **Preferred contact method.** Email, phone, post or none, on persons and organizations. It is part
+  of the package's full record, so every full-record update in this app carries it (the guest list
+  store, the directory and the move helper). Custom field values are a patch in the package and are
+  kept when left out. Tests prove that an edit of the name wipes neither.
+- **Erase one contact.** One rule, shared with the company erasure (`settleGuestCopies` in
+  `src/lib/erasure.ts`): the contact and its meal links go; the printed names on meals are removed when
+  the company has an export on record and held otherwise (link cleared, ten-year date). The
+  confirmation says which of the two happens and how many meals are concerned. The contact must exist
+  in the company before anything is touched, because printed copies are keyed by contact id alone.
+  Persons of an erased organization stay, unlinked. The retention purge stays unscheduled: no lawyer
+  has confirmed the ten-year period.
+- **Tab badge.** It counted persons only, while the tab also lists organizations. It now counts both;
+  the guest picker keeps offering persons only.
+
+Four paths covered for defining a field, editing with fields, and erasing: forward, change an earlier
+input, resume and re-entry (unit tests with the package's own field rules, component tests, and
+database tests against layout 0002).
 
 ## Not in this plan
 

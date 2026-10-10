@@ -49,6 +49,43 @@ export function retainUntilFrom(now: Date): Date {
   return until;
 }
 
+/** Whether the company has taken an export of its data (the zip with its register and contacts). */
+export async function companyHasExport(db: PrismaClient, tenantId: string): Promise<boolean> {
+  return (await db.companyExport.count({ where: { authTenantId: tenantId } })) > 0;
+}
+
+/** One condition on the printed guest copies an erasure covers. Several are combined with OR. */
+export type GuestCopyScope =
+  | { authTenantId: string }
+  | { authWorkspaceId: { in: string[] } }
+  | { contactId: string | { in: string[] } };
+
+/**
+ * THE rule for printed guest copies when their contact is erased. Used by the
+ * company erasure and by the erasure of one contact, so both always decide alike.
+ *
+ * - The company holds an export: the copies are removed now.
+ * - No export: the copies are held. Their contact link is cleared and
+ *   `retain_until` is set `RETENTION_YEARS` ahead. Only copies still linked to a
+ *   contact are given a date, so a repeat never restarts a hold.
+ */
+export async function settleGuestCopies(
+  db: PrismaClient,
+  scope: readonly GuestCopyScope[],
+  exported: boolean,
+  now: Date = new Date(),
+): Promise<{ removed: number; held: number }> {
+  if (scope.length === 0) return { removed: 0, held: 0 };
+  if (exported) {
+    return { removed: (await db.mealGuest.deleteMany({ where: { OR: [...scope] } })).count, held: 0 };
+  }
+  const held = await db.mealGuest.updateMany({
+    where: { OR: [...scope], contactId: { not: null } },
+    data: { contactId: null, retainUntil: retainUntilFrom(now) },
+  });
+  return { removed: 0, held: held.count };
+}
+
 /**
  * Erase one company's contact data. Order and rules:
  *
@@ -80,22 +117,8 @@ export async function eraseCompanyContacts(
   const workspaceScope = workspaceIds.length > 0 ? [{ authWorkspaceId: { in: [...workspaceIds] } }] : [];
   const scope = [{ authTenantId: tenantId }, ...workspaceScope, ...(sharedIds.length > 0 ? [{ contactId: { in: sharedIds } }] : [])];
 
-  const exported = (await db.companyExport.count({ where: { authTenantId: tenantId } })) > 0;
-
-  let guestCopies = 0;
-  let guestCopiesHeld = 0;
-  if (exported) {
-    // The company holds the export, so nothing of its guest data is kept here.
-    guestCopies = (await db.mealGuest.deleteMany({ where: { OR: scope } })).count;
-  } else {
-    // Hold only copies still linked to a contact; a copy already held keeps its date.
-    guestCopiesHeld = (
-      await db.mealGuest.updateMany({
-        where: { OR: scope, contactId: { not: null } },
-        data: { contactId: null, retainUntil: retainUntilFrom(now) },
-      })
-    ).count;
-  }
+  const exported = await companyHasExport(db, tenantId);
+  const { removed: guestCopies, held: guestCopiesHeld } = await settleGuestCopies(db, scope, exported, now);
 
   const ownContacts = await db.contact.deleteMany({
     where: { OR: [{ authTenantId: tenantId }, ...workspaceScope] },

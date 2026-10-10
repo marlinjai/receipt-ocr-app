@@ -4,7 +4,7 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, companyWorkspaceIds, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 
-import { companyContacts, sharedContactsEnabled } from '@/lib/contacts/db';
+import { companyContacts } from '@/lib/contacts/db';
 import {
   DirectoryError,
   archiveDirectoryField,
@@ -40,7 +40,6 @@ import { prisma } from '@/lib/prisma';
 
 export type DirectoryActionError =
   | DirectoryError['code']
-  | 'directory_off'
   | 'unauthorized'
   | 'forbidden'
   | 'failed';
@@ -68,13 +67,11 @@ function contactsFor(session: Parameters<typeof sessionWorkspaceId>[0]) {
 
 /** The company the directory works on, for reads. */
 async function readContacts() {
-  if (!sharedContactsEnabled()) throw new DirectoryError('unavailable');
   return contactsFor(await requireReceiptsSession());
 }
 
 /** The same company for writes, behind the receipts write right. */
 async function writeContacts() {
-  if (!sharedContactsEnabled()) throw new DirectoryError('unavailable');
   return contactsFor(await auth.requireAction('receipts.row.write'));
 }
 
@@ -83,7 +80,6 @@ async function writeContacts() {
  * the same set the company export is taken with (`companyWorkspaceIds`).
  */
 async function eraseScope() {
-  if (!sharedContactsEnabled()) throw new DirectoryError('unavailable');
   const session = await auth.requireAction('receipts.row.write');
   const contacts = contactsFor(session);
   return { contacts, workspaceIds: companyWorkspaceIds(session, contacts.tenantId) };

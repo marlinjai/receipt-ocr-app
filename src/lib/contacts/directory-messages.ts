@@ -30,10 +30,6 @@ export function directoryMessage(error: string): string {
       return 'Ein Feld mit diesem Namen gibt es bereits (auch archivierte Felder behalten ihren Namen).';
     case 'field_not_found':
       return 'Dieses Feld wurde nicht gefunden. Bitte die Seite neu laden.';
-    case 'unavailable':
-      return 'Diese Aktion ist noch nicht verfügbar.';
-    case 'directory_off':
-      return 'Das Kontaktverzeichnis braucht die gemeinsame Kontaktdatenbank, die für dieses Konto nicht eingeschaltet ist.';
     case 'unauthorized':
       return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und erneut anmelden.';
     case 'forbidden':

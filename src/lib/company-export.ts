@@ -24,11 +24,10 @@ export interface ExportFile {
 
 export interface CollectInput {
   db: PrismaClient;
-  tenantId: string;
   /** The company's workspaces the exporting member can see. */
   workspaceIds: readonly string[];
-  /** The company's contacts in the shared database, when that database is in use. */
-  shared: Contacts | null;
+  /** The company's contacts in the shared contacts database. */
+  shared: Contacts;
   now?: Date;
 }
 
@@ -104,36 +103,22 @@ export async function collectCompanyExport(input: CollectInput): Promise<ExportF
   const files: ExportFile[] = await collectRegisterFiles(input.db, input.workspaceIds);
   const registerFiles = files.length;
 
-  const contacts = input.shared ? await input.shared.list({ includeArchived: true }) : [];
-  const exported = await Promise.all(
-    contacts.map(async (c) => input.shared!.exportContact(c.id)),
-  );
+  const contacts = await input.shared.list({ includeArchived: true });
+  const exported = await Promise.all(contacts.map(async (c) => input.shared.exportContact(c.id)));
   files.push({
     path: 'contacts/contacts.json',
     data: strToU8(JSON.stringify(exported.filter((e) => e !== null), null, 2)),
   });
 
-  const legacy = await input.db.contact.findMany({ where: { authTenantId: input.tenantId } });
-  files.push({
-    path: 'contacts/app-table.json',
-    data: strToU8(
-      JSON.stringify(
-        legacy.map((c) => ({ id: c.id, name: c.name, companyOrRole: c.companyOrRole, note: c.note, archived: c.archivedAt !== null, createdAt: c.createdAt })),
-        null,
-        2,
-      ),
-    ),
-  });
-
   files.push({
     path: 'README.txt',
-    data: strToU8(buildReadme(now, { registerFiles, contacts: contacts.length, legacy: legacy.length })),
+    data: strToU8(buildReadme(now, { registerFiles, contacts: contacts.length })),
   });
   return files;
 }
 
 /** The readme inside the zip. Counts only, no names. */
-export function buildReadme(now: Date, counts: { registerFiles: number; contacts: number; legacy: number }): string {
+export function buildReadme(now: Date, counts: { registerFiles: number; contacts: number }): string {
   return [
     'Export of the company data held by Lumitra Receipts',
     `Created: ${now.toISOString()}`,
@@ -141,7 +126,7 @@ export function buildReadme(now: Date, counts: { registerFiles: number; contacts
     'register/      The business meal register, one CSV per workspace and year, and one guests.csv per',
     '               workspace with every printed guest name, also of incomplete meals (' + counts.registerFiles + ' files).',
     '               The yearly files list each meal with date, place, amount, occasion, host and guests.',
-    'contacts/      The contact list: ' + counts.contacts + ' contacts from the shared contact database, and ' + counts.legacy + ' from the app table.',
+    'contacts/      The contact list: ' + counts.contacts + ' contacts.',
     '',
     'Keep this export. German tax law (the Abgabenordnung, AO) requires business records, including',
     'business meal records, to be kept for ten years. Printed guest names are removed from Lumitra',

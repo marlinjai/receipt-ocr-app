@@ -27,7 +27,7 @@ describe('export archive', () => {
   });
 
   it('the readme states the counts and the retention duty, and carries no names', () => {
-    const text = buildReadme(new Date('2026-10-09T10:00:00Z'), { registerFiles: 2, contacts: 4, legacy: 0 });
+    const text = buildReadme(new Date('2026-10-09T10:00:00Z'), { registerFiles: 2, contacts: 4 });
     expect(text).toContain('2 files');
     expect(text).toContain('4 contacts');
     expect(text).toContain('ten years');

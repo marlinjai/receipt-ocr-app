@@ -2,13 +2,13 @@
 
 ## Planned
 
-- [ ] Remove the receipts app's own contacts table and the `CONTACTS_STORE` switch. The app has
-  read and written only the shared contacts database since 2026-10-09, and the old table holds a
-  stale copy of 4 meal guests that live there under the same ids. Prepared and HELD as pull request
-  61: merging it deploys a migration that drops the table in the production receipts database, so
-  it waits for Marlin's own yes. The database has a verified backup every six hours. After the
-  merge, remove the unused `CONTACTS_STORE` entry from the production secret project. Its plan
-  document arrives with that pull request. (2026-10-10)
+- [x] Removed the receipts app's own contacts table and the `CONTACTS_STORE` switch (wave 4 of
+  the shared contact list). The shared contacts database is the only contact store; a missing
+  company or a missing `CONTACTS_DATABASE_URL` fails loudly instead of falling back. Migration
+  `0018_drop_own_contacts_table` drops the table `contacts` in the receipts database on deploy
+  (4 stale rows, copied to the shared database under the same ids on 2026-10-09). Released on
+  Marlin's own yes. Afterwards remove the unused `CONTACTS_STORE` entry from the production secret
+  project. Plan: `docs/plans/2026-10-10-remove-own-contacts-table.md`. (2026-10-10)
 - [ ] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
   (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax
   return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent

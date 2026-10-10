@@ -34,8 +34,7 @@ export async function GET() {
 
   // The same set the erasure of one contact compares the register over.
   const workspaceIds = companyWorkspaceIds(session, tenantId);
-  const shared = process.env.CONTACTS_DATABASE_URL?.trim() ? companyContacts(tenantId) : null;
-  const files = await collectCompanyExport({ db: prisma, tenantId, workspaceIds, shared });
+  const files = await collectCompanyExport({ db: prisma, workspaceIds, shared: companyContacts(tenantId) });
   const zip = buildExportArchive(files);
   await prisma.companyExport.create({
     data: { authTenantId: tenantId, fileCount: files.length, sha256: sha256Hex(zip), registerSha256: registerHash(files) },

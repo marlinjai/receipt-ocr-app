@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHmac } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import {
@@ -12,10 +12,11 @@ import {
 } from '../erasure';
 
 const companyContactsMock = vi.hoisted(() => vi.fn());
+const contactsDbMock = vi.hoisted(() => vi.fn());
 const migrateMock = vi.hoisted(() => vi.fn(async () => ({ applied: [], alreadyApplied: 0, unknown: [] })));
 vi.mock('../contacts/db', () => ({
   companyContacts: companyContactsMock,
-  contactsDb: () => ({ sql: 'sql-handle' }),
+  contactsDb: contactsDbMock,
 }));
 vi.mock('@marlinjai/contacts-core', () => ({ migrate: migrateMock }));
 
@@ -29,7 +30,7 @@ function delivery(payload: Record<string, unknown>) {
   return JSON.stringify({ event_id: 'evt_1', kind: 'tenant.erased', tenant_id: 'tnt_a', requested_at: '2026-10-09T00:00:00Z', ...payload });
 }
 
-const COUNTS: ErasureCounts = { guestCopies: 2, guestCopiesHeld: 0, ownContacts: 1, sharedContacts: 3, exportCoverage: 'identical' };
+const COUNTS: ErasureCounts = { guestCopies: 2, guestCopiesHeld: 0, sharedContacts: 3, exportCoverage: 'identical' };
 
 describe('receiveErasureDelivery (the decisions, before any data is touched)', () => {
   it('refuses with 503 and erases nothing when the secret is not configured', async () => {
@@ -81,7 +82,7 @@ describe('receiveErasureDelivery (the decisions, before any data is touched)', (
   });
 
   it('is repeat-safe: a second identical delivery is acknowledged again', async () => {
-    const erase = vi.fn(async (): Promise<ErasureCounts> => ({ guestCopies: 0, guestCopiesHeld: 0, ownContacts: 0, sharedContacts: 0, exportCoverage: 'no_export' }));
+    const erase = vi.fn(async (): Promise<ErasureCounts> => ({ guestCopies: 0, guestCopiesHeld: 0, sharedContacts: 0, exportCoverage: 'no_export' }));
     const body = delivery({});
     const first = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, log: () => {} });
     const second = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, log: () => {} });
@@ -103,20 +104,20 @@ describe('receiveErasureDelivery (the decisions, before any data is touched)', (
 });
 
 describe('eraseCompanyContacts (what is removed, company-scoped)', () => {
-  let savedUrl: string | undefined;
+  /** The company's contacts in the shared contacts database, the only contact store. */
+  function sharedWith(ids: string[] = []) {
+    return { list: vi.fn(async () => ids.map((id) => ({ id }))), eraseAll: vi.fn(async () => ids.length) };
+  }
   beforeEach(() => {
-    savedUrl = process.env.CONTACTS_DATABASE_URL;
-    delete process.env.CONTACTS_DATABASE_URL;
     companyContactsMock.mockReset();
+    companyContactsMock.mockReturnValue(sharedWith());
+    contactsDbMock.mockReset();
+    contactsDbMock.mockReturnValue({ sql: 'sql-handle' });
     migrateMock.mockClear();
-  });
-  afterEach(() => {
-    if (savedUrl === undefined) delete process.env.CONTACTS_DATABASE_URL;
-    else process.env.CONTACTS_DATABASE_URL = savedUrl;
   });
 
   /** `exportHash`: undefined = no export on record, null = an export from before the hash existed. */
-  function fakeDb(opts: { exportHash?: string | null; guestsLinked?: number; own?: number } = {}) {
+  function fakeDb(opts: { exportHash?: string | null; guestsLinked?: number } = {}) {
     return {
       companyExport: {
         findFirst: vi.fn(async () => (opts.exportHash === undefined ? null : { registerSha256: opts.exportHash })),
@@ -125,20 +126,18 @@ describe('eraseCompanyContacts (what is removed, company-scoped)', () => {
         deleteMany: vi.fn(async () => ({ count: opts.guestsLinked ?? 0 })),
         updateMany: vi.fn(async () => ({ count: opts.guestsLinked ?? 0 })),
       },
-      contact: { deleteMany: vi.fn(async () => ({ count: opts.own ?? 0 })) },
     } as unknown as PrismaClient & {
       companyExport: { findFirst: ReturnType<typeof vi.fn> };
       mealGuest: { deleteMany: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn> };
-      contact: { deleteMany: ReturnType<typeof vi.fn> };
     };
   }
   const now = new Date('2026-10-09T12:00:00Z');
   const registerIs = (hash: string): RegisterHasher => vi.fn(async () => hash);
 
   it('without an export, holds the printed copies: the contact link is cleared and a retention date is set', async () => {
-    const db = fakeDb({ guestsLinked: 2, own: 1 });
+    const db = fakeDb({ guestsLinked: 2 });
     const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'));
-    expect(counts).toEqual({ guestCopies: 0, guestCopiesHeld: 2, ownContacts: 1, sharedContacts: 0, exportCoverage: 'no_export' });
+    expect(counts).toEqual({ guestCopies: 0, guestCopiesHeld: 2, sharedContacts: 0, exportCoverage: 'no_export' });
     expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
     const call = db.mealGuest.updateMany.mock.calls[0][0] as { where: Record<string, unknown>; data: Record<string, unknown> };
     expect(call.where).toMatchObject({ contactId: { not: null } });
@@ -176,12 +175,12 @@ describe('eraseCompanyContacts (what is removed, company-scoped)', () => {
   });
 
   it('when the register cannot be recomputed, holds (the safe direction) and does not fail the erasure', async () => {
-    const db = fakeDb({ exportHash: 'h1', guestsLinked: 2, own: 1 });
+    const db = fakeDb({ exportHash: 'h1', guestsLinked: 2 });
     const failing: RegisterHasher = vi.fn(async () => {
       throw new Error('data layer unreachable');
     });
     const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, failing);
-    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 2, ownContacts: 1, exportCoverage: 'recompute_failed' });
+    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 2, exportCoverage: 'recompute_failed' });
     expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -200,26 +199,28 @@ describe('eraseCompanyContacts (what is removed, company-scoped)', () => {
     expect(second).toMatchObject({ guestCopies: 0, guestCopiesHeld: 0 });
   });
 
-  it('removes the company contacts by company and workspace', async () => {
-    const db = fakeDb({ exportHash: 'h1', own: 1 });
-    await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'));
-    expect(db.contact.deleteMany).toHaveBeenCalledWith({
-      where: { OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] } }] },
-    });
-  });
-
-  it('with a shared database, also removes the company contacts and their printed copies by contact id', async () => {
-    process.env.CONTACTS_DATABASE_URL = 'postgresql://example.invalid/contacts';
-    const shared = { list: vi.fn(async () => [{ id: 'c1' }, { id: 'c2' }]), eraseAll: vi.fn(async () => 2) };
+  it('applies the layout, then removes the company contacts and their printed copies by contact id', async () => {
+    const shared = sharedWith(['c1', 'c2']);
     companyContactsMock.mockReturnValue(shared);
     const db = fakeDb({ exportHash: 'h1' });
     const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'));
     expect(migrateMock).toHaveBeenCalledWith('sql-handle');
+    expect(companyContactsMock).toHaveBeenCalledWith('tnt_a');
     expect(counts.sharedContacts).toBe(2);
     expect(db.mealGuest.deleteMany).toHaveBeenCalledWith({
       where: { OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] } }, { contactId: { in: ['c1', 'c2'] } }] },
     });
     expect(shared.eraseAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails loudly when the shared contacts database is not configured, and touches nothing', async () => {
+    contactsDbMock.mockImplementation(() => {
+      throw new Error('CONTACTS_DATABASE_URL is not set: the shared contacts database is the only contact store');
+    });
+    const db = fakeDb({ guestsLinked: 2 });
+    await expect(eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'))).rejects.toThrow('CONTACTS_DATABASE_URL');
+    expect(db.mealGuest.updateMany).not.toHaveBeenCalled();
+    expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
   });
 });
 

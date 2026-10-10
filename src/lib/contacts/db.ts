@@ -2,16 +2,14 @@ import 'server-only';
 import { contactsFor, createContactsDb, type Contacts, type ContactsDb } from '@marlinjai/contacts-core';
 
 /**
- * Whether this process uses the suite's shared contacts database.
- *
- * Off unless `CONTACTS_STORE=shared`. The URL alone never selects the shared
- * store: `CONTACTS_DATABASE_URL` already sits in the production secret project,
- * and switching to an empty database before the data move has run would show
- * an empty guest list. The flip is a deliberate second step (see the plan,
- * docs/plans/2026-10-09-shared-contacts-wave2.md).
+ * Thrown when the shared contacts database is not configured. There is no other
+ * contact store to fall back to, so this must surface, never be swallowed.
  */
-export function sharedContactsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.CONTACTS_STORE?.trim() === 'shared';
+export class ContactsNotConfiguredError extends Error {
+  constructor() {
+    super('CONTACTS_DATABASE_URL is not set: the shared contacts database is the only contact store');
+    this.name = 'ContactsNotConfiguredError';
+  }
 }
 
 const globalForContacts = globalThis as unknown as { contactsDb?: ContactsDb };
@@ -24,7 +22,7 @@ const globalForContacts = globalThis as unknown as { contactsDb?: ContactsDb };
 export function contactsDb(): ContactsDb {
   if (globalForContacts.contactsDb) return globalForContacts.contactsDb;
   const url = process.env.CONTACTS_DATABASE_URL?.trim();
-  if (!url) throw new Error('CONTACTS_DATABASE_URL is not set, but CONTACTS_STORE=shared');
+  if (!url) throw new ContactsNotConfiguredError();
   const handle = createContactsDb(url, { applicationName: 'receipts' });
   globalForContacts.contactsDb = handle;
   return handle;

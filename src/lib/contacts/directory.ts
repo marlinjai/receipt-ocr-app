@@ -93,8 +93,7 @@ export type DirectoryErrorCode =
   | 'unknown_field'
   | 'field_archived'
   | 'duplicate_field'
-  | 'field_not_found'
-  | 'unavailable';
+  | 'field_not_found';
 
 export class DirectoryError extends Error {
   readonly code: DirectoryErrorCode;
@@ -425,8 +424,6 @@ export async function eraseDirectoryContact(
   const coverage = await exportCoversRegister(db, contacts.tenantId, workspaceIds, hasher);
   const settled = await settleGuestCopies(db, [{ contactId: id }], coverage.covered, now);
   const erased = await call(() => contacts.erase(id));
-  // The app's own table may still hold the same id from before the move.
-  await db.contact.deleteMany({ where: { id, authTenantId: contacts.tenantId } });
   return {
     outcome: erased ? 'erased' : 'already_erased',
     printedNamesRemoved: settled.removed,

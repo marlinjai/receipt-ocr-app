@@ -58,6 +58,12 @@ export interface LedgerItem {
   /** 'year_boundary': a recurring payment at the turn of the year, counted in the year it belongs to. */
   dateBasis: 'payment' | 'document' | 'year_boundary';
   /**
+   * The day the item was really paid, when the ten-day rule moved `date`. The
+   * rule is one of income tax only: for the advance returns of value-added
+   * tax the input tax stays in the period of this day.
+   */
+  vatDate?: string | null;
+  /**
    * The cost in euro cents. Under section 19 of the value-added tax act this
    * is the gross amount, because no input tax is deducted.
    */

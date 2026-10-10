@@ -1190,6 +1190,19 @@ merged. Fixed in the same pull request:
 - **The answer belongs to the payment day** (migration `0016_tax_year_boundary`,
   additive). When a receipt is linked to another payment, the answer no longer
   applies and the question comes back; back on the same day, it holds again.
+- **Income tax only.** The input tax of a moved receipt stays in the advance return
+  period of the day it was really paid; payments are still matched to the receipt
+  by its real day; the statement shows "paid on, counts for" for a moved item.
+- **An answer is given for the day the person saw.** The screen sends the payment
+  day along; when it has changed since (another window, another link) the answer
+  is refused and the view reloads. "None of these" answers exactly the entries
+  that were on the screen, all together or none.
+- **An answer without effect stays visible.** When a receipt with an answer later
+  becomes a meal or part of an asset, the answer is listed as not applied and can
+  be taken back, instead of waking up unseen when that changes again.
+- **Reviewed before it merged** by a fresh agent: no isolation hole and no wrong
+  year assignment; the seven findings (the three above, the wording, and three
+  smaller ones) are fixed in the same pull request.
 - **Never moved:** a business meal (the meal register lists it by its own day) and a
   receipt that is part of an asset (depreciation runs from the acquisition).
 - **Not built:** regularly recurring INCOME at the turn of the year (a retainer paid

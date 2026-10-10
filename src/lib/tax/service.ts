@@ -70,7 +70,8 @@ export type TaxServiceErrorCode =
   | 'settlement_not_found'
   | 'line_not_found'
   | 'boundary_subject_not_found'
-  | 'not_in_year_boundary';
+  | 'not_in_year_boundary'
+  | 'year_boundary_changed';
 
 export class TaxServiceError extends Error {
   readonly code: TaxServiceErrorCode;
@@ -234,6 +235,12 @@ export interface YearBoundaryEntry {
   otherYear: number;
   /** True: counts in `otherYear`. False: stays. Null: not answered for this payment day. */
   answer: boolean | null;
+  /**
+   * Set when an answer exists but has no effect right now: the receipt has
+   * since become a business meal or part of an asset. It is listed so the
+   * answer can be taken back instead of waking up again unseen.
+   */
+  inactive: 'meal' | 'asset' | null;
 }
 
 /** One item as the finance screens show it: the facts, where its treatment comes from, and what it contributes. */
@@ -254,6 +261,8 @@ export interface StatementItem {
   vendor: string | null;
   vendorKey: string | null;
   date: string | null;
+  /** Set when the ten-day rule moved the item: the day it was really paid, while `date` is the day it counts on. */
+  paidOn: string | null;
   category: string | null;
   /** Document amount and currency, for display beside the euro amount. */
   gross: number | null;
@@ -367,6 +376,7 @@ function toStatementItem(resolved: ResolvedItem, facts: ReceiptFacts, result: { 
     vendor: item.vendor,
     vendorKey: resolved.vendorKey,
     date: item.date,
+    paidOn: item.dateBasis === 'year_boundary' ? (item.vatDate ?? null) : null,
     category: facts.record.category,
     gross: facts.record.gross,
     currency: facts.record.currency,
@@ -463,7 +473,8 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   const itemById = new Map(resolved.map((r) => [r.item.id, r.item]));
   const assetFacts = storedAssets.map((a) => toAssetFact(a, itemById, itemsByRow, smallBusinessOn(settings, a.acquisitionDate)));
   // Whole receipts, for matching payments: a payment pays a receipt, not a line of it.
-  const wholeReceipts = facts.map((f) => resolveItem(f, vendorRules, settings));
+  // On their real day: a payment is matched to a receipt by when it was paid, whatever year it counts in.
+  const wholeReceipts = facts.map((f) => resolveItem({ ...f, countsOnDay: null }, vendorRules, settings));
   const ledgerItems = resolved.map((r) => r.item);
   // No invoice in the workspace at all means revenue was never recorded, which
   // is different from a year without revenue.
@@ -654,8 +665,13 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
         const f = facts[index];
         const cashDay = cashDayOf(f);
         const otherYear = otherYearOf(cashDay);
-        // Meals are listed by the meal register on their own day; assets are depreciated from their acquisition.
-        if (cashDay === null || otherYear === null || !touchesYear(cashDay, year) || r.isMeal || rowsInAssets.has(f.record.rowId)) return [];
+        if (cashDay === null || otherYear === null || !touchesYear(cashDay, year)) return [];
+        const answer = answerFor(boundaryAnswers.get(`receipt:${f.record.rowId}`), cashDay);
+        // Meals are listed by the meal register on their own day; assets are
+        // depreciated from their acquisition. Neither is asked about, but an
+        // answer given before stays visible so it can be taken back.
+        const inactive = r.isMeal ? 'meal' : rowsInAssets.has(f.record.rowId) ? 'asset' : null;
+        if (inactive !== null && answer === null) return [];
         return [
           {
             kind: 'receipt',
@@ -665,7 +681,8 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
             dayBasis: f.paid ? 'payment' : 'document',
             cents: r.item.amountCents,
             otherYear,
-            answer: answerFor(boundaryAnswers.get(`receipt:${f.record.rowId}`), cashDay),
+            answer,
+            inactive,
           },
         ];
       }),
@@ -682,6 +699,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
             cents: s.cents,
             otherYear,
             answer: answerFor(boundaryAnswers.get(`vat_settlement:${s.id}`), s.settledOn),
+            inactive: null,
           },
         ];
       }),
@@ -993,32 +1011,39 @@ async function boundaryCashDay(db: PrismaClient, ctx: TaxContext, kind: Boundary
 export interface YearBoundaryInput {
   kind: BoundarySubjectKind;
   subjectId: string;
+  /** The payment day the person saw when answering; the answer is refused when it has changed since. */
+  cashDay: string;
   /** True: counts in the other year. False: stays in the year it was paid. Null: take the answer back. */
   belongsToOtherYear: boolean | null;
 }
 
 function validateBoundaryInput(raw: unknown): YearBoundaryInput {
-  const input = (raw ?? {}) as { kind?: unknown; subjectId?: unknown; belongsToOtherYear?: unknown };
+  const input = (raw ?? {}) as { kind?: unknown; subjectId?: unknown; cashDay?: unknown; belongsToOtherYear?: unknown };
   if (typeof input.kind !== 'string' || !(BOUNDARY_SUBJECT_KINDS as readonly string[]).includes(input.kind)) throw new TaxServiceError('boundary_subject_not_found');
   if (typeof input.subjectId !== 'string' || !input.subjectId) throw new TaxServiceError('boundary_subject_not_found');
   if (input.belongsToOtherYear !== null && typeof input.belongsToOtherYear !== 'boolean') throw new TaxServiceError('boundary_subject_not_found');
-  return { kind: input.kind as BoundarySubjectKind, subjectId: input.subjectId, belongsToOtherYear: input.belongsToOtherYear };
+  // Taking an answer back needs no day; giving one does.
+  if (input.belongsToOtherYear !== null && (typeof input.cashDay !== 'string' || otherYearOf(input.cashDay) === null)) throw new TaxServiceError('not_in_year_boundary');
+  return { kind: input.kind as BoundarySubjectKind, subjectId: input.subjectId, cashDay: typeof input.cashDay === 'string' ? input.cashDay : '', belongsToOtherYear: input.belongsToOtherYear };
 }
 
 /**
  * Answer the ten-day rule for one payment at the turn of the year. The answer
  * is stored with the payment day it was given for: when the receipt is linked
- * to another payment, or the settlement's day changes, the question comes back.
+ * to another payment, or the settlement's day changes, the question comes
+ * back. An answer given on a screen that showed another payment day than the
+ * current one is refused, so nobody answers for a day they did not see.
  */
 export async function saveYearBoundaryAnswer(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<void> {
   const input = validateBoundaryInput(raw);
   const key = { authWorkspaceId: ctx.workspaceId, subjectKind: input.kind, subjectId: input.subjectId };
   if (input.belongsToOtherYear === null) {
-    // Taking an answer back needs no payment day: it also clears an answer that no longer applies.
+    // Taking an answer back needs no check: it also clears an answer that has no effect any more.
     await db.taxYearBoundaryAnswer.deleteMany({ where: key });
     return;
   }
   const cashDay = await boundaryCashDay(db, ctx, input.kind, input.subjectId);
+  if (cashDay !== input.cashDay) throw new TaxServiceError('year_boundary_changed');
   await db.taxYearBoundaryAnswer.upsert({
     where: { authWorkspaceId_subjectKind_subjectId: key },
     create: { ...key, authTenantId: ctx.tenantId, cashDay, belongsToOtherYear: input.belongsToOtherYear },
@@ -1027,13 +1052,32 @@ export async function saveYearBoundaryAnswer(db: PrismaClient, ctx: TaxContext, 
 }
 
 /**
- * "None of these recurs": every payment at the turn of `year` that has no
- * answer yet stays in the year it was paid. Answers already given are kept.
+ * "None of these recurs": the payments the person saw without an answer stay
+ * in the year they were paid. Only entries that are still open, on the day the
+ * person saw, are answered; all of them together or none.
  */
-export async function declineOpenYearBoundary(db: PrismaClient, ctx: TaxContext, year: number): Promise<number> {
+export async function declineOpenYearBoundary(db: PrismaClient, ctx: TaxContext, year: number, raw: unknown): Promise<number> {
+  if (!Array.isArray(raw) || raw.length > 500) throw new TaxServiceError('boundary_subject_not_found');
+  const seen = new Set(
+    raw.map((r) => {
+      const e = (r ?? {}) as { kind?: unknown; subjectId?: unknown; cashDay?: unknown };
+      return `${String(e.kind)}:${String(e.subjectId)}:${String(e.cashDay)}`;
+    }),
+  );
   const view = await loadStatement(db, ctx.workspaceId, year);
-  const open = view.yearBoundary.filter((e) => e.answer === null);
-  for (const entry of open) await saveYearBoundaryAnswer(db, ctx, { kind: entry.kind, subjectId: entry.subjectId, belongsToOtherYear: false });
+  const open = view.yearBoundary.filter((e) => e.answer === null && e.inactive === null && seen.has(`${e.kind}:${e.subjectId}:${e.cashDay}`));
+  // What was on the screen and is not open on that day any more was changed elsewhere: say so instead of answering half.
+  if (open.length !== seen.size) throw new TaxServiceError('year_boundary_changed');
+  await db.$transaction(
+    open.map((e) => {
+      const key = { authWorkspaceId: ctx.workspaceId, subjectKind: e.kind, subjectId: e.subjectId };
+      return db.taxYearBoundaryAnswer.upsert({
+        where: { authWorkspaceId_subjectKind_subjectId: key },
+        create: { ...key, authTenantId: ctx.tenantId, cashDay: e.cashDay, belongsToOtherYear: false },
+        update: { cashDay: e.cashDay, belongsToOtherYear: false },
+      });
+    }),
+  );
   return open.length;
 }
 

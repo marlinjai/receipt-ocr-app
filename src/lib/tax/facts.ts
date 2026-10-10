@@ -145,6 +145,7 @@ export function resolveItem(
     // receipt for good); until then on its own day and amount.
     date: countsOn ?? cashDay,
     dateBasis: countsOn ? ('year_boundary' as const) : paid ? ('payment' as const) : ('document' as const),
+    ...(countsOn ? { vatDate: cashDay } : {}),
     ...(paid ? { amountCents: paid.cents, amountBasis: 'payment' as const } : document),
     netCents: paid ? netOfPaid(record, paid.cents) : refunded > 0 && document.amountCents !== null ? netOfPaid(record, document.amountCents) : netOf(record),
     // The status on the receipt's own date: a later change leaves earlier receipts alone.

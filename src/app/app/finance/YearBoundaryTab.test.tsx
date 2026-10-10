@@ -7,7 +7,7 @@ import YearBoundaryTab from './YearBoundaryTab';
 
 afterEach(cleanup);
 
-const entry = (o: Partial<YearBoundaryEntry> = {}): YearBoundaryEntry => ({ kind: 'receipt', subjectId: 'r-1', label: 'Vermieter Beispiel', cashDay: '2025-12-29', dayBasis: 'payment', cents: 65_000, otherYear: 2026, answer: null, ...o });
+const entry = (o: Partial<YearBoundaryEntry> = {}): YearBoundaryEntry => ({ kind: 'receipt', subjectId: 'r-1', label: 'Vermieter Beispiel', cashDay: '2025-12-29', dayBasis: 'payment', cents: 65_000, otherYear: 2026, answer: null, inactive: null, ...o });
 const view = (yearBoundary: YearBoundaryEntry[]): StatementView => ({ year: 2025, yearBoundary }) as StatementView;
 const props = () => ({ busy: false, error: null, onAnswer: vi.fn(), onDeclineOpen: vi.fn() });
 
@@ -54,6 +54,20 @@ describe('YearBoundaryTab', () => {
     expect(second.textContent).toContain('ohne Betrag');
     await user.click(screen.getByRole('button', { name: 'Keine davon ist regelmäßig wiederkehrend' }));
     expect(p.onDeclineOpen).toHaveBeenCalled();
+  });
+
+  it('an answer without effect (the receipt became an asset) says so and can only be taken back', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const e = entry({ answer: true, inactive: 'asset' });
+    render(<YearBoundaryTab view={view([e, entry({ subjectId: 'r-2' })])} {...p} />);
+    const first = screen.getAllByRole('listitem')[0];
+    expect(within(first).getByRole('status').textContent).toContain('wird nicht angewendet');
+    expect(within(first).queryByRole('button', { name: /Regelmäßig wiederkehrend/ })).toBeNull();
+    // One payment is open, so "none of these" is not offered; the entry without effect does not count as open.
+    expect(screen.queryByRole('button', { name: 'Keine davon ist regelmäßig wiederkehrend' })).toBeNull();
+    await user.click(within(first).getByRole('button', { name: 'Antwort zurücknehmen' }));
+    expect(p.onAnswer).toHaveBeenCalledWith(e, null);
   });
 
   it('a failed save is shown', () => {

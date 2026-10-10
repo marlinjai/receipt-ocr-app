@@ -47,6 +47,7 @@ function item(overrides: Partial<StatementItem> & { rowId: string }): StatementI
     lineNetCents: null,
     receiptGrossCents: 3999,
     receiptLines: [],
+    paidOn: null,
     label: `Rechnung ${overrides.rowId}`,
     vendor: 'Netzwerk Nord GmbH',
     vendorKey: 'netzwerk nord',
@@ -349,19 +350,27 @@ describe('FinanceClient: notices and statement', () => {
     ]);
   });
 
+  it('an item the ten-day rule moved shows the day it was really paid and the year it counts in', async () => {
+    const user = userEvent.setup();
+    render(<FinanceClient initial={view([{ ...decided('a'), date: '2025-01-01', paidOn: '2024-12-29' }])} />);
+    await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
+    const row = screen.getByText('Netzwerk Nord GmbH').closest('li') as HTMLElement;
+    expect(row.textContent).toContain('gezahlt 29.12.2024, zählt für 2025 (Jahreswechsel)');
+  });
+
   it('the turn-of-the-year tab exists only when the year has a payment in the window, counts what is unanswered, and saves an answer', async () => {
     const user = userEvent.setup();
     const { unmount } = render(<FinanceClient initial={view([])} />);
     expect(screen.queryByRole('tab', { name: /Jahreswechsel/ })).toBeNull();
     unmount();
-    const entry = { kind: 'receipt' as const, subjectId: 'a', label: 'Vermieter Beispiel', cashDay: '2025-12-29', dayBasis: 'payment' as const, cents: 65_000, otherYear: 2026, answer: null };
+    const entry = { kind: 'receipt' as const, subjectId: 'a', label: 'Vermieter Beispiel', cashDay: '2025-12-29', dayBasis: 'payment' as const, cents: 65_000, otherYear: 2026, answer: null, inactive: null };
     actions.answerYearBoundary.mockResolvedValue({ ok: true, value: view([], { yearBoundary: [{ ...entry, answer: true }] }) });
     render(<FinanceClient initial={view([], { yearBoundary: [entry] })} />);
     const tab = screen.getByRole('tab', { name: /Jahreswechsel/ });
     expect(tab.textContent).toContain('1');
     await user.click(tab);
     await user.click(screen.getByRole('button', { name: 'Regelmäßig wiederkehrend, gehört zu 2026' }));
-    expect(actions.answerYearBoundary).toHaveBeenCalledWith(2025, { kind: 'receipt', subjectId: 'a', belongsToOtherYear: true });
+    expect(actions.answerYearBoundary).toHaveBeenCalledWith(2025, { kind: 'receipt', subjectId: 'a', cashDay: '2025-12-29', belongsToOtherYear: true });
     expect(await screen.findByText('Vermieter Beispiel: zählt für 2026.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Regelmäßig wiederkehrend, gehört zu 2026' }).getAttribute('aria-pressed')).toBe('true');
   });

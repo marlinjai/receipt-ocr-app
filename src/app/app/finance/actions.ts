@@ -318,7 +318,7 @@ export async function answerYearBoundary(year: number, input: unknown): Promise<
   return write(year, (ctx) => saveYearBoundaryAnswer(prisma, ctx, input));
 }
 
-/** Every payment at the turn of this year that has no answer yet stays in the year it was paid. */
-export async function declineYearBoundary(year: number): Promise<Result<StatementView>> {
-  return write(year, (ctx) => declineOpenYearBoundary(prisma, ctx, safeYear(year)));
+/** The payments at the turn of this year the person saw without an answer stay in the year they were paid. */
+export async function declineYearBoundary(year: number, entries: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => declineOpenYearBoundary(prisma, ctx, safeYear(year), entries));
 }

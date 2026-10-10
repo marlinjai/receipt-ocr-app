@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SMALL_BUSINESS, meal } from '@/lib/meals/__tests__/fixtures';
+import { REGULAR_BUSINESS, SMALL_BUSINESS, meal } from '@/lib/meals/__tests__/fixtures';
 import type { MealRecord } from '@/lib/meals/types';
 import { computeYear } from '../compute';
 import { resolveItem, resolveItems, type ReceiptFacts } from '../facts';
@@ -73,6 +73,21 @@ describe('a confirmed recurring payment counts in the year it belongs to', () =>
     const settings = { ...SMALL_BUSINESS, statusChanges: [{ effectiveFrom: '2026-01-01', smallBusiness: false }] };
     const confirmed = facts(rent(), { decision: BUSINESS, countsOnDay: '2026-01-01' });
     expect(resolveItem(confirmed, [], settings).item.smallBusiness).toBe(true);
+  });
+
+  it('under regular taxation the input tax stays in the advance return period of the day it was paid', () => {
+    // 595.00 with 95.00 of tax, paid on 29 December 2025, confirmed as belonging to 2026.
+    const confirmed = facts(rent({ gross: 595, net: 500 }), { decision: BUSINESS, countsOnDay: '2026-01-01' });
+    const items = resolveItems(confirmed, [], REGULAR_BUSINESS).map((r) => r.item);
+    const old = computeYear({ year: 2025, items }, rulesForYear(2025));
+    const next = computeYear({ year: 2026, items }, rulesForYear(2026));
+    // Income tax: the whole payment, net and tax, is an expense of 2026.
+    expect(old.businessExpenseCents).toBe(0);
+    expect(old.items).toEqual([]);
+    expect(next.lines.map((l) => [l.key, l.cents])).toEqual([['euer.rent_business_premises', 50_000], ['euer.input_vat', 9_500]]);
+    // Value-added tax: the 95.00 belong to the advance return of December 2025, and to no period of 2026.
+    expect(old.inputVatEvents).toEqual([{ date: '2025-12-29', cents: 9_500, source: 'item', id: 'r-1' }]);
+    expect(next.inputVatEvents).toEqual([]);
   });
 
   it('a meal is never moved: the meal register lists it by its own day', () => {

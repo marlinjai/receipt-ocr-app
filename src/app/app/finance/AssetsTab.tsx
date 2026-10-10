@@ -18,7 +18,7 @@ export interface AssetDraft {
   businessShareBp: number;
   reminderCents: number;
   opening: { year: number; bookValueCents: number; remainingMonths: number } | null;
-  rowIds: string[];
+  itemIds: string[];
 }
 
 export interface DisposalDraft {
@@ -223,7 +223,8 @@ export default function AssetsTab({ view, busy, error, startFromRowId, onStartHa
 }
 
 function candidateReceipts(view: StatementView, asset: AssetView | null): StatementItem[] {
-  return view.items.filter((i) => !i.isMeal && (i.assetId === null || i.assetId === asset?.id));
+  // A receipt, or one line of a split receipt; a receipt whose lines no longer add up cannot be chosen.
+  return view.items.filter((i) => !i.isMeal && (i.assetId === null || i.assetId === asset?.id) && !i.checks.some((c) => c.kind === 'lines_do_not_sum'));
 }
 
 function AssetForm({
@@ -245,9 +246,9 @@ function AssetForm({
 }) {
   const id = useId();
   const candidates = candidateReceipts(view, asset);
-  const start = startFromRowId ? view.items.find((i) => i.rowId === startFromRowId) ?? null : null;
+  const start = startFromRowId ? view.items.find((i) => i.itemId === startFromRowId) ?? null : null;
   // Receipts of the asset that are not among this year's receipts stay linked untouched.
-  const hiddenRowIds = (asset?.rowIds ?? []).filter((r) => !candidates.some((c) => c.rowId === r));
+  const hiddenRowIds = (asset?.itemIds ?? []).filter((r) => !candidates.some((c) => c.itemId === r));
 
   const [label, setLabel] = useState(asset?.label ?? start?.label ?? '');
   const [kind, setKind] = useState<AssetKind>(asset?.kind ?? 'movable');
@@ -258,13 +259,13 @@ function AssetForm({
   const [rate, setRate] = useState(asset?.decliningRateBp ? String(asset.decliningRateBp / 100).replace('.', ',') : String(view.assetLimits.decliningMaxRateBp / 100));
   const [share, setShare] = useState(String((asset?.businessShareBp ?? 10000) / 100).replace('.', ','));
   const [reminder, setReminder] = useState((asset?.reminderCents ?? 0) > 0);
-  const [selected, setSelected] = useState<string[]>(() => (asset ? asset.rowIds.filter((r) => candidates.some((c) => c.rowId === r)) : start ? [start.rowId] : []));
+  const [selected, setSelected] = useState<string[]>(() => (asset ? asset.itemIds.filter((r) => candidates.some((c) => c.itemId === r)) : start ? [start.itemId] : []));
   const [openingYear, setOpeningYear] = useState(String(asset?.opening?.year ?? view.year));
   const [openingValue, setOpeningValue] = useState(asset?.opening ? formatCents(asset.opening.bookValueCents) : '');
   const [openingMonths, setOpeningMonths] = useState(String(asset?.opening?.remainingMonths ?? 0));
   const [localError, setLocalError] = useState<string | null>(null);
 
-  const selectedItems = candidates.filter((c) => selected.includes(c.rowId));
+  const selectedItems = candidates.filter((c) => selected.includes(c.itemId));
   const cost = selectedItems.every((i) => i.amountCents !== null) ? selectedItems.reduce((s, i) => s + (i.amountCents as number), 0) : null;
   const needsLife = !carried && (method === 'linear' || method === 'declining');
   const limits = view.assetLimits;
@@ -314,7 +315,7 @@ function AssetForm({
       businessShareBp: Math.round(shareNumber * 100),
       reminderCents: reminder ? 100 : 0,
       opening,
-      rowIds: carried ? [] : [...hiddenRowIds, ...selected],
+      itemIds: carried ? [] : [...hiddenRowIds, ...selected],
     });
   }
 
@@ -367,12 +368,12 @@ function AssetForm({
             ) : (
               <ul className="max-h-56 space-y-1 overflow-y-auto rounded-lg border p-2" style={{ borderColor: 'var(--border)' }}>
                 {candidates.map((c) => (
-                  <li key={c.rowId}>
+                  <li key={c.itemId}>
                     <label className="flex items-baseline gap-2 text-sm" style={{ color: 'var(--foreground)' }}>
                       <input
                         type="checkbox"
-                        checked={selected.includes(c.rowId)}
-                        onChange={(e) => setSelected((list) => (e.target.checked ? [...list, c.rowId] : list.filter((r) => r !== c.rowId)))}
+                        checked={selected.includes(c.itemId)}
+                        onChange={(e) => setSelected((list) => (e.target.checked ? [...list, c.itemId] : list.filter((r) => r !== c.itemId)))}
                       />
                       <span className="flex-1">
                         {c.vendor || c.label}

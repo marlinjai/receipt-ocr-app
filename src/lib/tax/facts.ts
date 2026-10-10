@@ -2,6 +2,7 @@ import { mealDeduction, mealStatus, smallBusinessOn, toCents } from '@/lib/meals
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { ruleInForce, type TreatmentInput, type VendorRule, vendorKey } from './decisions';
 import { CATEGORY_FORM_LINE, DEFAULT_EMPLOYMENT_LINE, DEFAULT_STUDY_LINE, legacyAllocations } from './defaults';
+import { itemIdOf, linesMatchTotal, spreadOverLines, type ReceiptLine } from './lines';
 import type { FormLineKey } from './rules/types';
 import type { Allocation, LedgerItem, MealFact } from './types';
 
@@ -17,7 +18,7 @@ import type { Allocation, LedgerItem, MealFact } from './types';
  * treated the way it is.
  */
 
-export type TreatmentOrigin = 'item' | 'vendor_rule' | 'legacy_columns' | 'category_default' | 'meal_register';
+export type TreatmentOrigin = 'item' | 'vendor_rule' | 'legacy_columns' | 'category_default' | 'meal_register' | 'line';
 
 export interface ReceiptFacts {
   record: MealRecord;
@@ -30,6 +31,8 @@ export interface ReceiptFacts {
    * no payment is linked.
    */
   paid?: { day: string; cents: number } | null;
+  /** The receipt's lines, when it was split. */
+  lines?: ReceiptLine[];
 }
 
 export interface ResolvedItem {
@@ -42,6 +45,11 @@ export interface ResolvedItem {
   vendorRuleId: string | null;
   /** True when the row is something the meal register judges (complete, incomplete or excluded). */
   isMeal: boolean;
+  /** The receipt row, and the line when this item is one line of a split receipt. */
+  rowId: string;
+  lineId: string | null;
+  /** The line's own text, for a line. */
+  lineDescription: string | null;
 }
 
 /** The receipt's net amount in euro cents, when it states one that fits its total. */
@@ -142,6 +150,9 @@ export function resolveItem(
       formLineOrigin: 'meal_register',
       vendorRuleId: rule?.id ?? null,
       isMeal: true,
+      rowId: record.rowId,
+      lineId: null,
+      lineDescription: null,
     };
   }
 
@@ -184,5 +195,56 @@ export function resolveItem(
     formLineOrigin,
     vendorRuleId: rule?.id ?? null,
     isMeal: false,
+    rowId: record.rowId,
+    lineId: null,
+    lineDescription: null,
   };
+}
+
+/**
+ * A receipt as one item, or as one item per line when it was split.
+ *
+ * Each line takes its share of the receipt's euro amount (and of its net
+ * amount) in the proportion of the line amounts, so the lines add up to the
+ * receipt to the cent whatever the currency or the amount actually paid. A
+ * line is treated like its receipt unless it has a decision of its own. A
+ * split whose lines no longer add up to the receipt's total yields the receipt
+ * as one blocked item instead: nothing is computed from stale lines.
+ */
+export function resolveItems(facts: ReceiptFacts, vendorRules: readonly VendorRule[], settings: MealTaxSettings): ResolvedItem[] {
+  const whole = resolveItem(facts, vendorRules, settings);
+  const lines = [...(facts.lines ?? [])].sort((a, b) => a.position - b.position);
+  // The meal register judges a meal as a whole; a meal is never split.
+  if (lines.length === 0 || whole.isMeal) return [whole];
+  const receiptGross = facts.record.gross !== null ? toCents(facts.record.gross) : null;
+  if (!linesMatchTotal(lines, receiptGross)) return [{ ...whole, item: { ...whole.item, linesMismatch: true } }];
+
+  const amounts = whole.item.amountCents !== null ? spreadOverLines(whole.item.amountCents, lines) : null;
+  return lines.map((line, index): ResolvedItem => {
+    const amountCents = amounts ? amounts[index] : null;
+    // The line's own net amount in the receipt's currency, carried to euro by the line's own factor.
+    const netCents = amountCents !== null && line.netCents !== null && line.grossCents > 0 ? Math.round((amountCents * line.netCents) / line.grossCents) : null;
+    const own = line.treatment;
+    return {
+      ...whole,
+      rowId: facts.record.rowId,
+      lineId: line.id,
+      lineDescription: line.description,
+      allocationOrigin: own ? 'line' : whole.allocationOrigin,
+      formLineOrigin: own ? (own.formLineKey ? 'line' : null) : whole.formLineOrigin,
+      item: {
+        ...whole.item,
+        id: itemIdOf(facts.record.rowId, line.id),
+        label: `${whole.item.label}: ${line.description}`,
+        amountCents,
+        netCents,
+        ...(own
+          ? { allocations: own.allocations, formLineKey: own.formLineKey, employmentLineKey: own.employmentLineKey }
+          : {}),
+        // Each line is judged against the low-value limit on its own, which is
+        // what the "several small items" statement stood in for.
+        severalLowValueItems: false,
+      },
+    };
+  });
 }

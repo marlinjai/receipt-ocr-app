@@ -41,13 +41,13 @@ const hardware = (overrides: Record<string, string | number> = {}) => ({
   ...overrides,
 });
 
-const camera = (rowIds: string[], overrides: Record<string, unknown> = {}) => ({
+const camera = (itemIds: string[], overrides: Record<string, unknown> = {}) => ({
   label: 'Kamera',
   kind: 'movable',
   acquisitionDate: '2025-03-10',
   method: 'linear',
   usefulLifeMonths: 60,
-  rowIds,
+  itemIds,
   ...overrides,
 });
 
@@ -87,7 +87,7 @@ describe('forward: receipt above the limit, asset, schedule', () => {
     // March to December: 10 of 60 months of 1,500.00.
     expect(line(view, 'euer.depreciation_movable')).toBe(25_000);
     expect(view.assets).toHaveLength(1);
-    expect(view.assets[0]).toMatchObject({ id: assetId, costCents: 150_000, netCostCents: 126_050, counted: true, rowIds: [rowId] });
+    expect(view.assets[0]).toMatchObject({ id: assetId, costCents: 150_000, netCostCents: 126_050, counted: true, itemIds: [rowId] });
     expect(view.assets[0].row).toMatchObject({ bookValueStartCents: 0, additionCents: 150_000, bookValueEndCents: 125_000 });
     const stored = await db.taxAsset.findUnique({ where: { id: assetId }, include: { parts: true } });
     expect(stored).toMatchObject({ authWorkspaceId: ws.workspaceId, authTenantId: ws.tenantId });
@@ -131,7 +131,7 @@ describe('forward: receipt above the limit, asset, schedule', () => {
       method: 'linear',
       reminderCents: 100,
       opening: { year: 2025, bookValueCents: 100, remainingMonths: 0 },
-      rowIds: [],
+      itemIds: [],
     });
     const view = await loadStatement(db, ws.workspaceId, 2026);
     expect(view.assets[0]).toMatchObject({ counted: true, costCents: null });
@@ -241,7 +241,7 @@ describe('disposal and re-entry', () => {
     await ws.adapter.deleteRow(rowId);
     await deleteDecisionsForRows(db, [rowId]);
     const view = await loadStatement(db, ws.workspaceId, 2025);
-    expect(view.assets[0]).toMatchObject({ id: assetId, counted: false, costCents: null, rowIds: [] });
+    expect(view.assets[0]).toMatchObject({ id: assetId, counted: false, costCents: null, itemIds: [] });
     expect(view.assets[0].checks.map((c) => c.kind)).toEqual(['asset_no_cost']);
   });
 });

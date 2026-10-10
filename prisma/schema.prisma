@@ -406,19 +406,23 @@ model TaxAsset {
   @@map("tax_assets")
 }
 
-// One receipt that is part of an asset's cost. A receipt belongs to at most
-// one asset. `rowId` has no foreign key (see meal_guests.row_id); the row
+// One receipt, or one line of a receipt, that is part of an asset's cost. Each
+// belongs to at most one asset. `rowId` has no foreign key (see meal_guests.row_id); the row
 // delete paths remove the link in code.
 model TaxAssetPart {
   id              String   @id @default(uuid())
   authWorkspaceId String   @map("auth_workspace_id")
   authTenantId    String?  @map("auth_tenant_id")
   assetId         String   @map("asset_id")
-  rowId           String   @unique @map("row_id")
+  rowId           String   @map("row_id")
+  // '' = the whole receipt; otherwise the id of one of its lines (TaxReceiptLine).
+  // A string with a default rather than a nullable column, so the uniqueness holds.
+  lineId          String   @default("") @map("line_id")
   createdAt       DateTime @default(now()) @map("created_at")
 
   asset TaxAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
+  @@unique([rowId, lineId])
   @@index([assetId])
   @@map("tax_asset_parts")
 }
@@ -611,4 +615,30 @@ model TaxPaymentLink {
   @@index([rowId])
   @@index([invoiceId])
   @@map("tax_payment_links")
+}
+
+// One position of a receipt, when a receipt was split because its positions
+// are treated differently (one business, one private; one an asset, one not).
+// `grossCents` and `netCents` are in the receipt's own currency. The lines of
+// a receipt must add up to its total; that is checked on read, because the
+// receipt can be corrected later. `allocations` NULL: the line is treated like
+// its receipt (decision, vendor rule or defaults); otherwise the line has a
+// decision of its own. `rowId` has no foreign key (see meal_guests.row_id).
+model TaxReceiptLine {
+  id                String   @id @default(uuid())
+  authWorkspaceId   String   @map("auth_workspace_id")
+  authTenantId      String?  @map("auth_tenant_id")
+  rowId             String   @map("row_id")
+  position          Int      @default(0)
+  description       String
+  grossCents        Int      @map("gross_cents")
+  netCents          Int?     @map("net_cents")
+  allocations       Json?
+  formLineKey       String?  @map("form_line_key")
+  employmentLineKey String?  @map("employment_line_key")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([authWorkspaceId, rowId])
+  @@map("tax_receipt_lines")
 }

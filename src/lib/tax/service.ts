@@ -1,5 +1,5 @@
 import 'server-only';
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { rowToMealRecord } from '@/lib/meals/record';
 import { smallBusinessOn } from '@/lib/meals/rules';
 import { allRows, getTaxSettings, guestsByRow, tableContext } from '@/lib/meals/service';
@@ -17,7 +17,8 @@ import {
   type TreatmentInput,
   type VendorRule,
 } from './decisions';
-import { resolveItem, type ReceiptFacts, type ResolvedItem, type TreatmentOrigin } from './facts';
+import { resolveItem, resolveItems, type ReceiptFacts, type ResolvedItem, type TreatmentOrigin } from './facts';
+import { LinesInputError, itemIdOf, splitItemId, storedLineTreatment, validateLines, type ReceiptLine } from './lines';
 import { forecastYear, type Forecast } from './forecast';
 import { proposeMatches, type MatchStrength } from './payments/match';
 import { deletePaymentLinksForRows, loadPayments, type CounterpartyTreatment, type LoadedPayments, type PaymentRow } from './payments/service';
@@ -65,7 +66,8 @@ export type TaxServiceErrorCode =
   | 'invoice_number_taken'
   | 'status_not_found'
   | 'status_unanswered'
-  | 'settlement_not_found';
+  | 'settlement_not_found'
+  | 'line_not_found';
 
 export class TaxServiceError extends Error {
   readonly code: TaxServiceErrorCode;
@@ -153,12 +155,21 @@ async function loadReceipts(
     rows = (await allRows(ctx.adapter, ctx.tableId)).filter((r) => !r.archived);
   }
   const rowIds = rows.map((r) => r.id);
-  const [guests, decisions] = await Promise.all([
+  const [guests, decisions, storedLines] = await Promise.all([
     guestsByRow(db, workspaceId, rowIds),
     rowIds.length === 0
       ? Promise.resolve([])
       : db.taxItemDecision.findMany({ where: { authWorkspaceId: workspaceId, rowId: { in: rowIds } } }),
+    rowIds.length === 0
+      ? Promise.resolve([])
+      : db.taxReceiptLine.findMany({ where: { authWorkspaceId: workspaceId, rowId: { in: rowIds } }, orderBy: [{ position: 'asc' }, { createdAt: 'asc' }] }),
   ]);
+  const linesByRow = new Map<string, ReceiptLine[]>();
+  for (const line of storedLines) {
+    const list = linesByRow.get(line.rowId) ?? [];
+    list.push({ id: line.id, position: line.position, description: line.description, grossCents: line.grossCents, netCents: line.netCents, treatment: storedLineTreatment(line) });
+    linesByRow.set(line.rowId, list);
+  }
   const decisionByRow = new Map(decisions.map((d) => [d.rowId, storedTreatment(d)]));
   const shareColumn = ctx.columns.find((c) => c.name === BUSINESS_SHARE_COLUMN);
   const noGuests: MealGuestEntry[] = [];
@@ -170,6 +181,7 @@ async function loadReceipts(
       businessSharePercent: shareNumber !== null && Number.isFinite(shareNumber) ? shareNumber : null,
       decision: decisionByRow.get(row.id) ?? null,
       paid: paid?.get(row.id) ?? null,
+      lines: linesByRow.get(row.id) ?? [],
     };
   });
   return { facts };
@@ -177,7 +189,16 @@ async function loadReceipts(
 
 /** One item as the finance screens show it: the facts, where its treatment comes from, and what it contributes. */
 export interface StatementItem {
+  /** Unique per item: the receipt's row id, or row and line for one line of a split receipt. */
+  itemId: string;
   rowId: string;
+  /** Set when the item is one line of a split receipt, with the line's own text and amounts in the receipt's currency. */
+  lineId: string | null;
+  lineDescription: string | null;
+  lineGrossCents: number | null;
+  lineNetCents: number | null;
+  /** The receipt's total in its own currency, cents: what the lines of a split have to add up to. */
+  receiptGrossCents: number | null;
   label: string;
   vendor: string | null;
   vendorKey: string | null;
@@ -278,8 +299,15 @@ export interface StatementView {
 
 function toStatementItem(resolved: ResolvedItem, facts: ReceiptFacts, result: { counted: boolean; parts: ItemPart[]; privateCents: number; checks: OpenCheck[] }): StatementItem {
   const { item } = resolved;
+  const line = resolved.lineId ? (facts.lines ?? []).find((l) => l.id === resolved.lineId) : undefined;
   return {
-    rowId: item.id,
+    itemId: item.id,
+    rowId: resolved.rowId,
+    lineId: resolved.lineId,
+    lineDescription: resolved.lineDescription,
+    lineGrossCents: line?.grossCents ?? null,
+    lineNetCents: line?.netCents ?? null,
+    receiptGrossCents: facts.record.gross !== null && Number.isFinite(facts.record.gross) ? Math.round(facts.record.gross * 100) : null,
     label: item.label,
     vendor: item.vendor,
     vendorKey: resolved.vendorKey,
@@ -346,15 +374,24 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   const smallBusinessAtYearEnd = smallBusinessOn(settings, `${year}-12-31`);
   const resolvedRules = rulesForYear(year);
   const facts = loaded?.facts ?? [];
-  const assetByRow = new Map<string, string>();
-  for (const asset of storedAssets) for (const part of asset.parts) assetByRow.set(part.rowId, asset.id);
-  const resolved = facts.map((f) => {
-    const r = resolveItem(f, vendorRules, settings);
-    const assetId = assetByRow.get(r.item.id);
-    return assetId ? { ...r, item: { ...r.item, assetId } } : r;
-  });
+  // An asset part is a whole receipt (line id '') or one line of it.
+  const assetByItem = new Map<string, string>();
+  for (const asset of storedAssets) for (const part of asset.parts) assetByItem.set(itemIdOf(part.rowId, part.lineId || null), asset.id);
+  const factsOfItem: ReceiptFacts[] = [];
+  const resolved = facts.flatMap((f) =>
+    resolveItems(f, vendorRules, settings).map((r) => {
+      factsOfItem.push(f);
+      // A whole-receipt part covers every line of that receipt.
+      const assetId = assetByItem.get(r.item.id) ?? assetByItem.get(r.rowId);
+      return assetId ? { ...r, item: { ...r.item, assetId } } : r;
+    }),
+  );
+  const itemsByRow = new Map<string, ResolvedItem[]>();
+  for (const r of resolved) itemsByRow.set(r.rowId, [...(itemsByRow.get(r.rowId) ?? []), r]);
   const itemById = new Map(resolved.map((r) => [r.item.id, r.item]));
-  const assetFacts = storedAssets.map((a) => toAssetFact(a, itemById, smallBusinessOn(settings, a.acquisitionDate)));
+  const assetFacts = storedAssets.map((a) => toAssetFact(a, itemById, itemsByRow, smallBusinessOn(settings, a.acquisitionDate)));
+  // Whole receipts, for matching payments: a payment pays a receipt, not a line of it.
+  const wholeReceipts = facts.map((f) => resolveItem(f, vendorRules, settings));
   const ledgerItems = resolved.map((r) => r.item);
   // No invoice in the workspace at all means revenue was never recorded, which
   // is different from a year without revenue.
@@ -403,7 +440,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     if (businessBp > 0) undeductedInputVatCents += Math.round(((item.amountCents - item.netCents) * businessBp) / 10_000);
   }
   const invoiceResults = new Map(result.revenue.invoices.map((i) => [i.invoiceId, i]));
-  const paymentsView = buildPaymentsView(loadedPayments, year, resolved, invoiceFacts, result.revenue.invoices);
+  const paymentsView = buildPaymentsView(loadedPayments, year, wholeReceipts, invoiceFacts, result.revenue.invoices);
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));
 
   const items: StatementItem[] = [];
@@ -413,7 +450,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     if (r.item.date) years.add(Number(r.item.date.slice(0, 4)));
     const itemResult = resultById.get(r.item.id);
     // computeYear only returns items of the year and undated ones.
-    if (itemResult) items.push(toStatementItem(r, facts[index], itemResult));
+    if (itemResult) items.push(toStatementItem(r, factsOfItem[index], itemResult));
   });
   items.sort((a, b) => (a.date ?? '') < (b.date ?? '') ? -1 : (a.date ?? '') > (b.date ?? '') ? 1 : a.label.localeCompare(b.label, 'de'));
 
@@ -440,7 +477,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
       disposal: fact.disposal,
       costCents: fact.costCents,
       netCostCents: fact.netCostCents,
-      rowIds: stored.parts.map((p) => p.rowId),
+      itemIds: stored.parts.map((p) => itemIdOf(p.rowId, p.lineId || null)),
       counted: yearResult.counted,
       checks: yearResult.checks,
       row: yearResult.row,
@@ -563,7 +600,7 @@ export interface OpenPayment {
   kind: PaymentKind;
   accountLabel: string;
   /** Why it needs a person. */
-  check: 'payment_without_document' | 'income_without_invoice';
+  check: 'payment_without_document' | 'income_without_invoice' | 'refund_without_receipt';
   proposals: PaymentProposal[];
 }
 
@@ -577,6 +614,15 @@ export interface PaymentsView {
   treatments: Array<{ key: string; label: string; treatment: CounterpartyTreatment }>;
   /** Business payments without a document and money received without an invoice. */
   open: OpenPayment[];
+  /** Payments of the year a person re-labelled (private, refund), so each can be put back. */
+  overridden: Array<{ id: string; bookingDay: string; amountCents: number; counterparty: string; kind: PaymentKind }>;
+  /**
+   * What a payment can be linked to by hand: receipts of the year and of the
+   * year before that no payment is linked to yet (a December receipt is often
+   * paid in January), and invoices with something still open.
+   */
+  receiptTargets: Array<{ id: string; label: string; day: string | null; amountCents: number | null }>;
+  invoiceTargets: Array<{ id: string; label: string; openCents: number }>;
   /** Links of the year, so each can be taken back. */
   links: Array<{ linkId: string; paymentId: string; bookingDay: string; cents: number; counterparty: string; target: 'receipt' | 'invoice'; targetLabel: string; method: string }>;
 }
@@ -610,14 +656,24 @@ function buildPaymentsView(
   const needing = inYear.filter((p) => {
     if (free(p) === 0) return false;
     const treatment = loaded.treatments.get(p.counterpartyKey);
-    if (p.kind === 'spend') return treatment === 'business';
+    // Money out to a business counterparty, and money out with no name at all
+    // (there is nobody to ask about once, so each such payment is asked about).
+    if (p.kind === 'spend') return treatment === 'business' || !p.counterpartyKey;
     if (p.kind === 'income') return treatment !== 'private' && treatment !== 'own_account';
+    // Money back from a business counterparty belongs on the receipt it refunds.
+    if (p.kind === 'refund') return treatment === 'business' || !p.counterpartyKey;
     return false;
   });
   const linkedRows = new Set(loaded.payments.flatMap((p) => p.links.map((l) => l.rowId).filter((id): id is string => id !== null)));
   const receiptDocuments = resolved
     .filter((r) => !r.isMeal && !linkedRows.has(r.item.id) && r.item.amountCents !== null && r.item.date !== null && r.item.date.startsWith(`${year}-`))
     .map((r) => ({ id: r.item.id, number: null, day: r.item.date, openCents: r.item.amountCents as number }));
+  // Candidates for linking by hand: also last year's receipts, and receipts that
+  // already have a payment (a refund goes on the receipt its purchase is linked to).
+  const receiptTargets = resolved
+    .filter((r) => !r.isMeal && (r.item.date === null || r.item.date.startsWith(`${year}-`) || r.item.date.startsWith(`${year - 1}-`)))
+    .map((r) => ({ id: r.item.id, label: r.item.label, day: r.item.date, amountCents: r.item.amountCents }))
+    .sort((a, b) => ((a.day ?? '') < (b.day ?? '') ? 1 : -1));
   const outstanding = new Map(invoiceResults.map((i) => [i.invoiceId, i.outstandingCents]));
   const invoiceDocuments = invoices.map((i) => ({ id: i.id, number: i.number, day: i.issueDate, openCents: outstanding.get(i.id) ?? 0 }));
   const asMatch = (p: PaymentRow) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, reference: p.reference, counterparty: p.counterparty });
@@ -633,9 +689,11 @@ function buildPaymentsView(
     reference: p.reference,
     kind: p.kind,
     accountLabel: accountLabel.get(p.accountId) ?? '',
-    check: p.kind === 'income' ? 'income_without_invoice' : 'payment_without_document',
+    check: p.kind === 'income' ? 'income_without_invoice' : p.kind === 'refund' ? 'refund_without_receipt' : 'payment_without_document',
     proposals:
-      p.kind === 'income'
+      p.kind === 'refund'
+        ? []
+        : p.kind === 'income'
         ? incomeProposals.filter((x) => x.paymentId === p.id).map((x) => ({ target: 'invoice' as const, targetId: x.documentId, label: `Rechnung ${invoiceById.get(x.documentId)?.number ?? ''}`, strength: x.strength }))
         : spendProposals.filter((x) => x.paymentId === p.id).map((x) => ({ target: 'receipt' as const, targetId: x.documentId, label: itemById.get(x.documentId)?.label ?? 'Beleg', strength: x.strength })),
   }));
@@ -651,6 +709,9 @@ function buildPaymentsView(
       treatment,
     })),
     open,
+    overridden: inYear.filter((p) => p.kindOverridden).map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, kind: p.kind })),
+    receiptTargets,
+    invoiceTargets: invoiceDocuments.filter((d) => d.openCents > 0).map((d) => ({ id: d.id, label: `Rechnung ${d.number}`, openCents: d.openCents })),
     links: inYear.flatMap((p) =>
       p.links.map((l) => ({
         linkId: l.id,
@@ -802,7 +863,8 @@ export interface AssetView {
   /** The sum of the linked receipts; null when one of them has no usable amount, or there are none. */
   costCents: number | null;
   netCostCents: number | null;
-  rowIds: string[];
+  /** The receipts and receipt lines that make up the cost, as item ids. */
+  itemIds: string[];
   counted: boolean;
   checks: AssetCheck[];
   /** This year's row of the schedule, before the business share. */
@@ -827,12 +889,13 @@ interface StoredAsset {
   disposalDate: string | null;
   disposalKind: string | null;
   disposalProceedsCents: number | null;
-  parts: Array<{ rowId: string }>;
+  parts: Array<{ rowId: string; lineId: string }>;
 }
 
 function toAssetFact(
   stored: StoredAsset,
   itemById: Map<string, { amountCents: number | null; netCents?: number | null }>,
+  itemsByRow: Map<string, ResolvedItem[]>,
   smallBusiness: boolean | null,
 ): AssetFact {
   const opening =
@@ -844,8 +907,12 @@ function toAssetFact(
   // than too low.
   let cost: number | null = stored.parts.length > 0 ? 0 : null;
   let net: number | null = stored.parts.length > 0 ? 0 : null;
-  for (const part of stored.parts) {
-    const item = itemById.get(part.rowId);
+  // A part is one line, or a whole receipt (then every item of that receipt:
+  // the receipt itself, or all of its lines once it was split).
+  const partItems = stored.parts.flatMap((part): Array<{ amountCents: number | null; netCents?: number | null } | undefined> =>
+    part.lineId ? [itemById.get(itemIdOf(part.rowId, part.lineId))] : (itemsByRow.get(part.rowId)?.map((r) => r.item) ?? [undefined]),
+  );
+  for (const item of partItems) {
     if (!item || item.amountCents === null) {
       cost = null;
       net = null;
@@ -884,18 +951,32 @@ function toAssetFact(
  * The receipts that may make up an asset: rows of THIS workspace, not judged
  * by the meal register, and not already part of another asset.
  */
-async function requireAssetRows(db: PrismaClient, ctx: TaxContext, rowIds: string[], ownAssetId: string | null): Promise<void> {
-  if (rowIds.length === 0) return;
+async function requireAssetRows(db: PrismaClient, ctx: TaxContext, itemIds: string[], ownAssetId: string | null): Promise<Array<{ rowId: string; lineId: string }>> {
+  const parts = itemIds.map((id) => {
+    const { rowId, lineId } = splitItemId(id);
+    return { rowId, lineId: lineId ?? '' };
+  });
+  if (parts.length === 0) return parts;
   const settings = await getTaxSettings(db, ctx.workspaceId);
-  for (const rowId of rowIds) {
-    const loaded = await loadReceipts(db, ctx.workspaceId, rowId);
+  for (const part of parts) {
+    const loaded = await loadReceipts(db, ctx.workspaceId, part.rowId);
     if (!loaded) throw new TaxServiceError('not_initialized');
     const facts = loaded.facts[0];
     if (!facts) throw new TaxServiceError('row_not_found');
     if (resolveItem(facts, [], settings).isMeal) throw new TaxServiceError('meal_row');
+    if (part.lineId && !(facts.lines ?? []).some((l) => l.id === part.lineId)) throw new TaxServiceError('line_not_found');
   }
-  const taken = await db.taxAssetPart.findMany({ where: { rowId: { in: rowIds } } });
-  if (taken.some((p) => p.assetId !== ownAssetId)) throw new TaxServiceError('row_in_other_asset');
+  // A receipt is in an asset as a whole or by lines, never both, and each
+  // receipt or line in one asset only.
+  const taken = await db.taxAssetPart.findMany({ where: { rowId: { in: parts.map((p) => p.rowId) } } });
+  for (const part of parts) {
+    const conflict = taken.some(
+      (p) => p.rowId === part.rowId && (p.assetId !== ownAssetId ? p.lineId === part.lineId || p.lineId === '' || part.lineId === '' : false),
+    );
+    if (conflict) throw new TaxServiceError('row_in_other_asset');
+    if (part.lineId === '' ? parts.some((o) => o.rowId === part.rowId && o.lineId !== '') : false) throw new TaxServiceError('row_in_other_asset');
+  }
+  return parts;
 }
 
 function assetData(input: AssetInput) {
@@ -917,13 +998,13 @@ function assetData(input: AssetInput) {
 /** Create an asset from receipts (or carry one in from before the app). Returns its id. */
 export async function createAsset(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<string> {
   const input = validateAssetInput(raw);
-  await requireAssetRows(db, ctx, input.rowIds, null);
+  const parts = await requireAssetRows(db, ctx, input.itemIds, null);
   const asset = await db.taxAsset.create({
     data: {
       authWorkspaceId: ctx.workspaceId,
       authTenantId: ctx.tenantId,
       ...assetData(input),
-      parts: { create: input.rowIds.map((rowId) => ({ rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId })) },
+      parts: { create: parts.map((part) => ({ ...part, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId })) },
     },
   });
   return asset.id;
@@ -934,14 +1015,12 @@ export async function updateAsset(db: PrismaClient, ctx: TaxContext, assetId: st
   const input = validateAssetInput(raw);
   const existing = await db.taxAsset.findFirst({ where: { id: assetId, authWorkspaceId: ctx.workspaceId } });
   if (!existing) throw new TaxServiceError('asset_not_found');
-  await requireAssetRows(db, ctx, input.rowIds, assetId);
+  const parts = await requireAssetRows(db, ctx, input.itemIds, assetId);
+  // The parts are replaced as one set, together with the asset or not at all.
   await db.$transaction([
-    db.taxAssetPart.deleteMany({ where: { assetId, rowId: { notIn: input.rowIds } } }),
+    db.taxAssetPart.deleteMany({ where: { assetId } }),
     db.taxAsset.update({ where: { id: assetId }, data: assetData(input) }),
-    db.taxAssetPart.createMany({
-      data: input.rowIds.map((rowId) => ({ assetId, rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId })),
-      skipDuplicates: true,
-    }),
+    db.taxAssetPart.createMany({ data: parts.map((part) => ({ ...part, assetId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId })) }),
   ]);
 }
 
@@ -965,7 +1044,65 @@ export async function setAssetDisposal(db: PrismaClient, ctx: TaxContext, assetI
   if (count === 0) throw new TaxServiceError('asset_not_found');
 }
 
-async function requireOrdinaryRow(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<ReceiptFacts> {
+/**
+ * Split a receipt into lines, or change its split. Lines that keep their id
+ * keep their decision and their place in an asset; a line that is dropped
+ * takes both with it. The lines must add up to the receipt's total.
+ */
+export async function saveReceiptLines(db: PrismaClient, ctx: TaxContext, rowId: string, raw: unknown): Promise<void> {
+  const facts = await requireOrdinaryRow(db, ctx, rowId);
+  const gross = facts.record.gross !== null && Number.isFinite(facts.record.gross) ? Math.round(facts.record.gross * 100) : null;
+  const lines = validateLines(raw, gross);
+  const existing = new Set((facts.lines ?? []).map((l) => l.id));
+  // An id that is not one of this receipt's lines is not accepted as "existing".
+  if (lines.some((l) => l.id !== undefined && !existing.has(l.id))) throw new TaxServiceError('line_not_found');
+  const kept = lines.flatMap((l) => (l.id ? [l.id] : []));
+  const dropped = [...existing].filter((id) => !kept.includes(id));
+  await db.$transaction([
+    db.taxAssetPart.deleteMany({ where: { rowId, lineId: { in: dropped } } }),
+    db.taxReceiptLine.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId, id: { in: dropped } } }),
+    ...lines.map((line, position) =>
+      line.id
+        ? db.taxReceiptLine.update({ where: { id: line.id }, data: { position, description: line.description, grossCents: line.grossCents, netCents: line.netCents } })
+        : db.taxReceiptLine.create({
+            data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, rowId, position, description: line.description, grossCents: line.grossCents, netCents: line.netCents },
+          }),
+    ),
+  ]);
+}
+
+/** Undo a split: the receipt is one item again, with whatever was decided about it as a whole. */
+export async function clearReceiptLines(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<void> {
+  await requireOrdinaryRow(db, ctx, rowId);
+  await db.$transaction([
+    db.taxAssetPart.deleteMany({ where: { rowId, lineId: { not: '' } } }),
+    db.taxReceiptLine.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId } }),
+  ]);
+}
+
+/** Decide how ONE line of a split receipt is treated; `null` lets it follow its receipt again. */
+export async function saveLineDecision(db: PrismaClient, ctx: TaxContext, lineId: string, raw: unknown | null): Promise<void> {
+  const line = await db.taxReceiptLine.findFirst({ where: { id: lineId, authWorkspaceId: ctx.workspaceId } });
+  if (!line) throw new TaxServiceError('line_not_found');
+  if ((await db.taxAssetPart.count({ where: { rowId: line.rowId, lineId: { in: ['', lineId] } } })) > 0) throw new TaxServiceError('asset_row');
+  if (raw === null) {
+    await db.taxReceiptLine.update({ where: { id: lineId }, data: { allocations: Prisma.DbNull, formLineKey: null, employmentLineKey: null } });
+    return;
+  }
+  const facts = await requireOrdinaryRow(db, ctx, line.rowId, { allowLinesInAsset: true });
+  const treatment = validateTreatment(raw, rulesFor(facts.paid?.day ?? facts.record.date));
+  await db.taxReceiptLine.update({
+    where: { id: lineId },
+    data: { allocations: treatment.allocations as unknown as Prisma.InputJsonValue, formLineKey: treatment.formLineKey, employmentLineKey: treatment.employmentLineKey },
+  });
+}
+
+async function requireOrdinaryRow(
+  db: PrismaClient,
+  ctx: TaxContext,
+  rowId: string,
+  options: { allowLinesInAsset?: boolean } = {},
+): Promise<ReceiptFacts> {
   const loaded = await loadReceipts(db, ctx.workspaceId, rowId);
   if (!loaded) throw new TaxServiceError('not_initialized');
   const facts = loaded.facts[0];
@@ -973,8 +1110,10 @@ async function requireOrdinaryRow(db: PrismaClient, ctx: TaxContext, rowId: stri
   const settings = await getTaxSettings(db, ctx.workspaceId);
   // What a meal is worth is decided by the meal register alone.
   if (resolveItem(facts, [], settings).isMeal) throw new TaxServiceError('meal_row');
-  // A receipt that is part of an asset is treated by the asset register.
-  if ((await db.taxAssetPart.count({ where: { rowId } })) > 0) throw new TaxServiceError('asset_row');
+  // A receipt that is part of an asset is treated by the asset register. A
+  // split receipt may have single lines in an asset while the others are decided.
+  const inAsset = await db.taxAssetPart.count({ where: options.allowLinesInAsset ? { rowId, lineId: '' } : { rowId } });
+  if (inAsset > 0) throw new TaxServiceError('asset_row');
   return facts;
 }
 
@@ -1123,6 +1262,7 @@ export async function deleteVendorRule(db: PrismaClient, ctx: TaxContext, ruleId
 export async function deleteDecisionsForRows(db: PrismaClient, rowIds: string[]): Promise<void> {
   if (rowIds.length === 0) return;
   await db.taxItemDecision.deleteMany({ where: { rowId: { in: rowIds } } });
+  await db.taxReceiptLine.deleteMany({ where: { rowId: { in: rowIds } } });
   // An asset keeps existing without the receipt; with no receipt left it shows
   // up as "no cost" and asks for one, instead of vanishing with its history.
   await db.taxAssetPart.deleteMany({ where: { rowId: { in: rowIds } } });
@@ -1130,4 +1270,4 @@ export async function deleteDecisionsForRows(db: PrismaClient, rowIds: string[])
   await deletePaymentLinksForRows(db, rowIds);
 }
 
-export { AssetInputError, RevenueInputError, TreatmentError };
+export { AssetInputError, LinesInputError, RevenueInputError, TreatmentError };

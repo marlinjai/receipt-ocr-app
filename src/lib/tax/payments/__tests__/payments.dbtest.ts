@@ -241,6 +241,112 @@ describe('counterparties, open payments and links', () => {
   });
 });
 
+describe('findings of the review on the first version', () => {
+  const FEBRUARY = file(line('2026-01-22', 'Vermieter Beispiel', 'Miete', '-650', 'Debit Transfer'), line('2026-02-03', 'Werkzeug Beispiel GmbH', 'Bestellung 4712', '-20'));
+
+  it('a link to an invoice never counts more than the invoice still has open', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    // 300.00 of 500.00 were typed in by hand; the bank file then brings the full 500.00.
+    const invoiceId = await saveInvoice(db, ctx, null, { number: 'R-2026-050', issueDate: '2026-01-10', grossCents: 50_000, treatment: 'small_business', payments: [{ date: '2026-01-12', cents: 30_000 }] });
+    await importPayments(db, ctx, accountId, file(line('2026-01-20', 'Kundin Beispiel', 'Zahlung', '500', 'Credit Transfer')));
+    const payment = (await db.taxPayment.findFirst({ where: { authWorkspaceId: ws.workspaceId } }))!;
+    expect(await code(linkPayment(db, ctx, { paymentId: payment.id, invoiceId, cents: 50_000 }, rowCheck(ctx)))).toBe('link_exceeds_payment');
+    await linkPayment(db, ctx, { paymentId: payment.id, invoiceId }, rowCheck(ctx));
+    const view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.revenue.invoices[0]).toMatchObject({ receivedCents: 50_000, outstandingCents: 0 });
+    // The 300.00 that are left of the payment still wait for an answer.
+    expect(view.payments.open.map((o) => o.freeCents)).toEqual([30_000]);
+    expect(await code(linkPayment(db, ctx, { paymentId: payment.id, invoiceId }, rowCheck(ctx)))).toBe('target_fully_paid');
+  });
+
+  it('money going out is never linked to an invoice', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    const invoiceId = await saveInvoice(db, ctx, null, { number: 'R-2026-051', issueDate: '2026-01-10', grossCents: 65_000, treatment: 'small_business', payments: [] });
+    await importPayments(db, ctx, accountId, JANUARY);
+    const rent = (await db.taxPayment.findFirst({ where: { authWorkspaceId: ws.workspaceId, amountCents: -65_000 } }))!;
+    expect(await code(linkPayment(db, ctx, { paymentId: rent.id, invoiceId }, rowCheck(ctx)))).toBe('invalid_link');
+    expect(await db.taxPaymentLink.count({ where: { paymentId: rent.id } })).toBe(0);
+  });
+
+  it('two confirmations at the same moment cannot both use the same payment', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, JANUARY);
+    const payment = (await db.taxPayment.findFirst({ where: { authWorkspaceId: ws.workspaceId, amountCents: -10_850 } }))!;
+    const a = await ws.addReceipt({ Name: 'A', Gross: 108.5, Date: '2026-01-05', Category: 'Bürobedarf', Currency: 'EUR', 'FX Rate': 1 });
+    const b = await ws.addReceipt({ Name: 'B', Gross: 108.5, Date: '2026-01-05', Category: 'Bürobedarf', Currency: 'EUR', 'FX Rate': 1 });
+    const results = await Promise.all([a, b].map((rowId) => code(linkPayment(db, ctx, { paymentId: payment.id, rowId }, rowCheck(ctx)))));
+    expect(results.filter((r) => r === 'no error')).toHaveLength(1);
+    expect((await db.taxPaymentLink.findMany({ where: { paymentId: payment.id } })).reduce((s, l) => s + l.cents, 0)).toBe(10_850);
+  });
+
+  it('an import is undone newest first: an older file a later one overlaps stays', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    const first = await importPayments(db, ctx, accountId, JANUARY);
+    const second = await importPayments(db, ctx, accountId, FEBRUARY);
+    expect(second).toMatchObject({ added: 1, alreadyThere: 1 });
+    expect(await code(deleteImportBatch(db, ctx, first.batchId))).toBe('batch_has_later_overlap');
+    expect(await db.taxPayment.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(4);
+    await deleteImportBatch(db, ctx, second.batchId);
+    await deleteImportBatch(db, ctx, first.batchId);
+    expect(await db.taxPayment.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
+  });
+
+  it('an account stays with one source, so no movement is stored twice under two identities', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, JANUARY);
+    const tomorrow = 'account_type,booking_date,valuta_date,sender_or_recipient,iban,booking_type,description,category,amount,currency\nPersonal Account,2026-02-01,2026-02-01,Laden Beispiel,,Card Payment,Einkauf,shopping,"-12,00",EUR\n';
+    expect(await code(importPayments(db, ctx, accountId, tomorrow))).toBe('format_mismatch');
+    expect(await db.taxImportBatch.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(1);
+  });
+
+  it('an earlier unlinked payment naming the same invoice makes a new one ambiguous: no automatic link', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, file(line('2026-01-15', 'Kundin Beispiel', 'Rechnung R-2026-060', '400', 'Credit Transfer')));
+    await saveInvoice(db, ctx, null, { number: 'R-2026-060', issueDate: '2026-01-10', grossCents: 40_000, treatment: 'small_business', payments: [] });
+    const later = await importPayments(db, ctx, accountId, file(line('2026-02-15', 'Kundin Beispiel', 'Rechnung R-2026-060', '400', 'Credit Transfer')));
+    expect(later.autoLinked).toBe(0);
+    expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
+  });
+
+  it('two imports of overlapping files at the same moment store every payment once', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    const results = await Promise.all([importPayments(db, ctx, accountId, JANUARY), importPayments(db, ctx, accountId, FEBRUARY)]);
+    expect(results.reduce((s, r) => s + r.added, 0)).toBe(4);
+    expect(await db.taxPayment.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(4);
+  });
+
+  it('a payment without a name is asked about on its own, can be marked private, and that can be put back', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, file(line('2026-01-07', '', 'Kartenzahlung', '-12.3')));
+    let view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.payments.open.map((o) => [o.check, o.freeCents])).toEqual([['payment_without_document', 1_230]]);
+    await setPaymentKind(db, ctx, view.payments.open[0].id, 'private');
+    view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.payments.open).toEqual([]);
+    expect(view.payments.overridden.map((o) => [o.kind, o.amountCents])).toEqual([['private', -1_230]]);
+    await setPaymentKind(db, ctx, view.payments.overridden[0].id, null);
+    view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.payments.open).toHaveLength(1);
+    expect(view.payments.overridden).toEqual([]);
+  });
+
+  it('a receipt of last year paid this year, and a different amount, can be linked by hand', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    const rowId = await ws.addReceipt({ Name: 'Bestellung 4711', Vendor: 'Werkzeug Beispiel GmbH', Gross: 100, Date: '2025-12-28', Category: 'Bürobedarf', Currency: 'EUR', 'FX Rate': 1 });
+    await importPayments(db, ctx, accountId, JANUARY);
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'Werkzeug Beispiel GmbH', treatment: 'business' });
+    const view = await loadStatement(db, ws.workspaceId, 2026);
+    const open = view.payments.open.find((o) => o.freeCents === 10_850)!;
+    // No proposal (other year, other amount), but the receipt can be chosen.
+    expect(open.proposals).toEqual([]);
+    expect(view.payments.receiptTargets.map((t) => t.id)).toContain(rowId);
+    await linkPayment(db, ctx, { paymentId: open.id, rowId }, rowCheck(ctx));
+    const after = await loadStatement(db, ws.workspaceId, 2026);
+    // Paid in January 2026: the expense belongs to 2026, with the amount actually charged.
+    expect(after.items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 10_850, date: '2026-01-05' });
+  });
+});
+
 describe('workspace isolation', () => {
   it('accounts, payments, rules and links of another workspace do not exist here', async () => {
     const { ws, ctx } = await workspace();

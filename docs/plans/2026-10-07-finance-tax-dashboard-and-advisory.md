@@ -1087,6 +1087,68 @@ and both were asked for now.
   value and no remaining months was never written off; the app's own computed
   lines could be chosen by hand; failed actions showed nothing on several tabs.
 
+## Reality after the second half of slice 2: receipt lines (2026-10-10)
+
+- **A receipt is split by hand.** `TaxReceiptLine` (text, amount and optional net
+  amount in the receipt's own currency), migration `0014_tax_receipt_lines`. A split
+  has at least two lines and must add up to the receipt's total; that is checked on
+  save and again on every read. A receipt whose total was corrected afterwards shows
+  as one blocked item ("the lines no longer add up") until the split fits again:
+  nothing is computed from stale lines.
+- **Each line is its own item.** It takes its share of the receipt's euro amount in
+  the proportion of the line amounts, as differences of cumulative figures, so the
+  lines add up to the receipt to the cent whatever the currency or the amount
+  actually paid. A line follows its receipt's treatment until it has a decision of
+  its own, which can be taken back.
+- **The low-value limit is judged per line.** This is what the "several small
+  items" statement on a receipt stood in for; that statement stays for receipts
+  nobody wants to split.
+- **An asset can be built from single lines.** An asset part is a whole receipt or
+  one line (the uniqueness of an asset part widened from the receipt to receipt
+  plus line; existing parts are unchanged). A receipt is in an asset whole or by
+  lines, never both. Changing a split keeps the lines that stay, with their
+  decision and their place in an asset; a line that is dropped takes both along,
+  and the asset then asks for its cost.
+- **Payments are matched to whole receipts**, not to lines.
+- **Meals are never split**; the meal register judges a meal as a whole.
+- **Not built:** the classifier reading lines off the receipt. The plan had it in
+  this slice; receipt reading is being reworked by another owner right now (the
+  extraction defects on the roadmap), so lines are entered by hand until that work
+  lands. Receipt columns for invoice number and document type are not added either,
+  for the same reason.
+
+## Reality after the review of the payments code (2026-10-10)
+
+The first part of slice 3 merged without an automated review, so a fresh agent
+that had not seen the work reviewed it. It found no way across workspaces and
+twelve defects, all fixed in the receipt lines pull request:
+
+- **An invoice never receives more than it has open**, whatever a payment's
+  amount, and only money received pays an invoice. What is left of the payment
+  keeps waiting for an answer.
+- **An import is one transaction including its automatic links.** Two imports at
+  the same moment store each payment once; two confirmations at the same moment
+  cannot both use a payment (the payment row is locked).
+- **Imports are undone newest first.** A payment belongs to the file that brought
+  it first, so an older file that a later one overlaps cannot be undone alone.
+- **One account, one source.** The identity of a movement is built from its
+  source's text, so an account imported from a bank export refuses the bank
+  interface list (and the other way round); a second source gets its own account.
+  Known limit that stays: a bank that rewrites a counterparty's name between two
+  exports of the same days produces a second movement; the overlap report after an
+  import ("already there") is where that shows.
+- **Ambiguity is judged against every unlinked payment** of the workspace.
+- **Amounts are never guessed**: grouping that fits neither notation, more than two
+  decimals, and anything above ten million euros reject the file.
+- **A PayPal purchase in another currency** is the euro conversion row, under the
+  purchase's name; before, such purchases produced no spend at all.
+- **Linking by hand** to any receipt of the year or the year before, or to an open
+  invoice, with a part of the amount. This is what makes foreign-currency receipts,
+  a December receipt paid in January, and one payment for two receipts linkable.
+- **Payments without a name** are asked about one by one and can be marked private;
+  **re-labelled payments** are listed and can be put back; **refunds** from a
+  business counterparty ask for the receipt they belong to.
+
 ## Decisions (2026-10-07)
 
 Answered by the owner on the decision page on 2026-10-07.

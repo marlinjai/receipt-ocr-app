@@ -6,6 +6,9 @@ import { rulesForYear } from '@/lib/tax/rules';
 import type { StatementItem, StatementView } from '@/lib/tax/service';
 
 const actions = vi.hoisted(() => ({
+  saveLines: vi.fn(),
+  removeLines: vi.fn(),
+  decideLine: vi.fn(),
   saveIssuedInvoice: vi.fn(),
   removeIssuedInvoice: vi.fn(),
   recordStatusChange: vi.fn(),
@@ -35,6 +38,12 @@ beforeEach(() => {
 
 function item(overrides: Partial<StatementItem> & { rowId: string }): StatementItem {
   return {
+    itemId: overrides.rowId,
+    lineId: null,
+    lineDescription: null,
+    lineGrossCents: null,
+    lineNetCents: null,
+    receiptGrossCents: 3999,
     label: `Rechnung ${overrides.rowId}`,
     vendor: 'Netzwerk Nord GmbH',
     vendorKey: 'netzwerk nord',
@@ -130,7 +139,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     smallBusinessAtYearEnd: true,
     statusChanges: [],
     vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, settlements: [] },
-    payments: { accounts: [], yearCount: 0, linkedCount: 0, unclassified: [], treatments: [], open: [], links: [] },
+    payments: { accounts: [], yearCount: 0, linkedCount: 0, unclassified: [], treatments: [], open: [], overridden: [], receiptTargets: [], invoiceTargets: [], links: [] },
     vendorRules: [],
     initialized: true,
     ...overrides,
@@ -329,7 +338,7 @@ describe('FinanceClient: assets', () => {
     disposal: null,
     costCents: 150000,
     netCostCents: 126050,
-    rowIds: ['cam'],
+    itemIds: ['cam'],
     counted: true,
     checks: [],
     row: { year: 2025, bookValueStartCents: 0, additionCents: 150000, depreciationCents: 25000, disposalBookValueCents: 0, bookValueEndCents: 125000 },
@@ -365,7 +374,7 @@ describe('FinanceClient: assets', () => {
       businessShareBp: 10000,
       reminderCents: 0,
       opening: null,
-      rowIds: ['cam'],
+      itemIds: ['cam'],
     });
     expect(await screen.findByText('Kamera: Anlage gespeichert.')).toBeTruthy();
     expect(screen.getByText('1.250,00 €')).toBeTruthy();
@@ -405,7 +414,7 @@ describe('FinanceClient: assets', () => {
       method: 'linear',
       reminderCents: 100,
       opening: { year: 2025, bookValueCents: 100, remainingMonths: 0 },
-      rowIds: [],
+      itemIds: [],
     });
   });
 

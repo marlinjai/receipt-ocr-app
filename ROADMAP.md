@@ -109,8 +109,9 @@
   revenue by payment day, profit or loss, forecast of the small-business limits) and
   slice 5 (dated status changes, regular value-added taxation, advance return
   periods), and the first part of slice 3 (payments from export files, one answer
-  per counterparty, links to receipts and invoices). Open, in this order: receipt
-  lines (second half of slice 2); the rest of slice 3 (live bank sync with session
+  per counterparty, links to receipts and invoices), and receipt lines entered by hand. Open, in this
+  order: the classifier reading lines off a receipt (waits for the extraction work
+  on this roadmap); the rest of slice 3 (live bank sync with session
   expiry, card statement and pay-later importers, the ten-day rule at the turn of
   the year); the income tax estimate; the year-end entry sheet; reading the
   expenses mailbox. Open inside what is built,

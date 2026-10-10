@@ -10,6 +10,7 @@ import { PaymentParseError, type NormalizedPayment, type ParsedFile, type Paymen
  */
 
 const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_AMOUNT_EUR = 10_000_000;
 
 /** Split CSV text into rows of cells: quoted fields, doubled quotes, line breaks inside quotes. */
 export function parseCsv(text: string): string[][] {
@@ -63,10 +64,20 @@ export function toIsoDay(value: string | null | undefined): string | null {
 export function toCents(value: string | null | undefined): number | null {
   const text = (value ?? '').trim().replace(/\s/g, '');
   if (!text) return null;
-  const normalized = text.includes(',') ? text.replace(/\./g, '').replace(',', '.') : text;
-  if (!/^[+-]?\d+(\.\d+)?$/.test(normalized)) return null;
+  let normalized: string;
+  if (text.includes(',')) {
+    // German: points group thousands in threes, the comma is the decimal sign.
+    // Anything else with a comma ("1,234.56") is not guessed at.
+    if (!/^[+-]?(\d{1,3}(\.\d{3})+|\d+)(,\d{1,2})?$/.test(text)) return null;
+    normalized = text.replace(/\./g, '').replace(',', '.');
+  } else {
+    // A point is the decimal sign, with at most two decimals: "1.234" is not read as 1.23.
+    if (!/^[+-]?\d+(\.\d{1,2})?$/.test(text)) return null;
+    normalized = text;
+  }
   const n = Number(normalized);
-  if (!Number.isFinite(n)) return null;
+  // No export holds a single movement of ten million euros; such a value is a misread.
+  if (!Number.isFinite(n) || Math.abs(n) > MAX_AMOUNT_EUR) return null;
   return Math.sign(n) * Math.round(Math.abs(n) * 100 + 1e-7);
 }
 
@@ -163,7 +174,13 @@ function parseTomorrow(rows: string[][]): ParsedFile {
 function parsePaypal(rows: string[][]): ParsedFile {
   const skipped: Record<string, number> = {};
   const drafts: Draft[] = [];
-  for (const r of records(rows)) {
+  const all = records(rows);
+  // A purchase in another currency appears as the purchase itself (in that
+  // currency) plus a currency conversion in euro that points back at it. The
+  // euro conversion is what was actually paid, so it becomes the spend, under
+  // the purchase's own name.
+  const byCode = new Map(all.map((r) => [clean(r.get('Transaktionscode')), r]));
+  for (const r of all) {
     // Only completed movements that changed the balance are payments. Pending
     // and declined ones never happened; memo lines repeat another row.
     if (clean(r.get('Status')) !== 'Abgeschlossen') {
@@ -182,15 +199,32 @@ function parsePaypal(rows: string[][]): ParsedFile {
     const amountCents = toCents(r.get('Brutto'));
     if (!bookingDay || amountCents === null) throw new PaymentParseError('unreadable_row', r.line);
     const type = clean(r.get('Typ'));
-    // Topping the balance up from the bank or the card, and the service's own
-    // currency conversion, move the owner's money around; they buy nothing.
-    const funding = /Bankgutschrift|Gutschrift auf Kreditkarte|Währungsumrechnung|Abbuchung|Einzahlung/i.test(type);
+    const describe = (row: (typeof all)[number]) =>
+      [clean(row.get('Artikelbezeichnung')), clean(row.get('Rechnungsnummer')), clean(row.get('Betreff'))].filter(Boolean).join(' ');
+    if (/Währungsumrechnung/i.test(type)) {
+      const purchase = byCode.get(clean(r.get('Zugehöriger Transaktionscode')));
+      const foreign = purchase !== undefined && clean(purchase.get('Währung')) !== 'EUR' && !/Währungsumrechnung/i.test(clean(purchase.get('Typ')));
+      drafts.push({
+        bookingDay,
+        valueDay: null,
+        amountCents,
+        counterparty: foreign ? clean(purchase.get('Name')) : '',
+        reference: foreign ? describe(purchase) : 'Währungsumrechnung',
+        entryReference: clean(r.get('Transaktionscode')) || null,
+        // The euro side of a foreign purchase is the spend (or the refund, when
+        // money came back); a conversion that belongs to no purchase only moves money.
+        kind: foreign ? (amountCents < 0 ? 'spend' : 'refund') : 'own_transfer',
+      });
+      continue;
+    }
+    // Topping the balance up from the bank or the card moves the owner's money around; it buys nothing.
+    const funding = /Bankgutschrift|Gutschrift auf Kreditkarte|Abbuchung|Einzahlung/i.test(type);
     drafts.push({
       bookingDay,
       valueDay: null,
       amountCents,
       counterparty: clean(r.get('Name')),
-      reference: [clean(r.get('Artikelbezeichnung')), clean(r.get('Rechnungsnummer')), clean(r.get('Betreff'))].filter(Boolean).join(' '),
+      reference: describe(r),
       entryReference: clean(r.get('Transaktionscode')) || null,
       kind: funding ? 'own_transfer' : /Rückzahlung|Erstattung/i.test(type) ? 'refund' : defaultKind(amountCents),
     });

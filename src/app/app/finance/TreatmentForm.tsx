@@ -204,7 +204,8 @@ export default function TreatmentForm({ item, formLines, busy, error, submitLabe
         </div>
       )}
 
-      {item.vendor && item.vendorKey && (
+      {/* A line is one position of one receipt: it says nothing about the vendor as a whole. */}
+      {item.vendor && item.vendorKey && item.lineId === null && (
         <div className="ui-note">
           <label className="flex items-start gap-2 text-sm" style={{ color: 'var(--foreground)' }}>
             <input type="checkbox" className="mt-1" checked={forVendor} onChange={(e) => setForVendor(e.target.checked)} />

@@ -20,8 +20,8 @@ export interface AssetInput {
   businessShareBp: number;
   reminderCents: number;
   opening: { year: number; bookValueCents: number; remainingMonths: number } | null;
-  /** The receipts that make up the cost. */
-  rowIds: string[];
+  /** The receipts and receipt lines that make up the cost, as item ids (a row id, or `row#line`). */
+  itemIds: string[];
 }
 
 export interface DisposalInput {
@@ -99,12 +99,12 @@ export function validateAssetInput(raw: unknown): AssetInput {
   const reminderCents = input.reminderCents === undefined ? 0 : input.reminderCents;
   if (!isInt(reminderCents) || reminderCents < 0 || reminderCents > 100) fail('invalid_reminder');
 
-  const rowIds = Array.isArray(input.rowIds) ? [...new Set(input.rowIds.filter((id): id is string => typeof id === 'string' && id.length > 0))] : [];
+  const itemIds = Array.isArray(input.itemIds) ? [...new Set(input.itemIds.filter((id): id is string => typeof id === 'string' && id.length > 0))] : [];
   // The cost of a new asset IS its receipts; a carried-in asset has a stated
   // book value instead and takes no receipts, or its cost would count twice.
-  if (opening === null && rowIds.length === 0) fail('receipts_required');
-  if (opening !== null && rowIds.length > 0) fail('receipts_and_opening');
-  if (rowIds.length > 50) fail('receipts_required');
+  if (opening === null && itemIds.length === 0) fail('receipts_required');
+  if (opening !== null && itemIds.length > 0) fail('receipts_and_opening');
+  if (itemIds.length > 50) fail('receipts_required');
 
   return {
     label,
@@ -117,7 +117,7 @@ export function validateAssetInput(raw: unknown): AssetInput {
     businessShareBp: businessShareBp as number,
     reminderCents: reminderCents as number,
     opening,
-    rowIds,
+    itemIds,
   };
 }
 

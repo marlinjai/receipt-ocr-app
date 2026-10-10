@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useId, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useState, type MouseEvent } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { Contact } from '@/lib/contacts/store';
 import { contactsTabCount } from '@/lib/contacts/field-form';
 import { incompleteQueue } from '@/lib/meals/register';
@@ -32,6 +33,20 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
     afterDiscard(() => {
       setUnsavedSubject(null);
       setTab(next);
+    });
+  };
+
+  // A link of this page leaves the form just as a tab switch does. With unsaved
+  // changes it asks first and navigates only after "verwerfen". A click that
+  // opens the link elsewhere (new tab or window) takes nothing away and is left alone.
+  const router = useRouter();
+  const leaveTo = (href: string) => (e: MouseEvent<HTMLAnchorElement>) => {
+    if (unsavedSubject === null) return;
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    afterDiscard(() => {
+      setUnsavedSubject(null);
+      router.push(href);
     });
   };
 
@@ -98,10 +113,10 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
             </p>
           </div>
           <div className="flex gap-2">
-            <Link href="/app/dashboard" className="ui-btn">
+            <Link href="/app/dashboard" className="ui-btn" onClick={leaveTo('/app/dashboard')}>
               Dashboard
             </Link>
-            <Link href="/app" className="ui-btn ui-btn-primary">
+            <Link href="/app" className="ui-btn ui-btn-primary" onClick={leaveTo('/app')}>
               Beleg hochladen
             </Link>
           </div>
@@ -139,6 +154,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
           {/* Not a tab: the contacts moved to their own page, and this is where they used to be. */}
           <Link
             href="/app/contacts"
+            onClick={leaveTo('/app/contacts')}
             className="-mb-px ml-auto shrink-0 border-b-2 border-transparent px-3 py-2.5 text-sm font-medium transition-colors duration-150 hover:underline"
             style={{ color: 'var(--muted)' }}
           >

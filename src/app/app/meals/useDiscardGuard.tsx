@@ -1,12 +1,17 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 
 /**
  * The one question the meals page asks before it throws away what was typed
  * into a meal form and not saved: on opening another entry, on leaving the
- * tab, on anything else that takes the form away.
+ * tab, on following a link of the page, on anything else that takes the form
+ * away.
+ *
+ * Reloading the page or closing the browser tab cannot be answered by an
+ * in-page dialog, so while something is unsaved the browser asks its own
+ * leave-page question.
  *
  * `subject` names the entry the unsaved changes belong to, as it reads in a
  * sentence; null while nothing is unsaved. `afterDiscard(run)` runs at once
@@ -14,6 +19,18 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
  */
 export function useDiscardGuard(subject: string | null) {
   const [pending, setPending] = useState<{ run: () => void } | null>(null);
+
+  const unsaved = subject !== null;
+  useEffect(() => {
+    if (!unsaved) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Older browsers only ask when this is set; the text itself is never shown.
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [unsaved]);
 
   const afterDiscard = (run: () => void) => {
     if (subject !== null) setPending({ run });

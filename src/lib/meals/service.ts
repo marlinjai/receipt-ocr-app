@@ -20,7 +20,7 @@ import { parseRotation, type Rotation } from './viewer-state';
 import { DEFAULT_TAX_SETTINGS, type MealGuestEntry, type MealRecord, type MealTaxSettings } from './types';
 import { TAX_RATES_COLUMN, formatTaxRates } from '@/lib/tax-rates';
 import { isGroupRow, receiptsOnly } from '@/lib/receipts-kind';
-import { releaseChildRows } from '@/lib/groups/links';
+import { releaseChildRows, restoreChildRows } from '@/lib/groups/links';
 
 /**
  * Server-side reads and writes for the meal register.
@@ -488,8 +488,17 @@ export async function deleteReceiptRows(
 
       // A group that is deleted leaves its receipts behind as ordinary top-level rows:
       // they are released first, so no receipt ever points at a row that is gone.
-      await releaseChildRows(db, ctx.tableId, rowId);
-      await ctx.adapter.deleteRow(rowId);
+      // If the delete then fails, the receipts go back under the group, so a failed
+      // request leaves the group and its links as they were and a retry finds them.
+      const released = await releaseChildRows(db, ctx.tableId, rowId);
+      try {
+        await ctx.adapter.deleteRow(rowId);
+      } catch (e) {
+        await restoreChildRows(db, ctx.tableId, rowId, released).catch((re) =>
+          console.error('[meals] putting the receipts back under their group failed', { rowId }, re),
+        );
+        throw e;
+      }
       // TaxItemDecision.rowId has no foreign key, and a retry cannot find the deleted row again, so
       // this runs before the guest cleanup: a guest failure must not orphan the decisions.
       // Same cleanup as the other deletion paths (tax/service imports this module, so no helper import).

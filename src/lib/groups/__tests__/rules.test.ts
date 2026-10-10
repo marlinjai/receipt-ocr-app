@@ -30,6 +30,8 @@ describe('what may go into a group', () => {
   const found = new Map([
     ['r1', { id: 'r1', kind: null }],
     ['g2', { id: 'g2', kind: GROUP_KIND }],
+    ['old', { id: 'old', kind: null, parentRowId: null, archived: true }],
+    ['oldInG', { id: 'oldInG', kind: null, parentRowId: 'g1', archived: true }],
   ]);
 
   it('receipts of the table', () => {
@@ -39,6 +41,13 @@ describe('what may go into a group', () => {
 
   it('never a group: groups have one level', () => {
     expect(code(() => assertCanJoinGroup(['r1', 'g2'], found))).toBe('group_in_group');
+  });
+
+  it('an archived receipt is not taken in, unless it already lies in that group', () => {
+    expect(code(() => assertCanJoinGroup(['old'], found))).toBe('row_not_found');
+    expect(code(() => assertCanJoinGroup(['old'], found, 'g1'))).toBe('row_not_found');
+    expect(code(() => assertCanJoinGroup(['oldInG'], found))).toBe('row_not_found');
+    expect(code(() => assertCanJoinGroup(['oldInG'], found, 'g1'))).toBe('no error');
   });
 
   it('never a row that is not in the table, and then nothing moves at all', () => {

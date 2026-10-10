@@ -109,7 +109,7 @@ export async function moveIntoGroup(db: PrismaClient, workspaceId: string, group
     const found = await readRowLinks(tx, table.tableId, table.kindColumnId, [groupId, ...ids]);
     const group = found.get(groupId);
     if (!group || group.kind !== GROUP_KIND || group.archived) throw new GroupError('group_not_found');
-    assertCanJoinGroup(ids, found);
+    assertCanJoinGroup(ids, found, groupId);
     return setParentRow(tx, table.tableId, ids, groupId);
   });
 }

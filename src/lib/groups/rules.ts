@@ -42,17 +42,26 @@ export function cleanGroupName(name: unknown): string {
 export interface MemberCandidate {
   id: string;
   kind: string | null;
+  /** The group the row lies in, null at the top level. Optional: a caller that does not read it sees no archived row as a member. */
+  parentRowId?: string | null;
+  archived?: boolean;
 }
 
 /**
  * Check the rows that are to go into a group: every one must exist in the
- * table, and none may be a group itself. Throws on the first violation, so a
- * move is all or nothing.
+ * table, and none may be a group itself. An archived receipt is not taken in,
+ * except one that already lies in the group `targetGroupId` (a repeated move
+ * stays a no-op). Throws on the first violation, so a move is all or nothing.
  */
-export function assertCanJoinGroup(requestedIds: readonly string[], found: ReadonlyMap<string, MemberCandidate>): void {
+export function assertCanJoinGroup(
+  requestedIds: readonly string[],
+  found: ReadonlyMap<string, MemberCandidate>,
+  targetGroupId?: string,
+): void {
   for (const id of requestedIds) {
     const row = found.get(id);
     if (!row) throw new GroupError('row_not_found');
+    if (row.archived && (targetGroupId === undefined || row.parentRowId !== targetGroupId)) throw new GroupError('row_not_found');
     if (row.kind === GROUP_KIND) throw new GroupError('group_in_group');
   }
 }

@@ -60,12 +60,25 @@ export async function setParentRow(db: Db, tableId: string, rowIds: readonly str
 /**
  * Release every row that lies under `parentRowId` to the top level. Runs
  * before a row is deleted, whatever its kind, so no row is left pointing at one
- * that is gone. Returns how many rows were released.
+ * that is gone. Returns the ids released, so a failed delete can put them back
+ * with `restoreChildRows`.
  */
-export async function releaseChildRows(db: Db, tableId: string, parentRowId: string): Promise<number> {
-  return db.$executeRawUnsafe(
-    `UPDATE ${safeTableName(tableId)} SET parent_row_id = NULL, _updated_at = $1 WHERE parent_row_id = $2`,
+export async function releaseChildRows(db: Db, tableId: string, parentRowId: string): Promise<string[]> {
+  const rows = await db.$queryRawUnsafe<Array<{ id: string }>>(
+    `UPDATE ${safeTableName(tableId)} SET parent_row_id = NULL, _updated_at = $1 WHERE parent_row_id = $2 RETURNING id`,
     new Date().toISOString(),
     parentRowId,
+  );
+  return rows.map((r) => r.id);
+}
+
+/** Put rows released by `releaseChildRows` back under their parent, when the parent's delete did not go through. */
+export async function restoreChildRows(db: Db, tableId: string, parentRowId: string, childIds: readonly string[]): Promise<void> {
+  if (childIds.length === 0) return;
+  await db.$executeRawUnsafe(
+    `UPDATE ${safeTableName(tableId)} SET parent_row_id = $1::text, _updated_at = $2 WHERE id IN (${placeholders(childIds.length, 3)}) AND parent_row_id IS NULL`,
+    parentRowId,
+    new Date().toISOString(),
+    ...childIds,
   );
 }

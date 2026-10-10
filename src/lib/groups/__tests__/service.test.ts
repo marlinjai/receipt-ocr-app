@@ -31,6 +31,7 @@ function memoryTable(initial: Row[]) {
   const store = new Map<string, Row>(initial.map((r) => [r.id, { ...r, cells: { ...r.cells } }]));
   let created = 0;
   let failNextMove = false;
+  let failNextDelete = false;
   const rows = () => [...store.values()];
   const adapter = {
     ...fakeAdapter(),
@@ -42,6 +43,10 @@ function memoryTable(initial: Row[]) {
       return row;
     },
     deleteRow: async (id: string) => {
+      if (failNextDelete) {
+        failNextDelete = false;
+        throw new Error('connection lost');
+      }
       store.delete(id);
     },
   };
@@ -50,6 +55,11 @@ function memoryTable(initial: Row[]) {
   const db: Record<string, unknown> = {
     $transaction: async (run: (tx: unknown) => Promise<unknown>) => run(dbProxy),
     $queryRawUnsafe: async (sql: string, ...ids: string[]) => {
+      if (sql.includes('SET parent_row_id = NULL') && sql.includes('RETURNING id')) {
+        const children = rows().filter((r) => r.parentRowId === ids[1]);
+        for (const child of children) store.set(child.id, { ...child, parentRowId: undefined } as Row);
+        return children.map((c) => ({ id: c.id }));
+      }
       if (!sql.startsWith('SELECT id, parent_row_id')) throw new Error(`unexpected query: ${sql}`);
       return ids
         .filter((id) => store.has(id))
@@ -59,12 +69,6 @@ function memoryTable(initial: Row[]) {
         });
     },
     $executeRawUnsafe: async (sql: string, ...params: Array<string | null>) => {
-      if (sql.includes('SET parent_row_id = NULL')) {
-        const parentId = params[1];
-        const children = rows().filter((r) => r.parentRowId === parentId);
-        for (const child of children) store.set(child.id, { ...child, parentRowId: undefined } as Row);
-        return children.length;
-      }
       if (sql.includes('SET parent_row_id = $1::text')) {
         if (failNextMove) {
           failNextMove = false;
@@ -84,7 +88,7 @@ function memoryTable(initial: Row[]) {
     },
   };
   const dbProxy = new Proxy(db, { get: (target, prop: string) => (prop in target ? target[prop] : model) }) as never;
-  return { adapter, db: dbProxy, rows, row: (id: string) => store.get(id), failNextMove: () => (failNextMove = true) };
+  return { adapter, db: dbProxy, rows, row: (id: string) => store.get(id), failNextMove: () => (failNextMove = true), failNextDelete: () => (failNextDelete = true) };
 }
 
 const code = async (run: Promise<unknown>): Promise<string> => {
@@ -242,6 +246,19 @@ describe('after the end: delete the group', () => {
     expect(table.row('dinner')!.parentRowId).toBeUndefined();
     expect(receiptIds()).toEqual([...RECEIPT_IDS].sort());
     expect(receiptTotal()).toBe(RECEIPT_TOTAL);
+  });
+
+  it('a delete that fails leaves the group and its receipts linked as they were', async () => {
+    const groupId = await createGroup(table.db, WORKSPACE_ID, 'Messe', ['hotel', 'dinner']);
+    table.failNextDelete();
+    const failed = await deleteReceiptRows(table.db, ctx, [groupId], deps);
+    expect(failed.done).toEqual([]);
+    expect(failed.skipped).toEqual([{ rowId: groupId, reason: 'failed' }]);
+    expect(table.row(groupId)).toBeDefined();
+    expect(table.row('hotel')!.parentRowId).toBe(groupId);
+    expect(table.row('dinner')!.parentRowId).toBe(groupId);
+    // A retry deletes it as usual.
+    expect((await deleteReceiptRows(table.db, ctx, [groupId], deps)).done).toEqual([groupId]);
   });
 
   it('a receipt selected together with its group is deleted, the others stay', async () => {

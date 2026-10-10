@@ -783,7 +783,7 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
         rows={receiptRows}
         columns={tableColumns}
         selectOptions={selectOptions}
-        onCellChange={(rowId, columnId, value) => updateCell(rowId, columnId, value)}
+        onCellChange={saveCell}
         onAddRow={async (cells?: Record<string, CellValue>) => { await addRow({ cells }); }}
         onDeleteRow={deleteOne}
         onCreateSelectOption={(params) => createSelectOption(params.columnId, params.name, params.color)}

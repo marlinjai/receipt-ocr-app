@@ -474,25 +474,26 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));
 
   const items: StatementItem[] = [];
-  const itemOrder = new Map<StatementItem, number>();
   const years = new Set<number>(RULE_YEARS);
   years.add(year);
   resolved.forEach((r, index) => {
     if (r.item.date) years.add(Number(r.item.date.slice(0, 4)));
     const itemResult = resultById.get(r.item.id);
     // computeYear only returns items of the year and undated ones.
-    if (itemResult) {
-      const statementItem = toStatementItem(r, factsOfItem[index], itemResult);
-      itemOrder.set(statementItem, index);
-      items.push(statementItem);
-    }
+    if (itemResult) items.push(toStatementItem(r, factsOfItem[index], itemResult));
   });
-  // By date, then by label; the lines of one receipt keep their stored order.
-  items.sort((a, b) => {
-    if (a.date !== b.date) return (a.date ?? '') < (b.date ?? '') ? -1 : 1;
-    if (a.rowId === b.rowId) return (itemOrder.get(a) ?? 0) - (itemOrder.get(b) ?? 0);
-    return a.label.localeCompare(b.label, 'de');
-  });
+  // By day, then by receipt; the lines of one receipt stay together, in their
+  // stored order. Every pair is compared by the same keys, so the order is
+  // the same whatever order the rows were loaded in.
+  const receiptLabel = (i: StatementItem) => (i.lineDescription ? i.label.slice(0, i.label.length - i.lineDescription.length - 2) : i.label);
+  const position = (i: StatementItem) => (i.lineId ? i.receiptLines.findIndex((l) => l.id === i.lineId) : 0);
+  items.sort((a, b) =>
+    (a.date ?? '') < (b.date ?? '')
+      ? -1
+      : (a.date ?? '') > (b.date ?? '')
+        ? 1
+        : receiptLabel(a).localeCompare(receiptLabel(b), 'de') || a.rowId.localeCompare(b.rowId) || position(a) - position(b),
+  );
 
   const { rules } = resolvedRules;
   const assetResults = new Map(result.assets.map((a) => [a.assetId, a]));

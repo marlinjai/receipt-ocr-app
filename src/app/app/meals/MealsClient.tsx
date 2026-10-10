@@ -11,6 +11,7 @@ import type { MealsPageData } from './actions';
 import DismissedMeals from './DismissedMeals';
 import QueueTab from './QueueTab';
 import RegisterTab from './RegisterTab';
+import { useDiscardGuard } from './useDiscardGuard';
 
 type TabKey = 'queue' | 'register';
 
@@ -21,6 +22,18 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
   const [settings, setSettings] = useState<MealTaxSettings>(initial.settings);
   const [defaultHost, setDefaultHost] = useState(initial.defaultHost);
   const [tab, setTab] = useState<TabKey>(() => (incompleteQueue(initial.records.filter((r) => !isDismissedMeal(r))).length > 0 ? 'queue' : 'register'));
+
+  // The open tab says which entry has unsaved changes in its form. Switching
+  // tabs takes that form away, so it asks first, like everything else that does.
+  const [unsavedSubject, setUnsavedSubject] = useState<string | null>(null);
+  const { afterDiscard, dialog: discardDialog } = useDiscardGuard(unsavedSubject);
+  const openTab = (next: TabKey) => {
+    if (next === tab) return;
+    afterDiscard(() => {
+      setUnsavedSubject(null);
+      setTab(next);
+    });
+  };
 
   // `records` also holds the receipts marked "Keine Bewirtung"; they are listed
   // on their own and never reach the queue, the register or the year picker.
@@ -104,7 +117,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
                 id={`${tabsId}-tab-${t.key}`}
                 aria-selected={tab === t.key}
                 aria-controls={`${tabsId}-panel-${t.key}`}
-                onClick={() => setTab(t.key)}
+                onClick={() => openTab(t.key)}
                 className="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150"
                 style={{
                   borderColor: tab === t.key ? 'var(--accent)' : 'transparent',
@@ -147,7 +160,8 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
               onRecordsSaved={onRecordsSaved}
               onRecordsRemoved={onRecordsRemoved}
               onContactCreated={onContactUpserted}
-              onOpenRegister={() => setTab('register')}
+              onOpenRegister={() => openTab('register')}
+              onUnsavedChange={setUnsavedSubject}
             />
           )}
           {tab === 'register' && (
@@ -161,11 +175,13 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
               onContactCreated={onContactUpserted}
               onRecordsSaved={onRecordsSaved}
               onRecordsRemoved={onRecordsRemoved}
-              onOpenQueue={() => setTab('queue')}
+              onOpenQueue={() => openTab('queue')}
+              onUnsavedChange={setUnsavedSubject}
             />
           )}
         </div>
 
+        {discardDialog}
         <DismissedMeals records={dismissed} onRecordsSaved={onRecordsSaved} onRecordsRemoved={onRecordsRemoved} />
       </div>
     </main>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Checkbox from '@/components/ui/Checkbox';
 import type { Contact } from '@/lib/contacts/store';
 import { receiptCount } from '@/lib/meals/batch';
@@ -10,6 +10,7 @@ import { mealStatus } from '@/lib/meals/rules';
 import { pruneSelection, selectAllState, toggleAll, toggleSelected } from '@/lib/meals/selection';
 import type { MealGuestEntry, MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import MealEditor from './MealEditor';
+import { useDiscardGuard } from './useDiscardGuard';
 import { useReceiptActions } from './useReceiptActions';
 
 interface QueueTabProps {
@@ -24,6 +25,8 @@ interface QueueTabProps {
   onRecordsRemoved: (rowIds: string[]) => void;
   onContactCreated: (contact: Contact) => void;
   onOpenRegister: () => void;
+  /** Told which entry has unsaved changes in the form (as it reads in a sentence), or null. */
+  onUnsavedChange?: (subject: string | null) => void;
 }
 
 function entryLabel(record: MealRecord): string {
@@ -77,6 +80,7 @@ export default function QueueTab({
   onRecordsRemoved,
   onContactCreated,
   onOpenRegister,
+  onUnsavedChange,
 }: QueueTabProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -96,6 +100,23 @@ export default function QueueTab({
   const allState = selectAllState(checked, queueIds);
   const opened = queue.find((e) => e.record.rowId === openId) ?? queue[0] ?? null;
   const busy = actions.busy;
+
+  // What was typed into the open form and not saved is never dropped without
+  // asking: not by opening another entry, and not by an action on this one.
+  const [formDirty, setFormDirty] = useState(false);
+  const onFormDirty = useCallback((dirty: boolean) => setFormDirty(dirty), []);
+  const openRowId = opened?.record.rowId ?? null;
+  const unsavedSubject = opened && formDirty ? `„${entryLabel(opened.record)}“` : null;
+  const { afterDiscard, dialog: discardDialog } = useDiscardGuard(unsavedSubject);
+  /** Run a list action; when it takes the open entry (and its unsaved form) away, ask first. */
+  const afterDiscardIfOpen = (records: MealRecord[], run: () => void) => {
+    if (records.some((r) => r.rowId === openRowId)) afterDiscard(run);
+    else run();
+  };
+  useEffect(() => {
+    onUnsavedChange?.(unsavedSubject);
+  }, [unsavedSubject, onUnsavedChange]);
+  useEffect(() => () => onUnsavedChange?.(null), [onUnsavedChange]);
 
   if (queue.length === 0) {
     return (
@@ -165,7 +186,10 @@ export default function QueueTab({
                   <button
                     type="button"
                     aria-current={isOpen ? 'true' : undefined}
-                    onClick={() => setOpenId(record.rowId)}
+                    onClick={() => {
+                      if (isOpen) return;
+                      afterDiscard(() => setOpenId(record.rowId));
+                    }}
                     className="ui-row-open flex min-w-0 items-baseline justify-between gap-3 pb-0.5 pr-3 pt-2.5"
                   >
                     <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
@@ -193,7 +217,7 @@ export default function QueueTab({
                         className="ui-btn ui-btn-sm ui-btn-ghost px-2 text-xs"
                         disabled={busy}
                         aria-label={`Keine Bewirtung: ${spoken}`}
-                        onClick={() => actions.markNotMeal([record], { confirm: false })}
+                        onClick={() => afterDiscardIfOpen([record], () => actions.markNotMeal([record], { confirm: false }))}
                       >
                         Keine Bewirtung
                       </button>
@@ -203,7 +227,7 @@ export default function QueueTab({
                         disabled={busy}
                         aria-label={`Löschen: ${spoken}`}
                         title="Löschen"
-                        onClick={() => actions.requestDelete([record])}
+                        onClick={() => afterDiscardIfOpen([record], () => actions.requestDelete([record]))}
                       >
                         <TrashIcon />
                       </button>
@@ -234,7 +258,7 @@ export default function QueueTab({
                 type="button"
                 className="ui-btn ui-btn-sm whitespace-nowrap"
                 disabled={busy}
-                onClick={() => actions.markNotMeal(checkedRecords, { confirm: true })}
+                onClick={() => afterDiscardIfOpen(checkedRecords, () => actions.markNotMeal(checkedRecords, { confirm: true }))}
               >
                 Keine Bewirtung
               </button>
@@ -242,7 +266,7 @@ export default function QueueTab({
                 type="button"
                 className="ui-btn ui-btn-sm ui-btn-danger"
                 disabled={busy}
-                onClick={() => actions.requestDelete(checkedRecords)}
+                onClick={() => afterDiscardIfOpen(checkedRecords, () => actions.requestDelete(checkedRecords))}
               >
                 Löschen
               </button>
@@ -274,6 +298,7 @@ export default function QueueTab({
           saveLabel="Speichern und weiter"
           onContactCreated={onContactCreated}
           onRecordsSaved={onRecordsSaved}
+          onDirtyChange={onFormDirty}
           onSaved={(record) => {
             if (record.guests.length > 0) setPreviousGuests(record.guests);
             const stillOpen = mealStatus(record).kind === 'incomplete';
@@ -290,6 +315,7 @@ export default function QueueTab({
         />
       )}
 
+      {discardDialog}
       {actions.overlays}
     </div>
   );

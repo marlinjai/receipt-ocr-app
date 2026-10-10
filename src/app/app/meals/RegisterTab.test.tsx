@@ -564,31 +564,68 @@ describe('RegisterTab: editing a register entry', () => {
     expect(await within(editor()).findByText('Keine Änderungen, nichts gespeichert.')).toBeTruthy();
   });
 
-  it('an entry taken out of the register while it is open closes its form, which does not come back with the entry', async () => {
+  it('while an entry is open its "Keine Bewirtung" and "Löschen" are off, so neither can take the form away; other rows keep theirs', async () => {
     const user = userEvent.setup();
-    markMealsNotMeal.mockResolvedValue({ ok: true, value: { done: ['a'], records: [{ ...FIRST, mealType: 'not_a_meal' }], skipped: [] } });
+    render(<Page />);
+    const notMeal = (no: number) => screen.getByRole('button', { name: new RegExp(`^Keine Bewirtung: Nr\\. ${no},`) }) as HTMLButtonElement;
+    const remove = (no: number) => screen.getByRole('button', { name: new RegExp(`^Löschen: Nr\\. ${no},`) }) as HTMLButtonElement;
+    expect(notMeal(1).disabled).toBe(false);
+
+    await user.click(editButton(1));
+    await user.type(field('Gastgeber'), ' und Partner');
+    expect(notMeal(1).disabled).toBe(true);
+    expect(remove(1).disabled).toBe(true);
+    expect(notMeal(1).title).toMatch(/zuerst speichern oder abbrechen/);
+    expect(notMeal(2).disabled).toBe(false);
+    expect(remove(2).disabled).toBe(false);
+    await user.click(notMeal(1));
+    await user.click(remove(1));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(field('Gastgeber').value).toBe('Inhaber Beispiel und Partner');
+
+    await user.click(within(editor()).getByRole('button', { name: 'Abbrechen' }));
+    expect(notMeal(1).disabled).toBe(false);
+    expect(remove(1).disabled).toBe(false);
+  });
+
+  it('tells the page which entry has unsaved changes, and that there are none once the form is closed', async () => {
+    const user = userEvent.setup();
+    const onUnsavedChange = vi.fn();
+    render(
+      <RegisterTab
+        records={[FIRST, SECOND]}
+        settings={SMALL_BUSINESS}
+        onSettingsChanged={vi.fn()}
+        onRecordsSaved={vi.fn()}
+        onRecordsRemoved={vi.fn()}
+        onOpenQueue={vi.fn()}
+        onUnsavedChange={onUnsavedChange}
+        {...EDITOR_PROPS}
+      />,
+    );
+    await user.click(editButton(1));
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(null);
+    await user.type(field('Gastgeber'), ' und Partner');
+    expect(onUnsavedChange).toHaveBeenLastCalledWith('Nr. 1 (Mittagessen Testlokal)');
+    await user.click(within(editor()).getByRole('button', { name: 'Abbrechen' }));
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it('an entry that leaves the register while it is open closes its form, which does not come back with the entry', async () => {
+    const user = userEvent.setup();
     function Restorable() {
       const [list, setList] = useState<MealRecord[]>([FIRST, SECOND]);
       return (
         <>
+          <button onClick={() => setList([SECOND])}>Entfernen</button>
           <button onClick={() => setList([FIRST, SECOND])}>Wieder aufnehmen</button>
-          <RegisterTab
-            records={list.filter((r) => r.mealType !== 'not_a_meal')}
-            settings={SMALL_BUSINESS}
-            onSettingsChanged={vi.fn()}
-            onRecordsSaved={(saved) => setList((l) => l.map((r) => saved.find((x) => x.rowId === r.rowId) ?? r))}
-            onRecordsRemoved={vi.fn()}
-            onOpenQueue={vi.fn()}
-            {...EDITOR_PROPS}
-          />
+          <RegisterTab records={list} settings={SMALL_BUSINESS} onSettingsChanged={vi.fn()} onRecordsSaved={vi.fn()} onRecordsRemoved={vi.fn()} onOpenQueue={vi.fn()} {...EDITOR_PROPS} />
         </>
       );
     }
     render(<Restorable />);
     await user.click(editButton(1));
-    await user.click(screen.getByRole('button', { name: /^Keine Bewirtung: Nr\. 1,/ }));
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Keine Bewirtung' }));
-    await screen.findByText(/wird nicht mehr als Bewirtung geführt/);
+    await user.click(screen.getByRole('button', { name: 'Entfernen' }));
     expect(screen.queryByRole('region', { name: 'Angaben zur Bewirtung' })).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Wieder aufnehmen' }));

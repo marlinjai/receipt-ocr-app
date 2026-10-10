@@ -17,6 +17,7 @@ import { buildRegister, registerYearChoices, undatedMeals } from '@/lib/meals/re
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { saveMealTaxSettings } from './actions';
 import MealEditor from './MealEditor';
+import { useDiscardGuard } from './useDiscardGuard';
 import { useReceiptActions } from './useReceiptActions';
 
 interface RegisterTabProps {
@@ -34,6 +35,8 @@ interface RegisterTabProps {
   onRecordsRemoved: (rowIds: string[]) => void;
   onContactCreated: (contact: Contact) => void;
   onOpenQueue: () => void;
+  /** Told which entry has unsaved changes in the editor (as it reads in a sentence), or null. */
+  onUnsavedChange?: (subject: string | null) => void;
 }
 
 /** Where the focus goes once the next render is on the page. */
@@ -41,6 +44,7 @@ type FocusRequest = { to: 'editor' } | { to: 'row'; rowId: string };
 
 type ExportFormat = 'csv' | 'pdf';
 
+const EDITING_LOCK_HINT = 'Der Eintrag wird gerade bearbeitet. Bitte zuerst speichern oder abbrechen.';
 const SECTION_19_QUESTION = 'Ist dieses Unternehmen Kleinunternehmer nach § 19 Umsatzsteuergesetz?';
 
 /** Save a response body as a file download. */
@@ -66,6 +70,7 @@ export default function RegisterTab({
   onRecordsRemoved,
   onContactCreated,
   onOpenQueue,
+  onUnsavedChange,
 }: RegisterTabProps) {
   const actions = useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint: DISMISSED_HINT });
   const { years, initial } = useMemo(() => registerYearChoices(records, new Date().getFullYear()), [records]);
@@ -88,13 +93,22 @@ export default function RegisterTab({
   const editorId = useId();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDirty, setEditDirty] = useState(false);
-  const [pendingDiscard, setPendingDiscard] = useState<{ run: () => void } | null>(null);
   const [savedNote, setSavedNote] = useState('');
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
   const editorHeading = useRef<HTMLHeadingElement>(null);
   const editButtons = useRef(new Map<string, HTMLButtonElement>());
   const editing = register.entries.find((e) => e.record.rowId === editingId) ?? null;
-  const unsaved = editing !== null && editDirty;
+  const unsavedSubject =
+    editing !== null && editDirty
+      ? `Nr. ${editing.no} (${editing.record.name || editing.record.vendor || 'Beleg'})`
+      : null;
+  const discard = useDiscardGuard(unsavedSubject);
+  const { afterDiscard } = discard;
+  // The page asks the same question before it switches to the other tab.
+  useEffect(() => {
+    onUnsavedChange?.(unsavedSubject);
+  }, [unsavedSubject, onUnsavedChange]);
+  useEffect(() => () => onUnsavedChange?.(null), [onUnsavedChange]);
   // Forget an entry that is gone, so it does not open again by itself should it
   // return to the register later (taken back from "Keine Bewirtung", say).
   if (editingId !== null && !editing) {
@@ -119,12 +133,6 @@ export default function RegisterTab({
     setEditingId(null);
     setEditDirty(false);
     if (returnTo) setFocusRequest({ to: 'row', rowId: returnTo });
-  };
-
-  /** Do something that drops the open draft: straight away when nothing is unsaved, else after asking. */
-  const afterDiscard = (run: () => void) => {
-    if (unsaved) setPendingDiscard({ run });
-    else run();
   };
 
   const startEdit = (rowId: string) => {
@@ -456,11 +464,16 @@ export default function RegisterTab({
                       >
                         {isEditing ? 'Wird bearbeitet' : 'Bearbeiten'}
                       </button>
-                      {/* A complete entry carries tax weight: taking it out of the register always asks first. */}
+                      {/*
+                        A complete entry carries tax weight: taking it out of the register always asks first.
+                        While the entry is open in the editor both actions are off, so neither can take
+                        the form away with what was typed into it: save or cancel first.
+                      */}
                       <button
                         type="button"
                         className="ui-btn ui-btn-sm ui-btn-ghost whitespace-nowrap"
-                        disabled={actions.busy}
+                        disabled={actions.busy || isEditing}
+                        title={isEditing ? EDITING_LOCK_HINT : undefined}
                         aria-label={`Keine Bewirtung: ${spoken}`}
                         onClick={() => actions.markNotMeal([record], { confirm: true })}
                       >
@@ -469,7 +482,8 @@ export default function RegisterTab({
                       <button
                         type="button"
                         className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-danger"
-                        disabled={actions.busy}
+                        disabled={actions.busy || isEditing}
+                        title={isEditing ? EDITING_LOCK_HINT : undefined}
                         aria-label={`Löschen: ${spoken}`}
                         onClick={() => actions.requestDelete([record])}
                       >
@@ -566,26 +580,7 @@ export default function RegisterTab({
           </p>
         )}
       </ConfirmDialog>
-      <ConfirmDialog
-        open={pendingDiscard !== null}
-        title="Ungespeicherte Änderungen verwerfen?"
-        confirmLabel="Änderungen verwerfen"
-        cancelLabel="Weiter bearbeiten"
-        danger
-        onCancel={() => setPendingDiscard(null)}
-        onConfirm={() => {
-          const pending = pendingDiscard;
-          setPendingDiscard(null);
-          pending?.run();
-        }}
-      >
-        {editing && (
-          <p>
-            Die Änderungen an Nr. {editing.no} ({editing.record.name || editing.record.vendor || 'Beleg'}) sind noch
-            nicht gespeichert. Der Eintrag bleibt dann so, wie er im Verzeichnis steht.
-          </p>
-        )}
-      </ConfirmDialog>
+      {discard.dialog}
       {actions.overlays}
     </div>
   );

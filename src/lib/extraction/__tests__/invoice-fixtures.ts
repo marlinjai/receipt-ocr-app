@@ -488,3 +488,25 @@ export const CUSTOMS_TAXED_AND_UNTAXED = `Beispiel Express GmbH
   Summe MWSt.                                    9,12
   Fälligkeitsdatum: 13.05.2025
   Gesamtbetrag (EUR)                           226,14`;
+
+/** The same order summary torn: five labels in a run, their amounts further down, the promotion with its minus sign. */
+export const MARKETPLACE_PROMOTION_TORN = `Order Summary
+Amazon.de
+Item(s) Subtotal:
+Postage & Packing:
+Total before VAT:
+Estimated VAT:
+Total:
+Promotion Applied:
+Grand Total:
+Softbox
+€96.00
+Light stand
+€71.78
+€167.78
+€0.00
+€167.78
+€31.88
+€199.66
+-€1.96
+€197.70`;

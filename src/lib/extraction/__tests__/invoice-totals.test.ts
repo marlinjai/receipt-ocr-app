@@ -94,6 +94,13 @@ describe('a total the tax lines do not add up to', () => {
     expect(a).toMatchObject({ gross: 197.7, net: null, taxRate: 19, taxPrinted: true, taxGroups: [], checks: [] });
   });
 
+  it('the same with labels and amounts torn apart: the minus sign names the deduction', () => {
+    expect(readAmounts(F.MARKETPLACE_PROMOTION_TORN)).toMatchObject({ gross: 197.7, taxRate: 19, taxPrinted: true, checks: [] });
+    // Without its sign the amount is not known to be taken off, and above the tax lines it is no deduction from their sum.
+    expect(readAmounts(F.MARKETPLACE_PROMOTION_TORN.replace('-€1.96', '€1.96')).gross).toBe(199.66);
+    expect(readAmounts('-€1.96\n€197.70\n€167.78\n€31.88\n€199.66\nVAT 19%').gross).toBe(199.66);
+  });
+
   it('a total printed below the tax lines without a deduction between them is not taken', () => {
     expect(readAmounts('Netto 100,00\nMwSt 19% 19,00\nSumme 119,00\nAnzahlung 50,00').gross).toBe(119);
     expect(readAmounts('Netto 100,00\nMwSt 19% 19,00\nSumme 119,00\nRestbetrag 69,00').gross).toBe(119);

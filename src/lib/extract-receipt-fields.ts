@@ -251,7 +251,7 @@ const VENDOR_CATEGORY_MAP: Record<string, string> = {
 };
 
 const KEYWORD_CATEGORIES: Array<{ pattern: RegExp; category: string }> = [
-  { pattern: /\b(?:restaurant|ristorante|trattoria|osteria|pizzeria|bistro|brasserie|gasthaus|gasthof|wirtshaus|biergarten|cafe|café|coffee|bakery|pizza|pasta|burger|sushi|grill|diner|meal|breakfast|lunch|dinner|gastronomie|bewirtung|catering|imbiss|bäckerei)\b/i, category: 'Bewirtung' },
+  { pattern: /\b(?:restaurant|ristorante|trattoria|osteria|pizzeria|bistro|brasserie|gasthaus|gasthof|wirtshaus|biergarten|brauhaus|pub|kneipe|bierstube|taproom|cafe|café|coffee|bakery|pizza|pasta|burger|sushi|grill|diner|meal|breakfast|lunch|dinner|gastronomie|bewirtung|catering|imbiss|bäckerei)\b/i, category: 'Bewirtung' },
   { pattern: /\b(?:hotel|motel|airline|flight|airport|rental\s*car|taxi|parking|gas\s*station|fuel|petrol|travel|booking|bahn|zug|flug|reise|tankstelle|mietwagen|fahrt|übernachtung)\b/i, category: 'Reisekosten' },
   { pattern: /\b(?:office|supplies|paper|ink|toner|printer|desk|chair|stationery|büro|papier|ordner|schreibwaren|möbel|büromaterial)\b/i, category: 'Bürobedarf' },
   { pattern: /\b(?:software|license|lizenz|saas|subscription|hosting|domain|server|cloud|app\s*store|play\s*store)\b/i, category: 'Software & Lizenzen' },

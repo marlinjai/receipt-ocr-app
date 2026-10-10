@@ -245,12 +245,14 @@ function labelledTotals(text: string): LabelledTotal[] {
 const DEDUCTION =
   /(?<![\p{L}\p{N}.,])[-\u2212]\s*(?:US\$|[$€£]|EUR|USD|GBP)?\s*(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})(?![\p{N}%])|(?<![\p{L}\p{N}.,:/#-])(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})\s*(?:€|EUR)?\s*[-\u2212](?=\s|$)/gmu;
 
-function deductionsIn(text: string): number[] {
-  const out: number[] = [];
-  for (const match of text.matchAll(DEDUCTION)) {
-    const value = toCents(match[1] ?? match[2]);
-    if (value !== null) out.push(value);
-  }
+function deductionsIn(text: string): Array<{ cents: number; line: number }> {
+  const out: Array<{ cents: number; line: number }> = [];
+  text.split('\n').forEach((line, i) => {
+    for (const match of line.matchAll(DEDUCTION)) {
+      const value = toCents(match[1] ?? match[2]);
+      if (value !== null) out.push({ cents: value, line: i });
+    }
+  });
   return out;
 }
 
@@ -483,10 +485,17 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     // them that the receipt bears out is the total: one that, less the tax,
     // is printed as well (duties and fees without tax next to taxed services).
     const withUntaxed = Math.max(0, ...labelled.filter((total) => total > bill && values.has(total - taxSum)));
-    // And a labelled total below them, where the difference is printed as an
-    // amount taken off (a promotion after the tax lines).
-    const deductions = [...deductionsIn(text), ...discounts];
-    const afterDeduction = labelled.findLast((total) => total < bill && deductions.includes(bill - total));
+    // And a total below them, where the difference is printed as an amount
+    // taken off (a promotion after the tax lines): one a label calls the
+    // total, or, with the labels torn from their amounts, one printed below
+    // an amount that carries its minus sign and stands below the bill.
+    const minus = deductionsIn(text);
+    const deductions = [...minus.map((d) => d.cents), ...discounts];
+    const afterDeduction =
+      labelled.findLast((total) => total < bill && deductions.includes(bill - total)) ??
+      minus
+        .filter((d) => d.cents < bill && found.some((a) => a.cents === bill && a.line < d.line) && found.some((a) => a.cents === bill - d.cents && a.line > d.line))
+        .map((d) => bill - d.cents)[0];
     const paid = withUntaxed > 0 ? withUntaxed : (afterDeduction ?? bill);
     if (model !== null && model !== paid && !(tipCents !== undefined && model === paid + tipCents)) checks.push('total_conflict');
     if (paid !== bill) {

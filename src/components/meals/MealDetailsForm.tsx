@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useId, useMemo, useState, type ChangeEvent } from 'react';
 import type { Contact, ContactInput } from '@/lib/contacts/store';
 import { CONSUMPTION_TYPES, MEAL_CATEGORY, MEAL_TYPES } from '@/lib/receipts-constants';
 import {
@@ -46,6 +46,11 @@ interface MealDetailsFormProps {
   secondaryAction?: { label: string; onClick: () => void };
   /** The host as typed, when the field is left: the queue offers it on the next receipt even before a save. */
   onHostEntered?: (host: string) => void;
+  /**
+   * Told whenever the draft starts or stops differing from what is stored, so
+   * the surface around the form can ask before it throws the draft away.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 /**
@@ -95,6 +100,7 @@ function MealDetailsFormInner({
   saveLabel = 'Speichern',
   secondaryAction,
   onHostEntered,
+  onDirtyChange,
 }: MealDetailsFormProps) {
   const ids = useId();
   const [draft, setDraft] = useState<MealDraft>(() => draftFromRecord(record, { host: defaultHost }));
@@ -113,6 +119,9 @@ function MealDetailsFormInner({
   const status = mealStatus(preview);
   const deduction = mealDeduction(preview, settings);
   const dirty = isDraftDirty(record, draft);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
   const isExternal = draft.mealType === 'business_meal_external';
   const notMealCategory = record.category !== MEAL_CATEGORY;
   const missing: MissingField[] = status.kind === 'incomplete' ? status.missing : [];

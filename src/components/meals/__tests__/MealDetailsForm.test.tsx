@@ -214,6 +214,25 @@ describe('re-entry', () => {
   });
 });
 
+describe('unsaved changes are reported to the surface around the form', () => {
+  it('says clean on opening, unsaved once a field differs from what is stored, and clean again when it is put back or saved', async () => {
+    const onDirtyChange = vi.fn();
+    const complete = meal();
+    const { user } = setup(complete, { onDirtyChange });
+    expect(onDirtyChange.mock.calls).toEqual([[false]]);
+
+    await user.type(screen.getByLabelText('Gastgeber'), 'x');
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    await user.type(screen.getByLabelText('Gastgeber'), '{Backspace}');
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+
+    await user.click(screen.getByRole('button', { name: `${GUEST_A.name} entfernen` }));
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    // Each change of state is reported once, not on every keystroke.
+    expect(onDirtyChange).toHaveBeenCalledTimes(4);
+  });
+});
+
 describe('errors surface and the draft survives', () => {
   it('a refused save shows the reason and keeps the input', async () => {
     const onSave = vi.fn(async (): Promise<SaveMealResult> => ({ ok: false, error: 'unauthorized' }));

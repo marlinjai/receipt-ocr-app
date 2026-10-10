@@ -484,6 +484,14 @@ textarea.ui-input {
   z-index: 1;
 }
 
+/* The register row whose entry is open in the editor: the same mark as an open queue row. */
+.ui-table-row[data-editing='true'] {
+  background: var(--accent-muted);
+}
+.ui-table-row[data-editing='true'] > td:first-child {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 /* A strip that scrolls sideways by swipe or wheel (the tab bar on a narrow phone) without drawing a bar under it. */
 .ui-scroll-bare {
   scrollbar-width: none;

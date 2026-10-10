@@ -1,8 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import MealDetailsForm from '@/components/meals/MealDetailsForm';
-import ReceiptViewer from '@/components/meals/ReceiptViewer';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Checkbox from '@/components/ui/Checkbox';
 import type { Contact } from '@/lib/contacts/store';
 import { receiptCount } from '@/lib/meals/batch';
@@ -11,7 +9,8 @@ import type { IncompleteEntry } from '@/lib/meals/register';
 import { mealStatus } from '@/lib/meals/rules';
 import { pruneSelection, selectAllState, toggleAll, toggleSelected } from '@/lib/meals/selection';
 import type { MealGuestEntry, MealRecord, MealTaxSettings } from '@/lib/meals/types';
-import { createContact, saveMeal, saveReceiptRotation } from './actions';
+import MealEditor from './MealEditor';
+import { useDiscardGuard } from './useDiscardGuard';
 import { useReceiptActions } from './useReceiptActions';
 
 interface QueueTabProps {
@@ -26,6 +25,8 @@ interface QueueTabProps {
   onRecordsRemoved: (rowIds: string[]) => void;
   onContactCreated: (contact: Contact) => void;
   onOpenRegister: () => void;
+  /** Told which entry has unsaved changes in the form (as it reads in a sentence), or null. */
+  onUnsavedChange?: (subject: string | null) => void;
 }
 
 function entryLabel(record: MealRecord): string {
@@ -79,6 +80,7 @@ export default function QueueTab({
   onRecordsRemoved,
   onContactCreated,
   onOpenRegister,
+  onUnsavedChange,
 }: QueueTabProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -98,6 +100,23 @@ export default function QueueTab({
   const allState = selectAllState(checked, queueIds);
   const opened = queue.find((e) => e.record.rowId === openId) ?? queue[0] ?? null;
   const busy = actions.busy;
+
+  // What was typed into the open form and not saved is never dropped without
+  // asking: not by opening another entry, and not by an action on this one.
+  const [formDirty, setFormDirty] = useState(false);
+  const onFormDirty = useCallback((dirty: boolean) => setFormDirty(dirty), []);
+  const openRowId = opened?.record.rowId ?? null;
+  const unsavedSubject = opened && formDirty ? `„${entryLabel(opened.record)}“` : null;
+  const { afterDiscard, dialog: discardDialog } = useDiscardGuard(unsavedSubject);
+  /** Run a list action; when it takes the open entry (and its unsaved form) away, ask first. */
+  const afterDiscardIfOpen = (records: MealRecord[], run: () => void) => {
+    if (records.some((r) => r.rowId === openRowId)) afterDiscard(run);
+    else run();
+  };
+  useEffect(() => {
+    onUnsavedChange?.(unsavedSubject);
+  }, [unsavedSubject, onUnsavedChange]);
+  useEffect(() => () => onUnsavedChange?.(null), [onUnsavedChange]);
 
   if (queue.length === 0) {
     return (
@@ -167,7 +186,10 @@ export default function QueueTab({
                   <button
                     type="button"
                     aria-current={isOpen ? 'true' : undefined}
-                    onClick={() => setOpenId(record.rowId)}
+                    onClick={() => {
+                      if (isOpen) return;
+                      afterDiscard(() => setOpenId(record.rowId));
+                    }}
                     className="ui-row-open flex min-w-0 items-baseline justify-between gap-3 pb-0.5 pr-3 pt-2.5"
                   >
                     <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
@@ -195,7 +217,7 @@ export default function QueueTab({
                         className="ui-btn ui-btn-sm ui-btn-ghost px-2 text-xs"
                         disabled={busy}
                         aria-label={`Keine Bewirtung: ${spoken}`}
-                        onClick={() => actions.markNotMeal([record], { confirm: false })}
+                        onClick={() => afterDiscardIfOpen([record], () => actions.markNotMeal([record], { confirm: false }))}
                       >
                         Keine Bewirtung
                       </button>
@@ -205,7 +227,7 @@ export default function QueueTab({
                         disabled={busy}
                         aria-label={`Löschen: ${spoken}`}
                         title="Löschen"
-                        onClick={() => actions.requestDelete([record])}
+                        onClick={() => afterDiscardIfOpen([record], () => actions.requestDelete([record]))}
                       >
                         <TrashIcon />
                       </button>
@@ -236,7 +258,7 @@ export default function QueueTab({
                 type="button"
                 className="ui-btn ui-btn-sm whitespace-nowrap"
                 disabled={busy}
-                onClick={() => actions.markNotMeal(checkedRecords, { confirm: true })}
+                onClick={() => afterDiscardIfOpen(checkedRecords, () => actions.markNotMeal(checkedRecords, { confirm: true }))}
               >
                 Keine Bewirtung
               </button>
@@ -244,7 +266,7 @@ export default function QueueTab({
                 type="button"
                 className="ui-btn ui-btn-sm ui-btn-danger"
                 disabled={busy}
-                onClick={() => actions.requestDelete(checkedRecords)}
+                onClick={() => afterDiscardIfOpen(checkedRecords, () => actions.requestDelete(checkedRecords))}
               >
                 Löschen
               </button>
@@ -266,72 +288,34 @@ export default function QueueTab({
       </div>
 
       {opened && (
-        <section
-          aria-label="Angaben zur Bewirtung"
-          className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] xl:items-start 2xl:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]"
-        >
-          <div className="glass-panel rounded-xl p-4 sm:p-6">
-            <div className="mb-5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b pb-4" style={{ borderColor: 'var(--border-subtle)' }}>
-              <h2 className="min-w-0 text-lg font-semibold leading-snug" style={{ color: 'var(--foreground)' }}>
-                {opened.record.name || opened.record.vendor || 'Beleg'}
-              </h2>
-              <p className="text-sm tabular-nums" style={{ color: 'var(--muted)' }}>
-                {formatDay(opened.record.date)}
-                {opened.record.gross ? ` · ${opened.record.gross.toFixed(2).replace('.', ',')} ${opened.record.currency}` : ''}
-              </p>
-            </div>
-            <MealDetailsForm
-              record={opened.record}
-              contacts={contacts}
-              settings={settings}
-              defaultHost={sessionHost || defaultHost}
-              onHostEntered={setSessionHost}
-              previousGuests={previousGuests}
-              saveLabel="Speichern und weiter"
-              onSave={saveMeal}
-              onCreateContact={createContact}
-              onContactCreated={onContactCreated}
-              onSaved={(record) => {
-                if (record.guests.length > 0) setPreviousGuests(record.guests);
-                const stillOpen = mealStatus(record).kind === 'incomplete';
-                const label = record.vendor || record.name || 'Beleg';
-                setLastSaved(stillOpen ? `${label}: gespeichert, noch unvollständig.` : `${label}: gespeichert.`);
-                if (!stillOpen) {
-                  // Advance to the entry after this one (or the first, at the end).
-                  const index = queue.findIndex((e) => e.record.rowId === record.rowId);
-                  const next = queue[index + 1] ?? queue.find((e) => e.record.rowId !== record.rowId) ?? null;
-                  setOpenId(next ? next.record.rowId : null);
-                }
-                onRecordSaved(record);
-              }}
-            />
-            <p className="mt-3 text-xs" style={{ color: 'var(--muted)' }}>
-              Strg oder Cmd + Enter speichert.
-            </p>
-          </div>
-          {/*
-            The receipt is what gets read while typing guests and occasion, so
-            it has the widest column and the full height of the window. Below
-            the two-column width it comes FIRST, above the form.
-          */}
-          <ReceiptViewer
-            key={opened.record.rowId}
-            className="h-[62svh] max-xl:order-first xl:sticky xl:top-4 xl:h-[calc(100svh-2rem)]"
-            files={opened.record.files}
-            onRotate={async (file, rotation) => {
-              try {
-                const result = await saveReceiptRotation(opened.record.rowId, file.refId, rotation);
-                if (!result.ok) return false;
-                onRecordsSaved([result.value.record]);
-                return true;
-              } catch {
-                return false;
-              }
-            }}
-          />
-        </section>
+        <MealEditor
+          record={opened.record}
+          contacts={contacts}
+          settings={settings}
+          defaultHost={sessionHost || defaultHost}
+          onHostEntered={setSessionHost}
+          previousGuests={previousGuests}
+          saveLabel="Speichern und weiter"
+          onContactCreated={onContactCreated}
+          onRecordsSaved={onRecordsSaved}
+          onDirtyChange={onFormDirty}
+          onSaved={(record) => {
+            if (record.guests.length > 0) setPreviousGuests(record.guests);
+            const stillOpen = mealStatus(record).kind === 'incomplete';
+            const label = record.vendor || record.name || 'Beleg';
+            setLastSaved(stillOpen ? `${label}: gespeichert, noch unvollständig.` : `${label}: gespeichert.`);
+            if (!stillOpen) {
+              // Advance to the entry after this one (or the first, at the end).
+              const index = queue.findIndex((e) => e.record.rowId === record.rowId);
+              const next = queue[index + 1] ?? queue.find((e) => e.record.rowId !== record.rowId) ?? null;
+              setOpenId(next ? next.record.rowId : null);
+            }
+            onRecordSaved(record);
+          }}
+        />
       )}
 
+      {discardDialog}
       {actions.overlays}
     </div>
   );

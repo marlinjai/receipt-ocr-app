@@ -61,19 +61,21 @@ export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedH
   const inFlight = useRef(false);
   const seq = useRef(0);
 
+  /** Show a notice in the dock. Also for an outcome that is not a list action (an edit that moved an entry). */
+  const notify = useCallback((n: MealBatchNotice) => {
+    seq.current += 1;
+    setNotice({ ...n, seq: seq.current });
+  }, []);
+
   const run = useCallback(
     async (kind: MealBatchKind, records: MealRecord[]) => {
       if (inFlight.current || records.length === 0) return;
       inFlight.current = true;
       setBusy(true);
-      const show = (n: MealBatchNotice) => {
-        seq.current += 1;
-        setNotice({ ...n, seq: seq.current });
-      };
       try {
         const result = await ACTIONS[kind](records.map((r) => r.rowId));
         if (!result.ok) {
-          show({ tone: 'danger', text: mealActionMessage(result.error, result.detail) });
+          notify({ tone: 'danger', text: mealActionMessage(result.error, result.detail) });
           return;
         }
         const value = result.value;
@@ -84,17 +86,17 @@ export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedH
           if (value.records.length > 0) onRecordsSaved(value.records);
           if (gone.length > 0) onRecordsRemoved(gone);
         }
-        show(batchOutcomeNotice(kind, value, records.length === 1 ? label(records[0]) : undefined, hasSelection));
+        notify(batchOutcomeNotice(kind, value, records.length === 1 ? label(records[0]) : undefined, hasSelection));
       } catch {
         // A thrown action: the network is down or the server unreachable. Nothing is assumed done.
-        show({ tone: 'danger', text: mealActionMessage('failed') });
+        notify({ tone: 'danger', text: mealActionMessage('failed') });
       } finally {
         inFlight.current = false;
         setBusy(false);
         setConfirm(null);
       }
     },
-    [onRecordsSaved, onRecordsRemoved, hasSelection],
+    [onRecordsSaved, onRecordsRemoved, hasSelection, notify],
   );
 
   /** "Keine Bewirtung". With `confirm`, an in-page dialog names the count first. */
@@ -169,7 +171,7 @@ export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedH
     </>
   );
 
-  return { busy, notice, markNotMeal, requestDelete, restore, overlays };
+  return { busy, notice, notify, markNotMeal, requestDelete, restore, overlays };
 }
 
 /** How long a notice that reports no failure stays before it leaves on its own. */

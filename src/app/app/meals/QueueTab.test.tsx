@@ -27,7 +27,13 @@ vi.mock('./actions', () => ({
   restoreMeals: (...a: unknown[]) => restoreMeals(...a),
 }));
 vi.mock('@/components/meals/MealDetailsForm', () => ({
-  default: ({ record }: { record: MealRecord }) => <div data-testid="form">{record.rowId}</div>,
+  // Stands in for the form: shows which entry is open and can report unsaved changes, as the form does.
+  default: ({ record, onDirtyChange }: { record: MealRecord; onDirtyChange?: (dirty: boolean) => void }) => (
+    <div data-testid="form">
+      {record.rowId}
+      <button type="button" onClick={() => onDirtyChange?.(true)}>Etwas eintippen</button>
+    </div>
+  ),
 }));
 vi.mock('@/components/meals/ReceiptViewer', () => ({ default: () => null }));
 
@@ -59,6 +65,11 @@ function Harness({ initial }: { initial: MealRecord[] }) {
 
 function ok(value: Partial<MealBatchResult>) {
   return { ok: true, value: { done: [], records: [], skipped: [], ...value } };
+}
+
+/** The row id of the entry whose form is open. */
+function openForm() {
+  return screen.getByTestId('form').firstChild?.textContent;
 }
 
 function box(name: RegExp | string) {
@@ -116,12 +127,12 @@ describe('QueueTab: selection', () => {
   it('checking an entry does not open it, and the checkbox works from the keyboard', async () => {
     const user = userEvent.setup();
     render(<Harness initial={THREE} />);
-    expect(screen.getByTestId('form').textContent).toBe('a');
+    expect(openForm()).toBe('a');
     const second = box('Lokal B, 10.02.2025 auswählen');
     second.focus();
     await user.keyboard(' ');
     expect(second.checked).toBe(true);
-    expect(screen.getByTestId('form').textContent).toBe('a');
+    expect(openForm()).toBe('a');
   });
 });
 
@@ -350,14 +361,14 @@ describe('QueueTab: actions on a single entry, without opening the form', () => 
     const user = userEvent.setup();
     deleteMealReceipts.mockResolvedValue(ok({ done: ['a'] }));
     render(<Harness initial={THREE} />);
-    expect(screen.getByTestId('form').textContent).toBe('a');
+    expect(openForm()).toBe('a');
     await user.click(screen.getByRole('button', { name: 'Löschen: Lokal A, 10.01.2025' }));
     const dialog = screen.getByRole('dialog', { name: 'Beleg endgültig löschen?' });
     expect(within(dialog).getByText(/„Lokal A“ wird mit der gespeicherten Belegdatei/)).toBeTruthy();
     await user.click(within(dialog).getByRole('button', { name: 'Beleg löschen' }));
     await screen.findByText('„Lokal A“ gelöscht.');
     expect(deleteMealReceipts).toHaveBeenCalledWith(['a']);
-    expect(screen.getByTestId('form').textContent).toBe('b');
+    expect(openForm()).toBe('b');
   });
 
   it('deleting the only entry leads to the empty state', async () => {
@@ -384,5 +395,56 @@ describe('QueueTab: actions on a single entry, without opening the form', () => 
     await user.click(within(screen.getByRole('group', { name: 'Aktionen für die Auswahl' })).getByRole('button', { name: 'Löschen' }));
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Beleg löschen' }));
     await waitFor(() => expect(deleteMealReceipts).toHaveBeenCalledWith(['b']));
+  });
+});
+
+describe('QueueTab: unsaved changes in the open form', () => {
+  const entry = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name}`) });
+
+  it('opening another entry asks first: staying keeps the form, discarding opens the other entry', async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={THREE} />);
+    await user.click(screen.getByRole('button', { name: 'Etwas eintippen' }));
+
+    await user.click(entry('Lokal B'));
+    let dialog = screen.getByRole('dialog', { name: 'Ungespeicherte Änderungen verwerfen?' });
+    expect(dialog.textContent).toContain('„Lokal A“');
+    await user.click(within(dialog).getByRole('button', { name: 'Weiter bearbeiten' }));
+    expect(openForm()).toBe('a');
+
+    await user.click(entry('Lokal B'));
+    dialog = screen.getByRole('dialog', { name: 'Ungespeicherte Änderungen verwerfen?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Änderungen verwerfen' }));
+    expect(openForm()).toBe('b');
+  });
+
+  it('without unsaved changes another entry opens at once, and the open entry itself never asks', async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={THREE} />);
+    await user.click(entry('Lokal B'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(openForm()).toBe('b');
+    await user.click(screen.getByRole('button', { name: 'Etwas eintippen' }));
+    await user.click(entry('Lokal B'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('an action that takes the open entry away asks about its unsaved form first; on another entry it runs as before', async () => {
+    const user = userEvent.setup();
+    markMealsNotMeal.mockResolvedValue(ok({ done: ['b'], records: [{ ...THREE[1], mealType: 'not_a_meal' }] }));
+    render(<Harness initial={THREE} />);
+    await user.click(screen.getByRole('button', { name: 'Etwas eintippen' }));
+
+    await user.click(screen.getByRole('button', { name: 'Keine Bewirtung: Lokal A, 10.01.2025' }));
+    const dialog = screen.getByRole('dialog', { name: 'Ungespeicherte Änderungen verwerfen?' });
+    expect(markMealsNotMeal).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Weiter bearbeiten' }));
+    expect(markMealsNotMeal).not.toHaveBeenCalled();
+    expect(openForm()).toBe('a');
+
+    await user.click(screen.getByRole('button', { name: 'Keine Bewirtung: Lokal B, 10.02.2025' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(markMealsNotMeal).toHaveBeenCalledWith(['b']));
+    expect(openForm()).toBe('a');
   });
 });

@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useId, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useState, type MouseEvent } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { Contact } from '@/lib/contacts/store';
 import { contactsTabCount } from '@/lib/contacts/field-form';
 import { incompleteQueue } from '@/lib/meals/register';
@@ -11,6 +12,7 @@ import type { MealsPageData } from './actions';
 import DismissedMeals from './DismissedMeals';
 import QueueTab from './QueueTab';
 import RegisterTab from './RegisterTab';
+import { useDiscardGuard } from './useDiscardGuard';
 
 type TabKey = 'queue' | 'register';
 
@@ -21,6 +23,32 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
   const [settings, setSettings] = useState<MealTaxSettings>(initial.settings);
   const [defaultHost, setDefaultHost] = useState(initial.defaultHost);
   const [tab, setTab] = useState<TabKey>(() => (incompleteQueue(initial.records.filter((r) => !isDismissedMeal(r))).length > 0 ? 'queue' : 'register'));
+
+  // The open tab says which entry has unsaved changes in its form. Switching
+  // tabs takes that form away, so it asks first, like everything else that does.
+  const [unsavedSubject, setUnsavedSubject] = useState<string | null>(null);
+  const { afterDiscard, dialog: discardDialog } = useDiscardGuard(unsavedSubject);
+  const openTab = (next: TabKey) => {
+    if (next === tab) return;
+    afterDiscard(() => {
+      setUnsavedSubject(null);
+      setTab(next);
+    });
+  };
+
+  // A link of this page leaves the form just as a tab switch does. With unsaved
+  // changes it asks first and navigates only after "verwerfen". A click that
+  // opens the link elsewhere (new tab or window) takes nothing away and is left alone.
+  const router = useRouter();
+  const leaveTo = (href: string) => (e: MouseEvent<HTMLAnchorElement>) => {
+    if (unsavedSubject === null) return;
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    afterDiscard(() => {
+      setUnsavedSubject(null);
+      router.push(href);
+    });
+  };
 
   // `records` also holds the receipts marked "Keine Bewirtung"; they are listed
   // on their own and never reach the queue, the register or the year picker.
@@ -85,10 +113,10 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
             </p>
           </div>
           <div className="flex gap-2">
-            <Link href="/app/dashboard" className="ui-btn">
+            <Link href="/app/dashboard" className="ui-btn" onClick={leaveTo('/app/dashboard')}>
               Dashboard
             </Link>
-            <Link href="/app" className="ui-btn ui-btn-primary">
+            <Link href="/app" className="ui-btn ui-btn-primary" onClick={leaveTo('/app')}>
               Beleg hochladen
             </Link>
           </div>
@@ -104,7 +132,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
                 id={`${tabsId}-tab-${t.key}`}
                 aria-selected={tab === t.key}
                 aria-controls={`${tabsId}-panel-${t.key}`}
-                onClick={() => setTab(t.key)}
+                onClick={() => openTab(t.key)}
                 className="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150"
                 style={{
                   borderColor: tab === t.key ? 'var(--accent)' : 'transparent',
@@ -126,6 +154,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
           {/* Not a tab: the contacts moved to their own page, and this is where they used to be. */}
           <Link
             href="/app/contacts"
+            onClick={leaveTo('/app/contacts')}
             className="-mb-px ml-auto shrink-0 border-b-2 border-transparent px-3 py-2.5 text-sm font-medium transition-colors duration-150 hover:underline"
             style={{ color: 'var(--muted)' }}
           >
@@ -147,21 +176,28 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
               onRecordsSaved={onRecordsSaved}
               onRecordsRemoved={onRecordsRemoved}
               onContactCreated={onContactUpserted}
-              onOpenRegister={() => setTab('register')}
+              onOpenRegister={() => openTab('register')}
+              onUnsavedChange={setUnsavedSubject}
             />
           )}
           {tab === 'register' && (
             <RegisterTab
               records={mealRecords}
+              contacts={contacts}
               settings={settings}
+              defaultHost={defaultHost}
               onSettingsChanged={setSettings}
+              onRecordSaved={onRecordSaved}
+              onContactCreated={onContactUpserted}
               onRecordsSaved={onRecordsSaved}
               onRecordsRemoved={onRecordsRemoved}
-              onOpenQueue={() => setTab('queue')}
+              onOpenQueue={() => openTab('queue')}
+              onUnsavedChange={setUnsavedSubject}
             />
           )}
         </div>
 
+        {discardDialog}
         <DismissedMeals records={dismissed} onRecordsSaved={onRecordsSaved} onRecordsRemoved={onRecordsRemoved} />
       </div>
     </main>

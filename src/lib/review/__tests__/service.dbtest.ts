@@ -4,6 +4,7 @@ import { deleteReceiptRows } from '@/lib/meals/service';
 import * as F from '@/lib/extraction/__tests__/fixtures';
 import { loadMealRecord } from '@/lib/meals/service';
 import { ReviewError, applyNewReading, confirmReceipt, keepBothReceipts, loadReviewQueue, recordReadFlags, type ReviewContext } from '../service';
+import { saveItemDecision } from '@/lib/tax/service';
 import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../../../../test/db-helpers';
 
 /**
@@ -52,6 +53,32 @@ describe('what needs a look is found on the receipt as it is stored', () => {
   it('a complete receipt is not in the queue', async () => {
     const rowId = await ws.addReceipt(clean());
     expect(await entryFor(rowId)).toBeUndefined();
+  });
+
+  it('an empty assignment asks who bears the cost, until the cell is filled', async () => {
+    const rowId = await ws.addReceipt(clean({ Category: 'Software & Lizenzen', Zuordnung: null }));
+    const entry = (await entryFor(rowId))!;
+    expect(entry.reasons).toEqual(['assignment_missing']);
+    expect(entry.canConfirm).toBe(false);
+
+    const column = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Zuordnung')!;
+    const business = (await ws.adapter.getSelectOptions(column.id)).find((o) => o.name === 'Geschäftlich')!;
+    await ws.adapter.updateRow(rowId, { [column.id]: business.id });
+    expect(await entryFor(rowId)).toBeUndefined();
+  });
+
+  it('is not asked of a meal, which the register judges, nor of a receipt the tax side has a decision for', async () => {
+    const meal = await ws.addReceipt(clean({ Zuordnung: null }));
+    expect(await entryFor(meal)).toBeUndefined();
+
+    const decided = await ws.addReceipt(clean({ Category: 'Software & Lizenzen', Zuordnung: null }));
+    expect((await entryFor(decided))!.reasons).toEqual(['assignment_missing']);
+    await saveItemDecision(db, ctx, decided, {
+      allocations: [{ purpose: 'business', shareBp: 5000 }, { purpose: 'study', shareBp: 3000 }],
+      formLineKey: 'euer.telecom',
+      employmentLineKey: 'employment.study_costs',
+    });
+    expect(await entryFor(decided)).toBeUndefined();
   });
 
   it('a page nothing could be read from is one finding, not three', async () => {
@@ -316,6 +343,7 @@ describe('a new reading in another currency', () => {
     'Tax Rate': 19,
     Date: `2025-11-${String(nextDay++).padStart(2, '0')}`,
     Category: 'Sonstige Ausgaben',
+    Zuordnung: 'Geschäftlich',
     'OCR Text': F.DOLLAR_INVOICE_WITH_DISCOUNT,
     ...overrides,
   });

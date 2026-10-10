@@ -44,6 +44,33 @@ describe('derivedReasons', () => {
   });
 });
 
+describe('an empty assignment', () => {
+  it('asks who bears the cost, and stops asking once it is answered', () => {
+    expect(derivedReasons(receipt({ assignment: null }))).toEqual(['assignment_missing']);
+    for (const assignment of ['Geschäftlich', 'Universität', 'Privat']) expect(derivedReasons(receipt({ assignment }))).toEqual([]);
+  });
+
+  it('is nothing to answer in a table without the column', () => {
+    expect(derivedReasons(receipt())).toEqual([]);
+    expect(derivedReasons(receipt({ assignment: undefined, assignmentSettled: false }))).toEqual([]);
+  });
+
+  it('is not asked where the meal register, a tax decision or a vendor rule already says it', () => {
+    expect(derivedReasons(receipt({ assignment: null, assignmentSettled: true }))).toEqual([]);
+  });
+
+  it('stands next to the other findings, and a page nothing was read from stays one finding', () => {
+    expect(derivedReasons(receipt({ assignment: null, gross: null, vendor: '' }))).toEqual(['amount_missing', 'vendor_missing', 'assignment_missing']);
+    expect(derivedReasons(receipt({ assignment: null, hasText: false, gross: null, date: null }))).toEqual(['read_failed']);
+  });
+
+  it('is not confirmed away: a recorded doubt can be, this one ends with an answer', () => {
+    const stored = { flags: ['total_unconfirmed'], checkedAt: new Date() };
+    expect(reviewReasons(receipt({ assignment: null }), stored, [])).toEqual(['assignment_missing']);
+    expect(REASON_TEXT.assignment_missing).toBe('Zuordnung fehlt: geschäftlich, Universität oder privat?');
+  });
+});
+
 describe('reviewReasons', () => {
   it('adds the recorded doubts, in a fixed order, until the receipt is confirmed', () => {
     const stored = { flags: ['total_unconfirmed', 'not_classified'], checkedAt: null };

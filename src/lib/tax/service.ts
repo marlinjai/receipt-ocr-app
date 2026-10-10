@@ -11,6 +11,7 @@ import {
   TreatmentError,
   isIsoDay,
   parseAllocations,
+  ruleInForce,
   sameTreatment,
   validateTreatment,
   vendorKey,
@@ -115,6 +116,33 @@ export async function listVendorRules(db: PrismaClient, workspaceId: string): Pr
     const treatment = storedTreatment(row);
     if (treatment) out.push({ id: row.id, vendorKey: row.vendorKey, vendorLabel: row.vendorLabel, effectiveFrom: row.effectiveFrom, ...treatment });
   }
+  return out;
+}
+
+/**
+ * The receipts whose treatment does not rest on the assignment column: a
+ * decision on the receipt itself, a decision on every one of its lines, or a
+ * rule for its vendor in force on its day. For all others the column is what
+ * the statement reads (see legacyAllocations), and an empty one is open.
+ */
+export async function rowsWithOwnTreatment(
+  db: PrismaClient,
+  workspaceId: string,
+  rows: ReadonlyArray<{ rowId: string; vendor: string; date: string | null }>,
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (rows.length === 0) return out;
+  const rowIds = rows.map((r) => r.rowId);
+  const [decisions, lines, vendorRules] = await Promise.all([
+    db.taxItemDecision.findMany({ where: { authWorkspaceId: workspaceId, rowId: { in: rowIds } } }),
+    db.taxReceiptLine.findMany({ where: { authWorkspaceId: workspaceId, rowId: { in: rowIds } } }),
+    listVendorRules(db, workspaceId),
+  ]);
+  for (const decision of decisions) if (storedTreatment(decision)) out.add(decision.rowId);
+  const decided = new Map<string, boolean>();
+  for (const line of lines) decided.set(line.rowId, (decided.get(line.rowId) ?? true) && storedLineTreatment(line) !== null);
+  for (const [rowId, all] of decided) if (all) out.add(rowId);
+  for (const row of rows) if (ruleInForce(vendorRules, vendorKey(row.vendor), row.date)) out.add(row.rowId);
   return out;
 }
 

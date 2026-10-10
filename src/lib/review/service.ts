@@ -10,6 +10,7 @@ import { kontoFor, newReading, type NewReading, type ReadingChange, type Reading
 import { isConfirmable, isReadFlag, lookAlikes, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
 import { getFxRate } from '@/lib/fx-rates';
 import { withTaxRates } from '@/lib/tax-rates';
+import { rowsWithOwnTreatment } from '@/lib/tax/service';
 
 /**
  * The review queue of a workspace: every receipt that needs a person's eye,
@@ -101,6 +102,8 @@ function snapshotOf(
     hasText: text(cell('OCR Text')).trim().length > 0,
     hasFile: Array.isArray(files) && files.length > 0,
     fileHashes: hashes.get(row.id) ?? [],
+    // A table without the column has nothing to answer: the field is left out.
+    ...(byName.has('Zuordnung') ? { assignment: optionName('Zuordnung') } : {}),
     isMeal: category === MEAL_CATEGORY,
     reading: {
       name: text(cell('Name')).trim(),
@@ -159,7 +162,11 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
   ]);
   const storedByRow = new Map(stored.map((r) => [r.rowId, r]));
   const distinct = new Map(stored.map((r) => [r.rowId, new Set(r.distinctFrom)]));
-  const snapshots = rows.map((row) => snapshotOf(row, ctx.columns, ctx.selectOptions, hashes));
+  const read = rows.map((row) => snapshotOf(row, ctx.columns, ctx.selectOptions, hashes));
+  // Who bears a receipt is settled without the assignment column where the
+  // meal register judges it or the tax side holds a decision or a vendor rule.
+  const treated = await rowsWithOwnTreatment(db, workspaceId, read);
+  const snapshots = read.map((s) => ({ ...s, assignmentSettled: s.isMeal || treated.has(s.rowId) }));
   const byId = new Map(snapshots.map((s) => [s.rowId, s]));
   const alike = lookAlikes(snapshots, distinct);
 

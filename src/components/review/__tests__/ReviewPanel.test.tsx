@@ -105,6 +105,30 @@ describe('ReviewPanel', () => {
     expect(handlers.onConfirm).toHaveBeenCalledWith('r1');
   });
 
+  it('a new currency is a row of its own, and the newly read amounts are shown in it', async () => {
+    const handlers = setup([
+      entry({
+        name: 'Example Courses',
+        gross: 450,
+        reasons: ['reading_differs'],
+        proposal: [
+          { field: 'gross', from: 450, to: 360 },
+          { field: 'net', from: 378.15, to: 360 },
+          { field: 'taxRate', from: 19, to: 0 },
+          { field: 'currency', from: null, to: 'USD' },
+        ],
+      }),
+    ]);
+    await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));
+    const table = screen.getByRole('table', { name: /Neue Lesart von Example Courses/ });
+    const rows = within(table).getAllByRole('row').slice(1).map((r) => r.textContent);
+    // Stored in the currency the row holds now (an empty cell is euros), newly read in dollars. A rate of 0 is a value, not "leer".
+    expect(rows).toEqual(['Gesamtbetrag450,00\u00a0€360,00\u00a0$', 'Netto378,15\u00a0€360,00\u00a0$', 'Steuersatz19 %0 %', 'WährungleerUSD']);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Neue Lesart übernehmen' }));
+    expect(handlers.onTakeReading).toHaveBeenCalledWith('r1', ['gross', 'net', 'taxRate', 'currency']);
+  });
+
   it('while an action runs every button of the list is disabled, so nothing is sent twice', async () => {
     const handlers = setup([entry()], { busy: true });
     await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));

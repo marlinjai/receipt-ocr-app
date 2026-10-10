@@ -6,8 +6,9 @@ import { isoDay, type SelectOptionsByColumn } from '@/lib/meals/record';
 import { allRows, tableContext } from '@/lib/meals/service';
 import { serializeTaxLines } from '@/lib/meals/rules';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
-import { kontoFor, newReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
+import { kontoFor, newReading, type NewReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
 import { isConfirmable, isReadFlag, lookAlikes, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
+import { getFxRate } from '@/lib/fx-rates';
 import { withTaxRates } from '@/lib/tax-rates';
 
 /**
@@ -32,6 +33,12 @@ export class ReviewError extends Error {
     this.code = code;
   }
 }
+
+/** The fields that hold money: they mean nothing without the currency they were read in. */
+const AMOUNT_FIELDS: readonly ReadingField[] = ['gross', 'net', 'tip'];
+
+/** The exchange rate of a currency to euros on a day; null when it cannot be determined. See `getFxRate`. */
+export type FxRateLookup = (currency: string, isoDate: string | null) => Promise<number | null>;
 
 export interface ReviewEntry {
   rowId: string;
@@ -101,11 +108,30 @@ function snapshotOf(
       gross: numberOrNull(cell('Gross')),
       net: numberOrNull(cell('Net')),
       taxRate: numberOrNull(cell('Tax Rate')),
+      currency: optionName('Currency'),
       tip: numberOrNull(cell(MEAL_COLUMNS.tip)),
       category,
       text: text(cell('OCR Text')),
     },
   };
+}
+
+/**
+ * The new reading of a stored receipt, as far as this table can take it. A
+ * currency the table has no option for (a person renamed or removed it)
+ * cannot be written, so it is not offered. The amounts read in it, and the
+ * name that states them, are not offered either: taken alone they would land
+ * in a row that says another currency.
+ */
+function readingOf(stored: StoredReading, columns: Column[], selectOptions: SelectOptionsByColumn): NewReading {
+  const reading = newReading(stored);
+  const currency = reading.changes.find((c) => c.field === 'currency');
+  if (!currency) return reading;
+  const columnId = firstColumnIdByName(columns).get('Currency');
+  const options = columnId ? (selectOptions.get(columnId) ?? []) : [];
+  if (options.some((o) => o.name === currency.to)) return reading;
+  const boundToCurrency = (c: ReadingChange) => c.field === 'currency' || c.field === 'name' || AMOUNT_FIELDS.includes(c.field);
+  return { ...reading, changes: reading.changes.filter((c) => !boundToCurrency(c)) };
 }
 
 /** Content hashes of the files on the given rows, by row. */
@@ -142,7 +168,7 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
     const duplicates = alike.get(s.rowId) ?? [];
     const record = storedByRow.get(s.rowId);
     // Reading the stored text again costs nothing (no model is asked); a confirmed receipt is left alone.
-    const proposal = record?.checkedAt ? [] : newReading(s.reading).changes;
+    const proposal = record?.checkedAt ? [] : readingOf(s.reading, ctx.columns, ctx.selectOptions).changes;
     const reasons = reviewReasons(s, record, duplicates, proposal.length > 0);
     if (reasons.length === 0) continue;
     entries.push({
@@ -228,16 +254,30 @@ export async function keepBothReceipts(db: PrismaClient, ctx: ReviewContext, row
  * are read again here from the stored text; nothing the browser sends is
  * written, and a field whose reading no longer differs is skipped. Returns
  * the fields that were written.
+ *
+ * A new currency brings its exchange rate, looked up for the receipt's day by
+ * `fxRateFor`: the one lookup the upload and "Recompute FX" use, so the row
+ * ends up as a fresh upload of the same receipt would leave it.
  */
-export async function applyNewReading(db: PrismaClient, ctx: ReviewContext, rowId: string, fields: readonly ReadingField[]): Promise<ReadingField[]> {
+export async function applyNewReading(
+  db: PrismaClient,
+  ctx: ReviewContext,
+  rowId: string,
+  fields: readonly ReadingField[],
+  fxRateFor: FxRateLookup = getFxRate,
+): Promise<ReadingField[]> {
   const table = await tableContext(db, ctx.workspaceId);
   if (!table) throw new ReviewError('not_initialized');
   const row = await table.adapter.getRow(rowId);
   if (!row || row.tableId !== table.tableId) throw new ReviewError('row_not_found');
 
   const snapshot = snapshotOf(row, table.columns, table.selectOptions, new Map());
-  const reading = newReading(snapshot.reading);
+  const reading = readingOf(snapshot.reading, table.columns, table.selectOptions);
   const wanted = new Set(fields);
+  // An amount is read in the receipt's currency: 360 dollars taken into a row
+  // that still says euros would be a wrong amount. Whoever takes an amount
+  // takes the currency it was read in with it.
+  if (AMOUNT_FIELDS.some((f) => wanted.has(f))) wanted.add('currency');
   const take = reading.changes.filter((c) => wanted.has(c.field));
   if (take.length === 0) return [];
 
@@ -255,6 +295,15 @@ export async function applyNewReading(db: PrismaClient, ctx: ReviewContext, rowI
     if (change.field === 'net') cells[columnId('Net')] = change.to;
     if (change.field === 'taxRate') cells[columnId('Tax Rate')] = change.to;
     if (change.field === 'tip') cells[columnId(MEAL_COLUMNS.tip)] = change.to;
+    if (change.field === 'currency') {
+      const id = columnId('Currency');
+      const option = table.selectOptions.get(id)?.find((o) => o.name === change.to);
+      if (!option) throw new ReviewError('not_initialized');
+      cells[id] = option.id;
+      // The rate of the receipt's own day, as the row shows it. Blank when it
+      // cannot be determined (no date, lookup failed), never a guessed rate.
+      cells[columnId('FX Rate')] = await fxRateFor(String(change.to), snapshot.date);
+    }
     if (change.field === 'category') {
       const id = columnId('Category');
       const option = table.selectOptions.get(id)?.find((o) => o.name === change.to);

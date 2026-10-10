@@ -15,6 +15,7 @@ const stored = (text: string, overrides: Partial<StoredReading> = {}): StoredRea
   gross: 10,
   net: 8.4,
   taxRate: 19,
+  currency: 'EUR',
   tip: null,
   category: 'Bewirtung',
   text,
@@ -60,10 +61,12 @@ describe('proposeReading', () => {
   });
 
   it('never proposes a total the reader itself could not confirm', () => {
-    // A label only, no arithmetic: the stored 450 stays, whatever the reader would take.
-    const changes = proposeReading(stored(F.DOLLAR_INVOICE_WITH_DISCOUNT, { vendor: 'Example Courses', gross: 450, net: 378.15, category: 'Sonstige Ausgaben' }));
-    expect(changes.map((c) => c.field)).not.toContain('gross');
-    expect(changes.map((c) => c.field)).not.toContain('net');
+    // A label only, no arithmetic: the stored 75 stays, whatever the reader would take.
+    const changes = proposeReading(stored(F.PARKING_LABEL_ONLY, { vendor: 'Parkhaus Beispiel', gross: 75, net: 63.03, category: 'Reisekosten' }));
+    expect(changes).toEqual([]);
+    // Nor an estimated rate over a stored one: the total is confirmed here (30,00 less 5,00), the 19 percent are a default.
+    const estimated = proposeReading(stored('Laden Beispiel GmbH\nZwischensumme 30,00\nRabatt -5,00\nSumme 25,00', { vendor: 'Laden Beispiel GmbH', gross: 30, net: 28.04, taxRate: 7, category: 'Sonstige Ausgaben' }));
+    expect(estimated).toEqual([]);
   });
 
   it('a tip is only offered for a meal', () => {
@@ -100,6 +103,70 @@ describe('proposeReading', () => {
       { rate: 19, net: 0.84, tax: 0.16 },
     ]);
     expect(newReading(stored(F.DOLLAR_INVOICE_WITH_DISCOUNT)).taxLines).toEqual([]);
+  });
+});
+
+/**
+ * The course invoice of 2026-10-10: stored by the old reader as 450 with an
+ * empty currency (which the app reads as euros), a euro sign in its name and
+ * 19 percent German tax. 360 dollars were paid.
+ */
+describe('the currency of a new reading', () => {
+  const oldName = 'Example Courses \u2013 Premium Package \u2013 \u20ac450.00 \u2013 26.11.2025';
+  const oldDollarInvoice = (overrides: Partial<StoredReading> = {}) =>
+    stored(F.DOLLAR_INVOICE_WITH_DISCOUNT, { name: oldName, vendor: 'Example Courses', gross: 450, net: 378.15, taxRate: 19, currency: null, category: 'Sonstige Ausgaben', ...overrides });
+
+  it('a dollar invoice stored in euros: total, net, rate and currency are offered together, and the name that repeats them', () => {
+    expect(byField(proposeReading(oldDollarInvoice()))).toEqual({
+      name: [oldName, 'Example Courses, 360.00 USD, 26.11.2025'],
+      gross: [450, 360],
+      net: [378.15, 360],
+      taxRate: [19, 0],
+      currency: [null, 'USD'],
+    });
+  });
+
+  it('an empty currency is euros: it differs from dollars and not from euros', () => {
+    expect(proposeReading(oldDollarInvoice()).map((c) => c.field)).toContain('currency');
+    // A euro receipt of the old reader, its currency never filled in: nothing to offer.
+    expect(proposeReading(stored(F.TAVERNA, { vendor: 'TAVERNA BEISPIEL', gross: 45.3, net: 38.07, currency: null }))).toEqual([]);
+  });
+
+  it('a stored currency the reader agrees with is left alone', () => {
+    expect(proposeReading(oldDollarInvoice({ name: 'Kurs Webentwicklung', gross: 360, net: 360, taxRate: 0, currency: 'USD' }))).toEqual([]);
+  });
+
+  it('a stored currency the receipt contradicts is offered, also where the total cannot be confirmed', () => {
+    const changes = proposeReading(stored('Shop Inc\nTotal: $50.00', { vendor: 'Shop Inc', gross: 50, net: 42.02, currency: 'EUR', category: 'Sonstige Ausgaben' }));
+    // The total is a label alone, so the amounts stay; the dollar sign is on the receipt all the same.
+    expect(changes).toEqual([{ field: 'currency', from: 'EUR', to: 'USD' }]);
+  });
+
+  it('the euro the reader only assumes is never offered over a stored currency', () => {
+    const noSign = 'Laden Beispiel GmbH\nSumme 25,00\nNetto 21,01\nMwSt 19% 3,99';
+    expect(proposeReading(stored(noSign, { vendor: 'Laden Beispiel GmbH', gross: 25, net: 21.01, currency: 'USD', category: 'Sonstige Ausgaben' }))).toEqual([]);
+  });
+
+  it('a stored currency under a name the reader does not know is left as it is', () => {
+    // The euro option renamed to "Euro": the receipt is in euros all the same, and its amounts are still offered.
+    const changes = proposeReading(stored(F.THAI_TOTAL_TIP_GRAND_TOTAL, { vendor: 'Bangkok Garten', gross: 50, net: 42.02, currency: 'Euro' }));
+    expect(changes.map((c) => c.field)).toEqual(['gross', 'net', 'tip']);
+  });
+
+  it('a majority among mixed currency signs is a guess, not a reading', () => {
+    const mixed = 'Laden Beispiel GmbH\nUS$ Adapter\nSumme 25,00 €\nNetto 21,01\nMwSt 19% 3,99';
+    expect(proposeReading(stored(mixed, { vendor: 'Laden Beispiel GmbH', gross: 25, net: 21.01, currency: null, category: 'Sonstige Ausgaben' }))).toEqual([]);
+  });
+
+  it('a name the old reader built is offered anew when only the currency changes; a typed name is not', () => {
+    const totalRight = { gross: 360, net: 360, taxRate: 0 };
+    expect(proposeReading(oldDollarInvoice(totalRight)).map((c) => c.field)).toEqual(['name', 'currency']);
+    expect(proposeReading(oldDollarInvoice({ ...totalRight, name: 'Kurs Webentwicklung' })).map((c) => c.field)).toEqual(['currency']);
+  });
+
+  it('a foreign receipt that states its tax is offered what it states', () => {
+    const changes = proposeReading(stored(F.DOLLAR_INVOICE_WITH_TAX, { vendor: 'Example Courses', gross: 450, net: 378.15, taxRate: 19, currency: 'USD', category: 'Sonstige Ausgaben' }));
+    expect(byField(changes)).toEqual({ gross: [450, 428.4], net: [378.15, 360] });
   });
 });
 

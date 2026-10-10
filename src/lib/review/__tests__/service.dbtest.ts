@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { deleteReceiptRows } from '@/lib/meals/service';
 import * as F from '@/lib/extraction/__tests__/fixtures';
 import { loadMealRecord } from '@/lib/meals/service';
@@ -294,6 +294,164 @@ describe('a new reading of a receipt stored by the old reader', () => {
     await expect(applyNewReading(db, ctx, foreign, ['gross'])).rejects.toBeInstanceOf(ReviewError);
     const columns = await other.adapter.getColumns(other.tableId);
     expect((await other.adapter.getRow(foreign))!.cells[columns.find((c) => c.name === 'Gross')!.id]).toBe(61.4);
+  });
+});
+
+/**
+ * The course invoice of 2026-10-10 as the old reader left it: the subtotal as
+ * the total, 19 percent German tax, a euro sign in the name, no currency and
+ * no exchange rate. 360 dollars were paid. Covers forward, taking part of it,
+ * coming back, a value changed by hand in between, and the rate that cannot
+ * be had.
+ */
+describe('a new reading in another currency', () => {
+  const oldName = 'Example Courses \u2013 Premium Package \u2013 \u20ac450.00 \u2013 26.11.2025';
+  // Its own day per receipt: same day, total and vendor would make them look-alikes of each other.
+  let nextDay = 1;
+  const oldDollarInvoice = (overrides: Record<string, string | number | null> = {}) => ({
+    Name: oldName,
+    Vendor: 'Example Courses',
+    Gross: 450,
+    Net: 378.15,
+    'Tax Rate': 19,
+    Date: `2025-11-${String(nextDay++).padStart(2, '0')}`,
+    Category: 'Sonstige Ausgaben',
+    'OCR Text': F.DOLLAR_INVOICE_WITH_DISCOUNT,
+    ...overrides,
+  });
+  // Stands in for the exchange-rate lookup (getFxRate): no day, no rate.
+  const lookup = (rate: number | null = 0.8642) => vi.fn(async (_currency: string, isoDate: string | null) => (isoDate ? rate : null));
+
+  /** The cells of a row by column name, a select cell as the name of its option. */
+  async function cellsOf(w: TestWorkspace, rowId: string, names: string[]): Promise<Record<string, unknown>> {
+    const columns = await w.adapter.getColumns(w.tableId);
+    const row = (await w.adapter.getRow(rowId))!;
+    const out: Record<string, unknown> = {};
+    for (const name of names) {
+      const column = columns.find((c) => c.name === name)!;
+      const value = row.cells[column.id] ?? null;
+      out[name] = column.type === 'select' && value !== null ? (await w.adapter.getSelectOptions(column.id)).find((o) => o.id === value)?.name : value;
+    }
+    return out;
+  }
+  const money = (rowId: string) => cellsOf(ws, rowId, ['Gross', 'Net', 'Tax Rate', 'Tax Rates', 'Currency', 'FX Rate']);
+  const dayOf = async (rowId: string) => (await entryFor(rowId))?.date ?? null;
+
+  it('forward: total, net, rate and currency are offered together, and nothing is written until they are taken', async () => {
+    const rowId = await ws.addReceipt(oldDollarInvoice());
+    const entry = (await entryFor(rowId))!;
+    expect(entry.reasons).toEqual(['reading_differs']);
+    // The stored amount is still shown in the currency the row holds: an empty cell is euros.
+    expect(entry).toMatchObject({ gross: 450, currency: 'EUR' });
+    expect(Object.fromEntries(entry.proposal.map((c) => [c.field, [c.from, c.to]]))).toEqual({
+      name: [oldName, 'Example Courses, 360.00 USD, 26.11.2025'],
+      gross: [450, 360],
+      net: [378.15, 360],
+      taxRate: [19, 0],
+      currency: [null, 'USD'],
+    });
+    expect(await money(rowId)).toEqual({ Gross: 450, Net: 378.15, 'Tax Rate': 19, 'Tax Rates': null, Currency: null, 'FX Rate': null });
+  });
+
+  it('taking it writes 360 dollars with the rate of the receipt day and no tax, and the receipt leaves the list', async () => {
+    const rowId = await ws.addReceipt(oldDollarInvoice());
+    const day = await dayOf(rowId);
+    const fxRateFor = lookup();
+    const written = await applyNewReading(db, ctx, rowId, ['name', 'gross', 'net', 'taxRate', 'currency'], fxRateFor);
+    expect(written.sort()).toEqual(['currency', 'gross', 'name', 'net', 'taxRate']);
+
+    expect(await money(rowId)).toEqual({ Gross: 360, Net: 360, 'Tax Rate': 0, 'Tax Rates': '0 %', Currency: 'USD', 'FX Rate': 0.8642 });
+    expect(await cellsOf(ws, rowId, ['Name'])).toEqual({ Name: 'Example Courses, 360.00 USD, 26.11.2025' });
+    // One lookup, for the currency that was read and the day the row shows.
+    expect(fxRateFor.mock.calls).toEqual([['USD', day]]);
+    expect(await entryFor(rowId)).toBeUndefined();
+  });
+
+  it('an amount never comes without the currency it was read in', async () => {
+    const rowId = await ws.addReceipt(oldDollarInvoice());
+    // Only the total is asked for: 360 in a row that still says euros would be a wrong amount.
+    const written = await applyNewReading(db, ctx, rowId, ['gross'], lookup());
+    expect(written.sort()).toEqual(['currency', 'gross']);
+    expect(await money(rowId)).toMatchObject({ Gross: 360, Currency: 'USD', 'FX Rate': 0.8642, Net: 378.15, 'Tax Rate': 19 });
+    // The rest is still on offer.
+    expect((await entryFor(rowId))!.proposal.map((c) => c.field)).toEqual(['net', 'taxRate']);
+  });
+
+  it('the currency can be taken on its own; the rate stays out of it', async () => {
+    const rowId = await ws.addReceipt(oldDollarInvoice());
+    expect(await applyNewReading(db, ctx, rowId, ['currency'], lookup())).toEqual(['currency']);
+    expect(await money(rowId)).toMatchObject({ Gross: 450, Net: 378.15, 'Tax Rate': 19, Currency: 'USD', 'FX Rate': 0.8642 });
+    expect((await entryFor(rowId))!.proposal.map((c) => c.field)).toEqual(['name', 'gross', 'net', 'taxRate']);
+    // The tax rate alone brings no currency with it.
+    const other = await ws.addReceipt(oldDollarInvoice());
+    expect(await applyNewReading(db, ctx, other, ['taxRate'], lookup())).toEqual(['taxRate']);
+    expect(await money(other)).toMatchObject({ 'Tax Rate': 0, 'Tax Rates': '0 %', Currency: null, 'FX Rate': null });
+  });
+
+  it('coming back: taking it twice writes nothing the second time and asks for no rate', async () => {
+    const rowId = await ws.addReceipt(oldDollarInvoice());
+    await applyNewReading(db, ctx, rowId, ['name', 'gross', 'net', 'taxRate', 'currency'], lookup());
+    const again = lookup(0.5);
+    expect(await applyNewReading(db, ctx, rowId, ['name', 'gross', 'net', 'taxRate', 'currency'], again)).toEqual([]);
+    expect(again).not.toHaveBeenCalled();
+    expect(await money(rowId)).toMatchObject({ Currency: 'USD', 'FX Rate': 0.8642 });
+  });
+
+  it('going back: a currency set by hand after the offer is no longer offered, and its rate is not written over', async () => {
+    const rowId = await ws.addReceipt(oldDollarInvoice());
+    expect((await entryFor(rowId))!.proposal.map((c) => c.field)).toContain('currency');
+    // The person sets dollars and their own rate in the table.
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    const currency = columns.find((c) => c.name === 'Currency')!;
+    const usd = (await ws.adapter.getSelectOptions(currency.id)).find((o) => o.name === 'USD')!.id;
+    await ws.adapter.updateRow(rowId, { [currency.id]: usd, [columns.find((c) => c.name === 'FX Rate')!.id]: 0.9 });
+
+    expect((await entryFor(rowId))!.proposal.map((c) => c.field)).toEqual(['name', 'gross', 'net', 'taxRate']);
+    const fxRateFor = lookup();
+    expect((await applyNewReading(db, ctx, rowId, ['gross', 'currency'], fxRateFor)).sort()).toEqual(['gross']);
+    expect(fxRateFor).not.toHaveBeenCalled();
+    expect(await money(rowId)).toMatchObject({ Gross: 360, Currency: 'USD', 'FX Rate': 0.9 });
+  });
+
+  it('a receipt without a date gets the currency and a blank rate, never a guessed one', async () => {
+    const rowId = await ws.addReceipt(oldDollarInvoice({ Date: null }));
+    const fxRateFor = lookup();
+    await applyNewReading(db, ctx, rowId, ['name', 'gross', 'net', 'taxRate', 'currency'], fxRateFor);
+    expect(fxRateFor.mock.calls).toEqual([['USD', null]]);
+    expect(await money(rowId)).toEqual({ Gross: 360, Net: 360, 'Tax Rate': 0, 'Tax Rates': '0 %', Currency: 'USD', 'FX Rate': null });
+    // The missing date is what the list still asks for.
+    expect((await entryFor(rowId))!.reasons).toEqual(['date_missing']);
+  });
+
+  it('a rate that cannot be looked up leaves the cell blank; the reading is written all the same', async () => {
+    const rowId = await ws.addReceipt(oldDollarInvoice());
+    await applyNewReading(db, ctx, rowId, ['gross', 'net', 'taxRate', 'currency'], lookup(null));
+    expect(await money(rowId)).toEqual({ Gross: 360, Net: 360, 'Tax Rate': 0, 'Tax Rates': '0 %', Currency: 'USD', 'FX Rate': null });
+  });
+
+  it('a currency the table has no option for is not offered, and neither are the amounts read in it', async () => {
+    const fresh = await createWorkspace();
+    const columns = await fresh.adapter.getColumns(fresh.tableId);
+    const currency = columns.find((c) => c.name === 'Currency')!;
+    const usd = (await fresh.adapter.getSelectOptions(currency.id)).find((o) => o.name === 'USD')!;
+    await fresh.adapter.updateSelectOption(usd.id, { name: 'Dollar' });
+
+    const rowId = await fresh.addReceipt(oldDollarInvoice());
+    const entry = (await loadReviewQueue(db, fresh.workspaceId)).find((e) => e.rowId === rowId)!;
+    // What does not depend on the currency is still offered; 360 is not, it could only land in a row that says euros.
+    expect(entry.proposal.map((c) => c.field)).toEqual(['taxRate']);
+    const freshCtx = { workspaceId: fresh.workspaceId, tenantId: fresh.tenantId };
+    expect(await applyNewReading(db, freshCtx, rowId, ['name', 'gross', 'net', 'taxRate', 'currency'], lookup())).toEqual(['taxRate']);
+    expect(await cellsOf(fresh, rowId, ['Gross', 'Currency', 'FX Rate'])).toEqual({ Gross: 450, Currency: null, 'FX Rate': null });
+  });
+
+  it('a euro receipt of the old reader, its currency never filled in, is offered no currency', async () => {
+    const rowId = await ws.addReceipt({ Name: 'Abendessen', Vendor: 'Bangkok Garten', Gross: 50, Net: 42.02, 'Tax Rate': 19, Date: '2025-04-02', Category: 'Bewirtung', 'OCR Text': F.THAI_TOTAL_TIP_GRAND_TOTAL });
+    expect((await entryFor(rowId))!.proposal.map((c) => c.field)).toEqual(['gross', 'net', 'tip']);
+    const fxRateFor = lookup();
+    await applyNewReading(db, ctx, rowId, ['gross', 'net', 'tip'], fxRateFor);
+    expect(fxRateFor).not.toHaveBeenCalled();
+    expect(await money(rowId)).toMatchObject({ Gross: 45.2, Currency: null, 'FX Rate': null });
   });
 });
 

@@ -49,6 +49,7 @@ const FIELD_LABEL: Record<ReadingField, string> = {
   gross: 'Gesamtbetrag',
   net: 'Netto',
   taxRate: 'Steuersatz',
+  currency: 'Währung',
   tip: 'Trinkgeld',
   category: 'Kategorie',
 };
@@ -58,6 +59,16 @@ function shown(change: ReadingChange, value: string | number | null, currency: s
   if (typeof value === 'string') return value;
   if (change.field === 'taxRate') return `${new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2 }).format(value)} %`;
   return amount(value, currency);
+}
+
+/**
+ * The currency the newly read amounts are in: the one the reading offers, else
+ * the stored one. A total read in dollars is shown in dollars, next to the
+ * stored one in the currency the row holds now.
+ */
+function readCurrency(entry: ReviewEntry): string {
+  const offered = entry.proposal.find((c) => c.field === 'currency')?.to;
+  return typeof offered === 'string' ? offered : entry.currency;
 }
 
 function day(iso: string | null): string {
@@ -171,7 +182,7 @@ export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, o
                             {shown(change, change.from, entry.currency)}
                           </td>
                           <td className="py-1 tabular-nums" style={{ color: 'var(--foreground)' }}>
-                            {shown(change, change.to, entry.currency)}
+                            {shown(change, change.to, readCurrency(entry))}
                           </td>
                         </tr>
                       ))}

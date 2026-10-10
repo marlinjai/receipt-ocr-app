@@ -1,5 +1,5 @@
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
-import { CATEGORY_TO_KONTO, MEAL_CATEGORY } from '@/lib/receipts-constants';
+import { CATEGORY_TO_KONTO, CURRENCY_OPTIONS, MEAL_CATEGORY } from '@/lib/receipts-constants';
 
 /**
  * A new reading of a receipt that is already stored.
@@ -16,7 +16,7 @@ import { CATEGORY_TO_KONTO, MEAL_CATEGORY } from '@/lib/receipts-constants';
  * and a receipt they have confirmed is left alone.
  */
 
-export type ReadingField = 'name' | 'vendor' | 'gross' | 'net' | 'taxRate' | 'tip' | 'category';
+export type ReadingField = 'name' | 'vendor' | 'gross' | 'net' | 'taxRate' | 'currency' | 'tip' | 'category';
 
 export interface ReadingChange {
   field: ReadingField;
@@ -34,6 +34,8 @@ export interface StoredReading {
   gross: number | null;
   net: number | null;
   taxRate: number | null;
+  /** The currency as stored (the name of the select option); null when the cell is empty, which the app reads as euros. */
+  currency: string | null;
   /** Null for a receipt that is not a meal: the tip column belongs to the meal register. */
   tip: number | null;
   category: string | null;
@@ -67,12 +69,26 @@ export function newReading(stored: StoredReading): NewReading {
     changes.push({ field: 'vendor', from: stored.vendor || null, to: read.vendor });
   }
 
-  // Amounts: only what the receipt's own arithmetic confirms.
-  const confirmed = read.gross !== null && read.taxRatePrinted && read.amountChecks.length === 0;
+  // Amounts: only what the receipt's own arithmetic confirms. An estimated rate
+  // is one of the checks ('tax_estimated'), so no check means nothing here is a
+  // guess: the rate is printed, or the receipt is in another currency and
+  // prints no tax at all (rate 0, the net is the total).
+  const confirmed = read.gross !== null && read.amountChecks.length === 0;
   if (confirmed) {
     if (!sameAmount(read.gross, stored.gross)) changes.push({ field: 'gross', from: stored.gross, to: read.gross! });
     if (read.net !== null && !sameAmount(read.net, stored.net)) changes.push({ field: 'net', from: stored.net, to: read.net });
     if (stored.taxRate === null || Math.abs(read.taxRate! - stored.taxRate) > 0.05) changes.push({ field: 'taxRate', from: stored.taxRate, to: read.taxRate! });
+  }
+
+  // Currency: only one the text itself shows, never the euro the reader falls
+  // back to. An empty cell is euros (that is how the app reads it), so it
+  // differs from dollars and not from euros. Without it, a total read in
+  // dollars would be taken into a row that still says euros. A stored currency
+  // under a name the reader does not know (an option a person renamed or
+  // added) cannot be compared, and is left as it is.
+  const storedCurrency = stored.currency ?? 'EUR';
+  if (read.currencyShown && CURRENCY_OPTIONS.includes(storedCurrency) && read.currency !== storedCurrency) {
+    changes.push({ field: 'currency', from: stored.currency, to: read.currency });
   }
 
   // Category: only towards "meal", and only on the text's own strong evidence.
@@ -85,10 +101,12 @@ export function newReading(stored: StoredReading): NewReading {
     changes.push({ field: 'tip', from: stored.tip, to: read.tip });
   }
   // The old reader built names as "vendor \u2013 items \u2013 total \u2013 date". Such a name repeats
-  // the wrong vendor or total, so it is offered anew together with them. A name a
-  // person typed (no such separators) is never offered a replacement.
+  // the wrong vendor or total (with a euro sign, whatever the currency), so it is
+  // offered anew together with them. A name a person typed (no such separators) is
+  // never offered a replacement.
   const builtByOldReader = stored.name.includes(' \u2013 ');
-  if (builtByOldReader && changes.some((c) => c.field === 'vendor' || c.field === 'gross') && read.name && read.name !== stored.name) {
+  const repeated = (c: ReadingChange) => c.field === 'vendor' || c.field === 'gross' || c.field === 'currency';
+  if (builtByOldReader && changes.some(repeated) && read.name && read.name !== stored.name) {
     changes.unshift({ field: 'name', from: stored.name, to: read.name });
   }
   return { changes, taxLines: confirmed ? read.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax })) : [] };

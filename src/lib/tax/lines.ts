@@ -38,7 +38,8 @@ export type LinesInputErrorCode =
   | 'invalid_line_net'
   | 'lines_do_not_sum'
   | 'receipt_without_total'
-  | 'duplicate_line';
+  | 'duplicate_line'
+  | 'line_cannot_hold_several_items';
 
 export class LinesInputError extends Error {
   readonly code: LinesInputErrorCode;

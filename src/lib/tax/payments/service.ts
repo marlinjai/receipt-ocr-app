@@ -273,10 +273,13 @@ export async function linkPayment(
     if (!payment) throw new PaymentServiceError('payment_not_found');
     let free = Math.abs(payment.amountCents) - payment.links.reduce((s, l) => s + l.cents, 0);
     if (invoiceId !== null) {
+      // The invoice is locked too (always after the payment): two payments
+      // confirmed for it at the same moment cannot both use what it has open.
+      await tx.$queryRaw`SELECT id FROM tax_issued_invoices WHERE id = ${invoiceId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
       const invoice = await tx.taxIssuedInvoice.findFirst({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId }, include: { payments: true, paymentLinks: true } });
       if (!invoice) throw new PaymentServiceError('target_not_found');
-      // Only money received pays an invoice.
-      if (payment.amountCents <= 0) throw new PaymentServiceError('invalid_link');
+      // Only money received as income pays an invoice: no money going out, no refund, no own transfer.
+      if (payment.amountCents <= 0 || effectiveKind(payment) !== 'income') throw new PaymentServiceError('invalid_link');
       // Never more than the invoice still has open: what was typed in by hand
       // and what other payments already cover is not counted a second time.
       const open = invoiceOpenCents(invoice);

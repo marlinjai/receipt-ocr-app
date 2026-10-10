@@ -170,6 +170,8 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Bitte für jede Position einen Betrag größer als null eingeben.';
         case 'invalid_line_net':
           return 'Der Nettobetrag einer Position muss größer als null und höchstens so groß wie ihr Betrag sein.';
+        case 'line_cannot_hold_several_items':
+          return 'Eine einzelne Position kann nicht „mehrere kleine Teile“ sein; dafür den Beleg weiter aufteilen.';
         case 'receipt_without_total':
           return 'Der Beleg hat keinen Betrag; ohne ihn lässt er sich nicht aufteilen.';
         case 'account_label_required':

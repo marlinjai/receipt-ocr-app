@@ -209,6 +209,42 @@ describe('unhappy paths and isolation', () => {
     expect(await code(saveLineDecision(db, ctx, lines[0].lineId!, { allocations: [{ purpose: 'private', shareBp: 10000 }] }))).toBe('asset_row');
   });
 
+  it('a split with a line in an asset can still be undone, and the asset then asks for its cost', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await ws.addReceipt(order());
+    await saveReceiptLines(db, ctx, rowId, LINES);
+    const lines = ofRow(await loadStatement(db, ws.workspaceId, 2025), rowId);
+    await createAsset(db, ctx, { label: 'Stativ', kind: 'movable', acquisitionDate: '2025-07-09', method: 'linear', usefulLifeMonths: 60, itemIds: [lines[0].itemId] });
+    await clearReceiptLines(db, ctx, rowId);
+    const view = await loadStatement(db, ws.workspaceId, 2025);
+    expect(ofRow(view, rowId)).toHaveLength(1);
+    expect(view.assets[0]).toMatchObject({ counted: false, itemIds: [] });
+    expect(await db.taxAssetPart.count({ where: { rowId } })).toBe(0);
+  });
+
+  it('every item carries the stored lines, also when they no longer add up, so the split can be repaired without losing ids', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await ws.addReceipt(order({ Gross: 110, Category: 'Bürobedarf' }));
+    await saveReceiptLines(db, ctx, rowId, [{ description: 'A', grossCents: 6_000 }, { description: 'B', grossCents: 5_000 }]);
+    const grossColumn = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Gross')!;
+    await ws.adapter.updateRow(rowId, { [grossColumn.id]: 120 });
+    const blocked = ofRow(await loadStatement(db, ws.workspaceId, 2025), rowId)[0];
+    expect(blocked.lineId).toBeNull();
+    expect(blocked.receiptLines.map((l) => [l.description, l.grossCents])).toEqual([['A', 6_000], ['B', 5_000]]);
+    expect(blocked.receiptLines.every((l) => typeof l.id === 'string' && l.id.length > 0)).toBe(true);
+  });
+
+  it('a line cannot be said to hold several small items, and the same part twice is one part', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await ws.addReceipt(order());
+    await saveReceiptLines(db, ctx, rowId, LINES);
+    const lines = ofRow(await loadStatement(db, ws.workspaceId, 2025), rowId);
+    expect(await code(saveLineDecision(db, ctx, lines[0].lineId!, { allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.low_value_assets', severalLowValueItems: true }))).toBe('line_cannot_hold_several_items');
+    const whole = await ws.addReceipt(order({ Name: 'Kamera' }));
+    await createAsset(db, ctx, { label: 'Kamera', kind: 'movable', acquisitionDate: '2025-07-09', method: 'linear', usefulLifeMonths: 84, itemIds: [whole, `${whole}#`, whole] });
+    expect(await db.taxAssetPart.count({ where: { rowId: whole } })).toBe(1);
+  });
+
   it('lines of another workspace do not exist here', async () => {
     const { ctx } = await workspace();
     const foreignRow = await other.addReceipt(order());

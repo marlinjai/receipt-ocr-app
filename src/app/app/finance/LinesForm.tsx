@@ -15,8 +15,8 @@ export interface LineDraft {
 interface Props {
   /** Any item of the receipt (the receipt itself, or one of its lines). */
   item: StatementItem;
-  /** The receipt's current lines, when it is already split. */
-  existing: StatementItem[];
+  /** The receipt's stored lines, when it is already split (also when they no longer add up). */
+  existing: StatementItem['receiptLines'];
   busy: boolean;
   error: string | null;
   /** Null: the form cannot be left without fixing the split. */
@@ -36,14 +36,14 @@ interface Row {
 /**
  * Split a receipt into its positions. Amounts are in the receipt's own
  * currency and must add up to its total; the form shows what is still to be
- * distributed while typing and offers it as a button for an empty line.
+ * distributed while typing and can put it into the first line without an amount.
  */
 export default function LinesForm({ item, existing, busy, error, onCancel, onSubmit, onRemove }: Props) {
   const id = useId();
   const total = item.receiptGrossCents ?? 0;
   const [rows, setRows] = useState<Row[]>(() =>
     existing.length > 0
-      ? existing.map((l) => ({ id: l.lineId ?? undefined, description: l.lineDescription ?? '', gross: l.lineGrossCents !== null ? formatCents(l.lineGrossCents) : '', net: l.lineNetCents !== null ? formatCents(l.lineNetCents) : '' }))
+      ? existing.map((l) => ({ id: l.id, description: l.description, gross: formatCents(l.grossCents), net: l.netCents !== null ? formatCents(l.netCents) : '' }))
       : [
           { description: '', gross: '', net: '' },
           { description: '', gross: '', net: '' },
@@ -52,6 +52,7 @@ export default function LinesForm({ item, existing, busy, error, onCancel, onSub
   const [localError, setLocalError] = useState<string | null>(null);
   const distributed = rows.reduce((s, r) => s + (parseEuro(r.gross) ?? 0), 0);
   const rest = total - distributed;
+  const emptyAmount = rows.findIndex((r) => !r.gross.trim());
   const set = (index: number, patch: Partial<Row>) => setRows((list) => list.map((r, i) => (i === index ? { ...r, ...patch } : r)));
 
   function submit(event: React.FormEvent) {
@@ -82,6 +83,11 @@ export default function LinesForm({ item, existing, busy, error, onCancel, onSub
         <span className="ml-2 text-xs" style={{ color: rest === 0 ? 'var(--muted)' : 'var(--accent)' }} role="status">
           {rest === 0 ? 'vollständig verteilt' : rest > 0 ? `noch zu verteilen: ${formatCents(rest)}` : `zu viel verteilt: ${formatCents(-rest)}`}
         </span>
+        {rest > 0 && emptyAmount >= 0 && distributed > 0 && (
+          <button type="button" className="ml-2 text-xs underline underline-offset-2" style={{ color: 'var(--accent)' }} onClick={() => set(emptyAmount, { gross: formatCents(rest) })}>
+            Rest in Position {emptyAmount + 1} übernehmen
+          </button>
+        )}
       </p>
       <ul className="space-y-2">
         {rows.map((row, index) => (
@@ -99,12 +105,6 @@ export default function LinesForm({ item, existing, busy, error, onCancel, onSub
                 value={row.gross}
                 onChange={(e) => set(index, { gross: e.target.value })}
               />
-              {/* What is still to be distributed is the natural amount for an empty line; offered, never pre-filled, so typing is never appended to it. */}
-              {!row.gross.trim() && rest > 0 && (
-                <button type="button" className="ui-btn ui-btn-sm mt-1" aria-label={`Rest für Position ${index + 1} einsetzen`} onClick={() => set(index, { gross: formatCents(rest) })}>
-                  Rest {formatCents(rest)}
-                </button>
-              )}
             </div>
             <div>
               <label className="ui-label" htmlFor={`${id}-n-${index}`}>davon netto</label>

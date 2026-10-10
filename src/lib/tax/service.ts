@@ -125,16 +125,42 @@ interface LoadedReceipts {
  */
 export function paidByRow(payments: readonly PaymentRow[]): Map<string, { day: string; cents: number }> {
   const out = new Map<string, { day: string; cents: number }>();
+  for (const [rowId, money] of linkedByRow(payments)) if (money.paid) out.set(rowId, money.paid);
+  return out;
+}
+
+/** What linked payments say about one receipt. */
+export interface LinkedMoney {
+  /** Day of the first payment out and what was paid, refunds taken off; null while no payment out is linked. */
+  paid: { day: string; cents: number } | null;
+  /** Refunds linked while no payment out is: taken off the document's own amount. */
+  refundedCents: number;
+}
+
+/**
+ * Money out and money back per receipt. A refund never stands for the
+ * purchase: with only a refund linked (the purchase was paid in cash, or its
+ * payment is not imported) the receipt keeps its own amount and day, less the refund.
+ */
+export function linkedByRow(payments: readonly PaymentRow[]): Map<string, LinkedMoney> {
+  const sums = new Map<string, { day: string | null; outCents: number; backCents: number }>();
   for (const payment of payments) {
     for (const link of payment.links) {
       if (!link.rowId) continue;
-      const signed = payment.amountCents < 0 ? link.cents : -link.cents;
-      const current = out.get(link.rowId);
-      if (!current) out.set(link.rowId, { day: payment.bookingDay, cents: signed });
-      else out.set(link.rowId, { day: payment.amountCents < 0 && payment.bookingDay < current.day ? payment.bookingDay : current.day, cents: current.cents + signed });
+      const current = sums.get(link.rowId) ?? { day: null, outCents: 0, backCents: 0 };
+      if (payment.amountCents < 0) {
+        current.outCents += link.cents;
+        if (current.day === null || payment.bookingDay < current.day) current.day = payment.bookingDay;
+      } else {
+        current.backCents += link.cents;
+      }
+      sums.set(link.rowId, current);
     }
   }
-  for (const [rowId, paid] of out) out.set(rowId, { day: paid.day, cents: Math.max(0, paid.cents) });
+  const out = new Map<string, LinkedMoney>();
+  for (const [rowId, s] of sums) {
+    out.set(rowId, s.day !== null ? { paid: { day: s.day, cents: Math.max(0, s.outCents - s.backCents) }, refundedCents: 0 } : { paid: null, refundedCents: s.backCents });
+  }
   return out;
 }
 
@@ -142,7 +168,7 @@ async function loadReceipts(
   db: PrismaClient,
   workspaceId: string,
   onlyRowId?: string,
-  paid?: Map<string, { day: string; cents: number }>,
+  linked?: Map<string, LinkedMoney>,
 ): Promise<LoadedReceipts | null> {
   const ctx = await tableContext(db, workspaceId);
   if (!ctx) return null;
@@ -180,7 +206,8 @@ async function loadReceipts(
       record: rowToMealRecord(row, ctx.columns, ctx.selectOptions, guests.get(row.id) ?? noGuests),
       businessSharePercent: shareNumber !== null && Number.isFinite(shareNumber) ? shareNumber : null,
       decision: decisionByRow.get(row.id) ?? null,
-      paid: paid?.get(row.id) ?? null,
+      paid: linked?.get(row.id)?.paid ?? null,
+      refundedCents: linked?.get(row.id)?.refundedCents ?? 0,
       lines: linesByRow.get(row.id) ?? [],
     };
   });
@@ -199,6 +226,8 @@ export interface StatementItem {
   lineNetCents: number | null;
   /** The receipt's total in its own currency, cents: what the lines of a split have to add up to. */
   receiptGrossCents: number | null;
+  /** The receipt's stored lines, also when they no longer add up (then the item is the whole receipt). */
+  receiptLines: Array<{ id: string; description: string; grossCents: number; netCents: number | null }>;
   label: string;
   vendor: string | null;
   vendorKey: string | null;
@@ -308,6 +337,7 @@ function toStatementItem(resolved: ResolvedItem, facts: ReceiptFacts, result: { 
     lineGrossCents: line?.grossCents ?? null,
     lineNetCents: line?.netCents ?? null,
     receiptGrossCents: facts.record.gross !== null && Number.isFinite(facts.record.gross) ? Math.round(facts.record.gross * 100) : null,
+    receiptLines: (facts.lines ?? []).map((l) => ({ id: l.id, description: l.description, grossCents: l.grossCents, netCents: l.netCents })),
     label: item.label,
     vendor: item.vendor,
     vendorKey: resolved.vendorKey,
@@ -337,7 +367,7 @@ function toStatementItem(resolved: ResolvedItem, facts: ReceiptFacts, result: { 
 export async function loadStatement(db: PrismaClient, workspaceId: string, year: number): Promise<StatementView> {
   const loadedPayments = await loadPayments(db, workspaceId);
   const [loaded, vendorRules, settings, storedAssets] = await Promise.all([
-    loadReceipts(db, workspaceId, undefined, paidByRow(loadedPayments.payments)),
+    loadReceipts(db, workspaceId, undefined, linkedByRow(loadedPayments.payments)),
     listVendorRules(db, workspaceId),
     getTaxSettings(db, workspaceId),
     db.taxAsset.findMany({ where: { authWorkspaceId: workspaceId }, include: { parts: true }, orderBy: [{ acquisitionDate: 'asc' }, { createdAt: 'asc' }] }),
@@ -643,7 +673,7 @@ function buildPaymentsView(
   // Counterparties without an answer, by what moved (own transfers and fees ask nothing).
   const unclassified = new Map<string, { key: string; label: string; count: number; outCents: number; inCents: number }>();
   for (const p of inYear) {
-    if (p.kind === 'own_transfer' || p.kind === 'fee' || !p.counterpartyKey || loaded.treatments.has(p.counterpartyKey) || free(p) === 0) continue;
+    if (p.kind === 'own_transfer' || p.kind === 'fee' || p.kind === 'private' || !p.counterpartyKey || loaded.treatments.has(p.counterpartyKey) || free(p) === 0) continue;
     const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: p.counterparty, count: 0, outCents: 0, inCents: 0 };
     entry.count += 1;
     if (p.amountCents < 0) entry.outCents += -p.amountCents;
@@ -952,10 +982,19 @@ function toAssetFact(
  * by the meal register, and not already part of another asset.
  */
 async function requireAssetRows(db: PrismaClient, ctx: TaxContext, itemIds: string[], ownAssetId: string | null): Promise<Array<{ rowId: string; lineId: string }>> {
-  const parts = itemIds.map((id) => {
-    const { rowId, lineId } = splitItemId(id);
-    return { rowId, lineId: lineId ?? '' };
-  });
+  const seen = new Set<string>();
+  const parts = itemIds
+    .map((id) => {
+      const { rowId, lineId } = splitItemId(id);
+      return { rowId, lineId: lineId ?? '' };
+    })
+    // "row" and "row#" name the same whole receipt; the same part twice is one part.
+    .filter((part) => {
+      const key = itemIdOf(part.rowId, part.lineId || null);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   if (parts.length === 0) return parts;
   const settings = await getTaxSettings(db, ctx.workspaceId);
   for (const part of parts) {
@@ -1050,7 +1089,8 @@ export async function setAssetDisposal(db: PrismaClient, ctx: TaxContext, assetI
  * takes both with it. The lines must add up to the receipt's total.
  */
 export async function saveReceiptLines(db: PrismaClient, ctx: TaxContext, rowId: string, raw: unknown): Promise<void> {
-  const facts = await requireOrdinaryRow(db, ctx, rowId);
+  // A receipt that is in an asset as a whole cannot be split; single lines in an asset do not stand in the way.
+  const facts = await requireOrdinaryRow(db, ctx, rowId, { allowLinesInAsset: true });
   const gross = facts.record.gross !== null && Number.isFinite(facts.record.gross) ? Math.round(facts.record.gross * 100) : null;
   const lines = validateLines(raw, gross);
   const existing = new Set((facts.lines ?? []).map((l) => l.id));
@@ -1073,7 +1113,7 @@ export async function saveReceiptLines(db: PrismaClient, ctx: TaxContext, rowId:
 
 /** Undo a split: the receipt is one item again, with whatever was decided about it as a whole. */
 export async function clearReceiptLines(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<void> {
-  await requireOrdinaryRow(db, ctx, rowId);
+  await requireOrdinaryRow(db, ctx, rowId, { allowLinesInAsset: true });
   await db.$transaction([
     db.taxAssetPart.deleteMany({ where: { rowId, lineId: { not: '' } } }),
     db.taxReceiptLine.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId } }),
@@ -1090,11 +1130,21 @@ export async function saveLineDecision(db: PrismaClient, ctx: TaxContext, lineId
     return;
   }
   const facts = await requireOrdinaryRow(db, ctx, line.rowId, { allowLinesInAsset: true });
-  const treatment = validateTreatment(raw, rulesFor(facts.paid?.day ?? facts.record.date));
+  // A line is one position: "several small items on this receipt" cannot be said about it.
+  if ((raw as { severalLowValueItems?: unknown } | undefined)?.severalLowValueItems === true) throw new LinesInputError('line_cannot_hold_several_items');
+  // The line counts in the year its receipt was paid, so that year's form lines apply.
+  const treatment = validateTreatment(raw, rulesFor((await paymentDayOfRow(db, ctx, line.rowId)) ?? facts.record.date));
   await db.taxReceiptLine.update({
     where: { id: lineId },
     data: { allocations: treatment.allocations as unknown as Prisma.InputJsonValue, formLineKey: treatment.formLineKey, employmentLineKey: treatment.employmentLineKey },
   });
+}
+
+/** The day of the first payment out linked to a receipt, when there is one. */
+async function paymentDayOfRow(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<string | null> {
+  const links = await db.taxPaymentLink.findMany({ where: { authWorkspaceId: ctx.workspaceId, rowId }, include: { payment: true } });
+  const days = links.filter((l) => l.payment.amountCents < 0).map((l) => l.payment.bookingDay);
+  return days.length > 0 ? days.sort()[0] : null;
 }
 
 async function requireOrdinaryRow(

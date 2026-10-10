@@ -211,9 +211,10 @@ function parsePaypal(rows: string[][]): ParsedFile {
         counterparty: foreign ? clean(purchase.get('Name')) : '',
         reference: foreign ? describe(purchase) : 'Währungsumrechnung',
         entryReference: clean(r.get('Transaktionscode')) || null,
-        // The euro side of a foreign purchase is the spend (or the refund, when
-        // money came back); a conversion that belongs to no purchase only moves money.
-        kind: foreign ? (amountCents < 0 ? 'spend' : 'refund') : 'own_transfer',
+        // The euro side of a foreign movement is that movement: a spend, money
+        // back on a purchase, or income from someone who paid in another
+        // currency. A conversion that belongs to nothing only moves money.
+        kind: !foreign ? 'own_transfer' : /Rückzahlung|Erstattung/i.test(clean(purchase.get('Typ'))) ? 'refund' : defaultKind(amountCents),
       });
       continue;
     }

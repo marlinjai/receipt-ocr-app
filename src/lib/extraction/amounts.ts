@@ -117,8 +117,8 @@ const TIP_WORD = /trinkgeld|\btip\b|gratuity|service\s*charge/i;
 /** A line that names a discount ("Rabatt", "Sofortrabatt", "Discount: SPRING"), not one that only mentions the word ("rabattfähig"). */
 const DISCOUNT_WORD = /(?:rabatte?|nachl(?:a|ä)sse?|discounts?|coupons?|gutscheine?)(?![\p{L}])/iu;
 const TAX_WORD = /mwst|ust|vat|steuer|\btax\b/i;
-const TOTAL_LABEL = /(?:^|[^\p{L}])(?:summe|gesamt(?:betrag|summe)?|total|endbetrag|rechnungsbetrag|zu\s+zahlen|betrag|brutto|order\s+total|amount\s+due|balance\s+due|grand\s+total)(?![\p{L}])/iu;
-const NOT_A_TOTAL = /zwischensumme|sub\s*-?\s*total|item\s*\(?s?\)?\s*total|netto|steuer|mwst|ust\b|vat|gegeben|zur(?:ü|u)ck|r(?:ü|u)ckgeld|trinkgeld|\btip\b|rabatt|discount|shipping|versand/i;
+const TOTAL_LABEL = /(?:^|[^\p{L}])(?:summe|gesamt(?:betrag|summe)?|total|endbetrag|rechnungsbetrag|zu\s+zahlen|betrag|brutto|order\s+total|amount\s+due|balance\s+due|grand\s+total|final\s+cost)(?![\p{L}])/iu;
+const NOT_A_TOTAL = /zwischensumme|sub\s*-?\s*total|item\s*\(?s?\)?\s*total|netto|steuer|mwst|ust\b|vat|(?:excl(?:uding|\.)?|before|without)\s+tax|gegeben|zur(?:ü|u)ck|r(?:ü|u)ckgeld|trinkgeld|\btip\b|rabatt|discount|shipping|versand/i;
 
 /**
  * Net and tax amounts that belong together at one rate.
@@ -190,24 +190,78 @@ function grossWithTax(values: Set<number>, rates: number[], candidates: number[]
   return null;
 }
 
-/** Amounts a label calls the total: on the label's own line, or on the next line when the label stands alone. */
-function labelledTotals(text: string): number[] {
+/** A label for what is left to pay. It is the total, unless a credit or an earlier balance stands between the two. */
+const DUE_LABEL = /(?:amount|balance)\s+due|f(?:ä|ae)lliger\s+betrag|offener\s+betrag/iu;
+/** The line many invoices open with: "US$19.22 due October 29, 2025", "178,50 € fällig am 18. Januar 2025". */
+const DUE_HEADLINE =
+  /^\s*(?:US\$|[$€£]|EUR|USD|GBP)?\s*(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})\s*(?:€|EUR|USD|GBP)?\s+(?:due|f(?:ä|ae)llig)(?![\p{L}])/iu;
+/** A credit, or a balance carried over, set against the invoice: the amount due is then not the invoice total. */
+const BALANCE_APPLIED = /applied\s+balance|balance\s+applied|credit\s+applied|applied\s+credit|guthaben\s+verrechnet|verrechnetes\s+guthaben/i;
+/** Any label of the totals block, standing alone on its line. */
+const BLOCK_LABEL = /balance|guthaben|credit/i;
+
+interface LabelledTotal {
+  cents: number;
+  /** Named as what is left to pay, not as the total. */
+  due: boolean;
+}
+
+/**
+ * Amounts a label calls the total: on the label's own line, or on the next
+ * line when the label stands alone. A label inside a block of labels
+ * ("Total / Amount due" above their values) names nothing by its position:
+ * the line below the block is the value of the block's first label.
+ */
+function labelledTotals(text: string): LabelledTotal[] {
   const lines = text.split('\n');
-  const out: number[] = [];
+  const out: LabelledTotal[] = [];
+  const amountsOn = (line: string) => [...line.matchAll(AMOUNT)].map((m) => toCents(m[1])).filter((v): v is number => v !== null);
+  const bareLabel = (line: string | undefined) =>
+    line !== undefined && !AMOUNT_TEST.test(line) && (TOTAL_LABEL.test(line) || NOT_A_TOTAL.test(line) || TAX_LABEL.test(line) || BLOCK_LABEL.test(line));
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    const headline = DUE_HEADLINE.exec(line);
+    if (headline) {
+      const value = toCents(headline[1]);
+      if (value !== null) out.push({ cents: value, due: true });
+      continue;
+    }
     if (!TOTAL_LABEL.test(line) || NOT_A_TOTAL.test(line)) continue;
-    const own = [...line.matchAll(AMOUNT)].map((m) => toCents(m[1])).filter((v): v is number => v !== null);
+    const due = DUE_LABEL.test(line);
+    const own = amountsOn(line);
     if (own.length > 0) {
-      out.push(own[own.length - 1]);
+      out.push({ cents: own[own.length - 1], due });
       continue;
     }
     const next = lines[i + 1] ?? '';
-    if (NOT_A_TOTAL.test(next) || TOTAL_LABEL.test(next)) continue;
-    const following = [...next.matchAll(AMOUNT)].map((m) => toCents(m[1])).filter((v): v is number => v !== null);
-    if (following.length > 0) out.push(following[following.length - 1]);
+    if (NOT_A_TOTAL.test(next) || TOTAL_LABEL.test(next) || bareLabel(lines[i - 1])) continue;
+    const following = amountsOn(next);
+    if (following.length > 0) out.push({ cents: following[following.length - 1], due });
   }
   return out;
+}
+
+/** Amounts the receipt prints as taken off: a minus in front ("-€1.96", "- 5,00") or behind ("5,00-"). */
+const DEDUCTION =
+  /(?<![\p{L}\p{N}.,])[-\u2212]\s*(?:US\$|[$€£]|EUR|USD|GBP)?\s*(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})(?![\p{N}%])|(?<![\p{L}\p{N}.,:/#-])(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})\s*(?:€|EUR)?\s*[-\u2212](?=\s|$)/gmu;
+
+function deductionsIn(text: string): number[] {
+  const out: number[] = [];
+  for (const match of text.matchAll(DEDUCTION)) {
+    const value = toCents(match[1] ?? match[2]);
+    if (value !== null) out.push(value);
+  }
+  return out;
+}
+
+/** The percentages a receipt prints that can be a tax rate ("19%", "25 %", "8.25%"). */
+function ratesPrinted(text: string): number[] {
+  const out = new Set<number>();
+  for (const match of text.matchAll(/(?<![\p{N}.,])(\d{1,2}(?:[.,]\d{1,2})?)\s?%/gu)) {
+    const rate = Number(match[1].replace(',', '.'));
+    if (rate > 0 && rate <= 27.5) out.add(rate);
+  }
+  return [...out];
 }
 
 const NET_LABEL = /(?:^|[^\p{L}])(?:sub\s*-?\s*total|zwischensumme|netto(?:betrag|umsatz)?|net(?:\s+amount)?|before\s+tax)(?![\p{L}])/iu;
@@ -355,7 +409,11 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   const german = !hints.currency || hints.currency === 'EUR';
   const rates = ratesOn(hints.date ? hints.date.slice(0, 10) : null);
   const model = hints.modelGross !== null && hints.modelGross !== undefined ? cents(hints.modelGross) : null;
-  const labelled = labelledTotals(text).filter((v) => v <= SANE_TOTAL_CENTS);
+  // The amount due is the total, except where a credit or an earlier balance
+  // was set against the invoice: then the line that says "Total" is.
+  const named = labelledTotals(text).filter((t) => t.cents <= SANE_TOTAL_CENTS);
+  const settled = BALANCE_APPLIED.test(text) && named.some((t) => !t.due);
+  const labelled = named.filter((t) => !settled || !t.due).map((t) => t.cents);
 
   // A tip is an amount on a line that names it; with columns torn apart it is
   // any amount that, added to a printed sum, gives another printed sum.
@@ -399,6 +457,14 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       .map((l) => ({ rate: l.rate, net: euros(l.net), tax: euros(l.tax), gross: euros(l.net + l.tax) }));
     groups = taxGroupsIn(values, rates, { notTax: [...tipOnLine, ...discounts], tipCandidates });
     if (groups.length === 0 && modelGroups.length > 0) groups = modelGroups;
+  } else {
+    // Another currency: no German rate is assumed for it. A rate the receipt
+    // prints itself counts ("VAT - Germany (19% on $20.00)" on a dollar
+    // invoice), and so does a German rate on a receipt that names a tax
+    // without its rate, but only where net, tax and their sum are all printed:
+    // the receipt then states the tax, nothing is worked out for it.
+    const candidates = [...new Set([...ratesPrinted(text), ...(TAX_WORD.test(text) ? rates : [])])];
+    groups = taxGroupsIn(values, candidates, { notTax: [...tipOnLine, ...discounts], tipCandidates });
   }
 
   let gross: number | null = null;
@@ -408,11 +474,27 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   if (groups.length > 0) {
     groups.sort((a, b) => b.gross - a.gross);
     const bill = groups.reduce((sum, g) => sum + cents(g.gross), 0);
+    const taxSum = groups.reduce((sum, g) => sum + cents(g.tax), 0);
     gross = euros(bill);
     const isTip = (t: number) => t < bill && values.has(bill + t);
     const tipCents = tipOnLine.find(isTip) ?? tipCandidates.find(isTip);
     if (tipCents !== undefined) tip = euros(tipCents);
-    if (model !== null && model !== bill && !(tipCents !== undefined && model === bill + tipCents)) checks.push('total_conflict');
+    // The tax groups can cover a part of the bill only. A labelled total above
+    // them that the receipt bears out is the total: one that, less the tax,
+    // is printed as well (duties and fees without tax next to taxed services).
+    const withUntaxed = Math.max(0, ...labelled.filter((total) => total > bill && values.has(total - taxSum)));
+    // And a labelled total below them, where the difference is printed as an
+    // amount taken off (a promotion after the tax lines).
+    const deductions = [...deductionsIn(text), ...discounts];
+    const afterDeduction = labelled.findLast((total) => total < bill && deductions.includes(bill - total));
+    const paid = withUntaxed > 0 ? withUntaxed : (afterDeduction ?? bill);
+    if (model !== null && model !== paid && !(tipCents !== undefined && model === paid + tipCents)) checks.push('total_conflict');
+    if (paid !== bill) {
+      // The rate is printed; the net is the total less the tax where the tax
+      // still stands, and left to the rate where a deduction changed it.
+      const net = withUntaxed > 0 ? euros(paid - taxSum) : null;
+      return { gross: euros(paid), net, taxRate: groups[0].rate, taxPrinted: true, taxGroups: withUntaxed > 0 ? groups : [], tip, checks };
+    }
   } else {
     // Largest first: the total is the largest amount a printed tax amount fits.
     const withTax =
@@ -423,8 +505,14 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       groups = [withTax];
       gross = withTax.gross;
     } else if (labelled.length > 0 && model !== null && labelled.includes(model)) {
-      gross = euros(model);
-      stated = readStated(model);
+      // The second reading agrees with a labelled amount. Where a larger one
+      // is labelled further down, it agreed with a column heading or a part
+      // ("Total" above the line items): the last labelled total stands.
+      const last = labelled[labelled.length - 1];
+      const part = labelled.slice(labelled.lastIndexOf(model) + 1).some((later) => later > model);
+      gross = euros(part ? last : model);
+      stated = readStated(part ? last : model);
+      if (part) checks.push('total_conflict');
     } else if (labelled.length > 0 && readStated(labelled[labelled.length - 1])) {
       // A receipt that states net, tax and total and whose three figures add up
       // has confirmed its own total, at whatever rate its country uses.
@@ -453,7 +541,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   if (groups.length === 0 && stated && gross !== null) {
     return { gross, net: euros(stated.net), taxRate: stated.rate, taxPrinted: true, taxGroups: [], tip, checks };
   }
-  if (!german) {
+  if (!german && groups.length === 0) {
     // Another currency. The tax a label names is kept also where it could not
     // confirm the total (a total only the second reading gave, figures that do
     // not add up): the doubt about the total is in the checks.

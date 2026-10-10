@@ -272,3 +272,219 @@ export const LEASING_CONTRACT_FIRST_DEBIT = `MODULAT LEASING AG
            zzgl. 19,00 % Mwst.                                                                                           29,63€
            Brutto-Gesamtbetrag im 1. Monat                                                                             185,56 €
            Rechnungsbetrag ab dem 2. Monat: 54,79 € netto zzgl. 19,00 % Mwst 10,42 € = 65,21 € brutto`;
+
+// ── Totals ───────────────────────────────────────────────────────────
+//
+// The same invoices as text recognition returns them: one cell per line, the
+// labels of the totals block in one run and its amounts in another. On the
+// import 26 of them were stored with a wrong total, mostly the net amount.
+
+/** Dollars with German tax: "Total excluding tax" above the net, "Total" and "Amount due" above the tax and the two totals. */
+export const OPENAI_TORN = `Invoice
+OpenAI, LLC
+United States
+Bill to
+Germany
+$23.80 USD due January 2, 2025
+Pay online
+Description
+ChatGPT Plus Subscription
+Qty
+Unit price
+Tax
+Amount
+1
+$20.00
+19%
+$20.00
+Jan 2 - Feb 2, 2025
+Subtotal
+$20.00
+Total excluding tax
+$20.00
+VAT - Germany (19% on $20.00)
+Total
+Amount due
+$3.80
+(€3.70)
+$23.80
+$23.80 USD
+Page 1 of 1`;
+
+/** A rate that is not a German one (25 percent, Sweden), printed on the invoice. */
+export const LEAP_TORN = `Invoice
+Bill to
+Germany
+$30.00 USD due August 18, 2025
+Pay online
+Description
+Leap Pro 10X
+Qty
+Unit price
+(excl. tax)
+Tax
+Amount
+(excl. tax)
+1
+$24.00
+25%
+$24.00
+Aug 18 - Sep 18, 2025
+Subtotal
+$24.00
+Total excluding tax
+$24.00
+VAT - Sweden (25% on $24.00)
+$6.00
+(57.38kr)
+Total
+Amount due
+$30.00
+$30.00 USD
+Page 1 of 1`;
+
+/** Three labels in a run, five amounts in a run: nothing on the page pairs "Total" with its amount but the arithmetic. */
+export const WEBFLOW_LABELS_THEN_AMOUNTS = `Webflow, Inc.
+Invoice
+1 × Site plans Basic Hosting Plan (at $18.00 / month), from Jan 10 2025 to Feb 10 2025
+USD 18.00
+USD 18.00
+Subtotal
+Tax (19.00%)
+Total
+Amount paid
+Amount due
+USD 18.00
+USD 3.42
+USD 21.42
+USD 21.42
+USD 0.00`;
+
+/** A tax amount without its rate, in dollars: net, tax and their sum are all printed. */
+export const NOTION_TAX_WITHOUT_RATE = `Notion Labs, Inc.
+Invoice
+$26.18
+Plus plan
+$22.00
+$0.00
+Tax
+Total Due
+$4.18
+$0.00
+$26.18
+Subtotal
+$22.00
+Tax will vary based on your jurisdiction.`;
+
+/** The column heading "Total" stands above the line items; the invoice total is the last one. The tax amount is not printed. */
+export const HOSTING_TOTAL_AS_A_COLUMN_HEADING = `Invoice #A-INV-000002
+A2 Hosting
+Description
+Total
+Domain renewal one
+€9.47
+Domain renewal two
+€9.47
+Subtotal
+€18.94
+Total
+€22.54`;
+
+/** A long usage invoice: the amount due opens the page, the totals block is two pages down, and a refund note names a limit of $200.00. */
+export const CURSOR_USAGE_HEADLINE_ONLY = `Invoice
+Cursor
+US$19.22 due October 29, 2025
+Pay online
+One-time Transitionary Invoice (2025-10-01 to 2025-10-26).
+Qty
+Unit price
+Amount
+Mid-month usage paid for October 2025
+1
+US$180.78
+US$180.78
+Refund because the last hard limit in the month was $200.00, but usage reached
+$200.33 (likely because of processing delays).
+1
+-US$0.33
+-US$0.33
+468 token-based usage calls
+1
+US$30.20
+US$30.20
+Description`;
+
+/** An earlier balance added to the invoice: the amount due is 20.40, the invoice total 20.00. */
+export const CURSOR_BALANCE_ADDED_TORN = `Invoice
+Cursor
+US$20.40 due February 27, 2025
+Pay online
+Description
+Cursor Pro
+27 Feb - 27 Mar 2025
+Qty
+Unit price
+Amount
+1
+US$20.00
+US$20.00
+Subtotal
+US$20.00
+Total
+US$20.00
+Applied balance
+Amount due
+US$0.40
+US$20.40
+Anysphere, Inc.`;
+
+/** The same invoice as CURSOR_PAID_FROM_BALANCE, torn: nothing is left to pay, the total is 0.40. */
+export const CURSOR_PAID_FROM_BALANCE_TORN = `Invoice
+Cursor
+US$0.00 due 2 February 2025
+Cursor Usage for January 2025
+Description
+1 o1 request * 40 cents per such request
+Subtotal
+Qty
+Unit price
+Amount
+1
+US$0.40
+US$0.40
+US$0.40
+Total
+US$0.40
+Applied balance
+-US$0.40
+Amount due
+US$0.00
+Anysphere, Inc.`;
+
+/** A promotion taken off after the tax lines: net and tax add up to "Total", what was paid is "Grand Total". */
+export const MARKETPLACE_PROMOTION_AFTER_TAX = `Order Summary
+Amazon.de
+                                                        Item(s) Subtotal:    €167.78
+                                                        Postage & Packing:   €0.00
+                                                        Total before VAT:    €167.78
+                                                        Estimated VAT:       €31.88
+                                                        Total:               €199.66
+                                                        Promotion Applied:   -€1.96
+                                                        Grand Total:         €197.70`;
+
+/** A customs invoice: duties and import tax carry no value-added tax, the service fees do. The tax lines cover 57,09 of 226,14. */
+export const CUSTOMS_TAXED_AND_UNTAXED = `Beispiel Express GmbH
+  Rechnungsdatum:  06.05.2025
+  Zölle (ZOLLEU)                                25,41       Z      25,41
+  Einfuhrumsatzsteuer (EUSt)                   143,64       Z     143,64
+  Zollservice und Zusatzleistungen              47,97     9,12     57,09
+  Gesamt                                       217,02     9,12    226,14
+  Duty Tax Processing                           12,50 A
+  Zollbedingte Lagerung 3 Tag(e)                35,47 A
+  Gesamt                                        47,97
+  Aufstellung Mehrwertsteuer
+  A   19,0%                                     47,97     9,12
+  Z   DUTY-VAT  0,0%                           169,05     0,00
+  Summe MWSt.                                    9,12
+  Fälligkeitsdatum: 13.05.2025
+  Gesamtbetrag (EUR)                           226,14`;

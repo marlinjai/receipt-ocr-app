@@ -158,6 +158,11 @@ function kindOf(text: string): DateKind {
 const EXPIRY_LINE = /\b(?:exp|expir|valid\s*thru|valid\s*through|card|cvv|cvc)\b/i;
 /** Two dates with only this between them are a period: "1. März 2025 - 31. März 2025", "20-NOV-2025 to 19-DEC-2025". */
 const RANGE_JOIN = /^\s*(?:-|\u2013|\u2014|to|bis|until|through)\s*$/i;
+/** The start of a period printed without its year, in front of the end: "Jan 2 - Feb 2, 2025", "27 Feb - 27 Mar 2025", "01.03. - 31.03.2025". */
+const RANGE_START = new RegExp(
+  `(?:(?:${MONTH_WORDS})\\.?\\s+\\d{1,2}|\\d{1,2}\\.?\\s+(?:${MONTH_WORDS})\\.?|\\d{1,2}\\.\\d{1,2}\\.)\\s*(?:-|\\u2013|\\u2014|to|bis)\\s*$`,
+  'iu',
+);
 /** A line of nothing, or of dots and rules, between a label and its value. */
 const FILLER_LINE = /^[\s.\-_=*·|]*$/;
 /**
@@ -225,7 +230,7 @@ export function readDate(text: string): string | null {
       let kind = kindOf(before);
       if (kind === 'unlabelled' && n === 0) kind = fromAbove.get(i) ?? 'unlabelled';
       // Either end of a period is a service date, whatever stands in front of it.
-      if (kind !== 'never' && ((n > 0 && RANGE_JOIN.test(before)) || (after !== null && RANGE_JOIN.test(after)))) kind = 'service';
+      if (kind !== 'never' && ((n > 0 && RANGE_JOIN.test(before)) || (after !== null && RANGE_JOIN.test(after)) || RANGE_START.test(before))) kind = 'service';
       if (kind === 'never') continue;
       if (!best || RANK[kind] < best.rank) best = { iso: onLine[n].iso, rank: RANK[kind] };
     }

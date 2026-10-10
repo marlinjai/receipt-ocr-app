@@ -133,6 +133,12 @@ describe('which of several dates is the invoice date', () => {
     expect(day('Service Term: 20-NOV-2025 to 19-DEC-2025')).toBe('2025-11-20');
   });
 
+  it('a period whose start is printed without the year is a period too', () => {
+    expect(day('Jan 2 - Feb 2, 2025\nIssued Jan 2, 2025')).toBe('2025-01-02');
+    expect(day('27 Feb - 27 Mar 2025\n27.02.2025')).toBe('2025-02-27');
+    expect(day('01.03. - 31.03.2025\n02.04.2025')).toBe('2025-04-02');
+  });
+
   it('a document that prints only a due date, a renewal or an expiry has no date', () => {
     expect(day('Fällig am 18. Januar 2025')).toBeNull();
     expect(day('Zahlbar bis 18.01.2025')).toBeNull();

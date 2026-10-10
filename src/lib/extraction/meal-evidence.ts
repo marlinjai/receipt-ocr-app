@@ -35,7 +35,7 @@ const SIGNS: Array<{ name: string; weight: number; pattern: RegExp; headOnly?: b
   // Anywhere on a line: "Co Working, Tisch 30" names the table as much as "Tisch: 12" does.
   { name: 'table', weight: 2, pattern: /(?<![\p{L}])(?:tisch|table)\s*[:#]?\s*(?:\d|to\s*go|theke)/iu },
   { name: 'service', weight: 2, pattern: /es\s+bediente\s+sie|bedient\s+von|\bbediener\b|\bkellner(?:in)?\b|\bserver\s*:|\bguests?\s*:\s*\d/i },
-  { name: 'venue', weight: 2, headOnly: true, pattern: /\b(?:restaurant|ristorante|ristoranty|trattoria|osteria|pizzeria|taverna?|bistro|brasserie|gasthaus|gasthof|gastst(?:ä|ae)tte|wirtshaus|biergarten|brauhaus|brauerei|brewery|caf(?:é|e)|coffee|kaffeehaus|foodbar|food\s*bar|imbiss|grill|sushi|kitchen|k(?:ü|ue)che|eatery|diner|gastronomie\w*|cantina|tapas|ramen|pho|burger)\b/i },
+  { name: 'venue', weight: 2, headOnly: true, pattern: /\b(?:restaurant|ristorante|ristoranty|trattoria|osteria|pizzeria|taverna?|bistro|brasserie|gasthaus|gasthof|gastst(?:ä|ae)tte|wirtshaus|biergarten|brauhaus|brauerei|brewery|pub|kneipe|bierstube|taproom|caf(?:é|e)|coffee|kaffeehaus|foodbar|food\s*bar|imbiss|grill|sushi|kitchen|k(?:ü|ue)che|eatery|diner|gastronomie\w*|cantina|tapas|ramen|pho|burger)\b/i },
   { name: 'tip_line', weight: 1, pattern: /trinkgeld|\btip\b|gratuity/i },
   { name: 'dine_in_or_out', weight: 1, pattern: /\bim\s+haus\b|au(?:ß|ss)er\s+haus|\bto\s+go\b|\bzum\s+mitnehmen\b/i },
   { name: 'dish_groups', weight: 1, pattern: /\b(?:speisen|getr(?:ä|ae)nke|food|draught|vorspeise|hauptgericht|dessert)\b/i },

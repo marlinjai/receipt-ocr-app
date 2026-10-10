@@ -22,13 +22,31 @@
   the MacBook (2,849, in the app an open check that leads to an asset, none recorded yet) and
   the phone lease from bank payments (577) account for most of it. Reconcile line by line and
   bring in what is missing. (2026-10-11)
-- [ ] The reader misses the invoice date on Google, Adobe, Apple and Microsoft invoices (53 of
-  235 imported documents had none; filled by hand on 2026-10-10). Teach it those date formats
-  and add them as fixtures. Two imported documents also have no total (one Cursor invoice, the
-  phone leasing contract). (2026-10-10)
-- [ ] The reader's first guess for the assignment was "Privat" on 65 of 221 imported business
-  invoices (software subscriptions). Check why, since an unassigned receipt is an open check
-  and a wrongly private one is silently left out. (2026-10-10)
+- [ ] Check the reader's new date and total reading against the text production actually stores.
+  The fixes of 2026-10-11 were measured on local text extraction of the 2025 purchase documents,
+  with the labels torn from their amounts to imitate the text recognition, because the stored
+  recognized text was not at hand. Read the "OCR Text" cells of the imported rows and rerun the
+  reader over them. Known to remain: a customs invoice whose total (226.14) cannot be paired
+  with its label once the two are torn apart, which needs the word positions the text
+  recognition returns; four documents without a total when the model gives none (three
+  Namecheap, one order page); two totals that came from the model and could not be reproduced
+  (one Cursor, one Namecheap). (2026-10-11)
+- [ ] Classification rules a user writes live in browser storage and never reach the upload
+  path, so a rule such as "this vendor is private" cannot apply when a receipt is uploaded.
+  Since 2026-10-11 the model leaves the assignment empty unless the document shows it, and an
+  empty assignment is asked for in the review list. Decide whether the rules move to the
+  server. (2026-10-11)
+- [x] The reader finds the invoice date on Google, Adobe, Apple and Microsoft invoices: every
+  date is ranked by the label in front of it, a due, renewal or debit date is never taken (58
+  of 302 documents without a date before, none after, on local text). Totals: net, tax and
+  their printed sum settle the total in any currency, the "Total" line stands where a credit is
+  applied, and a long invoice reaches the model with its end, which fixes the net-for-gross
+  readings (13 OpenAI invoices among them). The phone leasing application states no total, and
+  that is now pinned by a test. Done 2026-10-11.
+- [x] The reader's first guess "Privat" on 65 of 221 business invoices came from the classifier
+  prompt, which offered the three assignments with no meaning and no way to leave the field
+  open. The model now answers only what the document shows and leaves the assignment empty
+  otherwise; the review list asks for it ("Zuordnung fehlt"). Done 2026-10-11.
 - [x] Removed the receipts app's own contacts table and the `CONTACTS_STORE` switch (wave 4 of
   the shared contact list). The shared contacts database is the only contact store; a missing
   company or a missing `CONTACTS_DATABASE_URL` fails loudly instead of falling back. Migration

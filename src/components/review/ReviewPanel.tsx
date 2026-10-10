@@ -34,6 +34,7 @@ const SHORT: Record<ReviewReason, string> = {
   amount_missing: 'Betrag fehlt',
   date_missing: 'Datum fehlt',
   vendor_missing: 'Händler fehlt',
+  assignment_missing: 'Zuordnung fehlt',
   tax_implausible: 'Steuer prüfen',
   not_classified: 'Nicht eingeordnet',
   total_unconfirmed: 'Betrag prüfen',

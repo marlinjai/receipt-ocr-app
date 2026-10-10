@@ -310,6 +310,13 @@ describe('inferCategory (via extractReceiptFields)', () => {
     expect(result.category).toBe('Bewirtung');
   });
 
+  it('files a pub as a meal, although its receipt names a server and a subscription offer', () => {
+    // Without the pub in the list the first keyword that matched was "server", and the receipt was filed as software.
+    const result = extractReceiptFields(makeOcr('The Old Harp Irish Pub\nServer: Sam\n2 Guinness 13,00\nAsk about our loyalty subscription\nSumme 13,00'));
+    expect(result.category).toBe('Bewirtung');
+    expect(extractReceiptFields(makeOcr('Kneipe am Eck\n2 Pils 7,00\nSumme 7,00')).category).toBe('Bewirtung');
+  });
+
   it('categorizes by keyword (software/subscription)', () => {
     const ocr = makeOcr('Acme Inc\nSoftware License\nAnnual Subscription\nTotal: $299.00');
     const result = extractReceiptFields(ocr);

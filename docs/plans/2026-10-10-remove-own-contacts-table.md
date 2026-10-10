@@ -2,7 +2,7 @@
 title: Remove the receipts app's own contacts table and the store switch (wave 4)
 summary: The receipts app has read and written only the suite's shared contacts database since 2026-10-09. This removes the old own table, the switch back to it and every code path that touched it. Prepared and held: merging drops the table in the production receipts database on the next deploy, so it waits for Marlin's word.
 type: plan
-status: draft
+status: completed
 tags: [receipts, contacts, shared-model, migration, cleanup]
 projects: [receipt-ocr-app, contacts]
 date: 2026-10-10
@@ -10,13 +10,13 @@ date: 2026-10-10
 
 # Remove the receipts app's own contacts table and the store switch (wave 4)
 
-## Status: prepared, held, waiting for one yes
+## Status: done with the pull request that carries this document
 
-The change is built and tested in one pull request that carries the `hold` label. Nothing is
-merged. This plan stays a draft until Marlin says yes in the contacts session, because the yes is
-what turns the preparation into a production step.
+The change was built and tested in one pull request that carried the `hold` label until Marlin
+said yes in the contacts session. This document reaches the main branch only with that merge, so
+its status reads completed: by the time it is on main, the removal has been released.
 
-**What the yes unlocks:** the hold label is removed, the pull request merges, and the receipts app
+**What the yes unlocked:** the hold label is removed, the pull request merges, and the receipts app
 deploys by itself. Its start-up applies Prisma migration `0018_drop_own_contacts_table`, which runs
 `DROP TABLE "contacts"` in the production receipts database. That cannot be undone except from a
 backup. The shared contacts database is a different server and is not touched.

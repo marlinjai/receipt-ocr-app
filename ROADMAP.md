@@ -2,6 +2,23 @@
 
 ## Planned
 
+- [x] Removed the receipts app's own contacts table and the `CONTACTS_STORE` switch (wave 4 of
+  the shared contact list). The shared contacts database is the only contact store; a missing
+  company or a missing `CONTACTS_DATABASE_URL` fails loudly instead of falling back. Migration
+  `0018_drop_own_contacts_table` drops the table `contacts` in the receipts database on deploy
+  (4 stale rows, copied to the shared database under the same ids on 2026-10-09). Released on
+  Marlin's own yes. Afterwards remove the unused `CONTACTS_STORE` entry from the production secret
+  project. Plan: `docs/plans/2026-10-10-remove-own-contacts-table.md`. (2026-10-10)
+- [ ] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
+  (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax
+  return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent
+  lines would be misreported. Store the tax groups per invoice and report each under its own rate.
+  From the finance dashboard work. (2026-10-10)
+- [ ] A signed-in live write pass of `/app/finance` on production, under the company that holds
+  the receipts (after the move to Whiz-Art Media if it has happened): open each tab, write one
+  synthetic decision, vendor rule and payment link, remove them again, and confirm the numbers
+  return. Only a read-only pass was done (2026-10-10 08:53). From the finance dashboard work.
+  (2026-10-10)
 - [x] Company erasure hands over an export first: the company's register and contacts go into a
   zip (GET /api/export/company), and printed guest names are removed at once when an export was
   taken, otherwise held for ten years (German tax law, the Abgabenordnung, AO) and removed by the
@@ -123,15 +140,14 @@
   hash), and held in every other case, including an export taken before a later meal or
   correction. The export now also lists every printed guest name, so names on incomplete
   meals are part of it. Done 2026-10-10. (2026-10-10)
-- [ ] Remove the app's own contacts table and the store switch (wave 4 of the shared contact
-  list). Prepared and held on 2026-10-10: the pull request carries the `hold` label and waits for
-  Marlin's word. Merging it deploys by itself and drops the table `contacts` in the production
-  receipts database (4 stale rows, copied to the shared contacts database on 2026-10-09), which
-  only a backup can undo. Plan: `docs/plans/2026-10-10-remove-own-contacts-table.md`. (2026-10-10)
-- [ ] Business data belongs under the company Whiz-Art Media, which has the receipts grant, a
-  workspace and its imported customers, while the business meal register and its guests still sit
-  under the company marlinjai. Moving the register is a production data move: write the plan first,
-  and run it only against a verified backup. (2026-10-10)
+- [ ] Business receipts move to the company Whiz-Art Media. Decided 2026-10-10 (Marlin's rule:
+  business under Whiz-Art Media, personal under "marlinjai", one company per receipt by tax
+  purpose). The workspace under "marlinjai" holds 24 receipts, none marked personal, and every
+  finance table is still empty, so the whole workspace moves through auth-brain with all ids kept,
+  and "marlinjai" gets a fresh workspace. Prepared: plan and read-only dry run. Open: the
+  contacts-core transfer of the 4 guests, the restamp of the company on that workspace's rows, and
+  Marlin's one-line yes for the production step. Plan:
+  `docs/plans/2026-10-10-business-receipts-to-whiz-art-media.md`. (2026-10-10)
 
 ## In Progress
 
@@ -151,8 +167,8 @@
   periods), and the first part of slice 3 (payments from export files, one answer
   per counterparty, links to receipts and invoices, also by hand), receipt lines entered by
   hand, and the ten-day rule at the turn of the year for expenses and payments to
-  the tax office. Open, in this order: the classifier reading lines off a receipt (waits for
-  the extraction work on this roadmap); the rest of slice 3 (live bank sync with session
+  the tax office. Open, in this order: the classifier reading lines off a receipt (unblocked:
+  the receipt reader rebuild merged on 2026-10-10 as pull request 51); the rest of slice 3 (live bank sync with session
   expiry, card statement and pay-later importers, the ten-day rule for regularly
   recurring income); the income tax estimate; the year-end entry sheet; reading the
   expenses mailbox. Open inside what is built,

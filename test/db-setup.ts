@@ -30,3 +30,6 @@ process.env.CONTACTS_DATABASE_URL = localUrl('CONTACTS_TEST_DATABASE_URL');
 // test that touches a guest needs its layout. Applying it is idempotent under a lock.
 const { ensureContactsLayout } = await import('./contacts-db');
 await ensureContactsLayout();
+
+// Top-level await needs this file to be a module.
+export {};

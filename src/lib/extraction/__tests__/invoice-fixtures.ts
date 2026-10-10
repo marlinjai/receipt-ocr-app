@@ -510,3 +510,41 @@ Light stand
 €199.66
 -€1.96
 €197.70`;
+
+/** A receipt of a reseller: the order has no label on its total, only the amount under the tax line. */
+export const RESELLER_TOTAL_WITHOUT_LABEL = `Paddle.com
+Receipt
+           Product                              Billing period                    Quantity         Price
+           Premium (Self-Hosted)                26 Jan 2025 - 25 Feb 2025                1         US$12.00
+           VAT (19%)                                                                               US$2.28
+           YOUR ORDER
+                                                                                                    US$14.28
+                              The US$14.28 payment will appear on your bank/card statement as:
+                              PADDLE.NET* EXAMPLE`;
+
+/** The tax amount stands three times below the total ("VAT", the breakdown, "Tax total"): it is not the total. */
+export const TAX_BREAKDOWN_BELOW_THE_TOTAL = `Tax invoice PAID
+ClipBook
+21st July 2025 - $17.84
+                                                                              Subtotal             $14.99
+                                                                              VAT                   $2.85
+                                                                              Total                $17.84
+                                                                              Amount paid          $17.84
+                                                                              Tax breakdown
+                                                                              Tax %      Tax
+                                                                              19%                   $2.85
+                                                                              Tax total             $2.85`;
+
+/** Two currencies side by side: the euro figures are a conversion, the invoice is in dollars and paid in full. */
+export const TWO_CURRENCIES_PAID_IN_FULL = `Splice
+Invoice
+                                                Due On                Dec 25, 2025
+                                                PAID            on Dec 25, 2025
+  Date                     Description                Qty        Price    Subtotal      Tax %    Tax Net         Total
+  Dec 25, 2025             Splice Plan Creator          1       $19.99      $19.99    19.000%      $3.80        $23.79
+                                                                                       EUR           USD
+                                                                          Subtotal               €16.96       $19.99
+                                                                          DE VAT 19%              €3.22        $3.80
+                                                                          Total                               $23.79
+                                                                          Paid                               ($23.79)
+                                                                          Amount Due                           $0.00`;

@@ -117,3 +117,22 @@ describe('a total the tax lines do not add up to', () => {
     expect(a).toMatchObject({ gross: 58.7, tip: 2.7 });
   });
 });
+
+describe('totals that had no label, or the wrong one', () => {
+  it('a total with no label under its tax line: net and tax add up to it', () => {
+    expect(readAmounts(F.RESELLER_TOTAL_WITHOUT_LABEL, { currency: 'USD' })).toMatchObject({ gross: 14.28, net: 12, taxRate: 19, checks: [] });
+  });
+
+  it('a tax breakdown below the total: the last labelled amount is the tax, the total stays', () => {
+    expect(readAmounts(F.TAX_BREAKDOWN_BELOW_THE_TOTAL, { currency: 'USD' })).toMatchObject({ gross: 17.84, net: 14.99, taxRate: 19, checks: [] });
+  });
+
+  it('an invoice paid in full, with a conversion next to it: the total, not the zero left to pay', () => {
+    expect(readAmounts(F.TWO_CURRENCIES_PAID_IN_FULL, { currency: 'USD' })).toMatchObject({ gross: 23.79, net: 19.99, taxRate: 19, checks: [] });
+  });
+
+  it('"Gesamtpreis" names a total', () => {
+    expect(readAmounts('Fahrkarte Musterstadt - Beispielstadt\nGesamtpreis 35,90 €').gross).toBe(35.9);
+    expect(readAmounts('Gesamtpreis\n35,90 €').gross).toBe(35.9);
+  });
+});

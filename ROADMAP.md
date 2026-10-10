@@ -48,11 +48,14 @@
   meals without a date (which belong to no year) are counted on the register tab.
   Checked against all 21 receipts of that upload, restored from the verified backup into
   a local database. (2026-10-08)
-- [ ] Receipts stored before 2026-10-10 keep the readings of the old reader (for example
-  a total that includes the tip, or a slogan as the vendor). The review list flags the
-  ones with impossible figures; the others look plausible and are not flagged. Offer a
-  new reading of the stored text per receipt, shown as a comparison and applied only on
-  confirmation, never overwriting silently. (2026-10-10)
+- [x] Receipts stored before 2026-10-10 kept the readings of the old reader (for example
+  a total that includes the tip, or a slogan as the vendor). Done 2026-10-10: the review
+  list reads the stored text again with the current reader (no model is asked, the
+  result is the same every time) and offers what differs as "stored / newly read", field
+  by field (`src/lib/review/reading.ts`). Nothing is written until the offer is taken;
+  "Geprüft, stimmt so" keeps what is stored and ends the offer. Only what the reader
+  stands behind is offered, and a field is never offered to be emptied. On the restored
+  copy of the live data 13 of 24 receipts get an offer. (2026-10-10)
 - [ ] Direct model access with web search for the classifier is optional and not set up:
   it needs an Anthropic key in the receipts production settings (`ANTHROPIC_API_KEY`, a
   credential only the owner can issue). Without it the classifier decides from the

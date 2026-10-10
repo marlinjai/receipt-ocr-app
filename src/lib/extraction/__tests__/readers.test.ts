@@ -159,6 +159,14 @@ describe('defect 4: a bar filed as software, a taverna as "other"', () => {
     expect(mealEvidence('Schreibtisch 3 Stück\nSumme 300,00').signs).not.toContain('table');
   });
 
+  it('"Server:" on a hosting invoice does not make a meal, however many weak signs add up', () => {
+    const invoice = 'Hosting Beispiel GmbH\nRechnung 2025-118\nServer: web-01.example.net\nGuests: 4 virtual machines\nTip: restart nightly\nPlan: Food Delivery Starter\nSumme 49,00';
+    const evidence = mealEvidence(invoice);
+    expect(evidence.score).toBeGreaterThanOrEqual(4);
+    expect(evidence.strong).toBe(false);
+    expect(extractReceiptFields(ocr(invoice)).category).not.toBe('Bewirtung');
+  });
+
   it('the printed hospitality form alone decides', () => {
     expect(mealEvidence('Beispiel\nSumme 20,00\nBewirtungsaufwand-Angaben\nBewirtete Personen:\nAnlass der Bewirtung:').strong).toBe(true);
   });

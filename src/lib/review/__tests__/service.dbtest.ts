@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { deleteReceiptRows } from '@/lib/meals/service';
-import { ReviewError, confirmReceipt, keepBothReceipts, loadReviewQueue, recordReadFlags, type ReviewContext } from '../service';
+import * as F from '@/lib/extraction/__tests__/fixtures';
+import { loadMealRecord } from '@/lib/meals/service';
+import { ReviewError, applyNewReading, confirmReceipt, keepBothReceipts, loadReviewQueue, recordReadFlags, type ReviewContext } from '../service';
 import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../../../../test/db-helpers';
 
 /**
@@ -201,6 +203,97 @@ describe('look-alike receipts', () => {
 
     expect(await entryFor(a)).toBeUndefined();
     expect(await db.receiptReview.count({ where: { rowId: b } })).toBe(0);
+  });
+});
+
+describe('a new reading of a receipt stored by the old reader', () => {
+  // What the old reader left behind for the cafe receipt: a receipt number as the total, the tip inside it.
+  const oldCafe = () => clean({ Vendor: 'Cafe Morgenrot', 'OCR Text': F.CAFE_WITH_RECEIPT_NUMBERS, Date: '2025-02-19', Gross: 61.4, Net: 916694.18, 'Tax Rate': 0.01 });
+
+  it('forward: the difference is offered field by field, and nothing is written until it is taken', async () => {
+    const rowId = await ws.addReceipt(oldCafe());
+    const entry = (await entryFor(rowId))!;
+    expect(entry.reasons).toEqual(['tax_implausible', 'reading_differs']);
+    expect(entry.canConfirm).toBe(true);
+    expect(Object.fromEntries(entry.proposal.map((c) => [c.field, [c.from, c.to]]))).toEqual({
+      gross: [61.4, 58.7],
+      net: [916694.18, 49.33],
+      taxRate: [0.01, 19],
+      tip: [null, 2.7],
+    });
+    expect((await loadMealRecord(db, ws.workspaceId, rowId))!.gross).toBe(61.4);
+  });
+
+  it('taking it writes the values read on the server, with the tax groups, and the receipt leaves the list', async () => {
+    const rowId = await ws.addReceipt(oldCafe());
+    const written = await applyNewReading(db, ctx, rowId, ['gross', 'net', 'taxRate', 'tip']);
+    expect(written.sort()).toEqual(['gross', 'net', 'taxRate', 'tip']);
+
+    const record = (await loadMealRecord(db, ws.workspaceId, rowId))!;
+    expect(record).toMatchObject({ gross: 58.7, net: 49.33, taxRate: 19, tip: 2.7, vendor: 'Cafe Morgenrot' });
+    expect(record.taxLines).toEqual([{ rate: 19, net: 49.33, tax: 9.37 }]);
+    expect(await entryFor(rowId)).toBeUndefined();
+  });
+
+  it('only the fields that were chosen are written', async () => {
+    const rowId = await ws.addReceipt(oldCafe());
+    expect(await applyNewReading(db, ctx, rowId, ['tip'])).toEqual(['tip']);
+    const record = (await loadMealRecord(db, ws.workspaceId, rowId))!;
+    expect(record).toMatchObject({ gross: 61.4, tip: 2.7 });
+    // The rest is still on offer.
+    expect((await entryFor(rowId))!.proposal.map((c) => c.field)).toEqual(['gross', 'net', 'taxRate']);
+  });
+
+  it('coming back: taking it twice writes nothing the second time', async () => {
+    const rowId = await ws.addReceipt(oldCafe());
+    await applyNewReading(db, ctx, rowId, ['gross', 'net', 'taxRate', 'tip']);
+    expect(await applyNewReading(db, ctx, rowId, ['gross', 'net', 'taxRate', 'tip'])).toEqual([]);
+  });
+
+  it('going back: a value changed by hand after the offer is simply compared again', async () => {
+    const rowId = await ws.addReceipt(oldCafe());
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    const id = (name: string) => columns.find((c) => c.name === name)!.id;
+    // The person corrects the total by hand to what the reader reads: that field is no longer offered.
+    await ws.adapter.updateRow(rowId, { [id('Gross')]: 58.7 });
+    expect((await entryFor(rowId))!.proposal.map((c) => c.field)).toEqual(['net', 'taxRate', 'tip']);
+    // And a field that no longer differs is not written even when it is asked for.
+    expect(await applyNewReading(db, ctx, rowId, ['gross'])).toEqual([]);
+  });
+
+  it('"Geprüft" keeps what is stored and ends the offer; a field that is plainly wrong stays listed', async () => {
+    const rowId = await ws.addReceipt(clean({ Vendor: 'Since 2016', 'OCR Text': F.FOODBAR_TWO_RATES, Date: '2025-03-21', Gross: 37.7, Net: 35.14, 'Tax Rate': 7 }));
+    expect((await entryFor(rowId))!.proposal).toEqual([{ field: 'vendor', from: 'Since 2016', to: 'Fantastic Foodbar' }]);
+    await confirmReceipt(db, ctx, rowId);
+    expect(await entryFor(rowId)).toBeUndefined();
+
+    // Its own day: the receipts of the tests above share day, total and vendor with
+    // `oldCafe()` and would list this one as a possible duplicate as well.
+    const wrong = await ws.addReceipt({ ...oldCafe(), Date: '2025-02-27' });
+    await confirmReceipt(db, ctx, wrong);
+    expect((await entryFor(wrong))!.reasons).toEqual(['tax_implausible']);
+    expect((await entryFor(wrong))!.proposal).toEqual([]);
+  });
+
+  it('a bar stored as software is offered as a meal, and taking it files it with the account', async () => {
+    const rowId = await ws.addReceipt(
+      clean({ Vendor: 'Hopfen Retail Germany GmbH', 'OCR Text': F.BAR_WITH_SERVER, Date: '2025-12-05', Gross: 40.5, Net: 34.04, 'Tax Rate': 19, Category: 'Software & Lizenzen', Konto: '4806' }),
+    );
+    expect((await entryFor(rowId))!.proposal).toEqual([{ field: 'category', from: 'Software & Lizenzen', to: 'Bewirtung' }]);
+    await applyNewReading(db, ctx, rowId, ['category']);
+
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    const row = (await ws.adapter.getRow(rowId))!;
+    expect(row.cells[columns.find((c) => c.name === 'Konto')!.id]).toBe('4650');
+    // It is a meal now, so it waits in the meal queue for guests and occasion.
+    expect(await loadMealRecord(db, ws.workspaceId, rowId)).not.toBeNull();
+  });
+
+  it("another workspace's receipt cannot be given a new reading", async () => {
+    const foreign = await other.addReceipt(oldCafe());
+    await expect(applyNewReading(db, ctx, foreign, ['gross'])).rejects.toBeInstanceOf(ReviewError);
+    const columns = await other.adapter.getColumns(other.tableId);
+    expect((await other.adapter.getRow(foreign))!.cells[columns.find((c) => c.name === 'Gross')!.id]).toBe(61.4);
   });
 });
 

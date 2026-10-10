@@ -123,10 +123,14 @@
   hash), and held in every other case, including an export taken before a later meal or
   correction. The export now also lists every printed guest name, so names on incomplete
   meals are part of it. Done 2026-10-10. (2026-10-10)
-- [ ] Business data belongs under the company Whiz-Art Media, which has the receipts grant, a
-  workspace and its imported customers, while the business meal register and its guests still sit
-  under the company marlinjai. Moving the register is a production data move: write the plan first,
-  and run it only against a verified backup. (2026-10-10)
+- [ ] Business receipts move to the company Whiz-Art Media. Decided 2026-10-10 (Marlin's rule:
+  business under Whiz-Art Media, personal under "marlinjai", one company per receipt by tax
+  purpose). The workspace under "marlinjai" holds 24 receipts, none marked personal, and every
+  finance table is still empty, so the whole workspace moves through auth-brain with all ids kept,
+  and "marlinjai" gets a fresh workspace. Prepared: plan and read-only dry run. Open: the
+  contacts-core transfer of the 4 guests, the restamp of the company on that workspace's rows, and
+  Marlin's one-line yes for the production step. Plan:
+  `docs/plans/2026-10-10-business-receipts-to-whiz-art-media.md`. (2026-10-10)
 
 ## In Progress
 

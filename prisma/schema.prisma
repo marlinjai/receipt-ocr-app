@@ -302,6 +302,14 @@ model WorkspaceTaxSettings {
   authTenantId            String?  @map("auth_tenant_id")
   smallBusiness           Boolean? @map("small_business")
   hostAddressThresholdEur Int      @default(250) @map("host_address_threshold_eur")
+  // Regular value-added taxation, asked once and required before any advance
+  // return period is computed: how often a return is filed ('monthly' or
+  // 'quarterly') and when the tax on an invoice is owed ('issued' or 'received').
+  vatFrequency            String?  @map("vat_frequency")
+  vatMethod               String?  @map("vat_method")
+  // What the owner expects to receive per month from now on, for the forecast
+  // of the small-business limits. NULL: the forecast uses the run rate.
+  expectedMonthlyRevenueCents Int? @map("expected_monthly_revenue_cents")
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
 
@@ -350,11 +358,140 @@ model TaxItemDecision {
   allocations       Json
   formLineKey       String?  @map("form_line_key")
   employmentLineKey String?  @map("employment_line_key")
+  // The owner's statement that a receipt on the low-value asset line holds
+  // several assets, each within the limit on its own, although their sum is not.
+  severalLowValueItems Boolean @default(false) @map("several_low_value_items")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   @@index([authWorkspaceId])
   @@map("tax_item_decisions")
+}
+
+// An asset: something bought for the business that is written off instead of
+// being expensed like an ordinary receipt. Its COST is not stored: it is the
+// sum of the receipts linked through TaxAssetPart (the purchase, shipping,
+// customs), read on every computation. Its schedule and book values are
+// computed on read as well (src/lib/tax/assets.ts). Dates are ISO days as
+// text, like effective_from on the vendor rules.
+//
+// The three `opening*` columns are set together for an asset from before the
+// app: its book value on 1 January of `openingYear` and the months of useful
+// life left from then. The three `disposal*` columns are set together when it
+// leaves the register.
+model TaxAsset {
+  id                     String   @id @default(uuid())
+  authWorkspaceId        String   @map("auth_workspace_id")
+  authTenantId           String?  @map("auth_tenant_id")
+  label                  String
+  kind                   String
+  acquisitionDate        String?  @map("acquisition_date")
+  method                 String
+  usefulLifeMonths       Int?     @map("useful_life_months")
+  decliningRateBp        Int?     @map("declining_rate_bp")
+  businessShareBp        Int      @default(10000) @map("business_share_bp")
+  reminderCents          Int      @default(0) @map("reminder_cents")
+  openingYear            Int?     @map("opening_year")
+  openingBookValueCents  Int?     @map("opening_book_value_cents")
+  openingRemainingMonths Int?     @map("opening_remaining_months")
+  disposalDate           String?  @map("disposal_date")
+  disposalKind           String?  @map("disposal_kind")
+  disposalProceedsCents  Int?     @map("disposal_proceeds_cents")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  parts TaxAssetPart[]
+
+  @@index([authWorkspaceId])
+  @@map("tax_assets")
+}
+
+// One receipt that is part of an asset's cost. A receipt belongs to at most
+// one asset. `rowId` has no foreign key (see meal_guests.row_id); the row
+// delete paths remove the link in code.
+model TaxAssetPart {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  assetId         String   @map("asset_id")
+  rowId           String   @unique @map("row_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  asset TaxAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+  @@map("tax_asset_parts")
+}
+
+// A change of the section 19 status from a day on (crossing a limit, or
+// choosing regular taxation). The first answer stays in
+// workspace_tax_settings.small_business and applies from the beginning; a
+// receipt, an invoice or an asset is judged by the status on its own date, so
+// a change never moves earlier figures. `effectiveFrom` is an ISO day.
+model TaxStatusChange {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  effectiveFrom   String   @map("effective_from")
+  smallBusiness   Boolean  @map("small_business")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([authWorkspaceId, effectiveFrom])
+  @@map("tax_status_changes")
+}
+
+// An invoice the business issued: a list entry, not a document (no template,
+// no numbering, no rendering; that tier is the Books plan's). It holds no
+// client name: names of clients are personal data and belong to the contact
+// store. Revenue counts on the days of its payments.
+model TaxIssuedInvoice {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  number          String
+  issueDate       String?  @map("issue_date")
+  grossCents      Int      @map("gross_cents")
+  vatCents        Int      @default(0) @map("vat_cents")
+  treatment       String
+  declaredInYear  Int?     @map("declared_in_year")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  payments TaxInvoicePayment[]
+
+  @@unique([authWorkspaceId, number])
+  @@map("tax_issued_invoices")
+}
+
+// Money received for an issued invoice, with its day.
+model TaxInvoicePayment {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  invoiceId       String   @map("invoice_id")
+  paidOn          String   @map("paid_on")
+  cents           Int
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  invoice TaxIssuedInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("tax_invoice_payments")
+}
+
+// A payment of value-added tax to the tax office ('paid') or a refund from it
+// ('refunded'). Under the cash-basis statement both are lines of their own.
+model TaxVatSettlement {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  settledOn       String   @map("settled_on")
+  cents           Int
+  direction       String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([authWorkspaceId])
+  @@map("tax_vat_settlements")
 }
 
 // What still needs a person's eye on ONE receipt, and what a person has

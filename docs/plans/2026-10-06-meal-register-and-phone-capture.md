@@ -552,7 +552,7 @@ database backup into a local database and the reader was rebuilt against them.
 - **Review list.** `src/lib/review/`: what needs a look is worked out on read from the
   stored receipts (not readable, fields missing, impossible tax figures, look-alikes),
   plus the doubts the reader recorded. A person's decisions ("Geprüft", "Beide behalten")
-  are stored in `receipt_reviews` (migration 0011, additive). It is shown on the dashboard.
+  are stored in `receipt_reviews` (migration 0013, additive). It is shown on the dashboard.
 - **Deleting in the dashboard** is now the same safe delete as on the meals page, behind
   an in-page confirmation.
 - **Not done here:** the receipts of that first upload keep their old readings until a

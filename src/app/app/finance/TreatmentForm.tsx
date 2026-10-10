@@ -11,6 +11,7 @@ export interface TreatmentDraft {
   allocations: Allocation[];
   formLineKey: FormLineKey | null;
   employmentLineKey: FormLineKey | null;
+  severalLowValueItems: boolean;
 }
 
 export interface TreatmentSubmit {
@@ -65,6 +66,7 @@ export default function TreatmentForm({ item, formLines, busy, error, submitLabe
   const [shares, setShares] = useState<Shares>(() => initialShares(item));
   const [formLineKey, setFormLineKey] = useState<string>(item.formLineKey && item.formLineKey !== 'euer.meals' ? item.formLineKey : '');
   const [employmentLineKey, setEmploymentLineKey] = useState<string>(item.employmentLineKey ?? '');
+  const [several, setSeveral] = useState(item.severalLowValueItems);
   const [forVendor, setForVendor] = useState(false);
   const [effectiveFrom, setEffectiveFrom] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
@@ -76,7 +78,7 @@ export default function TreatmentForm({ item, formLines, busy, error, submitLabe
   const needsFormLine = (bp.business ?? 0) > 0;
   const needsEmploymentLine = (bp.study ?? 0) + (bp.employment ?? 0) > 0;
 
-  const euerLines = formLines.filter((l) => l.form === 'euer' && l.kind === 'expense' && l.key !== 'euer.meals');
+  const euerLines = formLines.filter((l) => l.form === 'euer' && l.kind === 'expense' && l.key !== 'euer.meals' && !l.assetOnly);
   const employmentLines = formLines.filter((l) => l.form === 'employment');
 
   function submit(event: React.FormEvent) {
@@ -99,6 +101,7 @@ export default function TreatmentForm({ item, formLines, busy, error, submitLabe
         allocations,
         formLineKey: needsFormLine ? (formLineKey as FormLineKey) : null,
         employmentLineKey: needsEmploymentLine ? (employmentLineKey as FormLineKey) : null,
+        severalLowValueItems: needsFormLine && formLineKey === 'euer.low_value_assets' && several,
       },
       applyToVendor: forVendor && item.vendor ? { vendor: item.vendor, effectiveFrom: effectiveFrom || undefined } : null,
     });
@@ -170,6 +173,18 @@ export default function TreatmentForm({ item, formLines, busy, error, submitLabe
               </option>
             ))}
           </select>
+          {formLineKey === 'euer.low_value_assets' && (
+            <label className="mt-2 flex items-start gap-2 text-sm" style={{ color: 'var(--foreground)' }}>
+              <input type="checkbox" className="mt-1" checked={several} onChange={(e) => setSeveral(e.target.checked)} />
+              <span>
+                Der Beleg enthält mehrere Wirtschaftsgüter, jedes für sich unter der Grenze
+                <span className="block text-xs" style={{ color: 'var(--muted)' }}>
+                  Dann darf die Summe über der Grenze liegen. Ein einzelnes Wirtschaftsgut über der Grenze wird als
+                  Anlage geführt.
+                </span>
+              </span>
+            </label>
+          )}
         </div>
       )}
 

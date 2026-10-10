@@ -76,9 +76,21 @@ export interface MealRecord {
 }
 
 /** The per-workspace tax facts (see the WorkspaceTaxSettings model). */
+/** A change of the section 19 status from a day on (ISO day). Earlier days keep what applied before. */
+export interface TaxStatusChange {
+  effectiveFrom: string;
+  smallBusiness: boolean;
+}
+
 export interface MealTaxSettings {
-  /** null = the section 19 question has not been answered yet. */
+  /** The first answer, valid from the beginning. null = the section 19 question has not been answered yet. */
   smallBusiness: boolean | null;
+  /**
+   * Later changes of the status, each from a day on (crossing a limit, or
+   * choosing regular taxation). A receipt is judged by the status on its own
+   * date, so earlier receipts keep their basis when the status changes.
+   */
+  statusChanges?: TaxStatusChange[];
   hostAddressThresholdEur: number;
 }
 

@@ -21,7 +21,7 @@ describe('computeYear: the synthetic year', () => {
       [43, 'euer.telecom', 20994],
       [51, 'euer.work_equipment', 6173 + 8437],
       [63, 'euer.meals', 4060],
-      [null, 'employment.study_costs', 12596 + 3704 + 31200],
+      [60, 'employment.study_costs', 12596 + 3704 + 31200],
     ]);
   });
 
@@ -71,7 +71,7 @@ describe('computeYear: open checks', () => {
     ['no amount', { amountCents: null, missingAmount: 'no_amount' }, 'no_amount'],
     ['foreign currency without a rate', { amountCents: null, missingAmount: 'no_exchange_rate' }, 'no_exchange_rate'],
     ['section 19 unanswered', { smallBusiness: null }, 'small_business_unanswered'],
-    ['regular taxation', { smallBusiness: false }, 'regular_taxation_not_computed'],
+    ['regular taxation without a net amount', { smallBusiness: false, netCents: null }, 'net_amount_missing'],
     ['no allocation', { allocations: null }, 'no_allocation'],
     ['shares above the whole', { allocations: [{ purpose: 'business', shareBp: 7000 }, { purpose: 'study', shareBp: 4000 }], employmentLineKey: 'employment.study_costs' }, 'allocation_exceeds_whole'],
     ['business share without a form line', { formLineKey: null }, 'no_form_line'],
@@ -150,10 +150,19 @@ describe('computeYear: properties', () => {
 });
 
 describe('computeYear: rule sets', () => {
-  it('prints no line numbers for a year whose form is not verified', () => {
-    const result = run([item({ id: 'x', date: '2026-03-01' })], 2026);
-    expect(result.formLinesVerified).toBe(false);
-    expect(result.lines[0]).toMatchObject({ key: 'euer.work_equipment', line: null, cents: 10000 });
+  it('prints each year\'s own line number for the same key', () => {
+    const in2025 = run([item({ id: 'x', date: '2025-03-01' })], 2025);
+    const in2026 = run([item({ id: 'x', date: '2026-03-01' })], 2026);
+    expect(in2025.lines[0]).toMatchObject({ key: 'euer.work_equipment', line: 51, numbering: 'verified', cents: 10000 });
+    expect(in2026.lines[0]).toMatchObject({ key: 'euer.work_equipment', line: 52, numbering: 'verified', cents: 10000 });
+  });
+
+  it('prints no number where a year\'s form is not compared yet, and never for a line the form has no amount field for', () => {
+    const study = (date: string, year: number, key: 'employment.study_costs' | 'employment.home_office') =>
+      run([item({ id: 'x', date, formLineKey: null, employmentLineKey: key, allocations: [{ purpose: 'study', shareBp: 10000 }] })], year).lines[0];
+    expect(study('2025-03-01', 2025, 'employment.study_costs')).toMatchObject({ line: 60, numbering: 'verified' });
+    expect(study('2026-03-01', 2026, 'employment.study_costs')).toMatchObject({ line: null, numbering: 'unverified' });
+    expect(study('2025-03-01', 2025, 'employment.home_office')).toMatchObject({ line: null, numbering: 'structured' });
   });
 
   it('says which rules a year without its own rule set was computed with', () => {

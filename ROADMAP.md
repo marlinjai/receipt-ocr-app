@@ -6,11 +6,12 @@
   zip (GET /api/export/company), and printed guest names are removed at once when an export was
   taken, otherwise held for ten years (German tax law, the Abgabenordnung, AO) and removed by the
   retention purge. Built in this change, 2026-10-09.
-- [ ] Schedule the retention purge of held guest copies (route /api/internal/retention/purge, built).
-  Before the schedule is added: generate RETENTION_PURGE_SECRET into the receipts production Infisical
-  project with the copy tool (op generate, value never printed), restart the app, then add a daily
-  Coolify scheduled task that POSTs an empty body signed with that secret. Until then held copies are
-  kept, which is safe. (2026-10-09)
+- [ ] Enable the retention purge of held guest copies only after recorded legal confirmation
+  of the retention policy. The implementation explicitly requires that review before go-live.
+  The production `RETENTION_PURGE_SECRET` was generated securely in Infisical on 2026-10-09;
+  no schedule was enabled. The backup and scratch restoration prerequisite is complete.
+  Once the legal policy is confirmed, run the signed purge verification and enable its daily
+  Coolify schedule. Preparation: `docs/operations/retention-purge.md`. (2026-10-09)
 
 <!-- Decided features, ready to be worked on -->
 
@@ -41,7 +42,7 @@
   receipt (`meal-evidence.ts`). (5) the vendor reader skips slogans, item lines and misread
   logos and joins a name set in several lines (`vendor.ts`). (6) look-alike receipts are
   found on read from the stored receipts and the decision "keep both" is stored (table
-  `receipt_reviews`, migration 0011), so the question survives leaving the upload page.
+  `receipt_reviews`, migration 0013), so the question survives leaving the upload page.
   (7) could not be reproduced: the year list was already built from all meal receipts,
   complete or not; it is now pinned by tests, the current year is always offered, and
   meals without a date (which belong to no year) are counted on the register tab.
@@ -63,13 +64,15 @@
   row second, a file another receipt still shows is kept, a receipt whose file cannot be
   deleted stays complete and is reported). The dashboard now asks before deleting, in
   the page: before, Backspace on a selection deleted at once. (2026-10-08)
-- [ ] The production database `receipts-postgres` on Coolify has no backup schedule at
-  all (checked 2026-10-09 through the Coolify interface: zero schedules). It holds the
-  receipts, the business-meal register and the tax figures. Needs the owner's decision
-  on frequency, retention and where the dumps are kept (on the server only, or also in
-  object storage); then one schedule on that database and one restore tried from it.
-  Found while repairing the doubled meal columns, which removes columns from a live
-  table. (2026-10-09)
+- [x] Production database backups verified: six-hourly Coolify dumps, 28 copies
+  locally for seven days, native European Union R2 copies for 30 days, and an hourly
+  additional copy to Hermes with 30-day retention.
+  A scheduled dump restored in an isolated PostgreSQL container with matching counts
+  for all 28 public tables (639 rows), logical column definitions, constraints and
+  indexes, including a fresh copy downloaded from R2. Production health stayed green.
+  No new fixed hosting cost; normal existing object-storage usage applies.
+  Plan: `docs/plans/2026-10-09-production-backups.md`.
+  Recovery: `docs/operations/production-recovery.md`. (2026-10-09)
 - [ ] Three defects in the shared table adapter (`@marlinjai/data-table-adapter-prisma`
   0.2.1) that this app now works around and that belong fixed there: (1) nothing stops
   two columns of one table from carrying the same name, so a check-then-create race
@@ -114,22 +117,25 @@
   off), with a merge-aware data move that Marlin reviews before anything is dropped. Done
   2026-10-09: the switch is on in production. Waves 3 to 5 are open in the knowledge-base
   roadmap. Plan: `docs/plans/2026-10-09-shared-contacts-wave2.md`. (2026-10-09)
-- [ ] Finance and tax dashboard, stage 1 (data foundation and live dashboard): slice 1
-  of 8 is built (the tax module with rule sets for 2025 and 2026, shares for several
-  purposes per receipt, vendor rules, the queue of open checks and the
-  income-surplus statement at `/app/finance`). Next: slice 2, assets and receipt
-  lines. Then payments (file imports and the Enable Banking daily sync, matching by
-  reference), revenue with a forecast of the small-business limits, regular
-  value-added taxation, the income tax estimate, the year-end entry sheet, reading
-  the expenses mailbox. Open inside slice 1, each described in the plan's "Reality
-  after slice 1": (1) the two older receipt columns "Business Share %" and
-  "Zuordnung" and the per-vendor share table of the overview page are still read as
-  a starting point and are removed only after the owner has finished entering the
-  2025 meals and the session preparing the 2025 return has been told; (2) the line
-  numbers of the 2026 form and of the employment annex are not yet compared with
-  the official forms, so the app shows those lines without numbers; (3) the 2027
-  rule set is due before 1 December 2026, when a test starts failing without it.
-  Plan: `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
+- [ ] Finance and tax dashboard, stage 1 (data foundation and live dashboard). Built:
+  slice 1 (tax module with rule sets for 2025 and 2026, shares for several purposes
+  per receipt, vendor rules, the queue of open checks, the income-surplus statement
+  at `/app/finance`), the asset register of slice 2, slice 4 (issued invoices,
+  revenue by payment day, profit or loss, forecast of the small-business limits) and
+  slice 5 (dated status changes, regular value-added taxation, advance return
+  periods). Open, in this order: receipt lines (second half of slice 2); payments
+  with imports, bank sync and matching (slice 3); the income tax estimate; the
+  year-end entry sheet; reading the expenses mailbox. Open inside what is built,
+  each described in the plan's "Reality" sections: (1) the two older receipt columns
+  "Business Share %" and "Zuordnung" and the per-vendor share table of the overview
+  page are still read as a starting point and are removed only after the owner has
+  finished entering the 2025 meals and the session preparing the 2025 return has
+  been told; (2) the line numbers of the employment annex of 2026 are not yet
+  compared with an official source, so those two lines show without numbers;
+  (3) the 2027 rule set is due before 1 December 2026, when a test starts failing
+  without it; (4) tax the buyer owes on services from abroad is not computed;
+  (5) invoices carry no link to a contact yet. Plan:
+  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-10)
 - [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: all six
   slices are built (register, contact list, export, duplicate checks, page split,
   phone capture, classifier, offline queue, service worker, share target). Left

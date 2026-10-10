@@ -1,8 +1,11 @@
 import 'server-only';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { rowToMealRecord } from '@/lib/meals/record';
+import { smallBusinessOn } from '@/lib/meals/rules';
 import { allRows, getTaxSettings, guestsByRow, tableContext } from '@/lib/meals/service';
 import type { MealGuestEntry } from '@/lib/meals/types';
+import { AssetInputError, validateAssetInput, validateDisposalInput, type AssetInput } from './asset-input';
+import { assetSchedule, type AssetCheck, type AssetFact, type AssetKind, type AssetMethod, type AssetYearRow, type DisposalKind } from './assets';
 import { computeYear } from './compute';
 import {
   TreatmentError,
@@ -15,8 +18,19 @@ import {
   type VendorRule,
 } from './decisions';
 import { resolveItem, type ReceiptFacts, type ResolvedItem, type TreatmentOrigin } from './facts';
+import { forecastYear, type Forecast } from './forecast';
+import {
+  RevenueInputError,
+  validateExpectation,
+  validateInvoiceInput,
+  validateSettlement,
+  validateStatusChange,
+  validateVatSettings,
+} from './revenue-input';
 import { RULE_YEARS, isFormLineKey, rulesForYear, type FormLine } from './rules';
-import type { ItemPart, LineResult, OpenCheck } from './types';
+import type { FormLineKey } from './rules/types';
+import type { InvoiceCheckKind, InvoiceFact, InvoiceTreatment, ItemPart, LineResult, OpenCheck, VatSettlementFact } from './types';
+import { vatYear, type VatFrequency, type VatMethod, type VatYear } from './vat';
 
 /**
  * Server-side reads and writes for the finance area.
@@ -34,7 +48,21 @@ export interface TaxContext {
   tenantId: string | null;
 }
 
-export type TaxServiceErrorCode = 'not_initialized' | 'row_not_found' | 'meal_row' | 'no_vendor' | 'invalid_date' | 'rule_not_found';
+export type TaxServiceErrorCode =
+  | 'not_initialized'
+  | 'row_not_found'
+  | 'meal_row'
+  | 'no_vendor'
+  | 'invalid_date'
+  | 'rule_not_found'
+  | 'asset_not_found'
+  | 'asset_row'
+  | 'row_in_other_asset'
+  | 'invoice_not_found'
+  | 'invoice_number_taken'
+  | 'status_not_found'
+  | 'status_unanswered'
+  | 'settlement_not_found';
 
 export class TaxServiceError extends Error {
   readonly code: TaxServiceErrorCode;
@@ -47,7 +75,12 @@ export class TaxServiceError extends Error {
 
 const BUSINESS_SHARE_COLUMN = 'Business Share %';
 
-function storedTreatment(row: { allocations: Prisma.JsonValue; formLineKey: string | null; employmentLineKey: string | null }): TreatmentInput | null {
+function storedTreatment(row: {
+  allocations: Prisma.JsonValue;
+  formLineKey: string | null;
+  employmentLineKey: string | null;
+  severalLowValueItems?: boolean;
+}): TreatmentInput | null {
   const allocations = parseAllocations(row.allocations);
   // A stored value that no longer parses (a purpose or line that was removed)
   // is treated as no decision: the item goes back to the queue instead of
@@ -59,6 +92,7 @@ function storedTreatment(row: { allocations: Prisma.JsonValue; formLineKey: stri
     allocations,
     formLineKey: row.formLineKey as TreatmentInput['formLineKey'],
     employmentLineKey: row.employmentLineKey as TreatmentInput['employmentLineKey'],
+    severalLowValueItems: row.severalLowValueItems === true,
   };
 }
 
@@ -130,10 +164,13 @@ export interface StatementItem {
   formLineKey: TreatmentInput['formLineKey'];
   formLineOrigin: TreatmentOrigin | null;
   employmentLineKey: TreatmentInput['employmentLineKey'];
+  severalLowValueItems: boolean;
   /** True when the item has its own decision (which can be removed again). */
   hasDecision: boolean;
   vendorRuleId: string | null;
   isMeal: boolean;
+  /** The asset this receipt is part of, if any. */
+  assetId: string | null;
   counted: boolean;
   parts: ItemPart[];
   privateCents: number;
@@ -149,8 +186,8 @@ export interface StatementView {
   rulesYear: number;
   rulesExact: boolean;
   rulesReviewedOn: string;
-  formLinesVerified: boolean;
-  formLinesSource: { citation: string; url: string; checkedOn: string };
+  /** Per form: where its lines come from, or null when that form of this year is not compared with an official source. */
+  formSources: Record<'euer' | 'employment', { citation: string; url: string; checkedOn: string } | null>;
   /** The lines a person can choose, in form order. */
   formLines: FormLine[];
   lines: LineResult[];
@@ -161,6 +198,49 @@ export interface StatementView {
   blockedItems: number;
   /** Items of the year plus undated items, which belong to every year's queue. */
   items: StatementItem[];
+  /** Every asset of the workspace that exists in this year or needs attention. */
+  assets: AssetView[];
+  /** The limits a person needs to see when choosing a method, for purchases of this year. */
+  assetLimits: {
+    lowValueNetLimitCents: number;
+    poolMinExclusiveNetCents: number;
+    poolMaxNetCents: number;
+    poolYears: number;
+    decliningFrom: string;
+    decliningTo: string;
+    decliningMaxRateBp: number;
+    decliningMaxMultiple: number;
+  };
+  businessRevenueCents: number;
+  /** Revenue minus expenses; null until at least one invoice is recorded for the workspace. */
+  profitCents: number | null;
+  revenue: {
+    /** False while the workspace has no issued invoice at all: revenue is then unknown, not zero. */
+    recorded: boolean;
+    receivedCents: number;
+    turnoverCents: number;
+    outstandingCents: number;
+    /** Every invoice that touches the year: issued in it, paid in it, or still unpaid at its end. */
+    invoices: InvoiceView[];
+  };
+  /** Where the year is heading against the small-business limits, as of today. */
+  forecast: Forecast;
+  limits: { previousYearLimitCents: number; currentYearLimitCents: number; source: { citation: string; url: string; checkedOn: string } };
+  expectedMonthlyRevenueCents: number | null;
+  /** The status on the last day of the year, and every recorded change. */
+  smallBusinessAtYearEnd: boolean | null;
+  statusChanges: Array<{ id: string; effectiveFrom: string; smallBusiness: boolean }>;
+  vat: {
+    frequency: VatFrequency | null;
+    method: VatMethod | null;
+    /** True when any day of the year is under regular taxation. */
+    applies: boolean;
+    /** The advance return periods; null until frequency and method are set. */
+    year: VatYear | null;
+    /** Tax on purchases of the year that could not be deducted under the small-business rule. */
+    undeductedInputVatCents: number;
+    settlements: Array<{ id: string; date: string; cents: number; direction: 'paid' | 'refunded' }>;
+  };
   vendorRules: VendorRule[];
   /** False until the Receipts table exists (first dashboard visit). */
   initialized: boolean;
@@ -184,9 +264,11 @@ function toStatementItem(resolved: ResolvedItem, facts: ReceiptFacts, result: { 
     formLineKey: item.formLineKey,
     formLineOrigin: resolved.formLineOrigin,
     employmentLineKey: item.employmentLineKey,
+    severalLowValueItems: item.severalLowValueItems === true,
     hasDecision: facts.decision !== null,
     vendorRuleId: resolved.vendorRuleId,
     isMeal: resolved.isMeal,
+    assetId: item.assetId ?? null,
     counted: result.counted,
     parts: result.parts,
     privateCents: result.privateCents,
@@ -195,15 +277,95 @@ function toStatementItem(resolved: ResolvedItem, facts: ReceiptFacts, result: { 
 }
 
 export async function loadStatement(db: PrismaClient, workspaceId: string, year: number): Promise<StatementView> {
-  const [loaded, vendorRules, settings] = await Promise.all([
+  const [loaded, vendorRules, settings, storedAssets] = await Promise.all([
     loadReceipts(db, workspaceId),
     listVendorRules(db, workspaceId),
     getTaxSettings(db, workspaceId),
+    db.taxAsset.findMany({ where: { authWorkspaceId: workspaceId }, include: { parts: true }, orderBy: [{ acquisitionDate: 'asc' }, { createdAt: 'asc' }] }),
   ]);
+  const [storedInvoices, storedSettlements, storedChanges, settingsRow] = await Promise.all([
+    db.taxIssuedInvoice.findMany({ where: { authWorkspaceId: workspaceId }, include: { payments: true }, orderBy: [{ issueDate: 'asc' }, { number: 'asc' }] }),
+    db.taxVatSettlement.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: { settledOn: 'asc' } }),
+    db.taxStatusChange.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: { effectiveFrom: 'asc' } }),
+    db.workspaceTaxSettings.findUnique({ where: { authWorkspaceId: workspaceId } }),
+  ]);
+  const invoiceFacts: InvoiceFact[] = storedInvoices.map((i) => ({
+    id: i.id,
+    number: i.number,
+    issueDate: i.issueDate,
+    grossCents: i.grossCents,
+    vatCents: i.vatCents,
+    treatment: (['small_business', 'standard', 'reduced', 'not_taxable'] as const).includes(i.treatment as InvoiceTreatment)
+      ? (i.treatment as InvoiceTreatment)
+      : 'not_taxable',
+    payments: i.payments.map((p) => ({ date: p.paidOn, cents: p.cents })),
+    declaredInYear: i.declaredInYear,
+    smallBusinessOnIssue: smallBusinessOn(settings, i.issueDate),
+  }));
+  const settlementFacts: VatSettlementFact[] = storedSettlements.map((s) => ({
+    id: s.id,
+    date: s.settledOn,
+    cents: s.cents,
+    direction: s.direction === 'refunded' ? 'refunded' : 'paid',
+  }));
+  const smallBusinessAtYearEnd = smallBusinessOn(settings, `${year}-12-31`);
   const resolvedRules = rulesForYear(year);
   const facts = loaded?.facts ?? [];
-  const resolved = facts.map((f) => resolveItem(f, vendorRules, settings));
-  const result = computeYear({ year, items: resolved.map((r) => r.item) }, resolvedRules);
+  const assetByRow = new Map<string, string>();
+  for (const asset of storedAssets) for (const part of asset.parts) assetByRow.set(part.rowId, asset.id);
+  const resolved = facts.map((f) => {
+    const r = resolveItem(f, vendorRules, settings);
+    const assetId = assetByRow.get(r.item.id);
+    return assetId ? { ...r, item: { ...r.item, assetId } } : r;
+  });
+  const itemById = new Map(resolved.map((r) => [r.item.id, r.item]));
+  const assetFacts = storedAssets.map((a) => toAssetFact(a, itemById, smallBusinessOn(settings, a.acquisitionDate)));
+  const ledgerItems = resolved.map((r) => r.item);
+  // No invoice in the workspace at all means revenue was never recorded, which
+  // is different from a year without revenue.
+  const revenueRecorded = invoiceFacts.length > 0;
+  const result = computeYear(
+    {
+      year,
+      items: ledgerItems,
+      assets: assetFacts,
+      invoices: revenueRecorded ? invoiceFacts : undefined,
+      vatSettlements: settlementFacts,
+      smallBusinessAtYearEnd,
+    },
+    resolvedRules,
+  );
+  // The previous year's turnover decides whether this year's status stands.
+  const previous = revenueRecorded ? computeYear({ year: year - 1, items: [], invoices: invoiceFacts }, rulesForYear(year - 1)) : null;
+  const limits = resolvedRules.rules.smallBusinessLimits;
+  const expectedMonthlyRevenueCents = settingsRow?.expectedMonthlyRevenueCents ?? null;
+  const forecast = forecastYear(
+    {
+      year,
+      today: today(),
+      receivedByMonthCents: result.revenue.turnoverByMonthCents,
+      previousYearReceivedCents: previous ? previous.revenue.turnoverCents : null,
+      outstandingCents: result.revenue.outstandingCents,
+      expectedMonthlyCents: expectedMonthlyRevenueCents,
+    },
+    limits.value,
+  );
+  const vatFrequency: VatFrequency | null = settingsRow?.vatFrequency === 'monthly' || settingsRow?.vatFrequency === 'quarterly' ? settingsRow.vatFrequency : null;
+  const vatMethod: VatMethod | null = settingsRow?.vatMethod === 'issued' || settingsRow?.vatMethod === 'received' ? settingsRow.vatMethod : null;
+  const regularInYear =
+    smallBusinessOn(settings, `${year}-01-01`) === false ||
+    smallBusinessAtYearEnd === false ||
+    storedChanges.some((c) => !c.smallBusiness && c.effectiveFrom.startsWith(`${year}-`));
+  // What the small-business rule cost in input tax this year: the tax in the
+  // business share of every counted receipt that stated a net amount.
+  let undeductedInputVatCents = 0;
+  for (const item of ledgerItems) {
+    if (item.smallBusiness !== true || item.date === null || !item.date.startsWith(`${year}-`)) continue;
+    if (item.amountCents === null || item.netCents === null || item.netCents === undefined || item.assetId) continue;
+    const businessBp = (item.allocations ?? []).filter((a) => a.purpose === 'business').reduce((s, a) => s + a.shareBp, 0);
+    if (businessBp > 0) undeductedInputVatCents += Math.round(((item.amountCents - item.netCents) * businessBp) / 10_000);
+  }
+  const invoiceResults = new Map(result.revenue.invoices.map((i) => [i.invoiceId, i]));
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));
 
   const items: StatementItem[] = [];
@@ -218,6 +380,41 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   items.sort((a, b) => (a.date ?? '') < (b.date ?? '') ? -1 : (a.date ?? '') > (b.date ?? '') ? 1 : a.label.localeCompare(b.label, 'de'));
 
   const { rules } = resolvedRules;
+  const assetResults = new Map(result.assets.map((a) => [a.assetId, a]));
+  const assets: AssetView[] = [];
+  storedAssets.forEach((stored, index) => {
+    const fact = assetFacts[index];
+    const yearResult = assetResults.get(stored.id);
+    // Not yet bought in this year and nothing wrong with it: not this year's business.
+    if (!yearResult) return;
+    const firstYear = fact.opening ? fact.opening.year : fact.acquisitionDate ? Number(fact.acquisitionDate.slice(0, 4)) : year;
+    assets.push({
+      id: stored.id,
+      label: fact.label,
+      kind: fact.kind,
+      acquisitionDate: fact.acquisitionDate,
+      method: fact.method,
+      usefulLifeMonths: fact.usefulLifeMonths,
+      decliningRateBp: fact.decliningRateBp,
+      businessShareBp: fact.businessShareBp,
+      reminderCents: fact.reminderCents,
+      opening: fact.opening,
+      disposal: fact.disposal,
+      costCents: fact.costCents,
+      netCostCents: fact.netCostCents,
+      rowIds: stored.parts.map((p) => p.rowId),
+      counted: yearResult.counted,
+      checks: yearResult.checks,
+      row: yearResult.row,
+      parts: yearResult.parts,
+      // The whole schedule up to this year, for the register.
+      schedule: yearResult.counted ? assetSchedule(fact, rulesForYear(firstYear).rules.assets, year) : [],
+    });
+  });
+  for (const asset of storedAssets) {
+    const y = asset.openingYear ?? (asset.acquisitionDate ? Number(asset.acquisitionDate.slice(0, 4)) : null);
+    if (y !== null) years.add(y);
+  }
   return {
     year,
     years: [...years].sort((a, b) => b - a),
@@ -225,9 +422,8 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     rulesYear: result.rulesYear,
     rulesExact: result.rulesExact,
     rulesReviewedOn: rules.reviewedOn,
-    formLinesVerified: result.formLinesVerified,
-    formLinesSource: rules.formLinesSource,
-    formLines: rules.formLines.map((l) => ({ ...l, line: rules.formLinesVerified ? l.line : null })),
+    formSources: rules.formSources,
+    formLines: rules.formLines.map((l) => ({ ...l, line: l.numbering === 'verified' ? l.line : null })),
     lines: result.lines,
     businessExpenseCents: result.businessExpenseCents,
     employmentCostCents: result.employmentCostCents,
@@ -235,9 +431,362 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     countedItems: result.countedItems,
     blockedItems: result.blockedItems,
     items,
+    profitCents: result.profitCents,
+    revenue: {
+      recorded: result.revenue.recorded,
+      receivedCents: result.revenue.receivedCents,
+      turnoverCents: result.revenue.turnoverCents,
+      outstandingCents: result.revenue.outstandingCents,
+      invoices: storedInvoices.flatMap((stored, index): InvoiceView[] => {
+        const r = invoiceResults.get(stored.id);
+        if (!r) return [];
+        const fact = invoiceFacts[index];
+        return [
+          {
+            id: stored.id,
+            number: fact.number,
+            issueDate: fact.issueDate,
+            grossCents: fact.grossCents,
+            vatCents: fact.vatCents,
+            treatment: fact.treatment,
+            declaredInYear: fact.declaredInYear,
+            payments: [...fact.payments].sort((a, b) => (a.date < b.date ? -1 : 1)),
+            receivedCents: r.receivedCents,
+            excludedCents: r.excludedCents,
+            outstandingCents: r.outstandingCents,
+            checks: r.checks,
+          },
+        ];
+      }),
+    },
+    forecast,
+    limits: { ...limits.value, source: limits.source },
+    expectedMonthlyRevenueCents,
+    smallBusinessAtYearEnd,
+    statusChanges: storedChanges.map((c) => ({ id: c.id, effectiveFrom: c.effectiveFrom, smallBusiness: c.smallBusiness })),
+    vat: {
+      frequency: vatFrequency,
+      method: vatMethod,
+      applies: regularInYear,
+      year:
+        vatFrequency && vatMethod
+          ? vatYear(year, vatFrequency, vatMethod, {
+              inputVat: result.inputVatEvents,
+              outputVatByIssue: result.outputVatByIssue,
+              outputVatByPayment: result.outputVatByPayment,
+            })
+          : null,
+      undeductedInputVatCents,
+      settlements: settlementFacts.filter((s) => s.date.startsWith(`${year}-`)),
+    },
+    assets,
+    assetLimits: {
+      lowValueNetLimitCents: rules.assets.lowValueNetLimitCents.value,
+      poolMinExclusiveNetCents: rules.assets.pool.value.minExclusiveNetCents,
+      poolMaxNetCents: rules.assets.pool.value.maxNetCents,
+      poolYears: rules.assets.pool.value.years,
+      decliningFrom: rules.assets.declining.value.acquiredFrom,
+      decliningTo: rules.assets.declining.value.acquiredTo,
+      decliningMaxRateBp: rules.assets.declining.value.maxRateBp,
+      decliningMaxMultiple: rules.assets.declining.value.maxMultipleOfLinear,
+    },
+    businessRevenueCents: result.businessRevenueCents,
     vendorRules,
     initialized: loaded !== null,
   };
+}
+
+/** The ISO day "today" in the business's time zone; one place, so tests can see what the forecast used. */
+function today(): string {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date());
+}
+
+/** An issued invoice as the finance screens show it for one year. */
+export interface InvoiceView {
+  id: string;
+  number: string;
+  issueDate: string | null;
+  grossCents: number;
+  vatCents: number;
+  treatment: InvoiceTreatment;
+  declaredInYear: number | null;
+  /** Every payment of the invoice, whatever year. */
+  payments: Array<{ date: string; cents: number }>;
+  /** Received in the viewed year, and what of that another year's return already declared. */
+  receivedCents: number;
+  excludedCents: number;
+  outstandingCents: number;
+  checks: InvoiceCheckKind[];
+}
+
+/** Record an issued invoice (`invoiceId` null) or change one, payments included. Returns its id. */
+export async function saveInvoice(db: PrismaClient, ctx: TaxContext, invoiceId: string | null, raw: unknown): Promise<string> {
+  const input = validateInvoiceInput(raw);
+  const sameNumber = await db.taxIssuedInvoice.findFirst({ where: { authWorkspaceId: ctx.workspaceId, number: input.number } });
+  if (sameNumber && sameNumber.id !== invoiceId) throw new TaxServiceError('invoice_number_taken');
+  const data = {
+    number: input.number,
+    issueDate: input.issueDate,
+    grossCents: input.grossCents,
+    vatCents: input.vatCents,
+    treatment: input.treatment,
+    declaredInYear: input.declaredInYear,
+  };
+  const payments = input.payments.map((p) => ({ paidOn: p.date, cents: p.cents, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId }));
+  if (invoiceId === null) {
+    const created = await db.taxIssuedInvoice.create({
+      data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, ...data, payments: { create: payments } },
+    });
+    return created.id;
+  }
+  const existing = await db.taxIssuedInvoice.findFirst({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId } });
+  if (!existing) throw new TaxServiceError('invoice_not_found');
+  // The payments of an invoice are few and have no identity of their own, so a
+  // save replaces them as one set, together with the invoice or not at all.
+  await db.$transaction([
+    db.taxInvoicePayment.deleteMany({ where: { invoiceId } }),
+    db.taxIssuedInvoice.update({ where: { id: invoiceId }, data }),
+    db.taxInvoicePayment.createMany({ data: payments.map((p) => ({ ...p, invoiceId })) }),
+  ]);
+  return invoiceId;
+}
+
+export async function deleteInvoice(db: PrismaClient, ctx: TaxContext, invoiceId: string): Promise<void> {
+  const { count } = await db.taxIssuedInvoice.deleteMany({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId } });
+  if (count === 0) throw new TaxServiceError('invoice_not_found');
+}
+
+/**
+ * Record that the section 19 status changes from a day on. The first answer
+ * must exist (it is the status "from the beginning"); a change on a day that
+ * already has one corrects that entry.
+ */
+export async function saveStatusChange(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<void> {
+  const input = validateStatusChange(raw);
+  const settings = await db.workspaceTaxSettings.findUnique({ where: { authWorkspaceId: ctx.workspaceId } });
+  if (!settings || settings.smallBusiness === null) throw new TaxServiceError('status_unanswered');
+  await db.taxStatusChange.upsert({
+    where: { authWorkspaceId_effectiveFrom: { authWorkspaceId: ctx.workspaceId, effectiveFrom: input.effectiveFrom } },
+    create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, ...input },
+    update: { smallBusiness: input.smallBusiness },
+  });
+}
+
+export async function deleteStatusChange(db: PrismaClient, ctx: TaxContext, changeId: string): Promise<void> {
+  const { count } = await db.taxStatusChange.deleteMany({ where: { id: changeId, authWorkspaceId: ctx.workspaceId } });
+  if (count === 0) throw new TaxServiceError('status_not_found');
+}
+
+/** How often a value-added tax return is filed and when the tax on an invoice is owed. */
+export async function saveVatSettings(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<void> {
+  const input = validateVatSettings(raw);
+  await db.workspaceTaxSettings.upsert({
+    where: { authWorkspaceId: ctx.workspaceId },
+    create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, vatFrequency: input.frequency, vatMethod: input.method },
+    update: { vatFrequency: input.frequency, vatMethod: input.method },
+  });
+}
+
+/** What the owner expects to receive per month from now on (null: use the run rate). */
+export async function saveRevenueExpectation(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<void> {
+  const cents = validateExpectation(raw);
+  await db.workspaceTaxSettings.upsert({
+    where: { authWorkspaceId: ctx.workspaceId },
+    create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, expectedMonthlyRevenueCents: cents },
+    update: { expectedMonthlyRevenueCents: cents },
+  });
+}
+
+export async function saveVatSettlement(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<string> {
+  const input = validateSettlement(raw);
+  const row = await db.taxVatSettlement.create({
+    data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, settledOn: input.date, cents: input.cents, direction: input.direction },
+  });
+  return row.id;
+}
+
+export async function deleteVatSettlement(db: PrismaClient, ctx: TaxContext, settlementId: string): Promise<void> {
+  const { count } = await db.taxVatSettlement.deleteMany({ where: { id: settlementId, authWorkspaceId: ctx.workspaceId } });
+  if (count === 0) throw new TaxServiceError('settlement_not_found');
+}
+
+/** An asset as the finance screens show it for one year. */
+export interface AssetView {
+  id: string;
+  label: string;
+  kind: AssetKind;
+  acquisitionDate: string | null;
+  method: AssetMethod;
+  usefulLifeMonths: number | null;
+  decliningRateBp: number | null;
+  businessShareBp: number;
+  reminderCents: number;
+  opening: AssetFact['opening'];
+  disposal: AssetFact['disposal'];
+  /** The sum of the linked receipts; null when one of them has no usable amount, or there are none. */
+  costCents: number | null;
+  netCostCents: number | null;
+  rowIds: string[];
+  counted: boolean;
+  checks: AssetCheck[];
+  /** This year's row of the schedule, before the business share. */
+  row: AssetYearRow | null;
+  parts: Array<{ lineKey: FormLineKey; cents: number }>;
+  schedule: AssetYearRow[];
+}
+
+interface StoredAsset {
+  id: string;
+  label: string;
+  kind: string;
+  acquisitionDate: string | null;
+  method: string;
+  usefulLifeMonths: number | null;
+  decliningRateBp: number | null;
+  businessShareBp: number;
+  reminderCents: number;
+  openingYear: number | null;
+  openingBookValueCents: number | null;
+  openingRemainingMonths: number | null;
+  disposalDate: string | null;
+  disposalKind: string | null;
+  disposalProceedsCents: number | null;
+  parts: Array<{ rowId: string }>;
+}
+
+function toAssetFact(
+  stored: StoredAsset,
+  itemById: Map<string, { amountCents: number | null; netCents?: number | null }>,
+  smallBusiness: boolean | null,
+): AssetFact {
+  const opening =
+    stored.openingYear !== null && stored.openingBookValueCents !== null && stored.openingRemainingMonths !== null
+      ? { year: stored.openingYear, bookValueCents: stored.openingBookValueCents, remainingMonths: stored.openingRemainingMonths }
+      : null;
+  // The cost is the sum of the linked receipts. One receipt without a usable
+  // amount, or a link to a receipt that is gone, makes the cost unknown rather
+  // than too low.
+  let cost: number | null = stored.parts.length > 0 ? 0 : null;
+  let net: number | null = stored.parts.length > 0 ? 0 : null;
+  for (const part of stored.parts) {
+    const item = itemById.get(part.rowId);
+    if (!item || item.amountCents === null) {
+      cost = null;
+      net = null;
+      break;
+    }
+    cost = (cost as number) + item.amountCents;
+    net = net === null || item.netCents === null || item.netCents === undefined ? null : net + item.netCents;
+  }
+  const disposal =
+    stored.disposalDate !== null && (stored.disposalKind === 'sold' || stored.disposalKind === 'scrapped' || stored.disposalKind === 'private')
+      ? { date: stored.disposalDate, kind: stored.disposalKind as DisposalKind, proceedsCents: stored.disposalProceedsCents ?? 0 }
+      : null;
+  return {
+    id: stored.id,
+    label: stored.label,
+    kind: stored.kind === 'intangible' ? 'intangible' : 'movable',
+    acquisitionDate: stored.acquisitionDate,
+    costCents: cost,
+    netCostCents: net,
+    // A stored method the code no longer knows falls back to equal amounts,
+    // which then asks for a useful life instead of computing something odd.
+    method: (['low_value', 'pool', 'linear', 'computer_one_year', 'declining'] as const).includes(stored.method as AssetMethod)
+      ? (stored.method as AssetMethod)
+      : 'linear',
+    usefulLifeMonths: stored.usefulLifeMonths,
+    decliningRateBp: stored.decliningRateBp,
+    businessShareBp: stored.businessShareBp,
+    reminderCents: stored.reminderCents,
+    opening,
+    disposal,
+    smallBusiness,
+  };
+}
+
+/**
+ * The receipts that may make up an asset: rows of THIS workspace, not judged
+ * by the meal register, and not already part of another asset.
+ */
+async function requireAssetRows(db: PrismaClient, ctx: TaxContext, rowIds: string[], ownAssetId: string | null): Promise<void> {
+  if (rowIds.length === 0) return;
+  const settings = await getTaxSettings(db, ctx.workspaceId);
+  for (const rowId of rowIds) {
+    const loaded = await loadReceipts(db, ctx.workspaceId, rowId);
+    if (!loaded) throw new TaxServiceError('not_initialized');
+    const facts = loaded.facts[0];
+    if (!facts) throw new TaxServiceError('row_not_found');
+    if (resolveItem(facts, [], settings).isMeal) throw new TaxServiceError('meal_row');
+  }
+  const taken = await db.taxAssetPart.findMany({ where: { rowId: { in: rowIds } } });
+  if (taken.some((p) => p.assetId !== ownAssetId)) throw new TaxServiceError('row_in_other_asset');
+}
+
+function assetData(input: AssetInput) {
+  return {
+    label: input.label,
+    kind: input.kind,
+    acquisitionDate: input.acquisitionDate,
+    method: input.method,
+    usefulLifeMonths: input.usefulLifeMonths,
+    decliningRateBp: input.decliningRateBp,
+    businessShareBp: input.businessShareBp,
+    reminderCents: input.reminderCents,
+    openingYear: input.opening?.year ?? null,
+    openingBookValueCents: input.opening?.bookValueCents ?? null,
+    openingRemainingMonths: input.opening?.remainingMonths ?? null,
+  };
+}
+
+/** Create an asset from receipts (or carry one in from before the app). Returns its id. */
+export async function createAsset(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<string> {
+  const input = validateAssetInput(raw);
+  await requireAssetRows(db, ctx, input.rowIds, null);
+  const asset = await db.taxAsset.create({
+    data: {
+      authWorkspaceId: ctx.workspaceId,
+      authTenantId: ctx.tenantId,
+      ...assetData(input),
+      parts: { create: input.rowIds.map((rowId) => ({ rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId })) },
+    },
+  });
+  return asset.id;
+}
+
+/** Change what was stated about an asset, including which receipts make up its cost. */
+export async function updateAsset(db: PrismaClient, ctx: TaxContext, assetId: string, raw: unknown): Promise<void> {
+  const input = validateAssetInput(raw);
+  const existing = await db.taxAsset.findFirst({ where: { id: assetId, authWorkspaceId: ctx.workspaceId } });
+  if (!existing) throw new TaxServiceError('asset_not_found');
+  await requireAssetRows(db, ctx, input.rowIds, assetId);
+  await db.$transaction([
+    db.taxAssetPart.deleteMany({ where: { assetId, rowId: { notIn: input.rowIds } } }),
+    db.taxAsset.update({ where: { id: assetId }, data: assetData(input) }),
+    db.taxAssetPart.createMany({
+      data: input.rowIds.map((rowId) => ({ assetId, rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId })),
+      skipDuplicates: true,
+    }),
+  ]);
+}
+
+/** Remove an asset. Its receipts are ordinary receipts again, with whatever was decided about them before. */
+export async function deleteAsset(db: PrismaClient, ctx: TaxContext, assetId: string): Promise<void> {
+  const { count } = await db.taxAsset.deleteMany({ where: { id: assetId, authWorkspaceId: ctx.workspaceId } });
+  if (count === 0) throw new TaxServiceError('asset_not_found');
+}
+
+/** Record that an asset left the register, or (with null) take that back. */
+export async function setAssetDisposal(db: PrismaClient, ctx: TaxContext, assetId: string, raw: unknown | null): Promise<void> {
+  const disposal = raw === null ? null : validateDisposalInput(raw);
+  const { count } = await db.taxAsset.updateMany({
+    where: { id: assetId, authWorkspaceId: ctx.workspaceId },
+    data: {
+      disposalDate: disposal?.date ?? null,
+      disposalKind: disposal?.kind ?? null,
+      disposalProceedsCents: disposal ? disposal.proceedsCents : null,
+    },
+  });
+  if (count === 0) throw new TaxServiceError('asset_not_found');
 }
 
 async function requireOrdinaryRow(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<ReceiptFacts> {
@@ -248,6 +797,8 @@ async function requireOrdinaryRow(db: PrismaClient, ctx: TaxContext, rowId: stri
   const settings = await getTaxSettings(db, ctx.workspaceId);
   // What a meal is worth is decided by the meal register alone.
   if (resolveItem(facts, [], settings).isMeal) throw new TaxServiceError('meal_row');
+  // A receipt that is part of an asset is treated by the asset register.
+  if ((await db.taxAssetPart.count({ where: { rowId } })) > 0) throw new TaxServiceError('asset_row');
   return facts;
 }
 
@@ -270,6 +821,7 @@ export async function saveItemDecision(db: PrismaClient, ctx: TaxContext, rowId:
     allocations: treatment.allocations as unknown as Prisma.InputJsonValue,
     formLineKey: treatment.formLineKey,
     employmentLineKey: treatment.employmentLineKey,
+    severalLowValueItems: treatment.severalLowValueItems === true,
   };
   await db.taxItemDecision.upsert({
     where: { rowId },
@@ -315,7 +867,7 @@ export async function saveVendorRule(db: PrismaClient, ctx: TaxContext, input: V
     create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, vendorKey: key, effectiveFrom, ...data },
     update: data,
   });
-  return { id: row.id, vendorKey: key, vendorLabel: row.vendorLabel, effectiveFrom, ...treatment };
+  return { id: row.id, vendorKey: key, vendorLabel: row.vendorLabel, effectiveFrom, ...treatment, severalLowValueItems: false };
 }
 
 /**
@@ -328,7 +880,8 @@ export async function saveVendorRule(db: PrismaClient, ctx: TaxContext, input: V
  * decision is removed. When the rule starts later than the receipt (or the
  * receipt has no date and the rule has a start date), the rule does not cover
  * this receipt, so the receipt keeps the decision; otherwise it would silently
- * fall back to its defaults after the person just decided it.
+ * fall back to its defaults after the person just decided it. The same holds
+ * for a receipt with the "several small items" statement, which no rule carries.
  */
 export async function decideForVendor(
   db: PrismaClient,
@@ -346,7 +899,12 @@ export async function decideForVendor(
   const forRule = validateTreatment(input.treatment, rulesFor(effectiveFrom || null));
   const forItem = validateTreatment(input.treatment, rulesFor(facts.record.date));
 
-  const receiptFollowsRule = effectiveFrom === '' || (facts.record.date !== null && effectiveFrom <= facts.record.date);
+  // The statement "several small items on this receipt" belongs to the one
+  // receipt and a rule cannot carry it, so a receipt that has it keeps its own
+  // decision even when the rule covers its date.
+  const receiptFollowsRule =
+    forItem.severalLowValueItems !== true &&
+    (effectiveFrom === '' || (facts.record.date !== null && effectiveFrom <= facts.record.date));
   const ruleData = {
     vendorLabel: input.vendor.trim(),
     allocations: forRule.allocations as unknown as Prisma.InputJsonValue,
@@ -357,6 +915,7 @@ export async function decideForVendor(
     allocations: forItem.allocations as unknown as Prisma.InputJsonValue,
     formLineKey: forItem.formLineKey,
     employmentLineKey: forItem.employmentLineKey,
+    severalLowValueItems: forItem.severalLowValueItems === true,
   };
   const [row] = await db.$transaction([
     db.taxVendorRule.upsert({
@@ -373,7 +932,8 @@ export async function decideForVendor(
         }),
   ]);
   return {
-    rule: { id: row.id, vendorKey: key, vendorLabel: row.vendorLabel, effectiveFrom, ...forRule },
+    // The statement about several small items belongs to one receipt, never to a rule.
+    rule: { id: row.id, vendorKey: key, vendorLabel: row.vendorLabel, effectiveFrom, ...forRule, severalLowValueItems: false },
     receiptFollowsRule,
   };
 }
@@ -387,6 +947,9 @@ export async function deleteVendorRule(db: PrismaClient, ctx: TaxContext, ruleId
 export async function deleteDecisionsForRows(db: PrismaClient, rowIds: string[]): Promise<void> {
   if (rowIds.length === 0) return;
   await db.taxItemDecision.deleteMany({ where: { rowId: { in: rowIds } } });
+  // An asset keeps existing without the receipt; with no receipt left it shows
+  // up as "no cost" and asks for one, instead of vanishing with its history.
+  await db.taxAssetPart.deleteMany({ where: { rowId: { in: rowIds } } });
 }
 
-export { TreatmentError };
+export { AssetInputError, RevenueInputError, TreatmentError };

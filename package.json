@@ -1,6 +1,6 @@
 {
   "name": "receipt-ocr-app",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "scripts": {
     "dev": "INFISICAL_TOKEN=\"$($HOME/software-dev/infra/scripts/infisical-mi-token.sh)\" infisical run --projectId=95d42533-3157-4b66-a49b-cc386ec1214d --domain=https://infisical.lumitra.co --env=dev -- next dev",

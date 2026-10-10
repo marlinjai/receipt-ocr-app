@@ -2,7 +2,7 @@
 title: Business receipts move to the company Whiz-Art Media
 summary: The receipts workspace that today sits under the personal company "marlinjai" holds business receipts. It moves as a whole to the business company Whiz-Art Media through auth-brain, keeping every row, file and workspace id, and "marlinjai" gets a fresh empty workspace for personal receipts. Decided 2026-10-10; the production step waits for Marlin's one-line yes.
 type: plan
-status: decided
+status: in-progress
 tags: [receipts, contacts, companies, whiz-art-media, migration, production-data]
 projects: [receipt-ocr-app, auth-brain, contacts]
 date: 2026-10-10
@@ -68,19 +68,22 @@ Prerequisites: a verified backup of the receipts database and of the contacts da
 same day; no other session's live test pass in flight; the sessions working on these receipts told
 the time (see Coordination).
 
-1. **Remove the app's own contacts table first** (pull request 61, held). Independent of this plan,
-   but it removes 4 company stamps that would otherwise need restamping.
+1. **Remove the app's own contacts table first** (pull request 61, done 2026-10-10). Independent of
+   this plan, but it removed 4 company stamps that would otherwise need restamping.
 2. **Shared contacts: move the 4 guests** from company "marlinjai" to Whiz-Art Media, keeping their
-   ids, because meal guest rows reference them. This needs a small addition to
-   `@marlinjai/contacts-core`: a transfer of given contacts to another company in one transaction,
-   which refuses and reports when a contact with the same identity already exists there (that case
-   becomes a merge, with the guest rows repointed). No raw SQL outside the package.
+   ids, because meal guest rows reference them. `@marlinjai/contacts-core` 0.3.0 has the transfer
+   (`transferTo`); the receipts endpoint of step 4 calls it. Three of the four are named by a meal
+   and move by that; the fourth is a guest kept in the list without a meal yet and is named in
+   `also_contact_ids`. No raw SQL outside the package.
 3. **auth-brain:** retire the empty workspace created for Whiz-Art Media on 2026-10-09
    (`01a12296-b963-7018-8857-5e76ffe01c87`, no receipts), then move workspace
    `019fa320-8e10-7978-b0a6-0b0d3bad83c3` to Whiz-Art Media and give it the name and slug of the
    company's main workspace.
-4. **Receipts database: restamp the company** on every row of that workspace, through Prisma, dry
-   run first, counts only: `meal_guests`, `workspace_tax_settings`, `receipt_reviews`, `dt_tables`,
+4. **Receipts database: restamp the company** on every row of that workspace, dry run first, counts
+   only, through the signed endpoint `POST /api/internal/workspace-move` (built 2026-10-10, see
+   "The receipts endpoint" below). The tables are read from the Prisma data model instead of this
+   list, which is kept as the cross-check it was written as: `meal_guests`,
+   `workspace_tax_settings`, `receipt_reviews`, `dt_tables`,
    `sheet_import_configs`, `overview_selections`, `workspace_notes`, `workspace_vendor_attribution`,
    and every finance table (`tax_item_decisions`, `tax_vendor_rules`, `tax_assets`,
    `tax_asset_parts`, `tax_receipt_lines`, `tax_issued_invoices`, `tax_invoice_payments`,
@@ -90,6 +93,41 @@ the time (see Coordination).
    row and would escape a company erasure.
 5. **"marlinjai":** create a fresh workspace for personal receipts. Its table is created on first
    visit.
+
+## The receipts endpoint (built 2026-10-10)
+
+`src/lib/workspace-move.ts`, called through `POST /api/internal/workspace-move`, signed with its
+own secret `WORKSPACE_MOVE_SECRET` like the erasure webhook, refusing without it. How to call it,
+its report and the order of a move: `docs/operations/workspace-move.md`.
+
+Decided under the "decide it yourself" rule, say so if you disagree:
+
+- **The table list is derived, not kept by hand.** Every Prisma model with a workspace column and
+  a company stamp is restamped (23 tables today, the same 23 as the list in step 4). A model with
+  a company stamp and no workspace column stops the code unless it is listed as belonging to the
+  company (`company_exports` is the only one), and a database test compares the derived list with
+  the columns that exist. Reason: a table added later cannot be forgotten.
+- **`company_exports` is not restamped.** An export record says which company took an export.
+  Production holds none.
+- **Contacts first, then rows, each half repeatable.** The two databases share no transaction. If
+  the rows fail after the contacts moved, the call answers 502 with `step: "rows"` and a repeat
+  finishes it. Reason: the contact transfer is all or nothing in the package, and a retry is the
+  only recovery that needs no manual step.
+- **Blockers write nothing.** A row stamped with a third company, a guest contact found in neither
+  company, a contact another workspace still names, or any refusal by the contacts package other
+  than an identity conflict stops the apply with 409 before the first write. Reason: with the
+  package's "skip" mode such a contact would silently stay behind while its guest rows moved.
+- **A guest the target already has is not merged.** The source contact stays where it is and the
+  guest rows of this workspace are pointed at the target's contact. Reason: the swap then points
+  them back, so the rollback stays "the same call with the companies swapped". Production has no
+  such conflict (checked read-only 2026-10-10: 0 identity and 0 customer number conflicts).
+- **Only guests move by default; others are named.** Contacts no meal names stay unless their ids
+  are given in `also_contact_ids`. Reason: "all contacts of the company" has no clean inverse (the
+  swap would send the 25 Whiz-Art Media clients to "marlinjai"); a list of ids does.
+- **A signed call expires after five minutes** (`issued_at` is part of the signed body). Reason: a
+  move has an inverse, so an old call must not be replayable after a rollback.
+- **Timestamps.** The restamp goes through Prisma, so `updated_at` moves on the 17 tables that
+  have it. The stamp did change at that time.
 
 ## Verification (in the browser, by the session that runs the move)
 
@@ -102,8 +140,9 @@ the time (see Coordination).
 
 ## Rollback
 
-Nothing is deleted. Move the workspace back with the same route, restamp back, transfer the 4
-contacts back. The backups are the second line.
+Nothing is deleted. Move the workspace back with the same route, then call the receipts endpoint
+with the two companies swapped and the same `also_contact_ids`: it restamps back and transfers the
+4 contacts back. The backups are the second line.
 
 ## Coordination
 
@@ -117,4 +156,9 @@ contacts back. The backups are the second line.
 ## Open
 
 - Marlin's one-line yes for the production step.
-- The contacts-core transfer operation (step 2).
+
+## Done
+
+- The contacts-core transfer operation (step 2): `@marlinjai/contacts-core` 0.3.0, 2026-10-10.
+- The receipts endpoint with its dry run (steps 2 and 4), 2026-10-10.
+- The unused `CONTACTS_STORE` entry is gone from the production secret project, 2026-10-10.

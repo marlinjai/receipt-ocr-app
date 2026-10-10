@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PDFDocument, degrees } from 'pdf-lib';
-import { buildRegister, exportRefusal, incompleteQueue, registerYears } from '../register';
+import { buildRegister, exportRefusal, incompleteQueue, registerYearChoices, registerYears, undatedMeals } from '../register';
 import { CSV_BOM, REGISTER_CSV_HEADERS, csvSafeText, registerCsv } from '../register-csv';
 import { SUMMARY_TABLE_WIDTH, registerPdf, rotatedImagePlacement, summaryColumns } from '../register-pdf';
 import { GUEST_A, GUEST_B, REGULAR_BUSINESS, SMALL_BUSINESS, UNANSWERED, meal } from './fixtures';
@@ -98,6 +98,34 @@ describe('queue and years', () => {
   });
   it('lists the years that have meal records, newest first', () => {
     expect(registerYears(records)).toEqual([2026, 2025]);
+  });
+
+  // Roadmap, first live upload: 17 meals of last year waited for guests and the
+  // register seemed to offer the current year only.
+  it('a backlog of incomplete meals from last year offers last year, and opens on it', () => {
+    const backlog = [
+      meal({ rowId: 'p1', date: '2025-02-09', guests: [], occasion: '', host: '' }),
+      meal({ rowId: 'p2', date: '2025-11-21', guests: [], occasion: '', host: '' }),
+    ];
+    expect(registerYears(backlog)).toEqual([2025]);
+    expect(registerYearChoices(backlog, 2026)).toEqual({ years: [2026, 2025], initial: 2025 });
+    expect(buildRegister(backlog, SMALL_BUSINESS, 2025).incomplete).toHaveLength(2);
+  });
+
+  it('the current year is always offered, and is where an empty register opens', () => {
+    expect(registerYearChoices([], 2026)).toEqual({ years: [2026], initial: 2026 });
+    expect(registerYearChoices(records, 2027)).toEqual({ years: [2027, 2026, 2025], initial: 2026 });
+  });
+
+  it('opens on the newest year that has a meal, not on a year that only holds a receipt marked "Keine Bewirtung"', () => {
+    const list = [meal({ rowId: 'n1', date: '2026-01-05', mealType: 'not_a_meal' }), meal({ rowId: 'm1', date: '2025-03-14' })];
+    expect(registerYearChoices(list, 2026)).toEqual({ years: [2026, 2025], initial: 2025 });
+  });
+
+  it('a meal without a date belongs to no year and is counted on its own', () => {
+    const list = [meal({ rowId: 'u1', date: null }), meal({ rowId: 'u2', date: null, mealType: 'not_a_meal' }), meal({ rowId: 'd1' })];
+    expect(undatedMeals(list).map((r) => r.rowId)).toEqual(['u1']);
+    expect(registerYears(list)).toEqual([2025]);
   });
 });
 

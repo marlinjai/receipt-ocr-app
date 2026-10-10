@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
-import { classifyWithWebSearch } from '@/lib/web-search';
+import { classifyReceiptText } from '@/lib/receipt-classifier';
 
 const CATEGORY_NAMES = Object.keys(CATEGORY_TO_KONTO);
 
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await classifyWithWebSearch({
+    const result = await classifyReceiptText({
       vendor: vendor ?? null,
       gross: gross ?? null,
       date: date ?? null,

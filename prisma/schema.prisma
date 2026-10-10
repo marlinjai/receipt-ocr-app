@@ -261,9 +261,9 @@ model Contact {
 // register: the register never has to ask the contact store, and an archived
 // contact keeps its place on old meals.
 model MealGuest {
-  id              String   @id @default(uuid())
-  authWorkspaceId String   @map("auth_workspace_id")
-  authTenantId    String?  @map("auth_tenant_id")
+  id              String    @id @default(uuid())
+  authWorkspaceId String    @map("auth_workspace_id")
+  authTenantId    String?   @map("auth_tenant_id")
   rowId           String    @map("row_id")
   // Null once the contact is erased: the printed copy is then held until retainUntil.
   contactId       String?   @map("contact_id")
@@ -281,11 +281,11 @@ model MealGuest {
 
 // One row per data export handed to a company (see src/lib/company-export.ts).
 model CompanyExport {
-  id            String   @id @default(uuid())
-  authTenantId  String   @map("auth_tenant_id")
-  fileCount     Int      @map("file_count")
-  sha256        String
-  createdAt     DateTime @default(now()) @map("created_at")
+  id           String   @id @default(uuid())
+  authTenantId String   @map("auth_tenant_id")
+  fileCount    Int      @map("file_count")
+  sha256       String
+  createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([authTenantId])
   @@map("company_exports")
@@ -297,21 +297,21 @@ model CompanyExport {
 // register shows no amounts until it is), true = no input tax, the 70 percent
 // is taken from gross; false = taken from net.
 model WorkspaceTaxSettings {
-  id                      String   @id @default(uuid())
-  authWorkspaceId         String   @unique @map("auth_workspace_id")
-  authTenantId            String?  @map("auth_tenant_id")
-  smallBusiness           Boolean? @map("small_business")
-  hostAddressThresholdEur Int      @default(250) @map("host_address_threshold_eur")
+  id                          String   @id @default(uuid())
+  authWorkspaceId             String   @unique @map("auth_workspace_id")
+  authTenantId                String?  @map("auth_tenant_id")
+  smallBusiness               Boolean? @map("small_business")
+  hostAddressThresholdEur     Int      @default(250) @map("host_address_threshold_eur")
   // Regular value-added taxation, asked once and required before any advance
   // return period is computed: how often a return is filed ('monthly' or
   // 'quarterly') and when the tax on an invoice is owed ('issued' or 'received').
-  vatFrequency            String?  @map("vat_frequency")
-  vatMethod               String?  @map("vat_method")
+  vatFrequency                String?  @map("vat_frequency")
+  vatMethod                   String?  @map("vat_method")
   // What the owner expects to receive per month from now on, for the forecast
   // of the small-business limits. NULL: the forecast uses the run rate.
-  expectedMonthlyRevenueCents Int? @map("expected_monthly_revenue_cents")
-  createdAt               DateTime @default(now()) @map("created_at")
-  updatedAt               DateTime @updatedAt @map("updated_at")
+  expectedMonthlyRevenueCents Int?     @map("expected_monthly_revenue_cents")
+  createdAt                   DateTime @default(now()) @map("created_at")
+  updatedAt                   DateTime @updatedAt @map("updated_at")
 
   @@map("workspace_tax_settings")
 }
@@ -351,18 +351,18 @@ model TaxVendorRule {
 // no foreign key for the same reason as meal_guests.row_id; the row delete
 // paths remove the decision in code.
 model TaxItemDecision {
-  id                String   @id @default(uuid())
-  authWorkspaceId   String   @map("auth_workspace_id")
-  authTenantId      String?  @map("auth_tenant_id")
-  rowId             String   @unique @map("row_id")
-  allocations       Json
-  formLineKey       String?  @map("form_line_key")
-  employmentLineKey String?  @map("employment_line_key")
+  id                   String   @id @default(uuid())
+  authWorkspaceId      String   @map("auth_workspace_id")
+  authTenantId         String?  @map("auth_tenant_id")
+  rowId                String   @unique @map("row_id")
+  allocations          Json
+  formLineKey          String?  @map("form_line_key")
+  employmentLineKey    String?  @map("employment_line_key")
   // The owner's statement that a receipt on the low-value asset line holds
   // several assets, each within the limit on its own, although their sum is not.
-  severalLowValueItems Boolean @default(false) @map("several_low_value_items")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  severalLowValueItems Boolean  @default(false) @map("several_low_value_items")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
 
   @@index([authWorkspaceId])
   @@map("tax_item_decisions")
@@ -641,4 +641,31 @@ model TaxReceiptLine {
 
   @@index([authWorkspaceId, rowId])
   @@map("tax_receipt_lines")
+}
+
+// What still needs a person's eye on ONE receipt, and what a person has
+// already settled about it.
+//
+// `flags` are the doubts the reader recorded when it read the receipt (a total
+// it could not confirm, a failed classification). `checkedAt` is a person
+// saying "I looked, it is right", which hides those flags until the receipt is
+// read again. `distinctFrom` lists the receipts a person confirmed are NOT the
+// same purchase, so a look-alike warning is settled once and does not come
+// back. Facts that can be seen on the row itself (no amount, no date) are not
+// stored here: they are worked out on read and end when the row is completed.
+//
+// `rowId` has no foreign key for the same reason as meal_guests.row_id; the
+// row delete paths remove the review in code.
+model ReceiptReview {
+  rowId           String    @id @map("row_id")
+  authWorkspaceId String    @map("auth_workspace_id")
+  authTenantId    String?   @map("auth_tenant_id")
+  flags           String[]  @default([])
+  distinctFrom    String[]  @default([]) @map("distinct_from")
+  checkedAt       DateTime? @map("checked_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([authWorkspaceId])
+  @@map("receipt_reviews")
 }

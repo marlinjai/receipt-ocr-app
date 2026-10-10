@@ -3,6 +3,8 @@
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
+import { readAmounts } from '@/lib/extraction/amounts';
+import { chooseVendor } from '@/lib/extraction/vendor';
 import { getFxRate } from '@/lib/fx-rates';
 import {
   CATEGORY_TO_KONTO,
@@ -16,7 +18,9 @@ import {
 import { defaultTaxRate, mealFactsFromClassification, type MealClassification } from '@/lib/meals/classify';
 import { serializeTaxLines } from '@/lib/meals/rules';
 import { receiptAttention, type ReceiptAttention } from '@/lib/upload/quality';
-import { classifyWithWebSearch } from '@/lib/web-search';
+import { ClassifierUnavailableError, classifyReceiptText } from '@/lib/receipt-classifier';
+import type { ReadFlag } from '@/lib/review/reasons';
+import { recordReadFlags } from '@/lib/review/service';
 import { ensureReceiptsTable } from '@/lib/receipts-table';
 import { findSimilarReceipt, type ExistingReceipt } from '@/lib/upload/duplicates';
 import { isSha256Hex } from '@/lib/upload/hash';
@@ -53,15 +57,18 @@ interface ClassificationResult {
   aiKonto: string | null;
   aiZuordnung: string | null;
   aiTaxRate: number | null;
+  aiVendor: string | null;
+  aiGross: number | null;
   meal: MealClassification | null;
 }
 
+/** Null when no classification could be had. The caller records that on the receipt: it is never silent. */
 async function classifyReceipt(
   extracted: ReturnType<typeof extractReceiptFields>,
   fullText: string,
-): Promise<ClassificationResult> {
+): Promise<ClassificationResult | null> {
   try {
-    const result = await classifyWithWebSearch({
+    const result = await classifyReceiptText({
       vendor: extracted.vendor,
       gross: extracted.gross,
       date: extracted.date,
@@ -70,18 +77,25 @@ async function classifyReceipt(
       categoryToKonto: CATEGORY_TO_KONTO,
       zuordnungOptions: ZUORDNUNG_OPTIONS,
     });
-
+    // An answer without a category is no classification (the model's text could not be parsed).
+    if (!result.category) {
+      console.error('[classifyReceipt] the classifier answered without a usable category', { provider: result.provider });
+      return null;
+    }
     return {
       aiName: result.name,
       aiCategory: result.category,
       aiKonto: result.konto,
       aiZuordnung: result.zuordnung,
       aiTaxRate: result.taxRate,
+      aiVendor: result.vendor,
+      aiGross: result.gross,
       meal: result.meal,
     };
   } catch (err) {
-    console.error('[classifyReceipt] Classification failed:', err);
-    return { aiName: null, aiCategory: null, aiKonto: null, aiZuordnung: null, aiTaxRate: null, meal: null };
+    if (err instanceof ClassifierUnavailableError) console.error('[classifyReceipt] no language model is configured: receipts are filed by pattern matching only');
+    else console.error('[classifyReceipt] classification failed:', err);
+    return null;
   }
 }
 
@@ -100,6 +114,8 @@ export interface ProcessReceiptResult {
   isMeal: boolean;
   /** Set when the receipt was not read well and a retake is worth offering. */
   attention: ReceiptAttention | null;
+  /** What the reader could not settle; the same doubts are stored for the review list. */
+  reviewFlags: ReadFlag[];
 }
 
 type ReceiptsAdapter = ReturnType<typeof getAdapter>;
@@ -133,6 +149,7 @@ interface ReadReceipt {
   date: string | null;
   gross: number | null;
   attention: ReceiptAttention | null;
+  reviewFlags: ReadFlag[];
 }
 
 /**
@@ -150,38 +167,49 @@ async function readReceipt(
   file: FileData,
   ocrResult: OcrResult | null,
 ): Promise<ReadReceipt> {
-  const extracted = ocrResult ? extractReceiptFields(ocrResult) : null;
+  const fullText = ocrResult?.fullText ?? '';
+  const extracted = ocrResult && fullText.trim() ? extractReceiptFields(ocrResult) : null;
+  const ai = extracted ? await classifyReceipt(extracted, fullText) : null;
+  const classificationFailed = extracted !== null && ai === null;
+  const reviewFlags: ReadFlag[] = [];
+  if (classificationFailed) reviewFlags.push('not_classified');
 
-  let ai: ClassificationResult | null = null;
-  let classificationFailed = false;
-  if (extracted && ocrResult?.fullText) {
-    ai = await classifyReceipt(extracted, ocrResult.fullText);
-    classificationFailed = !ai.aiCategory && !ai.aiKonto && !ai.aiZuordnung;
-  }
-
+  // Category: the model's answer, else what the text itself shows. A receipt
+  // with a table, a waiter and a tip line that the model filed elsewhere is
+  // kept as the model said and put up for a look.
   const finalCategory = ai?.aiCategory || extracted?.category || null;
+  if (ai && extracted?.mealEvidence.strong && finalCategory !== MEAL_CATEGORY) reviewFlags.push('category_doubt');
   const date = extracted?.date ?? null;
-  const meal = finalCategory === MEAL_CATEGORY ? mealFactsFromClassification(ai, ocrResult?.fullText ?? '', extracted?.vendor ?? null) : null;
+  const vendor = extracted ? chooseVendor({ vendor: extracted.vendor, confidence: extracted.vendorConfidence }, ai?.aiVendor, fullText).vendor : null;
+  const meal = finalCategory === MEAL_CATEGORY ? mealFactsFromClassification(ai, fullText, vendor) : null;
 
-  // Gross, net and tax rate. The receipt's own tax lines win; without them the
-  // rate falls back to what was read, then to a default that knows the date
-  // (restaurant food: 19 percent until the end of 2025, 7 percent from 2026).
-  const finalGross = extracted?.gross ?? null;
-  const lineNet = meal?.taxLines ? meal.taxLines.reduce((sum, l) => sum + l.net, 0) : null;
-  const finalTaxRate =
-    meal?.taxLines?.length === 1
-      ? meal.taxLines[0].rate
-      : (extracted?.taxRate ?? ai?.aiTaxRate ?? defaultTaxRate(finalCategory, date, meal?.consumption ?? null));
-  let finalNet = lineNet !== null ? Math.round(lineNet * 100) / 100 : (extracted?.net ?? null);
+  // Amounts: read again with the model's total and tax lines as a second
+  // opinion. The receipt's own arithmetic decides; what it cannot confirm is
+  // recorded for a look instead of stored as fact.
+  const amounts = extracted
+    ? readAmounts(fullText, { date, currency: extracted.currency, modelGross: ai?.aiGross ?? null, modelTaxLines: ai?.meal?.taxLines ?? null })
+    : null;
+  if (amounts?.checks.includes('total_conflict')) reviewFlags.push('total_conflict');
+  else if (amounts?.checks.includes('total_unconfirmed')) reviewFlags.push('total_unconfirmed');
+  const finalGross = amounts?.gross ?? null;
+  const finalTaxRate = amounts?.taxRate ?? ai?.aiTaxRate ?? defaultTaxRate(finalCategory, date, meal?.consumption ?? null);
+  let finalNet = amounts?.net ?? null;
   if (finalGross !== null && finalNet === null) {
     finalNet = Math.round((finalGross / (1 + finalTaxRate / 100)) * 100) / 100;
+  }
+  if (meal) {
+    // The printed tax groups and a printed tip, where the model reported none.
+    if (!meal.taxLines?.length && amounts && amounts.taxGroups.length > 0) {
+      meal.taxLines = amounts.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax }));
+    }
+    if (amounts?.tip != null) meal.tip = amounts.tip;
   }
 
   // Multi-currency: detected currency, historical FX rate (looked up live, on save),
   // and the shared/partial-business-use attribution default for this vendor.
   const currency = extracted?.currency ?? 'EUR';
   const fxRate = currency === 'EUR' ? 1 : await getFxRate(currency, date);
-  const businessSharePercent = getDefaultBusinessSharePercent(extracted?.vendor ?? null);
+  const businessSharePercent = getDefaultBusinessSharePercent(vendor);
 
   const columns = await adapter.getColumns(tableId);
   const optionId = async (columnName: string, optionName: string | null | undefined) => {
@@ -191,12 +219,13 @@ async function readReceipt(
     return (await adapter.getSelectOptions(col.id)).find((o) => o.name === optionName)?.id ?? null;
   };
 
-  const statusName = classificationFailed || !ocrResult?.fullText ? 'Pending' : 'Processed';
+  const statusName = classificationFailed || !extracted ? 'Pending' : 'Processed';
   const confidence = ocrResult?.confidence ? Math.round(ocrResult.confidence * 100) : 0;
 
   const values: Record<string, CellValue> = {
-    Name: ai?.aiName || extracted?.name || file.originalName,
-    Vendor: extracted?.vendor ?? null,
+    // A receipt nothing could be read from says so in its name instead of posing as a receipt.
+    Name: ai?.aiName || extracted?.name || (extracted ? file.originalName : `Nicht lesbar: ${file.originalName}`),
+    Vendor: vendor,
     Gross: finalGross,
     Net: finalNet,
     'Tax Rate': finalTaxRate,
@@ -208,7 +237,7 @@ async function readReceipt(
     Confidence: confidence,
     // 'Receipt Image' is a file column: the uploaded file is attached as a
     // file reference after the row exists, not via a cell value.
-    'OCR Text': ocrResult?.fullText ?? '',
+    'OCR Text': fullText,
     Currency: await optionId('Currency', currency),
     'FX Rate': fxRate,
     'Business Share %': businessSharePercent,
@@ -234,15 +263,16 @@ async function readReceipt(
     cells,
     imageColumnId: columns.find((c) => c.name === 'Receipt Image')?.id ?? null,
     category: finalCategory,
-    vendor: extracted?.vendor ?? null,
+    vendor,
     date,
     gross: finalGross,
     attention: receiptAttention({
-      ocrOk: Boolean(ocrResult?.fullText),
+      ocrOk: extracted !== null,
       confidence: ocrResult ? confidence : null,
       gross: finalGross,
       date,
     }),
+    reviewFlags,
   };
 }
 
@@ -252,6 +282,19 @@ function fileMetadata(options: ProcessReceiptOptions) {
     // Only a well-formed hash is stored; anything else from the browser is dropped.
     ...(isSha256Hex(options.sha256) ? { sha256: options.sha256 } : {}),
   };
+}
+
+/**
+ * Store what the reader could not settle, for the review list. The receipt is
+ * already saved at this point: a failure here is logged and the save stands
+ * (the facts that can be seen on the row itself are found on read anyway).
+ */
+async function storeReviewFlags(workspaceId: string, tenantId: string | null, rowId: string, read: ReadReceipt) {
+  try {
+    await recordReadFlags(prisma, { workspaceId, tenantId }, rowId, read.reviewFlags);
+  } catch (err) {
+    console.error('[processReceipt] storing the review flags failed:', err);
+  }
 }
 
 async function similarReceipt(workspaceId: string, read: ReadReceipt, rowId: string) {
@@ -292,12 +335,15 @@ export async function processReceipt(
     });
   }
 
+  await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read);
+
   return {
     rowId: row.id,
     possibleDuplicateOf: await similarReceipt(workspaceId, read, row.id),
     category: read.category,
     isMeal: read.category === MEAL_CATEGORY,
     attention: read.attention,
+    reviewFlags: read.reviewFlags,
   };
 }
 
@@ -350,12 +396,15 @@ export async function retakeReceipt(
     });
   }
 
+  await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read);
+
   return {
     rowId: row.id,
     possibleDuplicateOf: await similarReceipt(workspaceId, read, row.id),
     category: read.category,
     isMeal: read.category === MEAL_CATEGORY,
     attention: read.attention,
+    reviewFlags: read.reviewFlags,
   };
 }
 

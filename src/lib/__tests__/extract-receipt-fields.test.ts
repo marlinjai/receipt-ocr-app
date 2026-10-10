@@ -85,10 +85,13 @@ describe('extractAmounts (via extractReceiptFields)', () => {
     expect(result.net).toBe(80.00);
   });
 
-  it('falls back to largest amount when no total label', () => {
+  it('does not guess a total when the receipt names none: the largest number is not the total', () => {
+    // The old fallback took the largest amount, which on a real receipt was a
+    // receipt number read as 916,752.88.
     const ocr = makeOcr('Item A 12.50\nItem B 25.00\nItem C 8.75');
     const result = extractReceiptFields(ocr);
-    expect(result.gross).toBe(25.00);
+    expect(result.gross).toBeNull();
+    expect(result.amountChecks).toContain('total_missing');
   });
 
   it('handles currency symbol before amount', () => {
@@ -560,9 +563,10 @@ describe('name generation', () => {
     expect(result.name).toContain('3.50');
   });
 
-  it('returns "Receipt" as absolute fallback for empty/noise-only text', () => {
+  it('gives no name for empty or noise-only text: the caller names the row after its file', () => {
+    // "Receipt" as a name made an unreadable page look like a filed receipt.
     const ocr = makeOcr('   \n\n  ');
     const result = extractReceiptFields(ocr);
-    expect(result.name).toBe('Receipt');
+    expect(result.name).toBe('');
   });
 });

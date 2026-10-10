@@ -12,7 +12,7 @@ import {
   missingList,
   missingSummary,
 } from '@/lib/meals/messages';
-import { buildRegister, registerYears } from '@/lib/meals/register';
+import { buildRegister, registerYearChoices, undatedMeals } from '@/lib/meals/register';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { saveMealTaxSettings } from './actions';
 import { useReceiptActions } from './useReceiptActions';
@@ -53,12 +53,10 @@ export default function RegisterTab({
   onOpenQueue,
 }: RegisterTabProps) {
   const actions = useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint: DISMISSED_HINT });
-  const years = useMemo(() => {
-    const found = registerYears(records);
-    return found.length > 0 ? found : [new Date().getFullYear()];
-  }, [records]);
-  const [year, setYear] = useState(() => years[0]);
-  const activeYear = years.includes(year) ? year : years[0];
+  const { years, initial } = useMemo(() => registerYearChoices(records, new Date().getFullYear()), [records]);
+  const [year, setYear] = useState(() => initial);
+  const activeYear = years.includes(year) ? year : initial;
+  const undated = useMemo(() => undatedMeals(records).length, [records]);
   const register = useMemo(() => buildRegister(records, settings, activeYear), [records, settings, activeYear]);
 
   const [settingBusy, setSettingBusy] = useState(false);
@@ -225,6 +223,19 @@ export default function RegisterTab({
               <li key={w}>{w}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {undated > 0 && (
+        <div className="ui-note ui-note-warn flex flex-wrap items-center justify-between gap-3">
+          <span>
+            {undated === 1
+              ? '1 Bewirtung hat kein Datum und steht deshalb in keinem Jahr.'
+              : `${undated} Bewirtungen haben kein Datum und stehen deshalb in keinem Jahr.`}
+          </span>
+          <button type="button" className="ui-btn ui-btn-sm" onClick={onOpenQueue}>
+            Datum nachtragen
+          </button>
         </div>
       )}
 

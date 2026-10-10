@@ -10,6 +10,8 @@ import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service'
 import type { OpenCheckKind } from '@/lib/tax/types';
 import {
   addAccount,
+  answerYearBoundary,
+  declineYearBoundary,
   decideLine,
   removeLines,
   saveLines,
@@ -37,13 +39,14 @@ import {
 } from './actions';
 import LinesForm, { type LineDraft } from './LinesForm';
 import PaymentsTab from './PaymentsTab';
+import YearBoundaryTab from './YearBoundaryTab';
 import type { ImportResult } from '@/lib/tax/payments/service';
 import RevenueTab from './RevenueTab';
 import VatTab from './VatTab';
 import AssetsTab, { type AssetDraft, type DisposalDraft } from './AssetsTab';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 
-type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'vendors';
+type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'boundary' | 'vendors';
 
 /** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
 const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
@@ -172,6 +175,8 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
     { key: 'payments', label: 'Zahlungen', count: view.payments.open.length + view.payments.unclassified.length },
     { key: 'assets', label: 'Anlagen', count: view.assets.length },
     { key: 'vat', label: 'Umsatzsteuer' },
+    // Only when the year has a payment in the ten-day window; the count is what is not answered yet.
+    ...(view.yearBoundary.length > 0 ? [{ key: 'boundary' as const, label: 'Jahreswechsel', count: view.yearBoundary.filter((e) => e.answer === null && e.inactive === null).length }] : []),
     { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length },
   ];
 
@@ -384,7 +389,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                               </span>
                             </span>
                             <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>
-                              {formatDay(item.date)} ·{' '}
+                              {dayText(item)} ·{' '}
                               {item.checks
                                 .filter((c) => c.blocking && !WORKSPACE_CHECKS.includes(c.kind))
                                 .map((c) => CHECK_LABELS[c.kind])
@@ -514,7 +519,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                                             {item.vendor || item.label}
                                             {item.lineDescription && item.vendor ? `: ${item.lineDescription}` : ''}
                                             <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                                              {formatDay(item.date)} · {allocationText(item)}
+                                              {dayText(item)} · {allocationText(item)}
                                               {item.allocationOrigin ? ` (${ORIGIN_LABELS[item.allocationOrigin]})` : ''}
                                               {item.checks.some((c) => c.kind === 'amount_estimated') ? ' · Betrag geschätzt' : ''}
                                             </span>
@@ -684,6 +689,30 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
             />
           )}
 
+          {tab === 'boundary' && (
+            <YearBoundaryTab
+              view={view}
+              busy={pending}
+              error={error}
+              onAnswer={(entry, belongsToOtherYear) =>
+                run(
+                  () => answerYearBoundary(view.year, { kind: entry.kind, subjectId: entry.subjectId, cashDay: entry.cashDay, belongsToOtherYear }),
+                  belongsToOtherYear === null ? `${entry.label}: Antwort zurückgenommen.` : belongsToOtherYear ? `${entry.label}: zählt für ${entry.otherYear}.` : `${entry.label}: bleibt in ${entry.cashDay.slice(0, 4)}.`,
+                )
+              }
+              onDeclineOpen={() =>
+                run(
+                  () =>
+                    declineYearBoundary(
+                      view.year,
+                      view.yearBoundary.filter((e) => e.answer === null && e.inactive === null).map((e) => ({ kind: e.kind, subjectId: e.subjectId, cashDay: e.cashDay })),
+                    ),
+                  'Alle offenen Zahlungen bleiben in dem Jahr, in dem sie gezahlt wurden.',
+                )
+              }
+            />
+          )}
+
           {tab === 'assets' && (
             <AssetsTab
               // Coming from the queue with a receipt opens a fresh form for it.
@@ -746,13 +775,19 @@ function ItemHeader({ item }: { item: StatementItem }) {
       </h2>
       <p className="mb-4 mt-1 text-xs" style={{ color: 'var(--muted)' }}>
         {item.vendor ? `${item.vendor} · ` : ''}
-        {formatDay(item.date)}
+        {dayText(item)}
         {item.amountCents !== null ? ` · ${euro(item.amountCents)}` : ''}
         {item.currency !== 'EUR' && item.gross !== null ? ` (${item.gross.toFixed(2).replace('.', ',')} ${item.currency})` : ''}
         {item.category ? ` · ${item.category}` : ''}
       </p>
     </>
   );
+}
+
+/** The day an item counts on; for one the ten-day rule moved, the day it was really paid and the year it counts in. */
+function dayText(item: StatementItem): string {
+  if (item.paidOn && item.date) return `gezahlt ${formatDay(item.paidOn)}, zählt für ${item.date.slice(0, 4)} (Jahreswechsel)`;
+  return formatDay(item.date);
 }
 
 /** The way into splitting a receipt, or into changing its split, under a treatment form. */

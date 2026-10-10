@@ -37,6 +37,11 @@ export interface ReceiptFacts {
    * taken off the document's amount, which stays on the document's day.
    */
   refundedCents?: number;
+  /**
+   * Set when a person confirmed the ten-day rule for this receipt (see
+   * `year-boundary.ts`): the day it counts on instead of the day it was paid.
+   */
+  countsOnDay?: string | null;
   /** The receipt's lines, when it was split. */
   lines?: ReceiptLine[];
 }
@@ -127,6 +132,10 @@ export function resolveItem(
   const key = vendorKey(record.vendor);
   const rule = ruleInForce(vendorRules, key, record.date);
   const meal = mealFact(record, settings);
+  const cashDay = paid ? paid.day : record.date;
+  // The ten-day rule moves the year a recurring payment counts in, nothing
+  // else. A meal is never moved: the meal register lists it by its own day.
+  const countsOn = meal === null && cashDay !== null ? (facts.countsOnDay ?? null) : null;
   const base = {
     id: record.rowId,
     label: record.name || record.vendor || 'Beleg ohne Namen',
@@ -134,12 +143,13 @@ export function resolveItem(
     // Cash basis: with a linked payment the receipt counts on the payment's day
     // and with the euro amount the bank charged (which settles a foreign-currency
     // receipt for good); until then on its own day and amount.
-    date: paid ? paid.day : record.date,
-    dateBasis: paid ? ('payment' as const) : ('document' as const),
+    date: countsOn ?? cashDay,
+    dateBasis: countsOn ? ('year_boundary' as const) : paid ? ('payment' as const) : ('document' as const),
+    ...(countsOn ? { vatDate: cashDay } : {}),
     ...(paid ? { amountCents: paid.cents, amountBasis: 'payment' as const } : document),
     netCents: paid ? netOfPaid(record, paid.cents) : refunded > 0 && document.amountCents !== null ? netOfPaid(record, document.amountCents) : netOf(record),
     // The status on the receipt's own date: a later change leaves earlier receipts alone.
-    smallBusiness: smallBusinessOn(settings, paid ? paid.day : record.date),
+    smallBusiness: smallBusinessOn(settings, cashDay),
   };
 
   // A row the meal register judges is treated by the register alone: its line

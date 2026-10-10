@@ -194,20 +194,30 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
       checks.push(check);
       continue;
     }
-    if (yearOf(item.date) !== facts.year) continue;
+    // The ten-day rule moves the year an item counts in for income tax. Its
+    // input tax stays in the advance return period of the day it was paid, so
+    // an item can belong to this year for one purpose and not for the other.
+    const vatDay = item.vatDate ?? item.date;
+    const inYear = yearOf(item.date) === facts.year;
+    const vatInYear = yearOf(vatDay) === facts.year;
+    if (!inYear && !vatInYear) continue;
 
     const result = computeItem(item, rules.assets);
-    items.push(result);
-    checks.push(...result.checks);
+    if (inYear) {
+      items.push(result);
+      checks.push(...result.checks);
+    }
 
     for (const part of result.parts) {
       // A fully refunded purchase contributes nothing and opens no line.
       if (part.cents === 0 && part.nonDeductibleCents === 0) continue;
-      const line = lineFor(part.lineKey);
-      line.cents += part.cents;
-      line.nonDeductibleCents += part.nonDeductibleCents;
-      if (!line.itemIds.includes(item.id)) line.itemIds.push(item.id);
-      if (part.lineKey === INPUT_VAT_LINE) inputVatEvents.push({ date: item.date, cents: part.cents, source: 'item', id: item.id });
+      if (inYear) {
+        const line = lineFor(part.lineKey);
+        line.cents += part.cents;
+        line.nonDeductibleCents += part.nonDeductibleCents;
+        if (!line.itemIds.includes(item.id)) line.itemIds.push(item.id);
+      }
+      if (part.lineKey === INPUT_VAT_LINE && vatInYear) inputVatEvents.push({ date: vatDay, cents: part.cents, source: 'item', id: item.id });
     }
   }
 

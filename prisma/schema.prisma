@@ -499,6 +499,28 @@ model TaxVatSettlement {
   @@map("tax_vat_settlements")
 }
 
+// The ten-day rule at the turn of the year (section 11 of the income tax act):
+// a regularly recurring payment made between 22 December and 10 January counts
+// for the year it belongs to, not the year it was paid in. A person answers per
+// payment. `subjectKind` is 'receipt' (`subjectId` is the row id, no foreign
+// key, see meal_guests.row_id) or 'vat_settlement'. `cashDay` is the payment
+// day the answer was given for: when that day changes, the answer no longer
+// applies and the question is asked again.
+model TaxYearBoundaryAnswer {
+  id                 String   @id @default(uuid())
+  authWorkspaceId    String   @map("auth_workspace_id")
+  authTenantId       String?  @map("auth_tenant_id")
+  subjectKind        String   @map("subject_kind")
+  subjectId          String   @map("subject_id")
+  cashDay            String   @map("cash_day")
+  belongsToOtherYear Boolean  @map("belongs_to_other_year")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, subjectKind, subjectId])
+  @@map("tax_year_boundary_answers")
+}
+
 // ── Payments ─────────────────────────────────────────────────────────────────
 //
 // Booked movements on the owner's accounts, imported from export files (and

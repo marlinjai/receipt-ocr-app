@@ -115,7 +115,7 @@ export default function VatTab({ view, busy, error, onStatusChange, onRemoveStat
           <ul className="mt-3 space-y-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
             {view.vat.settlements.map((s) => (
               <li key={s.id} className="flex flex-wrap items-baseline justify-between gap-2">
-                <span>{formatDay(s.date)}: {s.direction === 'paid' ? 'gezahlt' : 'erstattet'} {euro(s.cents)}</span>
+                <span>{formatDay(s.date)}: {s.direction === 'paid' ? 'gezahlt' : 'erstattet'} {euro(s.cents)}{s.countsOn ? ` (zählt für ${s.countsOn.slice(0, 4)}, Jahreswechsel)` : ''}</span>
                 <button type="button" className="ui-btn ui-btn-sm ui-btn-danger" disabled={busy} onClick={() => onRemoveSettlement(s.id)}>Löschen</button>
               </li>
             ))}
@@ -207,7 +207,7 @@ export default function VatTab({ view, busy, error, onStatusChange, onRemoveStat
               <ul className="mt-3 space-y-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
                 {view.vat.settlements.map((s) => (
                   <li key={s.id} className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span>{formatDay(s.date)}: {s.direction === 'paid' ? 'gezahlt' : 'erstattet'} {euro(s.cents)}</span>
+                    <span>{formatDay(s.date)}: {s.direction === 'paid' ? 'gezahlt' : 'erstattet'} {euro(s.cents)}{s.countsOn ? ` (zählt für ${s.countsOn.slice(0, 4)}, Jahreswechsel)` : ''}</span>
                     <button type="button" className="ui-btn ui-btn-sm ui-btn-danger" disabled={busy} onClick={() => onRemoveSettlement(s.id)}>Löschen</button>
                   </li>
                 ))}

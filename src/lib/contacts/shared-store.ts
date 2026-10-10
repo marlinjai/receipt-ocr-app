@@ -131,6 +131,9 @@ export class SharedContactStore implements ContactStore {
           city: current.city,
           country: current.country,
           vatId: current.vatId,
+          // Part of the full record: left out, it would be wiped. Custom field
+          // values are a patch in the package, so leaving them out keeps them.
+          preferredContact: current.preferredContact,
         },
         { expectedVersion: current.version },
       );

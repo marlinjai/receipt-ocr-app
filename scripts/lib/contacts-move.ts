@@ -145,6 +145,7 @@ function fullRecord(c: SharedContact, note: string | null) {
     city: c.city,
     country: c.country,
     vatId: c.vatId,
+    preferredContact: c.preferredContact,
   };
 }
 

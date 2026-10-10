@@ -5,8 +5,12 @@ import {
   type Contact as SharedContact,
   type ContactInput as SharedInput,
   type Contacts,
+  type FieldDefinition,
+  type FieldValues,
+  type PreferredContact,
 } from '@marlinjai/contacts-core';
 import type { PrismaClient } from '@prisma/client';
+import { companyHasExport, settleGuestCopies } from '../erasure';
 
 /**
  * The company's directory: persons and organizations, their links, merges,
@@ -37,10 +41,23 @@ export interface DirectoryContact {
   city: string | null;
   country: string | null;
   vatId: string | null;
+  /** How the contact prefers to be reached; null when not recorded. */
+  preferredContact: PreferredContact | null;
+  /** Values of the company's custom fields, by field key. */
+  customFields: FieldValues;
   /** Formatted for printing, for example "0025". Null until assigned. */
   customerNumber: string | null;
   archived: boolean;
   version: number;
+}
+
+/** A custom field the company defined, as the screen shows it. */
+export interface DirectoryField {
+  key: string;
+  label: string;
+  type: FieldDefinition['type'];
+  options: string[] | null;
+  archived: boolean;
 }
 
 export interface DirectoryInput {
@@ -58,6 +75,9 @@ export interface DirectoryInput {
   city?: string | null;
   country?: string | null;
   vatId?: string | null;
+  preferredContact?: string | null;
+  /** A PATCH: only the keys given change, and null clears a value. */
+  customFields?: Record<string, unknown>;
 }
 
 export type DirectoryErrorCode =
@@ -69,17 +89,25 @@ export type DirectoryErrorCode =
   | 'same_contact'
   | 'kind_mismatch'
   | 'customer_number_conflict'
+  | 'invalid_value'
+  | 'unknown_field'
+  | 'field_archived'
+  | 'duplicate_field'
+  | 'field_not_found'
   | 'unavailable';
 
 export class DirectoryError extends Error {
   readonly code: DirectoryErrorCode;
   /** For `duplicate`: the id of the contact that already has this identity. */
   readonly existingId?: string;
-  constructor(code: DirectoryErrorCode, existingId?: string) {
+  /** The input or custom field key the error is about, when the package names one. */
+  readonly field?: string;
+  constructor(code: DirectoryErrorCode, existingId?: string, field?: string) {
     super(code);
     this.name = 'DirectoryError';
     this.code = code;
     this.existingId = existingId;
+    this.field = field;
   }
 }
 
@@ -94,6 +122,11 @@ const SHARED_TO_DIRECTORY: Record<string, DirectoryErrorCode> = {
   not_organization: 'not_organization',
   merge_kind_mismatch: 'kind_mismatch',
   customer_number_conflict: 'customer_number_conflict',
+  invalid_value: 'invalid_value',
+  unknown_field: 'unknown_field',
+  field_archived: 'field_archived',
+  duplicate_field: 'duplicate_field',
+  field_not_found: 'field_not_found',
 };
 
 /** Run one package call and turn its errors into directory errors. */
@@ -103,7 +136,7 @@ async function call<T>(fn: () => Promise<T>): Promise<T> {
   } catch (e) {
     if (e instanceof SharedError) {
       const code = SHARED_TO_DIRECTORY[e.code] ?? 'invalid';
-      throw new DirectoryError(code, e.existing?.id);
+      throw new DirectoryError(code, e.existing?.id, e.field);
     }
     throw e;
   }
@@ -132,13 +165,19 @@ async function present(contacts: Contacts, c: SharedContact): Promise<DirectoryC
     city: c.city,
     country: c.country,
     vatId: c.vatId,
+    preferredContact: c.preferredContact,
+    customFields: c.customFields,
     customerNumber: c.customerNumber === null ? null : formatCustomerNumber(c.customerNumber),
     archived: c.archived,
     version: c.version,
   };
 }
 
-/** Every field of a contact, as the package's full-record update takes it. */
+/**
+ * Every field of a contact, as the package's full-record update takes it. The
+ * preferred contact method is part of the full record and would be wiped if left
+ * out. Custom field values are a patch in the package: left out, they are kept.
+ */
 function carry(c: SharedContact): SharedInput {
   return {
     kind: c.kind,
@@ -155,6 +194,7 @@ function carry(c: SharedContact): SharedInput {
     city: c.city,
     country: c.country,
     vatId: c.vatId,
+    preferredContact: c.preferredContact,
   };
 }
 
@@ -281,12 +321,95 @@ export async function mergeDirectoryContacts(
   return { outcome, winner: await present(contacts, current!), ...repoint };
 }
 
+function presentField(d: FieldDefinition): DirectoryField {
+  return { key: d.key, label: d.label, type: d.type, options: d.options, archived: d.archived };
+}
+
+/** The company's custom fields. Archived ones only on request. */
+export async function listDirectoryFields(contacts: Contacts, options: { includeArchived?: boolean } = {}): Promise<DirectoryField[]> {
+  return (await call(() => contacts.listFields({ includeArchived: options.includeArchived === true }))).map(presentField);
+}
+
+/** Define a custom field for the company. Its key stays taken even after archiving. */
+export async function createDirectoryField(
+  contacts: Contacts,
+  input: { key: string; label: string; type: string; options?: readonly string[] | null },
+): Promise<DirectoryField> {
+  return presentField(await call(() => contacts.createField(input)));
+}
+
+/** Archive a custom field: stored values stay, new values are refused. Repeatable. */
+export async function archiveDirectoryField(contacts: Contacts, key: string): Promise<DirectoryField> {
+  return presentField(await call(() => contacts.archiveField(key)));
+}
+
+/** How many organizations the directory lists (archived ones are left out, as in the list). */
+export async function countDirectoryOrganizations(contacts: Contacts): Promise<number> {
+  return (await contacts.list({ kind: 'organization' })).length;
+}
+
+export interface ErasePreview {
+  /** False when the contact is already gone (an earlier erase finished or stopped part way). */
+  exists: boolean;
+  /** Meals that name this contact as a guest. */
+  meals: number;
+  /** What happens to the printed names on those meals: see `settleGuestCopies`. */
+  printedNames: 'removed' | 'held';
+  /** For an organization: persons linked to it. They stay, unlinked. */
+  linkedPersons: number;
+}
+
+/** What erasing this contact would do, for the confirmation step. Writes nothing. */
+export async function previewEraseContact(contacts: Contacts, db: PrismaClient, id: string): Promise<ErasePreview> {
+  const exportedContact = await contacts.exportContact(id);
+  // An id that is not a contact of THIS company is never looked up in the meals.
+  if (!exportedContact) return { exists: false, meals: 0, printedNames: 'held', linkedPersons: 0 };
+  const exported = await companyHasExport(db, contacts.tenantId);
+  const rows = await db.mealGuest.findMany({ where: { contactId: id }, select: { rowId: true }, distinct: ['rowId'] });
+  return {
+    exists: true,
+    meals: rows.length,
+    printedNames: exported ? 'removed' : 'held',
+    linkedPersons: exportedContact?.members.length ?? 0,
+  };
+}
+
+export interface EraseResult {
+  outcome: 'erased' | 'already_erased';
+  printedNamesRemoved: number;
+  printedNamesHeld: number;
+}
+
 /**
- * Erasing one contact is shown in the screen but not available yet: its printed
- * copies on meals follow the company erasure rule, which is being built on its own
- * (roadmap: "Company erasure hands over an export first"). Until then this refuses
- * and writes nothing.
+ * Erase one contact for good. Two steps, each repeatable:
+ * 1. Its printed copies on meals are settled by THE rule of the company erasure
+ *    (`settleGuestCopies` in src/lib/erasure.ts): removed when the company holds
+ *    an export, otherwise held with the link cleared.
+ * 2. The contact record is deleted. Persons linked to an erased organization
+ *    stay, unlinked (the package clears the link).
+ * A run that stopped after step 1 is completed by the next run, because the
+ * contact still exists then. Running it after completion reports `already_erased`
+ * and changes nothing more.
+ *
+ * The contact must exist in THIS company before anything is touched: the printed
+ * copies are keyed by contact id alone, so an id from another company (or a made-up
+ * one) must never reach them.
  */
-export function eraseDirectoryContact(): never {
-  throw new DirectoryError('unavailable');
+export async function eraseDirectoryContact(
+  contacts: Contacts,
+  db: PrismaClient,
+  id: string,
+  now: Date = new Date(),
+): Promise<EraseResult> {
+  if (!(await contacts.get(id))) return { outcome: 'already_erased', printedNamesRemoved: 0, printedNamesHeld: 0 };
+  const exported = await companyHasExport(db, contacts.tenantId);
+  const settled = await settleGuestCopies(db, [{ contactId: id }], exported, now);
+  const erased = await call(() => contacts.erase(id));
+  // The app's own table may still hold the same id from before the move.
+  await db.contact.deleteMany({ where: { id, authTenantId: contacts.tenantId } });
+  return {
+    outcome: erased ? 'erased' : 'already_erased',
+    printedNamesRemoved: settled.removed,
+    printedNamesHeld: settled.held,
+  };
 }

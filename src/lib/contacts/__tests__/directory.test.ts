@@ -5,7 +5,6 @@ import {
   DirectoryError,
   assignDirectoryCustomerNumber,
   createDirectoryContact,
-  eraseDirectoryContact,
   exportDirectoryContact,
   linkPerson,
   listDirectory,
@@ -27,6 +26,8 @@ function row(over: Partial<SharedContact> & { id: string; kind: 'person' | 'orga
     city: null,
     country: null,
     vatId: null,
+    preferredContact: null,
+    customFields: {},
     customerNumber: null,
     version: 1,
     archived: false,
@@ -77,6 +78,8 @@ function fakeContacts(initial: SharedContact[]) {
         city: input.city ?? null,
         country: input.country ?? null,
         vatId: input.vatId ?? null,
+        // Part of the full record in the package: left out, it is wiped.
+        preferredContact: input.preferredContact ?? null,
         version: current.version + 1,
       };
       rows.set(id, written);
@@ -270,12 +273,5 @@ describe('customer number and export', () => {
     const c = fakeContacts([row({ id: 'p1', kind: 'person', name: 'Ada' })]);
     await expect(exportDirectoryContact(c as unknown as Contacts, 'p1')).resolves.toMatchObject({ contact: { id: 'p1' } });
     await expect(exportDirectoryContact(c as unknown as Contacts, 'nope')).rejects.toMatchObject({ code: 'not_found' });
-  });
-});
-
-describe('erase: shown but not available yet', () => {
-  it('refuses and writes nothing', () => {
-    expect(() => eraseDirectoryContact()).toThrow(DirectoryError);
-    expect(() => eraseDirectoryContact()).toThrow(expect.objectContaining({ code: 'unavailable' }) as never);
   });
 });

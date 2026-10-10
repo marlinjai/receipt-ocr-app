@@ -33,9 +33,14 @@ The signed endpoint `POST /api/internal/workspace-move` does both, with a dry ru
   meal names stay, unless their ids are given in `also_contact_ids`.
 - **A guest the target already has** (same kind and identity): the contact stays in the
   source company and the guest rows of this workspace are pointed at the target's contact.
-  Printed names on meals are never changed.
+  Printed names on meals are never changed. This is done only for a plain guest. It blocks
+  the move instead when the guest belongs to an organization (the two cannot be separated),
+  when the contact was asked for in `also_contact_ids` (it has no guest row to repoint, so it
+  would silently stay behind), or when a meal already names the target's contact as well
+  (one of the two rows would have to be removed, and a move removes nothing).
 
-Reports and log lines carry counts and reason codes only, never a name.
+Reports and log lines carry counts and reason codes only, never a name. The restamp goes
+through Prisma, so `updated_at` moves on the restamped rows of the tables that have it.
 
 ## The call
 
@@ -49,7 +54,7 @@ header `x-lumitra-erasure-signature`.
 | `from_tenant_id` | The company its rows are stamped with now. |
 | `to_tenant_id` | The company that owns it after the move. |
 | `mode` | `dry_run` or `apply`. Required, there is no default. |
-| `issued_at` | Time of signing (ISO 8601). A call older or newer than five minutes is refused, so an old call cannot be replayed after a rollback. |
+| `issued_at` | Time of signing (ISO 8601). A call older or newer than five minutes is refused, so a signed call does not stay replayable. Within those five minutes it can be sent again. |
 | `also_contact_ids` | Optional. Contacts of the source company that move along although no meal names them. |
 
 | Answer | Meaning |
@@ -59,12 +64,18 @@ header `x-lumitra-erasure-signature`.
 | 401 | Signature missing or wrong, or `issued_at` outside five minutes. |
 | 409 | An apply met a blocker. Nothing was written; the report says why. |
 | 502 with `step: "rows"` | The contacts moved, the rows did not follow. Repeat the call: it finishes the move. |
-| 502 | Another failure. Read the app log for the error name. |
+| 502 | Another failure. It does not say how far the move got (a connection can drop after a write). Run `dry_run` to see what is left, then repeat the `apply`: a repeat is always safe. The app log names the error's class and code. |
 | 503 | `WORKSPACE_MOVE_SECRET` is not configured. |
 
 Blockers (`report.blocked`): `rows_of_another_company`, `contacts_not_found`,
 `contacts_refused` (the reasons are counted in `report.contacts.refused`),
-`contacts_used_by_another_workspace`, `too_many_contacts`, `changed_since_plan`.
+`guest_rows_would_fold`, `contacts_used_by_another_workspace`, `too_many_contacts`,
+`changed_since_plan`.
+
+`report.sourceConfirmed` is not a blocker but has to be read: `false` while `rows.restamp` is
+above 0 means nothing in the workspace names the source company (every row is from before
+the stamp existed and no guest lives in that company), so a mistyped `from_tenant_id` would
+go unnoticed. Check the id by hand before applying.
 
 Sign and send from a machine that has the secret in its environment, never as a command
 argument (arguments are readable by every local process). In a Claude session that means
@@ -96,9 +107,10 @@ console.log(res.status, await res.text());
 ## Order of a whole move
 
 1. A fresh backup of the receipts database and of the contacts database.
-2. `dry_run`. Read `report.blocked` (must be empty), `report.rows` and `report.contacts`.
+2. `dry_run`. Read `report.blocked` (must be empty), `report.sourceConfirmed` (must be true,
+   or the source id is checked by hand), `report.rows` and `report.contacts`.
    `contacts.sourceAfter` and `contacts.targetAfter` say how many contacts each company
-   holds afterwards.
+   holds afterwards. Note `contacts.move`: a rollback compares against it.
 3. auth-brain: move the workspace with the admin machine route `PATCH
    /api/admin/machine/workspaces` (`tenant_id`). From here the app shows the workspace under
    the target company.
@@ -112,12 +124,20 @@ under the old company. Keep that gap short.
 
 ## Rolling back
 
-Nothing is deleted by a move, so the way back is the same sequence with the companies
-swapped: move the workspace back in auth-brain, then `apply` with `from_tenant_id` and
+A move deletes nothing, so the way back is the same sequence with the companies swapped:
+move the workspace back in auth-brain, then call the endpoint with `from_tenant_id` and
 `to_tenant_id` exchanged and the same `also_contact_ids`. Guest rows that were pointed at a
 target contact are pointed back, because the source contact was left in place. Rows that
 carried no stamp before the move carry the source company's afterwards. The backups of
 step 1 are the second line.
+
+Run the swapped `dry_run` first and compare `contacts.move` with what the forward call
+moved. The swap is an exact inverse only while the workspace was not used under the new
+company: what moves is always "the contacts this workspace's meals name now". If one of the
+target company's own contacts was put on a meal of the workspace in the meantime, the swap
+would take that contact along (a larger `contacts.move`), or be refused with
+`contacts_used_by_another_workspace` when another workspace names it too. Take that guest
+off the meal first, or accept that it moves.
 
 ## What this does not do
 
@@ -125,3 +145,6 @@ step 1 are the second line.
 - It does not touch the receipt rows themselves, their files or their views: they are keyed
   by the workspace and the table, which keep their ids.
 - It does not merge contacts. An identity conflict leaves the source contact where it is.
+- It does not know about other apps. "Still named by another workspace" is checked in the
+  receipts app's own meal guest rows only. If another app of the suite stores the ids of
+  these contacts under the source company, check there before moving them.

@@ -105,6 +105,42 @@ async function scenario(opts: { realTable?: boolean } = {}) {
 const apply = (req: WorkspaceMoveRequest, client: PrismaClient = db) => moveWorkspace(client, req, { apply: true });
 const dryRun = (req: WorkspaceMoveRequest) => moveWorkspace(db, req, { apply: false });
 
+/** The real database, except that the rows transaction fails: the state after a move stopped half way. */
+function withoutRows(): PrismaClient {
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop === '$transaction') {
+        return async () => {
+          throw new Error('receipts database went away');
+        };
+      }
+      return Reflect.get(target, prop);
+    },
+  });
+}
+
+/** The real database, with `hook` run once, just before the plan's last read of the guest rows. */
+function withHookBeforeWrite(hook: () => Promise<void>): PrismaClient {
+  let ran = false;
+  const mealGuest = new Proxy(db.mealGuest, {
+    get(target, prop) {
+      if (prop !== 'count') return Reflect.get(target, prop);
+      return async (args: unknown) => {
+        if (!ran) {
+          ran = true;
+          await hook();
+        }
+        return (target.count as (a: unknown) => Promise<number>)(args);
+      };
+    },
+  });
+  return new Proxy(db, {
+    get(target, prop) {
+      return prop === 'mealGuest' ? mealGuest : Reflect.get(target, prop);
+    },
+  });
+}
+
 describe('which tables carry the company stamp', () => {
   it('the tables derived from the Prisma data model are exactly the tables that have the column', async () => {
     const rows = await db.$queryRaw<{ table_name: string }[]>`
@@ -123,12 +159,13 @@ describe('moveWorkspace: forward, dry run, repeat and back', () => {
 
     const report = await dryRun(f.req);
 
-    expect(report).toMatchObject({ dryRun: true, written: false, blocked: [] });
-    expect(report.rows).toMatchObject({ rows: 9, restamp: 9, alreadyAtTarget: 0, otherCompany: 0 });
+    expect(report).toMatchObject({ dryRun: true, written: false, blocked: [], sourceConfirmed: true });
+    // 9 rows, one of them (the notes row) from before the stamp existed.
+    expect(report.rows).toMatchObject({ rows: 9, restamp: 9, unstamped: 1, alreadyAtTarget: 0, otherCompany: 0 });
     expect(report.rows.tables.dt_tables).toMatchObject({ rows: 1, restamp: 1 });
     expect(report.rows.tables.meal_guests).toMatchObject({ rows: 2, restamp: 2 });
-    expect(report.rows.tables.workspace_notes).toMatchObject({ rows: 1, restamp: 1 });
-    expect(report.rows.tables.tax_payments).toEqual({ rows: 0, restamp: 0, alreadyAtTarget: 0, otherCompany: 0 });
+    expect(report.rows.tables.workspace_notes).toMatchObject({ rows: 1, restamp: 1, unstamped: 1 });
+    expect(report.rows.tables.tax_payments).toEqual({ rows: 0, restamp: 0, unstamped: 0, alreadyAtTarget: 0, otherCompany: 0 });
     expect(Object.keys(report.rows.tables)).toHaveLength(stampedModels().length);
     expect(report.contacts).toMatchObject({
       guests: 2,
@@ -202,18 +239,41 @@ describe('moveWorkspace: forward, dry run, repeat and back', () => {
     expect(await guestRows(f.workspaceId)).toEqual(guestsBefore);
   });
 
+  it('back after a half-finished forward: the swap returns the contacts, the rows never left', async () => {
+    const f = await scenario();
+    await expect(apply(f.req, withoutRows())).rejects.toBeInstanceOf(WorkspaceMoveIncompleteError);
+
+    const report = await apply(f.back);
+
+    expect(report).toMatchObject({ written: true, blocked: [] });
+    expect(report.rows).toMatchObject({ restamp: 1, alreadyAtTarget: 7 });
+    expect(report.contacts).toMatchObject({ move: 3 });
+    const after = await stamps(f.workspaceId);
+    for (const table of Object.keys(after)) expect(new Set(after[table]), table).toEqual(new Set([f.from]));
+    expect(Object.keys(await contactsOf(f.from)).sort()).toEqual(f.ids);
+    expect(await contactsOf(f.to)).toEqual({});
+  });
+
+  it('back after the workspace was used: the swapped dry run shows the extra contact before anything moves', async () => {
+    const f = await scenario();
+    const forward = await apply(f.req);
+    // Under the new company, one of ITS OWN contacts is put on a meal of the moved workspace.
+    const ownContact = await companyContacts(f.to).create(person('Eigener Kontakt'));
+    await addGuest(f.workspaceId, f.to, ownContact.id);
+
+    const preview = await dryRun(f.back);
+
+    // "The contacts this workspace's meals name now" includes it, so the swap would take it along.
+    // The number is the signal: more than the forward call moved.
+    expect(forward.contacts.move).toBe(3);
+    expect(preview.contacts.move).toBe(4);
+    expect(preview.blocked).toEqual([]);
+    expect(Object.keys(await contactsOf(f.to))).toContain(ownContact.id);
+  });
+
   it('resume: when the rows fail after the contacts moved, a repeat finishes the move', async () => {
     const f = await scenario();
-    const failing = new Proxy(db, {
-      get(target, prop) {
-        if (prop === '$transaction') {
-          return async () => {
-            throw new Error('receipts database went away');
-          };
-        }
-        return Reflect.get(target, prop);
-      },
-    });
+    const failing = withoutRows();
 
     await expect(apply(f.req, failing)).rejects.toBeInstanceOf(WorkspaceMoveIncompleteError);
     // Half way: the contacts are in the target company, the rows still carry the source.
@@ -316,19 +376,115 @@ describe('moveWorkspace: a guest the target company already has', () => {
   });
 });
 
+describe('moveWorkspace: a workspace that does not say where it came from', () => {
+  it('only unstamped rows and no guest: the move is allowed, and the report says the source is unconfirmed', async () => {
+    const workspaceId = `test-ws-${randomUUID()}`;
+    const to = tenant();
+    await db.workspaceNotes.create({ data: { authWorkspaceId: workspaceId, authTenantId: null, body: 'note' } });
+    const req: WorkspaceMoveRequest = { workspaceId, fromTenantId: tenant(), toTenantId: to, alsoContactIds: [] };
+
+    const preview = await dryRun(req);
+    expect(preview).toMatchObject({ blocked: [], sourceConfirmed: false });
+    expect(preview.rows).toMatchObject({ rows: 1, restamp: 1, unstamped: 1 });
+
+    const report = await apply(req);
+    expect(report).toMatchObject({ written: true, blocked: [], sourceConfirmed: false });
+    expect(await stamps(workspaceId)).toEqual({ workspace_notes: [to] });
+  });
+});
+
 describe('moveWorkspace: blockers write nothing', () => {
-  /** Runs a dry run and an apply, and asserts both name the blocker and neither wrote. */
+  /** Runs a dry run and an apply, and asserts both name the blocker and neither wrote: no stamp, no contact, no guest row. */
   async function expectBlocked(workspaceId: string, req: WorkspaceMoveRequest, blocker: string) {
-    const before = { stamps: await stamps(workspaceId), from: await contactsOf(req.fromTenantId), to: await contactsOf(req.toTenantId) };
+    const before = {
+      stamps: await stamps(workspaceId),
+      guests: await guestRows(workspaceId),
+      from: await contactsOf(req.fromTenantId),
+      to: await contactsOf(req.toTenantId),
+    };
     const preview = await dryRun(req);
     const attempt = await apply(req);
     expect(preview.blocked).toEqual([blocker]);
     expect(attempt).toMatchObject({ dryRun: false, written: false, blocked: [blocker] });
     expect(await stamps(workspaceId)).toEqual(before.stamps);
+    expect(await guestRows(workspaceId)).toEqual(before.guests);
     expect(await contactsOf(req.fromTenantId)).toEqual(before.from);
     expect(await contactsOf(req.toTenantId)).toEqual(before.to);
     return attempt;
   }
+
+  /** A workspace with one guest the target company already has under the same identity. */
+  async function conflictScenario() {
+    const workspaceId = `test-ws-${randomUUID()}`;
+    const from = tenant();
+    const to = tenant();
+    const same = person('Doppelt');
+    const inSource = await companyContacts(from).create(same);
+    const inTarget = await companyContacts(to).create(same);
+    const rowId = await addGuest(workspaceId, from, inSource.id);
+    const req: WorkspaceMoveRequest = { workspaceId, fromTenantId: from, toTenantId: to, alsoContactIds: [] };
+    return { workspaceId, from, to, req, inSource, inTarget, rowId };
+  }
+
+  it('a pending repoint is not carried out when something else blocks', async () => {
+    const c = await conflictScenario();
+    await db.taxAccount.create({ data: { authWorkspaceId: c.workspaceId, authTenantId: tenant(), label: 'Fremd', kind: 'bank' } });
+    const attempt = await expectBlocked(c.workspaceId, c.req, 'rows_of_another_company');
+    expect(attempt.contacts).toMatchObject({ identityConflicts: 1, guestRowsRepointed: 1 });
+    expect((await guestRows(c.workspaceId))[0].contactId).toBe(c.inSource.id);
+  });
+
+  it('a meal that names both the guest and the target\u2019s contact of the same person: no row is removed', async () => {
+    const c = await conflictScenario();
+    // The same meal already lists the target company's contact.
+    await db.mealGuest.create({
+      data: { authWorkspaceId: c.workspaceId, authTenantId: c.from, rowId: c.rowId, contactId: c.inTarget.id, position: 1, displayName: 'Printed Name', displayCompany: 'Printed Co' },
+    });
+    const attempt = await expectBlocked(c.workspaceId, c.req, 'guest_rows_would_fold');
+    expect(attempt.contacts).toMatchObject({ identityConflicts: 1, guestRowsRepointed: 0, guestRowsFolded: 1 });
+    expect(await guestRows(c.workspaceId)).toHaveLength(2);
+  });
+
+  it('a contact asked for by id that the target already has: it would stay behind, so the move is refused', async () => {
+    const f = await scenario();
+    const unplaced = await companyContacts(f.from).get(f.req.alsoContactIds[0]);
+    await companyContacts(f.to).create({ name: unplaced!.name });
+    const attempt = await expectBlocked(f.workspaceId, f.req, 'contacts_refused');
+    expect(attempt.contacts).toMatchObject({ move: 0, identityConflicts: 0, refused: { identity_conflict: 1 } });
+  });
+
+  it('a guest the target already has who belongs to an organization: refused, not repointed', async () => {
+    const workspaceId = `test-ws-${randomUUID()}`;
+    const from = tenant();
+    const to = tenant();
+    const same = person('Doppelt');
+    const organization = await companyContacts(from).create({ kind: 'organization', name: `Firma ${randomUUID().slice(0, 8)}` });
+    const guest = await companyContacts(from).create({ ...same, organizationId: organization.id });
+    await companyContacts(to).create(same);
+    await addGuest(workspaceId, from, guest.id);
+    const req: WorkspaceMoveRequest = { workspaceId, fromTenantId: from, toTenantId: to, alsoContactIds: [] };
+    const attempt = await expectBlocked(workspaceId, req, 'contacts_refused');
+    // The guest's own conflict is resolvable, its organization cannot move without it.
+    expect(attempt.contacts).toMatchObject({ move: 0, identityConflicts: 1, refused: { linked_persons_not_transferred: 1 } });
+  });
+
+  it('contacts that change between the check and the write: the transfer refuses, and no row is touched', async () => {
+    const f = await scenario();
+    const before = { stamps: await stamps(f.workspaceId), guests: await guestRows(f.workspaceId), from: await contactsOf(f.from) };
+    // After the plan's preview, the target company gains a contact with the identity of one that is about to move.
+    const moving = await companyContacts(f.from).get(f.ids[0]);
+    const racing = withHookBeforeWrite(async () => {
+      await companyContacts(f.to).create({ name: moving!.name });
+    });
+
+    const attempt = await apply(f.req, racing);
+
+    expect(attempt).toMatchObject({ dryRun: false, written: false, blocked: ['changed_since_plan'] });
+    expect(attempt.contacts).toMatchObject({ move: 0 });
+    expect(await stamps(f.workspaceId)).toEqual(before.stamps);
+    expect(await guestRows(f.workspaceId)).toEqual(before.guests);
+    expect(await contactsOf(f.from)).toEqual(before.from);
+  });
 
   it('a row stamped with a third company: the source company given is not the workspace’s', async () => {
     const f = await scenario();

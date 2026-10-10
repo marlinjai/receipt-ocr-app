@@ -158,6 +158,14 @@
   the order of the plan. Plan: `docs/plans/2026-10-10-business-receipts-to-whiz-art-media.md`.
   (2026-10-10)
 
+- [ ] Remove what the retired empty Whiz-Art Media workspace leaves in the receipts database.
+  Workspace `01a12296-b963-7018-8857-5e76ffe01c87` was created empty on 2026-10-09 and is retired
+  in auth-brain when the business receipts move (plan
+  `docs/plans/2026-10-10-business-receipts-to-whiz-art-media.md`). A visit created a Receipts
+  table with 0 receipts and one tax settings row for it; nothing reads them once the workspace is
+  retired. Removing them is a delete on production and waits for the move to be done and
+  verified. (2026-10-10)
+
 ## In Progress
 
 <!-- Currently being implemented -->

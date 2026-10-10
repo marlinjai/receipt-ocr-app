@@ -162,7 +162,6 @@ function fakeDb(guests: Guest[], exportHash?: string | null) {
   };
   const db = {
     companyExport: { findFirst: vi.fn(async () => (state.exportHash === undefined ? null : { registerSha256: state.exportHash })) },
-    contact: { deleteMany: vi.fn(async () => ({ count: 0 })) },
     mealGuest: {
       findMany: vi.fn(async ({ where }: { where: { contactId: string | { in: string[] } } }) =>
         rows.filter((r) => (typeof where.contactId === 'string' ? r.contactId === where.contactId : where.contactId.in.includes(r.contactId ?? ''))).map((r) => ({ ...r })),

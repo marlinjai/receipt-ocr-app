@@ -123,6 +123,11 @@
   hash), and held in every other case, including an export taken before a later meal or
   correction. The export now also lists every printed guest name, so names on incomplete
   meals are part of it. Done 2026-10-10. (2026-10-10)
+- [ ] Remove the app's own contacts table and the store switch (wave 4 of the shared contact
+  list). Prepared and held on 2026-10-10: the pull request carries the `hold` label and waits for
+  Marlin's word. Merging it deploys by itself and drops the table `contacts` in the production
+  receipts database (4 stale rows, copied to the shared contacts database on 2026-10-09), which
+  only a backup can undo. Plan: `docs/plans/2026-10-10-remove-own-contacts-table.md`. (2026-10-10)
 - [ ] Business data belongs under the company Whiz-Art Media, which has the receipts grant, a
   workspace and its imported customers, while the business meal register and its guests still sit
   under the company marlinjai. Moving the register is a production data move: write the plan first,

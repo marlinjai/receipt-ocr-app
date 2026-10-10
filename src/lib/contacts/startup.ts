@@ -1,13 +1,16 @@
 import 'server-only';
 import { migrate, type ContactsDb } from '@marlinjai/contacts-core';
-import { contactsDb, sharedContactsEnabled } from './db';
+import { contactsDb } from './db';
 
-export type ContactsStartupOutcome = 'off' | 'ready' | 'unreachable';
+export type ContactsStartupOutcome = 'ready' | 'unreachable';
 
 /**
  * Runs once when the server starts (src/instrumentation.ts), before it serves.
+ * The shared contacts database is the only contact store, so this always runs.
  *
- * - Switch off: nothing runs; the app keeps using its own contacts table.
+ * - Not configured (`CONTACTS_DATABASE_URL` missing): the error propagates and
+ *   the start stops. There is no other store to fall back to, so a server that
+ *   started anyway would fail on every contact request instead.
  * - Database unreachable: logged and the server starts anyway. The contact tab
  *   and the guest picker show an error with a retry, and the meal register and
  *   its exports keep working from the printed copies. The layout is applied at
@@ -20,10 +23,8 @@ export type ContactsStartupOutcome = 'off' | 'ready' | 'unreachable';
  * error's name, never its message, because a connection error can echo the host.
  */
 export async function runContactsStartup(
-  deps: { enabled?: boolean; handle?: ContactsDb; log?: (line: string) => void } = {},
+  deps: { handle?: ContactsDb; log?: (line: string) => void } = {},
 ): Promise<ContactsStartupOutcome> {
-  const enabled = deps.enabled ?? sharedContactsEnabled();
-  if (!enabled) return 'off';
   const handle = deps.handle ?? contactsDb();
   const log = deps.log ?? ((line: string) => console.log(line));
 

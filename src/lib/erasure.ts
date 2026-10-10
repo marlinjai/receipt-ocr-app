@@ -11,13 +11,8 @@ import { verifyErasureSignature } from './erasure-signature';
  * What it removes, for the company (tenant) and the workspaces auth-brain names:
  * - the printed guest copies on meals (`meal_guests`), by company, by workspace
  *   and by contact id (the id catches rows written before the company was filled);
- * - the app's own `contacts` table (kept until the clean-up wave removes it);
  * - the company's contacts and its customer-number counter in the suite's shared
- *   contacts database, when `CONTACTS_DATABASE_URL` is set.
- *
- * The shared step runs whenever the database is configured, NOT only when
- * `CONTACTS_STORE=shared`: the data move writes into that database while the
- * switch is still off, so erasure has to reach it either way.
+ *   contacts database, the only contact store.
  *
  * It is repeat-safe: a second run finds nothing and removes nothing more.
  *
@@ -31,7 +26,6 @@ export interface ErasureCounts {
   guestCopies: number;
   /** Printed guest copies kept until `RETENTION_YEARS` have passed (no export that covers them). */
   guestCopiesHeld: number;
-  ownContacts: number;
   sharedContacts: number;
   /** Why the printed copies were removed or held. A code, never a name. */
   exportCoverage: ExportCoverageReason;
@@ -150,7 +144,7 @@ export async function settleGuestCopies(
 /**
  * Erase one company's contact data. Order and rules:
  *
- * 1. The contacts (app table and shared database) are removed, and so are the
+ * 1. The contacts (in the shared contacts database) are removed, and so are the
  *    links from meals to them. Those links are not records the business must keep.
  * 2. The printed guest copies on meals (name and company as printed on the
  *    register) are the one tax-relevant part. They are removed only when the
@@ -169,13 +163,13 @@ export async function eraseCompanyContacts(
   now: Date = new Date(),
   hasher?: RegisterHasher,
 ): Promise<ErasureCounts> {
-  // The shared step needs the layout. Start-up applies it only while the switch
-  // is on, so apply it here too: migrate() is idempotent under a lock, and without
-  // it an older database would fail every retry of this delivery.
-  const configured = Boolean(process.env.CONTACTS_DATABASE_URL?.trim());
-  if (configured) await migrate(contactsDb().sql);
-  const shared = configured ? companyContacts(tenantId) : null;
-  const sharedIds = shared ? (await shared.list({ includeArchived: true })).map((c) => c.id) : [];
+  // Start-up applies the layout, but it continues when the database is unreachable
+  // then. migrate() is idempotent under a lock, so apply it here too: without it a
+  // database that came up later would fail every retry of this delivery. A missing
+  // CONTACTS_DATABASE_URL throws here, which answers 502 and makes auth-brain retry.
+  await migrate(contactsDb().sql);
+  const shared = companyContacts(tenantId);
+  const sharedIds = (await shared.list({ includeArchived: true })).map((c) => c.id);
 
   const workspaceScope = workspaceIds.length > 0 ? [{ authWorkspaceId: { in: [...workspaceIds] } }] : [];
   const scope = [{ authTenantId: tenantId }, ...workspaceScope, ...(sharedIds.length > 0 ? [{ contactId: { in: sharedIds } }] : [])];
@@ -183,15 +177,11 @@ export async function eraseCompanyContacts(
   const coverage = await exportCoversRegister(db, tenantId, workspaceIds, hasher);
   const { removed: guestCopies, held: guestCopiesHeld } = await settleGuestCopies(db, scope, coverage.covered, now);
 
-  const ownContacts = await db.contact.deleteMany({
-    where: { OR: [{ authTenantId: tenantId }, ...workspaceScope] },
-  });
-  const sharedRemoved = shared ? await shared.eraseAll() : 0;
+  const sharedRemoved = await shared.eraseAll();
 
   return {
     guestCopies,
     guestCopiesHeld,
-    ownContacts: ownContacts.count,
     sharedContacts: sharedRemoved,
     exportCoverage: coverage.reason,
   };
@@ -261,7 +251,7 @@ export async function receiveErasureDelivery(input: {
   try {
     const counts = await input.erase(tenantId, workspaceIds);
     log(
-      `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld} (export coverage: ${counts.exportCoverage}), ${counts.ownContacts} own contacts, ${counts.sharedContacts} shared contacts`,
+      `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld} (export coverage: ${counts.exportCoverage}), ${counts.sharedContacts} contacts`,
     );
     return { status: 200, body: { ok: true, erased: counts } };
   } catch (e) {

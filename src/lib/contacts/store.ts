@@ -1,12 +1,11 @@
 /**
  * The contact list behind the business-meal register.
  *
- * THE SEAM. Everything that reads or writes contacts goes through the
- * `ContactStore` interface below. Two implementations exist: the app's own
- * `contacts` table (prisma-store.ts, the default) and the suite's shared
- * contacts database (shared-store.ts, behind the `CONTACTS_STORE=shared`
- * switch). Meals hold a contact id plus a printed copy of name and company,
- * so neither implementation changes meals, rules, register or export.
+ * THE SEAM. Everything in the meal register that reads or writes contacts goes
+ * through the `ContactStore` interface below. Its one implementation is the
+ * suite's shared contacts database (shared-store.ts), scoped to the company.
+ * Meals hold a contact id plus a printed copy of name and company, so the
+ * register, its rules and its export never read the contact itself.
  *
  * This file is pure (types, validation, errors) and safe to import anywhere.
  */

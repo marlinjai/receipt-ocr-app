@@ -25,3 +25,8 @@ process.env.DATABASE_URL = receiptsUrl;
 
 // The shared contacts client reads this when a test first opens it.
 process.env.CONTACTS_DATABASE_URL = localUrl('CONTACTS_TEST_DATABASE_URL');
+
+// The shared contacts database is the app's only contact store, so every database
+// test that touches a guest needs its layout. Applying it is idempotent under a lock.
+const { ensureContactsLayout } = await import('./contacts-db');
+await ensureContactsLayout();

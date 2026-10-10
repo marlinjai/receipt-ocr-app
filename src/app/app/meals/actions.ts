@@ -4,7 +4,7 @@ import type { AppSession } from '@marlinjai/auth-brain-nextjs';
 import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession, requireRowAccess } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
-import { companyContacts, sharedContactsEnabled } from '@/lib/contacts/db';
+import { companyContacts } from '@/lib/contacts/db';
 import { countDirectoryOrganizations } from '@/lib/contacts/directory';
 import { ContactError, type Contact, type ContactInput } from '@/lib/contacts/store';
 import { normalizeRowIds, type MealBatchResult } from '@/lib/meals/batch';
@@ -89,13 +89,9 @@ function readContext(session: AppSession): string {
   return sessionWorkspaceId(session);
 }
 
-/**
- * The company a contact READ is scoped to. Only the shared store needs it, so
- * with the switch off the register reads the app's own table exactly as before,
- * and a workspace without a company on its membership cannot break the page.
- */
+/** The company a contact read is scoped to. Fails closed like the writes do. */
 function contactReadTenant(session: AppSession, workspaceId: string): string | null {
-  return sharedContactsEnabled() ? requireSessionTenantId(session, workspaceId) : null;
+  return requireSessionTenantId(session, workspaceId);
 }
 
 async function writeContext(): Promise<MealContext> {

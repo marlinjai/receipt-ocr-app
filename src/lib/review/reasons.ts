@@ -23,6 +23,8 @@ export type ReviewReason =
   | 'amount_missing'
   | 'date_missing'
   | 'vendor_missing'
+  /** Nobody has said who bears the cost: business, university or private. */
+  | 'assignment_missing'
   /** A tax rate outside anything a receipt can carry, or a net amount above the total. */
   | 'tax_implausible'
   /** Another receipt of the same day and total from the same vendor. */
@@ -51,6 +53,17 @@ export interface ReviewSnapshot {
   hasFile: boolean;
   /** Content hashes of the attached files, where known. */
   fileHashes: string[];
+  /**
+   * The assignment ("Zuordnung") as stored, null when its cell is empty.
+   * Left out when the table has no such column: there is nothing to answer.
+   */
+  assignment?: string | null;
+  /**
+   * True when something else already says who bears the cost, so that the tax
+   * side never looks at the assignment: the meal register (a business meal),
+   * a tax decision on the receipt or on each of its lines, a rule for its vendor.
+   */
+  assignmentSettled?: boolean;
 }
 
 /** No tax rate of a real receipt is above this (the highest standard rate in the European Union is 27 percent). */
@@ -64,6 +77,10 @@ export function derivedReasons(s: ReviewSnapshot): ReviewReason[] {
   if (s.gross === null || !(s.gross > 0)) out.push('amount_missing');
   if (!s.date) out.push('date_missing');
   if (!s.vendor.trim()) out.push('vendor_missing');
+  // An empty assignment is an open check on the tax side (legacyAllocations
+  // returns null for it). It is one here too, so that it is answered where
+  // receipts are looked at and not first found in the statement.
+  if (s.assignment === null && !s.assignmentSettled) out.push('assignment_missing');
   const rateOff = s.taxRate !== null && (s.taxRate < 0 || s.taxRate > HIGHEST_REAL_RATE);
   const netOff = s.net !== null && s.gross !== null && s.gross > 0 && s.net > s.gross + 0.005;
   if (rateOff || netOff) out.push('tax_implausible');
@@ -155,6 +172,7 @@ export const REASON_TEXT: Record<ReviewReason, string> = {
   amount_missing: 'Betrag fehlt.',
   date_missing: 'Datum fehlt.',
   vendor_missing: 'Händler fehlt.',
+  assignment_missing: 'Zuordnung fehlt: geschäftlich, Universität oder privat?',
   tax_implausible: 'Steuersatz oder Nettobetrag passt nicht zum Gesamtbetrag.',
   not_classified: 'Nicht automatisch eingeordnet: Kategorie und Zuordnung bitte prüfen.',
   total_unconfirmed: 'Gesamtbetrag nur vom Etikett gelesen, ohne Gegenprobe über die Steuerzeilen.',

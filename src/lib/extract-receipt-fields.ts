@@ -3,6 +3,7 @@ import { CATEGORY_TO_KONTO } from '@/lib/receipts-constants';
 import { defaultTaxRate } from '@/lib/meals/classify';
 import { MEAL_CATEGORY } from '@/lib/receipts-constants';
 import { readAmounts, type AmountCheck, type TaxGroup } from '@/lib/extraction/amounts';
+import { readDate } from '@/lib/extraction/date';
 import { mealEvidence, type MealEvidence } from '@/lib/extraction/meal-evidence';
 import { readVendor, type VendorConfidence } from '@/lib/extraction/vendor';
 
@@ -63,89 +64,6 @@ function extractCurrency(text: string): { currency: string; shown: boolean } {
   if (dollarCount >= euroCount && dollarCount >= poundCount) return { currency: 'USD', shown: kinds === 1 };
   if (poundCount >= euroCount) return { currency: 'GBP', shown: kinds === 1 };
   return { currency: 'EUR', shown: kinds === 1 };
-}
-
-// ── Date Extraction ──────────────────────────────────────────────────
-
-const EXPIRY_KEYWORDS = /\b(?:exp|expir|valid\s*thru|valid\s*through|card|cvv|cvc)\b/i;
-const LABELED_DATE = /(?:date|invoice\s+date|transaction\s+date|receipt\s+date)\s*[:\-]\s*/i;
-
-const ISO_DATE = /(\d{4})-(\d{2})-(\d{2})/;
-const US_DATE_SLASH = /(\d{1,2})\/(\d{1,2})\/(\d{2,4})/;
-const EU_DATE_DOT = /(\d{1,2})\.(\d{1,2})\.(\d{2,4})/;
-const NAMED_MONTH = /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[,.]?\s+(\d{2,4})/i;
-const NAMED_MONTH_FIRST = /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[.]?\s+(\d{1,2})[,.]?\s+(\d{2,4})/i;
-
-const MONTH_MAP: Record<string, number> = {
-  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
-};
-
-function normalizeYear(y: number): number {
-  if (y < 100) return y + 2000;
-  return y;
-}
-
-function toISO(year: number, month: number, day: number): string | null {
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const y = normalizeYear(year);
-  if (y < 1900 || y > 2100) return null;
-  // Midnight UTC of the printed day, whatever time zone the server runs in:
-  // built in local time, a receipt of the 9th became the 8th at 23:00 UTC.
-  const d = new Date(Date.UTC(y, month - 1, day));
-  if (d.getUTCFullYear() !== y || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return null;
-  return d.toISOString();
-}
-
-function parseDateFromLine(line: string): string | null {
-  let m = line.match(ISO_DATE);
-  if (m) return toISO(parseInt(m[1]), parseInt(m[2]), parseInt(m[3]));
-
-  m = line.match(NAMED_MONTH_FIRST);
-  if (m) {
-    const month = MONTH_MAP[m[1].toLowerCase().slice(0, 3)];
-    return toISO(parseInt(m[3]), month, parseInt(m[2]));
-  }
-
-  m = line.match(NAMED_MONTH);
-  if (m) {
-    const month = MONTH_MAP[m[2].toLowerCase().slice(0, 3)];
-    return toISO(parseInt(m[3]), month, parseInt(m[1]));
-  }
-
-  m = line.match(EU_DATE_DOT);
-  if (m) {
-    const a = parseInt(m[1]), b = parseInt(m[2]), y = parseInt(m[3]);
-    return toISO(y, b, a);
-  }
-
-  m = line.match(US_DATE_SLASH);
-  if (m) {
-    const a = parseInt(m[1]), b = parseInt(m[2]), y = parseInt(m[3]);
-    if (a > 12) return toISO(y, b, a);
-    return toISO(y, a, b);
-  }
-
-  return null;
-}
-
-function extractDate(text: string): string | null {
-  const lines = text.split('\n');
-
-  for (const line of lines) {
-    if (LABELED_DATE.test(line) && !EXPIRY_KEYWORDS.test(line)) {
-      const date = parseDateFromLine(line);
-      if (date) return date;
-    }
-  }
-
-  for (const line of lines) {
-    if (EXPIRY_KEYWORDS.test(line)) continue;
-    const date = parseDateFromLine(line);
-    if (date) return date;
-  }
-
-  return null;
 }
 
 // ── Vendor Extraction ────────────────────────────────────────────────
@@ -333,7 +251,7 @@ const VENDOR_CATEGORY_MAP: Record<string, string> = {
 };
 
 const KEYWORD_CATEGORIES: Array<{ pattern: RegExp; category: string }> = [
-  { pattern: /\b(?:restaurant|ristorante|trattoria|osteria|pizzeria|bistro|brasserie|gasthaus|gasthof|wirtshaus|biergarten|cafe|café|coffee|bakery|pizza|pasta|burger|sushi|grill|diner|meal|breakfast|lunch|dinner|gastronomie|bewirtung|catering|imbiss|bäckerei)\b/i, category: 'Bewirtung' },
+  { pattern: /\b(?:restaurant|ristorante|trattoria|osteria|pizzeria|bistro|brasserie|gasthaus|gasthof|wirtshaus|biergarten|brauhaus|pub|kneipe|bierstube|taproom|cafe|café|coffee|bakery|pizza|pasta|burger|sushi|grill|diner|meal|breakfast|lunch|dinner|gastronomie|bewirtung|catering|imbiss|bäckerei)\b/i, category: 'Bewirtung' },
   { pattern: /\b(?:hotel|motel|airline|flight|airport|rental\s*car|taxi|parking|gas\s*station|fuel|petrol|travel|booking|bahn|zug|flug|reise|tankstelle|mietwagen|fahrt|übernachtung)\b/i, category: 'Reisekosten' },
   { pattern: /\b(?:office|supplies|paper|ink|toner|printer|desk|chair|stationery|büro|papier|ordner|schreibwaren|möbel|büromaterial)\b/i, category: 'Bürobedarf' },
   { pattern: /\b(?:software|license|lizenz|saas|subscription|hosting|domain|server|cloud|app\s*store|play\s*store)\b/i, category: 'Software & Lizenzen' },
@@ -398,7 +316,7 @@ export function extractReceiptFields(ocrData: OcrResult): TextExtraction {
   const text = ocrData.fullText;
   const reading = readVendor(text);
   const vendor = reading.vendor;
-  const date = extractDate(text);
+  const date = readDate(text);
   const { currency, shown: currencyShown } = extractCurrency(text);
   const amounts = readAmounts(text, { date, currency });
   const evidence = mealEvidence(text);

@@ -77,7 +77,7 @@ export async function keepBothLookAlikes(rowId: string, otherRowId: string): Pro
   }
 }
 
-const READING_FIELDS: readonly ReadingField[] = ['name', 'vendor', 'gross', 'net', 'taxRate', 'tip', 'category'];
+const READING_FIELDS: readonly ReadingField[] = ['name', 'vendor', 'gross', 'net', 'taxRate', 'currency', 'tip', 'category'];
 
 /**
  * "Neue Lesart übernehmen": write the fields of the new reading that the

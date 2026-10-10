@@ -287,6 +287,8 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
         const r = await createDirectoryAction({ ...input, ...custom, kind: newKind, name: input.name ?? '' });
         if (r.ok) {
           // The new contact is opened, so what was just entered can be checked and continued.
+          // It joins the list at once: the panel must not close and reopen while the list reloads.
+          setContacts((list) => [...list.filter((c) => c.id !== r.value.id), r.value]);
           setCreating(null);
           setSelectedId(r.value.id);
           formDirty.current = false;

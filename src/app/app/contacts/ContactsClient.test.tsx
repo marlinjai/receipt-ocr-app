@@ -704,8 +704,9 @@ describe('contacts page: creating', () => {
     expect(await screen.findByText('Person angelegt.')).toBeTruthy();
     await waitFor(() => expect(rowNames()).toEqual(['Anna Verknüpft', 'Beispiel Person', 'Musterwerk', 'Neue Testperson']));
     expect(within(list()).getAllByRole('button', { name: /Neue Testperson/ })).toHaveLength(1);
-    expect(panel('Neue Testperson')).toBeTruthy();
     expect(row('Neue Testperson').getAttribute('aria-current')).toBe('true');
+    // The focus follows into the new contact instead of being dropped with the form.
+    expect(document.activeElement).toBe(within(panel('Neue Testperson')).getByRole('heading', { name: 'Neue Testperson' }));
   });
 
   it('a new organization carries its details too', async () => {

@@ -105,8 +105,9 @@ export interface MealsPageData {
   records: MealRecord[];
   contacts: Contact[];
   /**
-   * Organizations in the company's directory. The Kontakte tab lists them next to
-   * the persons, so its badge counts both; the guest picker offers persons only.
+   * Organizations among the company's contacts. The contacts page lists them next
+   * to the persons, so the count on the link to it covers both; the guest picker
+   * offers persons only.
    * Zero while the shared contact database is off.
    */
   organizationCount: number;

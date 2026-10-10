@@ -12,9 +12,11 @@
   mobile contract (Marlin's answers of 2026-10-06 to the tax decision page). Done 2026-10-10.
 - [ ] Sub rows in the receipts table, like sub-items in Notion: a group Marlin creates (a parent
   row as a container, its receipts underneath, the parent showing their sum and never counting
-  as a receipt itself). Second use, later: a receipt with its parts. The table package already
-  has nested rows (`subItemsConfig`, `parent_row_id`); the app never switched them on. The tax
-  module and the meal register must not count a parent row. Plan first. (2026-10-11)
+  as a receipt itself). Built with `@marlinjai/data-table-react` 0.6.0, which nests rows inside
+  grouped views. Open: the click-through on production after the deploy (create a group, sum,
+  drag between sections, take a receipt out, dissolve the group). Second use, later: a receipt
+  with its parts. Plan: [receipt sub rows](docs/plans/2026-10-11-receipt-sub-rows.md)
+  (2026-10-11)
 - [ ] Explain the gap between the finance area and the tax session's draft for 2025: the app
   shows about 7,530 euros of business expenses, the draft table (`entwurf-ausgaben-2025.csv` in
   the 2025 tax folder) claims 14,344.35. First reading, not verified: the draft's low-value

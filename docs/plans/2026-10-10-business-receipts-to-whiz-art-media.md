@@ -137,7 +137,7 @@ Decided under the "decide it yourself" rule, say so if you disagree:
 - **Timestamps.** The restamp goes through Prisma, so `updated_at` moves on the 17 tables that
   have it. The stamp did change at that time.
 
-## The production run, call by call (prepared 2026-10-10, not run)
+## The production run, call by call (completed 2026-10-10)
 
 What production holds, read without writing on 2026-10-10 (counts and ids, no names):
 

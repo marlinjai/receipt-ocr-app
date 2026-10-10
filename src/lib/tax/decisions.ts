@@ -86,7 +86,7 @@ export function validateTreatment(raw: unknown, rules: YearRules): TreatmentInpu
     const def = rules.formLines.find((l) => l.key === input.formLineKey);
     // Lines the asset register fills (depreciation, pool, remaining book
     // value) cannot be chosen by hand either.
-    if (!def || def.form !== 'euer' || def.kind !== 'expense' || def.key === 'euer.meals' || def.assetOnly) {
+    if (!def || def.form !== 'euer' || def.kind !== 'expense' || def.key === 'euer.meals' || def.assetOnly || def.computedOnly) {
       throw new TreatmentError('form_line_invalid');
     }
     formLineKey = def.key;

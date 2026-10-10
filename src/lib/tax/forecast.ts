@@ -26,7 +26,11 @@ export interface ForecastInput {
   receivedByMonthCents: number[];
   /** Turnover of the previous year, or null when the app does not know it. */
   previousYearReceivedCents: number | null;
-  /** Invoiced and not yet paid. Assumed to arrive within the year in both scenarios. */
+  /**
+   * Invoiced and not yet paid, without the value-added tax in it (the limits
+   * measure turnover net). Assumed to arrive within a running year in both
+   * scenarios; ignored for a year that is over.
+   */
   outstandingCents: number;
   /** What the owner expects to receive per month from now on, if he said so. Replaces the run rate. */
   expectedMonthlyCents: number | null;
@@ -104,7 +108,9 @@ export function forecastYear(input: ForecastInput, rules: LimitRules): Forecast 
     rateBasis = 'run_rate';
   }
   const remainingMonths = 12 - monthsElapsed;
-  const outstanding = Math.max(0, input.outstandingCents);
+  // In a year that is over, what was unpaid at its end did not arrive in it:
+  // it is next year's turnover, not this year's.
+  const outstanding = todayYear > input.year ? 0 : Math.max(0, input.outstandingCents);
   const lowCents = receivedCents + outstanding;
   const highCents = lowCents + monthlyRateCents * remainingMonths;
 

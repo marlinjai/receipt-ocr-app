@@ -1041,6 +1041,52 @@ and both were asked for now.
 - **Amount entry** reads German notation ("1.234,56", "5.000"); a bug that read
   "5.000" as five euros was caught by a test before release.
 
+## Reality after slice 3, first part: payments from files, and a review (2026-10-10)
+
+- **Payments come from export files for now.** Readers for the two bank exports,
+  the payment service's export and the bank interface's transaction list
+  (`src/lib/tax/payments/parse.ts`). A file is read whole or not at all (the first
+  unreadable row rejects it with its number). Rows that are deliberately no
+  payments (pending, declined, another currency, memo lines) are counted and
+  reported. The live daily sync through the bank interface is not built yet; it
+  will feed the same reader.
+- **Identity across files is a hash of the movement itself.** The bank's own
+  reference is present on only a fifth of one bank's transactions and is not
+  unique there (measured on real data, as the roadmap warned), so it is part of
+  the hash but never the identity. Two genuinely identical movements are told apart
+  by their order of appearance. The same file is refused twice; an overlapping file
+  adds only what is new; an import can be undone as a whole.
+- **No account number is stored**, not even hashed. Own accounts are recognised by
+  one answer per counterparty ("own account"), like private and business.
+- **One answer per counterparty** decides whether its payments need a document.
+  Money out to an unanswered counterparty asks who it is; money in is always asked
+  about (revenue or private) unless the counterparty is private.
+- **Links.** Automatic only for money received whose text carries an issued
+  invoice's number, with exactly the open amount, where neither side could mean
+  another. Everything else is a proposal with its strength shown (number with a
+  different amount; amount and date only) that a person confirms. Receipts carry no
+  invoice number column yet, so receipts are only ever proposed by amount and date.
+- **A linked payment is the receipt's day and amount.** Cash basis: the receipt
+  counts on the payment's booking day and with the euro amount charged, which
+  settles a foreign-currency receipt. A refund linked to the same receipt is taken
+  off; a fully refunded purchase is no expense. Simplification: a refund counts on
+  the purchase, also when it arrived in a later year; the plan's rule (reduce the
+  expense in the refund's year) is not built.
+- **A linked payment to an invoice is its money received**, beside payment days
+  typed in by hand.
+- **Not built yet from slice 3:** the live bank sync and its session expiry;
+  importers for the card statement and the pay-later list; settlements of card and
+  pay-later bills as their own kind (they can be answered as "own account"); the
+  ten-day rule at the turn of the year; recognising payments to the tax office.
+- **An independent review of the two changes that had merged without an automated
+  review** (asset register; revenue and regular taxation) found no isolation hole
+  and no unsafe migration, and six defects, all fixed here with tests: the meal
+  register ignored a status change inside a year; the forecast counted invoices
+  unpaid at the end of a finished year, and gross instead of net; a year with only
+  an invoice or a settlement could not be selected; a carried-in asset with a book
+  value and no remaining months was never written off; the app's own computed
+  lines could be chosen by hand; failed actions showed nothing on several tabs.
+
 ## Decisions (2026-10-07)
 
 Answered by the owner on the decision page on 2026-10-07.

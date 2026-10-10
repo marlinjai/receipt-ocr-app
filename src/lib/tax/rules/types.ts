@@ -105,6 +105,8 @@ export interface FormLine {
   kind: 'revenue' | 'expense';
   /** True for lines only the asset register may fill: they cannot be chosen for a receipt by hand. */
   assetOnly?: boolean;
+  /** True for lines the app fills from invoices, input tax and settlements: never chosen for a receipt by hand. */
+  computedOnly?: boolean;
   /**
    * True for lines of the form that have a "not deductible" column beside the
    * deductible one (gifts, business meals).

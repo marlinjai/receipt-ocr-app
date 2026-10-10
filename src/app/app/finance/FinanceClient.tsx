@@ -74,6 +74,12 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
   const [tab, setTab] = useState<TabKey>(() => (openQueue(initial).length > 0 ? 'open' : 'statement'));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The item of the statement tab whose receipt is being split (its lines change the item ids, so both close together).
+  const [splittingId, setSplittingId] = useState<string | null>(null);
+  const closeEditing = () => {
+    setEditingId(null);
+    setSplittingId(null);
+  };
   const [openLine, setOpenLine] = useState<string | null>(null);
   const [assetFromRow, setAssetFromRow] = useState<string | null>(null);
   const [lastImport, setLastImport] = useState<ImportResult | null>(null);
@@ -371,6 +377,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                             <span className="flex items-baseline justify-between gap-2">
                               <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
                                 {item.vendor || item.label}
+                                {item.lineDescription && item.vendor ? `: ${item.lineDescription}` : ''}
                               </span>
                               <span className="shrink-0 text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
                                 {item.amountCents !== null ? euro(item.amountCents) : ''}
@@ -505,6 +512,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                                         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                                           <span className="text-sm" style={{ color: 'var(--foreground)' }}>
                                             {item.vendor || item.label}
+                                            {item.lineDescription && item.vendor ? `: ${item.lineDescription}` : ''}
                                             <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
                                               {formatDay(item.date)} · {allocationText(item)}
                                               {item.allocationOrigin ? ` (${ORIGIN_LABELS[item.allocationOrigin]})` : ''}
@@ -531,6 +539,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                                                 aria-expanded={editing}
                                                 onClick={() => {
                                                   setEditingId(editing ? null : `${line.key}:${id}`);
+                                                  setSplittingId(null);
                                                   setError(null);
                                                 }}
                                               >
@@ -541,15 +550,30 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                                         </div>
                                         {editing && (
                                           <div className="mt-3 rounded-lg border p-3" style={{ borderColor: 'var(--border)' }}>
-                                            <TreatmentForm
-                                              item={item}
-                                              formLines={view.formLines}
-                                              busy={pending}
-                                              error={error}
-                                              submitLabel="Speichern"
-                                              onSubmit={(submit) => decide(item, submit)}
-                                            />
-                                            {(item.lineId ? item.allocationOrigin === 'line' : item.hasDecision) && (
+                                            {splittingId === id ? (
+                                              <LinesForm
+                                                item={item}
+                                                existing={item.receiptLines}
+                                                busy={pending}
+                                                error={error}
+                                                onCancel={() => setSplittingId(null)}
+                                                onSubmit={(lines) => run(() => saveLines(view.year, item.rowId, lines), `${item.vendor || item.label}: Positionen gespeichert.`, closeEditing)}
+                                                onRemove={item.receiptLines.length > 0 ? () => run(() => removeLines(view.year, item.rowId), `${item.vendor || item.label}: Aufteilung aufgehoben.`, closeEditing) : null}
+                                              />
+                                            ) : (
+                                              <>
+                                                <TreatmentForm
+                                                  item={item}
+                                                  formLines={view.formLines}
+                                                  busy={pending}
+                                                  error={error}
+                                                  submitLabel="Speichern"
+                                                  onSubmit={(submit) => decide(item, submit)}
+                                                />
+                                                <SplitOffer item={item} onSplit={() => setSplittingId(id)} />
+                                              </>
+                                            )}
+                                            {splittingId !== id && (item.lineId ? item.allocationOrigin === 'line' : item.hasDecision) && (
                                               <button
                                                 type="button"
                                                 className="ui-btn ui-btn-sm mt-3"
@@ -731,6 +755,21 @@ function ItemHeader({ item }: { item: StatementItem }) {
   );
 }
 
+/** The way into splitting a receipt, or into changing its split, under a treatment form. */
+function SplitOffer({ item, onSplit }: { item: StatementItem; onSplit: () => void }) {
+  if (item.receiptGrossCents === null) return null;
+  return (
+    <p className="mt-3 text-xs" style={{ color: 'var(--muted)' }}>
+      {item.lineId
+        ? 'Diese Position gehört zu einem aufgeteilten Beleg.'
+        : 'Enthält der Beleg Positionen, die unterschiedlich zu behandeln sind (zum Beispiel eine betrieblich, eine privat)?'}{' '}
+      <button type="button" className="underline underline-offset-2" style={{ color: 'var(--accent)' }} onClick={onSplit}>
+        {item.lineId ? 'Aufteilung ändern' : 'In Positionen aufteilen'}
+      </button>
+    </p>
+  );
+}
+
 function OpenItemBody({
   item,
   view,
@@ -752,8 +791,6 @@ function OpenItemBody({
 }) {
   const [splitting, setSplitting] = useState(false);
   const blocking = item.checks.filter((c) => c.blocking).map((c) => c.kind);
-  // The lines of this receipt, in their own currency, for changing the split.
-  const siblings = view.items.filter((i) => i.rowId === item.rowId && i.lineId !== null);
   const mismatch = blocking.includes('lines_do_not_sum');
   if (blocking.some((k) => MEAL_CHECKS.includes(k))) {
     return (
@@ -779,12 +816,12 @@ function OpenItemBody({
         )}
         <LinesForm
           item={item}
-          existing={siblings}
+          existing={item.receiptLines}
           busy={busy}
           error={error}
           onCancel={mismatch ? null : () => setSplitting(false)}
           onSubmit={(lines) => onSaveLines(lines, () => setSplitting(false))}
-          onRemove={siblings.length > 0 || mismatch ? onRemoveLines : null}
+          onRemove={item.receiptLines.length > 0 ? onRemoveLines : null}
         />
       </div>
     );
@@ -822,14 +859,7 @@ function OpenItemBody({
         </div>
       )}
       <TreatmentForm item={item} formLines={view.formLines} busy={busy} error={error} submitLabel="Speichern und weiter" onSubmit={onSubmit} />
-      {item.receiptGrossCents !== null && (
-        <p className="text-xs" style={{ color: 'var(--muted)' }}>
-          {item.lineId ? 'Diese Position gehört zu einem aufgeteilten Beleg.' : 'Enthält der Beleg Positionen, die unterschiedlich zu behandeln sind (zum Beispiel eine betrieblich, eine privat)?'}{' '}
-          <button type="button" className="underline underline-offset-2" style={{ color: 'var(--accent)' }} onClick={() => setSplitting(true)}>
-            {item.lineId ? 'Aufteilung ändern' : 'In Positionen aufteilen'}
-          </button>
-        </p>
-      )}
+      <SplitOffer item={item} onSplit={() => setSplitting(true)} />
     </div>
   );
 }

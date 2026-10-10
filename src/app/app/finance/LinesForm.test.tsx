@@ -8,11 +8,11 @@ import LinesForm from './LinesForm';
 afterEach(cleanup);
 
 const receipt = (overrides: Partial<StatementItem> = {}): StatementItem =>
-  ({ itemId: 'r-1', rowId: 'r-1', lineId: null, lineDescription: null, lineGrossCents: null, lineNetCents: null, receiptGrossCents: 110_000, currency: 'EUR', label: 'Bestellung 4711', ...overrides }) as StatementItem;
+  ({ itemId: 'r-1', rowId: 'r-1', lineId: null, lineDescription: null, lineGrossCents: null, lineNetCents: null, receiptGrossCents: 110_000, receiptLines: [], currency: 'EUR', label: 'Bestellung 4711', ...overrides }) as StatementItem;
 const props = () => ({ busy: false, error: null, onCancel: vi.fn(), onSubmit: vi.fn(), onRemove: null });
 
 describe('LinesForm', () => {
-  it('forward: two lines that add up are sent; the rest is offered for the last line', async () => {
+  it('forward: two lines that add up are sent; the rest can be put into the empty line', async () => {
     const user = userEvent.setup();
     const p = props();
     render(<LinesForm item={receipt()} existing={[]} {...p} />);
@@ -20,8 +20,8 @@ describe('LinesForm', () => {
     await user.type(screen.getByLabelText('Position 1'), 'Stativ');
     await user.type(screen.getAllByLabelText('Betrag')[0], '900');
     await user.type(screen.getByLabelText('Position 2'), 'Speicherkarte');
-    // Focusing the empty amount offers what is left.
-    await user.click(screen.getAllByLabelText('Betrag')[1]);
+    // What is left can be put into the line that has no amount yet.
+    await user.click(screen.getByRole('button', { name: 'Rest in Position 2 übernehmen' }));
     expect((screen.getAllByLabelText('Betrag')[1] as HTMLInputElement).value).toBe('200,00');
     expect(screen.getByRole('status').textContent).toContain('vollständig verteilt');
     await user.click(screen.getByRole('button', { name: 'Positionen speichern' }));
@@ -58,10 +58,10 @@ describe('LinesForm', () => {
     const p = { ...props(), onRemove: vi.fn() };
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const existing = [
-      receipt({ itemId: 'r-1#a', lineId: 'a', lineDescription: 'Stativ', lineGrossCents: 90_000, lineNetCents: 75_630 }),
-      receipt({ itemId: 'r-1#b', lineId: 'b', lineDescription: 'Karte', lineGrossCents: 20_000 }),
+      { id: 'a', description: 'Stativ', grossCents: 90_000, netCents: 75_630 },
+      { id: 'b', description: 'Karte', grossCents: 20_000, netCents: null },
     ];
-    render(<LinesForm item={existing[0]} existing={existing} {...p} />);
+    render(<LinesForm item={receipt({ itemId: 'r-1#a', lineId: 'a', receiptLines: existing })} existing={existing} {...p} />);
     expect((screen.getByLabelText('Position 1') as HTMLInputElement).value).toBe('Stativ');
     expect((screen.getAllByLabelText('davon netto')[0] as HTMLInputElement).value).toBe('756,30');
     await user.click(screen.getByRole('button', { name: 'Positionen speichern' }));

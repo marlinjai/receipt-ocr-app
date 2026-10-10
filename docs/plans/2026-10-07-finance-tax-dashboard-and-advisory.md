@@ -1149,6 +1149,27 @@ twelve defects, all fixed in the receipt lines pull request:
   **re-labelled payments** are listed and can be put back; **refunds** from a
   business counterparty ask for the receipt they belong to.
 
+## Reality after the review of receipt lines (2026-10-10)
+
+A second fresh agent reviewed receipt lines and the payment fixes before they
+merged. Fixed in the same pull request:
+
+- A split can be changed or undone while one of its lines is in an asset (it was
+  refused, and after a corrected receipt total there was no way out).
+- A refund linked to a receipt whose purchase is not linked (paid in cash, or the
+  payment is not imported) is taken off the receipt's own amount on the receipt's
+  own day. Before, the receipt counted as zero from the day of the refund.
+- Every item carries its receipt's stored lines, so a split that no longer adds up
+  opens with its lines and their ids, and repairing it keeps decisions and assets.
+- Splitting, changing and undoing a split is offered in the statement too, not
+  only in the open queue (a receipt settled by a vendor rule never appears there).
+- A payment received through PayPal in another currency is income from the payer.
+- Only money received as income pays an invoice; the invoice is locked while a
+  payment is linked to it.
+- Known and kept: a refund for one returned line of a split receipt is spread over
+  all its lines in proportion, because payments are matched to whole receipts. To
+  take it off one line only, change that line's amount and the receipt's total.
+
 ## Decisions (2026-10-07)
 
 Answered by the owner on the decision page on 2026-10-07.

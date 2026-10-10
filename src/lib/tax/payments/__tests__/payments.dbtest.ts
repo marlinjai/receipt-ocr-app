@@ -347,6 +347,41 @@ describe('findings of the review on the first version', () => {
   });
 });
 
+describe('findings of the review on the second version', () => {
+  it('a refund linked to a receipt whose purchase is not linked is taken off the receipt, not put in its place', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    // Paid in cash on the 3rd; 50.00 came back to the bank account on the 9th.
+    const rowId = await ws.addReceipt({ Name: 'Barkauf', Vendor: 'Werkzeug Beispiel GmbH', Gross: 500, Date: '2026-01-03', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    await importPayments(db, ctx, accountId, file(line('2026-01-09', 'Werkzeug Beispiel GmbH', 'Erstattung', '50', 'Credit Transfer')));
+    const refund = (await db.taxPayment.findFirst({ where: { accountId } }))!;
+    await setPaymentKind(db, ctx, refund.id, 'refund');
+    await linkPayment(db, ctx, { paymentId: refund.id, rowId }, rowCheck(ctx));
+    const view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 45_000, date: '2026-01-03', amountBasis: 'document' });
+    expect(view.businessExpenseCents).toBe(45_000);
+  });
+
+  it('money back is never linked to an invoice, whatever its sign', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    const invoiceId = await saveInvoice(db, ctx, null, { number: 'R-2026-070', issueDate: '2026-01-10', grossCents: 5_000, treatment: 'small_business', payments: [] });
+    await importPayments(db, ctx, accountId, file(line('2026-01-09', 'Werkzeug Beispiel GmbH', 'Erstattung', '50', 'Credit Transfer')));
+    const refund = (await db.taxPayment.findFirst({ where: { accountId } }))!;
+    await setPaymentKind(db, ctx, refund.id, 'refund');
+    expect(await code(linkPayment(db, ctx, { paymentId: refund.id, invoiceId }, rowCheck(ctx)))).toBe('invalid_link');
+    expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
+  });
+
+  it('two payments confirmed for one invoice at the same moment cannot both use what it has open', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    const invoiceId = await saveInvoice(db, ctx, null, { number: 'R-2026-071', issueDate: '2026-01-10', grossCents: 40_000, treatment: 'small_business', payments: [] });
+    await importPayments(db, ctx, accountId, file(line('2026-01-15', 'Kundin Beispiel', 'Zahlung eins', '400', 'Credit Transfer'), line('2026-01-16', 'Kundin Beispiel', 'Zahlung zwei', '400', 'Credit Transfer')));
+    const payments = await db.taxPayment.findMany({ where: { accountId } });
+    const results = await Promise.all(payments.map((p) => code(linkPayment(db, ctx, { paymentId: p.id, invoiceId }, rowCheck(ctx)))));
+    expect(results.sort()).toEqual(['no error', 'target_fully_paid']);
+    expect((await loadStatement(db, ws.workspaceId, 2026)).revenue.invoices[0]).toMatchObject({ receivedCents: 40_000, outstandingCents: 0 });
+  });
+});
+
 describe('workspace isolation', () => {
   it('accounts, payments, rules and links of another workspace do not exist here', async () => {
     const { ws, ctx } = await workspace();

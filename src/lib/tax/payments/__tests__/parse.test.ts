@@ -152,6 +152,20 @@ describe('parsePaymentFile: a PayPal purchase in another currency', () => {
   });
 });
 
+describe('parsePaymentFile: PayPal income in another currency', () => {
+  it('the euro side of a payment received in dollars is income from the payer, not a refund', () => {
+    const file = parsePaymentFile(
+      [
+        PAYPAL_HEADER,
+        paypalRow({ date: '11.03.2026', name: 'Kunde Übersee', type: 'Website-Zahlung', status: 'Abgeschlossen', currency: 'USD', gross: '1.000,00', code: 'TX8', item: 'Rechnung R-2026-009', effect: 'Haben' }),
+        paypalRow({ date: '11.03.2026', name: '', type: 'Allgemeine Währungsumrechnung', status: 'Abgeschlossen', currency: 'USD', gross: '-1.000,00', code: 'TX8B', related: 'TX8', effect: 'Soll' }),
+        paypalRow({ date: '11.03.2026', name: '', type: 'Allgemeine Währungsumrechnung', status: 'Abgeschlossen', currency: 'EUR', gross: '921,40', code: 'TX8A', related: 'TX8', effect: 'Haben' }),
+      ].join('\n'),
+    );
+    expect(file.payments.map((p) => [p.counterparty, p.amountCents, p.kind, p.reference])).toEqual([['Kunde Übersee', 92_140, 'income', 'Rechnung R-2026-009']]);
+  });
+});
+
 describe('toCents: nothing is guessed', () => {
   it.each(['1,234.56', '1.234', '12.345', '1,234', '1.23.456,00', '12,3,4', '1e3', '20000000', '20.000.000,00'])('rejects %s', (text) => {
     expect(toCents(text)).toBeNull();

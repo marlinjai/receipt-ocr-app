@@ -31,6 +31,12 @@ export interface ReceiptFacts {
    * no payment is linked.
    */
   paid?: { day: string; cents: number } | null;
+  /**
+   * Refunds linked to this receipt while no payment out is linked (the
+   * purchase was paid in cash, or its payment is not imported): they are
+   * taken off the document's amount, which stays on the document's day.
+   */
+  refundedCents?: number;
   /** The receipt's lines, when it was split. */
   lines?: ReceiptLine[];
 }
@@ -115,6 +121,9 @@ export function resolveItem(
 ): ResolvedItem {
   const { record, decision } = facts;
   const paid = facts.paid ?? null;
+  const refunded = paid ? 0 : Math.max(0, facts.refundedCents ?? 0);
+  const stated = amountOf(record);
+  const document = refunded > 0 && stated.amountCents !== null ? { ...stated, amountCents: Math.max(0, stated.amountCents - refunded) } : stated;
   const key = vendorKey(record.vendor);
   const rule = ruleInForce(vendorRules, key, record.date);
   const meal = mealFact(record, settings);
@@ -127,8 +136,8 @@ export function resolveItem(
     // receipt for good); until then on its own day and amount.
     date: paid ? paid.day : record.date,
     dateBasis: paid ? ('payment' as const) : ('document' as const),
-    ...(paid ? { amountCents: paid.cents, amountBasis: 'payment' as const } : amountOf(record)),
-    netCents: paid ? netOfPaid(record, paid.cents) : netOf(record),
+    ...(paid ? { amountCents: paid.cents, amountBasis: 'payment' as const } : document),
+    netCents: paid ? netOfPaid(record, paid.cents) : refunded > 0 && document.amountCents !== null ? netOfPaid(record, document.amountCents) : netOf(record),
     // The status on the receipt's own date: a later change leaves earlier receipts alone.
     smallBusiness: smallBusinessOn(settings, paid ? paid.day : record.date),
   };

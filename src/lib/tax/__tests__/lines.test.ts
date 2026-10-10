@@ -141,6 +141,16 @@ describe('resolveItems: a split receipt', () => {
     expect(result.lines.map((l) => [l.key, l.cents])).toEqual([['euer.work_equipment', 50_000], ['euer.input_vat', 9_500]]);
   });
 
+  it('a refund without a linked purchase is taken off the receipt and so off its lines, on the receipt\'s own day', () => {
+    const whole = resolveItems(facts(order(), [], { refundedCents: 10_000 }), [], SMALL_BUSINESS);
+    expect(whole.map((r) => [r.item.amountCents, r.item.date, r.item.amountBasis])).toEqual([[100_000, '2025-03-14', 'document']]);
+    const split = resolveItems(facts(order(), [line('a', 60_000), line('b', 50_000)], { refundedCents: 10_000 }), [], SMALL_BUSINESS);
+    expect(split.map((r) => r.item.amountCents)).toEqual([54_545, 45_455]);
+    // With a payment out linked, the payment decides and the refund is already in it.
+    const paid = resolveItems(facts(order(), [], { paid: { day: '2025-07-01', cents: 90_000 }, refundedCents: 10_000 }), [], SMALL_BUSINESS);
+    expect(paid[0].item.amountCents).toBe(90_000);
+  });
+
   it('a meal is never split, whatever lines exist', () => {
     const items = resolveItems(facts(meal(), [line('a', 6_000), line('b', 5_900)]), [], SMALL_BUSINESS);
     expect(items).toHaveLength(1);

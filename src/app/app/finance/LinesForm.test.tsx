@@ -20,8 +20,10 @@ describe('LinesForm', () => {
     await user.type(screen.getByLabelText('Position 1'), 'Stativ');
     await user.type(screen.getAllByLabelText('Betrag')[0], '900');
     await user.type(screen.getByLabelText('Position 2'), 'Speicherkarte');
-    // Focusing the empty amount offers what is left.
+    // The empty amount offers what is left; focusing it alone leaves it empty.
     await user.click(screen.getAllByLabelText('Betrag')[1]);
+    expect((screen.getAllByLabelText('Betrag')[1] as HTMLInputElement).value).toBe('');
+    await user.click(screen.getByRole('button', { name: 'Rest für Position 2 einsetzen' }));
     expect((screen.getAllByLabelText('Betrag')[1] as HTMLInputElement).value).toBe('200,00');
     expect(screen.getByRole('status').textContent).toContain('vollständig verteilt');
     await user.click(screen.getByRole('button', { name: 'Positionen speichern' }));

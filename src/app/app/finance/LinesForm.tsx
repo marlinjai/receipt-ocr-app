@@ -36,7 +36,7 @@ interface Row {
 /**
  * Split a receipt into its positions. Amounts are in the receipt's own
  * currency and must add up to its total; the form shows what is still to be
- * distributed while typing and offers it for the last line.
+ * distributed while typing and offers it as a button for an empty line.
  */
 export default function LinesForm({ item, existing, busy, error, onCancel, onSubmit, onRemove }: Props) {
   const id = useId();
@@ -98,11 +98,13 @@ export default function LinesForm({ item, existing, busy, error, onCancel, onSub
                 inputMode="decimal"
                 value={row.gross}
                 onChange={(e) => set(index, { gross: e.target.value })}
-                // What is still to be distributed is the natural amount for an empty line.
-                onFocus={() => {
-                  if (!row.gross.trim() && rest > 0) set(index, { gross: formatCents(rest) });
-                }}
               />
+              {/* What is still to be distributed is the natural amount for an empty line; offered, never pre-filled, so typing is never appended to it. */}
+              {!row.gross.trim() && rest > 0 && (
+                <button type="button" className="ui-btn ui-btn-sm mt-1" aria-label={`Rest für Position ${index + 1} einsetzen`} onClick={() => set(index, { gross: formatCents(rest) })}>
+                  Rest {formatCents(rest)}
+                </button>
+              )}
             </div>
             <div>
               <label className="ui-label" htmlFor={`${id}-n-${index}`}>davon netto</label>

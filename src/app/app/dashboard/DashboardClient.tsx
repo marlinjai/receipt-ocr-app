@@ -135,9 +135,15 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
       setWorking(true);
       try {
         const result = await action();
-        applyReview(result);
-        // The receipt behind a failed action may be gone: show what is there now.
-        if (!result.ok) await reloadReview();
+        if (result.ok) {
+          applyReview(result);
+        } else {
+          // The receipt behind a failed action may be gone: show what is there now,
+          // THEN say what failed. The other way round the reload cleared the message
+          // and the person never learned that the action did not happen.
+          await reloadReview();
+          setReviewError(REVIEW_ERROR[result.error]);
+        }
       } catch {
         setReviewError(REVIEW_ERROR.failed);
       } finally {

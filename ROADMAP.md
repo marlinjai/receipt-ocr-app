@@ -2,6 +2,23 @@
 
 ## Planned
 
+- [ ] Remove the receipts app's own contacts table and the `CONTACTS_STORE` switch. The app has
+  read and written only the shared contacts database since 2026-10-09, and the old table holds a
+  stale copy of 4 meal guests that live there under the same ids. Prepared and HELD as pull request
+  61: merging it deploys a migration that drops the table in the production receipts database, so
+  it waits for Marlin's own yes. The database has a verified backup every six hours. After the
+  merge, remove the unused `CONTACTS_STORE` entry from the production secret project. Its plan
+  document arrives with that pull request. (2026-10-10)
+- [ ] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
+  (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax
+  return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent
+  lines would be misreported. Store the tax groups per invoice and report each under its own rate.
+  From the finance dashboard work. (2026-10-10)
+- [ ] A signed-in live write pass of `/app/finance` on production, under the company that holds
+  the receipts (after the move to Whiz-Art Media if it has happened): open each tab, write one
+  synthetic decision, vendor rule and payment link, remove them again, and confirm the numbers
+  return. Only a read-only pass was done (2026-10-10 08:53). From the finance dashboard work.
+  (2026-10-10)
 - [x] Company erasure hands over an export first: the company's register and contacts go into a
   zip (GET /api/export/company), and printed guest names are removed at once when an export was
   taken, otherwise held for ten years (German tax law, the Abgabenordnung, AO) and removed by the
@@ -150,8 +167,8 @@
   periods), and the first part of slice 3 (payments from export files, one answer
   per counterparty, links to receipts and invoices, also by hand), receipt lines entered by
   hand, and the ten-day rule at the turn of the year for expenses and payments to
-  the tax office. Open, in this order: the classifier reading lines off a receipt (waits for
-  the extraction work on this roadmap); the rest of slice 3 (live bank sync with session
+  the tax office. Open, in this order: the classifier reading lines off a receipt (unblocked:
+  the receipt reader rebuild merged on 2026-10-10 as pull request 51); the rest of slice 3 (live bank sync with session
   expiry, card statement and pay-later importers, the ten-day rule for regularly
   recurring income); the income tax estimate; the year-end entry sheet; reading the
   expenses mailbox. Open inside what is built,

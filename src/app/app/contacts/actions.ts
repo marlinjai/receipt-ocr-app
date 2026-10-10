@@ -31,7 +31,7 @@ import {
 import { prisma } from '@/lib/prisma';
 
 /**
- * Server actions of the contact directory (Kontakte tab, wave 3). Each action
+ * Server actions of the contacts page (/app/contacts). Each action
  * re-resolves the verified session and works only for the company of its
  * active workspace. Failures are returned with a stable code, as in
  * src/app/app/meals/actions.ts, because a thrown error loses its message in a

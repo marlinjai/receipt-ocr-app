@@ -760,6 +760,75 @@ textarea.ui-input {
   }
 }
 
+/* ---- Contacts page (/app/contacts) ----
+   One compact row per contact: the whole row is the button that opens it.
+   Opening only changes colours, so nothing in the list moves. */
+.ui-list-row {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-height: 2.75rem;
+  justify-content: center;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.625rem;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.02);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease-out, background-color 150ms ease-out;
+}
+.ui-list-row:hover {
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.04);
+}
+.ui-list-row[aria-current='true'] {
+  border-color: rgba(226, 163, 72, 0.6);
+  background: var(--accent-muted);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.ui-list-row:focus-visible,
+.ui-tab:focus-visible,
+.ui-list-region:focus-visible,
+.ui-panel-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ui-list-region,
+.ui-panel-title {
+  border-radius: 0.375rem;
+}
+.ui-tab {
+  transition: color 150ms ease-out, border-color 150ms ease-out;
+}
+/* Inside the tab: the scrolling tab row would clip a ring drawn around it. */
+.ui-tab:focus-visible {
+  outline-offset: -2px;
+}
+/* The panel of the open contact: a short ease-out entrance when it opens, none when the contact in it changes. */
+@keyframes ui-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ui-panel-in {
+  animation: ui-panel-in 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-list-row,
+  .ui-tab {
+    transition: none;
+  }
+  .ui-panel-in {
+    animation: none;
+  }
+}
+
 /* Bottom sheet (phone capture): rises from the bottom edge, ease-out, short. */
 @keyframes ui-sheet-in {
   from {

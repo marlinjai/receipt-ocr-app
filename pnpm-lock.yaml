@@ -31,8 +31,8 @@ importers:
         specifier: ^0.3.1
         version: 0.3.1
       '@marlinjai/data-table-react':
-        specifier: ^0.5.0
-        version: 0.5.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        specifier: 0.6.0
+        version: 0.6.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@marlinjai/storage-brain-sdk':
         specifier: ^0.9.0
         version: 0.9.0(zod@4.3.6)
@@ -844,8 +844,8 @@ packages:
   '@marlinjai/data-table-core@0.3.1':
     resolution: {integrity: sha512-mogaPRSEmEUB76xCw5Jy2KmqeFiYFN6rWdUgTrXA8u75RQRXSdeDZ9MVADAeTL+C/m9MqEgxENNnn8iC+QPjHg==}
 
-  '@marlinjai/data-table-react@0.5.0':
-    resolution: {integrity: sha512-4eeuG7wF0DBqvcAy7vsuX4cWJRvPKYb9jdzfSqPpg0NlAAXG0iMeqky7WdMOC+SkdGYBlNhCQ9AgRMykrNu2jA==}
+  '@marlinjai/data-table-react@0.6.0':
+    resolution: {integrity: sha512-H938fbHreYRTUk7sDv36pB1gInpvzYDGFpDsC7ko7xGZ4tx8/afGAR8JRbFeYAXNBRh7e/1xpbZq6HX+hsmqQw==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
@@ -5122,7 +5122,7 @@ snapshots:
 
   '@marlinjai/data-table-core@0.3.1': {}
 
-  '@marlinjai/data-table-react@0.5.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@marlinjai/data-table-react@0.6.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@marlinjai/data-table-core': 0.3.1
       react: 19.2.3

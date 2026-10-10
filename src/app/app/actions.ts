@@ -23,6 +23,7 @@ import { ClassifierUnavailableError, classifyReceiptText } from '@/lib/receipt-c
 import type { ReadFlag } from '@/lib/review/reasons';
 import { recordReadFlags } from '@/lib/review/service';
 import { ensureReceiptsTable } from '@/lib/receipts-table';
+import { isGroupRow, receiptsOnly } from '@/lib/receipts-kind';
 import { findSimilarReceipt, type ExistingReceipt } from '@/lib/upload/duplicates';
 import { isSha256Hex } from '@/lib/upload/hash';
 import { auth } from '@/lib/auth';
@@ -371,12 +372,14 @@ export async function retakeReceipt(
   const row = await adapter.getRow(String(rowId));
   // Only a row of the active workspace's own table can be retaken.
   if (!row || row.tableId !== tableId) throw new Error('Receipt not found');
+  const columns = await adapter.getColumns(tableId);
+  // A group is a container, never a receipt: nothing is read into it.
+  if (isGroupRow(row, columns)) throw new Error('Receipt not found');
 
   const read = await readReceipt(adapter, tableId, file, ocrResult);
 
   // Date, amount, category and the like are re-read: that is what a retake is
   // for. Meal facts the user (or an earlier reading) already filled in stay.
-  const columns = await adapter.getColumns(tableId);
   for (const name of MEAL_READ_COLUMNS) {
     const columnId = columns.find((c) => c.name === name)?.id;
     if (!columnId) continue;
@@ -465,7 +468,8 @@ export async function recomputeFxRates(
       offset,
     });
 
-    for (const row of items) {
+    // Receipts only: a group has no currency and no amount to convert.
+    for (const row of receiptsOnly(items, columns)) {
       const currencyOptionId = row.cells[currencyCol.id] as string | null;
       const currencyName = currencyOptionId ? currencyNameById.get(currencyOptionId) ?? null : null;
       const date = row.cells[dateCol.id] as string | null;

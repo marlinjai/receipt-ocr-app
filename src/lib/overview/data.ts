@@ -2,6 +2,7 @@ import 'server-only';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { Row, Column } from '@marlinjai/data-table-core';
 import { prisma } from '@/lib/prisma';
+import { receiptsOnly } from '@/lib/receipts-kind';
 import type { LedgerInvoice } from './selection';
 
 const TABLE_NAME = 'Receipts';
@@ -53,7 +54,8 @@ export async function loadInvoices(workspaceId: string): Promise<LedgerInvoice[]
   const currencyOpts = currencyCol ? await adapter.getSelectOptions(currencyCol.id) : [];
   const currencyName = new Map(currencyOpts.map((o) => [o.id, o.name]));
 
-  const rows = await allRows(adapter, table.id);
+  // Receipts only: a group holds receipts and is not an invoice itself.
+  const rows = receiptsOnly(await allRows(adapter, table.id), columns);
   return rows.map((r) => {
     const cells = r.cells;
     const curId = currencyCol ? cells[currencyCol.id] : null;

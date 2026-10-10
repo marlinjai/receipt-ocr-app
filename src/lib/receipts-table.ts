@@ -16,6 +16,7 @@ import { mergeDuplicateColumns } from '@/lib/receipts-duplicate-columns';
 import { readAmounts } from '@/lib/extraction/amounts';
 import { parseTaxLines, serializeTaxLines } from '@/lib/meals/rules';
 import { TAX_RATE_COLUMN, TAX_RATES_COLUMN, formatTaxRates } from '@/lib/tax-rates';
+import { ROW_KIND_COLUMN } from '@/lib/receipts-kind';
 
 /**
  * The Receipts table definition (columns and standard views) and the
@@ -91,6 +92,8 @@ const COLUMNS: ColumnDef[] = [
   { name: MEAL_COLUMNS.detailsAt, type: 'date', config: { includeTime: true } },
   // The receipt's own tax lines as JSON: [{ rate, net, tax }].
   { name: MEAL_COLUMNS.taxLines, type: 'text' },
+  // What the row is: empty on a receipt, "group" on a container that holds receipts (see receipts-kind.ts).
+  { name: ROW_KIND_COLUMN, type: 'text' },
 ];
 
 /** Record the owning company on a table that was just created. Never overwrites an existing owner. */

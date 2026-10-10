@@ -116,9 +116,9 @@ export function optionsFromText(text: string): string[] {
 }
 
 /**
- * What the Kontakte tab badge shows: every contact the tab lists, which is the
- * active persons (the guest list) plus the organizations of the directory. The
- * guest picker keeps offering persons only.
+ * The count next to the "Kontakte" link of the meal page: every active contact
+ * the contacts page lists, which is the active persons plus the organizations.
+ * The guest picker keeps offering persons only.
  */
 export function contactsTabCount(persons: readonly { archived: boolean }[], organizations: number): number {
   return persons.filter((p) => !p.archived).length + Math.max(0, organizations);

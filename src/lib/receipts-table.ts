@@ -13,6 +13,8 @@ import {
 } from '@/lib/receipts-constants';
 import { firstColumnIdByName } from '@/lib/column-lookup';
 import { mergeDuplicateColumns } from '@/lib/receipts-duplicate-columns';
+import { readAmounts } from '@/lib/extraction/amounts';
+import { TAX_RATE_COLUMN, TAX_RATES_COLUMN, formatTaxRates, withTaxRates } from '@/lib/tax-rates';
 
 /**
  * The Receipts table definition (columns and standard views) and the
@@ -45,6 +47,8 @@ const COLUMNS: ColumnDef[] = [
   { name: 'Gross', type: 'number' },
   { name: 'Net', type: 'number' },
   { name: 'Tax Rate', type: 'number' },
+  // What the receipt says about its rates, as text: "19 %" or "19 % + 7 %" (see tax-rates.ts).
+  { name: TAX_RATES_COLUMN, type: 'text' },
   { name: 'Date', type: 'date' },
   { name: 'Category', type: 'select', options: CATEGORY_NAMES, optionColors: CATEGORY_COLORS },
   { name: 'Konto', type: 'text' },
@@ -201,6 +205,64 @@ export async function ensureReceiptsTable(
   await underSchemaLock(owner.db, workspaceId, isCurrent, () => bringReceiptsTableUpToDate(adapter, workspaceId, owner));
 }
 
+/**
+ * The rates a stored receipt prints, read again from its stored text. Only for
+ * a row without tax lines, and only when the reading arrives at the row's own
+ * total and finds more than one rate: anything less sure keeps the single rate.
+ */
+function printedRates(cells: Record<string, unknown>, ids: Map<string, string>): string | null {
+  const cell = (name: string): unknown => {
+    const id = ids.get(name);
+    return id ? cells[id] : null;
+  };
+  const stored = cell(MEAL_COLUMNS.taxLines);
+  const text = cell('OCR Text');
+  const gross = Number(cell('Gross'));
+  if ((typeof stored === 'string' && stored.trim()) || typeof text !== 'string' || !text.trim() || !Number.isFinite(gross)) return null;
+  const day = cell('Date');
+  const iso = day instanceof Date ? day.toISOString().slice(0, 10) : typeof day === 'string' && /^\d{4}-\d{2}-\d{2}/.test(day) ? day.slice(0, 10) : null;
+  const read = readAmounts(text, { date: iso });
+  if (read.gross === null || Math.abs(read.gross - gross) > 0.005 || new Set(read.taxGroups.map((g) => g.rate)).size < 2) return null;
+  return formatTaxRates(read.taxGroups, null);
+}
+
+/**
+ * A table that existed before the rates text did: put the new column next to
+ * the number column, and give every receipt its text from what it already
+ * holds (its tax lines, else its single rate). Runs once, when the column is
+ * created. A row that fails is logged by id and skipped: the others still get
+ * their text, and the row gets it with its next save.
+ */
+async function fillTaxRates(adapter: PrismaAdapter, tableId: string, before: ReadonlyArray<{ id: string; name: string }>, ratesColumnId: string): Promise<void> {
+  const rateIndex = before.findIndex((c) => c.name === TAX_RATE_COLUMN);
+  if (rateIndex >= 0) {
+    const order = before.map((c) => c.id);
+    order.splice(rateIndex + 1, 0, ratesColumnId);
+    await adapter.reorderColumns(tableId, order);
+  }
+  const columns = [...before, { id: ratesColumnId, name: TAX_RATES_COLUMN }];
+  const ids = firstColumnIdByName(before);
+  const rateId = rateIndex >= 0 ? before[rateIndex].id : null;
+  let offset = 0;
+  for (;;) {
+    const page = await adapter.getRows(tableId, { limit: 500, offset });
+    for (const row of page.items) {
+      // Ask for the text as a write of the rate would: from the row's own lines and rate.
+      const cells = withTaxRates(columns, rateId ? { [rateId]: row.cells[rateId] ?? null } : {}, row.cells);
+      // A receipt stored before tax lines were kept may still print two rates: its stored text says so.
+      const text = printedRates(row.cells, ids) ?? cells[ratesColumnId];
+      if (typeof text !== 'string' || !text) continue;
+      try {
+        await adapter.updateRow(row.id, { [ratesColumnId]: text });
+      } catch (e) {
+        console.error('[receipts-table] could not fill the tax rates of a row', JSON.stringify({ tableId, rowId: row.id }), e);
+      }
+    }
+    if (!page.hasMore || page.items.length === 0) break;
+    offset += page.items.length;
+  }
+}
+
 /** The work of `ensureReceiptsTable`. Only ever runs under the workspace's schema lock. */
 async function bringReceiptsTableUpToDate(
   adapter: PrismaAdapter,
@@ -235,6 +297,7 @@ async function bringReceiptsTableUpToDate(
       config: col.config as any,
     });
     columnIds[col.name] = created.id;
+    if (col.name === TAX_RATES_COLUMN) await fillTaxRates(adapter, table.id, existingColumns, created.id);
 
     if (col.options) {
       const colors = col.optionColors ?? DEFAULT_OPTION_COLORS;

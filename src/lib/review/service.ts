@@ -8,6 +8,7 @@ import { serializeTaxLines } from '@/lib/meals/rules';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 import { kontoFor, newReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
 import { isConfirmable, isReadFlag, lookAlikes, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
+import { TAX_RATES_COLUMN, formatTaxRates, withTaxRates } from '@/lib/tax-rates';
 
 /**
  * The review queue of a workspace: every receipt that needs a person's eye,
@@ -268,6 +269,13 @@ export async function applyNewReading(db: PrismaClient, ctx: ReviewContext, rowI
   if (amountsTaken && isMeal && reading.taxLines.length > 0) {
     cells[columnId(MEAL_COLUMNS.taxLines)] = serializeTaxLines(reading.taxLines);
   }
-  await table.adapter.updateRow(rowId, cells);
+  // The rates as text follow the new reading: every rate it found printed (on
+  // any receipt, not only a meal), else whatever the row then holds.
+  const ratesId = byName.get(TAX_RATES_COLUMN);
+  if (ratesId && amountsTaken && reading.taxLines.length > 0) {
+    const rate = take.find((c) => c.field === 'taxRate')?.to;
+    cells[ratesId] = formatTaxRates(reading.taxLines, typeof rate === 'number' ? rate : snapshot.reading.taxRate);
+  }
+  await table.adapter.updateRow(rowId, withTaxRates(table.columns, cells, row.cells));
   return take.map((c) => c.field);
 }

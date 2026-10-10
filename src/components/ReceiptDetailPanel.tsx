@@ -212,6 +212,7 @@ export default function ReceiptDetailPanel({
   const gross = getVal('Gross');
   const net = getVal('Net');
   const taxRate = getVal('Tax Rate');
+  const taxRates = getVal('Tax Rates');
   const date = getVal('Date');
   const category = getVal('Category');
   const konto = getVal('Konto');
@@ -252,7 +253,8 @@ export default function ReceiptDetailPanel({
     },
     {
       label: 'Tax Rate',
-      value: taxRate != null ? `${taxRate}%` : '—',
+      // Every rate the receipt carries ("19 % + 7 %") where that is known; else the single rate.
+      value: taxRates ? String(taxRates) : taxRate != null ? `${taxRate}%` : '—',
     },
     {
       label: 'Date',

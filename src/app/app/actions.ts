@@ -1,5 +1,6 @@
 'use server';
 
+import { TAX_RATES_COLUMN, formatTaxRates } from '@/lib/tax-rates';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
@@ -127,7 +128,7 @@ type ReceiptsAdapter = ReturnType<typeof getAdapter>;
  * blank (see MEAL_READ_COLUMNS), so nothing the user typed is overwritten.
  */
 const OCR_DERIVED_COLUMNS = new Set([
-  'Name', 'Vendor', 'Gross', 'Net', 'Tax Rate', 'Date', 'Category', 'Konto', 'Zuordnung', 'Status',
+  'Name', 'Vendor', 'Gross', 'Net', 'Tax Rate', TAX_RATES_COLUMN, 'Date', 'Category', 'Konto', 'Zuordnung', 'Status',
   'Confidence', 'OCR Text', 'Currency', 'FX Rate', 'Business Share %',
   MEAL_COLUMNS.mealType, MEAL_COLUMNS.consumption, MEAL_COLUMNS.tip, MEAL_COLUMNS.taxLines, MEAL_COLUMNS.place,
 ]);
@@ -229,6 +230,8 @@ async function readReceipt(
     Gross: finalGross,
     Net: finalNet,
     'Tax Rate': finalTaxRate,
+    // Every rate the receipt prints, not only the one that carries most of the bill.
+    [TAX_RATES_COLUMN]: formatTaxRates(meal?.taxLines?.length ? meal.taxLines : (amounts?.taxGroups ?? null), finalTaxRate),
     Date: date,
     Category: await optionId('Category', finalCategory),
     Konto: ai?.aiKonto || extracted?.konto || null,

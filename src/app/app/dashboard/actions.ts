@@ -1,5 +1,6 @@
 'use server';
 
+import { withTaxRates } from '@/lib/tax-rates';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
@@ -160,7 +161,19 @@ export async function reorderSelectOptions(columnId: string, optionIds: string[]
 
 export async function createRow(input: CreateRowInput): Promise<Row> {
   await requireTableAccess(input.tableId, 'receipts.row.write');
-  return getAdapter().createRow(input);
+  const adapter = getAdapter();
+  return adapter.createRow({ ...input, cells: input.cells ? await cellsWithTaxRates(input.tableId, input.cells) : input.cells });
+}
+
+/**
+ * A rate typed into the grid shows up in the rates text too (see
+ * `lib/tax-rates.ts`): the text follows the row's tax lines when it has any,
+ * else the rate just typed. Only a write that touches the rate or the lines
+ * costs the extra read of the columns.
+ */
+async function cellsWithTaxRates(tableId: string, cells: Record<string, CellValue>, stored?: Record<string, unknown>): Promise<Record<string, CellValue>> {
+  const columns = await getAdapter().getColumns(tableId);
+  return withTaxRates(columns, cells, stored) as Record<string, CellValue>;
 }
 
 export async function getRow(rowId: string): Promise<Row | null> {
@@ -175,7 +188,9 @@ export async function getRows(tableId: string, query?: QueryOptions): Promise<Qu
 
 export async function updateRow(rowId: string, cells: Record<string, CellValue>): Promise<Row> {
   await requireRowAccess(rowId, 'receipts.row.write');
-  return getAdapter().updateRow(rowId, cells);
+  const adapter = getAdapter();
+  const stored = await adapter.getRow(rowId);
+  return adapter.updateRow(rowId, stored ? await cellsWithTaxRates(stored.tableId, cells, stored.cells) : cells);
 }
 
 /** Why a receipt was kept when a delete was asked for. */
@@ -268,7 +283,7 @@ export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<Row[]> {
   for (const tableId of tableIds) {
     await requireTableAccess(tableId, 'receipts.row.write');
   }
-  return getAdapter().bulkCreateRows(inputs);
+  return getAdapter().bulkCreateRows(await Promise.all(inputs.map(async (i) => ({ ...i, cells: i.cells ? await cellsWithTaxRates(i.tableId, i.cells) : i.cells }))));
 }
 
 async function requireRowsAccess(rowIds: string[]): Promise<void> {

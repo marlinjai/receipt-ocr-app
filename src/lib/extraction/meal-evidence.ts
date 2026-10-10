@@ -21,6 +21,14 @@ export interface MealEvidence {
 /** From this score on, the text alone decides. */
 export const MEAL_EVIDENCE_THRESHOLD = 4;
 
+/**
+ * Signs only a restaurant receipt carries. Points alone are not enough: an
+ * invoice from a hosting company can say "Server:", mention a "tip" and the
+ * word "food" and reach the threshold without being a meal. At least one of
+ * these must be present.
+ */
+const RESTAURANT_ONLY = new Set(['hospitality_form', 'table', 'venue', 'dishes']);
+
 const SIGNS: Array<{ name: string; weight: number; pattern: RegExp; headOnly?: boolean }> = [
   // The form German restaurants print for the business-meal deduction.
   { name: 'hospitality_form', weight: 4, pattern: /bewirtungsaufw(?:and|endungen)|bewirtete\s+person|anlass\s+d(?:er|\.)\s+bewirtung|bewirtungsbeleg/i },
@@ -55,5 +63,5 @@ export function mealEvidence(fullText: string): MealEvidence {
     signs.push('dishes');
     score += dishes.size >= 4 ? 2 : 1;
   }
-  return { score, strong: score >= MEAL_EVIDENCE_THRESHOLD, signs };
+  return { score, strong: score >= MEAL_EVIDENCE_THRESHOLD && signs.some((s) => RESTAURANT_ONLY.has(s)), signs };
 }

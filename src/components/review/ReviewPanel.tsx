@@ -2,6 +2,7 @@
 
 import { useId, useState } from 'react';
 import type { ReviewEntry } from '@/lib/review/service';
+import type { ReadingChange, ReadingField } from '@/lib/review/reading';
 import { REASON_TEXT, type ReviewReason } from '@/lib/review/reasons';
 
 /**
@@ -24,6 +25,8 @@ export interface ReviewPanelProps {
   onConfirm: (rowId: string) => void;
   onKeepBoth: (rowId: string, otherRowId: string) => void;
   onDelete: (rowId: string) => void;
+  /** Take the offered new reading of a receipt, for the fields named. */
+  onTakeReading: (rowId: string, fields: ReadingField[]) => void;
 }
 
 const SHORT: Record<ReviewReason, string> = {
@@ -37,7 +40,25 @@ const SHORT: Record<ReviewReason, string> = {
   total_conflict: 'Betrag prüfen',
   category_doubt: 'Kategorie prüfen',
   possible_duplicate: 'Mögliches Duplikat',
+  reading_differs: 'Neue Lesart',
 };
+
+const FIELD_LABEL: Record<ReadingField, string> = {
+  name: 'Name',
+  vendor: 'Händler',
+  gross: 'Gesamtbetrag',
+  net: 'Netto',
+  taxRate: 'Steuersatz',
+  tip: 'Trinkgeld',
+  category: 'Kategorie',
+};
+
+function shown(change: ReadingChange, value: string | number | null, currency: string): string {
+  if (value === null || value === '') return 'leer';
+  if (typeof value === 'string') return value;
+  if (change.field === 'taxRate') return `${new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2 }).format(value)} %`;
+  return amount(value, currency);
+}
 
 function day(iso: string | null): string {
   if (!iso) return 'ohne Datum';
@@ -62,7 +83,7 @@ function money(value: number | null, currency: string): string {
   return value === null ? 'ohne Betrag' : amount(value, currency);
 }
 
-export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, onKeepBoth, onDelete }: ReviewPanelProps) {
+export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, onKeepBoth, onDelete, onTakeReading }: ReviewPanelProps) {
   const panelId = useId();
   const [open, setOpen] = useState(false);
   if (entries.length === 0 && !error) return null;
@@ -122,6 +143,50 @@ export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, o
                   </li>
                 ))}
               </ul>
+
+              {entry.proposal.length > 0 && (
+                <div className="mt-2 rounded-md px-2.5 py-2" style={{ background: 'rgba(255, 255, 255, 0.03)' }}>
+                  <table className="w-full text-left text-xs">
+                    <caption className="sr-only">Neue Lesart von {entry.name}</caption>
+                    <thead>
+                      <tr style={{ color: 'var(--dt-text-secondary)' }}>
+                        <th scope="col" className="py-1 pr-3 font-normal">
+                          Feld
+                        </th>
+                        <th scope="col" className="py-1 pr-3 font-normal">
+                          Gespeichert
+                        </th>
+                        <th scope="col" className="py-1 font-normal">
+                          Neu gelesen
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {entry.proposal.map((change) => (
+                        <tr key={change.field}>
+                          <th scope="row" className="py-1 pr-3 font-normal" style={{ color: 'var(--dt-text-secondary)' }}>
+                            {FIELD_LABEL[change.field]}
+                          </th>
+                          <td className="py-1 pr-3 tabular-nums line-through decoration-1" style={{ color: 'var(--dt-text-secondary)' }}>
+                            {shown(change, change.from, entry.currency)}
+                          </td>
+                          <td className="py-1 tabular-nums" style={{ color: 'var(--foreground)' }}>
+                            {shown(change, change.to, entry.currency)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <button
+                    type="button"
+                    className="ui-btn ui-btn-sm mt-2"
+                    disabled={busy}
+                    onClick={() => onTakeReading(entry.rowId, entry.proposal.map((c) => c.field))}
+                  >
+                    Neue Lesart übernehmen
+                  </button>
+                </div>
+              )}
 
               {entry.duplicates.map((other) => (
                 <div key={other.rowId} className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md px-2.5 py-2 text-xs" style={{ background: 'rgba(255, 255, 255, 0.03)' }}>

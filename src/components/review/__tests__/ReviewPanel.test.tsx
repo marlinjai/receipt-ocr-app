@@ -18,11 +18,12 @@ const entry = (overrides: Partial<ReviewEntry> = {}): ReviewEntry => ({
   reasons: ['total_unconfirmed'],
   canConfirm: true,
   duplicates: [],
+  proposal: [],
   ...overrides,
 });
 
 function setup(entries: ReviewEntry[], extra: { busy?: boolean; error?: string | null } = {}) {
-  const handlers = { onOpen: vi.fn(), onConfirm: vi.fn(), onKeepBoth: vi.fn(), onDelete: vi.fn() };
+  const handlers = { onOpen: vi.fn(), onConfirm: vi.fn(), onKeepBoth: vi.fn(), onDelete: vi.fn(), onTakeReading: vi.fn() };
   render(<ReviewPanel entries={entries} busy={extra.busy ?? false} error={extra.error ?? null} {...handlers} />);
   return handlers;
 }
@@ -76,6 +77,32 @@ describe('ReviewPanel', () => {
     expect(handlers.onKeepBoth).toHaveBeenCalledWith('r1', 'r9');
     await userEvent.click(screen.getByRole('button', { name: 'Anderen ansehen' }));
     expect(handlers.onOpen).toHaveBeenCalledWith('r9');
+  });
+
+  it('a new reading is shown as stored against newly read, and is taken only on request', async () => {
+    const handlers = setup([
+      entry({
+        name: 'Since 2016',
+        reasons: ['reading_differs'],
+        proposal: [
+          { field: 'vendor', from: 'Since 2016', to: 'Fantastic Foodbar' },
+          { field: 'gross', from: 50, to: 45.2 },
+          { field: 'taxRate', from: 526.37, to: 19 },
+          { field: 'tip', from: null, to: 4.8 },
+        ],
+      }),
+    ]);
+    await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));
+    const table = screen.getByRole('table', { name: /Neue Lesart von Since 2016/ });
+    const rows = within(table).getAllByRole('row').slice(1).map((r) => r.textContent);
+    expect(rows).toEqual(['HändlerSince 2016Fantastic Foodbar', 'Gesamtbetrag50,00\u00a0€45,20\u00a0€', 'Steuersatz526,37 %19 %', 'Trinkgeldleer4,80\u00a0€']);
+    expect(handlers.onTakeReading).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Neue Lesart übernehmen' }));
+    expect(handlers.onTakeReading).toHaveBeenCalledWith('r1', ['vendor', 'gross', 'taxRate', 'tip']);
+    // Keeping what is stored is the other answer.
+    await userEvent.click(screen.getByRole('button', { name: 'Geprüft, stimmt so' }));
+    expect(handlers.onConfirm).toHaveBeenCalledWith('r1');
   });
 
   it('while an action runs every button of the list is disabled, so nothing is sent twice', async () => {

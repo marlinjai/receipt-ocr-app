@@ -25,6 +25,7 @@ interface ReceiptDetailPanelProps {
 }
 
 const MAX_FILES_PER_ROW = 10;
+const PANEL_FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 
 function getCellDisplay(
@@ -108,16 +109,49 @@ export default function ReceiptDetailPanel({
   const [previewIdx, setPreviewIdx] = useState(0);
   const [dragActive, setDragActive] = useState(false);
 
-  // Escape closes the panel, as it closes every other layer of the app. With
-  // the fullscreen preview open, Escape belongs to the preview.
+  // The panel is a modal dialog: focus moves into it when it opens, Tab stays
+  // inside it, Escape closes it, and focus goes back to where it was. Saying
+  // `aria-modal` alone does none of that, and a keyboard user kept walking
+  // through the dashboard behind the backdrop.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    closeButtonRef.current?.focus();
+    return () => {
+      // The row that opened the panel may be gone (deleted, filtered away).
+      if (previous && document.contains(previous)) previous.focus?.();
+    };
+  }, []);
+
+  // With the fullscreen preview or a confirmation open, the keys belong to that layer.
   const lightboxOpen = lightboxFile !== null;
   useEffect(() => {
     if (lightboxOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
-      // A dialog opened from inside the panel (a confirmation) handles its own Escape first.
-      if (document.querySelector('.ui-dialog-backdrop')) return;
-      onClose();
+      if (e.defaultPrevented || document.querySelector('.ui-dialog-backdrop')) return;
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      const panel = panelRef.current;
+      if (e.key !== 'Tab' || !panel) return;
+      const items = Array.from(panel.querySelectorAll<HTMLElement>(PANEL_FOCUSABLE));
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (!panel.contains(active)) {
+        // Focus escaped (a click on the backdrop area, a removed element): bring it back.
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -282,6 +316,7 @@ export default function ReceiptDetailPanel({
 
       {/* Panel — the whole surface is a drop target for the receipt file */}
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={name ? `Beleg: ${String(name)}` : 'Beleg'}
@@ -314,6 +349,7 @@ export default function ReceiptDetailPanel({
             )}
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             aria-label="Schließen"

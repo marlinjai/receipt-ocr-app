@@ -16,7 +16,7 @@ import {
 import type { ColumnType, Row, GroupConfig, FooterConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
 import { deleteReceiptsForGood } from './actions';
-import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, type ReviewActionError, type ReviewResult } from './review-actions';
+import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
 import FxRecomputePanel from './FxRecomputePanel';
 import BulkEditBar from './BulkEditBar';
 import AiChatSidebar from '@/components/AiChatSidebar';
@@ -511,6 +511,14 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
         onConfirm={(rowId) => void runReviewAction(() => confirmReceiptChecked(rowId))}
         onKeepBoth={(rowId, otherRowId) => void runReviewAction(() => keepBothLookAlikes(rowId, otherRowId))}
         onDelete={deleteOne}
+        onTakeReading={(rowId, fields) =>
+          void runReviewAction(async () => {
+            const result = await takeNewReading(rowId, fields);
+            // The table shows the receipt with its new values.
+            if (result.ok) await refresh();
+            return result;
+          })
+        }
       />
 
       <ConfirmDialog

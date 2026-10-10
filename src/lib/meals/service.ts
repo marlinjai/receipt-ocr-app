@@ -19,6 +19,7 @@ import { rowToMealRecord, type SelectOptionsByColumn } from './record';
 import { isDismissedMeal, isMealRelated, serializeTaxLines } from './rules';
 import { parseRotation, type Rotation } from './viewer-state';
 import { DEFAULT_TAX_SETTINGS, type MealGuestEntry, type MealRecord, type MealTaxSettings } from './types';
+import { TAX_RATES_COLUMN, formatTaxRates } from '@/lib/tax-rates';
 
 /**
  * Server-side reads and writes for the meal register.
@@ -275,6 +276,13 @@ async function writeMealInput(
     [columnId(MEAL_COLUMNS.taxLines)]: serializeTaxLines(merged.taxLines),
     [columnId(MEAL_COLUMNS.detailsAt)]: now().toISOString(),
   };
+  // The rates as text follow the tax lines typed here; without lines, the row's
+  // single rate. Only when the lines changed: a save that leaves them alone
+  // leaves the text alone, also one a person has typed.
+  const ratesColumn = ctx.columns.find((c) => c.name === TAX_RATES_COLUMN);
+  if (ratesColumn && serializeTaxLines(merged.taxLines) !== serializeTaxLines(current.taxLines)) {
+    cells[ratesColumn.id] = formatTaxRates(merged.taxLines, current.taxRate);
+  }
   if (merged.date !== stored.date) cells[columnId('Date')] = merged.date;
   if (merged.gross !== null && merged.gross !== stored.gross) cells[columnId('Gross')] = merged.gross;
 

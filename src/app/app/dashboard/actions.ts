@@ -1,5 +1,6 @@
 'use server';
 
+import { touchesTaxRates, withTaxRates } from '@/lib/tax-rates';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
@@ -160,7 +161,9 @@ export async function reorderSelectOptions(columnId: string, optionIds: string[]
 
 export async function createRow(input: CreateRowInput): Promise<Row> {
   await requireTableAccess(input.tableId, 'receipts.row.write');
-  return getAdapter().createRow(input);
+  const adapter = getAdapter();
+  if (!input.cells) return adapter.createRow(input);
+  return adapter.createRow({ ...input, cells: withTaxRates(await adapter.getColumns(input.tableId), input.cells) as Record<string, CellValue> });
 }
 
 export async function getRow(rowId: string): Promise<Row | null> {
@@ -175,7 +178,22 @@ export async function getRows(tableId: string, query?: QueryOptions): Promise<Qu
 
 export async function updateRow(rowId: string, cells: Record<string, CellValue>): Promise<Row> {
   await requireRowAccess(rowId, 'receipts.row.write');
-  return getAdapter().updateRow(rowId, cells);
+  const { tableId } = await rowTable(rowId);
+  const adapter = getAdapter();
+  // A rate typed into the grid shows up in the rates text too (see
+  // `lib/tax-rates.ts`). Every edit reads the columns to know whether it is
+  // one; only an edit of the rate or the tax lines also reads the stored row.
+  const columns = await adapter.getColumns(tableId);
+  if (!touchesTaxRates(columns, cells)) return adapter.updateRow(rowId, cells);
+  const stored = await adapter.getRow(rowId);
+  return adapter.updateRow(rowId, withTaxRates(columns, cells, stored?.cells) as Record<string, CellValue>);
+}
+
+/** The table a row belongs to; the row was authorized just before. */
+async function rowTable(rowId: string): Promise<{ tableId: string }> {
+  const tableId = (await resolveRowTableIds([rowId])).get(rowId);
+  if (!tableId) throw new Error('Row not found');
+  return { tableId };
 }
 
 /** Why a receipt was kept when a delete was asked for. */
@@ -268,7 +286,12 @@ export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<Row[]> {
   for (const tableId of tableIds) {
     await requireTableAccess(tableId, 'receipts.row.write');
   }
-  return getAdapter().bulkCreateRows(inputs);
+  const adapter = getAdapter();
+  // The columns of each table once, not once per row.
+  const columnsByTable = new Map(await Promise.all(tableIds.map(async (tableId) => [tableId, await adapter.getColumns(tableId)] as const)));
+  return adapter.bulkCreateRows(
+    inputs.map((i) => (i.cells ? { ...i, cells: withTaxRates(columnsByTable.get(i.tableId) ?? [], i.cells) as Record<string, CellValue> } : i)),
+  );
 }
 
 async function requireRowsAccess(rowIds: string[]): Promise<void> {

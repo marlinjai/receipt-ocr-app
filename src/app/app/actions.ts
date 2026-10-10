@@ -1,5 +1,6 @@
 'use server';
 
+import { TAX_RATES_COLUMN, formatTaxRates, withTaxRates } from '@/lib/tax-rates';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
@@ -127,7 +128,7 @@ type ReceiptsAdapter = ReturnType<typeof getAdapter>;
  * blank (see MEAL_READ_COLUMNS), so nothing the user typed is overwritten.
  */
 const OCR_DERIVED_COLUMNS = new Set([
-  'Name', 'Vendor', 'Gross', 'Net', 'Tax Rate', 'Date', 'Category', 'Konto', 'Zuordnung', 'Status',
+  'Name', 'Vendor', 'Gross', 'Net', 'Tax Rate', TAX_RATES_COLUMN, 'Date', 'Category', 'Konto', 'Zuordnung', 'Status',
   'Confidence', 'OCR Text', 'Currency', 'FX Rate', 'Business Share %',
   MEAL_COLUMNS.mealType, MEAL_COLUMNS.consumption, MEAL_COLUMNS.tip, MEAL_COLUMNS.taxLines, MEAL_COLUMNS.place,
 ]);
@@ -229,6 +230,8 @@ async function readReceipt(
     Gross: finalGross,
     Net: finalNet,
     'Tax Rate': finalTaxRate,
+    // Every rate the receipt prints, not only the one that carries most of the bill.
+    [TAX_RATES_COLUMN]: formatTaxRates(meal?.taxLines?.length ? meal.taxLines : (amounts?.taxGroups ?? null), finalTaxRate),
     Date: date,
     Category: await optionId('Category', finalCategory),
     Konto: ai?.aiKonto || extracted?.konto || null,
@@ -252,6 +255,10 @@ async function readReceipt(
     values[MEAL_COLUMNS.tip] = meal.tip;
     values[MEAL_COLUMNS.taxLines] = serializeTaxLines(meal.taxLines);
     values[MEAL_COLUMNS.place] = meal.place ?? '';
+  } else if (amounts && amounts.taxGroups.length > 0) {
+    // Any receipt keeps the tax groups it prints, so the rates text has a
+    // stored source and a later write derives the same text again.
+    values[MEAL_COLUMNS.taxLines] = serializeTaxLines(amounts.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax })));
   }
 
   const cells: Record<string, CellValue> = {};
@@ -376,7 +383,11 @@ export async function retakeReceipt(
     const current = row.cells[columnId];
     if (current !== null && current !== undefined && current !== '') delete read.cells[columnId];
   }
-  await adapter.updateRow(row.id, read.cells);
+  // The rates text is derived again from what the row holds after this write:
+  // tax lines that were kept above must not be contradicted by the new reading's.
+  const ratesColumnId = columns.find((c) => c.name === TAX_RATES_COLUMN)?.id;
+  if (ratesColumnId) delete read.cells[ratesColumnId];
+  await adapter.updateRow(row.id, withTaxRates(columns, read.cells, row.cells) as typeof read.cells);
 
   if (read.imageColumnId && file.id) {
     // Swap the file: drop what the capture uploaded before, keep anything a

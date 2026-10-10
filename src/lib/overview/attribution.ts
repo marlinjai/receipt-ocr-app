@@ -1,6 +1,7 @@
 import 'server-only';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
+import { receiptsOnly } from '@/lib/receipts-kind';
 
 /**
  * Workspace-editable per-vendor attribution %, the configurable replacement for
@@ -99,7 +100,8 @@ export async function applyAttributionToLedger(workspaceId: string): Promise<num
   let offset = 0;
   for (;;) {
     const page = await adapter.getRows(table.id, { limit: 500, offset });
-    for (const row of page.items) {
+    // A group never carries a business share: only receipts are attributed.
+    for (const row of receiptsOnly(page.items, columns)) {
       rows.push({
         id: row.id,
         vendor: typeof row.cells[vendorCol.id] === 'string' ? (row.cells[vendorCol.id] as string) : null,

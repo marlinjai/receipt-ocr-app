@@ -19,6 +19,8 @@ import { isDismissedMeal, isMealRelated, serializeTaxLines } from './rules';
 import { parseRotation, type Rotation } from './viewer-state';
 import { DEFAULT_TAX_SETTINGS, type MealGuestEntry, type MealRecord, type MealTaxSettings } from './types';
 import { TAX_RATES_COLUMN, formatTaxRates } from '@/lib/tax-rates';
+import { isGroupRow, receiptsOnly } from '@/lib/receipts-kind';
+import { releaseChildRows } from '@/lib/groups/links';
 
 /**
  * Server-side reads and writes for the meal register.
@@ -82,7 +84,22 @@ export async function tableContext(db: PrismaClient, workspaceId: string): Promi
   return { adapter, tableId: table.id, columns, selectOptions };
 }
 
-export async function allRows(adapter: PrismaAdapter, tableId: string): Promise<Row[]> {
+/**
+ * Every receipt of the table. Groups (containers that hold receipts, see
+ * `receipts-kind.ts`) are left out: they are not receipts, so nothing that
+ * counts, sums or reviews receipts may see them. A receipt inside a group is
+ * an ordinary row here and is returned exactly once.
+ */
+export async function allReceiptRows(
+  adapter: Pick<PrismaAdapter, 'getRows'>,
+  tableId: string,
+  columns: readonly Pick<Column, 'id' | 'name'>[],
+): Promise<Row[]> {
+  return receiptsOnly(await allRows(adapter, tableId), columns);
+}
+
+/** Every row of the table, groups included. Only for callers that handle the rows as rows; receipts are read through `allReceiptRows`. */
+async function allRows(adapter: Pick<PrismaAdapter, 'getRows'>, tableId: string): Promise<Row[]> {
   const out: Row[] = [];
   let offset = 0;
   const limit = 500;
@@ -140,7 +157,7 @@ export async function loadMealRecords(
 ): Promise<MealRecord[]> {
   const ctx = await tableContext(db, workspaceId);
   if (!ctx) return [];
-  const rows = await allRows(ctx.adapter, ctx.tableId);
+  const rows = await allReceiptRows(ctx.adapter, ctx.tableId, ctx.columns);
   const noGuests: MealGuestEntry[] = [];
   const candidates = rows
     .filter((r) => !r.archived)
@@ -176,8 +193,8 @@ async function loadWithContext(
   rowId: string,
 ): Promise<MealRecord | null> {
   const row = await ctx.adapter.getRow(rowId);
-  // The row must live in THIS workspace's Receipts table.
-  if (!row || row.tableId !== ctx.tableId) return null;
+  // The row must live in THIS workspace's Receipts table, and be a receipt: a group has no meal.
+  if (!row || row.tableId !== ctx.tableId || isGroupRow(row, ctx.columns)) return null;
   const guests = await guestsByRow(db, workspaceId, [rowId]);
   return rowToMealRecord(row, ctx.columns, ctx.selectOptions, guests.get(rowId) ?? []);
 }
@@ -469,6 +486,9 @@ export async function deleteReceiptRows(
         continue;
       }
 
+      // A group that is deleted leaves its receipts behind as ordinary top-level rows:
+      // they are released first, so no receipt ever points at a row that is gone.
+      await releaseChildRows(db, ctx.tableId, rowId);
       await ctx.adapter.deleteRow(rowId);
       // TaxItemDecision.rowId has no foreign key, and a retry cannot find the deleted row again, so
       // this runs before the guest cleanup: a guest failure must not orphan the decisions.

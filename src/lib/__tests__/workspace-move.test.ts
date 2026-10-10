@@ -263,6 +263,50 @@ describe('moveWorkspace (the write order, with the contacts package and the data
     });
   });
 
+  it('writes nothing but the company stamp, so a receipt keeps its id and its link to its group', async () => {
+    // Groups and their receipts are rows of one receipts table, linked by `parent_row_id` in that
+    // table. The table belongs to the workspace as a whole (through its `dt_tables` row), so a move
+    // must never rewrite, copy or re-create its rows: then ids and links cannot come apart.
+    const writes: Array<{ model: string; method: string; data: unknown }> = [];
+    const raw = vi.fn();
+    const model = (name: string) =>
+      new Proxy(
+        {},
+        {
+          get: (_t, method: string) => async (args: { data?: unknown }) => {
+            if (method === 'groupBy') return [{ authTenantId: 'tnt_a', _count: { _all: 2 } }];
+            if (method === 'findMany') return [];
+            if (method === 'count') return 0;
+            writes.push({ model: name, method, data: args?.data });
+            return { count: 2 };
+          },
+        },
+      );
+    const db: unknown = new Proxy(
+      {},
+      {
+        get: (_t, prop: string) => {
+          if (prop === '$transaction') return async (run: (tx: unknown) => Promise<void>) => run(db);
+          if (prop.startsWith('$')) return raw;
+          return model(prop);
+        },
+      },
+    );
+    fakeContacts(async () => ({ written: true, moved: 0, refused: 0, held: 0, items: [] }), async () => []);
+
+    const report = await moveWorkspace(db as PrismaClient, REQ, { apply: true });
+
+    expect(report).toMatchObject({ written: true, blocked: [] });
+    expect(writes.length).toBeGreaterThan(0);
+    expect(writes.map((w) => w.model)).toContain('dtTable');
+    for (const write of writes) {
+      expect(write.method).toBe('updateMany');
+      expect(write.data).toEqual({ authTenantId: 'tnt_b' });
+    }
+    // No statement outside the models: the rows of the receipts table are never addressed.
+    expect(raw).not.toHaveBeenCalled();
+  });
+
   it('a dry run asks the package only for a preview and opens no transaction', async () => {
     const { db, transaction, updateMany } = fakeDb();
     const { transferTo } = fakeContacts(async () => {

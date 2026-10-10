@@ -1,4 +1,5 @@
 import type { Column, Row, CellValue } from '@marlinjai/data-table-core';
+import { receiptsOnly } from '@/lib/receipts-kind';
 
 /**
  * DATEV-compatible CSV column mapping.
@@ -143,6 +144,9 @@ export interface ExportCSVOptions {
 /**
  * Generate a DATEV-compatible CSV string from rows and columns.
  * Uses semicolon delimiter, German number formatting, and UTF-8 BOM.
+ *
+ * One line per receipt. A group (a container that holds receipts) is left out:
+ * it is no booking, and its receipts are in the list as their own lines.
  */
 export function generateCSV(columns: Column[], rows: Row[]): string {
   const mapping = buildColumnMapping(columns);
@@ -151,7 +155,7 @@ export function generateCSV(columns: Column[], rows: Row[]): string {
   const headerLine = DATEV_HEADERS.map((h) => escapeCSVField(h)).join(';');
 
   // Data rows
-  const dataLines = rows.map((row) => {
+  const dataLines = receiptsOnly(rows, columns).map((row) => {
     const fields = DATEV_HEADERS.map((header) => {
       if (header === 'Belegnummer') {
         return escapeCSVField(row.id);

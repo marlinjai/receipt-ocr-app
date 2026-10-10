@@ -2,7 +2,8 @@ import 'server-only';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { rowToMealRecord } from '@/lib/meals/record';
 import { smallBusinessOn } from '@/lib/meals/rules';
-import { allRows, getTaxSettings, guestsByRow, tableContext } from '@/lib/meals/service';
+import { allReceiptRows, getTaxSettings, guestsByRow, tableContext } from '@/lib/meals/service';
+import { isGroupRow } from '@/lib/receipts-kind';
 import type { MealGuestEntry } from '@/lib/meals/types';
 import { AssetInputError, validateAssetInput, validateDisposalInput, type AssetInput } from './asset-input';
 import { assetSchedule, type AssetCheck, type AssetFact, type AssetKind, type AssetMethod, type AssetYearRow, type DisposalKind } from './assets';
@@ -180,9 +181,10 @@ async function loadReceipts(
   if (onlyRowId) {
     const row = await ctx.adapter.getRow(onlyRowId);
     // The row must live in THIS workspace's Receipts table.
-    rows = row && row.tableId === ctx.tableId && !row.archived ? [row] : [];
+    // A group is never a receipt, so asking for one by id finds nothing.
+    rows = row && row.tableId === ctx.tableId && !row.archived && !isGroupRow(row, ctx.columns) ? [row] : [];
   } else {
-    rows = (await allRows(ctx.adapter, ctx.tableId)).filter((r) => !r.archived);
+    rows = (await allReceiptRows(ctx.adapter, ctx.tableId, ctx.columns)).filter((r) => !r.archived);
   }
   const rowIds = rows.map((r) => r.id);
   const [guests, decisions, storedLines] = await Promise.all([

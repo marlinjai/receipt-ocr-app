@@ -3,7 +3,8 @@ import type { PrismaClient } from '@prisma/client';
 import type { Column, Row } from '@marlinjai/data-table-core';
 import { firstColumnIdByName } from '@/lib/column-lookup';
 import { isoDay, type SelectOptionsByColumn } from '@/lib/meals/record';
-import { allRows, tableContext } from '@/lib/meals/service';
+import { allReceiptRows, tableContext } from '@/lib/meals/service';
+import { isGroupRow } from '@/lib/receipts-kind';
 import { serializeTaxLines } from '@/lib/meals/rules';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 import { kontoFor, newReading, type NewReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
@@ -150,7 +151,8 @@ async function fileHashesByRow(db: PrismaClient, rowIds: string[]): Promise<Map<
 export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Promise<ReviewEntry[]> {
   const ctx = await tableContext(db, workspaceId);
   if (!ctx) return [];
-  const rows = await allRows(ctx.adapter, ctx.tableId);
+  // Receipts only: a group has no amount, vendor or file and would sit in this list forever.
+  const rows = await allReceiptRows(ctx.adapter, ctx.tableId, ctx.columns);
   if (rows.length === 0) return [];
   const rowIds = rows.map((r) => r.id);
   const [hashes, stored] = await Promise.all([
@@ -198,7 +200,7 @@ async function requireRow(db: PrismaClient, ctx: ReviewContext, rowId: string): 
   const table = await tableContext(db, ctx.workspaceId);
   if (!table) throw new ReviewError('not_initialized');
   const row = await table.adapter.getRow(rowId);
-  if (!row || row.tableId !== table.tableId) throw new ReviewError('row_not_found');
+  if (!row || row.tableId !== table.tableId || isGroupRow(row, table.columns)) throw new ReviewError('row_not_found');
 }
 
 /**
@@ -269,7 +271,8 @@ export async function applyNewReading(
   const table = await tableContext(db, ctx.workspaceId);
   if (!table) throw new ReviewError('not_initialized');
   const row = await table.adapter.getRow(rowId);
-  if (!row || row.tableId !== table.tableId) throw new ReviewError('row_not_found');
+  // A group is never read: it has no file and takes no amount.
+  if (!row || row.tableId !== table.tableId || isGroupRow(row, table.columns)) throw new ReviewError('row_not_found');
 
   const snapshot = snapshotOf(row, table.columns, table.selectOptions, new Map());
   const reading = readingOf(snapshot.reading, table.columns, table.selectOptions);

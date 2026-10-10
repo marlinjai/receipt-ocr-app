@@ -3,6 +3,7 @@ import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { PrismaClient } from '@prisma/client';
 import { isoDay } from '@/lib/meals/record';
 import { RECEIPTS_TABLE_NAME } from '@/lib/receipts-table';
+import { isGroupRow } from '@/lib/receipts-kind';
 
 /**
  * Duplicate detection for uploads, scoped to one workspace.
@@ -70,7 +71,7 @@ export async function findFileDuplicate(
       // Only rows of this workspace's own table count; a hit in another
       // workspace must stay invisible (it would leak that someone holds the file).
       const row = await ctx.adapter.getRow(rowId);
-      if (row && row.tableId === ctx.tableId && !row.archived) {
+      if (row && row.tableId === ctx.tableId && !row.archived && !isGroupRow(row, ctx.columns)) {
         return { rowId, name: rowName(row.cells, ctx.columns) };
       }
     }
@@ -126,7 +127,8 @@ export async function findSimilarReceipt(
       offset,
     });
     for (const row of page.items) {
-      if (row.id === excludeRowId || row.archived) continue;
+      // A group is never a look-alike of a receipt, whatever its cells say.
+      if (row.id === excludeRowId || row.archived || isGroupRow(row, ctx.columns)) continue;
       if (isoDay(row.cells[dateCol.id]) !== day) continue;
       const rowVendor = row.cells[vendorCol.id];
       if (typeof rowVendor !== 'string' || rowVendor.trim().toLocaleLowerCase('de-DE') !== vendor) continue;

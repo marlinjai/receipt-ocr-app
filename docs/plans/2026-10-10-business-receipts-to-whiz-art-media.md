@@ -1,8 +1,8 @@
 ---
 title: Business receipts move to the company Whiz-Art Media
-summary: The receipts workspace that today sits under the personal company "marlinjai" holds business receipts. It moves as a whole to the business company Whiz-Art Media through auth-brain, keeping every row, file and workspace id, and "marlinjai" gets a fresh empty workspace for personal receipts. Decided 2026-10-10; the production step waits for Marlin's one-line yes.
+summary: The receipts workspace that today sits under the personal company "marlinjai" holds business receipts. It moves as a whole to the business company Whiz-Art Media through auth-brain, keeping every row, file and workspace id, and "marlinjai" gets a fresh empty workspace for personal receipts. Decided and carried out on 2026-10-10 on Marlin's yes; verified in both databases and in the browser.
 type: plan
-status: in-progress
+status: completed
 tags: [receipts, contacts, companies, whiz-art-media, migration, production-data]
 projects: [receipt-ocr-app, auth-brain, contacts]
 date: 2026-10-10
@@ -78,7 +78,8 @@ the time (see Coordination).
 3. **auth-brain:** retire the empty workspace created for Whiz-Art Media on 2026-10-09
    (`01a12296-b963-7018-8857-5e76ffe01c87`, no receipts), then move workspace
    `019fa320-8e10-7978-b0a6-0b0d3bad83c3` to Whiz-Art Media and give it the name and slug of the
-   company's main workspace.
+   company's main workspace. The empty workspace has to give up its slug BEFORE it is retired, see
+   "The production run, call by call".
 4. **Receipts database: restamp the company** on every row of that workspace, dry run first, counts
    only, through the signed endpoint `POST /api/internal/workspace-move` (built 2026-10-10, see
    "The receipts endpoint" below). The tables are read from the Prisma data model instead of this
@@ -115,19 +116,90 @@ Decided under the "decide it yourself" rule, say so if you disagree:
   only recovery that needs no manual step.
 - **Blockers write nothing.** A row stamped with a third company, a guest contact found in neither
   company, a contact another workspace still names, or any refusal by the contacts package other
-  than an identity conflict stops the apply with 409 before the first write. Reason: with the
-  package's "skip" mode such a contact would silently stay behind while its guest rows moved.
+  than a plain guest's identity conflict stops the apply with 409 before the first write. Reason:
+  with the package's "skip" mode such a contact would silently stay behind while its guest rows
+  moved.
 - **A guest the target already has is not merged.** The source contact stays where it is and the
   guest rows of this workspace are pointed at the target's contact. Reason: the swap then points
-  them back, so the rollback stays "the same call with the companies swapped". Production has no
-  such conflict (checked read-only 2026-10-10: 0 identity and 0 customer number conflicts).
+  them back, so the rollback stays "the same call with the companies swapped". It blocks instead
+  when the guest belongs to an organization, when the contact was only asked for by id, or when a
+  meal already names the target's contact too (a row would have to be removed). Production has
+  no such conflict (checked read-only 2026-10-10: 0 identity and 0 customer number conflicts).
+- **The swap is an exact way back only while the workspace is unused under the new company.**
+  What moves is "the contacts this workspace's meals name now", so a rollback starts with the
+  swapped dry run and compares the number of contacts with the 4 the forward call moved.
 - **Only guests move by default; others are named.** Contacts no meal names stay unless their ids
   are given in `also_contact_ids`. Reason: "all contacts of the company" has no clean inverse (the
   swap would send the 25 Whiz-Art Media clients to "marlinjai"); a list of ids does.
 - **A signed call expires after five minutes** (`issued_at` is part of the signed body). Reason: a
-  move has an inverse, so an old call must not be replayable after a rollback.
+  move has an inverse, so a signed call must not stay replayable. Within the five minutes it can
+  be sent again; a single-use token was not worth a table for a call made by hand.
 - **Timestamps.** The restamp goes through Prisma, so `updated_at` moves on the 17 tables that
   have it. The stamp did change at that time.
+
+## The production run, call by call (completed 2026-10-10)
+
+What production holds, read without writing on 2026-10-10 (counts and ids, no names):
+
+- Receipts database, workspace `019fa320-8e10-7978-b0a6-0b0d3bad83c3`: 5 rows carry or lack the
+  company stamp. `dt_tables` 1 (no stamp, from before the stamp existed), `meal_guests` 3,
+  `workspace_tax_settings` 1. No row is stamped with a third company. 24 tables have the stamp
+  column: the 23 the endpoint derives plus `company_exports`, which holds no row.
+- Contacts database: "marlinjai" holds 4 persons, none linked to an organization, none with a
+  customer number or a custom field value. 3 are named by meals. The fourth is
+  `770c6be8-b497-4c14-8b46-925afa46cd5b` and goes into `also_contact_ids`, forward and on a
+  rollback. Whiz-Art Media holds 25. No identity conflict and no customer number conflict.
+- auth-brain: "marlinjai" has one workspace, name "Main", slug `main` (the one that moves).
+  Whiz-Art Media has one, name "Main", slug `whiz-art-media` (the empty one). Each has one member.
+- The empty workspace is not quite empty in the receipts database: it has a Receipts table with 0
+  receipts and one tax settings row, created by a visit. They stay behind when it is retired (a
+  roadmap line holds their removal).
+
+**The slug has to be freed by hand.** auth-brain retires a workspace by marking it deleted and
+keeps the row. Its route checks a slug only against live workspaces, but the table's own rule
+(`UNIQUE(tenant_id, slug)`, migration `003_workspaces.sql`) also counts retired ones. Retiring the
+empty workspace first and then moving the real one onto `whiz-art-media` would pass the route's
+check and fail in the database. So the empty workspace is renamed first.
+
+The sequence. Each auth-brain call goes to `/api/admin/machine/workspaces` on auth.lumitra.co with
+the admin key from the secrets proxy; `actor_email` is Marlin's account.
+
+1. Dump both databases on the server into `/root/backups-manual/` as
+   `receipts-before-workspace-move-<time>.dmp` and `contacts-before-workspace-move-<time>.dmp`
+   (`pg_dump -Fc` inside each database container), and read both back with `pg_restore --list`.
+2. An unsigned `POST` to `/api/internal/workspace-move` must answer 401 with "Invalid signature"
+   (503 would mean the secret is not loaded).
+3. Signed `dry_run` with `also_contact_ids` as above. Expected: `blocked` empty, `rows.restamp` 5,
+   `contacts.move` 4, `contacts.sourceAfter` 0, `contacts.targetAfter` 29. Anything else: stop and
+   report, apply nothing.
+4. `PATCH` the empty workspace `01a12296-b963-7018-8857-5e76ffe01c87`: slug
+   `whiz-art-media-retired-20261010`, name "Main (retired 2026-10-10)".
+5. `DELETE` that workspace (auth-brain marks it deleted; its one membership is revoked).
+6. `PATCH` workspace `019fa320-8e10-7978-b0a6-0b0d3bad83c3`: `tenant_id`
+   `019fa877-1771-7ab8-9696-c804bc32d5f3`, slug `whiz-art-media`, name "Main". If the database
+   still refuses the slug (a server error; the route cannot see retired workspaces, so it cannot
+   be checked beforehand), use the slug `receipts` instead. Nothing in the receipts or contacts
+   database has been touched at that point.
+7. Signed `apply`, at once: a new call with the same workspace, companies and
+   `also_contact_ids` as step 3, `mode` set to `apply` and a fresh `issued_at`, signed anew (the
+   signature covers the whole body, so the dry run's body cannot be reused). A 502 with
+   `step: "rows"` is repeated.
+   Before sending it, the newest "Build & Deploy" run of the receipts app must not be in
+   progress: a restart of the app in the middle of the apply is the one realistic way to stop it
+   half way.
+8. Signed `dry_run` again: `rows.restamp` 0, `contacts.move` 0, `contacts.alreadyAtTarget` 4.
+9. `POST` a fresh workspace for "marlinjai" (`tenant_id` `019f6a90-8b72-7de9-946f-e81b2ddf3f60`,
+   name "Main", slug `main`, which step 6 freed; if the database refuses it, slug `personal`).
+10. The browser checks below.
+11. Afterwards: tick the roadmap line and set this plan to completed; on
+    `knowledge-base/ROADMAP.md`, change the admin line on the receipts queues so it says the 13
+    open business meals of 2025 and the review list now live under Whiz-Art Media (asked for by
+    the session that wrote that line); enter the guests and occasions of those 13 meals once
+    Marlin has given them (answer page `~/software-dev/decision-pages/2026-10-10-business-meals-2025.html`).
+
+The signed dry run of step 3 was sent once on 2026-10-10 against production and answered exactly
+the expected numbers with no blocker; a read of both databases afterwards showed nothing changed.
+It is sent again as the gate when the move is run.
 
 ## Verification (in the browser, by the session that runs the move)
 
@@ -140,9 +212,14 @@ Decided under the "decide it yourself" rule, say so if you disagree:
 
 ## Rollback
 
-Nothing is deleted. Move the workspace back with the same route, then call the receipts endpoint
-with the two companies swapped and the same `also_contact_ids`: it restamps back and transfers the
-4 contacts back. The backups are the second line.
+Nothing is deleted from the receipts or the contacts database. In reverse order: retire the fresh
+"marlinjai" workspace after giving up its slug `main` (rename, then `DELETE`), `PATCH` workspace
+`019fa320-8e10-7978-b0a6-0b0d3bad83c3` back to `tenant_id` `019f6a90-8b72-7de9-946f-e81b2ddf3f60`
+with slug `main`, then call the receipts endpoint with the two companies swapped and the same
+`also_contact_ids` (`770c6be8-b497-4c14-8b46-925afa46cd5b`): it restamps back and transfers the 4
+contacts back. The retired empty Whiz-Art Media workspace cannot be brought back through
+auth-brain's routes; a new empty one is created in its place if it is wanted. The two dumps of
+step 1 are the second line.
 
 ## Coordination
 
@@ -153,12 +230,33 @@ with the two companies swapped and the same `also_contact_ids`: it restamps back
 - The session preparing the 2025 tax return used the 16 business meals of this workspace. It must be
   asked before a time is set.
 
-## Open
-
-- Marlin's one-line yes for the production step.
-
 ## Done
 
+- **The move, on production, 2026-10-10 from 12:24 UTC, on Marlin's yes** ("ok lets proceed"), in
+  the order of "The production run, call by call":
+  - Dumps `receipts-before-workspace-move-20261010T122443Z.dmp` and
+    `contacts-before-workspace-move-20261010T122443Z.dmp` in `/root/backups-manual/` on the
+    server. Both were restored into a scratch database and compared with the live counts, then
+    the scratch databases were dropped.
+  - The dry run answered the expected numbers with no blocker. The empty Whiz-Art Media workspace
+    was renamed and retired, the real workspace moved to Whiz-Art Media and took the slug
+    `whiz-art-media` (the database accepted it, no fallback needed).
+  - The apply answered 200: 5 rows restamped (`dt_tables` 1, `meal_guests` 3,
+    `workspace_tax_settings` 1), 4 contacts moved. The dry run after it found nothing left
+    (0 rows to restamp, 4 contacts already at the target).
+  - "marlinjai" has a fresh workspace `01a125c7-188e-7964-a36a-51e7faa82007`, name "Main", slug
+    `main`.
+  - Read from the databases afterwards: every stamped row of the moved workspace carries Whiz-Art
+    Media, 24 receipt rows, contacts 0 under "marlinjai" and 29 under Whiz-Art Media.
+  - In the browser under Whiz-Art Media: 24 receipts, the 5 views, 16 business meals (13 open, 3
+    in the register, each with participants), 29 contacts, a stored receipt file opens. A
+    synthetic receipt was uploaded, read, listed (25 receipts for a moment) and deleted again;
+    its file answers 404 since. Under "marlinjai": an empty table, 0 contacts.
+  - The follow-up pull request was paused for the minutes of the move, so no deploy could restart
+    the app in the middle of the apply.
+
 - The contacts-core transfer operation (step 2): `@marlinjai/contacts-core` 0.3.0, 2026-10-10.
-- The receipts endpoint with its dry run (steps 2 and 4), 2026-10-10.
+- The receipts endpoint with its dry run (steps 2 and 4), 2026-10-10 (pull request 65). It landed
+  before a review had run, so a fresh agent reviewed the merged code the same day: nothing that
+  touches this move, eight findings for the general case, all fixed in the follow-up pull request.
 - The unused `CONTACTS_STORE` entry is gone from the production secret project, 2026-10-10.

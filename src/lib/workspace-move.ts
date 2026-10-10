@@ -26,7 +26,9 @@ import { verifyErasureSignature } from './erasure-signature';
  * and skips it, so repeating the call finishes a move that stopped half way, and a
  * repeat after completion writes nothing.
  *
- * Rolling back is the same call with the two companies swapped.
+ * Rolling back is the same call with the two companies swapped. It is an exact
+ * inverse as long as the workspace was not used under the new company in between:
+ * what moves is always "the contacts this workspace's meals name now".
  *
  * Reports and log lines carry counts and reason codes only, never a name.
  */
@@ -52,6 +54,14 @@ export interface WorkspaceMoveRequest {
  *   in neither company.
  * - `contacts_refused`: the contacts package refuses a contact for a reason this
  *   module does not resolve by itself (`report.contacts.refused` names the reasons).
+ *   An identity conflict is resolved only for a guest of this workspace (its guest
+ *   rows are repointed); on any other contact it is a refusal like the rest.
+ * - `guest_rows_would_fold`: a meal names both a guest and the target's contact of
+ *   the same identity. Repointing would leave one guest twice, so one row would have
+ *   to be removed, and a move removes nothing. Take one of the two off the meal first.
+ *   If the meal gains that second row between the check and the write, the rows
+ *   transaction rolls back: blocked when no contact had moved yet, otherwise the move
+ *   is incomplete and the repeat reports this blocker.
  * - `contacts_used_by_another_workspace`: a contact that would move is still named by
  *   a meal of another workspace, which would then point across companies.
  * - `too_many_contacts`: more contacts than one transfer takes.
@@ -61,15 +71,19 @@ export type MoveBlocker =
   | 'rows_of_another_company'
   | 'contacts_not_found'
   | 'contacts_refused'
+  | 'guest_rows_would_fold'
   | 'contacts_used_by_another_workspace'
   | 'too_many_contacts'
   | 'changed_since_plan';
 
+/** Counts of one table for one workspace. Everything but `restamp` is the state before this call. */
 export interface TableCounts {
   /** Rows of the workspace in this table. */
   rows: number;
   /** Rows restamped (in a dry run: that would be). Stamped with the source company, or not stamped at all. */
   restamp: number;
+  /** Of the rows to restamp, those without a stamp. They do not say which company the workspace came from. */
+  unstamped: number;
   alreadyAtTarget: number;
   /** Rows stamped with a third company. Never rewritten; any such row blocks the move. */
   otherCompany: number;
@@ -80,6 +94,14 @@ export interface WorkspaceMoveReport {
   /** True when this call changed anything. Always false in a dry run and when blocked. */
   written: boolean;
   blocked: MoveBlocker[];
+  /**
+   * True when something in the workspace names the source company: a row stamped
+   * with it, or a wanted contact that lives in it. False while there is something to
+   * restamp means a mistyped source company would go unnoticed, so check the id by
+   * hand before applying. Not a blocker: a workspace from before the stamp existed,
+   * without guests, is a legitimate move.
+   */
+  sourceConfirmed: boolean;
   rows: TableCounts & { tables: Record<string, TableCounts> };
   contacts: {
     /** Distinct contacts named by the meals of this workspace. */
@@ -93,11 +115,14 @@ export interface WorkspaceMoveReport {
     /** Wanted contacts the target company already holds under the same id (a repeat, or a resumed move). */
     alreadyAtTarget: number;
     notFound: number;
-    /** Contacts the target already has as the same person or organization. They stay; guest rows are repointed. */
+    /** Guests the target already has as the same person. They stay; their guest rows are repointed. */
     identityConflicts: number;
     /** Guest rows pointed at the target's existing contact (in a dry run: that would be). */
     guestRowsRepointed: number;
-    /** Guest rows removed because the meal already named the target's contact. Known only after an apply. */
+    /**
+     * Guest rows on a meal that already names the target's contact. Any such row blocks
+     * the move (`guest_rows_would_fold`); after an apply that wrote, it is always 0.
+     */
     guestRowsFolded: number;
     /** Refusals that block the move, by the package's reason code. */
     refused: Partial<Record<TransferRefusal, number>>;
@@ -109,6 +134,18 @@ export interface WorkspaceMoveReport {
     sourceAfter: number;
     targetAfter: number;
   };
+}
+
+/**
+ * Thrown inside the rows transaction when a repoint would remove a guest row after
+ * all: the meal gained the target's contact between the check and the write. The
+ * transaction rolls back, so nothing is removed.
+ */
+class GuestRowsWouldFoldError extends Error {
+  constructor() {
+    super('workspace move: a repoint would remove a guest row');
+    this.name = 'GuestRowsWouldFoldError';
+  }
 }
 
 /** The contacts moved, but the rows did not follow. Repeating the call finishes the move. */
@@ -207,13 +244,16 @@ async function countTable(db: Db, model: StampedModel, req: WorkspaceMoveRequest
     where: { [model.workspaceField]: req.workspaceId },
     _count: { _all: true },
   });
-  const counts: TableCounts = { rows: 0, restamp: 0, alreadyAtTarget: 0, otherCompany: 0 };
+  const counts: TableCounts = { rows: 0, restamp: 0, unstamped: 0, alreadyAtTarget: 0, otherCompany: 0 };
   for (const group of groups) {
     const n = group._count._all;
     counts.rows += n;
     if (group.authTenantId === req.toTenantId) counts.alreadyAtTarget += n;
-    else if (group.authTenantId === req.fromTenantId || group.authTenantId === null) counts.restamp += n;
-    else counts.otherCompany += n;
+    else if (group.authTenantId === req.fromTenantId) counts.restamp += n;
+    else if (group.authTenantId === null) {
+      counts.restamp += n;
+      counts.unstamped += n;
+    } else counts.otherCompany += n;
   }
   return counts;
 }
@@ -231,12 +271,13 @@ async function planMove(db: PrismaClient, req: WorkspaceMoveRequest): Promise<Pl
 
   // 1. The rows.
   const tables: Record<string, TableCounts> = {};
-  const totals: TableCounts = { rows: 0, restamp: 0, alreadyAtTarget: 0, otherCompany: 0 };
+  const totals: TableCounts = { rows: 0, restamp: 0, unstamped: 0, alreadyAtTarget: 0, otherCompany: 0 };
   for (const model of stampedModels()) {
     const counts = await countTable(db, model, req);
     tables[model.table] = counts;
     totals.rows += counts.rows;
     totals.restamp += counts.restamp;
+    totals.unstamped += counts.unstamped;
     totals.alreadyAtTarget += counts.alreadyAtTarget;
     totals.otherCompany += counts.otherCompany;
   }
@@ -282,9 +323,14 @@ async function planMove(db: PrismaClient, req: WorkspaceMoveRequest): Promise<Pl
   }
 
   // 4. Ask the package what would happen. `skip` reports every contact on its own merits.
+  //    An identity conflict is resolved here only for a guest of this workspace: its guest
+  //    rows can be pointed at the target's contact. A contact that was asked for by id, or
+  //    pulled in by a link, has no guest row to repoint, so it would silently stay behind:
+  //    that is a refusal.
   let moveIds: string[] = [];
   const repoints: Plan['repoints'] = [];
   const refused: Partial<Record<TransferRefusal, number>> = {};
+  const guestSet = new Set(guestIds);
   if (scope.size > TRANSFER_MAX) {
     blocked.add('too_many_contacts');
   } else if (scope.size > 0) {
@@ -292,7 +338,7 @@ async function planMove(db: PrismaClient, req: WorkspaceMoveRequest): Promise<Pl
     for (const item of preview.items) {
       if (item.status === 'moved') {
         moveIds.push(item.id);
-      } else if (item.reason === 'identity_conflict' && item.existingId) {
+      } else if (item.reason === 'identity_conflict' && item.existingId && guestSet.has(item.id)) {
         repoints.push({ fromId: item.id, toId: item.existingId });
       } else {
         const reason = item.reason ?? 'not_found';
@@ -313,12 +359,23 @@ async function planMove(db: PrismaClient, req: WorkspaceMoveRequest): Promise<Pl
         });
   if (usedByOtherWorkspaces > 0) blocked.add('contacts_used_by_another_workspace');
 
-  const guestRowsRepointed =
-    repoints.length === 0
-      ? 0
-      : await db.mealGuest.count({
-          where: { authWorkspaceId: req.workspaceId, contactId: { in: repoints.map((r) => r.fromId) } },
-        });
+  // A meal that names both the guest and the target's contact would list one person twice
+  // after the repoint. Resolving that removes a row, and a move removes nothing: it blocks.
+  let guestRowsRepointed = 0;
+  let guestRowsFolded = 0;
+  for (const { fromId, toId } of repoints) {
+    const rows = await db.mealGuest.findMany({
+      where: { authWorkspaceId: req.workspaceId, contactId: fromId },
+      select: { rowId: true },
+    });
+    const folds =
+      rows.length === 0
+        ? 0
+        : await db.mealGuest.count({ where: { contactId: toId, rowId: { in: rows.map((r) => r.rowId) } } });
+    guestRowsFolded += folds;
+    guestRowsRepointed += rows.length - folds;
+  }
+  if (guestRowsFolded > 0) blocked.add('guest_rows_would_fold');
 
   const wantedSet = new Set(wanted);
   const willMove = blocked.size === 0 ? moveIds.length : 0;
@@ -329,6 +386,7 @@ async function planMove(db: PrismaClient, req: WorkspaceMoveRequest): Promise<Pl
       dryRun: true,
       written: false,
       blocked: [...blocked].sort(),
+      sourceConfirmed: totals.restamp > totals.unstamped || wantedInSource.length > 0,
       rows: { ...totals, tables },
       contacts: {
         guests: guestIds.length,
@@ -339,7 +397,7 @@ async function planMove(db: PrismaClient, req: WorkspaceMoveRequest): Promise<Pl
         notFound,
         identityConflicts: repoints.length,
         guestRowsRepointed,
-        guestRowsFolded: 0,
+        guestRowsFolded,
         refused,
         usedByOtherWorkspaces,
         sourceBefore: sourceAll.length,
@@ -401,14 +459,14 @@ export async function moveWorkspace(
   const tables: Record<string, TableCounts> = {};
   let restamped = 0;
   let repointed = 0;
-  let folded = 0;
   try {
     await db.$transaction(
       async (tx) => {
         for (const { fromId, toId } of plan.repoints) {
           const result = await repointGuestRows(tx, fromId, toId, { authWorkspaceId: req.workspaceId });
+          // The plan found no such row, so the meal changed since. Rolling back undoes the removal.
+          if (result.deduplicated > 0) throw new GuestRowsWouldFoldError();
           repointed += result.repointed;
-          folded += result.deduplicated;
         }
         for (const model of stampedModels()) {
           const { count } = await delegateOf(tx, model).updateMany({
@@ -422,21 +480,31 @@ export async function moveWorkspace(
       { maxWait: 10_000, timeout: 60_000 },
     );
   } catch (e) {
+    // The transaction rolled back: no row was restamped, repointed or removed.
     if (contactsMoved > 0) throw new WorkspaceMoveIncompleteError(contactsMoved, e);
+    if (e instanceof GuestRowsWouldFoldError) return { ...report, blocked: ['guest_rows_would_fold'] };
     throw e;
   }
 
-  const sourceAfter = (await companyContacts(req.fromTenantId).list({ includeArchived: true })).length;
-  const targetAfter = (await companyContacts(req.toTenantId).list({ includeArchived: true })).length;
+  // The move is written at this point. If the contacts database cannot be read for the
+  // closing count, the report keeps the projection instead of turning a finished move into a failure.
+  let sourceAfter = report.contacts.sourceBefore - contactsMoved;
+  let targetAfter = report.contacts.targetBefore + contactsMoved;
+  try {
+    sourceAfter = (await companyContacts(req.fromTenantId).list({ includeArchived: true })).length;
+    targetAfter = (await companyContacts(req.toTenantId).list({ includeArchived: true })).length;
+  } catch {
+    // Keep the projection.
+  }
   return {
     ...report,
-    written: contactsMoved > 0 || restamped > 0 || repointed > 0 || folded > 0,
+    written: contactsMoved > 0 || restamped > 0 || repointed > 0,
     rows: { ...report.rows, restamp: restamped, tables },
     contacts: {
       ...report.contacts,
       move: contactsMoved,
       guestRowsRepointed: repointed,
-      guestRowsFolded: folded,
+      guestRowsFolded: 0,
       sourceAfter,
       targetAfter,
     },
@@ -450,6 +518,16 @@ const ID_MAX = 64;
 
 function isId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= ID_MAX;
+}
+
+/**
+ * An error's class name and, when it has one, its short code (Prisma's `P2034`, a
+ * Postgres `23505`). Never its message: that can quote a value.
+ */
+function describeError(e: unknown): string {
+  const name = (e as Error | undefined)?.name ?? 'error';
+  const code = (e as { code?: unknown } | undefined)?.code;
+  return typeof code === 'string' && /^[A-Za-z0-9_]{1,16}$/.test(code) ? `${name} ${code}` : name;
 }
 
 export interface WorkspaceMoveDelivery {
@@ -468,14 +546,16 @@ export interface WorkspaceMoveDelivery {
  * - Secret not configured: 503, nothing is read or written.
  * - Signature missing or wrong: 401.
  * - `issued_at` further than `MOVE_REQUEST_MAX_AGE_MS` from now: 401. A move has an
- *   inverse (the same call with the companies swapped), so an old signed call must
- *   not be replayable after a rollback.
+ *   inverse (the same call with the companies swapped), so a signed call must not stay
+ *   replayable: after that window it is refused. Within the window it can be sent again.
  * - Unparseable or incomplete body, or the same company twice: 400.
  * - An apply that is blocked: 409 with the report; nothing was written.
  * - A failure after the contacts moved: 502 with `step: "rows"`; repeating finishes it.
- * - Any other failure: 502.
+ * - Any other failure: 502. It does not say how far the move got (the connection may
+ *   have dropped after a write), so the answer names the way forward: a dry run shows
+ *   what is left, and repeating the apply is always safe.
  *
- * Log lines carry the workspace id, counts and reason codes only.
+ * Log lines carry the workspace id, counts, reason codes and an error's class and code only.
  */
 export async function receiveWorkspaceMove(input: {
   rawBody: string;
@@ -539,14 +619,22 @@ export async function receiveWorkspaceMove(input: {
   } catch (e) {
     if (e instanceof WorkspaceMoveIncompleteError) {
       log(
-        `[workspace-move] ${label} for workspace ${workspaceId} incomplete: ${e.contactsMoved} contacts moved, the rows were not restamped; repeat the call`,
+        `[workspace-move] ${label} for workspace ${workspaceId} incomplete (${describeError(e.cause)}): ` +
+          `${e.contactsMoved} contacts moved, the rows were not restamped; repeat the call`,
       );
       return {
         status: 502,
         body: { error: 'Move incomplete; repeat the call to finish it', step: 'rows', contactsMoved: e.contactsMoved },
       };
     }
-    log(`[workspace-move] ${label} for workspace ${workspaceId} failed (${(e as Error)?.name ?? 'error'})`);
-    return { status: 502, body: { error: 'Move failed' } };
+    log(`[workspace-move] ${label} for workspace ${workspaceId} failed (${describeError(e)})`);
+    return {
+      status: 502,
+      body: {
+        error: apply
+          ? 'Move failed; run a dry run to see what is left, then repeat the apply. A repeat is safe.'
+          : 'Dry run failed; nothing was written.',
+      },
+    };
   }
 }

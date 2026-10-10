@@ -14,8 +14,8 @@
   return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent
   lines would be misreported. Store the tax groups per invoice and report each under its own rate.
   From the finance dashboard work. (2026-10-10)
-- [ ] A signed-in live write pass of `/app/finance` on production, under the company that holds
-  the receipts (after the move to Whiz-Art Media if it has happened): open each tab, write one
+- [ ] A signed-in live write pass of `/app/finance` on production, under Whiz-Art Media, which
+  holds the receipts since the move of 2026-10-10: open each tab, write one
   synthetic decision, vendor rule and payment link, remove them again, and confirm the numbers
   return. Only a read-only pass was done (2026-10-10 08:53). From the finance dashboard work.
   (2026-10-10)
@@ -147,15 +147,21 @@
   hash), and held in every other case, including an export taken before a later meal or
   correction. The export now also lists every printed guest name, so names on incomplete
   meals are part of it. Done 2026-10-10. (2026-10-10)
-- [ ] Business receipts move to the company Whiz-Art Media. Decided 2026-10-10 (Marlin's rule:
-  business under Whiz-Art Media, personal under "marlinjai", one company per receipt by tax
-  purpose). The workspace under "marlinjai" holds 24 receipts, none marked personal, and every
-  finance table is still empty, so the whole workspace moves through auth-brain with all ids kept,
-  and "marlinjai" gets a fresh workspace. Built: the signed receipts endpoint `POST
-  /api/internal/workspace-move`, which restamps the company on every row of one workspace and
-  moves its guest contacts with `@marlinjai/contacts-core` 0.3.0, with a dry run (how to call it:
-  `docs/operations/workspace-move.md`). Open: Marlin's one-line yes, then the production run in
-  the order of the plan. Plan: `docs/plans/2026-10-10-business-receipts-to-whiz-art-media.md`.
+- [x] Business receipts moved to the company Whiz-Art Media (Marlin's rule: business under
+  Whiz-Art Media, personal under "marlinjai", one company per receipt by tax purpose). The whole
+  workspace with its 24 receipts, 16 business meals and 3 guest rows moved through auth-brain with
+  all ids kept, its 4 contacts went along (29 under Whiz-Art Media, 0 under "marlinjai"), and
+  "marlinjai" has a fresh empty workspace. The receipts side is the signed endpoint `POST
+  /api/internal/workspace-move` (how to call it: `docs/operations/workspace-move.md`). Run on
+  Marlin's yes and verified in both databases and in the browser. Plan:
+  `docs/plans/2026-10-10-business-receipts-to-whiz-art-media.md`. Done 2026-10-10.
+
+- [ ] Remove what the retired empty Whiz-Art Media workspace leaves in the receipts database.
+  Workspace `01a12296-b963-7018-8857-5e76ffe01c87` was created empty on 2026-10-09 and was retired
+  in auth-brain on 2026-10-10, when the business receipts moved to Whiz-Art Media. A visit had
+  created a Receipts table with 0 receipts and one tax settings row for it; nothing reads them
+  now. Removing them is a delete on production: it needs Marlin's one-line yes, with the dump
+  `receipts-before-workspace-move-20261010T122443Z.dmp` on the server as the way back.
   (2026-10-10)
 
 ## In Progress

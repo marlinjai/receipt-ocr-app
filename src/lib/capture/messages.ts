@@ -14,6 +14,7 @@ const TRANSLATIONS: Array<[RegExp, (match: RegExpExecArray) => string]> = [
   [/upload failed with status (\d+)/i, (m) => `Der Upload wurde vom Speicher abgelehnt (Fehler ${m[1]}).`],
   [/upload request failed|failed to get file info/i, () => 'Der Upload wurde vom Server abgelehnt.'],
   [/receipt not found/i, () => 'Der Beleg wurde nicht gefunden.'],
+  [/sent, but could not be cleared from the queue/i, () => 'Bereits gesendet, konnte aber nicht aus der Warteschlange entfernt werden. Es wird nicht erneut gesendet.'],
 ];
 
 export function captureErrorText(message: string | null | undefined): string {

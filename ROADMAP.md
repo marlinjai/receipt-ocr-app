@@ -44,6 +44,13 @@
   and public bank data access exist. After stage 2. Plan:
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
 
+- [ ] Two tax rates, two columns, one order. On a receipt with two tax rates, the number column
+  "Tax Rate" takes the first of the reader's printed tax groups ordered by gross
+  (`src/lib/extraction/amounts.ts`), while the text column "Tax Rates" follows the model's meal
+  tax lines ordered by net (`src/lib/tax-rates.ts`, written in `readReceipt`). The two can name a
+  different first rate when the two sources disagree. Decide one source of truth for the order
+  and make both columns follow it, with a test where the sources disagree. Found while landing
+  the capture queue fix. (2026-10-10)
 - [x] Extraction defects found in the first live upload (2026-10-08, a 21-page scan of
   restaurant receipts uploaded with "One receipt per page"). Done 2026-10-10. Root cause
   behind four of the seven: the language-model classifier never ran in production (no
@@ -221,6 +228,17 @@
 
 <!-- Done — move to CHANGELOG.md on release -->
 
+- [x] Phone capture queue: a photo the server has is never sent again. Sending a queued photo and
+  removing its entry were one step, so a failed removal looked like a failed send: the photo was
+  reported as not processed, its attempts were raised, and every later run sent it again (kept
+  from becoming a second receipt only by the duplicate check, which stops helping once the
+  receipt was deleted on purpose). Now two steps with two outcomes: a failed removal marks the
+  entry as sent, later runs only retry the removal, also without a connection, and the screen
+  says so. This is the capture half of a reviewed fix that missed its merge: it was committed in
+  the same second pull request 31 merged on 2026-10-07 and was never pushed. Its other half (the
+  tax rate of a meal with several tax lines) is not ported: the receipt reader rebuild names the
+  rate that carries most of the bill, and pull request 60 lists every rate. Done 2026-10-10.
+  (2026-10-10)
 - [x] A newly created Receipts table now carries its company from the first moment
   (`ensureReceiptsTable` and the dashboard's `createTable` stamp it right after
   creation, never overwriting an owner), with a database test. Before, a workspace

@@ -56,6 +56,8 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
   const retakeRef = useRef<HTMLInputElement>(null);
   const [view, setView] = useState<View>({ kind: 'idle' });
   const [waiting, setWaiting] = useState<QueuedCapture[]>([]);
+  // Photos the server already has but whose entry could not be removed are not "waiting to be sent".
+  const pending = waiting.filter((w) => w.sentAt === null);
   const [queueNote, setQueueNote] = useState<string | null>(null);
   const [queueBroken, setQueueBroken] = useState(false);
   const [draining, setDraining] = useState(false);
@@ -122,6 +124,13 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
           if (result.stopped === 'auth') parts.push('Die Anmeldung ist abgelaufen: bitte neu anmelden, die Fotos bleiben gespeichert.');
           if (result.stopped === 'offline' && result.remaining > 0) parts.push('Keine Verbindung: der Rest wird später gesendet.');
           if (result.failed > 0) parts.push(result.failed === 1 ? '1 Foto konnte nicht verarbeitet werden.' : `${result.failed} Fotos konnten nicht verarbeitet werden.`);
+          if (result.stuck > 0) {
+            parts.push(
+              result.stuck === 1
+                ? '1 gesendetes Foto konnte nicht aus der Warteschlange entfernt werden. Es wird nicht erneut gesendet.'
+                : `${result.stuck} gesendete Fotos konnten nicht aus der Warteschlange entfernt werden. Sie werden nicht erneut gesendet.`,
+            );
+          }
           setQueueNote(parts.length > 0 ? parts.join(' ') : null);
           return result;
         } catch {
@@ -407,10 +416,10 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
       {/* The queue: always visible while anything waits, so nothing is silently pending. */}
       {(waiting.length > 0 || queueNote || queueBroken) && (
         <div className="mt-4 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
-          {waiting.length > 0 && (
+          {pending.length > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm" style={{ color: 'var(--foreground)' }} role="status">
-                {waiting.length === 1 ? '1 Foto wartet auf den Versand.' : `${waiting.length} Fotos warten auf den Versand.`}
+                {pending.length === 1 ? '1 Foto wartet auf den Versand.' : `${pending.length} Fotos warten auf den Versand.`}
               </p>
               <button type="button" className="ui-btn ui-btn-sm" disabled={draining || busy} onClick={() => void drain()}>
                 {draining ? 'Wird gesendet…' : 'Jetzt senden'}
@@ -464,10 +473,16 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
         onCancel={() => setRemoving(null)}
         onConfirm={() => removing && void removeWaiting(removing)}
       >
-        {removing && (
+        {removing && removing.sentAt === null && (
           <p>
             „{removing.name}“ wurde noch nicht gesendet und wird von diesem Gerät gelöscht. Der Beleg muss dann neu
             fotografiert werden.
+          </p>
+        )}
+        {removing && removing.sentAt !== null && (
+          <p>
+            „{removing.name}“ wurde bereits gesendet und ist als Beleg gespeichert. Hier wird nur der Eintrag auf
+            diesem Gerät entfernt.
           </p>
         )}
       </ConfirmDialog>

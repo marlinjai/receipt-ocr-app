@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { UploadStepError } from '@/lib/upload/errors';
 import type { PipelineOutcome } from '@/lib/upload/pipeline';
-import { drainQueue, singleFlight } from '../drain';
+import { SENT_NOT_CLEARED, drainQueue, singleFlight } from '../drain';
 import { newQueuedCapture, openCaptureStore, queuedFile, type CaptureStore } from '../offline-queue';
 
 const DONE: PipelineOutcome = {
@@ -60,7 +60,7 @@ describe('capture queue (IndexedDB)', () => {
       tx.oncomplete = () => resolve();
     });
     db.close();
-    expect(await store.list()).toMatchObject([{ id: 'sw-1', source: 'share', attempts: 0, lastError: null }]);
+    expect(await store.list()).toMatchObject([{ id: 'sw-1', source: 'share', attempts: 0, lastError: null, sentAt: null }]);
   });
 });
 
@@ -142,7 +142,126 @@ describe('drainQueue', () => {
       .mockResolvedValueOnce(DONE);
     const result = await drainQueue(store, send);
     expect(result).toMatchObject({ remaining: 1, stopped: null, failed: 1 });
-    expect(await store.list()).toMatchObject([{ name: 'kaputt.jpg', attempts: 1, lastError: 'Upload request failed' }]);
+    expect(await store.list()).toMatchObject([{ name: 'kaputt.jpg', attempts: 1, lastError: 'Upload request failed', sentAt: null }]);
+  });
+});
+
+/**
+ * Sending and removing are two steps. These tests break the second one: the
+ * server has the photo, the browser cannot drop the queue entry. Whatever
+ * happens then, the photo must not go to the server a second time.
+ */
+describe('drainQueue: the server has the photo but the entry cannot be removed', () => {
+  async function seed(...names: string[]) {
+    for (const [i, name] of names.entries()) await store.add(newQueuedCapture(photo(name), 'camera', i + 1));
+  }
+  /** The real store with `remove` failing the first `times` calls. */
+  function failingRemove(times: number): CaptureStore {
+    let left = times;
+    return {
+      ...store,
+      remove: async (id) => {
+        if (left > 0) {
+          left -= 1;
+          throw new Error('QuotaExceededError');
+        }
+        await store.remove(id);
+      },
+    };
+  }
+
+  it('forward: counted as sent, reported as stuck, never as a failed send, and marked in the queue', async () => {
+    await seed('a.jpg');
+    const send = vi.fn<(file: File) => Promise<PipelineOutcome>>(async () => DONE);
+    const result = await drainQueue(failingRemove(1), send, { now: () => 5000 });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(result.sent).toHaveLength(1);
+    expect(result).toMatchObject({ failed: 0, stuck: 1, cleared: 0, remaining: 1, stopped: null });
+    expect(await store.list()).toMatchObject([{ name: 'a.jpg', sentAt: 5000, lastError: SENT_NOT_CLEARED, attempts: 0 }]);
+  });
+
+  it('the next run does NOT send it again; it only removes the entry', async () => {
+    await seed('a.jpg');
+    const broken = failingRemove(1);
+    const send = vi.fn<(file: File) => Promise<PipelineOutcome>>(async () => DONE);
+    await drainQueue(broken, send);
+    const second = await drainQueue(broken, send);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(second).toMatchObject({ failed: 0, stuck: 0, cleared: 1, remaining: 0 });
+    expect(second.sent).toEqual([]);
+    expect(await store.list()).toEqual([]);
+  });
+
+  it('a removal that keeps failing never causes a second upload, run after run, and keeps its first sent time', async () => {
+    await seed('a.jpg');
+    const broken = failingRemove(3);
+    const send = vi.fn<(file: File) => Promise<PipelineOutcome>>(async () => DONE);
+    await drainQueue(broken, send, { now: () => 5000 });
+    expect(await drainQueue(broken, send, { now: () => 6000 })).toMatchObject({ stuck: 1, cleared: 0, remaining: 1 });
+    expect(await drainQueue(broken, send, { now: () => 7000 })).toMatchObject({ stuck: 1, cleared: 0, remaining: 1 });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await store.list()).toMatchObject([{ sentAt: 5000 }]);
+    // Re-entry after it finally clears: nothing is left and nothing is sent.
+    expect(await drainQueue(broken, send)).toMatchObject({ cleared: 1, remaining: 0 });
+    expect(await drainQueue(broken, send)).toMatchObject({ cleared: 0, stuck: 0, remaining: 0 });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('resume after a reload: a fresh store on the same database sees the mark and does not send', async () => {
+    await seed('a.jpg');
+    await drainQueue(failingRemove(1), async () => DONE);
+    const reopened = openCaptureStore(factory);
+    const send = vi.fn<(file: File) => Promise<PipelineOutcome>>(async () => DONE);
+    const result = await drainQueue(reopened, send);
+    expect(send).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ cleared: 1, remaining: 0 });
+  });
+
+  it('a later photo is sent once while the stuck one is left alone (changed input)', async () => {
+    await seed('a.jpg');
+    const broken = failingRemove(2);
+    const send = vi.fn<(file: File) => Promise<PipelineOutcome>>(async () => DONE);
+    await drainQueue(broken, send);
+    await store.add(newQueuedCapture(photo('b.jpg'), 'camera', 99));
+    const second = await drainQueue(broken, send);
+    expect(send.mock.calls.map((c) => c[0].name)).toEqual(['a.jpg', 'b.jpg']);
+    expect(second.sent.map((s) => s.entry.name)).toEqual(['b.jpg']);
+    expect(second).toMatchObject({ stuck: 1, remaining: 1 });
+    expect((await store.list()).map((e) => e.name)).toEqual(['a.jpg']);
+  });
+
+  it('a stuck entry is cleared without a connection, and does not hide the photos that still wait', async () => {
+    await seed('a.jpg', 'b.jpg');
+    const broken = failingRemove(1);
+    const first = vi.fn().mockResolvedValueOnce(DONE).mockRejectedValueOnce(new UploadStepError('network', 'Upload network error'));
+    expect(await drainQueue(broken, first)).toMatchObject({ stuck: 1, stopped: 'offline', remaining: 2 });
+    const offline = vi.fn<(file: File) => Promise<PipelineOutcome>>(async () => DONE);
+    const result = await drainQueue(broken, offline, { isOnline: () => false });
+    expect(offline).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ cleared: 1, stopped: 'offline', remaining: 1 });
+    expect((await store.list()).map((e) => e.name)).toEqual(['b.jpg']);
+  });
+
+  it('a store that can neither remove nor mark: the open page still does not send the photo again', async () => {
+    await seed('a.jpg');
+    const dead: CaptureStore = {
+      ...store,
+      remove: async () => { throw new Error('storage is gone'); },
+      update: async () => { throw new Error('storage is gone'); },
+    };
+    const send = vi.fn<(file: File) => Promise<PipelineOutcome>>(async () => DONE);
+    expect(await drainQueue(dead, send)).toMatchObject({ stuck: 1, failed: 0 });
+    expect(await drainQueue(dead, send)).toMatchObject({ stuck: 1, failed: 0 });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('a send that fails is not marked as sent and is tried again', async () => {
+    await seed('a.jpg');
+    const send = vi.fn().mockRejectedValueOnce(new UploadStepError('server', 'Upload request failed')).mockResolvedValueOnce(DONE);
+    expect(await drainQueue(store, send)).toMatchObject({ failed: 1, stuck: 0, remaining: 1 });
+    expect(await store.list()).toMatchObject([{ sentAt: null, attempts: 1 }]);
+    expect(await drainQueue(store, send)).toMatchObject({ failed: 0, remaining: 0 });
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });
 

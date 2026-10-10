@@ -244,6 +244,29 @@ describe('offline, lost connection, expired session', () => {
     await user.click(screen.getByRole('button', { name: 'Jetzt senden' }));
     expect(await screen.findByText(/1 wartendes Foto wurde gesendet/)).toBeTruthy();
   });
+
+  it('a photo that was sent but cannot be removed from the queue is not sent again and not shown as waiting', async () => {
+    await store.add(newQueuedCapture(photo('fest.jpg'), 'camera', 1));
+    const remove = store.remove;
+    store.remove = vi.fn().mockRejectedValue(new Error('QuotaExceededError'));
+    const { user } = mount();
+    expect(await screen.findByText(/1 gesendetes Foto konnte nicht aus der Warteschlange entfernt werden/)).toBeTruthy();
+    expect(await screen.findByText(/fest.jpg: Bereits gesendet, konnte aber nicht aus der Warteschlange entfernt werden/)).toBeTruthy();
+    expect(screen.queryByText(/wartet auf den Versand/)).toBeNull();
+    expect(onSave).toHaveBeenCalledTimes(1);
+    // A second trigger (the connection returning) must not upload it again.
+    window.dispatchEvent(new Event('online'));
+    await waitFor(() => expect(store.remove).toHaveBeenCalledTimes(2));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    // The user can still drop the entry by hand once the browser allows it.
+    store.remove = remove;
+    await user.click(screen.getByRole('button', { name: 'fest.jpg aus der Warteschlange entfernen' }));
+    // The dialog says what is true for this entry: the receipt is saved, only the entry goes.
+    expect(screen.getByRole('dialog').textContent).toMatch(/bereits gesendet und ist als Beleg gespeichert/);
+    expect(screen.getByRole('dialog').textContent).not.toMatch(/noch nicht gesendet/);
+    await user.click(screen.getByRole('button', { name: 'Entfernen' }));
+    await waitFor(async () => expect(await store.list()).toEqual([]));
+  });
 });
 
 describe('a photo that keeps failing', () => {

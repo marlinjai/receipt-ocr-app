@@ -285,6 +285,10 @@ model CompanyExport {
   authTenantId String   @map("auth_tenant_id")
   fileCount    Int      @map("file_count")
   sha256       String
+  // SHA-256 over the register files of this export only (see registerHash in
+  // src/lib/company-export.ts). Null on exports taken before the column existed;
+  // such an export never justifies removing printed guest names.
+  registerSha256 String? @map("register_sha256")
   createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([authTenantId])

@@ -113,6 +113,16 @@
   on meals follow the rule of the company erasure (removed when an export exists, otherwise held).
   The tab badge counts persons and organizations. Plan:
   `docs/plans/2026-10-09-contact-screen.md`. (2026-10-09)
+- [x] Contact screen repairs, found in the live check of 2026-10-10: (1) the guest list, the
+  directory and the tab badge now follow each other without a page reload, in both directions
+  (a change in one list reloads the other; an erase or a merge also reloads the meals);
+  (2) a person can be created in the directory with its details, custom field values and
+  preferred contact method, as an organization can; (3) the export rule was wrong for an old
+  export: printed guest names are now removed on an erasure only when the register is
+  identical to the company's newest export (`company_exports.register_sha256`, compared by
+  hash), and held in every other case, including an export taken before a later meal or
+  correction. The export now also lists every printed guest name, so names on incomplete
+  meals are part of it. Done 2026-10-10. (2026-10-10)
 - [ ] Business data belongs under the company Whiz-Art Media, which has the receipts grant, a
   workspace and its imported customers, while the business meal register and its guests still sit
   under the company marlinjai. Moving the register is a production data move: write the plan first,

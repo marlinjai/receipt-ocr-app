@@ -127,6 +127,18 @@ export function tenantIdForWorkspace(
 }
 
 /**
+ * The workspaces of one company that this session can see, sorted and without
+ * duplicates. The company export and the erasure of one contact both compare the
+ * register over exactly this set, so they must ask here and nowhere else.
+ *
+ * The development bypass has no memberships; it works in its one local workspace.
+ */
+export function companyWorkspaceIds(session: SessionLike, tenantId: string): string[] {
+  if (session.memberships.length === 0) return [devFallbackWorkspaceId()];
+  return [...new Set(session.memberships.filter((m) => m.tenantId === tenantId).map((m) => m.id))].sort();
+}
+
+/**
  * The company id to stamp on a write, or a thrown `MissingTenantError`.
  *
  * The rule this enforces is the one the column cannot: a REAL session must

@@ -27,12 +27,14 @@ import { verifyErasureSignature } from './erasure-signature';
  */
 
 export interface ErasureCounts {
-  /** Printed guest copies removed now (the company already holds an export). */
+  /** Printed guest copies removed now (the company's last export is identical to the register). */
   guestCopies: number;
-  /** Printed guest copies kept until `RETENTION_YEARS` have passed (no export yet). */
+  /** Printed guest copies kept until `RETENTION_YEARS` have passed (no export that covers them). */
   guestCopiesHeld: number;
   ownContacts: number;
   sharedContacts: number;
+  /** Why the printed copies were removed or held. A code, never a name. */
+  exportCoverage: ExportCoverageReason;
 }
 
 /**
@@ -49,9 +51,64 @@ export function retainUntilFrom(now: Date): Date {
   return until;
 }
 
-/** Whether the company has taken an export of its data (the zip with its register and contacts). */
-export async function companyHasExport(db: PrismaClient, tenantId: string): Promise<boolean> {
-  return (await db.companyExport.count({ where: { authTenantId: tenantId } })) > 0;
+/**
+ * Why an export does or does not cover the printed guest names of a company.
+ * Only `identical` lets them be removed; every other reason holds them.
+ */
+export type ExportCoverageReason =
+  | 'identical' // the register as it is now equals the newest export
+  | 'no_export' // the company never took an export
+  | 'no_hash' // the newest export predates the register hash
+  | 'changed' // the register changed after the newest export
+  | 'no_workspaces' // the caller could not say which workspaces to compare
+  | 'recompute_failed'; // the register could not be read now
+
+export interface ExportCoverage {
+  covered: boolean;
+  reason: ExportCoverageReason;
+}
+
+/** Computes the register hash for some workspaces. Injected in tests. */
+export type RegisterHasher = (db: PrismaClient, workspaceIds: readonly string[]) => Promise<string>;
+
+/** Loaded on first use: the export module pulls in the whole meal register. */
+const defaultHasher: RegisterHasher = async (db, workspaceIds) =>
+  (await import('./company-export')).currentRegisterHash(db, workspaceIds);
+
+/**
+ * Does the company hold an export of the register AS IT IS NOW?
+ *
+ * An export only justifies removing printed guest names when it contains them.
+ * An export taken before a later meal or a later correction does not, so the
+ * register is recomputed and its hash compared with the one stored when the
+ * newest export was taken (`company_exports.register_sha256`). Equal: covered.
+ * Anything else, including a failure to recompute, is NOT covered, which holds
+ * the names: the safe direction.
+ *
+ * `workspaceIds` must be the same scope the export was taken with. A different
+ * scope gives a different hash and therefore holds.
+ */
+export async function exportCoversRegister(
+  db: PrismaClient,
+  tenantId: string,
+  workspaceIds: readonly string[],
+  hasher: RegisterHasher = defaultHasher,
+): Promise<ExportCoverage> {
+  const newest = await db.companyExport.findFirst({
+    where: { authTenantId: tenantId },
+    orderBy: { createdAt: 'desc' },
+    select: { registerSha256: true },
+  });
+  if (!newest) return { covered: false, reason: 'no_export' };
+  if (!newest.registerSha256) return { covered: false, reason: 'no_hash' };
+  if (workspaceIds.length === 0) return { covered: false, reason: 'no_workspaces' };
+  let current: string;
+  try {
+    current = await hasher(db, workspaceIds);
+  } catch {
+    return { covered: false, reason: 'recompute_failed' };
+  }
+  return current === newest.registerSha256 ? { covered: true, reason: 'identical' } : { covered: false, reason: 'changed' };
 }
 
 /** One condition on the printed guest copies an erasure covers. Several are combined with OR. */
@@ -64,19 +121,23 @@ export type GuestCopyScope =
  * THE rule for printed guest copies when their contact is erased. Used by the
  * company erasure and by the erasure of one contact, so both always decide alike.
  *
- * - The company holds an export: the copies are removed now.
- * - No export: the copies are held. Their contact link is cleared and
+ * - `covered` (the company's newest export is identical to the register now, see
+ *   `exportCoversRegister`): the copies are removed.
+ * - Not covered: the copies are held. Their contact link is cleared and
  *   `retain_until` is set `RETENTION_YEARS` ahead. Only copies still linked to a
  *   contact are given a date, so a repeat never restarts a hold.
+ *
+ * Removing copies changes the register, so the same export no longer covers a
+ * LATER erasure: that one holds until a new export is taken. This is intended.
  */
 export async function settleGuestCopies(
   db: PrismaClient,
   scope: readonly GuestCopyScope[],
-  exported: boolean,
+  covered: boolean,
   now: Date = new Date(),
 ): Promise<{ removed: number; held: number }> {
   if (scope.length === 0) return { removed: 0, held: 0 };
-  if (exported) {
+  if (covered) {
     return { removed: (await db.mealGuest.deleteMany({ where: { OR: [...scope] } })).count, held: 0 };
   }
   const held = await db.mealGuest.updateMany({
@@ -92,10 +153,11 @@ export async function settleGuestCopies(
  * 1. The contacts (app table and shared database) are removed, and so are the
  *    links from meals to them. Those links are not records the business must keep.
  * 2. The printed guest copies on meals (name and company as printed on the
- *    register) are the one tax-relevant part. If the company already has an
- *    export on record, they are removed too, because the company holds the
- *    export. If not, they are held (contact link cleared, `retain_until` set)
- *    until the retention period has passed; `purgeExpiredRetainedGuests` removes them.
+ *    register) are the one tax-relevant part. They are removed only when the
+ *    company's newest export is identical to the register as it is now
+ *    (`exportCoversRegister`, compared over `workspaceIds`). Otherwise they are
+ *    held (contact link cleared, `retain_until` set) until the retention period
+ *    has passed; `purgeExpiredRetainedGuests` removes them.
  *
  * Repeat-safe: a second run does not restart a hold, because only copies still
  * linked to a contact are given one.
@@ -105,6 +167,7 @@ export async function eraseCompanyContacts(
   tenantId: string,
   workspaceIds: readonly string[],
   now: Date = new Date(),
+  hasher?: RegisterHasher,
 ): Promise<ErasureCounts> {
   // The shared step needs the layout. Start-up applies it only while the switch
   // is on, so apply it here too: migrate() is idempotent under a lock, and without
@@ -117,8 +180,8 @@ export async function eraseCompanyContacts(
   const workspaceScope = workspaceIds.length > 0 ? [{ authWorkspaceId: { in: [...workspaceIds] } }] : [];
   const scope = [{ authTenantId: tenantId }, ...workspaceScope, ...(sharedIds.length > 0 ? [{ contactId: { in: sharedIds } }] : [])];
 
-  const exported = await companyHasExport(db, tenantId);
-  const { removed: guestCopies, held: guestCopiesHeld } = await settleGuestCopies(db, scope, exported, now);
+  const coverage = await exportCoversRegister(db, tenantId, workspaceIds, hasher);
+  const { removed: guestCopies, held: guestCopiesHeld } = await settleGuestCopies(db, scope, coverage.covered, now);
 
   const ownContacts = await db.contact.deleteMany({
     where: { OR: [{ authTenantId: tenantId }, ...workspaceScope] },
@@ -130,6 +193,7 @@ export async function eraseCompanyContacts(
     guestCopiesHeld,
     ownContacts: ownContacts.count,
     sharedContacts: sharedRemoved,
+    exportCoverage: coverage.reason,
   };
 }
 
@@ -197,7 +261,7 @@ export async function receiveErasureDelivery(input: {
   try {
     const counts = await input.erase(tenantId, workspaceIds);
     log(
-      `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld}, ${counts.ownContacts} own contacts, ${counts.sharedContacts} shared contacts`,
+      `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld} (export coverage: ${counts.exportCoverage}), ${counts.ownContacts} own contacts, ${counts.sharedContacts} shared contacts`,
     );
     return { status: 200, body: { ok: true, erased: counts } };
   } catch (e) {

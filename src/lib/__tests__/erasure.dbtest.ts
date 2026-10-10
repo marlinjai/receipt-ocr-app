@@ -1,15 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { db } from '../../../test/db-helpers';
+import { createWorkspace, db, plainMealReceipt } from '../../../test/db-helpers';
 import { ensureContactsLayout } from '../../../test/contacts-db';
 import { companyContacts, contactsDb } from '../contacts/db';
 import { SharedContactStore } from '../contacts/shared-store';
+import { currentRegisterHash } from '../company-export';
 import { eraseCompanyContacts, purgeExpiredRetainedGuests } from '../erasure';
 
 /**
  * Company erasure against the real receipts tables and the real contacts
- * database. Covers the hold (no export on record), repeat runs, the export
- * branch and the purge.
+ * database. Covers the hold (no export on record), repeat runs, the purge, and
+ * the export rule with the real register: an export counts only while the
+ * register it was taken from is still the register.
  */
 
 beforeAll(async () => {
@@ -33,12 +35,110 @@ async function scenario() {
   return { tenant, ws, rowId, contactId: contact.id, store };
 }
 
+/** A real workspace with a Receipts table, one business meal and one guest on it. */
+async function mealScenario() {
+  const ws = await createWorkspace();
+  const store = new SharedContactStore(companyContacts(ws.tenantId), db);
+  const contact = await store.create({ name: `Gast ${randomUUID().slice(0, 8)}` });
+  const addGuest = async (contactId: string, name: string) => {
+    const rowId = await ws.addReceipt(plainMealReceipt());
+    await db.mealGuest.create({
+      data: { authWorkspaceId: ws.workspaceId, authTenantId: ws.tenantId, rowId, contactId, position: 0, displayName: name, displayCompany: '' },
+    });
+    return rowId;
+  };
+  const rowId = await addGuest(contact.id, contact.name);
+  let taken = 0;
+  /** Record an export of the register as it is right now, as the export route does. */
+  const takeExport = async () =>
+    db.companyExport.create({
+      data: {
+        authTenantId: ws.tenantId,
+        fileCount: 1,
+        sha256: 'a'.repeat(64),
+        registerSha256: await currentRegisterHash(db, [ws.workspaceId]),
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, ++taken)),
+      },
+    });
+  return { ws, store, contact, rowId, addGuest, takeExport };
+}
+
+describe('the export rule against the real register', () => {
+  it('export, then no change: the printed copy is removed', async () => {
+    const f = await mealScenario();
+    await f.takeExport();
+    const counts = await eraseCompanyContacts(db, f.ws.tenantId, [f.ws.workspaceId]);
+    expect(counts).toMatchObject({ guestCopies: 1, guestCopiesHeld: 0, exportCoverage: 'identical' });
+    expect(await db.mealGuest.count({ where: { rowId: f.rowId } })).toBe(0);
+  });
+
+  it('export, then a guest correction: the export no longer holds the printed name, so it is held', async () => {
+    const f = await mealScenario();
+    const before = await currentRegisterHash(db, [f.ws.workspaceId]);
+    await f.takeExport();
+    await f.store.update(f.contact.id, { name: `${f.contact.name} korrigiert` });
+    expect(await currentRegisterHash(db, [f.ws.workspaceId])).not.toBe(before);
+    const counts = await eraseCompanyContacts(db, f.ws.tenantId, [f.ws.workspaceId]);
+    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 1, exportCoverage: 'changed' });
+    const held = await db.mealGuest.findFirstOrThrow({ where: { rowId: f.rowId } });
+    expect(held).toMatchObject({ contactId: null, displayName: `${f.contact.name} korrigiert` });
+  });
+
+  it('export, then a new meal guest: both printed copies are held', async () => {
+    const f = await mealScenario();
+    await f.takeExport();
+    const second = await f.store.create({ name: `Zweiter ${randomUUID().slice(0, 8)}` });
+    const newRow = await f.addGuest(second.id, second.name);
+    const counts = await eraseCompanyContacts(db, f.ws.tenantId, [f.ws.workspaceId]);
+    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 2, exportCoverage: 'changed' });
+    expect(await db.mealGuest.count({ where: { rowId: { in: [f.rowId, newRow] }, contactId: null } })).toBe(2);
+  });
+
+  it('the newest export decides: a later export of the changed register covers it again', async () => {
+    const f = await mealScenario();
+    await f.takeExport();
+    await f.store.update(f.contact.id, { name: `${f.contact.name} korrigiert` });
+    await f.takeExport();
+    const counts = await eraseCompanyContacts(db, f.ws.tenantId, [f.ws.workspaceId]);
+    expect(counts).toMatchObject({ guestCopies: 1, guestCopiesHeld: 0, exportCoverage: 'identical' });
+  });
+
+  it('an export from before the register hash existed holds', async () => {
+    const f = await mealScenario();
+    await db.companyExport.create({ data: { authTenantId: f.ws.tenantId, fileCount: 3, sha256: 'a'.repeat(64) } });
+    const counts = await eraseCompanyContacts(db, f.ws.tenantId, [f.ws.workspaceId]);
+    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 1, exportCoverage: 'no_hash' });
+  });
+
+  it('a register that cannot be read, and an erasure without workspace ids, both hold', async () => {
+    const failing = await mealScenario();
+    await failing.takeExport();
+    const counts = await eraseCompanyContacts(db, failing.ws.tenantId, [failing.ws.workspaceId], new Date(), async () => {
+      throw new Error('data layer unreachable');
+    });
+    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 1, exportCoverage: 'recompute_failed' });
+
+    const noScope = await mealScenario();
+    await noScope.takeExport();
+    const held = await eraseCompanyContacts(db, noScope.ws.tenantId, []);
+    expect(held).toMatchObject({ guestCopies: 0, guestCopiesHeld: 1, exportCoverage: 'no_workspaces' });
+  });
+
+  it('repeat-safe after a removal: the second run finds nothing', async () => {
+    const f = await mealScenario();
+    await f.takeExport();
+    await eraseCompanyContacts(db, f.ws.tenantId, [f.ws.workspaceId]);
+    const again = await eraseCompanyContacts(db, f.ws.tenantId, [f.ws.workspaceId]);
+    expect(again).toMatchObject({ guestCopies: 0, guestCopiesHeld: 0, sharedContacts: 0 });
+  });
+});
+
 describe('eraseCompanyContacts against the real databases', () => {
   it('without an export: the contact goes, the printed copy is held for ten years, and a repeat does not move the date', async () => {
     const f = await scenario();
     const now = new Date('2026-10-09T10:00:00Z');
     const first = await eraseCompanyContacts(db, f.tenant, [f.ws], now);
-    expect(first).toMatchObject({ guestCopies: 0, guestCopiesHeld: 1, sharedContacts: 1 });
+    expect(first).toMatchObject({ guestCopies: 0, guestCopiesHeld: 1, sharedContacts: 1, exportCoverage: 'no_export' });
     expect(await f.store.list({ includeArchived: true })).toEqual([]);
 
     const held = await db.mealGuest.findFirstOrThrow({ where: { rowId: f.rowId } });
@@ -50,14 +150,6 @@ describe('eraseCompanyContacts against the real databases', () => {
     expect(second).toMatchObject({ guestCopies: 0, guestCopiesHeld: 0 });
     const still = await db.mealGuest.findFirstOrThrow({ where: { rowId: f.rowId } });
     expect(still.retainUntil?.toISOString()).toBe('2036-10-09T10:00:00.000Z');
-  });
-
-  it('with an export on record: the printed copy is removed now', async () => {
-    const f = await scenario();
-    await db.companyExport.create({ data: { authTenantId: f.tenant, fileCount: 3, sha256: 'a'.repeat(64) } });
-    const counts = await eraseCompanyContacts(db, f.tenant, [f.ws]);
-    expect(counts).toMatchObject({ guestCopies: 1, guestCopiesHeld: 0 });
-    expect(await db.mealGuest.count({ where: { rowId: f.rowId } })).toBe(0);
   });
 
   it('the purge removes only held copies past their date, never a copy still linked to a contact', async () => {

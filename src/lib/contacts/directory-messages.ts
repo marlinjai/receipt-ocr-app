@@ -57,11 +57,30 @@ export function fieldErrorMessage(error: string): string {
   }
 }
 
+/** Why printed names are held, in plain German. Codes come from `exportCoversRegister`. */
+function heldReason(coverage: string | undefined): string {
+  switch (coverage) {
+    case 'changed':
+      return 'weil sich das Bewirtungsverzeichnis seit dem letzten Export geändert hat';
+    case 'no_hash':
+      return 'weil der letzte Export noch ohne Abgleich mit dem Verzeichnis erstellt wurde';
+    case 'recompute_failed':
+      return 'weil das Verzeichnis gerade nicht mit dem letzten Export verglichen werden konnte';
+    case 'no_workspaces':
+      return 'weil nicht feststeht, mit welchem Stand der Export zu vergleichen wäre';
+    default:
+      return 'weil noch kein Export vorliegt';
+  }
+}
+
 /**
  * What the confirmation says before one contact is erased. Plain German, and it
  * names which of the two outcomes for the printed names will happen.
  */
-export function eraseConfirmation(preview: { meals: number; printedNames: 'removed' | 'held'; linkedPersons: number }, kind: 'person' | 'organization'): string {
+export function eraseConfirmation(
+  preview: { meals: number; printedNames: 'removed' | 'held'; coverage?: string; linkedPersons: number },
+  kind: 'person' | 'organization',
+): string {
   const meals =
     preview.meals === 0
       ? 'Dieser Kontakt steht auf keiner Bewirtung.'
@@ -72,8 +91,8 @@ export function eraseConfirmation(preview: { meals: number; printedNames: 'remov
     preview.meals === 0
       ? ''
       : preview.printedNames === 'removed'
-        ? ' Die gedruckten Namen dort werden jetzt entfernt, weil für dieses Konto bereits ein Export vorliegt.'
-        : ' Die gedruckten Namen dort bleiben zehn Jahre erhalten, weil noch kein Export vorliegt; nur die Verbindung zum Kontakt wird gelöst.';
+        ? ' Die gedruckten Namen dort werden jetzt entfernt, weil das Bewirtungsverzeichnis seit dem letzten Export dieses Kontos unverändert ist: der Export enthält sie.'
+        : ` Die gedruckten Namen dort bleiben zehn Jahre erhalten, ${heldReason(preview.coverage)}; nur die Verbindung zum Kontakt wird gelöst. Entfernt werden sie nur, wenn das aktuelle Verzeichnis mit dem letzten Export übereinstimmt.`;
   const persons =
     kind === 'organization' && preview.linkedPersons > 0
       ? ` ${preview.linkedPersons === 1 ? '1 verknüpfte Person bleibt' : `${preview.linkedPersons} verknüpfte Personen bleiben`} bestehen und wird nur von der Organisation gelöst.`.replace('bleiben bestehen und wird', 'bleiben bestehen und werden')

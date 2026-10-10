@@ -8,7 +8,7 @@ import { contactsTabCount } from '@/lib/contacts/field-form';
 import { incompleteQueue } from '@/lib/meals/register';
 import { isDismissedMeal } from '@/lib/meals/rules';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
-import type { MealsPageData } from './actions';
+import { getMealsPageData, type MealsPageData } from './actions';
 import ContactsTab from './ContactsTab';
 import DirectoryPanel from './DirectoryPanel';
 import DismissedMeals from './DismissedMeals';
@@ -24,6 +24,8 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
   const [organizationCount, setOrganizationCount] = useState(initial.organizationCount);
   const [settings, setSettings] = useState<MealTaxSettings>(initial.settings);
   const [defaultHost, setDefaultHost] = useState(initial.defaultHost);
+  // Raised on every contact change made outside the directory, so it reloads.
+  const [directoryRevision, setDirectoryRevision] = useState(0);
   const [tab, setTab] = useState<TabKey>(() => (incompleteQueue(initial.records.filter((r) => !isDismissedMeal(r))).length > 0 ? 'queue' : 'register'));
 
   // `records` also holds the receipts marked "Keine Bewirtung"; they are listed
@@ -69,12 +71,47 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
     );
   }, []);
 
-  // The directory lists organizations too and can erase a person, so the badge
-  // and the guest list follow what it shows.
+  // The guest list and the directory show the same persons from two loads. Each
+  // side reports its changes to the other, so neither needs a page reload:
+  // a change in the guest list raises `directoryRevision`, which reloads the directory,
+  // and every directory load is folded into the guest list here.
+  const onGuestListChanged = useCallback(
+    (contact: Contact) => {
+      onContactUpserted(contact);
+      setDirectoryRevision((n) => n + 1);
+    },
+    [onContactUpserted],
+  );
+
+  // The directory lists the active persons and organizations of the company. Its
+  // list is the truth for them: a person it shows is added or updated, an active
+  // person it no longer shows is gone (erased or merged away). Archived persons
+  // are not listed there and are kept as they are.
   const onDirectoryChanged = useCallback((listed: DirectoryContact[]) => {
     setOrganizationCount(listed.filter((c) => c.kind === 'organization').length);
-    const ids = new Set(listed.map((c) => c.id));
-    setContacts((prev) => prev.filter((c) => c.archived || ids.has(c.id)));
+    const persons = new Map(listed.filter((c) => c.kind === 'person').map((c) => [c.id, c]));
+    setContacts((prev) => {
+      const kept = prev.filter((c) => c.archived && !persons.has(c.id));
+      const active: Contact[] = [...persons.values()].map((c) => ({
+        id: c.id,
+        name: c.name,
+        companyOrRole: c.companyOrRole,
+        note: c.note,
+        archived: false,
+      }));
+      return [...kept, ...active].sort((a, b) => a.name.localeCompare(b.name, 'de'));
+    });
+  }, []);
+
+  // An erase or a merge in the directory changes the guests of meals, so the
+  // meals are loaded again. A failed reload leaves the shown state untouched.
+  const onMealsStale = useCallback(() => {
+    void getMealsPageData().then((fresh) => {
+      if (!fresh.ok) return;
+      setRecords(fresh.value.records);
+      setContacts(fresh.value.contacts);
+      setOrganizationCount(fresh.value.organizationCount);
+    });
   }, []);
 
   const tabs: Array<{ key: TabKey; label: string; count?: number }> = [
@@ -144,7 +181,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
               onRecordSaved={onRecordSaved}
               onRecordsSaved={onRecordsSaved}
               onRecordsRemoved={onRecordsRemoved}
-              onContactCreated={onContactUpserted}
+              onContactCreated={onGuestListChanged}
               onOpenRegister={() => setTab('register')}
             />
           )}
@@ -160,8 +197,8 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
           )}
           {tab === 'contacts' && (
             <>
-              <ContactsTab contacts={contacts} onContactChanged={onContactUpserted} />
-              <DirectoryPanel onChanged={onDirectoryChanged} />
+              <ContactsTab contacts={contacts} onContactChanged={onGuestListChanged} />
+              <DirectoryPanel onChanged={onDirectoryChanged} refreshKey={directoryRevision} onMealsStale={onMealsStale} />
             </>
           )}
         </div>

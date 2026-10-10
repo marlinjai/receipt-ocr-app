@@ -2,7 +2,7 @@
 
 import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
-import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
+import { MissingTenantError, companyWorkspaceIds, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 
 import { companyContacts, sharedContactsEnabled } from '@/lib/contacts/db';
 import {
@@ -76,6 +76,17 @@ async function readContacts() {
 async function writeContacts() {
   if (!sharedContactsEnabled()) throw new DirectoryError('unavailable');
   return contactsFor(await auth.requireAction('receipts.row.write'));
+}
+
+/**
+ * The company for an erase, with the workspaces its register is compared over:
+ * the same set the company export is taken with (`companyWorkspaceIds`).
+ */
+async function eraseScope() {
+  if (!sharedContactsEnabled()) throw new DirectoryError('unavailable');
+  const session = await auth.requireAction('receipts.row.write');
+  const contacts = contactsFor(session);
+  return { contacts, workspaceIds: companyWorkspaceIds(session, contacts.tenantId) };
 }
 
 export async function listDirectoryAction(includeArchived = false): Promise<DirectoryResult<DirectoryContact[]>> {
@@ -191,7 +202,8 @@ export async function archiveFieldAction(key: string): Promise<DirectoryResult<D
 /** What erasing this contact would do. Writes nothing; shown before the confirmation. */
 export async function previewEraseAction(id: string): Promise<DirectoryResult<ErasePreview>> {
   try {
-    return { ok: true, value: await previewEraseContact(await writeContacts(), prisma, String(id)) };
+    const { contacts, workspaceIds } = await eraseScope();
+    return { ok: true, value: await previewEraseContact(contacts, prisma, String(id), workspaceIds) };
   } catch (e) {
     return failure(e);
   }
@@ -199,12 +211,18 @@ export async function previewEraseAction(id: string): Promise<DirectoryResult<Er
 
 /**
  * Erase one contact for good. Its printed names on meals follow the same rule as
- * the company erasure (src/lib/erasure.ts): removed when the company holds an
- * export, otherwise held. Repeating it changes nothing more.
+ * the company erasure (src/lib/erasure.ts): removed only when the company's newest
+ * export is identical to the register as it is now, otherwise held. Repeating it
+ * changes nothing more. The log line carries the reason code, never a name.
  */
 export async function eraseDirectoryAction(id: string): Promise<DirectoryResult<EraseResult>> {
   try {
-    return { ok: true, value: await eraseDirectoryContact(await writeContacts(), prisma, String(id)) };
+    const { contacts, workspaceIds } = await eraseScope();
+    const result = await eraseDirectoryContact(contacts, prisma, String(id), workspaceIds);
+    console.log(
+      `[contacts] erase one contact: ${result.outcome}, printed names removed ${result.printedNamesRemoved}, held ${result.printedNamesHeld} (export coverage: ${result.coverage})`,
+    );
+    return { ok: true, value: result };
   } catch (e) {
     return failure(e);
   }

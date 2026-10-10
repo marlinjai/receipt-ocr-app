@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The ten-day rule at the turn of the year: payments between 22 December and 10 January are listed in a tab "Jahreswechsel" with the rule and its source; a regularly recurring one (rent, insurance, an advance payment of value-added tax) can be confirmed to count in the year it belongs to. Nothing is moved without an answer, and the answer belongs to the payment day (migration `0016_tax_year_boundary`)
 - Payments can be linked by hand to any receipt of the year or the year before, or to an invoice with something open, with a part of the amount; a payment without a name can be marked private; re-labelled payments are listed and can be put back; refunds ask for their receipt
 - Receipt lines in the finance area: a receipt can be split into positions that add up to its total, each treated on its own (one business, one private; one an asset, one expensed at once); a line can have its own decision or follow its receipt, and an asset can be built from single lines (migration `0015_tax_receipt_lines`)
 - Review list: a receipt stored by the old reader gets a new reading of its stored text, shown as "stored / newly read" per field (name, vendor, total, net, tax rate, tip, category) and written only when taken. No model is asked. "Geprüft, stimmt so" keeps what is stored

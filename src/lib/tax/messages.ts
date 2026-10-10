@@ -92,6 +92,8 @@ export function financeActionMessage(error: string, detail?: string): string {
     case 'not_found':
       return detail === 'rule_not_found'
         ? 'Diese Regel gibt es nicht mehr. Die Ansicht wurde vermutlich in einem anderen Fenster geändert; bitte neu laden.'
+        : detail === 'boundary_subject_not_found'
+          ? 'Diese Zahlung gibt es nicht mehr. Die Ansicht wurde vermutlich in einem anderen Fenster geändert; bitte neu laden.'
         : detail === 'line_not_found'
           ? 'Diese Position gibt es nicht mehr. Die Ansicht wurde vermutlich in einem anderen Fenster geändert; bitte neu laden.'
         : detail === 'asset_not_found'
@@ -150,6 +152,8 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Bitte Datum und Betrag jedes Zahlungseingangs prüfen.';
         case 'invalid_year':
           return 'Bitte das Jahr prüfen, in dem die Rechnung bereits erklärt wurde.';
+        case 'not_in_year_boundary':
+          return 'Diese Zahlung liegt nicht (mehr) zwischen dem 22. Dezember und dem 10. Januar; die Ausnahme zum Jahreswechsel gilt für sie nicht. Bitte die Ansicht neu laden.';
         case 'status_unanswered':
           return 'Zuerst muss die Frage zur Kleinunternehmerregelung beantwortet sein (im Bewirtungsverzeichnis unter „Verzeichnis“).';
         case 'invalid_status':

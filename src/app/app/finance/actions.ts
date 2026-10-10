@@ -24,6 +24,8 @@ import {
   TaxServiceError,
   TreatmentError,
   clearItemDecision,
+  declineOpenYearBoundary,
+  saveYearBoundaryAnswer,
   clearReceiptLines,
   createAsset,
   decideForVendor,
@@ -94,7 +96,8 @@ function failure(e: unknown): { ok: false; error: FinanceActionError; detail?: s
       e.code === 'invoice_not_found' ||
       e.code === 'status_not_found' ||
       e.code === 'settlement_not_found' ||
-      e.code === 'line_not_found'
+      e.code === 'line_not_found' ||
+      e.code === 'boundary_subject_not_found'
     ) {
       return { ok: false, error: 'not_found', detail: e.code };
     }
@@ -308,4 +311,14 @@ export async function removeLines(year: number, rowId: string): Promise<Result<S
 /** Decide one line of a split receipt; `treatment` null lets it follow its receipt again. */
 export async function decideLine(year: number, lineId: string, treatment: unknown | null): Promise<Result<StatementView>> {
   return write(year, (ctx) => saveLineDecision(prisma, ctx, String(lineId), treatment));
+}
+
+/** Answer the ten-day rule for one payment at the turn of the year; checked by `saveYearBoundaryAnswer`. */
+export async function answerYearBoundary(year: number, input: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => saveYearBoundaryAnswer(prisma, ctx, input));
+}
+
+/** Every payment at the turn of this year that has no answer yet stays in the year it was paid. */
+export async function declineYearBoundary(year: number): Promise<Result<StatementView>> {
+  return write(year, (ctx) => declineOpenYearBoundary(prisma, ctx, safeYear(year)));
 }

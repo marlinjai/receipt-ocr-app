@@ -1170,6 +1170,31 @@ merged. Fixed in the same pull request:
   all its lines in proportion, because payments are matched to whole receipts. To
   take it off one line only, change that line's amount and the receipt's total.
 
+## Reality after the ten-day rule (2026-10-10)
+
+- **What it is.** Cash basis has one exception (section 11 (1) sentence 2 and (2)
+  sentence 2 of the income tax act): a regularly recurring payment that fell due
+  and was paid between 22 December and 10 January counts in the year it belongs
+  to. Rent, insurance premiums and advance payments of value-added tax are the
+  usual cases.
+- **Nothing is moved by itself.** Whether a payment recurs, and whether it was also
+  due inside the window, cannot be read off a receipt. Payments inside the window
+  are listed in a tab "Jahreswechsel" (shown only when the year has one), with the
+  rule and its source, and a person answers for each: belongs to the other year,
+  or stays. "None of these recurs" answers everything still open at once.
+- **Covered:** receipts (by the day of the linked payment, or the receipt's own day
+  while no payment is linked) and payments to or from the tax office for
+  value-added tax. A confirmed item counts on the first day of the next year, or
+  the last day of the year before; its amount and its section 19 status stay those
+  of the day it was really paid.
+- **The answer belongs to the payment day** (migration `0016_tax_year_boundary`,
+  additive). When a receipt is linked to another payment, the answer no longer
+  applies and the question comes back; back on the same day, it holds again.
+- **Never moved:** a business meal (the meal register lists it by its own day) and a
+  receipt that is part of an asset (depreciation runs from the acquisition).
+- **Not built:** regularly recurring INCOME at the turn of the year (a retainer paid
+  on 2 January for December). The same rule applies to it; it is on the roadmap.
+
 ## Decisions (2026-10-07)
 
 Answered by the owner on the decision page on 2026-10-07.

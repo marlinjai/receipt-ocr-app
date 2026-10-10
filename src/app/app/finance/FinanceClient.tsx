@@ -10,6 +10,8 @@ import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service'
 import type { OpenCheckKind } from '@/lib/tax/types';
 import {
   addAccount,
+  answerYearBoundary,
+  declineYearBoundary,
   decideLine,
   removeLines,
   saveLines,
@@ -37,13 +39,14 @@ import {
 } from './actions';
 import LinesForm, { type LineDraft } from './LinesForm';
 import PaymentsTab from './PaymentsTab';
+import YearBoundaryTab from './YearBoundaryTab';
 import type { ImportResult } from '@/lib/tax/payments/service';
 import RevenueTab from './RevenueTab';
 import VatTab from './VatTab';
 import AssetsTab, { type AssetDraft, type DisposalDraft } from './AssetsTab';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 
-type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'vendors';
+type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'boundary' | 'vendors';
 
 /** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
 const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
@@ -172,6 +175,8 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
     { key: 'payments', label: 'Zahlungen', count: view.payments.open.length + view.payments.unclassified.length },
     { key: 'assets', label: 'Anlagen', count: view.assets.length },
     { key: 'vat', label: 'Umsatzsteuer' },
+    // Only when the year has a payment in the ten-day window; the count is what is not answered yet.
+    ...(view.yearBoundary.length > 0 ? [{ key: 'boundary' as const, label: 'Jahreswechsel', count: view.yearBoundary.filter((e) => e.answer === null).length }] : []),
     { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length },
   ];
 
@@ -681,6 +686,21 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               onSettings={(input) => run(() => setVatSettings(view.year, input), 'Angaben zur Voranmeldung gespeichert.')}
               onSettlement={(input, done) => run(() => recordVatSettlement(view.year, input), 'Zahlung eingetragen.', done)}
               onRemoveSettlement={(settlementId) => run(() => removeVatSettlement(view.year, settlementId), 'Zahlung gelöscht.')}
+            />
+          )}
+
+          {tab === 'boundary' && (
+            <YearBoundaryTab
+              view={view}
+              busy={pending}
+              error={error}
+              onAnswer={(entry, belongsToOtherYear) =>
+                run(
+                  () => answerYearBoundary(view.year, { kind: entry.kind, subjectId: entry.subjectId, belongsToOtherYear }),
+                  belongsToOtherYear === null ? `${entry.label}: Antwort zurückgenommen.` : belongsToOtherYear ? `${entry.label}: zählt für ${entry.otherYear}.` : `${entry.label}: bleibt in ${entry.cashDay.slice(0, 4)}.`,
+                )
+              }
+              onDeclineOpen={() => run(() => declineYearBoundary(view.year), 'Alle offenen Zahlungen bleiben in dem Jahr, in dem sie gezahlt wurden.')}
             />
           )}
 

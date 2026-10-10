@@ -134,11 +134,12 @@
   revenue by payment day, profit or loss, forecast of the small-business limits) and
   slice 5 (dated status changes, regular value-added taxation, advance return
   periods), and the first part of slice 3 (payments from export files, one answer
-  per counterparty, links to receipts and invoices, also by hand), and receipt lines entered by
-  hand. Open, in this order: the classifier reading lines off a receipt (waits for
+  per counterparty, links to receipts and invoices, also by hand), receipt lines entered by
+  hand, and the ten-day rule at the turn of the year for expenses and payments to
+  the tax office. Open, in this order: the classifier reading lines off a receipt (waits for
   the extraction work on this roadmap); the rest of slice 3 (live bank sync with session
-  expiry, card statement and pay-later importers, the ten-day rule at the turn of
-  the year); the income tax estimate; the year-end entry sheet; reading the
+  expiry, card statement and pay-later importers, the ten-day rule for regularly
+  recurring income); the income tax estimate; the year-end entry sheet; reading the
   expenses mailbox. Open inside what is built,
   each described in the plan's "Reality" sections: (1) the two older receipt columns
   "Business Share %" and "Zuordnung" and the per-vendor share table of the overview

@@ -6,6 +6,8 @@ import { rulesForYear } from '@/lib/tax/rules';
 import type { StatementItem, StatementView } from '@/lib/tax/service';
 
 const actions = vi.hoisted(() => ({
+  answerYearBoundary: vi.fn(),
+  declineYearBoundary: vi.fn(),
   saveLines: vi.fn(),
   removeLines: vi.fn(),
   decideLine: vi.fn(),
@@ -142,6 +144,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, settlements: [] },
     payments: { accounts: [], yearCount: 0, linkedCount: 0, unclassified: [], treatments: [], open: [], overridden: [], receiptTargets: [], invoiceTargets: [], links: [] },
     vendorRules: [],
+    yearBoundary: [],
     initialized: true,
     ...overrides,
   };
@@ -344,6 +347,23 @@ describe('FinanceClient: notices and statement', () => {
       { id: 'l-1', description: 'Anschluss', grossCents: 3000, netCents: null },
       { id: 'l-2', description: 'Gerät', grossCents: 1999, netCents: null },
     ]);
+  });
+
+  it('the turn-of-the-year tab exists only when the year has a payment in the window, counts what is unanswered, and saves an answer', async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<FinanceClient initial={view([])} />);
+    expect(screen.queryByRole('tab', { name: /Jahreswechsel/ })).toBeNull();
+    unmount();
+    const entry = { kind: 'receipt' as const, subjectId: 'a', label: 'Vermieter Beispiel', cashDay: '2025-12-29', dayBasis: 'payment' as const, cents: 65_000, otherYear: 2026, answer: null };
+    actions.answerYearBoundary.mockResolvedValue({ ok: true, value: view([], { yearBoundary: [{ ...entry, answer: true }] }) });
+    render(<FinanceClient initial={view([], { yearBoundary: [entry] })} />);
+    const tab = screen.getByRole('tab', { name: /Jahreswechsel/ });
+    expect(tab.textContent).toContain('1');
+    await user.click(tab);
+    await user.click(screen.getByRole('button', { name: 'Regelmäßig wiederkehrend, gehört zu 2026' }));
+    expect(actions.answerYearBoundary).toHaveBeenCalledWith(2025, { kind: 'receipt', subjectId: 'a', belongsToOtherYear: true });
+    expect(await screen.findByText('Vermieter Beispiel: zählt für 2026.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Regelmäßig wiederkehrend, gehört zu 2026' }).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('changing the year navigates, so the server computes the other year', async () => {

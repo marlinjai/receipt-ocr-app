@@ -55,7 +55,8 @@ export interface LedgerItem {
    * until then the document day (cash basis, section 11 of the income tax act).
    */
   date: string | null;
-  dateBasis: 'payment' | 'document';
+  /** 'year_boundary': a recurring payment at the turn of the year, counted in the year it belongs to. */
+  dateBasis: 'payment' | 'document' | 'year_boundary';
   /**
    * The cost in euro cents. Under section 19 of the value-added tax act this
    * is the gross amount, because no input tax is deducted.

@@ -75,7 +75,7 @@ describe('splitting a receipt: forward', () => {
     let view = await loadStatement(db, ws.workspaceId, 2025);
     const lines = ofRow(view, rowId);
     expect(lines.map((i) => [i.lineDescription, i.amountCents, i.lineGrossCents, i.checks.map((c) => c.kind)])).toEqual([
-      ['Stativ', 90_000, 90_000, []],
+      ['Stativ', 90_000, 90_000, ['net_amount_needed']],
       ['Speicherkarte', 15_000, 15_000, []],
       ['Geschenk, privat', 5_000, 5_000, []],
     ]);

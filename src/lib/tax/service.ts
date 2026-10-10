@@ -474,15 +474,25 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));
 
   const items: StatementItem[] = [];
+  const itemOrder = new Map<StatementItem, number>();
   const years = new Set<number>(RULE_YEARS);
   years.add(year);
   resolved.forEach((r, index) => {
     if (r.item.date) years.add(Number(r.item.date.slice(0, 4)));
     const itemResult = resultById.get(r.item.id);
     // computeYear only returns items of the year and undated ones.
-    if (itemResult) items.push(toStatementItem(r, factsOfItem[index], itemResult));
+    if (itemResult) {
+      const statementItem = toStatementItem(r, factsOfItem[index], itemResult);
+      itemOrder.set(statementItem, index);
+      items.push(statementItem);
+    }
   });
-  items.sort((a, b) => (a.date ?? '') < (b.date ?? '') ? -1 : (a.date ?? '') > (b.date ?? '') ? 1 : a.label.localeCompare(b.label, 'de'));
+  // By date, then by label; the lines of one receipt keep their stored order.
+  items.sort((a, b) => {
+    if (a.date !== b.date) return (a.date ?? '') < (b.date ?? '') ? -1 : 1;
+    if (a.rowId === b.rowId) return (itemOrder.get(a) ?? 0) - (itemOrder.get(b) ?? 0);
+    return a.label.localeCompare(b.label, 'de');
+  });
 
   const { rules } = resolvedRules;
   const assetResults = new Map(result.assets.map((a) => [a.assetId, a]));

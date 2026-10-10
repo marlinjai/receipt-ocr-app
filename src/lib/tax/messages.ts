@@ -33,6 +33,7 @@ export const ASSET_CHECK_LABELS: Record<AssetCheckKind, string> = {
   asset_declining_not_allowed: 'Degressive Abschreibung ist für dieses Anschaffungsdatum oder diese Art nicht zulässig',
   asset_declining_rate_too_high: 'Satz der degressiven Abschreibung fehlt oder liegt über dem zulässigen Höchstsatz',
   asset_opening_method: 'Übernommene Anlagen werden linear über die Restnutzungsdauer abgeschrieben',
+  asset_opening_no_life: 'Buchwert über dem Erinnerungswert, aber keine Restnutzungsdauer: so würde nie abgeschrieben',
   asset_disposal_before_acquisition: 'Abgang liegt vor der Anschaffung',
 };
 
@@ -155,6 +156,24 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Bitte Datum und Betrag der Zahlung prüfen.';
         case 'invalid_expectation':
           return 'Bitte den erwarteten Monatsumsatz als Betrag eingeben.';
+        case 'account_label_required':
+          return 'Bitte einen Namen für das Konto eingeben.';
+        case 'account_label_taken':
+          return 'Ein Konto mit diesem Namen gibt es bereits.';
+        case 'file_already_imported':
+          return 'Genau diese Datei wurde für dieses Konto schon eingelesen. Es wurde nichts doppelt angelegt.';
+        case 'unknown_layout':
+          return 'Der Aufbau dieser Datei wird nicht erkannt. Unterstützt werden die Exporte von N26, Tomorrow und PayPal (CSV) sowie die Umsatzliste der Bankschnittstelle (JSON). Es wurde nichts eingelesen.';
+        case 'empty':
+          return 'Die Datei enthält keine Umsätze.';
+        case 'too_large':
+          return 'Die Datei ist zu groß für einen Kontoexport (mehr als 8 MB).';
+        case 'link_exceeds_payment':
+          return 'Der Betrag ist größer als das, was von dieser Zahlung noch nicht zugeordnet ist.';
+        case 'invalid_link':
+          return 'Diese Zuordnung ist nicht möglich. Bitte Zahlung, Beleg oder Rechnung und Betrag prüfen.';
+        case 'invalid_treatment':
+          return 'Für diese Gegenseite lässt sich keine Regel anlegen (kein Name).';
         case 'invalid_disposal':
           return 'Bitte Datum, Art und Erlös des Abgangs prüfen. Bei einem Abgang ohne Erlös bleibt der Erlös leer.';
         case 'no_vendor':
@@ -162,7 +181,10 @@ export function financeActionMessage(error: string, detail?: string): string {
         case 'invalid_date':
           return 'Das Datum „gilt ab“ ist ungültig.';
         default:
-          return 'Eine Eingabe ist ungültig. Bitte Anteile und Zeilen prüfen.';
+          if (detail?.startsWith('unreadable_row:')) {
+            return `Zeile ${detail.split(':')[1]} der Datei lässt sich nicht lesen (Datum oder Betrag). Es wurde nichts eingelesen, auch nicht die Zeilen davor.`;
+          }
+          return 'Eine Eingabe ist ungültig. Bitte die Angaben prüfen.';
       }
     default:
       return 'Das hat nicht geklappt. Bitte erneut versuchen; wenn es wieder scheitert, die Verbindung prüfen.';

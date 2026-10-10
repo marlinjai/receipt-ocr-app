@@ -22,7 +22,7 @@ export const EMPLOYMENT_FORM_2025: Source = {
 };
 
 /** The labels of the income-surplus statement, shared by the years; the line numbers are per year. */
-export const EUER_LABELS: Record<Extract<FormLineKey, `euer.${string}`>, { label: string; kind: 'revenue' | 'expense'; limited?: boolean; assetOnly?: boolean }> = {
+export const EUER_LABELS: Record<Extract<FormLineKey, `euer.${string}`>, { label: string; kind: 'revenue' | 'expense'; limited?: boolean; assetOnly?: boolean; computedOnly?: boolean }> = {
   'euer.revenue_small_business': { label: 'Betriebseinnahmen als umsatzsteuerlicher Kleinunternehmer (nach § 19 Abs. 1 UStG)', kind: 'revenue' },
   'euer.revenue_taxable': { label: 'Umsatzsteuerpflichtige Betriebseinnahmen', kind: 'revenue' },
   'euer.revenue_not_taxable': {
@@ -51,8 +51,8 @@ export const EUER_LABELS: Record<Extract<FormLineKey, `euer.${string}`>, { label
   'euer.work_equipment': { label: 'Arbeitsmittel (z. B. Bürobedarf, Porto, Fachliteratur)', kind: 'expense' },
   'euer.packaging_transport': { label: 'Kosten für Verpackung und Transport', kind: 'expense' },
   'euer.advertising': { label: 'Werbekosten (z. B. Inserate, Werbespots, Plakate)', kind: 'expense' },
-  'euer.input_vat': { label: 'Gezahlte und nach § 15 UStG abziehbare Vorsteuerbeträge', kind: 'expense' },
-  'euer.vat_paid': { label: 'An das Finanzamt gezahlte und ggf. verrechnete Umsatzsteuer', kind: 'expense' },
+  'euer.input_vat': { label: 'Gezahlte und nach § 15 UStG abziehbare Vorsteuerbeträge', kind: 'expense', computedOnly: true },
+  'euer.vat_paid': { label: 'An das Finanzamt gezahlte und ggf. verrechnete Umsatzsteuer', kind: 'expense', computedOnly: true },
   'euer.other_unlimited': { label: 'Übrige unbeschränkt abziehbare Betriebsausgaben', kind: 'expense' },
   'euer.gifts': { label: 'Geschenke', kind: 'expense', limited: true },
   'euer.meals': { label: 'Bewirtungsaufwendungen', kind: 'expense', limited: true },

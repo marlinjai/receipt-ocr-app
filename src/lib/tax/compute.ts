@@ -200,6 +200,8 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
     checks.push(...result.checks);
 
     for (const part of result.parts) {
+      // A fully refunded purchase contributes nothing and opens no line.
+      if (part.cents === 0 && part.nonDeductibleCents === 0) continue;
       const line = lineFor(part.lineKey);
       line.cents += part.cents;
       line.nonDeductibleCents += part.nonDeductibleCents;
@@ -316,6 +318,7 @@ function computeRevenue(
   const outputVatByPayment: VatEvent[] = [];
   let receivedCents = 0;
   let outstandingCents = 0;
+  let outstandingTurnoverCents = 0;
   const yearEnd = `${facts.year}-12-31`;
 
   for (const invoice of facts.invoices ?? []) {
@@ -370,6 +373,9 @@ function computeRevenue(
     }
     receivedCents += result.receivedCents;
     outstandingCents += result.outstandingCents;
+    // The tax share of what is still open, in the invoice's own proportion.
+    outstandingTurnoverCents +=
+      result.outstandingCents - (invoice.grossCents > 0 ? Math.round((vat * result.outstandingCents) / invoice.grossCents) : 0);
     // Only invoices that touch the year are listed.
     if (result.receivedCents !== 0 || result.outstandingCents !== 0 || result.checks.length > 0 || (invoice.issueDate !== null && yearOf(invoice.issueDate) === facts.year)) {
       invoices.push(result);
@@ -383,6 +389,7 @@ function computeRevenue(
       turnoverByMonthCents: byMonth,
       turnoverCents: byMonth.reduce((s, c) => s + c, 0),
       outstandingCents,
+      outstandingTurnoverCents,
       invoices,
     },
     outputVatByIssue,

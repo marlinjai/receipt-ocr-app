@@ -8,8 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Review list "Belege prüfen" on the dashboard: receipts that need a look, with the reasons in plain words (not readable, amount or date missing, impossible tax figures, not classified, total not confirmed, possible duplicate) and the actions "Beleg öffnen", "Geprüft, stimmt so", "Beide behalten" and "Löschen". Worked out from the stored receipts on every load, so a warning no longer depends on the upload page that first showed it (migration `0013_receipt_reviews`, additive)
+- Review list "Belege prüfen" on the dashboard: receipts that need a look, with the reasons in plain words (not readable, amount or date missing, impossible tax figures, not classified, total not confirmed, possible duplicate) and the actions "Beleg öffnen", "Geprüft, stimmt so", "Beide behalten" and "Löschen". Worked out from the stored receipts on every load, so a warning no longer depends on the upload page that first showed it (migration `0014_receipt_reviews`, additive)
 - Business-meal register: the current year is always offered, the register opens on the newest year that has a meal, and meals without a date are counted instead of being invisible
+- Payments in the finance area: accounts, import of export files (N26, Tomorrow and PayPal as CSV, the bank interface's transaction list as JSON), read whole or not at all and idempotent across overlapping files; one answer per counterparty (business, private, own account); links from payments to receipts and issued invoices, made automatically only on an invoice number in the payment text with the exact amount, otherwise proposed and confirmed by a person; a linked payment gives a receipt its payment day and the euro amount actually charged (migration `0013_tax_payments`)
 - Revenue in the finance area: a list of issued invoices with their payments; revenue counts on the day the money arrived, an unpaid invoice is shown as outstanding, and profit or loss is shown once invoices are recorded (migration `0012_tax_revenue_vat`)
 - Forecast of the small-business limits (25,000 euros for the previous year, 100,000 for the running year, both by money received): a range to year end, the month a limit would be passed, and a preparation list for the change to regular taxation
 - Regular value-added taxation: the status is a first answer plus dated changes, and every receipt, invoice and asset is judged by the status on its own date; under regular taxation costs count net, the tax is input tax at the business share, invoices carry output tax; advance return periods (monthly or quarterly, by issue or by payment date) and payments to the tax office
@@ -35,6 +36,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The meal register and the meal form follow the value-added tax status on each meal's own date when the status changed inside a year
+- The limit forecast no longer counts invoices that were unpaid at the end of a finished year as that year's turnover, and measures open invoices without the tax in them
+- Every year in which an invoice, a payment, a tax settlement or a status change is dated can be selected in the finance area
+- Lines the app computes itself (input tax, tax paid to the tax office) can no longer be chosen for a receipt by hand; a carried-in asset with a book value but no remaining life is reported instead of silently never being written off; a failed action is shown on every tab
 - A newly created Receipts table carries its company id from the first moment instead of waiting for the backfill script
 - A failed text recognition no longer loses the upload: the receipt is saved without text, flagged, for a retake or manual entry
 - Supermarket receipts are no longer filed as "Bewirtung" by the fallback rules; the default tax rate for a meal follows the receipt date (19 percent until the end of 2025, 7 percent from 2026)

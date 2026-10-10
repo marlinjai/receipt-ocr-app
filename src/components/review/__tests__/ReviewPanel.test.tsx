@@ -87,6 +87,12 @@ describe('ReviewPanel', () => {
     expect(handlers.onConfirm).not.toHaveBeenCalled();
   });
 
+  it('a currency name that is no currency code does not break the list', async () => {
+    setup([entry({ currency: 'Euro' })]);
+    await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));
+    expect(screen.getByText(/09\.10\.2025 · 48,40 Euro/)).toBeTruthy();
+  });
+
   it('a failure is said in the page, also when the list itself is empty', () => {
     setup([], { error: 'Die Prüfliste konnte nicht geladen werden.' });
     expect(screen.getByRole('alert').textContent).toContain('Die Prüfliste konnte nicht geladen werden.');

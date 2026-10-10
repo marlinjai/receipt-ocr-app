@@ -174,7 +174,13 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
     } finally {
       setPendingDelete(null);
       setWorking(false);
-      await Promise.all([refresh(), reloadReview()]);
+      // The delete is done and said above. If the table cannot be reloaded now, say that
+      // too: the rows shown may be out of date until the page is loaded again.
+      try {
+        await Promise.all([refresh(), reloadReview()]);
+      } catch {
+        setReviewError('Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.');
+      }
     }
   }, [pendingDelete, working, refresh, reloadReview]);
 

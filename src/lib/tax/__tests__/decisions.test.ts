@@ -85,7 +85,8 @@ describe('validateTreatment: several low-value items on one receipt', () => {
   });
 
   it('cannot put a receipt on a line only the asset register fills', () => {
-    for (const key of ['euer.depreciation_movable', 'euer.depreciation_intangible', 'euer.pool_release', 'euer.remaining_book_value']) {
+    // Nor on a line the app computes itself: input tax and tax paid to the tax office.
+    for (const key of ['euer.depreciation_movable', 'euer.depreciation_intangible', 'euer.pool_release', 'euer.remaining_book_value', 'euer.input_vat', 'euer.vat_paid']) {
       expect(code(() => treatment(key, false))).toBe('form_line_invalid');
     }
   });

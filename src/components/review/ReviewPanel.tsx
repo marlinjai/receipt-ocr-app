@@ -45,9 +45,21 @@ function day(iso: string | null): string {
   return `${d}.${m}.${y}`;
 }
 
+/**
+ * An amount in its currency. The currency is the NAME of a select option, which a
+ * person can rename to something that is no currency code ("Euro"): the amount is
+ * then shown with that name behind it instead of the list failing to draw.
+ */
+function amount(value: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat('de-DE', { style: 'currency', currency }).format(value);
+  } catch {
+    return `${new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)} ${currency}`;
+  }
+}
+
 function money(value: number | null, currency: string): string {
-  if (value === null) return 'ohne Betrag';
-  return new Intl.NumberFormat('de-DE', { style: 'currency', currency }).format(value);
+  return value === null ? 'ohne Betrag' : amount(value, currency);
 }
 
 export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, onKeepBoth, onDelete }: ReviewPanelProps) {

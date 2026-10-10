@@ -130,6 +130,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     smallBusinessAtYearEnd: true,
     statusChanges: [],
     vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, settlements: [] },
+    payments: { accounts: [], yearCount: 0, linkedCount: 0, unclassified: [], treatments: [], open: [], links: [] },
     vendorRules: [],
     initialized: true,
     ...overrides,

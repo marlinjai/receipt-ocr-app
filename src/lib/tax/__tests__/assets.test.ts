@@ -184,9 +184,18 @@ describe('assetChecks', () => {
     ['declining above the cap', { method: 'declining' as const, acquisitionDate: '2025-08-01', decliningRateBp: 3001 }, ['asset_declining_rate_too_high']],
     ['declining without a rate', { method: 'declining' as const, acquisitionDate: '2025-08-01' }, ['asset_declining_rate_too_high']],
     ['disposal before purchase', { disposal: { date: '2025-01-01', kind: 'sold' as const, proceedsCents: 0 } }, ['asset_disposal_before_acquisition']],
-    ['a carried-in asset with a one-off method', { method: 'low_value' as const, opening: { year: 2025, bookValueCents: 100, remainingMonths: 0 } }, ['asset_opening_method']],
+    ['a carried-in asset with a one-off method', { method: 'low_value' as const, reminderCents: 100, opening: { year: 2025, bookValueCents: 100, remainingMonths: 0 } }, ['asset_opening_method']],
   ])('%s', (_name, overrides, expected) => {
     expect(kinds(asset(overrides))).toEqual(expected);
+  });
+
+  it('a carried-in book value with no months left to write it off is reported, unless it is the reminder value', () => {
+    const carried = (bookValueCents: number, reminderCents: number, remainingMonths: number) =>
+      kinds(asset({ acquisitionDate: null, costCents: null, netCostCents: null, reminderCents, opening: { year: 2025, bookValueCents, remainingMonths } }));
+    expect(carried(300_000, 0, 0)).toEqual(['asset_opening_no_life']);
+    expect(carried(300_000, 100, 0)).toEqual(['asset_opening_no_life']);
+    expect(carried(100, 100, 0)).toEqual([]);
+    expect(carried(300_000, 0, 24)).toEqual([]);
   });
 
   it('decides the net limit from the gross amount only where that is conclusive', () => {

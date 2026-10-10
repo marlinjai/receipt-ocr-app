@@ -117,6 +117,11 @@ describe('queue and years', () => {
     expect(registerYearChoices(records, 2027)).toEqual({ years: [2027, 2026, 2025], initial: 2026 });
   });
 
+  it('opens on the newest year that has a meal, not on a year that only holds a receipt marked "Keine Bewirtung"', () => {
+    const list = [meal({ rowId: 'n1', date: '2026-01-05', mealType: 'not_a_meal' }), meal({ rowId: 'm1', date: '2025-03-14' })];
+    expect(registerYearChoices(list, 2026)).toEqual({ years: [2026, 2025], initial: 2025 });
+  });
+
   it('a meal without a date belongs to no year and is counted on its own', () => {
     const list = [meal({ rowId: 'u1', date: null }), meal({ rowId: 'u2', date: null, mealType: 'not_a_meal' }), meal({ rowId: 'd1' })];
     expect(undatedMeals(list).map((r) => r.rowId)).toEqual(['u1']);

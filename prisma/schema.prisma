@@ -457,7 +457,8 @@ model TaxIssuedInvoice {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  payments TaxInvoicePayment[]
+  payments     TaxInvoicePayment[]
+  paymentLinks TaxPaymentLink[]
 
   @@unique([authWorkspaceId, number])
   @@map("tax_issued_invoices")
@@ -492,6 +493,124 @@ model TaxVatSettlement {
 
   @@index([authWorkspaceId])
   @@map("tax_vat_settlements")
+}
+
+// ── Payments ─────────────────────────────────────────────────────────────────
+//
+// Booked movements on the owner's accounts, imported from export files (and
+// later from the bank interface). A payment is evidence: it gives a receipt or
+// an invoice its real day and euro amount once the two are linked. No full
+// account number is stored anywhere.
+
+// One of the owner's accounts (a bank account, a card, a payment service).
+model TaxAccount {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  label           String
+  kind            String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  batches  TaxImportBatch[]
+  payments TaxPayment[]
+
+  @@unique([authWorkspaceId, label])
+  @@map("tax_accounts")
+}
+
+// One imported file. `contentHash` (SHA-256 of the file) refuses the same file
+// twice for the same account; overlapping files are deduplicated per payment.
+model TaxImportBatch {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  accountId       String   @map("account_id")
+  contentHash     String   @map("content_hash")
+  format          String
+  paymentCount    Int      @map("payment_count")
+  newCount        Int      @map("new_count")
+  firstDay        String?  @map("first_day")
+  lastDay         String?  @map("last_day")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  account  TaxAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  payments TaxPayment[]
+
+  @@unique([accountId, contentHash])
+  @@map("tax_import_batches")
+}
+
+// One booked movement. `amountCents` is signed (negative: money out).
+// `sourceHash` is its identity within the account across files.
+// `sourceKind` is what the file says it is; `kindOverride` what a person says.
+// `counterpartyKey` is the normalized name the counterparty rules match on.
+model TaxPayment {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  accountId       String   @map("account_id")
+  batchId         String   @map("batch_id")
+  bookingDay      String   @map("booking_day")
+  valueDay        String?  @map("value_day")
+  amountCents     Int      @map("amount_cents")
+  counterparty    String
+  counterpartyKey String   @map("counterparty_key")
+  reference       String
+  entryReference  String?  @map("entry_reference")
+  sourceKind      String   @map("source_kind")
+  kindOverride    String?  @map("kind_override")
+  sourceHash      String   @map("source_hash")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  account TaxAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  batch   TaxImportBatch   @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  links   TaxPaymentLink[]
+
+  @@unique([accountId, sourceHash])
+  @@index([authWorkspaceId, bookingDay])
+  @@map("tax_payments")
+}
+
+// How a counterparty is treated, asked once: 'business' (its payments need a
+// document), 'private' (ignored for the business), or 'own_account' (moving
+// money between the owner's own accounts).
+model TaxCounterpartyRule {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  counterpartyKey String   @map("counterparty_key")
+  label           String
+  treatment       String
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, counterpartyKey])
+  @@map("tax_counterparty_rules")
+}
+
+// A payment (or part of it) that belongs to a receipt row or to an issued
+// invoice; exactly one of `rowId` and `invoiceId` is set. `cents` is positive.
+// `method` says how the link came about: 'reference' (the document's number is
+// in the payment's text) or 'manual' (a person confirmed it). `rowId` has no
+// foreign key (see meal_guests.row_id); the row delete paths remove the link.
+model TaxPaymentLink {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  paymentId       String   @map("payment_id")
+  rowId           String?  @map("row_id")
+  invoiceId       String?  @map("invoice_id")
+  cents           Int
+  method          String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  payment TaxPayment        @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  invoice TaxIssuedInvoice? @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@index([rowId])
+  @@index([invoiceId])
+  @@map("tax_payment_links")
 }
 
 // What still needs a person's eye on ONE receipt, and what a person has

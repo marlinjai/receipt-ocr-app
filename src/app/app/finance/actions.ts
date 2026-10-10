@@ -4,6 +4,18 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
+import {
+  PaymentServiceError,
+  createAccount,
+  deleteImportBatch,
+  importPayments,
+  linkPayment,
+  setCounterpartyTreatment,
+  setPaymentKind,
+  unlinkPayment,
+  type ImportResult,
+} from '@/lib/tax/payments/service';
+import { PaymentParseError } from '@/lib/tax/payments/types';
 import { RULE_YEARS } from '@/lib/tax/rules';
 import {
   AssetInputError,
@@ -27,6 +39,7 @@ import {
   saveVatSettlement,
   setAssetDisposal,
   updateAsset,
+  isWorkspaceReceipt,
   type StatementView,
   type TaxContext,
 } from '@/lib/tax/service';
@@ -63,6 +76,11 @@ function failure(e: unknown): { ok: false; error: FinanceActionError; detail?: s
   if (e instanceof TreatmentError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof AssetInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof RevenueInputError) return { ok: false, error: 'invalid_input', detail: e.code };
+  if (e instanceof PaymentParseError) return { ok: false, error: 'invalid_input', detail: e.row === null ? e.code : `${e.code}:${e.row}` };
+  if (e instanceof PaymentServiceError) {
+    const missing = ['account_not_found', 'batch_not_found', 'payment_not_found', 'link_not_found', 'target_not_found'];
+    return { ok: false, error: missing.includes(e.code) ? 'not_found' : 'invalid_input', detail: e.code };
+  }
   if (e instanceof TaxServiceError) {
     if (
       e.code === 'row_not_found' ||
@@ -232,4 +250,42 @@ export async function recordVatSettlement(year: number, input: unknown): Promise
 
 export async function removeVatSettlement(year: number, settlementId: string): Promise<Result<StatementView>> {
   return write(year, (ctx) => deleteVatSettlement(prisma, ctx, String(settlementId)));
+}
+
+export async function addAccount(year: number, input: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => createAccount(prisma, ctx, input));
+}
+
+/**
+ * Import one export file into an account. The file's text travels in the
+ * request; it is parsed whole on the server before anything is stored.
+ */
+export async function importPaymentFile(year: number, accountId: string, text: string): Promise<Result<{ view: StatementView; imported: ImportResult }>> {
+  try {
+    const ctx = await writeContext();
+    const imported = await importPayments(prisma, ctx, String(accountId), String(text ?? ''));
+    return { ok: true, value: { view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)), imported } };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+export async function undoImport(year: number, batchId: string): Promise<Result<StatementView>> {
+  return write(year, (ctx) => deleteImportBatch(prisma, ctx, String(batchId)));
+}
+
+export async function treatCounterparty(year: number, input: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => setCounterpartyTreatment(prisma, ctx, input));
+}
+
+export async function correctPaymentKind(year: number, paymentId: string, kind: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => setPaymentKind(prisma, ctx, String(paymentId), kind));
+}
+
+export async function confirmPaymentLink(year: number, input: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => linkPayment(prisma, ctx, input, (rowId) => isWorkspaceReceipt(prisma, ctx.workspaceId, rowId)));
+}
+
+export async function removePaymentLink(year: number, linkId: string): Promise<Result<StatementView>> {
+  return write(year, (ctx) => unlinkPayment(prisma, ctx, String(linkId)));
 }

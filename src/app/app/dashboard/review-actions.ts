@@ -4,8 +4,10 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { sessionWorkspaceId, tenantIdForWorkspace } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
+import type { ReadingField } from '@/lib/review/reading';
 import {
   ReviewError,
+  applyNewReading,
   confirmReceipt,
   keepBothReceipts,
   loadReviewQueue,
@@ -69,6 +71,26 @@ export async function keepBothLookAlikes(rowId: string, otherRowId: string): Pro
     if (typeof rowId !== 'string' || typeof otherRowId !== 'string' || !rowId || !otherRowId) return { ok: false, error: 'not_found' };
     const ctx = await writeContext();
     await keepBothReceipts(prisma, ctx, rowId, otherRowId);
+    return { ok: true, value: await loadReviewQueue(prisma, ctx.workspaceId) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+const READING_FIELDS: readonly ReadingField[] = ['name', 'vendor', 'gross', 'net', 'taxRate', 'tip', 'category'];
+
+/**
+ * "Neue Lesart übernehmen": write the fields of the new reading that the
+ * person chose. Only field NAMES come from the browser; the values are read
+ * again on the server from the stored text. Returns the queue as it is now.
+ */
+export async function takeNewReading(rowId: string, fields: string[]): Promise<ReviewResult<ReviewEntry[]>> {
+  try {
+    if (typeof rowId !== 'string' || !rowId || !Array.isArray(fields)) return { ok: false, error: 'not_found' };
+    const wanted = READING_FIELDS.filter((f) => fields.includes(f));
+    if (wanted.length === 0) return { ok: false, error: 'not_found' };
+    const ctx = await writeContext();
+    await applyNewReading(prisma, ctx, rowId, wanted);
     return { ok: true, value: await loadReviewQueue(prisma, ctx.workspaceId) };
   } catch (e) {
     return failure(e);

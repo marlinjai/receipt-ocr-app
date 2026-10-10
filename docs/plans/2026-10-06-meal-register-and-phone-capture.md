@@ -555,9 +555,10 @@ database backup into a local database and the reader was rebuilt against them.
   are stored in `receipt_reviews` (migration 0014, additive). It is shown on the dashboard.
 - **Deleting in the dashboard** is now the same safe delete as on the meals page, behind
   an in-page confirmation.
-- **Not done here:** the receipts of that first upload keep their old readings until a
-  new reading of the stored text is offered per receipt (roadmap). The checks on a real
-  phone are unchanged and still open.
+- **Receipts of that first upload.** They kept their old readings. The review list
+  reads their stored text again and offers the difference per field; nothing is written
+  until it is taken (`src/lib/review/reading.ts`).
+- **Not done here:** the checks on a real phone are unchanged and still open.
 
 ## Decisions (2026-10-06)
 

@@ -4,8 +4,10 @@ import type { Column, Row } from '@marlinjai/data-table-core';
 import { firstColumnIdByName } from '@/lib/column-lookup';
 import { isoDay, type SelectOptionsByColumn } from '@/lib/meals/record';
 import { allRows, tableContext } from '@/lib/meals/service';
-import { MEAL_CATEGORY } from '@/lib/receipts-constants';
-import { isReadFlag, lookAlikes, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
+import { serializeTaxLines } from '@/lib/meals/rules';
+import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
+import { kontoFor, newReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
+import { isConfirmable, isReadFlag, lookAlikes, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
 
 /**
  * The review queue of a workspace: every receipt that needs a person's eye,
@@ -45,6 +47,8 @@ export interface ReviewEntry {
   canConfirm: boolean;
   /** The receipts this one looks like, for the "same purchase?" decision. */
   duplicates: Array<{ rowId: string; name: string; date: string | null; gross: number | null }>;
+  /** What a new reading of the stored text would change, field by field. Empty when nothing. */
+  proposal: ReadingChange[];
 }
 
 function text(value: unknown): string {
@@ -62,7 +66,7 @@ function snapshotOf(
   columns: Column[],
   selectOptions: SelectOptionsByColumn,
   hashes: ReadonlyMap<string, string[]>,
-): ReviewSnapshot & { isMeal: boolean } {
+): ReviewSnapshot & { isMeal: boolean; reading: StoredReading } {
   const byName = firstColumnIdByName(columns);
   const cell = (name: string): unknown => {
     const id = byName.get(name);
@@ -76,6 +80,7 @@ function snapshotOf(
   };
   const files = cell('Receipt Image');
   const vendor = text(cell('Vendor')).trim();
+  const category = optionName('Category');
   return {
     rowId: row.id,
     name: text(cell('Name')).trim() || vendor || 'Beleg ohne Namen',
@@ -88,7 +93,17 @@ function snapshotOf(
     hasText: text(cell('OCR Text')).trim().length > 0,
     hasFile: Array.isArray(files) && files.length > 0,
     fileHashes: hashes.get(row.id) ?? [],
-    isMeal: optionName('Category') === MEAL_CATEGORY,
+    isMeal: category === MEAL_CATEGORY,
+    reading: {
+      name: text(cell('Name')).trim(),
+      vendor,
+      gross: numberOrNull(cell('Gross')),
+      net: numberOrNull(cell('Net')),
+      taxRate: numberOrNull(cell('Tax Rate')),
+      tip: numberOrNull(cell(MEAL_COLUMNS.tip)),
+      category,
+      text: text(cell('OCR Text')),
+    },
   };
 }
 
@@ -125,7 +140,9 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
   for (const s of snapshots) {
     const duplicates = alike.get(s.rowId) ?? [];
     const record = storedByRow.get(s.rowId);
-    const reasons = reviewReasons(s, record, duplicates);
+    // Reading the stored text again costs nothing (no model is asked); a confirmed receipt is left alone.
+    const proposal = record?.checkedAt ? [] : newReading(s.reading).changes;
+    const reasons = reviewReasons(s, record, duplicates, proposal.length > 0);
     if (reasons.length === 0) continue;
     entries.push({
       rowId: s.rowId,
@@ -136,11 +153,12 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
       currency: s.currency,
       isMeal: s.isMeal,
       reasons,
-      canConfirm: reasons.some(isReadFlag),
+      canConfirm: reasons.some(isConfirmable),
       duplicates: duplicates
         .map((id) => byId.get(id))
         .filter((d): d is NonNullable<typeof d> => d !== undefined)
         .map((d) => ({ rowId: d.rowId, name: d.name, date: d.date, gross: d.gross })),
+      proposal,
     });
   }
   return entries.sort((a, b) => {
@@ -202,4 +220,54 @@ export async function keepBothReceipts(db: PrismaClient, ctx: ReviewContext, row
       update: { distinctFrom },
     });
   }
+}
+
+/**
+ * Take the new reading of a stored receipt, for the fields named. The values
+ * are read again here from the stored text; nothing the browser sends is
+ * written, and a field whose reading no longer differs is skipped. Returns
+ * the fields that were written.
+ */
+export async function applyNewReading(db: PrismaClient, ctx: ReviewContext, rowId: string, fields: readonly ReadingField[]): Promise<ReadingField[]> {
+  const table = await tableContext(db, ctx.workspaceId);
+  if (!table) throw new ReviewError('not_initialized');
+  const row = await table.adapter.getRow(rowId);
+  if (!row || row.tableId !== table.tableId) throw new ReviewError('row_not_found');
+
+  const snapshot = snapshotOf(row, table.columns, table.selectOptions, new Map());
+  const reading = newReading(snapshot.reading);
+  const wanted = new Set(fields);
+  const take = reading.changes.filter((c) => wanted.has(c.field));
+  if (take.length === 0) return [];
+
+  const byName = firstColumnIdByName(table.columns);
+  const columnId = (name: string): string => {
+    const id = byName.get(name);
+    if (!id) throw new ReviewError('not_initialized');
+    return id;
+  };
+  const cells: Record<string, string | number | null> = {};
+  for (const change of take) {
+    if (change.field === 'name') cells[columnId('Name')] = change.to;
+    if (change.field === 'vendor') cells[columnId('Vendor')] = change.to;
+    if (change.field === 'gross') cells[columnId('Gross')] = change.to;
+    if (change.field === 'net') cells[columnId('Net')] = change.to;
+    if (change.field === 'taxRate') cells[columnId('Tax Rate')] = change.to;
+    if (change.field === 'tip') cells[columnId(MEAL_COLUMNS.tip)] = change.to;
+    if (change.field === 'category') {
+      const id = columnId('Category');
+      const option = table.selectOptions.get(id)?.find((o) => o.name === change.to);
+      if (!option) throw new ReviewError('not_initialized');
+      cells[id] = option.id;
+      cells[columnId('Konto')] = kontoFor(String(change.to));
+    }
+  }
+  // The printed tax groups go with the amounts on a meal, so the register's tax split matches the new total.
+  const amountsTaken = take.some((c) => c.field === 'gross' || c.field === 'net' || c.field === 'taxRate');
+  const isMeal = snapshot.isMeal || take.some((c) => c.field === 'category');
+  if (amountsTaken && isMeal && reading.taxLines.length > 0) {
+    cells[columnId(MEAL_COLUMNS.taxLines)] = serializeTaxLines(reading.taxLines);
+  }
+  await table.adapter.updateRow(rowId, cells);
+  return take.map((c) => c.field);
 }

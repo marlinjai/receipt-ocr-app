@@ -9,12 +9,17 @@ import { formatCents } from '@/lib/tax/money';
 import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service';
 import type { OpenCheckKind } from '@/lib/tax/types';
 import {
+  addAccount,
+  confirmPaymentLink,
+  correctPaymentKind,
   decideItem,
   disposeAsset,
+  importPaymentFile,
   recordStatusChange,
   recordVatSettlement,
   removeAsset,
   removeIssuedInvoice,
+  removePaymentLink,
   removeStatusChange,
   removeVatSettlement,
   removeVendorRule,
@@ -23,14 +28,18 @@ import {
   saveIssuedInvoice,
   setRevenueExpectation,
   setVatSettings,
+  treatCounterparty,
+  undoImport,
   type Result,
 } from './actions';
+import PaymentsTab from './PaymentsTab';
+import type { ImportResult } from '@/lib/tax/payments/service';
 import RevenueTab from './RevenueTab';
 import VatTab from './VatTab';
 import AssetsTab, { type AssetDraft, type DisposalDraft } from './AssetsTab';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 
-type TabKey = 'open' | 'statement' | 'revenue' | 'assets' | 'vat' | 'vendors';
+type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'vendors';
 
 /** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
 const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
@@ -63,6 +72,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [openLine, setOpenLine] = useState<string | null>(null);
   const [assetFromRow, setAssetFromRow] = useState<string | null>(null);
+  const [lastImport, setLastImport] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -76,6 +86,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
     setEditingId(null);
     setOpenLine(null);
     setAssetFromRow(null);
+    setLastImport(null);
     setError(null);
     setNotice(null);
   }
@@ -146,6 +157,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
     { key: 'open', label: 'Offen', count: queue.length },
     { key: 'statement', label: 'EÜR' },
     { key: 'revenue', label: 'Einnahmen', count: view.revenue.invoices.length },
+    { key: 'payments', label: 'Zahlungen', count: view.payments.open.length + view.payments.unclassified.length },
     { key: 'assets', label: 'Anlagen', count: view.assets.length },
     { key: 'vat', label: 'Umsatzsteuer' },
     { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length },
@@ -305,7 +317,8 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
         <div role="status" aria-live="polite" className="mt-4 min-h-5 text-sm" style={{ color: 'var(--muted)' }}>
           {notice}
         </div>
-        {error && tab === 'statement' && (
+        {/* The forms on the queue, payments and tax tabs show a failure next to what was typed; everywhere else it is shown here. */}
+        {error && tab !== 'open' && tab !== 'payments' && tab !== 'vat' && (
           <p className="ui-note ui-note-danger mt-2" role="alert">
             {error}
           </p>
@@ -587,10 +600,41 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
             <RevenueTab
               view={view}
               busy={pending}
-              error={error}
+              error={null}
               onSave={(invoiceId, draft, done) => run(() => saveIssuedInvoice(view.year, invoiceId, draft), `Rechnung ${draft.number}: gespeichert.`, done)}
               onDelete={(invoice) => run(() => removeIssuedInvoice(view.year, invoice.id), `Rechnung ${invoice.number}: gelöscht.`)}
               onExpectation={(cents) => run(() => setRevenueExpectation(view.year, cents), 'Erwartung für die Hochrechnung übernommen.')}
+            />
+          )}
+
+          {tab === 'payments' && (
+            <PaymentsTab
+              view={view}
+              busy={pending}
+              error={error}
+              lastImport={lastImport}
+              onAddAccount={(input, done) => run(() => addAccount(view.year, input), `Konto ${input.label} angelegt.`, done)}
+              onImport={(accountId, text, done) => {
+                setLastImport(null);
+                run(
+                  async () => {
+                    const result = await importPaymentFile(view.year, accountId, text);
+                    if (!result.ok) return result;
+                    setLastImport(result.value.imported);
+                    return { ok: true, value: result.value.view };
+                  },
+                  'Datei eingelesen.',
+                  done,
+                );
+              }}
+              onUndoImport={(batchId) => {
+                setLastImport(null);
+                run(() => undoImport(view.year, batchId), 'Import rückgängig gemacht.');
+              }}
+              onTreat={(counterparty, treatment) => run(() => treatCounterparty(view.year, { counterparty, treatment }), `${counterparty}: ${treatment === null ? 'Antwort zurückgenommen' : 'gespeichert'}.`)}
+              onLink={(input) => run(() => confirmPaymentLink(view.year, input), 'Zahlung zugeordnet.')}
+              onUnlink={(linkId) => run(() => removePaymentLink(view.year, linkId), 'Zuordnung gelöst.')}
+              onNotIncome={(payment) => run(() => correctPaymentKind(view.year, payment.id, 'refund'), 'Als Erstattung oder Umbuchung vermerkt.')}
             />
           )}
 
@@ -613,7 +657,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               key={assetFromRow ?? 'assets'}
               view={view}
               busy={pending}
-              error={error}
+              error={null}
               startFromRowId={assetFromRow}
               onStartHandled={() => setAssetFromRow(null)}
               onSave={saveAssetDraft}

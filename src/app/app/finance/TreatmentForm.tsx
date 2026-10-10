@@ -78,7 +78,7 @@ export default function TreatmentForm({ item, formLines, busy, error, submitLabe
   const needsFormLine = (bp.business ?? 0) > 0;
   const needsEmploymentLine = (bp.study ?? 0) + (bp.employment ?? 0) > 0;
 
-  const euerLines = formLines.filter((l) => l.form === 'euer' && l.kind === 'expense' && l.key !== 'euer.meals' && !l.assetOnly);
+  const euerLines = formLines.filter((l) => l.form === 'euer' && l.kind === 'expense' && l.key !== 'euer.meals' && !l.assetOnly && !l.computedOnly);
   const employmentLines = formLines.filter((l) => l.form === 'employment');
 
   function submit(event: React.FormEvent) {

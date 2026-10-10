@@ -103,11 +103,26 @@ export default function VatTab({ view, busy, error, onStatusChange, onRemoveStat
         )}
       </section>
 
-      {!view.vat.applies ? (
+      {!view.vat.applies && (
         <p className="glass-panel rounded-xl p-6 text-sm" style={{ color: 'var(--muted)' }}>
           {view.year} liegt vollständig unter der Kleinunternehmerregelung: es gibt keine Voranmeldungen.
         </p>
-      ) : (
+      )}
+      {!view.vat.applies && view.vat.settlements.length > 0 && (
+        // A settlement dated in a year without regular taxation still counts on the statement, so it must stay visible and removable.
+        <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Zahlungen an das Finanzamt">
+          <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Zahlungen an das Finanzamt und Erstattungen</h2>
+          <ul className="mt-3 space-y-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
+            {view.vat.settlements.map((s) => (
+              <li key={s.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                <span>{formatDay(s.date)}: {s.direction === 'paid' ? 'gezahlt' : 'erstattet'} {euro(s.cents)}</span>
+                <button type="button" className="ui-btn ui-btn-sm ui-btn-danger" disabled={busy} onClick={() => onRemoveSettlement(s.id)}>Löschen</button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {view.vat.applies && (
         <>
           <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Voranmeldungen">
             <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Umsatzsteuer-Voranmeldungen {view.year}</h2>

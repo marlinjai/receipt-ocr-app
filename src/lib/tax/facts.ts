@@ -24,6 +24,12 @@ export interface ReceiptFacts {
   /** The "Business Share %" cell, null when empty. */
   businessSharePercent: number | null;
   decision: TreatmentInput | null;
+  /**
+   * What linked payments say the receipt cost and when: the day of the first
+   * payment and the euro amount paid, refunds already taken off. Null while
+   * no payment is linked.
+   */
+  paid?: { day: string; cents: number } | null;
 }
 
 export interface ResolvedItem {
@@ -60,6 +66,15 @@ function amountOf(record: MealRecord): Pick<LedgerItem, 'amountCents' | 'amountB
   return { amountCents: Math.round(toCents(record.gross) * record.fxRate), amountBasis: 'reference_rate' };
 }
 
+/**
+ * The net part of what was paid: the receipt's own proportion of net to total,
+ * applied to the paid euro amount. Null when the receipt states no net amount.
+ */
+function netOfPaid(record: MealRecord, paidCents: number): number | null {
+  if (record.net === null || record.gross === null || !(record.gross > 0) || record.net <= 0 || record.net > record.gross) return null;
+  return Math.round((paidCents * toCents(record.net)) / toCents(record.gross));
+}
+
 function mealFact(record: MealRecord, settings: MealTaxSettings): MealFact | null {
   const status = mealStatus(record);
   if (status.kind === 'not_a_meal') return null;
@@ -91,6 +106,7 @@ export function resolveItem(
   settings: MealTaxSettings,
 ): ResolvedItem {
   const { record, decision } = facts;
+  const paid = facts.paid ?? null;
   const key = vendorKey(record.vendor);
   const rule = ruleInForce(vendorRules, key, record.date);
   const meal = mealFact(record, settings);
@@ -98,12 +114,15 @@ export function resolveItem(
     id: record.rowId,
     label: record.name || record.vendor || 'Beleg ohne Namen',
     vendor: record.vendor,
-    date: record.date,
-    dateBasis: 'document' as const,
-    ...amountOf(record),
-    netCents: netOf(record),
+    // Cash basis: with a linked payment the receipt counts on the payment's day
+    // and with the euro amount the bank charged (which settles a foreign-currency
+    // receipt for good); until then on its own day and amount.
+    date: paid ? paid.day : record.date,
+    dateBasis: paid ? ('payment' as const) : ('document' as const),
+    ...(paid ? { amountCents: paid.cents, amountBasis: 'payment' as const } : amountOf(record)),
+    netCents: paid ? netOfPaid(record, paid.cents) : netOf(record),
     // The status on the receipt's own date: a later change leaves earlier receipts alone.
-    smallBusiness: smallBusinessOn(settings, record.date),
+    smallBusiness: smallBusinessOn(settings, paid ? paid.day : record.date),
   };
 
   // A row the meal register judges is treated by the register alone: its line

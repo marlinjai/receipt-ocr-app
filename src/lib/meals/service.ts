@@ -470,6 +470,8 @@ export async function deleteReceiptRows(
       await db.taxItemDecision.deleteMany({ where: { rowId } });
       // Same for a link into an asset's cost: the asset then asks for its cost again.
       await db.taxAssetPart.deleteMany({ where: { rowId } });
+      // And for links from bank payments: the payments stay and ask for a document again.
+      await db.taxPaymentLink.deleteMany({ where: { rowId } });
       await deleteGuestsForRows(db, [rowId]);
       result.done.push(rowId);
     } catch (e) {

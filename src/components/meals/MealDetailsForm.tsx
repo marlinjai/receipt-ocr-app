@@ -19,6 +19,7 @@ import {
   mealDeduction,
   mealStatus,
   type MissingField,
+  smallBusinessOn,
 } from '@/lib/meals/rules';
 import type { MealGuestEntry, MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import GuestPicker, { type CreateContactResult } from './GuestPicker';
@@ -373,7 +374,7 @@ function MealDetailsFormInner({
             </div>
           </div>
 
-          {settings.smallBusiness !== true && (
+          {smallBusinessOn(settings, record.date) !== true && (
             <div>
               <button
                 type="button"

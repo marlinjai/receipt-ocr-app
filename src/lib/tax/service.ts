@@ -19,6 +19,9 @@ import {
 } from './decisions';
 import { resolveItem, type ReceiptFacts, type ResolvedItem, type TreatmentOrigin } from './facts';
 import { forecastYear, type Forecast } from './forecast';
+import { proposeMatches, type MatchStrength } from './payments/match';
+import { deletePaymentLinksForRows, loadPayments, type CounterpartyTreatment, type LoadedPayments, type PaymentRow } from './payments/service';
+import type { PaymentKind } from './payments/types';
 import {
   RevenueInputError,
   validateExpectation,
@@ -113,7 +116,32 @@ interface LoadedReceipts {
   facts: ReceiptFacts[];
 }
 
-async function loadReceipts(db: PrismaClient, workspaceId: string, onlyRowId?: string): Promise<LoadedReceipts | null> {
+/**
+ * What linked payments say each receipt cost: money out counts, a refund
+ * linked to the same receipt is taken off, and the day is that of the first
+ * payment out.
+ */
+export function paidByRow(payments: readonly PaymentRow[]): Map<string, { day: string; cents: number }> {
+  const out = new Map<string, { day: string; cents: number }>();
+  for (const payment of payments) {
+    for (const link of payment.links) {
+      if (!link.rowId) continue;
+      const signed = payment.amountCents < 0 ? link.cents : -link.cents;
+      const current = out.get(link.rowId);
+      if (!current) out.set(link.rowId, { day: payment.bookingDay, cents: signed });
+      else out.set(link.rowId, { day: payment.amountCents < 0 && payment.bookingDay < current.day ? payment.bookingDay : current.day, cents: current.cents + signed });
+    }
+  }
+  for (const [rowId, paid] of out) out.set(rowId, { day: paid.day, cents: Math.max(0, paid.cents) });
+  return out;
+}
+
+async function loadReceipts(
+  db: PrismaClient,
+  workspaceId: string,
+  onlyRowId?: string,
+  paid?: Map<string, { day: string; cents: number }>,
+): Promise<LoadedReceipts | null> {
   const ctx = await tableContext(db, workspaceId);
   if (!ctx) return null;
   let rows;
@@ -141,6 +169,7 @@ async function loadReceipts(db: PrismaClient, workspaceId: string, onlyRowId?: s
       record: rowToMealRecord(row, ctx.columns, ctx.selectOptions, guests.get(row.id) ?? noGuests),
       businessSharePercent: shareNumber !== null && Number.isFinite(shareNumber) ? shareNumber : null,
       decision: decisionByRow.get(row.id) ?? null,
+      paid: paid?.get(row.id) ?? null,
     };
   });
   return { facts };
@@ -241,6 +270,7 @@ export interface StatementView {
     undeductedInputVatCents: number;
     settlements: Array<{ id: string; date: string; cents: number; direction: 'paid' | 'refunded' }>;
   };
+  payments: PaymentsView;
   vendorRules: VendorRule[];
   /** False until the Receipts table exists (first dashboard visit). */
   initialized: boolean;
@@ -277,8 +307,9 @@ function toStatementItem(resolved: ResolvedItem, facts: ReceiptFacts, result: { 
 }
 
 export async function loadStatement(db: PrismaClient, workspaceId: string, year: number): Promise<StatementView> {
+  const loadedPayments = await loadPayments(db, workspaceId);
   const [loaded, vendorRules, settings, storedAssets] = await Promise.all([
-    loadReceipts(db, workspaceId),
+    loadReceipts(db, workspaceId, undefined, paidByRow(loadedPayments.payments)),
     listVendorRules(db, workspaceId),
     getTaxSettings(db, workspaceId),
     db.taxAsset.findMany({ where: { authWorkspaceId: workspaceId }, include: { parts: true }, orderBy: [{ acquisitionDate: 'asc' }, { createdAt: 'asc' }] }),
@@ -298,7 +329,11 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     treatment: (['small_business', 'standard', 'reduced', 'not_taxable'] as const).includes(i.treatment as InvoiceTreatment)
       ? (i.treatment as InvoiceTreatment)
       : 'not_taxable',
-    payments: i.payments.map((p) => ({ date: p.paidOn, cents: p.cents })),
+    // Money received: what was typed in, plus every bank payment linked to the invoice.
+    payments: [
+      ...i.payments.map((p) => ({ date: p.paidOn, cents: p.cents })),
+      ...loadedPayments.payments.flatMap((p) => p.links.filter((l) => l.invoiceId === i.id).map((l) => ({ date: p.bookingDay, cents: l.cents }))),
+    ],
     declaredInYear: i.declaredInYear,
     smallBusinessOnIssue: smallBusinessOn(settings, i.issueDate),
   }));
@@ -345,7 +380,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
       today: today(),
       receivedByMonthCents: result.revenue.turnoverByMonthCents,
       previousYearReceivedCents: previous ? previous.revenue.turnoverCents : null,
-      outstandingCents: result.revenue.outstandingCents,
+      outstandingCents: result.revenue.outstandingTurnoverCents,
       expectedMonthlyCents: expectedMonthlyRevenueCents,
     },
     limits.value,
@@ -359,13 +394,16 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   // What the small-business rule cost in input tax this year: the tax in the
   // business share of every counted receipt that stated a net amount.
   let undeductedInputVatCents = 0;
+  const countedIds = new Set(result.items.filter((i) => i.counted).map((i) => i.itemId));
   for (const item of ledgerItems) {
+    if (!countedIds.has(item.id) || item.meal) continue;
     if (item.smallBusiness !== true || item.date === null || !item.date.startsWith(`${year}-`)) continue;
     if (item.amountCents === null || item.netCents === null || item.netCents === undefined || item.assetId) continue;
     const businessBp = (item.allocations ?? []).filter((a) => a.purpose === 'business').reduce((s, a) => s + a.shareBp, 0);
     if (businessBp > 0) undeductedInputVatCents += Math.round(((item.amountCents - item.netCents) * businessBp) / 10_000);
   }
   const invoiceResults = new Map(result.revenue.invoices.map((i) => [i.invoiceId, i]));
+  const paymentsView = buildPaymentsView(loadedPayments, year, resolved, invoiceFacts, result.revenue.invoices);
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));
 
   const items: StatementItem[] = [];
@@ -415,6 +453,16 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     const y = asset.openingYear ?? (asset.acquisitionDate ? Number(asset.acquisitionDate.slice(0, 4)) : null);
     if (y !== null) years.add(y);
   }
+  // Every year anything is dated in must be selectable, or what was recorded
+  // there could never be seen, changed or deleted again.
+  const yearOfDay = (day: string | null) => (day ? years.add(Number(day.slice(0, 4))) : undefined);
+  for (const invoice of invoiceFacts) {
+    yearOfDay(invoice.issueDate);
+    for (const payment of invoice.payments) yearOfDay(payment.date);
+  }
+  for (const settlement of settlementFacts) yearOfDay(settlement.date);
+  for (const change of storedChanges) yearOfDay(change.effectiveFrom);
+  for (const payment of loadedPayments.payments) yearOfDay(payment.bookingDay);
   return {
     year,
     years: [...years].sort((a, b) => b - a),
@@ -479,6 +527,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
       undeductedInputVatCents,
       settlements: settlementFacts.filter((s) => s.date.startsWith(`${year}-`)),
     },
+    payments: paymentsView,
     assets,
     assetLimits: {
       lowValueNetLimitCents: rules.assets.lowValueNetLimitCents.value,
@@ -494,6 +543,133 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     vendorRules,
     initialized: loaded !== null,
   };
+}
+
+export interface PaymentProposal {
+  target: 'receipt' | 'invoice';
+  targetId: string;
+  label: string;
+  strength: MatchStrength;
+}
+
+export interface OpenPayment {
+  id: string;
+  bookingDay: string;
+  /** Signed cents, and what of it is not linked to anything yet (positive). */
+  amountCents: number;
+  freeCents: number;
+  counterparty: string;
+  reference: string;
+  kind: PaymentKind;
+  accountLabel: string;
+  /** Why it needs a person. */
+  check: 'payment_without_document' | 'income_without_invoice';
+  proposals: PaymentProposal[];
+}
+
+export interface PaymentsView {
+  accounts: LoadedPayments['accounts'];
+  /** Payments booked in the year, and how many of them are linked to a document. */
+  yearCount: number;
+  linkedCount: number;
+  /** Counterparties of the year nobody has said anything about yet, largest first. */
+  unclassified: Array<{ key: string; label: string; count: number; outCents: number; inCents: number }>;
+  treatments: Array<{ key: string; label: string; treatment: CounterpartyTreatment }>;
+  /** Business payments without a document and money received without an invoice. */
+  open: OpenPayment[];
+  /** Links of the year, so each can be taken back. */
+  links: Array<{ linkId: string; paymentId: string; bookingDay: string; cents: number; counterparty: string; target: 'receipt' | 'invoice'; targetLabel: string; method: string }>;
+}
+
+function buildPaymentsView(
+  loaded: LoadedPayments,
+  year: number,
+  resolved: ResolvedItem[],
+  invoices: InvoiceFact[],
+  invoiceResults: Array<{ invoiceId: string; outstandingCents: number }>,
+): PaymentsView {
+  const inYear = loaded.payments.filter((p) => p.bookingDay.startsWith(`${year}-`));
+  const accountLabel = new Map(loaded.accounts.map((a) => [a.id, a.label]));
+  const itemById = new Map(resolved.map((r) => [r.item.id, r.item]));
+  const invoiceById = new Map(invoices.map((i) => [i.id, i]));
+  const free = (p: PaymentRow) => Math.abs(p.amountCents) - p.links.reduce((s, l) => s + l.cents, 0);
+
+  // Counterparties without an answer, by what moved (own transfers and fees ask nothing).
+  const unclassified = new Map<string, { key: string; label: string; count: number; outCents: number; inCents: number }>();
+  for (const p of inYear) {
+    if (p.kind === 'own_transfer' || p.kind === 'fee' || !p.counterpartyKey || loaded.treatments.has(p.counterpartyKey) || free(p) === 0) continue;
+    const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: p.counterparty, count: 0, outCents: 0, inCents: 0 };
+    entry.count += 1;
+    if (p.amountCents < 0) entry.outCents += -p.amountCents;
+    else entry.inCents += p.amountCents;
+    unclassified.set(p.counterpartyKey, entry);
+  }
+
+  // What needs a document: money out to a business counterparty, and money in
+  // that is not private and not a refund.
+  const needing = inYear.filter((p) => {
+    if (free(p) === 0) return false;
+    const treatment = loaded.treatments.get(p.counterpartyKey);
+    if (p.kind === 'spend') return treatment === 'business';
+    if (p.kind === 'income') return treatment !== 'private' && treatment !== 'own_account';
+    return false;
+  });
+  const linkedRows = new Set(loaded.payments.flatMap((p) => p.links.map((l) => l.rowId).filter((id): id is string => id !== null)));
+  const receiptDocuments = resolved
+    .filter((r) => !r.isMeal && !linkedRows.has(r.item.id) && r.item.amountCents !== null && r.item.date !== null && r.item.date.startsWith(`${year}-`))
+    .map((r) => ({ id: r.item.id, number: null, day: r.item.date, openCents: r.item.amountCents as number }));
+  const outstanding = new Map(invoiceResults.map((i) => [i.invoiceId, i.outstandingCents]));
+  const invoiceDocuments = invoices.map((i) => ({ id: i.id, number: i.number, day: i.issueDate, openCents: outstanding.get(i.id) ?? 0 }));
+  const asMatch = (p: PaymentRow) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, reference: p.reference, counterparty: p.counterparty });
+  const spendProposals = proposeMatches(needing.filter((p) => p.kind === 'spend').map(asMatch), receiptDocuments);
+  const incomeProposals = proposeMatches(needing.filter((p) => p.kind === 'income').map(asMatch), invoiceDocuments);
+
+  const open: OpenPayment[] = needing.map((p) => ({
+    id: p.id,
+    bookingDay: p.bookingDay,
+    amountCents: p.amountCents,
+    freeCents: free(p),
+    counterparty: p.counterparty,
+    reference: p.reference,
+    kind: p.kind,
+    accountLabel: accountLabel.get(p.accountId) ?? '',
+    check: p.kind === 'income' ? 'income_without_invoice' : 'payment_without_document',
+    proposals:
+      p.kind === 'income'
+        ? incomeProposals.filter((x) => x.paymentId === p.id).map((x) => ({ target: 'invoice' as const, targetId: x.documentId, label: `Rechnung ${invoiceById.get(x.documentId)?.number ?? ''}`, strength: x.strength }))
+        : spendProposals.filter((x) => x.paymentId === p.id).map((x) => ({ target: 'receipt' as const, targetId: x.documentId, label: itemById.get(x.documentId)?.label ?? 'Beleg', strength: x.strength })),
+  }));
+
+  return {
+    accounts: loaded.accounts,
+    yearCount: inYear.length,
+    linkedCount: inYear.filter((p) => p.links.length > 0).length,
+    unclassified: [...unclassified.values()].sort((a, b) => b.outCents + b.inCents - (a.outCents + a.inCents)),
+    treatments: [...loaded.treatments.entries()].map(([key, treatment]) => ({
+      key,
+      label: loaded.payments.find((p) => p.counterpartyKey === key)?.counterparty ?? key,
+      treatment,
+    })),
+    open,
+    links: inYear.flatMap((p) =>
+      p.links.map((l) => ({
+        linkId: l.id,
+        paymentId: p.id,
+        bookingDay: p.bookingDay,
+        cents: l.cents,
+        counterparty: p.counterparty,
+        target: l.rowId ? ('receipt' as const) : ('invoice' as const),
+        targetLabel: l.rowId ? (itemById.get(l.rowId)?.label ?? 'Beleg (nicht mehr vorhanden)') : `Rechnung ${invoiceById.get(l.invoiceId ?? '')?.number ?? ''}`,
+        method: l.method,
+      })),
+    ),
+  };
+}
+
+/** True when the row is a receipt of this workspace: how the payment service checks a link target. */
+export async function isWorkspaceReceipt(db: PrismaClient, workspaceId: string, rowId: string): Promise<boolean> {
+  const loaded = await loadReceipts(db, workspaceId, rowId);
+  return (loaded?.facts.length ?? 0) > 0;
 }
 
 /** The ISO day "today" in the business's time zone; one place, so tests can see what the forecast used. */
@@ -950,6 +1126,8 @@ export async function deleteDecisionsForRows(db: PrismaClient, rowIds: string[])
   // An asset keeps existing without the receipt; with no receipt left it shows
   // up as "no cost" and asks for one, instead of vanishing with its history.
   await db.taxAssetPart.deleteMany({ where: { rowId: { in: rowIds } } });
+  // The payments stay; they then show up again as payments without a document.
+  await deletePaymentLinksForRows(db, rowIds);
 }
 
 export { AssetInputError, RevenueInputError, TreatmentError };

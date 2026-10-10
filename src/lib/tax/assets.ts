@@ -74,6 +74,8 @@ export type AssetCheckKind =
   | 'asset_declining_not_allowed'
   | 'asset_declining_rate_too_high'
   | 'asset_opening_method'
+  /** Carried in with a book value above the reminder value but no months left to write it off over. */
+  | 'asset_opening_no_life'
   | 'asset_disposal_before_acquisition';
 
 export interface AssetCheck {
@@ -139,6 +141,8 @@ export function assetChecks(asset: AssetFact, rules: AssetRules): AssetCheck[] {
     // A carried-in asset runs out its remaining life in equal amounts; the
     // one-off methods make no sense for something bought in an earlier year.
     if (asset.method !== 'linear') add('asset_opening_method');
+    // With no months left nothing would ever be written off, silently.
+    if (asset.opening.remainingMonths === 0 && asset.opening.bookValueCents > Math.max(0, asset.reminderCents)) add('asset_opening_no_life');
     return checks;
   }
   if (asset.costCents === null || asset.acquisitionDate === null) return checks;

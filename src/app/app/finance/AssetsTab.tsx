@@ -128,9 +128,14 @@ export default function AssetsTab({ view, busy, error, startFromRowId, onStartHa
                   )}
                 </div>
 
-                {asset.checks.length > 0 && (
+                {asset.checks.some((c) => c.blocking) && (
                   <p className="ui-note ui-note-warn mt-3" role="status">
-                    Diese Anlage wird noch nicht gerechnet: {asset.checks.map((c) => ASSET_CHECK_LABELS[c.kind]).join('; ')}.
+                    Diese Anlage wird noch nicht gerechnet: {asset.checks.filter((c) => c.blocking).map((c) => ASSET_CHECK_LABELS[c.kind]).join('; ')}.
+                  </p>
+                )}
+                {asset.checks.some((c) => !c.blocking) && (
+                  <p className="ui-note mt-3" role="status">
+                    Hinweis: {asset.checks.filter((c) => !c.blocking).map((c) => ASSET_CHECK_LABELS[c.kind]).join('; ')}.
                   </p>
                 )}
                 {asset.counted && !asset.row && (
@@ -385,7 +390,7 @@ function AssetForm({
                 ? 'Noch kein Beleg gewählt.'
                 : cost === null
                   ? 'Ein gewählter Beleg hat keinen Betrag; die Kosten sind damit unbekannt.'
-                  : `Anschaffungskosten aus ${selected.length === 1 ? '1 Beleg' : `${selected.length} Belegen`}: ${euro(cost)} (brutto, ohne Vorsteuerabzug).`}
+                  : `Anschaffungskosten aus ${selected.length === 1 ? '1 Beleg' : `${selected.length} Belegen`}: ${euro(cost)} (Summe der Belege; unter der Kleinunternehmerregelung zählt dieser Bruttobetrag, bei Regelbesteuerung der Nettobetrag).`}
             </p>
           </fieldset>
 

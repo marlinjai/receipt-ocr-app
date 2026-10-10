@@ -99,6 +99,12 @@ describe('revenue: invoices with value-added tax', () => {
     expect(result.revenue.receivedCents).toBe(119_000);
   });
 
+  it('what an unpaid invoice would add to turnover is its amount without the tax', () => {
+    const result = run({ invoices: [taxed({ payments: [] }), invoice({ id: 'inv-2', payments: [] })] });
+    expect(result.revenue.outstandingCents).toBe(119_000 + 100_000);
+    expect(result.revenue.outstandingTurnoverCents).toBe(100_000 + 100_000);
+  });
+
   it('partial payments add up to exactly the tax on the invoice', () => {
     const thirds = taxed({ grossCents: 100_000, vatCents: 15_966, payments: [{ date: '2026-03-01', cents: 33_333 }, { date: '2026-04-01', cents: 33_333 }, { date: '2026-05-01', cents: 33_334 }] });
     const result = run({ invoices: [thirds] });

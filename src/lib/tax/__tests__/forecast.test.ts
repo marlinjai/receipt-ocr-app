@@ -81,6 +81,13 @@ describe('forecastYear', () => {
     expect(f.nextYear).toEqual({ state: 'crossed', month: 11 });
   });
 
+  it('in a year that is over, what was unpaid at its end is not counted as arriving in it', () => {
+    // 20,000.00 received in 2025, 8,000.00 invoiced in December and paid in January.
+    const f = forecastYear(input({ year: 2025, receivedByMonthCents: Array(10).fill(200_000), outstandingCents: 800_000 }), RULES);
+    expect(f).toMatchObject({ receivedCents: 2_000_000, outstandingCents: 0, lowCents: 2_000_000, highCents: 2_000_000 });
+    expect(f.nextYear).toEqual({ state: 'not_reached' });
+  });
+
   it('a future year has nothing elapsed', () => {
     const f = forecastYear(input({ year: 2027, receivedByMonthCents: [], outstandingCents: 0 }), RULES);
     expect(f).toMatchObject({ monthsElapsed: 0, receivedCents: 0, rateBasis: 'none' });

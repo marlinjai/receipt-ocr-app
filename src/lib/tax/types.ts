@@ -258,6 +258,8 @@ export interface RevenueResult {
   turnoverCents: number;
   /** Invoiced and unpaid at the end of the year. */
   outstandingCents: number;
+  /** The same without the value-added tax in it: what the unpaid invoices would add to turnover. */
+  outstandingTurnoverCents: number;
   invoices: InvoiceResult[];
 }
 

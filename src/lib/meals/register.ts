@@ -1,4 +1,4 @@
-import { mealDeduction, mealStatus, toCents, fromCents, type MealDeduction, type MissingField } from './rules';
+import { mealDeduction, mealStatus, smallBusinessOn, toCents, fromCents, type MealDeduction, type MissingField } from './rules';
 import type { MealRecord, MealTaxSettings } from './types';
 
 /**
@@ -140,7 +140,14 @@ export function buildRegister(records: MealRecord[], settings: MealTaxSettings, 
     entries.push({ no: entries.length + 1, record, deduction: deduction.kind === 'ok' ? deduction : null });
   }
 
-  const basis = settingMissing ? null : settings.smallBusiness ? 'gross' : 'net';
+  // The status can change inside a year (see smallBusinessOn): each entry carries its own basis.
+  // The year shows the net columns as soon as one entry is on the net basis; a year without
+  // entries takes the status of its last day.
+  const basis = settingMissing
+    ? null
+    : entries.some((e) => e.deduction?.basis === 'net') || (entries.length === 0 && smallBusinessOn(settings, `${year}-12-31`) === false)
+      ? 'net'
+      : 'gross';
   const count = (s: { count: number; cents: number }): SeparateCount => ({
     count: s.count,
     grossEur: fromCents(s.cents),

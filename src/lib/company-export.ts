@@ -3,9 +3,11 @@ import { createHash } from 'node:crypto';
 import { zipSync, strToU8 } from 'fflate';
 import type { Contacts } from '@marlinjai/contacts-core';
 import type { PrismaClient } from '@prisma/client';
-import { registerCsv } from './meals/register-csv';
+import { escapeCSVField } from './export-csv';
+import { csvSafeText, registerCsv } from './meals/register-csv';
 import { buildRegister, registerYears } from './meals/register';
 import { getTaxSettings, loadMealRecords } from './meals/service';
+import type { MealRecord } from './meals/types';
 
 /**
  * The export a company takes with it before its data is erased: the business
@@ -30,20 +32,77 @@ export interface CollectInput {
   now?: Date;
 }
 
-export async function collectCompanyExport(input: CollectInput): Promise<ExportFile[]> {
-  const now = input.now ?? new Date();
-  const files: ExportFile[] = [];
-  let registerFiles = 0;
+/** Where the register files live in the zip. Everything under it is what `registerHash` covers. */
+export const REGISTER_PREFIX = 'register/';
 
-  for (const workspaceId of input.workspaceIds) {
-    const records = await loadMealRecords(input.db, workspaceId, { includeDismissed: true });
-    const settings = await getTaxSettings(input.db, workspaceId);
+/**
+ * Every printed guest name of a workspace, one line per guest and meal, as
+ * semicolon-separated CSV like the register files.
+ * The yearly registers list complete business meals only; this list also carries
+ * the guests of meals that are incomplete or set aside, so the export holds
+ * every printed name the app does.
+ */
+export function guestCopiesCsv(records: readonly MealRecord[]): string | null {
+  const lines: string[] = [];
+  for (const record of [...records].sort((a, b) => a.rowId.localeCompare(b.rowId))) {
+    record.guests.forEach((guest, position) => {
+      lines.push(
+        [record.rowId, record.date ?? '', String(position + 1), guest.name, guest.company]
+          .map((cell) => escapeCSVField(csvSafeText(cell)))
+          .join(';'),
+      );
+    });
+  }
+  if (lines.length === 0) return null;
+  return ['meal_row_id;date;position;name;company', ...lines].join('\n') + '\n';
+}
+
+/**
+ * The register part of the export: one CSV per workspace and year, plus the list
+ * of all printed guest names per workspace. Deterministic for the same data, so
+ * it can be compared later (see `registerHash`).
+ */
+export async function collectRegisterFiles(db: PrismaClient, workspaceIds: readonly string[]): Promise<ExportFile[]> {
+  const files: ExportFile[] = [];
+  for (const workspaceId of [...new Set(workspaceIds)].sort()) {
+    const records = await loadMealRecords(db, workspaceId, { includeDismissed: true });
+    const settings = await getTaxSettings(db, workspaceId);
     for (const year of registerYears(records)) {
       const register = buildRegister(records, settings, year);
-      files.push({ path: `register/${workspaceId}/${year}.csv`, data: strToU8(registerCsv(register)) });
-      registerFiles++;
+      files.push({ path: `${REGISTER_PREFIX}${workspaceId}/${year}.csv`, data: strToU8(registerCsv(register)) });
     }
+    const guests = guestCopiesCsv(records);
+    if (guests !== null) files.push({ path: `${REGISTER_PREFIX}${workspaceId}/guests.csv`, data: strToU8(guests) });
   }
+  return files;
+}
+
+/**
+ * One SHA-256 over the register files only: path and content of each, sorted by
+ * path. The readme and the contact files are left out on purpose (the readme
+ * carries a timestamp), so two exports of the same register give the same hash.
+ */
+export function registerHash(files: readonly ExportFile[]): string {
+  const hash = createHash('sha256');
+  const register = files.filter((f) => f.path.startsWith(REGISTER_PREFIX)).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  for (const file of register) {
+    hash.update(file.path, 'utf8');
+    hash.update('\0');
+    hash.update(file.data);
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+/** The hash of the register as it is now, for comparing with the hash stored at export time. */
+export async function currentRegisterHash(db: PrismaClient, workspaceIds: readonly string[]): Promise<string> {
+  return registerHash(await collectRegisterFiles(db, workspaceIds));
+}
+
+export async function collectCompanyExport(input: CollectInput): Promise<ExportFile[]> {
+  const now = input.now ?? new Date();
+  const files: ExportFile[] = await collectRegisterFiles(input.db, input.workspaceIds);
+  const registerFiles = files.length;
 
   const contacts = input.shared ? await input.shared.list({ includeArchived: true }) : [];
   const exported = await Promise.all(
@@ -79,13 +138,15 @@ export function buildReadme(now: Date, counts: { registerFiles: number; contacts
     'Export of the company data held by Lumitra Receipts',
     `Created: ${now.toISOString()}`,
     '',
-    'register/      The business meal register, one CSV per workspace and year (' + counts.registerFiles + ' files).',
-    '               It lists each meal with date, place, amount, occasion, host and the guests as printed.',
+    'register/      The business meal register, one CSV per workspace and year, and one guests.csv per',
+    '               workspace with every printed guest name, also of incomplete meals (' + counts.registerFiles + ' files).',
+    '               The yearly files list each meal with date, place, amount, occasion, host and guests.',
     'contacts/      The contact list: ' + counts.contacts + ' contacts from the shared contact database, and ' + counts.legacy + ' from the app table.',
     '',
     'Keep this export. German tax law (the Abgabenordnung, AO) requires business records, including',
-    'business meal records, to be kept for ten years. Once this export has been handed over, the',
-    'printed guest names are removed from Lumitra Receipts.',
+    'business meal records, to be kept for ten years. Printed guest names are removed from Lumitra',
+    'Receipts on an erasure only while the register is still identical to this export. After any',
+    'later change they are kept there for ten years, until a new export is taken.',
     '',
   ].join('\n');
 }

@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHmac } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
-import { eraseCompanyContacts, purgeExpiredRetainedGuests, receiveErasureDelivery, retainUntilFrom, type ErasureCounts } from '../erasure';
+import {
+  eraseCompanyContacts,
+  exportCoversRegister,
+  purgeExpiredRetainedGuests,
+  receiveErasureDelivery,
+  retainUntilFrom,
+  type ErasureCounts,
+  type RegisterHasher,
+} from '../erasure';
 
 const companyContactsMock = vi.hoisted(() => vi.fn());
 const migrateMock = vi.hoisted(() => vi.fn(async () => ({ applied: [], alreadyApplied: 0, unknown: [] })));
@@ -21,7 +29,7 @@ function delivery(payload: Record<string, unknown>) {
   return JSON.stringify({ event_id: 'evt_1', kind: 'tenant.erased', tenant_id: 'tnt_a', requested_at: '2026-10-09T00:00:00Z', ...payload });
 }
 
-const COUNTS: ErasureCounts = { guestCopies: 2, guestCopiesHeld: 0, ownContacts: 1, sharedContacts: 3 };
+const COUNTS: ErasureCounts = { guestCopies: 2, guestCopiesHeld: 0, ownContacts: 1, sharedContacts: 3, exportCoverage: 'identical' };
 
 describe('receiveErasureDelivery (the decisions, before any data is touched)', () => {
   it('refuses with 503 and erases nothing when the secret is not configured', async () => {
@@ -73,7 +81,7 @@ describe('receiveErasureDelivery (the decisions, before any data is touched)', (
   });
 
   it('is repeat-safe: a second identical delivery is acknowledged again', async () => {
-    const erase = vi.fn(async () => ({ guestCopies: 0, guestCopiesHeld: 0, ownContacts: 0, sharedContacts: 0 }));
+    const erase = vi.fn(async (): Promise<ErasureCounts> => ({ guestCopies: 0, guestCopiesHeld: 0, ownContacts: 0, sharedContacts: 0, exportCoverage: 'no_export' }));
     const body = delivery({});
     const first = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, log: () => {} });
     const second = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, log: () => {} });
@@ -107,43 +115,94 @@ describe('eraseCompanyContacts (what is removed, company-scoped)', () => {
     else process.env.CONTACTS_DATABASE_URL = savedUrl;
   });
 
-  function fakeDb(opts: { exports?: number; guestsLinked?: number; guestsHeld?: number; own?: number } = {}) {
+  /** `exportHash`: undefined = no export on record, null = an export from before the hash existed. */
+  function fakeDb(opts: { exportHash?: string | null; guestsLinked?: number; own?: number } = {}) {
     return {
-      companyExport: { count: vi.fn(async () => opts.exports ?? 0) },
+      companyExport: {
+        findFirst: vi.fn(async () => (opts.exportHash === undefined ? null : { registerSha256: opts.exportHash })),
+      },
       mealGuest: {
         deleteMany: vi.fn(async () => ({ count: opts.guestsLinked ?? 0 })),
         updateMany: vi.fn(async () => ({ count: opts.guestsLinked ?? 0 })),
       },
       contact: { deleteMany: vi.fn(async () => ({ count: opts.own ?? 0 })) },
     } as unknown as PrismaClient & {
-      companyExport: { count: ReturnType<typeof vi.fn> };
+      companyExport: { findFirst: ReturnType<typeof vi.fn> };
       mealGuest: { deleteMany: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn> };
       contact: { deleteMany: ReturnType<typeof vi.fn> };
     };
   }
+  const now = new Date('2026-10-09T12:00:00Z');
+  const registerIs = (hash: string): RegisterHasher => vi.fn(async () => hash);
 
   it('without an export, holds the printed copies: the contact link is cleared and a retention date is set', async () => {
     const db = fakeDb({ guestsLinked: 2, own: 1 });
-    const now = new Date('2026-10-09T12:00:00Z');
-    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now);
-    expect(counts).toEqual({ guestCopies: 0, guestCopiesHeld: 2, ownContacts: 1, sharedContacts: 0 });
+    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'));
+    expect(counts).toEqual({ guestCopies: 0, guestCopiesHeld: 2, ownContacts: 1, sharedContacts: 0, exportCoverage: 'no_export' });
     expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
     const call = db.mealGuest.updateMany.mock.calls[0][0] as { where: Record<string, unknown>; data: Record<string, unknown> };
     expect(call.where).toMatchObject({ contactId: { not: null } });
     expect(call.data).toEqual({ contactId: null, retainUntil: new Date('2036-10-09T12:00:00Z') });
   });
 
-  it('with an export on record, the printed copies are removed now', async () => {
-    const db = fakeDb({ exports: 1, guestsLinked: 3 });
-    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1']);
-    expect(counts).toMatchObject({ guestCopies: 3, guestCopiesHeld: 0 });
+  it('export, then no change: the register equals the export, so the printed copies are removed', async () => {
+    const db = fakeDb({ exportHash: 'h1', guestsLinked: 3 });
+    const hasher = registerIs('h1');
+    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, hasher);
+    expect(counts).toMatchObject({ guestCopies: 3, guestCopiesHeld: 0, exportCoverage: 'identical' });
     expect(db.mealGuest.updateMany).not.toHaveBeenCalled();
-    expect(db.companyExport.count).toHaveBeenCalledWith({ where: { authTenantId: 'tnt_a' } });
+    expect(hasher).toHaveBeenCalledWith(db, ['ws_1']);
+    // The NEWEST export is the one compared.
+    expect(db.companyExport.findFirst).toHaveBeenCalledWith({
+      where: { authTenantId: 'tnt_a' },
+      orderBy: { createdAt: 'desc' },
+      select: { registerSha256: true },
+    });
+  });
+
+  it('export, then a change (a correction or a new guest): the register differs, so the printed copies are held', async () => {
+    const db = fakeDb({ exportHash: 'h1', guestsLinked: 3 });
+    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h2'));
+    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 3, exportCoverage: 'changed' });
+    expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('an export from before the hash existed never counts: held', async () => {
+    const db = fakeDb({ exportHash: null, guestsLinked: 1 });
+    const hasher = registerIs('h1');
+    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, hasher);
+    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 1, exportCoverage: 'no_hash' });
+    expect(hasher).not.toHaveBeenCalled();
+  });
+
+  it('when the register cannot be recomputed, holds (the safe direction) and does not fail the erasure', async () => {
+    const db = fakeDb({ exportHash: 'h1', guestsLinked: 2, own: 1 });
+    const failing: RegisterHasher = vi.fn(async () => {
+      throw new Error('data layer unreachable');
+    });
+    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, failing);
+    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 2, ownContacts: 1, exportCoverage: 'recompute_failed' });
+    expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('without workspace ids there is nothing to compare the export with: held', async () => {
+    const db = fakeDb({ exportHash: 'h1', guestsLinked: 2 });
+    const hasher = registerIs('h1');
+    const counts = await eraseCompanyContacts(db, 'tnt_a', [], now, hasher);
+    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 2, exportCoverage: 'no_workspaces' });
+    expect(hasher).not.toHaveBeenCalled();
+  });
+
+  it('repeat-safe: a second run after a hold finds no linked copy and holds nothing more', async () => {
+    const first = await eraseCompanyContacts(fakeDb({ guestsLinked: 2 }), 'tnt_a', ['ws_1'], now, registerIs('h1'));
+    const second = await eraseCompanyContacts(fakeDb({ guestsLinked: 0 }), 'tnt_a', ['ws_1'], now, registerIs('h1'));
+    expect(first.guestCopiesHeld).toBe(2);
+    expect(second).toMatchObject({ guestCopies: 0, guestCopiesHeld: 0 });
   });
 
   it('removes the company contacts by company and workspace', async () => {
-    const db = fakeDb({ exports: 1, own: 1 });
-    await eraseCompanyContacts(db, 'tnt_a', ['ws_1']);
+    const db = fakeDb({ exportHash: 'h1', own: 1 });
+    await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'));
     expect(db.contact.deleteMany).toHaveBeenCalledWith({
       where: { OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] } }] },
     });
@@ -153,14 +212,34 @@ describe('eraseCompanyContacts (what is removed, company-scoped)', () => {
     process.env.CONTACTS_DATABASE_URL = 'postgresql://example.invalid/contacts';
     const shared = { list: vi.fn(async () => [{ id: 'c1' }, { id: 'c2' }]), eraseAll: vi.fn(async () => 2) };
     companyContactsMock.mockReturnValue(shared);
-    const db = fakeDb({ exports: 1 });
-    const counts = await eraseCompanyContacts(db, 'tnt_a', []);
+    const db = fakeDb({ exportHash: 'h1' });
+    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'));
     expect(migrateMock).toHaveBeenCalledWith('sql-handle');
     expect(counts.sharedContacts).toBe(2);
     expect(db.mealGuest.deleteMany).toHaveBeenCalledWith({
-      where: { OR: [{ authTenantId: 'tnt_a' }, { contactId: { in: ['c1', 'c2'] } }] },
+      where: { OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] } }, { contactId: { in: ['c1', 'c2'] } }] },
     });
     expect(shared.eraseAll).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('exportCoversRegister (does the company hold the register as it is now)', () => {
+  const dbWith = (row: { registerSha256: string | null } | null) =>
+    ({ companyExport: { findFirst: vi.fn(async () => row) } }) as unknown as PrismaClient;
+
+  it('is covered only when the recomputed hash equals the newest export', async () => {
+    expect(await exportCoversRegister(dbWith({ registerSha256: 'a' }), 't', ['w'], async () => 'a')).toEqual({ covered: true, reason: 'identical' });
+    expect(await exportCoversRegister(dbWith({ registerSha256: 'a' }), 't', ['w'], async () => 'b')).toEqual({ covered: false, reason: 'changed' });
+  });
+
+  it('every other case is not covered, each with its own reason code', async () => {
+    const never: RegisterHasher = async () => {
+      throw new Error('boom');
+    };
+    expect(await exportCoversRegister(dbWith(null), 't', ['w'], async () => 'a')).toEqual({ covered: false, reason: 'no_export' });
+    expect(await exportCoversRegister(dbWith({ registerSha256: null }), 't', ['w'], async () => 'a')).toEqual({ covered: false, reason: 'no_hash' });
+    expect(await exportCoversRegister(dbWith({ registerSha256: 'a' }), 't', [], async () => 'a')).toEqual({ covered: false, reason: 'no_workspaces' });
+    expect(await exportCoversRegister(dbWith({ registerSha256: 'a' }), 't', ['w'], never)).toEqual({ covered: false, reason: 'recompute_failed' });
   });
 });
 

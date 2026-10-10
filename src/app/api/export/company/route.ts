@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
+import { companyWorkspaceIds, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { companyContacts } from '@/lib/contacts/db';
-import { buildExportArchive, collectCompanyExport, sha256Hex } from '@/lib/company-export';
+import { buildExportArchive, collectCompanyExport, registerHash, sha256Hex } from '@/lib/company-export';
 import { prisma } from '@/lib/prisma';
 
 /**
  * The company's data export: the business meal register and the contacts, as one
  * zip. The company keeps it; it is the copy that lets the company's printed guest
- * names be removed from this app (see erasure.ts). Each download is recorded with
- * its file count and hash.
+ * names be removed from this app, as long as the register has not changed since
+ * (see exportCoversRegister in erasure.ts). Each download is recorded with its file
+ * count, the hash of the zip and the hash of its register files.
  */
 export const dynamic = 'force-dynamic';
 
@@ -31,14 +32,13 @@ export async function GET() {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const workspaceIds = [
-    ...new Set(session.memberships.filter((m) => m.tenantId === tenantId).map((m) => m.id)),
-  ];
+  // The same set the erasure of one contact compares the register over.
+  const workspaceIds = companyWorkspaceIds(session, tenantId);
   const shared = process.env.CONTACTS_DATABASE_URL?.trim() ? companyContacts(tenantId) : null;
   const files = await collectCompanyExport({ db: prisma, tenantId, workspaceIds, shared });
   const zip = buildExportArchive(files);
   await prisma.companyExport.create({
-    data: { authTenantId: tenantId, fileCount: files.length, sha256: sha256Hex(zip) },
+    data: { authTenantId: tenantId, fileCount: files.length, sha256: sha256Hex(zip), registerSha256: registerHash(files) },
   });
 
   const date = new Date().toISOString().slice(0, 10);

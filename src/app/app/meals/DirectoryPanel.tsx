@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import type { DirectoryContact, DirectoryField, DirectoryInput, ErasePreview } from '@/lib/contacts/directory';
+import { useEffect, useRef, useState } from 'react';
+import type { DirectoryContact, DirectoryField, DirectoryInput, DirectoryKind, ErasePreview } from '@/lib/contacts/directory';
 import { directoryMessage, eraseConfirmation, fieldErrorMessage } from '@/lib/contacts/directory-messages';
 import {
   FIELD_TYPE_LABELS,
@@ -36,10 +36,12 @@ import {
  * own fields here, and every contact carries a value for each, plus a preferred contact method.
  */
 
-type Editing = { mode: 'create' } | { mode: 'edit'; contact: DirectoryContact };
+type Editing = { mode: 'create'; kind: DirectoryKind } | { mode: 'edit'; contact: DirectoryContact };
 
 interface DetailForm {
   name: string;
+  /** Persons only, and only when a person is created here: the label printed next to the name. */
+  companyOrRole: string;
   legalForm: string;
   addressLine1: string;
   addressLine2: string;
@@ -56,6 +58,7 @@ interface DetailForm {
 
 const EMPTY_FORM: DetailForm = {
   name: '',
+  companyOrRole: '',
   legalForm: '',
   addressLine1: '',
   addressLine2: '',
@@ -75,6 +78,7 @@ const blank = (v: string) => (v.trim() === '' ? null : v.trim());
 function formFrom(c: DirectoryContact, fields: readonly DirectoryField[]): DetailForm {
   return {
     name: c.name,
+    companyOrRole: c.companyOrRole,
     legalForm: c.legalForm ?? '',
     addressLine1: c.addressLine1 ?? '',
     addressLine2: c.addressLine2 ?? '',
@@ -112,12 +116,25 @@ function personInput(form: DetailForm): DirectoryInput {
   return { email: blank(form.email), phone: blank(form.phone), preferredContact: blank(form.preferredContact) };
 }
 
+/** A new person with everything the directory records about one. */
+function newPersonInput(form: DetailForm): DirectoryInput {
+  return { ...personInput(form), name: form.name.trim(), companyOrRole: form.companyOrRole.trim(), note: blank(form.note) };
+}
+
 interface DirectoryPanelProps {
   /** Called with the listed contacts after every load, so the tab badge and the guest list can follow. */
   onChanged?: (contacts: DirectoryContact[]) => void;
+  /**
+   * Raised by the parent whenever a contact changed OUTSIDE this panel (the guest
+   * list above, the guest picker of a meal). The panel reloads its list when it
+   * changes, so the two lists never disagree.
+   */
+  refreshKey?: number;
+  /** Called after a change that also alters meals (an erase, a merge), so the parent reloads them. */
+  onMealsStale?: () => void;
 }
 
-export default function DirectoryPanel({ onChanged }: DirectoryPanelProps = {}) {
+export default function DirectoryPanel({ onChanged, refreshKey = 0, onMealsStale }: DirectoryPanelProps = {}) {
   const [contacts, setContacts] = useState<DirectoryContact[] | null>(null);
   const [fields, setFields] = useState<DirectoryField[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -134,8 +151,14 @@ export default function DirectoryPanel({ onChanged }: DirectoryPanelProps = {}) 
 
   const activeFields = fields.filter((f) => !f.archived);
 
+  // Loads can overlap (a change here while the parent asks for a reload). Only
+  // the newest load may be shown, or an older answer would undo a newer one.
+  const loadSeq = useRef(0);
+
   const reload = async () => {
+    const seq = ++loadSeq.current;
     const [list, defs] = await Promise.all([listDirectoryAction(false), listFieldsAction()]);
+    if (seq !== loadSeq.current) return;
     if (defs.ok) setFields(defs.value);
     if (list.ok) {
       setContacts(list.value);
@@ -145,9 +168,10 @@ export default function DirectoryPanel({ onChanged }: DirectoryPanelProps = {}) 
 
   useEffect(() => {
     void reload();
-    // Loaded once; every change reloads through `act`.
+    // Loaded on mount and whenever the parent reports a change made elsewhere;
+    // changes made here reload through `act`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refreshKey]);
 
   /** Run one change, then reload the list. Shows the message on failure, under its input when it names one. */
   const act = async (
@@ -198,12 +222,13 @@ export default function DirectoryPanel({ onChanged }: DirectoryPanelProps = {}) 
     }
     const custom = Object.keys(patch).length > 0 ? { customFields: patch } : {};
     if (editing.mode === 'create') {
-      const input = organizationInput(form);
+      const { kind } = editing;
+      const input = kind === 'organization' ? organizationInput(form) : newPersonInput(form);
       void act('save', async () => {
-        const r = await createDirectoryAction({ ...input, ...custom, kind: 'organization', name: input.name ?? '' });
+        const r = await createDirectoryAction({ ...input, ...custom, kind, name: input.name ?? '' });
         if (r.ok) setEditing(null);
         return r;
-      }, 'Organisation angelegt.');
+      }, kind === 'organization' ? 'Organisation angelegt.' : 'Person angelegt.');
     } else {
       const { contact } = editing;
       const input = contact.kind === 'organization' ? organizationInput(form) : personInput(form);
@@ -264,6 +289,7 @@ export default function DirectoryPanel({ onChanged }: DirectoryPanelProps = {}) 
       if (r.ok) {
         setErasing(null);
         setNotice(r.value.outcome === 'erased' ? 'Kontakt gelöscht.' : 'Dieser Kontakt war bereits gelöscht.');
+        onMealsStale?.();
       }
       return r;
     });
@@ -286,7 +312,9 @@ export default function DirectoryPanel({ onChanged }: DirectoryPanelProps = {}) 
 
   const organizations = (contacts ?? []).filter((c) => c.kind === 'organization');
   const people = (contacts ?? []).filter((c) => c.kind === 'person');
-  const editingKind = editing?.mode === 'edit' ? editing.contact.kind : 'organization';
+  const editingKind: DirectoryKind = editing?.mode === 'edit' ? editing.contact.kind : editing?.mode === 'create' ? editing.kind : 'organization';
+  const creatingPerson = editing?.mode === 'create' && editing.kind === 'person';
+  const nameRequired = editingKind === 'organization' || creatingPerson;
   const setField = (key: string, value: FieldFormValue) => setForm({ ...form, fields: { ...form.fields, [key]: value } });
 
   return (
@@ -295,9 +323,14 @@ export default function DirectoryPanel({ onChanged }: DirectoryPanelProps = {}) 
         <h2 id="directory-heading" className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>
           Verzeichnis
         </h2>
-        <button type="button" className="ui-btn ui-btn-primary ui-btn-sm" onClick={() => startEdit({ mode: 'create' })}>
-          Organisation anlegen
-        </button>
+        <div className="flex gap-2">
+          <button type="button" className="ui-btn ui-btn-sm" onClick={() => startEdit({ mode: 'create', kind: 'person' })}>
+            Person mit Angaben anlegen
+          </button>
+          <button type="button" className="ui-btn ui-btn-primary ui-btn-sm" onClick={() => startEdit({ mode: 'create', kind: 'organization' })}>
+            Organisation anlegen
+          </button>
+        </div>
       </div>
 
       {error && <p role="alert" className="ui-note ui-note-danger">{error}</p>}
@@ -306,7 +339,7 @@ export default function DirectoryPanel({ onChanged }: DirectoryPanelProps = {}) 
       {editing && (
         <form
           className="glass-panel space-y-3 rounded-xl p-4"
-          aria-label={editing.mode === 'create' ? 'Neue Organisation' : editingKind === 'organization' ? 'Organisation bearbeiten' : 'Angaben zur Person bearbeiten'}
+          aria-label={editing.mode === 'create' ? (editingKind === 'organization' ? 'Neue Organisation' : 'Neue Person') : editingKind === 'organization' ? 'Organisation bearbeiten' : 'Angaben zur Person bearbeiten'}
           onSubmit={(e) => { e.preventDefault(); saveContact(); }}
         >
           {editingKind === 'person' && editing.mode === 'edit' && (
@@ -315,6 +348,12 @@ export default function DirectoryPanel({ onChanged }: DirectoryPanelProps = {}) 
             </p>
           )}
           <div className="grid gap-3 sm:grid-cols-2">
+            {creatingPerson && (
+              <>
+                <TextField id="person-name" label="Name" value={form.name} required onChange={(v) => setForm({ ...form, name: v })} />
+                <TextField id="person-company" label="Firma oder Funktion" value={form.companyOrRole} onChange={(v) => setForm({ ...form, companyOrRole: v })} />
+              </>
+            )}
             {editingKind === 'organization' && (
               <>
                 <TextField id="org-name" label="Name" value={form.name} required onChange={(v) => setForm({ ...form, name: v })} />
@@ -345,11 +384,11 @@ export default function DirectoryPanel({ onChanged }: DirectoryPanelProps = {}) 
               <CustomFieldInput key={f.key} field={f} value={form.fields[f.key] ?? (f.type === 'multi_select' ? [] : '')} error={fieldErrors[f.key]} onChange={(v) => setField(f.key, v)} />
             ))}
           </div>
-          {editingKind === 'organization' && (
+          {(editingKind === 'organization' || creatingPerson) && (
             <TextField id="org-note" label="Notiz (wird nicht gedruckt)" value={form.note} onChange={(v) => setForm({ ...form, note: v })} />
           )}
           <div className="flex gap-2">
-            <button type="submit" className="ui-btn ui-btn-primary" disabled={Boolean(busy) || (editingKind === 'organization' && !form.name.trim())}>
+            <button type="submit" className="ui-btn ui-btn-primary" disabled={Boolean(busy) || (nameRequired && !form.name.trim())}>
               {busy === 'save' ? 'Wird gespeichert…' : 'Speichern'}
             </button>
             <button type="button" className="ui-btn" onClick={() => setEditing(null)} disabled={Boolean(busy)}>
@@ -488,7 +527,7 @@ export default function DirectoryPanel({ onChanged }: DirectoryPanelProps = {}) 
             onClick={() =>
               void act('merge', async () => {
                 const r = await mergeDirectoryAction(mergeLoser, mergeWinner);
-                if (r.ok) { setMergeLoser(''); setMergeWinner(''); setNotice(r.value.outcome === 'merged' ? 'Zusammengeführt.' : 'Bereits zusammengeführt.'); }
+                if (r.ok) { setMergeLoser(''); setMergeWinner(''); setNotice(r.value.outcome === 'merged' ? 'Zusammengeführt.' : 'Bereits zusammengeführt.'); onMealsStale?.(); }
                 return r;
               })
             }

@@ -78,8 +78,10 @@ app starts.
   store, the directory and the move helper). Custom field values are a patch in the package and are
   kept when left out. Tests prove that an edit of the name wipes neither.
 - **Erase one contact.** One rule, shared with the company erasure (`settleGuestCopies` in
-  `src/lib/erasure.ts`): the contact and its meal links go; the printed names on meals are removed when
-  the company has an export on record and held otherwise (link cleared, ten-year date). The
+  `src/lib/erasure.ts`): the contact and its meal links go; the printed names on meals are removed only
+  when the register is identical to the company's newest export, and held otherwise (link cleared,
+  ten-year date). Corrected on 2026-10-10: the first version removed them whenever any export was on
+  record, which was wrong for an export older than a later meal or correction. The
   confirmation says which of the two happens and how many meals are concerned. The contact must exist
   in the company before anything is touched, because printed copies are keyed by contact id alone.
   Persons of an erased organization stay, unlinked. The retention purge stays unscheduled: no lawyer

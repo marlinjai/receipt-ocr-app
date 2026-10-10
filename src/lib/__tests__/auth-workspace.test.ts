@@ -7,6 +7,7 @@ import {
   sessionTenantId,
   tenantIdForWorkspace,
   requireSessionTenantId,
+  companyWorkspaceIds,
   MissingTenantError,
   type SessionLike,
 } from '../auth-workspace';
@@ -150,5 +151,25 @@ describe('requireSessionTenantId', () => {
   it('lets AUTH_DEV_TENANT_ID override the development company', () => {
     vi.stubEnv('AUTH_DEV_TENANT_ID', 'tnt_local');
     expect(requireSessionTenantId({ memberships: [], activeWorkspace: null })).toBe('tnt_local');
+  });
+});
+
+describe('companyWorkspaceIds', () => {
+  it('returns the workspaces of that company only, sorted and without duplicates', () => {
+    const session: SessionLike = {
+      memberships: [
+        { id: 'ws_b', slug: 'b', role: 'member', tenantId: 'tnt_a' },
+        { id: 'ws_other', slug: 'o', role: 'member', tenantId: 'tnt_b' },
+        { id: 'ws_a', slug: 'a', role: 'member', tenantId: 'tnt_a' },
+        { id: 'ws_a', slug: 'a', role: 'member', tenantId: 'tnt_a' },
+      ],
+      activeWorkspace: null,
+    };
+    expect(companyWorkspaceIds(session, 'tnt_a')).toEqual(['ws_a', 'ws_b']);
+    expect(companyWorkspaceIds(session, 'tnt_none')).toEqual([]);
+  });
+
+  it('gives the dev bypass its one local workspace', () => {
+    expect(companyWorkspaceIds({ memberships: [], activeWorkspace: null }, 'dev-tenant')).toEqual(['receipt-ocr']);
   });
 });

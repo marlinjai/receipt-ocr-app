@@ -10,7 +10,7 @@ import {
   type PreferredContact,
 } from '@marlinjai/contacts-core';
 import type { PrismaClient } from '@prisma/client';
-import { companyHasExport, settleGuestCopies } from '../erasure';
+import { exportCoversRegister, settleGuestCopies, type ExportCoverageReason, type RegisterHasher } from '../erasure';
 
 /**
  * The company's directory: persons and organizations, their links, merges,
@@ -355,21 +355,34 @@ export interface ErasePreview {
   meals: number;
   /** What happens to the printed names on those meals: see `settleGuestCopies`. */
   printedNames: 'removed' | 'held';
+  /** Why: `identical` removes, every other reason holds (see `exportCoversRegister`). */
+  coverage: ExportCoverageReason;
   /** For an organization: persons linked to it. They stay, unlinked. */
   linkedPersons: number;
 }
 
-/** What erasing this contact would do, for the confirmation step. Writes nothing. */
-export async function previewEraseContact(contacts: Contacts, db: PrismaClient, id: string): Promise<ErasePreview> {
+/**
+ * What erasing this contact would do, for the confirmation step. Writes nothing.
+ * `workspaceIds` are the company's workspaces the register is compared over
+ * (`companyWorkspaceIds`), the same set the export is taken with.
+ */
+export async function previewEraseContact(
+  contacts: Contacts,
+  db: PrismaClient,
+  id: string,
+  workspaceIds: readonly string[],
+  hasher?: RegisterHasher,
+): Promise<ErasePreview> {
   const exportedContact = await contacts.exportContact(id);
   // An id that is not a contact of THIS company is never looked up in the meals.
-  if (!exportedContact) return { exists: false, meals: 0, printedNames: 'held', linkedPersons: 0 };
-  const exported = await companyHasExport(db, contacts.tenantId);
+  if (!exportedContact) return { exists: false, meals: 0, printedNames: 'held', coverage: 'no_export', linkedPersons: 0 };
+  const coverage = await exportCoversRegister(db, contacts.tenantId, workspaceIds, hasher);
   const rows = await db.mealGuest.findMany({ where: { contactId: id }, select: { rowId: true }, distinct: ['rowId'] });
   return {
     exists: true,
     meals: rows.length,
-    printedNames: exported ? 'removed' : 'held',
+    printedNames: coverage.covered ? 'removed' : 'held',
+    coverage: coverage.reason,
     linkedPersons: exportedContact?.members.length ?? 0,
   };
 }
@@ -378,13 +391,16 @@ export interface EraseResult {
   outcome: 'erased' | 'already_erased';
   printedNamesRemoved: number;
   printedNamesHeld: number;
+  /** Why the printed names were removed or held. A code, never a name. */
+  coverage: ExportCoverageReason;
 }
 
 /**
  * Erase one contact for good. Two steps, each repeatable:
  * 1. Its printed copies on meals are settled by THE rule of the company erasure
- *    (`settleGuestCopies` in src/lib/erasure.ts): removed when the company holds
- *    an export, otherwise held with the link cleared.
+ *    (`exportCoversRegister` and `settleGuestCopies` in src/lib/erasure.ts):
+ *    removed only when the company's newest export is identical to the register
+ *    as it is now, otherwise held with the link cleared.
  * 2. The contact record is deleted. Persons linked to an erased organization
  *    stay, unlinked (the package clears the link).
  * A run that stopped after step 1 is completed by the next run, because the
@@ -399,11 +415,15 @@ export async function eraseDirectoryContact(
   contacts: Contacts,
   db: PrismaClient,
   id: string,
+  workspaceIds: readonly string[],
   now: Date = new Date(),
+  hasher?: RegisterHasher,
 ): Promise<EraseResult> {
-  if (!(await contacts.get(id))) return { outcome: 'already_erased', printedNamesRemoved: 0, printedNamesHeld: 0 };
-  const exported = await companyHasExport(db, contacts.tenantId);
-  const settled = await settleGuestCopies(db, [{ contactId: id }], exported, now);
+  if (!(await contacts.get(id))) {
+    return { outcome: 'already_erased', printedNamesRemoved: 0, printedNamesHeld: 0, coverage: 'no_export' };
+  }
+  const coverage = await exportCoversRegister(db, contacts.tenantId, workspaceIds, hasher);
+  const settled = await settleGuestCopies(db, [{ contactId: id }], coverage.covered, now);
   const erased = await call(() => contacts.erase(id));
   // The app's own table may still hold the same id from before the move.
   await db.contact.deleteMany({ where: { id, authTenantId: contacts.tenantId } });
@@ -411,5 +431,6 @@ export async function eraseDirectoryContact(
     outcome: erased ? 'erased' : 'already_erased',
     printedNamesRemoved: settled.removed,
     printedNamesHeld: settled.held,
+    coverage: coverage.reason,
   };
 }

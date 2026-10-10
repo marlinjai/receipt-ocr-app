@@ -1207,6 +1207,12 @@ merged. Fixed in the same pull request:
   receipt that is part of an asset (depreciation runs from the acquisition).
 - **Not built:** regularly recurring INCOME at the turn of the year (a retainer paid
   on 2 January for December). The same rule applies to it; it is on the roadmap.
+  Whoever builds it: the move is for the income-surplus statement only. The limits
+  of the small-business rule (section 19 of the value-added tax act) are measured by
+  money actually received and know no ten-day rule, so a payment moved into
+  December still counts for the forecast and the limit check in January. That needs
+  a second day on an invoice's payments, as `vatDate` is the second day on a
+  receipt, and the forecast and the turnover figure must read that one.
 
 ## Decisions (2026-10-07)
 

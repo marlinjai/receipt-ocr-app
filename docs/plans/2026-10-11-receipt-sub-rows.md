@@ -2,7 +2,7 @@
 title: Sub rows in the receipts table, a group that holds receipts
 summary: A row of the receipts table can be a group Marlin creates. Receipts sit underneath it, the group shows the sum of its receipts and never counts as a receipt itself. Needs the table package to nest rows inside grouped views (data-table-react 0.6.0), because every receipts view is grouped.
 type: plan
-status: decided
+status: completed
 tags: [receipts, dashboard, sub-rows, groups, data-table, tax]
 projects: [receipt-ocr-app, data-table]
 date: 2026-10-11

@@ -10,20 +10,40 @@
   study on the 12 Telekom home internet and the 12 Notion invoices (per receipt, in the finance
   area, study part on "Fortbildungskosten"), and 50 percent study on the 12 invoices of the older
   mobile contract (Marlin's answers of 2026-10-06 to the tax decision page). Done 2026-10-10.
-- [ ] Sub rows in the receipts table, like sub-items in Notion: a group Marlin creates (a parent
+- [x] Sub rows in the receipts table, like sub-items in Notion: a group Marlin creates (a parent
   row as a container, its receipts underneath, the parent showing their sum and never counting
-  as a receipt itself). Built with `@marlinjai/data-table-react` 0.6.0, which nests rows inside
-  grouped views. Open: the click-through on production after the deploy (create a group, sum,
-  drag between sections, take a receipt out, dissolve the group). Second use, later: a receipt
-  with its parts. Plan: [receipt sub rows](docs/plans/2026-10-11-receipt-sub-rows.md)
+  as a receipt itself). Built with `@marlinjai/data-table-react` 0.6.0. Clicked through on
+  production on 2026-10-11: a group made from two receipts, both drawn underneath it, the
+  section count and the 241 items unchanged, folding, the state kept over a reload, one receipt
+  taken out, the group dissolved with its confirmation and both receipts back at the top level.
+  Plan: [receipt sub rows](docs/plans/2026-10-11-receipt-sub-rows.md). Done 2026-10-11.
+- [ ] A group's sum quietly leaves out a receipt that has no value in the summed column. Seen on
+  production on 2026-10-11: two receipts in a group, one without a euro equivalent, and the
+  group showed the euro sum of the other one alone with no sign that it is incomplete. Show
+  that a sum is incomplete (how many receipts it covers) instead of a clean number. Also not
+  yet proven on production: dragging a group from one section into another. (2026-10-11)
+- [ ] A receipt with its parts as sub rows, the second use of sub rows (further values of the
+  hidden `Row Kind` column). Not built; the group design leaves room for it. (2026-10-11)
+- [ ] Read receipts with a model that sees the page, not only the recognized text. The wrong
+  totals of the 2025 import (net stored for gross on 26 receipts) came from text recognition
+  that returns labels and amounts in separate runs, after which the reader believed a language
+  model that had only that text, cut at 6,000 characters. The fixes of 2026-10-11 settle the
+  total from the invoice's own arithmetic; what they cannot settle (a total that only its
+  position on the page pairs with its label, such as the customs invoice) needs either the
+  word positions the text recognition already returns or a vision model given the image. Write
+  the plan: which model, what it costs per receipt, and how its answer is checked against the
+  arithmetic. Asked for by Marlin on 2026-10-11. (2026-10-11)
+- [ ] Bring the app up to the tax session's draft for 2025. The gap is explained to one cent
+  (2026-10-11): the app showed 7,547.54 euros of business expenses, the draft table
+  (`entwurf-ausgaben-2025.csv` in the 2025 tax folder) 14,344.35. The steps: the MacBook waits
+  as an open check for its asset (2,849.00), seven hardware invoices and other documents on
+  disk were never imported (2,806.23), items paid without a document (749.56), five small
+  orders without any evidence (128.20), two receipts blocked by an open check (342.17), and
+  wrongly read amounts and exchange rates (134.74). Marlin answered the 17 questions on
+  2026-10-11 (recorded in `Entscheidungen-2025.md` in the tax folder); being carried out:
+  the imports, the asset, the bank and PayPal files into the payments, the corrected amounts.
+  Waiting on Marlin: the business meals, which he completes in the register himself.
   (2026-10-11)
-- [ ] Explain the gap between the finance area and the tax session's draft for 2025: the app
-  shows about 7,530 euros of business expenses, the draft table (`entwurf-ausgaben-2025.csv` in
-  the 2025 tax folder) claims 14,344.35. First reading, not verified: the draft's low-value
-  assets (4,463, mostly Amazon and eBay order pages that are not among the imported documents),
-  the MacBook (2,849, in the app an open check that leads to an asset, none recorded yet) and
-  the phone lease from bank payments (577) account for most of it. Reconcile line by line and
-  bring in what is missing. (2026-10-11)
 - [ ] Check the reader's new date and total reading against the text production actually stores.
   The fixes of 2026-10-11 were measured on local text extraction of the 2025 purchase documents,
   with the labels torn from their amounts to imitate the text recognition, because the stored

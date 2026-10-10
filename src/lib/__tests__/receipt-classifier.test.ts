@@ -40,6 +40,35 @@ describe('classificationPrompt', () => {
   });
 });
 
+describe('the assignment: only what the document shows', () => {
+  it('lets the model leave it open and says what each option means', () => {
+    const prompt = classificationPrompt(INPUT, { webSearch: false });
+    expect(prompt).toContain('one of Universität, Geschäftlich, Privat, or null');
+    expect(prompt).toContain('Otherwise null');
+    expect(prompt).toContain('a self-employed person is invoiced under their own name');
+    expect(prompt).toContain('Never answer "Privat" unless a user classification rule below says so');
+    // The answer the model copies from must not suggest an option.
+    expect(prompt).toContain('"zuordnung": null');
+  });
+
+  it('keeps a rule the user wrote, which is the only source of "Privat"', () => {
+    const prompt = classificationPrompt({ ...INPUT, userRules: 'User classification rules:\n- When vendor matches "Kino" → Zuordnung: Privat' }, { webSearch: false });
+    expect(prompt.indexOf('Zuordnung: Privat')).toBeGreaterThan(prompt.indexOf('unless a user classification rule below'));
+  });
+
+  it('an open assignment stays open, and an option that does not exist never reaches a cell', () => {
+    const answer = (zuordnung: unknown) => JSON.stringify({ name: 'x', category: 'Software & Lizenzen', zuordnung, taxRate: 19, confidence: 0.9, reasoning: '' });
+    expect(parseClassificationResponse(answer(null), INPUT).zuordnung).toBeNull();
+    expect(parseClassificationResponse(answer('Geschäftlich'), INPUT).zuordnung).toBe('Geschäftlich');
+    expect(parseClassificationResponse(answer('Private'), INPUT).zuordnung).toBeNull();
+    expect(parseClassificationResponse(answer(''), INPUT).zuordnung).toBeNull();
+  });
+
+  it('asks for the invoice total where the amount due is zero', () => {
+    expect(classificationPrompt(INPUT, { webSearch: false })).toContain('never an amount due of 0');
+  });
+});
+
 describe('parseClassificationResponse: vendor and total as a second opinion', () => {
   const answer = (extra: Record<string, unknown>) => JSON.stringify({ name: 'x', category: 'Bewirtung', konto: '4650', zuordnung: ZUORDNUNG_OPTIONS[0], taxRate: 19, confidence: 0.9, reasoning: '', ...extra });
 

@@ -123,6 +123,18 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
   }
 }
 
+/**
+ * What the model may say about the assignment. A receipt almost never shows
+ * who bears its cost, and the prompt once offered the three options with no
+ * word on what they mean and no way to leave the field open: the model then
+ * filed software subscriptions addressed to a person as "Privat", 65 of 221
+ * business invoices in one import. An empty assignment is an open check that
+ * someone answers; a wrong "Privat" silently leaves the receipt out of the
+ * books. So the model answers only what the document itself shows.
+ */
+const ASSIGNMENT_RULE =
+  'Answer only what the document itself shows. "Geschäftlich" (business) when it is addressed to a company, shows the buyer\'s VAT identification number, or applies reverse charge. "Universität" when it is addressed to a university or names an enrolment or a course of study. Otherwise null: a self-employed person is invoiced under their own name, so a personal addressee, a home address, or the kind of product (music, video, cloud storage, a phone plan) says nothing about who bears the cost. Never answer "Privat" unless a user classification rule below says so.';
+
 /** The instructions, identical for both providers apart from the sentence about searching. */
 export function classificationPrompt(input: ClassifyInput, options: { webSearch: boolean }): string {
   const search = options.webSearch
@@ -138,11 +150,11 @@ Classify the receipt and read these facts from it:
 
 1. **name**: a human-readable summary of what was purchased. Format: "Item/Service description, Vendor, €Amount, DD.MM.YYYY". Lead with the ITEM, not the vendor. If there are several items, name the most important one or summarize briefly.
 2. **vendor**: the name of the business that issued the receipt, as a customer would call it ("Trattoria Beispiel", "Musterbräu Berlin"). Never a slogan ("Since 2016"), never a product or an extra ("+ mit Haferdrink"), never a bare description ("Indisches"), never a receipt heading ("Rechnung", "Bewirtungsbeleg"). Null when the text does not name it.
-3. **gross**: the total the customer had to pay, as a number, exactly as printed (the line labelled Summe, Gesamt, Total, Betrag, zu zahlen, or the sum of the tax lines). Never a receipt number, table number, transaction number, card number or telephone number. Null when the text does not show a total.
+3. **gross**: the total the customer had to pay, as a number, exactly as printed (the line labelled Summe, Gesamt, Total, Betrag, zu zahlen, or the sum of the tax lines). Never a receipt number, table number, transaction number, card number or telephone number. An invoice settled from a credit or balance still has its total: give the line "Total", never an amount due of 0. Null when the text does not show a total.
 4. **category**: one of: ${input.categoryNames.join(', ')}
 5. **konto**: the SKR03 account number (mapped from category):
 ${input.categoryNames.map((c) => `   ${c} → ${input.categoryToKonto[c]}`).join('\n')}
-6. **zuordnung** (assignment context): one of: ${input.zuordnungOptions.join(', ')}
+6. **zuordnung** (who bears the cost): one of ${input.zuordnungOptions.join(', ')}, or null. ${ASSIGNMENT_RULE}
 7. **taxRate**: the German value-added tax rate printed on the receipt. If the receipt shows several rates, give the one with the largest amount here and list all of them in taxLines. Only if none is printed, infer it: 19 standard; 7 for books and public transport; for restaurant and catering FOOD 19 until 31 December 2025 and 7 from 1 January 2026 (drinks always 19); takeaway food 7.
 8. **taxLines**: every tax line printed on the receipt as { "rate": percent, "net": amount, "tax": amount }, exactly as printed. Empty array if the receipt prints none. Never compute or guess a line.
 
@@ -157,7 +169,7 @@ Only when the category is "Bewirtung", also give:
 ${input.userRules || ''}
 
 Respond with ONLY a JSON object (no markdown, no explanation):
-{ "name": "...", "vendor": "...", "gross": 0.00, "category": "...", "konto": "...", "zuordnung": "...", "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "..." }`;
+{ "name": "...", "vendor": "...", "gross": 0.00, "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "..." }`;
 }
 
 function userContent(input: ClassifyInput): string {

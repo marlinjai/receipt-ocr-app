@@ -119,6 +119,19 @@ function withoutRows(): PrismaClient {
   });
 }
 
+/** The real database, with `hook` run once after the plan, just before the rows transaction opens. */
+function withHookBeforeRows(hook: () => Promise<void>): PrismaClient {
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop !== '$transaction') return Reflect.get(target, prop);
+      return async (...args: unknown[]) => {
+        await hook();
+        return (target.$transaction as (...a: unknown[]) => Promise<unknown>)(...args);
+      };
+    },
+  });
+}
+
 /** The real database, with `hook` run once, just before the plan's last read of the guest rows. */
 function withHookBeforeWrite(hook: () => Promise<void>): PrismaClient {
   let ran = false;
@@ -443,6 +456,44 @@ describe('moveWorkspace: blockers write nothing', () => {
     const attempt = await expectBlocked(c.workspaceId, c.req, 'guest_rows_would_fold');
     expect(attempt.contacts).toMatchObject({ identityConflicts: 1, guestRowsRepointed: 0, guestRowsFolded: 1 });
     expect(await guestRows(c.workspaceId)).toHaveLength(2);
+  });
+
+  it('a meal that gains the target\u2019s contact between the check and the write: the repoint is rolled back, nothing is removed', async () => {
+    const c = await conflictScenario();
+    const racing = withHookBeforeRows(async () => {
+      await db.mealGuest.create({
+        data: { authWorkspaceId: c.workspaceId, authTenantId: c.from, rowId: c.rowId, contactId: c.inTarget.id, position: 1, displayName: 'Printed Name', displayCompany: 'Printed Co' },
+      });
+    });
+
+    const attempt = await apply(c.req, racing);
+
+    // No contact had moved (the only guest is the conflicting one), so this is a plain refusal.
+    expect(attempt).toMatchObject({ dryRun: false, written: false, blocked: ['guest_rows_would_fold'] });
+    expect(await guestRows(c.workspaceId)).toHaveLength(2);
+    expect((await guestRows(c.workspaceId)).map((g) => g.contactId).sort()).toEqual([c.inSource.id, c.inTarget.id].sort());
+    // Both rows (the guest's and the one that arrived late) still carry the source company.
+    expect(await stamps(c.workspaceId)).toEqual({ meal_guests: [c.from, c.from] });
+  });
+
+  it('the same race after other contacts had moved: the move is incomplete, nothing is removed, and the repeat names the blocker', async () => {
+    const c = await conflictScenario();
+    const other = await companyContacts(c.from).create(person('Zweiter Gast'));
+    await addGuest(c.workspaceId, c.from, other.id);
+    const racing = withHookBeforeRows(async () => {
+      await db.mealGuest.create({
+        data: { authWorkspaceId: c.workspaceId, authTenantId: c.from, rowId: c.rowId, contactId: c.inTarget.id, position: 1, displayName: 'Printed Name', displayCompany: 'Printed Co' },
+      });
+    });
+
+    await expect(apply(c.req, racing)).rejects.toBeInstanceOf(WorkspaceMoveIncompleteError);
+
+    expect(await guestRows(c.workspaceId)).toHaveLength(3);
+    expect(new Set((await stamps(c.workspaceId)).meal_guests)).toEqual(new Set([c.from]));
+    expect(Object.keys(await contactsOf(c.to))).toContain(other.id);
+    const repeat = await apply(c.req);
+    expect(repeat).toMatchObject({ written: false, blocked: ['guest_rows_would_fold'] });
+    expect(await guestRows(c.workspaceId)).toHaveLength(3);
   });
 
   it('a contact asked for by id that the target already has: it would stay behind, so the move is refused', async () => {

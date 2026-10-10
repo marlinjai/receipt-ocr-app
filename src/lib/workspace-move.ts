@@ -59,6 +59,9 @@ export interface WorkspaceMoveRequest {
  * - `guest_rows_would_fold`: a meal names both a guest and the target's contact of
  *   the same identity. Repointing would leave one guest twice, so one row would have
  *   to be removed, and a move removes nothing. Take one of the two off the meal first.
+ *   If the meal gains that second row between the check and the write, the rows
+ *   transaction rolls back: blocked when no contact had moved yet, otherwise the move
+ *   is incomplete and the repeat reports this blocker.
  * - `contacts_used_by_another_workspace`: a contact that would move is still named by
  *   a meal of another workspace, which would then point across companies.
  * - `too_many_contacts`: more contacts than one transfer takes.
@@ -117,9 +120,8 @@ export interface WorkspaceMoveReport {
     /** Guest rows pointed at the target's existing contact (in a dry run: that would be). */
     guestRowsRepointed: number;
     /**
-     * Guest rows on a meal that already names the target's contact. In a dry run any
-     * such row blocks the move (`guest_rows_would_fold`). After an apply it counts rows
-     * removed, which only happens when the meal changed between the check and the write.
+     * Guest rows on a meal that already names the target's contact. Any such row blocks
+     * the move (`guest_rows_would_fold`); after an apply that wrote, it is always 0.
      */
     guestRowsFolded: number;
     /** Refusals that block the move, by the package's reason code. */
@@ -132,6 +134,18 @@ export interface WorkspaceMoveReport {
     sourceAfter: number;
     targetAfter: number;
   };
+}
+
+/**
+ * Thrown inside the rows transaction when a repoint would remove a guest row after
+ * all: the meal gained the target's contact between the check and the write. The
+ * transaction rolls back, so nothing is removed.
+ */
+class GuestRowsWouldFoldError extends Error {
+  constructor() {
+    super('workspace move: a repoint would remove a guest row');
+    this.name = 'GuestRowsWouldFoldError';
+  }
 }
 
 /** The contacts moved, but the rows did not follow. Repeating the call finishes the move. */
@@ -445,14 +459,14 @@ export async function moveWorkspace(
   const tables: Record<string, TableCounts> = {};
   let restamped = 0;
   let repointed = 0;
-  let folded = 0;
   try {
     await db.$transaction(
       async (tx) => {
         for (const { fromId, toId } of plan.repoints) {
           const result = await repointGuestRows(tx, fromId, toId, { authWorkspaceId: req.workspaceId });
+          // The plan found no such row, so the meal changed since. Rolling back undoes the removal.
+          if (result.deduplicated > 0) throw new GuestRowsWouldFoldError();
           repointed += result.repointed;
-          folded += result.deduplicated;
         }
         for (const model of stampedModels()) {
           const { count } = await delegateOf(tx, model).updateMany({
@@ -466,7 +480,9 @@ export async function moveWorkspace(
       { maxWait: 10_000, timeout: 60_000 },
     );
   } catch (e) {
+    // The transaction rolled back: no row was restamped, repointed or removed.
     if (contactsMoved > 0) throw new WorkspaceMoveIncompleteError(contactsMoved, e);
+    if (e instanceof GuestRowsWouldFoldError) return { ...report, blocked: ['guest_rows_would_fold'] };
     throw e;
   }
 
@@ -482,13 +498,13 @@ export async function moveWorkspace(
   }
   return {
     ...report,
-    written: contactsMoved > 0 || restamped > 0 || repointed > 0 || folded > 0,
+    written: contactsMoved > 0 || restamped > 0 || repointed > 0,
     rows: { ...report.rows, restamp: restamped, tables },
     contacts: {
       ...report.contacts,
       move: contactsMoved,
       guestRowsRepointed: repointed,
-      guestRowsFolded: folded,
+      guestRowsFolded: 0,
       sourceAfter,
       targetAfter,
     },

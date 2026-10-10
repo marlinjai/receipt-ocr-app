@@ -1,8 +1,8 @@
 ---
 title: Business receipts move to the company Whiz-Art Media
-summary: The receipts workspace that today sits under the personal company "marlinjai" holds business receipts. It moves as a whole to the business company Whiz-Art Media through auth-brain, keeping every row, file and workspace id, and "marlinjai" gets a fresh empty workspace for personal receipts. Decided 2026-10-10; the production step waits for Marlin's one-line yes.
+summary: The receipts workspace that today sits under the personal company "marlinjai" holds business receipts. It moves as a whole to the business company Whiz-Art Media through auth-brain, keeping every row, file and workspace id, and "marlinjai" gets a fresh empty workspace for personal receipts. Decided and carried out on 2026-10-10 on Marlin's yes; verified in both databases and in the browser.
 type: plan
-status: in-progress
+status: completed
 tags: [receipts, contacts, companies, whiz-art-media, migration, production-data]
 projects: [receipt-ocr-app, auth-brain, contacts]
 date: 2026-10-10
@@ -180,7 +180,10 @@ the admin key from the secrets proxy; `actor_email` is Marlin's account.
    still refuses the slug (a server error; the route cannot see retired workspaces, so it cannot
    be checked beforehand), use the slug `receipts` instead. Nothing in the receipts or contacts
    database has been touched at that point.
-7. Signed `apply`, at once, with the same body as step 3. A 502 with `step: "rows"` is repeated.
+7. Signed `apply`, at once: a new call with the same workspace, companies and
+   `also_contact_ids` as step 3, `mode` set to `apply` and a fresh `issued_at`, signed anew (the
+   signature covers the whole body, so the dry run's body cannot be reused). A 502 with
+   `step: "rows"` is repeated.
    Before sending it, the newest "Build & Deploy" run of the receipts app must not be in
    progress: a restart of the app in the middle of the apply is the one realistic way to stop it
    half way.
@@ -227,11 +230,30 @@ step 1 are the second line.
 - The session preparing the 2025 tax return used the 16 business meals of this workspace. It must be
   asked before a time is set.
 
-## Open
-
-- Marlin's one-line yes for the production step.
-
 ## Done
+
+- **The move, on production, 2026-10-10 from 12:24 UTC, on Marlin's yes** ("ok lets proceed"), in
+  the order of "The production run, call by call":
+  - Dumps `receipts-before-workspace-move-20261010T122443Z.dmp` and
+    `contacts-before-workspace-move-20261010T122443Z.dmp` in `/root/backups-manual/` on the
+    server. Both were restored into a scratch database and compared with the live counts, then
+    the scratch databases were dropped.
+  - The dry run answered the expected numbers with no blocker. The empty Whiz-Art Media workspace
+    was renamed and retired, the real workspace moved to Whiz-Art Media and took the slug
+    `whiz-art-media` (the database accepted it, no fallback needed).
+  - The apply answered 200: 5 rows restamped (`dt_tables` 1, `meal_guests` 3,
+    `workspace_tax_settings` 1), 4 contacts moved. The dry run after it found nothing left
+    (0 rows to restamp, 4 contacts already at the target).
+  - "marlinjai" has a fresh workspace `01a125c7-188e-7964-a36a-51e7faa82007`, name "Main", slug
+    `main`.
+  - Read from the databases afterwards: every stamped row of the moved workspace carries Whiz-Art
+    Media, 24 receipt rows, contacts 0 under "marlinjai" and 29 under Whiz-Art Media.
+  - In the browser under Whiz-Art Media: 24 receipts, the 5 views, 16 business meals (13 open, 3
+    in the register, each with participants), 29 contacts, a stored receipt file opens. A
+    synthetic receipt was uploaded, read, listed (25 receipts for a moment) and deleted again;
+    its file answers 404 since. Under "marlinjai": an empty table, 0 contacts.
+  - The follow-up pull request was paused for the minutes of the move, so no deploy could restart
+    the app in the middle of the apply.
 
 - The contacts-core transfer operation (step 2): `@marlinjai/contacts-core` 0.3.0, 2026-10-10.
 - The receipts endpoint with its dry run (steps 2 and 4), 2026-10-10 (pull request 65). It landed

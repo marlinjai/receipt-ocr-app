@@ -221,6 +221,17 @@
 
 <!-- Done — move to CHANGELOG.md on release -->
 
+- [x] Phone capture queue: a photo the server has is never sent again. Sending a queued photo and
+  removing its entry were one step, so a failed removal looked like a failed send: the photo was
+  reported as not processed, its attempts were raised, and every later run sent it again (kept
+  from becoming a second receipt only by the duplicate check, which stops helping once the
+  receipt was deleted on purpose). Now two steps with two outcomes: a failed removal marks the
+  entry as sent, later runs only retry the removal, also without a connection, and the screen
+  says so. This is the capture half of a reviewed fix that missed its merge: it was committed in
+  the same second pull request 31 merged on 2026-10-07 and was never pushed. Its other half (the
+  tax rate of a meal with several tax lines) is not ported: the receipt reader rebuild names the
+  rate that carries most of the bill, and pull request 60 lists every rate. Done 2026-10-10.
+  (2026-10-10)
 - [x] A newly created Receipts table now carries its company from the first moment
   (`ensureReceiptsTable` and the dashboard's `createTable` stamp it right after
   creation, never overwriting an owner), with a database test. Before, a workspace

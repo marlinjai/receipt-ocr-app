@@ -7,6 +7,9 @@
  * app), the service worker `public/sw.js` (shared files) and the offline page
  * `public/offline.html` (photos taken without a connection). The names below
  * are repeated there as literals; a test compares them.
+ *
+ * `sentAt` is written by the app only (see drain.ts). The other two writers
+ * leave it out, and `list()` reads a missing value as "not sent yet".
  */
 
 export const CAPTURE_DB_NAME = 'receipt-capture';
@@ -25,6 +28,12 @@ export interface QueuedCapture {
   source: CaptureSource;
   attempts: number;
   lastError: string | null;
+  /**
+   * Set when the server has this photo but the entry could not be removed from
+   * the queue. An entry with a value here is NEVER sent again; the next run
+   * only tries to remove it. Null while the photo still waits to be sent.
+   */
+  sentAt: number | null;
 }
 
 export interface CaptureStore {
@@ -32,7 +41,7 @@ export interface CaptureStore {
   /** Oldest first. */
   list(): Promise<QueuedCapture[]>;
   remove(id: string): Promise<void>;
-  update(id: string, patch: Partial<Pick<QueuedCapture, 'attempts' | 'lastError'>>): Promise<void>;
+  update(id: string, patch: Partial<Pick<QueuedCapture, 'attempts' | 'lastError' | 'sentAt'>>): Promise<void>;
 }
 
 function promisify<T>(request: IDBRequest<T>): Promise<T> {
@@ -87,6 +96,7 @@ export function openCaptureStore(factory: IDBFactory = indexedDB): CaptureStore 
           ...e,
           attempts: typeof e.attempts === 'number' ? e.attempts : 0,
           lastError: typeof e.lastError === 'string' ? e.lastError : null,
+          sentAt: typeof e.sentAt === 'number' ? e.sentAt : null,
           source: e.source ?? 'camera',
         }))
         .sort((a, b) => a.addedAt - b.addedAt);
@@ -124,6 +134,7 @@ export function newQueuedCapture(file: File | Blob, source: CaptureSource, now: 
     source,
     attempts: 0,
     lastError: null,
+    sentAt: null,
   };
 }
 

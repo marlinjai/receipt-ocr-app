@@ -267,7 +267,9 @@ describe('a new reading of a receipt stored by the old reader', () => {
     await confirmReceipt(db, ctx, rowId);
     expect(await entryFor(rowId)).toBeUndefined();
 
-    const wrong = await ws.addReceipt(oldCafe());
+    // Its own day: the receipts of the tests above share day, total and vendor with
+    // `oldCafe()` and would list this one as a possible duplicate as well.
+    const wrong = await ws.addReceipt({ ...oldCafe(), Date: '2025-02-27' });
     await confirmReceipt(db, ctx, wrong);
     expect((await entryFor(wrong))!.reasons).toEqual(['tax_implausible']);
     expect((await entryFor(wrong))!.proposal).toEqual([]);

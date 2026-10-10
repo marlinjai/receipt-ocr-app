@@ -14,7 +14,7 @@ import {
 } from '../service';
 import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../../../../test/db-helpers';
 
-/** Receipt lines against a real database (migration 0014). Run with `pnpm test:db`. */
+/** Receipt lines against a real database (migration 0015). Run with `pnpm test:db`. */
 
 let other: TestWorkspace;
 let otherCtx: TaxContext;

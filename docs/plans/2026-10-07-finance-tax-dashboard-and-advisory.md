@@ -1090,7 +1090,7 @@ and both were asked for now.
 ## Reality after the second half of slice 2: receipt lines (2026-10-10)
 
 - **A receipt is split by hand.** `TaxReceiptLine` (text, amount and optional net
-  amount in the receipt's own currency), migration `0014_tax_receipt_lines`. A split
+  amount in the receipt's own currency), migration `0015_tax_receipt_lines`. A split
   has at least two lines and must add up to the receipt's total; that is checked on
   save and again on every read. A receipt whose total was corrected afterwards shows
   as one blocked item ("the lines no longer add up") until the split fits again:

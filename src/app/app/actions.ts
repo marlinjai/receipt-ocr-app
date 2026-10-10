@@ -1,6 +1,6 @@
 'use server';
 
-import { TAX_RATES_COLUMN, formatTaxRates } from '@/lib/tax-rates';
+import { TAX_RATES_COLUMN, formatTaxRates, withTaxRates } from '@/lib/tax-rates';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
@@ -255,6 +255,10 @@ async function readReceipt(
     values[MEAL_COLUMNS.tip] = meal.tip;
     values[MEAL_COLUMNS.taxLines] = serializeTaxLines(meal.taxLines);
     values[MEAL_COLUMNS.place] = meal.place ?? '';
+  } else if (amounts && amounts.taxGroups.length > 0) {
+    // Any receipt keeps the tax groups it prints, so the rates text has a
+    // stored source and a later write derives the same text again.
+    values[MEAL_COLUMNS.taxLines] = serializeTaxLines(amounts.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax })));
   }
 
   const cells: Record<string, CellValue> = {};
@@ -379,7 +383,11 @@ export async function retakeReceipt(
     const current = row.cells[columnId];
     if (current !== null && current !== undefined && current !== '') delete read.cells[columnId];
   }
-  await adapter.updateRow(row.id, read.cells);
+  // The rates text is derived again from what the row holds after this write:
+  // tax lines that were kept above must not be contradicted by the new reading's.
+  const ratesColumnId = columns.find((c) => c.name === TAX_RATES_COLUMN)?.id;
+  if (ratesColumnId) delete read.cells[ratesColumnId];
+  await adapter.updateRow(row.id, withTaxRates(columns, read.cells, row.cells) as typeof read.cells);
 
   if (read.imageColumnId && file.id) {
     // Swap the file: drop what the capture uploaded before, keep anything a

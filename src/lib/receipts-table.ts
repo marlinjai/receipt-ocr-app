@@ -14,7 +14,8 @@ import {
 import { firstColumnIdByName } from '@/lib/column-lookup';
 import { mergeDuplicateColumns } from '@/lib/receipts-duplicate-columns';
 import { readAmounts } from '@/lib/extraction/amounts';
-import { TAX_RATE_COLUMN, TAX_RATES_COLUMN, formatTaxRates, withTaxRates } from '@/lib/tax-rates';
+import { parseTaxLines, serializeTaxLines } from '@/lib/meals/rules';
+import { TAX_RATE_COLUMN, TAX_RATES_COLUMN, formatTaxRates } from '@/lib/tax-rates';
 
 /**
  * The Receipts table definition (columns and standard views) and the
@@ -111,12 +112,14 @@ const FOOTER_SUM_VIEWS: readonly string[] = ['Table', 'By Vendor'];
  * Pure, so the common page load decides it from two reads and takes no lock.
  */
 export function receiptsSchemaIsCurrent(
-  columns: readonly { id: string; name: string }[],
+  columns: readonly { id: string; name: string; config?: unknown }[],
   views: readonly { name: string; config?: ViewConfig }[],
 ): boolean {
   const count = new Map<string, number>();
   for (const c of columns) count.set(c.name, (count.get(c.name) ?? 0) + 1);
   if (COLUMNS.some((col) => count.get(col.name) !== 1)) return false;
+  // Receipts stored before the rates text existed still wait for theirs.
+  if (!ratesAreFilled(columns)) return false;
 
   const viewByName = new Map(views.map((v) => [v.name, v]));
   if (STANDARD_VIEWS.some((name) => !viewByName.has(name))) return false;
@@ -205,12 +208,23 @@ export async function ensureReceiptsTable(
   await underSchemaLock(owner.db, workspaceId, isCurrent, () => bringReceiptsTableUpToDate(adapter, workspaceId, owner));
 }
 
+/** Set on the rates column's config once every receipt that existed before it has its text. */
+const RATES_FILLED = 'taxRatesFilled';
+/** How long one page load works on the fill before it leaves the rest to the next one. */
+const FILL_BUDGET_MS = 45_000;
+
+function ratesAreFilled(columns: ReadonlyArray<{ name: string; config?: unknown }>): boolean {
+  const column = columns.find((c) => c.name === TAX_RATES_COLUMN);
+  return Boolean(column && (column.config as Record<string, unknown> | null | undefined)?.[RATES_FILLED] === true);
+}
+
 /**
- * The rates a stored receipt prints, read again from its stored text. Only for
- * a row without tax lines, and only when the reading arrives at the row's own
- * total and finds more than one rate: anything less sure keeps the single rate.
+ * The tax groups a stored receipt prints, read again from its stored text.
+ * Only for a row without tax lines, and only when the reading arrives at the
+ * row's own total and finds more than one rate: anything less sure keeps the
+ * single rate.
  */
-function printedRates(cells: Record<string, unknown>, ids: Map<string, string>): string | null {
+function printedTaxLines(cells: Record<string, unknown>, ids: Map<string, string>): Array<{ rate: number; net: number; tax: number }> | null {
   const cell = (name: string): unknown => {
     const id = ids.get(name);
     return id ? cells[id] : null;
@@ -223,44 +237,72 @@ function printedRates(cells: Record<string, unknown>, ids: Map<string, string>):
   const iso = day instanceof Date ? day.toISOString().slice(0, 10) : typeof day === 'string' && /^\d{4}-\d{2}-\d{2}/.test(day) ? day.slice(0, 10) : null;
   const read = readAmounts(text, { date: iso });
   if (read.gross === null || Math.abs(read.gross - gross) > 0.005 || new Set(read.taxGroups.map((g) => g.rate)).size < 2) return null;
-  return formatTaxRates(read.taxGroups, null);
+  return read.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax }));
 }
 
 /**
- * A table that existed before the rates text did: put the new column next to
- * the number column, and give every receipt its text from what it already
- * holds (its tax lines, else its single rate). Runs once, when the column is
- * created. A row that fails is logged by id and skipped: the others still get
- * their text, and the row gets it with its next save.
+ * A table that existed before the rates text did: put the column next to the
+ * number column, and give every receipt its text from what it already holds
+ * (its tax lines, else its stored text where that prints two rates, else its
+ * single rate). An old receipt found to print two rates gets its tax lines
+ * stored too, so later writes derive the same text.
+ *
+ * The work can be interrupted at any point and is taken up again by the next
+ * page load: only a row whose text is still empty is written, each row is read
+ * again right before, and the column is marked as filled only after a complete
+ * pass. One page load works on it for a bounded time. Returns whether it finished.
  */
-async function fillTaxRates(adapter: PrismaAdapter, tableId: string, before: ReadonlyArray<{ id: string; name: string }>, ratesColumnId: string): Promise<void> {
-  const rateIndex = before.findIndex((c) => c.name === TAX_RATE_COLUMN);
-  if (rateIndex >= 0) {
-    const order = before.map((c) => c.id);
-    order.splice(rateIndex + 1, 0, ratesColumnId);
-    await adapter.reorderColumns(tableId, order);
+async function fillTaxRates(adapter: PrismaAdapter, tableId: string): Promise<boolean> {
+  const columns = await adapter.getColumns(tableId);
+  const ids = firstColumnIdByName(columns);
+  const ratesId = ids.get(TAX_RATES_COLUMN);
+  if (!ratesId) return false;
+  const rateId = ids.get(TAX_RATE_COLUMN);
+  const linesId = ids.get(MEAL_COLUMNS.taxLines);
+
+  const order = columns.map((c) => c.id);
+  if (rateId && order[order.indexOf(rateId) + 1] !== ratesId) {
+    const next = order.filter((id) => id !== ratesId);
+    next.splice(next.indexOf(rateId) + 1, 0, ratesId);
+    await adapter.reorderColumns(tableId, next);
   }
-  const columns = [...before, { id: ratesColumnId, name: TAX_RATES_COLUMN }];
-  const ids = firstColumnIdByName(before);
-  const rateId = rateIndex >= 0 ? before[rateIndex].id : null;
+
+  const blank = (v: unknown) => v === null || v === undefined || v === '';
+  const deadline = Date.now() + FILL_BUDGET_MS;
   let offset = 0;
   for (;;) {
-    const page = await adapter.getRows(tableId, { limit: 500, offset });
-    for (const row of page.items) {
-      // Ask for the text as a write of the rate would: from the row's own lines and rate.
-      const cells = withTaxRates(columns, rateId ? { [rateId]: row.cells[rateId] ?? null } : {}, row.cells);
-      // A receipt stored before tax lines were kept may still print two rates: its stored text says so.
-      const text = printedRates(row.cells, ids) ?? cells[ratesColumnId];
-      if (typeof text !== 'string' || !text) continue;
+    const page = await adapter.getRows(tableId, { limit: 500, offset, includeArchived: true });
+    for (const listed of page.items) {
+      if (!blank(listed.cells[ratesId])) continue;
+      if (Date.now() > deadline) return false;
       try {
-        await adapter.updateRow(row.id, { [ratesColumnId]: text });
+        // Read again: the row may have been edited since the page was listed.
+        const row = await adapter.getRow(listed.id);
+        if (!row || !blank(row.cells[ratesId])) continue;
+        const printed = linesId ? printedTaxLines(row.cells, ids) : null;
+        const lines = printed && linesId ? { [linesId]: serializeTaxLines(printed) } : {};
+        // The text any write of these lines, or of this rate, would get.
+        const text = formatTaxRates(printed ?? (linesId ? parseTaxLines(row.cells[linesId]) : null), rateId ? numberOrNull(row.cells[rateId]) : null);
+        if (!text) continue;
+        await adapter.updateRow(row.id, { ...lines, [ratesId]: text });
       } catch (e) {
-        console.error('[receipts-table] could not fill the tax rates of a row', JSON.stringify({ tableId, rowId: row.id }), e);
+        // Ids only: no cell value reaches the log. The row gets its text with its next save.
+        console.error('[receipts-table] could not fill the tax rates of a row', JSON.stringify({ tableId, rowId: listed.id }), e);
       }
     }
     if (!page.hasMore || page.items.length === 0) break;
     offset += page.items.length;
   }
+  const column = columns.find((c) => c.id === ratesId);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await adapter.updateColumn(ratesId, { config: { ...((column?.config as Record<string, unknown> | undefined) ?? {}), [RATES_FILLED]: true } as any });
+  return true;
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 /** The work of `ensureReceiptsTable`. Only ever runs under the workspace's schema lock. */
@@ -297,7 +339,6 @@ async function bringReceiptsTableUpToDate(
       config: col.config as any,
     });
     columnIds[col.name] = created.id;
-    if (col.name === TAX_RATES_COLUMN) await fillTaxRates(adapter, table.id, existingColumns, created.id);
 
     if (col.options) {
       const colors = col.optionColors ?? DEFAULT_OPTION_COLORS;
@@ -306,6 +347,9 @@ async function bringReceiptsTableUpToDate(
       }
     }
   }
+
+  // Receipts that existed before the rates text get theirs; resumed by the next page load until done.
+  if (!ratesAreFilled(await adapter.getColumns(table.id))) await fillTaxRates(adapter, table.id);
 
   const attributedEurColId = columnIds['Attributed EUR'];
 

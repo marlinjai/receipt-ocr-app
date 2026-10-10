@@ -276,9 +276,13 @@ async function writeMealInput(
     [columnId(MEAL_COLUMNS.taxLines)]: serializeTaxLines(merged.taxLines),
     [columnId(MEAL_COLUMNS.detailsAt)]: now().toISOString(),
   };
-  // The rates as text follow the tax lines typed here; without lines, the row's single rate.
+  // The rates as text follow the tax lines typed here; without lines, the row's
+  // single rate. Only when the lines changed: a save that leaves them alone
+  // leaves the text alone, also one a person has typed.
   const ratesColumn = ctx.columns.find((c) => c.name === TAX_RATES_COLUMN);
-  if (ratesColumn) cells[ratesColumn.id] = formatTaxRates(merged.taxLines, current.taxRate);
+  if (ratesColumn && serializeTaxLines(merged.taxLines) !== serializeTaxLines(current.taxLines)) {
+    cells[ratesColumn.id] = formatTaxRates(merged.taxLines, current.taxRate);
+  }
   if (merged.date !== stored.date) cells[columnId('Date')] = merged.date;
   if (merged.gross !== null && merged.gross !== stored.gross) cells[columnId('Gross')] = merged.gross;
 

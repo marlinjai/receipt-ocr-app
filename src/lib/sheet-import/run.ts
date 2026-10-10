@@ -6,7 +6,7 @@ import { getAccessTokenForUser } from './google-credentials';
 import { parseSpreadsheetId, readSheetValues, gridToRows } from './sheets-client';
 import { mapRow, computeDedupKey, type ColumnMapping, type ImportableField } from './normalize';
 import { buildCells, type ColumnLike } from './build-cells';
-import { withTaxRates } from '@/lib/tax-rates';
+import { touchesTaxRates, withTaxRates } from '@/lib/tax-rates';
 
 const TABLE_NAME = 'Receipts';
 
@@ -135,7 +135,8 @@ export async function runSheetImport(input: RunImportInput): Promise<RunImportRe
 
     const existingRowId = ledger.get(key);
     // An imported rate shows in the rates text too; a row that already has tax lines keeps what they say.
-    const cells = withTaxRates(columns, built, existingRowId ? (await adapter.getRow(existingRowId))?.cells : undefined) as typeof built;
+    const stored = existingRowId && touchesTaxRates(columns, built) ? (await adapter.getRow(existingRowId))?.cells : undefined;
+    const cells = withTaxRates(columns, built, stored) as typeof built;
     if (existingRowId) {
       await adapter.updateRow(existingRowId, cells);
       updated++;

@@ -37,6 +37,8 @@ describe('a table that existed before the rates text', () => {
     // The stored total is not the one the text arrives at: the text proves nothing about this row.
     const otherTotal = await ws.addReceipt(plainMealReceipt({ 'OCR Text': F.FOODBAR_TWO_RATES, Date: '2025-03-21', Gross: 50, 'Tax Rate': 7 }));
     const noRate = await ws.addReceipt({ Name: 'Nicht lesbar: scan-07.pdf' });
+    const archived = await ws.addReceipt({ Name: 'Abgelegt', Gross: 10.7, 'Tax Rate': 7 });
+    await ws.adapter.archiveRow(archived);
 
     await ensureReceiptsTable(ws.adapter, ws.workspaceId, { db, tenantId: ws.tenantId });
 
@@ -48,12 +50,39 @@ describe('a table that existed before the rates text', () => {
     expect(await ratesOf(ws, oldMixed)).toBe('7 % + 19 %');
     expect(await ratesOf(ws, otherTotal)).toBe('7 %');
     expect(await ratesOf(ws, noRate)).toBeNull();
+    expect(await ratesOf(ws, archived)).toBe('7 %');
+    // The old mixed receipt now also holds the tax groups its text was read from, so later writes agree with it.
+    const columnsAfter = await ws.adapter.getColumns(ws.tableId);
+    const linesId = columnsAfter.find((c) => c.name === 'Tax Lines')!.id;
+    expect(JSON.parse(String((await ws.adapter.getRow(oldMixed))!.cells[linesId])).map((l: { rate: number }) => l.rate)).toEqual([7, 19]);
+    expect((await ws.adapter.getRow(otherTotal))!.cells[linesId] ?? '').toBe('');
 
     // A second run changes nothing, also not a text a person has typed since.
     const columns = await ws.adapter.getColumns(ws.tableId);
     await ws.adapter.updateRow(single, { [columns.find((c) => c.name === 'Tax Rates')!.id]: 'von Hand' });
     await ensureReceiptsTable(ws.adapter, ws.workspaceId, { db, tenantId: ws.tenantId });
     expect(await ratesOf(ws, single)).toBe('von Hand');
+  });
+});
+
+describe('a fill that was interrupted', () => {
+  it('is taken up again by the next page load and writes only what is still empty', async () => {
+    const ws = await createWorkspace();
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    const ratesColumn = columns.find((c) => c.name === 'Tax Rates')!;
+    const done = await ws.addReceipt({ Name: 'Schon gefüllt', Gross: 11.9, 'Tax Rate': 19, 'Tax Rates': 'von Hand' });
+    const waiting = await ws.addReceipt({ Name: 'Wartet noch', Gross: 10.7, 'Tax Rate': 7 });
+    // As after a restart in the middle: the column exists, the mark that it is filled does not.
+    await ws.adapter.updateColumn(ratesColumn.id, { config: {} });
+
+    await ensureReceiptsTable(ws.adapter, ws.workspaceId, { db, tenantId: ws.tenantId });
+    expect(await ratesOf(ws, waiting)).toBe('7 %');
+    expect(await ratesOf(ws, done)).toBe('von Hand');
+
+    // Marked as filled: a receipt that loses its text later is not touched by a page load.
+    await ws.adapter.updateRow(waiting, { [ratesColumn.id]: '' });
+    await ensureReceiptsTable(ws.adapter, ws.workspaceId, { db, tenantId: ws.tenantId });
+    expect(await ratesOf(ws, waiting)).toBe('');
   });
 });
 
@@ -80,6 +109,18 @@ describe('later writes keep the text in step', () => {
     expect(await ratesOf(ws, rowId)).toBe('19 %');
   });
 
+  it('the meal form saved without touching the tax lines leaves the text alone, also one typed by hand', async () => {
+    const ws = await createWorkspace();
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    const rowId = await ws.addReceipt(plainMealReceipt({ 'Tax Rate': 7, 'Tax Rates': 'von Hand' }));
+    const guest = await contactStore(db, ctx).create({ name: 'Erika Beispiel', companyOrRole: 'Beispiel GmbH' });
+    await saveMealDetails(db, ctx, rowId, {
+      mealType: 'business_meal_external', occasion: 'Abstimmung Relaunch Webshop', place: 'Testlokal, Musterstraße 1, 12345 Musterstadt',
+      host: 'Inhaber Beispiel', tip: null, consumption: 'dine_in', taxLines: null, guestContactIds: [guest.id], date: null, gross: null,
+    });
+    expect(await ratesOf(ws, rowId)).toBe('von Hand');
+  });
+
   it('a new reading of a stored receipt that prints two rates says both', async () => {
     const ws = await createWorkspace();
     const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
@@ -88,6 +129,11 @@ describe('later writes keep the text in step', () => {
     const written = await applyNewReading(db, ctx, rowId, ['net', 'taxRate']);
     expect(written).toEqual(expect.arrayContaining(['net', 'taxRate']));
     expect(await ratesOf(ws, rowId)).toBe('7 % + 19 %');
+
+    // The same on a receipt that is no meal: it keeps the printed tax groups as well.
+    const plain = await ws.addReceipt({ Name: 'Einkauf', Vendor: 'Fantastic Foodbar', 'OCR Text': F.FOODBAR_TWO_RATES, Date: '2025-03-21', Gross: 37.7, Net: 31.68, 'Tax Rate': 19, Category: 'Bürobedarf' });
+    await applyNewReading(db, ctx, plain, ['net', 'taxRate']);
+    expect(await ratesOf(ws, plain)).toBe('7 % + 19 %');
   });
 
   it('a rate typed into the grid: the text follows, unless the receipt has tax lines that say more', async () => {

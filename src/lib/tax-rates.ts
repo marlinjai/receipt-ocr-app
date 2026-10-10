@@ -49,11 +49,25 @@ export function formatTaxRates(lines: ReadonlyArray<{ rate: number; net?: number
   return typeof fallbackRate === 'number' && Number.isFinite(fallbackRate) ? formatRate(fallbackRate) : '';
 }
 
+function sameCell(a: unknown, b: unknown): boolean {
+  const blank = (v: unknown) => v === null || v === undefined || v === '';
+  if (blank(a) || blank(b)) return blank(a) && blank(b);
+  return String(a) === String(b);
+}
+
+/** True when a write sets the rate or the tax lines, so the stored row is needed to derive the text. */
+export function touchesTaxRates(columns: ReadonlyArray<{ id: string; name: string }>, cells: Record<string, unknown>): boolean {
+  const ids = firstColumnIdByName(columns);
+  const ratesId = ids.get(TAX_RATES_COLUMN);
+  if (!ratesId || ratesId in cells) return false;
+  return [ids.get(TAX_RATE_COLUMN), ids.get(MEAL_COLUMNS.taxLines)].some((id) => id !== undefined && id in cells);
+}
+
 /**
  * The cells of a write, with the rates text added whenever the write touches
  * the rate or the tax lines. `stored` is the row as it is now (omit for a new
  * row): what the write does not set is read from there. A write that sets the
- * rates text itself, or touches neither source, is returned unchanged, and so
+ * rates text itself, or changes neither source, is returned unchanged, and so
  * is any write on a table that has no such column yet.
  */
 export function withTaxRates<V>(
@@ -66,9 +80,11 @@ export function withTaxRates<V>(
   if (!ratesId || ratesId in cells) return cells;
   const rateId = ids.get(TAX_RATE_COLUMN);
   const linesId = ids.get(MEAL_COLUMNS.taxLines);
-  const setsRate = rateId !== undefined && rateId in cells;
-  const setsLines = linesId !== undefined && linesId in cells;
-  if (!setsRate && !setsLines) return cells;
+  // A write that repeats what the row already holds (an import run again, a form
+  // saved without touching the lines) changes nothing, so the text stays as it
+  // is: also a text a person has typed.
+  const changes = (id: string | undefined): boolean => id !== undefined && id in cells && (!stored || !sameCell(cells[id], stored[id]));
+  if (!changes(rateId) && !changes(linesId)) return cells;
   const value = (id: string | undefined): unknown => (id === undefined ? null : id in cells ? cells[id] : (stored?.[id] ?? null));
   return { ...cells, [ratesId]: formatTaxRates(parseTaxLines(value(linesId)), numberOrNull(value(rateId))) };
 }

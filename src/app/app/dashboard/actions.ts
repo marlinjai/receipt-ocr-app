@@ -1,6 +1,6 @@
 'use server';
 
-import { withTaxRates } from '@/lib/tax-rates';
+import { touchesTaxRates, withTaxRates } from '@/lib/tax-rates';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
@@ -162,18 +162,8 @@ export async function reorderSelectOptions(columnId: string, optionIds: string[]
 export async function createRow(input: CreateRowInput): Promise<Row> {
   await requireTableAccess(input.tableId, 'receipts.row.write');
   const adapter = getAdapter();
-  return adapter.createRow({ ...input, cells: input.cells ? await cellsWithTaxRates(input.tableId, input.cells) : input.cells });
-}
-
-/**
- * A rate typed into the grid shows up in the rates text too (see
- * `lib/tax-rates.ts`): the text follows the row's tax lines when it has any,
- * else the rate just typed. Only a write that touches the rate or the lines
- * costs the extra read of the columns.
- */
-async function cellsWithTaxRates(tableId: string, cells: Record<string, CellValue>, stored?: Record<string, unknown>): Promise<Record<string, CellValue>> {
-  const columns = await getAdapter().getColumns(tableId);
-  return withTaxRates(columns, cells, stored) as Record<string, CellValue>;
+  if (!input.cells) return adapter.createRow(input);
+  return adapter.createRow({ ...input, cells: withTaxRates(await adapter.getColumns(input.tableId), input.cells) as Record<string, CellValue> });
 }
 
 export async function getRow(rowId: string): Promise<Row | null> {
@@ -188,9 +178,22 @@ export async function getRows(tableId: string, query?: QueryOptions): Promise<Qu
 
 export async function updateRow(rowId: string, cells: Record<string, CellValue>): Promise<Row> {
   await requireRowAccess(rowId, 'receipts.row.write');
+  const { tableId } = await rowTable(rowId);
   const adapter = getAdapter();
+  // A rate typed into the grid shows up in the rates text too (see
+  // `lib/tax-rates.ts`). Every edit reads the columns to know whether it is
+  // one; only an edit of the rate or the tax lines also reads the stored row.
+  const columns = await adapter.getColumns(tableId);
+  if (!touchesTaxRates(columns, cells)) return adapter.updateRow(rowId, cells);
   const stored = await adapter.getRow(rowId);
-  return adapter.updateRow(rowId, stored ? await cellsWithTaxRates(stored.tableId, cells, stored.cells) : cells);
+  return adapter.updateRow(rowId, withTaxRates(columns, cells, stored?.cells) as Record<string, CellValue>);
+}
+
+/** The table a row belongs to; the row was authorized just before. */
+async function rowTable(rowId: string): Promise<{ tableId: string }> {
+  const tableId = (await resolveRowTableIds([rowId])).get(rowId);
+  if (!tableId) throw new Error('Row not found');
+  return { tableId };
 }
 
 /** Why a receipt was kept when a delete was asked for. */
@@ -283,7 +286,12 @@ export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<Row[]> {
   for (const tableId of tableIds) {
     await requireTableAccess(tableId, 'receipts.row.write');
   }
-  return getAdapter().bulkCreateRows(await Promise.all(inputs.map(async (i) => ({ ...i, cells: i.cells ? await cellsWithTaxRates(i.tableId, i.cells) : i.cells }))));
+  const adapter = getAdapter();
+  // The columns of each table once, not once per row.
+  const columnsByTable = new Map(await Promise.all(tableIds.map(async (tableId) => [tableId, await adapter.getColumns(tableId)] as const)));
+  return adapter.bulkCreateRows(
+    inputs.map((i) => (i.cells ? { ...i, cells: withTaxRates(columnsByTable.get(i.tableId) ?? [], i.cells) as Record<string, CellValue> } : i)),
+  );
 }
 
 async function requireRowsAccess(rowIds: string[]): Promise<void> {

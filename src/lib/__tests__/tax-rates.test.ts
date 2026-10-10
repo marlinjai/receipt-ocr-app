@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatTaxRates, withTaxRates } from '../tax-rates';
+import { formatTaxRates, touchesTaxRates, withTaxRates } from '../tax-rates';
 
 const COLUMNS = [
   { id: 'c-rate', name: 'Tax Rate' },
@@ -38,8 +38,8 @@ describe('withTaxRates: the text follows every write of the rate or the tax line
     expect(withTaxRates(COLUMNS, { 'c-rate': 7, 'c-lines': lines([7, 30], [19, 12]) })['c-rates']).toBe('7 % + 19 %');
     // A rate typed into the grid on a receipt with two printed rates does not make it a one-rate receipt.
     expect(withTaxRates(COLUMNS, { 'c-rate': 19 }, { 'c-lines': lines([7, 30], [19, 12]), 'c-rate': 7 })['c-rates']).toBe('7 % + 19 %');
-    // New lines, the rate comes from the row.
-    expect(withTaxRates(COLUMNS, { 'c-lines': '' }, { 'c-rate': 19 })['c-rates']).toBe('19 %');
+    // The lines are cleared: the rate comes from the row.
+    expect(withTaxRates(COLUMNS, { 'c-lines': '' }, { 'c-rate': 19, 'c-lines': lines([7, 30], [19, 12]) })['c-rates']).toBe('19 %');
   });
 
   it('clearing the rate clears the text', () => {
@@ -53,6 +53,25 @@ describe('withTaxRates: the text follows every write of the rate or the tax line
     expect(withTaxRates(COLUMNS, typed)).toBe(typed);
     const old = { 'c-rate': 19 };
     expect(withTaxRates(COLUMNS.filter((c) => c.id !== 'c-rates'), old)).toBe(old);
+  });
+
+  it('a write that repeats what the row holds leaves the text alone, also one a person typed', () => {
+    const typed = { 'c-rate': 19, 'c-rates': 'von Hand', 'c-lines': '' };
+    const again = { 'c-rate': 19, 'c-lines': '' };
+    expect(withTaxRates(COLUMNS, again, typed)).toBe(again);
+    // The same rate as text (an import) is the same rate.
+    const asText = { 'c-rate': '19' };
+    expect(withTaxRates(COLUMNS, asText, typed)).toBe(asText);
+    // A different rate is a change, and the text follows.
+    expect(withTaxRates(COLUMNS, { 'c-rate': 7 }, typed)['c-rates']).toBe('7 %');
+  });
+
+  it('knows which writes need the stored row', () => {
+    expect(touchesTaxRates(COLUMNS, { 'c-name': 'Beleg' })).toBe(false);
+    expect(touchesTaxRates(COLUMNS, { 'c-rate': 19 })).toBe(true);
+    expect(touchesTaxRates(COLUMNS, { 'c-lines': '' })).toBe(true);
+    expect(touchesTaxRates(COLUMNS, { 'c-rate': 19, 'c-rates': 'x' })).toBe(false);
+    expect(touchesTaxRates(COLUMNS.filter((c) => c.id !== 'c-rates'), { 'c-rate': 19 })).toBe(false);
   });
 
   it('reads a rate stored as text and ignores lines that are not lines', () => {

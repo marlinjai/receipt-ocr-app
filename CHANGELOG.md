@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The dashboard always shows every receipt: the table fetches the remaining pages by itself and the "load more" button is gone, so sums and groups never stand on a partial list
 - Table views (Table, By Konto, By Vendor): columns can be resized, sorted and aligned from the header again, and a receipt can be dragged from one group into another by the grip on its row, which changes the grouped column (for the Table view: the category). Dragging one of several selected receipts takes the selection along. From `@marlinjai/data-table-react` 0.5.0
 - Contacts have their own page at `/app/contacts`: one searchable list of persons and organizations and one panel per contact; merging and custom fields sit under "Verwaltung". The meal register links to it
 - Entries in the meal register can be edited ("Bearbeiten"), with the same form as open meals; unsaved changes are not dropped without asking

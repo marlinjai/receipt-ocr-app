@@ -212,6 +212,13 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [selectedRows, handleDeleteSelected]);
 
+  // The ledger always shows every receipt: sums, groups and the review of a year are
+  // wrong on a partial list. The table loads in pages, so the next page is fetched as
+  // soon as the previous one has arrived, until nothing is left.
+  useEffect(() => {
+    if (hasMore && !isRowsLoading) void loadMore();
+  }, [hasMore, isRowsLoading, loadMore]);
+
   // Load select options for all select columns
   useEffect(() => {
     columns
@@ -279,8 +286,6 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
             sorts={sorts}
             onSortChange={setSorts}
             isLoading={isRowsLoading}
-            hasMore={hasMore}
-            onLoadMore={loadMore}
             groupConfig={currentView?.config?.groupConfig as GroupConfig | undefined}
             onGroupConfigChange={(config) => {
               if (currentView) {

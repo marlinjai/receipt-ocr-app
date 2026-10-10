@@ -1,6 +1,10 @@
 import type { OcrResult } from '@/lib/ocr-types';
 import { CATEGORY_TO_KONTO } from '@/lib/receipts-constants';
 import { defaultTaxRate } from '@/lib/meals/classify';
+import { MEAL_CATEGORY } from '@/lib/receipts-constants';
+import { readAmounts, type AmountCheck, type TaxGroup } from '@/lib/extraction/amounts';
+import { mealEvidence, type MealEvidence } from '@/lib/extraction/meal-evidence';
+import { readVendor, type VendorConfidence } from '@/lib/extraction/vendor';
 
 export interface ExtractionResult {
   name: string; // descriptive summary, always generated
@@ -11,133 +15,20 @@ export interface ExtractionResult {
   date: string | null; // ISO 8601
   category: string | null; // matches CATEGORY_OPTIONS (SKR03) from receipts-table.ts
   konto: string | null; // SKR03 account number (e.g. "4650")
-  currency: string; // ISO 4217 code, e.g. "EUR", "USD", "GBP" — defaults to "EUR" when ambiguous
+  currency: string; // ISO 4217 code, e.g. "EUR", "USD", "GBP"; defaults to "EUR" when ambiguous
 }
 
-// ── Amount Extraction ────────────────────────────────────────────────
-
-const CURRENCY_SYMBOL = /[$€£]/;
-const US_NUMBER = /\d{1,3}(?:,\d{3})*\.\d{2}/; // 1,234.56
-const EU_NUMBER = /\d{1,3}(?:\.\d{3})*,\d{2}/; // 1.234,56
-const PLAIN_NUMBER = /\d+\.\d{2}/; // 123.45
-
-function parseAmount(raw: string): number | null {
-  const cleaned = raw.replace(CURRENCY_SYMBOL, '').trim();
-  // European format: 1.234,56 → 1234.56
-  if (EU_NUMBER.test(cleaned)) {
-    const normalized = cleaned.replace(/\./g, '').replace(',', '.');
-    const val = parseFloat(normalized);
-    return isNaN(val) ? null : val;
-  }
-  // US format: 1,234.56 → 1234.56
-  const normalized = cleaned.replace(/,/g, '');
-  const val = parseFloat(normalized);
-  return isNaN(val) ? null : val;
-}
-
-const AMOUNT_PATTERN = new RegExp(
-  `(?:[$€£]\\s*)?(?:${US_NUMBER.source}|${EU_NUMBER.source}|${PLAIN_NUMBER.source})(?:\\s*[$€£])?`,
-  'g'
-);
-
-const HIGH_PRIORITY_TOTAL = /(?:grand\s+total|total\s+due|amount\s+due|balance\s+due)\s*[:\-]?\s*/i;
-const MEDIUM_PRIORITY_TOTAL = /(?:^|\s)total\s*[:\-]?\s*/i;
-const SUBTOTAL_PATTERN = /sub\s*total/i;
-const EU_TOTAL = /(?:gesamt|summe|montant|totale?|brutto)\s*[:\-]?\s*/i;
-const NET_PATTERN = /(?:sub\s*total|net|netto|net\s*amount|before\s*tax|excl\.?\s*(?:tax|vat|mwst))\s*[:\-]?\s*/i;
-const TAX_PATTERN = /(?:(?:sales\s+)?tax|vat|mwst|ust|tva|iva|gst|hst)\s*[:\-]?\s*/i;
-
-function extractAmountFromLine(line: string): number | null {
-  const amounts = line.match(AMOUNT_PATTERN);
-  if (amounts) {
-    const val = parseAmount(amounts[amounts.length - 1]);
-    if (val !== null && val > 0) return val;
-  }
-  return null;
-}
-
-interface AmountBreakdown {
-  gross: number | null;
-  net: number | null;
-  tax: number | null;
-}
-
-function extractAmounts(text: string): AmountBreakdown {
-  const lines = text.split('\n');
-  let gross: number | null = null;
-  let net: number | null = null;
-  let tax: number | null = null;
-
-  // Extract net (subtotal / before tax)
-  for (const line of lines) {
-    if (NET_PATTERN.test(line)) {
-      const val = extractAmountFromLine(line);
-      if (val !== null) { net = val; break; }
-    }
-  }
-
-  // Extract tax
-  for (const line of lines) {
-    if (TAX_PATTERN.test(line) && !MEDIUM_PRIORITY_TOTAL.test(line)) {
-      const val = extractAmountFromLine(line);
-      if (val !== null) { tax = val; break; }
-    }
-  }
-
-  // Extract gross (total)
-  // Pass 1: High-priority labeled totals
-  for (const line of lines) {
-    if (HIGH_PRIORITY_TOTAL.test(line)) {
-      const val = extractAmountFromLine(line);
-      if (val !== null) { gross = val; break; }
-    }
-  }
-
-  // Pass 2: Generic "Total" (excluding subtotal)
-  if (gross === null) {
-    for (const line of lines) {
-      if (MEDIUM_PRIORITY_TOTAL.test(line) && !SUBTOTAL_PATTERN.test(line) && !TAX_PATTERN.test(line)) {
-        const val = extractAmountFromLine(line);
-        if (val !== null) { gross = val; break; }
-      }
-    }
-  }
-
-  // Pass 3: European keywords
-  if (gross === null) {
-    for (const line of lines) {
-      if (EU_TOTAL.test(line)) {
-        const val = extractAmountFromLine(line);
-        if (val !== null) { gross = val; break; }
-      }
-    }
-  }
-
-  // Pass 4: Fallback — largest amount
-  if (gross === null) {
-    const allAmounts = text.match(AMOUNT_PATTERN);
-    if (allAmounts) {
-      for (const raw of allAmounts) {
-        const val = parseAmount(raw);
-        if (val !== null && val > 0 && (gross === null || val > gross)) {
-          gross = val;
-        }
-      }
-    }
-  }
-
-  // Derive missing values if we have two of three
-  if (gross !== null && net !== null && tax === null) {
-    const derived = Math.round((gross - net) * 100) / 100;
-    if (derived > 0) tax = derived;
-  } else if (gross !== null && tax !== null && net === null) {
-    const derived = Math.round((gross - tax) * 100) / 100;
-    if (derived > 0) net = derived;
-  } else if (net !== null && tax !== null && gross === null) {
-    gross = Math.round((net + tax) * 100) / 100;
-  }
-
-  return { gross, net, tax };
+/** What the text reader adds to the fields: how it got them, for the checks that follow. */
+export interface TextExtraction extends ExtractionResult {
+  /** A tip printed on the receipt, on top of the bill. */
+  tip: number | null;
+  /** The tax groups the receipt prints, largest first. */
+  taxGroups: TaxGroup[];
+  /** True when the tax rate is printed on the receipt; false when it is the default for this kind of receipt. */
+  taxRatePrinted: boolean;
+  amountChecks: AmountCheck[];
+  vendorConfidence: VendorConfidence;
+  mealEvidence: MealEvidence;
 }
 
 // ── Currency Extraction ──────────────────────────────────────────────
@@ -185,8 +76,10 @@ function toISO(year: number, month: number, day: number): string | null {
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   const y = normalizeYear(year);
   if (y < 1900 || y > 2100) return null;
-  const d = new Date(y, month - 1, day);
-  if (d.getFullYear() !== y || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
+  // Midnight UTC of the printed day, whatever time zone the server runs in:
+  // built in local time, a receipt of the 9th became the 8th at 23:00 UTC.
+  const d = new Date(Date.UTC(y, month - 1, day));
+  if (d.getUTCFullYear() !== y || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return null;
   return d.toISOString();
 }
 
@@ -262,35 +155,6 @@ function isNoiseLine(text: string): boolean {
   const trimmed = text.trim();
   if (GENERIC_HEADINGS.test(trimmed)) return true;
   return NOISE_PATTERNS.some((p) => p.test(trimmed));
-}
-
-function extractVendorSpatial(blocks: OcrResult['blocks']): string | null {
-  if (!blocks || blocks.length === 0) return null;
-
-  const sorted = [...blocks].sort((a, b) => a.boundingBox.y - b.boundingBox.y);
-
-  for (const block of sorted.slice(0, 10)) {
-    const text = block.text.trim();
-    if (!isNoiseLine(text) && text.length >= 3 && text.length <= 60) {
-      return text;
-    }
-  }
-  return null;
-}
-
-function extractVendorFallback(text: string): string | null {
-  const lines = text.split('\n').slice(0, 8);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!isNoiseLine(trimmed) && trimmed.length >= 3 && trimmed.length <= 60) {
-      return trimmed;
-    }
-  }
-  return null;
-}
-
-function extractVendor(ocrData: OcrResult): string | null {
-  return extractVendorSpatial(ocrData.blocks) ?? extractVendorFallback(ocrData.fullText);
 }
 
 // ── Name Generation ──────────────────────────────────────────────────
@@ -370,6 +234,7 @@ function extractName(
   ocrData: OcrResult,
   gross: number | null,
   date: string | null,
+  currency: string,
 ): string {
   const lines = ocrData.fullText.split('\n');
   const items = extractItems(lines, vendor);
@@ -384,7 +249,7 @@ function extractName(
   }
 
   if (gross !== null) {
-    parts.push(`€${gross.toFixed(2)}`);
+    parts.push(`${gross.toFixed(2)} ${currency}`);
   }
 
   if (date) {
@@ -395,18 +260,11 @@ function extractName(
   }
 
   if (parts.length > 0) {
-    return parts.join(' – ');
+    return parts.join(', ');
   }
 
-  // Absolute fallback: first non-noise line from OCR
-  for (const line of lines.slice(0, 10)) {
-    const trimmed = line.trim();
-    if (trimmed.length >= 3 && !isNoiseLine(trimmed)) {
-      return trimmed;
-    }
-  }
-
-  return 'Receipt';
+  // Nothing could be read: the caller names the row after its file.
+  return '';
 }
 
 // ── Category Inference ───────────────────────────────────────────────
@@ -482,14 +340,24 @@ const ITEM_CATEGORY_HINTS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\b(?:cpu|gpu|mainboard|grafikkarte|netzteil|gehäuse|arbeitsspeicher|laufwerk)\b/i, category: 'Hardware & IT' },
 ];
 
-function inferCategory(vendor: string | null, fullText: string): string | null {
-  // Pass 1: Known vendor lookup
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function inferCategory(vendor: string | null, fullText: string, evidence: MealEvidence): string | null {
+  // Pass 1: Known vendor lookup. Whole words only: "total" inside "Totally
+  // Vegan" or "bp" inside any longer word must not decide the category.
   if (vendor) {
     const lower = vendor.toLowerCase();
     for (const [key, category] of Object.entries(VENDOR_CATEGORY_MAP)) {
-      if (lower.includes(key)) return category;
+      if (new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(key)}(?![\\p{L}\\p{N}])`, 'u').test(lower)) return category;
     }
   }
+
+  // Pass 1b: a table, a waiter, a tip line, the printed hospitality form. A
+  // receipt that carries them is a restaurant receipt whatever keyword
+  // follows ("Server: ..." is the waiter, not a machine).
+  if (evidence.strong) return MEAL_CATEGORY;
 
   // Pass 2: Keyword scan on full text
   for (const { pattern, category } of KEYWORD_CATEGORIES) {
@@ -510,28 +378,40 @@ function inferCategory(vendor: string | null, fullText: string): string | null {
 // (restaurant food is 19 percent until the end of 2025 and 7 percent from
 // 2026), 7 percent for books, 19 percent otherwise. See src/lib/meals/classify.ts.
 
-export function extractReceiptFields(ocrData: OcrResult): ExtractionResult {
-  const vendor = extractVendor(ocrData);
-  const { gross, net, tax } = extractAmounts(ocrData.fullText);
-  const date = extractDate(ocrData.fullText);
-  const category = inferCategory(vendor, ocrData.fullText);
-  const name = extractName(vendor, ocrData, gross, date);
+export function extractReceiptFields(ocrData: OcrResult): TextExtraction {
+  const text = ocrData.fullText;
+  const reading = readVendor(text);
+  const vendor = reading.vendor;
+  const date = extractDate(text);
+  const currency = extractCurrency(text);
+  const amounts = readAmounts(text, { date, currency });
+  const evidence = mealEvidence(text);
+  const category = inferCategory(vendor, text, evidence);
+  const name = extractName(vendor, ocrData, amounts.gross, date, currency);
   const konto = category ? CATEGORY_TO_KONTO[category] ?? null : null;
-  const currency = extractCurrency(ocrData.fullText);
 
-  // Calculate tax rate from gross and net, or default based on category
-  let taxRate: number | null = null;
-  if (gross !== null && net !== null && net > 0) {
-    taxRate = Math.round(((gross - net) / net) * 10000) / 100;
-  } else {
-    taxRate = defaultTaxRate(category, date, null);
+  // The printed rate, or the default for this kind of receipt on this date.
+  const taxRate = amounts.taxRate ?? defaultTaxRate(category, date, null);
+  let net = amounts.net;
+  if (net === null && amounts.gross !== null) {
+    net = Math.round((amounts.gross / (1 + taxRate / 100)) * 100) / 100;
   }
 
-  // Always calculate net from gross if not explicitly found
-  let finalNet = net;
-  if (finalNet === null && gross !== null && taxRate !== null) {
-    finalNet = Math.round((gross / (1 + taxRate / 100)) * 100) / 100;
-  }
-
-  return { name, vendor, gross, net: finalNet, taxRate, date, category, konto, currency };
+  return {
+    name,
+    vendor,
+    gross: amounts.gross,
+    net,
+    taxRate,
+    date,
+    category,
+    konto,
+    currency,
+    tip: amounts.tip,
+    taxGroups: amounts.taxGroups,
+    taxRatePrinted: amounts.taxRate !== null,
+    amountChecks: amounts.checks,
+    vendorConfidence: reading.confidence,
+    mealEvidence: evidence,
+  };
 }

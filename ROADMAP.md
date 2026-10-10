@@ -27,26 +27,43 @@
   and public bank data access exist. After stage 2. Plan:
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
 
-- [ ] Extraction defects found in the first live upload (2026-10-08, a 21-page scan of
-  restaurant receipts uploaded with "One receipt per page"): (1) a receipt number was read
-  as the total (916,752.88 instead of 61.40), so a total needs a plausibility check against
-  the line items and the tax lines; (2) tax rates come out as nonsense (526.37, 844.06)
-  when the net amount is misread; (3) 2 of 21 pages were saved as an empty "Receipt" row
-  with no vendor, date or amount and no hint that reading failed; (4) a bar receipt was
-  categorised as software and a restaurant receipt as "other", so neither reached the meal
-  queue; (5) vendor names are taken from the first printed line ("Since 2016", "+ mit
-  Haferdrink", "Indisches") instead of the business name; (6) the look-alike prompt was
-  lost when the upload page was left, and the duplicate stayed saved without a trace in
-  the queue; (7) the meal register year picker offers only the current year until a meal
-  is complete, so a prior-year backlog looks empty. (2026-10-08)
-- [ ] Deleting a receipt in the dashboard table leaves its stored file behind: `deleteRow`
-  and `bulkDeleteRows` in `src/app/app/dashboard/actions.ts` remove the row, its file
-  references and its guests, but never the object in the file store (the table's file
-  adapter treats deletion as reference-only on purpose). The meals page now deletes
-  the stored file too (`deleteReceiptRows` in `src/lib/meals/service.ts`, file first,
-  row second, shared files kept). Needs the owner's decision whether the dashboard
-  should delete for good the same way; if yes, route both dashboard actions through
-  `deleteReceiptRows`. Found on 2026-10-08 while building the batch actions. (2026-10-08)
+- [x] Extraction defects found in the first live upload (2026-10-08, a 21-page scan of
+  restaurant receipts uploaded with "One receipt per page"). Done 2026-10-10. Root cause
+  behind four of the seven: the language-model classifier never ran in production (no
+  Anthropic key is set there, the call threw, the error was swallowed), so every receipt
+  was filed by pattern matching alone. It now runs through the OpenRouter key production
+  has, and a missing or failed classification is recorded on the receipt. (1) and (2):
+  total, net and tax come from the tax groups the receipt prints and are confirmed by its
+  own arithmetic (`src/lib/extraction/amounts.ts`); a receipt number, a date or a rate is
+  no longer an amount; a printed tip is split off the total; a total that only a label
+  vouches for is put up for a look; nothing is guessed from the largest number. (3) a page
+  nothing could be read from is named "Nicht lesbar: <file>" and stands in the new review
+  list. (4) a table, a waiter, a tip line or the printed hospitality form make a restaurant
+  receipt (`meal-evidence.ts`). (5) the vendor reader skips slogans, item lines and misread
+  logos and joins a name set in several lines (`vendor.ts`). (6) look-alike receipts are
+  found on read from the stored receipts and the decision "keep both" is stored (table
+  `receipt_reviews`, migration 0014), so the question survives leaving the upload page.
+  (7) could not be reproduced: the year list was already built from all meal receipts,
+  complete or not; it is now pinned by tests, the current year is always offered, and
+  meals without a date (which belong to no year) are counted on the register tab.
+  Checked against all 21 receipts of that upload, restored from the verified backup into
+  a local database. (2026-10-08)
+- [ ] Receipts stored before 2026-10-10 keep the readings of the old reader (for example
+  a total that includes the tip, or a slogan as the vendor). The review list flags the
+  ones with impossible figures; the others look plausible and are not flagged. Offer a
+  new reading of the stored text per receipt, shown as a comparison and applied only on
+  confirmation, never overwriting silently. (2026-10-10)
+- [ ] Direct model access with web search for the classifier is optional and not set up:
+  it needs an Anthropic key in the receipts production settings (`ANTHROPIC_API_KEY`, a
+  credential only the owner can issue). Without it the classifier decides from the
+  receipt text alone through OpenRouter, which is what runs today. (2026-10-10)
+- [x] Deleting a receipt in the dashboard table left its stored file behind. Done
+  2026-10-10, decided by the owner's standing goal: the dashboard deletes for good, the
+  same way the meals page does. `deleteRow` and `bulkDeleteRows` in
+  `src/app/app/dashboard/actions.ts` go through `deleteReceiptRows` (stored file first,
+  row second, a file another receipt still shows is kept, a receipt whose file cannot be
+  deleted stays complete and is reported). The dashboard now asks before deleting, in
+  the page: before, Backspace on a selection deleted at once. (2026-10-08)
 - [x] Production database backups verified: six-hourly Coolify dumps, 28 copies
   locally for seven days, native European Union R2 copies for 30 days, and an hourly
   additional copy to Hermes with 30-day retention.
@@ -70,14 +87,12 @@
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a
   tenant-scoped key so their access is entitlement-checked like browser sessions. (2026-09-10)
-- [ ] Deploy Docs GitHub Actions workflow has failed on every run since at least
-  2026-08-03 ("Missing universal auth credentials": the Infisical secrets-action
-  step wants `INFISICAL_CLIENT_ID`/`INFISICAL_CLIENT_SECRET` as repo secrets, which
-  this repo does not have). Two real options: (1) provision the two Infisical
-  secrets on this repo, or (2) retire the standalone docs site and switch to the
-  satellite `docs-trigger.yml` pattern used by other repos (needs changes in the
-  hub ERP-suite repo too). Needs Marlin to decide which docs site survives and
-  either provision a secret or make the hub-repo change. (2026-09-10)
+- [x] Deploy Docs GitHub Actions workflow failed on every run from at least 2026-08-03.
+  Resolved, this line was stale: the Infisical credentials were provisioned on the
+  repository and the workflow was repaired in pull request 27 (action pin, project slug,
+  scoped path). Last failure 2026-09-14; every run since has succeeded, latest run
+  37986504043 on commit 565e4e1 (2026-10-09), and https://docs.receipts.lumitra.co answers
+  200 (checked 2026-10-10). The standalone docs site stays. (2026-09-10)
 - [ ] The dashboard workspace dropdown still lists a drained legacy workspace
   labeled "Lola Stories" whose data was migrated away (leftover from the PR #18
   app-grant gating cleanup). The ambiguous-label half of this is fixed (adopting

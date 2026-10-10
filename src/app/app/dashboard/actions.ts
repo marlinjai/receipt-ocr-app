@@ -3,8 +3,8 @@
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
-import { deleteGuestsForRows } from '@/lib/meals/service';
-import { deleteDecisionsForRows } from '@/lib/tax/service';
+import { deleteReceiptRows } from '@/lib/meals/service';
+import { deleteStoredFile } from '@/lib/stored-files';
 import { tenantIdForWorkspace } from '@/lib/auth-workspace';
 import { stampTableOwner } from '@/lib/receipts-table';
 import {
@@ -178,14 +178,79 @@ export async function updateRow(rowId: string, cells: Record<string, CellValue>)
   return getAdapter().updateRow(rowId, cells);
 }
 
+/** Why a receipt was kept when a delete was asked for. */
+export type KeptReason = 'not_found' | 'file_delete_failed' | 'failed';
+
+export interface DeleteReceiptsOutcome {
+  deleted: string[];
+  kept: Array<{ rowId: string; reason: KeptReason }>;
+}
+
+/**
+ * Delete receipts for good, the same way the meals page does: the stored file
+ * first, the row with its file references, guests, tax decision and review
+ * state only after that succeeded (`deleteReceiptRows`). A file that another
+ * receipt still shows is kept. When the file store refuses, the receipt stays
+ * complete and is reported, instead of the row vanishing while its file lives
+ * on with nothing pointing at it.
+ *
+ * Every row is authorized through its own table, so a batch across workspaces
+ * the session may write to is carried out workspace by workspace.
+ */
+async function removeReceipts(rowIds: string[]): Promise<DeleteReceiptsOutcome> {
+  const ids = [...new Set(rowIds.filter((id) => typeof id === 'string' && id))];
+  const outcome: DeleteReceiptsOutcome = { deleted: [], kept: [] };
+  const tableByRow = await resolveRowTableIds(ids);
+  const workspaceByTable = new Map<string, string>();
+  const rowsByWorkspace = new Map<string, string[]>();
+  for (const id of ids) {
+    const tableId = tableByRow.get(id);
+    if (!tableId) {
+      outcome.kept.push({ rowId: id, reason: 'not_found' });
+      continue;
+    }
+    let workspaceId = workspaceByTable.get(tableId);
+    if (!workspaceId) {
+      workspaceId = (await requireTableAccess(tableId, 'receipts.row.write')).workspaceId;
+      workspaceByTable.set(tableId, workspaceId);
+    }
+    rowsByWorkspace.set(workspaceId, [...(rowsByWorkspace.get(workspaceId) ?? []), id]);
+  }
+  for (const [workspaceId, rows] of rowsByWorkspace) {
+    // The company id is only stamped on rows this call would create; a delete creates none.
+    const result = await deleteReceiptRows(prisma, { workspaceId, tenantId: null }, rows, { deleteStoredFile });
+    outcome.deleted.push(...result.done);
+    outcome.kept.push(...result.skipped);
+  }
+  return outcome;
+}
+
+/**
+ * The dashboard's delete: what was removed and what was kept, as a value. In a
+ * production build a thrown server-action error reaches the browser without
+ * its message, so the page could not say which receipts are still there.
+ */
+export async function deleteReceiptsForGood(rowIds: string[]): Promise<DeleteReceiptsOutcome> {
+  if (!Array.isArray(rowIds) || rowIds.length === 0 || rowIds.length > 500) throw new ReceiptsAuthError(404);
+  return removeReceipts(rowIds);
+}
+
+/**
+ * The table adapter's row delete (also used by the chat sidebar and by the
+ * upload page when a look-alike receipt is discarded). Same safe delete; this
+ * contract returns nothing, so a receipt that had to be kept is an error here
+ * and never a silent success.
+ */
 export async function deleteRow(rowId: string): Promise<void> {
-  await requireRowAccess(rowId, 'receipts.row.write');
-  await getAdapter().deleteRow(rowId);
-  // The meal guests of a receipt hang off its row id without a foreign key
-  // (rows live in two storage layouts), so they are removed here.
-  await deleteGuestsForRows(prisma, [rowId]);
-  // Same for the tax decision on the row.
-  await deleteDecisionsForRows(prisma, [rowId]);
+  const outcome = await removeReceipts([rowId]);
+  const kept = outcome.kept[0];
+  if (!kept) return;
+  if (kept.reason === 'not_found') throw new ReceiptsAuthError(404);
+  throw new Error(
+    kept.reason === 'file_delete_failed'
+      ? 'The stored file could not be deleted, so the receipt was kept.'
+      : 'The receipt could not be deleted and was kept.',
+  );
 }
 
 export async function archiveRow(rowId: string): Promise<void> {
@@ -218,10 +283,13 @@ async function requireRowsAccess(rowIds: string[]): Promise<void> {
 }
 
 export async function bulkDeleteRows(rowIds: string[]): Promise<void> {
+  // All or nothing on access, as before: an id that is not a row of a table
+  // this session may write to refuses the whole batch before anything is removed.
   await requireRowsAccess(rowIds);
-  await getAdapter().bulkDeleteRows(rowIds);
-  await deleteGuestsForRows(prisma, rowIds);
-  await deleteDecisionsForRows(prisma, rowIds);
+  const outcome = await removeReceipts(rowIds);
+  if (outcome.kept.length > 0) {
+    throw new Error(`${outcome.kept.length} of ${rowIds.length} receipts could not be deleted and were kept.`);
+  }
 }
 
 export async function bulkArchiveRows(rowIds: string[]): Promise<void> {

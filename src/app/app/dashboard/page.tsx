@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth';
 import { sessionWorkspaceId } from '@/lib/auth-guards';
 import { incompleteQueue } from '@/lib/meals/register';
 import { loadMealRecords } from '@/lib/meals/service';
+import { loadReviewQueue, type ReviewEntry } from '@/lib/review/service';
 import DashboardClient from './DashboardClient';
 
 export const dynamic = 'force-dynamic';
@@ -43,11 +44,23 @@ export default async function DashboardPage() {
     console.error('[dashboard] open meal count failed', e);
   }
 
+  // Receipts that need a look. Same rule as the badge: the list is help, not
+  // a condition for seeing the receipts. The page reloads it after each action.
+  let initialReview: ReviewEntry[] | null = [];
+  try {
+    initialReview = await loadReviewQueue(prisma, workspaceId);
+  } catch (e) {
+    console.error('[dashboard] review queue failed', e);
+    // Null, not an empty list: the page then says the list could not be loaded.
+    initialReview = null;
+  }
+
   return (
     <DashboardClient
       tableId={table.id}
       workspaceId={workspaceId}
       openMealCount={openMealCount}
+      initialReview={initialReview}
     />
   );
 }

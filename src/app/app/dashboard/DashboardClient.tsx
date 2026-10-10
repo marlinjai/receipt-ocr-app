@@ -373,6 +373,19 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
                 </span>
               )}
             </Link>
+            <Link
+              href="/app/contacts"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
+              style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
+              title="Personen und Organisationen mit Kundennummern"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <circle cx="9" cy="8" r="3.5" />
+                <path d="M2.5 20c.6-3.4 3.2-5.5 6.5-5.5s5.9 2.1 6.5 5.5" />
+                <path d="M16 4.8a3.5 3.5 0 0 1 0 6.4M18.5 14.9c1.6.9 2.7 2.6 3 5.1" />
+              </svg>
+              Kontakte
+            </Link>
             <button
               onClick={() => exportCSV({ columns, rows: displayRows })}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"

@@ -64,7 +64,8 @@ workspace. Wave 2 (`docs/plans/2026-10-09-shared-contacts-wave2.md`) moved it be
 
 - Confirm in the start-up log that migration 0018 applied and the contacts layout step ran.
 - Remove the now unused `CONTACTS_STORE` entry from the receipts production secret project. It has
-  no effect once this is deployed; removing it avoids a variable nobody reads.
+  no effect once this is deployed; removing it avoids a variable nobody reads. Done 2026-10-10:
+  deleted through the secrets proxy, and a second look by name found it absent.
 - Open the contacts tab in the browser under both companies and check the counts.
 - Set this plan to completed and tick the roadmap line.
 

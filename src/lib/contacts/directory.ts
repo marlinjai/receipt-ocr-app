@@ -271,9 +271,20 @@ export interface RepointResult {
  * Point the meal guest rows that name `fromId` at `toId`. A row that already names
  * `toId` on the same meal is removed instead, so no meal lists one guest twice.
  * Printed names are not touched. Repeatable: rows already moved are not found again.
+ *
+ * With `authWorkspaceId` only the rows of that workspace are repointed. `db` may be
+ * a transaction client, so the repoint can be part of a larger all-or-nothing write.
  */
-export async function repointGuestRows(db: PrismaClient, fromId: string, toId: string): Promise<RepointResult> {
-  const rows = await db.mealGuest.findMany({ where: { contactId: fromId }, select: { id: true, rowId: true } });
+export async function repointGuestRows(
+  db: Pick<PrismaClient, 'mealGuest'>,
+  fromId: string,
+  toId: string,
+  scope: { authWorkspaceId?: string } = {},
+): Promise<RepointResult> {
+  const rows = await db.mealGuest.findMany({
+    where: { contactId: fromId, ...(scope.authWorkspaceId ? { authWorkspaceId: scope.authWorkspaceId } : {}) },
+    select: { id: true, rowId: true },
+  });
   let repointed = 0;
   let deduplicated = 0;
   for (const row of rows) {

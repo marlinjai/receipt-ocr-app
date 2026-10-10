@@ -277,8 +277,13 @@ describe('workspace isolation', () => {
     expect(await code(deleteInvoice(db, ctx, foreignInvoice))).toBe('invoice_not_found');
     expect(await code(deleteStatusChange(db, ctx, foreignChange))).toBe('status_not_found');
     expect(await code(deleteVatSettlement(db, ctx, foreignSettlement))).toBe('settlement_not_found');
-    // The same invoice number may exist in two workspaces.
+    // The same invoice number may exist in two workspaces. Counted over these two only:
+    // the test database is not emptied between runs, so earlier runs left the number behind.
     await saveInvoice(db, ctx, null, invoice({ number: 'FREMD-1' }));
-    expect(await db.taxIssuedInvoice.count({ where: { number: 'FREMD-1' } })).toBe(2);
+    expect(
+      await db.taxIssuedInvoice.count({
+        where: { number: 'FREMD-1', authWorkspaceId: { in: [ws.workspaceId, other.workspaceId] } },
+      }),
+    ).toBe(2);
   });
 });

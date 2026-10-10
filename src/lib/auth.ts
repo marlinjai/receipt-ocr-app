@@ -35,11 +35,14 @@ export const auth = createAuthBrainNextjs({
   // data. Behind the login they answered with a redirect, which made the app
   // impossible to install to the home screen.
   // /api/internal/erasure is auth-brain's signed erasure webhook: a machine caller
-  // that authenticates by HMAC over the raw body (see src/lib/erasure.ts).
+  // that authenticates by HMAC over the raw body (see src/lib/erasure.ts). The
+  // retention purge and the workspace move (src/lib/workspace-move.ts) are machine
+  // callers of the same kind, each with its own secret, each refusing without it.
   publicPaths: [
     '/api/health',
     '/api/internal/erasure',
     '/api/internal/retention/purge',
+    '/api/internal/workspace-move',
     '/manifest.json',
     '/icons/*',
     '/sw.js',

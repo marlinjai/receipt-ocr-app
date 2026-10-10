@@ -7,8 +7,8 @@
   company or a missing `CONTACTS_DATABASE_URL` fails loudly instead of falling back. Migration
   `0018_drop_own_contacts_table` drops the table `contacts` in the receipts database on deploy
   (4 stale rows, copied to the shared database under the same ids on 2026-10-09). Released on
-  Marlin's own yes. Afterwards remove the unused `CONTACTS_STORE` entry from the production secret
-  project. Plan: `docs/plans/2026-10-10-remove-own-contacts-table.md`. (2026-10-10)
+  Marlin's own yes. The unused `CONTACTS_STORE` entry was removed from the production secret
+  project the same day. Plan: `docs/plans/2026-10-10-remove-own-contacts-table.md`. (2026-10-10)
 - [ ] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
   (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax
   return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent
@@ -151,10 +151,12 @@
   business under Whiz-Art Media, personal under "marlinjai", one company per receipt by tax
   purpose). The workspace under "marlinjai" holds 24 receipts, none marked personal, and every
   finance table is still empty, so the whole workspace moves through auth-brain with all ids kept,
-  and "marlinjai" gets a fresh workspace. Prepared: plan and read-only dry run. Open: the
-  contacts-core transfer of the 4 guests, the restamp of the company on that workspace's rows, and
-  Marlin's one-line yes for the production step. Plan:
-  `docs/plans/2026-10-10-business-receipts-to-whiz-art-media.md`. (2026-10-10)
+  and "marlinjai" gets a fresh workspace. Built: the signed receipts endpoint `POST
+  /api/internal/workspace-move`, which restamps the company on every row of one workspace and
+  moves its guest contacts with `@marlinjai/contacts-core` 0.3.0, with a dry run (how to call it:
+  `docs/operations/workspace-move.md`). Open: Marlin's one-line yes, then the production run in
+  the order of the plan. Plan: `docs/plans/2026-10-10-business-receipts-to-whiz-art-media.md`.
+  (2026-10-10)
 
 ## In Progress
 

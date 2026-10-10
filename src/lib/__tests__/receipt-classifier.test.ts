@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
-import { classificationPrompt, classifierProvider, parseClassificationResponse, type ClassifyInput } from '../receipt-classifier';
+import { classificationPrompt, classifierProvider, parseClassificationResponse, textForModel, type ClassifyInput } from '../receipt-classifier';
 
 const INPUT: ClassifyInput = {
   vendor: 'Since 2016',
@@ -66,6 +66,22 @@ describe('the assignment: only what the document shows', () => {
 
   it('asks for the invoice total where the amount due is zero', () => {
     expect(classificationPrompt(INPUT, { webSearch: false })).toContain('never an amount due of 0');
+  });
+});
+
+describe('textForModel: what a long invoice keeps', () => {
+  it('sends a short text whole', () => {
+    expect(textForModel('Cafe\nSumme 5,00')).toBe('Cafe\nSumme 5,00');
+    expect(textForModel('x'.repeat(6000))).toHaveLength(6000);
+  });
+
+  it('keeps the head and the totals at the end of a long one, and marks the cut', () => {
+    const text = `Cursor\nUS$19.22 due October 29, 2025\n${'1\nUS$30.20\nUS$30.20\n'.repeat(500)}Total\nUS$19.22\nAmount due\nUS$19.22`;
+    const sent = textForModel(text);
+    expect(sent.length).toBeLessThanOrEqual(6010);
+    expect(sent.startsWith('Cursor\nUS$19.22 due October 29, 2025')).toBe(true);
+    expect(sent.endsWith('Total\nUS$19.22\nAmount due\nUS$19.22')).toBe(true);
+    expect(sent).toContain('\n[...]\n');
   });
 });
 

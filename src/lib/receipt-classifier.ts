@@ -26,8 +26,21 @@ import { parseMealClassification, type MealClassification } from '@/lib/meals/cl
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5-5';
 /** How often a paused server-tool turn is resumed before the answer is taken as it is. */
 const MAX_RESUMES = 3;
-/** The recognized text sent to the model. A till receipt is far shorter; an invoice keeps its head and totals. */
+/** The recognized text sent to the model. A till receipt is far shorter; a long invoice keeps its head and its end. */
 const TEXT_LIMIT = 6000;
+/** How much of that is the end of the text, where a long invoice prints its totals. */
+const TEXT_TAIL = 2000;
+
+/**
+ * The part of a long text the model gets: the head (vendor, date, the amount
+ * due many invoices open with) and the end (the totals block). Cut after the
+ * head alone, a usage invoice of three pages reached the model without any
+ * total, and it answered with a number from a line item.
+ */
+export function textForModel(fullText: string): string {
+  if (fullText.length <= TEXT_LIMIT) return fullText;
+  return `${fullText.slice(0, TEXT_LIMIT - TEXT_TAIL)}\n[...]\n${fullText.slice(-TEXT_TAIL)}`;
+}
 
 export class ClassifierUnavailableError extends Error {
   constructor() {
@@ -177,7 +190,7 @@ function userContent(input: ClassifyInput): string {
     input.vendor && `First reading of the vendor (may be wrong): ${input.vendor}`,
     input.gross !== null && `First reading of the total (may be wrong): ${input.gross}`,
     input.date && `Date: ${input.date}`,
-    `\nReceipt text:\n${input.fullText.slice(0, TEXT_LIMIT)}`,
+    `\nReceipt text:\n${textForModel(input.fullText)}`,
   ]
     .filter(Boolean)
     .join('\n');

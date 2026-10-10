@@ -2,6 +2,21 @@
 
 ## Planned
 
+- [x] The 2025 purchase documents from the tax folder are in the app: 221 under Whiz-Art Media
+  (241 receipts with the 20 that were there), 12 private ones under "marlinjai". Two files were
+  already present and were not added again. Missing dates were filled from the tax session's
+  table, and assignment and share were set from its draft expense table. Done 2026-10-10.
+- [ ] Vendor rules for shares the assignment column cannot hold: the 12 Freenet invoices of the
+  second mobile contract (50 percent employment costs; they still say "Privat"), and the 30
+  percent study part of the Telekom home internet and of Notion next to their 50 percent
+  business part. Set them as vendor rules in the finance area. (2026-10-10)
+- [ ] The reader misses the invoice date on Google, Adobe, Apple and Microsoft invoices (53 of
+  235 imported documents had none; filled by hand on 2026-10-10). Teach it those date formats
+  and add them as fixtures. Two imported documents also have no total (one Cursor invoice, the
+  phone leasing contract). (2026-10-10)
+- [ ] The reader's first guess for the assignment was "Privat" on 65 of 221 imported business
+  invoices (software subscriptions). Check why, since an unassigned receipt is an open check
+  and a wrongly private one is silently left out. (2026-10-10)
 - [x] Removed the receipts app's own contacts table and the `CONTACTS_STORE` switch (wave 4 of
   the shared contact list). The shared contacts database is the only contact store; a missing
   company or a missing `CONTACTS_DATABASE_URL` fails loudly instead of falling back. Migration

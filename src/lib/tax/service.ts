@@ -1033,7 +1033,9 @@ function buildPaymentsView(
     // What the OTHER accounts show leaving for the service; the wallet's own payout rows are not collections.
     for (const p of ruled) if (p.funding?.service === service.name && p.amountCents < 0 && holderOf.get(p.accountId)?.name !== service.name) collected.set(p.bookingDay.slice(0, 7), (collected.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
     if (collected.size === 0) continue;
-    for (const p of inYear) if (holderOf.get(p.accountId)?.name === service.name && p.amountCents < 0 && p.sourceKind === 'spend' && !p.byRule) listed.set(p.bookingDay.slice(0, 7), (listed.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
+    // The wallet's own payout rows are no purchases; a row the rule pairs with ANOTHER service (a PayPal
+    // purchase on the pay-later card) is still a purchase this service collects from the bank.
+    for (const p of inYear) if (holderOf.get(p.accountId)?.name === service.name && p.amountCents < 0 && p.sourceKind === 'spend' && !(p.byRule && p.funding?.service === service.name)) listed.set(p.bookingDay.slice(0, 7), (listed.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
     let running = 0;
     const months = [...new Set([...collected.keys(), ...listed.keys()])].sort().map((month) => {
       const collectedCents = collected.get(month) ?? 0;

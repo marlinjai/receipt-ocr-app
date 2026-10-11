@@ -926,6 +926,23 @@ describe('money that only funds another payment account', () => {
     expect(view.payments.unclassified.map((c) => c.label)).toEqual(expect.arrayContaining(['PAYPAL *GASTSHOP', 'PAYPAL *KIOSK']));
   });
 
+  it('a wallet purchase on the pay-later card still counts as a purchase the pay-later service collects from the bank', async () => {
+    const base = await bankAskedAbout();
+    const laterId = await createAccount(db, base.ctx, { label: 'Später zahlen', kind: 'payment_service' });
+    const walletId = await createAccount(db, base.ctx, { label: 'Geldbörse', kind: 'payment_service' });
+    // Same 36.15 the bank collected, but one purchase (19.99) was a wallet purchase charged to the pay-later card.
+    await importPayments(db, base.ctx, laterId, laterFile(
+      later('2025-03-01', 'Kiosk Beispiel', '1.00', '4000000000000'),
+      later('2025-03-10', 'Schreibwaren Beispiel', '13.16', '4000000000002'),
+      later('2025-03-11', 'PAYPAL *LADENBEISPIEL', '19.99', '7000000000001'),
+      later('2025-03-31', 'Kiosk Beispiel', '2.00', '4000000000003'),
+    ));
+    await importPayments(db, base.ctx, walletId, WALLET_MARCH);
+    const view = await loadStatement(db, base.ws.workspaceId, 2025);
+    expect(view.payments.ruleTransfers.map((t) => t.counterparty)).toContain('PAYPAL *LADENBEISPIEL');
+    expect(view.payments.reconciliations.find((r) => r.service === 'klarna')).toMatchObject({ collectedCents: 3615, listedCents: 3615, differenceCents: 0, reconciles: true });
+  });
+
   it('change an earlier input: undoing the list’s import makes the bank debit ask again', async () => {
     const { ws, ctx } = await bankAskedAbout();
     const laterId = await createAccount(db, ctx, { label: 'Später zahlen', kind: 'payment_service' });

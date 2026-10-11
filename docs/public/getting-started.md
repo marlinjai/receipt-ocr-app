@@ -51,7 +51,7 @@ OPENROUTER_API_KEY=sk-or-v1-your_key_here
 # AI_MODEL=anthropic/claude-sonnet-4.6
 # Optional: the model that reads a receipt. It is given the page itself (an image
 # or PDF pages), so it must accept image and file input. Default
-# anthropic/claude-haiku-5.5; falls back to AI_MODEL when that is set.
+# anthropic/claude-haiku-5.5. It does not follow AI_MODEL.
 # AI_CLASSIFY_MODEL=anthropic/claude-haiku-5.5
 ```
 

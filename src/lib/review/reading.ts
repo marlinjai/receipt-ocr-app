@@ -1,4 +1,5 @@
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
+import { readAmounts, type AmountReading } from '@/lib/extraction/amounts';
 import { CATEGORY_TO_KONTO, CURRENCY_OPTIONS, MEAL_CATEGORY } from '@/lib/receipts-constants';
 
 /**
@@ -9,6 +10,13 @@ import { CATEGORY_TO_KONTO, CURRENCY_OPTIONS, MEAL_CATEGORY } from '@/lib/receip
  * amount as the net. The recognized text is stored with each receipt, so the
  * current reader can read it again, at no cost and with the same result every
  * time (no language model is asked).
+ *
+ * A receipt read with the model that sees the page can hold a total the text
+ * alone does not lead to (the customs invoice: the text proves the taxed part,
+ * the page names the total above it). Such a total is not "an older reading":
+ * where the current reader, handed the stored total as the page's, settles on
+ * exactly that total without a conflict, it stands and nothing is offered
+ * against it.
  *
  * This module only COMPARES. What differs is offered to a person as "stored /
  * new", field by field, and nothing is written until they take it. A value a
@@ -73,11 +81,29 @@ export function newReading(stored: StoredReading): NewReading {
   // is one of the checks ('tax_estimated'), so no check means nothing here is a
   // guess: the rate is printed, or the receipt is in another currency and
   // prints no tax at all (rate 0, the net is the total).
-  const confirmed = read.gross !== null && read.amountChecks.length === 0;
+  const storedCurrency = stored.currency ?? 'EUR';
+  // The stored total, where the text alone reads another one: is it what the
+  // reader settles on when the page names it? Then it is a page reading the
+  // printed figures bear out, and it is the reading the amounts are compared
+  // with, not the text's own.
+  const asPageReading: AmountReading | null =
+    stored.gross !== null && read.gross !== null && !sameAmount(read.gross, stored.gross)
+      ? readAmounts(stored.text, {
+          date: read.date,
+          currency: CURRENCY_OPTIONS.includes(storedCurrency) ? storedCurrency : read.currency,
+          modelGross: stored.gross,
+          modelSawPage: true,
+        })
+      : null;
+  const storedStands = asPageReading !== null && sameAmount(asPageReading.gross, stored.gross) && !asPageReading.checks.includes('total_conflict');
+  const amounts = storedStands
+    ? { gross: asPageReading.gross, net: asPageReading.net, taxRate: asPageReading.taxRate, taxGroups: asPageReading.taxGroups, checks: asPageReading.checks }
+    : { gross: read.gross, net: read.net, taxRate: read.taxRate, taxGroups: read.taxGroups, checks: read.amountChecks };
+  const confirmed = amounts.gross !== null && amounts.checks.length === 0;
   if (confirmed) {
-    if (!sameAmount(read.gross, stored.gross)) changes.push({ field: 'gross', from: stored.gross, to: read.gross! });
-    if (read.net !== null && !sameAmount(read.net, stored.net)) changes.push({ field: 'net', from: stored.net, to: read.net });
-    if (stored.taxRate === null || Math.abs(read.taxRate! - stored.taxRate) > 0.05) changes.push({ field: 'taxRate', from: stored.taxRate, to: read.taxRate! });
+    if (!sameAmount(amounts.gross, stored.gross)) changes.push({ field: 'gross', from: stored.gross, to: amounts.gross! });
+    if (amounts.net !== null && !sameAmount(amounts.net, stored.net)) changes.push({ field: 'net', from: stored.net, to: amounts.net });
+    if (amounts.taxRate !== null && (stored.taxRate === null || Math.abs(amounts.taxRate - stored.taxRate) > 0.05)) changes.push({ field: 'taxRate', from: stored.taxRate, to: amounts.taxRate });
   }
 
   // Currency: only one the text itself shows, never the euro the reader falls
@@ -86,7 +112,6 @@ export function newReading(stored: StoredReading): NewReading {
   // dollars would be taken into a row that still says euros. A stored currency
   // under a name the reader does not know (an option a person renamed or
   // added) cannot be compared, and is left as it is.
-  const storedCurrency = stored.currency ?? 'EUR';
   if (read.currencyShown && CURRENCY_OPTIONS.includes(storedCurrency) && read.currency !== storedCurrency) {
     changes.push({ field: 'currency', from: stored.currency, to: read.currency });
   }
@@ -109,7 +134,7 @@ export function newReading(stored: StoredReading): NewReading {
   if (builtByOldReader && changes.some(repeated) && read.name && read.name !== stored.name) {
     changes.unshift({ field: 'name', from: stored.name, to: read.name });
   }
-  return { changes, taxLines: confirmed ? read.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax })) : [] };
+  return { changes, taxLines: confirmed ? amounts.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax })) : [] };
 }
 
 /** The changes alone. */

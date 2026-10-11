@@ -162,3 +162,33 @@ describe('a dollar invoice, uploaded today and taken from the review list', () =
     expect(await takeNewReading(old, ['Währung'])).toEqual({ ok: false, error: 'not_found' });
   });
 });
+
+describe('a total the model read from the page, in the review list', () => {
+  // An invented customs invoice: the text alone proves the taxed part (57.09), the page names the total above it.
+  const CUSTOMS = [
+  'Musterfracht Express GmbH', 'Rechnung', 'Rechnungsdatum 14.05.2025', 'Einfuhrabgaben', 'Zoll', 'Einfuhrumsatzsteuer',
+  'Vorlageprovision', 'Nettobetrag', 'MwSt 19 %', 'Rechnungsbetrag', '38,40', '130,65', '47,97', '217,02', '9,12', '57,09', '226,14',
+].join('\n');
+
+  it('is stored as read and is not offered back as "an older reading" of 57.09', async () => {
+    classify.mockResolvedValue({ ...MODEL_ANSWER, name: 'Zollabfertigung, Musterfracht Express', vendor: 'Musterfracht Express GmbH', gross: 226.14, taxRate: 19 });
+    const uploaded = await processReceipt(file(10), ocr(CUSTOMS), {});
+    expect(uploaded.reviewFlags).toEqual([]);
+    expect(await stateOf(uploaded.rowId)).toMatchObject({ Gross: 226.14, Net: 217.02, 'Tax Rate': 19, Date: '2025-05-14' });
+
+    const queue = await getReviewQueue();
+    if (!queue.ok) throw new Error(queue.error);
+    expect(queue.value.find((e) => e.rowId === uploaded.rowId)).toBeUndefined();
+    // Nothing can be taken either: the server reads the offer again and finds none.
+    const taken = await takeNewReading(uploaded.rowId, ['gross', 'net']);
+    expect(taken.ok).toBe(true);
+    expect(await stateOf(uploaded.rowId)).toMatchObject({ Gross: 226.14, Net: 217.02 });
+  });
+
+  it('the same invoice read by a model that named another amount keeps the proven part and asks for a look', async () => {
+    classify.mockResolvedValue({ ...MODEL_ANSWER, vendor: 'Musterfracht Express', gross: 130.65, taxRate: 19 });
+    const uploaded = await processReceipt(file(11), ocr(CUSTOMS), {});
+    expect(uploaded.reviewFlags).toEqual(['total_conflict']);
+    expect(await stateOf(uploaded.rowId)).toMatchObject({ Gross: 57.09 });
+  });
+});

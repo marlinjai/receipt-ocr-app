@@ -2,7 +2,7 @@
 title: A receipt reading that sees the page
 summary: The language model that classifies a receipt is given the page itself (the image, or the PDF pages) next to the recognized text, and also reads date, total, currency, net and tax lines from it. Its answer is a second reading that the invoice's own arithmetic and the recognized text check; it is never stored on its own word.
 type: plan
-status: decided
+status: in-progress
 tags: [receipts, reader, vision, extraction, review]
 projects: [receipt-ocr-app]
 date: 2026-10-11
@@ -45,7 +45,8 @@ proxy: no Anthropic key, no model setting), so the call goes through OpenRouter 
 is needed. PDF pages are sent as a file part with the parser pinned to `native`, so the model
 receives the pages and not a text extract; images as an image part. The model is **Claude Haiku
 5.5** (`anthropic/claude-haiku-5.5`), the default in `src/lib/ai-client.ts`, changeable with
-`AI_CLASSIFY_MODEL`; no production setting is needed. It was chosen by measurement (see
+`AI_CLASSIFY_MODEL` (it no longer follows `AI_MODEL`, the chat model); no production setting is
+needed. It was chosen by measurement (see
 "Measured"): on the 2025 documents it read every date and every total that Claude Sonnet 5.5 read
 on the sample, at a twentieth of the price. The `claude-api` reference recommends the largest
 model by default; for one page of an invoice whose answer is checked anyway, the measured result
@@ -84,6 +85,12 @@ server-side scaling is added. Beyond a limit the receipt is read from the text a
 - *Currency.* A currency the text settles stands. Otherwise the page answer is taken if its code
   or sign is in the text.
 - *Vendor.* Unchanged: `chooseVendor` already checks the model's name against the text.
+
+**The review list after a page reading.** The review list reads the stored text again without a
+model and offers what differs as "Neue Lesart". A total the page reading settled (the customs
+invoice) must not be offered back as the text's 57.09: where the reader, handed the stored total
+as the page's, settles on exactly that total without a conflict, the stored total stands and its
+net and rate are what is compared.
 
 **What is stored.** No new column and no migration. The settled values go into the cells that
 exist; doubts go into the review flags (a string list), with two new ones: `date_conflict` and

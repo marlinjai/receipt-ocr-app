@@ -7,7 +7,7 @@ import OpenAI from 'openai';
  * Env vars:
  *   OPENROUTER_API_KEY  — your OpenRouter key (required)
  *   AI_MODEL            — model for chat/tool-use  (default: anthropic/claude-sonnet-4.6)
- *   AI_CLASSIFY_MODEL   : model that reads one receipt, page and text (falls back to AI_MODEL, then to the default below)
+ *   AI_CLASSIFY_MODEL   : model that reads one receipt, page and text (default below; it does not follow AI_MODEL)
  *   AI_BASE_URL         — override base URL (default: https://openrouter.ai/api/v1)
  */
 
@@ -40,5 +40,7 @@ export function getChatModel(): string {
 }
 
 export function getClassifyModel(): string {
-  return process.env.AI_CLASSIFY_MODEL || process.env.AI_MODEL || DEFAULT_CLASSIFY_MODEL;
+  // Not AI_MODEL: the reader needs a model that takes images and files, and its
+  // price per receipt was measured. Choosing a chat model must not change it.
+  return process.env.AI_CLASSIFY_MODEL || DEFAULT_CLASSIFY_MODEL;
 }

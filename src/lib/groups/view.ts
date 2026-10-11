@@ -118,10 +118,15 @@ export function receiptsInGroup(groupId: string, rows: readonly Row[], columns: 
  * The rows a search shows: what it found, plus the receipts of every group it
  * found. A group matched by its name alone would otherwise be drawn without its
  * receipts, with a sum of 0. The order of the table is kept and no row is added twice.
+ *
+ * The rows are always taken from `rows`, the table as it is loaded now, never
+ * from `found`: what a search found is a snapshot of the moment it ran, and a
+ * cell edited afterwards would be drawn with its old value (a typed amount
+ * looked as if it had not been saved, while it had). A found row that is no
+ * longer in the table (deleted since) is not shown.
  */
 export function searchWithGroupReceipts(found: readonly Row[], rows: readonly Row[], columns: readonly NamedColumn[]): Row[] {
   const foundGroups = new Set(found.filter((row) => isGroupRow(row, columns)).map((row) => row.id));
-  if (foundGroups.size === 0) return [...found];
   const keep = new Set(found.map((row) => row.id));
   return rows.filter((row) => keep.has(row.id) || (row.parentRowId !== undefined && foundGroups.has(row.parentRowId)));
 }

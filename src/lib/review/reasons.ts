@@ -178,7 +178,7 @@ export const REASON_TEXT: Record<ReviewReason, string> = {
   page_not_read: 'Nur aus dem erkannten Text gelesen: Die Seite selbst konnte dem Sprachmodell nicht gezeigt werden. Beträge und Datum bitte prüfen.',
   total_unconfirmed: 'Gesamtbetrag nur vom Etikett gelesen, ohne Gegenprobe über die Steuerzeilen.',
   total_conflict: 'Zwei Lesarten des Gesamtbetrags widersprechen sich.',
-  date_conflict: 'Zwei Lesarten des Rechnungsdatums widersprechen sich.',
+  date_conflict: 'Das Rechnungsdatum ist nicht gesichert: Zwei Lesarten widersprechen sich, oder das Datum steht nicht im erkannten Text.',
   category_doubt: 'Sieht nach einer Bewirtung aus, wurde aber anders eingeordnet.',
   possible_duplicate: 'Mögliches Duplikat: gleicher Tag, gleicher Betrag.',
   reading_differs: 'Der Beleg wurde mit einem älteren Leser erfasst. Die neue Lesart weicht ab.',

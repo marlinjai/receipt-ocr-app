@@ -13,9 +13,11 @@
  *   npx tsx scripts/evaluate-page-reading.ts <folder> <table.csv> [options]
  *
  * The table is a CSV with the columns `file` (path below the folder),
- * `vendor`, `invoice_date` (YYYY-MM-DD), `total_gross` (empty when the
- * document states no total) and `duplicate_of` (rows that name another file
- * are skipped).
+ * `vendor`, `invoice_date` (YYYY-MM-DD, or empty when it is not known and the
+ * date is then not judged), `total_gross` (empty when the
+ * document states no total), optionally `vat_amount` (the tax contained in the
+ * total; where given, the net that is stored is judged too) and
+ * `duplicate_of` (rows that name another file are skipped).
  *
  * Options:
  *   --sample <n>          read at most n documents, spread over the vendors
@@ -49,13 +51,15 @@ import { recognizeText } from '@/lib/text-recognition';
 interface Expected {
   file: string;
   vendor: string;
-  /** YYYY-MM-DD. */
-  date: string;
+  /** YYYY-MM-DD; null when the table does not know it. */
+  date: string | null;
   /** Null when the document states no total. */
   total: number | null;
+  /** The tax contained in the total; null when the table does not say. */
+  vat: number | null;
 }
 
-type Verdict = 'correct' | 'wrong' | 'missing';
+type Verdict = 'correct' | 'wrong' | 'missing' | 'not judged';
 
 /** Why the settled total is not the table's, by what the model itself answered. */
 type MissCause =
@@ -71,11 +75,15 @@ interface Outcome {
   vendor: string;
   date: Verdict;
   total: Verdict;
+  /** The stored net against the table's total less its tax; absent where the table names no tax or the total is not right. */
+  net?: 'correct' | 'wrong';
   flags: string[];
   sawPage: boolean;
   /** What the settled total rests on (see TotalBasis in the amount reader). */
   basis?: string;
   cause?: MissCause;
+  /** Why the settled date is not the table's, by what the model itself answered. */
+  dateCause?: 'model_right' | 'model_gave_none' | 'model_agrees_with_text' | 'model_named_another_day' | 'no_model_answer';
 }
 
 interface DocumentResult {
@@ -163,10 +171,12 @@ function expectedRows(csv: string): Expected[] {
   const out: Expected[] = [];
   for (const row of parseCsv(csv)) {
     if (!row.file || row.duplicate_of) continue;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(row.invoice_date ?? '')) continue;
+    const date = row.invoice_date ?? '';
+    if (date !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
     const total = row.total_gross === '' ? null : Number(row.total_gross);
     if (total !== null && !Number.isFinite(total)) continue;
-    out.push({ file: row.file, vendor: row.vendor || 'unknown', date: row.invoice_date, total });
+    const vat = row.vat_amount === undefined || row.vat_amount === '' ? null : Number(row.vat_amount);
+    out.push({ file: row.file, vendor: row.vendor || 'unknown', date: date || null, total, vat: vat !== null && Number.isFinite(vat) ? vat : null });
   }
   return out;
 }
@@ -197,13 +207,17 @@ export function pickSample<T extends { vendor: string }>(rows: T[], size: number
 
 const sameAmount = (a: number, b: number) => Math.abs(a - b) < 0.005;
 
-function judge(expected: Expected, settled: Pick<SettledReading, 'date' | 'gross' | 'flags'>, vendor: string, sawPage: boolean): Outcome {
+function judge(expected: Expected, settled: Pick<SettledReading, 'date' | 'gross' | 'net' | 'flags'>, vendor: string, sawPage: boolean): Outcome {
   const day = settled.date?.slice(0, 10) ?? null;
-  const date: Verdict = day === null ? 'missing' : day === expected.date ? 'correct' : 'wrong';
+  const date: Verdict = expected.date === null ? 'not judged' : day === null ? 'missing' : day === expected.date ? 'correct' : 'wrong';
   let total: Verdict;
   if (expected.total === null) total = settled.gross === null ? 'correct' : 'wrong';
   else total = settled.gross === null ? 'missing' : sameAmount(settled.gross, expected.total) ? 'correct' : 'wrong';
-  return { vendor, date, total, flags: settled.flags, sawPage };
+  const outcome: Outcome = { vendor, date, total, flags: settled.flags, sawPage };
+  if (total === 'correct' && expected.total !== null && expected.vat !== null) {
+    outcome.net = settled.net !== null && Math.abs(settled.net - (expected.total - expected.vat)) < 0.011 ? 'correct' : 'wrong';
+  }
+  return outcome;
 }
 
 function missCause(expected: Expected, modelGross: number | null | undefined, settledGross: number | null, fullText: string): MissCause {
@@ -246,7 +260,7 @@ async function readDocument(expected: Expected, folder: string, visionKey: strin
 
   const extracted = extractReceiptFields({ fullText, blocks: [], confidence });
   const result: DocumentResult = {
-    text: judge(expected, { date: extracted.date, gross: extracted.gross, flags: [] }, expected.vendor, false),
+    text: judge(expected, { date: extracted.date, gross: extracted.gross, net: extracted.net, flags: [] }, expected.vendor, false),
   };
 
   const page = withPage ? ((await preparePage(bytes)).page ?? null) : null;
@@ -270,6 +284,18 @@ async function readDocument(expected: Expected, folder: string, visionKey: strin
   }
   const settled = settleReading(fullText, extracted, answer);
   result.reading = { ...judge(expected, settled, expected.vendor, answer?.sawPage ?? false), basis: settled.amounts.basis };
+  if (result.reading.date === 'wrong' || result.reading.date === 'missing') {
+    const modelDay = answer?.date?.slice(0, 10) ?? null;
+    result.reading.dateCause = !answer
+      ? 'no_model_answer'
+      : modelDay === null
+        ? 'model_gave_none'
+        : modelDay === expected.date
+          ? 'model_right'
+          : modelDay === extracted.date?.slice(0, 10)
+            ? 'model_agrees_with_text'
+            : 'model_named_another_day';
+  }
   if (result.reading.total !== 'correct') result.reading.cause = missCause(expected, answer ? answer.gross : undefined, settled.gross, fullText);
   return result;
 }
@@ -281,8 +307,10 @@ function tally(outcomes: Outcome[]) {
   const flagged = (o: Outcome) => o.flags.some((f) => f === 'total_conflict' || f === 'total_unconfirmed' || f === 'not_classified' || f === 'page_not_read');
   return {
     documents: outcomes.length,
-    date: { correct: count((o) => o.date === 'correct'), wrong: count((o) => o.date === 'wrong'), missing: count((o) => o.date === 'missing') },
+    date: { correct: count((o) => o.date === 'correct'), wrong: count((o) => o.date === 'wrong'), missing: count((o) => o.date === 'missing'), notJudged: count((o) => o.date === 'not judged') },
     total: { correct: count((o) => o.total === 'correct'), wrong: count((o) => o.total === 'wrong'), missing: count((o) => o.total === 'missing') },
+    // Judged only where the total is right and the table names the tax.
+    net: { correct: count((o) => o.net === 'correct'), wrong: count((o) => o.net === 'wrong') },
     // The number that matters most: a wrong total stored with nothing asking for a look.
     wrongTotalWithoutFlag: count((o) => o.total === 'wrong' && !flagged(o)),
     wrongDateWithoutFlag: count((o) => o.date === 'wrong' && !o.flags.includes('date_conflict')),
@@ -306,7 +334,11 @@ function perVendor(outcomes: Outcome[]): Record<string, string> {
     vendors.map((vendor) => {
       const own = outcomes.filter((o) => o.vendor === vendor);
       const n = (pick: (o: Outcome) => boolean) => own.filter(pick).length;
-      return [vendor, `n=${own.length} date ${n((o) => o.date === 'correct')}/${own.length} total ${n((o) => o.total === 'correct')}/${own.length} (wrong ${n((o) => o.total === 'wrong')}, missing ${n((o) => o.total === 'missing')})`];
+      const flagged = n((o) => o.flags.length > 0);
+      return [
+        vendor,
+        `n=${own.length} date ${n((o) => o.date === 'correct')}/${own.length} (wrong ${n((o) => o.date === 'wrong')}, missing ${n((o) => o.date === 'missing')}) total ${n((o) => o.total === 'correct')}/${own.length} (wrong ${n((o) => o.total === 'wrong')}, missing ${n((o) => o.total === 'missing')}) net wrong ${n((o) => o.net === 'wrong')} flagged ${flagged}${flagged > 0 ? ` [${[...new Set(own.flatMap((o) => o.flags))].sort().join(',')}]` : ''}`,
+      ];
     }),
   );
 }
@@ -316,7 +348,9 @@ function report(name: string, outcomes: Outcome[], used?: Array<NonNullable<Docu
   console.log(JSON.stringify(tally(outcomes), null, 2));
   console.log('flags:', JSON.stringify(countBy(outcomes.flatMap((o) => o.flags), (f) => f)));
   console.log('why a total was missed:', JSON.stringify(countBy(outcomes, (o) => (o.cause ? `${o.cause} (kept: ${o.basis})` : undefined))));
+  console.log('why a date was missed:', JSON.stringify(countBy(outcomes, (o) => (o.dateCause ? `${o.dateCause} (${o.vendor})` : undefined))));
   console.log('what the totals rest on:', JSON.stringify(countBy(outcomes, (o) => o.basis)));
+  console.log('what a wrong net rests on:', JSON.stringify(countBy(outcomes, (o) => (o.net === 'wrong' ? `${o.basis ?? 'text reader'} (${o.vendor})` : undefined))));
   console.log('what flagged totals rest on:', JSON.stringify(countBy(outcomes, (o) => (o.flags.some((f) => f === 'total_conflict' || f === 'total_unconfirmed') ? `${o.basis}, total ${o.total}` : undefined))));
   if (used && used.length > 0) {
     const sum = (pick: (u: NonNullable<DocumentResult['usage']>) => number) => used.reduce((total, u) => total + pick(u), 0);
@@ -387,7 +421,7 @@ async function main() {
     console.log(`stopped after ${args.maxSeconds} seconds: ${read.length} of ${rows.length} read. Run again with the same --state to go on.`);
     return;
   }
-  console.log(`could not be read: ${JSON.stringify(countBy(read, (r) => r.failed))}`);
+  console.log(`could not be read: ${JSON.stringify(countBy(read, (r) => (r.failed ? `${r.failed} (${r.text.vendor})` : undefined)))}`);
   const readable = read.filter((r) => !r.failed);
   report('text reader alone (no model)', readable.map((r) => r.text));
   report(

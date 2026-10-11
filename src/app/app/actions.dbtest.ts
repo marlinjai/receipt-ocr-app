@@ -50,6 +50,9 @@ const CAFE = [
   'Trinkgeld', '| Bezahlter Betrag', 'MwSt. 19% auf 49.33: € 9.37 (58.70)', '€ 61.40', '€ 2.70', '€ 58.70',
 ].join('\n');
 
+/** The day the cafe receipt prints, as the model answers it. A model that names no date leaves an unlabelled one in doubt. */
+const CAFE_DAY = '2025-02-19T00:00:00.000Z';
+
 /** The value of a cell by column name; a select as the name of its option. */
 async function cellOf(workspace: TestWorkspace, rowId: string, name: string) {
   const column = (await workspace.adapter.getColumns(workspace.tableId)).find((c) => c.name === name)!;
@@ -184,13 +187,14 @@ describe('processReceipt: what the reader cannot settle is recorded, never silen
   });
 
   it('a clean reading records nothing', async () => {
+    classify.mockResolvedValue({ ...MEAL_ANSWER, date: CAFE_DAY });
     const result = await processReceipt(file(21), ocr(CAFE), {});
     expect(result.reviewFlags).toEqual([]);
     expect(await db.receiptReview.count({ where: { rowId: result.rowId } })).toBe(0);
   });
 
   it("the model's total never overrules the receipt's own arithmetic, and the disagreement is recorded", async () => {
-    classify.mockResolvedValue({ ...MEAL_ANSWER, gross: 916752.88, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null } });
+    classify.mockResolvedValue({ ...MEAL_ANSWER, date: CAFE_DAY, gross: 916752.88, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null } });
     const result = await processReceipt(file(22), ocr(CAFE), {});
     expect(await cell(result.rowId, 'Gross')).toBe(58.7);
     expect(result.reviewFlags).toEqual(['total_conflict']);
@@ -229,7 +233,7 @@ describe('processReceipt: what the reader cannot settle is recorded, never silen
     const first = await processReceipt(file(28), ocr(CAFE), {});
     expect(await stored(first.rowId)).toEqual(['not_classified']);
 
-    classify.mockResolvedValue({ ...MEAL_ANSWER, gross: 58.7, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null } });
+    classify.mockResolvedValue({ ...MEAL_ANSWER, date: CAFE_DAY, gross: 58.7, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null } });
     const again = await retakeReceipt(first.rowId, file(29), ocr(CAFE), {});
     expect(again.rowId).toBe(first.rowId);
     expect(again.reviewFlags).toEqual([]);

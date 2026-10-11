@@ -46,6 +46,7 @@ const MODEL_ANSWER = {
   name: 'Example Courses, 360.00 USD, 26.11.2025',
   vendor: 'Example Courses',
   gross: 360,
+  date: '2025-11-26T00:00:00.000Z',
   category: 'Sonstige Ausgaben',
   konto: '4900',
   zuordnung: 'Geschäftlich',
@@ -171,7 +172,7 @@ describe('a total the model read from the page, in the review list', () => {
 ].join('\n');
 
   it('is stored as read and is not offered back as "an older reading" of 57.09', async () => {
-    classify.mockResolvedValue({ ...MODEL_ANSWER, name: 'Zollabfertigung, Musterfracht Express', vendor: 'Musterfracht Express GmbH', gross: 226.14, taxRate: 19 });
+    classify.mockResolvedValue({ ...MODEL_ANSWER, name: 'Zollabfertigung, Musterfracht Express', vendor: 'Musterfracht Express GmbH', gross: 226.14, date: '2025-05-14T00:00:00.000Z', taxRate: 19 });
     const uploaded = await processReceipt(file(10), ocr(CUSTOMS), {});
     expect(uploaded.reviewFlags).toEqual([]);
     expect(await stateOf(uploaded.rowId)).toMatchObject({ Gross: 226.14, Net: 217.02, 'Tax Rate': 19, Date: '2025-05-14' });
@@ -186,7 +187,7 @@ describe('a total the model read from the page, in the review list', () => {
   });
 
   it('the same invoice read by a model that named another amount keeps the proven part and asks for a look', async () => {
-    classify.mockResolvedValue({ ...MODEL_ANSWER, vendor: 'Musterfracht Express', gross: 130.65, taxRate: 19 });
+    classify.mockResolvedValue({ ...MODEL_ANSWER, vendor: 'Musterfracht Express', gross: 130.65, date: '2025-05-14T00:00:00.000Z', taxRate: 19 });
     const uploaded = await processReceipt(file(11), ocr(CUSTOMS), {});
     expect(uploaded.reviewFlags).toEqual(['total_conflict']);
     expect(await stateOf(uploaded.rowId)).toMatchObject({ Gross: 57.09 });

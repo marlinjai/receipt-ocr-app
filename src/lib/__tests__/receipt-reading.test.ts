@@ -44,19 +44,36 @@ describe('settleDate: the labelled date of the text stands', () => {
     expect(settleDate('Example Hosting\n1 Mar 2025 - 31 Mar 2025\nTotal $10.00', answer({ date: day('2025-03-31') }))).toEqual({ date: day('2025-03-31'), conflict: false });
   });
 
-  it('fills a gap only with a day the text prints', () => {
-    const text = 'Musterladen\nBon 12\n14.03.25 Kasse 2';
-    expect(settleDate('Musterladen\nSumme 5,00', answer({ date: day('2025-03-14') }))).toEqual({ date: null, conflict: false });
-    expect(settleDate(text, answer({ date: day('2025-03-14') })).date).toBe(day('2025-03-14'));
+  it('an order date gives way to the invoice date the page reads, and says so', () => {
+    const text = 'Musterversand\nBestelldatum 24.04.2025\nRechnungsnummer DE-1\n26.04.2025\nGesamt 59,00';
+    expect(settleDate(text, null).date).toBe(day('2025-04-24'));
+    expect(settleDate(text, answer({ date: day('2025-04-26') }))).toEqual({ date: day('2025-04-26'), conflict: true });
+    // A day the text does not print never replaces it.
+    expect(settleDate(text, answer({ date: day('2025-04-27') }))).toEqual({ date: day('2025-04-24'), conflict: true });
+  });
+
+  it('fills a gap from the page; a day the text does not print is filled in as a conflict, never silently', () => {
+    // A scanned till slip: the recognized text lost the date line.
+    expect(settleDate('Musterladen\nSumme 5,00', answer({ date: day('2025-03-14') }))).toEqual({ date: day('2025-03-14'), conflict: true });
+    // A due date is all the text finds: it is never the invoice date, so this is a gap too, and the day is printed.
+    expect(settleDate('Example Cloud Inc.\nDue date: 4 Feb 2025\n5 Jan 25 09:12 Terminal 2', answer({ date: day('2025-01-05') })).conflict).toBe(false);
+  });
+
+  it('the page reading names no date: a date the text does not call the invoice date is kept as a conflict', () => {
+    // A ticket that prints the day of the event only.
+    const ticket = 'Mustermesse 2026\nTagesticket\n12.03.2026\nGesamt 25,00';
+    expect(settleDate(ticket, answer({ date: null }))).toEqual({ date: day('2026-03-12'), conflict: true });
+    expect(settleDate('Musterladen\nRechnungsdatum 14.03.2025', answer({ date: null }))).toEqual({ date: day('2025-03-14'), conflict: false });
+    expect(settleDate('Musterladen\nSumme 5,00', answer({ date: null }))).toEqual({ date: null, conflict: false });
   });
 
   it('a page date that is not printed does not replace an unlabelled one, and says so', () => {
     expect(settleDate('Musterladen\n14.03.2025\nSumme 5,00', answer({ date: day('2025-03-15') }))).toEqual({ date: day('2025-03-14'), conflict: true });
   });
 
-  it('a due date is never taken, even when the page reading names it', () => {
+  it('a day the text calls the due date is not a printed invoice day: taken from the page only as a conflict', () => {
     const text = 'Example Cloud Inc.\nDue date: 4 Feb 2025\nTotal $10.00';
-    expect(settleDate(text, answer({ date: day('2025-02-04') }))).toEqual({ date: null, conflict: false });
+    expect(settleDate(text, answer({ date: day('2025-02-04') }))).toEqual({ date: day('2025-02-04'), conflict: true });
   });
 
   it('the date of a model that read the text alone is not used', () => {

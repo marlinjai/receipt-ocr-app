@@ -144,4 +144,49 @@ describe('readAmounts with a model that saw the page', () => {
     const printed = readAmounts(`${text}\n100,00\n19,00`, { date: '2025-03-01', modelGross: 119, modelTaxLines: [{ rate: 19, net: 100, tax: 19 }], modelSawPage: true });
     expect(printed.taxGroups).toEqual([{ rate: 19, net: 100, tax: 19, gross: 119 }]);
   });
+
+  it('a postage slip: one taxed item among tax-free postage, the sum named by a label and by the page', () => {
+    const slip = ['Musterpost AG', 'Filiale 12', '14.03.2025', 'Paket 2 kg 6,19', 'Einschreiben 13,30', 'Versandtasche 1,99 A', 'Summe EUR 21,48', 'A 19% Netto 1,67 MwSt 0,32 Brutto 1,99'].join('\n');
+    // The text alone proves the taxed item and takes it for the bill.
+    expect(readAmounts(slip, { date: '2025-03-14' }).gross).toBe(1.99);
+    const reading = readAmounts(slip, { date: '2025-03-14', modelGross: 21.48, modelSawPage: true });
+    expect(reading).toMatchObject({ gross: 21.48, net: 21.16, basis: 'label_agreed' });
+    expect(reading.checks).toContain('total_conflict');
+    // A page amount no label names does not move a proven bill.
+    expect(readAmounts(slip, { date: '2025-03-14', modelGross: 13.3, modelSawPage: true }).gross).toBe(1.99);
+  });
+
+  it('a bill with a tip on top: the amount paid is not taken for the bill', () => {
+    const receipt = ['Trattoria Beispiel', 'Netto 40,76', 'MwSt 19% 7,74', 'Summe 48,50', 'Trinkgeld 5,00', 'Gesamt 53,50'].join('\n');
+    const reading = readAmounts(receipt, { date: '2025-03-14', modelGross: 53.5, modelSawPage: true });
+    expect(reading).toMatchObject({ gross: 48.5, tip: 5 });
+    expect(reading.checks).not.toContain('total_conflict');
+  });
+
+  it('a booking page: the total is printed where the text reader counts no money, and the page names it', () => {
+    const booking = ['Musterbahn', 'Ihre Buchung', 'Auftragsnummer 123456789012 Gesamtpreis EUR63,98', 'Hinfahrt 12.05.2025'].join('\n');
+    expect(readAmounts(booking, {}).gross).toBeNull();
+    const reading = readAmounts(booking, { modelGross: 63.98, modelSawPage: true });
+    expect(reading).toMatchObject({ gross: 63.98, basis: 'model_alone' });
+    expect(reading.checks).toContain('total_unconfirmed');
+    // An amount that is not printed at all stays out.
+    expect(readAmounts(booking, { modelGross: 68.93, modelSawPage: true }).gross).toBeNull();
+    // And so does one a model names that never saw the page.
+    expect(readAmounts(booking, { modelGross: 63.98 }).gross).toBeNull();
+  });
+
+  it('"Subtotal" and "Total" only, the tax implied by the difference: the net the page reads is stored with its rate', () => {
+    const invoice = ['Example Hosting Inc.', 'Invoice', 'Status -', 'Web hosting 12 months', 'Sub Total', 'Total', '$242.51', '$288.59'].join('\n');
+    const reading = readAmounts(invoice, { currency: 'USD', modelGross: 288.59, modelNet: 242.51, modelSawPage: true });
+    expect(reading).toMatchObject({ gross: 288.59, net: 242.51, taxRate: 19, taxPrinted: true });
+    // A difference that is no rate in force and not printed proves nothing: no rate is made up.
+    const odd = readAmounts(invoice.replace('$242.51', '$250.00'), { currency: 'USD', modelGross: 288.59, modelNet: 250, modelSawPage: true });
+    expect(odd).toMatchObject({ gross: 288.59, net: 288.59, taxRate: 0 });
+  });
+
+  it('a foreign invoice that prints its tax: the rate is stored whatever the currency', () => {
+    const invoice = ['Example Deploy AB', 'Invoice', 'Subtotal', 'VAT 25%', 'Total', 'Amount due', '$80.00', '$20.00', '$100.00', '$100.00'].join('\n');
+    const reading = readAmounts(invoice, { currency: 'USD', modelGross: 100, modelNet: 80, modelSawPage: true });
+    expect(reading).toMatchObject({ gross: 100, net: 80, taxRate: 25, taxPrinted: true });
+  });
 });

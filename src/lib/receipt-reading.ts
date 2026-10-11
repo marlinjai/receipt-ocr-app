@@ -82,18 +82,34 @@ export function settleCurrency(fullText: string, extracted: Pick<TextExtraction,
 }
 
 /**
- * The invoice date. A date the text labels stands, and a differing answer of
- * a model that saw the page is a conflict. Where the text has no date, or one
- * that nothing names (it can be a service period), the model's day is taken
- * if the text prints it; a day that is not printed is never stored.
+ * The invoice date, from the text's reading and that of a model that saw the
+ * page. Whatever the two do not agree on is a conflict recorded for a person;
+ * no date is ever replaced or filled in silently.
+ *
+ *  - A date the text calls the invoice date, or a plain "Datum", stands.
+ *  - A date nothing names (it can be a service period) gives way to the day
+ *    the page reading names, if the text prints that day: no conflict, the
+ *    page only says which of the printed days it is.
+ *  - An order or payment date gives way the same way, as a conflict: the page
+ *    shows another day next to "Rechnungsdatum".
+ *  - A gap (the text found no date, as on a scanned till slip) is filled by
+ *    the page reading; where the text does not print that day, as a conflict.
+ *  - The page reading names no date at all and the text's is not one it calls
+ *    the invoice date: the text's date stays, as a conflict (a ticket that
+ *    prints the day of the event, not of the sale).
  */
 export function settleDate(fullText: string, ai: ModelReading | null): { date: string | null; conflict: boolean } {
   const text = readDateDetail(fullText);
-  const page = ai?.sawPage ? ai.date : null;
-  if (!page || text.iso?.slice(0, 10) === page.slice(0, 10)) return { date: text.iso, conflict: false };
-  if (text.iso && text.labelled) return { date: text.iso, conflict: true };
-  if (text.printedDays.includes(page.slice(0, 10))) return { date: page, conflict: false };
-  return { date: text.iso, conflict: text.iso !== null };
+  if (!ai?.sawPage) return { date: text.iso, conflict: false };
+  const named = text.kind === 'invoice' || text.kind === 'plain';
+  const page = ai.date;
+  if (!page) return { date: text.iso, conflict: text.iso !== null && !named };
+  if (text.iso?.slice(0, 10) === page.slice(0, 10)) return { date: text.iso, conflict: false };
+  if (named) return { date: text.iso, conflict: true };
+  const printed = text.printedDays.includes(page.slice(0, 10));
+  if (text.iso === null) return { date: page, conflict: !printed };
+  if (printed) return { date: page, conflict: text.kind === 'order' };
+  return { date: text.iso, conflict: true };
 }
 
 /**

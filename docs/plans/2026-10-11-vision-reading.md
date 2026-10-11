@@ -74,14 +74,25 @@ server-side scaling is added. Beyond a limit the receipt is read from the text a
   names any. A page answer that does not stand in the recognized text is never stored. Tax lines
   from the model count only when their figures stand in the text. Every reading says what its
   total rests on (`basis`), so a wrong total can be traced to its rule.
+- *Three cases from production (added after the first measurement).* A total above the tax groups
+  that a label in the text and the page reading both name is taken, with `total_conflict` (one
+  taxed item on a slip of tax-free postage). Where nothing names or proves a total and the page
+  amount is printed where the text reader counts no money (glued to a currency code on a booking
+  page), it is taken with `total_unconfirmed`. Net and tax: for any settled total, the net the
+  page reads is stored with its rate when net and tax are both printed, or when the net is printed
+  and the difference is exactly a rate in force or one the document prints (an invoice with
+  "Subtotal" and "Total" only). So a rate the document prints is stored whatever the currency.
 - *No total.* When the model saw the page and says the document states no total (a leasing
   application with a monthly rate only), an unproven label reading is dropped and the amount stays
   empty, which the review list shows as "Betrag fehlt". A proven total stands and raises
   `total_conflict`.
-- *Date.* A date the text labels (invoice date, plain "Datum", order or payment date) stands; a
-  differing page answer raises the new flag `date_conflict`. Where the text has no date or only an
-  unlabelled or service-period one, the page answer is taken if that day is printed in the text.
-  Otherwise the text date stands with `date_conflict`, or the date stays empty.
+- *Date.* A date the text calls the invoice date, or a plain "Datum", stands; a differing page
+  answer raises the new flag `date_conflict`. A date nothing names gives way to the day the page
+  reading names if the text prints it, without a flag. An order or payment date gives way the same
+  way, with the flag (an invoice that prints both). A gap is filled by the page reading, with the
+  flag where the text does not print that day (a scanned till slip). Where the page reading names
+  no date and the text's is not one it calls the invoice date, the text's stays, with the flag (a
+  ticket that prints the day of the event). No date is replaced or filled in silently.
 - *Currency.* A currency the text settles stands. Otherwise the page answer is taken if its code
   or sign is in the text.
 - *Vendor.* Unchanged: `chooseVendor` already checks the model's name against the text.
@@ -161,11 +172,37 @@ as duplicates), all PDF, hand-checked date and total each.
   cost 0.0153 US dollars per receipt, Haiku 0.0008.
 - Reproduced: two full runs with the same code gave the same tallies, apart from one answer in
   the first that was no JSON object (stored as `not_classified`).
-- What the number does not say: the last rule (a page answer that is one of two labelled totals
-  stands) was written after the first full run showed three invoices of one vendor overruled by
-  the text. The 235 of 235 is therefore measured on the documents the rule was written against,
-  not on unseen ones. The first full run, before that rule, had 232 of 235 totals right and the
-  three wrong ones flagged.
-- All 235 documents are PDF files. Photos of paper receipts uploaded as images are covered by
-  tests on invented documents only, not by this measurement.
-- Cost of the whole measurement: about 4 US dollars, of which 2.25 for the "before" run.
+- What the number does not say: the rule that a page answer which is one of two labelled totals
+  stands was written after the first full run showed three invoices of one vendor overruled by
+  the text. The 235 of 235 is therefore measured on the documents the rule was written against.
+  The first full run, before that rule, had 232 of 235 totals right and the three wrong ones
+  flagged.
+- Cost of the first measurement: about 4 US dollars, of which 2.25 for the "before" run.
+
+### Second measurement: the cases production failed on
+
+The same night, 284 documents: the 235 above, 20 purchase documents whose file name carries date
+and amount (12 Splice invoices as the regression check, Amazon invoices and two printed order
+pages), 28 from the tax inbox with a hand-checked table (scanned paper slips among them) and one
+train booking. Net is judged where a table names the tax and the total is right.
+
+| Reading | Dates right | Totals right | Net right |
+|---|---|---|---|
+| Text reader alone | 260 (21 wrong, 2 missing) | 265 (10 wrong, 9 missing) | 191 of 194 |
+| With the page (Claude Haiku 5.5) | 281 (2 wrong, both flagged) | 282 (1 wrong, flagged; 1 missing) | 197 of 199 |
+
+No wrong date and no wrong total is stored without a flag. 19 documents carry a flag, among them
+14 whose total is right. What still fails, by name:
+
+- A postage slip (Deutsche Post): 1.99 stored for 21.48, with `total_conflict`. The text proves
+  the one taxed item as a tax group and prints no label next to the sum, so the proven part
+  stands as decided above, and a person looks.
+- A train booking (Deutsche Bahn): no total stored ("Betrag fehlt"). Neither Haiku 5.5 nor Sonnet
+  5.5 named one for the file measured.
+- Two tickets (Eventbrite, a trade fair): the date stored is not the table's, with
+  `date_conflict`. On one the model read the right day and the text names another; on the other
+  the model named no date.
+- Net: one A2 Hosting invoice and one Amazon invoice store a net that is not total less tax.
+- All 12 Splice invoices stayed right in date and total, without a flag.
+- The rules of this section were written against these documents, so its numbers are in-sample
+  like the first. Cost: about 0.75 US dollars.

@@ -9,7 +9,7 @@ describe('rereadNote: what a person is told after "Seite neu lesen"', () => {
   it('names every doubt the new reading left', () => {
     const note = rereadNote({ ok: true, reviewFlags: ['date_conflict', 'total_conflict'] });
     expect(note.tone).toBe('warn');
-    expect(note.text).toContain('Rechnungsdatums');
+    expect(note.text).toContain('Rechnungsdatum ist nicht gesichert');
     expect(note.text).toContain('Gesamtbetrags');
   });
 

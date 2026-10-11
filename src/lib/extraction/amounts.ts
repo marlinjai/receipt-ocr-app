@@ -411,6 +411,18 @@ function discountConfirms(text: string, totalCents: number): boolean {
   return subtotal !== undefined && off > 0 && Math.abs(subtotal - off - totalCents) <= 1;
 }
 
+/**
+ * True when the text prints this amount anywhere, in either notation, also
+ * where `amountsInText` does not count it as money: glued to a currency code
+ * ("EUR63,98") or on a line that carries a booking number.
+ */
+function printedAnywhere(text: string, amountCents: number): boolean {
+  const whole = String(Math.floor(amountCents / 100));
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, '[.,\u00a0 ]?');
+  const fraction = String(amountCents % 100).padStart(2, '0');
+  return new RegExp(`(?<![\\d.,])${grouped}[.,]${fraction}(?!\\d)`).test(text);
+}
+
 export interface AmountHints {
   /** ISO day of the receipt, to know which tax rates were in force. */
   date?: string | null;
@@ -521,13 +533,17 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       : (hints.modelTaxLines ?? []).length > 0
         ? (hints.modelTaxLines ?? []).reduce((sum, l) => sum + cents(l.net), 0)
         : null;
-  const pageProof = (() => {
-    if (pageTotal === null || pageNet === null || pageNet <= 0 || pageNet >= pageTotal) return null;
-    const tax = pageTotal - pageNet;
+  const pageSplit = (totalCents: number) => {
+    if (!sawPage || pageNet === null || pageNet <= 0 || pageNet >= totalCents) return null;
+    const tax = totalCents - pageNet;
     const rate = rateOf(pageNet, tax);
-    if (rate === null || !values.has(pageNet) || !values.has(tax)) return null;
+    if (rate === null || !values.has(pageNet)) return null;
+    // The tax amount is printed, or the receipt prints "Subtotal" and "Total"
+    // only and the difference is exactly a rate in force or one it prints.
+    if (!values.has(tax) && ![...rates, ...ratesPrinted(text)].includes(rate)) return null;
     return { net: pageNet, tax, rate };
-  })();
+  };
+  const pageProof = pageTotal !== null ? pageSplit(pageTotal) : null;
 
   let gross: number | null = null;
   let basis: TotalBasis = 'none';
@@ -561,6 +577,17 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       minus
         .filter((d) => d.cents < bill && found.some((a) => a.cents === bill && a.line < d.line) && found.some((a) => a.cents === bill - d.cents && a.line > d.line))
         .map((d) => bill - d.cents)[0];
+    // A total above the tax groups that a label in the text AND the page
+    // reading both name, with no printed figure to prove it: the groups then
+    // cover a part of the bill only (one taxed item on a slip of tax-free
+    // postage). Two independent readings agree, so it is taken, and because
+    // the arithmetic does not bear it out, a person looks.
+    const agreedAbove =
+      withUntaxed === 0 && afterDeduction === undefined && pageTotal !== null && pageTotal > bill && labelled.includes(pageTotal) && !(tipCents !== undefined && pageTotal === bill + tipCents);
+    if (agreedAbove && pageTotal !== null) {
+      checks.push('total_conflict');
+      return { gross: euros(pageTotal), basis: 'label_agreed', net: euros(pageTotal - taxSum), taxRate: groups[0].rate, taxPrinted: true, taxGroups: groups, tip, checks };
+    }
     const paid = withUntaxed > 0 ? withUntaxed : (afterDeduction ?? bill);
     if (noTotal || (model !== null && model !== paid && !(tipCents !== undefined && model === paid + tipCents))) checks.push('total_conflict');
     if (paid !== bill) {
@@ -634,6 +661,13 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       gross = euros(model);
       basis = 'model_alone';
       checks.push('total_unconfirmed');
+    } else if (sawPage && model !== null && model <= SANE_TOTAL_CENTS && printedAnywhere(text, model)) {
+      // Nothing in the text names or proves a total, and the amount the page
+      // reading names is printed, though not where the text reader counts
+      // money (a booking page). Taken, and put up for a look.
+      gross = euros(model);
+      basis = 'model_alone';
+      checks.push('total_unconfirmed');
     } else {
       checks.push('total_missing');
     }
@@ -644,6 +678,12 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     }
   }
 
+  // The total is settled, but the text names no net and tax for it (their
+  // labels are torn off, or the receipt is in another currency and the text
+  // reader assumes no rate for it). Where the page gave the net, and net and
+  // the tax that leaves are both printed, they are the receipt's own figures:
+  // a rate the document prints is stored whatever the currency.
+  if (groups.length === 0 && !stated && gross !== null) stated = pageSplit(cents(gross));
   if (groups.length === 0 && stated && gross !== null) {
     return { gross, basis, net: euros(stated.net), taxRate: stated.rate, taxPrinted: true, taxGroups: [], tip, checks };
   }

@@ -40,6 +40,8 @@
   `import-log-2026-10-11.md` there. The remaining 181.04: four Figma months without an invoice
   (95.20, support mail drafted), the meal allowance flat rate (56.00), Notion debits without a
   document (19.05), estimates on receipts paid with the pay-later card (7.96), the meals (3.01).
+  These five add up to 181.22, 0.18 more than the gap of 181.04: the difference sits in the two
+  estimated items and is not traced yet.
   Waiting on Marlin: the Figma mail, the meals in the register, the Notion debits, a battery
   charger billed to another person, the Dremel in the year-boundary tab. (2026-10-11)
 - [ ] Flat rates have no place in the finance area: the meal allowance of a business trip, the

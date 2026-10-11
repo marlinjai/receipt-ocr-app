@@ -52,18 +52,29 @@
   of a restaurant or bar, or where none is stored, and never for the legal form alone. The
   amount offers stay: there the new reading was the better one (the printed 19 percent on dollar
   invoices that were stored with 0). Done 2026-10-11.
+- [ ] The dashboard table doubles its rows after cell edits. Seen on production on 2026-10-11
+  while renaming receipts through the table: after a few dozen edits in one page load the
+  header read "917 items" for 267 receipts and every row was drawn several times (917 rows,
+  267 distinct ids). The stored data was intact and a reload showed 267 again. Probably the
+  loader that fetches all pages appends them again after an edit. Until fixed, counts and
+  sums on a page that was edited a lot cannot be trusted without a reload. (2026-10-11)
+- [ ] A receipt's name does not follow a later edit of its vendor, total or date in the table.
+  Since 2026-10-11 the name is put together from those three cells (all 291 receipts were
+  renamed that day, 267 under Whiz-Art Media and 24 private), but only when a receipt is read.
+  A name that still equals what its cells gave should be rebuilt when one of them is edited;
+  a name a person typed stays. (2026-10-11)
 - [ ] Bring the app up to the tax session's draft for 2025. Marlin's 17 answers of 2026-10-11
   (recorded in `Entscheidungen-2025.md` in the tax folder) are carried out, the bank, PayPal and
   pay-later lists are imported, and 112 payments are linked: business expenses in the app went
   from 7,547.54 to 13,979.55 euros, the draft table from 14,344.35 to 14,152.54, and one receipt
   is left on an estimated euro amount (CleanShot of 30 November, no payment in any source).
-  Every change is in `import-log-2026-10-11.md` there. The remaining 172.99: four Figma months
-  without an invoice (95.20; charged 26 January, 26 February, 26 March, 26 April; support mail
-  drafted), the meal allowance flat rate (56.00), the business half of Notion debits without a
-  document (18.96), the meals (3.01), rounding (-0.18). Waiting on Marlin: sending the Figma
-  mail, the meals in the register, the Notion debits, a battery charger billed to another
-  person, the Dremel in the year-boundary tab, and whether a pay-later purchase counts on the
-  purchase day (as built) or on the day the money leaves the bank. The pay-later notice in the payments tab for 2025 (1,429.81 euros less collected from the bank
+  Every change is in `import-log-2026-10-11.md` there. The four missing Figma invoices were downloaded and imported on 2026-10-11, so the app now
+  shows 14,074.75 euros against a draft of 14,133.55 (Notion's 37.98 without an invoice left the
+  draft the same day). The remaining 58.80: the meal allowance flat rate (56.00) and the meals
+  (3.01), less rounding. Open: the five Figma receipts are not linked to their pay-later
+  purchases yet. Waiting on Marlin: the meals in the register, and the tax adviser's answer on
+  whether a pay-later purchase counts on the purchase day (as built) or on the day the money
+  leaves the bank. The pay-later notice in the payments tab for 2025 (1,429.81 euros less collected from the bank
   than the list holds in purchases) is explained and is not missing data: the MacBook of 25
   November (2,849.00) ran as a financed purchase through PayPal, so the list holds it in full
   while the bank only sees instalments; against that, the monthly cycle collects December 2024

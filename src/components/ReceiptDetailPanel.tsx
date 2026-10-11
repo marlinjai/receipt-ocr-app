@@ -10,6 +10,7 @@ import { parseRotation, type Rotation } from '@/lib/meals/viewer-state';
 import { saveReceiptRotation } from '@/app/app/meals/actions';
 import MealPanelSection from './meals/MealPanelSection';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
+import type { RereadNote } from '@/lib/review/reread';
 
 interface ReceiptDetailPanelProps {
   row: Row;
@@ -22,6 +23,8 @@ interface ReceiptDetailPanelProps {
   onDeleteFile?: (rowId: string, columnId: string, fileId: string) => Promise<void>;
   /** Reload the table after the meal details of this row were saved. */
   onMealSaved?: () => void;
+  /** Read the stored file again with the model that sees the page; resolves with what to tell the person. */
+  onReread?: (rowId: string) => Promise<RereadNote>;
 }
 
 const MAX_FILES_PER_ROW = 10;
@@ -83,8 +86,23 @@ export default function ReceiptDetailPanel({
   onUploadFile,
   onDeleteFile,
   onMealSaved,
+  onReread,
 }: ReceiptDetailPanelProps) {
   const [ocrExpanded, setOcrExpanded] = useState(false);
+  const [rereadBusy, setRereadBusy] = useState(false);
+  const [rereadNote, setRereadNote] = useState<RereadNote | null>(null);
+  const reread = async () => {
+    if (!onReread || rereadBusy) return;
+    setRereadBusy(true);
+    setRereadNote(null);
+    try {
+      setRereadNote(await onReread(row.id));
+    } catch {
+      setRereadNote({ tone: 'danger', text: 'Das neue Lesen ist fehlgeschlagen. Am Beleg wurde nichts geändert.' });
+    } finally {
+      setRereadBusy(false);
+    }
+  };
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [lightboxFile, setLightboxFile] = useState<FileReference | null>(null);
@@ -502,6 +520,25 @@ export default function ReceiptDetailPanel({
               ))}
             </div>
           </div>
+
+          {onReread && files.length > 0 && (
+            <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="min-w-0 flex-1 text-xs text-gray-500">
+                  Liest die Datei noch einmal mit dem Sprachmodell, das die Seite sieht. Händler, Datum, Beträge und Währung
+                  werden überschrieben; Kategorie und Zuordnung nur gefüllt, wo sie leer sind.
+                </p>
+                <button type="button" className="ui-btn ui-btn-sm shrink-0" disabled={rereadBusy} onClick={() => void reread()}>
+                  {rereadBusy ? 'Liest …' : 'Seite neu lesen'}
+                </button>
+              </div>
+              {rereadNote && (
+                <p role={rereadNote.tone === 'ok' ? 'status' : 'alert'} className={`ui-note ui-note-${rereadNote.tone} mt-3`}>
+                  {rereadNote.text}
+                </p>
+              )}
+            </div>
+          )}
 
           {showMealSection && (
             // Keyed on the category: after a reclassification the section reloads.

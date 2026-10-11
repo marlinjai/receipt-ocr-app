@@ -47,9 +47,12 @@ GOOGLE_CLOUD_VISION_API_KEY=AIza_your_key_here
 # OpenRouter -- AI classification and chat sidebar
 OPENROUTER_API_KEY=sk-or-v1-your_key_here
 
-# Optional: override the default AI model (anthropic/claude-sonnet-4-20250514)
-# AI_MODEL=anthropic/claude-sonnet-4-20250514
-# AI_CLASSIFY_MODEL=anthropic/claude-sonnet-4-20250514
+# Optional: the model of the chat sidebar (default anthropic/claude-sonnet-4.6)
+# AI_MODEL=anthropic/claude-sonnet-4.6
+# Optional: the model that reads a receipt. It is given the page itself (an image
+# or PDF pages), so it must accept image and file input. Default
+# anthropic/claude-haiku-5.5. It does not follow AI_MODEL.
+# AI_CLASSIFY_MODEL=anthropic/claude-haiku-5.5
 ```
 
 Database connectivity uses the Cloudflare D1 binding (`DB`) configured in `wrangler.jsonc` -- no environment variables needed for the database.
@@ -82,7 +85,7 @@ The dashboard at `/dashboard` displays all your receipts with 4 switchable views
 ## AI Features
 
 ### Classify Receipts
-After uploading, receipts can be classified by AI. The classification endpoint uses the OCR text and vendor to determine the SKR03 category, konto, and zuordnung (assignment context). You can define custom classification rules that are stored in your browser and included in AI prompts.
+On upload, one language model call reads and classifies the receipt. It is given the page itself (the image, or the PDF pages) next to the recognized text, and answers the SKR03 category, konto and zuordnung (assignment context) as well as the invoice date, total, currency, net and tax lines. Its figures are a second reading: the invoice's own arithmetic and the recognized text check them, and what cannot be settled is put on the review list instead of being stored silently. A receipt that is already stored can be read again from its detail panel ("Seite neu lesen"). You can define custom classification rules that are stored in your browser and included in AI prompts.
 
 ### Chat Sidebar
 Click the chat icon on the dashboard to open the AI chat sidebar. You can ask the assistant to:

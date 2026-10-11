@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_CLASSIFY_MODEL, getClassifyModel } from '@/lib/ai-client';
 import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
 import { classificationPrompt, classifierProvider, parseClassificationResponse, textForModel, type ClassifyInput } from '../receipt-classifier';
 
@@ -106,5 +107,18 @@ describe('parseClassificationResponse: vendor and total as a second opinion', ()
 
   it('an answer that is not the expected object yields nothing, not a guess', () => {
     expect(parseClassificationResponse('I could not read this.', INPUT)).toMatchObject({ category: null, vendor: null, gross: null, confidence: 0 });
+  });
+});
+
+describe('getClassifyModel: the model that reads a receipt', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('is the measured default, whatever chat model is chosen, unless it is set itself', () => {
+    vi.stubEnv('AI_CLASSIFY_MODEL', '');
+    vi.stubEnv('AI_MODEL', 'some/chat-model');
+    expect(getClassifyModel()).toBe(DEFAULT_CLASSIFY_MODEL);
+    expect(DEFAULT_CLASSIFY_MODEL).toBe('anthropic/claude-haiku-5.5');
+    vi.stubEnv('AI_CLASSIFY_MODEL', 'some/reading-model');
+    expect(getClassifyModel()).toBe('some/reading-model');
   });
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as F from '@/lib/extraction/__tests__/fixtures';
 import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
@@ -5,8 +6,8 @@ import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-hel
 /**
  * "Neue Lesart übernehmen" against a real database, next to a fresh upload of
  * the same receipt: both must leave the same amounts, currency and exchange
- * rate on the row. Auth, the classifier and the exchange-rate source are the
- * only things replaced; the lookup is the ONE module both paths import.
+ * rate on the row. Auth, the classifier, the file store and the exchange-rate
+ * source are the only things replaced; the lookup is the ONE module both paths import.
  * Run with `pnpm test:db`.
  */
 
@@ -26,13 +27,17 @@ vi.mock('@/lib/receipt-classifier', async (original) => ({
   classifyReceiptText: (...a: unknown[]) => classify(...a),
 }));
 vi.mock('@/lib/fx-rates', () => ({ getFxRate: (...a: unknown[]) => fxRate(...a) }));
+// The file store is not there in a test: the page is one the loader would have prepared.
+vi.mock('@/lib/receipt-page-source', () => ({ loadReceiptPage: vi.fn(async () => ({ page: { mediaType: 'application/pdf', base64: 'UERG', pagesSent: 1, pagesTotal: 1 } })) }));
 
 import { processReceipt } from '../actions';
 import { getReviewQueue, takeNewReading } from './review-actions';
 
 let ws: TestWorkspace;
 
-const file = (n: number) => ({ id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`, originalName: `rechnung-${n}.pdf`, fileType: 'application/pdf' });
+// A file id of this run only: the store hands out a fresh id per upload, and a file another workspace holds is refused.
+const RUN = randomUUID().slice(0, 24);
+const file = (n: number) => ({ id: `${RUN}${String(n).padStart(12, '0')}`, originalName: `rechnung-${n}.pdf`, fileType: 'application/pdf' });
 const ocr = (fullText: string) => ({ fullText, blocks: [], confidence: 0.95 });
 
 // The answer of a model that read the invoice well, and, as it is told to where a
@@ -41,12 +46,14 @@ const MODEL_ANSWER = {
   name: 'Example Courses, 360.00 USD, 26.11.2025',
   vendor: 'Example Courses',
   gross: 360,
+  date: '2025-11-26T00:00:00.000Z',
   category: 'Sonstige Ausgaben',
   konto: '4900',
   zuordnung: 'Geschäftlich',
   taxRate: 19,
   confidence: 0.9,
   reasoning: '',
+  sawPage: true,
   meal: { mealType: null, consumption: null, tip: null, taxLines: null, place: null },
 };
 
@@ -154,5 +161,35 @@ describe('a dollar invoice, uploaded today and taken from the review list', () =
     expect(await stateOf(old)).toMatchObject({ Gross: 450, 'FX Rate': 0.1111 });
     // No field name at all is a refused request.
     expect(await takeNewReading(old, ['Währung'])).toEqual({ ok: false, error: 'not_found' });
+  });
+});
+
+describe('a total the model read from the page, in the review list', () => {
+  // An invented customs invoice: the text alone proves the taxed part (57.09), the page names the total above it.
+  const CUSTOMS = [
+  'Musterfracht Express GmbH', 'Rechnung', 'Rechnungsdatum 14.05.2025', 'Einfuhrabgaben', 'Zoll', 'Einfuhrumsatzsteuer',
+  'Vorlageprovision', 'Nettobetrag', 'MwSt 19 %', 'Rechnungsbetrag', '38,40', '130,65', '47,97', '217,02', '9,12', '57,09', '226,14',
+].join('\n');
+
+  it('is stored as read and is not offered back as "an older reading" of 57.09', async () => {
+    classify.mockResolvedValue({ ...MODEL_ANSWER, name: 'Zollabfertigung, Musterfracht Express', vendor: 'Musterfracht Express GmbH', gross: 226.14, date: '2025-05-14T00:00:00.000Z', taxRate: 19 });
+    const uploaded = await processReceipt(file(10), ocr(CUSTOMS), {});
+    expect(uploaded.reviewFlags).toEqual([]);
+    expect(await stateOf(uploaded.rowId)).toMatchObject({ Gross: 226.14, Net: 217.02, 'Tax Rate': 19, Date: '2025-05-14' });
+
+    const queue = await getReviewQueue();
+    if (!queue.ok) throw new Error(queue.error);
+    expect(queue.value.find((e) => e.rowId === uploaded.rowId)).toBeUndefined();
+    // Nothing can be taken either: the server reads the offer again and finds none.
+    const taken = await takeNewReading(uploaded.rowId, ['gross', 'net']);
+    expect(taken.ok).toBe(true);
+    expect(await stateOf(uploaded.rowId)).toMatchObject({ Gross: 226.14, Net: 217.02 });
+  });
+
+  it('the same invoice read by a model that named another amount keeps the proven part and asks for a look', async () => {
+    classify.mockResolvedValue({ ...MODEL_ANSWER, vendor: 'Musterfracht Express', gross: 130.65, date: '2025-05-14T00:00:00.000Z', taxRate: 19 });
+    const uploaded = await processReceipt(file(11), ocr(CUSTOMS), {});
+    expect(uploaded.reviewFlags).toEqual(['total_conflict']);
+    expect(await stateOf(uploaded.rowId)).toMatchObject({ Gross: 57.09 });
   });
 });

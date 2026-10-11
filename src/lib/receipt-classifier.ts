@@ -1,5 +1,13 @@
 /**
- * Classify a receipt from its recognized text with a language model.
+ * Read and classify a receipt with a language model that is given the page
+ * itself (the image, or the PDF pages) next to the recognized text.
+ *
+ * Text recognition returns labels and amounts in separate runs; the page
+ * shows which amount stands next to "Total". What the model reads is a second
+ * reading: the caller checks every figure against the receipt's arithmetic
+ * and the recognized text (src/lib/receipt-reading.ts) and stores none of it
+ * on the model's word alone. Without a page (file missing, over the limits)
+ * the same call reads the text alone and says so (`sawPage`).
  *
  * Two ways to reach a model, tried in this order:
  *  1. Anthropic directly (`ANTHROPIC_API_KEY`), with the server-side web search
@@ -19,7 +27,9 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import { getAiClient, getClassifyModel } from '@/lib/ai-client';
+import type { ReceiptPage } from '@/lib/receipt-page';
 import { parseMealClassification, type MealClassification } from '@/lib/meals/classify';
 
 /** A model identifier is used exactly as published: no date suffix. */
@@ -30,6 +40,10 @@ const MAX_RESUMES = 3;
 const TEXT_LIMIT = 6000;
 /** How much of that is the end of the text, where a long invoice prints its totals. */
 const TEXT_TAIL = 2000;
+/** How long one answer may take. Beyond it the receipt is stored with its text reading and says it was not classified. */
+const REQUEST_TIMEOUT_MS = 60_000;
+/** One more attempt after a connection error or a server error, none after a timeout of the second. */
+const MAX_RETRIES = 1;
 
 /**
  * The part of a long text the model gets: the head (vendor, date, the amount
@@ -67,6 +81,16 @@ export interface ClassifyInput {
   categoryToKonto: Record<string, string>;
   zuordnungOptions: string[];
   userRules?: string;
+  /** The page itself, when the stored file could be fetched and is within the limits. */
+  page?: ReceiptPage | null;
+}
+
+/** What one call used, for the log and the evaluation. Never anything of the document. */
+export interface ModelUsage {
+  inputTokens: number;
+  outputTokens: number;
+  /** In US dollars, as the provider bills it; null where it does not say. */
+  cost: number | null;
 }
 
 export interface ReceiptClassification {
@@ -81,6 +105,14 @@ export interface ReceiptClassification {
   vendor: string | null;
   /** The total to pay as printed. A second opinion, checked by the caller against the tax lines. */
   gross: number | null;
+  /** The net amount as printed, null when the receipt prints none. */
+  net: number | null;
+  /** The invoice date as an ISO 8601 instant (midnight UTC of the printed day). Checked by the caller against the dates in the text. */
+  date: string | null;
+  /** ISO 4217 code of the currency the total is in. */
+  currency: string | null;
+  /** True when the model says the document states no total to pay at all. */
+  noTotal: boolean;
   /** What could be read about a meal (only meaningful for category Bewirtung). */
   meal: MealClassification;
 }
@@ -90,6 +122,21 @@ type ParseInput = Pick<ClassifyInput, 'categoryNames' | 'categoryToKonto' | 'zuo
 function amount(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 1_000_000) return null;
   return Math.round(value * 100) / 100;
+}
+
+/** A day as the model was asked to give it, YYYY-MM-DD, as the instant the text reader uses. Null for anything else. */
+function invoiceDay(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (year < 1990 || year > 2100 || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return date.toISOString();
+}
+
+function currencyCode(value: unknown): string | null {
+  return typeof value === 'string' && /^[A-Za-z]{3}$/.test(value.trim()) ? value.trim().toUpperCase() : null;
 }
 
 function vendorName(value: unknown): string | null {
@@ -112,6 +159,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
   try {
     const parsed = JSON.parse(candidate);
     const category = input.categoryNames.includes(parsed.category) ? (parsed.category as string) : null;
+    const gross = amount(parsed.gross);
     return {
       name: typeof parsed.name === 'string' && parsed.name ? parsed.name : null,
       category,
@@ -122,7 +170,12 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
       reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : '',
       vendor: vendorName(parsed.vendor),
-      gross: amount(parsed.gross),
+      gross,
+      net: amount(parsed.net),
+      date: invoiceDay(parsed.date),
+      currency: currencyCode(parsed.currency),
+      // Only an explicit "no total" counts, and never next to a total.
+      noTotal: parsed.totalStated === false && gross === null,
       meal: parseMealClassification(parsed),
     };
   } catch {
@@ -130,7 +183,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
     return {
       name: null, category: null, konto: null, zuordnung: null, taxRate: null, confidence: 0,
       reasoning: 'Failed to parse classification response',
-      vendor: null, gross: null,
+      vendor: null, gross: null, net: null, date: null, currency: null, noTotal: false,
       meal: parseMealClassification(null),
     };
   }
@@ -148,67 +201,112 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
 const ASSIGNMENT_RULE =
   'Answer only what the document itself shows. "Geschäftlich" (business) when it is addressed to a company, shows the buyer\'s VAT identification number, or applies reverse charge. "Universität" when it is addressed to a university or names an enrolment or a course of study. Otherwise null: a self-employed person is invoiced under their own name, so a personal addressee, a home address, or the kind of product (music, video, cloud storage, a phone plan) says nothing about who bears the cost. Never answer "Privat" unless a user classification rule below says so.';
 
-/** The instructions, identical for both providers apart from the sentence about searching. */
+/** What the model is told about what it is looking at. */
+function sourceParagraph(page: ReceiptPage | null | undefined): string {
+  const ocrCaveat =
+    'It can contain misread characters, lines out of order, and a second printed form on the same page (a German hospitality form, "Bewirtungsbeleg" or "Angaben zum Nachweis der Höhe und der betrieblichen Veranlassung von Bewirtungsaufwendungen", is printed on or stapled to many restaurant receipts).';
+  if (!page) return `The text below comes from optical character recognition of a photographed or scanned receipt. ${ocrCaveat}`;
+  const cut =
+    page.pagesTotal !== undefined && page.pagesSent !== undefined && page.pagesSent < page.pagesTotal
+      ? ` Only the first and the last pages are attached (${page.pagesSent} of ${page.pagesTotal}).`
+      : '';
+  return `You are given the document itself (${page.mediaType === 'application/pdf' ? 'its pages as a PDF' : 'an image of it'}) and, below, the text that optical character recognition read from it.${cut} Read amounts, dates and names from the document itself: only there can you see which value stands next to which label. The recognized text returns labels and values in separate runs. ${ocrCaveat} Give every amount and date exactly as printed: your answer is checked against the recognized text, and a figure that is not printed is discarded.`;
+}
+
+/** The instructions, identical for both providers apart from the sentence about searching and the one about the page. */
 export function classificationPrompt(input: ClassifyInput, options: { webSearch: boolean }): string {
   const search = options.webSearch
     ? 'You have access to web_search. Search for the vendor to understand what they sell before classifying, unless the receipt text already makes it plain.'
-    : 'You cannot look anything up. Decide from the receipt text alone and lower "confidence" when the kind of business is not clear from it.';
+    : 'You cannot look anything up. Decide from the receipt alone and lower "confidence" when the kind of business is not clear from it.';
   return `You are a receipt classification assistant for German business expense tracking (SKR03).
 
 ${search}
 
-The text below comes from optical character recognition of a photographed or scanned receipt. It can contain misread characters, lines out of order, and a second printed form on the same page (a German hospitality form, "Bewirtungsbeleg" or "Angaben zum Nachweis der Höhe und der betrieblichen Veranlassung von Bewirtungsaufwendungen", is printed on or stapled to many restaurant receipts).
+${sourceParagraph(input.page)}
 
 Classify the receipt and read these facts from it:
 
 1. **name**: a human-readable summary of what was purchased. Format: "Item/Service description, Vendor, €Amount, DD.MM.YYYY". Lead with the ITEM, not the vendor. If there are several items, name the most important one or summarize briefly.
 2. **vendor**: the name of the business that issued the receipt, as a customer would call it ("Trattoria Beispiel", "Musterbräu Berlin"). Never a slogan ("Since 2016"), never a product or an extra ("+ mit Haferdrink"), never a bare description ("Indisches"), never a receipt heading ("Rechnung", "Bewirtungsbeleg"). Null when the text does not name it.
-3. **gross**: the total the customer had to pay, as a number, exactly as printed (the line labelled Summe, Gesamt, Total, Betrag, zu zahlen, or the sum of the tax lines). Never a receipt number, table number, transaction number, card number or telephone number. An invoice settled from a credit or balance still has its total: give the line "Total", never an amount due of 0. Null when the text does not show a total.
-4. **category**: one of: ${input.categoryNames.join(', ')}
-5. **konto**: the SKR03 account number (mapped from category):
+3. **gross**: the total the customer had to pay, as a number, exactly as printed (the line labelled Summe, Gesamt, Total, Betrag, zu zahlen, or the sum of the tax lines). Where several totals are printed (a subtotal, "Total" and "Grand Total", a total per section), give the final one, with tax, shipping and duties. Never a receipt number, table number, transaction number, card number or telephone number. An invoice settled from a credit or balance still has its total: give the line "Total", never an amount due of 0. Null when the document does not show a total.
+4. **totalStated**: false when the document states no total to pay at all: an application, a contract or an offer that names only a monthly rate or an instalment, a delivery note without prices. Then "gross" is null: a monthly rate is not a total. Otherwise true.
+5. **net**: the amount before tax as a number, exactly as printed. Null when the document prints none. Never compute it.
+6. **currency**: the ISO 4217 code of the currency the total is in ("EUR", "USD", "GBP").
+7. **date**: the invoice date (the day the document was issued; for a till receipt the day of the purchase) as YYYY-MM-DD. Never the due date, a renewal or expiry date, a delivery date or the start or end of the period billed. Null when the document prints no such date.
+8. **category**: one of: ${input.categoryNames.join(', ')}
+9. **konto**: the SKR03 account number (mapped from category):
 ${input.categoryNames.map((c) => `   ${c} → ${input.categoryToKonto[c]}`).join('\n')}
-6. **zuordnung** (who bears the cost): one of ${input.zuordnungOptions.join(', ')}, or null. ${ASSIGNMENT_RULE}
-7. **taxRate**: the German value-added tax rate printed on the receipt. If the receipt shows several rates, give the one with the largest amount here and list all of them in taxLines. Only if none is printed, infer it: 19 standard; 7 for books and public transport; for restaurant and catering FOOD 19 until 31 December 2025 and 7 from 1 January 2026 (drinks always 19); takeaway food 7.
-8. **taxLines**: every tax line printed on the receipt as { "rate": percent, "net": amount, "tax": amount }, exactly as printed. Empty array if the receipt prints none. Never compute or guess a line.
+10. **zuordnung** (who bears the cost): one of ${input.zuordnungOptions.join(', ')}, or null. ${ASSIGNMENT_RULE}
+11. **taxRate**: the German value-added tax rate printed on the receipt. If the receipt shows several rates, give the one with the largest amount here and list all of them in taxLines. Only if none is printed, infer it: 19 standard; 7 for books and public transport; for restaurant and catering FOOD 19 until 31 December 2025 and 7 from 1 January 2026 (drinks always 19); takeaway food 7.
+12. **taxLines**: every tax line printed on the receipt as { "rate": percent, "net": amount, "tax": amount }, exactly as printed. Empty array if the receipt prints none. Never compute or guess a line.
 
 A meal or drinks in a restaurant, cafe, bar, pub, brewery tap room, snack bar or from a caterer is "Bewirtung", whatever else the vendor's name suggests. Words such as "Tisch", "Bedienung", "Es bediente Sie", "Kellner", "Trinkgeld", "Speisen", "Getränke" and a printed hospitality form are strong signs of it. Supermarket and grocery receipts are NOT "Bewirtung", whoever the vendor is.
 
 Only when the category is "Bewirtung", also give:
-9. **mealType**: "business_meal_external" for a restaurant, cafe, bar or catering meal; "travel_meal" when it is clearly food bought on a trip for one person (station kiosk, motorway services, in-flight); "not_a_meal" if it is not a meal after all. Use null when unsure. You cannot know the guests: never infer them.
-10. **consumption**: "dine_in" or "takeaway" if the receipt says so (for example "Im Haus", "Außer Haus", "To go"), else null.
-11. **tip**: a tip printed or handwritten on the receipt as a number, else null. Never estimate one.
-12. **place**: the restaurant's name and postal address as one line, as printed, else null.
+13. **mealType**: "business_meal_external" for a restaurant, cafe, bar or catering meal; "travel_meal" when it is clearly food bought on a trip for one person (station kiosk, motorway services, in-flight); "not_a_meal" if it is not a meal after all. Use null when unsure. You cannot know the guests: never infer them.
+14. **consumption**: "dine_in" or "takeaway" if the receipt says so (for example "Im Haus", "Außer Haus", "To go"), else null.
+15. **tip**: a tip printed or handwritten on the receipt as a number, else null. Never estimate one.
+16. **place**: the restaurant's name and postal address as one line, as printed, else null.
 
 ${input.userRules || ''}
 
 Respond with ONLY a JSON object (no markdown, no explanation):
-{ "name": "...", "vendor": "...", "gross": 0.00, "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "..." }`;
+{ "name": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "..." }`;
 }
 
-function userContent(input: ClassifyInput): string {
+function userText(input: ClassifyInput): string {
   return [
     input.vendor && `First reading of the vendor (may be wrong): ${input.vendor}`,
     input.gross !== null && `First reading of the total (may be wrong): ${input.gross}`,
-    input.date && `Date: ${input.date}`,
-    `\nReceipt text:\n${textForModel(input.fullText)}`,
+    input.date && `First reading of the date (may be wrong): ${input.date.slice(0, 10)}`,
+    `\n${input.page ? 'Recognized text' : 'Receipt text'}:\n${textForModel(input.fullText)}`,
   ]
     .filter(Boolean)
     .join('\n');
 }
 
-async function classifyWithAnthropic(apiKey: string, input: ClassifyInput): Promise<string> {
-  const client = new Anthropic({ apiKey });
-  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userContent(input) }];
+/**
+ * True when the provider refused the request itself (a file it cannot open,
+ * a page too large for it) and not the caller: the same receipt is then worth
+ * one more call with its text alone. A missing key, an empty balance, a rate
+ * limit and a timeout fail the same way without the page, so they are not.
+ */
+function rejectedTheRequest(err: unknown): boolean {
+  const status = (err as { status?: unknown } | null)?.status;
+  return typeof status === 'number' && status >= 400 && status < 500 && ![401, 402, 403, 408, 429].includes(status);
+}
+
+interface ModelAnswer {
+  text: string;
+  usage: ModelUsage;
+}
+
+async function askAnthropic(apiKey: string, input: ClassifyInput): Promise<ModelAnswer> {
+  const client = new Anthropic({ apiKey, maxRetries: MAX_RETRIES });
+  const page = input.page;
+  const pageBlock: Anthropic.ContentBlockParam[] = !page
+    ? []
+    : page.mediaType === 'application/pdf'
+      ? [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: page.base64 } }]
+      : [{ type: 'image', source: { type: 'base64', media_type: page.mediaType, data: page.base64 } }];
+  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: [...pageBlock, { type: 'text', text: userText(input) }] }];
+  const usage: ModelUsage = { inputTokens: 0, outputTokens: 0, cost: null };
   let text = '';
   for (let attempt = 0; attempt <= MAX_RESUMES; attempt++) {
-    const response = await client.messages.create({
-      model: process.env.ANTHROPIC_CLASSIFY_MODEL || DEFAULT_ANTHROPIC_MODEL,
-      max_tokens: 16000,
-      output_config: { effort: 'low' },
-      system: classificationPrompt(input, { webSearch: true }),
-      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }],
-      messages,
-    });
+    const response = await client.messages.create(
+      {
+        model: process.env.ANTHROPIC_CLASSIFY_MODEL || DEFAULT_ANTHROPIC_MODEL,
+        max_tokens: 16000,
+        output_config: { effort: 'low' },
+        system: classificationPrompt(input, { webSearch: true }),
+        tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }],
+        messages,
+      },
+      // A turn that searches takes longer than one that only reads.
+      { timeout: 2 * REQUEST_TIMEOUT_MS },
+    );
+    usage.inputTokens += response.usage.input_tokens;
+    usage.outputTokens += response.usage.output_tokens;
     if (response.stop_reason === 'refusal') throw new Error('The model declined to classify this receipt.');
     const textBlock = response.content.findLast((block) => block.type === 'text');
     if (textBlock && textBlock.type === 'text') text = textBlock.text;
@@ -216,28 +314,77 @@ async function classifyWithAnthropic(apiKey: string, input: ClassifyInput): Prom
     if (response.stop_reason !== 'pause_turn') break;
     messages.push({ role: 'assistant', content: response.content });
   }
-  return text;
+  return { text, usage };
 }
 
-async function classifyWithOpenRouter(input: ClassifyInput): Promise<string> {
-  const response = await getAiClient().chat.completions.create({
+/** What OpenRouter takes beyond the chat completion parameters of the client library. */
+type OpenRouterRequest = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & {
+  plugins?: Array<{ id: 'file-parser'; pdf: { engine: 'native' } }>;
+  reasoning?: { effort: 'low' | 'medium' | 'high' };
+  usage?: { include: boolean };
+};
+
+async function askOpenRouter(input: ClassifyInput): Promise<ModelAnswer> {
+  const page = input.page;
+  const pagePart: OpenAI.Chat.Completions.ChatCompletionContentPart[] = !page
+    ? []
+    : page.mediaType === 'application/pdf'
+      ? [{ type: 'file', file: { filename: 'receipt.pdf', file_data: `data:application/pdf;base64,${page.base64}` } }]
+      : [{ type: 'image_url', image_url: { url: `data:${page.mediaType};base64,${page.base64}` } }];
+  const request: OpenRouterRequest = {
     model: getClassifyModel(),
-    max_tokens: 4000,
+    max_tokens: 8000,
+    // Reading one receipt is not a hard problem; the answer is checked anyway.
+    reasoning: { effort: 'low' },
+    usage: { include: true },
     messages: [
       { role: 'system', content: classificationPrompt(input, { webSearch: false }) },
-      { role: 'user', content: userContent(input) },
+      { role: 'user', content: [...pagePart, { type: 'text', text: userText(input) }] },
     ],
-  });
-  return response.choices[0]?.message?.content ?? '';
+    // The model gets the PDF pages themselves. Without this OpenRouter may hand
+    // it a text extract instead, which is the torn text all over again.
+    ...(page?.mediaType === 'application/pdf' ? { plugins: [{ id: 'file-parser' as const, pdf: { engine: 'native' as const } }] } : {}),
+  };
+  const response = await getAiClient().chat.completions.create(request, { timeout: REQUEST_TIMEOUT_MS, maxRetries: MAX_RETRIES });
+  const choice = response.choices[0];
+  if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) throw new Error('The model declined to classify this receipt.');
+  const billed = (response.usage as { cost?: unknown } | undefined)?.cost;
+  return {
+    text: choice?.message?.content ?? '',
+    usage: {
+      inputTokens: response.usage?.prompt_tokens ?? 0,
+      outputTokens: response.usage?.completion_tokens ?? 0,
+      cost: typeof billed === 'number' ? billed : null,
+    },
+  };
 }
 
-/** Classify one receipt. Throws when no provider is configured or the call fails; never returns a guess for a failure. */
-export async function classifyReceiptText(input: ClassifyInput): Promise<ReceiptClassification & { provider: ClassifierProvider }> {
+export interface ReceiptReadingAnswer extends ReceiptClassification {
+  provider: ClassifierProvider;
+  /** True when the model was given the page; false when it read the recognized text alone. */
+  sawPage: boolean;
+  usage: ModelUsage;
+}
+
+/**
+ * Read and classify one receipt. Throws when no provider is configured or the
+ * call fails; never returns a guess for a failure. A page the provider cannot
+ * take costs one more call with the text alone, and the answer says so.
+ */
+export async function classifyReceiptText(input: ClassifyInput): Promise<ReceiptReadingAnswer> {
   const provider = classifierProvider();
   if (!provider) throw new ClassifierUnavailableError();
-  const text =
-    provider === 'anthropic_web_search'
-      ? await classifyWithAnthropic(process.env.ANTHROPIC_API_KEY!, input)
-      : await classifyWithOpenRouter(input);
-  return { ...parseClassificationResponse(text, input), provider };
+  const ask = (asked: ClassifyInput) => (provider === 'anthropic_web_search' ? askAnthropic(process.env.ANTHROPIC_API_KEY!, asked) : askOpenRouter(asked));
+  let sawPage = Boolean(input.page);
+  let answer: ModelAnswer;
+  try {
+    answer = await ask(input);
+  } catch (err) {
+    if (!input.page || !rejectedTheRequest(err)) throw err;
+    console.error('[receipt-classifier] the provider did not take the page; reading the text alone', { provider, status: (err as { status?: number }).status });
+    sawPage = false;
+    answer = await ask({ ...input, page: null });
+  }
+  console.info('[receipt-classifier] read', { provider, sawPage, inputTokens: answer.usage.inputTokens, outputTokens: answer.usage.outputTokens });
+  return { ...parseClassificationResponse(answer.text, input), provider, sawPage, usage: answer.usage };
 }

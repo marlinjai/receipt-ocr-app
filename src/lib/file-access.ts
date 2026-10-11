@@ -52,31 +52,47 @@ export async function guardFileAccess(
   // Dev bypass (development only): no real memberships to check against.
   if (principal.memberships.length === 0) return null;
 
-  // Every table that references this file. Since the Receipt Image column
-  // migrated to the native file type (2026-08-03), the file-reference junction
-  // is the single source of truth: nothing records fileIds in cells anymore.
-  const fileRefs = await prisma.dtFile.findMany({ where: { fileId }, select: { rowId: true } });
-  const tableIds = new Set<string>();
-  if (fileRefs.length > 0) {
-    const resolved = await resolveRowTableIds(fileRefs.map((r) => r.rowId));
-    for (const tableId of resolved.values()) tableIds.add(tableId);
-  }
+  const workspaceIds = await workspacesReferencing(fileId);
 
   // Unreferenced = the fresh-upload window; see module docblock.
-  if (tableIds.size === 0) return null;
+  if (workspaceIds.length === 0) return null;
 
-  const tables = await prisma.dtTable.findMany({
-    where: { id: { in: [...tableIds] } },
-    select: { workspaceId: true },
-  });
   const session = {
     memberships: principal.memberships,
     activeWorkspace: principal.activeWorkspace,
   };
-  const allowed = tables.some((t) => sessionMayAccessWorkspace(session, t.workspaceId));
+  const allowed = workspaceIds.some((id) => sessionMayAccessWorkspace(session, id));
   if (allowed) return null;
 
   // Same shape as an SB miss so foreign ids are indistinguishable from
   // nonexistent ones.
   return NextResponse.json({ error: 'not found' }, { status: 404 });
+}
+
+/**
+ * The workspaces whose tables reference this file. Since the Receipt Image
+ * column migrated to the native file type (2026-08-03), the file-reference
+ * junction is the single source of truth: nothing records fileIds in cells
+ * anymore.
+ */
+async function workspacesReferencing(fileId: string): Promise<string[]> {
+  const fileRefs = await prisma.dtFile.findMany({ where: { fileId }, select: { rowId: true } });
+  if (fileRefs.length === 0) return [];
+  const resolved = await resolveRowTableIds(fileRefs.map((r) => r.rowId));
+  const tableIds = [...new Set(resolved.values())];
+  if (tableIds.length === 0) return [];
+  const tables = await prisma.dtTable.findMany({ where: { id: { in: tableIds } }, select: { workspaceId: true } });
+  return [...new Set(tables.map((t) => t.workspaceId))];
+}
+
+/**
+ * The same rule for a server action that is handed a file id by the browser
+ * and works for ONE workspace: the file must be fresh (referenced nowhere) or
+ * referenced by that workspace. Without it, a receipt could be saved with
+ * another company's file id, and its page read into the caller's row.
+ */
+export async function fileOpenToWorkspace(fileId: string, workspaceId: string): Promise<boolean> {
+  if (!UUID_RE.test(fileId)) return false;
+  const workspaceIds = await workspacesReferencing(fileId);
+  return workspaceIds.length === 0 || workspaceIds.includes(workspaceId);
 }

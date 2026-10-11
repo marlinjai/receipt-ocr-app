@@ -13,7 +13,7 @@
  */
 
 /** Doubts recorded at reading time. A person can confirm them away ("Geprüft"). */
-export const READ_FLAGS = ['not_classified', 'total_unconfirmed', 'total_conflict', 'category_doubt'] as const;
+export const READ_FLAGS = ['not_classified', 'page_not_read', 'total_unconfirmed', 'total_conflict', 'date_conflict', 'category_doubt'] as const;
 export type ReadFlag = (typeof READ_FLAGS)[number];
 
 export type ReviewReason =
@@ -175,8 +175,10 @@ export const REASON_TEXT: Record<ReviewReason, string> = {
   assignment_missing: 'Zuordnung fehlt: geschäftlich, Universität oder privat?',
   tax_implausible: 'Steuersatz oder Nettobetrag passt nicht zum Gesamtbetrag.',
   not_classified: 'Nicht automatisch eingeordnet: Kategorie und Zuordnung bitte prüfen.',
+  page_not_read: 'Nur aus dem erkannten Text gelesen: Die Seite selbst konnte dem Sprachmodell nicht gezeigt werden. Beträge und Datum bitte prüfen.',
   total_unconfirmed: 'Gesamtbetrag nur vom Etikett gelesen, ohne Gegenprobe über die Steuerzeilen.',
   total_conflict: 'Zwei Lesarten des Gesamtbetrags widersprechen sich.',
+  date_conflict: 'Das Rechnungsdatum ist nicht gesichert: Zwei Lesarten widersprechen sich, oder das Datum steht nicht im erkannten Text.',
   category_doubt: 'Sieht nach einer Bewirtung aus, wurde aber anders eingeordnet.',
   possible_duplicate: 'Mögliches Duplikat: gleicher Tag, gleicher Betrag.',
   reading_differs: 'Der Beleg wurde mit einem älteren Leser erfasst. Die neue Lesart weicht ab.',

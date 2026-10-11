@@ -179,3 +179,29 @@ describe('the offer in the review list', () => {
     expect(reviewReasons(snapshot, undefined, [], false)).toEqual([]);
   });
 });
+
+describe('a total the page reading settled is not "an older reading"', () => {
+  // An invented customs invoice: duties without tax next to a taxed service. The
+  // text alone proves the taxed part (57.09); the page names the total above it.
+  const CUSTOMS = [
+  'Musterfracht Express GmbH', 'Rechnung', 'Rechnungsdatum 14.05.2025', 'Einfuhrabgaben', 'Zoll', 'Einfuhrumsatzsteuer',
+  'Vorlageprovision', 'Nettobetrag', 'MwSt 19 %', 'Rechnungsbetrag', '38,40', '130,65', '47,97', '217,02', '9,12', '57,09', '226,14',
+].join('\n');
+  const customs = (overrides: Partial<StoredReading> = {}) =>
+    stored(CUSTOMS, { name: 'Zollabfertigung', vendor: 'Musterfracht Express GmbH', gross: 226.14, net: 217.02, taxRate: 19, category: 'Sonstige Ausgaben', ...overrides });
+
+  it('offers nothing against a stored total the printed figures bear out as the page\'s', () => {
+    expect(proposeReading(customs())).toEqual([]);
+  });
+
+  it('still offers the net and the rate that go with that total where they are stored wrong', () => {
+    expect(byField(proposeReading(customs({ net: 190.03, taxRate: 7 })))).toEqual({ net: [190.03, 217.02], taxRate: [7, 19] });
+  });
+
+  it('still offers the proven part against a stored amount nothing bears out', () => {
+    // 130.65 is printed, but the invoice's arithmetic does not make it the total.
+    expect(byField(proposeReading(customs({ gross: 130.65, net: 109.79 })))).toMatchObject({ gross: [130.65, 57.09] });
+    // And against an amount that is not printed at all.
+    expect(byField(proposeReading(customs({ gross: 300, net: 252.1 })))).toMatchObject({ gross: [300, 57.09] });
+  });
+});

@@ -187,7 +187,7 @@ export function financeActionMessage(error: string, detail?: string): string {
         case 'file_already_imported':
           return 'Genau diese Datei wurde für dieses Konto schon eingelesen. Es wurde nichts doppelt angelegt.';
         case 'unknown_layout':
-          return 'Der Aufbau dieser Datei wird nicht erkannt. Unterstützt werden die Exporte von N26, Tomorrow und PayPal (CSV) sowie die Umsatzliste der Bankschnittstelle (JSON). Es wurde nichts eingelesen.';
+          return 'Der Aufbau dieser Datei wird nicht erkannt. Unterstützt werden die Exporte von N26, Tomorrow und PayPal (CSV), die Kaufliste von Klarna (CSV) sowie die Umsatzliste der Bankschnittstelle (JSON). Es wurde nichts eingelesen.';
         case 'empty':
           return 'Die Datei enthält keine Umsätze.';
         case 'too_large':

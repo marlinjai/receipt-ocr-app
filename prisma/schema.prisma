@@ -603,8 +603,9 @@ model TaxCounterpartyRule {
 // A payment (or part of it) that belongs to a receipt row or to an issued
 // invoice; exactly one of `rowId` and `invoiceId` is set. `cents` is positive.
 // `method` says how the link came about: 'reference' (the document's number is
-// in the payment's text) or 'manual' (a person confirmed it). `rowId` has no
-// foreign key (see meal_guests.row_id); the row delete paths remove the link.
+// in the payment's text), 'manual' (a person picked it) or 'estimate' (a
+// person accepted the proposal for a receipt on an estimated amount). `rowId`
+// has no foreign key (see meal_guests.row_id); the row delete paths remove the link.
 model TaxPaymentLink {
   id              String   @id @default(uuid())
   authWorkspaceId String   @map("auth_workspace_id")

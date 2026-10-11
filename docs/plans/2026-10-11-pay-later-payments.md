@@ -2,7 +2,7 @@
 title: Pay-later purchases as payments, one rule for money that only funds another account
 summary: The purchase list of the pay-later service (Klarna) becomes a payment source like the bank and PayPal files. A debit that only funds another imported payment account (PayPal's debit on the bank, the pay-later service's settlement, a PayPal purchase charged to the pay-later card) is recognized as a transfer between own accounts by one rule. Receipts whose euro amount is an estimate get a proposed payment, accepted one by one or all at once. Linking a payment no longer redraws thousands of list entries.
 type: plan
-status: decided
+status: in-progress
 tags: [finance, tax, payments, import, matching, performance]
 projects: [receipt-ocr-app]
 date: 2026-10-11
@@ -110,4 +110,43 @@ accepting twice links nothing twice). Every fixture row is invented.
 
 ## Measured
 
-Filled in by the implementation, see the section at the end of this file.
+Production may not be touched, so the time was measured on a local throwaway database seeded with
+invented rows: 2,150 payments on three accounts, 550 receipts, 120 counterparties answered as
+business, which leaves 890 open payments. The page was drawn in the test browser environment
+(jsdom), so the render figures compare before with after and are not browser times.
+
+| Step of one manual link | Before | After |
+|---|---|---|
+| Server: check that the receipt is the workspace's | 2,499 ms | 47 ms |
+| Server: the link including that check | 1,795 ms | 52 ms |
+| Server: compute the statement that is sent back | 110 to 130 ms | 81 to 100 ms |
+| Page: entries of the receipt picker in the document | 489,500 (550 per open payment) | 0 until a picker is opened, then 550 |
+| Page: redraw after the link, 200 open payments drawn | 892 ms | 33 ms |
+| Page: redraw when the buttons are disabled, 200 drawn | 1,013 ms | 29 ms |
+| Page: redraw after the link, all 890 drawn | out of memory | 52 ms |
+
+Where the time went, and what was done:
+
+1. **The page.** Every open payment carried its own picker with every receipt of two years. One
+   action redraws the list three times (buttons off, new statement, buttons on), so the cost
+   was paid three times. The picker is now drawn for one payment at a time, behind "Von Hand
+   zuordnen".
+2. **The row check.** The table package's single-row read is not told which table the row is in
+   and asks every table of the database in turn, one query each (1,900 tables in the test
+   database; the number on production is not known here). `loadReceipts` now reads one row from
+   the workspace's own receipts table, which is one query. This also serves every other
+   single-receipt action of the finance area.
+3. **Not the cause:** computing the statement (about 0.1 seconds) and the proposals. The answer
+   of an action is still the whole statement (815 kB for the seeded year); that was left as it is
+   because it is how every finance action keeps the screen free of figures worked out in the browser.
+
+## Reality (2026-10-11)
+
+- Built on the branch `feat/pay-later-payments`, not deployed, nothing imported on production.
+- The real file was read locally for counts only: 1,128 purchases in the 17-column file, 3 left
+  out as not processed, every purchase of the 13-column file found again under the same identity
+  in the longer one. Of the 492 purchases of 2025, 83 are PayPal purchases charged to the
+  pay-later card, which count as transfers once PayPal's list is in the same workspace.
+- `pnpm check:roadmap` fails on two lines of `ROADMAP.md` that passed their 30 days on
+  2026-10-11 (the machine path to tenant-scoped authentication and the workspace dropdown). They
+  are not part of this work and were not re-confirmed without the owner.

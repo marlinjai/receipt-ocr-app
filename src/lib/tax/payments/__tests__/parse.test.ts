@@ -236,6 +236,93 @@ describe('parsePaymentFile: unhappy paths', () => {
   });
 });
 
+// The purchase list of the pay-later service, in its longer variant. The shorter one ends after `statement_number`.
+const KLARNA_HEADER = 'created_date,created_time,activated,settled,amount,currency,merchant,items,payment_method,status,payment_reference,statement_number,category,purchase_type,card,source,timezone';
+const klarnaRow = (o: { day: string; amount: string; merchant: string; items?: string; status?: string; reference?: string; order?: string; activated?: string; currency?: string; method?: string }) =>
+  [o.day, '09:30', o.activated ?? `${o.day} 09:31`, '', o.amount, o.currency ?? 'EUR', `"${o.merchant}"`, `"${o.items ?? ''}"`, o.method ?? 'Invoice', `"${o.status ?? 'Normal'}"`, o.reference ?? '', o.order ?? 'ORDER0001', '', '', '', 'beispiel-quelle', 'Europe/Berlin'].join(',');
+const klarna = (...rows: string[]) => [KLARNA_HEADER, ...rows].join('\r\n') + '\r\n';
+const KLARNA = klarna(
+  klarnaRow({ day: '2025-03-02', activated: '2025-03-03 08:00', amount: '21.37', merchant: 'Editor Beispiel', items: 'Editor Beispiel Pro Monat', reference: '1000000000001' }),
+  klarnaRow({ day: '2025-03-05', amount: '240.00', merchant: 'Möbel Beispiel', items: 'Schreibtisch', method: 'Term Loan', reference: '1000000000002' }),
+  klarnaRow({ day: '2025-03-09', activated: '', amount: '9.99', merchant: 'ZAHLDIENST *Laden Beispiel', reference: '', order: 'ORDER0003' }),
+);
+
+describe('the pay-later purchase list', () => {
+  const code = (text: string) => {
+    try {
+      parsePaymentFile(text);
+    } catch (e) {
+      return e instanceof PaymentParseError ? [e.code, e.row] : ['unexpected', String(e)];
+    }
+    return ['no error', null];
+  };
+
+  it('reads a purchase as money out on the day it was made, with the capture day as value day', () => {
+    const parsed = parsePaymentFile(KLARNA);
+    expect(parsed).toMatchObject({ format: 'klarna_csv', skipped: {}, firstDay: '2025-03-02', lastDay: '2025-03-09' });
+    expect(parsed.payments.map((p) => ({ ...p, sourceHash: undefined }))).toEqual([
+      { bookingDay: '2025-03-02', valueDay: '2025-03-03', amountCents: -2137, counterparty: 'Editor Beispiel', reference: 'Editor Beispiel Pro Monat', entryReference: '1000000000001', kind: 'spend', sourceHash: undefined },
+      // Bought on instalments: one spend of the full amount on the purchase day.
+      { bookingDay: '2025-03-05', valueDay: '2025-03-05', amountCents: -24_000, counterparty: 'Möbel Beispiel', reference: 'Schreibtisch', entryReference: '1000000000002', kind: 'spend', sourceHash: undefined },
+      // A row read from the web pages: no capture day, no payment reference, the order number stands in.
+      { bookingDay: '2025-03-09', valueDay: null, amountCents: -999, counterparty: 'ZAHLDIENST *Laden Beispiel', reference: '', entryReference: 'ORDER0003', kind: 'spend', sourceHash: undefined },
+    ]);
+  });
+
+  it('is recognized by its column names: the shorter variant and reordered columns read the same', () => {
+    const rows = parseCsv(KLARNA);
+    const short = rows.map((r) => r.slice(0, 12).map((c) => `"${c}"`).join(',')).join('\n');
+    const reversed = rows.map((r) => [...r].reverse().map((c) => `"${c}"`).join(',')).join('\n');
+    const hashes = (text: string) => parsePaymentFile(text).payments.map((p) => p.sourceHash);
+    expect(parsePaymentFile(short).format).toBe('klarna_csv');
+    expect(hashes(short)).toEqual(hashes(KLARNA));
+    expect(hashes(reversed)).toEqual(hashes(KLARNA));
+  });
+
+  it('identifies a purchase by the payment reference alone, so a corrected name or text does not store it twice', () => {
+    const other = klarna(klarnaRow({ day: '2025-03-02', amount: '21.37', merchant: 'EDITOR BEISPIEL INC', items: '', reference: '1000000000001' }));
+    expect(parsePaymentFile(other).payments[0].sourceHash).toBe(parsePaymentFile(KLARNA).payments[0].sourceHash);
+    // Without a reference two identical purchases of one day are told apart by their order, as in every other source.
+    const twins = klarna(klarnaRow({ day: '2025-04-01', amount: '5.00', merchant: 'Kiosk Beispiel' }), klarnaRow({ day: '2025-04-01', amount: '5.00', merchant: 'Kiosk Beispiel' }));
+    const [a, b] = parsePaymentFile(twins).payments;
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('leaves out what is no payment, and says how many of each', () => {
+    const parsed = parsePaymentFile(
+      klarna(
+        klarnaRow({ day: '2025-05-01', amount: '10.00', merchant: 'Laden Beispiel', reference: '2000000000001' }),
+        klarnaRow({ day: '2025-05-01', amount: '10.00', merchant: 'Laden Beispiel', reference: '2000000000001' }),
+        klarnaRow({ day: '2025-05-02', amount: '30.00', merchant: 'Auslandsladen Beispiel', currency: 'USD', reference: '2000000000002' }),
+        klarnaRow({ day: '2025-05-03', amount: '40.00', merchant: 'Laden Beispiel', status: 'Wenn der Händler deine Bestellung bearbeitet, ist deine Zahlung 30 Tage später fällig', reference: '2000000000003' }),
+        klarnaRow({ day: '2025-05-04', amount: '50.00', merchant: 'Laden Beispiel', status: 'Storniert', reference: '2000000000004' }),
+        klarnaRow({ day: '2025-05-05', amount: '60.00', merchant: 'Laden Beispiel', status: 'Vollständig erstattet', reference: '2000000000005' }),
+        klarnaRow({ day: '2025-05-06', amount: '0.00', merchant: 'Laden Beispiel', reference: '2000000000006' }),
+        klarnaRow({ day: '2025-05-07', amount: '70.00', merchant: 'Laden Beispiel', status: 'Teilweise erstattet', reference: '2000000000007' }),
+        klarnaRow({ day: '2025-05-08', amount: '80.00', merchant: 'Laden Beispiel', status: 'In 12 Tagen fällig', reference: '2000000000008' }),
+      ),
+    );
+    expect(parsed.skipped).toEqual({ duplicate_row: 1, other_currency: 1, not_completed: 1, cancelled: 2, zero_amount: 1 });
+    // A part refund keeps the purchase in full; a purchase that is merely not due yet is a purchase.
+    expect(parsed.payments.map((p) => [p.bookingDay, p.amountCents])).toEqual([['2025-05-01', -1000], ['2025-05-07', -7000], ['2025-05-08', -8000]]);
+  });
+
+  it('reads a negative amount as money back', () => {
+    const [refund] = parsePaymentFile(klarna(klarnaRow({ day: '2025-06-01', amount: '-12.50', merchant: 'Laden Beispiel', reference: '3000000000001' }))).payments;
+    expect(refund).toMatchObject({ amountCents: 1250, kind: 'refund' });
+  });
+
+  it('a file with only the header is empty; one unreadable row rejects the whole file', () => {
+    expect(code(KLARNA_HEADER + '\n')).toEqual(['empty', null]);
+    expect(code(klarna(klarnaRow({ day: '2025-06-01', amount: '12,50 €', merchant: 'Laden Beispiel' })))).toEqual(['unreadable_row', 2]);
+    expect(code(KLARNA.replace('2025-03-05,09:30', '05.03.25,09:30'))).toEqual(['unreadable_row', 3]);
+  });
+
+  it('a list of the same columns without the amount is not taken for a purchase list', () => {
+    expect(code('created_date,merchant,status\n2025-01-01,Laden Beispiel,Normal\n')).toEqual(['unknown_layout', null]);
+  });
+});
+
 /**
  * Local only: the owner's real exports must parse without an unreadable row.
  * Point TAX_PAYMENT_FILES_DIR at a folder of exports. Nothing but counts is

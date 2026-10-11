@@ -3,7 +3,6 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { rowToMealRecord } from '@/lib/meals/record';
 import { smallBusinessOn } from '@/lib/meals/rules';
 import { allReceiptRows, getTaxSettings, guestsByRow, tableContext } from '@/lib/meals/service';
-import { isGroupRow } from '@/lib/receipts-kind';
 import type { MealGuestEntry } from '@/lib/meals/types';
 import { AssetInputError, validateAssetInput, validateDisposalInput, type AssetInput } from './asset-input';
 import { assetSchedule, type AssetCheck, type AssetFact, type AssetKind, type AssetMethod, type AssetYearRow, type DisposalKind } from './assets';
@@ -23,8 +22,8 @@ import { resolveItem, resolveItems, type ReceiptFacts, type ResolvedItem, type T
 import { answerFor, boundaryDay, otherYearOf, touchesYear, BOUNDARY_SUBJECT_KINDS, type BoundarySubjectKind } from './year-boundary';
 import { LinesInputError, itemIdOf, splitItemId, storedLineTreatment, validateLines, type ReceiptLine } from './lines';
 import { forecastYear, type Forecast } from './forecast';
-import { proposeMatches, type MatchStrength } from './payments/match';
-import { deletePaymentLinksForRows, loadPayments, type CounterpartyTreatment, type LoadedPayments, type PaymentRow } from './payments/service';
+import { proposeEstimateMatches, proposeMatches, type MatchStrength } from './payments/match';
+import { PaymentServiceError, deletePaymentLinksForRows, linkPayment, loadPayments, type CounterpartyTreatment, type LoadedPayments, type PaymentContext, type PaymentRow } from './payments/service';
 import type { PaymentKind } from './payments/types';
 import {
   RevenueInputError,
@@ -205,15 +204,13 @@ async function loadReceipts(
 ): Promise<LoadedReceipts | null> {
   const ctx = await tableContext(db, workspaceId);
   if (!ctx) return null;
-  let rows;
-  if (onlyRowId) {
-    const row = await ctx.adapter.getRow(onlyRowId);
-    // The row must live in THIS workspace's Receipts table.
-    // A group is never a receipt, so asking for one by id finds nothing.
-    rows = row && row.tableId === ctx.tableId && !row.archived && !isGroupRow(row, ctx.columns) ? [row] : [];
-  } else {
-    rows = (await allReceiptRows(ctx.adapter, ctx.tableId, ctx.columns)).filter((r) => !r.archived);
-  }
+  // One row is looked up in THIS workspace's Receipts table too, never by the
+  // adapter's single-row read: that one is not told the table and asks every
+  // table of the database in turn, which took seconds per call. Reading the
+  // workspace's own table is one query, and a row of another workspace, an
+  // archived row or a group (never a receipt) is simply not in it.
+  const receipts = (await allReceiptRows(ctx.adapter, ctx.tableId, ctx.columns)).filter((r) => !r.archived);
+  const rows = onlyRowId ? receipts.filter((r) => r.id === onlyRowId) : receipts;
   const rowIds = rows.map((r) => r.id);
   const [guests, decisions, storedLines] = await Promise.all([
     guestsByRow(db, workspaceId, rowIds),
@@ -774,16 +771,37 @@ export interface OpenPayment {
   proposals: PaymentProposal[];
 }
 
+/** A payment proposed for a receipt whose euro amount is an estimate (see `proposeEstimateMatches`). */
+export interface EstimateProposalView {
+  paymentId: string;
+  rowId: string;
+  receiptLabel: string;
+  receiptDay: string;
+  /** What the receipt counts with today, converted at the reference rate. */
+  estimateCents: number;
+  bookingDay: string;
+  /** What was actually paid, as a positive number. */
+  paidCents: number;
+  counterparty: string;
+  accountLabel: string;
+  /** False when the receipt has several such payments or the payment fits several receipts: offered, never taken in bulk. */
+  unambiguous: boolean;
+}
+
 export interface PaymentsView {
   accounts: LoadedPayments['accounts'];
   /** Payments booked in the year, and how many of them are linked to a document. */
   yearCount: number;
   linkedCount: number;
+  /** Payments of the year that only move money between the owner's own accounts: nothing is asked about them. */
+  transferCount: number;
   /** Counterparties of the year nobody has said anything about yet, largest first. */
   unclassified: Array<{ key: string; label: string; count: number; outCents: number; inCents: number }>;
   treatments: Array<{ key: string; label: string; treatment: CounterpartyTreatment }>;
   /** Business payments without a document and money received without an invoice. */
   open: OpenPayment[];
+  /** Receipts of the year on an estimated euro amount, with the payment that looks like theirs. */
+  estimateProposals: EstimateProposalView[];
   /** Payments of the year a person re-labelled (private, refund), so each can be put back. */
   overridden: Array<{ id: string; bookingDay: string; amountCents: number; counterparty: string; kind: PaymentKind }>;
   /**
@@ -850,6 +868,38 @@ function buildPaymentsView(
   const spendProposals = proposeMatches(needing.filter((p) => p.kind === 'spend').map(asMatch), receiptDocuments);
   const incomeProposals = proposeMatches(needing.filter((p) => p.kind === 'income').map(asMatch), invoiceDocuments);
 
+  // Receipts on an estimated amount. Every receipt without a link takes part
+  // (a payment that also fits a euro receipt is not unambiguous), and every
+  // unlinked payment out of any year that was not answered as private: the
+  // vendor on a receipt is the evidence, so this does not wait for the
+  // question about the counterparty.
+  const estimateDocuments = resolved
+    .filter((r) => !r.isMeal && !linkedRows.has(r.item.id) && r.item.amountCents !== null && r.item.date !== null)
+    .map((r) => ({ id: r.item.id, vendorKey: r.vendorKey, day: r.item.date, amountCents: r.item.amountCents as number, estimated: r.item.amountBasis === 'reference_rate' }));
+  const estimatePayments = loaded.payments
+    .filter((p) => p.amountCents < 0 && p.kind === 'spend' && p.links.length === 0 && loaded.treatments.get(p.counterpartyKey) !== 'private')
+    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: vendorKey(p.reference) ?? '' }));
+  const paymentById = new Map(loaded.payments.map((p) => [p.id, p]));
+  const estimateProposals: EstimateProposalView[] = proposeEstimateMatches(estimatePayments, estimateDocuments)
+    .flatMap((proposal) => {
+      const item = itemById.get(proposal.documentId);
+      const payment = paymentById.get(proposal.paymentId);
+      if (!item || !payment || item.date === null || !item.date.startsWith(`${year}-`) || item.amountCents === null) return [];
+      return [{
+        paymentId: payment.id,
+        rowId: item.id,
+        receiptLabel: item.label,
+        receiptDay: item.date,
+        estimateCents: item.amountCents,
+        bookingDay: payment.bookingDay,
+        paidCents: -payment.amountCents,
+        counterparty: payment.counterparty,
+        accountLabel: accountLabel.get(payment.accountId) ?? '',
+        unambiguous: proposal.unambiguous,
+      }];
+    })
+    .sort((a, b) => (a.receiptDay === b.receiptDay ? (a.bookingDay < b.bookingDay ? -1 : 1) : a.receiptDay < b.receiptDay ? -1 : 1));
+
   const open: OpenPayment[] = needing.map((p) => ({
     id: p.id,
     bookingDay: p.bookingDay,
@@ -868,17 +918,23 @@ function buildPaymentsView(
         : spendProposals.filter((x) => x.paymentId === p.id).map((x) => ({ target: 'receipt' as const, targetId: x.documentId, label: itemById.get(x.documentId)?.label ?? 'Beleg', strength: x.strength })),
   }));
 
+  // The name a counterparty was first seen under, looked up once for all rules.
+  const labelByCounterparty = new Map<string, string>();
+  for (const p of loaded.payments) if (!labelByCounterparty.has(p.counterpartyKey)) labelByCounterparty.set(p.counterpartyKey, p.counterparty);
+
   return {
     accounts: loaded.accounts,
     yearCount: inYear.length,
     linkedCount: inYear.filter((p) => p.links.length > 0).length,
+    transferCount: inYear.filter((p) => p.kind === 'own_transfer').length,
     unclassified: [...unclassified.values()].sort((a, b) => b.outCents + b.inCents - (a.outCents + a.inCents)),
     treatments: [...loaded.treatments.entries()].map(([key, treatment]) => ({
       key,
-      label: loaded.payments.find((p) => p.counterpartyKey === key)?.counterparty ?? key,
+      label: labelByCounterparty.get(key) ?? key,
       treatment,
     })),
     open,
+    estimateProposals,
     overridden: inYear.filter((p) => p.kindOverridden).map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, kind: p.kind })),
     receiptTargets,
     invoiceTargets: invoiceDocuments.filter((d) => d.openCents > 0).map((d) => ({ id: d.id, label: `Rechnung ${d.number}`, openCents: d.openCents })),
@@ -895,6 +951,30 @@ function buildPaymentsView(
       })),
     ),
   };
+}
+
+/**
+ * Accept every unambiguous proposal for a receipt on an estimated amount: the
+ * one action behind "Alle eindeutigen Vorschläge übernehmen". The proposals
+ * are worked out here again from what is stored, never taken from the browser,
+ * so a proposal that stopped being unambiguous since the page was drawn is not
+ * linked. Returns how many links were made.
+ */
+export async function acceptEstimateProposals(db: PrismaClient, ctx: PaymentContext, year: number): Promise<number> {
+  const view = await loadStatement(db, ctx.workspaceId, year);
+  let linked = 0;
+  for (const proposal of view.payments.estimateProposals.filter((p) => p.unambiguous)) {
+    try {
+      // The row comes from this workspace's own statement, so it is the workspace's receipt.
+      await linkPayment(db, ctx, { paymentId: proposal.paymentId, rowId: proposal.rowId }, async () => true, 'estimate');
+      linked += 1;
+    } catch (e) {
+      // Linked or removed by another action in this very moment: nothing to take over, the rest goes on.
+      if (e instanceof PaymentServiceError && (e.code === 'invalid_link' || e.code === 'payment_not_found' || e.code === 'link_exceeds_payment')) continue;
+      throw e;
+    }
+  }
+  return linked;
 }
 
 /** True when the row is a receipt of this workspace: how the payment service checks a link target. */

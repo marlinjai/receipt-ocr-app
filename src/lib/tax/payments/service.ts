@@ -2,6 +2,7 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { vendorKey } from '../decisions';
+import { fundedService, fundingServices } from './funding';
 import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from './match';
 import { parsePaymentFile } from './parse';
 import { PAYMENT_KINDS, type PaymentFormat, type PaymentKind } from './types';
@@ -197,6 +198,22 @@ export function effectiveKind(payment: { sourceKind: string; kindOverride: strin
   return (PAYMENT_KINDS as readonly string[]).includes(kind) ? (kind as PaymentKind) : 'spend';
 }
 
+/**
+ * What a payment is, in this order: the counterparty is an own account (moving
+ * money there is no spend, whatever the file calls it); a person re-labelled
+ * this one payment; it only funds another imported payment account (see
+ * `funding.ts`); otherwise what its file says.
+ */
+function paymentKind(
+  payment: { accountId: string; counterpartyKey: string; sourceKind: string; kindOverride: string | null },
+  treatment: CounterpartyTreatment | undefined,
+  services: ReturnType<typeof fundingServices>,
+): PaymentKind {
+  if (treatment === 'own_account') return 'own_transfer';
+  if (payment.kindOverride === null && fundedService(payment, services) !== null) return 'own_transfer';
+  return effectiveKind(payment);
+}
+
 /** Undo an import: the batch goes, with the payments it added and their links. */
 export async function deleteImportBatch(db: PrismaClient, ctx: PaymentContext, batchId: string): Promise<void> {
   const batch = await db.taxImportBatch.findFirst({ where: { id: batchId, authWorkspaceId: ctx.workspaceId } });
@@ -252,13 +269,15 @@ export interface LinkInput {
 /**
  * Link a payment (or part of it) to a receipt or an issued invoice, by a
  * person's confirmation. `rowBelongsToWorkspace` is how the caller proves a
- * receipt row is this workspace's (rows live in the generic table).
+ * receipt row is this workspace's (rows live in the generic table). `method`
+ * records how it came about: picked by hand, or a proposal the person accepted.
  */
 export async function linkPayment(
   db: PrismaClient,
   ctx: PaymentContext,
   raw: unknown,
   rowBelongsToWorkspace: (rowId: string) => Promise<boolean>,
+  method: 'manual' | 'estimate' = 'manual',
 ): Promise<string> {
   const input = (raw ?? {}) as LinkInput;
   const rowId = typeof input.rowId === 'string' && input.rowId ? input.rowId : null;
@@ -290,7 +309,7 @@ export async function linkPayment(
     if (!Number.isInteger(cents) || cents <= 0) throw new PaymentServiceError('invalid_link');
     if (cents > free) throw new PaymentServiceError('link_exceeds_payment');
     const link = await tx.taxPaymentLink.create({
-      data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, paymentId: payment.id, rowId, invoiceId, cents, method: 'manual' },
+      data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, paymentId: payment.id, rowId, invoiceId, cents, method },
     });
     return link.id;
   });
@@ -339,6 +358,7 @@ export async function loadPayments(db: PrismaClient, workspaceId: string): Promi
   for (const rule of rules) {
     if ((COUNTERPARTY_TREATMENTS as readonly string[]).includes(rule.treatment)) treatments.set(rule.counterpartyKey, rule.treatment as CounterpartyTreatment);
   }
+  const services = fundingServices(accounts.map((a) => ({ id: a.id, formats: a.batches.map((b) => b.format) })));
   const rows: PaymentRow[] = payments.map((p) => ({
     id: p.id,
     accountId: p.accountId,
@@ -347,8 +367,7 @@ export async function loadPayments(db: PrismaClient, workspaceId: string): Promi
     counterparty: p.counterparty,
     counterpartyKey: p.counterpartyKey,
     reference: p.reference,
-    // Moving money to an own account is no spend, whatever the file calls it.
-    kind: treatments.get(p.counterpartyKey) === 'own_account' ? 'own_transfer' : effectiveKind(p),
+    kind: paymentKind(p, treatments.get(p.counterpartyKey), services),
     kindOverridden: p.kindOverride !== null,
     links: p.links.map((l) => ({ id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method })),
   }));

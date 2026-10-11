@@ -9,6 +9,7 @@ import { formatCents } from '@/lib/tax/money';
 import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service';
 import type { OpenCheckKind } from '@/lib/tax/types';
 import {
+  acceptPaymentProposals,
   addAccount,
   answerYearBoundary,
   declineYearBoundary,
@@ -670,6 +671,19 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               }}
               onTreat={(counterparty, treatment) => run(() => treatCounterparty(view.year, { counterparty, treatment }), `${counterparty}: ${treatment === null ? 'Antwort zurückgenommen' : 'gespeichert'}.`)}
               onLink={(input) => run(() => confirmPaymentLink(view.year, input), 'Zahlung zugeordnet.')}
+              onAcceptProposals={() => {
+                let linked = 0;
+                run(
+                  async () => {
+                    const result = await acceptPaymentProposals(view.year);
+                    if (!result.ok) return result;
+                    linked = result.value.linked;
+                    return { ok: true, value: result.value.view };
+                  },
+                  'Vorschläge übernommen.',
+                  () => setNotice(linked === 0 ? 'Kein Vorschlag war mehr eindeutig; es wurde nichts zugeordnet.' : `${linked} ${linked === 1 ? 'Zahlung' : 'Zahlungen'} dem Beleg zugeordnet. Die Belege zählen jetzt mit dem bezahlten Betrag.`),
+                );
+              }}
               onUnlink={(linkId) => run(() => removePaymentLink(view.year, linkId), 'Zuordnung gelöst.')}
               onNotIncome={(payment) => run(() => correctPaymentKind(view.year, payment.id, 'refund'), 'Als Erstattung oder Umbuchung vermerkt. Unter „Von dir umgewidmete Zahlungen“ lässt sich das zurücksetzen.')}
               onKind={(paymentId, kind) => run(() => correctPaymentKind(view.year, paymentId, kind), kind === null ? 'Zahlung zurückgesetzt.' : 'Zahlung umgewidmet.')}

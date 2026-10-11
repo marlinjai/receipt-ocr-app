@@ -35,11 +35,14 @@
   made on the documents the rules were written against; measure on the next import of unseen
   documents. (3) The vendor cell is not judged by the evaluation script. Plan:
   [docs/plans/2026-10-11-vision-reading.md](docs/plans/2026-10-11-vision-reading.md). (2026-10-11)
-- [ ] The review list offers the text reader's vendor name against one the model gave and the
-  upload accepted because the text prints it ("Musterfracht Express" stored, "Musterfracht
-  Express GmbH" offered as "Neue Lesart"). Seen while testing the page reading on 2026-10-11;
-  the behaviour is older than it. Decide whose name wins (the name a customer would use, or the
-  printed legal name) and make the upload and the review list agree. (2026-10-11)
+- [x] The review list no longer offers the text reader's vendor name against a stored one on an
+  invoice. Measured on production on 2026-10-11: of 102 offered new readings, 76 changed the
+  vendor, and about 70 of those were worse than the stored name (a heading, a field label, the
+  customer's own name). Marlin's call the same day: the name a customer would use stands
+  ("YouTube", not the company that bills for it). A vendor is now only offered on a till receipt
+  of a restaurant or bar, or where none is stored, and never for the legal form alone. The
+  amount offers stay: there the new reading was the better one (the printed 19 percent on dollar
+  invoices that were stored with 0). Done 2026-10-11.
 - [ ] Bring the app up to the tax session's draft for 2025. Marlin's 17 answers of 2026-10-11
   (recorded in `Entscheidungen-2025.md` in the tax folder) are carried out, the bank, PayPal and
   pay-later lists are imported, and 112 payments are linked: business expenses in the app went

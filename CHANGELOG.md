@@ -79,6 +79,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- "Belege prüfen" no longer offers another vendor for an invoice that has one: the text alone took headings, field labels or the addressee for the vendor ("Rechnungsnummer", "Order Summary"), and the stored name is the one a customer would use ("YouTube"). A vendor is still offered on a restaurant or bar receipt and where none is stored, and never when only the legal form differs
 - "Seite neu lesen" keeps the vendor a receipt already has when the page shows the same name in another spelling (the legal form added, another case): "A2 Hosting" no longer becomes "A2 Hosting LLC" and falls out of its group. A vendor that is really another name is still corrected
 - Retaking the photo of a receipt no longer resets its assignment or a business share somebody changed
 - A receipt can no longer be saved or retaken with a file another workspace holds: the file id from the browser is checked against the session's workspace before the file is attached or read

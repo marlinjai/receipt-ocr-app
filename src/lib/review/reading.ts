@@ -1,5 +1,6 @@
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
 import { readAmounts, type AmountReading } from '@/lib/extraction/amounts';
+import { sameVendor } from '@/lib/extraction/vendor';
 import { CATEGORY_TO_KONTO, CURRENCY_OPTIONS, MEAL_CATEGORY } from '@/lib/receipts-constants';
 
 /**
@@ -72,8 +73,22 @@ export function newReading(stored: StoredReading): NewReading {
   const read = extractReceiptFields({ fullText: stored.text, blocks: [], confidence: 1 });
   const changes: ReadingChange[] = [];
 
-  // Vendor: only a name the reader stands behind, and only when it really is another name.
-  if (read.vendor && read.vendorConfidence === 'confirmed' && !sameName(read.vendor, stored.vendor)) {
+  // Category: only towards "meal", and only on the text's own strong evidence.
+  const becomesMeal = read.mealEvidence.strong && stored.category !== MEAL_CATEGORY;
+
+  // Vendor: only a name the reader stands behind, only when it really is
+  // another name (the legal form added or dropped is the same vendor), and
+  // only where the text reader is the better judge of it: a till receipt of a
+  // restaurant or bar, which prints its name at the top, or a receipt that has
+  // no vendor at all. On an invoice the text alone takes a heading, a field
+  // label or the addressee for the vendor ("Rechnungsnummer", "Order Summary",
+  // the customer's own name), while the stored name came from the model and is
+  // the one a customer would use ("YouTube", not the company that bills for
+  // it). Of 76 vendors offered on the 2025 receipts, about 70 were worse than
+  // the stored one, all of them on invoices.
+  const tillReceipt = stored.category === MEAL_CATEGORY || becomesMeal;
+  const hasVendor = stored.vendor.trim() !== '';
+  if (read.vendor && read.vendorConfidence === 'confirmed' && (tillReceipt || !hasVendor) && !sameName(read.vendor, stored.vendor) && !sameVendor(read.vendor, stored.vendor)) {
     changes.push({ field: 'vendor', from: stored.vendor || null, to: read.vendor });
   }
 
@@ -116,8 +131,6 @@ export function newReading(stored: StoredReading): NewReading {
     changes.push({ field: 'currency', from: stored.currency, to: read.currency });
   }
 
-  // Category: only towards "meal", and only on the text's own strong evidence.
-  const becomesMeal = read.mealEvidence.strong && stored.category !== MEAL_CATEGORY;
   if (becomesMeal) changes.push({ field: 'category', from: stored.category, to: MEAL_CATEGORY });
 
   // A printed tip, for a receipt that is (or is about to be) a meal.

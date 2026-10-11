@@ -19,13 +19,14 @@ const open = (o: Partial<OpenPayment> = {}): OpenPayment => ({
   accountLabel: 'Geschäftskonto',
   check: 'payment_without_document',
   proposals: [],
+  namesService: false,
   ...o,
 });
 
 function view(payments: Partial<PaymentsView> = {}): StatementView {
   return {
     year: 2026,
-    payments: { accounts: [account], yearCount: 3, linkedCount: 1, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], overridden: [], receiptTargets: [], invoiceTargets: [], links: [], ...payments },
+    payments: { accounts: [account], yearCount: 3, linkedCount: 1, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [], ...payments },
   } as StatementView;
 }
 
@@ -40,6 +41,7 @@ const props = () => ({
   onLink: vi.fn(),
   onUnlink: vi.fn(),
   onAcceptProposals: vi.fn(),
+  onTransfer: vi.fn(),
   onNotIncome: vi.fn(),
   onKind: vi.fn(),
 });
@@ -83,7 +85,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 10, added: 7, alreadyThere: 3, skipped: { other_currency: 2, not_completed: 4 }, autoLinked: 1, firstDay: null, lastDay: null }}
+        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 10, added: 7, alreadyThere: 3, skipped: { other_currency: 2, not_completed: 4 }, autoLinked: 1, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], firstDay: null, lastDay: null }}
       />,
     );
     const status = screen.getByRole('status').textContent;
@@ -129,7 +131,7 @@ describe('PaymentsTab', () => {
     render(
       <PaymentsTab
         view={view({
-          links: [{ linkId: 'l-1', paymentId: 'p-1', bookingDay: '2026-01-20', cents: 100_000, counterparty: 'Kundin Beispiel', target: 'invoice', targetLabel: 'Rechnung R-2026-001', method: 'reference' }],
+          links: [{ linkId: 'l-1', paymentId: 'p-1', bookingDay: '2026-01-20', cents: 100_000, counterparty: 'Kundin Beispiel', target: 'invoice', targetLabel: 'Rechnung R-2026-001', method: 'reference', counts: true }],
           treatments: [{ key: 'vermieter beispiel', label: 'Vermieter Beispiel', treatment: 'private' }],
         })}
         {...p}
@@ -145,7 +147,7 @@ describe('PaymentsTab', () => {
   it('links by hand: a chosen receipt, optionally with a part of the amount, checked before anything is sent', async () => {
     const user = userEvent.setup();
     const p = props();
-    const receiptTargets = [{ id: 'r-9', label: 'Bestellung 4711', day: '2025-12-28', amountCents: 10_000 }];
+    const receiptTargets = [{ id: 'r-9', label: 'Bestellung 4711', day: '2025-12-28', amountCents: 10_000, linkedCents: 0 }];
     render(<PaymentsTab view={view({ open: [open()], receiptTargets })} {...p} />);
     // The picker is drawn only once it is asked for.
     expect(screen.queryByLabelText('Beleg von Hand wählen')).toBeNull();
@@ -167,7 +169,7 @@ describe('PaymentsTab', () => {
     const user = userEvent.setup();
     const p = props();
     const income = open({ amountCents: 50_000, freeCents: 50_000, kind: 'income', check: 'income_without_invoice' });
-    render(<PaymentsTab view={view({ open: [income], invoiceTargets: [{ id: 'i-1', label: 'Rechnung R-2026-050', openCents: 20_000 }], receiptTargets: [{ id: 'r-9', label: 'x', day: null, amountCents: null }] })} {...p} />);
+    render(<PaymentsTab view={view({ open: [income], invoiceTargets: [{ id: 'i-1', label: 'Rechnung R-2026-050', openCents: 20_000 }], receiptTargets: [{ id: 'r-9', label: 'x', day: null, amountCents: null, linkedCents: 0 }] })} {...p} />);
     await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
     expect(screen.queryByLabelText('Beleg von Hand wählen')).toBeNull();
     await user.selectOptions(screen.getByLabelText('Rechnung von Hand wählen'), 'i-1');
@@ -192,7 +194,7 @@ describe('PaymentsTab', () => {
   it('with many open payments the list of receipts is drawn once, for the payment whose picker is open', async () => {
     const user = userEvent.setup();
     const many = Array.from({ length: 40 }, (_, i) => open({ id: `p-${i}`, counterparty: `Firma Beispiel ${i}` }));
-    const receiptTargets = Array.from({ length: 30 }, (_, i) => ({ id: `r-${i}`, label: `Beleg ${i}`, day: '2026-01-02', amountCents: 1_000 }));
+    const receiptTargets = Array.from({ length: 30 }, (_, i) => ({ id: `r-${i}`, label: `Beleg ${i}`, day: '2026-01-02', amountCents: 1_000, linkedCents: i === 0 ? 400 : 0 }));
     const { container } = render(<PaymentsTab view={view({ open: many, receiptTargets })} {...props()} />);
     // Before: 40 pickers of 30 receipts each. Now none until one is opened, and one at a time.
     expect(container.querySelectorAll('option[value^="r-"]').length).toBe(0);
@@ -216,7 +218,7 @@ describe('PaymentsTab', () => {
   it('offers a payment for a receipt on an estimated amount; one click takes one, one click takes all unambiguous ones', async () => {
     const user = userEvent.setup();
     const p = props();
-    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel März', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true };
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel März', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false };
     const estimateProposals = [proposal, { ...proposal, paymentId: 'p-2', rowId: 'r-2', receiptLabel: 'Editor Beispiel April', receiptDay: '2026-04-02', bookingDay: '2026-04-03' }, { ...proposal, paymentId: 'p-3', rowId: 'r-3', receiptLabel: 'Hosting Beispiel', unambiguous: false }];
     render(<PaymentsTab view={view({ estimateProposals })} {...p} />);
     const section = screen.getByRole('region', { name: 'Vorschläge für geschätzte Belege' });
@@ -226,21 +228,56 @@ describe('PaymentsTab', () => {
 
     // Nothing is linked by drawing the list.
     expect(p.onLink).not.toHaveBeenCalled();
+    // One row: the same accept path as the bulk action, for the one pair, so it is recorded as an accepted proposal.
     await user.click(within(first).getByRole('button', { name: 'Übernehmen' }));
-    expect(p.onLink).toHaveBeenCalledWith({ paymentId: 'p-1', rowId: 'r-1' });
+    expect(p.onAcceptProposals).toHaveBeenLastCalledWith([{ paymentId: 'p-1', rowId: 'r-1' }], false);
+    expect(p.onLink).not.toHaveBeenCalled();
+    p.onAcceptProposals.mockClear();
 
     // The bulk action counts the unambiguous ones only, asks first, and sends no list: the server works it out again.
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
     await user.click(within(section).getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
     expect(p.onAcceptProposals).not.toHaveBeenCalled();
     await user.click(within(section).getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
-    expect(p.onAcceptProposals).toHaveBeenCalledWith();
+    // What is sent is the list the dialog counted: the two unambiguous pairs, not the ambiguous third.
+    expect(p.onAcceptProposals).toHaveBeenCalledWith([{ paymentId: 'p-1', rowId: 'r-1' }, { paymentId: 'p-2', rowId: 'r-2' }], true);
     expect(confirm.mock.calls[0][0]).toContain('2 eindeutige Vorschläge übernehmen?');
     confirm.mockRestore();
   });
 
+  it('while the bulk accept runs the button says so and cannot be pressed again; it comes back when the answer is in', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: '', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false };
+    const shown = view({ estimateProposals: [proposal, { ...proposal, paymentId: 'p-2', rowId: 'r-2' }] });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { rerender } = render(<PaymentsTab view={shown} {...p} />);
+    await user.click(screen.getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
+    // The parent turns `busy` on a moment later; the button is locked from the press itself.
+    const running = screen.getByRole('button', { name: 'Übernimmt 2 Vorschläge …' }) as HTMLButtonElement;
+    expect(running.disabled).toBe(true);
+    expect(screen.getByRole('status').textContent).toContain('ein zweiter Klick ist nicht nötig');
+    await user.click(running);
+    expect(p.onAcceptProposals).toHaveBeenCalledTimes(1);
+    rerender(<PaymentsTab view={shown} {...p} busy />);
+    expect((screen.getByRole('button', { name: 'Übernimmt 2 Vorschläge …' }) as HTMLButtonElement).disabled).toBe(true);
+    // The answer is in (here: a failure, the proposals are still shown): the button is usable again.
+    rerender(<PaymentsTab view={shown} {...p} busy={false} />);
+    expect((screen.getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }) as HTMLButtonElement).disabled).toBe(false);
+    confirm.mockRestore();
+  });
+
+  it('one payment for two receipts is shown for both as needing a hand: no accept button, not in the bulk count', () => {
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Hosting Beispiel A', receiptDay: '2026-03-02', estimateCents: 1_000, bookingDay: '2026-03-03', paidCents: 1_948, counterparty: 'Hosting Beispiel', accountLabel: 'Später zahlen', unambiguous: false, severalReceipts: true };
+    render(<PaymentsTab view={view({ estimateProposals: [proposal, { ...proposal, rowId: 'r-2', receiptLabel: 'Hosting Beispiel B', estimateCents: 950 }] })} {...props()} />);
+    const section = screen.getByRole('region', { name: 'Vorschläge für geschätzte Belege' });
+    expect(within(section).getAllByText(/eine Zahlung für mehrere Belege\?/).length).toBe(2);
+    expect(within(section).queryByRole('button', { name: 'Übernehmen' })).toBeNull();
+    expect(within(section).queryByRole('button', { name: /eindeutigen Vorschl/ })).toBeNull();
+  });
+
   it('only ambiguous proposals: each can be taken, there is nothing to take in bulk; no proposals, no section', () => {
-    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: '', accountLabel: 'Später zahlen', unambiguous: false };
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: '', accountLabel: 'Später zahlen', unambiguous: false, severalReceipts: false };
     const { unmount } = render(<PaymentsTab view={view({ estimateProposals: [proposal] })} {...props()} />);
     expect(screen.getByRole('button', { name: 'Übernehmen' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /eindeutigen Vorschl/ })).toBeNull();
@@ -254,13 +291,13 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view({
           transferCount: 12,
-          links: [{ linkId: 'l-2', paymentId: 'p-1', bookingDay: '2026-03-03', cents: 2_075, counterparty: 'Editor Beispiel', target: 'receipt', targetLabel: 'Editor Beispiel März', method: 'estimate' }],
+          links: [{ linkId: 'l-2', paymentId: 'p-1', bookingDay: '2026-03-03', cents: 2_075, counterparty: 'Editor Beispiel', target: 'receipt', targetLabel: 'Editor Beispiel März', method: 'estimate', counts: false }],
         })}
         {...props()}
       />,
     );
     expect(screen.getByText(/12 Umbuchungen zwischen eigenen Konten, nach denen nicht gefragt wird/)).toBeTruthy();
-    expect(screen.getByText('Vorschlag, von dir übernommen')).toBeTruthy();
+    expect(screen.getByText(/Vorschlag, von dir übernommen · zählt nicht doppelt/)).toBeTruthy();
   });
 
   it('reports the rows a pay-later list left out in plain words', () => {
@@ -268,10 +305,86 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'klarna_csv', total: 5, added: 5, alreadyThere: 0, skipped: { cancelled: 2, duplicate_row: 1, zero_amount: 1 }, autoLinked: 0, firstDay: null, lastDay: null }}
+        lastImport={{ batchId: 'b', format: 'klarna_csv', total: 5, added: 5, alreadyThere: 0, skipped: { cancelled: 2, duplicate_row: 1, zero_amount: 1 }, autoLinked: 0, cancelledEarlier: 2, releasedLinks: 1, adopted: 1, notices: { part_refunded: 1, unknown_status: 1 }, unknownStatuses: ['Angefochten'], firstDay: null, lastDay: null }}
       />,
     );
-    expect(screen.getByRole('status').textContent).toContain('2 storniert oder vollständig erstattet, 1 doppelt in der Datei, 1 ohne Betrag');
+    const status = screen.getByRole('status').textContent;
+    expect(status).toContain('2 storniert oder vollständig erstattet, 1 doppelt in der Datei, 1 ohne Betrag');
+    expect(status).toContain('1 schon vorhandene an ihrer neuen Nummer wiedererkannt');
+    expect(status).toContain('2 früher eingelesene Käufe sind laut dieser Datei storniert oder vollständig erstattet und zählen nicht mehr; 1 Zuordnung wurde gelöst, siehe „Stornierte Käufe“');
+    expect(status).toContain('Bitte ansehen: 1 teilweise erstattet');
+    // A wording the reader did not know is read as a purchase and named, never dropped in silence.
+    expect(status).toContain('1 mit unbekanntem Status (als Kauf eingelesen');
+    expect(status).toContain('Unbekannte Statusangaben: „Angefochten“.');
+  });
+
+  it('lists what the funding rule treats as a transfer, with count and sum, and each can be made a payment of its own', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const ruleTransfers = [
+      { id: 't-1', bookingDay: '2026-03-28', amountCents: -3_615, counterparty: 'Später Beispiel Bank', reference: 'Sammelabrechnung', accountLabel: 'Geschäftskonto', hasTwin: false, linkedTo: [] },
+      { id: 't-2', bookingDay: '2026-03-12', amountCents: -1_999, counterparty: 'Geldbörse Beispiel', reference: '', accountLabel: 'Geschäftskonto', hasTwin: true, linkedTo: ['Einkauf Laden'] },
+    ];
+    render(<PaymentsTab view={view({ ruleTransfers, ruleTransferCents: 5_614 })} {...p} />);
+    const section = screen.getByRole('region', { name: 'Umbuchungen zwischen eigenen Konten' });
+    // Collapsed: the summary carries count and sum.
+    expect(within(section).getByText('2 Zahlungen als Umbuchung behandelt, zusammen 56,14 €')).toBeTruthy();
+    // A transfer that is linked says to which receipt: a linked payment appears in no other list.
+    expect((within(section).getByText(/Geldbörse Beispiel/).closest('li') as HTMLElement).textContent).toContain('der Kauf dazu steht in der Liste des Dienstes · zugeordnet zu: Einkauf Laden');
+    const row = within(section).getByText(/Später Beispiel Bank/).closest('li') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: 'Kein Übertrag, eine eigene Zahlung' }));
+    expect(p.onTransfer).toHaveBeenCalledWith('t-1', false);
+  });
+
+  it('an open payment that names a held service can be called a transfer; any other open payment cannot', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    render(<PaymentsTab view={view({ open: [open({ id: 'p-5', counterparty: 'Später Beispiel Bank', namesService: true }), open({ id: 'p-6', counterparty: 'Werkzeug Beispiel GmbH' })] })} {...p} />);
+    const buttons = screen.getAllByRole('button', { name: 'Übertrag zwischen eigenen Konten' });
+    expect(buttons.length).toBe(1);
+    await user.click(buttons[0]);
+    expect(p.onTransfer).toHaveBeenCalledWith('p-5', true);
+  });
+
+  it('sets what was collected against what the service’s list states, and calls out a year that does not fit', () => {
+    const months = [{ month: '2026-03', collectedCents: 4_065, listedCents: 3_615, differenceCents: 450, runningCents: 450 }];
+    const fits = { service: 'paypal', serviceKind: 'wallet' as const, accountLabels: ['Geldbörse'], months: [], collectedCents: 1_999, listedCents: 1_999, differenceCents: 0, reconciles: true, toleranceCents: 100 };
+    const fromBalance = { ...fits, accountLabels: ['Zweite Geldbörse'], listedCents: 9_999, differenceCents: -8_000 };
+    const off = { service: 'klarna', serviceKind: 'pay_later' as const, accountLabels: ['Später zahlen'], months, collectedCents: 4_065, listedCents: 3_615, differenceCents: 450, reconciles: false, toleranceCents: 100 };
+    render(<PaymentsTab view={view({ reconciliations: [fits, fromBalance, off] })} {...props()} />);
+    const section = screen.getByRole('region', { name: 'Umbuchungen zwischen eigenen Konten' });
+    expect(within(section).getByText(/PayPal \(Geldbörse\): vom Bankkonto eingezogen 19,99 €, Käufe laut Liste 19,99 €/).textContent).toContain('Das passt zusammen.');
+    // A wallet that collected less than it lists is no alarm, and says why.
+    expect(within(section).getByText(/PayPal \(Zweite Geldbörse\)/).textContent).toContain('bei einem Guthabenkonto üblich');
+    const alert = within(section).getByRole('alert');
+    expect(alert.textContent).toContain('Klarna (Später zahlen): vom Bankkonto eingezogen 40,65 €, Käufe laut Liste 36,15 €, Differenz 4,50 € mehr eingezogen als gelistet.');
+    expect(alert.textContent).toContain('Das passt nicht zusammen (Toleranz 1,00 €)');
+    expect(alert.textContent).toContain('Gebühren oder Zinsen');
+    const cells = within(within(section).getByRole('table')).getAllByRole('cell').map((c) => c.textContent);
+    expect(cells).toEqual(['03/2026', '40,65 €', '36,15 €', '4,50 €', '4,50 €']);
+  });
+
+  it('names the purchases a later list cancelled and the receipt that lost its payment', () => {
+    const cancelled = [{ id: 'c-1', bookingDay: '2026-03-03', amountCents: -2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', releasedFrom: ['Editor Beispiel März'] }];
+    render(<PaymentsTab view={view({ cancelled })} {...props()} />);
+    const section = screen.getByRole('region', { name: 'Stornierte Käufe' });
+    expect(section.textContent).toContain('03.03.2026 Editor Beispiel 20,75 €');
+    expect(section.textContent).toContain('Zuordnung gelöst von: Editor Beispiel März');
+  });
+
+  it('the picker says which receipt already carries a payment, and re-labelled transfers read in plain words', async () => {
+    const user = userEvent.setup();
+    const receiptTargets = [{ id: 'r-1', label: 'Einkauf Laden', day: '2026-03-11', amountCents: 1_999, linkedCents: 1_999 }];
+    const overridden = [
+      { id: 'p-8', bookingDay: '2026-03-28', amountCents: -3_615, counterparty: 'Später Beispiel Bank', kind: 'spend' as const },
+      { id: 'p-9', bookingDay: '2026-04-28', amountCents: -900, counterparty: 'Später Beispiel Bank', kind: 'own_transfer' as const },
+    ];
+    render(<PaymentsTab view={view({ open: [open()], receiptTargets, overridden })} {...props()} />);
+    await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
+    expect(screen.getByRole('option', { name: /Einkauf Laden \(19,99 €\), schon zugeordnet 19,99 €/ })).toBeTruthy();
+    const section = screen.getByRole('region', { name: 'Umgewidmete Zahlungen' });
+    expect(section.textContent).toContain('eigene Zahlung, kein Übertrag');
+    expect(section.textContent).toContain('Übertrag zwischen eigenen Konten');
   });
 
   it('a refund asks for the receipt it belongs to', () => {

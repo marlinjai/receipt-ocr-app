@@ -59,6 +59,8 @@ export interface NormalizedPayment {
    * the identity.
    */
   sourceHash: string;
+  /** True when `sourceHash` is built from the source's own number alone (see `referenceHash`). */
+  byReference?: boolean;
 }
 
 export type ParseErrorCode =
@@ -84,6 +86,20 @@ export interface ParsedFile {
   payments: NormalizedPayment[];
   /** Rows of the file that are not booked movements in euro and were left out on purpose, by reason. */
   skipped: Record<string, number>;
+  /**
+   * Identities (`sourceHash`) of purchases the file lists as cancelled or
+   * refunded in full. They are not payments of this file; a payment stored by
+   * an earlier import under one of them stops counting.
+   */
+  cancelled: string[];
+  /** Rows that were read but need a person's attention, by reason (a part refund the list gives no amount for). */
+  notices: Record<string, number>;
+  /**
+   * Status wordings the reader did not know (the service's wordings are
+   * open-ended). Such a row is read as a purchase and named here, so a person
+   * looks at it; it is never dropped in silence.
+   */
+  unknownStatuses: string[];
   firstDay: string | null;
   lastDay: string | null;
 }

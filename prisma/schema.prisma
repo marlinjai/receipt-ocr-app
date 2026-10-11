@@ -545,8 +545,9 @@ model TaxImportBatch {
   lastDay         String?  @map("last_day")
   createdAt       DateTime @default(now()) @map("created_at")
 
-  account  TaxAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  payments TaxPayment[]
+  account   TaxAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  payments  TaxPayment[]
+  cancelled TaxPayment[] @relation("cancelledBy")
 
   @@unique([accountId, contentHash])
   @@map("tax_import_batches")
@@ -572,10 +573,16 @@ model TaxPayment {
   sourceKind      String   @map("source_kind")
   kindOverride    String?  @map("kind_override")
   sourceHash      String   @map("source_hash")
+  // Set when a later import of the same source listed this purchase as
+  // cancelled or refunded in full: the payment is kept for the record and
+  // counts nowhere. Undoing that import sets it back to NULL (the foreign key
+  // does), so the payment and its links count again.
+  cancelledByBatchId String? @map("cancelled_by_batch_id")
   createdAt       DateTime @default(now()) @map("created_at")
 
-  account TaxAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  batch   TaxImportBatch   @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  account     TaxAccount      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  batch       TaxImportBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  cancelledBy TaxImportBatch? @relation("cancelledBy", fields: [cancelledByBatchId], references: [id], onDelete: SetNull)
   links   TaxPaymentLink[]
 
   @@unique([accountId, sourceHash])

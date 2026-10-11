@@ -19,8 +19,14 @@ interface Props {
   onTreat: (counterparty: string, treatment: CounterpartyTreatment | null) => void;
   onLink: (input: { paymentId: string; rowId?: string; invoiceId?: string; cents?: number }) => void;
   onUnlink: (linkId: string) => void;
-  /** Accept every unambiguous proposal for a receipt on an estimated amount; the server works the list out again. */
-  onAcceptProposals: () => void;
+  /**
+   * Accept proposals for receipts on an estimated amount: the pairs the person
+   * sees. The server links those of them it still proposes (with
+   * `onlyUnambiguous`, those still unambiguous) and says what it did.
+   */
+  onAcceptProposals: (pairs: Array<{ paymentId: string; rowId: string }>, onlyUnambiguous: boolean) => void;
+  /** Say that a payment is a transfer between own accounts (true), or a payment of its own (false). */
+  onTransfer: (paymentId: string, isTransfer: boolean) => void;
   onNotIncome: (payment: OpenPayment) => void;
   /** Re-label one payment (private, refund), or with null put it back to what its file says. */
   onKind: (paymentId: string, kind: 'private' | 'refund' | null) => void;
@@ -42,6 +48,19 @@ const SKIP_LABELS: Record<string, string> = {
   zero_amount: 'ohne Betrag',
   duplicate_row: 'doppelt in der Datei',
 };
+const NOTICE_LABELS: Record<string, string> = {
+  part_refunded: 'teilweise erstattet (der Kauf zählt voll; die Erstattung steht auf dem Bankkonto und wird dort dem Beleg zugeordnet)',
+  unknown_status: 'mit unbekanntem Status (als Kauf eingelesen; falls storniert oder noch offen, die Zahlung bitte als privat oder Umbuchung kennzeichnen)',
+};
+const KIND_LABELS: Record<string, string> = {
+  private: 'privat',
+  refund: 'Erstattung oder Umbuchung',
+  own_transfer: 'Übertrag zwischen eigenen Konten',
+  spend: 'eigene Zahlung, kein Übertrag',
+  income: 'eigener Geldeingang, kein Übertrag',
+};
+const SERVICE_LABELS: Record<string, string> = { paypal: 'PayPal', klarna: 'Klarna' };
+const monthLabel = (month: string) => `${month.slice(5, 7)}/${month.slice(0, 4)}`;
 const LINK_METHOD_LABELS: Record<string, string> = {
   reference: 'über die Rechnungsnummer',
   estimate: 'Vorschlag, von dir übernommen',
@@ -52,7 +71,7 @@ const LINK_METHOD_LABELS: Record<string, string> = {
  * a counterparty is treated, and linking payments to receipts and invoices.
  * A link is only made on a reference or by a person's confirmation.
  */
-export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onNotIncome, onKind }: Props) {
+export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind }: Props) {
   const id = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState('');
@@ -64,7 +83,15 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
   // hundreds of thousands of entries on every action.
   const [manualFor, setManualFor] = useState<string | null>(null);
   const p = view.payments;
-  const unambiguous = p.estimateProposals.filter((x) => x.unambiguous).length;
+  // True from the press on "accept all" until the answer is in: the button says so and cannot be pressed again.
+  const [accepting, setAccepting] = useState(false);
+  const [wasBusy, setWasBusy] = useState(busy);
+  if (wasBusy !== busy) {
+    setWasBusy(busy);
+    if (!busy) setAccepting(false);
+  }
+  const unambiguousPairs = p.estimateProposals.filter((x) => x.unambiguous).map((x) => ({ paymentId: x.paymentId, rowId: x.rowId }));
+  const unambiguous = unambiguousPairs.length;
   const shown = localError ?? error;
   const selectedAccount = p.accounts.some((a) => a.id === accountId) ? accountId : (p.accounts[0]?.id ?? '');
 
@@ -186,7 +213,17 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
             <p className="ui-note ui-note-ok mt-3" role="status">
               Eingelesen: {lastImport.added} neue Zahlungen
               {lastImport.alreadyThere > 0 ? `, ${lastImport.alreadyThere} waren schon vorhanden` : ''}
-              {lastImport.autoLinked > 0 ? `, ${lastImport.autoLinked} über die Rechnungsnummer einer Rechnung zugeordnet` : ''}.
+              {lastImport.autoLinked > 0 ? `, ${lastImport.autoLinked} über die Rechnungsnummer einer Rechnung zugeordnet` : ''}
+              {lastImport.adopted > 0 ? `, ${lastImport.adopted} schon vorhandene an ihrer neuen Nummer wiedererkannt` : ''}.
+              {lastImport.cancelledEarlier > 0 &&
+                ` ${lastImport.cancelledEarlier} früher eingelesene ${lastImport.cancelledEarlier === 1 ? 'Kauf ist' : 'Käufe sind'} laut dieser Datei storniert oder vollständig erstattet und ${lastImport.cancelledEarlier === 1 ? 'zählt' : 'zählen'} nicht mehr${
+                  lastImport.releasedLinks > 0 ? `; ${lastImport.releasedLinks} ${lastImport.releasedLinks === 1 ? 'Zuordnung wurde' : 'Zuordnungen wurden'} gelöst, siehe „Stornierte Käufe“` : ''
+                }.`}
+              {Object.keys(lastImport.notices).length > 0 &&
+                ` Bitte ansehen: ${Object.entries(lastImport.notices)
+                  .map(([reason, count]) => `${count} ${NOTICE_LABELS[reason] ?? reason}`)
+                  .join(', ')}.`}
+              {lastImport.unknownStatuses.length > 0 && ` Unbekannte Statusangaben: ${lastImport.unknownStatuses.map((w) => `„${w}“`).join(', ')}.`}
               {Object.keys(lastImport.skipped).length > 0 &&
                 ` Bewusst ausgelassen: ${Object.entries(lastImport.skipped)
                   .map(([reason, count]) => `${count} ${SKIP_LABELS[reason] ?? reason}`)
@@ -235,13 +272,19 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
               <button
                 type="button"
                 className="ui-btn ui-btn-sm ui-btn-primary"
-                disabled={busy}
+                disabled={busy || accepting}
+                aria-busy={accepting}
                 onClick={() => {
                   if (!window.confirm(`${unambiguous} ${unambiguous === 1 ? 'eindeutigen Vorschlag' : 'eindeutige Vorschläge'} übernehmen? Jede Zuordnung lässt sich unter „Zuordnungen und Regeln“ wieder lösen.`)) return;
-                  onAcceptProposals();
+                  setAccepting(true);
+                  onAcceptProposals(unambiguousPairs, true);
                 }}
               >
-                {unambiguous === 1 ? 'Den einen eindeutigen Vorschlag übernehmen' : `Alle ${unambiguous} eindeutigen Vorschläge übernehmen`}
+                {accepting
+                  ? `Übernimmt ${unambiguous} ${unambiguous === 1 ? 'Vorschlag' : 'Vorschläge'} …`
+                  : unambiguous === 1
+                    ? 'Den einen eindeutigen Vorschlag übernehmen'
+                    : `Alle ${unambiguous} eindeutigen Vorschläge übernehmen`}
               </button>
             )}
           </div>
@@ -250,6 +293,11 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
             Vorgeschlagen wird eine Zahlung an denselben Lieferanten, gebucht von 3 Tagen vor bis 10 Tage nach dem
             Belegdatum, höchstens 8 % neben der Schätzung. Zugeordnet wird nur, was du übernimmst.
           </p>
+          {accepting && (
+            <p className="ui-note mt-3" role="status">
+              Die Vorschläge werden zugeordnet und die Übersicht neu berechnet. Das dauert einige Sekunden; ein zweiter Klick ist nicht nötig und würde nichts doppelt anlegen.
+            </p>
+          )}
           <ul className="mt-3 space-y-2">
             {p.estimateProposals.map((proposal) => (
               <li key={`${proposal.rowId}:${proposal.paymentId}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
@@ -258,12 +306,18 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                   <span className="ml-2 text-xs tabular-nums" style={{ color: 'var(--muted)' }}>
                     geschätzt {euro(proposal.estimateCents)} · bezahlt {euro(proposal.paidCents)} am {formatDay(proposal.bookingDay)}
                     {proposal.counterparty ? ` an ${proposal.counterparty.slice(0, 40)}` : ''} · {proposal.accountLabel}
-                    {proposal.unambiguous ? '' : ' · mehrdeutig, bitte einzeln prüfen'}
+                    {proposal.severalReceipts
+                      ? ' · eine Zahlung für mehrere Belege? Der Betrag passt besser zu diesem und einem weiteren Beleg zusammen. Bitte unter „Zahlungen ohne Beleg“ von Hand mit Teilbetrag zuordnen.'
+                      : proposal.unambiguous
+                        ? ''
+                        : ' · mehrdeutig, bitte einzeln prüfen'}
                   </span>
                 </span>
-                <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onLink({ paymentId: proposal.paymentId, rowId: proposal.rowId })}>
-                  Übernehmen
-                </button>
+                {!proposal.severalReceipts && (
+                  <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onAcceptProposals([{ paymentId: proposal.paymentId, rowId: proposal.rowId }], false)}>
+                    Übernehmen
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -333,6 +387,11 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                       Von Hand zuordnen
                     </button>
                   )}
+                  {payment.namesService && (
+                    <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onTransfer(payment.id, true)}>
+                      Übertrag zwischen eigenen Konten
+                    </button>
+                  )}
                   {payment.counterparty ? (
                     <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onTreat(payment.counterparty, 'private')}>
                       Gegenseite ist privat
@@ -358,6 +417,108 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         )}
       </section>
 
+      {(p.ruleTransfers.length > 0 || p.reconciliations.length > 0) && (
+        <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Umbuchungen zwischen eigenen Konten">
+          <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Umbuchungen zwischen eigenen Konten {view.year}</h2>
+          <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+            Was ein Zahlungsdienst vom Bankkonto einzieht, ist dasselbe Geld wie die Käufe in seiner eigenen Liste. Solche
+            Abbuchungen gelten deshalb als Umbuchung: keine Ausgabe, keine Frage. Das gilt nur für Tage, die die
+            eingelesene Liste des Dienstes abdeckt. Hier steht, was so behandelt wird, damit nichts unbemerkt verschwindet.
+          </p>
+          {p.reconciliations.map((r) => (
+            <div key={r.service} className="mt-3">
+              <p className={`ui-note ${r.reconciles ? 'ui-note-ok' : 'ui-note-danger'}`} role={r.reconciles ? undefined : 'alert'}>
+                {SERVICE_LABELS[r.service] ?? r.service} ({r.accountLabels.join(', ')}): vom Bankkonto eingezogen {euro(r.collectedCents)}, Käufe laut Liste {euro(r.listedCents)},{' '}
+                Differenz {euro(Math.abs(r.differenceCents))} {r.differenceCents > 0 ? 'mehr eingezogen als gelistet' : r.differenceCents < 0 ? 'weniger eingezogen als gelistet' : ''}.{' '}
+                {r.reconciles
+                  ? r.differenceCents < -r.toleranceCents
+                    ? 'Das ist bei einem Guthabenkonto üblich: der Rest wurde aus Guthaben oder über eine Karte bezahlt. Nichts wurde eingezogen, das die Liste nicht erklärt.'
+                    : 'Das passt zusammen.'
+                  : `Das passt nicht zusammen (Toleranz ${euro(r.toleranceCents)}). ${
+                      r.differenceCents > 0
+                        ? 'Mehr eingezogen heißt: Käufe, die in der Liste fehlen (andere Währung, beim Export noch offen), Gebühren oder Zinsen, oder Käufe aus einem anderen Jahr. Die betreffende Abbuchung unten als eigene Zahlung kennzeichnen.'
+                        : 'Weniger eingezogen heißt: Käufe werden erst später eingezogen (Zahlungsziel, Raten), wurden erstattet, oder die Abbuchung liegt in einem anderen Jahr.'
+                    }`}
+              </p>
+              {r.months.length > 0 && (
+              <details className="mt-2">
+                <summary className="cursor-pointer text-sm" style={{ color: 'var(--foreground)' }}>Abgleich je Monat</summary>
+                <table className="mt-2 w-full text-left text-xs tabular-nums" style={{ color: 'var(--foreground)' }}>
+                  <thead>
+                    <tr style={{ color: 'var(--muted)' }}>
+                      <th scope="col" className="py-1 pr-3 font-normal">Monat</th>
+                      <th scope="col" className="py-1 pr-3 font-normal">Eingezogen</th>
+                      <th scope="col" className="py-1 pr-3 font-normal">Käufe laut Liste</th>
+                      <th scope="col" className="py-1 pr-3 font-normal">Differenz</th>
+                      <th scope="col" className="py-1 font-normal">Laufend</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {r.months.map((m) => (
+                      <tr key={m.month}>
+                        <td className="py-0.5 pr-3">{monthLabel(m.month)}</td>
+                        <td className="py-0.5 pr-3">{euro(m.collectedCents)}</td>
+                        <td className="py-0.5 pr-3">{euro(m.listedCents)}</td>
+                        <td className="py-0.5 pr-3">{m.differenceCents < 0 ? '-' : ''}{euro(Math.abs(m.differenceCents))}</td>
+                        <td className="py-0.5">{m.runningCents < 0 ? '-' : ''}{euro(Math.abs(m.runningCents))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </details>
+              )}
+            </div>
+          ))}
+          {p.ruleTransfers.length > 0 && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-sm" style={{ color: 'var(--foreground)' }}>
+                {p.ruleTransfers.length} {p.ruleTransfers.length === 1 ? 'Zahlung' : 'Zahlungen'} als Umbuchung behandelt, zusammen {euro(Math.abs(p.ruleTransferCents))}
+              </summary>
+              <ul className="mt-2 space-y-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
+                {p.ruleTransfers.map((transfer) => (
+                  <li key={transfer.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span>
+                      {formatDay(transfer.bookingDay)} {transfer.counterparty || 'ohne Namen'} {transfer.amountCents < 0 ? 'bezahlt' : 'erhalten'} {euro(Math.abs(transfer.amountCents))}
+                      <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                        {transfer.accountLabel}
+                        {transfer.reference ? ` · ${transfer.reference.slice(0, 60)}` : ''}
+                        {transfer.hasTwin ? ' · der Kauf dazu steht in der Liste des Dienstes' : ''}
+                        {transfer.linkedTo.length > 0 ? ` · zugeordnet zu: ${transfer.linkedTo.join(', ')}` : ''}
+                      </span>
+                    </span>
+                    <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onTransfer(transfer.id, false)}>
+                      Kein Übertrag, eine eigene Zahlung
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </section>
+      )}
+
+      {p.cancelled.length > 0 && (
+        <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Stornierte Käufe">
+          <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Stornierte Käufe {view.year}</h2>
+          <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+            Diese Käufe wurden als bezahlt eingelesen; eine später eingelesene Liste führt sie als storniert oder
+            vollständig erstattet. Sie zählen nirgends mehr. Der Import, der das gemeldet hat, lässt sich rückgängig
+            machen; dann zählen sie und ihre Zuordnungen wieder.
+          </p>
+          <ul className="mt-3 space-y-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
+            {p.cancelled.map((payment) => (
+              <li key={payment.id}>
+                {formatDay(payment.bookingDay)} {payment.counterparty || 'ohne Namen'} {euro(Math.abs(payment.amountCents))}
+                <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                  {payment.accountLabel}
+                  {payment.releasedFrom.length > 0 ? ` · Zuordnung gelöst von: ${payment.releasedFrom.join(', ')}. Der Beleg zählt wieder mit seinem eigenen Betrag.` : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {p.overridden.length > 0 && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Umgewidmete Zahlungen">
           <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Von dir umgewidmete Zahlungen</h2>
@@ -366,7 +527,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
               <li key={payment.id} className="flex flex-wrap items-baseline justify-between gap-2">
                 <span>
                   {formatDay(payment.bookingDay)} {payment.counterparty || 'ohne Namen'} {euro(Math.abs(payment.amountCents))}:{' '}
-                  {payment.kind === 'private' ? 'privat' : payment.kind === 'refund' ? 'Erstattung oder Umbuchung' : payment.kind}
+                  {KIND_LABELS[payment.kind] ?? payment.kind}
                 </span>
                 <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onKind(payment.id, null)}>Zurücksetzen</button>
               </li>
@@ -384,7 +545,10 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 <li key={link.linkId} className="flex flex-wrap items-baseline justify-between gap-2">
                   <span>
                     {formatDay(link.bookingDay)} {link.counterparty || 'ohne Namen'} {euro(link.cents)} → {link.targetLabel}
-                    <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>{LINK_METHOD_LABELS[link.method] ?? 'von dir bestätigt'}</span>
+                    <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                      {LINK_METHOD_LABELS[link.method] ?? 'von dir bestätigt'}
+                      {link.counts ? '' : ' · zählt nicht doppelt: der Kauf, den diese Abbuchung bezahlt, ist demselben Beleg zugeordnet'}
+                    </span>
                   </span>
                   <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onUnlink(link.linkId)}>Lösen</button>
                 </li>
@@ -453,7 +617,7 @@ function ManualLink({
           ))}
           {receipts.map((r) => (
             <option key={r.id} value={r.id}>
-              {formatDay(r.day)} {r.label.slice(0, 60)}{r.amountCents !== null ? ` (${euro(r.amountCents)})` : ''}
+              {formatDay(r.day)} {r.label.slice(0, 60)}{r.amountCents !== null ? ` (${euro(r.amountCents)})` : ''}{r.linkedCents > 0 ? `, schon zugeordnet ${euro(r.linkedCents)}` : ''}
             </option>
           ))}
         </select>

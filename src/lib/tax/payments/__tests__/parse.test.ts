@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseCsv, parsePaymentFile, toCents, toIsoDay } from '../parse';
+import { homeDay, parseCsv, parsePaymentFile, referenceHash, toCents, toIsoDay } from '../parse';
 import { PaymentParseError } from '../types';
 
 /** Every name, text and amount below is invented; only the column layouts are the real ones. */
@@ -238,8 +238,8 @@ describe('parsePaymentFile: unhappy paths', () => {
 
 // The purchase list of the pay-later service, in its longer variant. The shorter one ends after `statement_number`.
 const KLARNA_HEADER = 'created_date,created_time,activated,settled,amount,currency,merchant,items,payment_method,status,payment_reference,statement_number,category,purchase_type,card,source,timezone';
-const klarnaRow = (o: { day: string; amount: string; merchant: string; items?: string; status?: string; reference?: string; order?: string; activated?: string; currency?: string; method?: string }) =>
-  [o.day, '09:30', o.activated ?? `${o.day} 09:31`, '', o.amount, o.currency ?? 'EUR', `"${o.merchant}"`, `"${o.items ?? ''}"`, o.method ?? 'Invoice', `"${o.status ?? 'Normal'}"`, o.reference ?? '', o.order ?? 'ORDER0001', '', '', '', 'beispiel-quelle', 'Europe/Berlin'].join(',');
+const klarnaRow = (o: { day: string; amount: string; merchant: string; items?: string; status?: string; reference?: string; order?: string; activated?: string; currency?: string; method?: string; time?: string; zone?: string }) =>
+  [o.day, o.time ?? '09:30', o.activated ?? `${o.day} 09:31`, '', o.amount, o.currency ?? 'EUR', `"${o.merchant}"`, `"${o.items ?? ''}"`, o.method ?? 'Invoice', `"${o.status ?? 'Normal'}"`, o.reference ?? '', o.order ?? 'ORDER0001', '', '', '', 'beispiel-quelle', o.zone ?? 'Europe/Berlin'].join(',');
 const klarna = (...rows: string[]) => [KLARNA_HEADER, ...rows].join('\r\n') + '\r\n';
 const KLARNA = klarna(
   klarnaRow({ day: '2025-03-02', activated: '2025-03-03 08:00', amount: '21.37', merchant: 'Editor Beispiel', items: 'Editor Beispiel Pro Monat', reference: '1000000000001' }),
@@ -260,7 +260,7 @@ describe('the pay-later purchase list', () => {
   it('reads a purchase as money out on the day it was made, with the capture day as value day', () => {
     const parsed = parsePaymentFile(KLARNA);
     expect(parsed).toMatchObject({ format: 'klarna_csv', skipped: {}, firstDay: '2025-03-02', lastDay: '2025-03-09' });
-    expect(parsed.payments.map((p) => ({ ...p, sourceHash: undefined }))).toEqual([
+    expect(parsed.payments.map((p) => ({ ...p, sourceHash: undefined, byReference: undefined }))).toEqual([
       { bookingDay: '2025-03-02', valueDay: '2025-03-03', amountCents: -2137, counterparty: 'Editor Beispiel', reference: 'Editor Beispiel Pro Monat', entryReference: '1000000000001', kind: 'spend', sourceHash: undefined },
       // Bought on instalments: one spend of the full amount on the purchase day.
       { bookingDay: '2025-03-05', valueDay: '2025-03-05', amountCents: -24_000, counterparty: 'Möbel Beispiel', reference: 'Schreibtisch', entryReference: '1000000000002', kind: 'spend', sourceHash: undefined },
@@ -303,8 +303,91 @@ describe('the pay-later purchase list', () => {
       ),
     );
     expect(parsed.skipped).toEqual({ duplicate_row: 1, other_currency: 1, not_completed: 1, cancelled: 2, zero_amount: 1 });
+    // The cancelled and the fully refunded purchase are named by identity, so an earlier import of them stops counting.
+    expect(parsed.cancelled).toEqual([referenceHash('2000000000004'), referenceHash('2000000000005')]);
+    expect(parsed.notices).toEqual({ part_refunded: 1 });
     // A part refund keeps the purchase in full; a purchase that is merely not due yet is a purchase.
     expect(parsed.payments.map((p) => [p.bookingDay, p.amountCents])).toEqual([['2025-05-01', -1000], ['2025-05-07', -7000], ['2025-05-08', -8000]]);
+  });
+
+  it('names every status it knows, and refuses the file at a word it does not know', () => {
+    const kept = (status: string) => {
+      const parsed = parsePaymentFile(klarna(klarnaRow({ day: '2025-05-01', amount: '10.00', merchant: 'Laden Beispiel', status, reference: '2100000000001' })));
+      return parsed.payments.length === 1 ? (parsed.notices.part_refunded ? 'purchase, part refunded' : 'purchase') : Object.keys(parsed.skipped)[0];
+    };
+    // The statuses of the real list, and an empty one.
+    for (const status of ['Normal', 'read', 'Gestern bezahlt', 'Heute bezahlt', 'Am 5. Sept. bezahlt', 'Am 12. Aug. bezahlt', 'In 12 Tagen fällig', 'Überfällig', '']) expect([status, kept(status)]).toEqual([status, 'purchase']);
+    expect(kept('Wenn der Händler deine Bestellung bearbeitet, ist deine Zahlung 30 Tage später fällig')).toBe('not_completed');
+    for (const status of ['In Bearbeitung', 'Ausstehend', 'Pending']) expect([status, kept(status)]).toEqual([status, 'not_completed']);
+    for (const status of ['Storniert', 'Cancelled', 'Erstattet', 'Vollständig erstattet', 'Refunded']) expect([status, kept(status)]).toEqual([status, 'cancelled']);
+    // A part refund keeps the purchase, whatever the spelling: "erstattet" inside the word must not drop it.
+    for (const status of ['Teilweise erstattet', 'Teilerstattet', 'Teilerstattung', 'Partially refunded']) expect([status, kept(status)]).toEqual([status, 'purchase, part refunded']);
+    // The wordings of the real list are relative to the export day: any day, any number of days.
+    for (const status of ['Am 31. Aug. bezahlt', 'Am 2. Sept. bezahlt', 'In 13 Tagen fällig', 'In 30 Tagen fällig']) expect([status, kept(status)]).toEqual([status, 'purchase']);
+  });
+
+  it('a wording it does not know is read as a purchase and named for a look, never dropped and never a reason to refuse the file', () => {
+    // "bearbeitet" alone is not the pending sentence, and "erstattet" inside another sentence is not a full refund.
+    const parsed = parsePaymentFile(
+      klarna(
+        klarnaRow({ day: '2025-05-01', amount: '10.00', merchant: 'Laden Beispiel', status: 'Bearbeitet', reference: '2200000000001' }),
+        klarnaRow({ day: '2025-05-02', amount: '20.00', merchant: 'Laden Beispiel', status: 'Angefochten', reference: '2200000000002' }),
+        klarnaRow({ day: '2025-05-03', amount: '30.00', merchant: 'Laden Beispiel', status: 'Angefochten', reference: '2200000000003' }),
+        klarnaRow({ day: '2025-05-04', amount: '40.00', merchant: 'Laden Beispiel', reference: '2200000000004' }),
+      ),
+    );
+    expect(parsed.payments.map((p) => p.amountCents)).toEqual([-1000, -2000, -3000, -4000]);
+    expect(parsed.skipped).toEqual({});
+    expect(parsed.notices).toEqual({ unknown_status: 3 });
+    expect(parsed.unknownStatuses).toEqual(['Bearbeitet', 'Angefochten']);
+  });
+
+  it('reads the currency whatever its case', () => {
+    expect(parsePaymentFile(klarna(klarnaRow({ day: '2025-05-01', amount: '10.00', merchant: 'Laden Beispiel', currency: 'eur' }))).payments.length).toBe(1);
+    expect(parsePaymentFile(klarna(klarnaRow({ day: '2025-05-01', amount: '10.00', merchant: 'Laden Beispiel', currency: 'usd' }))).skipped).toEqual({ other_currency: 1 });
+  });
+
+  it('money back that carries its purchase’s reference is a movement of its own, not a second copy of the purchase', () => {
+    const parsed = parsePaymentFile(
+      klarna(
+        klarnaRow({ day: '2025-06-01', amount: '40.00', merchant: 'Laden Beispiel', reference: '3100000000001' }),
+        klarnaRow({ day: '2025-06-09', amount: '-15.00', merchant: 'Laden Beispiel', reference: '3100000000001' }),
+        klarnaRow({ day: '2025-06-09', amount: '-15.00', merchant: 'Laden Beispiel', reference: '3100000000001' }),
+      ),
+    );
+    expect(parsed.payments.map((p) => [p.bookingDay, p.amountCents, p.kind])).toEqual([['2025-06-01', -4000, 'spend'], ['2025-06-09', 1500, 'refund']]);
+    expect(parsed.skipped).toEqual({ duplicate_row: 1 });
+    expect(parsed.payments[0].sourceHash).not.toBe(parsed.payments[1].sourceHash);
+  });
+
+  it('a row without a reference that a referenced row repeats is that purchase, when neither side could mean another row', () => {
+    const web = klarnaRow({ day: '2025-07-01', amount: '9.00', merchant: 'Laden Beispiel', order: 'WEB1' });
+    const extract = klarnaRow({ day: '2025-07-01', amount: '9.00', merchant: 'LADEN BEISPIEL', reference: '3200000000001' });
+    const one = parsePaymentFile(klarna(web, extract));
+    expect(one.payments.map((p) => p.entryReference)).toEqual(['3200000000001']);
+    expect(one.skipped).toEqual({ duplicate_row: 1 });
+    // Two referenced purchases of that day, amount and merchant: the unreferenced row may be a third, so all stay.
+    const other = klarnaRow({ day: '2025-07-01', amount: '9.00', merchant: 'Laden Beispiel', reference: '3200000000002' });
+    expect(parsePaymentFile(klarna(web, extract, other)).payments.length).toBe(3);
+    // Another amount or another day is another purchase.
+    expect(parsePaymentFile(klarna(web, extract.replace('9.00', '9.50'))).payments.length).toBe(2);
+  });
+
+  it('takes the day in German time: a list in another time zone moves a purchase near midnight to its real day', () => {
+    expect(homeDay('2025-12-31', '23:30', 'UTC')).toBe('2026-01-01');
+    expect(homeDay('2025-07-01', '21:59', 'UTC')).toBe('2025-07-01');
+    expect(homeDay('2025-07-01', '22:00', 'UTC')).toBe('2025-07-02');
+    expect(homeDay('2025-03-10', '02:00', 'America/New_York')).toBe('2025-03-10');
+    expect(homeDay('2025-03-10', '20:00', 'America/New_York')).toBe('2025-03-11');
+    // The list's own zone, a missing zone or a missing time leave the day as written.
+    expect(homeDay('2025-12-31', '23:30', 'Europe/Berlin')).toBe('2025-12-31');
+    expect(homeDay('2025-12-31', '23:30', '')).toBe('2025-12-31');
+    expect(homeDay('2025-12-31', '', 'UTC')).toBe('2025-12-31');
+    expect(homeDay('2025-12-31', '23:30', 'Nirgendwo/Stadt')).toBeNull();
+
+    const [late] = parsePaymentFile(klarna(klarnaRow({ day: '2025-12-31', time: '23:30', zone: 'UTC', amount: '10.00', merchant: 'Laden Beispiel' }))).payments;
+    expect(late.bookingDay).toBe('2026-01-01');
+    expect(code(klarna(klarnaRow({ day: '2025-12-31', time: '23:30', zone: 'Nirgendwo/Stadt', amount: '10.00', merchant: 'Laden Beispiel' })))).toEqual(['unreadable_row', 2]);
   });
 
   it('reads a negative amount as money back', () => {

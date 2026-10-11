@@ -148,6 +148,12 @@ export interface EstimatePayment {
   amountCents: number;
   counterpartyKey: string;
   referenceKey: string;
+  /**
+   * Vendors this counterparty is known to stand for: the vendors of receipts
+   * its payments are linked to. A service lists the product ("editor") where
+   * the invoice names the company behind it; one link by hand teaches the pairing.
+   */
+  vendorAliases?: readonly string[];
 }
 
 export interface EstimateProposal {
@@ -155,6 +161,12 @@ export interface EstimateProposal {
   documentId: string;
   /** The receipt has exactly this one payment, and the payment fits no other receipt. */
   unambiguous: boolean;
+  /**
+   * The payment fits this receipt together with another estimated receipt of
+   * the vendor better than it fits this one alone: two invoices charged in
+   * one sum. Never unambiguous; a person splits the payment by hand.
+   */
+  severalReceipts: boolean;
 }
 
 /** The window a payment may lie in around the receipt's day, and how far it may be from the estimate. */
@@ -181,7 +193,9 @@ export function vendorNamed(vendorKey: string | null, counterpartyKey: string, r
  * receipt never equals what the bank charged, so the exact-amount candidates
  * above cannot find its payment. Here the vendor has to be named, the payment
  * booked from 3 days before to 10 days after the receipt, and the amount within
- * 8 percent of the estimate.
+ * 8 percent of the estimate. The vendor is named by its words in the payment,
+ * or by a pairing a person made before (`vendorAliases`). A payment that pays
+ * two receipts of the vendor in one sum is offered for both and marked.
  *
  * `documents` are all receipts no payment is linked to, the euro ones too:
  * they receive no proposal here, but a payment that also fits one of them
@@ -191,17 +205,38 @@ export function vendorNamed(vendorKey: string | null, counterpartyKey: string, r
 export function proposeEstimateMatches(payments: readonly EstimatePayment[], documents: readonly EstimateDocument[]): EstimateProposal[] {
   const dayNumber = (day: string) => Math.round(Date.parse(`${day}T00:00:00Z`) / 86_400_000);
   const paid = payments.map((p) => ({ p, day: dayNumber(p.bookingDay), cents: Math.abs(p.amountCents) }));
+  const within = (cents: number, estimate: number) => Math.abs(cents - estimate) * 100 <= ESTIMATE_TOLERANCE_PERCENT * estimate;
   const pairs: Array<{ paymentId: string; document: EstimateDocument }> = [];
+  // Per payment, the estimated receipts of its vendor in the window, whatever their amount: the parts one sum may pay.
+  const near = new Map<string, { cents: number; documents: EstimateDocument[] }>();
   for (const document of documents) {
     if (document.day === null || document.vendorKey === null || document.amountCents <= 0) continue;
     const day = dayNumber(document.day);
     for (const { p, day: booked, cents } of paid) {
       const gap = booked - day;
       if (gap < -ESTIMATE_DAYS_BEFORE || gap > ESTIMATE_DAYS_AFTER) continue;
-      const fits = document.estimated
-        ? Math.abs(cents - document.amountCents) * 100 <= ESTIMATE_TOLERANCE_PERCENT * document.amountCents
-        : cents === document.amountCents;
-      if (fits && vendorNamed(document.vendorKey, p.counterpartyKey, p.referenceKey)) pairs.push({ paymentId: p.id, document });
+      if (!vendorNamed(document.vendorKey, p.counterpartyKey, p.referenceKey) && !(p.vendorAliases ?? []).includes(document.vendorKey)) continue;
+      if (document.estimated) {
+        const entry = near.get(p.id) ?? { cents, documents: [] };
+        entry.documents.push(document);
+        near.set(p.id, entry);
+      }
+      if (document.estimated ? within(cents, document.amountCents) : cents === document.amountCents) pairs.push({ paymentId: p.id, document });
+    }
+  }
+  // One payment for two receipts: the sum of two fits, and fits better than either does alone.
+  const several = new Set<string>();
+  for (const [paymentId, { cents, documents: parts }] of near) {
+    for (let a = 0; a < parts.length; a++) {
+      for (let b = a + 1; b < parts.length; b++) {
+        const sum = parts[a].amountCents + parts[b].amountCents;
+        // Better than EITHER alone: a receipt that fits by itself to the cent is not made part of a sum.
+        if (!within(cents, sum) || Math.abs(cents - sum) >= Math.min(Math.abs(cents - parts[a].amountCents), Math.abs(cents - parts[b].amountCents))) continue;
+        for (const part of [parts[a], parts[b]]) {
+          several.add(`${paymentId}|${part.id}`);
+          if (!pairs.some((pair) => pair.paymentId === paymentId && pair.document.id === part.id)) pairs.push({ paymentId, document: part });
+        }
+      }
     }
   }
   const perPayment = new Map<string, number>();
@@ -215,6 +250,7 @@ export function proposeEstimateMatches(payments: readonly EstimatePayment[], doc
     .map((pair) => ({
       paymentId: pair.paymentId,
       documentId: pair.document.id,
-      unambiguous: perPayment.get(pair.paymentId) === 1 && perDocument.get(pair.document.id) === 1,
+      unambiguous: perPayment.get(pair.paymentId) === 1 && perDocument.get(pair.document.id) === 1 && !several.has(`${pair.paymentId}|${pair.document.id}`),
+      severalReceipts: several.has(`${pair.paymentId}|${pair.document.id}`),
     }));
 }

@@ -63,9 +63,16 @@
   document (18.96), the meals (3.01), rounding (-0.18). Waiting on Marlin: sending the Figma
   mail, the meals in the register, the Notion debits, a battery charger billed to another
   person, the Dremel in the year-boundary tab, and whether a pay-later purchase counts on the
-  purchase day (as built) or on the day the money leaves the bank. The payments tab also shows
-  for 2025 that the pay-later service collected 1,429.81 euros less from the bank than its list
-  holds in purchases: look at what explains it. (2026-10-11)
+  purchase day (as built) or on the day the money leaves the bank. The pay-later notice in the payments tab for 2025 (1,429.81 euros less collected from the bank
+  than the list holds in purchases) is explained and is not missing data: the MacBook of 25
+  November (2,849.00) ran as a financed purchase through PayPal, so the list holds it in full
+  while the bank only sees instalments; against that, the monthly cycle collects December 2024
+  (1,513.12) in 2025 and December 2025 (924.43) in 2026, and the remaining 827.78 are
+  instalments already paid and purchases settled ahead of the statement, which the files cannot
+  split. Open from it: the reconciliation should treat financed purchases separately, or the
+  notice returns every year one exists; and the draft's note for the MacBook says "paid via
+  PayPal" where the money came from a pay-later loan, which belongs to the purchase-day question
+  for the tax adviser. (2026-10-11)
 - [ ] Flat rates have no place in the finance area: the meal allowance of a business trip, the
   home office flat rate, commuting days and semester fees paid by transfer. The employment annex
   therefore shows 667.75 where the 2025 draft claims 2,101.22 (1,422.14 of it without a purchase

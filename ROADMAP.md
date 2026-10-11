@@ -71,8 +71,8 @@
   Every change is in `import-log-2026-10-11.md` there. The four missing Figma invoices were downloaded and imported on 2026-10-11, so the app now
   shows 14,074.75 euros against a draft of 14,133.55 (Notion's 37.98 without an invoice left the
   draft the same day). The remaining 58.80: the meal allowance flat rate (56.00) and the meals
-  (3.01), less rounding. Open: the five Figma receipts are not linked to their pay-later
-  purchases yet. Waiting on Marlin: the meals in the register, and the tax adviser's answer on
+  (3.01), less rounding. The five Figma receipts are linked to their pay-later purchases (116 payments linked).
+  Waiting on Marlin: the meals in the register, and the tax adviser's answer on
   whether a pay-later purchase counts on the purchase day (as built) or on the day the money
   leaves the bank. The pay-later notice in the payments tab for 2025 (1,429.81 euros less collected from the bank
   than the list holds in purchases) is explained and is not missing data: the MacBook of 25

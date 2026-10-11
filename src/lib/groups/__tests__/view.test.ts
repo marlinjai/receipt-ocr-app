@@ -110,6 +110,20 @@ describe('a search that finds a group', () => {
     expect(searchWithGroupReceipts([dinner, group, licence], allRows, columns).map((r) => r.id)).toEqual(['group', 'hotel', 'dinner', 'licence']);
   });
 
+  it('shows a found receipt as it is in the table now, not as it was when the search ran', () => {
+    // The amount was typed after the search: the search still holds the receipt without it.
+    const before = { ...hotel, cells: { ...hotel.cells, [columnId('Gross')]: null } } as Row;
+    const shown = searchWithGroupReceipts([before], allRows, columns);
+    expect(shown).toHaveLength(1);
+    expect(shown[0].cells[columnId('Gross')]).toBe(hotel.cells[columnId('Gross')]);
+    expect(shown[0]).toBe(hotel);
+  });
+
+  it('a found receipt that was deleted since is not shown', () => {
+    const gone = { ...hotel, id: 'deleted-since' } as Row;
+    expect(searchWithGroupReceipts([gone, licence], allRows, columns).map((r) => r.id)).toEqual(['licence']);
+  });
+
   it('a search that finds only receipts is left as it is', () => {
     expect(searchWithGroupReceipts([hotel, licence], allRows, columns).map((r) => r.id)).toEqual(['hotel', 'licence']);
   });

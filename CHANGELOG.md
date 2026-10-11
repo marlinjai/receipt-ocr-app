@@ -82,6 +82,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A page loaded just before or during a deployment no longer dies with "Application error": when it asks for a script file of the build that is gone, it reloads itself once and gets the new one. A second failure within a minute is left to show, so a file that is really missing cannot loop
 - With a search active, a cell edited in the table kept showing its old value: a typed amount looked as if it had not been saved, although it had, and typing it again saved a second value. The search view now draws the rows as they are loaded, and a row deleted since is no longer shown
 - "Belege prüfen" no longer offers another vendor for an invoice that has one: the text alone took headings, field labels or the addressee for the vendor ("Rechnungsnummer", "Order Summary"), and the stored name is the one a customer would use ("YouTube"). A vendor is still offered on a restaurant or bar receipt and where none is stored, and never when only the legal form differs
 - "Seite neu lesen" keeps the vendor a receipt already has when the page shows the same name in another spelling (the legal form added, another case): "A2 Hosting" no longer becomes "A2 Hosting LLC" and falls out of its group. A vendor that is really another name is still corrected

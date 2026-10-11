@@ -24,12 +24,16 @@
   yet proven on production: dragging a group from one section into another. (2026-10-11)
 - [ ] A receipt with its parts as sub rows, the second use of sub rows (further values of the
   hidden `Row Kind` column). Not built; the group design leaves room for it. (2026-10-11)
-- [ ] Read receipts with a model that sees the page, not only the recognized text. Text
-  recognition returns labels and amounts in separate runs, so 26 receipts of the 2025 import
-  stored the net for the gross. The classification call now gets the page itself and also reads
-  date, total, currency, net and tax lines; the invoice's arithmetic and the recognized text
-  check its answer, and a stored receipt can be read again ("Seite neu lesen"). Open until it is
-  deployed and the wrong receipts of the import are read again on production. Plan:
+- [ ] Read receipts with a model that sees the page, not only the recognized text. Live since
+  2026-10-11: the classification call gets the page itself and also reads date, total, currency,
+  net and tax lines; the invoice's arithmetic and the recognized text check its answer. On 288
+  real documents no wrong date or total is stored without a flag. "Seite neu lesen" was used on
+  production on one receipt (the unpaid hosting invoice: 288.59 where the old reader had 242.51;
+  assignment, share and name untouched). Open: (1) a new reading replaces a vendor that is
+  already set with the legal name on the page ("A2 Hosting" became "A2 Hosting LLC", set back by
+  hand), which splits the vendor grouping: keep a vendor that is set. (2) The measurement was
+  made on the documents the rules were written against; measure on the next import of unseen
+  documents. (3) The vendor cell is not judged by the evaluation script. Plan:
   [docs/plans/2026-10-11-vision-reading.md](docs/plans/2026-10-11-vision-reading.md). (2026-10-11)
 - [ ] The review list offers the text reader's vendor name against one the model gave and the
   upload accepted because the text prints it ("Musterfracht Express" stored, "Musterfracht
@@ -37,16 +41,19 @@
   the behaviour is older than it. Decide whose name wins (the name a customer would use, or the
   printed legal name) and make the upload and the review list agree. (2026-10-11)
 - [ ] Bring the app up to the tax session's draft for 2025. Marlin's 17 answers of 2026-10-11
-  (recorded in `Entscheidungen-2025.md` in the tax folder) are carried out: business expenses in
-  the app went from 7,547.54 to 13,971.50 euros, the draft table from 14,344.35 to 14,152.54,
-  and lines 29, 33, 36, 47 and 70 agree to the cent. Every change is in
-  `import-log-2026-10-11.md` there. The remaining 181.04: four Figma months without an invoice
-  (95.20, support mail drafted), the meal allowance flat rate (56.00), Notion debits without a
-  document (19.05), estimates on receipts paid with the pay-later card (7.96), the meals (3.01).
-  These five add up to 181.22, 0.18 more than the gap of 181.04: the difference sits in the two
-  estimated items and is not traced yet.
-  Waiting on Marlin: the Figma mail, the meals in the register, the Notion debits, a battery
-  charger billed to another person, the Dremel in the year-boundary tab. (2026-10-11)
+  (recorded in `Entscheidungen-2025.md` in the tax folder) are carried out, the bank, PayPal and
+  pay-later lists are imported, and 112 payments are linked: business expenses in the app went
+  from 7,547.54 to 13,979.55 euros, the draft table from 14,344.35 to 14,152.54, and one receipt
+  is left on an estimated euro amount (CleanShot of 30 November, no payment in any source).
+  Every change is in `import-log-2026-10-11.md` there. The remaining 172.99: four Figma months
+  without an invoice (95.20; charged 26 January, 26 February, 26 March, 26 April; support mail
+  drafted), the meal allowance flat rate (56.00), the business half of Notion debits without a
+  document (18.96), the meals (3.01), rounding (-0.18). Waiting on Marlin: sending the Figma
+  mail, the meals in the register, the Notion debits, a battery charger billed to another
+  person, the Dremel in the year-boundary tab, and whether a pay-later purchase counts on the
+  purchase day (as built) or on the day the money leaves the bank. The payments tab also shows
+  for 2025 that the pay-later service collected 1,429.81 euros less from the bank than its list
+  holds in purchases: look at what explains it. (2026-10-11)
 - [ ] Flat rates have no place in the finance area: the meal allowance of a business trip, the
   home office flat rate, commuting days and semester fees paid by transfer. The employment annex
   therefore shows 667.75 where the 2025 draft claims 2,101.22 (1,422.14 of it without a purchase

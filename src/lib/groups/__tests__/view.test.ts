@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Row } from '@marlinjai/data-table-core';
 import { GROUP_WRITABLE_COLUMNS } from '@/lib/receipts-kind';
-import { deleteWording, deletedWording, groupCellValue, groupsOf, receiptsInGroup, searchWithGroupReceipts, selectionKinds, sumOf } from '../view';
+import { deleteWording, deletedWording, groupCellNote, groupCellValue, groupsOf, receiptsInGroup, searchWithGroupReceipts, selectionKinds, sumOf } from '../view';
 import { allRows, columnId, columns, dinner, emptyGroup, group, hotel, licence, orphan } from './fixture';
 
 const column = (name: string) => columns.find((c) => c.name === name)!;
@@ -39,6 +39,26 @@ describe('what a group shows in the table', () => {
     for (const name of ['Net', 'Tax Rate', 'Date', 'Currency', 'FX Rate', 'Business Share %', 'Status']) {
       expect(groupCellValue(group, inGroup, column(name), columns), name).toBeNull();
     }
+  });
+
+  it('says how many receipts a sum covers when one of them has no value in the column', () => {
+    const noEuro = { ...dinner, cells: { ...dinner.cells, [columnId('EUR Equivalent')]: null } } as Row;
+    expect(groupCellValue(group, [hotel, noEuro], column('EUR Equivalent'), columns)).toBe(100);
+    expect(groupCellNote(group, [hotel, noEuro], column('EUR Equivalent'), columns)).toBe('(1 von 2)');
+    // The gross column of the same receipts is complete, so it carries no note.
+    expect(groupCellNote(group, [hotel, noEuro], column('Gross'), columns)).toBeUndefined();
+    // An empty text cell is no value either; a 0 is one.
+    const blank = { ...dinner, cells: { ...dinner.cells, [columnId('Attributed EUR')]: '' } } as Row;
+    const zero = { ...dinner, cells: { ...dinner.cells, [columnId('Attributed EUR')]: 0 } } as Row;
+    expect(groupCellNote(group, [hotel, blank], column('Attributed EUR'), columns)).toBe('(1 von 2)');
+    expect(groupCellNote(group, [hotel, zero], column('Attributed EUR'), columns)).toBeUndefined();
+  });
+
+  it('no note on a complete sum, an empty group, another column or a receipt', () => {
+    expect(groupCellNote(group, inGroup, column('EUR Equivalent'), columns)).toBeUndefined();
+    expect(groupCellNote(emptyGroup, [], column('Gross'), columns)).toBeUndefined();
+    expect(groupCellNote(group, inGroup, column('Date'), columns)).toBeUndefined();
+    expect(groupCellNote(hotel, [dinner], column('Gross'), columns)).toBeUndefined();
   });
 
   it('a receipt always shows its own cells, also when rows lie underneath it', () => {

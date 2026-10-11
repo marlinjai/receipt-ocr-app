@@ -17,11 +17,12 @@
   section count and the 241 items unchanged, folding, the state kept over a reload, one receipt
   taken out, the group dissolved with its confirmation and both receipts back at the top level.
   Plan: [receipt sub rows](docs/plans/2026-10-11-receipt-sub-rows.md). Done 2026-10-11.
-- [ ] A group's sum quietly leaves out a receipt that has no value in the summed column. Seen on
-  production on 2026-10-11: two receipts in a group, one without a euro equivalent, and the
-  group showed the euro sum of the other one alone with no sign that it is incomplete. Show
-  that a sum is incomplete (how many receipts it covers) instead of a clean number. Also not
-  yet proven on production: dragging a group from one section into another. (2026-10-11)
+- [x] A group's sum no longer looks complete when it is not: next to the number the group says
+  how many of its receipts the sum covers ("(1 von 2)"), decided by Marlin on 2026-10-11. With
+  `@marlinjai/data-table-react` 0.7.0, which also brings folding all sections at once and a
+  filter bar without its own frame. Done 2026-10-11.
+- [ ] Dragging a group from one section into another is not yet proven on production.
+  (2026-10-11)
 - [ ] A receipt with its parts as sub rows, the second use of sub rows (further values of the
   hidden `Row Kind` column). Not built; the group design leaves room for it. (2026-10-11)
 - [ ] Read receipts with a model that sees the page, not only the recognized text. Live since

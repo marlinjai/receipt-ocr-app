@@ -46,6 +46,25 @@ export function groupCellValue(row: Row, children: readonly Row[], column: Named
   return sumOf(children, column.id);
 }
 
+/** True when the receipt carries a value in the column: a number, or text that is one. An empty cell is no value, a 0 is. */
+function hasAmount(row: Pick<Row, 'cells'>, columnId: string): boolean {
+  const value = row.cells[columnId];
+  if (value === null || value === undefined || value === '') return false;
+  return Number.isFinite(Number(value));
+}
+
+/**
+ * The note next to a group's sum (the table's `getSubItemSummaryNote`): how
+ * many of its receipts the sum covers, when it does not cover all of them. A
+ * receipt without a value in the column (no euro equivalent yet, for example)
+ * adds nothing to the sum, and the sum must not look complete without it.
+ */
+export function groupCellNote(row: Row, children: readonly Row[], column: NamedColumn, columns: readonly NamedColumn[]): string | undefined {
+  if (!isGroupRow(row, columns) || !GROUP_SUM_COLUMNS.includes(column.name) || children.length === 0) return undefined;
+  const covered = children.filter((child) => hasAmount(child, column.id)).length;
+  return covered === children.length ? undefined : `(${covered} von ${children.length})`;
+}
+
 export interface GroupOption {
   id: string;
   name: string;

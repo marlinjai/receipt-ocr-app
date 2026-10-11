@@ -33,17 +33,42 @@
   word positions the text recognition already returns or a vision model given the image. Write
   the plan: which model, what it costs per receipt, and how its answer is checked against the
   arithmetic. Asked for by Marlin on 2026-10-11. (2026-10-11)
-- [ ] Bring the app up to the tax session's draft for 2025. The gap is explained to one cent
-  (2026-10-11): the app showed 7,547.54 euros of business expenses, the draft table
-  (`entwurf-ausgaben-2025.csv` in the 2025 tax folder) 14,344.35. The steps: the MacBook waits
-  as an open check for its asset (2,849.00), seven hardware invoices and other documents on
-  disk were never imported (2,806.23), items paid without a document (749.56), five small
-  orders without any evidence (128.20), two receipts blocked by an open check (342.17), and
-  wrongly read amounts and exchange rates (134.74). Marlin answered the 17 questions on
-  2026-10-11 (recorded in `Entscheidungen-2025.md` in the tax folder); being carried out:
-  the imports, the asset, the bank and PayPal files into the payments, the corrected amounts.
-  Waiting on Marlin: the business meals, which he completes in the register himself.
-  (2026-10-11)
+- [ ] Bring the app up to the tax session's draft for 2025. Marlin's 17 answers of 2026-10-11
+  (recorded in `Entscheidungen-2025.md` in the tax folder) are carried out: business expenses in
+  the app went from 7,547.54 to 13,971.50 euros, the draft table from 14,344.35 to 14,152.54,
+  and lines 29, 33, 36, 47 and 70 agree to the cent. Every change is in
+  `import-log-2026-10-11.md` there. The remaining 181.04: four Figma months without an invoice
+  (95.20, support mail drafted), the meal allowance flat rate (56.00), Notion debits without a
+  document (19.05), estimates on receipts paid with the pay-later card (7.96), the meals (3.01).
+  Waiting on Marlin: the Figma mail, the meals in the register, the Notion debits, a battery
+  charger billed to another person, the Dremel in the year-boundary tab. (2026-10-11)
+- [ ] Flat rates have no place in the finance area: the meal allowance of a business trip, the
+  home office flat rate, commuting days and semester fees paid by transfer. The employment annex
+  therefore shows 667.75 where the 2025 draft claims 2,101.22 (1,422.14 of it without a purchase
+  document by nature), and the business form misses 56.00. Design entries without a receipt:
+  what evidence each needs, which form line it lands on. Same question for an expense that
+  exists only as a bank payment and for a recurring contract rate, which on 2026-10-11 only
+  worked because one lease confirmation could carry eleven payments. (2026-10-11)
+- [ ] The payments tab asks too much and offers too little after a real import (2026-10-11,
+  2,150 payments): 586 open payments and 237 unanswered counterparties. Money in is always
+  asked about, with no answer for "this whole account is private"; a payment to an unanswered
+  counterparty cannot be linked until the counterparty is answered as business, which turns all
+  its other payments into questions; an account takes one source, so a bank export that ends
+  mid-year cannot be continued from another list; an import cannot be limited to a year (the
+  bank-interface list brought 454 payments outside 2025). (2026-10-11)
+- [ ] The assignment cell and the finance decision are two sources for who bears a receipt: a
+  decision in the finance area does not update "Zuordnung" or the share in the table, so the
+  dashboard and the finance area can disagree until both are set, and a decision has no note
+  field (the note for the unpaid hosting invoice of 2025 stands in the receipt's name). Private
+  receipts also carry share 100 in some rows and 0 in others. Decide which one is the source
+  and derive the other. (2026-10-11)
+- [ ] A refunded purchase has no representation: three Amazon orders of 2025 were refunded in
+  full and were kept out by hand. Importing invoice and credit note as a pair should net to
+  zero by itself. (2026-10-11)
+- [ ] The same invoice can be imported into two companies without a warning (the duplicate
+  check is per company and per file hash), and the active company is a session-wide switch, so
+  importing into another company means switching the whole signed-in session, a risk when
+  several sessions work at once. An upload should name its company itself. (2026-10-11)
 - [ ] Check the reader's new date and total reading against the text production actually stores.
   The fixes of 2026-10-11 were measured on local text extraction of the 2025 purchase documents,
   with the labels torn from their amounts to imitate the text recognition, because the stored

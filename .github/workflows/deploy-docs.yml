@@ -8,6 +8,18 @@ name: Deploy Docs
 on:
   push:
     branches: [main]
+    # Every input of `clearify build`: the docs sections, the Clearify config
+    # (clearify.config.ts), the root changelog, roadmap and readme it renders,
+    # and the manifests the install resolves from.
+    paths:
+      - 'docs/**'
+      - 'clearify.config.ts'
+      - 'CHANGELOG.md'
+      - 'ROADMAP.md'
+      - 'README.md'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/deploy-docs.yml'
   workflow_dispatch: {}
 
 jobs:

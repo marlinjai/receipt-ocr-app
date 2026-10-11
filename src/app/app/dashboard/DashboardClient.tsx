@@ -32,7 +32,7 @@ import type { ReviewEntry } from '@/lib/review/service';
 import { PresignedStorageBrainAdapter } from '@/lib/presigned-file-adapter';
 import { exportCSV } from '@/lib/export-csv';
 import { isGroupRow, receiptsOnly, visibleColumns } from '@/lib/receipts-kind';
-import { deleteWording, deletedWording, groupCellValue, groupsOf, receiptsInGroup, searchWithGroupReceipts, selectionKinds } from '@/lib/groups/view';
+import { deleteWording, deletedWording, groupCellNote, groupCellValue, groupsOf, receiptsInGroup, searchWithGroupReceipts, selectionKinds } from '@/lib/groups/view';
 
 const dbAdapter = createServerActionsAdapter();
 const fileAdapter = new PresignedStorageBrainAdapter();
@@ -133,6 +133,10 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
   const isCountedRow = useCallback((row: Row) => !isGroupRow(row, columns), [columns]);
   const groupSummary = useCallback(
     (row: Row, children: Row[], column: Column) => groupCellValue(row, children, column, columns),
+    [columns],
+  );
+  const groupSummaryNote = useCallback(
+    (row: Row, children: Row[], column: Column) => groupCellNote(row, children, column, columns),
     [columns],
   );
 
@@ -420,6 +424,7 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
             onCollapseRow={(rowId) => setGroupFolded(rowId, true)}
             onExpandRow={(rowId) => setGroupFolded(rowId, false)}
             getSubItemSummary={groupSummary}
+            getSubItemSummaryNote={groupSummaryNote}
             isCountedRow={isCountedRow}
             onAddRow={() => addRow()}
             onDeleteRow={deleteOne}
@@ -736,6 +741,7 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
           filters={filters}
           selectOptions={selectOptions}
           onFiltersChange={setFilters}
+          bare
         />
       </div>
 

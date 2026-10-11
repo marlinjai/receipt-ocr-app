@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
+import { STALE_CHUNK_RELOAD_SCRIPT } from "@/lib/pwa/stale-chunk-reload";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -48,6 +49,8 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}
       >
+        {/* First in the body, as text: it has to run before any script file of the app, because it is there for the case that one of them is gone. */}
+        <script dangerouslySetInnerHTML={{ __html: STALE_CHUNK_RELOAD_SCRIPT }} />
         {children}
         <ServiceWorkerRegistrar />
       </body>

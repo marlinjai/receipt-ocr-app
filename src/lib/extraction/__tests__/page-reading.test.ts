@@ -156,6 +156,30 @@ describe('readAmounts with a model that saw the page', () => {
     expect(readAmounts(slip, { date: '2025-03-14', modelGross: 13.3, modelSawPage: true }).gross).toBe(1.99);
   });
 
+  it('a postage slip whose sum has no label: the taxed box plus the printed tax-free postage is the printed total the page names', () => {
+    const slip = ['Musterpost AG', '24.03.2025', 'Paket 5 kg', '19,49', 'Karton M', '1,99 A', '21,48', 'A 19% Netto 1,67 MwSt 0,32 Brutto 1,99', 'EC-Karte'].join('\n');
+    expect(readAmounts(slip, { date: '2025-03-24' }).gross).toBe(1.99);
+    const reading = readAmounts(slip, { date: '2025-03-24', modelGross: 21.48, modelSawPage: true });
+    expect(reading).toMatchObject({ gross: 21.48, net: 21.16, basis: 'page_reading' });
+    expect(reading.checks).toContain('total_conflict');
+    // The difference must be printed: an amount that only happens to be larger is not taken.
+    expect(readAmounts(slip.replace('19,49', '19,00'), { date: '2025-03-24', modelGross: 21.48, modelSawPage: true }).gross).toBe(1.99);
+  });
+
+  it('a later labelled total that the receipt\'s arithmetic proves stands over a page answer naming an earlier, larger labelled amount', () => {
+    // German figures: the tax group proves 119.00, which "Rechnungsbetrag" names below the amount before the discount.
+    const german = ['Musterhandel', 'Rechnung', 'Gesamt vor Abzug 150,00', 'Abzug 31,00', 'Zwischensumme 100,00', 'MwSt 19,00', 'Rechnungsbetrag 119,00'].join('\n');
+    const proven = readAmounts(german, { date: '2025-03-01', modelGross: 150, modelSawPage: true });
+    expect(proven.gross).toBe(119);
+    expect(proven.checks).toContain('total_conflict');
+    // Another currency: net and tax stated next to their labels add up to the last labelled total.
+    // Another currency, no net printed: the tax a label names fits the last labelled total.
+    const dollars = ['Example Supplies Inc.', 'Invoice', 'Order total $150.00', 'Credit $31.00', 'VAT $19.00', 'Amount due $119.00'].join('\n');
+    const stated = readAmounts(dollars, { currency: 'USD', modelGross: 150, modelSawPage: true });
+    expect(stated).toMatchObject({ gross: 119, net: 100, taxRate: 19, basis: 'label_stated' });
+    expect(stated.checks).toContain('total_conflict');
+  });
+
   it('a bill with a tip on top: the amount paid is not taken for the bill', () => {
     const receipt = ['Trattoria Beispiel', 'Netto 40,76', 'MwSt 19% 7,74', 'Summe 48,50', 'Trinkgeld 5,00', 'Gesamt 53,50'].join('\n');
     const reading = readAmounts(receipt, { date: '2025-03-14', modelGross: 53.5, modelSawPage: true });

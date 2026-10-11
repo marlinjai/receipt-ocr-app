@@ -74,9 +74,12 @@ server-side scaling is added. Beyond a limit the receipt is read from the text a
   names any. A page answer that does not stand in the recognized text is never stored. Tax lines
   from the model count only when their figures stand in the text. Every reading says what its
   total rests on (`basis`), so a wrong total can be traced to its rule.
-- *Three cases from production (added after the first measurement).* A total above the tax groups
-  that a label in the text and the page reading both name is taken, with `total_conflict` (one
-  taxed item on a slip of tax-free postage). Where nothing names or proves a total and the page
+- *Cases from production (added after the first measurement).* A total above the tax groups is
+  taken, with `total_conflict`, when the page reading names it and either a label in the text
+  names it too or it is the taxed bill plus one other printed amount (a taxed box on a slip of
+  tax-free postage); never against a bill that a later label calls the total itself. A later
+  labelled total that its stated net and tax prove stands over a page answer naming another
+  labelled amount. Where nothing names or proves a total and the page
   amount is printed where the text reader counts no money (glued to a currency code on a booking
   page), it is taken with `total_unconfirmed`. Net and tax: for any settled total, the net the
   page reads is stored with its rate when net and tax are both printed, or when the net is printed
@@ -181,28 +184,47 @@ as duplicates), all PDF, hand-checked date and total each.
 
 ### Second measurement: the cases production failed on
 
-The same night, 284 documents: the 235 above, 20 purchase documents whose file name carries date
-and amount (12 Splice invoices as the regression check, Amazon invoices and two printed order
-pages), 28 from the tax inbox with a hand-checked table (scanned paper slips among them) and one
-train booking. Net is judged where a table names the tax and the total is right.
+The same night, 288 documents: the 235 above, purchase documents whose file name carries date and
+amount (12 Splice invoices as the regression check, Amazon invoices, two printed order pages),
+documents from the tax inbox with a hand-checked table (scanned paper slips among them), and the
+26 documents uploaded through the app that night, with the expected values of the import log.
+Net is judged where a table names the tax and the total is right.
 
-| Reading | Dates right | Totals right | Net right |
-|---|---|---|---|
-| Text reader alone | 260 (21 wrong, 2 missing) | 265 (10 wrong, 9 missing) | 191 of 194 |
-| With the page (Claude Haiku 5.5) | 281 (2 wrong, both flagged) | 282 (1 wrong, flagged; 1 missing) | 197 of 199 |
+With the page (Claude Haiku 5.5), on all 288: 285 dates and 287 totals as the tables have them,
+no total wrong, one empty; net right on 197 of 199. The text reader alone, measured on 284 of
+them in the run before: 260 dates, 265 totals. On the 26 documents of the import log the text
+reader alone had 23 dates and 20 totals right; with the page 25 and 25.
 
-No wrong date and no wrong total is stored without a flag. 19 documents carry a flag, among them
-14 whose total is right. What still fails, by name:
+No wrong total is stored at all, and no wrong date without a flag, with one exception that is the
+document's own: a trade fair ticket prints the wrong year, both readings read what is printed,
+and the table corrects it from the weekdays. 18 documents carry a flag; 15 of them have the right
+total.
 
-- A postage slip (Deutsche Post): 1.99 stored for 21.48, with `total_conflict`. The text proves
-  the one taxed item as a tax group and prints no label next to the sum, so the proven part
-  stands as decided above, and a person looks.
-- A train booking (Deutsche Bahn): no total stored ("Betrag fehlt"). Neither Haiku 5.5 nor Sonnet
-  5.5 named one for the file measured.
-- Two tickets (Eventbrite, a trade fair): the date stored is not the table's, with
-  `date_conflict`. On one the model read the right day and the text names another; on the other
-  the model named no date.
+The 26 documents of the import log, by name:
+
+- Right without a flag, 18: the Proton, GoDaddy and Miles invoices, the eight Amazon hardware
+  invoices (the 10 gigabit switch now with its invoice date, not the order date), the purchase
+  contract, the Amazon smart plugs, quick release plate and marker pen order page, the Hornbach
+  slip, the copy shop slip, the KIND slip.
+- Right with a flag, 6: the eBay order page (3.69, `total_unconfirmed`), three postage slips
+  (8.79, 7.69, 19.49, `total_unconfirmed`), the postage and box slip (21.48 where the text
+  reader proves only the taxed box at 1.99, `total_conflict`), the MediMax power strip slip
+  (date filled from the page, `date_conflict`).
+- Flagged and not right in the last run, 1: the MediMax sockets slip. The dates of the two
+  MediMax slips are not in the recognized text; over five runs the model read one of them
+  wrongly twice, each time with `date_conflict`.
+- Empty, 1: the Deutsche Bahn ticket stores no total ("Betrag fehlt"). All three pages were
+  given to the model, which says the document states no total, and the recognized text does not
+  print 63.98 anywhere. Nothing is guessed.
+
+Other findings:
+
+- The ordering left open in the first measurement is settled: a later labelled total that the
+  receipt's arithmetic proves stands over a page answer naming an earlier labelled amount, with
+  `total_conflict`. No document of the 288 is affected by it either way.
+- Two tickets from the inbox (an event, a trade fair) are no receipts; the event ticket's date is
+  flagged, the trade fair ticket is the misprint above.
 - Net: one A2 Hosting invoice and one Amazon invoice store a net that is not total less tax.
 - All 12 Splice invoices stayed right in date and total, without a flag.
 - The rules of this section were written against these documents, so its numbers are in-sample
-  like the first. Cost: about 0.75 US dollars.
+  like the first. The vendor cell is not judged by the script. Cost: about 1.50 US dollars.

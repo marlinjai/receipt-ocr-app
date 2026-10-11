@@ -578,15 +578,24 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
         .filter((d) => d.cents < bill && found.some((a) => a.cents === bill && a.line < d.line) && found.some((a) => a.cents === bill - d.cents && a.line > d.line))
         .map((d) => bill - d.cents)[0];
     // A total above the tax groups that a label in the text AND the page
-    // reading both name, with no printed figure to prove it: the groups then
-    // cover a part of the bill only (one taxed item on a slip of tax-free
-    // postage). Two independent readings agree, so it is taken, and because
-    // the arithmetic does not bear it out, a person looks.
-    const agreedAbove =
-      withUntaxed === 0 && afterDeduction === undefined && pageTotal !== null && pageTotal > bill && labelled.includes(pageTotal) && !(tipCents !== undefined && pageTotal === bill + tipCents);
+    // reading both name: the groups then cover a part of the bill only (one
+    // taxed item on a slip of tax-free postage). Two independent readings
+    // agree, so it is taken, and because the tax arithmetic alone does not
+    // bear it out, a person looks.
+    // Or the page names a printed total that is the taxed bill plus one other
+    // printed amount (tax-free postage next to a taxed box): three printed
+    // figures that add up, paired by the page. Not on a receipt that names a
+    // tip: there the amount on top is the tip, which is handled below.
+    // Never against a bill that a label further down calls the total itself:
+    // the amount above it is then a figure before a discount, and the proven
+    // total stands.
+    const billIsLaterTotal = pageTotal !== null && labelled.lastIndexOf(bill) > labelled.lastIndexOf(pageTotal);
+    const above =
+      withUntaxed === 0 && afterDeduction === undefined && pageTotal !== null && pageTotal > bill && !billIsLaterTotal && !(tipCents !== undefined && pageTotal === bill + tipCents);
+    const agreedAbove = above && pageTotal !== null && (labelled.includes(pageTotal) || (!hasTipWord && values.has(pageTotal - bill)));
     if (agreedAbove && pageTotal !== null) {
       checks.push('total_conflict');
-      return { gross: euros(pageTotal), basis: 'label_agreed', net: euros(pageTotal - taxSum), taxRate: groups[0].rate, taxPrinted: true, taxGroups: groups, tip, checks };
+      return { gross: euros(pageTotal), basis: labelled.includes(pageTotal) ? 'label_agreed' : 'page_reading', net: euros(pageTotal - taxSum), taxRate: groups[0].rate, taxPrinted: true, taxGroups: groups, tip, checks };
     }
     const paid = withUntaxed > 0 ? withUntaxed : (afterDeduction ?? bill);
     if (noTotal || (model !== null && model !== paid && !(tipCents !== undefined && model === paid + tipCents))) checks.push('total_conflict');
@@ -612,6 +621,14 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       gross = euros(pageTotal);
       basis = 'page_proof';
       stated = pageProof;
+    } else if (labelled.length > 0 && model !== null && model !== labelled[labelled.length - 1] && labelled.includes(model) && readStated(labelled[labelled.length - 1])) {
+      // The second reading names a labelled amount, but not the last one, and
+      // the last one is borne out by the net and tax stated next to their
+      // labels: the receipt's arithmetic stands, and a person looks.
+      gross = euros(labelled[labelled.length - 1]);
+      basis = 'label_stated';
+      stated = readStated(labelled[labelled.length - 1]);
+      checks.push('total_conflict');
     } else if (labelled.length > 0 && model !== null && labelled.includes(model)) {
       // The second reading agrees with a labelled amount. Where a larger one
       // is labelled further down, a model that read the text alone agreed with

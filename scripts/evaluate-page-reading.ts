@@ -68,6 +68,7 @@ type MissCause =
   | 'model_wrong_and_taken'
   | 'model_wrong_text_kept'
   | 'model_gave_none'
+  | 'model_said_there_is_no_total'
   | 'model_named_a_total_where_there_is_none'
   | 'no_model_answer';
 
@@ -220,10 +221,10 @@ function judge(expected: Expected, settled: Pick<SettledReading, 'date' | 'gross
   return outcome;
 }
 
-function missCause(expected: Expected, modelGross: number | null | undefined, settledGross: number | null, fullText: string): MissCause {
+function missCause(expected: Expected, modelGross: number | null | undefined, settledGross: number | null, fullText: string, saidNoTotal = false): MissCause {
   if (modelGross === undefined) return 'no_model_answer';
   if (expected.total === null) return modelGross !== null ? 'model_named_a_total_where_there_is_none' : 'model_wrong_text_kept';
-  if (modelGross === null) return 'model_gave_none';
+  if (modelGross === null) return saidNoTotal ? 'model_said_there_is_no_total' : 'model_gave_none';
   if (sameAmount(modelGross, expected.total)) {
     const printed = amountsInText(fullText).some((a) => a.cents === Math.round(expected.total! * 100));
     return printed ? 'model_right_overruled_by_text' : 'model_right_not_printed_in_text';
@@ -296,7 +297,12 @@ async function readDocument(expected: Expected, folder: string, visionKey: strin
             ? 'model_agrees_with_text'
             : 'model_named_another_day';
   }
-  if (result.reading.total !== 'correct') result.reading.cause = missCause(expected, answer ? answer.gross : undefined, settled.gross, fullText);
+  if (result.reading.total !== 'correct') result.reading.cause = missCause(expected, answer ? answer.gross : undefined, settled.gross, fullText, answer?.noTotal ?? false);
+  // How much of the document the model was given, and whether the text prints the table's total at all.
+  if (result.reading.total !== 'correct' && expected.total !== null) {
+    const printed = new RegExp(`(?<![\\d.,])${expected.total.toFixed(2).replace('.', '[.,]')}(?!\\d)`).test(fullText);
+    result.reading.basis = `${result.reading.basis}; pages ${page?.pagesSent ?? '-'} of ${page?.pagesTotal ?? '-'}; table total ${printed ? 'printed' : 'not printed'} in the text`;
+  }
   return result;
 }
 

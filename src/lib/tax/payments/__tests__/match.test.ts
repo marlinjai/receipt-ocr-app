@@ -92,7 +92,7 @@ describe('proposals for receipts on an estimated euro amount', () => {
   const paid = (o: Partial<EstimatePayment> & { id: string }): EstimatePayment => ({ bookingDay: '2025-03-03', amountCents: -2075, counterpartyKey: 'editor beispiel', referenceKey: '', ...o });
 
   it('proposes the one payment to the same vendor near the receipt and near the estimate', () => {
-    expect(proposeEstimateMatches([paid({ id: 'p1' })], [receipt({ id: 'r1' })])).toEqual([{ paymentId: 'p1', documentId: 'r1', unambiguous: true }]);
+    expect(proposeEstimateMatches([paid({ id: 'p1' })], [receipt({ id: 'r1' })])).toEqual([{ paymentId: 'p1', documentId: 'r1', unambiguous: true, severalReceipts: false }]);
   });
 
   it('the window is 3 days before to 10 days after the receipt, both ends included', () => {
@@ -119,8 +119,8 @@ describe('proposals for receipts on an estimated euro amount', () => {
   it('two payments for one receipt are both offered and neither is unambiguous', () => {
     const proposals = proposeEstimateMatches([paid({ id: 'p1' }), paid({ id: 'p2', bookingDay: '2025-03-06', amountCents: -1990 })], [receipt({ id: 'r1' })]);
     expect(proposals).toEqual([
-      { paymentId: 'p1', documentId: 'r1', unambiguous: false },
-      { paymentId: 'p2', documentId: 'r1', unambiguous: false },
+      { paymentId: 'p1', documentId: 'r1', unambiguous: false, severalReceipts: false },
+      { paymentId: 'p2', documentId: 'r1', unambiguous: false, severalReceipts: false },
     ]);
   });
 
@@ -132,9 +132,9 @@ describe('proposals for receipts on an estimated euro amount', () => {
   it('a euro receipt gets no proposal, but its exact amount makes the payment ambiguous for the estimated one', () => {
     const euro = receipt({ id: 'r-euro', estimated: false, amountCents: 2075 });
     expect(proposeEstimateMatches([paid({ id: 'p1' })], [euro])).toEqual([]);
-    expect(proposeEstimateMatches([paid({ id: 'p1' })], [receipt({ id: 'r1' }), euro])).toEqual([{ paymentId: 'p1', documentId: 'r1', unambiguous: false }]);
+    expect(proposeEstimateMatches([paid({ id: 'p1' })], [receipt({ id: 'r1' }), euro])).toEqual([{ paymentId: 'p1', documentId: 'r1', unambiguous: false, severalReceipts: false }]);
     // A euro receipt of another amount is no fit: the estimated receipt stays unambiguous.
-    expect(proposeEstimateMatches([paid({ id: 'p1' })], [receipt({ id: 'r1' }), { ...euro, amountCents: 2076 }])).toEqual([{ paymentId: 'p1', documentId: 'r1', unambiguous: true }]);
+    expect(proposeEstimateMatches([paid({ id: 'p1' })], [receipt({ id: 'r1' }), { ...euro, amountCents: 2076 }])).toEqual([{ paymentId: 'p1', documentId: 'r1', unambiguous: true, severalReceipts: false }]);
   });
 
   it('a monthly subscription pairs each receipt with its own month', () => {
@@ -143,9 +143,40 @@ describe('proposals for receipts on an estimated euro amount', () => {
       [receipt({ id: 'r-mar' }), receipt({ id: 'r-apr', day: '2025-04-02' })],
     );
     expect(proposals).toEqual([
-      { paymentId: 'p-mar', documentId: 'r-mar', unambiguous: true },
-      { paymentId: 'p-apr', documentId: 'r-apr', unambiguous: true },
+      { paymentId: 'p-mar', documentId: 'r-mar', unambiguous: true, severalReceipts: false },
+      { paymentId: 'p-apr', documentId: 'r-apr', unambiguous: true, severalReceipts: false },
     ]);
+  });
+
+  it('one payment for two receipts: when the sum of two fits better than one alone, both are offered as needing a hand', () => {
+    // Two invoices of one vendor, 19.00 and 0.50 estimated, charged together as 19.48.
+    const big = receipt({ id: 'r-big', amountCents: 1900 });
+    const small = receipt({ id: 'r-small', amountCents: 50, day: '2025-03-03' });
+    const sum = proposeEstimateMatches([paid({ id: 'p1', amountCents: -1948 })], [big, small]);
+    // The large one fits alone too (2.5 percent off), which is how it came to be proposed in full: no longer unambiguous.
+    expect(sum).toEqual([
+      { paymentId: 'p1', documentId: 'r-big', unambiguous: false, severalReceipts: true },
+      { paymentId: 'p1', documentId: 'r-small', unambiguous: false, severalReceipts: true },
+    ]);
+    // Two halves, neither of which fits alone, are found as well.
+    const halves = proposeEstimateMatches([paid({ id: 'p1', amountCents: -1948 })], [receipt({ id: 'r-a', amountCents: 1000 }), receipt({ id: 'r-b', amountCents: 950 })]);
+    expect(halves.map((p) => [p.documentId, p.unambiguous, p.severalReceipts])).toEqual([['r-a', false, true], ['r-b', false, true]]);
+    // The exact single fit wins over a sum that is further off: an ordinary unambiguous proposal for the one, nothing for the other.
+    expect(proposeEstimateMatches([paid({ id: 'p1', amountCents: -1900 })], [big, small])).toEqual([{ paymentId: 'p1', documentId: 'r-big', unambiguous: true, severalReceipts: false }]);
+    // A second receipt of another vendor, or outside the window, is no part of the sum.
+    expect(proposeEstimateMatches([paid({ id: 'p1', amountCents: -1948 })], [big, { ...small, vendorKey: 'anderer laden' }])[0]).toMatchObject({ unambiguous: true, severalReceipts: false });
+    expect(proposeEstimateMatches([paid({ id: 'p1', amountCents: -1948 })], [big, { ...small, day: '2025-01-03' }])[0]).toMatchObject({ unambiguous: true, severalReceipts: false });
+  });
+
+  it('a counterparty a person linked to a vendor before stands for that vendor, whatever the names say', () => {
+    // The list names the product, the invoice the company behind it.
+    const product = paid({ id: 'p1', counterpartyKey: 'schreibwerk', referenceKey: 'schreibwerk pro' });
+    const invoice = receipt({ id: 'r1', vendorKey: 'beispiel software' });
+    expect(proposeEstimateMatches([product], [invoice])).toEqual([]);
+    expect(proposeEstimateMatches([{ ...product, vendorAliases: ['beispiel software'] }], [invoice])).toEqual([{ paymentId: 'p1', documentId: 'r1', unambiguous: true, severalReceipts: false }]);
+    // The pairing is for that vendor only, and window and amount still have to fit.
+    expect(proposeEstimateMatches([{ ...product, vendorAliases: ['anderer laden'] }], [invoice])).toEqual([]);
+    expect(proposeEstimateMatches([{ ...product, vendorAliases: ['beispiel software'], amountCents: -9000 }], [invoice])).toEqual([]);
   });
 
   it('a receipt without a vendor, a day or an amount gets nothing', () => {

@@ -28,7 +28,7 @@ import {
   PaymentServiceError,
   countedReceiptLinks,
   deletePaymentLinksForRows,
-  linkPayment,
+  linkProposals,
   loadPayments,
   type CounterpartyTreatment,
   type LoadedPayments,
@@ -795,8 +795,10 @@ export interface RuleTransfer {
   counterparty: string;
   reference: string;
   accountLabel: string;
-  /** True when the service's list holds a purchase of exactly this amount close to this day. */
+  /** True when the service's list holds the purchase this payment pays. */
   hasTwin: boolean;
+  /** The receipts this payment is linked to: a link on a transfer keeps counting for its receipt unless the purchase it funds is linked there too. */
+  linkedTo: string[];
 }
 
 /**
@@ -839,6 +841,8 @@ export interface EstimateProposalView {
   accountLabel: string;
   /** False when the receipt has several such payments or the payment fits several receipts: offered, never taken in bulk. */
   unambiguous: boolean;
+  /** The payment looks like one sum for this receipt and another of the vendor: shown, not accepted in one click; a person splits it by hand. */
+  severalReceipts: boolean;
 }
 
 export interface PaymentsView {
@@ -953,12 +957,24 @@ function buildPaymentsView(
   // unlinked payment out of any year that was not answered as private: the
   // vendor on a receipt is the evidence, so this does not wait for the
   // question about the counterparty.
+  // Which vendors a counterparty stands for, learned from the links that exist: the pay-later list names the
+  // product where the invoice names the company, and one link by hand pairs the two for every later proposal.
+  // Derived from the links, so nothing is stored and taking the link back takes the pairing back.
+  const vendorByRow = new Map(resolved.map((r) => [r.item.id, r.vendorKey]));
+  const vendorsOfCounterparty = new Map<string, Set<string>>();
+  for (const p of loaded.payments) {
+    if (!p.counterpartyKey || p.amountCents >= 0) continue;
+    for (const link of p.links) {
+      const vendor = link.rowId ? vendorByRow.get(link.rowId) : null;
+      if (vendor) vendorsOfCounterparty.set(p.counterpartyKey, (vendorsOfCounterparty.get(p.counterpartyKey) ?? new Set()).add(vendor));
+    }
+  }
   const estimateDocuments = resolved
     .filter((r) => !r.isMeal && !linkedRows.has(r.item.id) && r.item.amountCents !== null && r.item.date !== null)
     .map((r) => ({ id: r.item.id, vendorKey: r.vendorKey, day: r.item.date, amountCents: r.item.amountCents as number, estimated: r.item.amountBasis === 'reference_rate' }));
   const estimatePayments = loaded.payments
     .filter((p) => p.amountCents < 0 && p.kind === 'spend' && p.links.length === 0 && loaded.treatments.get(p.counterpartyKey) !== 'private')
-    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: vendorKey(p.reference) ?? '' }));
+    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: vendorKey(p.reference) ?? '', vendorAliases: [...(vendorsOfCounterparty.get(p.counterpartyKey) ?? [])] }));
   const paymentById = new Map(loaded.payments.map((p) => [p.id, p]));
   const estimateProposals: EstimateProposalView[] = proposeEstimateMatches(estimatePayments, estimateDocuments)
     .flatMap((proposal) => {
@@ -976,6 +992,7 @@ function buildPaymentsView(
         counterparty: payment.counterparty,
         accountLabel: accountLabel.get(payment.accountId) ?? '',
         unambiguous: proposal.unambiguous,
+        severalReceipts: proposal.severalReceipts,
       }];
     })
     .sort((a, b) => (a.receiptDay === b.receiptDay ? (a.bookingDay < b.bookingDay ? -1 : 1) : a.receiptDay < b.receiptDay ? -1 : 1));
@@ -1002,7 +1019,7 @@ function buildPaymentsView(
   // What the funding rule hides, so it can be seen and taken back.
   const ruled = inYear.filter((p) => p.byRule && p.kind === 'own_transfer');
   const ruleTransfers: RuleTransfer[] = ruled
-    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, reference: p.reference, accountLabel: accountLabel.get(p.accountId) ?? '', hasTwin: p.funding?.twinId != null }))
+    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, reference: p.reference, accountLabel: accountLabel.get(p.accountId) ?? '', hasTwin: p.funding?.twinId != null, linkedTo: p.links.flatMap((l) => (l.rowId ? [itemById.get(l.rowId)?.label ?? 'Beleg (nicht mehr vorhanden)'] : [])) }))
     .sort((a, b) => (a.bookingDay < b.bookingDay ? 1 : -1));
   const holderOf = new Map<string, { name: string; kind: ServiceKind }>();
   for (const a of loaded.accounts) {
@@ -1013,9 +1030,10 @@ function buildPaymentsView(
   for (const service of new Map([...holderOf.values()].map((v) => [v.name, v])).values()) {
     const collected = new Map<string, number>();
     const listed = new Map<string, number>();
-    for (const p of ruled) if (p.funding?.service === service.name && p.amountCents < 0) collected.set(p.bookingDay.slice(0, 7), (collected.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
+    // What the OTHER accounts show leaving for the service; the wallet's own payout rows are not collections.
+    for (const p of ruled) if (p.funding?.service === service.name && p.amountCents < 0 && holderOf.get(p.accountId)?.name !== service.name) collected.set(p.bookingDay.slice(0, 7), (collected.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
     if (collected.size === 0) continue;
-    for (const p of inYear) if (holderOf.get(p.accountId)?.name === service.name && p.amountCents < 0 && p.sourceKind === 'spend') listed.set(p.bookingDay.slice(0, 7), (listed.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
+    for (const p of inYear) if (holderOf.get(p.accountId)?.name === service.name && p.amountCents < 0 && p.sourceKind === 'spend' && !p.byRule) listed.set(p.bookingDay.slice(0, 7), (listed.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
     let running = 0;
     const months = [...new Set([...collected.keys(), ...listed.keys()])].sort().map((month) => {
       const collectedCents = collected.get(month) ?? 0;
@@ -1096,9 +1114,10 @@ export interface AcceptedProposals {
  * all unambiguous ones. `pairs` is what the person saw and confirmed. Linked
  * is only what is in that list AND still a proposal when worked out again from
  * what is stored (with `onlyUnambiguous`, still an unambiguous one), so
- * nothing the person did not see is linked and nothing stale either. Each
- * link is checked once more inside its own write (`proposal_gone`), which
- * makes a second tab harmless. The answer says exactly what was linked.
+ * nothing the person did not see is linked and nothing stale either. All
+ * links are written in one transaction that checks each pair once more
+ * (`linkProposals`), which makes a second tab or a second press harmless.
+ * The answer says exactly what was linked.
  */
 export async function acceptEstimateProposals(db: PrismaClient, ctx: PaymentContext, year: number, pairs: unknown, onlyUnambiguous: boolean): Promise<AcceptedProposals> {
   const wanted = (Array.isArray(pairs) ? pairs : []).flatMap((pair) => {
@@ -1107,19 +1126,10 @@ export async function acceptEstimateProposals(db: PrismaClient, ctx: PaymentCont
   });
   if (wanted.length === 0 || wanted.length > 2000) throw new PaymentServiceError('invalid_link');
   const view = await loadStatement(db, ctx.workspaceId, year);
-  const current = view.payments.estimateProposals.filter((p) => wanted.includes(`${p.paymentId}|${p.rowId}`) && (!onlyUnambiguous || p.unambiguous));
-  const linked: AcceptedProposals['linked'] = [];
-  for (const proposal of current) {
-    try {
-      // The row comes from this workspace's own statement, so it is the workspace's receipt.
-      await linkPayment(db, ctx, { paymentId: proposal.paymentId, rowId: proposal.rowId }, async () => ({ amountCents: proposal.estimateCents }), 'estimate');
-      linked.push({ paymentId: proposal.paymentId, rowId: proposal.rowId });
-    } catch (e) {
-      // Linked or removed by another action in this very moment: nothing to take over, the rest goes on.
-      if (e instanceof PaymentServiceError && ['proposal_gone', 'invalid_link', 'payment_not_found', 'link_exceeds_payment'].includes(e.code)) continue;
-      throw e;
-    }
-  }
+  // A payment that looks like one sum for several receipts is never accepted in one click.
+  const current = view.payments.estimateProposals.filter((p) => wanted.includes(`${p.paymentId}|${p.rowId}`) && !p.severalReceipts && (!onlyUnambiguous || p.unambiguous));
+  // One transaction for all of them; the rows come from this workspace's own statement.
+  const linked = await linkProposals(db, ctx, current.map((p) => ({ paymentId: p.paymentId, rowId: p.rowId })));
   return { linked, skipped: new Set(wanted).size - linked.length };
 }
 

@@ -213,10 +213,6 @@ export function financeActionMessage(error: string, detail?: string): string {
         case 'invalid_date':
           return 'Das Datum „gilt ab“ ist ungültig.';
         default:
-          if (detail?.startsWith('unknown_status:')) {
-            const [, row, ...word] = detail.split(':');
-            return `Zeile ${row} der Datei trägt den Status „${word.join(':')}“, den das Einlesen nicht kennt. Ob das ein Kauf ist, wird nicht geraten. Es wurde nichts eingelesen.`;
-          }
           if (detail?.startsWith('unreadable_row:')) {
             return `Zeile ${detail.split(':')[1]} der Datei lässt sich nicht lesen (Datum oder Betrag). Es wurde nichts eingelesen, auch nicht die Zeilen davor.`;
           }

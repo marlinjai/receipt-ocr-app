@@ -10,7 +10,7 @@ const accounts = [
   { id: 'later', kind: 'payment_service', formats: ['klarna_csv'] },
 ];
 let n = 0;
-const payment = (o: Partial<FundingPayment> & { accountId: string }): FundingPayment => ({ id: `p${++n}`, bookingDay: '2025-03-12', amountCents: -1999, counterpartyKey: '', sourceKind: 'spend', ...o });
+const payment = (o: Partial<FundingPayment> & { accountId: string }): FundingPayment => ({ id: `p${++n}`, bookingDay: '2025-03-12', amountCents: -1999, counterpartyKey: '', referenceKey: '', sourceKind: 'spend', ...o });
 /** The wallet's list covers 1 to 31 March 2025 and holds one purchase of 19.99 on the 11th. */
 const walletList = () => [
   payment({ id: 'w-first', accountId: 'wallet', bookingDay: '2025-03-01', amountCents: -100, counterpartyKey: 'kiosk beispiel' }),
@@ -45,8 +45,43 @@ describe('money that only funds another payment account', () => {
   });
 
   it('money coming in: a wallet pays balance out (a transfer), a pay-later service pays money back (a refund)', () => {
-    expect(fundingOf(payment({ accountId: 'bank', amountCents: 5000, sourceKind: 'income', counterpartyKey: 'paypal europe' }), walletList())).toMatchObject({ kind: 'own_transfer', twinId: null });
+    // A credit from the wallet alone proves nothing: it may be a payout, a refund or a sale.
+    const credit = payment({ accountId: 'bank', bookingDay: '2025-03-14', amountCents: 5000, sourceKind: 'income', counterpartyKey: 'paypal europe' });
+    expect(fundingOf(credit, walletList())).toBeNull();
     expect(fundingOf(payment({ accountId: 'bank', amountCents: 1240, sourceKind: 'income', counterpartyKey: 'klarna bank ab' }), laterList())).toMatchObject({ service: 'klarna', kind: 'refund', twinId: null });
+  });
+
+  it('a credit from the wallet is a transfer when the wallet’s list shows that money leaving it, and that row is a transfer too', () => {
+    const credit = payment({ accountId: 'bank', bookingDay: '2025-03-14', amountCents: 5000, sourceKind: 'income', counterpartyKey: 'paypal europe' });
+    // The wallet's row: no merchant, the same amount going out, two days earlier (read from the file as a spend without a name).
+    const payout = payment({ id: 'w-out', accountId: 'wallet', bookingDay: '2025-03-12', amountCents: -5000, counterpartyKey: '' });
+    const funding = resolveFunding(accounts, [...walletList(), payout, credit]);
+    expect(funding.get(credit.id)).toEqual({ service: 'paypal', serviceKind: 'wallet', kind: 'own_transfer', twinId: null });
+    expect(funding.get('w-out')).toMatchObject({ kind: 'own_transfer' });
+    // Another amount, a purchase with a merchant, or a row too far away is no such movement.
+    const not = (row: FundingPayment) => resolveFunding(accounts, [...walletList(), row, credit]).has(credit.id);
+    expect(not({ ...payout, amountCents: -4999 })).toBe(false);
+    expect(not({ ...payout, counterpartyKey: 'laden beispiel' })).toBe(false);
+    expect(not({ ...payout, bookingDay: '2025-03-01' })).toBe(false);
+    // One payout explains one credit.
+    const second = payment({ accountId: 'bank', bookingDay: '2025-03-15', amountCents: 5000, sourceKind: 'income', counterpartyKey: 'paypal europe' });
+    const both = resolveFunding(accounts, [...walletList(), payout, credit, second]);
+    expect([both.has(credit.id), both.has(second.id)]).toEqual([true, false]);
+  });
+
+  it('a bank debit without a counterparty is the part of a wallet purchase drawn from the bank, when its text names that one purchase’s merchant', () => {
+    // 139.49 bought through the wallet, of which 114.08 came from the bank.
+    const bought = payment({ id: 'w-big', accountId: 'wallet', bookingDay: '2025-03-20', amountCents: -13_949, counterpartyKey: 'geraete beispiel' });
+    const debit = (o: Partial<FundingPayment> = {}) => payment({ accountId: 'bank', bookingDay: '2025-03-21', amountCents: -11_408, counterpartyKey: '', referenceKey: 'pp 1234 pp geraete beispiel ihr einkauf', ...o });
+    const of = (d: FundingPayment, extra: FundingPayment[] = []) => resolveFunding(accounts, [...walletList(), bought, ...extra, d]).get(d.id) ?? null;
+    expect(of(debit())).toEqual({ service: 'paypal', serviceKind: 'wallet', kind: 'own_transfer', twinId: 'w-big' });
+    // More than the purchase, a text naming nobody, outside the window, or two purchases that fit: left alone.
+    expect(of(debit({ amountCents: -14_000 }))).toBeNull();
+    expect(of(debit({ referenceKey: 'lastschrift' }))).toBeNull();
+    expect(of(debit({ bookingDay: '2025-03-31' }))).toBeNull();
+    expect(of(debit(), [payment({ accountId: 'wallet', bookingDay: '2025-03-22', amountCents: -20_000, counterpartyKey: 'geraete beispiel' })])).toBeNull();
+    // Only on a bank account, and only for a wallet.
+    expect(of(debit({ accountId: 'card' }))).toBeNull();
   });
 
   it('on a card or another service’s account the row is a transfer only with its twin in the list', () => {

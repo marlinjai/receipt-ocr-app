@@ -529,7 +529,7 @@ describe('FinanceClient: assets', () => {
   it('accepting the proposals sends the pairs the dialog counted, says exactly what was linked and what was left out, and shows a failure', async () => {
     const user = userEvent.setup();
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2025-03-02', estimateCents: 2_000, bookingDay: '2025-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true };
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2025-03-02', estimateCents: 2_000, bookingDay: '2025-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false };
     const second = { ...proposal, paymentId: 'p-2', rowId: 'r-2', receiptLabel: 'Hosting Beispiel' };
     const payments = view([]).payments;
     const withProposals = view([], { payments: { ...payments, estimateProposals: [proposal, second] } });
@@ -583,7 +583,7 @@ describe('FinanceClient: assets', () => {
     const user = userEvent.setup();
     const payments = view([]).payments;
     const openPayment = { id: 'p-1', bookingDay: '2025-03-11', amountCents: -1_999, freeCents: 1_999, counterparty: 'Laden Beispiel', reference: '', kind: 'spend' as const, accountLabel: 'Geldbörse', check: 'payment_without_document' as const, proposals: [{ target: 'receipt' as const, targetId: 'r-1', label: 'Einkauf Laden', strength: 'amount_and_date' as const }], namesService: false };
-    const ruleTransfers = [{ id: 't-1', bookingDay: '2025-03-12', amountCents: -1_999, counterparty: 'Geldbörse Beispiel', reference: '', accountLabel: 'Geschäftskonto', hasTwin: true }];
+    const ruleTransfers = [{ id: 't-1', bookingDay: '2025-03-12', amountCents: -1_999, counterparty: 'Geldbörse Beispiel', reference: '', accountLabel: 'Geschäftskonto', hasTwin: true, linkedTo: [] }];
     const initial = view([], { payments: { ...payments, open: [openPayment], ruleTransfers, ruleTransferCents: 1_999 } });
     actions.confirmPaymentLink.mockResolvedValue({ ok: true, value: { view: initial, moved: true } });
     actions.markPaymentTransfer.mockResolvedValue({ ok: true, value: view([]) });

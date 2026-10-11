@@ -93,6 +93,8 @@ export interface ImportResult {
   adopted: number;
   /** Rows that were read but need a look, by reason. */
   notices: Record<string, number>;
+  /** Status wordings the reader did not know; those rows were read as purchases. */
+  unknownStatuses: string[];
   firstDay: string | null;
   lastDay: string | null;
 }
@@ -186,6 +188,7 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     releasedLinks,
     adopted,
     notices: parsed.notices,
+    unknownStatuses: parsed.unknownStatuses,
     firstDay: parsed.firstDay,
     lastDay: parsed.lastDay,
   };
@@ -428,8 +431,11 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
         } else if (!input.confirmed && receipt && receipt.amountCents !== null) {
           const paidSoFar = paidOnReceipt(loaded.payments, rowId);
           const limit = receipt.amountCents + Math.round((receipt.amountCents * OVERPAID_TOLERANCE_PERCENT) / 100);
-          // Counted once when this payment's funding debit is on the receipt already.
-          const adds = funders.length > 0 ? 0 : cents;
+          // Counted once when the other end of the same money is on the receipt already: this
+          // purchase's funding debit, or the purchase this debit funds.
+          const twinId = loaded.payments.find((p) => p.id === payment.id)?.funding?.twinId ?? null;
+          const twinOnReceipt = twinId !== null && loaded.payments.some((p) => p.id === twinId && onReceipt(p).length > 0);
+          const adds = funders.length > 0 || twinOnReceipt ? 0 : cents;
           if (adds > 0 && paidSoFar > 0 && paidSoFar + adds > limit) throw new PaymentServiceError('receipt_already_paid', `${paidSoFar}:${receipt.amountCents}`);
         }
       }
@@ -439,6 +445,43 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
     });
     return { linkId: link.id, movedFromPaymentId };
   });
+}
+
+/**
+ * Link accepted proposals, all in one transaction: every payment and receipt
+ * is locked, what is stored is read once, and a pair is linked only when its
+ * payment and its receipt are both still free (also of each other within this
+ * list). The rest is left out. One transaction instead of one per link: with
+ * a database a network away, 44 links took half a minute the other way.
+ * Returns exactly the pairs that were linked.
+ */
+export async function linkProposals(db: PrismaClient, ctx: PaymentContext, pairs: ReadonlyArray<{ paymentId: string; rowId: string }>): Promise<Array<{ paymentId: string; rowId: string }>> {
+  if (pairs.length === 0) return [];
+  return db.$transaction(async (tx) => {
+    const paymentIds = [...new Set(pairs.map((p) => p.paymentId))].sort();
+    const rowKeys = [...new Set(pairs.map((p) => `tax-receipt:${p.rowId}`))].sort();
+    // The same locks, in the same order, as a single link takes: payments first, then receipts.
+    await tx.$queryRaw`SELECT id FROM tax_payments WHERE id = ANY(${paymentIds}) AND auth_workspace_id = ${ctx.workspaceId} ORDER BY id FOR UPDATE`;
+    await tx.$queryRaw`SELECT count(*)::int AS locked FROM (SELECT pg_advisory_xact_lock(hashtext(k)) FROM unnest(${rowKeys}::text[]) AS k ORDER BY k) AS locks`;
+    const loaded = await loadPayments(tx, ctx.workspaceId);
+    const free = new Map(loaded.payments.filter((p) => p.links.length === 0 && p.amountCents < 0).map((p) => [p.id, p]));
+    const linkedRows = new Set(loaded.payments.flatMap((p) => p.links.flatMap((l) => (l.rowId ? [l.rowId] : []))));
+    const linked: Array<{ paymentId: string; rowId: string }> = [];
+    for (const pair of pairs) {
+      const payment = free.get(pair.paymentId);
+      if (!payment || linkedRows.has(pair.rowId)) continue;
+      free.delete(pair.paymentId);
+      linkedRows.add(pair.rowId);
+      linked.push({ paymentId: pair.paymentId, rowId: pair.rowId });
+    }
+    if (linked.length > 0) {
+      const amount = new Map(loaded.payments.map((p) => [p.id, -p.amountCents]));
+      await tx.taxPaymentLink.createMany({
+        data: linked.map((pair) => ({ authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, paymentId: pair.paymentId, rowId: pair.rowId, cents: amount.get(pair.paymentId) as number, method: 'estimate' })),
+      });
+    }
+    return linked;
+  }, { maxWait: 20_000, timeout: 60_000 });
 }
 
 /**
@@ -525,7 +568,7 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
   const payments = stored.filter((p) => p.cancelledByBatchId === null);
   const funding = resolveFunding(
     accounts.map((a) => ({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) })),
-    payments,
+    payments.map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: counterpartyKey(p.reference), sourceKind: p.sourceKind })),
   );
   const rows: PaymentRow[] = payments.map((p) => {
     const treatment = treatments.get(p.counterpartyKey);

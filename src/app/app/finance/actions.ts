@@ -85,7 +85,7 @@ function failure(e: unknown): { ok: false; error: FinanceActionError; detail?: s
   if (e instanceof AssetInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof RevenueInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof LinesInputError) return { ok: false, error: 'invalid_input', detail: e.code };
-  if (e instanceof PaymentParseError) return { ok: false, error: 'invalid_input', detail: e.row === null ? e.code : e.word === null ? `${e.code}:${e.row}` : `${e.code}:${e.row}:${e.word}` };
+  if (e instanceof PaymentParseError) return { ok: false, error: 'invalid_input', detail: e.row === null ? e.code : `${e.code}:${e.row}` };
   if (e instanceof PaymentServiceError) {
     const missing = ['account_not_found', 'batch_not_found', 'payment_not_found', 'link_not_found', 'target_not_found'];
     return { ok: false, error: missing.includes(e.code) ? 'not_found' : 'invalid_input', detail: e.detail === null ? e.code : `${e.code}:${e.detail}` };

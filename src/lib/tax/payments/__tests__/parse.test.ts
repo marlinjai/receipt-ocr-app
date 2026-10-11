@@ -322,16 +322,24 @@ describe('the pay-later purchase list', () => {
     for (const status of ['Storniert', 'Cancelled', 'Erstattet', 'Vollständig erstattet', 'Refunded']) expect([status, kept(status)]).toEqual([status, 'cancelled']);
     // A part refund keeps the purchase, whatever the spelling: "erstattet" inside the word must not drop it.
     for (const status of ['Teilweise erstattet', 'Teilerstattet', 'Teilerstattung', 'Partially refunded']) expect([status, kept(status)]).toEqual([status, 'purchase, part refunded']);
-    // "bearbeitet" alone is not the pending sentence, and nothing else is guessed at.
-    for (const status of ['Bearbeitet', 'Angefochten', 'Zahlung erstattet am 3. Mai']) {
-      let thrown: unknown;
-      try {
-        parsePaymentFile(klarna(klarnaRow({ day: '2025-05-01', amount: '10.00', merchant: 'Laden Beispiel', status })));
-      } catch (e) {
-        thrown = e;
-      }
-      expect(thrown).toMatchObject({ code: 'unknown_status', row: 2, word: status });
-    }
+    // The wordings of the real list are relative to the export day: any day, any number of days.
+    for (const status of ['Am 31. Aug. bezahlt', 'Am 2. Sept. bezahlt', 'In 13 Tagen fällig', 'In 30 Tagen fällig']) expect([status, kept(status)]).toEqual([status, 'purchase']);
+  });
+
+  it('a wording it does not know is read as a purchase and named for a look, never dropped and never a reason to refuse the file', () => {
+    // "bearbeitet" alone is not the pending sentence, and "erstattet" inside another sentence is not a full refund.
+    const parsed = parsePaymentFile(
+      klarna(
+        klarnaRow({ day: '2025-05-01', amount: '10.00', merchant: 'Laden Beispiel', status: 'Bearbeitet', reference: '2200000000001' }),
+        klarnaRow({ day: '2025-05-02', amount: '20.00', merchant: 'Laden Beispiel', status: 'Angefochten', reference: '2200000000002' }),
+        klarnaRow({ day: '2025-05-03', amount: '30.00', merchant: 'Laden Beispiel', status: 'Angefochten', reference: '2200000000003' }),
+        klarnaRow({ day: '2025-05-04', amount: '40.00', merchant: 'Laden Beispiel', reference: '2200000000004' }),
+      ),
+    );
+    expect(parsed.payments.map((p) => p.amountCents)).toEqual([-1000, -2000, -3000, -4000]);
+    expect(parsed.skipped).toEqual({});
+    expect(parsed.notices).toEqual({ unknown_status: 3 });
+    expect(parsed.unknownStatuses).toEqual(['Bearbeitet', 'Angefochten']);
   });
 
   it('reads the currency whatever its case', () => {

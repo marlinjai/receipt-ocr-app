@@ -176,6 +176,53 @@ Built on the branch `fix/pay-later-review-findings`.
     German time on every row and its days stand as written. A list in another zone is moved by
     its time, so a purchase at 23:30 in UTC on 31 December counts on 1 January.
 
+## Decisions from the production run of 2026-10-11
+
+The list was imported on production with the first version (1,128 purchases, 44 proposals
+accepted in bulk). What that run showed changed these decisions.
+
+25. **Accepting many proposals is one write (replaces the last sentence of 21).** All links of a
+    bulk accept are made in one transaction: payments and receipts locked in one statement each,
+    what is stored read once, every pair checked once more, the links written together. The
+    first version made one transaction per link and took over 30 seconds for 44 links with the
+    database a network away. A second press is a no-op on the server (nothing of the list is
+    still free), and the button is locked and says "Übernimmt n Vorschläge …" from the press
+    until the answer is in.
+26. **One payment for two receipts is not a proposal to accept.** When the sum of two estimated
+    receipts of the vendor in the window fits the payment within the tolerance, and fits better
+    than either receipt alone, both are shown with "eine Zahlung für mehrere Belege?" and
+    without a button; neither the bulk action nor a single accept links them. The person links
+    the payment by hand with a part of the amount for each. Sums of two only.
+27. **A counterparty stands for the vendor it was linked to.** The list names the product where
+    the invoice names the company. Every existing link from a payment out to a receipt pairs the
+    payment's counterparty with that receipt's vendor, and later proposals use the pairing
+    beside the names. Derived from the links when the page is computed: nothing is stored, so
+    there is no migration, and taking the link back takes the pairing back. Chosen over a table
+    of pairings because a stored pairing would outlive the link it came from.
+28. **An unknown status wording does not refuse the file (replaces part of 22).** The real
+    wordings are relative to the export day ("Gestern bezahlt", "Am 3. Sept. bezahlt", "In 13
+    Tagen fällig") and open-ended. A wording the reader does not know is read as a purchase,
+    counted and named after the import for a look. Dropping a real purchase in silence is the
+    worse mistake; a purchase read by mistake is visible and can be marked private. The flag is
+    shown once, after the import; it is not stored on the payment.
+29. **Money in from a wallet is a transfer only with its counterpart (replaces part of 14).** A
+    credit naming PayPal is a transfer only when PayPal's own list shows the same amount leaving
+    it without a merchant, from 3 days after to 10 days before the credit; that row of the list
+    is then a transfer too. Otherwise the credit is what its file says and is asked about. On
+    the real files of 2025 none of the 14 such credits has a counterpart, so all are asked about.
+30. **The bank's part of a wallet purchase (adds to 14 and 19).** A bank debit without a
+    counterparty whose text names the merchant of exactly one purchase in the wallet's list,
+    booked from 3 days before to 10 days after it and no larger than it, is the part of that
+    purchase drawn from the bank: a transfer, and the purchase's twin, so both linked to one
+    receipt count once. What the PayPal file offers beyond that: it has a row per bank funding
+    ("Bankgutschrift auf PayPal-Konto") that points at its purchase, but every such row carries
+    the status "Ausstehend" and was left out at import, and an imported file cannot be imported
+    again without undoing it (which would drop its links). So the stored data holds no funding
+    rows, and the rule works from the bank line's text instead. On the real files of 2025 this
+    recognizes 4 of the 269 bank debits without a counterparty.
+31. **The list of transfers names the receipt a transfer is linked to**, because a linked
+    payment appears in no other list.
+
 ## Open question for the owner
 
 **Which day does a pay-later purchase count on?** The booking day is the purchase day (decision

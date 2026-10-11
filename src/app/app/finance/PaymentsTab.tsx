@@ -50,6 +50,7 @@ const SKIP_LABELS: Record<string, string> = {
 };
 const NOTICE_LABELS: Record<string, string> = {
   part_refunded: 'teilweise erstattet (der Kauf zählt voll; die Erstattung steht auf dem Bankkonto und wird dort dem Beleg zugeordnet)',
+  unknown_status: 'mit unbekanntem Status (als Kauf eingelesen; falls storniert oder noch offen, die Zahlung bitte als privat oder Umbuchung kennzeichnen)',
 };
 const KIND_LABELS: Record<string, string> = {
   private: 'privat',
@@ -82,6 +83,13 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
   // hundreds of thousands of entries on every action.
   const [manualFor, setManualFor] = useState<string | null>(null);
   const p = view.payments;
+  // True from the press on "accept all" until the answer is in: the button says so and cannot be pressed again.
+  const [accepting, setAccepting] = useState(false);
+  const [wasBusy, setWasBusy] = useState(busy);
+  if (wasBusy !== busy) {
+    setWasBusy(busy);
+    if (!busy) setAccepting(false);
+  }
   const unambiguousPairs = p.estimateProposals.filter((x) => x.unambiguous).map((x) => ({ paymentId: x.paymentId, rowId: x.rowId }));
   const unambiguous = unambiguousPairs.length;
   const shown = localError ?? error;
@@ -215,6 +223,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 ` Bitte ansehen: ${Object.entries(lastImport.notices)
                   .map(([reason, count]) => `${count} ${NOTICE_LABELS[reason] ?? reason}`)
                   .join(', ')}.`}
+              {lastImport.unknownStatuses.length > 0 && ` Unbekannte Statusangaben: ${lastImport.unknownStatuses.map((w) => `„${w}“`).join(', ')}.`}
               {Object.keys(lastImport.skipped).length > 0 &&
                 ` Bewusst ausgelassen: ${Object.entries(lastImport.skipped)
                   .map(([reason, count]) => `${count} ${SKIP_LABELS[reason] ?? reason}`)
@@ -263,13 +272,19 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
               <button
                 type="button"
                 className="ui-btn ui-btn-sm ui-btn-primary"
-                disabled={busy}
+                disabled={busy || accepting}
+                aria-busy={accepting}
                 onClick={() => {
                   if (!window.confirm(`${unambiguous} ${unambiguous === 1 ? 'eindeutigen Vorschlag' : 'eindeutige Vorschläge'} übernehmen? Jede Zuordnung lässt sich unter „Zuordnungen und Regeln“ wieder lösen.`)) return;
+                  setAccepting(true);
                   onAcceptProposals(unambiguousPairs, true);
                 }}
               >
-                {unambiguous === 1 ? 'Den einen eindeutigen Vorschlag übernehmen' : `Alle ${unambiguous} eindeutigen Vorschläge übernehmen`}
+                {accepting
+                  ? `Übernimmt ${unambiguous} ${unambiguous === 1 ? 'Vorschlag' : 'Vorschläge'} …`
+                  : unambiguous === 1
+                    ? 'Den einen eindeutigen Vorschlag übernehmen'
+                    : `Alle ${unambiguous} eindeutigen Vorschläge übernehmen`}
               </button>
             )}
           </div>
@@ -278,6 +293,11 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
             Vorgeschlagen wird eine Zahlung an denselben Lieferanten, gebucht von 3 Tagen vor bis 10 Tage nach dem
             Belegdatum, höchstens 8 % neben der Schätzung. Zugeordnet wird nur, was du übernimmst.
           </p>
+          {accepting && (
+            <p className="ui-note mt-3" role="status">
+              Die Vorschläge werden zugeordnet und die Übersicht neu berechnet. Das dauert einige Sekunden; ein zweiter Klick ist nicht nötig und würde nichts doppelt anlegen.
+            </p>
+          )}
           <ul className="mt-3 space-y-2">
             {p.estimateProposals.map((proposal) => (
               <li key={`${proposal.rowId}:${proposal.paymentId}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
@@ -286,12 +306,18 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                   <span className="ml-2 text-xs tabular-nums" style={{ color: 'var(--muted)' }}>
                     geschätzt {euro(proposal.estimateCents)} · bezahlt {euro(proposal.paidCents)} am {formatDay(proposal.bookingDay)}
                     {proposal.counterparty ? ` an ${proposal.counterparty.slice(0, 40)}` : ''} · {proposal.accountLabel}
-                    {proposal.unambiguous ? '' : ' · mehrdeutig, bitte einzeln prüfen'}
+                    {proposal.severalReceipts
+                      ? ' · eine Zahlung für mehrere Belege? Der Betrag passt besser zu diesem und einem weiteren Beleg zusammen. Bitte unter „Zahlungen ohne Beleg“ von Hand mit Teilbetrag zuordnen.'
+                      : proposal.unambiguous
+                        ? ''
+                        : ' · mehrdeutig, bitte einzeln prüfen'}
                   </span>
                 </span>
-                <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onAcceptProposals([{ paymentId: proposal.paymentId, rowId: proposal.rowId }], false)}>
-                  Übernehmen
-                </button>
+                {!proposal.severalReceipts && (
+                  <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onAcceptProposals([{ paymentId: proposal.paymentId, rowId: proposal.rowId }], false)}>
+                    Übernehmen
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -456,7 +482,8 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                       <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
                         {transfer.accountLabel}
                         {transfer.reference ? ` · ${transfer.reference.slice(0, 60)}` : ''}
-                        {transfer.hasTwin ? ' · derselbe Betrag steht als Kauf in der Liste des Dienstes' : ''}
+                        {transfer.hasTwin ? ' · der Kauf dazu steht in der Liste des Dienstes' : ''}
+                        {transfer.linkedTo.length > 0 ? ` · zugeordnet zu: ${transfer.linkedTo.join(', ')}` : ''}
                       </span>
                     </span>
                     <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onTransfer(transfer.id, false)}>

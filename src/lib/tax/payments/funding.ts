@@ -23,9 +23,15 @@ import type { PaymentFormat } from './types';
  *   service's list holds a purchase of exactly that amount close to that day
  *   (its twin). Without one it may be a guest checkout the list does not
  *   contain, and stays an ordinary payment.
- * - Money coming IN from a wallet is balance paid out: a transfer. Money
- *   coming in from a pay-later service is money back for a purchase (its list
- *   holds no refunds): a refund, which asks for its receipt.
+ * - Money coming IN from a wallet is a transfer only when the wallet's own
+ *   list shows that money leaving it: a row of the same amount without a
+ *   merchant (a payout, or bank funding sent back). That row is then a
+ *   transfer too. Without one the credit may be anything and is asked about.
+ * - Money coming in from a pay-later service is money back for a purchase (its
+ *   list holds no refunds): a refund, which asks for its receipt.
+ * - A bank debit WITHOUT a counterparty whose text names the merchant of
+ *   exactly one purchase in a wallet's list, booked close to it and no larger
+ *   than it, is the part of that purchase the wallet drew from the bank.
  */
 
 export type ServiceKind =
@@ -59,6 +65,8 @@ export interface FundingPayment {
   amountCents: number;
   /** The normalized counterparty: lower case words separated by single spaces. */
   counterpartyKey: string;
+  /** The payment's text, normalized like the counterparty. */
+  referenceKey: string;
   /** What the file says the movement is. */
   sourceKind: string;
 }
@@ -125,12 +133,39 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
     }
   }
 
+  // Rows of a wallet's own list that move its balance and name no merchant: where money paid out to the bank shows.
+  const movements = new Map<string, FundingPayment[]>();
+  for (const payment of payments) {
+    const service = held.get(payment.accountId);
+    if (service?.kind === 'wallet' && payment.amountCents < 0 && (payment.counterpartyKey === '' || payment.sourceKind === 'own_transfer')) {
+      movements.set(service.name, [...(movements.get(service.name) ?? []), payment]);
+    }
+  }
+  const hasWords = (text: string, words: string) => ` ${text} `.includes(` ${words} `);
   const taken = new Set<string>();
   // In booking order, so the same data always pairs the same way.
   const ordered = [...payments].sort((a, b) => (a.bookingDay === b.bookingDay ? (a.id < b.id ? -1 : 1) : a.bookingDay < b.bookingDay ? -1 : 1));
   for (const payment of ordered) {
-    if (!payment.counterpartyKey) continue;
     const own = held.get(payment.accountId)?.name ?? null;
+    if (!payment.counterpartyKey) {
+      // A bank debit without a counterparty: the part of a wallet purchase drawn from the bank, when its
+      // text names that purchase's merchant and exactly one purchase fits.
+      if (own !== null || accountKind.get(payment.accountId) !== 'bank' || payment.amountCents >= 0 || !payment.referenceKey) continue;
+      const day = dayNumber(payment.bookingDay);
+      for (const service of services.values()) {
+        if (service.kind !== 'wallet') continue;
+        const fits = (purchases.get(service.name) ?? []).filter((purchase) => {
+          if (taken.has(purchase.id) || purchase.counterpartyKey.length < 3 || purchase.amountCents > payment.amountCents) return false;
+          const gap = day - dayNumber(purchase.bookingDay);
+          return gap >= -TWIN_DAYS_BEFORE && gap <= TWIN_DAYS_AFTER && hasWords(payment.referenceKey, purchase.counterpartyKey);
+        });
+        if (fits.length !== 1) continue;
+        taken.add(fits[0].id);
+        out.set(payment.id, { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: fits[0].id });
+        break;
+      }
+      continue;
+    }
     // The service's name must be a whole word of the counterparty: "paypal europe" matches, "paypalace" does not.
     const service = payment.counterpartyKey
       .split(' ')
@@ -140,11 +175,24 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
     const covered = [...service.holders.values()].some((span) => payment.bookingDay >= span.first && payment.bookingDay <= span.last);
     if (!covered) continue;
 
+    const day = dayNumber(payment.bookingDay);
     if (payment.amountCents > 0) {
-      out.set(payment.id, { service: service.name, serviceKind: service.kind, kind: service.kind === 'wallet' ? 'own_transfer' : 'refund', twinId: null });
+      if (service.kind === 'pay_later') {
+        out.set(payment.id, { service: service.name, serviceKind: service.kind, kind: 'refund', twinId: null });
+        continue;
+      }
+      // The wallet's list has to show the same money leaving it, from 3 days after to 10 days before this credit.
+      const movement = (movements.get(service.name) ?? []).find((row) => {
+        const gap = day - dayNumber(row.bookingDay);
+        return !taken.has(row.id) && row.amountCents === -payment.amountCents && gap >= -TWIN_DAYS_BEFORE && gap <= TWIN_DAYS_AFTER;
+      });
+      if (!movement) continue;
+      taken.add(movement.id);
+      out.set(payment.id, { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: null });
+      // The other end of the same money: the wallet's row is no purchase without a name, it is the payout.
+      out.set(movement.id, { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: null });
       continue;
     }
-    const day = dayNumber(payment.bookingDay);
     let twin: FundingPayment | null = null;
     let twinGap = Infinity;
     for (const purchase of purchases.get(service.name) ?? []) {

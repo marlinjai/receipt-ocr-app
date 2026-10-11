@@ -111,7 +111,7 @@ function finish(
   format: PaymentFormat,
   drafts: Draft[],
   skipped: Record<string, number>,
-  extra: { cancelled: string[]; notices: Record<string, number> } = { cancelled: [], notices: {} },
+  extra: { cancelled: string[]; notices: Record<string, number>; unknownStatuses: string[] } = { cancelled: [], notices: {}, unknownStatuses: [] },
 ): ParsedFile {
   if (drafts.length === 0 && Object.keys(skipped).length === 0) throw new PaymentParseError('empty');
   const days = drafts.map((d) => d.bookingDay).sort();
@@ -273,10 +273,13 @@ export function homeDay(day: string, time: string, zone: string): string | null 
 type KlarnaStatus = 'purchase' | 'not_completed' | 'cancelled' | 'part_refunded';
 
 /**
- * What a status of the pay-later list means, word by word. Every status the
- * list is known to carry is named here; an unknown one is not guessed at (the
- * file is refused with the word), because both guesses are wrong: counting a
- * cancelled purchase, or dropping a real one.
+ * What a status of the pay-later list means, wording by wording. The
+ * statuses are relative to the export day and say when the service collects
+ * ("Gestern bezahlt", "In 13 Tagen fällig"): paid or due, the purchase
+ * happened. Only the sentence about the merchant not having processed the
+ * order means it has not. The wordings are open-ended, so an unknown one does
+ * not refuse the file: the row is read as a purchase (dropping a real purchase
+ * in silence is the worse mistake) and the wording is reported for a look.
  */
 const KLARNA_STATUS: Array<[RegExp, KlarnaStatus]> = [
   // The merchant has not processed the order: it can still change or never be charged.
@@ -312,6 +315,7 @@ function parseKlarna(rows: string[][]): ParsedFile {
   const skipped: Record<string, number> = {};
   const notices: Record<string, number> = {};
   const cancelled: string[] = [];
+  const unknownStatuses: string[] = [];
   const drafts: Draft[] = [];
   const seen = new Set<string>();
   for (const r of records(rows)) {
@@ -319,8 +323,12 @@ function parseKlarna(rows: string[][]): ParsedFile {
       skip(skipped, 'other_currency');
       continue;
     }
-    const status = klarnaStatus(clean(r.get('status')));
-    if (status === null) throw new PaymentParseError('unknown_status', r.line, clean(r.get('status')).slice(0, 60));
+    const wording = clean(r.get('status'));
+    const status = klarnaStatus(wording) ?? 'purchase';
+    if (klarnaStatus(wording) === null) {
+      notices.unknown_status = (notices.unknown_status ?? 0) + 1;
+      if (!unknownStatuses.includes(wording.slice(0, 60)) && unknownStatuses.length < 5) unknownStatuses.push(wording.slice(0, 60));
+    }
     if (status === 'not_completed') {
       skip(skipped, 'not_completed');
       continue;
@@ -380,7 +388,7 @@ function parseKlarna(rows: string[][]): ParsedFile {
     skip(skipped, 'duplicate_row');
     return false;
   });
-  return finish('klarna_csv', kept, skipped, { cancelled, notices });
+  return finish('klarna_csv', kept, skipped, { cancelled, notices, unknownStatuses });
 }
 
 function parseEnableBanking(data: unknown): ParsedFile {

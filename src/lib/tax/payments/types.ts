@@ -67,22 +67,17 @@ export type ParseErrorCode =
   | 'unknown_layout'
   | 'empty'
   | 'unreadable_row'
-  /** A status word the reader does not know: guessing whether it is a purchase would be wrong either way. */
-  | 'unknown_status'
   | 'too_large';
 
 export class PaymentParseError extends Error {
   readonly code: ParseErrorCode;
   /** 1-based line or entry number of the first row that could not be read. */
   readonly row: number | null;
-  /** The word that was not understood, for `unknown_status`. */
-  readonly word: string | null;
-  constructor(code: ParseErrorCode, row: number | null = null, word: string | null = null) {
+  constructor(code: ParseErrorCode, row: number | null = null) {
     super(row === null ? code : `${code} at row ${row}`);
     this.name = 'PaymentParseError';
     this.code = code;
     this.row = row;
-    this.word = word;
   }
 }
 
@@ -99,6 +94,12 @@ export interface ParsedFile {
   cancelled: string[];
   /** Rows that were read but need a person's attention, by reason (a part refund the list gives no amount for). */
   notices: Record<string, number>;
+  /**
+   * Status wordings the reader did not know (the service's wordings are
+   * open-ended). Such a row is read as a purchase and named here, so a person
+   * looks at it; it is never dropped in silence.
+   */
+  unknownStatuses: string[];
   firstDay: string | null;
   lastDay: string | null;
 }

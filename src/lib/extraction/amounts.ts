@@ -38,9 +38,33 @@ export type AmountCheck =
   /** No tax line was found; the rate is the default for this kind of receipt. */
   | 'tax_estimated';
 
+/** What the total rests on, strongest first. Said with every reading, so that a wrong total can be traced to its rule. */
+export type TotalBasis =
+  /** Net and tax amounts that belong together at a printed rate and add up to a printed sum. */
+  | 'tax_groups'
+  /** A printed sum together with the tax it contains. */
+  | 'gross_with_tax'
+  /** The total, net and tax a model read from the page, all printed and adding up. */
+  | 'page_proof'
+  /** A labelled amount a second reading agrees with. */
+  | 'label_agreed'
+  /** A labelled amount that the net and tax stated next to their labels add up to. */
+  | 'label_stated'
+  /** A labelled amount that is the stated subtotal less the stated discounts. */
+  | 'label_discount'
+  /** The total a model read from the page, printed in the text, with nothing else to prove it. */
+  | 'page_reading'
+  /** A labelled amount with nothing to confirm it. */
+  | 'label_alone'
+  /** The total of a model, printed in the text, where no label names any. */
+  | 'model_alone'
+  | 'none';
+
 export interface AmountReading {
   /** The amount of the bill, without a tip. */
   gross: number | null;
+  /** What `gross` rests on. */
+  basis: TotalBasis;
   net: number | null;
   /**
    * The rate that carries the largest part of the bill, percent. Null when it
@@ -506,6 +530,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   })();
 
   let gross: number | null = null;
+  let basis: TotalBasis = 'none';
   let tip: number | null = null;
   let stated: { net: number; tax: number; rate: number } | null = null;
 
@@ -514,6 +539,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     const bill = groups.reduce((sum, g) => sum + cents(g.gross), 0);
     const taxSum = groups.reduce((sum, g) => sum + cents(g.tax), 0);
     gross = euros(bill);
+    basis = 'tax_groups';
     const isTip = (t: number) => t < bill && values.has(bill + t);
     const tipCents = tipOnLine.find(isTip) ?? tipCandidates.find(isTip);
     if (tipCents !== undefined) tip = euros(tipCents);
@@ -541,7 +567,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       // The rate is printed; the net is the total less the tax where the tax
       // still stands, and left to the rate where a deduction changed it.
       const net = withUntaxed > 0 ? euros(paid - taxSum) : null;
-      return { gross: euros(paid), net, taxRate: groups[0].rate, taxPrinted: true, taxGroups: withUntaxed > 0 ? groups : [], tip, checks };
+      return { gross: euros(paid), basis, net, taxRate: groups[0].rate, taxPrinted: true, taxGroups: withUntaxed > 0 ? groups : [], tip, checks };
     }
   } else {
     // Largest first: the total is the largest amount a printed tax amount fits.
@@ -552,24 +578,33 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     if (withTax) {
       groups = [withTax];
       gross = withTax.gross;
+      basis = 'gross_with_tax';
       // The page reading names another total, or none: the printed pair stands and a person looks.
       if (noTotal || (pageTotal !== null && pageTotal !== cents(withTax.gross))) checks.push('total_conflict');
     } else if (pageProof && pageTotal !== null) {
       gross = euros(pageTotal);
+      basis = 'page_proof';
       stated = pageProof;
     } else if (labelled.length > 0 && model !== null && labelled.includes(model)) {
       // The second reading agrees with a labelled amount. Where a larger one
-      // is labelled further down, it agreed with a column heading or a part
-      // ("Total" above the line items): the last labelled total stands.
+      // is labelled further down, a model that read the text alone agreed with
+      // a column heading or a part ("Total" above the line items): the last
+      // labelled total stands. A model that saw the page saw which of the two
+      // is the total (an invoice that prints its total above a usage table
+      // with a "Total" of its own): its reading stands. Either way two
+      // readings name different amounts, and a person looks.
       const last = labelled[labelled.length - 1];
       const part = labelled.slice(labelled.lastIndexOf(model) + 1).some((later) => later > model);
-      gross = euros(part ? last : model);
-      stated = readStated(part ? last : model);
+      const taken = part && !sawPage ? last : model;
+      gross = euros(taken);
+      basis = 'label_agreed';
+      stated = readStated(taken);
       if (part) checks.push('total_conflict');
     } else if (labelled.length > 0 && readStated(labelled[labelled.length - 1])) {
       // A receipt that states net, tax and total and whose three figures add up
       // has confirmed its own total, at whatever rate its country uses.
       gross = euros(labelled[labelled.length - 1]);
+      basis = 'label_stated';
       stated = readStated(labelled[labelled.length - 1]);
       if (noTotal || (sawPage && model !== null)) checks.push('total_conflict');
     } else if (labelled.length > 0) {
@@ -578,6 +613,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       if (discountConfirms(text, pick)) {
         // Subtotal less discount is this total: the receipt has confirmed it itself.
         gross = euros(pick);
+        basis = 'label_discount';
         if (noTotal || (model !== null && model !== pick)) checks.push('total_conflict');
       } else if (noTotal) {
         // The page states no total and nothing proves the labelled amount (a
@@ -587,13 +623,16 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
         // Nothing proves either reading. The model saw which amount stands next
         // to the label; the text reader only saw the label torn from it.
         gross = euros(pageTotal);
+        basis = 'page_reading';
         checks.push('total_conflict');
       } else {
         gross = euros(pick);
+        basis = 'label_alone';
         checks.push(model !== null && model !== pick ? 'total_conflict' : 'total_unconfirmed');
       }
     } else if (model !== null && values.has(model) && model <= SANE_TOTAL_CENTS) {
       gross = euros(model);
+      basis = 'model_alone';
       checks.push('total_unconfirmed');
     } else {
       checks.push('total_missing');
@@ -606,21 +645,21 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   }
 
   if (groups.length === 0 && stated && gross !== null) {
-    return { gross, net: euros(stated.net), taxRate: stated.rate, taxPrinted: true, taxGroups: [], tip, checks };
+    return { gross, basis, net: euros(stated.net), taxRate: stated.rate, taxPrinted: true, taxGroups: [], tip, checks };
   }
   if (!german && groups.length === 0) {
     // Another currency. The tax a label names is kept also where it could not
     // confirm the total (a total only the second reading gave, figures that do
     // not add up): the doubt about the total is in the checks.
     const named = gross !== null ? labelledTax(text, cents(gross)) : null;
-    if (named) return { gross, net: euros(named.net), taxRate: named.rate, taxPrinted: true, taxGroups: [], tip, checks };
+    if (named) return { gross, basis, net: euros(named.net), taxRate: named.rate, taxPrinted: true, taxGroups: [], tip, checks };
     // No tax amount on the receipt: no German rate is assumed for it (a
     // dollar invoice was given 19 percent). The bill is the net, the rate 0,
     // and nothing here is an estimate that would need a look.
-    return { gross, net: gross, taxRate: 0, taxPrinted: false, taxGroups: [], tip, checks };
+    return { gross, basis, net: gross, taxRate: 0, taxPrinted: false, taxGroups: [], tip, checks };
   }
   const net = groups.length > 0 ? euros(groups.reduce((sum, g) => sum + cents(g.net), 0)) : null;
   const taxRate = groups.length > 0 ? groups[0].rate : null;
   if (gross !== null && groups.length === 0) checks.push('tax_estimated');
-  return { gross, net, taxRate, taxPrinted: groups.length > 0, taxGroups: groups, tip, checks };
+  return { gross, basis, net, taxRate, taxPrinted: groups.length > 0, taxGroups: groups, tip, checks };
 }

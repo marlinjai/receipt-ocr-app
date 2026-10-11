@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as F from '@/lib/extraction/__tests__/fixtures';
 import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
@@ -5,8 +6,8 @@ import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-hel
 /**
  * "Neue Lesart übernehmen" against a real database, next to a fresh upload of
  * the same receipt: both must leave the same amounts, currency and exchange
- * rate on the row. Auth, the classifier and the exchange-rate source are the
- * only things replaced; the lookup is the ONE module both paths import.
+ * rate on the row. Auth, the classifier, the file store and the exchange-rate
+ * source are the only things replaced; the lookup is the ONE module both paths import.
  * Run with `pnpm test:db`.
  */
 
@@ -26,13 +27,17 @@ vi.mock('@/lib/receipt-classifier', async (original) => ({
   classifyReceiptText: (...a: unknown[]) => classify(...a),
 }));
 vi.mock('@/lib/fx-rates', () => ({ getFxRate: (...a: unknown[]) => fxRate(...a) }));
+// The file store is not there in a test: the page is one the loader would have prepared.
+vi.mock('@/lib/receipt-page-source', () => ({ loadReceiptPage: vi.fn(async () => ({ page: { mediaType: 'application/pdf', base64: 'UERG', pagesSent: 1, pagesTotal: 1 } })) }));
 
 import { processReceipt } from '../actions';
 import { getReviewQueue, takeNewReading } from './review-actions';
 
 let ws: TestWorkspace;
 
-const file = (n: number) => ({ id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`, originalName: `rechnung-${n}.pdf`, fileType: 'application/pdf' });
+// A file id of this run only: the store hands out a fresh id per upload, and a file another workspace holds is refused.
+const RUN = randomUUID().slice(0, 24);
+const file = (n: number) => ({ id: `${RUN}${String(n).padStart(12, '0')}`, originalName: `rechnung-${n}.pdf`, fileType: 'application/pdf' });
 const ocr = (fullText: string) => ({ fullText, blocks: [], confidence: 0.95 });
 
 // The answer of a model that read the invoice well, and, as it is told to where a
@@ -47,6 +52,7 @@ const MODEL_ANSWER = {
   taxRate: 19,
   confidence: 0.9,
   reasoning: '',
+  sawPage: true,
   meal: { mealType: null, consumption: null, tip: null, taxLines: null, place: null },
 };
 

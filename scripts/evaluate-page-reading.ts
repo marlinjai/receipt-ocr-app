@@ -20,13 +20,17 @@
  * Options:
  *   --sample <n>          read at most n documents, spread over the vendors
  *   --must <a,b,...>      vendors (parts of their names) the sample must contain
- *   --model <id>          the model that sees the page (default: the app's)
- *   --before <id>         also read every document from its text alone with this
- *                         model, as production did before the page reading
- *   --state <file>        keep each document's outcome in this file (it holds the
- *                         amounts read, so keep it out of the repository)
+ *   --model <id>          the model that reads (default: the app's)
+ *   --text-only           do not give the model the page, as production did before
+ *                         the page reading: the "before" number for a model
+ *   --state <file>        keep each document's outcome in this file and skip the
+ *                         documents it already holds, so a run that was cut off
+ *                         goes on where it stopped (outcomes and token counts
+ *                         only; keep it out of the repository all the same)
  *   --retry-misses <file> read only the documents a former run got wrong
  *   --concurrency <n>     documents read at once (default 4)
+ *   --max-seconds <n>     start no further document after n seconds; run again
+ *                         with the same --state to go on
  *
  * Environment: GOOGLE_CLOUD_VISION_API_KEY and OPENROUTER_API_KEY, as the app
  * has them. Run it where they are injected; never paste a key.
@@ -69,26 +73,20 @@ interface Outcome {
   total: Verdict;
   flags: string[];
   sawPage: boolean;
+  /** What the settled total rests on (see TotalBasis in the amount reader). */
+  basis?: string;
   cause?: MissCause;
 }
 
 interface DocumentResult {
   /** The text reader alone, no model. */
   text: Outcome;
-  /** Text and a model that read the text alone (`--before`). */
-  before?: Outcome;
-  /** Text and the model that sees the page. */
-  page?: Outcome;
+  /** Text and the model, settled as the app settles them. */
+  reading?: Outcome;
+  /** What the model call used; `cost` in US dollars, null where the provider does not say. */
+  usage?: { inputTokens: number; outputTokens: number; cost: number | null };
   /** Set when the document could not be read at all (recognition failed, file gone). */
   failed?: 'recognition' | 'file';
-}
-
-interface Usage {
-  calls: number;
-  inputTokens: number;
-  outputTokens: number;
-  cost: number;
-  costKnown: boolean;
 }
 
 // ── Arguments ────────────────────────────────────────────────────────
@@ -97,11 +95,12 @@ function parseArgs(argv: string[]) {
   const positional: string[] = [];
   const options = new Map<string, string>();
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith('--')) options.set(argv[i].slice(2), argv[++i] ?? '');
+    if (argv[i] === '--text-only') options.set('text-only', 'yes');
+    else if (argv[i].startsWith('--')) options.set(argv[i].slice(2), argv[++i] ?? '');
     else positional.push(argv[i]);
   }
   if (positional.length !== 2) {
-    throw new Error('Usage: evaluate-page-reading <folder> <table.csv> [--sample n] [--must a,b] [--model id] [--before id] [--state file] [--retry-misses file] [--concurrency n]');
+    throw new Error('Usage: evaluate-page-reading <folder> <table.csv> [--sample n] [--must a,b] [--model id] [--text-only] [--state file] [--retry-misses file] [--concurrency n] [--max-seconds n]');
   }
   const number = (name: string, fallback: number) => {
     const raw = options.get(name);
@@ -116,10 +115,11 @@ function parseArgs(argv: string[]) {
     sample: options.has('sample') ? number('sample', 0) : null,
     must: (options.get('must') ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     model: options.get('model') || null,
-    before: options.get('before') || null,
+    textOnly: options.has('text-only'),
     state: options.get('state') || null,
     retryMisses: options.get('retry-misses') || null,
     concurrency: number('concurrency', 4),
+    maxSeconds: options.has('max-seconds') ? number('max-seconds', 0) : null,
   };
 }
 
@@ -218,16 +218,8 @@ function missCause(expected: Expected, modelGross: number | null | undefined, se
 }
 
 const CATEGORY_NAMES = Object.keys(CATEGORY_TO_KONTO);
-/** The model the environment names when the script starts; `--model` and `--before` override it per reading. */
-const CONFIGURED_MODEL = process.env.AI_CLASSIFY_MODEL;
 
-async function readDocument(
-  expected: Expected,
-  folder: string,
-  visionKey: string,
-  models: { page: string | null; before: string | null },
-  usage: { page: Usage; before: Usage },
-): Promise<DocumentResult> {
+async function readDocument(expected: Expected, folder: string, visionKey: string, withPage: boolean): Promise<DocumentResult> {
   const failed = (reason: 'recognition' | 'file'): DocumentResult => ({
     text: { vendor: expected.vendor, date: 'missing', total: 'missing', flags: [], sawPage: false },
     failed: reason,
@@ -257,42 +249,28 @@ async function readDocument(
     text: judge(expected, { date: extracted.date, gross: extracted.gross, flags: [] }, expected.vendor, false),
   };
 
-  const ask = async (model: string | null, withPage: boolean, tally: Usage): Promise<Outcome> => {
-    // The app reads the model from the environment; the two readings of a document run one after the other.
-    if (model) process.env.AI_CLASSIFY_MODEL = model;
-    else if (CONFIGURED_MODEL === undefined) delete process.env.AI_CLASSIFY_MODEL;
-    else process.env.AI_CLASSIFY_MODEL = CONFIGURED_MODEL;
-    const page = withPage ? ((await preparePage(bytes)).page ?? null) : null;
-    let answer: Awaited<ReturnType<typeof classifyReceiptText>> | null = null;
-    try {
-      answer = await classifyReceiptText({
-        vendor: extracted.vendor,
-        gross: extracted.gross,
-        date: extracted.date,
-        fullText,
-        categoryNames: CATEGORY_NAMES,
-        categoryToKonto: CATEGORY_TO_KONTO,
-        zuordnungOptions: ZUORDNUNG_OPTIONS,
-        page,
-      });
-      tally.calls++;
-      tally.inputTokens += answer.usage.inputTokens;
-      tally.outputTokens += answer.usage.outputTokens;
-      if (answer.usage.cost === null) tally.costKnown = false;
-      else tally.cost += answer.usage.cost;
-      // As in the app: an answer without a category is no classification.
-      if (!answer.category) answer = null;
-    } catch {
-      answer = null;
-    }
-    const settled = settleReading(fullText, extracted, answer);
-    const outcome = judge(expected, settled, expected.vendor, answer?.sawPage ?? false);
-    if (outcome.total !== 'correct') outcome.cause = missCause(expected, answer ? answer.gross : undefined, settled.gross, fullText);
-    return outcome;
-  };
-
-  if (models.before) result.before = await ask(models.before, false, usage.before);
-  result.page = await ask(models.page, true, usage.page);
+  const page = withPage ? ((await preparePage(bytes)).page ?? null) : null;
+  let answer: Awaited<ReturnType<typeof classifyReceiptText>> | null = null;
+  try {
+    answer = await classifyReceiptText({
+      vendor: extracted.vendor,
+      gross: extracted.gross,
+      date: extracted.date,
+      fullText,
+      categoryNames: CATEGORY_NAMES,
+      categoryToKonto: CATEGORY_TO_KONTO,
+      zuordnungOptions: ZUORDNUNG_OPTIONS,
+      page,
+    });
+    result.usage = answer.usage;
+    // As in the app: an answer without a category is no classification.
+    if (!answer.category) answer = null;
+  } catch {
+    answer = null;
+  }
+  const settled = settleReading(fullText, extracted, answer);
+  result.reading = { ...judge(expected, settled, expected.vendor, answer?.sawPage ?? false), basis: settled.amounts.basis };
+  if (result.reading.total !== 'correct') result.reading.cause = missCause(expected, answer ? answer.gross : undefined, settled.gross, fullText);
   return result;
 }
 
@@ -333,15 +311,18 @@ function perVendor(outcomes: Outcome[]): Record<string, string> {
   );
 }
 
-function report(name: string, outcomes: Outcome[], usage?: Usage) {
+function report(name: string, outcomes: Outcome[], used?: Array<NonNullable<DocumentResult['usage']>>) {
   console.log(`\n== ${name} ==`);
   console.log(JSON.stringify(tally(outcomes), null, 2));
   console.log('flags:', JSON.stringify(countBy(outcomes.flatMap((o) => o.flags), (f) => f)));
-  console.log('why a total was missed:', JSON.stringify(countBy(outcomes, (o) => o.cause)));
-  if (usage) {
-    const each = usage.calls > 0 ? usage.cost / usage.calls : 0;
+  console.log('why a total was missed:', JSON.stringify(countBy(outcomes, (o) => (o.cause ? `${o.cause} (kept: ${o.basis})` : undefined))));
+  console.log('what the totals rest on:', JSON.stringify(countBy(outcomes, (o) => o.basis)));
+  console.log('what flagged totals rest on:', JSON.stringify(countBy(outcomes, (o) => (o.flags.some((f) => f === 'total_conflict' || f === 'total_unconfirmed') ? `${o.basis}, total ${o.total}` : undefined))));
+  if (used && used.length > 0) {
+    const sum = (pick: (u: NonNullable<DocumentResult['usage']>) => number) => used.reduce((total, u) => total + pick(u), 0);
+    const cost = used.every((u) => u.cost !== null) ? sum((u) => u.cost ?? 0) : null;
     console.log(
-      `model calls ${usage.calls}, input tokens ${usage.inputTokens}, output tokens ${usage.outputTokens}, cost ${usage.costKnown ? `${usage.cost.toFixed(4)} US dollars (${each.toFixed(5)} per document)` : 'not reported by the provider'}`,
+      `model calls ${used.length}, input tokens ${sum((u) => u.inputTokens)}, output tokens ${sum((u) => u.outputTokens)}, cost ${cost === null ? 'not reported by the provider' : `${cost.toFixed(4)} US dollars (${(cost / used.length).toFixed(5)} per document)`}`,
     );
   }
   console.log('per vendor:', JSON.stringify(perVendor(outcomes), null, 2));
@@ -371,30 +352,49 @@ async function main() {
   if (args.retryMisses) {
     const former = JSON.parse(await readFile(args.retryMisses, 'utf-8')) as Record<string, DocumentResult>;
     rows = rows.filter((row) => {
-      const page = former[row.file]?.page;
-      return page !== undefined && (page.total !== 'correct' || page.date !== 'correct');
+      const reading = former[row.file]?.reading;
+      return reading !== undefined && (reading.total !== 'correct' || reading.date !== 'correct');
     });
   }
   if (args.sample !== null) rows = pickSample(rows, args.sample, args.must);
-  console.log(`documents to read: ${rows.length}`);
+  // The app reads the model from the environment.
+  if (args.model) process.env.AI_CLASSIFY_MODEL = args.model;
 
-  const usage = {
-    page: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0, costKnown: true },
-    before: { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0, costKnown: true },
-  };
   const results: Record<string, DocumentResult> = {};
-  // With `--before` two models take turns through one environment variable, so the documents are read one at a time.
-  const concurrency = args.before ? 1 : args.concurrency;
-  const read = await inBatches(rows, concurrency, (row) => readDocument(row, args.folder, visionKey, { page: args.model, before: args.before }, usage));
-  rows.forEach((row, i) => (results[row.file] = read[i]));
-  if (args.state) await writeFile(args.state, JSON.stringify(results));
+  if (args.state) {
+    try {
+      Object.assign(results, JSON.parse(await readFile(args.state, 'utf-8')));
+    } catch {
+      // No former run: start from nothing.
+    }
+  }
+  const open = rows.filter((row) => !(row.file in results));
+  console.log(`documents: ${rows.length}, already read: ${rows.length - open.length}`);
 
-  const all = Object.values(results);
-  console.log(`could not be read: ${JSON.stringify(countBy(all, (r) => r.failed))}`);
-  const readable = all.filter((r) => !r.failed);
+  const started = Date.now();
+  const inTime = () => args.maxSeconds === null || Date.now() - started < args.maxSeconds * 1000;
+  let saving = Promise.resolve();
+  await inBatches(open, args.concurrency, async (row) => {
+    if (!inTime()) return;
+    results[row.file] = await readDocument(row, args.folder, visionKey, !args.textOnly);
+    // One writer at a time, after every document: a run that is cut off loses nothing it paid for.
+    if (args.state) saving = saving.then(() => writeFile(args.state!, JSON.stringify(results)));
+  });
+  await saving;
+
+  const read = rows.flatMap((row) => (results[row.file] ? [results[row.file]] : []));
+  if (read.length < rows.length) {
+    console.log(`stopped after ${args.maxSeconds} seconds: ${read.length} of ${rows.length} read. Run again with the same --state to go on.`);
+    return;
+  }
+  console.log(`could not be read: ${JSON.stringify(countBy(read, (r) => r.failed))}`);
+  const readable = read.filter((r) => !r.failed);
   report('text reader alone (no model)', readable.map((r) => r.text));
-  if (args.before) report(`text and a model that reads the text alone (${args.before})`, readable.flatMap((r) => (r.before ? [r.before] : [])), usage.before);
-  report(`text and the model that sees the page (${args.model ?? 'app default'})`, readable.flatMap((r) => (r.page ? [r.page] : [])), usage.page);
+  report(
+    `text and the model ${args.textOnly ? 'that reads the text alone' : 'that sees the page'} (${args.model ?? process.env.AI_CLASSIFY_MODEL ?? 'app default'})`,
+    readable.flatMap((r) => (r.reading ? [r.reading] : [])),
+    readable.flatMap((r) => (r.usage ? [r.usage] : [])),
+  );
 }
 
 // Run only as a script: the tests import the pure helpers above.

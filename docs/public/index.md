@@ -41,7 +41,7 @@ A ~500-line heuristic engine (`src/lib/extract-receipt-fields.ts`) extracts stru
 - LLM-powered classification via OpenRouter (`/api/classify-single`)
 - Returns category, SKR03 konto, zuordnung, confidence score, and reasoning
 - User-defined classification rules (stored in localStorage) included in prompts
-- Default model: `anthropic/claude-sonnet-4-20250514` (configurable via `AI_MODEL` env var)
+- The model that reads a receipt is given the page itself next to the recognized text; default `anthropic/claude-haiku-5.5` (`AI_CLASSIFY_MODEL`). The chat sidebar uses `anthropic/claude-sonnet-4.6` (`AI_MODEL`)
 
 ### AI Chat Sidebar
 - 420px slide-in sidebar with streaming SSE responses

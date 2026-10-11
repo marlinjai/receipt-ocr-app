@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The reader sees the page: the language model that classifies a receipt is given the page itself (the image, or the PDF pages) next to the recognized text, and also reads the invoice date, total, currency, net and tax lines. Its answer is a second reading, never stored on its own word: a total the invoice's arithmetic proves stands and a differing answer raises "Betrag prüfen"; where nothing is proven the page reading is taken only if the recognized text prints that amount; a labelled invoice date stands and a differing one raises the new "Datum prüfen"; a document that states no total (an application with a monthly rate) stores none. The provider being down or slow, a missing or oversized file and a refusal all leave the upload complete with the text reading and a visible note ("Nur Text gelesen", "Nicht eingeordnet"). On the 235 purchase documents of 2025: dates right 218 before, 235 after; totals right 226 before, 235 after; cost per receipt 0.0096 US dollars before, 0.0008 after (Claude Haiku 5.5 through OpenRouter, no new secret, no setting). Plan: `docs/plans/2026-10-11-vision-reading.md`
+- "Seite neu lesen" in a receipt's detail panel reads a stored receipt again with the model that sees the page. It writes vendor, date, amounts and currency, fills category, account and assignment only where they are empty, and leaves the business share, the project and every tax decision alone. When the model or the page is not to be had it writes nothing and says so
+- `scripts/evaluate-page-reading.ts` measures the reading on a folder of documents against a hand-checked table of date and total, printing counts and tallies per vendor only
+
 - Groups in the receipts table, like sub-items in Notion: "Neue Gruppe" creates a row that holds receipts. Receipts are put in from the selection ("Neue Gruppe mit n Belegen", "In Gruppe legen"), taken out again ("aus der Gruppe nehmen", or "Herausnehmen" in the group's panel), and drawn under their group, which folds and shows the sum of its receipts (gross when they share one currency, and the two euro columns). A group is never a receipt: it is in no count and in no sum, in the tax module, the meal register, the review list, the overview, the exports, the duplicate check or the assistant, it takes no amount, no file and no reading, and "Gruppe auflösen" removes it and leaves its receipts in the table. In a grouped view the receipts follow their group's section and keep their own category. One level: a group cannot lie in a group. Needs `@marlinjai/data-table-react` 0.6.0. Plan: `docs/plans/2026-10-11-receipt-sub-rows.md`
 - The dashboard always shows every receipt: the table fetches the remaining pages by itself and the "load more" button is gone, so sums and groups never stand on a partial list
 - Table views (Table, By Konto, By Vendor): columns can be resized, sorted and aligned from the header again, and a receipt can be dragged from one group into another by the grip on its row, which changes the grouped column (for the Table view: the category). Dragging one of several selected receipts takes the selection along. From `@marlinjai/data-table-react` 0.5.0
@@ -48,6 +52,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The model that reads a receipt is Claude Haiku 5.5 through OpenRouter (`anthropic/claude-haiku-5.5`) instead of Claude Sonnet 4.6, chosen by the measurement in the plan; `AI_CLASSIFY_MODEL` still overrides it. Every model call now has a timeout of 60 seconds and one retry
 - The meal register and the meal form follow the value-added tax status on each meal's own date when the status changed inside a year
 - The limit forecast no longer counts invoices that were unpaid at the end of a finished year as that year's turnover, and measures open invoices without the tax in them
 - Every year in which an invoice, a payment, a tax settlement or a status change is dated can be selected in the finance area
@@ -61,6 +66,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Retaking the photo of a receipt no longer resets its assignment or a business share somebody changed
+- A receipt can no longer be saved or retaken with a file another workspace holds: the file id from the browser is checked against the session's workspace before the file is attached or read
 - The reader finds the invoice date on invoices that print it as "20-NOV-2025", "8. March 2025", "26. Nov. 2025" or with the label alone on the line above (Adobe, Apple, Google, Microsoft). Every date is ranked by the label in front of it; a due, renewal, debit or expiry date is never taken as the invoice date
 - The reader no longer stores the net as the total where the recognized text separates labels from amounts: net, tax and their printed sum settle the total in any currency, a total labelled further down beats a column heading, the "Total" line stands where a credit or balance is applied, and a long invoice reaches the model with its end as well as its start
 - The first guess for "Zuordnung" is no longer "Privat" on invoices addressed to a person: the model answers only what the document shows and leaves the field empty otherwise, and the review list asks for it ("Zuordnung fehlt") unless the meal register, a tax decision or a vendor rule already settles who bears the cost
@@ -79,6 +86,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The exchange-rate recompute filtered the date column with strings, which the database rejected; it now binds dates
 - A saved occasion, place or host of a business meal read back empty while the page said "Gespeichert": two page loads had each created the meal columns, so the table held them twice, the save wrote one and the read took the other. Readers and writers now resolve a column name the same way, the next page load folds a doubled column back into one (every value is moved over first; a column holding a differing value is renamed, never deleted), and the columns are created under a per-workspace lock so two requests cannot both create one
 - After a column was added to or removed from a table while the app was running, saves could fail with "row not found" until the next restart: Postgres refuses a prepared `SELECT *` once the table's shape changed. The database client no longer keeps prepared statements
+
+### Removed
+
+- The experiment behind `USE_MULTIMODAL_OCR` (a language model in place of text recognition, its answer stored unchecked; never switched on in production) and its module `src/lib/multimodal-ocr.ts`. The page reading above replaces it. Text recognition moved from the route into `src/lib/text-recognition.ts`, unchanged
 
 ## [0.5.0] - 2026-02-28
 

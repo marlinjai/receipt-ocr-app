@@ -7,7 +7,7 @@ import OpenAI from 'openai';
  * Env vars:
  *   OPENROUTER_API_KEY  — your OpenRouter key (required)
  *   AI_MODEL            — model for chat/tool-use  (default: anthropic/claude-sonnet-4.6)
- *   AI_CLASSIFY_MODEL   — model that reads one receipt, page and text (falls back to AI_MODEL, then to the default below)
+ *   AI_CLASSIFY_MODEL   : model that reads one receipt, page and text (falls back to AI_MODEL, then to the default below)
  *   AI_BASE_URL         — override base URL (default: https://openrouter.ai/api/v1)
  */
 
@@ -18,7 +18,7 @@ const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
  * pages), so it must accept image and file input. Chosen by measurement on
  * the 2025 documents: docs/plans/2026-10-11-vision-reading.md, "Measured".
  */
-export const DEFAULT_CLASSIFY_MODEL = 'anthropic/claude-sonnet-5.5';
+export const DEFAULT_CLASSIFY_MODEL = 'anthropic/claude-haiku-5.5';
 
 export function getAiClient(): OpenAI {
   const apiKey = process.env.OPENROUTER_API_KEY;

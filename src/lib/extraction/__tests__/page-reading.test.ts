@@ -106,6 +106,17 @@ describe('readAmounts with a model that saw the page', () => {
     expect(reading.checks).not.toContain('total_unconfirmed');
   });
 
+  it('a total printed above a table with a larger "Total" of its own: the page reading stands, a text-only one does not', () => {
+    // An invoice settled partly from a credit: the amount to pay on top, the usage table with its own total below.
+    const text = ['Example Editor Inc.', 'Invoice', 'Total $19.22', 'Usage', 'Requests 1 $30.20', 'Total usage $30.20'].join('\n');
+    const page = readAmounts(text, { currency: 'USD', modelGross: 19.22, modelSawPage: true });
+    expect(page.gross).toBe(19.22);
+    expect(page.checks).toContain('total_conflict');
+    const textOnly = readAmounts(text, { currency: 'USD', modelGross: 19.22 });
+    expect(textOnly.gross).toBe(30.2);
+    expect(textOnly.checks).toContain('total_conflict');
+  });
+
   it('a document with no total: the monthly rate is not stored as one', () => {
     expect(readAmounts(LEASING_APPLICATION, {}).gross).toBe(49.9);
     const reading = readAmounts(LEASING_APPLICATION, { modelGross: null, modelNoTotal: true, modelSawPage: true });

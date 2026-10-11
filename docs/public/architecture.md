@@ -256,8 +256,8 @@ GOOGLE_CLOUD_VISION_API_KEY=AIza...
 OPENROUTER_API_KEY=sk-or-v1-...
 
 # Optional: override AI models
-# AI_MODEL=anthropic/claude-sonnet-4-20250514
-# AI_CLASSIFY_MODEL=anthropic/claude-sonnet-4-20250514
+# AI_MODEL=anthropic/claude-sonnet-4.6            # chat sidebar
+# AI_CLASSIFY_MODEL=anthropic/claude-haiku-5.5    # reads a receipt, page and text; must accept image and file input
 ```
 
 Database connectivity comes from the `DATABASE_URL` environment variable, injected at runtime by the Infisical CLI (see `Dockerfile`).

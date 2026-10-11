@@ -157,6 +157,8 @@ describe('a receipt in another currency carries no German tax', () => {
   it('a dollar invoice that prints no tax is given none: the net is the total, the rate 0, nothing estimated', () => {
     expect(readAmounts(F.DOLLAR_INVOICE_WITH_DISCOUNT, { date: '2025-11-26', currency: 'USD' })).toEqual({
       gross: 360,
+      // Subtotal less discount is the total: the receipt confirms it itself.
+      basis: 'label_discount',
       net: 360,
       taxRate: 0,
       taxPrinted: false,
@@ -199,6 +201,8 @@ describe('a receipt in another currency carries no German tax', () => {
   it('keeps it where every label stands above its amount, with a discount in between', () => {
     expect(readAmounts(F.DOLLAR_INVOICE_WITH_TAX, { date: '2025-11-27', currency: 'USD' })).toEqual({
       gross: 428.4,
+      // Net and tax next to their labels add up to the labelled total.
+      basis: 'label_stated',
       net: 360,
       taxRate: 19,
       taxPrinted: true,

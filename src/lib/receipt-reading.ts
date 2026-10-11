@@ -27,7 +27,8 @@ import type { ReadFlag } from '@/lib/review/reasons';
 
 /** What the language model answered, as far as the reading uses it. */
 export interface ModelReading {
-  name: string | null;
+  /** What was bought, in a few words. */
+  item: string | null;
   category: string | null;
   konto: string | null;
   zuordnung: string | null;

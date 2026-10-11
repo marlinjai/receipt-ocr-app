@@ -34,7 +34,8 @@ import { requireReceiptsSession } from '@/lib/auth-guards';
 import { sessionWorkspaceId, tenantIdForWorkspace } from '@/lib/auth-workspace';
 import type { CellValue } from '@marlinjai/data-table-core';
 import { sameVendor } from '@/lib/extraction/vendor';
-import { receiptName } from '@/lib/receipt-name';
+import { ITEM_COLUMN, receiptName } from '@/lib/receipt-name';
+import { nameFromCells } from '@/lib/receipt-name-cells';
 import type { OcrResult } from '@/lib/ocr-types';
 
 const TABLE_NAME = 'Receipts';
@@ -117,7 +118,7 @@ type ReceiptsAdapter = ReturnType<typeof getAdapter>;
  * blank (see MEAL_READ_COLUMNS), so nothing the user typed is overwritten.
  */
 const OCR_DERIVED_COLUMNS = new Set([
-  'Name', 'Vendor', 'Gross', 'Net', 'Tax Rate', TAX_RATES_COLUMN, 'Date', 'Category', 'Konto', 'Zuordnung', 'Status',
+  'Name', 'Vendor', ITEM_COLUMN, 'Gross', 'Net', 'Tax Rate', TAX_RATES_COLUMN, 'Date', 'Category', 'Konto', 'Zuordnung', 'Status',
   'Confidence', 'OCR Text', 'Currency', 'FX Rate', 'Business Share %',
   MEAL_COLUMNS.mealType, MEAL_COLUMNS.consumption, MEAL_COLUMNS.tip, MEAL_COLUMNS.taxLines, MEAL_COLUMNS.place,
 ]);
@@ -136,6 +137,9 @@ const MEAL_READ_COLUMNS: string[] = [
  * a receipt that is already stored fills them only where they are empty.
  */
 const DECISION_COLUMNS: string[] = ['Category', 'Konto', 'Zuordnung'];
+
+/** What was bought is worded by the model and may be reworded by a person: a new reading fills it only where it is empty. */
+const WORDED_COLUMNS: string[] = [ITEM_COLUMN];
 
 /** True when the stored vendor and the newly read one are the same vendor written differently. */
 function storedVendorStands(stored: CellValue | undefined, read: CellValue | undefined): boolean {
@@ -204,6 +208,8 @@ async function readReceipt(
   const finalGross = settled?.gross ?? null;
   const finalTaxRate = settled?.taxRate ?? 19;
   const finalNet = settled?.net ?? null;
+  // A meal is named by its restaurant; what was eaten belongs to the meal register.
+  const item = finalCategory === MEAL_CATEGORY ? null : (ai?.item ?? null);
 
   // Multi-currency: detected currency, historical FX rate (looked up live, on save),
   // and the shared/partial-business-use attribution default for this vendor.
@@ -224,9 +230,11 @@ async function readReceipt(
 
   const values: Record<string, CellValue> = {
     // A receipt nothing could be read from says so in its name instead of posing as a receipt.
-    // Vendor, total and date as they were settled: never the line items, never a name a model wrote.
-    Name: receiptName({ vendor, gross: finalGross, currency, date }) || (extracted ? file.originalName : `Nicht lesbar: ${file.originalName}`),
+    // Vendor, total and date as they were settled, with what was bought in a few words: never the
+    // list of line items, never a name a model wrote.
+    Name: receiptName({ vendor, item, gross: finalGross, currency, date }) || (extracted ? file.originalName : `Nicht lesbar: ${file.originalName}`),
     Vendor: vendor,
+    [ITEM_COLUMN]: item,
     Gross: finalGross,
     Net: finalNet,
     'Tax Rate': finalTaxRate,
@@ -524,7 +532,7 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
       const optionId = categoryId ? row.cells[categoryId] : null;
       return typeof optionId === 'string' && optionId !== '' && read.mealCategoryOptionId === optionId;
     })();
-    const fillOnly = new Set([...DECISION_COLUMNS, ...MEAL_READ_COLUMNS.filter((name) => isMeal || name !== MEAL_COLUMNS.taxLines)]);
+    const fillOnly = new Set([...DECISION_COLUMNS, ...WORDED_COLUMNS, ...MEAL_READ_COLUMNS.filter((name) => isMeal || name !== MEAL_COLUMNS.taxLines)]);
     // A receipt that waited as "Pending" because it could not be classified is read now; any other status is somebody's.
     const statusId = columnId('Status');
     const pendingId = statusId ? (await adapter.getSelectOptions(statusId)).find((o) => o.name === 'Pending')?.id : undefined;
@@ -537,6 +545,9 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
       if (column.name === 'Vendor' && storedVendorStands(row.cells[column.id], read.cells[column.id])) continue;
       if (always.has(column.name) || (fillOnly.has(column.name) && isBlank(row.cells[column.id]))) cells[column.id] = read.cells[column.id];
     }
+    // The name says what the row holds after this write: a vendor or an item that was kept stays in it.
+    const nameId = columnId('Name');
+    if (nameId && nameId in cells) cells[nameId] = (await nameFromCells(adapter, columns, { ...row.cells, ...cells })) || cells[nameId];
     // The printed tax groups of the new reading, or none: lines of the old
     // reading must not stand next to amounts they no longer belong to.
     const linesId = columnId(MEAL_COLUMNS.taxLines);

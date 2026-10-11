@@ -6,7 +6,7 @@ import { EMPTY_MEAL_CLASSIFICATION } from '../meals/classify';
 /** All documents here are invented, in the layout of real ones. */
 
 const answer = (extra: Partial<ModelReading> = {}): ModelReading => ({
-  name: 'Posten, Händler',
+  item: 'Posten',
   category: 'Software & Lizenzen',
   konto: '4806',
   zuordnung: null,

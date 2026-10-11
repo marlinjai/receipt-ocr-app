@@ -58,11 +58,18 @@
   267 distinct ids). The stored data was intact and a reload showed 267 again. Probably the
   loader that fetches all pages appends them again after an edit. Until fixed, counts and
   sums on a page that was edited a lot cannot be trusted without a reload. (2026-10-11)
-- [ ] A receipt's name does not follow a later edit of its vendor, total or date in the table.
-  Since 2026-10-11 the name is put together from those three cells (all 291 receipts were
-  renamed that day, 267 under Whiz-Art Media and 24 private), but only when a receipt is read.
-  A name that still equals what its cells gave should be rebuilt when one of them is edited;
-  a name a person typed stays. (2026-10-11)
+- [ ] What was bought is part of a receipt's name: a cell "Item" the reader fills, the name as
+  "vendor, item, total, date", and the name following its cells when vendor, item, total,
+  currency or date is corrected (a typed name stays). Decided by the owner on 2026-10-11 for
+  every receipt of every year. Built; open until it is deployed and the stored receipts of all
+  years have their item through `POST /api/receipts/items`. Plan:
+  [docs/plans/2026-10-11-receipt-item-in-name.md](docs/plans/2026-10-11-receipt-item-in-name.md). (2026-10-11)
+- [ ] "Set field" on a selection loses writes: on 2026-10-11, setting the assignment on 30
+  selected rows reported success and left 14 of 81 rows unchanged; selections of 7 went through
+  completely. The writes run side by side through the guarded cell update. (2026-10-11)
+- [ ] A file that holds two invoices becomes one receipt with the second invoice's figures
+  (seen on 2026-10-11 on a file with a marketplace invoice and a retailer invoice). The reader
+  should say that the file holds more than one document, so it can be split. (2026-10-11)
 - [ ] Bring the app up to the tax session's draft for 2025. Marlin's 17 answers of 2026-10-11
   (recorded in `Entscheidungen-2025.md` in the tax folder) are carried out, the bank, PayPal and
   pay-later lists are imported, and 112 payments are linked: business expenses in the app went
@@ -333,8 +340,10 @@
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-10)
 - [ ] Import the purchase documents of the tax years 2024, 2023, 2022 and 2021 through the
   uploader, newest first. All four years are filed, so each is a record that has to match what
-  was declared. Form lines only for 2024, whose form numbering matches the 2025 rule set; rule
-  sets for 2021 to 2024 and the depreciation schedules of the 2021 assets stay open here. Plan:
+  was declared. 2024 is in since 2026-10-11: 156 receipts, the form lines within about one euro
+  of the return (line 36 to the cent). 2023, 2022 and 2021 follow once receipts carry their
+  item. Form lines only for 2024, whose form numbering matches the 2025 rule set; rule sets for
+  2021 to 2024 and the depreciation schedules of the 2021 assets stay open here. Plan:
   [docs/plans/2026-10-11-import-tax-years-2021-2024.md](docs/plans/2026-10-11-import-tax-years-2021-2024.md). (2026-10-11)
 - [ ] Pay-later purchases as payments. The purchase list of the pay-later service (Klarna) is a
   payment source, a debit that only funds another imported payment account (PayPal on the bank,

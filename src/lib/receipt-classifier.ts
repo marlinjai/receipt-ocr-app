@@ -23,17 +23,21 @@
  * Env vars:
  *   ANTHROPIC_API_KEY        direct access with web search (optional)
  *   ANTHROPIC_CLASSIFY_MODEL model for the direct path (default below)
+ *   ANTHROPIC_ITEM_MODEL     model that names what was bought on an already stored receipt (default below)
  *   OPENROUTER_API_KEY, AI_CLASSIFY_MODEL, AI_MODEL: see src/lib/ai-client.ts
  */
 
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { getAiClient, getClassifyModel } from '@/lib/ai-client';
+import { cleanItem } from '@/lib/receipt-name';
 import type { ReceiptPage } from '@/lib/receipt-page';
 import { parseMealClassification, type MealClassification } from '@/lib/meals/classify';
 
 /** A model identifier is used exactly as published: no date suffix. */
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5-5';
+/** Naming what was bought from a stored text is a small task: the small model. */
+const DEFAULT_ANTHROPIC_ITEM_MODEL = 'claude-haiku-5-5';
 /** How often a paused server-tool turn is resumed before the answer is taken as it is. */
 const MAX_RESUMES = 3;
 /** The recognized text sent to the model. A till receipt is far shorter; a long invoice keeps its head and its end. */
@@ -94,7 +98,8 @@ export interface ModelUsage {
 }
 
 export interface ReceiptClassification {
-  name: string | null;
+  /** What was bought, in a few words, for the receipt's name. Never checked against the text: it states no fact the books use. */
+  item: string | null;
   category: string | null;
   konto: string | null;
   zuordnung: string | null;
@@ -161,7 +166,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
     const category = input.categoryNames.includes(parsed.category) ? (parsed.category as string) : null;
     const gross = amount(parsed.gross);
     return {
-      name: typeof parsed.name === 'string' && parsed.name ? parsed.name : null,
+      item: cleanItem(parsed.item),
       category,
       // The account follows the category; a number the model made up never reaches a cell.
       konto: category ? (input.categoryToKonto[category] ?? null) : null,
@@ -181,7 +186,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
   } catch {
     console.error('[receipt-classifier] the answer was not the expected object');
     return {
-      name: null, category: null, konto: null, zuordnung: null, taxRate: null, confidence: 0,
+      item: null, category: null, konto: null, zuordnung: null, taxRate: null, confidence: 0,
       reasoning: 'Failed to parse classification response',
       vendor: null, gross: null, net: null, date: null, currency: null, noTotal: false,
       meal: parseMealClassification(null),
@@ -200,6 +205,15 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
  */
 const ASSIGNMENT_RULE =
   'Answer only what the document itself shows. "Geschäftlich" (business) when it is addressed to a company, shows the buyer\'s VAT identification number, or applies reverse charge. "Universität" when it is addressed to a university or names an enrolment or a course of study. Otherwise null: a self-employed person is invoiced under their own name, so a personal addressee, a home address, or the kind of product (music, video, cloud storage, a phone plan) says nothing about who bears the cost. Never answer "Privat" unless a user classification rule below says so.';
+
+/**
+ * What was bought, for the receipt's name. A marketplace or a billing platform
+ * as the vendor says nothing about the purchase, and one vendor sells several
+ * things; the list of line items made names long and different every time, so
+ * the model is held to a few words.
+ */
+export const ITEM_RULE =
+  'what was bought, in two to four words, in German, for a list of receipts: the product or the plan by its own name where it has one ("ChatGPT Plus", "Creative Cloud Foto-Abo", "Notion Plus"), otherwise the kind of thing ("SSD-Gehäuse", "Domainverlängerung", "Mobilfunkvertrag", "Deutschlandticket"). With several different line items, the main one and how many more follow ("USB-Stick + 2"). Never the vendor\'s name alone, never an amount, a date, a quantity, an order or invoice number, a period ("Januar 2024") or the name of a person. Null for a meal in a restaurant and when the document does not show what was bought.';
 
 /** What the model is told about what it is looking at. */
 function sourceParagraph(page: ReceiptPage | null | undefined): string {
@@ -226,7 +240,7 @@ ${sourceParagraph(input.page)}
 
 Classify the receipt and read these facts from it:
 
-1. **name**: the vendor, the total and the date, nothing else: "Vendor, Amount, DD.MM.YYYY". No line items and no description of what was bought.
+1. **item**: ${ITEM_RULE}
 2. **vendor**: the name of the business that issued the receipt, as a customer would call it ("Trattoria Beispiel", "Musterbräu Berlin"). Never a slogan ("Since 2016"), never a product or an extra ("+ mit Haferdrink"), never a bare description ("Indisches"), never a receipt heading ("Rechnung", "Bewirtungsbeleg"). Null when the text does not name it.
 3. **gross**: the total the customer had to pay, as a number, exactly as printed (the line labelled Summe, Gesamt, Total, Betrag, zu zahlen, or the sum of the tax lines). Where several totals are printed (a subtotal, "Total" and "Grand Total", a total per section), give the final one, with tax, shipping and duties. Never a receipt number, table number, transaction number, card number or telephone number. An invoice settled from a credit or balance still has its total: give the line "Total", never an amount due of 0. Null when the document does not show a total.
 4. **totalStated**: false when the document states no total to pay at all: an application, a contract or an offer that names only a monthly rate or an instalment, a delivery note without prices. Then "gross" is null: a monthly rate is not a total. Otherwise true.
@@ -251,7 +265,7 @@ Only when the category is "Bewirtung", also give:
 ${input.userRules || ''}
 
 Respond with ONLY a JSON object (no markdown, no explanation):
-{ "name": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "..." }`;
+{ "item": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "..." }`;
 }
 
 function userText(input: ClassifyInput): string {
@@ -387,4 +401,59 @@ export async function classifyReceiptText(input: ClassifyInput): Promise<Receipt
   }
   console.info('[receipt-classifier] read', { provider, sawPage, inputTokens: answer.usage.inputTokens, outputTokens: answer.usage.outputTokens });
   return { ...parseClassificationResponse(answer.text, input), provider, sawPage, usage: answer.usage };
+}
+
+/** What the item-only reading is given: the stored text and what the row already holds. */
+export interface ItemInput {
+  vendor: string | null;
+  fullText: string;
+}
+
+export function itemPrompt(): string {
+  return `You are given the text of one receipt or invoice, as optical character recognition read it. Answer with **item**: ${ITEM_RULE}
+
+Respond with ONLY a JSON object (no markdown, no explanation):
+{ "item": "..." }`;
+}
+
+/** Parse the answer of the item-only reading. Anything malformed is null: an item is never guessed from a broken answer. */
+export function parseItemResponse(text: string): string | null {
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first < 0 || last <= first) return null;
+  try {
+    return cleanItem((JSON.parse(text.slice(first, last + 1)) as { item?: unknown }).item);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read only what was bought, from the stored text of a receipt that was read
+ * before the item existed. No page, no search and nothing else is asked: the
+ * vendor, the total and the date of a stored receipt may have been corrected
+ * by a person and are not this call's business. Throws when no provider is
+ * configured or the call fails.
+ */
+export async function readReceiptItem(input: ItemInput): Promise<string | null> {
+  const provider = classifierProvider();
+  if (!provider) throw new ClassifierUnavailableError();
+  const user = [input.vendor && `Vendor: ${input.vendor}`, `\nReceipt text:\n${textForModel(input.fullText)}`].filter(Boolean).join('\n');
+  if (provider === 'anthropic_web_search') {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, maxRetries: MAX_RETRIES });
+    const response = await client.messages.create(
+      { model: process.env.ANTHROPIC_ITEM_MODEL || DEFAULT_ANTHROPIC_ITEM_MODEL, max_tokens: 200, system: itemPrompt(), messages: [{ role: 'user', content: user }] },
+      { timeout: REQUEST_TIMEOUT_MS },
+    );
+    if (response.stop_reason === 'refusal') throw new Error('The model declined to read this receipt.');
+    const block = response.content.findLast((b) => b.type === 'text');
+    return parseItemResponse(block && block.type === 'text' ? block.text : '');
+  }
+  const response = await getAiClient().chat.completions.create(
+    { model: getClassifyModel(), max_tokens: 200, messages: [{ role: 'system', content: itemPrompt() }, { role: 'user', content: user }] },
+    { timeout: REQUEST_TIMEOUT_MS, maxRetries: MAX_RETRIES },
+  );
+  const choice = response.choices[0];
+  if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) throw new Error('The model declined to read this receipt.');
+  return parseItemResponse(choice?.message?.content ?? '');
 }

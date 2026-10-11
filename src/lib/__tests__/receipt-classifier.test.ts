@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CLASSIFY_MODEL, getClassifyModel } from '@/lib/ai-client';
 import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
-import { classificationPrompt, classifierProvider, parseClassificationResponse, textForModel, type ClassifyInput } from '../receipt-classifier';
+import { classificationPrompt, classifierProvider, itemPrompt, parseClassificationResponse, parseItemResponse, textForModel, type ClassifyInput } from '../receipt-classifier';
 
 const INPUT: ClassifyInput = {
   vendor: 'Since 2016',
@@ -120,5 +120,37 @@ describe('getClassifyModel: the model that reads a receipt', () => {
     expect(DEFAULT_CLASSIFY_MODEL).toBe('anthropic/claude-haiku-5.5');
     vi.stubEnv('AI_CLASSIFY_MODEL', 'some/reading-model');
     expect(getClassifyModel()).toBe('some/reading-model');
+  });
+});
+
+describe('what was bought, for the name', () => {
+  const answer = (item: unknown) => JSON.stringify({ item, category: 'Software & Lizenzen', zuordnung: null, taxRate: 19, confidence: 0.9, reasoning: '' });
+
+  it('asks for a few words and no longer asks the model for a name', () => {
+    const prompt = classificationPrompt(INPUT, { webSearch: false });
+    expect(prompt).toContain('**item**');
+    expect(prompt).toContain('in two to four words');
+    expect(prompt).toContain('Null for a meal in a restaurant');
+    expect(prompt).not.toContain('**name**');
+    expect(prompt).toContain('{ "item": "...", "vendor"');
+  });
+
+  it('takes a short item, tidies it, and drops anything that is not one', () => {
+    expect(parseClassificationResponse(answer('ChatGPT Plus'), INPUT).item).toBe('ChatGPT Plus');
+    expect(parseClassificationResponse(answer(' USB-Stick,  Kabel. '), INPUT).item).toBe('USB-Stick Kabel');
+    expect(parseClassificationResponse(answer(null), INPUT).item).toBeNull();
+    expect(parseClassificationResponse(answer(12), INPUT).item).toBeNull();
+    expect(parseClassificationResponse(answer('x'.repeat(200)), INPUT).item!.length).toBeLessThanOrEqual(48);
+    expect(parseClassificationResponse('not json', INPUT).item).toBeNull();
+  });
+
+  it('reads the item alone for a stored receipt, with the same rule', () => {
+    expect(itemPrompt()).toContain('in two to four words');
+    expect(itemPrompt()).toContain('{ "item": "..." }');
+    expect(parseItemResponse('{ "item": "Domainverlängerung" }')).toBe('Domainverlängerung');
+    expect(parseItemResponse('Here it is: {"item":"SSD-Gehäuse"}')).toBe('SSD-Gehäuse');
+    expect(parseItemResponse('{ "item": null }')).toBeNull();
+    expect(parseItemResponse('{ broken')).toBeNull();
+    expect(parseItemResponse('')).toBeNull();
   });
 });

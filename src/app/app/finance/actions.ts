@@ -23,6 +23,7 @@ import {
   RevenueInputError,
   TaxServiceError,
   TreatmentError,
+  acceptEstimateProposals,
   clearItemDecision,
   declineOpenYearBoundary,
   saveYearBoundaryAnswer,
@@ -293,6 +294,20 @@ export async function correctPaymentKind(year: number, paymentId: string, kind: 
 
 export async function confirmPaymentLink(year: number, input: unknown): Promise<Result<StatementView>> {
   return write(year, (ctx) => linkPayment(prisma, ctx, input, (rowId) => isWorkspaceReceipt(prisma, ctx.workspaceId, rowId)));
+}
+
+/**
+ * Accept every unambiguous proposal for a receipt on an estimated amount. The
+ * list is worked out again on the server; the answer says how many were linked.
+ */
+export async function acceptPaymentProposals(year: number): Promise<Result<{ view: StatementView; linked: number }>> {
+  try {
+    const ctx = await writeContext();
+    const linked = await acceptEstimateProposals(prisma, ctx, safeYear(year));
+    return { ok: true, value: { view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)), linked } };
+  } catch (e) {
+    return failure(e);
+  }
 }
 
 export async function removePaymentLink(year: number, linkId: string): Promise<Result<StatementView>> {

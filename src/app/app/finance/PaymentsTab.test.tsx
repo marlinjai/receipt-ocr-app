@@ -25,7 +25,7 @@ const open = (o: Partial<OpenPayment> = {}): OpenPayment => ({
 function view(payments: Partial<PaymentsView> = {}): StatementView {
   return {
     year: 2026,
-    payments: { accounts: [account], yearCount: 3, linkedCount: 1, unclassified: [], treatments: [], open: [], overridden: [], receiptTargets: [], invoiceTargets: [], links: [], ...payments },
+    payments: { accounts: [account], yearCount: 3, linkedCount: 1, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], overridden: [], receiptTargets: [], invoiceTargets: [], links: [], ...payments },
   } as StatementView;
 }
 
@@ -39,6 +39,7 @@ const props = () => ({
   onTreat: vi.fn(),
   onLink: vi.fn(),
   onUnlink: vi.fn(),
+  onAcceptProposals: vi.fn(),
   onNotIncome: vi.fn(),
   onKind: vi.fn(),
 });
@@ -146,6 +147,9 @@ describe('PaymentsTab', () => {
     const p = props();
     const receiptTargets = [{ id: 'r-9', label: 'Bestellung 4711', day: '2025-12-28', amountCents: 10_000 }];
     render(<PaymentsTab view={view({ open: [open()], receiptTargets })} {...p} />);
+    // The picker is drawn only once it is asked for.
+    expect(screen.queryByLabelText('Beleg von Hand wählen')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
     await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
     expect(screen.getByRole('alert').textContent).toContain('Bitte einen Beleg');
     await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r-9');
@@ -164,6 +168,7 @@ describe('PaymentsTab', () => {
     const p = props();
     const income = open({ amountCents: 50_000, freeCents: 50_000, kind: 'income', check: 'income_without_invoice' });
     render(<PaymentsTab view={view({ open: [income], invoiceTargets: [{ id: 'i-1', label: 'Rechnung R-2026-050', openCents: 20_000 }], receiptTargets: [{ id: 'r-9', label: 'x', day: null, amountCents: null }] })} {...p} />);
+    await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
     expect(screen.queryByLabelText('Beleg von Hand wählen')).toBeNull();
     await user.selectOptions(screen.getByLabelText('Rechnung von Hand wählen'), 'i-1');
     await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
@@ -182,6 +187,91 @@ describe('PaymentsTab', () => {
     expect(section.textContent).toContain('privat');
     await user.click(within(section).getByRole('button', { name: 'Zurücksetzen' }));
     expect(p.onKind).toHaveBeenCalledWith('p-7', null);
+  });
+
+  it('with many open payments the list of receipts is drawn once, for the payment whose picker is open', async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 40 }, (_, i) => open({ id: `p-${i}`, counterparty: `Firma Beispiel ${i}` }));
+    const receiptTargets = Array.from({ length: 30 }, (_, i) => ({ id: `r-${i}`, label: `Beleg ${i}`, day: '2026-01-02', amountCents: 1_000 }));
+    const { container } = render(<PaymentsTab view={view({ open: many, receiptTargets })} {...props()} />);
+    // Before: 40 pickers of 30 receipts each. Now none until one is opened, and one at a time.
+    expect(container.querySelectorAll('option[value^="r-"]').length).toBe(0);
+    const openers = screen.getAllByRole('button', { name: 'Von Hand zuordnen' });
+    expect(openers.length).toBe(40);
+    await user.click(openers[3]);
+    expect(container.querySelectorAll('option[value^="r-"]').length).toBe(30);
+    expect(openers[3].getAttribute('aria-expanded')).toBe('true');
+    await user.click(openers[7]);
+    expect(container.querySelectorAll('option[value^="r-"]').length).toBe(30);
+    expect(openers[3].getAttribute('aria-expanded')).toBe('false');
+    await user.click(openers[7]);
+    expect(container.querySelectorAll('option[value^="r-"]').length).toBe(0);
+  });
+
+  it('without anything to link to, no picker is offered', () => {
+    render(<PaymentsTab view={view({ open: [open()] })} {...props()} />);
+    expect(screen.queryByRole('button', { name: 'Von Hand zuordnen' })).toBeNull();
+  });
+
+  it('offers a payment for a receipt on an estimated amount; one click takes one, one click takes all unambiguous ones', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel März', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true };
+    const estimateProposals = [proposal, { ...proposal, paymentId: 'p-2', rowId: 'r-2', receiptLabel: 'Editor Beispiel April', receiptDay: '2026-04-02', bookingDay: '2026-04-03' }, { ...proposal, paymentId: 'p-3', rowId: 'r-3', receiptLabel: 'Hosting Beispiel', unambiguous: false }];
+    render(<PaymentsTab view={view({ estimateProposals })} {...p} />);
+    const section = screen.getByRole('region', { name: 'Vorschläge für geschätzte Belege' });
+    const first = within(section).getByText(/Editor Beispiel März/).closest('li') as HTMLElement;
+    expect(first.textContent).toContain('geschätzt 20,00 € · bezahlt 20,75 € am 03.03.2026 an Editor Beispiel · Später zahlen');
+    expect((within(section).getByText(/Hosting Beispiel/).closest('li') as HTMLElement).textContent).toContain('mehrdeutig, bitte einzeln prüfen');
+
+    // Nothing is linked by drawing the list.
+    expect(p.onLink).not.toHaveBeenCalled();
+    await user.click(within(first).getByRole('button', { name: 'Übernehmen' }));
+    expect(p.onLink).toHaveBeenCalledWith({ paymentId: 'p-1', rowId: 'r-1' });
+
+    // The bulk action counts the unambiguous ones only, asks first, and sends no list: the server works it out again.
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    await user.click(within(section).getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
+    expect(p.onAcceptProposals).not.toHaveBeenCalled();
+    await user.click(within(section).getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
+    expect(p.onAcceptProposals).toHaveBeenCalledWith();
+    expect(confirm.mock.calls[0][0]).toContain('2 eindeutige Vorschläge übernehmen?');
+    confirm.mockRestore();
+  });
+
+  it('only ambiguous proposals: each can be taken, there is nothing to take in bulk; no proposals, no section', () => {
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: '', accountLabel: 'Später zahlen', unambiguous: false };
+    const { unmount } = render(<PaymentsTab view={view({ estimateProposals: [proposal] })} {...props()} />);
+    expect(screen.getByRole('button', { name: 'Übernehmen' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /eindeutigen Vorschl/ })).toBeNull();
+    unmount();
+    render(<PaymentsTab view={view()} {...props()} />);
+    expect(screen.queryByRole('region', { name: 'Vorschläge für geschätzte Belege' })).toBeNull();
+  });
+
+  it('says how many payments are transfers between own accounts, and names how a link came about', () => {
+    render(
+      <PaymentsTab
+        view={view({
+          transferCount: 12,
+          links: [{ linkId: 'l-2', paymentId: 'p-1', bookingDay: '2026-03-03', cents: 2_075, counterparty: 'Editor Beispiel', target: 'receipt', targetLabel: 'Editor Beispiel März', method: 'estimate' }],
+        })}
+        {...props()}
+      />,
+    );
+    expect(screen.getByText(/12 Umbuchungen zwischen eigenen Konten, nach denen nicht gefragt wird/)).toBeTruthy();
+    expect(screen.getByText('Vorschlag, von dir übernommen')).toBeTruthy();
+  });
+
+  it('reports the rows a pay-later list left out in plain words', () => {
+    render(
+      <PaymentsTab
+        view={view()}
+        {...props()}
+        lastImport={{ batchId: 'b', format: 'klarna_csv', total: 5, added: 5, alreadyThere: 0, skipped: { cancelled: 2, duplicate_row: 1, zero_amount: 1 }, autoLinked: 0, firstDay: null, lastDay: null }}
+      />,
+    );
+    expect(screen.getByRole('status').textContent).toContain('2 storniert oder vollständig erstattet, 1 doppelt in der Datei, 1 ohne Betrag');
   });
 
   it('a refund asks for the receipt it belongs to', () => {

@@ -6,6 +6,7 @@ import { rulesForYear } from '@/lib/tax/rules';
 import type { StatementItem, StatementView } from '@/lib/tax/service';
 
 const actions = vi.hoisted(() => ({
+  acceptPaymentProposals: vi.fn(),
   answerYearBoundary: vi.fn(),
   declineYearBoundary: vi.fn(),
   saveLines: vi.fn(),
@@ -143,7 +144,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     smallBusinessAtYearEnd: true,
     statusChanges: [],
     vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, settlements: [] },
-    payments: { accounts: [], yearCount: 0, linkedCount: 0, unclassified: [], treatments: [], open: [], overridden: [], receiptTargets: [], invoiceTargets: [], links: [] },
+    payments: { accounts: [], yearCount: 0, linkedCount: 0, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], overridden: [], receiptTargets: [], invoiceTargets: [], links: [] },
     vendorRules: [],
     yearBoundary: [],
     initialized: true,
@@ -522,5 +523,25 @@ describe('FinanceClient: assets', () => {
       employmentLineKey: null,
       severalLowValueItems: true,
     });
+  });
+  it('accepting the proposals for estimated receipts says how many were linked, and a failure is shown, not swallowed', async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2025-03-02', estimateCents: 2_000, bookingDay: '2025-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true };
+    const payments = view([]).payments;
+    const withProposal = view([], { payments: { ...payments, estimateProposals: [proposal] } });
+    actions.acceptPaymentProposals.mockResolvedValueOnce({ ok: false, error: 'failed' }).mockResolvedValueOnce({ ok: true, value: { view: view([]), linked: 1 } });
+    render(<FinanceClient initial={withProposal} />);
+    await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
+
+    await user.click(screen.getByRole('button', { name: 'Den einen eindeutigen Vorschlag übernehmen' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Das hat nicht geklappt');
+    // The proposal is still there to try again.
+    await user.click(screen.getByRole('button', { name: 'Den einen eindeutigen Vorschlag übernehmen' }));
+    expect(await screen.findByText(/1 Zahlung dem Beleg zugeordnet/)).toBeTruthy();
+    expect(actions.acceptPaymentProposals).toHaveBeenCalledTimes(2);
+    expect(actions.acceptPaymentProposals).toHaveBeenLastCalledWith(2025);
+    expect(screen.queryByRole('region', { name: 'Vorschläge für geschätzte Belege' })).toBeNull();
+    confirm.mockRestore();
   });
 });

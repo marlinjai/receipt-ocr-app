@@ -19,6 +19,8 @@ interface Props {
   onTreat: (counterparty: string, treatment: CounterpartyTreatment | null) => void;
   onLink: (input: { paymentId: string; rowId?: string; invoiceId?: string; cents?: number }) => void;
   onUnlink: (linkId: string) => void;
+  /** Accept every unambiguous proposal for a receipt on an estimated amount; the server works the list out again. */
+  onAcceptProposals: () => void;
   onNotIncome: (payment: OpenPayment) => void;
   /** Re-label one payment (private, refund), or with null put it back to what its file says. */
   onKind: (paymentId: string, kind: 'private' | 'refund' | null) => void;
@@ -36,6 +38,13 @@ const SKIP_LABELS: Record<string, string> = {
   not_completed: 'nicht abgeschlossen',
   other_currency: 'andere Währung',
   memo_line: 'Hinweiszeilen',
+  cancelled: 'storniert oder vollständig erstattet',
+  zero_amount: 'ohne Betrag',
+  duplicate_row: 'doppelt in der Datei',
+};
+const LINK_METHOD_LABELS: Record<string, string> = {
+  reference: 'über die Rechnungsnummer',
+  estimate: 'Vorschlag, von dir übernommen',
 };
 
 /**
@@ -43,14 +52,19 @@ const SKIP_LABELS: Record<string, string> = {
  * a counterparty is treated, and linking payments to receipts and invoices.
  * A link is only made on a reference or by a person's confirmation.
  */
-export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onNotIncome, onKind }: Props) {
+export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onNotIncome, onKind }: Props) {
   const id = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState('');
   const [kind, setKind] = useState<AccountKind>('bank');
   const [accountId, setAccountId] = useState(view.payments.accounts[0]?.id ?? '');
   const [localError, setLocalError] = useState<string | null>(null);
+  // The payment whose picker for linking by hand is open. One at a time: the
+  // picker lists every receipt, and one per open payment made the page draw
+  // hundreds of thousands of entries on every action.
+  const [manualFor, setManualFor] = useState<string | null>(null);
   const p = view.payments;
+  const unambiguous = p.estimateProposals.filter((x) => x.unambiguous).length;
   const shown = localError ?? error;
   const selectedAccount = p.accounts.some((a) => a.id === accountId) ? accountId : (p.accounts[0]?.id ?? '');
 
@@ -163,8 +177,10 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
             <button type="button" className="ui-btn ui-btn-primary" disabled={busy} onClick={readAndImport}>{busy ? 'Liest ein …' : 'Einlesen'}</button>
           </div>
           <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
-            Unterstützt: Exporte von N26, Tomorrow und PayPal sowie die Umsatzliste der Bankschnittstelle. Eine Datei wird
-            ganz oder gar nicht eingelesen; überlappende Zeiträume legen nichts doppelt an.
+            Unterstützt: Exporte von N26, Tomorrow und PayPal, die Kaufliste von Klarna sowie die Umsatzliste der
+            Bankschnittstelle. Eine Datei wird ganz oder gar nicht eingelesen; überlappende Zeiträume legen nichts doppelt
+            an. Was ein Zahlungsdienst später vom Bankkonto einzieht, gilt als Umbuchung zwischen eigenen Konten, sobald
+            die Liste des Dienstes eingelesen ist.
           </p>
           {lastImport && (
             <p className="ui-note ui-note-ok mt-3" role="status">
@@ -211,10 +227,56 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         </section>
       )}
 
+      {p.estimateProposals.length > 0 && (
+        <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Vorschläge für geschätzte Belege">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Belege mit geschätztem Eurobetrag: passende Zahlung</h2>
+            {unambiguous > 0 && (
+              <button
+                type="button"
+                className="ui-btn ui-btn-sm ui-btn-primary"
+                disabled={busy}
+                onClick={() => {
+                  if (!window.confirm(`${unambiguous} ${unambiguous === 1 ? 'eindeutigen Vorschlag' : 'eindeutige Vorschläge'} übernehmen? Jede Zuordnung lässt sich unter „Zuordnungen und Regeln“ wieder lösen.`)) return;
+                  onAcceptProposals();
+                }}
+              >
+                {unambiguous === 1 ? 'Den einen eindeutigen Vorschlag übernehmen' : `Alle ${unambiguous} eindeutigen Vorschläge übernehmen`}
+              </button>
+            )}
+          </div>
+          <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+            Ein Beleg in fremder Währung zählt mit einem geschätzten Eurobetrag, bis seine Zahlung zugeordnet ist.
+            Vorgeschlagen wird eine Zahlung an denselben Lieferanten, gebucht von 3 Tagen vor bis 10 Tage nach dem
+            Belegdatum, höchstens 8 % neben der Schätzung. Zugeordnet wird nur, was du übernimmst.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {p.estimateProposals.map((proposal) => (
+              <li key={`${proposal.rowId}:${proposal.paymentId}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+                <span className="text-sm" style={{ color: 'var(--foreground)' }}>
+                  {formatDay(proposal.receiptDay)} {proposal.receiptLabel.slice(0, 60)}
+                  <span className="ml-2 text-xs tabular-nums" style={{ color: 'var(--muted)' }}>
+                    geschätzt {euro(proposal.estimateCents)} · bezahlt {euro(proposal.paidCents)} am {formatDay(proposal.bookingDay)}
+                    {proposal.counterparty ? ` an ${proposal.counterparty.slice(0, 40)}` : ''} · {proposal.accountLabel}
+                    {proposal.unambiguous ? '' : ' · mehrdeutig, bitte einzeln prüfen'}
+                  </span>
+                </span>
+                <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onLink({ paymentId: proposal.paymentId, rowId: proposal.rowId })}>
+                  Übernehmen
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Offene Zahlungen">
         <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>
           Zahlungen ohne Beleg oder Rechnung {view.year}
-          <span className="ml-2 text-xs font-normal" style={{ color: 'var(--muted)' }}>{p.linkedCount} von {p.yearCount} Zahlungen zugeordnet</span>
+          <span className="ml-2 text-xs font-normal" style={{ color: 'var(--muted)' }}>
+            {p.linkedCount} von {p.yearCount} Zahlungen zugeordnet
+            {p.transferCount > 0 ? ` · ${p.transferCount} Umbuchungen zwischen eigenen Konten, nach denen nicht gefragt wird` : ''}
+          </span>
         </h2>
         {p.open.length === 0 ? (
           <p className="mt-3 text-sm" style={{ color: 'var(--muted)' }}>
@@ -261,6 +323,16 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                       Keine Einnahme (Erstattung oder Umbuchung)
                     </button>
                   )}
+                  {(payment.check === 'income_without_invoice' ? p.invoiceTargets.length : p.receiptTargets.length) > 0 && (
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm"
+                      aria-expanded={manualFor === payment.id}
+                      onClick={() => setManualFor(manualFor === payment.id ? null : payment.id)}
+                    >
+                      Von Hand zuordnen
+                    </button>
+                  )}
                   {payment.counterparty ? (
                     <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onTreat(payment.counterparty, 'private')}>
                       Gegenseite ist privat
@@ -271,13 +343,15 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                     </button>
                   )}
                 </div>
-                <ManualLink
-                  payment={payment}
-                  receipts={payment.check === 'income_without_invoice' ? [] : p.receiptTargets}
-                  invoices={payment.check === 'income_without_invoice' ? p.invoiceTargets : []}
-                  busy={busy}
-                  onLink={onLink}
-                />
+                {manualFor === payment.id && (
+                  <ManualLink
+                    payment={payment}
+                    receipts={payment.check === 'income_without_invoice' ? [] : p.receiptTargets}
+                    invoices={payment.check === 'income_without_invoice' ? p.invoiceTargets : []}
+                    busy={busy}
+                    onLink={onLink}
+                  />
+                )}
               </li>
             ))}
           </ul>
@@ -310,7 +384,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 <li key={link.linkId} className="flex flex-wrap items-baseline justify-between gap-2">
                   <span>
                     {formatDay(link.bookingDay)} {link.counterparty || 'ohne Namen'} {euro(link.cents)} → {link.targetLabel}
-                    <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>{link.method === 'reference' ? 'über die Rechnungsnummer' : 'von dir bestätigt'}</span>
+                    <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>{LINK_METHOD_LABELS[link.method] ?? 'von dir bestätigt'}</span>
                   </span>
                   <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onUnlink(link.linkId)}>Lösen</button>
                 </li>
@@ -335,8 +409,8 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
 
 /**
  * Linking by hand, for everything no proposal covers: an amount that differs
- * (a foreign-currency receipt, a fee kept on the way), a receipt of last year
- * paid this year, one payment for two receipts.
+ * (a fee kept on the way), a receipt of last year paid this year, one payment
+ * for two receipts. Drawn only for the payment whose picker was opened.
  */
 function ManualLink({
   payment,

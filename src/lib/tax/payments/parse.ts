@@ -91,12 +91,15 @@ interface Draft {
   reference: string;
   entryReference: string | null;
   kind: PaymentKind;
+  /** The source's own unique number for the movement; when set it alone is the identity. */
+  identity?: string;
 }
 
 /** Give every draft its identity; identical movements are numbered in order of appearance. */
 function withHashes(drafts: Draft[]): NormalizedPayment[] {
   const seen = new Map<string, number>();
-  return drafts.map((d) => {
+  return drafts.map(({ identity, ...d }) => {
+    if (identity) return { ...d, sourceHash: createHash('sha256').update(`id|${identity}`).digest('hex') };
     const base = [d.bookingDay, d.amountCents, d.counterparty.toLowerCase(), d.reference.toLowerCase(), d.entryReference ?? ''].join('|');
     const occurrence = (seen.get(base) ?? 0) + 1;
     seen.set(base, occurrence);
@@ -233,6 +236,66 @@ function parsePaypal(rows: string[][]): ParsedFile {
   return finish('paypal_csv', drafts, skipped);
 }
 
+/**
+ * The purchase list of the pay-later service. One row is one purchase, always
+ * a positive amount, on the day it was made. The list holds no refunds, no
+ * settlements and no single instalments: a purchase paid in instalments is one
+ * spend of the full amount, and how the service collects the money shows on
+ * the bank account, where it is a transfer (see `funding.ts`).
+ */
+function parseKlarna(rows: string[][]): ParsedFile {
+  const skipped: Record<string, number> = {};
+  const drafts: Draft[] = [];
+  const seenReferences = new Set<string>();
+  for (const r of records(rows)) {
+    if (clean(r.get('currency')) !== 'EUR') {
+      skip(skipped, 'other_currency');
+      continue;
+    }
+    const status = clean(r.get('status'));
+    // The merchant has not processed the order yet: it can still change or never be charged.
+    if (/bearbeitet|ausstehend|pending|processing/i.test(status)) {
+      skip(skipped, 'not_completed');
+      continue;
+    }
+    // Cancelled or refunded in full: the money never left, or all of it came back.
+    // A part refund keeps the purchase; the money back is linked from the bank side.
+    if (/storniert|erstattet|cancel|refunded/i.test(status) && !/teilweise|partial/i.test(status)) {
+      skip(skipped, 'cancelled');
+      continue;
+    }
+    const bookingDay = toIsoDay(r.get('created_date'));
+    const amountCents = toCents(r.get('amount'));
+    if (!bookingDay || amountCents === null) throw new PaymentParseError('unreadable_row', r.line);
+    if (amountCents === 0) {
+      skip(skipped, 'zero_amount');
+      continue;
+    }
+    const reference = clean(r.get('payment_reference'));
+    if (reference) {
+      // The same purchase listed twice (two extracts merged into one file) is one purchase.
+      if (seenReferences.has(reference)) {
+        skip(skipped, 'duplicate_row');
+        continue;
+      }
+      seenReferences.add(reference);
+    }
+    drafts.push({
+      bookingDay,
+      // The day the merchant captured the purchase, when the list has it.
+      valueDay: toIsoDay(r.get('activated')),
+      // The list states what was bought as a positive amount; a negative one is money back.
+      amountCents: -amountCents,
+      counterparty: clean(r.get('merchant')),
+      reference: clean(r.get('items')),
+      entryReference: reference || clean(r.get('statement_number')) || null,
+      kind: amountCents < 0 ? 'refund' : 'spend',
+      ...(reference ? { identity: reference } : {}),
+    });
+  }
+  return finish('klarna_csv', drafts, skipped);
+}
+
 function parseEnableBanking(data: unknown): ParsedFile {
   const list = Array.isArray(data) ? data : Array.isArray((data as { transactions?: unknown })?.transactions) ? (data as { transactions: unknown[] }).transactions : null;
   if (list === null) throw new PaymentParseError('unknown_layout');
@@ -293,5 +356,6 @@ export function parsePaymentFile(text: string): ParsedFile {
   if (has('Booking Date', 'Partner Name', 'Amount (EUR)', 'Payment Reference')) return parseN26(rows);
   if (has('booking_date', 'sender_or_recipient', 'amount', 'currency', 'booking_type')) return parseTomorrow(rows);
   if (has('Datum', 'Name', 'Typ', 'Status', 'Währung', 'Brutto', 'Transaktionscode', 'Auswirkung auf Guthaben')) return parsePaypal(rows);
+  if (has('created_date', 'amount', 'currency', 'merchant', 'status', 'payment_reference')) return parseKlarna(rows);
   throw new PaymentParseError('unknown_layout');
 }

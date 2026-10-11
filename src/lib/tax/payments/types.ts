@@ -8,13 +8,16 @@ export type PaymentFormat =
   | 'enable_banking_json'
   | 'n26_csv'
   | 'tomorrow_csv'
-  | 'paypal_csv';
+  | 'paypal_csv'
+  /** The purchase list of the pay-later service (Klarna), converted to a table from its data extract. */
+  | 'klarna_csv';
 
 export const PAYMENT_FORMAT_LABELS: Record<PaymentFormat, string> = {
   enable_banking_json: 'Bankschnittstelle (JSON)',
   n26_csv: 'N26 (CSV)',
   tomorrow_csv: 'Tomorrow (CSV)',
   paypal_csv: 'PayPal (CSV)',
+  klarna_csv: 'Klarna-Käufe (CSV)',
 };
 
 /** What a movement is, as far as the source itself says. A person can override it. */
@@ -51,7 +54,9 @@ export interface NormalizedPayment {
    * Identity of the movement within its account, stable across files: the
    * same movement in an overlapping export gets the same hash and is stored
    * once. Two genuinely identical movements (same day, amount, counterparty
-   * and text) are told apart by their order of appearance.
+   * and text) are told apart by their order of appearance. Where the source
+   * numbers its movements uniquely (the pay-later list), that number alone is
+   * the identity.
    */
   sourceHash: string;
 }

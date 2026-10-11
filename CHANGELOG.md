@@ -79,6 +79,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- "Seite neu lesen" keeps the vendor a receipt already has when the page shows the same name in another spelling (the legal form added, another case): "A2 Hosting" no longer becomes "A2 Hosting LLC" and falls out of its group. A vendor that is really another name is still corrected
 - Retaking the photo of a receipt no longer resets its assignment or a business share somebody changed
 - A receipt can no longer be saved or retaken with a file another workspace holds: the file id from the browser is checked against the session's workspace before the file is attached or read
 - The reader finds the invoice date on invoices that print it as "20-NOV-2025", "8. March 2025", "26. Nov. 2025" or with the label alone on the line above (Adobe, Apple, Google, Microsoft). Every date is ranked by the label in front of it; a due, renewal, debit or expiry date is never taken as the invoice date

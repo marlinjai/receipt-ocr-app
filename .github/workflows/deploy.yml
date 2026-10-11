@@ -3,6 +3,15 @@ name: Build & Deploy
 on:
   push:
     branches: [main]
+    # Paths that never enter the container image: .dockerignore already keeps
+    # docs, root markdown, .github and .evolution out of the build context, and
+    # no tracked markdown file lives anywhere else.
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.evolution/**'
+      - '.github/workflows/deploy-docs.yml'
+      - '.github/workflows/verify.yml'
   workflow_dispatch:
 
 jobs:

@@ -674,6 +674,14 @@ describe('a purchase first listed without the service’s number', () => {
     expect(await importPayments(db, ctx, laterId, MARCH + '\n')).toMatchObject({ added: 0, adopted: 0 });
   });
 
+  it('money back is never taken for the same movement: two refunds of one day, amount and merchant both stay', async () => {
+    const { ctx, laterId } = await withLaterAccount();
+    await importPayments(db, ctx, laterId, laterFile(later('2025-03-03', 'Laden Beispiel', '-5.00', '4100000000001')));
+    expect(await importPayments(db, ctx, laterId, laterFile(later('2025-03-03', 'Laden Beispiel', '-5.00', '4100000000002')))).toMatchObject({ added: 1, adopted: 0 });
+    const stored = await db.taxPayment.findMany({ where: { accountId: laterId }, orderBy: { entryReference: 'asc' } });
+    expect(stored.map((p) => [p.entryReference, p.amountCents, p.sourceKind])).toEqual([['4100000000001', 500, 'refund'], ['4100000000002', 500, 'refund']]);
+  });
+
   it('two stored purchases that both fit are not guessed at: the numbered one is added', async () => {
     const { ctx, laterId } = await withLaterAccount();
     await importPayments(db, ctx, laterId, laterFile(later('2025-03-03', 'Kiosk Beispiel', '2.00', ''), later('2025-03-03', 'Kiosk Beispiel', '2.00', '')));
@@ -795,8 +803,11 @@ describe('money that only funds another payment account', () => {
     // Listed in March: 1.00 + 20.75 + 12.40 + 2.00 = 36.15, and 36.15 was collected.
     expect(later).toMatchObject({ serviceKind: 'pay_later', accountLabels: ['Später zahlen'], collectedCents: 3615, listedCents: 3615, differenceCents: 0, reconciles: true });
     expect(later.months).toEqual([{ month: '2025-03', collectedCents: 3615, listedCents: 3615, differenceCents: 0, runningCents: 0 }]);
-    // The wallet: 22.99 listed, 19.99 collected from the bank: three euro were paid another way, which is said, not hidden.
-    expect(view.payments.reconciliations.find((r) => r.service === 'paypal')).toMatchObject({ collectedCents: 1999, listedCents: 2299, differenceCents: -300, reconciles: false, toleranceCents: 100 });
+    // The wallet: 22.99 listed, 19.99 collected from the bank. Three euro were paid from balance or a card, which is
+    // shown and is no alarm: for a wallet only MORE collected than listed is money the rule hides without an explanation.
+    expect(view.payments.reconciliations.find((r) => r.service === 'paypal')).toMatchObject({ collectedCents: 1999, listedCents: 2299, differenceCents: -300, reconciles: true, toleranceCents: 100 });
+    await importPayments(db, ctx, accountId, file(line('2025-03-20', 'PayPal Europe S.a.r.l. et Cie S.C.A', 'Ihr Einkauf bei Gastshop Beispiel', '-45', 'Direct Debit')));
+    expect((await loadStatement(db, ws.workspaceId, 2025)).payments.reconciliations.find((r) => r.service === 'paypal')).toMatchObject({ collectedCents: 6499, listedCents: 2299, differenceCents: 4200, reconciles: false });
 
     // A late fee debited on its own within the covered days is hidden by the rule, and shows up as money the list does not explain.
     await importPayments(db, ctx, accountId, file(line('2025-03-29', 'Klarna Bank AB (publ)', 'Mahngebühr', '-4.50', 'Direct Debit')));

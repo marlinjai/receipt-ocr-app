@@ -814,7 +814,7 @@ export interface Reconciliation {
   listedCents: number;
   /** Collected less listed over the year. */
   differenceCents: number;
-  /** The difference of the year stays within the tolerance. */
+  /** The difference of the year stays within the tolerance (for a wallet: no more collected than listed plus the tolerance). */
   reconciles: boolean;
   toleranceCents: number;
 }
@@ -1034,7 +1034,10 @@ function buildPaymentsView(
       collectedCents,
       listedCents,
       differenceCents: collectedCents - listedCents,
-      reconciles: Math.abs(collectedCents - listedCents) <= toleranceCents,
+      // A wallet also pays from its balance or a card, so less collected than listed is its normal case;
+      // what must not pass unseen is more collected than the list explains. A pay-later service collects
+      // every listed purchase from the bank, so there both directions are called out.
+      reconciles: service.kind === 'wallet' ? collectedCents - listedCents <= toleranceCents : Math.abs(collectedCents - listedCents) <= toleranceCents,
       toleranceCents,
     });
   }

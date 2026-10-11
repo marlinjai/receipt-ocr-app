@@ -405,13 +405,13 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 {SERVICE_LABELS[r.service] ?? r.service} ({r.accountLabels.join(', ')}): vom Bankkonto eingezogen {euro(r.collectedCents)}, Käufe laut Liste {euro(r.listedCents)},{' '}
                 Differenz {euro(Math.abs(r.differenceCents))} {r.differenceCents > 0 ? 'mehr eingezogen als gelistet' : r.differenceCents < 0 ? 'weniger eingezogen als gelistet' : ''}.{' '}
                 {r.reconciles
-                  ? 'Das passt zusammen.'
+                  ? r.differenceCents < -r.toleranceCents
+                    ? 'Das ist bei einem Guthabenkonto üblich: der Rest wurde aus Guthaben oder über eine Karte bezahlt. Nichts wurde eingezogen, das die Liste nicht erklärt.'
+                    : 'Das passt zusammen.'
                   : `Das passt nicht zusammen (Toleranz ${euro(r.toleranceCents)}). ${
                       r.differenceCents > 0
                         ? 'Mehr eingezogen heißt: Käufe, die in der Liste fehlen (andere Währung, beim Export noch offen), Gebühren oder Zinsen, oder Käufe aus einem anderen Jahr. Die betreffende Abbuchung unten als eigene Zahlung kennzeichnen.'
-                        : r.serviceKind === 'wallet'
-                          ? 'Weniger eingezogen heißt: Käufe wurden aus Guthaben oder über eine Karte bezahlt, oder die Abbuchung liegt in einem anderen Jahr.'
-                          : 'Weniger eingezogen heißt: Käufe werden erst später eingezogen (Zahlungsziel, Raten), wurden erstattet, oder die Abbuchung liegt in einem anderen Jahr.'
+                        : 'Weniger eingezogen heißt: Käufe werden erst später eingezogen (Zahlungsziel, Raten), wurden erstattet, oder die Abbuchung liegt in einem anderen Jahr.'
                     }`}
               </p>
               {r.months.length > 0 && (

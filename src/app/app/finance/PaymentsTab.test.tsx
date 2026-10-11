@@ -314,10 +314,13 @@ describe('PaymentsTab', () => {
   it('sets what was collected against what the service’s list states, and calls out a year that does not fit', () => {
     const months = [{ month: '2026-03', collectedCents: 4_065, listedCents: 3_615, differenceCents: 450, runningCents: 450 }];
     const fits = { service: 'paypal', serviceKind: 'wallet' as const, accountLabels: ['Geldbörse'], months: [], collectedCents: 1_999, listedCents: 1_999, differenceCents: 0, reconciles: true, toleranceCents: 100 };
+    const fromBalance = { ...fits, accountLabels: ['Zweite Geldbörse'], listedCents: 9_999, differenceCents: -8_000 };
     const off = { service: 'klarna', serviceKind: 'pay_later' as const, accountLabels: ['Später zahlen'], months, collectedCents: 4_065, listedCents: 3_615, differenceCents: 450, reconciles: false, toleranceCents: 100 };
-    render(<PaymentsTab view={view({ reconciliations: [fits, off] })} {...props()} />);
+    render(<PaymentsTab view={view({ reconciliations: [fits, fromBalance, off] })} {...props()} />);
     const section = screen.getByRole('region', { name: 'Umbuchungen zwischen eigenen Konten' });
     expect(within(section).getByText(/PayPal \(Geldbörse\): vom Bankkonto eingezogen 19,99 €, Käufe laut Liste 19,99 €/).textContent).toContain('Das passt zusammen.');
+    // A wallet that collected less than it lists is no alarm, and says why.
+    expect(within(section).getByText(/PayPal \(Zweite Geldbörse\)/).textContent).toContain('bei einem Guthabenkonto üblich');
     const alert = within(section).getByRole('alert');
     expect(alert.textContent).toContain('Klarna (Später zahlen): vom Bankkonto eingezogen 40,65 €, Käufe laut Liste 36,15 €, Differenz 4,50 € mehr eingezogen als gelistet.');
     expect(alert.textContent).toContain('Das passt nicht zusammen (Toleranz 1,00 €)');

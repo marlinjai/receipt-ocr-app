@@ -131,7 +131,9 @@ Built on the branch `fix/pay-later-review-findings`.
     with the difference named and a table per month with a running difference. The year is
     called out when the difference is more than one euro or one percent of the listed purchases.
     Judged per year, not per month: a pay-later service collects weeks after the purchase, so
-    single months never fit. A late fee, interest or a purchase missing from the list shows as
+    single months never fit. For a wallet only MORE collected than listed is called out: it also
+    pays from its balance or a card, so less collected than listed is its normal case and is
+    shown without an alarm. A late fee, interest or a purchase missing from the list shows as
     "more collected than listed"; the person marks that debit as a payment of its own.
 17. **A purchase cancelled or refunded in full after it was imported stops counting (adds to
     5).** The file names such purchases by identity; a payment stored under one is marked with
@@ -153,7 +155,7 @@ Built on the branch `fix/pay-later-review-findings`.
 20. **A purchase stored without the service's number is recognized when a later file gives it
     one (adds to 3).** Exactly one stored row without a number and exactly one new row with one
     must agree on day, amount and merchant; the stored row then takes the number as its
-    identity and keeps its links. The same inside one file. With more than one candidate on
+    identity and keeps its links. Purchases only: money back is never merged. The same inside one file. With more than one candidate on
     either side nothing is guessed and both stay. In today's file no such pair exists (6 rows
     without a number, none repeated by a numbered row).
 21. **Accepting proposals (replaces 12 in part).** One "Übernehmen" and the bulk action use the

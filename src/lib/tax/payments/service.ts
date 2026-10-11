@@ -200,7 +200,8 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
  * and keeps everything else, its links included. Returns how many did.
  */
 async function adoptUnreferenced(db: Prisma.TransactionClient, accountId: string, parsed: readonly NormalizedPayment[]): Promise<number> {
-  const numbered = parsed.filter((p) => p.byReference && p.entryReference);
+  // Purchases only: money back carries its purchase's number and has an identity of its own.
+  const numbered = parsed.filter((p) => p.byReference && p.entryReference && p.amountCents < 0);
   if (numbered.length === 0) return 0;
   const known = new Set(
     (await db.taxPayment.findMany({ where: { accountId, sourceHash: { in: numbered.map((p) => p.sourceHash) } }, select: { sourceHash: true } })).map((p) => p.sourceHash),
@@ -215,7 +216,7 @@ async function adoptUnreferenced(db: Prisma.TransactionClient, accountId: string
   }
   const stored = await db.taxPayment.findMany({ where: { accountId, bookingDay: { in: [...new Set(fresh.map((p) => p.bookingDay))] } } });
   // Stored without a number: its identity is not the hash of a number of its own.
-  const unnumbered = stored.filter((p) => p.sourceHash !== referenceHash(p.entryReference ?? ''));
+  const unnumbered = stored.filter((p) => p.amountCents < 0 && p.sourceHash !== referenceHash(p.entryReference ?? ''));
   let adopted = 0;
   for (const [key, claimants] of claims) {
     const candidates = unnumbered.filter((p) => sameMovement(p) === key);

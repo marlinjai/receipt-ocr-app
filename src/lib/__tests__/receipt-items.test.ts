@@ -92,4 +92,21 @@ describe('giving stored receipts what was bought', () => {
     expect(result).toEqual({ rowId: 'r1', outcome: 'failed', item: null, renamedTo: null });
     expect(cell('r1', 'Name')).toBe('Example Software Ireland Ltd, 23,80 $, 01.02.2024');
   });
+
+  it('builds the name from the row as it is after the model answered, and keeps an item typed meanwhile', async () => {
+    const { adapter, cell } = table({ r1: receipt() });
+    const [result] = await fillReceiptItems(adapter, 't1', ['r1'], async () => {
+      // While the model was asked, a person corrected the vendor and typed an item.
+      await adapter.updateRow('r1', { 'c-Vendor': 'Beispiel', 'c-Item': 'Jahresabo' });
+      return 'Example Plus';
+    });
+    expect(result).toMatchObject({ outcome: 'kept', item: 'Jahresabo', renamedTo: 'Beispiel, Jahresabo, 23,80 $, 01.02.2024' });
+    expect(cell('r1', 'Item')).toBe('Jahresabo');
+  });
+
+  it('does not touch an archived receipt', async () => {
+    const { adapter } = table({ r1: receipt() });
+    const archived: typeof adapter = { ...adapter, getRow: async (id) => ({ ...(await adapter.getRow(id))!, archived: true }) };
+    expect((await fillReceiptItems(archived, 't1', ['r1'], async () => 'x item'))[0].outcome).toBe('not_found');
+  });
 });

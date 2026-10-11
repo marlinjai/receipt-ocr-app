@@ -1,6 +1,6 @@
 import type { CellValue } from '@marlinjai/data-table-core';
-import { ITEM_COLUMN, nameIsBuilt } from '@/lib/receipt-name';
-import { nameFromCells } from '@/lib/receipt-name-cells';
+import { ITEM_COLUMN } from '@/lib/receipt-name';
+import { nameFromCells, storedNameIsBuilt } from '@/lib/receipt-name-cells';
 import { MEAL_CATEGORY } from '@/lib/receipts-constants';
 import { isGroupRow } from '@/lib/receipts-kind';
 
@@ -19,7 +19,7 @@ import { isGroupRow } from '@/lib/receipts-kind';
  */
 
 /** How many rows one call takes: each is one model call, and the request has to answer in time. */
-export const ITEM_BATCH_LIMIT = 25;
+export const ITEM_BATCH_LIMIT = 15;
 /** How many model calls run side by side. */
 const SIDE_BY_SIDE = 5;
 
@@ -50,6 +50,7 @@ export interface ItemResult {
 interface StoredRow {
   id: string;
   tableId: string;
+  archived?: boolean;
   cells: Record<string, CellValue>;
 }
 
@@ -73,7 +74,7 @@ export async function fillReceiptItems(adapter: ItemsAdapter, tableId: string, r
   const one = async (rowId: string): Promise<ItemResult> => {
     const result = (outcome: ItemOutcome, item: string | null = null, renamedTo: string | null = null): ItemResult => ({ rowId, outcome, item, renamedTo });
     const row = await adapter.getRow(rowId);
-    if (!row || row.tableId !== tableId || isGroupRow(row, columns) || !itemId || !nameId) return result('not_found');
+    if (!row || row.tableId !== tableId || row.archived || isGroupRow(row, columns) || !itemId || !nameId) return result('not_found');
     if (categoryId && mealOptionId && row.cells[categoryId] === mealOptionId) return result('meal');
 
     const cells: Record<string, CellValue> = {};
@@ -94,11 +95,19 @@ export async function fillReceiptItems(adapter: ItemsAdapter, tableId: string, r
         if (item) cells[itemId] = item;
       }
     }
+    // The model took its time: the row is read again, so a correction made meanwhile is
+    // what the name is built from, and an item typed meanwhile stays.
+    const now = (await adapter.getRow(rowId)) ?? row;
+    if (cells[itemId] !== undefined && text(now.cells[itemId])) {
+      delete cells[itemId];
+      item = text(now.cells[itemId]);
+      outcome = 'kept';
+    }
     // The name from what the row holds now. A name a person typed stays.
     let renamedTo: string | null = null;
-    if (nameIsBuilt(row.cells[nameId])) {
-      const name = await nameFromCells(adapter, columns, { ...row.cells, ...cells });
-      if (name && name !== row.cells[nameId]) {
+    if (await storedNameIsBuilt(adapter, columns, now.cells)) {
+      const name = await nameFromCells(adapter, columns, { ...now.cells, ...cells });
+      if (name && name !== now.cells[nameId]) {
         cells[nameId] = name;
         renamedTo = name;
       }

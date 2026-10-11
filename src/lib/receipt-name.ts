@@ -64,18 +64,29 @@ export function cleanItem(value: unknown): string | null {
 }
 
 const UNREADABLE_PREFIX = 'Nicht lesbar: ';
-/** The way a built name ends: a total ("119,00 €", "23,80 $", "10,00 XXQ"), a day, or both. */
-const BUILT_TAIL = /(?:\d{1,3}(?:\.\d{3})*,\d{2} \S{1,4}|\d{2}\.\d{2}\.\d{4})$/;
+/** A receipt nothing could be read from is named after its file until its cells say more. */
+const FILE_NAME = /^[^,]+\.(pdf|png|jpe?g|webp|heic|heif|tiff?)$/i;
 
 /**
- * True when a stored name was put together from the cells (or stands in for a
- * receipt nothing could be read from), so it may be built again when the cells
- * change. A name a person typed says something else and is left alone.
+ * True when a stored name was put together from the cells the row holds (or
+ * stands in for a receipt nothing could be read from), so it may be built
+ * again when the cells change. A name a person typed says something else and
+ * is left alone.
+ *
+ * Built means: the name ends in exactly the total and the day the row holds
+ * now, behind a comma or as the whole name. The vendor and the item in front
+ * may be out of date, which is the case this exists for. A typed name that
+ * merely mentions a date or an amount ("Hotel Messe 12.03.2025") does not end
+ * that way. Where the row holds neither a total nor a day, only the name its
+ * vendor and item make counts.
  */
-export function nameIsBuilt(name: unknown): boolean {
+export function nameIsBuilt(name: unknown, stored: ReceiptNameParts): boolean {
   if (typeof name !== 'string') return true;
   const trimmed = name.trim();
-  return trimmed === '' || trimmed.startsWith(UNREADABLE_PREFIX) || BUILT_TAIL.test(trimmed);
+  if (trimmed === '' || trimmed.startsWith(UNREADABLE_PREFIX) || FILE_NAME.test(trimmed)) return true;
+  const tail = receiptName({ vendor: null, item: null, gross: stored.gross, currency: stored.currency, date: stored.date });
+  if (tail) return trimmed === tail || trimmed.endsWith(`, ${tail}`);
+  return trimmed === receiptName(stored) || trimmed === receiptName({ ...stored, item: null });
 }
 
 /** The name, or an empty string when neither vendor, total nor date is known (the caller then names the row after its file). */

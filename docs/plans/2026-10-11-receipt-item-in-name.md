@@ -33,13 +33,15 @@ the name.
   written by a model. An item that only repeats the vendor is left out. A business meal has no
   item: it is named by its restaurant, and what was eaten belongs to the meal register.
 - **The name follows its cells.** A write that changes vendor, item, total, currency or date
-  builds the name again, when the stored name is one that was built (it ends in a total or a
-  day, or it stands for an unreadable file). A name a person typed stays, and so does the name
-  of a group. The table shows the new name at once, because the edit returns the row.
-- **A new reading of a stored receipt** fills the item only where it is empty, and builds the
-  name from the row as it is after the write, so a vendor that was kept is the one in the name.
+  builds the name again, when the stored name is one that was built: it ends in exactly the
+  total and the day the row holds, or it stands for an unreadable file. A name a person typed
+  stays, also one that mentions a day or an amount, and so does the name of a group. The same
+  holds for a correction taken from the review list. The table shows the new name at once, because the edit returns the row.
+- **A new reading or a new photo of a stored receipt** fills the item only where it is empty,
+  and builds the name from the row as it is after the write, so a vendor or an item that was
+  kept is the one in the name. A row filed as a meal gets no item from a new reading.
 - **Stored receipts** get their item through `POST /api/receipts/items` with a list of row ids
-  (at most 25 per call): the item is read from the stored text by the small model, only where
+  (at most 15 per call): the item is read from the stored text by the small model, only where
   the row holds none, and the name is built again from the row's own cells. Vendor, total, date
   and every decision stay untouched, because people have corrected them since. A row that could
   not be asked is unchanged and can be sent again. The caller names the rows, so a part of the
@@ -55,6 +57,18 @@ the name.
    would undo corrections made by hand.
 5. The fill is run by row ids from outside, year by year. The business meals of 2025 are left
    out while the owner is completing the meal register.
+
+## Reviewed before the pull request
+
+A fresh agent read the commit on 2026-10-11. Fixed from its findings: the item-only call had
+no room for the model's reasoning and would have reported "nothing to name" on a cut answer; a
+typed name ending in a date or an amount counted as built; a new photo replaced a worded item;
+a currency option that no longer exists turned a total into euros; a new reading could put an
+item on a meal; corrections taken in the review list did not reach the name; the name was
+built from the row as it was before the model answered. Left as it is: two cell edits on one
+row within the same moment each build the name from the stored row, so the later write can
+carry one stale part until the next edit; rows from the sheet import keep the name the sheet
+gives them.
 
 ## Open
 

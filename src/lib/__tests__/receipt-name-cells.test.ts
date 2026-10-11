@@ -47,4 +47,15 @@ describe('a name that follows its cells', () => {
     expect(await withFollowingName(adapter, COLUMNS, { 'c-Vendor': '' }, onlyVendor)).toEqual({ 'c-Vendor': '' });
     expect(await withFollowingName(adapter, COLUMNS, { 'c-Gross': 5 }, onlyVendor)).toEqual({ 'c-Gross': 5, 'c-Name': 'Example, 5,00 €' });
   });
+
+  it('does not rename a total into euros when its currency can no longer be looked up', async () => {
+    const gone = { ...stored, 'c-Currency': 'deleted-option' };
+    expect(await nameFromCells(adapter, COLUMNS, gone)).toBe('');
+    expect(await withFollowingName(adapter, COLUMNS, { 'c-Vendor': 'Example' }, gone)).toEqual({ 'c-Vendor': 'Example' });
+  });
+
+  it('does not take a typed name for a built one because it mentions the day', async () => {
+    const typed = { ...stored, 'c-Name': 'Hotel Messe 01.02.2024' };
+    expect(await withFollowingName(adapter, COLUMNS, { 'c-Vendor': 'Example' }, typed)).toEqual({ 'c-Vendor': 'Example' });
+  });
 });

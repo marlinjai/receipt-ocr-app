@@ -417,12 +417,17 @@ export async function retakeReceipt(
   // for. Meal facts the user (or an earlier reading) already filled in stay,
   // and so does an assignment: the first reading leaves it empty unless the
   // document itself shows it, so a value there is an answer somebody gave.
-  keepWhereFilled(read.cells, row, columns, [...MEAL_READ_COLUMNS, 'Zuordnung']);
+  keepWhereFilled(read.cells, row, columns, [...MEAL_READ_COLUMNS, ...WORDED_COLUMNS, 'Zuordnung']);
   keepChangedShare(read.cells, row, columns);
   // The rates text is derived again from what the row holds after this write:
   // tax lines that were kept above must not be contradicted by the new reading's.
   const ratesColumnId = columns.find((c) => c.name === TAX_RATES_COLUMN)?.id;
   if (ratesColumnId) delete read.cells[ratesColumnId];
+  // The name says what the row holds after this write: an item that was kept stays in it.
+  const retakenNameId = columns.find((c) => c.name === 'Name')?.id;
+  if (retakenNameId && retakenNameId in read.cells) {
+    read.cells[retakenNameId] = (await nameFromCells(adapter, columns, { ...row.cells, ...read.cells })) || read.cells[retakenNameId];
+  }
   await adapter.updateRow(row.id, withTaxRates(columns, read.cells, row.cells) as typeof read.cells);
 
   if (read.imageColumnId && file.id) {
@@ -543,6 +548,8 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
       if (!(column.id in read.cells)) continue;
       // The same vendor in another spelling (the legal form added) keeps the name it has.
       if (column.name === 'Vendor' && storedVendorStands(row.cells[column.id], read.cells[column.id])) continue;
+      // A row filed as a meal is named by its restaurant, whatever this reading takes it for.
+      if (column.name === ITEM_COLUMN && isMeal) continue;
       if (always.has(column.name) || (fillOnly.has(column.name) && isBlank(row.cells[column.id]))) cells[column.id] = read.cells[column.id];
     }
     // The name says what the row holds after this write: a vendor or an item that was kept stays in it.

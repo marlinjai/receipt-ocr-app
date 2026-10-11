@@ -38,6 +38,9 @@ import { parseMealClassification, type MealClassification } from '@/lib/meals/cl
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5-5';
 /** Naming what was bought from a stored text is a small task: the small model. */
 const DEFAULT_ANTHROPIC_ITEM_MODEL = 'claude-haiku-5-5';
+const ITEM_MAX_TOKENS = 4000;
+/** One item is asked for in a request that answers for several receipts: it may not take as long as a full reading. */
+const ITEM_TIMEOUT_MS = 30_000;
 /** How often a paused server-tool turn is resumed before the answer is taken as it is. */
 const MAX_RESUMES = 3;
 /** The recognized text sent to the model. A till receipt is far shorter; a long invoice keeps its head and its end. */
@@ -442,18 +445,34 @@ export async function readReceiptItem(input: ItemInput): Promise<string | null> 
   if (provider === 'anthropic_web_search') {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, maxRetries: MAX_RETRIES });
     const response = await client.messages.create(
-      { model: process.env.ANTHROPIC_ITEM_MODEL || DEFAULT_ANTHROPIC_ITEM_MODEL, max_tokens: 200, system: itemPrompt(), messages: [{ role: 'user', content: user }] },
-      { timeout: REQUEST_TIMEOUT_MS },
+      {
+        model: process.env.ANTHROPIC_ITEM_MODEL || DEFAULT_ANTHROPIC_ITEM_MODEL,
+        // Room for the model's own reasoning before the few words of the answer.
+        max_tokens: ITEM_MAX_TOKENS,
+        output_config: { effort: 'low' },
+        system: itemPrompt(),
+        messages: [{ role: 'user', content: user }],
+      },
+      { timeout: ITEM_TIMEOUT_MS },
     );
     if (response.stop_reason === 'refusal') throw new Error('The model declined to read this receipt.');
+    // A cut answer is no answer: it must not pass for "nothing to name".
+    if (response.stop_reason === 'max_tokens') throw new Error('The answer was cut off.');
     const block = response.content.findLast((b) => b.type === 'text');
     return parseItemResponse(block && block.type === 'text' ? block.text : '');
   }
-  const response = await getAiClient().chat.completions.create(
-    { model: getClassifyModel(), max_tokens: 200, messages: [{ role: 'system', content: itemPrompt() }, { role: 'user', content: user }] },
-    { timeout: REQUEST_TIMEOUT_MS, maxRetries: MAX_RETRIES },
-  );
+  const request: OpenRouterRequest = {
+    model: getClassifyModel(),
+    max_tokens: ITEM_MAX_TOKENS,
+    reasoning: { effort: 'low' },
+    messages: [
+      { role: 'system', content: itemPrompt() },
+      { role: 'user', content: user },
+    ],
+  };
+  const response = await getAiClient().chat.completions.create(request, { timeout: ITEM_TIMEOUT_MS, maxRetries: MAX_RETRIES });
   const choice = response.choices[0];
   if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) throw new Error('The model declined to read this receipt.');
+  if (choice?.finish_reason === 'length') throw new Error('The answer was cut off.');
   return parseItemResponse(choice?.message?.content ?? '');
 }

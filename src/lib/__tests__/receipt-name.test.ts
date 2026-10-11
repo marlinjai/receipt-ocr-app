@@ -49,13 +49,33 @@ describe('the name of a receipt', () => {
   });
 
   it('tells a name built from the cells from one a person typed', () => {
-    expect(nameIsBuilt('Musterwerk, 119,00 €, 14.03.2025')).toBe(true);
-    expect(nameIsBuilt('Example Courses, 1.234,50 $')).toBe(true);
-    expect(nameIsBuilt('Musterwerk, 14.03.2025')).toBe(true);
-    expect(nameIsBuilt('Nicht lesbar: scan.pdf')).toBe(true);
-    expect(nameIsBuilt('')).toBe(true);
-    expect(nameIsBuilt(null)).toBe(true);
-    expect(nameIsBuilt('Laptop für das Büro')).toBe(false);
-    expect(nameIsBuilt('Musterwerk')).toBe(false);
+    const row = { vendor: 'Musterwerk', gross: 119, currency: 'EUR', date: '2025-03-14' };
+    expect(nameIsBuilt('Musterwerk, 119,00 €, 14.03.2025', row)).toBe(true);
+    // The vendor in front may be out of date: that is the name that has to follow.
+    expect(nameIsBuilt('Musterwerk Software Ireland Ltd, 119,00 €, 14.03.2025', row)).toBe(true);
+    expect(nameIsBuilt('Musterwerk, Bürostuhl, 119,00 €, 14.03.2025', row)).toBe(true);
+    expect(nameIsBuilt('119,00 €, 14.03.2025', row)).toBe(true);
+    expect(nameIsBuilt('Nicht lesbar: scan.pdf', row)).toBe(true);
+    expect(nameIsBuilt('scan 2025.PDF', row)).toBe(true);
+    expect(nameIsBuilt('', row)).toBe(true);
+    expect(nameIsBuilt(null, row)).toBe(true);
+  });
+
+  it('leaves a typed name alone, also one that mentions a day or an amount', () => {
+    const row = { vendor: 'Musterwerk', gross: 119, currency: 'EUR', date: '2025-03-14' };
+    expect(nameIsBuilt('Laptop für das Büro', row)).toBe(false);
+    expect(nameIsBuilt('Hotel Messe Köln 14.03.2025', row)).toBe(false);
+    expect(nameIsBuilt('Miete Büro, 500,00 €', row)).toBe(false);
+    expect(nameIsBuilt('Anzahlung 119,00 €, 14.03.2025', row)).toBe(false);
+    // Another total than the row holds: somebody wrote it, or the total was corrected before names followed.
+    expect(nameIsBuilt('Musterwerk, 120,00 €, 14.03.2025', row)).toBe(false);
+  });
+
+  it('knows a built name without total and day by its vendor and item, in any currency', () => {
+    expect(nameIsBuilt('Amazon, SSD-Gehäuse', { vendor: 'Amazon', item: 'SSD-Gehäuse', gross: null, date: null })).toBe(true);
+    expect(nameIsBuilt('Amazon', { vendor: 'Amazon', item: 'SSD-Gehäuse', gross: null, date: null })).toBe(true);
+    expect(nameIsBuilt('Amazon Bestellung', { vendor: 'Amazon', gross: null, date: null })).toBe(false);
+    expect(nameIsBuilt('Example, 1.000 ¥', { vendor: 'Example', gross: 1000, currency: 'JPY', date: null })).toBe(true);
+    expect(nameIsBuilt('Example, 10,00 XXQ', { vendor: 'Example', gross: 10, currency: 'XXQ', date: null })).toBe(true);
   });
 });

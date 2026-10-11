@@ -9,7 +9,7 @@ import { ITEM_BATCH_LIMIT, fillReceiptItems } from '@/lib/receipt-items';
 import { RECEIPTS_TABLE_NAME, ensureReceiptsTable } from '@/lib/receipts-table';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;
+export const maxDuration = 180;
 
 /**
  * POST /api/receipts/items  Body: { rowIds: string[] }

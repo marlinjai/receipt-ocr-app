@@ -58,12 +58,39 @@
   267 distinct ids). The stored data was intact and a reload showed 267 again. Probably the
   loader that fetches all pages appends them again after an edit. Until fixed, counts and
   sums on a page that was edited a lot cannot be trusted without a reload. (2026-10-11)
-- [ ] What was bought is part of a receipt's name: a cell "Item" the reader fills, the name as
+- [x] What was bought is part of a receipt's name: a cell "Item" the reader fills, the name as
   "vendor, item, total, date", and the name following its cells when vendor, item, total,
   currency or date is corrected (a typed name stays). Decided by the owner on 2026-10-11 for
-  every receipt of every year. Built; open until it is deployed and the stored receipts of all
-  years have their item through `POST /api/receipts/items`. Plan:
-  [docs/plans/2026-10-11-receipt-item-in-name.md](docs/plans/2026-10-11-receipt-item-in-name.md). (2026-10-11)
+  every receipt of every year. Deployed the same day; every stored receipt has its item through
+  `POST /api/receipts/items`: 780 under Whiz-Art Media (2021 to 2025, the 13 business meals of
+  2025 left as they are, 3 receipts where the model found nothing to name) and 24 private ones.
+  The 2024 and 2025 figures were the same before and after. Plan:
+  [docs/plans/2026-10-11-receipt-item-in-name.md](docs/plans/2026-10-11-receipt-item-in-name.md). Done 2026-10-11.
+- [ ] The item is worded per receipt, so the monthly invoices of one subscription can read
+  differently ("PocketTube Abo", "PocketTube-Mitgliedschaft"). The reader should be given the
+  items the same vendor already has and reuse one that fits. (2026-10-11)
+- [ ] The reader stores the value-added tax amount as the total on one vendor's invoices: 32
+  invoices of a mail-scanning service across 2021, 2022 and 2023 (0.64 for 3.99, 2.07 for 12.99),
+  all corrected by hand on 2026-10-11. Two more classes from the same import: a mobile bill is
+  read with or without the third-party charges it lists, differently from month to month, and an
+  amount in another currency printed next to the euro amount was taken as euros (once), a euro
+  invoice as dollars (once). (2026-10-11)
+- [ ] The dashboard is slow with 780 receipts: every load fetches all rows in pages, a cell edit
+  took about 30 seconds end to end on 2026-10-11, and some writes failed with the page closing
+  underneath. (2026-10-11)
+- [ ] Rule sets for the tax years 2021 to 2024, so the finance area shows those years on their own
+  forms. Today they are computed with the 2025 form, which the page says. 2024 uses the same line
+  numbers as 2025 for every line that was declared; 2023 is shifted, 2022 and 2021 use the older,
+  longer form. (2026-10-11)
+- [ ] Asset schedules for what the returns depreciated and the app now holds as documents: camera,
+  camera stabiliser and tripod of 2021 (the app counts two of them in full as low-value assets and
+  holds the camera as an open check), the lens of 2022 (open check) and the laptop of 2022 (counted
+  at full price times the study share). Until then 2021 and 2022 differ from the returns by the
+  amounts in the plan of the import. (2026-10-11)
+- [ ] A share on both forms cannot be recorded for a year without its own rule set: subscriptions
+  the returns of 2022 and 2023 split between business and study carry only the business share,
+  because the split is a finance-area decision and those were made for 2024 only. About 687 of
+  study cost in 2022 is not counted for that reason. (2026-10-11)
 - [ ] "Set field" on a selection loses writes: on 2026-10-11, setting the assignment on 30
   selected rows reported success and left 14 of 81 rows unchanged; selections of 7 went through
   completely. The writes run side by side through the guarded cell update. (2026-10-11)
@@ -338,13 +365,12 @@
   without it; (4) tax the buyer owes on services from abroad is not computed;
   (5) invoices carry no link to a contact yet. Plan:
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-10)
-- [ ] Import the purchase documents of the tax years 2024, 2023, 2022 and 2021 through the
-  uploader, newest first. All four years are filed, so each is a record that has to match what
-  was declared. 2024 is in since 2026-10-11: 156 receipts, the form lines within about one euro
-  of the return (line 36 to the cent). 2023, 2022 and 2021 follow once receipts carry their
-  item. Form lines only for 2024, whose form numbering matches the 2025 rule set; rule sets for
-  2021 to 2024 and the depreciation schedules of the 2021 assets stay open here. Plan:
-  [docs/plans/2026-10-11-import-tax-years-2021-2024.md](docs/plans/2026-10-11-import-tax-years-2021-2024.md). (2026-10-11)
+- [x] The purchase documents of the tax years 2024, 2023, 2022 and 2021 are in the app: 514
+  receipts under Whiz-Art Media (2024: 155 and one ticket dated 2023, 2023: 148, 2022: 119, 2021:
+  91), each year a record of its filed return, with a log, a file table and a snapshot per year in
+  the owner's tax folders. 2024 matches the return within about one euro per form line. What
+  remains has its own lines above (rule sets, asset schedules, shares on both forms). Plan:
+  [docs/plans/2026-10-11-import-tax-years-2021-2024.md](docs/plans/2026-10-11-import-tax-years-2021-2024.md). Done 2026-10-11.
 - [ ] Pay-later purchases as payments. The purchase list of the pay-later service (Klarna) is a
   payment source, a debit that only funds another imported payment account (PayPal on the bank,
   the pay-later settlement) counts as a transfer between own accounts, and receipts on an

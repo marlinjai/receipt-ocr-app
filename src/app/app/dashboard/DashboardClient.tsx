@@ -24,6 +24,8 @@ import GroupPanel from './GroupPanel';
 import { createReceiptGroup, moveReceiptsIntoGroup, removeReceiptsFromGroup, type GroupActionError, type GroupResult } from './group-actions';
 import AiChatSidebar from '@/components/AiChatSidebar';
 import ReceiptDetailPanel from '@/components/ReceiptDetailPanel';
+import { rereadReceipt } from '../actions';
+import { rereadNote } from '@/lib/review/reread';
 import ReviewPanel from '@/components/review/ReviewPanel';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import type { ReviewEntry } from '@/lib/review/service';
@@ -755,6 +757,12 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
           onMealSaved={() => {
             void refresh();
             void reloadReview();
+          }}
+          onReread={async (rowId) => {
+            const result = await rereadReceipt(rowId);
+            // The table and the review list show the receipt as it is read now.
+            if (result.ok) await Promise.all([refresh(), reloadReview()]);
+            return rereadNote(result);
           }}
         />
       )}

@@ -173,11 +173,26 @@ const FILLER_LINE = /^[\s.\-_=*·|]*$/;
 const LABEL_LINE_MAX = 40;
 const AFTER_LABEL = /^(?:\s+(?:am|vom|on|at))?[\s:.]*$/i;
 
+/** What the text says about the invoice date, for the check of a second reading. */
+export interface DateReading {
+  /** The invoice date as an ISO 8601 instant (midnight UTC of the printed day), or null when the text prints none. */
+  iso: string | null;
+  /** True when words in the text name the date (an invoice date, a plain "Datum", an order or payment date). */
+  labelled: boolean;
+  /** Every day the text prints that can be the invoice date, as YYYY-MM-DD. A due, renewal or expiry date is not among them. */
+  printedDays: string[];
+}
+
 /**
  * The invoice date of a receipt as an ISO 8601 instant (midnight UTC of the
  * printed day), or null when the text prints none.
  */
 export function readDate(text: string): string | null {
+  return readDateDetail(text).iso;
+}
+
+/** The invoice date together with how the text names it and which other days it prints. */
+export function readDateDetail(text: string): DateReading {
   const lines = text.split('\n');
   const dates = lines.map((line) => (EXPIRY_LINE.test(line) ? [] : datesOnLine(line)));
   const isFiller = (i: number) => FILLER_LINE.test(lines[i]);
@@ -222,6 +237,7 @@ export function readDate(text: string): string | null {
   }
 
   let best: { iso: string; rank: number } | null = null;
+  const printedDays = new Set<string>();
   for (let i = 0; i < lines.length; i++) {
     const onLine = dates[i];
     for (let n = 0; n < onLine.length; n++) {
@@ -232,8 +248,9 @@ export function readDate(text: string): string | null {
       // Either end of a period is a service date, whatever stands in front of it.
       if (kind !== 'never' && ((n > 0 && RANGE_JOIN.test(before)) || (after !== null && RANGE_JOIN.test(after)) || RANGE_START.test(before))) kind = 'service';
       if (kind === 'never') continue;
+      printedDays.add(onLine[n].iso.slice(0, 10));
       if (!best || RANK[kind] < best.rank) best = { iso: onLine[n].iso, rank: RANK[kind] };
     }
   }
-  return best?.iso ?? null;
+  return { iso: best?.iso ?? null, labelled: best !== null && best.rank <= RANK.order, printedDays: [...printedDays] };
 }

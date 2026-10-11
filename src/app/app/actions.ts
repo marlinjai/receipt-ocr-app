@@ -4,8 +4,6 @@ import { TAX_RATES_COLUMN, formatTaxRates, withTaxRates } from '@/lib/tax-rates'
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
-import { readAmounts } from '@/lib/extraction/amounts';
-import { chooseVendor } from '@/lib/extraction/vendor';
 import { getFxRate } from '@/lib/fx-rates';
 import {
   CATEGORY_TO_KONTO,
@@ -16,11 +14,16 @@ import {
   mealTypeLabel,
   getDefaultBusinessSharePercent,
 } from '@/lib/receipts-constants';
-import { defaultTaxRate, mealFactsFromClassification, type MealClassification } from '@/lib/meals/classify';
+import { ReceiptsAuthError } from '@/lib/auth-guards';
 import { serializeTaxLines } from '@/lib/meals/rules';
 import { receiptAttention, type ReceiptAttention } from '@/lib/upload/quality';
 import { ClassifierUnavailableError, classifyReceiptText } from '@/lib/receipt-classifier';
+import type { ReceiptPage } from '@/lib/receipt-page';
+import { loadReceiptPage } from '@/lib/receipt-page-source';
+import { settleReading, type ModelReading } from '@/lib/receipt-reading';
+import { fileOpenToWorkspace } from '@/lib/file-access';
 import type { ReadFlag } from '@/lib/review/reasons';
+import type { RereadResult } from '@/lib/review/reread';
 import { recordReadFlags } from '@/lib/review/service';
 import { ensureReceiptsTable } from '@/lib/receipts-table';
 import { isGroupRow, receiptsOnly } from '@/lib/receipts-kind';
@@ -53,22 +56,12 @@ interface FileData {
   fileType?: string;
 }
 
-interface ClassificationResult {
-  aiName: string | null;
-  aiCategory: string | null;
-  aiKonto: string | null;
-  aiZuordnung: string | null;
-  aiTaxRate: number | null;
-  aiVendor: string | null;
-  aiGross: number | null;
-  meal: MealClassification | null;
-}
-
 /** Null when no classification could be had. The caller records that on the receipt: it is never silent. */
 async function classifyReceipt(
   extracted: ReturnType<typeof extractReceiptFields>,
   fullText: string,
-): Promise<ClassificationResult | null> {
+  page: ReceiptPage | null,
+): Promise<ModelReading | null> {
   try {
     const result = await classifyReceiptText({
       vendor: extracted.vendor,
@@ -78,25 +71,18 @@ async function classifyReceipt(
       categoryNames: CATEGORY_NAMES,
       categoryToKonto: CATEGORY_TO_KONTO,
       zuordnungOptions: ZUORDNUNG_OPTIONS,
+      page,
     });
     // An answer without a category is no classification (the model's text could not be parsed).
     if (!result.category) {
       console.error('[classifyReceipt] the classifier answered without a usable category', { provider: result.provider });
       return null;
     }
-    return {
-      aiName: result.name,
-      aiCategory: result.category,
-      aiKonto: result.konto,
-      aiZuordnung: result.zuordnung,
-      aiTaxRate: result.taxRate,
-      aiVendor: result.vendor,
-      aiGross: result.gross,
-      meal: result.meal,
-    };
+    return result;
   } catch (err) {
+    // The message only: an error object of the client library can carry the request, and with it the page.
     if (err instanceof ClassifierUnavailableError) console.error('[classifyReceipt] no language model is configured: receipts are filed by pattern matching only');
-    else console.error('[classifyReceipt] classification failed:', err);
+    else console.error('[classifyReceipt] classification failed:', err instanceof Error ? `${err.name}: ${err.message}` : 'unknown error');
     return null;
   }
 }
@@ -143,6 +129,26 @@ const MEAL_READ_COLUMNS: string[] = [
   MEAL_COLUMNS.place,
 ];
 
+/**
+ * Columns that carry a person's decision once they hold a value: a reading of
+ * a receipt that is already stored fills them only where they are empty.
+ */
+const DECISION_COLUMNS: string[] = ['Category', 'Konto', 'Zuordnung'];
+
+/** What a new reading of a stored file always writes: the facts the page prints. */
+const REREAD_COLUMNS: string[] = ['Vendor', 'Gross', 'Net', 'Tax Rate', 'Date', 'Currency', 'FX Rate'];
+
+const isBlank = (value: unknown) => value === null || value === undefined || value === '';
+
+/**
+ * A file id comes from the browser. It must be a fresh upload or belong to
+ * this workspace before its bytes are fetched and shown to a model, or
+ * attached to a row here.
+ */
+async function requireOwnFile(fileId: string | undefined, workspaceId: string) {
+  if (fileId && !(await fileOpenToWorkspace(fileId, workspaceId))) throw new Error('File not found');
+}
+
 interface ReadReceipt {
   cells: Record<string, CellValue>;
   imageColumnId: string | null;
@@ -152,6 +158,8 @@ interface ReadReceipt {
   gross: number | null;
   attention: ReceiptAttention | null;
   reviewFlags: ReadFlag[];
+  /** The id of the option "Bewirtung" in the category column, to tell whether a stored row is a meal. */
+  mealCategoryOptionId: string | null;
 }
 
 /**
@@ -171,45 +179,28 @@ async function readReceipt(
 ): Promise<ReadReceipt> {
   const fullText = ocrResult?.fullText ?? '';
   const extracted = ocrResult && fullText.trim() ? extractReceiptFields(ocrResult) : null;
-  const ai = extracted ? await classifyReceipt(extracted, fullText) : null;
+  // The model is given the page itself where the stored file can be fetched and
+  // is within the limits. Without recognized text nothing could check its
+  // answer, so it is not asked at all.
+  const page = extracted && file.id ? ((await loadReceiptPage(file.id)).page ?? null) : null;
+  const ai = extracted ? await classifyReceipt(extracted, fullText, page) : null;
   const classificationFailed = extracted !== null && ai === null;
-  const reviewFlags: ReadFlag[] = [];
-  if (classificationFailed) reviewFlags.push('not_classified');
-
-  // Category: the model's answer, else what the text itself shows. A receipt
-  // with a table, a waiter and a tip line that the model filed elsewhere is
-  // kept as the model said and put up for a look.
-  const finalCategory = ai?.aiCategory || extracted?.category || null;
-  if (ai && extracted?.mealEvidence.strong && finalCategory !== MEAL_CATEGORY) reviewFlags.push('category_doubt');
-  const date = extracted?.date ?? null;
-  const vendor = extracted ? chooseVendor({ vendor: extracted.vendor, confidence: extracted.vendorConfidence }, ai?.aiVendor, fullText).vendor : null;
-  const meal = finalCategory === MEAL_CATEGORY ? mealFactsFromClassification(ai, fullText, vendor) : null;
-
-  // Amounts: read again with the model's total and tax lines as a second
-  // opinion. The receipt's own arithmetic decides; what it cannot confirm is
-  // recorded for a look instead of stored as fact.
-  const amounts = extracted
-    ? readAmounts(fullText, { date, currency: extracted.currency, modelGross: ai?.aiGross ?? null, modelTaxLines: ai?.meal?.taxLines ?? null })
-    : null;
-  if (amounts?.checks.includes('total_conflict')) reviewFlags.push('total_conflict');
-  else if (amounts?.checks.includes('total_unconfirmed')) reviewFlags.push('total_unconfirmed');
-  const finalGross = amounts?.gross ?? null;
-  const finalTaxRate = amounts?.taxRate ?? ai?.aiTaxRate ?? defaultTaxRate(finalCategory, date, meal?.consumption ?? null);
-  let finalNet = amounts?.net ?? null;
-  if (finalGross !== null && finalNet === null) {
-    finalNet = Math.round((finalGross / (1 + finalTaxRate / 100)) * 100) / 100;
-  }
-  if (meal) {
-    // The printed tax groups and a printed tip, where the model reported none.
-    if (!meal.taxLines?.length && amounts && amounts.taxGroups.length > 0) {
-      meal.taxLines = amounts.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax }));
-    }
-    if (amounts?.tip != null) meal.tip = amounts.tip;
-  }
+  // The two readings, settled: what the text proves stands, what the model
+  // read from the page is taken only where the text prints it.
+  const settled = extracted ? settleReading(fullText, extracted, ai) : null;
+  const reviewFlags: ReadFlag[] = settled?.flags ?? [];
+  const finalCategory = settled?.category ?? null;
+  const date = settled?.date ?? null;
+  const vendor = settled?.vendor ?? null;
+  const meal = settled?.meal ?? null;
+  const amounts = settled?.amounts ?? null;
+  const finalGross = settled?.gross ?? null;
+  const finalTaxRate = settled?.taxRate ?? 19;
+  const finalNet = settled?.net ?? null;
 
   // Multi-currency: detected currency, historical FX rate (looked up live, on save),
   // and the shared/partial-business-use attribution default for this vendor.
-  const currency = extracted?.currency ?? 'EUR';
+  const currency = settled?.currency ?? 'EUR';
   const fxRate = currency === 'EUR' ? 1 : await getFxRate(currency, date);
   const businessSharePercent = getDefaultBusinessSharePercent(vendor);
 
@@ -226,7 +217,7 @@ async function readReceipt(
 
   const values: Record<string, CellValue> = {
     // A receipt nothing could be read from says so in its name instead of posing as a receipt.
-    Name: ai?.aiName || extracted?.name || (extracted ? file.originalName : `Nicht lesbar: ${file.originalName}`),
+    Name: ai?.name || extracted?.name || (extracted ? file.originalName : `Nicht lesbar: ${file.originalName}`),
     Vendor: vendor,
     Gross: finalGross,
     Net: finalNet,
@@ -235,8 +226,8 @@ async function readReceipt(
     [TAX_RATES_COLUMN]: formatTaxRates(meal?.taxLines?.length ? meal.taxLines : (amounts?.taxGroups ?? null), finalTaxRate),
     Date: date,
     Category: await optionId('Category', finalCategory),
-    Konto: ai?.aiKonto || extracted?.konto || null,
-    Zuordnung: await optionId('Zuordnung', ai?.aiZuordnung),
+    Konto: ai?.konto || extracted?.konto || null,
+    Zuordnung: await optionId('Zuordnung', ai?.zuordnung),
     Status: (await optionId('Status', statusName)) ?? '',
     Confidence: confidence,
     // 'Receipt Image' is a file column: the uploaded file is attached as a
@@ -281,7 +272,31 @@ async function readReceipt(
       date,
     }),
     reviewFlags,
+    mealCategoryOptionId: await optionId('Category', MEAL_CATEGORY),
   };
+}
+
+type NamedColumns = Array<{ id: string; name: string }>;
+
+/** Drop from a reading the named columns the row already holds a value in. */
+function keepWhereFilled(cells: Record<string, CellValue>, row: { cells: Record<string, CellValue> }, columns: NamedColumns, names: string[]) {
+  for (const name of names) {
+    const columnId = columns.find((c) => c.name === name)?.id;
+    if (columnId && !isBlank(row.cells[columnId])) delete cells[columnId];
+  }
+}
+
+/**
+ * The business share is a default that follows the vendor until a person
+ * changes it. A share that is not the default of the vendor the row holds was
+ * set by hand and stays; one that still is follows the vendor read now.
+ */
+function keepChangedShare(cells: Record<string, CellValue>, row: { cells: Record<string, CellValue> }, columns: NamedColumns) {
+  const shareId = columns.find((c) => c.name === 'Business Share %')?.id;
+  if (!shareId || isBlank(row.cells[shareId])) return;
+  const vendorId = columns.find((c) => c.name === 'Vendor')?.id;
+  const storedVendor = vendorId && typeof row.cells[vendorId] === 'string' ? (row.cells[vendorId] as string) : null;
+  if (Number(row.cells[shareId]) !== getDefaultBusinessSharePercent(storedVendor)) delete cells[shareId];
 }
 
 function fileMetadata(options: ProcessReceiptOptions) {
@@ -327,6 +342,7 @@ export async function processReceipt(
   const session = await auth.requireAction('receipts.upload');
   const workspaceId = sessionWorkspaceId(session);
   const { adapter, tableId } = await getTableId(workspaceId);
+  await requireOwnFile(file.id, workspaceId);
   const read = await readReceipt(adapter, tableId, file, ocrResult);
 
   const row = await adapter.createRow({ tableId, cells: read.cells });
@@ -358,7 +374,9 @@ export async function processReceipt(
 /**
  * Replace the photo of a receipt that was read badly, on the SAME row: the new
  * file takes the place of the uploaded one and the receipt is read again.
- * Never a second row. Meal details already entered on the row are kept.
+ * Never a second row. Meal details already entered on the row are kept, and so
+ * is what a person decided about it: an assignment that is set, and a business
+ * share that is no longer the default of the vendor read before.
  */
 export async function retakeReceipt(
   rowId: string,
@@ -375,17 +393,16 @@ export async function retakeReceipt(
   const columns = await adapter.getColumns(tableId);
   // A group is a container, never a receipt: nothing is read into it.
   if (isGroupRow(row, columns)) throw new Error('Receipt not found');
+  await requireOwnFile(file.id, workspaceId);
 
   const read = await readReceipt(adapter, tableId, file, ocrResult);
 
   // Date, amount, category and the like are re-read: that is what a retake is
-  // for. Meal facts the user (or an earlier reading) already filled in stay.
-  for (const name of MEAL_READ_COLUMNS) {
-    const columnId = columns.find((c) => c.name === name)?.id;
-    if (!columnId) continue;
-    const current = row.cells[columnId];
-    if (current !== null && current !== undefined && current !== '') delete read.cells[columnId];
-  }
+  // for. Meal facts the user (or an earlier reading) already filled in stay,
+  // and so does an assignment: the first reading leaves it empty unless the
+  // document itself shows it, so a value there is an answer somebody gave.
+  keepWhereFilled(read.cells, row, columns, [...MEAL_READ_COLUMNS, 'Zuordnung']);
+  keepChangedShare(read.cells, row, columns);
   // The rates text is derived again from what the row holds after this write:
   // tax lines that were kept above must not be contradicted by the new reading's.
   const ratesColumnId = columns.find((c) => c.name === TAX_RATES_COLUMN)?.id;
@@ -420,6 +437,111 @@ export async function retakeReceipt(
     attention: read.attention,
     reviewFlags: read.reviewFlags,
   };
+}
+
+/** A name the reader built from the total it read then: it states that amount, in either notation. */
+function nameStatesAmount(name: string, gross: number): boolean {
+  const fixed = gross.toFixed(2);
+  return name.includes(fixed) || name.includes(fixed.replace('.', ','));
+}
+
+/**
+ * "Seite neu lesen": read a receipt that is already stored again, from the
+ * file and the recognized text it holds, with the model that sees the page.
+ *
+ * It writes what the page prints (vendor, date, amounts, currency and its
+ * exchange rate). Category, account, assignment and the meal facts are
+ * filled only where they are empty. The business share, the project and
+ * everything a person entered in the meal or tax screens stay untouched; tax
+ * decisions live in the tax module's own tables and are not reached from
+ * here. The name is replaced only where the reader built it: it is empty,
+ * still the file name, or states the total that is now read differently.
+ * The status moves on only from "Pending".
+ *
+ * A reading without the page is not what was asked for: when the model does
+ * not answer, or cannot be given the page, nothing is written and the row
+ * stays exactly as it is.
+ *
+ * Failures are RETURNED with a stable code, not thrown: a thrown
+ * server-action error reaches the browser with its message stripped.
+ */
+export async function rereadReceipt(rowId: string): Promise<RereadResult> {
+  try {
+    if (typeof rowId !== 'string' || !rowId) return { ok: false, error: 'not_found' };
+    const session = await auth.requireAction('receipts.row.write');
+    const workspaceId = sessionWorkspaceId(session);
+    const { adapter, tableId } = await getTableId(workspaceId);
+    const row = await adapter.getRow(rowId);
+    if (!row || row.tableId !== tableId) return { ok: false, error: 'not_found' };
+    const columns = await adapter.getColumns(tableId);
+    // A group is a container, never a receipt: nothing is read into it.
+    if (isGroupRow(row, columns)) return { ok: false, error: 'not_found' };
+    const columnId = (name: string) => columns.find((c) => c.name === name)?.id;
+    const cell = (name: string): CellValue => {
+      const id = columnId(name);
+      return id ? row.cells[id] : null;
+    };
+
+    const imageColumnId = columnId('Receipt Image');
+    const files = imageColumnId ? await adapter.getFileReferences(row.id, imageColumnId) : [];
+    // The file the capture uploaded, else the first one a person attached.
+    const stored = files.find((f) => f.metadata?.source === 'ocr-upload') ?? files[0];
+    if (!stored) return { ok: false, error: 'no_file' };
+    const fullText = typeof cell('OCR Text') === 'string' ? (cell('OCR Text') as string) : '';
+    if (!fullText.trim()) return { ok: false, error: 'no_text' };
+
+    const confidence = Number(cell('Confidence'));
+    const read = await readReceipt(
+      adapter,
+      tableId,
+      { id: stored.fileId, originalName: stored.originalName, fileType: stored.mimeType },
+      { fullText, blocks: [], confidence: Number.isFinite(confidence) ? confidence / 100 : 0 },
+    );
+
+    if (read.reviewFlags.includes('not_classified')) return { ok: false, error: 'model_unavailable' };
+    if (read.reviewFlags.includes('page_not_read')) return { ok: false, error: 'page_unavailable' };
+
+    const storedName = typeof cell('Name') === 'string' ? (cell('Name') as string).trim() : '';
+    const storedGross = Number(cell('Gross'));
+    const builtByReader =
+      !storedName ||
+      storedName === stored.originalName ||
+      storedName.startsWith('Nicht lesbar: ') ||
+      (!isBlank(cell('Gross')) && Number.isFinite(storedGross) && read.gross !== null && Math.abs(storedGross - read.gross) >= 0.005 && nameStatesAmount(storedName, storedGross));
+    // Tax lines a person may have typed belong to the meal register; on any
+    // other receipt they are the printed tax groups and follow the reading.
+    const isMeal = (() => {
+      const categoryId = columnId('Category');
+      const optionId = categoryId ? row.cells[categoryId] : null;
+      return typeof optionId === 'string' && optionId !== '' && read.mealCategoryOptionId === optionId;
+    })();
+    const fillOnly = new Set([...DECISION_COLUMNS, ...MEAL_READ_COLUMNS.filter((name) => isMeal || name !== MEAL_COLUMNS.taxLines)]);
+    // A receipt that waited as "Pending" because it could not be classified is read now; any other status is somebody's.
+    const statusId = columnId('Status');
+    const pendingId = statusId ? (await adapter.getSelectOptions(statusId)).find((o) => o.name === 'Pending')?.id : undefined;
+    const waiting = statusId !== undefined && (isBlank(row.cells[statusId]) || row.cells[statusId] === pendingId);
+    const always = new Set([...REREAD_COLUMNS, ...(builtByReader ? ['Name'] : []), ...(waiting ? ['Status'] : [])]);
+    const cells: Record<string, CellValue> = {};
+    for (const column of columns) {
+      if (!(column.id in read.cells)) continue;
+      if (always.has(column.name) || (fillOnly.has(column.name) && isBlank(row.cells[column.id]))) cells[column.id] = read.cells[column.id];
+    }
+    // The printed tax groups of the new reading, or none: lines of the old
+    // reading must not stand next to amounts they no longer belong to.
+    const linesId = columnId(MEAL_COLUMNS.taxLines);
+    if (linesId && !isMeal) cells[linesId] = read.cells[linesId] ?? serializeTaxLines(null);
+    // The rates text is derived from what the row holds after this write.
+    await adapter.updateRow(row.id, withTaxRates(columns, cells, row.cells) as typeof cells);
+    await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read);
+    return { ok: true, reviewFlags: read.reviewFlags };
+  } catch (e) {
+    const status = e instanceof ReceiptsAuthError ? e.status : (e as { status?: number })?.status;
+    if (status === 401) return { ok: false, error: 'unauthorized' };
+    if (status === 403) return { ok: false, error: 'forbidden' };
+    if (status === 404) return { ok: false, error: 'not_found' };
+    console.error('[rereadReceipt] failed:', e instanceof Error ? `${e.name}: ${e.message}` : 'unknown error');
+    return { ok: false, error: 'failed' };
+  }
 }
 
 /**

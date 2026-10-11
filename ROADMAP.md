@@ -331,6 +331,11 @@
   without it; (4) tax the buyer owes on services from abroad is not computed;
   (5) invoices carry no link to a contact yet. Plan:
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-10)
+- [ ] Import the purchase documents of the tax years 2024, 2023, 2022 and 2021 through the
+  uploader, newest first. All four years are filed, so each is a record that has to match what
+  was declared. Form lines only for 2024, whose form numbering matches the 2025 rule set; rule
+  sets for 2021 to 2024 and the depreciation schedules of the 2021 assets stay open here. Plan:
+  [docs/plans/2026-10-11-import-tax-years-2021-2024.md](docs/plans/2026-10-11-import-tax-years-2021-2024.md). (2026-10-11)
 - [ ] Pay-later purchases as payments. The purchase list of the pay-later service (Klarna) is a
   payment source, a debit that only funds another imported payment account (PayPal on the bank,
   the pay-later settlement) counts as a transfer between own accounts, and receipts on an

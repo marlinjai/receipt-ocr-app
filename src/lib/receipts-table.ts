@@ -17,6 +17,7 @@ import { readAmounts } from '@/lib/extraction/amounts';
 import { parseTaxLines, serializeTaxLines } from '@/lib/meals/rules';
 import { TAX_RATE_COLUMN, TAX_RATES_COLUMN, formatTaxRates } from '@/lib/tax-rates';
 import { ROW_KIND_COLUMN } from '@/lib/receipts-kind';
+import { ITEM_COLUMN } from '@/lib/receipt-name';
 
 /**
  * The Receipts table definition (columns and standard views) and the
@@ -46,6 +47,8 @@ const DEFAULT_OPTION_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4
 const COLUMNS: ColumnDef[] = [
   { name: 'Name', type: 'text', isPrimary: true },
   { name: 'Vendor', type: 'text' },
+  // What was bought, in a few words; part of the name (see receipt-name.ts).
+  { name: ITEM_COLUMN, type: 'text' },
   { name: 'Gross', type: 'number' },
   { name: 'Net', type: 'number' },
   { name: 'Tax Rate', type: 'number' },

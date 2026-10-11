@@ -1,6 +1,7 @@
 'use server';
 
 import { touchesTaxRates, withTaxRates } from '@/lib/tax-rates';
+import { touchesNameParts, withFollowingName } from '@/lib/receipt-name-cells';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
@@ -216,10 +217,16 @@ export async function updateRow(rowId: string, cells: Record<string, CellValue>)
   // one; only an edit of the rate or the tax lines also reads the stored row.
   const columns = await adapter.getColumns(tableId);
   // A group takes its name and the columns the views sort by; no row takes a kind (see `assertCellsWritable`).
-  assertCellsWritable(columns, await rowKind(prisma, tableId, columns, rowId), cells);
-  if (!touchesTaxRates(columns, cells)) return adapter.updateRow(rowId, cells);
+  const kind = await rowKind(prisma, tableId, columns, rowId);
+  assertCellsWritable(columns, kind, cells);
+  // A corrected vendor, item, total, currency or date is said by the name too
+  // (see `lib/receipt-name-cells.ts`); a group's name is its own.
+  const followsName = kind !== GROUP_KIND && touchesNameParts(columns, cells);
+  const ratesChange = touchesTaxRates(columns, cells);
+  if (!followsName && !ratesChange) return adapter.updateRow(rowId, cells);
   const stored = await adapter.getRow(rowId);
-  return adapter.updateRow(rowId, withTaxRates(columns, cells, stored?.cells) as Record<string, CellValue>);
+  const named = followsName ? await withFollowingName(adapter, columns, cells, stored?.cells) : cells;
+  return adapter.updateRow(rowId, (ratesChange ? withTaxRates(columns, named, stored?.cells) : named) as Record<string, CellValue>);
 }
 
 /** The table a row belongs to; the row was authorized just before. */

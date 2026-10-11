@@ -1,6 +1,7 @@
 import 'server-only';
 import type { PrismaClient } from '@prisma/client';
 import type { Column, Row } from '@marlinjai/data-table-core';
+import { withFollowingName } from '@/lib/receipt-name-cells';
 import { firstColumnIdByName } from '@/lib/column-lookup';
 import { isoDay, type SelectOptionsByColumn } from '@/lib/meals/record';
 import { allReceiptRows, tableContext } from '@/lib/meals/service';
@@ -328,6 +329,8 @@ export async function applyNewReading(
   if (amountsTaken && reading.taxLines.length > 0) {
     cells[columnId(MEAL_COLUMNS.taxLines)] = serializeTaxLines(reading.taxLines);
   }
-  await table.adapter.updateRow(rowId, withTaxRates(table.columns, cells, row.cells));
+  // A vendor or a total taken from the proposal is said by the name too, unless the proposal names the receipt itself.
+  const named = await withFollowingName(table.adapter, table.columns, cells, row.cells);
+  await table.adapter.updateRow(rowId, withTaxRates(table.columns, named, row.cells));
   return take.map((c) => c.field);
 }

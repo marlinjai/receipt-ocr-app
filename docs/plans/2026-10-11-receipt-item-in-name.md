@@ -2,7 +2,7 @@
 title: What was bought, in the receipt's name
 summary: A receipt gets a cell "Item" with what was bought in a few words, read by the model, and its name becomes vendor, item, total, date. The name now follows its cells when one of them is corrected. Receipts stored before get their item from their stored text, without being read again.
 type: plan
-status: in-progress
+status: completed
 tags: [receipts, reader, naming, dashboard]
 projects: [receipt-ocr-app]
 date: 2026-10-11
@@ -70,7 +70,12 @@ row within the same moment each build the name from the stored row, so the later
 carry one stale part until the next edit; rows from the sheet import keep the name the sheet
 gives them.
 
-## Open
+## Done
 
-- Deploy, then fill every receipt of every year under both companies and check the names on
-  production.
+Deployed on 2026-10-11 with pull request 95. The fill ran the same evening: 780 receipts under
+Whiz-Art Media and 24 private ones. 13 business meals of 2025 were left as they are, 3 receipts
+got no item (the model found nothing to name), 2 names of 2025 with a handwritten note behind the
+date stayed exactly as they were, 2 names of 2024 whose figures had been corrected before names
+followed were set by hand. Receipts uploaded after the deploy (2023, 2022, 2021) got their item
+on the way in. The 2024 and 2025 figures of the finance area were the same before and after.
+Follow-up on the roadmap: one wording per subscription.

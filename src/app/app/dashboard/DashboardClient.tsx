@@ -761,8 +761,15 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
           onReread={async (rowId) => {
             const result = await rereadReceipt(rowId);
             // The table and the review list show the receipt as it is read now.
-            if (result.ok) await Promise.all([refresh(), reloadReview()]);
-            return rereadNote(result);
+            const note = rereadNote(result);
+            if (result.ok) {
+              try {
+                await Promise.all([refresh(), reloadReview()]);
+              } catch {
+                return { ...note, text: `${note.text} Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.` };
+              }
+            }
+            return note;
           }}
         />
       )}

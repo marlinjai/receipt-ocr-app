@@ -105,7 +105,12 @@ function parseArgs(argv: string[]) {
   const options = new Map<string, string>();
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--text-only') options.set('text-only', 'yes');
-    else if (argv[i].startsWith('--')) options.set(argv[i].slice(2), argv[++i] ?? '');
+    else if (argv[i].startsWith('--')) {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('--')) throw new Error(`${argv[i]} needs a value`);
+      options.set(argv[i].slice(2), value);
+      i++;
+    }
     else positional.push(argv[i]);
   }
   if (positional.length !== 2) {
@@ -308,9 +313,10 @@ async function readDocument(expected: Expected, folder: string, visionKey: strin
 
 // ── Tallies ──────────────────────────────────────────────────────────
 
-function tally(outcomes: Outcome[]) {
+// A text-only run never shows the model the page, so `page_not_read` there is the mode, not a review flag.
+function tally(outcomes: Outcome[], textOnly = false) {
   const count = (pick: (o: Outcome) => boolean) => outcomes.filter(pick).length;
-  const flagged = (o: Outcome) => o.flags.some((f) => f === 'total_conflict' || f === 'total_unconfirmed' || f === 'not_classified' || f === 'page_not_read');
+  const flagged = (o: Outcome) => o.flags.some((f) => f === 'total_conflict' || f === 'total_unconfirmed' || f === 'not_classified' || (f === 'page_not_read' && !textOnly));
   return {
     documents: outcomes.length,
     date: { correct: count((o) => o.date === 'correct'), wrong: count((o) => o.date === 'wrong'), missing: count((o) => o.date === 'missing'), notJudged: count((o) => o.date === 'not judged') },
@@ -349,9 +355,9 @@ function perVendor(outcomes: Outcome[]): Record<string, string> {
   );
 }
 
-function report(name: string, outcomes: Outcome[], used?: Array<NonNullable<DocumentResult['usage']>>) {
+function report(name: string, outcomes: Outcome[], used?: Array<NonNullable<DocumentResult['usage']>>, textOnly = false) {
   console.log(`\n== ${name} ==`);
-  console.log(JSON.stringify(tally(outcomes), null, 2));
+  console.log(JSON.stringify(tally(outcomes, textOnly), null, 2));
   console.log('flags:', JSON.stringify(countBy(outcomes.flatMap((o) => o.flags), (f) => f)));
   console.log('why a total was missed:', JSON.stringify(countBy(outcomes, (o) => (o.cause ? `${o.cause} (kept: ${o.basis})` : undefined))));
   console.log('why a date was missed:', JSON.stringify(countBy(outcomes, (o) => (o.dateCause ? `${o.dateCause} (${o.vendor})` : undefined))));
@@ -434,6 +440,7 @@ async function main() {
     `text and the model ${args.textOnly ? 'that reads the text alone' : 'that sees the page'} (${args.model ?? process.env.AI_CLASSIFY_MODEL ?? 'app default'})`,
     readable.flatMap((r) => (r.reading ? [r.reading] : [])),
     readable.flatMap((r) => (r.usage ? [r.usage] : [])),
+    args.textOnly,
   );
 }
 

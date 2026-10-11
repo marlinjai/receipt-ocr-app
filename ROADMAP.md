@@ -205,7 +205,7 @@
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a
-  tenant-scoped key so their access is entitlement-checked like browser sessions. (2026-09-10)
+  tenant-scoped key so their access is entitlement-checked like browser sessions. Still open and still wanted: the machine path is unchanged. (2026-10-11)
 - [x] Deploy Docs GitHub Actions workflow failed on every run from at least 2026-08-03.
   Resolved, this line was stale: the Infisical credentials were provisioned on the
   repository and the workflow was repaired in pull request 27 (action pin, project slug,
@@ -219,7 +219,7 @@
   single-workspace company by its company name instead of a bare "Main"); what
   remains is hiding or deleting the drained legacy workspace membership, which is
   a production data change/audit in the auth-brain multi-tenant service, not a
-  code fix in this repo. Needs Marlin or a data audit before touching it. (2026-09-10)
+  code fix in this repo. Needs Marlin or a data audit before touching it. Still open: the dropdown was not rechecked since. (2026-10-11)
 
 - [x] Contact screen, wave 3: the Kontakte tab manages organizations with address, legal form and
   VAT ID, links people to organizations, merges duplicates, assigns customer numbers and exports one

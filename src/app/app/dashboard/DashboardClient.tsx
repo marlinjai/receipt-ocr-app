@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import {
   DataTableProvider,
@@ -44,6 +44,8 @@ interface DashboardClientProps {
   openMealCount: number;
   /** Receipts that need a look, as loaded with the page. Null when loading them failed. */
   initialReview: ReviewEntry[] | null;
+  /** The receipt a link from another area asks to open (see `receiptHref`); null without one. */
+  openRowId: string | null;
 }
 
 const REVIEW_ERROR: Record<ReviewActionError, string> = {
@@ -70,7 +72,7 @@ function receipts(n: number): string {
   return n === 1 ? '1 Beleg' : `${n} Belege`;
 }
 
-function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: string; openMealCount: number; initialReview: ReviewEntry[] | null }) {
+function DashboardContent({ tableId, openMealCount, initialReview, openRowId }: { tableId: string; openMealCount: number; initialReview: ReviewEntry[] | null; openRowId: string | null }) {
   const {
     table,
     columns,
@@ -366,6 +368,26 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
   useEffect(() => {
     if (hasMore && !isRowsLoading) void loadMore();
   }, [hasMore, isRowsLoading, loadMore]);
+
+  // A link from another area (a finance line, a payment) opens its receipt:
+  // once, as soon as the row has arrived. The table loads in pages, so the row
+  // may come with a later one; only when every page is in and it is still
+  // missing is the receipt said to be gone (deleted, or of another company).
+  const openedFromLink = useRef(false);
+  useEffect(() => {
+    if (!openRowId || openedFromLink.current) return;
+    const row = rows.find((r) => r.id === openRowId);
+    if (row) {
+      openedFromLink.current = true;
+      if (isGroupRow(row, columns)) setGroupPanelId(row.id);
+      else setDetailRow(row);
+      return;
+    }
+    if (!hasMore && !isRowsLoading && columns.length > 0) {
+      openedFromLink.current = true;
+      setNotice({ tone: 'warn', text: 'Der verlinkte Beleg ist in dieser Tabelle nicht vorhanden. Er wurde gelöscht oder gehört zu einem anderen Unternehmen.' });
+    }
+  }, [openRowId, rows, columns, hasMore, isRowsLoading]);
 
   // Load select options for all select columns
   useEffect(() => {
@@ -814,10 +836,10 @@ function DashboardContent({ tableId, openMealCount, initialReview }: { tableId: 
   );
 }
 
-export default function DashboardClient({ tableId, workspaceId, openMealCount, initialReview }: DashboardClientProps) {
+export default function DashboardClient({ tableId, workspaceId, openMealCount, initialReview, openRowId }: DashboardClientProps) {
   return (
     <DataTableProvider dbAdapter={dbAdapter} fileAdapter={fileAdapter} workspaceId={workspaceId}>
-      <DashboardContent tableId={tableId} openMealCount={openMealCount} initialReview={initialReview} />
+      <DashboardContent tableId={tableId} openMealCount={openMealCount} initialReview={initialReview} openRowId={openRowId} />
     </DataTableProvider>
   );
 }

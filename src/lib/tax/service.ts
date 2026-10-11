@@ -883,6 +883,8 @@ export interface PaymentsView {
     cents: number;
     counterparty: string;
     target: 'receipt' | 'invoice';
+    /** The receipt the payment is linked to; null for an issued invoice. */
+    rowId: string | null;
     targetLabel: string;
     method: string;
     /** False when the purchase this debit funds is linked to the same receipt: the same money, counted there. */
@@ -1096,6 +1098,7 @@ function buildPaymentsView(
         cents: l.cents,
         counterparty: p.counterparty,
         target: l.rowId ? ('receipt' as const) : ('invoice' as const),
+        rowId: l.rowId ?? null,
         targetLabel: l.rowId ? (itemById.get(l.rowId)?.label ?? 'Beleg (nicht mehr vorhanden)') : `Rechnung ${invoiceById.get(l.invoiceId ?? '')?.number ?? ''}`,
         method: l.method,
         counts: !l.rowId || countedLinkIds.has(l.id),

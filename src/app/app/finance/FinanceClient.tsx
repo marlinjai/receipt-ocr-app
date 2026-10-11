@@ -2,6 +2,7 @@
 
 import { useId, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
+import { receiptHref } from '@/lib/receipt-link';
 import { useRouter } from 'next/navigation';
 import { formatDay } from '@/lib/meals/messages';
 import { CHECK_LABELS, ORIGIN_LABELS, PURPOSE_LABELS, financeActionMessage } from '@/lib/tax/messages';
@@ -440,6 +441,11 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                 {selected && (
                   <section aria-label="Beleg entscheiden" className="glass-panel rounded-xl p-4 sm:p-5">
                     <ItemHeader item={selected} />
+                    <p className="m-0 mt-1 text-xs">
+                      <Link href={receiptHref(selected.rowId)} className="underline" style={{ color: 'var(--dt-text-secondary)' }}>
+                        Beleg in der Tabelle öffnen
+                      </Link>
+                    </p>
                     <OpenItemBody
                       // A fresh form per receipt: nothing typed for one leaks into the next.
                       key={selected.itemId}
@@ -552,7 +558,9 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                                       <li key={id} className="border-t px-4 py-2.5" style={{ borderColor: 'var(--border)' }}>
                                         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                                           <span className="text-sm" style={{ color: 'var(--foreground)' }}>
-                                            {item.vendor || item.label}
+                                            <Link href={receiptHref(item.rowId)} className="hover:underline" title="Beleg in der Tabelle öffnen">
+                                              {item.vendor || item.label}
+                                            </Link>
                                             {item.lineDescription && item.vendor ? `: ${item.lineDescription}` : ''}
                                             <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
                                               {dayText(item)} · {allocationText(item)}

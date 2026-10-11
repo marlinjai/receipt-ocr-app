@@ -171,7 +171,7 @@ describe('a receipt in another currency carries no German tax', () => {
   it('the full extraction says the same, in dollars, with no estimate to look at', () => {
     const fields = extractReceiptFields(ocr(F.DOLLAR_INVOICE_WITH_DISCOUNT));
     expect(fields).toMatchObject({ gross: 360, net: 360, taxRate: 0, currency: 'USD', currencyShown: true, taxRatePrinted: false, amountChecks: [], taxGroups: [] });
-    expect(fields.name).toBe('Example Courses, 360.00 USD, 26.11.2025');
+    expect(fields.name).toBe('Example Courses, 360,00 $, 26.11.2025');
   });
 
   it('the same total in euros still gets the German default, marked as an estimate', () => {

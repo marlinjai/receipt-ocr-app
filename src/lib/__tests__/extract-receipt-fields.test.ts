@@ -612,14 +612,14 @@ describe('extractReceiptFields — full receipt samples', () => {
 // ── Name Generation ──────────────────────────────────────────────────
 
 describe('name generation', () => {
-  it('generates a name from vendor, items, amount, and date', () => {
+  it('names a receipt after its vendor, total and date, without the line items', () => {
     const ocr = makeOcrWithBlocks(
       'Starbucks\nCappuccino 3.50\nTotal: $3.50\nDate: 03/15/2024',
       ['Starbucks'],
     );
     const result = extractReceiptFields(ocr);
-    expect(result.name).toContain('Starbucks');
-    expect(result.name).toContain('3.50');
+    expect(result.name).toBe('Starbucks, 3,50 $, 15.03.2024');
+    expect(result.name).not.toContain('Cappuccino');
   });
 
   it('gives no name for empty or noise-only text: the caller names the row after its file', () => {

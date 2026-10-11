@@ -439,7 +439,7 @@ describe('rereadReceipt: a stored receipt read again with the page', () => {
     expect(new Date((await cellOf(ws, rowId, 'Date')) as string).toISOString().slice(0, 10)).toBe('2025-02-19');
     expect(await cellOf(ws, rowId, 'Currency')).toBe('EUR');
     // The name stated the total that is now read differently: the reader built it, so it is built again.
-    expect(await cellOf(ws, rowId, 'Name')).toBe('Kräutertee, Cafe Morgenrot, €58.70, 19.02.2025');
+    expect(await cellOf(ws, rowId, 'Name')).toBe('Cafe Morgenrot, 58,70 €, 19.02.2025');
     // The printed tax group replaces whatever the old reading left.
     expect(JSON.parse((await cellOf(ws, rowId, 'Tax Lines')) as string)).toEqual([{ rate: 19, net: 49.33, tax: 9.37 }]);
 

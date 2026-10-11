@@ -372,7 +372,7 @@ describe('a new reading in another currency', () => {
     // The stored amount is still shown in the currency the row holds: an empty cell is euros.
     expect(entry).toMatchObject({ gross: 450, currency: 'EUR' });
     expect(Object.fromEntries(entry.proposal.map((c) => [c.field, [c.from, c.to]]))).toEqual({
-      name: [oldName, 'Example Courses, 360.00 USD, 26.11.2025'],
+      name: [oldName, 'Example Courses, 360,00 $, 26.11.2025'],
       gross: [450, 360],
       net: [378.15, 360],
       taxRate: [19, 0],
@@ -389,7 +389,7 @@ describe('a new reading in another currency', () => {
     expect(written.sort()).toEqual(['currency', 'gross', 'name', 'net', 'taxRate']);
 
     expect(await money(rowId)).toEqual({ Gross: 360, Net: 360, 'Tax Rate': 0, 'Tax Rates': '0 %', Currency: 'USD', 'FX Rate': 0.8642 });
-    expect(await cellsOf(ws, rowId, ['Name'])).toEqual({ Name: 'Example Courses, 360.00 USD, 26.11.2025' });
+    expect(await cellsOf(ws, rowId, ['Name'])).toEqual({ Name: 'Example Courses, 360,00 $, 26.11.2025' });
     // One lookup, for the currency that was read and the day the row shows.
     expect(fxRateFor.mock.calls).toEqual([['USD', day]]);
     expect(await entryFor(rowId)).toBeUndefined();

@@ -226,7 +226,7 @@ ${sourceParagraph(input.page)}
 
 Classify the receipt and read these facts from it:
 
-1. **name**: a human-readable summary of what was purchased. Format: "Item/Service description, Vendor, €Amount, DD.MM.YYYY". Lead with the ITEM, not the vendor. If there are several items, name the most important one or summarize briefly.
+1. **name**: the vendor, the total and the date, nothing else: "Vendor, Amount, DD.MM.YYYY". No line items and no description of what was bought.
 2. **vendor**: the name of the business that issued the receipt, as a customer would call it ("Trattoria Beispiel", "Musterbräu Berlin"). Never a slogan ("Since 2016"), never a product or an extra ("+ mit Haferdrink"), never a bare description ("Indisches"), never a receipt heading ("Rechnung", "Bewirtungsbeleg"). Null when the text does not name it.
 3. **gross**: the total the customer had to pay, as a number, exactly as printed (the line labelled Summe, Gesamt, Total, Betrag, zu zahlen, or the sum of the tax lines). Where several totals are printed (a subtotal, "Total" and "Grand Total", a total per section), give the final one, with tax, shipping and duties. Never a receipt number, table number, transaction number, card number or telephone number. An invoice settled from a credit or balance still has its total: give the line "Total", never an amount due of 0. Null when the document does not show a total.
 4. **totalStated**: false when the document states no total to pay at all: an application, a contract or an offer that names only a monthly rate or an instalment, a delivery note without prices. Then "gross" is null: a monthly rate is not a total. Otherwise true.

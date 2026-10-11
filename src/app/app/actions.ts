@@ -34,6 +34,7 @@ import { requireReceiptsSession } from '@/lib/auth-guards';
 import { sessionWorkspaceId, tenantIdForWorkspace } from '@/lib/auth-workspace';
 import type { CellValue } from '@marlinjai/data-table-core';
 import { sameVendor } from '@/lib/extraction/vendor';
+import { receiptName } from '@/lib/receipt-name';
 import type { OcrResult } from '@/lib/ocr-types';
 
 const TABLE_NAME = 'Receipts';
@@ -223,7 +224,8 @@ async function readReceipt(
 
   const values: Record<string, CellValue> = {
     // A receipt nothing could be read from says so in its name instead of posing as a receipt.
-    Name: ai?.name || extracted?.name || (extracted ? file.originalName : `Nicht lesbar: ${file.originalName}`),
+    // Vendor, total and date as they were settled: never the line items, never a name a model wrote.
+    Name: receiptName({ vendor, gross: finalGross, currency, date }) || (extracted ? file.originalName : `Nicht lesbar: ${file.originalName}`),
     Vendor: vendor,
     Gross: finalGross,
     Net: finalNet,
@@ -513,7 +515,8 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
       !storedName ||
       storedName === stored.originalName ||
       storedName.startsWith('Nicht lesbar: ') ||
-      (!isBlank(cell('Gross')) && Number.isFinite(storedGross) && read.gross !== null && Math.abs(storedGross - read.gross) >= 0.005 && nameStatesAmount(storedName, storedGross));
+      // A name that states the stored total was put together from the cells: it follows the new reading.
+      (!isBlank(cell('Gross')) && Number.isFinite(storedGross) && nameStatesAmount(storedName, storedGross));
     // Tax lines a person may have typed belong to the meal register; on any
     // other receipt they are the printed tax groups and follow the reading.
     const isMeal = (() => {

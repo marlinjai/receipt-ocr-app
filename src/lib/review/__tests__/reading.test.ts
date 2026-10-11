@@ -142,7 +142,7 @@ describe('the currency of a new reading', () => {
 
   it('a dollar invoice stored in euros: total, net, rate and currency are offered together, and the name that repeats them', () => {
     expect(byField(proposeReading(oldDollarInvoice()))).toEqual({
-      name: [oldName, 'Example Courses, 360.00 USD, 26.11.2025'],
+      name: [oldName, 'Example Courses, 360,00 $, 26.11.2025'],
       gross: [450, 360],
       net: [378.15, 360],
       taxRate: [19, 0],

@@ -66,6 +66,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- A receipt is named after its vendor, its total and its date ("Musterwerk, 119,00 €, 14.03.2025"), put together from the cells the receipt holds. The line items are no longer part of the name, and the name is no longer written by the language model. A name that states the stored total follows a new reading; a name a person typed stays
 - The model that reads a receipt is Claude Haiku 5.5 through OpenRouter (`anthropic/claude-haiku-5.5`) instead of Claude Sonnet 4.6, chosen by the measurement in the plan; `AI_CLASSIFY_MODEL` still overrides it. Every model call now has a timeout of 60 seconds and one retry
 - The meal register and the meal form follow the value-added tax status on each meal's own date when the status changed inside a year
 - The limit forecast no longer counts invoices that were unpaid at the end of a finished year as that year's turnover, and measures open invoices without the tax in them

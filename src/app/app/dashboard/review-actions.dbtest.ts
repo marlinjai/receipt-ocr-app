@@ -43,7 +43,7 @@ const ocr = (fullText: string) => ({ fullText, blocks: [], confidence: 0.95 });
 // The answer of a model that read the invoice well, and, as it is told to where a
 // receipt prints no rate, inferred the German standard rate.
 const MODEL_ANSWER = {
-  name: 'Example Courses, 360.00 USD, 26.11.2025',
+  name: 'Example Courses, 360,00 $, 26.11.2025',
   vendor: 'Example Courses',
   gross: 360,
   date: '2025-11-26T00:00:00.000Z',
@@ -110,7 +110,7 @@ describe('a dollar invoice, uploaded today and taken from the review list', () =
     const currency = columns.find((c) => c.name === 'Currency')!;
     const usd = (await ws.adapter.getSelectOptions(currency.id)).find((o) => o.name === 'USD')!.id;
     expect(await stateOf(uploaded.rowId)).toEqual({
-      Name: 'Example Courses, 360.00 USD, 26.11.2025',
+      Name: 'Example Courses, 360,00 $, 26.11.2025',
       Vendor: 'Example Courses',
       Gross: 360,
       Net: 360,

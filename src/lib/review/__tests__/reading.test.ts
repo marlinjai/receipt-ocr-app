@@ -55,6 +55,30 @@ describe('proposeReading', () => {
     expect(proposeReading(stored(F.TAVERNA, { vendor: 'Taverna Beispiel', gross: 45.3, net: 38.07 }))).toEqual([]);
   });
 
+  it('on an invoice the stored vendor stands: the text alone is no judge of it there', () => {
+    // The same text that renames a meal receipt's slogan renames nothing once the receipt is filed as an invoice.
+    const asMeal = proposeReading(stored(F.FOODBAR_TWO_RATES, { vendor: 'Since 2016', gross: 37.7, net: 35.14, taxRate: 7 }));
+    expect(asMeal.some((c) => c.field === 'vendor')).toBe(true);
+    const invoice = 'Musterwerk GmbH\nRechnung\nNetto 100,00\nUSt 19 % 19,00\nGesamt 119,00';
+    const filed = proposeReading(stored(invoice, { vendor: 'Musterkanal', gross: 119, net: 100, taxRate: 19, category: 'Software & Lizenzen' }));
+    expect(filed.some((c) => c.field === 'vendor')).toBe(false);
+    // A name built by the old reader is not offered anew for the vendor's sake either.
+    const named = proposeReading(stored(invoice, { name: 'Musterkanal \u2013 Abo \u2013 \u20ac119.00', vendor: 'Musterkanal', gross: 119, net: 100, taxRate: 19, category: 'Software & Lizenzen' }));
+    expect(named.some((c) => c.field === 'name' || c.field === 'vendor')).toBe(false);
+  });
+
+  it('an invoice without any vendor is offered the one the text names', () => {
+    const invoice = 'Musterwerk GmbH\nRechnung\nNetto 100,00\nUSt 19 % 19,00\nGesamt 119,00';
+    const changes = proposeReading(stored(invoice, { vendor: '', gross: 119, net: 100, taxRate: 19, category: 'Software & Lizenzen' }));
+    expect(byField(changes).vendor).toEqual([null, 'Musterwerk GmbH']);
+  });
+
+  it('the legal form added or dropped is the same vendor, on a till receipt too', () => {
+    const text = F.TAVERNA.replace('TAVERNA BEISPIEL', 'TAVERNA BEISPIEL GmbH');
+    const changes = proposeReading(stored(text, { vendor: 'Taverna Beispiel', gross: 45.3, net: 38.07 }));
+    expect(changes.some((c) => c.field === 'vendor')).toBe(false);
+  });
+
   it('never proposes to empty a field: a cropped scan keeps the vendor someone typed', () => {
     const changes = proposeReading(stored(F.CROPPED_HEAD, { vendor: 'Cafe Sophie', gross: 32.6, net: 27.39, tip: 2.4 }));
     expect(changes).toEqual([]);

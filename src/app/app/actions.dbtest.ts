@@ -462,6 +462,17 @@ describe('rereadReceipt: a stored receipt read again with the page', () => {
     expect(await cellOf(ws, rowId, 'Status')).toBe('Processed');
   });
 
+  it('keeps a vendor that is stored in another spelling of the same name, and still corrects a wrong one', async () => {
+    const sameName = await wrongRow({ Vendor: 'CAFE MORGENROT' }, ws, 63);
+    await rereadReceipt(sameName);
+    // The page reads "Cafe Morgenrot": the same vendor, so the stored spelling stands and its rows stay in one group.
+    expect(await cellOf(ws, sameName, 'Vendor')).toBe('CAFE MORGENROT');
+    expect(await cellOf(ws, sameName, 'Gross')).toBe(58.7);
+    const otherName = await wrongRow({ Vendor: 'Laufkunde' }, ws, 64);
+    await rereadReceipt(otherName);
+    expect(await cellOf(ws, otherName, 'Vendor')).toBe('Cafe Morgenrot');
+  });
+
   it('keeps a name a person typed', async () => {
     const rowId = await wrongRow({ Name: 'Teamfrühstück im Februar' }, ws, 62);
     await rereadReceipt(rowId);

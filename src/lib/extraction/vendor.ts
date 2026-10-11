@@ -83,6 +83,26 @@ function backedByText(name: string, lines: string[], ownIndex: number, fullText:
   return addresses.some((a) => normalized(a).includes(key) || key.includes(normalized(a.replace(/^(?:www\.|https?:\/\/|@)/i, '').split('.')[0])));
 }
 
+/** A vendor name without its legal form, in lower case, letters and digits only. */
+function vendorKey(name: string): string {
+  return name
+    .replace(new RegExp(LEGAL_FORM.source, 'gi'), ' ')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/**
+ * True when two names are the same vendor written differently: with or
+ * without the legal form ("A2 Hosting" and "A2 Hosting LLC"), in another case
+ * or with other punctuation. A reading that only differs this way is no reason
+ * to rename a vendor that is already stored: the rows of one vendor would fall
+ * into two groups.
+ */
+export function sameVendor(a: string, b: string): boolean {
+  const keyA = vendorKey(a);
+  return keyA !== '' && keyA === vendorKey(b);
+}
+
 /** Read the business name from the recognized text. Never invents one. */
 export function readVendor(fullText: string): VendorReading {
   const all = fullText.split('\n').map(clean);

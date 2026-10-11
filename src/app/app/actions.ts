@@ -33,6 +33,7 @@ import { auth } from '@/lib/auth';
 import { requireReceiptsSession } from '@/lib/auth-guards';
 import { sessionWorkspaceId, tenantIdForWorkspace } from '@/lib/auth-workspace';
 import type { CellValue } from '@marlinjai/data-table-core';
+import { sameVendor } from '@/lib/extraction/vendor';
 import type { OcrResult } from '@/lib/ocr-types';
 
 const TABLE_NAME = 'Receipts';
@@ -134,6 +135,11 @@ const MEAL_READ_COLUMNS: string[] = [
  * a receipt that is already stored fills them only where they are empty.
  */
 const DECISION_COLUMNS: string[] = ['Category', 'Konto', 'Zuordnung'];
+
+/** True when the stored vendor and the newly read one are the same vendor written differently. */
+function storedVendorStands(stored: CellValue | undefined, read: CellValue | undefined): boolean {
+  return typeof stored === 'string' && typeof read === 'string' && stored.trim() !== '' && sameVendor(stored, read);
+}
 
 /** What a new reading of a stored file always writes: the facts the page prints. */
 const REREAD_COLUMNS: string[] = ['Vendor', 'Gross', 'Net', 'Tax Rate', 'Date', 'Currency', 'FX Rate'];
@@ -524,6 +530,8 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     const cells: Record<string, CellValue> = {};
     for (const column of columns) {
       if (!(column.id in read.cells)) continue;
+      // The same vendor in another spelling (the legal form added) keeps the name it has.
+      if (column.name === 'Vendor' && storedVendorStands(row.cells[column.id], read.cells[column.id])) continue;
       if (always.has(column.name) || (fillOnly.has(column.name) && isBlank(row.cells[column.id]))) cells[column.id] = read.cells[column.id];
     }
     // The printed tax groups of the new reading, or none: lines of the old

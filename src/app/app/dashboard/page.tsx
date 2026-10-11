@@ -5,11 +5,15 @@ import { sessionWorkspaceId } from '@/lib/auth-guards';
 import { incompleteQueue } from '@/lib/meals/register';
 import { loadMealRecords } from '@/lib/meals/service';
 import { loadReviewQueue, type ReviewEntry } from '@/lib/review/service';
+import { RECEIPT_PARAM } from '@/lib/receipt-link';
 import DashboardClient from './DashboardClient';
 
 export const dynamic = 'force-dynamic';
 
-export default async function DashboardPage() {
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  // A link from another area names the receipt to open (see `receiptHref`).
+  const openParam = (await searchParams)[RECEIPT_PARAM];
+  const openRowId = typeof openParam === 'string' && openParam ? openParam : null;
   // The middleware gates the route; requireSession resolves the verified
   // session (or redirects) so the table lookup is scoped to the ACTIVE
   // workspace, server-side.
@@ -61,6 +65,7 @@ export default async function DashboardPage() {
       workspaceId={workspaceId}
       openMealCount={openMealCount}
       initialReview={initialReview}
+      openRowId={openRowId}
     />
   );
 }

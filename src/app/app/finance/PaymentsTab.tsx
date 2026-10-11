@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+import { receiptHref } from '@/lib/receipt-link';
 import { useId, useRef, useState } from 'react';
 import { formatDay } from '@/lib/meals/messages';
 import type { MatchStrength } from '@/lib/tax/payments/match';
@@ -302,7 +304,10 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
             {p.estimateProposals.map((proposal) => (
               <li key={`${proposal.rowId}:${proposal.paymentId}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
                 <span className="text-sm" style={{ color: 'var(--foreground)' }}>
-                  {formatDay(proposal.receiptDay)} {proposal.receiptLabel.slice(0, 60)}
+                  {formatDay(proposal.receiptDay)}{' '}
+                  <Link href={receiptHref(proposal.rowId)} className="hover:underline" title="Beleg in der Tabelle öffnen">
+                    {proposal.receiptLabel.slice(0, 60)}
+                  </Link>
                   <span className="ml-2 text-xs tabular-nums" style={{ color: 'var(--muted)' }}>
                     geschätzt {euro(proposal.estimateCents)} · bezahlt {euro(proposal.paidCents)} am {formatDay(proposal.bookingDay)}
                     {proposal.counterparty ? ` an ${proposal.counterparty.slice(0, 40)}` : ''} · {proposal.accountLabel}
@@ -544,7 +549,14 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
               {p.links.map((link) => (
                 <li key={link.linkId} className="flex flex-wrap items-baseline justify-between gap-2">
                   <span>
-                    {formatDay(link.bookingDay)} {link.counterparty || 'ohne Namen'} {euro(link.cents)} → {link.targetLabel}
+                    {formatDay(link.bookingDay)} {link.counterparty || 'ohne Namen'} {euro(link.cents)} →{' '}
+                    {link.rowId ? (
+                      <Link href={receiptHref(link.rowId)} className="hover:underline" title="Beleg in der Tabelle öffnen">
+                        {link.targetLabel}
+                      </Link>
+                    ) : (
+                      link.targetLabel
+                    )}
                     <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
                       {LINK_METHOD_LABELS[link.method] ?? 'von dir bestätigt'}
                       {link.counts ? '' : ' · zählt nicht doppelt: der Kauf, den diese Abbuchung bezahlt, ist demselben Beleg zugeordnet'}

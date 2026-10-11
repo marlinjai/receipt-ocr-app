@@ -131,7 +131,7 @@ describe('PaymentsTab', () => {
     render(
       <PaymentsTab
         view={view({
-          links: [{ linkId: 'l-1', paymentId: 'p-1', bookingDay: '2026-01-20', cents: 100_000, counterparty: 'Kundin Beispiel', target: 'invoice', targetLabel: 'Rechnung R-2026-001', method: 'reference', counts: true }],
+          links: [{ linkId: 'l-1', paymentId: 'p-1', bookingDay: '2026-01-20', cents: 100_000, counterparty: 'Kundin Beispiel', target: 'invoice', rowId: null, targetLabel: 'Rechnung R-2026-001', method: 'reference', counts: true }],
           treatments: [{ key: 'vermieter beispiel', label: 'Vermieter Beispiel', treatment: 'private' }],
         })}
         {...p}
@@ -291,13 +291,30 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view({
           transferCount: 12,
-          links: [{ linkId: 'l-2', paymentId: 'p-1', bookingDay: '2026-03-03', cents: 2_075, counterparty: 'Editor Beispiel', target: 'receipt', targetLabel: 'Editor Beispiel März', method: 'estimate', counts: false }],
+          links: [{ linkId: 'l-2', paymentId: 'p-1', bookingDay: '2026-03-03', cents: 2_075, counterparty: 'Editor Beispiel', target: 'receipt', rowId: 'row-march', targetLabel: 'Editor Beispiel März', method: 'estimate', counts: false }],
         })}
         {...props()}
       />,
     );
     expect(screen.getByText(/12 Umbuchungen zwischen eigenen Konten, nach denen nicht gefragt wird/)).toBeTruthy();
     expect(screen.getByText(/Vorschlag, von dir übernommen · zählt nicht doppelt/)).toBeTruthy();
+  });
+
+  it('a linked payment leads to its receipt in the table; one linked to an issued invoice has no such link', () => {
+    render(
+      <PaymentsTab
+        view={view({
+          links: [
+            { linkId: 'l-2', paymentId: 'p-1', bookingDay: '2026-03-03', cents: 2_075, counterparty: 'Editor Beispiel', target: 'receipt', rowId: 'row march/1', targetLabel: 'Editor Beispiel März', method: 'manual', counts: true },
+            { linkId: 'l-3', paymentId: 'p-2', bookingDay: '2026-01-20', cents: 100_000, counterparty: 'Kundin Beispiel', target: 'invoice', rowId: null, targetLabel: 'Rechnung R-2026-001', method: 'reference', counts: true },
+          ],
+        })}
+        {...props()}
+      />,
+    );
+    const link = screen.getByRole('link', { name: 'Editor Beispiel März' });
+    expect(link.getAttribute('href')).toBe('/app/dashboard?beleg=row%20march%2F1');
+    expect(screen.queryByRole('link', { name: 'Rechnung R-2026-001' })).toBeNull();
   });
 
   it('reports the rows a pay-later list left out in plain words', () => {

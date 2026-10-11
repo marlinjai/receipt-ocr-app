@@ -99,6 +99,92 @@ with details read from the service's web pages. It exists with 13 and with 17 co
     never trusts the browser's. Such a link carries the method `estimate`.
 13. **Speed.** Measured first (see "Measured" below), then fixed where the time went.
 
+## Decisions changed by the review of 2026-10-11
+
+An independent review after the first deploy found the funding rule too wide and several ways
+for the same money to count twice or to stay counted. These decisions replace the ones named.
+Built on the branch `fix/pay-later-review-findings`.
+
+14. **The funding rule is narrow (replaces 7).** Now `resolveFunding` in `funding.ts`:
+    - It holds only on days the service's own list covers: from the first to the last booked day
+      of the account that holds the list. Outside them the line on the other account is the only
+      record of the purchase and stays an ordinary payment. No days are added after the last
+      one: a collection after the end of the list asks, and a person says it is a transfer.
+    - A debit on a BANK account naming the service is a transfer, with or without a purchase of
+      the same amount in the list, because a bank shows the consolidated collection.
+    - A row on a card or on another service's account naming the service ("PAYPAL *shop" on the
+      pay-later card) is a transfer only when the service's list holds a purchase of exactly that
+      amount booked so that the row lies from 3 days before to 10 days after it (its twin), and
+      a purchase is the twin of one row only. Otherwise it may be a guest checkout and stays an
+      ordinary payment.
+    - Money coming IN from a wallet (PayPal) is balance paid out: a transfer. Money coming in
+      from a pay-later service (Klarna) is money back for a purchase, because its list holds no
+      refunds: kind `refund`, asked about payment by payment, linked to the receipt as money back.
+15. **The rule can be seen and overruled in the screen (adds to 8).** The payments tab lists the
+    payments the rule made a transfer, collapsed, with count and sum, each with "Kein Übertrag,
+    eine eigene Zahlung" (the payment goes back to what its file says and is asked about again).
+    An open payment that names a held service offers "Übertrag zwischen eigenen Konten". Both
+    are a re-labelling of the single payment and are taken back under "Von dir umgewidmete
+    Zahlungen". Stored in the existing column `kind_override`.
+16. **What the rule hides is reconciled (replaces 10).** Per service and year the tab sets the
+    bank debits the rule treats as transfers against the purchases the service's list states,
+    with the difference named and a table per month with a running difference. The year is
+    called out when the difference is more than one euro or one percent of the listed purchases.
+    Judged per year, not per month: a pay-later service collects weeks after the purchase, so
+    single months never fit. A late fee, interest or a purchase missing from the list shows as
+    "more collected than listed"; the person marks that debit as a payment of its own.
+17. **A purchase cancelled or refunded in full after it was imported stops counting (adds to
+    5).** The file names such purchases by identity; a payment stored under one is marked with
+    the import that said so (`cancelled_by_batch_id`). It is kept, is in no list, count or sum,
+    and cannot be linked. Its links are kept too and count for nothing: the tab lists the
+    purchase with the receipt that lost its payment. Undoing that import clears the mark (the
+    foreign key does), and payment and link count again. Chosen over deleting the links because
+    deleting cannot be undone.
+18. **One additive migration (replaces 9), `0019_tax_payment_cancelled`:** one nullable column
+    with a foreign key. No row is rewritten and no link is touched.
+19. **The same money counts once on a receipt.** A payment and the debit that funds it (its
+    twin, see 14) are one sum: linked to the same receipt, only the purchase side counts and the
+    debit's link is shown as not counting. Linking the purchase to a receipt whose only link
+    sits on that debit moves the link and says so. Any other link that would take a receipt
+    more than 8 percent beyond its own amount (the tolerance of the proposals) is refused with
+    what is already on it; the screen asks ("Dieser Beleg hat schon eine Zahlung über ...") and
+    links on a yes. Several payments on one receipt stay possible. One writer per receipt at a
+    time (a transaction-level advisory lock on the receipt's id).
+20. **A purchase stored without the service's number is recognized when a later file gives it
+    one (adds to 3).** Exactly one stored row without a number and exactly one new row with one
+    must agree on day, amount and merchant; the stored row then takes the number as its
+    identity and keeps its links. The same inside one file. With more than one candidate on
+    either side nothing is guessed and both stay. In today's file no such pair exists (6 rows
+    without a number, none repeated by a numbered row).
+21. **Accepting proposals (replaces 12 in part).** One "Übernehmen" and the bulk action use the
+    same server path and both record the method `estimate`. The screen sends the pairs the
+    person saw; linked is only what is in that list and still a proposal when worked out again
+    (for the bulk action: still unambiguous). Each link is checked once more inside its write
+    (payment and receipt both still free), so a second tab cannot double it. Each link is its
+    own transaction and the answer says exactly how many were linked and how many were left out.
+22. **Status words are named one by one (replaces part of 5).** Every status the list is known
+    to carry is listed in the reader, including "read", a leftover of the conversion on one row
+    that says nothing about the payment and is read as a purchase. A part refund in any spelling
+    keeps the purchase in full and is reported after the import, because the list gives no
+    amount for it. An unknown status refuses the file and names the word. The currency is read
+    whatever its case.
+23. **Money back with its purchase's reference is a movement of its own (corrects 6):** its
+    identity is the reference plus "refund", so it is no double of the purchase.
+24. **The day is the day in German time.** The list states its time zone; today's file is in
+    German time on every row and its days stand as written. A list in another zone is moved by
+    its time, so a purchase at 23:30 in UTC on 31 December counts on 1 January.
+
+## Open question for the owner
+
+**Which day does a pay-later purchase count on?** The booking day is the purchase day (decision
+2). For "pay in 30 days" and for instalments the money leaves the bank account later, so a
+purchase of December that is collected in January counts in the old year once it is linked.
+Under cash-basis accounting (section 11 of the income tax act) that is a tax judgment: paying
+with a pay-later service can be seen as paid on the purchase day (the service paid the merchant
+and the buyer owes the service, like a credit card), or as paid when the buyer's money leaves.
+Not decided here. Until it is, the purchase day stands, and the payments at the turn of the
+year are the ones to look at.
+
 ## Tests
 
 Parser and matching as unit tests; the import flow against a real database on all four paths of
@@ -150,3 +236,18 @@ Where the time went, and what was done:
 - `pnpm check:roadmap` fails on two lines of `ROADMAP.md` that passed their 30 days on
   2026-10-11 (the machine path to tenant-scoped authentication and the workspace dropdown). They
   are not part of this work and were not re-confirmed without the owner.
+
+## Reality (2026-10-11, after the review)
+
+- The first version merged and deployed on 2026-10-11 (squash commit 54fefd8). The fixes above
+  are on `fix/pay-later-review-findings`, not deployed.
+- On production the fix changes this at deploy, without any import: every bank debit naming
+  PayPal outside the days the PayPal list covers (the list covers 2025; the bank lists reach from
+  September 2024 to September 2026) is an ordinary payment again and asks. Money the pay-later
+  service paid back to the bank becomes a refund that asks for its receipt.
+- The real file reads exactly as before (1,128 purchases, 3 left out, the same identities), so
+  an import made with the first version stays valid and a repeat adds nothing.
+- The database tests ran on throwaway databases of their own. On a fresh database the whole
+  suite passes; the five timeouts of the first run came from the shared test database, which
+  held about 2,100 tables of earlier runs.
+

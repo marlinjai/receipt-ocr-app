@@ -196,6 +196,8 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Dieses Konto wurde bisher aus einer anderen Quelle eingelesen. Damit keine Zahlung doppelt entsteht, bleibt ein Konto bei einer Quelle; für die andere Quelle bitte ein eigenes Konto anlegen.';
         case 'batch_has_later_overlap':
           return 'Ein später eingelesener Export deckt dieselben Tage ab. Bitte zuerst den späteren Import rückgängig machen.';
+        case 'proposal_gone':
+          return 'Dieser Vorschlag gilt nicht mehr: Zahlung oder Beleg wurde inzwischen zugeordnet. Die Liste ist jetzt aktuell.';
         case 'target_fully_paid':
           return 'Diese Rechnung ist bereits vollständig bezahlt.';
         case 'link_exceeds_payment':
@@ -211,6 +213,10 @@ export function financeActionMessage(error: string, detail?: string): string {
         case 'invalid_date':
           return 'Das Datum „gilt ab“ ist ungültig.';
         default:
+          if (detail?.startsWith('unknown_status:')) {
+            const [, row, ...word] = detail.split(':');
+            return `Zeile ${row} der Datei trägt den Status „${word.join(':')}“, den das Einlesen nicht kennt. Ob das ein Kauf ist, wird nicht geraten. Es wurde nichts eingelesen.`;
+          }
           if (detail?.startsWith('unreadable_row:')) {
             return `Zeile ${detail.split(':')[1]} der Datei lässt sich nicht lesen (Datum oder Betrag). Es wurde nichts eingelesen, auch nicht die Zeilen davor.`;
           }

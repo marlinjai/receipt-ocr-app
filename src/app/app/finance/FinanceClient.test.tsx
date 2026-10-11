@@ -7,6 +7,8 @@ import type { StatementItem, StatementView } from '@/lib/tax/service';
 
 const actions = vi.hoisted(() => ({
   acceptPaymentProposals: vi.fn(),
+  confirmPaymentLink: vi.fn(),
+  markPaymentTransfer: vi.fn(),
   answerYearBoundary: vi.fn(),
   declineYearBoundary: vi.fn(),
   saveLines: vi.fn(),
@@ -144,7 +146,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     smallBusinessAtYearEnd: true,
     statusChanges: [],
     vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, settlements: [] },
-    payments: { accounts: [], yearCount: 0, linkedCount: 0, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], overridden: [], receiptTargets: [], invoiceTargets: [], links: [] },
+    payments: { accounts: [], yearCount: 0, linkedCount: 0, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [] },
     vendorRules: [],
     yearBoundary: [],
     initialized: true,
@@ -524,24 +526,74 @@ describe('FinanceClient: assets', () => {
       severalLowValueItems: true,
     });
   });
-  it('accepting the proposals for estimated receipts says how many were linked, and a failure is shown, not swallowed', async () => {
+  it('accepting the proposals sends the pairs the dialog counted, says exactly what was linked and what was left out, and shows a failure', async () => {
     const user = userEvent.setup();
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2025-03-02', estimateCents: 2_000, bookingDay: '2025-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true };
+    const second = { ...proposal, paymentId: 'p-2', rowId: 'r-2', receiptLabel: 'Hosting Beispiel' };
     const payments = view([]).payments;
-    const withProposal = view([], { payments: { ...payments, estimateProposals: [proposal] } });
-    actions.acceptPaymentProposals.mockResolvedValueOnce({ ok: false, error: 'failed' }).mockResolvedValueOnce({ ok: true, value: { view: view([]), linked: 1 } });
-    render(<FinanceClient initial={withProposal} />);
+    const withProposals = view([], { payments: { ...payments, estimateProposals: [proposal, second] } });
+    actions.acceptPaymentProposals
+      .mockResolvedValueOnce({ ok: false, error: 'failed' })
+      .mockResolvedValueOnce({ ok: true, value: { view: view([]), linked: 1, skipped: 1 } });
+    render(<FinanceClient initial={withProposals} />);
     await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
 
-    await user.click(screen.getByRole('button', { name: 'Den einen eindeutigen Vorschlag übernehmen' }));
+    await user.click(screen.getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Das hat nicht geklappt');
-    // The proposal is still there to try again.
-    await user.click(screen.getByRole('button', { name: 'Den einen eindeutigen Vorschlag übernehmen' }));
-    expect(await screen.findByText(/1 Zahlung dem Beleg zugeordnet/)).toBeTruthy();
-    expect(actions.acceptPaymentProposals).toHaveBeenCalledTimes(2);
-    expect(actions.acceptPaymentProposals).toHaveBeenLastCalledWith(2025);
+    // The proposals are still there to try again.
+    await user.click(screen.getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
+    expect(await screen.findByText('1 Zahlung dem Beleg zugeordnet; 1 Vorschlag galt nicht mehr und blieb unberührt. Die Liste zeigt den aktuellen Stand.')).toBeTruthy();
+    expect(actions.acceptPaymentProposals).toHaveBeenLastCalledWith(2025, [{ paymentId: 'p-1', rowId: 'r-1' }, { paymentId: 'p-2', rowId: 'r-2' }], true);
     expect(screen.queryByRole('region', { name: 'Vorschläge für geschätzte Belege' })).toBeNull();
     confirm.mockRestore();
+  });
+
+  it('a receipt that already carries a payment is not linked a second time without a question; a no links nothing, a yes sends it confirmed', async () => {
+    const user = userEvent.setup();
+    const payments = view([]).payments;
+    const openPayment = { id: 'p-1', bookingDay: '2025-03-15', amountCents: -4_000, freeCents: 4_000, counterparty: 'Werkzeug Beispiel GmbH', reference: '', kind: 'spend' as const, accountLabel: 'Geschäftskonto', check: 'payment_without_document' as const, proposals: [], namesService: false };
+    const receiptTargets = [{ id: 'r-1', label: 'Einkauf Laden', day: '2025-03-11', amountCents: 1_999, linkedCents: 1_999 }];
+    const initial = view([], { payments: { ...payments, open: [openPayment], receiptTargets } });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    actions.confirmPaymentLink.mockImplementation(async (_year: number, input: { confirmed?: boolean }) =>
+      input.confirmed ? { ok: true, value: { view: view([]), moved: false } } : { ok: false, error: 'invalid_input', detail: 'receipt_already_paid:1999:1999' },
+    );
+    render(<FinanceClient initial={initial} />);
+    await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
+    await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
+    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r-1');
+
+    await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    expect(confirm.mock.calls[0][0]).toContain('Dieser Beleg hat schon eine Zahlung über 19,99 € (Belegbetrag 19,99 €)');
+    // No: one request went out, unconfirmed, and the payment is still open.
+    expect(actions.confirmPaymentLink).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('Nichts zugeordnet: der Beleg hat schon eine Zahlung.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Zuordnen' })).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
+    await vi.waitFor(() => expect(actions.confirmPaymentLink).toHaveBeenCalledTimes(3));
+    expect(actions.confirmPaymentLink.mock.calls[2][1]).toEqual({ paymentId: 'p-1', rowId: 'r-1', confirmed: true });
+    expect(await screen.findByText('Zahlung zugeordnet.')).toBeTruthy();
+    confirm.mockRestore();
+  });
+
+  it('says so when a link was taken over from the bank-side debit of the same money, and re-labels a transfer through its action', async () => {
+    const user = userEvent.setup();
+    const payments = view([]).payments;
+    const openPayment = { id: 'p-1', bookingDay: '2025-03-11', amountCents: -1_999, freeCents: 1_999, counterparty: 'Laden Beispiel', reference: '', kind: 'spend' as const, accountLabel: 'Geldbörse', check: 'payment_without_document' as const, proposals: [{ target: 'receipt' as const, targetId: 'r-1', label: 'Einkauf Laden', strength: 'amount_and_date' as const }], namesService: false };
+    const ruleTransfers = [{ id: 't-1', bookingDay: '2025-03-12', amountCents: -1_999, counterparty: 'Geldbörse Beispiel', reference: '', accountLabel: 'Geschäftskonto', hasTwin: true }];
+    const initial = view([], { payments: { ...payments, open: [openPayment], ruleTransfers, ruleTransferCents: 1_999 } });
+    actions.confirmPaymentLink.mockResolvedValue({ ok: true, value: { view: initial, moved: true } });
+    actions.markPaymentTransfer.mockResolvedValue({ ok: true, value: view([]) });
+    render(<FinanceClient initial={initial} />);
+    await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
+    await user.click(screen.getByRole('button', { name: /Zuordnen: Einkauf Laden/ }));
+    expect(await screen.findByText(/wurde hierher verschoben: es ist dasselbe Geld/)).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Kein Übertrag, eine eigene Zahlung' }));
+    await vi.waitFor(() => expect(actions.markPaymentTransfer).toHaveBeenCalledWith(2025, 't-1', false));
+    expect(await screen.findByText(/Als eigene Zahlung vermerkt/)).toBeTruthy();
   });
 });

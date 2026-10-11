@@ -7,7 +7,7 @@ import {
   declineOpenYearBoundary,
   deleteDecisionsForRows,
   deleteVatSettlement,
-  isWorkspaceReceipt,
+  receiptForLink,
   loadStatement,
   saveVatSettlement,
   saveYearBoundaryAnswer,
@@ -113,11 +113,11 @@ describe('the ten-day rule: change, resume, re-entry', () => {
     const accountId = await createAccount(db, ctx, { label: 'Geschäftskonto', kind: 'bank' });
     await importPayments(db, ctx, accountId, bankFile(['2025-12-30', '-650'], ['2026-01-20', '-650']));
     const [inWindow, later] = await db.taxPayment.findMany({ where: { accountId }, orderBy: { bookingDay: 'asc' } });
-    const check = (id: string) => isWorkspaceReceipt(db, ctx.workspaceId, id);
+    const check = receiptForLink(db, ctx.workspaceId);
 
     // The receipt's own day is outside the window; the linked payment's day is inside.
     expect(await entryOf(ws, 2025, rowId)).toBeUndefined();
-    const linkId = await linkPayment(db, ctx, { paymentId: inWindow.id, rowId }, check);
+    const { linkId } = await linkPayment(db, ctx, { paymentId: inWindow.id, rowId }, check);
     expect(await entryOf(ws, 2025, rowId)).toMatchObject({ cashDay: '2025-12-30', dayBasis: 'payment', answer: null });
     await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: rowId, cashDay: '2025-12-30', belongsToOtherYear: true });
     expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([0, 65_000]);
@@ -149,7 +149,7 @@ describe('the ten-day rule: change, resume, re-entry', () => {
     // Matched by the receipt's real day, although it counts in 2026.
     expect(view.payments.receiptTargets.find((r) => r.id === rowId)).toMatchObject({ day: '2025-12-28' });
     const payment = (await db.taxPayment.findFirst({ where: { accountId } }))!;
-    await linkPayment(db, ctx, { paymentId: payment.id, rowId }, (id) => isWorkspaceReceipt(db, ctx.workspaceId, id));
+    await linkPayment(db, ctx, { paymentId: payment.id, rowId }, receiptForLink(db, ctx.workspaceId));
     // The payment day is another day than the one the answer was given for.
     expect(await entryOf(ws, 2025, rowId)).toMatchObject({ cashDay: '2025-12-30', answer: null });
     expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([65_000, 0]);

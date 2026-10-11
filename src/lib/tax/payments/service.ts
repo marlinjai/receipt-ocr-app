@@ -2,10 +2,10 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { vendorKey } from '../decisions';
-import { fundedService, fundingServices } from './funding';
+import { resolveFunding, type Funding } from './funding';
 import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from './match';
-import { parsePaymentFile } from './parse';
-import { PAYMENT_KINDS, type PaymentFormat, type PaymentKind } from './types';
+import { parsePaymentFile, referenceHash } from './parse';
+import { PAYMENT_KINDS, type NormalizedPayment, type PaymentFormat, type PaymentKind } from './types';
 
 /**
  * Server-side reads and writes for payments. Like the other finance services,
@@ -35,14 +35,21 @@ export type PaymentServiceErrorCode =
   | 'invalid_link'
   | 'link_exceeds_payment'
   | 'target_not_found'
-  | 'target_fully_paid';
+  | 'target_fully_paid'
+  /** The receipt already carries payments, and this one would take it beyond its own amount: asked about, not refused. */
+  | 'receipt_already_paid'
+  /** The pair is no proposal any more (one side was linked in the meantime). */
+  | 'proposal_gone';
 
 export class PaymentServiceError extends Error {
   readonly code: PaymentServiceErrorCode;
-  constructor(code: PaymentServiceErrorCode) {
+  /** For `receipt_already_paid`: "<cents already linked>:<the receipt's own cents>". */
+  readonly detail: string | null;
+  constructor(code: PaymentServiceErrorCode, detail: string | null = null) {
     super(code);
     this.name = 'PaymentServiceError';
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -78,6 +85,14 @@ export interface ImportResult {
   skipped: Record<string, number>;
   /** Payments linked to an issued invoice because its number is in the payment's text. */
   autoLinked: number;
+  /** Payments of an earlier import that this file lists as cancelled or refunded in full: they stopped counting. */
+  cancelledEarlier: number;
+  /** Of those, how many were linked to a receipt (the link is kept and released, see the payments view). */
+  releasedLinks: number;
+  /** Payments stored without the source's number that this file gave one: recognized, not stored again. */
+  adopted: number;
+  /** Rows that were read but need a look, by reason. */
+  notices: Record<string, number>;
   firstDay: string | null;
   lastDay: string | null;
 }
@@ -102,7 +117,8 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
 
   // Everything from here on happens together or not at all, including the
   // automatic links: a failure leaves no batch behind that would refuse a retry.
-  const { batch, added, autoLinked } = await db.$transaction(async (tx) => {
+  const { batch, added, autoLinked, adopted, cancelledEarlier, releasedLinks } = await db.$transaction(async (tx) => {
+    const adopted = await adoptUnreferenced(tx, accountId, parsed.payments);
     const existing = new Set(
       (await tx.taxPayment.findMany({ where: { accountId, sourceHash: { in: parsed.payments.map((p) => p.sourceHash) } }, select: { sourceHash: true } })).map((p) => p.sourceHash),
     );
@@ -145,7 +161,16 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
       inserted = result.count;
       if (inserted !== fresh.length) await tx.taxImportBatch.update({ where: { id: created.id }, data: { newCount: inserted } });
     }
-    return { batch: created, added: inserted, autoLinked: await linkByReference(tx, ctx, created.id) };
+    // A purchase an earlier file brought as paid and this one lists as cancelled or refunded in full
+    // is kept and marked with this import; undoing this import clears the mark again.
+    let cancelledEarlier = 0;
+    let releasedLinks = 0;
+    if (parsed.cancelled.length > 0) {
+      const where = { accountId, sourceHash: { in: parsed.cancelled }, cancelledByBatchId: null };
+      releasedLinks = await tx.taxPaymentLink.count({ where: { payment: where } });
+      cancelledEarlier = (await tx.taxPayment.updateMany({ where, data: { cancelledByBatchId: created.id } })).count;
+    }
+    return { batch: created, added: inserted, autoLinked: await linkByReference(tx, ctx, created.id), adopted, cancelledEarlier, releasedLinks };
     // A year of payments on a busy server takes longer than the five seconds a transaction gets by default.
   }, { maxWait: 20_000, timeout: 120_000 });
 
@@ -157,9 +182,48 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     alreadyThere: parsed.payments.length - added,
     skipped: parsed.skipped,
     autoLinked,
+    cancelledEarlier,
+    releasedLinks,
+    adopted,
+    notices: parsed.notices,
     firstDay: parsed.firstDay,
     lastDay: parsed.lastDay,
   };
+}
+
+/**
+ * A purchase stored without the source's own number (it came from a file that
+ * had none for it) is the same purchase when a later file lists it with one.
+ * Their identities differ, so it would be stored twice. Where exactly one
+ * stored row without a number and exactly one new row with a number agree on
+ * day, amount and merchant, the stored row takes the number as its identity
+ * and keeps everything else, its links included. Returns how many did.
+ */
+async function adoptUnreferenced(db: Prisma.TransactionClient, accountId: string, parsed: readonly NormalizedPayment[]): Promise<number> {
+  const numbered = parsed.filter((p) => p.byReference && p.entryReference);
+  if (numbered.length === 0) return 0;
+  const known = new Set(
+    (await db.taxPayment.findMany({ where: { accountId, sourceHash: { in: numbered.map((p) => p.sourceHash) } }, select: { sourceHash: true } })).map((p) => p.sourceHash),
+  );
+  const fresh = numbered.filter((p) => !known.has(p.sourceHash));
+  if (fresh.length === 0) return 0;
+  const sameMovement = (p: { bookingDay: string; amountCents: number; counterpartyKey: string }) => `${p.bookingDay}|${p.amountCents}|${p.counterpartyKey}`;
+  const claims = new Map<string, NormalizedPayment[]>();
+  for (const p of fresh) {
+    const key = sameMovement({ ...p, counterpartyKey: counterpartyKey(p.counterparty) });
+    claims.set(key, [...(claims.get(key) ?? []), p]);
+  }
+  const stored = await db.taxPayment.findMany({ where: { accountId, bookingDay: { in: [...new Set(fresh.map((p) => p.bookingDay))] } } });
+  // Stored without a number: its identity is not the hash of a number of its own.
+  const unnumbered = stored.filter((p) => p.sourceHash !== referenceHash(p.entryReference ?? ''));
+  let adopted = 0;
+  for (const [key, claimants] of claims) {
+    const candidates = unnumbered.filter((p) => sameMovement(p) === key);
+    if (claimants.length !== 1 || candidates.length !== 1) continue;
+    await db.taxPayment.update({ where: { id: candidates[0].id }, data: { sourceHash: claimants[0].sourceHash, entryReference: claimants[0].entryReference } });
+    adopted += 1;
+  }
+  return adopted;
 }
 
 /**
@@ -171,7 +235,7 @@ async function linkByReference(db: Prisma.TransactionClient, ctx: PaymentContext
   // Whether a link is unambiguous is judged against every unlinked incoming
   // payment of the workspace, not only this file's: an earlier payment naming
   // the same invoice makes the new one ambiguous too.
-  const payments = await db.taxPayment.findMany({ where: { authWorkspaceId: ctx.workspaceId, amountCents: { gt: 0 } }, include: { links: true } });
+  const payments = await db.taxPayment.findMany({ where: { authWorkspaceId: ctx.workspaceId, amountCents: { gt: 0 }, cancelledByBatchId: null }, include: { links: true } });
   const invoices = await db.taxIssuedInvoice.findMany({ where: { authWorkspaceId: ctx.workspaceId }, include: { payments: true, paymentLinks: true } });
   const proposals = unambiguousReferenceMatches(
     proposeMatches(
@@ -201,16 +265,12 @@ export function effectiveKind(payment: { sourceKind: string; kindOverride: strin
 /**
  * What a payment is, in this order: the counterparty is an own account (moving
  * money there is no spend, whatever the file calls it); a person re-labelled
- * this one payment; it only funds another imported payment account (see
- * `funding.ts`); otherwise what its file says.
+ * this one payment; it only funds another imported payment account, or is
+ * money back from one (see `funding.ts`); otherwise what its file says.
  */
-function paymentKind(
-  payment: { accountId: string; counterpartyKey: string; sourceKind: string; kindOverride: string | null },
-  treatment: CounterpartyTreatment | undefined,
-  services: ReturnType<typeof fundingServices>,
-): PaymentKind {
+function paymentKind(payment: { sourceKind: string; kindOverride: string | null }, treatment: CounterpartyTreatment | undefined, funding: Funding | undefined): PaymentKind {
   if (treatment === 'own_account') return 'own_transfer';
-  if (payment.kindOverride === null && fundedService(payment, services) !== null) return 'own_transfer';
+  if (payment.kindOverride === null && funding) return funding.kind;
   return effectiveKind(payment);
 }
 
@@ -257,6 +317,21 @@ export async function setPaymentKind(db: PrismaClient, ctx: PaymentContext, paym
   if (count === 0) throw new PaymentServiceError('payment_not_found');
 }
 
+/**
+ * Say that one payment is a transfer between own accounts, or that it is not.
+ * This is how a person overrules the funding rule in both directions: a debit
+ * the rule hid is a purchase after all (it goes back to what its file says and
+ * is asked about again), or a debit the rule did not catch is a transfer.
+ */
+export async function setPaymentTransfer(db: PrismaClient, ctx: PaymentContext, paymentId: string, isTransfer: unknown): Promise<void> {
+  if (typeof isTransfer !== 'boolean') throw new PaymentServiceError('invalid_kind');
+  const payment = await db.taxPayment.findFirst({ where: { id: paymentId, authWorkspaceId: ctx.workspaceId } });
+  if (!payment) throw new PaymentServiceError('payment_not_found');
+  // "No transfer" is what the file says it is; a file that itself calls it a transfer leaves money out or money in.
+  const own = payment.sourceKind === 'own_transfer' ? (payment.amountCents < 0 ? 'spend' : 'income') : payment.sourceKind;
+  await db.taxPayment.update({ where: { id: payment.id }, data: { kindOverride: isTransfer ? 'own_transfer' : own } });
+}
+
 export interface LinkInput {
   paymentId: string;
   /** Exactly one of the two. */
@@ -264,33 +339,57 @@ export interface LinkInput {
   invoiceId?: string | null;
   /** The part of the payment that belongs to the target; omitted: all that is not linked yet. */
   cents?: number | null;
+  /** The person was told the receipt already carries payments and wants this one on it as well. */
+  confirmed?: boolean;
 }
+
+export interface LinkResult {
+  linkId: string;
+  /**
+   * Set when the receipt's only link sat on the debit that funds this payment
+   * (the bank side of the same money): that link was replaced by this one.
+   */
+  movedFromPaymentId: string | null;
+}
+
+/** How a receipt answers for a link: null when it is not this workspace's, otherwise its own euro amount (null: none). */
+export type ReceiptForLink = (rowId: string) => Promise<{ amountCents: number | null } | null>;
+
+/** How far the payments of a receipt may go beyond its own amount before a person is asked: fees and exchange rates. */
+export const OVERPAID_TOLERANCE_PERCENT = 8;
 
 /**
  * Link a payment (or part of it) to a receipt or an issued invoice, by a
- * person's confirmation. `rowBelongsToWorkspace` is how the caller proves a
- * receipt row is this workspace's (rows live in the generic table). `method`
- * records how it came about: picked by hand, or a proposal the person accepted.
+ * person's confirmation. `receiptOf` is how the caller proves a receipt row is
+ * this workspace's (rows live in the generic table) and says what it amounts
+ * to. `method` records how it came about: picked by hand, or a proposal the
+ * person accepted.
+ *
+ * Three things keep the same money from counting twice on a receipt:
+ * a link on the funding debit of this payment is replaced when it is the
+ * receipt's only one; links of a payment and its funding debit to the same
+ * receipt count once (`countedReceiptLinks`); and a link that takes a receipt
+ * beyond its own amount is refused with `receipt_already_paid` until the
+ * person confirms it (several payments on one receipt are legitimate: a lease
+ * paid in monthly debits).
  */
-export async function linkPayment(
-  db: PrismaClient,
-  ctx: PaymentContext,
-  raw: unknown,
-  rowBelongsToWorkspace: (rowId: string) => Promise<boolean>,
-  method: 'manual' | 'estimate' = 'manual',
-): Promise<string> {
+export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: unknown, receiptOf: ReceiptForLink, method: 'manual' | 'estimate' = 'manual'): Promise<LinkResult> {
   const input = (raw ?? {}) as LinkInput;
   const rowId = typeof input.rowId === 'string' && input.rowId ? input.rowId : null;
   const invoiceId = typeof input.invoiceId === 'string' && input.invoiceId ? input.invoiceId : null;
   if (typeof input.paymentId !== 'string' || (rowId === null) === (invoiceId === null)) throw new PaymentServiceError('invalid_link');
-  if (rowId !== null && !(await rowBelongsToWorkspace(rowId))) throw new PaymentServiceError('target_not_found');
+  const receipt = rowId !== null ? await receiptOf(rowId) : null;
+  if (rowId !== null && receipt === null) throw new PaymentServiceError('target_not_found');
 
   return db.$transaction(async (tx) => {
     // Lock the payment so two confirmations at the same moment cannot both use its free amount.
     await tx.$queryRaw`SELECT id FROM tax_payments WHERE id = ${input.paymentId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
     const payment = await tx.taxPayment.findFirst({ where: { id: input.paymentId, authWorkspaceId: ctx.workspaceId }, include: { links: true } });
     if (!payment) throw new PaymentServiceError('payment_not_found');
+    // A cancelled purchase counts nowhere, so nothing is linked to it.
+    if (payment.cancelledByBatchId !== null) throw new PaymentServiceError('invalid_link');
     let free = Math.abs(payment.amountCents) - payment.links.reduce((s, l) => s + l.cents, 0);
+    let movedFromPaymentId: string | null = null;
     if (invoiceId !== null) {
       // The invoice is locked too (always after the payment): two payments
       // confirmed for it at the same moment cannot both use what it has open.
@@ -308,11 +407,63 @@ export async function linkPayment(
     const cents = input.cents === undefined || input.cents === null ? free : input.cents;
     if (!Number.isInteger(cents) || cents <= 0) throw new PaymentServiceError('invalid_link');
     if (cents > free) throw new PaymentServiceError('link_exceeds_payment');
+
+    if (rowId !== null) {
+      // One writer per receipt (always after the payment): what the receipt
+      // already carries is read and judged without another link slipping in.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`tax-receipt:${rowId}`}))`;
+      const loaded = await loadPayments(tx, ctx.workspaceId);
+      const onReceipt = (p: PaymentRow) => p.links.filter((l) => l.rowId === rowId);
+      // An accepted proposal is for a payment and a receipt that are both free;
+      // in a second tab one of them may have been linked a moment ago.
+      if (method === 'estimate' && (payment.links.length > 0 || loaded.payments.some((p) => onReceipt(p).length > 0))) throw new PaymentServiceError('proposal_gone');
+      if (payment.amountCents < 0) {
+        const funders = loaded.payments.filter((p) => p.funding?.twinId === payment.id && onReceipt(p).length > 0);
+        const others = loaded.payments.filter((p) => p.id !== payment.id && !funders.includes(p) && onReceipt(p).length > 0);
+        // The receipt's only link sits on the debit that funds this very purchase: it is the same money, so the link moves here.
+        if (funders.length > 0 && others.length === 0 && payment.links.every((l) => l.rowId !== rowId)) {
+          await tx.taxPaymentLink.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId, paymentId: { in: funders.map((p) => p.id) } } });
+          movedFromPaymentId = funders[0].id;
+        } else if (!input.confirmed && receipt && receipt.amountCents !== null) {
+          const paidSoFar = paidOnReceipt(loaded.payments, rowId);
+          const limit = receipt.amountCents + Math.round((receipt.amountCents * OVERPAID_TOLERANCE_PERCENT) / 100);
+          // Counted once when this payment's funding debit is on the receipt already.
+          const adds = funders.length > 0 ? 0 : cents;
+          if (adds > 0 && paidSoFar > 0 && paidSoFar + adds > limit) throw new PaymentServiceError('receipt_already_paid', `${paidSoFar}:${receipt.amountCents}`);
+        }
+      }
+    }
     const link = await tx.taxPaymentLink.create({
       data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, paymentId: payment.id, rowId, invoiceId, cents, method },
     });
-    return link.id;
+    return { linkId: link.id, movedFromPaymentId };
   });
+}
+
+/**
+ * The receipt links that count. A payment and the debit that funds it are the
+ * same money: when both are linked to the same receipt, the funding side is
+ * left out, so the receipt counts what was paid once.
+ */
+export function countedReceiptLinks(payments: readonly PaymentRow[]): Array<{ payment: PaymentRow; link: PaymentRow['links'][number] & { rowId: string } }> {
+  const linkedPurchase = new Set<string>();
+  for (const payment of payments) for (const link of payment.links) if (link.rowId) linkedPurchase.add(`${payment.id}|${link.rowId}`);
+  const out: Array<{ payment: PaymentRow; link: PaymentRow['links'][number] & { rowId: string } }> = [];
+  for (const payment of payments) {
+    for (const link of payment.links) {
+      if (!link.rowId) continue;
+      if (payment.funding?.twinId && linkedPurchase.has(`${payment.funding.twinId}|${link.rowId}`)) continue;
+      out.push({ payment, link: { ...link, rowId: link.rowId } });
+    }
+  }
+  return out;
+}
+
+/** What the linked payments of a receipt add up to: money out less money back, never below nothing. */
+function paidOnReceipt(payments: readonly PaymentRow[], rowId: string): number {
+  let cents = 0;
+  for (const { payment, link } of countedReceiptLinks(payments)) if (link.rowId === rowId) cents += payment.amountCents < 0 ? link.cents : -link.cents;
+  return Math.max(0, cents);
 }
 
 export async function unlinkPayment(db: PrismaClient, ctx: PaymentContext, linkId: string): Promise<void> {
@@ -338,18 +489,30 @@ export interface PaymentRow {
   reference: string;
   kind: PaymentKind;
   kindOverridden: boolean;
+  /** What the file itself says the movement is: what "put it back" returns to. */
+  sourceKind: PaymentKind;
+  /** Set when the funding rule applies to the payment, whether or not a person overruled it (see `funding.ts`). */
+  funding: Funding | null;
+  /** True when `kind` comes from the funding rule: nobody said it, and it can be overruled. */
+  byRule: boolean;
   links: Array<{ id: string; rowId: string | null; invoiceId: string | null; cents: number; method: string }>;
 }
 
 export interface LoadedPayments {
   accounts: Array<{ id: string; label: string; kind: string; paymentCount: number; completeThrough: string | null; batches: Array<{ id: string; format: string; newCount: number; paymentCount: number; firstDay: string | null; lastDay: string | null; importedAt: string }> }>;
   payments: PaymentRow[];
+  /**
+   * Purchases a later import listed as cancelled or refunded in full. They are
+   * in no list, count and sum above; their links are kept (undoing that import
+   * brings both back) but count for no receipt.
+   */
+  cancelled: Array<{ id: string; accountId: string; bookingDay: string; amountCents: number; counterparty: string; rowIds: string[] }>;
   treatments: Map<string, CounterpartyTreatment>;
 }
 
 /** Every payment of the workspace with its links, and what was said about the counterparties. */
-export async function loadPayments(db: PrismaClient, workspaceId: string): Promise<LoadedPayments> {
-  const [accounts, payments, rules] = await Promise.all([
+export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, workspaceId: string): Promise<LoadedPayments> {
+  const [accounts, stored, rules] = await Promise.all([
     db.taxAccount.findMany({ where: { authWorkspaceId: workspaceId }, include: { batches: { orderBy: { createdAt: 'desc' } } }, orderBy: { label: 'asc' } }),
     db.taxPayment.findMany({ where: { authWorkspaceId: workspaceId }, include: { links: true }, orderBy: [{ bookingDay: 'asc' }, { createdAt: 'asc' }] }),
     db.taxCounterpartyRule.findMany({ where: { authWorkspaceId: workspaceId } }),
@@ -358,19 +521,30 @@ export async function loadPayments(db: PrismaClient, workspaceId: string): Promi
   for (const rule of rules) {
     if ((COUNTERPARTY_TREATMENTS as readonly string[]).includes(rule.treatment)) treatments.set(rule.counterpartyKey, rule.treatment as CounterpartyTreatment);
   }
-  const services = fundingServices(accounts.map((a) => ({ id: a.id, formats: a.batches.map((b) => b.format) })));
-  const rows: PaymentRow[] = payments.map((p) => ({
-    id: p.id,
-    accountId: p.accountId,
-    bookingDay: p.bookingDay,
-    amountCents: p.amountCents,
-    counterparty: p.counterparty,
-    counterpartyKey: p.counterpartyKey,
-    reference: p.reference,
-    kind: paymentKind(p, treatments.get(p.counterpartyKey), services),
-    kindOverridden: p.kindOverride !== null,
-    links: p.links.map((l) => ({ id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method })),
-  }));
+  const payments = stored.filter((p) => p.cancelledByBatchId === null);
+  const funding = resolveFunding(
+    accounts.map((a) => ({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) })),
+    payments,
+  );
+  const rows: PaymentRow[] = payments.map((p) => {
+    const treatment = treatments.get(p.counterpartyKey);
+    const funds = funding.get(p.id);
+    return {
+      id: p.id,
+      accountId: p.accountId,
+      bookingDay: p.bookingDay,
+      amountCents: p.amountCents,
+      counterparty: p.counterparty,
+      counterpartyKey: p.counterpartyKey,
+      reference: p.reference,
+      kind: paymentKind(p, treatment, funds),
+      kindOverridden: p.kindOverride !== null,
+      sourceKind: effectiveKind({ sourceKind: p.sourceKind, kindOverride: null }),
+      funding: funds ?? null,
+      byRule: funds !== undefined && treatment !== 'own_account' && p.kindOverride === null,
+      links: p.links.map((l) => ({ id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method })),
+    };
+  });
   return {
     accounts: accounts.map((a) => {
       const own = rows.filter((r) => r.accountId === a.id);
@@ -385,6 +559,9 @@ export async function loadPayments(db: PrismaClient, workspaceId: string): Promi
       };
     }),
     payments: rows,
+    cancelled: stored
+      .filter((p) => p.cancelledByBatchId !== null)
+      .map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, rowIds: p.links.flatMap((l) => (l.rowId ? [l.rowId] : [])) })),
     treatments,
   };
 }

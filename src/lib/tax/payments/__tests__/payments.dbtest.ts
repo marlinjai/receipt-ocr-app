@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { saveTaxSettings } from '@/lib/meals/service';
-import { acceptEstimateProposals, deleteDecisionsForRows, isWorkspaceReceipt, loadStatement, saveInvoice, type TaxContext } from '../../service';
+import { acceptEstimateProposals, deleteDecisionsForRows, isWorkspaceReceipt, loadStatement, receiptForLink, saveInvoice, type TaxContext } from '../../service';
 import {
   PaymentServiceError,
   createAccount,
@@ -9,6 +9,7 @@ import {
   linkPayment,
   setCounterpartyTreatment,
   setPaymentKind,
+  setPaymentTransfer,
   unlinkPayment,
 } from '../service';
 import { PaymentParseError } from '../types';
@@ -49,7 +50,7 @@ const code = async (p: Promise<unknown>) => {
   return 'no error';
 };
 
-const rowCheck = (ctx: TaxContext) => (rowId: string) => isWorkspaceReceipt(db, ctx.workspaceId, rowId);
+const rowCheck = (ctx: TaxContext) => receiptForLink(db, ctx.workspaceId);
 
 beforeAll(async () => {
   const o = await workspace();
@@ -159,7 +160,7 @@ describe('counterparties, open payments and links', () => {
     const payment = (await loadStatement(db, ws.workspaceId, 2026)).payments.open.find((p) => p.check === 'payment_without_document')!;
     // No candidate is offered across the turn of the year by amount (10,800 against 10,850): a person links it.
     expect(payment.proposals).toEqual([]);
-    const linkId = await linkPayment(db, ctx, { paymentId: payment.id, rowId }, rowCheck(ctx));
+    const { linkId } = await linkPayment(db, ctx, { paymentId: payment.id, rowId }, rowCheck(ctx));
 
     // Cash basis: the receipt left 2025 and counts in 2026 with what the bank charged.
     expect((await loadStatement(db, ws.workspaceId, 2025)).items.find((i) => i.rowId === rowId)).toBeUndefined();
@@ -385,7 +386,7 @@ describe('findings of the review on the second version', () => {
 // The purchase list of the pay-later service and a PayPal export, with invented rows.
 const LATER_HEADER = 'created_date,created_time,activated,settled,amount,currency,merchant,items,payment_method,status,payment_reference,statement_number,category,purchase_type,card,source,timezone';
 const later = (day: string, merchant: string, amount: string, reference: string, status = 'Normal') =>
-  [day, '09:30', `${day} 09:31`, '', amount, 'EUR', `"${merchant}"`, `"${merchant} Bestellung"`, 'Invoice', `"${status}"`, reference, `ORDER${reference}`, '', '', '', 'beispiel-quelle', 'Europe/Berlin'].join(',');
+  [day, '09:30', `${day} 09:31`, '', amount, 'EUR', `"${merchant}"`, `"${merchant} Bestellung"`, 'Invoice', `"${status}"`, reference, reference ? `ORDER${reference}` : `WEB${day}`, '', '', '', 'beispiel-quelle', 'Europe/Berlin'].join(',');
 const laterFile = (...lines: string[]) => [LATER_HEADER, ...lines].join('\n') + '\n';
 const WALLET_HEADER =
   'Datum,Uhrzeit,Zeitzone,Name,Typ,Status,Währung,Brutto,Gebühr,Netto,Absender E-Mail-Adresse,Empfänger E-Mail-Adresse,Transaktionscode,Lieferadresse,Adress-Status,Artikelbezeichnung,Artikelnummer,Versand- und Bearbeitungsgebühr,Versicherungsbetrag,Umsatzsteuer,Option 1 Name,Option 1 Wert,Option 2 Name,Option 2 Wert,Zugehöriger Transaktionscode,Rechnungsnummer,Zollnummer,Anzahl,Empfangsnummer,Guthaben,Adresszeile 1,Adresszusatz,Ort,Bundesland,PLZ,Land,Telefon,Betreff,Hinweis,Ländervorwahl,Auswirkung auf Guthaben';
@@ -403,22 +404,39 @@ const MARCH = laterFile(
   later('2025-03-03', 'EDITOR BEISPIEL, AI TOOLS', '20.75', '4000000000001'),
   later('2025-03-10', 'Schreibwaren Beispiel', '12.40', '4000000000002'),
 );
+/** The same list reaching to the end of the month: the days it covers decide what on the bank is a transfer. */
+const MARCH_WHOLE = laterFile(
+  later('2025-03-01', 'Kiosk Beispiel', '1.00', '4000000000000'),
+  later('2025-03-03', 'EDITOR BEISPIEL, AI TOOLS', '20.75', '4000000000001'),
+  later('2025-03-10', 'Schreibwaren Beispiel', '12.40', '4000000000002'),
+  later('2025-03-31', 'Kiosk Beispiel', '2.00', '4000000000003'),
+);
+/** A wallet list of March 2025 with one purchase of 19.99 on the 11th. */
+const WALLET_MARCH = walletFile(
+  { date: '01.03.2025', name: 'Kiosk Beispiel', gross: '-1,00', code: 'TXW0' },
+  { date: '11.03.2025', name: 'Laden Beispiel', gross: '-19,99', code: 'TXW1' },
+  { date: '31.03.2025', name: 'Kiosk Beispiel', gross: '-2,00', code: 'TXW9' },
+);
 /** A dollar receipt of 2 March 2025: 22.00 at 0.91, an estimate of 20.02 euro. */
 const dollarReceipt = (ws: TestWorkspace, overrides: Record<string, string | number> = {}) =>
   ws.addReceipt({ Name: 'Editor Beispiel März', Vendor: 'Editor Beispiel', Gross: 22, Date: '2025-03-02', Category: 'Software & Lizenzen', Zuordnung: 'Geschäftlich', Currency: 'USD', 'FX Rate': 0.91, ...overrides });
+const proposalsOf = async (workspaceId: string) => (await loadStatement(db, workspaceId, 2025)).payments.estimateProposals;
+const pairs = (list: Array<{ paymentId: string; rowId: string }>) => list.map((p) => ({ paymentId: p.paymentId, rowId: p.rowId }));
+/** What the screen does for "Alle eindeutigen Vorschläge übernehmen": it sends the unambiguous pairs it shows. */
+const acceptAllShown = async (ctx: TaxContext) => acceptEstimateProposals(db, ctx, 2025, pairs((await proposalsOf(ctx.workspaceId)).filter((p) => p.unambiguous)), true);
+
+async function withLaterAccount() {
+  const base = await workspace();
+  const laterId = await createAccount(db, base.ctx, { label: 'Später zahlen', kind: 'payment_service' });
+  return { ...base, laterId };
+}
 
 describe('the pay-later purchase list: forward, change an earlier input, resume, re-entry', () => {
-  async function withLaterAccount() {
-    const base = await workspace();
-    const laterId = await createAccount(db, base.ctx, { label: 'Später zahlen', kind: 'payment_service' });
-    return { ...base, laterId };
-  }
-
   it('forward: the list is imported, the estimated receipt gets a proposal, and nothing is linked until it is accepted', async () => {
     const { ws, ctx, laterId } = await withLaterAccount();
     const rowId = await dollarReceipt(ws);
     const result = await importPayments(db, ctx, laterId, MARCH);
-    expect(result).toMatchObject({ format: 'klarna_csv', total: 2, added: 2, alreadyThere: 0, skipped: {}, firstDay: '2025-03-03', lastDay: '2025-03-10' });
+    expect(result).toMatchObject({ format: 'klarna_csv', total: 2, added: 2, alreadyThere: 0, skipped: {}, cancelledEarlier: 0, adopted: 0, firstDay: '2025-03-03', lastDay: '2025-03-10' });
 
     const before = await loadStatement(db, ws.workspaceId, 2025);
     // Proposed although nobody has said what the counterparty is: the vendor on the receipt is the evidence.
@@ -429,19 +447,19 @@ describe('the pay-later purchase list: forward, change an earlier input, resume,
     expect(before.payments.links).toEqual([]);
     expect(before.items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 2002, amountBasis: 'reference_rate' });
 
-    expect(await acceptEstimateProposals(db, ctx, 2025)).toBe(1);
+    expect(await acceptAllShown(ctx)).toEqual({ linked: [{ paymentId: before.payments.estimateProposals[0].paymentId, rowId }], skipped: 0 });
     const after = await loadStatement(db, ws.workspaceId, 2025);
     // The receipt counts with what was paid, on the day it was paid.
     expect(after.items.find((i) => i.rowId === rowId)).toMatchObject({ date: '2025-03-03', amountCents: 2075, amountBasis: 'payment' });
     expect(after.payments.estimateProposals).toEqual([]);
-    expect(after.payments.links).toEqual([expect.objectContaining({ target: 'receipt', targetLabel: 'Editor Beispiel März', cents: 2075, method: 'estimate' })]);
+    expect(after.payments.links).toEqual([expect.objectContaining({ target: 'receipt', targetLabel: 'Editor Beispiel März', cents: 2075, method: 'estimate', counts: true })]);
   });
 
   it('change an earlier input: undoing the import takes the payments and the accepted link with it, the estimate is back', async () => {
     const { ws, ctx, laterId } = await withLaterAccount();
     const rowId = await dollarReceipt(ws);
     const first = await importPayments(db, ctx, laterId, MARCH);
-    expect(await acceptEstimateProposals(db, ctx, 2025)).toBe(1);
+    expect((await acceptAllShown(ctx)).linked.length).toBe(1);
 
     await deleteImportBatch(db, ctx, first.batchId);
     const undone = await loadStatement(db, ws.workspaceId, 2025);
@@ -453,14 +471,14 @@ describe('the pay-later purchase list: forward, change an earlier input, resume,
 
     // A corrected file (another amount for the same purchase) is a new input: the proposal is built from it, not from the old one.
     await importPayments(db, ctx, laterId, MARCH.replace('20.75', '19.50'));
-    expect((await loadStatement(db, ws.workspaceId, 2025)).payments.estimateProposals).toEqual([expect.objectContaining({ rowId, paidCents: 1950, unambiguous: true })]);
+    expect(await proposalsOf(ws.workspaceId)).toEqual([expect.objectContaining({ rowId, paidCents: 1950, unambiguous: true })]);
   });
 
   it('change an earlier input, the counter-case: a longer file over the same days adds only what is new and keeps the accepted link', async () => {
     const { ws, ctx, laterId } = await withLaterAccount();
     const rowId = await dollarReceipt(ws);
     await importPayments(db, ctx, laterId, MARCH);
-    expect(await acceptEstimateProposals(db, ctx, 2025)).toBe(1);
+    expect((await acceptAllShown(ctx)).linked.length).toBe(1);
     const linkBefore = await db.taxPaymentLink.findFirstOrThrow({ where: { authWorkspaceId: ws.workspaceId } });
 
     // The same purchases under a corrected merchant name, plus one more: identity is the payment reference.
@@ -478,21 +496,23 @@ describe('the pay-later purchase list: forward, change an earlier input, resume,
     const { ws, ctx, laterId } = await withLaterAccount();
     await dollarReceipt(ws);
     await importPayments(db, ctx, laterId, MARCH);
-    const seen = (await loadStatement(db, ws.workspaceId, 2025)).payments.estimateProposals;
+    const seen = await proposalsOf(ws.workspaceId);
 
     expect(await code(importPayments(db, ctx, laterId, MARCH))).toBe('file_already_imported');
     expect(await db.taxPayment.count({ where: { accountId: laterId } })).toBe(2);
     expect(await db.taxImportBatch.count({ where: { accountId: laterId } })).toBe(1);
     // Nothing lives in the page: what a reload shows is worked out from what is stored.
-    expect((await loadStatement(db, ws.workspaceId, 2025)).payments.estimateProposals).toEqual(seen);
+    expect(await proposalsOf(ws.workspaceId)).toEqual(seen);
   });
 
   it('re-entry after completion: accepting again links nothing twice, and a link taken back is proposed again', async () => {
     const { ws, ctx, laterId } = await withLaterAccount();
     const rowId = await dollarReceipt(ws);
     await importPayments(db, ctx, laterId, MARCH);
-    expect(await acceptEstimateProposals(db, ctx, 2025)).toBe(1);
-    expect(await acceptEstimateProposals(db, ctx, 2025)).toBe(0);
+    const shown = pairs(await proposalsOf(ws.workspaceId));
+    expect((await acceptEstimateProposals(db, ctx, 2025, shown, true)).linked.length).toBe(1);
+    // The list an old page still shows: nothing of it is a proposal any more.
+    expect(await acceptEstimateProposals(db, ctx, 2025, shown, true)).toEqual({ linked: [], skipped: 1 });
     expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(1);
 
     const link = (await loadStatement(db, ws.workspaceId, 2025)).payments.links[0];
@@ -504,8 +524,9 @@ describe('the pay-later purchase list: forward, change an earlier input, resume,
 
   it('re-entry after failure: a refused file leaves nothing behind, and the next import starts clean', async () => {
     const { ctx, accountId, laterId } = await withLaterAccount();
-    // One unreadable row rejects the whole file.
+    // One unreadable row rejects the whole file; so does a status word nobody knows.
     expect(await code(importPayments(db, ctx, laterId, MARCH.replace('12.40', 'zwölf')))).toBe('unreadable_row:3');
+    expect(await code(importPayments(db, ctx, laterId, laterFile(later('2025-03-03', 'Laden Beispiel', '5.00', '4000000000008', 'Angefochten'))))).toBe('unknown_status:2');
     // A file of another kind is not a purchase list.
     expect(await code(importPayments(db, ctx, laterId, 'Datum;Betrag\n01.03.2025;5,00\n'))).toBe('unknown_layout:null');
     expect(await code(importPayments(db, ctx, laterId, LATER_HEADER + '\n'))).toBe('empty:null');
@@ -520,32 +541,53 @@ describe('the pay-later purchase list: forward, change an earlier input, resume,
     expect(await db.taxPayment.count({ where: { accountId: laterId } })).toBe(2);
   });
 
-  it('rows the list marks as cancelled or not processed are left out and counted; undo then import again works', async () => {
-    const { ctx, laterId } = await withLaterAccount();
-    const text = laterFile(
-      later('2025-05-01', 'Laden Beispiel', '10.00', '5000000000001'),
-      later('2025-05-02', 'Laden Beispiel', '20.00', '5000000000002', 'Storniert'),
-      later('2025-05-03', 'Laden Beispiel', '30.00', '5000000000003', 'Wenn der Händler deine Bestellung bearbeitet, ist deine Zahlung 30 Tage später fällig'),
-    );
-    const first = await importPayments(db, ctx, laterId, text);
-    expect(first).toMatchObject({ total: 1, added: 1, skipped: { cancelled: 1, not_completed: 1 } });
-    await deleteImportBatch(db, ctx, first.batchId);
-    expect(await importPayments(db, ctx, laterId, text)).toMatchObject({ total: 1, added: 1, alreadyThere: 0 });
-  });
-
-  it('an ambiguous proposal is offered but never taken in bulk; taking one by hand settles the other', async () => {
+  it('an ambiguous proposal is offered but never taken in bulk; taking one of them settles the other, and it is an accepted proposal', async () => {
     const { ws, ctx, laterId } = await withLaterAccount();
     const rowId = await dollarReceipt(ws);
     await importPayments(db, ctx, laterId, laterFile(later('2025-03-03', 'Editor Beispiel', '20.75', '6000000000001'), later('2025-03-05', 'Editor Beispiel', '19.90', '6000000000002')));
-    const view = await loadStatement(db, ws.workspaceId, 2025);
-    expect(view.payments.estimateProposals.map((p) => [p.paidCents, p.unambiguous])).toEqual([[2075, false], [1990, false]]);
-    expect(await acceptEstimateProposals(db, ctx, 2025)).toBe(0);
+    const shown = await proposalsOf(ws.workspaceId);
+    expect(shown.map((p) => [p.paidCents, p.unambiguous])).toEqual([[2075, false], [1990, false]]);
+    // The bulk action links unambiguous ones only, whatever list it is sent.
+    expect(await acceptEstimateProposals(db, ctx, 2025, pairs(shown), true)).toEqual({ linked: [], skipped: 2 });
     expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
 
-    await linkPayment(db, ctx, { paymentId: view.payments.estimateProposals[0].paymentId, rowId }, rowCheck(ctx));
+    // "Übernehmen" on one row: the same server path, for the one pair, recorded as an accepted proposal.
+    expect((await acceptEstimateProposals(db, ctx, 2025, pairs([shown[0]]), false)).linked).toEqual([{ paymentId: shown[0].paymentId, rowId }]);
     const after = await loadStatement(db, ws.workspaceId, 2025);
     expect(after.payments.estimateProposals).toEqual([]);
-    expect(after.payments.links[0]).toMatchObject({ method: 'manual', cents: 2075 });
+    expect(after.payments.links[0]).toMatchObject({ method: 'estimate', cents: 2075 });
+  });
+
+  it('only what the person saw AND the server still proposes is linked: a made-up pair and a stale pair are left out and counted', async () => {
+    const { ws, ctx, laterId } = await withLaterAccount();
+    const rowId = await dollarReceipt(ws);
+    const euroRow = await ws.addReceipt({ Name: 'Schreibwaren', Vendor: 'Schreibwaren Beispiel', Gross: 12.4, Date: '2025-03-10', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    await importPayments(db, ctx, laterId, MARCH);
+    const [proposal] = await proposalsOf(ws.workspaceId);
+    const stationery = await db.taxPayment.findFirstOrThrow({ where: { accountId: laterId, amountCents: -1240 } });
+    // A pair the server never proposed (a euro receipt) cannot be pushed through the accept path.
+    expect(await acceptEstimateProposals(db, ctx, 2025, [{ paymentId: stationery.id, rowId: euroRow }, { paymentId: proposal.paymentId, rowId }], false)).toEqual({
+      linked: [{ paymentId: proposal.paymentId, rowId }],
+      skipped: 1,
+    });
+    expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(1);
+    // An empty or malformed list is an invalid request, not "everything".
+    expect(await code(acceptEstimateProposals(db, ctx, 2025, [], true))).toBe('invalid_link');
+    expect(await code(acceptEstimateProposals(db, ctx, 2025, 'alle', true))).toBe('invalid_link');
+  });
+
+  it('a second tab: the same proposal accepted twice at the same moment makes one link, and two payments for one receipt cannot both land', async () => {
+    const { ws, ctx, laterId } = await withLaterAccount();
+    const rowId = await dollarReceipt(ws);
+    await importPayments(db, ctx, laterId, laterFile(later('2025-03-03', 'Editor Beispiel', '20.75', '6100000000001'), later('2025-03-05', 'Editor Beispiel', '19.90', '6100000000002')));
+    const shown = await proposalsOf(ws.workspaceId);
+    // Two tabs, each taking another of the two proposals for the one receipt.
+    const results = await Promise.all(shown.map((p) => acceptEstimateProposals(db, ctx, 2025, pairs([p]), false)));
+    expect(results.map((r) => r.linked.length).sort()).toEqual([0, 1]);
+    expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: ws.workspaceId, rowId } })).toBe(1);
+    // And the write itself refuses a pair whose receipt was linked in between.
+    const loser = shown.find((p) => !results.some((r) => r.linked.some((l) => l.paymentId === p.paymentId)))!;
+    expect(await code(linkPayment(db, ctx, { paymentId: loser.paymentId, rowId }, rowCheck(ctx), 'estimate'))).toBe('proposal_gone');
   });
 
   it('a payment to a counterparty answered as private is not proposed, and a euro receipt gets no proposal', async () => {
@@ -553,19 +595,102 @@ describe('the pay-later purchase list: forward, change an earlier input, resume,
     await dollarReceipt(ws);
     await ws.addReceipt({ Name: 'Schreibwaren', Vendor: 'Schreibwaren Beispiel', Gross: 12.4, Date: '2025-03-10', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
     await importPayments(db, ctx, laterId, MARCH);
-    expect((await loadStatement(db, ws.workspaceId, 2025)).payments.estimateProposals.length).toBe(1);
+    const shown = await proposalsOf(ws.workspaceId);
+    expect(shown.length).toBe(1);
     await setCounterpartyTreatment(db, ctx, { counterparty: 'EDITOR BEISPIEL, AI TOOLS', treatment: 'private' });
-    expect((await loadStatement(db, ws.workspaceId, 2025)).payments.estimateProposals).toEqual([]);
-    expect(await acceptEstimateProposals(db, ctx, 2025)).toBe(0);
+    expect(await proposalsOf(ws.workspaceId)).toEqual([]);
+    expect(await acceptEstimateProposals(db, ctx, 2025, pairs(shown), true)).toEqual({ linked: [], skipped: 1 });
+  });
+});
+
+describe('a purchase cancelled or refunded after it was imported', () => {
+  const CANCELLED = laterFile(
+    later('2025-03-03', 'EDITOR BEISPIEL, AI TOOLS', '20.75', '4000000000001', 'Storniert'),
+    later('2025-03-10', 'Schreibwaren Beispiel', '12.40', '4000000000002'),
+    later('2025-03-12', 'Hosting Beispiel', '5.00', '4000000000005'),
+  );
+
+  it('stops counting, its link is released with the receipt named, and the purchase is kept for the record', async () => {
+    const { ws, ctx, laterId } = await withLaterAccount();
+    const rowId = await dollarReceipt(ws);
+    await importPayments(db, ctx, laterId, MARCH);
+    await acceptAllShown(ctx);
+    expect((await loadStatement(db, ws.workspaceId, 2025)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 2075, amountBasis: 'payment' });
+
+    const second = await importPayments(db, ctx, laterId, CANCELLED);
+    expect(second).toMatchObject({ total: 2, added: 1, alreadyThere: 1, skipped: { cancelled: 1 }, cancelledEarlier: 1, releasedLinks: 1 });
+    const view = await loadStatement(db, ws.workspaceId, 2025);
+    // The receipt is back on its own estimate, nothing of the purchase counts, and the screen says which receipt lost its payment.
+    expect(view.items.find((i) => i.rowId === rowId)).toMatchObject({ date: '2025-03-02', amountCents: 2002, amountBasis: 'reference_rate' });
+    expect(view.payments.cancelled).toEqual([expect.objectContaining({ bookingDay: '2025-03-03', amountCents: -2075, accountLabel: 'Später zahlen', releasedFrom: ['Editor Beispiel März'] })]);
+    expect(view.payments.links).toEqual([]);
+    expect(view.payments.yearCount).toBe(2);
+    expect(view.payments.unclassified.map((c) => c.label)).not.toContain('EDITOR BEISPIEL, AI TOOLS');
+    // A cancelled purchase is no candidate for the receipt and cannot be linked.
+    expect(view.payments.estimateProposals).toEqual([]);
+    const cancelled = await db.taxPayment.findFirstOrThrow({ where: { accountId: laterId, amountCents: -2075 } });
+    expect(await code(linkPayment(db, ctx, { paymentId: cancelled.id, rowId }, rowCheck(ctx)))).toBe('invalid_link');
+    // Kept: the row and its link are still stored.
+    expect(await db.taxPaymentLink.count({ where: { paymentId: cancelled.id } })).toBe(1);
+  });
+
+  it('undoing the import that reported the cancellation restores the purchase and its link', async () => {
+    const { ws, ctx, laterId } = await withLaterAccount();
+    const rowId = await dollarReceipt(ws);
+    await importPayments(db, ctx, laterId, MARCH);
+    await acceptAllShown(ctx);
+    const second = await importPayments(db, ctx, laterId, CANCELLED);
+    await deleteImportBatch(db, ctx, second.batchId);
+    const view = await loadStatement(db, ws.workspaceId, 2025);
+    expect(view.payments.cancelled).toEqual([]);
+    expect(view.items.find((i) => i.rowId === rowId)).toMatchObject({ date: '2025-03-03', amountCents: 2075, amountBasis: 'payment' });
+    expect(view.payments.links).toEqual([expect.objectContaining({ targetLabel: 'Editor Beispiel März', method: 'estimate' })]);
+    // Re-entry: the same report again cancels it again, once.
+    expect(await importPayments(db, ctx, laterId, CANCELLED)).toMatchObject({ cancelledEarlier: 1 });
+    expect(await importPayments(db, ctx, laterId, CANCELLED + '\n')).toMatchObject({ cancelledEarlier: 0 });
+  });
+
+  it('a cancellation of a purchase that was never imported cancels nothing', async () => {
+    const { ctx, laterId } = await withLaterAccount();
+    expect(await importPayments(db, ctx, laterId, CANCELLED)).toMatchObject({ total: 2, added: 2, cancelledEarlier: 0, releasedLinks: 0 });
+  });
+});
+
+describe('a purchase first listed without the service’s number', () => {
+  const WEB = laterFile(later('2025-03-03', 'EDITOR BEISPIEL, AI TOOLS', '20.75', ''), later('2025-03-10', 'Schreibwaren Beispiel', '12.40', '4000000000002'));
+
+  it('is recognized when a later file gives it one: stored once, its link kept', async () => {
+    const { ws, ctx, laterId } = await withLaterAccount();
+    const rowId = await dollarReceipt(ws);
+    await importPayments(db, ctx, laterId, WEB);
+    await acceptAllShown(ctx);
+    const before = await db.taxPayment.findFirstOrThrow({ where: { accountId: laterId, amountCents: -2075 } });
+
+    expect(await importPayments(db, ctx, laterId, MARCH)).toMatchObject({ total: 2, added: 0, alreadyThere: 2, adopted: 1 });
+    const after = await db.taxPayment.findMany({ where: { accountId: laterId, amountCents: -2075 } });
+    expect(after.map((p) => [p.id, p.entryReference])).toEqual([[before.id, '4000000000001']]);
+    expect((await loadStatement(db, ws.workspaceId, 2025)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 2075, amountBasis: 'payment' });
+    // From now on it is known by its number: the file again changes nothing.
+    expect(await importPayments(db, ctx, laterId, MARCH + '\n')).toMatchObject({ added: 0, adopted: 0 });
+  });
+
+  it('two stored purchases that both fit are not guessed at: the numbered one is added', async () => {
+    const { ctx, laterId } = await withLaterAccount();
+    await importPayments(db, ctx, laterId, laterFile(later('2025-03-03', 'Kiosk Beispiel', '2.00', ''), later('2025-03-03', 'Kiosk Beispiel', '2.00', '')));
+    expect(await importPayments(db, ctx, laterId, laterFile(later('2025-03-03', 'Kiosk Beispiel', '2.00', '4000000000007')))).toMatchObject({ added: 1, adopted: 0 });
+    expect(await db.taxPayment.count({ where: { accountId: laterId } })).toBe(3);
   });
 });
 
 describe('money that only funds another payment account', () => {
   const BANK = file(
-    line('2025-03-28', 'Klarna Bank AB (publ)', 'Sammelabrechnung März', '-33.15', 'Direct Debit'),
+    line('2024-11-12', 'PayPal Europe S.a.r.l. et Cie S.C.A', 'Ihr Einkauf bei Altladen Beispiel', '-30', 'Direct Debit'),
     line('2025-03-12', 'PayPal Europe S.a.r.l. et Cie S.C.A', 'Ihr Einkauf bei Laden Beispiel', '-19.99', 'Direct Debit'),
     line('2025-03-14', 'PayPal Europe S.a.r.l. et Cie S.C.A', 'Auszahlung', '50', 'Credit Transfer'),
     line('2025-03-15', 'Werkzeug Beispiel GmbH', 'Bestellung 4712', '-40', 'Presentment'),
+    line('2025-03-20', 'Klarna Bank AB (publ)', 'Erstattung Schreibwaren', '12.40', 'Credit Transfer'),
+    line('2025-03-28', 'Klarna Bank AB (publ)', 'Sammelabrechnung März', '-36.15', 'Direct Debit'),
+    line('2025-04-28', 'Klarna Bank AB (publ)', 'Sammelabrechnung April', '-9', 'Direct Debit'),
   );
 
   async function bankAskedAbout() {
@@ -577,84 +702,221 @@ describe('money that only funds another payment account', () => {
     }
     return base;
   }
-  const openNames = async (workspaceId: string) => (await loadStatement(db, workspaceId, 2025)).payments.open.map((p) => `${p.counterparty.split(' ')[0]} ${p.amountCents}`).sort();
+  const openNames = async (workspaceId: string, year = 2025) => (await loadStatement(db, workspaceId, year)).payments.open.map((p) => `${p.counterparty.split(' ')[0]} ${p.amountCents}`).sort();
+  async function bothLists() {
+    const base = await bankAskedAbout();
+    const laterId = await createAccount(db, base.ctx, { label: 'Später zahlen', kind: 'payment_service' });
+    const walletId = await createAccount(db, base.ctx, { label: 'Geldbörse', kind: 'payment_service' });
+    await importPayments(db, base.ctx, laterId, MARCH_WHOLE);
+    await importPayments(db, base.ctx, walletId, WALLET_MARCH);
+    return { ...base, laterId, walletId };
+  }
 
   it('before the service’s own list is imported its debit on the bank is the only record and keeps asking', async () => {
     const { ws } = await bankAskedAbout();
-    expect(await openNames(ws.workspaceId)).toEqual(['Klarna -3315', 'PayPal -1999', 'PayPal 5000', 'Werkzeug -4000']);
-    expect((await loadStatement(db, ws.workspaceId, 2025)).payments.transferCount).toBe(0);
-  });
-
-  it('one rule for both services: once the list is there, the settlement and the funding debit are transfers, in both directions', async () => {
-    const { ws, ctx } = await bankAskedAbout();
-    const laterId = await createAccount(db, ctx, { label: 'Später zahlen', kind: 'payment_service' });
-    const walletId = await createAccount(db, ctx, { label: 'Geldbörse', kind: 'payment_service' });
-
-    await importPayments(db, ctx, laterId, MARCH);
-    // The pay-later settlement stopped asking; PayPal's debits still do, its list is not there yet.
-    expect(await openNames(ws.workspaceId)).toEqual(['PayPal -1999', 'PayPal 5000', 'Werkzeug -4000']);
-
-    await importPayments(db, ctx, walletId, walletFile({ date: '11.03.2025', name: 'Laden Beispiel', gross: '-19,99', code: 'TXW1' }));
+    expect(await openNames(ws.workspaceId)).toEqual(['Klarna -3615', 'Klarna -900', 'Klarna 1240', 'PayPal -1999', 'PayPal 5000', 'Werkzeug -4000']);
     const view = await loadStatement(db, ws.workspaceId, 2025);
-    expect(view.payments.open.map((p) => p.counterparty)).toEqual(['Werkzeug Beispiel GmbH']);
-    expect(view.payments.transferCount).toBe(3);
-    // Not asked about either, and never an expense: nothing counts for the year without a receipt.
-    expect(view.payments.unclassified.map((c) => c.label).some((label) => /klarna|paypal/i.test(label))).toBe(false);
-    expect(view.businessExpenseCents).toBe(0);
-    // The purchases themselves are payments of their own accounts, each once.
-    expect(view.payments.unclassified.map((c) => c.label).sort()).toEqual(['EDITOR BEISPIEL, AI TOOLS', 'Laden Beispiel', 'Schreibwaren Beispiel']);
+    expect(view.payments).toMatchObject({ transferCount: 0, ruleTransfers: [], reconciliations: [] });
   });
 
-  it('a PayPal purchase charged to the pay-later card is funding too, so it is not a second purchase', async () => {
+  it('the rule holds only on days the list covers: a debit before or after them stays a payment that asks', async () => {
+    const { ws } = await bothLists();
+    // Both lists cover 1 to 31 March 2025. The PayPal debit of November 2024 and the collection of April 2025 are the only record of that money.
+    expect(await openNames(ws.workspaceId, 2024)).toEqual(['PayPal -3000']);
+    expect(await openNames(ws.workspaceId)).toEqual(['Klarna -900', 'Klarna 1240', 'Werkzeug -4000']);
+    const view = await loadStatement(db, ws.workspaceId, 2025);
+    expect(view.payments.ruleTransfers.map((t) => [t.bookingDay, t.amountCents, t.hasTwin])).toEqual([
+      ['2025-03-28', -3615, false],
+      ['2025-03-14', 5000, false],
+      ['2025-03-12', -1999, true],
+    ]);
+    expect(view.payments.ruleTransferCents).toBe(3615 + 1999 - 5000);
+    expect((await loadStatement(db, ws.workspaceId, 2024)).payments.ruleTransfers).toEqual([]);
+    // Never an expense: nothing counts for the year without a receipt.
+    expect(view.businessExpenseCents).toBe(0);
+  });
+
+  it('money coming in: from the wallet it is balance paid out (a transfer); from the pay-later service it is money back and asks for its receipt', async () => {
+    const { ws, ctx, accountId } = await bothLists();
+    const view = await loadStatement(db, ws.workspaceId, 2025);
+    const back = view.payments.open.find((p) => p.amountCents === 1240)!;
+    expect(back).toMatchObject({ counterparty: 'Klarna Bank AB (publ)', kind: 'refund', check: 'refund_without_receipt' });
+    expect(view.payments.open.some((p) => p.amountCents === 5000)).toBe(false);
+
+    // It asks even when nobody ever said what the service is; the counterparty question then counts only the
+    // collection of April, which lies outside the covered days.
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'Klarna Bank AB (publ)', treatment: null });
+    const unanswered = await loadStatement(db, ws.workspaceId, 2025);
+    expect(unanswered.payments.open.some((p) => p.id === back.id)).toBe(true);
+    expect(unanswered.payments.unclassified.find((c) => c.label === 'Klarna Bank AB (publ)')).toMatchObject({ count: 1, outCents: 900, inCents: 0 });
+
+    // Linked to the receipt of the purchase it refunds, it is taken off what the receipt cost.
+    const rowId = await ws.addReceipt({ Name: 'Schreibwaren', Vendor: 'Schreibwaren Beispiel', Gross: 12.4, Date: '2025-03-10', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    const purchase = await db.taxPayment.findFirstOrThrow({ where: { authWorkspaceId: ws.workspaceId, amountCents: -1240 } });
+    await linkPayment(db, ctx, { paymentId: purchase.id, rowId }, rowCheck(ctx));
+    await linkPayment(db, ctx, { paymentId: back.id, rowId }, rowCheck(ctx));
+    expect((await loadStatement(db, ws.workspaceId, 2025)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 0 });
+    expect(await db.taxPayment.count({ where: { accountId } })).toBe(7);
+  });
+
+  it('through the screen: a transfer the rule made can be turned into a payment of its own and back, and the reverse', async () => {
+    const { ws, ctx } = await bothLists();
+    const view = await loadStatement(db, ws.workspaceId, 2025);
+    const debit = view.payments.ruleTransfers.find((t) => t.amountCents === -3615)!;
+
+    // "Kein Übertrag, eine eigene Zahlung": the id comes from the list the screen shows.
+    await setPaymentTransfer(db, ctx, debit.id, false);
+    const purchase = await loadStatement(db, ws.workspaceId, 2025);
+    expect(purchase.payments.ruleTransfers.some((t) => t.id === debit.id)).toBe(false);
+    expect(purchase.payments.open.find((p) => p.id === debit.id)).toMatchObject({ kind: 'spend', check: 'payment_without_document', namesService: true });
+    expect(purchase.payments.overridden).toEqual([expect.objectContaining({ id: debit.id, kind: 'spend' })]);
+
+    // "Zurücksetzen" in the list of re-labelled payments: the rule applies again.
+    await setPaymentKind(db, ctx, debit.id, null);
+    expect((await loadStatement(db, ws.workspaceId, 2025)).payments.ruleTransfers.some((t) => t.id === debit.id)).toBe(true);
+
+    // The reverse: the collection of April lies outside the covered days and asks; "Übertrag zwischen eigenen Konten" on the open payment settles it.
+    const april = purchase.payments.open.find((p) => p.amountCents === -900)!;
+    expect(april.namesService).toBe(true);
+    await setPaymentTransfer(db, ctx, april.id, true);
+    const settled = await loadStatement(db, ws.workspaceId, 2025);
+    expect(settled.payments.open.some((p) => p.id === april.id)).toBe(false);
+    expect(settled.payments.overridden).toEqual([expect.objectContaining({ id: april.id, kind: 'own_transfer' })]);
+    // A payment that names no service is not offered that button.
+    expect(settled.payments.open.find((p) => p.counterparty.startsWith('Werkzeug'))?.namesService).toBe(false);
+    expect(await code(setPaymentTransfer(db, ctx, april.id, 'ja'))).toBe('invalid_kind');
+    expect(await code(setPaymentTransfer(db, otherCtx, april.id, true))).toBe('payment_not_found');
+  });
+
+  it('what the rule hides is set against the service’s own list, month by month, and a difference is called out', async () => {
+    const { ws, ctx, accountId } = await bothLists();
+    const view = await loadStatement(db, ws.workspaceId, 2025);
+    const later = view.payments.reconciliations.find((r) => r.service === 'klarna')!;
+    // Listed in March: 1.00 + 20.75 + 12.40 + 2.00 = 36.15, and 36.15 was collected.
+    expect(later).toMatchObject({ serviceKind: 'pay_later', accountLabels: ['Später zahlen'], collectedCents: 3615, listedCents: 3615, differenceCents: 0, reconciles: true });
+    expect(later.months).toEqual([{ month: '2025-03', collectedCents: 3615, listedCents: 3615, differenceCents: 0, runningCents: 0 }]);
+    // The wallet: 22.99 listed, 19.99 collected from the bank: three euro were paid another way, which is said, not hidden.
+    expect(view.payments.reconciliations.find((r) => r.service === 'paypal')).toMatchObject({ collectedCents: 1999, listedCents: 2299, differenceCents: -300, reconciles: false, toleranceCents: 100 });
+
+    // A late fee debited on its own within the covered days is hidden by the rule, and shows up as money the list does not explain.
+    await importPayments(db, ctx, accountId, file(line('2025-03-29', 'Klarna Bank AB (publ)', 'Mahngebühr', '-4.50', 'Direct Debit')));
+    const withFee = (await loadStatement(db, ws.workspaceId, 2025)).payments;
+    expect(withFee.reconciliations.find((r) => r.service === 'klarna')).toMatchObject({ collectedCents: 4065, listedCents: 3615, differenceCents: 450, reconciles: false });
+    // The person says which debit it is; the rest then reconciles again.
+    const fee = withFee.ruleTransfers.find((t) => t.amountCents === -450)!;
+    await setPaymentTransfer(db, ctx, fee.id, false);
+    expect((await loadStatement(db, ws.workspaceId, 2025)).payments.reconciliations.find((r) => r.service === 'klarna')).toMatchObject({ differenceCents: 0, reconciles: true });
+  });
+
+  it('a wallet purchase on the pay-later card is a transfer only when the wallet’s list holds that purchase', async () => {
     const { ws, ctx } = await workspace();
     const laterId = await createAccount(db, ctx, { label: 'Später zahlen', kind: 'payment_service' });
     const walletId = await createAccount(db, ctx, { label: 'Geldbörse', kind: 'payment_service' });
-    await importPayments(db, ctx, laterId, laterFile(later('2025-04-02', 'PAYPAL *LADENBEISPIEL', '19.99', '7000000000001'), later('2025-04-03', 'Laden Beispiel', '8.00', '7000000000002')));
-    // Without PayPal's own list the row on the pay-later card is the only record of the purchase.
+    await importPayments(db, ctx, laterId, laterFile(
+      later('2025-03-11', 'PAYPAL *LADENBEISPIEL', '19.99', '7000000000001'),
+      // A guest checkout: the wallet's list does not hold it.
+      later('2025-03-12', 'PAYPAL *GASTSHOP', '45.00', '7000000000002'),
+      // The same amount as a listed purchase, but a month away from it.
+      later('2025-03-30', 'PAYPAL *KIOSK', '1.00', '7000000000003'),
+    ));
+    // Without the wallet's own list every row is the only record of its purchase.
     expect((await loadStatement(db, ws.workspaceId, 2025)).payments.transferCount).toBe(0);
-    await importPayments(db, ctx, walletId, walletFile({ date: '02.04.2025', name: 'Laden Beispiel', gross: '-19,99', code: 'TXW2' }));
+    await importPayments(db, ctx, walletId, WALLET_MARCH);
     const view = await loadStatement(db, ws.workspaceId, 2025);
-    expect(view.payments.transferCount).toBe(1);
-    expect(view.payments.unclassified.map((c) => [c.label, c.count])).toEqual([['Laden Beispiel', 2]]);
+    expect(view.payments.ruleTransfers.map((t) => [t.counterparty, t.hasTwin])).toEqual([['PAYPAL *LADENBEISPIEL', true]]);
+    expect(view.payments.unclassified.map((c) => c.label)).toEqual(expect.arrayContaining(['PAYPAL *GASTSHOP', 'PAYPAL *KIOSK']));
   });
 
   it('change an earlier input: undoing the list’s import makes the bank debit ask again', async () => {
     const { ws, ctx } = await bankAskedAbout();
     const laterId = await createAccount(db, ctx, { label: 'Später zahlen', kind: 'payment_service' });
-    const batch = await importPayments(db, ctx, laterId, MARCH);
-    expect(await openNames(ws.workspaceId)).not.toContain('Klarna -3315');
+    const batch = await importPayments(db, ctx, laterId, MARCH_WHOLE);
+    expect(await openNames(ws.workspaceId)).not.toContain('Klarna -3615');
     await deleteImportBatch(db, ctx, batch.batchId);
-    expect(await openNames(ws.workspaceId)).toContain('Klarna -3315');
+    expect(await openNames(ws.workspaceId)).toContain('Klarna -3615');
   });
 
-  it('nothing stored is rewritten: a link made by hand on a debit that is now a transfer stays and keeps counting', async () => {
-    const { ws, ctx, accountId } = await bankAskedAbout();
-    const rowId = await ws.addReceipt({ Name: 'Einkauf Laden', Vendor: 'Laden Beispiel', Gross: 19.99, Date: '2025-03-11', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
-    const debit = await db.taxPayment.findFirstOrThrow({ where: { accountId, amountCents: -1999 } });
-    const linkId = await linkPayment(db, ctx, { paymentId: debit.id, rowId }, rowCheck(ctx));
-    const stored = await db.taxPayment.findMany({ where: { accountId }, orderBy: { sourceHash: 'asc' } });
+  it('what a person said about one payment stands above the rule', async () => {
+    const { ws, ctx } = await bothLists();
+    const debit = (await loadStatement(db, ws.workspaceId, 2025)).payments.ruleTransfers.find((t) => t.amountCents === -3615)!;
+    await setPaymentKind(db, ctx, debit.id, 'private');
+    const view = await loadStatement(db, ws.workspaceId, 2025);
+    expect(view.payments.overridden).toEqual([expect.objectContaining({ id: debit.id, kind: 'private' })]);
+    expect(view.payments.ruleTransfers.some((t) => t.id === debit.id)).toBe(false);
+  });
+});
 
-    const walletId = await createAccount(db, ctx, { label: 'Geldbörse', kind: 'payment_service' });
-    await importPayments(db, ctx, walletId, walletFile({ date: '11.03.2025', name: 'Laden Beispiel', gross: '-19,99', code: 'TXW3' }));
+describe('the same money never counts twice on a receipt', () => {
+  const BANK = file(line('2025-03-12', 'PayPal Europe S.a.r.l. et Cie S.C.A', 'Ihr Einkauf bei Laden Beispiel', '-19.99', 'Direct Debit'), line('2025-03-15', 'Werkzeug Beispiel GmbH', 'Bestellung 4712', '-40', 'Presentment'));
+  async function linkedOnTheBankSide() {
+    const base = await workspace();
+    await importPayments(db, base.ctx, base.accountId, BANK);
+    const rowId = await base.ws.addReceipt({ Name: 'Einkauf Laden', Vendor: 'Laden Beispiel', Gross: 19.99, Date: '2025-03-11', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    const debit = await db.taxPayment.findFirstOrThrow({ where: { accountId: base.accountId, amountCents: -1999 } });
+    // Linked by hand on the bank side, as on production before the wallet's list counted.
+    const { linkId } = await linkPayment(db, base.ctx, { paymentId: debit.id, rowId }, rowCheck(base.ctx));
+    const stored = await db.taxPayment.findMany({ where: { accountId: base.accountId }, orderBy: { sourceHash: 'asc' } });
+    const walletId = await createAccount(db, base.ctx, { label: 'Geldbörse', kind: 'payment_service' });
+    await importPayments(db, base.ctx, walletId, WALLET_MARCH);
+    const purchase = await db.taxPayment.findFirstOrThrow({ where: { accountId: walletId, amountCents: -1999 } });
+    return { ...base, rowId, debit, linkId, stored, purchase };
+  }
+
+  it('nothing stored is rewritten: a link made by hand on a debit that is now a transfer stays and keeps counting', async () => {
+    const { ws, ctx, accountId, rowId, linkId, stored } = await linkedOnTheBankSide();
     expect(await db.taxPayment.findMany({ where: { accountId }, orderBy: { sourceHash: 'asc' } })).toEqual(stored);
     const view = await loadStatement(db, ws.workspaceId, 2025);
-    expect(view.payments.links.find((l) => l.linkId === linkId)).toMatchObject({ targetLabel: 'Einkauf Laden', cents: 1999, method: 'manual' });
+    expect(view.payments.links.find((l) => l.linkId === linkId)).toMatchObject({ targetLabel: 'Einkauf Laden', cents: 1999, method: 'manual', counts: true });
     expect(view.items.find((i) => i.rowId === rowId)).toMatchObject({ date: '2025-03-12', amountCents: 1999, amountBasis: 'payment' });
-    // And it can still be taken back.
+    // The picker for linking by hand says the receipt already carries a payment.
+    expect(view.payments.receiptTargets.find((r) => r.id === rowId)).toMatchObject({ linkedCents: 1999 });
     await unlinkPayment(db, ctx, linkId);
     expect((await loadStatement(db, ws.workspaceId, 2025)).payments.links).toEqual([]);
   });
 
-  it('what a person said about one payment stands above the rule', async () => {
-    const { ws, ctx, accountId } = await bankAskedAbout();
-    const laterId = await createAccount(db, ctx, { label: 'Später zahlen', kind: 'payment_service' });
-    await importPayments(db, ctx, laterId, MARCH);
-    const settlement = await db.taxPayment.findFirstOrThrow({ where: { accountId, amountCents: -3315 } });
-    await setPaymentKind(db, ctx, settlement.id, 'private');
+  it('linking the purchase itself moves the link over from the debit that funds it, and says so', async () => {
+    const { ws, ctx, rowId, debit, purchase } = await linkedOnTheBankSide();
+    const result = await linkPayment(db, ctx, { paymentId: purchase.id, rowId }, rowCheck(ctx));
+    expect(result.movedFromPaymentId).toBe(debit.id);
     const view = await loadStatement(db, ws.workspaceId, 2025);
-    expect(view.payments.overridden).toEqual([expect.objectContaining({ id: settlement.id, kind: 'private' })]);
-    await setPaymentKind(db, ctx, settlement.id, null);
-    expect((await loadStatement(db, ws.workspaceId, 2025)).payments.transferCount).toBe(1);
+    expect(view.payments.links.map((l) => [l.paymentId, l.cents, l.counts])).toEqual([[purchase.id, 1999, true]]);
+    expect(view.items.find((i) => i.rowId === rowId)).toMatchObject({ date: '2025-03-11', amountCents: 1999, amountBasis: 'payment' });
+  });
+
+  it('both sides linked to one receipt count once: the debit’s link is shown as not counting', async () => {
+    const { ws, ctx, rowId, debit, purchase, linkId } = await linkedOnTheBankSide();
+    // Another payment sits on the receipt as well, so the debit's link is not simply moved.
+    const tool = await db.taxPayment.findFirstOrThrow({ where: { authWorkspaceId: ws.workspaceId, amountCents: -4000 } });
+    expect(await code(linkPayment(db, ctx, { paymentId: tool.id, rowId, cents: 500 }, rowCheck(ctx)))).toBe('receipt_already_paid');
+    await linkPayment(db, ctx, { paymentId: tool.id, rowId, cents: 500, confirmed: true }, rowCheck(ctx));
+    // The purchase the debit funds: the same money, so it adds nothing and is not asked about.
+    expect((await linkPayment(db, ctx, { paymentId: purchase.id, rowId }, rowCheck(ctx))).movedFromPaymentId).toBeNull();
+    const view = await loadStatement(db, ws.workspaceId, 2025);
+    expect(view.payments.links.find((l) => l.linkId === linkId)).toMatchObject({ paymentId: debit.id, counts: false });
+    expect(view.items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 1999 + 500 });
+    expect(view.payments.receiptTargets.find((r) => r.id === rowId)).toMatchObject({ linkedCents: 2499 });
+  });
+
+  it('a second payment that takes a receipt beyond its own amount is asked about, with what is already on it, and lands on a yes', async () => {
+    const { ws, ctx, rowId } = await linkedOnTheBankSide();
+    const tool = await db.taxPayment.findFirstOrThrow({ where: { authWorkspaceId: ws.workspaceId, amountCents: -4000 } });
+    const refused = await linkPayment(db, ctx, { paymentId: tool.id, rowId }, rowCheck(ctx)).catch((e) => e);
+    expect(refused).toMatchObject({ code: 'receipt_already_paid', detail: '1999:1999' });
+    expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: ws.workspaceId, rowId } })).toBe(1);
+    await linkPayment(db, ctx, { paymentId: tool.id, rowId, confirmed: true }, rowCheck(ctx));
+    expect((await loadStatement(db, ws.workspaceId, 2025)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 5999 });
+  });
+
+  it('several payments that stay within the receipt’s amount are not asked about: a bill paid in parts', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, file(line('2025-05-02', 'Vermieter Beispiel', 'Rate 1', '-50', 'Debit Transfer'), line('2025-06-02', 'Vermieter Beispiel', 'Rate 2', '-50', 'Debit Transfer'), line('2025-07-02', 'Vermieter Beispiel', 'Rate 3', '-9', 'Debit Transfer')));
+    const rowId = await ws.addReceipt({ Name: 'Gerät auf Raten', Vendor: 'Vermieter Beispiel', Gross: 100, Date: '2025-05-01', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    const parts = await db.taxPayment.findMany({ where: { accountId }, orderBy: { bookingDay: 'asc' } });
+    await linkPayment(db, ctx, { paymentId: parts[0].id, rowId }, rowCheck(ctx));
+    await linkPayment(db, ctx, { paymentId: parts[1].id, rowId }, rowCheck(ctx));
+    // 109 of 100: beyond the tolerance of 8 percent, so this one is asked about.
+    expect(await code(linkPayment(db, ctx, { paymentId: parts[2].id, rowId }, rowCheck(ctx)))).toBe('receipt_already_paid');
+    expect((await loadStatement(db, ws.workspaceId, 2025)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 10_000 });
   });
 });
 
@@ -677,7 +939,7 @@ describe('workspace isolation', () => {
     await setCounterpartyTreatment(db, otherCtx, { counterparty: 'Werkzeug Beispiel GmbH', treatment: 'business' });
     const foreignPayment = (await db.taxPayment.findFirst({ where: { accountId: foreignAccount } }))!;
     const foreignRow = await other.addReceipt({ Name: 'Fremd', Vendor: 'Werkzeug Beispiel GmbH', Gross: 108.5, Date: '2026-01-03', Currency: 'EUR', 'FX Rate': 1 });
-    const foreignLink = await linkPayment(db, otherCtx, { paymentId: foreignPayment.id, rowId: foreignRow }, rowCheck(otherCtx));
+    const { linkId: foreignLink } = await linkPayment(db, otherCtx, { paymentId: foreignPayment.id, rowId: foreignRow }, rowCheck(otherCtx));
 
     const mine = await loadStatement(db, ws.workspaceId, 2026);
     expect(mine.payments).toMatchObject({ yearCount: 0, unclassified: [], open: [], links: [], treatments: [] });

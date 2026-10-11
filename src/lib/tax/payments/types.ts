@@ -59,23 +59,30 @@ export interface NormalizedPayment {
    * the identity.
    */
   sourceHash: string;
+  /** True when `sourceHash` is built from the source's own number alone (see `referenceHash`). */
+  byReference?: boolean;
 }
 
 export type ParseErrorCode =
   | 'unknown_layout'
   | 'empty'
   | 'unreadable_row'
+  /** A status word the reader does not know: guessing whether it is a purchase would be wrong either way. */
+  | 'unknown_status'
   | 'too_large';
 
 export class PaymentParseError extends Error {
   readonly code: ParseErrorCode;
   /** 1-based line or entry number of the first row that could not be read. */
   readonly row: number | null;
-  constructor(code: ParseErrorCode, row: number | null = null) {
+  /** The word that was not understood, for `unknown_status`. */
+  readonly word: string | null;
+  constructor(code: ParseErrorCode, row: number | null = null, word: string | null = null) {
     super(row === null ? code : `${code} at row ${row}`);
     this.name = 'PaymentParseError';
     this.code = code;
     this.row = row;
+    this.word = word;
   }
 }
 
@@ -84,6 +91,14 @@ export interface ParsedFile {
   payments: NormalizedPayment[];
   /** Rows of the file that are not booked movements in euro and were left out on purpose, by reason. */
   skipped: Record<string, number>;
+  /**
+   * Identities (`sourceHash`) of purchases the file lists as cancelled or
+   * refunded in full. They are not payments of this file; a payment stored by
+   * an earlier import under one of them stops counting.
+   */
+  cancelled: string[];
+  /** Rows that were read but need a person's attention, by reason (a part refund the list gives no amount for). */
+  notices: Record<string, number>;
   firstDay: string | null;
   lastDay: string | null;
 }

@@ -23,7 +23,19 @@ import { answerFor, boundaryDay, otherYearOf, touchesYear, BOUNDARY_SUBJECT_KIND
 import { LinesInputError, itemIdOf, splitItemId, storedLineTreatment, validateLines, type ReceiptLine } from './lines';
 import { forecastYear, type Forecast } from './forecast';
 import { proposeEstimateMatches, proposeMatches, type MatchStrength } from './payments/match';
-import { PaymentServiceError, deletePaymentLinksForRows, linkPayment, loadPayments, type CounterpartyTreatment, type LoadedPayments, type PaymentContext, type PaymentRow } from './payments/service';
+import { heldService, type ServiceKind } from './payments/funding';
+import {
+  PaymentServiceError,
+  countedReceiptLinks,
+  deletePaymentLinksForRows,
+  linkPayment,
+  loadPayments,
+  type CounterpartyTreatment,
+  type LoadedPayments,
+  type PaymentContext,
+  type PaymentRow,
+  type ReceiptForLink,
+} from './payments/service';
 import type { PaymentKind } from './payments/types';
 import {
   RevenueInputError,
@@ -176,18 +188,16 @@ export interface LinkedMoney {
  */
 export function linkedByRow(payments: readonly PaymentRow[]): Map<string, LinkedMoney> {
   const sums = new Map<string, { day: string | null; outCents: number; backCents: number }>();
-  for (const payment of payments) {
-    for (const link of payment.links) {
-      if (!link.rowId) continue;
-      const current = sums.get(link.rowId) ?? { day: null, outCents: 0, backCents: 0 };
-      if (payment.amountCents < 0) {
-        current.outCents += link.cents;
-        if (current.day === null || payment.bookingDay < current.day) current.day = payment.bookingDay;
-      } else {
-        current.backCents += link.cents;
-      }
-      sums.set(link.rowId, current);
+  // A payment and the debit that funds it are the same money and count once (`countedReceiptLinks`).
+  for (const { payment, link } of countedReceiptLinks(payments)) {
+    const current = sums.get(link.rowId) ?? { day: null, outCents: 0, backCents: 0 };
+    if (payment.amountCents < 0) {
+      current.outCents += link.cents;
+      if (current.day === null || payment.bookingDay < current.day) current.day = payment.bookingDay;
+    } else {
+      current.backCents += link.cents;
     }
+    sums.set(link.rowId, current);
   }
   const out = new Map<string, LinkedMoney>();
   for (const [rowId, s] of sums) {
@@ -769,6 +779,49 @@ export interface OpenPayment {
   /** Why it needs a person. */
   check: 'payment_without_document' | 'income_without_invoice' | 'refund_without_receipt';
   proposals: PaymentProposal[];
+  /**
+   * The counterparty names a payment service one of the accounts holds, but
+   * the funding rule did not make it a transfer (outside the days the list
+   * covers, no matching purchase, or a person said so): a person can say it is one.
+   */
+  namesService: boolean;
+}
+
+/** A payment the funding rule made a transfer between own accounts. Listed so a person can say it is a purchase after all. */
+export interface RuleTransfer {
+  id: string;
+  bookingDay: string;
+  amountCents: number;
+  counterparty: string;
+  reference: string;
+  accountLabel: string;
+  /** True when the service's list holds a purchase of exactly this amount close to this day. */
+  hasTwin: boolean;
+}
+
+/**
+ * What the funding rule hides against what the service's own list holds, for
+ * one service and one year: the debits the other accounts show for the service
+ * and the purchases its list states, month by month.
+ */
+export interface Reconciliation {
+  service: string;
+  serviceKind: ServiceKind;
+  /** The accounts that hold the service's list. */
+  accountLabels: string[];
+  months: Array<{ month: string; collectedCents: number; listedCents: number; differenceCents: number; runningCents: number }>;
+  collectedCents: number;
+  listedCents: number;
+  /** Collected less listed over the year. */
+  differenceCents: number;
+  /** The difference of the year stays within the tolerance. */
+  reconciles: boolean;
+  toleranceCents: number;
+}
+
+/** The difference a reconciliation may show before it is called out: one euro or one percent of what the list states. */
+export function reconciliationTolerance(listedCents: number): number {
+  return Math.max(100, Math.round(listedCents / 100));
 }
 
 /** A payment proposed for a receipt whose euro amount is an estimate (see `proposeEstimateMatches`). */
@@ -802,17 +855,35 @@ export interface PaymentsView {
   open: OpenPayment[];
   /** Receipts of the year on an estimated euro amount, with the payment that looks like theirs. */
   estimateProposals: EstimateProposalView[];
-  /** Payments of the year a person re-labelled (private, refund), so each can be put back. */
+  /** Payments of the year a person re-labelled (private, refund, a transfer or no transfer), so each can be put back. */
   overridden: Array<{ id: string; bookingDay: string; amountCents: number; counterparty: string; kind: PaymentKind }>;
+  /** Payments of the year the funding rule made a transfer, newest first, and what they add up to (money out less money in). */
+  ruleTransfers: RuleTransfer[];
+  ruleTransferCents: number;
+  /** Per service with such transfers in the year: what was collected against what its list states. */
+  reconciliations: Reconciliation[];
+  /** Purchases of the year a later import listed as cancelled or refunded in full, with the receipts their links were released from. */
+  cancelled: Array<{ id: string; bookingDay: string; amountCents: number; counterparty: string; accountLabel: string; releasedFrom: string[] }>;
   /**
    * What a payment can be linked to by hand: receipts of the year and of the
    * year before that no payment is linked to yet (a December receipt is often
    * paid in January), and invoices with something still open.
    */
-  receiptTargets: Array<{ id: string; label: string; day: string | null; amountCents: number | null }>;
+  receiptTargets: Array<{ id: string; label: string; day: string | null; amountCents: number | null; linkedCents: number }>;
   invoiceTargets: Array<{ id: string; label: string; openCents: number }>;
   /** Links of the year, so each can be taken back. */
-  links: Array<{ linkId: string; paymentId: string; bookingDay: string; cents: number; counterparty: string; target: 'receipt' | 'invoice'; targetLabel: string; method: string }>;
+  links: Array<{
+    linkId: string;
+    paymentId: string;
+    bookingDay: string;
+    cents: number;
+    counterparty: string;
+    target: 'receipt' | 'invoice';
+    targetLabel: string;
+    method: string;
+    /** False when the purchase this debit funds is linked to the same receipt: the same money, counted there. */
+    counts: boolean;
+  }>;
 }
 
 function buildPaymentsView(
@@ -831,7 +902,8 @@ function buildPaymentsView(
   // Counterparties without an answer, by what moved (own transfers and fees ask nothing).
   const unclassified = new Map<string, { key: string; label: string; count: number; outCents: number; inCents: number }>();
   for (const p of inYear) {
-    if (p.kind === 'own_transfer' || p.kind === 'fee' || p.kind === 'private' || !p.counterpartyKey || loaded.treatments.has(p.counterpartyKey) || free(p) === 0) continue;
+    // Money back from a pay-later service is asked about payment by payment, not once for the service.
+    if (p.kind === 'own_transfer' || p.kind === 'fee' || p.kind === 'private' || p.byRule || !p.counterpartyKey || loaded.treatments.has(p.counterpartyKey) || free(p) === 0) continue;
     const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: p.counterparty, count: 0, outCents: 0, inCents: 0 };
     entry.count += 1;
     if (p.amountCents < 0) entry.outCents += -p.amountCents;
@@ -849,9 +921,17 @@ function buildPaymentsView(
     if (p.kind === 'spend') return treatment === 'business' || !p.counterpartyKey;
     if (p.kind === 'income') return treatment !== 'private' && treatment !== 'own_account';
     // Money back from a business counterparty belongs on the receipt it refunds.
-    if (p.kind === 'refund') return treatment === 'business' || !p.counterpartyKey;
+    // So does money a pay-later service pays back: its list holds no refunds, the bank line is the only record.
+    if (p.kind === 'refund') return treatment === 'business' || !p.counterpartyKey || p.byRule;
     return false;
   });
+  const heldNames = new Set(loaded.accounts.flatMap((a) => heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) })?.name ?? []));
+  const namesService = (p: PaymentRow) => p.counterpartyKey.split(' ').some((word) => heldNames.has(word));
+  const counted = countedReceiptLinks(loaded.payments);
+  const countedLinkIds = new Set(counted.map((c) => c.link.id));
+  // What each receipt already carries, so the picker for linking by hand can say so.
+  const linkedCentsByRow = new Map<string, number>();
+  for (const { payment, link } of counted) linkedCentsByRow.set(link.rowId, (linkedCentsByRow.get(link.rowId) ?? 0) + (payment.amountCents < 0 ? link.cents : -link.cents));
   const linkedRows = new Set(loaded.payments.flatMap((p) => p.links.map((l) => l.rowId).filter((id): id is string => id !== null)));
   const receiptDocuments = resolved
     .filter((r) => !r.isMeal && !linkedRows.has(r.item.id) && r.item.amountCents !== null && r.item.date !== null && r.item.date.startsWith(`${year}-`))
@@ -860,7 +940,7 @@ function buildPaymentsView(
   // already have a payment (a refund goes on the receipt its purchase is linked to).
   const receiptTargets = resolved
     .filter((r) => !r.isMeal && (r.item.date === null || r.item.date.startsWith(`${year}-`) || r.item.date.startsWith(`${year - 1}-`)))
-    .map((r) => ({ id: r.item.id, label: r.item.label, day: r.item.date, amountCents: r.item.amountCents }))
+    .map((r) => ({ id: r.item.id, label: r.item.label, day: r.item.date, amountCents: r.item.amountCents, linkedCents: linkedCentsByRow.get(r.item.id) ?? 0 }))
     .sort((a, b) => ((a.day ?? '') < (b.day ?? '') ? 1 : -1));
   const outstanding = new Map(invoiceResults.map((i) => [i.invoiceId, i.outstandingCents]));
   const invoiceDocuments = invoices.map((i) => ({ id: i.id, number: i.number, day: i.issueDate, openCents: outstanding.get(i.id) ?? 0 }));
@@ -910,6 +990,7 @@ function buildPaymentsView(
     kind: p.kind,
     accountLabel: accountLabel.get(p.accountId) ?? '',
     check: p.kind === 'income' ? 'income_without_invoice' : p.kind === 'refund' ? 'refund_without_receipt' : 'payment_without_document',
+    namesService: p.kind !== 'refund' && namesService(p),
     proposals:
       p.kind === 'refund'
         ? []
@@ -917,6 +998,46 @@ function buildPaymentsView(
         ? incomeProposals.filter((x) => x.paymentId === p.id).map((x) => ({ target: 'invoice' as const, targetId: x.documentId, label: `Rechnung ${invoiceById.get(x.documentId)?.number ?? ''}`, strength: x.strength }))
         : spendProposals.filter((x) => x.paymentId === p.id).map((x) => ({ target: 'receipt' as const, targetId: x.documentId, label: itemById.get(x.documentId)?.label ?? 'Beleg', strength: x.strength })),
   }));
+
+  // What the funding rule hides, so it can be seen and taken back.
+  const ruled = inYear.filter((p) => p.byRule && p.kind === 'own_transfer');
+  const ruleTransfers: RuleTransfer[] = ruled
+    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, reference: p.reference, accountLabel: accountLabel.get(p.accountId) ?? '', hasTwin: p.funding?.twinId != null }))
+    .sort((a, b) => (a.bookingDay < b.bookingDay ? 1 : -1));
+  const holderOf = new Map<string, { name: string; kind: ServiceKind }>();
+  for (const a of loaded.accounts) {
+    const service = heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) });
+    if (service) holderOf.set(a.id, service);
+  }
+  const reconciliations: Reconciliation[] = [];
+  for (const service of new Map([...holderOf.values()].map((v) => [v.name, v])).values()) {
+    const collected = new Map<string, number>();
+    const listed = new Map<string, number>();
+    for (const p of ruled) if (p.funding?.service === service.name && p.amountCents < 0) collected.set(p.bookingDay.slice(0, 7), (collected.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
+    if (collected.size === 0) continue;
+    for (const p of inYear) if (holderOf.get(p.accountId)?.name === service.name && p.amountCents < 0 && p.sourceKind === 'spend') listed.set(p.bookingDay.slice(0, 7), (listed.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
+    let running = 0;
+    const months = [...new Set([...collected.keys(), ...listed.keys()])].sort().map((month) => {
+      const collectedCents = collected.get(month) ?? 0;
+      const listedCents = listed.get(month) ?? 0;
+      running += collectedCents - listedCents;
+      return { month, collectedCents, listedCents, differenceCents: collectedCents - listedCents, runningCents: running };
+    });
+    const collectedCents = months.reduce((sum, m) => sum + m.collectedCents, 0);
+    const listedCents = months.reduce((sum, m) => sum + m.listedCents, 0);
+    const toleranceCents = reconciliationTolerance(listedCents);
+    reconciliations.push({
+      service: service.name,
+      serviceKind: service.kind,
+      accountLabels: loaded.accounts.filter((a) => holderOf.get(a.id)?.name === service.name).map((a) => a.label),
+      months,
+      collectedCents,
+      listedCents,
+      differenceCents: collectedCents - listedCents,
+      reconciles: Math.abs(collectedCents - listedCents) <= toleranceCents,
+      toleranceCents,
+    });
+  }
 
   // The name a counterparty was first seen under, looked up once for all rules.
   const labelByCounterparty = new Map<string, string>();
@@ -936,6 +1057,12 @@ function buildPaymentsView(
     open,
     estimateProposals,
     overridden: inYear.filter((p) => p.kindOverridden).map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, kind: p.kind })),
+    ruleTransfers,
+    ruleTransferCents: ruled.reduce((sum, p) => sum - p.amountCents, 0),
+    reconciliations,
+    cancelled: loaded.cancelled
+      .filter((p) => p.bookingDay.startsWith(`${year}-`))
+      .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, accountLabel: accountLabel.get(p.accountId) ?? '', releasedFrom: p.rowIds.map((rowId) => itemById.get(rowId)?.label ?? 'Beleg (nicht mehr vorhanden)') })),
     receiptTargets,
     invoiceTargets: invoiceDocuments.filter((d) => d.openCents > 0).map((d) => ({ id: d.id, label: `Rechnung ${d.number}`, openCents: d.openCents })),
     links: inYear.flatMap((p) =>
@@ -948,39 +1075,70 @@ function buildPaymentsView(
         target: l.rowId ? ('receipt' as const) : ('invoice' as const),
         targetLabel: l.rowId ? (itemById.get(l.rowId)?.label ?? 'Beleg (nicht mehr vorhanden)') : `Rechnung ${invoiceById.get(l.invoiceId ?? '')?.number ?? ''}`,
         method: l.method,
+        counts: !l.rowId || countedLinkIds.has(l.id),
       })),
     ),
   };
 }
 
+export interface AcceptedProposals {
+  /** The pairs that were linked, exactly. */
+  linked: Array<{ paymentId: string; rowId: string }>;
+  /** Pairs that were asked for and are no proposal any more (linked elsewhere, or no longer unambiguous). */
+  skipped: number;
+}
+
 /**
- * Accept every unambiguous proposal for a receipt on an estimated amount: the
- * one action behind "Alle eindeutigen Vorschläge übernehmen". The proposals
- * are worked out here again from what is stored, never taken from the browser,
- * so a proposal that stopped being unambiguous since the page was drawn is not
- * linked. Returns how many links were made.
+ * Accept proposals for receipts on an estimated amount: one ("Übernehmen") or
+ * all unambiguous ones. `pairs` is what the person saw and confirmed. Linked
+ * is only what is in that list AND still a proposal when worked out again from
+ * what is stored (with `onlyUnambiguous`, still an unambiguous one), so
+ * nothing the person did not see is linked and nothing stale either. Each
+ * link is checked once more inside its own write (`proposal_gone`), which
+ * makes a second tab harmless. The answer says exactly what was linked.
  */
-export async function acceptEstimateProposals(db: PrismaClient, ctx: PaymentContext, year: number): Promise<number> {
+export async function acceptEstimateProposals(db: PrismaClient, ctx: PaymentContext, year: number, pairs: unknown, onlyUnambiguous: boolean): Promise<AcceptedProposals> {
+  const wanted = (Array.isArray(pairs) ? pairs : []).flatMap((pair) => {
+    const p = (pair ?? {}) as { paymentId?: unknown; rowId?: unknown };
+    return typeof p.paymentId === 'string' && typeof p.rowId === 'string' ? [`${p.paymentId}|${p.rowId}`] : [];
+  });
+  if (wanted.length === 0 || wanted.length > 2000) throw new PaymentServiceError('invalid_link');
   const view = await loadStatement(db, ctx.workspaceId, year);
-  let linked = 0;
-  for (const proposal of view.payments.estimateProposals.filter((p) => p.unambiguous)) {
+  const current = view.payments.estimateProposals.filter((p) => wanted.includes(`${p.paymentId}|${p.rowId}`) && (!onlyUnambiguous || p.unambiguous));
+  const linked: AcceptedProposals['linked'] = [];
+  for (const proposal of current) {
     try {
       // The row comes from this workspace's own statement, so it is the workspace's receipt.
-      await linkPayment(db, ctx, { paymentId: proposal.paymentId, rowId: proposal.rowId }, async () => true, 'estimate');
-      linked += 1;
+      await linkPayment(db, ctx, { paymentId: proposal.paymentId, rowId: proposal.rowId }, async () => ({ amountCents: proposal.estimateCents }), 'estimate');
+      linked.push({ paymentId: proposal.paymentId, rowId: proposal.rowId });
     } catch (e) {
       // Linked or removed by another action in this very moment: nothing to take over, the rest goes on.
-      if (e instanceof PaymentServiceError && (e.code === 'invalid_link' || e.code === 'payment_not_found' || e.code === 'link_exceeds_payment')) continue;
+      if (e instanceof PaymentServiceError && ['proposal_gone', 'invalid_link', 'payment_not_found', 'link_exceeds_payment'].includes(e.code)) continue;
       throw e;
     }
   }
-  return linked;
+  return { linked, skipped: new Set(wanted).size - linked.length };
 }
 
-/** True when the row is a receipt of this workspace: how the payment service checks a link target. */
+/** True when the row is a receipt of this workspace. */
 export async function isWorkspaceReceipt(db: PrismaClient, workspaceId: string, rowId: string): Promise<boolean> {
   const loaded = await loadReceipts(db, workspaceId, rowId);
   return (loaded?.facts.length ?? 0) > 0;
+}
+
+/**
+ * How the payment service checks a link target: null when the row is no
+ * receipt of this workspace, otherwise the receipt's own euro amount (the
+ * document's, or the reference-rate estimate), which is what its payments are
+ * measured against.
+ */
+export function receiptForLink(db: PrismaClient, workspaceId: string): ReceiptForLink {
+  return async (rowId) => {
+    const loaded = await loadReceipts(db, workspaceId, rowId);
+    const facts = loaded?.facts[0];
+    if (!facts) return null;
+    return { amountCents: resolveItem({ ...facts, countsOnDay: null }, [], await getTaxSettings(db, workspaceId)).item.amountCents };
+  };
 }
 
 /** The ISO day "today" in the business's time zone; one place, so tests can see what the forecast used. */

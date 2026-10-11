@@ -99,7 +99,7 @@ interface Draft {
 function withHashes(drafts: Draft[]): NormalizedPayment[] {
   const seen = new Map<string, number>();
   return drafts.map(({ identity, ...d }) => {
-    if (identity) return { ...d, sourceHash: createHash('sha256').update(`id|${identity}`).digest('hex') };
+    if (identity) return { ...d, sourceHash: referenceHash(identity), byReference: true };
     const base = [d.bookingDay, d.amountCents, d.counterparty.toLowerCase(), d.reference.toLowerCase(), d.entryReference ?? ''].join('|');
     const occurrence = (seen.get(base) ?? 0) + 1;
     seen.set(base, occurrence);
@@ -107,10 +107,15 @@ function withHashes(drafts: Draft[]): NormalizedPayment[] {
   });
 }
 
-function finish(format: PaymentFormat, drafts: Draft[], skipped: Record<string, number>): ParsedFile {
+function finish(
+  format: PaymentFormat,
+  drafts: Draft[],
+  skipped: Record<string, number>,
+  extra: { cancelled: string[]; notices: Record<string, number> } = { cancelled: [], notices: {} },
+): ParsedFile {
   if (drafts.length === 0 && Object.keys(skipped).length === 0) throw new PaymentParseError('empty');
   const days = drafts.map((d) => d.bookingDay).sort();
-  return { format, payments: withHashes(drafts), skipped, firstDay: days[0] ?? null, lastDay: days[days.length - 1] ?? null };
+  return { format, payments: withHashes(drafts), skipped, ...extra, firstDay: days[0] ?? null, lastDay: days[days.length - 1] ?? null };
 }
 
 const defaultKind = (amountCents: number): PaymentKind => (amountCents < 0 ? 'spend' : 'income');
@@ -236,50 +241,116 @@ function parsePaypal(rows: string[][]): ParsedFile {
   return finish('paypal_csv', drafts, skipped);
 }
 
+/** The identity of a movement the source numbers uniquely: that number alone, whatever else the row says. */
+export function referenceHash(reference: string): string {
+  return createHash('sha256').update(`id|${reference}`).digest('hex');
+}
+
+const HOME_ZONE = 'Europe/Berlin';
+
+/**
+ * The day in German time of a moment given as day, time and time zone. The
+ * list states its zone; when that is the German one (or the time is missing)
+ * the day stands as written. A day in another zone is moved: 23:30 in UTC is
+ * already the next day here, which matters at the edges of a proposal window
+ * and on 31 December. Null when the zone is not a real one.
+ */
+export function homeDay(day: string, time: string, zone: string): string | null {
+  const clock = /^(\d{2}):(\d{2})/.exec(time.trim());
+  if (!zone || zone === HOME_ZONE || !clock) return day;
+  const [y, m, d] = day.split('-').map(Number);
+  const asUtc = Date.UTC(y, m - 1, d, Number(clock[1]), Number(clock[2]));
+  try {
+    // What the zone's clock shows at that instant tells how far the zone is from UTC.
+    const shown = new Intl.DateTimeFormat('sv-SE', { timeZone: zone, dateStyle: 'short', timeStyle: 'medium' }).format(new Date(asUtc));
+    const offset = Date.parse(`${shown.replace(' ', 'T')}Z`) - asUtc;
+    return new Intl.DateTimeFormat('sv-SE', { timeZone: HOME_ZONE }).format(new Date(asUtc - offset));
+  } catch {
+    return null;
+  }
+}
+
+type KlarnaStatus = 'purchase' | 'not_completed' | 'cancelled' | 'part_refunded';
+
+/**
+ * What a status of the pay-later list means, word by word. Every status the
+ * list is known to carry is named here; an unknown one is not guessed at (the
+ * file is refused with the word), because both guesses are wrong: counting a
+ * cancelled purchase, or dropping a real one.
+ */
+const KLARNA_STATUS: Array<[RegExp, KlarnaStatus]> = [
+  // The merchant has not processed the order: it can still change or never be charged.
+  // First, because the German sentence also ends in "fällig".
+  [/^wenn der händler deine bestellung bearbeitet\b/, 'not_completed'],
+  [/^(in bearbeitung|wird bearbeitet|ausstehend|pending|processing)$/, 'not_completed'],
+  // Part of the money came back; the list does not say how much. The purchase stays.
+  [/^(teilweise (rück)?erstattet|teilerstattet|teilerstattung|partially refunded|partial refund)$/, 'part_refunded'],
+  // Never charged, or all of it came back.
+  [/^(storniert|cancell?ed|vollständig (rück)?erstattet|(rück)?erstattet|fully refunded|refunded)$/, 'cancelled'],
+  // An ordinary purchase: paid, or due on a later day ("Gestern bezahlt", "Am 5. Sept. bezahlt", "In 12 Tagen fällig", "Überfällig").
+  [/^(normal|paid|completed|captured)$/, 'purchase'],
+  [/(^|\s)bezahlt$/, 'purchase'],
+  [/fällig$/, 'purchase'],
+  // Left by the conversion on a row read from the web pages; it says nothing about the payment.
+  [/^read$/, 'purchase'],
+];
+
+function klarnaStatus(status: string): KlarnaStatus | null {
+  const text = status.toLowerCase();
+  if (text === '') return 'purchase';
+  return KLARNA_STATUS.find(([pattern]) => pattern.test(text))?.[1] ?? null;
+}
+
 /**
  * The purchase list of the pay-later service. One row is one purchase, always
- * a positive amount, on the day it was made. The list holds no refunds, no
- * settlements and no single instalments: a purchase paid in instalments is one
- * spend of the full amount, and how the service collects the money shows on
- * the bank account, where it is a transfer (see `funding.ts`).
+ * a positive amount, on the day it was made. The list holds no settlements and
+ * no single instalments: a purchase paid in instalments is one spend of the
+ * full amount, and how the service collects the money shows on the bank
+ * account, where it is a transfer (see `funding.ts`).
  */
 function parseKlarna(rows: string[][]): ParsedFile {
   const skipped: Record<string, number> = {};
+  const notices: Record<string, number> = {};
+  const cancelled: string[] = [];
   const drafts: Draft[] = [];
-  const seenReferences = new Set<string>();
+  const seen = new Set<string>();
   for (const r of records(rows)) {
-    if (clean(r.get('currency')) !== 'EUR') {
+    if (clean(r.get('currency')).toUpperCase() !== 'EUR') {
       skip(skipped, 'other_currency');
       continue;
     }
-    const status = clean(r.get('status'));
-    // The merchant has not processed the order yet: it can still change or never be charged.
-    if (/bearbeitet|ausstehend|pending|processing/i.test(status)) {
+    const status = klarnaStatus(clean(r.get('status')));
+    if (status === null) throw new PaymentParseError('unknown_status', r.line, clean(r.get('status')).slice(0, 60));
+    if (status === 'not_completed') {
       skip(skipped, 'not_completed');
       continue;
     }
-    // Cancelled or refunded in full: the money never left, or all of it came back.
-    // A part refund keeps the purchase; the money back is linked from the bank side.
-    if (/storniert|erstattet|cancel|refunded/i.test(status) && !/teilweise|partial/i.test(status)) {
+    const reference = clean(r.get('payment_reference'));
+    if (status === 'cancelled') {
       skip(skipped, 'cancelled');
+      // A purchase an earlier file brought as paid stops counting (see `importPayments`).
+      if (reference) cancelled.push(referenceHash(reference));
       continue;
     }
-    const bookingDay = toIsoDay(r.get('created_date'));
+    const writtenDay = toIsoDay(r.get('created_date'));
     const amountCents = toCents(r.get('amount'));
+    const bookingDay = writtenDay ? homeDay(writtenDay, r.get('created_time'), clean(r.get('timezone'))) : null;
     if (!bookingDay || amountCents === null) throw new PaymentParseError('unreadable_row', r.line);
     if (amountCents === 0) {
       skip(skipped, 'zero_amount');
       continue;
     }
-    const reference = clean(r.get('payment_reference'));
-    if (reference) {
-      // The same purchase listed twice (two extracts merged into one file) is one purchase.
-      if (seenReferences.has(reference)) {
+    // Money back carries its purchase's reference: it is a movement of its own, not a second copy of the purchase.
+    const identity = reference ? (amountCents < 0 ? `${reference}|refund` : reference) : null;
+    if (identity) {
+      // The same movement listed twice (two extracts merged into one file) is one movement.
+      if (seen.has(identity)) {
         skip(skipped, 'duplicate_row');
         continue;
       }
-      seenReferences.add(reference);
+      seen.add(identity);
     }
+    if (status === 'part_refunded') notices.part_refunded = (notices.part_refunded ?? 0) + 1;
     drafts.push({
       bookingDay,
       // The day the merchant captured the purchase, when the list has it.
@@ -290,10 +361,26 @@ function parseKlarna(rows: string[][]): ParsedFile {
       reference: clean(r.get('items')),
       entryReference: reference || clean(r.get('statement_number')) || null,
       kind: amountCents < 0 ? 'refund' : 'spend',
-      ...(reference ? { identity: reference } : {}),
+      ...(identity ? { identity } : {}),
     });
   }
-  return finish('klarna_csv', drafts, skipped);
+  // A row without a reference that a referenced row repeats (the same purchase
+  // once from the web pages, once from the extract) is that purchase: day,
+  // amount and merchant agree and neither side could mean another row.
+  const sameMovement = (d: Draft) => `${d.bookingDay}|${d.amountCents}|${d.counterparty.toLowerCase()}`;
+  const count = (list: Draft[]) => {
+    const counts = new Map<string, number>();
+    for (const d of list) counts.set(sameMovement(d), (counts.get(sameMovement(d)) ?? 0) + 1);
+    return counts;
+  };
+  const referenced = count(drafts.filter((d) => d.identity));
+  const unreferenced = count(drafts.filter((d) => !d.identity));
+  const kept = drafts.filter((d) => {
+    if (d.identity || referenced.get(sameMovement(d)) !== 1 || unreferenced.get(sameMovement(d)) !== 1) return true;
+    skip(skipped, 'duplicate_row');
+    return false;
+  });
+  return finish('klarna_csv', kept, skipped, { cancelled, notices });
 }
 
 function parseEnableBanking(data: unknown): ParsedFile {

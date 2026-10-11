@@ -12,6 +12,7 @@ import {
   linkPayment,
   setCounterpartyTreatment,
   setPaymentKind,
+  setPaymentTransfer,
   unlinkPayment,
   type ImportResult,
 } from '@/lib/tax/payments/service';
@@ -46,7 +47,7 @@ import {
   saveVatSettlement,
   setAssetDisposal,
   updateAsset,
-  isWorkspaceReceipt,
+  receiptForLink,
   type StatementView,
   type TaxContext,
 } from '@/lib/tax/service';
@@ -84,10 +85,10 @@ function failure(e: unknown): { ok: false; error: FinanceActionError; detail?: s
   if (e instanceof AssetInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof RevenueInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof LinesInputError) return { ok: false, error: 'invalid_input', detail: e.code };
-  if (e instanceof PaymentParseError) return { ok: false, error: 'invalid_input', detail: e.row === null ? e.code : `${e.code}:${e.row}` };
+  if (e instanceof PaymentParseError) return { ok: false, error: 'invalid_input', detail: e.row === null ? e.code : e.word === null ? `${e.code}:${e.row}` : `${e.code}:${e.row}:${e.word}` };
   if (e instanceof PaymentServiceError) {
     const missing = ['account_not_found', 'batch_not_found', 'payment_not_found', 'link_not_found', 'target_not_found'];
-    return { ok: false, error: missing.includes(e.code) ? 'not_found' : 'invalid_input', detail: e.code };
+    return { ok: false, error: missing.includes(e.code) ? 'not_found' : 'invalid_input', detail: e.detail === null ? e.code : `${e.code}:${e.detail}` };
   }
   if (e instanceof TaxServiceError) {
     if (
@@ -292,19 +293,38 @@ export async function correctPaymentKind(year: number, paymentId: string, kind: 
   return write(year, (ctx) => setPaymentKind(prisma, ctx, String(paymentId), kind));
 }
 
-export async function confirmPaymentLink(year: number, input: unknown): Promise<Result<StatementView>> {
-  return write(year, (ctx) => linkPayment(prisma, ctx, input, (rowId) => isWorkspaceReceipt(prisma, ctx.workspaceId, rowId)));
+/**
+ * Link a payment to a receipt or an invoice. A receipt that already carries
+ * payments answers `receipt_already_paid` with the amounts; the screen asks
+ * and sends the same link again with `confirmed`. `moved` says the link was
+ * taken over from the debit that funds this payment.
+ */
+export async function confirmPaymentLink(year: number, input: unknown): Promise<Result<{ view: StatementView; moved: boolean }>> {
+  try {
+    const ctx = await writeContext();
+    const result = await linkPayment(prisma, ctx, input, receiptForLink(prisma, ctx.workspaceId));
+    return { ok: true, value: { view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)), moved: result.movedFromPaymentId !== null } };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Say that one payment is a transfer between own accounts (true) or a payment of its own (false). */
+export async function markPaymentTransfer(year: number, paymentId: string, isTransfer: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => setPaymentTransfer(prisma, ctx, String(paymentId), isTransfer));
 }
 
 /**
- * Accept every unambiguous proposal for a receipt on an estimated amount. The
- * list is worked out again on the server; the answer says how many were linked.
+ * Accept proposals for receipts on an estimated amount: the pairs the person
+ * saw, of which only those the server still proposes are linked (with
+ * `onlyUnambiguous`, only those still unambiguous). The answer carries the
+ * fresh statement and exactly what was linked, also when some were left out.
  */
-export async function acceptPaymentProposals(year: number): Promise<Result<{ view: StatementView; linked: number }>> {
+export async function acceptPaymentProposals(year: number, pairs: unknown, onlyUnambiguous: boolean): Promise<Result<{ view: StatementView; linked: number; skipped: number }>> {
   try {
     const ctx = await writeContext();
-    const linked = await acceptEstimateProposals(prisma, ctx, safeYear(year));
-    return { ok: true, value: { view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)), linked } };
+    const accepted = await acceptEstimateProposals(prisma, ctx, safeYear(year), pairs, onlyUnambiguous === true);
+    return { ok: true, value: { view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)), linked: accepted.linked.length, skipped: accepted.skipped } };
   } catch (e) {
     return failure(e);
   }

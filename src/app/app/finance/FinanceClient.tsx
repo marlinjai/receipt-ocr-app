@@ -10,6 +10,7 @@ import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service'
 import type { OpenCheckKind } from '@/lib/tax/types';
 import {
   acceptPaymentProposals,
+  markPaymentTransfer,
   addAccount,
   answerYearBoundary,
   declineYearBoundary,
@@ -134,6 +135,40 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
       setNotice(done);
       after?.(result.value);
     });
+  }
+
+  /**
+   * Link a payment. A receipt that already carries payments is not linked
+   * silently a second time: the server answers with what is on it, the person
+   * is asked, and only a yes sends the link again.
+   */
+  function linkWithQuestion(input: { paymentId: string; rowId?: string; invoiceId?: string; cents?: number }, confirmed = false) {
+    let moved = false;
+    let question: string | null = null;
+    run(
+      async () => {
+        const result = await confirmPaymentLink(view.year, { ...input, confirmed });
+        if (!result.ok) {
+          const [code, paid, own] = (result.detail ?? '').split(':');
+          if (code === 'receipt_already_paid') {
+            question = `Dieser Beleg hat schon eine Zahlung über ${euro(Number(paid))} (Belegbetrag ${euro(Number(own))}). Diese Zahlung zusätzlich zuordnen? Der Beleg zählt dann mit der Summe aller zugeordneten Zahlungen.`;
+            return { ok: true, value: view };
+          }
+          return result;
+        }
+        moved = result.value.moved;
+        return { ok: true, value: result.value.view };
+      },
+      'Zahlung zugeordnet.',
+      () => {
+        if (question !== null) {
+          setNotice('Nichts zugeordnet: der Beleg hat schon eine Zahlung.');
+          if (window.confirm(question)) linkWithQuestion(input, true);
+        } else if (moved) {
+          setNotice('Zahlung zugeordnet. Die bisherige Zuordnung dieses Belegs zur Abbuchung auf dem Bankkonto wurde hierher verschoben: es ist dasselbe Geld.');
+        }
+      },
+    );
   }
 
   function decide(item: StatementItem, submit: TreatmentSubmit) {
@@ -670,20 +705,31 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                 run(() => undoImport(view.year, batchId), 'Import rückgängig gemacht.');
               }}
               onTreat={(counterparty, treatment) => run(() => treatCounterparty(view.year, { counterparty, treatment }), `${counterparty}: ${treatment === null ? 'Antwort zurückgenommen' : 'gespeichert'}.`)}
-              onLink={(input) => run(() => confirmPaymentLink(view.year, input), 'Zahlung zugeordnet.')}
-              onAcceptProposals={() => {
-                let linked = 0;
+              onLink={linkWithQuestion}
+              onAcceptProposals={(pairs, onlyUnambiguous) => {
+                let outcome = { linked: 0, skipped: 0 };
                 run(
                   async () => {
-                    const result = await acceptPaymentProposals(view.year);
+                    const result = await acceptPaymentProposals(view.year, pairs, onlyUnambiguous);
                     if (!result.ok) return result;
-                    linked = result.value.linked;
+                    outcome = result.value;
                     return { ok: true, value: result.value.view };
                   },
                   'Vorschläge übernommen.',
-                  () => setNotice(linked === 0 ? 'Kein Vorschlag war mehr eindeutig; es wurde nichts zugeordnet.' : `${linked} ${linked === 1 ? 'Zahlung' : 'Zahlungen'} dem Beleg zugeordnet. Die Belege zählen jetzt mit dem bezahlten Betrag.`),
+                  () =>
+                    setNotice(
+                      `${outcome.linked === 0 ? 'Nichts zugeordnet' : `${outcome.linked} ${outcome.linked === 1 ? 'Zahlung' : 'Zahlungen'} dem Beleg zugeordnet`}${
+                        outcome.skipped > 0 ? `; ${outcome.skipped} ${outcome.skipped === 1 ? 'Vorschlag galt' : 'Vorschläge galten'} nicht mehr und ${outcome.skipped === 1 ? 'blieb' : 'blieben'} unberührt` : ''
+                      }. Die Liste zeigt den aktuellen Stand.`,
+                    ),
                 );
               }}
+              onTransfer={(paymentId, isTransfer) =>
+                run(
+                  () => markPaymentTransfer(view.year, paymentId, isTransfer),
+                  isTransfer ? 'Als Übertrag zwischen eigenen Konten vermerkt; nach der Zahlung wird nicht mehr gefragt.' : 'Als eigene Zahlung vermerkt; sie steht wieder bei den offenen Zahlungen oder Gegenseiten.',
+                )
+              }
               onUnlink={(linkId) => run(() => removePaymentLink(view.year, linkId), 'Zuordnung gelöst.')}
               onNotIncome={(payment) => run(() => correctPaymentKind(view.year, payment.id, 'refund'), 'Als Erstattung oder Umbuchung vermerkt. Unter „Von dir umgewidmete Zahlungen“ lässt sich das zurücksetzen.')}
               onKind={(paymentId, kind) => run(() => correctPaymentKind(view.year, paymentId, kind), kind === null ? 'Zahlung zurückgesetzt.' : 'Zahlung umgewidmet.')}

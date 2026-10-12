@@ -6,6 +6,7 @@ import { incompleteQueue } from '@/lib/meals/register';
 import { loadMealRecords } from '@/lib/meals/service';
 import { loadReviewQueue, type ReviewEntry } from '@/lib/review/service';
 import { RECEIPT_PARAM } from '@/lib/receipt-link';
+import { YEAR_PARAM } from '@/lib/receipt-years';
 import DashboardClient from './DashboardClient';
 
 export const dynamic = 'force-dynamic';
@@ -14,6 +15,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   // A link from another area names the receipt to open (see `receiptHref`).
   const openParam = (await searchParams)[RECEIPT_PARAM];
   const openRowId = typeof openParam === 'string' && openParam ? openParam : null;
+  // The years the address asks for ("?jahr=2022-2024,2026"), see `parseYearParam`.
+  const yearParam = (await searchParams)[YEAR_PARAM];
+  const initialYears = typeof yearParam === 'string' ? yearParam : null;
   // The middleware gates the route; requireSession resolves the verified
   // session (or redirects) so the table lookup is scoped to the ACTIVE
   // workspace, server-side.
@@ -66,6 +70,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       openMealCount={openMealCount}
       initialReview={initialReview}
       openRowId={openRowId}
+      initialYears={initialYears}
     />
   );
 }

@@ -33,6 +33,8 @@ import { PresignedStorageBrainAdapter } from '@/lib/presigned-file-adapter';
 import { exportCSV } from '@/lib/export-csv';
 import { isGroupRow, receiptsOnly, visibleColumns } from '@/lib/receipts-kind';
 import { deleteWording, deletedWording, groupCellNote, groupCellValue, groupsOf, receiptsInGroup, searchWithGroupReceipts, selectionKinds } from '@/lib/groups/view';
+import YearFilter from './YearFilter';
+import { YEAR_PARAM, filterByYears, formatYearParam, hasYearFilter, parseYearParam, yearsOf, type YearSelection } from '@/lib/receipt-years';
 
 const dbAdapter = createServerActionsAdapter();
 const fileAdapter = new PresignedStorageBrainAdapter();
@@ -46,6 +48,7 @@ interface DashboardClientProps {
   initialReview: ReviewEntry[] | null;
   /** The receipt a link from another area asks to open (see `receiptHref`); null without one. */
   openRowId: string | null;
+  initialYears: string | null;
 }
 
 const REVIEW_ERROR: Record<ReviewActionError, string> = {
@@ -72,7 +75,7 @@ function receipts(n: number): string {
   return n === 1 ? '1 Beleg' : `${n} Belege`;
 }
 
-function DashboardContent({ tableId, openMealCount, initialReview, openRowId }: { tableId: string; openMealCount: number; initialReview: ReviewEntry[] | null; openRowId: string | null }) {
+function DashboardContent({ tableId, openMealCount, initialReview, openRowId, initialYears }: { tableId: string; openMealCount: number; initialReview: ReviewEntry[] | null; openRowId: string | null; initialYears: string | null }) {
   const {
     table,
     columns,
@@ -118,10 +121,23 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId }: 
   const [detailRow, setDetailRow] = useState<Row | null>(null);
   const [groupPanelId, setGroupPanelId] = useState<string | null>(null);
   // A search that finds a group shows the group's receipts with it (see `searchWithGroupReceipts`).
-  const displayRows = useMemo(
+  const searchedRows = useMemo(
     () => (searchResults ? searchWithGroupReceipts(searchResults, rows, columns) : rows),
     [searchResults, rows, columns],
   );
+  // The years chosen above the table. They narrow what every view and the export show (see `lib/receipt-years.ts`).
+  const [yearSelection, setYearSelection] = useState<YearSelection>(() => parseYearParam(initialYears));
+  const changeYears = useCallback((next: YearSelection) => {
+    setYearSelection(next);
+    // Kept in the address, so a reload or a copied link shows the same years.
+    const url = new URL(window.location.href);
+    const value = formatYearParam(next);
+    if (value) url.searchParams.set(YEAR_PARAM, value);
+    else url.searchParams.delete(YEAR_PARAM);
+    window.history.replaceState(null, '', url);
+  }, []);
+  const displayRows = useMemo(() => filterByYears(searchedRows, columns, yearSelection), [searchedRows, columns, yearSelection]);
+  const yearsInTable = useMemo(() => yearsOf(rows, columns), [rows, columns]);
 
   // A group is a row that holds receipts and is never one itself (see
   // `lib/receipts-kind.ts`). The table draws groups; everything that counts,
@@ -133,6 +149,15 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId }: 
   const groups = useMemo(() => groupsOf(rows, columns), [rows, columns]);
   const selection = useMemo(() => selectionKinds(selectedRows, rows, columns), [selectedRows, rows, columns]);
   const isCountedRow = useCallback((row: Row) => !isGroupRow(row, columns), [columns]);
+  // A row the years hide is no longer selected: a bulk edit or a delete must only reach what the page shows.
+  useEffect(() => {
+    if (!hasYearFilter(yearSelection)) return;
+    const shown = new Set(displayRows.map((r) => r.id));
+    setSelectedRows((current) => {
+      const kept = [...current].filter((id) => shown.has(id));
+      return kept.length === current.size ? current : new Set(kept);
+    });
+  }, [displayRows, yearSelection]);
   const groupSummary = useCallback(
     (row: Row, children: Row[], column: Column) => groupCellValue(row, children, column, columns),
     [columns],
@@ -752,7 +777,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId }: 
       />
 
       {/* Search & Filter */}
-      <div className="px-4 py-2 flex gap-2 items-center" style={{ borderBottom: '1px solid var(--dt-border-color)', background: 'rgba(10, 10, 15, 0.3)' }}>
+      <div className="px-4 py-2 flex flex-wrap gap-2 items-center" style={{ borderBottom: '1px solid var(--dt-border-color)', background: 'rgba(10, 10, 15, 0.3)' }}>
         <SearchBar
           rows={rows}
           columns={tableColumns}
@@ -764,6 +789,14 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId }: 
           selectOptions={selectOptions}
           onFiltersChange={setFilters}
           bare
+        />
+        <YearFilter
+          years={yearsInTable.years}
+          undated={yearsInTable.undated}
+          selection={yearSelection}
+          shown={displayReceiptRows.length}
+          total={receiptRows.length}
+          onChange={changeYears}
         />
       </div>
 
@@ -836,10 +869,10 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId }: 
   );
 }
 
-export default function DashboardClient({ tableId, workspaceId, openMealCount, initialReview, openRowId }: DashboardClientProps) {
+export default function DashboardClient({ tableId, workspaceId, openMealCount, initialReview, openRowId, initialYears }: DashboardClientProps) {
   return (
     <DataTableProvider dbAdapter={dbAdapter} fileAdapter={fileAdapter} workspaceId={workspaceId}>
-      <DashboardContent tableId={tableId} openMealCount={openMealCount} initialReview={initialReview} openRowId={openRowId} />
+      <DashboardContent tableId={tableId} openMealCount={openMealCount} initialReview={initialReview} openRowId={openRowId} initialYears={initialYears} />
     </DataTableProvider>
   );
 }

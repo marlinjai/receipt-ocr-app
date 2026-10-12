@@ -419,6 +419,7 @@
 
 <!-- Done — move to CHANGELOG.md on release -->
 
+- [x] A year filter on the receipts table (requested by the owner on 2026-10-12): chips per year with their count, one year, several or a range with Shift, kept in the address as `?jahr=`. Done 2026-10-12.
 - [x] Phone capture queue: a photo the server has is never sent again. Sending a queued photo and
   removing its entry were one step, so a failed removal looked like a failed send: the photo was
   reported as not processed, its attempts were raised, and every later run sent it again (kept

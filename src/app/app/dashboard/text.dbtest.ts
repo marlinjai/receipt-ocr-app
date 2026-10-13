@@ -72,8 +72,8 @@ describe('the search in the recognized text', () => {
     await ws.addReceipt(plainMealReceipt({ 'OCR Text': 'Etwas ganz anderes' }));
     await other.addReceipt(plainMealReceipt({ 'OCR Text': page }));
 
-    expect(await searchReceiptText(ws.tableId, `${marker.toLowerCase()} cloud`)).toEqual([hit]);
-    expect(await searchReceiptText(ws.tableId, 'nichts davon')).toEqual([]);
+    expect(await searchReceiptText(ws.tableId, `${marker.toLowerCase()} cloud`)).toEqual({ ids: [hit], truncated: false });
+    expect((await searchReceiptText(ws.tableId, 'nichts davon')).ids).toEqual([]);
     // Another company's table is not reachable with this session.
     await expect(searchReceiptText(other.tableId, marker)).rejects.toBeTruthy();
   });
@@ -83,8 +83,18 @@ describe('the search in the recognized text', () => {
     const rowId = await ws.addReceipt(plainMealReceipt({ 'OCR Text': `Rabatt ${marker} 50% auf alles` }));
     await ws.addReceipt(plainMealReceipt({ 'OCR Text': `Rabatt ${marker} 50 Euro` }));
 
-    expect(await searchReceiptText(ws.tableId, `${marker} 50% auf`)).toEqual([rowId]);
-    expect(await searchReceiptText(ws.tableId, '%%%')).toEqual([]);
-    expect(await searchReceiptText(ws.tableId, 'Ra')).toEqual([]);
+    expect((await searchReceiptText(ws.tableId, `${marker} 50% auf`)).ids).toEqual([rowId]);
+    expect((await searchReceiptText(ws.tableId, '%%%')).ids).toEqual([]);
+    expect((await searchReceiptText(ws.tableId, 'Ra')).ids).toEqual([]);
+  });
+});
+
+describe('a search with more hits than it returns', () => {
+  it('says it was not cut when everything fits', async () => {
+    const marker = `Viele-${randomUUID().slice(0, 8)}`;
+    for (let i = 0; i < 3; i++) await ws.addReceipt(plainMealReceipt({ 'OCR Text': `${marker} ${i}` }));
+    const result = await searchReceiptText(ws.tableId, marker);
+    expect(result.ids).toHaveLength(3);
+    expect(result.truncated).toBe(false);
   });
 });

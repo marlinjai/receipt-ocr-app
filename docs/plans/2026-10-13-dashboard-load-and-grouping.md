@@ -41,6 +41,18 @@ The wait is round trips and the cost afterwards is the drawing: 500 rows of 29 c
   300 receipts), and a receipt is found when either finds it.
 - **Pages of 200** instead of 50: four requests instead of sixteen for the same rows.
 
+## Reviewed before merging
+
+A fresh agent read the pull request on 2026-10-13. Fixed from its findings: the panel showed the
+previous receipt's text while the next one loaded (the panel is now one per receipt); the AI
+assistant lost the recognized text (its row tool takes `includeText` for up to 25 receipts and its
+instructions say so); the search bar counted "0 results" for a hit found only in the text (the
+list has its own search field with its own count, and it now searches live as rows arrive); a text
+search cut at 300 receipts did not say so (it says so); the hits of the previous term vanished
+while the next ones loaded (they stay); a duplicate text column would have kept its text in the
+list (all such columns are emptied); a table not yet migrated made the search fail silently (it is
+migrated first, as the list does).
+
 ## Step two (decided direction, not built)
 
 Load only the years chosen. The year chips get their counts from one count query, the default is

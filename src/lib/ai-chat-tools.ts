@@ -20,6 +20,11 @@ export const TABLE_TOOLS: OpenAI.ChatCompletionTool[] = [
             type: 'number',
             description: 'Max rows to return. Default 50.',
           },
+          includeText: {
+            type: 'boolean',
+            description:
+              'Also return the recognized text of each receipt as "OCR Text". It is not part of the rows otherwise and is slower to fetch: ask for it only when the text is needed (for example to classify), and then with a limit of 25 or less.',
+          },
         },
       },
     },

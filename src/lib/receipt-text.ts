@@ -15,19 +15,22 @@ export const TEXT_COLUMN = 'OCR Text';
 
 type NamedColumn = Pick<Column, 'id' | 'name'>;
 
-/** The id of the text column, or null on a table that has none. */
-export function textColumnId(columns: readonly NamedColumn[]): string | null {
-  return columns.find((c) => c.name === TEXT_COLUMN)?.id ?? null;
+/** The ids of the text columns. Normally one; a leftover duplicate column of the same name must not carry the text either. */
+export function textColumnIds(columns: readonly NamedColumn[]): string[] {
+  return columns.filter((c) => c.name === TEXT_COLUMN).map((c) => c.id);
 }
 
 /** The row without its recognized text: the cell is empty, nothing else changes. */
-export function withoutText<T extends Pick<Row, 'cells'>>(row: T, textId: string | null): T {
-  if (!textId || typeof row.cells[textId] !== 'string' || row.cells[textId] === '') return row;
-  return { ...row, cells: { ...row.cells, [textId]: '' } };
+export function withoutText<T extends Pick<Row, 'cells'>>(row: T, textIds: readonly string[]): T {
+  const present = textIds.filter((id) => typeof row.cells[id] === 'string' && row.cells[id] !== '');
+  if (present.length === 0) return row;
+  const cells = { ...row.cells };
+  for (const id of present) cells[id] = '';
+  return { ...row, cells };
 }
 
-export function rowsWithoutText<T extends Pick<Row, 'cells'>>(rows: readonly T[], textId: string | null): T[] {
-  return rows.map((row) => withoutText(row, textId));
+export function rowsWithoutText<T extends Pick<Row, 'cells'>>(rows: readonly T[], textIds: readonly string[]): T[] {
+  return rows.map((row) => withoutText(row, textIds));
 }
 
 /** The columns a table list shows: everything the person can read or edit in a grid, never the recognized text. */

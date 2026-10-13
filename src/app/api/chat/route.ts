@@ -44,7 +44,7 @@ ${tableContext.userRules || ''}
 ## Instructions
 - Use tools to read and modify data. Always read data first before making changes.
 - For select columns (Category, Status, Zuordnung), use the **option name** (e.g. "Bewirtung"), not the option ID.
-- When classifying receipts, examine the OCR Text and Vendor columns to determine Category, Konto, and Zuordnung.
+- When classifying receipts, examine the Name and Vendor columns first. The recognized text ("OCR Text") is not part of the rows: ask for it with get_rows and includeText set to true, with a limit of 25 or less, when the name and vendor are not enough to determine Category, Konto, and Zuordnung.
 - When updating Konto, use the SKR03 mapping above based on the Category.
 - Explain what you plan to do before calling update/delete tools.
 - Be concise in your responses. Use German column names when referencing them.

@@ -99,6 +99,7 @@ export default function ReceiptDetailPanel({
     if (!loadText) return;
     let current = true;
     setTextFailed(false);
+    setLoadedText(null);
     loadText(row.id)
       .then((text) => current && setLoadedText(text))
       .catch(() => current && setTextFailed(true));

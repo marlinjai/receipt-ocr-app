@@ -130,16 +130,23 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   // not in the list and is searched on the server. A receipt is found when either finds it.
   const { searchTerm, setSearchTerm, filteredRows: listHits } = useTableSearch(rows, tableColumns);
   const [textHits, setTextHits] = useState<{ ids: Set<string>; truncated: boolean } | null>(null);
+  const [textSearchFailed, setTextSearchFailed] = useState(false);
   const trimmedTerm = searchTerm.trim();
   const textSearched = trimmedTerm.length >= MIN_TEXT_SEARCH_LENGTH;
   useEffect(() => {
     if (!textSearched) return;
     let current = true;
+    setTextSearchFailed(false);
     const timer = setTimeout(() => {
       searchReceiptText(tableId, trimmedTerm)
         .then((result) => current && setTextHits({ ids: new Set(result.ids), truncated: result.truncated }))
-        // A failed text search leaves the list search as it is; the person still finds names and vendors.
-        .catch(() => current && setTextHits(null));
+        // A failed text search leaves the list search as it is, and the field says so: the person still finds
+        // names and vendors, but must not read the count as covering the recognized text.
+        .catch(() => {
+          if (!current) return;
+          setTextHits(null);
+          setTextSearchFailed(true);
+        });
     }, 350);
     return () => {
       current = false;
@@ -812,6 +819,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           onTermChange={setSearchTerm}
           count={searchResults ? receiptsOnly(searchResults, columns).length : null}
           truncated={Boolean(activeTextHits?.truncated)}
+          textFailed={textSearched && textSearchFailed}
         />
         <FilterBar
           columns={tableColumns}

@@ -14,6 +14,7 @@ export default function ReceiptSearch({
   onTermChange,
   count,
   truncated,
+  textFailed,
 }: {
   term: string;
   onTermChange: (term: string) => void;
@@ -21,6 +22,8 @@ export default function ReceiptSearch({
   count: number | null;
   /** True when the text search found more receipts than it returns. */
   truncated: boolean;
+  /** True when the server search of the recognized text failed: only names, vendors and amounts were searched. */
+  textFailed: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
 
@@ -61,6 +64,7 @@ export default function ReceiptSearch({
         <span className="text-xs whitespace-nowrap" style={{ color: count > 0 ? 'var(--dt-text-secondary)' : 'var(--dt-accent-danger)' }} role="status">
           {count} {count === 1 ? 'Treffer' : 'Treffer'}
           {truncated ? ' (im Text nur die neuesten, bitte genauer suchen)' : ''}
+          {textFailed ? ' (der erkannte Text konnte nicht durchsucht werden, nur Name, Händler und Betrag)' : ''}
         </span>
       )}
       {term && (

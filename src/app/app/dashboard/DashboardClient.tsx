@@ -15,7 +15,8 @@ import {
 } from '@marlinjai/data-table-react';
 import type { Column, ColumnType, Row, GroupConfig, FooterConfig, SubItemsConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
-import { deleteReceiptsForGood } from './actions';
+import { deleteReceiptsForGood, getReceiptText, searchReceiptText } from './actions';
+import { MIN_TEXT_SEARCH_LENGTH, listColumns } from '@/lib/receipt-text';
 import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
 import FxRecomputePanel from './FxRecomputePanel';
 import BulkEditBar from './BulkEditBar';
@@ -100,7 +101,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     isRowsLoading,
     loadSelectOptions,
     refresh,
-  } = useTable({ tableId });
+  } = useTable({ tableId, pageSize: 200 });
 
   const {
     views,
@@ -111,7 +112,26 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     setCurrentView,
   } = useViews({ tableId });
 
-  const [searchResults, setSearchResults] = useState<Row[] | null>(null);
+  // The names, vendors and amounts are searched in the list; the recognized text is not in the list and is
+  // searched on the server. A receipt is found when either finds it.
+  const [searchTerm, setSearchTerm] = useState('');
+  const [listHits, setListHits] = useState<Row[] | null>(null);
+  const [textHits, setTextHits] = useState<{ term: string; ids: Set<string> } | null>(null);
+  useEffect(() => {
+    const term = searchTerm.trim();
+    if (term.length < MIN_TEXT_SEARCH_LENGTH) return;
+    let current = true;
+    const timer = setTimeout(() => {
+      searchReceiptText(tableId, term)
+        .then((ids) => current && setTextHits({ term: searchTerm, ids: new Set(ids) }))
+        // A failed text search leaves the list search as it is; the person still finds names and vendors.
+        .catch(() => current && setTextHits(null));
+    }, 350);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [searchTerm, tableId]);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   // The keyboard-focused row (Notion-style implicit selection): bulk edits
   // apply to it when nothing is checkbox-selected. Destructive actions
@@ -121,6 +141,13 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   const [detailRow, setDetailRow] = useState<Row | null>(null);
   const [groupPanelId, setGroupPanelId] = useState<string | null>(null);
   // A search that finds a group shows the group's receipts with it (see `searchWithGroupReceipts`).
+  const searchResults = useMemo(() => {
+    if (!listHits) return null;
+    const byText = textHits && textHits.term === searchTerm ? textHits.ids : null;
+    if (!byText || byText.size === 0) return listHits;
+    const found = new Set(listHits.map((r) => r.id));
+    return [...listHits, ...rows.filter((r) => byText.has(r.id) && !found.has(r.id))];
+  }, [listHits, textHits, searchTerm, rows]);
   const searchedRows = useMemo(
     () => (searchResults ? searchWithGroupReceipts(searchResults, rows, columns) : rows),
     [searchResults, rows, columns],
@@ -143,7 +170,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   // `lib/receipts-kind.ts`). The table draws groups; everything that counts,
   // edits in bulk, exports or hands rows to the assistant works on receipts.
   // The column that says which rows are groups is not shown or edited.
-  const tableColumns = useMemo(() => visibleColumns(columns), [columns]);
+  const tableColumns = useMemo(() => listColumns(visibleColumns(columns)), [columns]);
   const receiptRows = useMemo(() => receiptsOnly(rows, columns), [rows, columns]);
   const displayReceiptRows = useMemo(() => receiptsOnly(displayRows, columns), [displayRows, columns]);
   const groups = useMemo(() => groupsOf(rows, columns), [rows, columns]);
@@ -781,7 +808,11 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         <SearchBar
           rows={rows}
           columns={tableColumns}
-          onSearchResults={(results, term) => setSearchResults(term ? results : null)}
+          onSearchResults={(results, term) => {
+            setSearchTerm(term);
+            setListHits(term ? results : null);
+            if (term.trim().length < MIN_TEXT_SEARCH_LENGTH) setTextHits(null);
+          }}
         />
         <FilterBar
           columns={tableColumns}
@@ -813,6 +844,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           columns={columns}
           selectOptions={selectOptions}
           onClose={() => setDetailRow(null)}
+          loadText={getReceiptText}
           onUploadFile={uploadFile}
           onDeleteFile={deleteFile}
           onMealSaved={() => {

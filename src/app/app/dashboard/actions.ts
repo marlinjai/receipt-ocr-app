@@ -3,12 +3,14 @@
 import { touchesTaxRates, withTaxRates } from '@/lib/tax-rates';
 import { touchesNameParts, withFollowingName } from '@/lib/receipt-name-cells';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
+import { safeColumnName, safeTableName } from '@marlinjai/data-table-adapter-shared';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
 import { deleteReceiptRows } from '@/lib/meals/service';
 import { deleteStoredFile } from '@/lib/stored-files';
 import { tenantIdForWorkspace } from '@/lib/auth-workspace';
 import { stampTableOwner } from '@/lib/receipts-table';
+import { MIN_TEXT_SEARCH_LENGTH, TEXT_SEARCH_LIMIT, likePattern, rowsWithoutText, textColumnId, withoutText } from '@/lib/receipt-text';
 import { GROUP_KIND, ROW_KIND_COLUMN, rowKindColumnId } from '@/lib/receipts-kind';
 import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
 import { rowKind } from '@/lib/groups/service';
@@ -198,14 +200,62 @@ export async function createRow(input: CreateRowInput): Promise<Row> {
   return adapter.createRow({ ...input, cells: withTaxRates(columns, input.cells) as Record<string, CellValue> });
 }
 
-export async function getRow(rowId: string): Promise<Row | null> {
-  await requireRowAccess(rowId);
-  return getAdapter().getRow(rowId);
+/** The id of the recognized-text column of a table, for the actions that return rows to the list. */
+async function textColumnOf(adapter: PrismaAdapter, tableId: string): Promise<string | null> {
+  return textColumnId(await adapter.getColumns(tableId));
 }
 
+export async function getRow(rowId: string): Promise<Row | null> {
+  await requireRowAccess(rowId);
+  const adapter = getAdapter();
+  const row = await adapter.getRow(rowId);
+  return row ? withoutText(row, await textColumnOf(adapter, row.tableId)) : null;
+}
+
+/**
+ * The rows of the list. The recognized text of a receipt is left out (an empty
+ * cell): it is several kilobytes per row and only the detail panel needs it,
+ * through `getReceiptText`. On 2026-10-12 the full list was 3 MB for 780 rows.
+ */
 export async function getRows(tableId: string, query?: QueryOptions): Promise<QueryResult<Row>> {
   await requireTableAccess(tableId);
-  return getAdapter().getRows(tableId, query);
+  const adapter = getAdapter();
+  const result = await adapter.getRows(tableId, query);
+  return { ...result, items: rowsWithoutText(result.items, await textColumnOf(adapter, tableId)) };
+}
+
+/** The recognized text of one receipt, for the detail panel. Empty when there is none. */
+export async function getReceiptText(rowId: string): Promise<string> {
+  await requireRowAccess(rowId);
+  const adapter = getAdapter();
+  const row = await adapter.getRow(rowId);
+  if (!row) return '';
+  const textId = textColumnId(await adapter.getColumns(row.tableId));
+  const value = textId ? row.cells[textId] : null;
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Receipts whose recognized text contains the term, as ids (at most
+ * TEXT_SEARCH_LIMIT, newest first). The list does not carry the text, so a
+ * search in it runs here.
+ */
+export async function searchReceiptText(tableId: string, term: string): Promise<string[]> {
+  await requireTableAccess(tableId);
+  const wanted = typeof term === 'string' ? term.trim() : '';
+  if (wanted.length < MIN_TEXT_SEARCH_LENGTH || wanted.length > 120) return [];
+  const textId = textColumnId(await getAdapter().getColumns(tableId));
+  if (!textId) return [];
+  // Rows live in a real table per data table, one text column per column id (the adapter's own naming,
+  // which also validates the identifiers). Only the pattern is a parameter.
+  const rows = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+    `SELECT id FROM ${safeTableName(tableId)}
+     WHERE _archived = 0 AND ${safeColumnName(textId)} ILIKE $1
+     ORDER BY _created_at DESC
+     LIMIT ${Math.trunc(TEXT_SEARCH_LIMIT)}`,
+    likePattern(wanted),
+  );
+  return rows.map((r) => r.id);
 }
 
 export async function updateRow(rowId: string, cells: Record<string, CellValue>): Promise<Row> {
@@ -223,10 +273,15 @@ export async function updateRow(rowId: string, cells: Record<string, CellValue>)
   // (see `lib/receipt-name-cells.ts`); a group's name is its own.
   const followsName = kind !== GROUP_KIND && touchesNameParts(columns, cells);
   const ratesChange = touchesTaxRates(columns, cells);
-  if (!followsName && !ratesChange) return adapter.updateRow(rowId, cells);
+  const textId = textColumnId(columns);
+  // The table puts the returned row in its list: without the recognized text, like every row of the list.
+  if (!followsName && !ratesChange) return withoutText(await adapter.updateRow(rowId, cells), textId);
   const stored = await adapter.getRow(rowId);
   const named = followsName ? await withFollowingName(adapter, columns, cells, stored?.cells) : cells;
-  return adapter.updateRow(rowId, (ratesChange ? withTaxRates(columns, named, stored?.cells) : named) as Record<string, CellValue>);
+  return withoutText(
+    await adapter.updateRow(rowId, (ratesChange ? withTaxRates(columns, named, stored?.cells) : named) as Record<string, CellValue>),
+    textId,
+  );
 }
 
 /** The table a row belongs to; the row was authorized just before. */

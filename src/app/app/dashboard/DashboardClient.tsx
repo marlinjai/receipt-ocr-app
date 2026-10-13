@@ -10,12 +10,13 @@ import {
   BoardView,
   CalendarView,
   ViewSwitcher,
-  SearchBar,
+  useTableSearch,
   FilterBar,
 } from '@marlinjai/data-table-react';
 import type { Column, ColumnType, Row, GroupConfig, FooterConfig, SubItemsConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
-import { deleteReceiptsForGood } from './actions';
+import { deleteReceiptsForGood, getReceiptText, searchReceiptText } from './actions';
+import { MIN_TEXT_SEARCH_LENGTH, listColumns } from '@/lib/receipt-text';
 import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
 import FxRecomputePanel from './FxRecomputePanel';
 import BulkEditBar from './BulkEditBar';
@@ -34,6 +35,7 @@ import { exportCSV } from '@/lib/export-csv';
 import { isGroupRow, receiptsOnly, visibleColumns } from '@/lib/receipts-kind';
 import { deleteWording, deletedWording, groupCellNote, groupCellValue, groupsOf, receiptsInGroup, searchWithGroupReceipts, selectionKinds } from '@/lib/groups/view';
 import YearFilter from './YearFilter';
+import ReceiptSearch from './ReceiptSearch';
 import { YEAR_PARAM, filterByYears, formatYearParam, hasYearFilter, parseYearParam, yearsOf, type YearSelection } from '@/lib/receipt-years';
 
 const dbAdapter = createServerActionsAdapter();
@@ -100,7 +102,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     isRowsLoading,
     loadSelectOptions,
     refresh,
-  } = useTable({ tableId });
+  } = useTable({ tableId, pageSize: 200 });
 
   const {
     views,
@@ -111,7 +113,6 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     setCurrentView,
   } = useViews({ tableId });
 
-  const [searchResults, setSearchResults] = useState<Row[] | null>(null);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   // The keyboard-focused row (Notion-style implicit selection): bulk edits
   // apply to it when nothing is checkbox-selected. Destructive actions
@@ -120,6 +121,46 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   const [aiSidebarOpen, setAiSidebarOpen] = useState(false);
   const [detailRow, setDetailRow] = useState<Row | null>(null);
   const [groupPanelId, setGroupPanelId] = useState<string | null>(null);
+  // A group is a row that holds receipts and is never one itself (see
+  // `lib/receipts-kind.ts`). The table draws groups; everything that counts,
+  // edits in bulk, exports or hands rows to the assistant works on receipts.
+  // The column that says which rows are groups is not shown or edited.
+  const tableColumns = useMemo(() => listColumns(visibleColumns(columns)), [columns]);
+  // The names, vendors and amounts are searched in the list, live as rows arrive; the recognized text is
+  // not in the list and is searched on the server. A receipt is found when either finds it.
+  const { searchTerm, setSearchTerm, filteredRows: listHits } = useTableSearch(rows, tableColumns);
+  const [textHits, setTextHits] = useState<{ ids: Set<string>; truncated: boolean } | null>(null);
+  const [textSearchFailed, setTextSearchFailed] = useState(false);
+  const trimmedTerm = searchTerm.trim();
+  const textSearched = trimmedTerm.length >= MIN_TEXT_SEARCH_LENGTH;
+  useEffect(() => {
+    if (!textSearched) return;
+    let current = true;
+    setTextSearchFailed(false);
+    const timer = setTimeout(() => {
+      searchReceiptText(tableId, trimmedTerm)
+        .then((result) => current && setTextHits({ ids: new Set(result.ids), truncated: result.truncated }))
+        // A failed text search leaves the list search as it is, and the field says so: the person still finds
+        // names and vendors, but must not read the count as covering the recognized text.
+        .catch(() => {
+          if (!current) return;
+          setTextHits(null);
+          setTextSearchFailed(true);
+        });
+    }, 350);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [trimmedTerm, textSearched, tableId]);
+  // The hits of the previous term stay until the new ones arrive: typing on must not make receipts blink out.
+  const activeTextHits = textSearched ? textHits : null;
+  const searchResults = useMemo(() => {
+    if (!trimmedTerm) return null;
+    if (!activeTextHits || activeTextHits.ids.size === 0) return listHits;
+    const found = new Set(listHits.map((r) => r.id));
+    return [...listHits, ...rows.filter((r) => activeTextHits.ids.has(r.id) && !found.has(r.id))];
+  }, [trimmedTerm, listHits, activeTextHits, rows]);
   // A search that finds a group shows the group's receipts with it (see `searchWithGroupReceipts`).
   const searchedRows = useMemo(
     () => (searchResults ? searchWithGroupReceipts(searchResults, rows, columns) : rows),
@@ -139,11 +180,6 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   const displayRows = useMemo(() => filterByYears(searchedRows, columns, yearSelection), [searchedRows, columns, yearSelection]);
   const yearsInTable = useMemo(() => yearsOf(rows, columns), [rows, columns]);
 
-  // A group is a row that holds receipts and is never one itself (see
-  // `lib/receipts-kind.ts`). The table draws groups; everything that counts,
-  // edits in bulk, exports or hands rows to the assistant works on receipts.
-  // The column that says which rows are groups is not shown or edited.
-  const tableColumns = useMemo(() => visibleColumns(columns), [columns]);
   const receiptRows = useMemo(() => receiptsOnly(rows, columns), [rows, columns]);
   const displayReceiptRows = useMemo(() => receiptsOnly(displayRows, columns), [displayRows, columns]);
   const groups = useMemo(() => groupsOf(rows, columns), [rows, columns]);
@@ -778,10 +814,12 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
 
       {/* Search & Filter */}
       <div className="px-4 py-2 flex flex-wrap gap-2 items-center" style={{ borderBottom: '1px solid var(--dt-border-color)', background: 'rgba(10, 10, 15, 0.3)' }}>
-        <SearchBar
-          rows={rows}
-          columns={tableColumns}
-          onSearchResults={(results, term) => setSearchResults(term ? results : null)}
+        <ReceiptSearch
+          term={searchTerm}
+          onTermChange={setSearchTerm}
+          count={searchResults ? receiptsOnly(searchResults, columns).length : null}
+          truncated={Boolean(activeTextHits?.truncated)}
+          textFailed={textSearched && textSearchFailed}
         />
         <FilterBar
           columns={tableColumns}
@@ -809,10 +847,13 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           upload/replace inside the panel shows up without reopening it */}
       {detailRow && (
         <ReceiptDetailPanel
+          // One panel per receipt: the text of the previous receipt must never show while the next one loads.
+          key={detailRow.id}
           row={rows.find((r) => r.id === detailRow.id) ?? detailRow}
           columns={columns}
           selectOptions={selectOptions}
           onClose={() => setDetailRow(null)}
+          loadText={getReceiptText}
           onUploadFile={uploadFile}
           onDeleteFile={deleteFile}
           onMealSaved={() => {
@@ -858,6 +899,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         onClose={() => setAiSidebarOpen(false)}
         rows={receiptRows}
         columns={tableColumns}
+        loadText={getReceiptText}
         selectOptions={selectOptions}
         onCellChange={saveCell}
         onAddRow={async (cells?: Record<string, CellValue>) => { await addRow({ cells }); }}

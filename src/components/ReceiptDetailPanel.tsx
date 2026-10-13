@@ -25,6 +25,8 @@ interface ReceiptDetailPanelProps {
   onMealSaved?: () => void;
   /** Read the stored file again with the model that sees the page; resolves with what to tell the person. */
   onReread?: (rowId: string) => Promise<RereadNote>;
+  /** The recognized text of the receipt: the list does not carry it, the panel asks when a receipt is opened. */
+  loadText?: (rowId: string) => Promise<string>;
 }
 
 const MAX_FILES_PER_ROW = 10;
@@ -87,8 +89,26 @@ export default function ReceiptDetailPanel({
   onDeleteFile,
   onMealSaved,
   onReread,
+  loadText,
 }: ReceiptDetailPanelProps) {
   const [ocrExpanded, setOcrExpanded] = useState(false);
+  const [loadedText, setLoadedText] = useState<string | null>(null);
+  const [textFailed, setTextFailed] = useState(false);
+  const textKey = `${row.id}:${String(row.updatedAt)}`;
+  useEffect(() => {
+    if (!loadText) return;
+    let current = true;
+    setTextFailed(false);
+    setLoadedText(null);
+    loadText(row.id)
+      .then((text) => current && setLoadedText(text))
+      .catch(() => current && setTextFailed(true));
+    return () => {
+      current = false;
+    };
+    // `row` is read through its id and update stamp: a new object with the same content must not ask again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadText, textKey]);
   const [rereadBusy, setRereadBusy] = useState(false);
   const [rereadNote, setRereadNote] = useState<RereadNote | null>(null);
   const reread = async () => {
@@ -236,7 +256,8 @@ export default function ReceiptDetailPanel({
   const konto = getVal('Konto');
   const status = getVal('Status');
   const confidence = getVal('Confidence');
-  const ocrText = getVal('OCR Text');
+  // The list leaves the text out (an empty cell): the panel's own copy, loaded on open and again after a new reading.
+  const ocrText = loadedText ?? getVal('OCR Text');
   const rawFiles = imageColId ? row.cells[imageColId] : null;
   const files: FileReference[] = Array.isArray(rawFiles) ? (rawFiles as FileReference[]) : [];
   const previewFile = files[Math.min(previewIdx, files.length - 1)] ?? null;
@@ -545,6 +566,11 @@ export default function ReceiptDetailPanel({
             <MealPanelSection key={`${row.id}:${categoryName}`} rowId={row.id} onSaved={onMealSaved} />
           )}
 
+          {textFailed && (
+            <p className="text-xs" style={{ color: 'var(--dt-text-secondary)' }} role="status">
+              Der erkannte Text konnte nicht geladen werden.
+            </p>
+          )}
           {/* OCR Text */}
           {ocrText && String(ocrText) && (
             <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">

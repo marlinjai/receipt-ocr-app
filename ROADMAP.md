@@ -75,9 +75,11 @@
   read with or without the third-party charges it lists, differently from month to month, and an
   amount in another currency printed next to the euro amount was taken as euros (once), a euro
   invoice as dollars (once). (2026-10-11)
-- [ ] The dashboard is slow with 780 receipts: every load fetches all rows in pages, a cell edit
-  took about 30 seconds end to end on 2026-10-11, and some writes failed with the page closing
-  underneath. (2026-10-11)
+- [ ] The dashboard under 780 receipts: 35 seconds until all rows are there, 817 MB in the
+  browser, a cell edit takes about 30 seconds. Step one is built (recognized text out of the list,
+  loaded per receipt, searched on the server; pages of 200). Step two (load only the chosen years,
+  default the newest) and step three (group recurring receipts automatically) wait for the owner's
+  answers. Plan: [docs/plans/2026-10-13-dashboard-load-and-grouping.md](docs/plans/2026-10-13-dashboard-load-and-grouping.md). (2026-10-13)
 - [ ] Rule sets for the tax years 2021 to 2024, so the finance area shows those years on their own
   forms. Today they are computed with the 2025 form, which the page says. 2024 uses the same line
   numbers as 2025 for every line that was declared; 2023 is shifted, 2022 and 2021 use the older,

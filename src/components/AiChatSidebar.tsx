@@ -18,6 +18,8 @@ interface AiChatSidebarProps {
   onClose: () => void;
   rows: Row[];
   columns: Column[];
+  /** The recognized text of one receipt: rows come without it, the assistant asks when it needs it. */
+  loadText?: (rowId: string) => Promise<string>;
   selectOptions: Map<string, SelectOption[]>;
   onCellChange: (rowId: string, columnId: string, value: CellValue) => void;
   onAddRow: (cells?: Record<string, CellValue>) => Promise<void>;
@@ -32,13 +34,14 @@ interface AiChatSidebarProps {
 
 // ── Tool Execution ────────────────────────────────────────────────────
 
-function executeReadOnlyTool(
+export async function executeReadOnlyTool(
   toolName: string,
   input: Record<string, unknown>,
   rows: Row[],
   columns: Column[],
   selectOptions: Map<string, SelectOption[]>,
-): string {
+  loadText?: (rowId: string) => Promise<string>,
+): Promise<string> {
   switch (toolName) {
     case 'get_columns': {
       const cols = columns.map((c) => ({ name: c.name, type: c.type, id: c.id }));
@@ -77,7 +80,22 @@ function executeReadOnlyTool(
         });
       }
 
-      const result = filtered.slice(0, limit).map((row) => {
+      // The recognized text is fetched per receipt and only when asked for, and for few receipts at a time.
+      const wantText = input.includeText === true && loadText !== undefined;
+      const slice = filtered.slice(0, wantText ? Math.min(limit, 25) : limit);
+      const texts = new Map<string, string>();
+      if (wantText) {
+        await Promise.all(
+          slice.map(async (row) => {
+            try {
+              texts.set(row.id, await loadText(row.id));
+            } catch {
+              texts.set(row.id, '');
+            }
+          }),
+        );
+      }
+      const result = slice.map((row) => {
         const cells: Record<string, unknown> = {};
         for (const col of columns) {
           const raw = row.cells[col.id];
@@ -90,6 +108,7 @@ function executeReadOnlyTool(
             cells[col.name] = raw ?? null;
           }
         }
+        if (wantText) cells['OCR Text'] = texts.get(row.id) ?? '';
         return { rowId: row.id, ...cells };
       });
 
@@ -179,6 +198,7 @@ export default function AiChatSidebar({
   onClose,
   rows,
   columns,
+  loadText,
   selectOptions,
   onCellChange,
   onAddRow,
@@ -459,12 +479,13 @@ export default function AiChatSidebar({
 
               if (isReadOnlyTool(tc.name)) {
                 // Execute immediately and collect for multi-turn
-                const result = executeReadOnlyTool(
+                const result = await executeReadOnlyTool(
                   tc.name,
                   tc.input,
                   rows,
                   columns,
                   selectOptions,
+                  loadText,
                 );
                 appliedToolCalls.push({
                   id: tc.id,
@@ -666,7 +687,7 @@ export default function AiChatSidebar({
       setIsStreaming(false);
       abortRef.current = null;
     }
-  }, [input, isStreaming, messages, rows, columns, selectOptions, buildTableContext]);
+  }, [input, isStreaming, messages, rows, columns, selectOptions, buildTableContext, loadText]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

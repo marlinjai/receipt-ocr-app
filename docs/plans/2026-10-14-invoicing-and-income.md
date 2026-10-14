@@ -76,14 +76,14 @@ install line of the secrets tool in its image).
   years in question; 28 to 61 cover 2024 to 2026.
 - **Count and totals**: 2024: numbers 28 to 39, total 12,271.44, identical to the filed profit
   statement (counted by invoice). 2025: 40 to 50, total 4,837.00, all paid in 2025 (payment days
-  in `Steuern/2025/Entscheidungen-2025.md`). 2026: 51 to 61, ten files, total 5,626.58; eight
+  in `Steuern/2025/Entscheidungen-2025.md`). 2026: 51 to 61, eleven invoices, total 9,126.58 (invoice 60 is not on disk, only as the attachment of the sent mail, found by the owner on 2026-10-14); eight
   payments found in the bank export that ends on 2026-09-28 (five by invoice number in the
   transfer text, three by amount only); invoice 58 has no payment yet, 61 is newer than the
   export.
 - **Every invoice from 28 on carries the small-business note** ("Umsatzsteuerfreie Leistungen
   gemäß §19 UStG"), shows no tax, and prints the tax number and the VAT identification number.
 - **Numbering**: one running integer across the years (2024 ends at 39, 2025 at 50). Defects:
-  no invoice 60 exists anywhere; the file of invoice 58 prints "Nr. 53" (a copy of 53's header);
+  invoice 60 (2026-09-25) was missing from the folder and exists only in the sent mail; the file of invoice 58 prints "Nr. 53" (a copy of 53's header);
   invoices 51, 53 and 58 also print a second mark "RE-2026-001/002/003" (the maintenance
   contract); invoice 40 prints the wrong year in its original (a corrected copy of 2026-10-06
   exists, as for 42, whose original printed a wrong total).
@@ -105,7 +105,7 @@ Checked against primary sources on 2026-10-14:
   exceed 100,000 euros. The turnover is counted by money received (Abschnitt 19.2 (1)). The
   transaction that crosses 100,000 is itself already taxable, from that payment on. Crossing
   25,000 in a year ends the status on 1 January of the next year. Figures here: 2025 is 4,837,
-  2026 so far is 5,626.58 issued, so 2026 and, unless 2026 passes 25,000, 2027 stay under
+  2026 so far is 9,126.58 issued, so 2026 and, unless 2026 passes 25,000, 2027 stay under
   section 19.
 - **What an invoice under section 19 must show** (section 34a of the value-added tax
   implementing ordinance, read in its current wording on gesetze-im-internet.de): full name and
@@ -249,7 +249,7 @@ invoice service so the same validation applies. A number already present in the 
 them may have been typed in by an earlier session) is compared, not entered again: the unique
 key on company and number refuses a second row, and a differing figure is reported.
 
-1. **2026, invoices 51 to 61** (60 waits for the owner, card 2): the records first; they need
+1. **2026, invoices 51 to 61** (60 from the sent mail, saved into the folder first): the records first; they need
    nothing else and end "Einnahmen 0" at once (as outstanding). Then the payment links: from the
    2026 bank payments in the app, the five transfers that name the invoice number link on their
    own, the three amount-only matches (51, 53, 56) are offered as proposals for the owner. The
@@ -299,8 +299,8 @@ Verify for each code step: the repo's gates (`pnpm test`, `pnpm build`, `pnpm ts
 On the decision page `~/software-dev/decision-pages/2026-10-14-invoicing-and-income.html`:
 
 1. Where invoices are written (D1). Recommended: the receipts app.
-2. Invoice 60: issued, cancelled, or a number skipped? Recommended, if it was never issued: the
-   register records 60 as "not used" with a note, so the gap is explained.
+2. ~~Invoice 60~~: answered on 2026-10-14. It was issued on 2026-09-25 and sent by mail; the PDF
+   was never saved to the folder. It goes into the folder and the list like the others.
 3. Invoice 58 prints "Nr. 53" and is unpaid since 2026-07-10. Recommended: send the client a
    corrected copy under 58, which doubles as the payment reminder. A corrected copy is filed in the
    folder either way, as was done for 40 and 42.

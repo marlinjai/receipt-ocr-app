@@ -195,7 +195,7 @@
   zero, no code), tighten the matcher to whole invoice numbers, then the invoice editor with
   numbering at issue (next number 62) and the PDF, then reading electronic invoices (XRechnung,
   ZUGFeRD) that arrive in the expenses mailbox. Waiting on the owner: where invoices are written
-  (recommended here, not in framer-clone), invoice 60, invoice 58. Plan:
+  (recommended here, not in framer-clone) and invoice 58. Plan:
   [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-10-14)
 - [ ] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
   (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax

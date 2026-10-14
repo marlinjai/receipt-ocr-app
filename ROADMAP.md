@@ -189,6 +189,14 @@
   (4 stale rows, copied to the shared database under the same ids on 2026-10-09). Released on
   Marlin's own yes. The unused `CONTACTS_STORE` entry was removed from the production secret
   project the same day. Plan: `docs/plans/2026-10-10-remove-own-contacts-table.md`. (2026-10-10)
+- [ ] Invoicing and income: the finance area shows "Einnahmen 0" for 2026 because no issued
+  invoice is recorded (all of them are PDF files written in a Google Doc). Order: enter the
+  invoices of 2024 to 2026 from the list in the tax folder and link their bank payments (ends the
+  zero, no code), tighten the matcher to whole invoice numbers, then the invoice editor with
+  numbering at issue (next number 62) and the PDF, then reading electronic invoices (XRechnung,
+  ZUGFeRD) that arrive in the expenses mailbox. Waiting on the owner: where invoices are written
+  (recommended here, not in framer-clone), invoice 60, invoice 58. Plan:
+  [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-10-14)
 - [ ] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
   (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax
   return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent

@@ -1,7 +1,7 @@
 ---
 title: "Invoicing and income: one record per issued invoice, from creation to the money arriving"
 type: plan
-status: draft
+status: decided
 date: 2026-10-14
 summary: "Why the finance area shows no income for 2026, where an issued invoice is created and stored so it is entered once, how it reaches the income side on the day the money arrives, the numbering, what the small-business rule (section 19 of the value-added tax act) and the German electronic invoice duties mean here (checked against the finance ministry's letters), and the migration of the invoices of 2024 to 2026 that exist only as PDF files."
 tags: [invoices, revenue, income, cash-basis, small-business, section-19, e-invoice, xrechnung, zugferd, numbering, payments, migration, books]
@@ -167,8 +167,34 @@ with the same record shape and the same flow into income either way (D2 to D7 ho
   endpoint, never edited here). Payments and links stay here. Cost: the endpoint, its
   service-account key and the mirror job, and the time until phases 0 to 3 exist.
 
-Until the owner answers, nothing is built for D1; D2 to D8 do not wait for it except where a
-step says so.
+**Decided by the owner on 2026-10-14: (b), framer-clone, as the Books plan says.** His reason:
+the invoicing tier there is meant to make offers too and to be usable by other businesses, and
+products and services are created there for the commerce functions anyway; building the
+document in the receipts app would build that twice. The recommendation for (a) is withdrawn.
+What follows from it, decided here:
+
+- **The document lives in framer-clone** (`SalesDocument`, lines, snapshots, numbering at issue,
+  event log, template and PDF: Books plan sections 4 and 5, phases 0 to 3). D2's field list and
+  D7 describe what that document must carry; they are requirements on the Books tier, not a
+  schema in this repo.
+- **This app mirrors issued invoices, read-only.** `TaxIssuedInvoice` gains `source`
+  (`register` for the invoices entered from PDFs, `books` for documents from framer-clone) and
+  the framer-clone document id. A `books` row is written only by the pull from framer-clone (an
+  authenticated machine endpoint scoped to the company) and cannot be edited in the
+  "Einnahmen" tab; a cancellation or credit note there updates it. Payments, links, the
+  matcher, the section 19 meter and the profit statement stay here. The invoice exists once
+  (as the framer-clone document); the mirror is a copy no person types.
+- **Three Books plan settings follow from this plan**, so its open questions 2 and 3 are
+  answered: the company is Whiz-Art Media (the auth-brain company that holds the receipts);
+  documents default to the small-business treatment (section 19, D7's section 34a check); and
+  the invoice number format is the plain integer series continuing at 62 (D4), not the Books
+  plan's `RE-{YYYY}-{####}`, set through its configurable number format with a start value.
+- **No second customer list.** The Books plan's `Customer` keeps the tax fields an invoice needs
+  (business or consumer, VAT identification number, country) and points to the shared contacts
+  database for name and address (D3), instead of holding its own copy.
+- **The register invoices 28 to 61 stay `register` rows here.** They were never framer-clone
+  documents and are not imported into it; the framer-clone counter starts after the highest
+  number in the register.
 
 **D2. One record per issued invoice.** The record is created once, at the moment the invoice is
 written, and everything else reads it: the PDF, the income side, the matcher, the limit
@@ -180,7 +206,8 @@ unit, unit price in cents, discount, tax rate in basis points, treatment). The t
 rate are derived from the lines, which also closes the roadmap gap of invoices with more than
 one tax rate. An issued invoice is frozen: lines, recipient and sender are copied into snapshots
 at issue and never recomputed; a correction is a cancellation invoice (Storno) plus a new one,
-never an edit. The draft-to-issue flow is a multi-step flow, so the four paths of
+never an edit. With the owner's decision this is the Books tier's `SalesDocument` (see the decided
+block under D1). The draft-to-issue flow is a multi-step flow, so the four paths of
 `knowledge-base/standards/stateful-flow-testing.md` (forward, back and revise, resume, re-entry)
 are its tests, as the Books plan lists them in its phase 2.
 
@@ -238,8 +265,8 @@ mailbox") is built, because that is where such files first arrive.
 
 **D9. Interim, until the editor exists.** The Google Doc stays the way an invoice is written,
 and the same day the invoice is entered in "Einnahmen" (number, date, amount, small business).
-That is double entry on purpose and is what this plan removes; it is the reason the editor is
-step 2 and not later.
+That is double entry on purpose and is what the Books tier removes; it lasts until the Books
+phases 0 to 3 are built.
 
 ## 5. Migration of the invoices on disk
 
@@ -255,7 +282,9 @@ key on company and number refuses a second row, and a differing figure is report
    own, the three amount-only matches (51, 53, 56) are offered as proposals for the owner. The
    2026 bank import is the other session's work (the 2026 import, task B); the links are made
    after its payments are in the app, never by typing a payment day for money the bank shows.
-   Invoice 58 is recorded under 58 with a note that its PDF prints 53 (card 3).
+   Invoice 58 is recorded under 58 with a note that its PDF prints 53; it was paid through
+   PayPal (owner, 2026-10-14), so its link comes from the PayPal list once that is imported for
+   2026. A corrected copy under 58 is filed in the folder only, not sent.
 2. **2025, invoices 40 to 50**: records with their payments; where the 2025 bank payments are in
    the app (they are, since the 2025 import) the payment is linked, otherwise the day from
    `Entscheidungen-2025.md` is typed. Check after: the 2025 income equals 4,837.00, the figure of
@@ -281,36 +310,37 @@ repository.
 1. **Migration, steps 1 to 3 of section 5.** Ends "Einnahmen 0". No dependency on D1. The
    payment links of 2026 after the other session's 2026 bank import.
 2. **D5's matcher tightening** and the open-check for overdue invoices (D6). Small, in this repo.
-3. **The invoice document** (D2, D3, D4, D7) in the home the owner picks in D1. With (a), in
-   this repo: schema migration (additive: columns and a lines table, existing rows become
-   `register` invoices with one line each), the issue transaction with the counter, the editor,
-   the PDF and its completeness test, the four flow paths. With (b), the Books phases 0 to 3 in
-   framer-clone plus the mirror here.
-4. **Reading electronic invoices** (D8), with the mailbox reading of the finance plan.
-5. **Later, on a trigger, not on a date**: credit notes beyond cancellation, offers, an
+3. **The invoice document in framer-clone**: the Books phases 0 to 3 with the settings of the
+   decided block under D1 (company, small-business default, number series from 62, customers
+   pointing to the shared contacts). Tracked on framer-clone's roadmap, built there.
+4. **The mirror here**: `source` and the document id on `TaxIssuedInvoice`, the pull from
+   framer-clone with a service-account key scoped to the company, `books` rows read-only in the
+   "Einnahmen" tab. After step 3 can issue a document.
+5. **Reading electronic invoices** (D8), with the mailbox reading of the finance plan.
+6. **Later, on a trigger, not on a date**: credit notes beyond cancellation, offers, an
    XRechnung export (when a customer asks or the section 19 status ends), invoices from storefront
    orders.
 
 Verify for each code step: the repo's gates (`pnpm test`, `pnpm build`, `pnpm tsc --noEmit`,
 `pnpm lint`) and, for step 3, the four flow tests named in the suite and the completeness test.
 
-## 7. Waiting for the owner
+## 7. The owner's answers (2026-10-14)
 
-On the decision page `~/software-dev/decision-pages/2026-10-14-invoicing-and-income.html`:
+From the decision page `~/software-dev/decision-pages/2026-10-14-invoicing-and-income.html`:
 
-1. Where invoices are written (D1). Recommended: the receipts app.
+1. Where invoices are written (D1): framer-clone, as the Books plan decided (recommendation was the
+   receipts app; see the decided block under D1 for his reason and what follows).
 2. ~~Invoice 60~~: answered on 2026-10-14. It was issued on 2026-09-25 and sent by mail; the PDF
    was never saved to the folder. It goes into the folder and the list like the others.
-3. Invoice 58 prints "Nr. 53" and is unpaid since 2026-07-10. Recommended: send the client a
-   corrected copy under 58, which doubles as the payment reminder. A corrected copy is filed in the
-   folder either way, as was done for 40 and 42.
+3. Invoice 58 (prints "Nr. 53"): paid through PayPal, not unpaid as the bank export suggested.
+   The corrected copy is filed internally only.
 
 ## 8. Relationship to other plans
 
-- **Books plan (framer-clone, decided 2026-08-15)**: with D1 (a), its invoice and customer tier is
-  superseded by this plan and should be marked so there, with its storefront parts (invoice from
-  an order) kept as the later step 5; with D1 (b), this plan defers to it for the document and
-  keeps sections 3, 5 and D4 to D8.
+- **Books plan (framer-clone, decided 2026-08-15)**: confirmed as the home of the invoice document
+  by the owner on 2026-10-14. This plan defers to it for the document and keeps sections 3 and 5,
+  D4 to D8 and the mirror; the settings it fixes for the Books tier are in the decided block under
+  D1.
 - **Finance and tax area (this repo)**: this plan fills its income side; its "InvoiceSource"
   seam is the record of D2.
 - **Shared contacts (this repo, 2026-10-09)**: the recipient of D3.

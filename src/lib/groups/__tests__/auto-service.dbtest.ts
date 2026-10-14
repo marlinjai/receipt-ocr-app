@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { isGroupRow } from '@/lib/receipts-kind';
 import { deleteReceiptRows } from '@/lib/meals/service';
 import { autoGroupRecurring } from '../auto-service';
-import { removeFromGroup } from '../service';
+import { createGroup, removeFromGroup } from '../service';
 import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
 
 /**
@@ -125,5 +125,36 @@ describe('automatic groups of recurring receipts', () => {
     expect(await parentOf(x1)).toBeTruthy();
     expect(await parentOf(y1)).toBeFalsy();
     expect(await parentOf(y2)).toBeFalsy();
+  });
+
+  it('makes one group when two runs start at once', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const a = await ws.addReceipt(receipt(`Twice ${tag}`, 'Abo', '2024-01-05T00:00:00.000Z'));
+    const b = await ws.addReceipt(receipt(`Twice ${tag}`, 'Abo', '2024-02-05T00:00:00.000Z'));
+    await Promise.all([autoGroupRecurring(db, ws.workspaceId), autoGroupRecurring(db, ws.workspaceId)]);
+    const named = (await groupsOf()).filter(async () => true);
+    const cols = await columns();
+    const nameCol = cols.find((c) => c.name === 'Name')!.id;
+    const same = named.filter((g) => g.cells[nameCol] === `Twice ${tag}, Abo, 2024`);
+    expect(same).toHaveLength(1);
+    expect(await parentOf(a)).toBe(same[0].id);
+    expect(await parentOf(b)).toBe(same[0].id);
+  });
+
+  it('removes an empty group that has the name of one that holds receipts, and keeps one with a name of its own', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const a = await ws.addReceipt(receipt(`Dup ${tag}`, 'Abo', '2024-01-05T00:00:00.000Z'));
+    await ws.addReceipt(receipt(`Dup ${tag}`, 'Abo', '2024-02-05T00:00:00.000Z'));
+    await autoGroupRecurring(db, ws.workspaceId);
+    const real = (await parentOf(a))!;
+    // What a second process leaves behind: an empty group with the same name.
+    const stray = await createGroup(db, ws.workspaceId, `Dup ${tag}, Abo, 2024`, []);
+    const own = await createGroup(db, ws.workspaceId, `Mine ${tag}`, []);
+    const result = await autoGroupRecurring(db, ws.workspaceId);
+    expect(result.removedEmpty).toBeGreaterThanOrEqual(1);
+    const left = (await groupsOf()).map((g) => g.id);
+    expect(left).toContain(real);
+    expect(left).toContain(own);
+    expect(left).not.toContain(stray);
   });
 });

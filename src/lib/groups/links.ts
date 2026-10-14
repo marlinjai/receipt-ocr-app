@@ -108,4 +108,13 @@ export async function restoreChildRows(db: Db, tableId: string, parentRowId: str
     new Date().toISOString(),
     ...childIds,
   );
+  // A delete that failed put the receipts back: they were not taken out by a person, so the mark of
+  // `releaseChildRows` goes again.
+  const lockId = await autoGroupOffColumn(db, tableId);
+  if (lockId) {
+    await db.$executeRawUnsafe(
+      `UPDATE ${safeTableName(tableId)} SET ${safeColumnName(lockId)} = NULL WHERE id IN (${placeholders(childIds.length, 1)})`,
+      ...childIds,
+    );
+  }
 }

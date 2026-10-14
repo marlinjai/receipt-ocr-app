@@ -70,4 +70,19 @@ describe('the plan', () => {
     expect(long.length).toBeLessThanOrEqual(120);
     expect(long.endsWith(', Plan, 2024')).toBe(true);
   });
+
+  it('keeps the year in the name when the item is long, so two years never share a group', () => {
+    const item = 'x'.repeat(100);
+    expect(groupNameFor('Vendor', item, 2024).endsWith(', 2024')).toBe(true);
+    expect(groupNameFor('Vendor', item, 2024).length).toBeLessThanOrEqual(120);
+    expect(groupNameFor('Vendor', item, 2024)).not.toBe(groupNameFor('Vendor', item, 2025));
+  });
+
+  it('makes one group for two keys that come to the same name', () => {
+    const vendor = 'V'.repeat(60);
+    const a = [r({ vendor: vendor + 'a' }), r({ vendor: vendor + 'a' })];
+    const b = [r({ vendor: vendor + 'b' }), r({ vendor: vendor + 'b' })];
+    const plan = planAutoGroups([...a, ...b], []);
+    expect(plan.create).toHaveLength(1);
+  });
 });

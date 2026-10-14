@@ -15,7 +15,7 @@ import {
 } from '@marlinjai/data-table-react';
 import type { Column, ColumnType, Row, GroupConfig, FooterConfig, SubItemsConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
-import { deleteReceiptsForGood, getReceiptText, getYearCounts, searchReceiptText } from './actions';
+import { deleteReceiptsForGood, getReceiptText, getReceiptYear, getYearCounts, searchReceiptText } from './actions';
 import { scopeOf, setYearScope } from './year-scope';
 import type { YearCounts } from '@/lib/receipt-year-counts';
 import { MIN_TEXT_SEARCH_LENGTH, listColumns } from '@/lib/receipt-text';
@@ -185,7 +185,6 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       // The server loads only these years; the list is fetched again for the new choice.
       setYearScope(scopeOf(next));
       void refresh();
-      void getYearCounts(tableId).then(setCounts).catch(() => undefined);
       // Kept in the address, so a reload or a copied link shows the same years; "alle" is a choice, not a default.
       const url = new URL(window.location.href);
       url.searchParams.set(YEAR_PARAM, formatYearParam(next) || ALL_YEARS);
@@ -194,6 +193,20 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     [refresh, tableId],
   );
   const displayRows = useMemo(() => filterByYears(searchedRows, columns, yearSelection), [searchedRows, columns, yearSelection]);
+  // The chips follow the table: a receipt deleted, added or re-dated changes the rows, and the counts are asked
+  // again a moment after the rows settle (one cheap query, no row is loaded).
+  useEffect(() => {
+    let current = true;
+    const timer = setTimeout(() => {
+      getYearCounts(tableId)
+        .then((next) => current && setCounts(next))
+        .catch(() => undefined);
+    }, 600);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [rows.length, tableId]);
   const totalReceipts = useMemo(() => counts.years.reduce((sum, y) => sum + y.count, 0) + counts.undated, [counts]);
 
   const receiptRows = useMemo(() => receiptsOnly(rows, columns), [rows, columns]);
@@ -439,9 +452,9 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [selectedRows, handleDeleteSelected]);
 
-  // The ledger always shows every receipt: sums, groups and the review of a year are
-  // wrong on a partial list. The table loads in pages, so the next page is fetched as
-  // soon as the previous one has arrived, until nothing is left.
+  // The table shows every receipt of the years it was asked for: sums, groups and the review of a year
+  // are wrong on a partial list. It loads in pages, so the next page is fetched as soon as the
+  // previous one has arrived, until nothing is left.
   useEffect(() => {
     if (hasMore && !isRowsLoading) void loadMore();
   }, [hasMore, isRowsLoading, loadMore]);
@@ -450,21 +463,44 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   // once, as soon as the row has arrived. The table loads in pages, so the row
   // may come with a later one; only when every page is in and it is still
   // missing is the receipt said to be gone (deleted, or of another company).
-  const openedFromLink = useRef(false);
+  // The receipt to open: the one a link names, and later one the review list or a check asks for. When it is
+  // not among the loaded rows it may lie in a year that is not loaded: its year is looked up and added to
+  // the choice, and only when it is still missing after that is it said to be gone.
+  const [pendingOpenId, setPendingOpenId] = useState<string | null>(openRowId);
+  const widenedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!openRowId || openedFromLink.current) return;
-    const row = rows.find((r) => r.id === openRowId);
+    if (!pendingOpenId) return;
+    const row = rows.find((r) => r.id === pendingOpenId);
     if (row) {
-      openedFromLink.current = true;
+      setPendingOpenId(null);
       if (isGroupRow(row, columns)) setGroupPanelId(row.id);
       else setDetailRow(row);
       return;
     }
-    if (!hasMore && !isRowsLoading && columns.length > 0) {
-      openedFromLink.current = true;
+    if (hasMore || isRowsLoading || columns.length === 0) return;
+    const gone = () => {
+      setPendingOpenId(null);
       setNotice({ tone: 'warn', text: 'Der verlinkte Beleg ist in dieser Tabelle nicht vorhanden. Er wurde gelöscht oder gehört zu einem anderen Unternehmen.' });
+    };
+    if (widenedFor.current === pendingOpenId) {
+      gone();
+      return;
     }
-  }, [openRowId, rows, columns, hasMore, isRowsLoading]);
+    widenedFor.current = pendingOpenId;
+    const wanted = pendingOpenId;
+    void getReceiptYear(wanted)
+      .then((year) => {
+        const shown = yearSelection.years.size === 0 && !yearSelection.undated;
+        if (year === null || shown || yearSelection.years.has(year)) {
+          // Already in the years shown, or without a date: undated receipts come with "ohne Datum".
+          if (year === null && !yearSelection.undated && !shown) changeYears({ years: yearSelection.years, undated: true });
+          else gone();
+          return;
+        }
+        changeYears({ years: new Set([...yearSelection.years, year]), undated: yearSelection.undated });
+      })
+      .catch(() => gone());
+  }, [pendingOpenId, rows, columns, hasMore, isRowsLoading, yearSelection, changeYears]);
 
   // Load select options for all select columns
   useEffect(() => {
@@ -790,8 +826,9 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         error={reviewError}
         onOpen={(rowId) => {
           const row = rows.find((r) => r.id === rowId);
+          // Not among the loaded rows: its year is added to the years shown and it opens when it arrives.
           if (row) setDetailRow(row);
-          else setReviewError('Der Beleg ist in dieser Ansicht nicht geladen. Bitte Filter und Suche leeren.');
+          else setPendingOpenId(rowId);
         }}
         onConfirm={(rowId) => void runReviewAction(() => confirmReceiptChecked(rowId))}
         onKeepBoth={(rowId, otherRowId) => void runReviewAction(() => keepBothLookAlikes(rowId, otherRowId))}

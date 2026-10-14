@@ -9,6 +9,8 @@ import { type YearSelection } from '@/lib/receipt-years';
 let scope: number[] | null = null;
 
 export function setYearScope(years: number[] | null): void {
+  // Only the browser asks for lists through this store; a render on the server must not set a process-wide value.
+  if (typeof window === 'undefined') return;
   scope = years;
 }
 

@@ -60,8 +60,11 @@ function norm(value: string): string {
 /** The name of the group for a vendor, item and year as the first receipt spells them. */
 export function groupNameFor(vendor: string, item: string, year: number): string {
   const v = vendor.replace(/\s+/g, ' ').trim().slice(0, VENDOR_NAME_MAX).trim();
-  const i = item.replace(/\s+/g, ' ').trim();
-  return `${v}, ${i}, ${year}`.slice(0, GROUP_NAME_MAX);
+  const tail = `, ${year}`;
+  // The year always stays: it is the part of the key that the name must carry. The item gives way.
+  const room = Math.max(1, GROUP_NAME_MAX - v.length - ', '.length - tail.length);
+  const i = item.replace(/\s+/g, ' ').trim().slice(0, room).trim();
+  return `${v}, ${i}${tail}`;
 }
 
 /** The key of a receipt, or null when it is not to be grouped. */
@@ -90,6 +93,9 @@ export function planAutoGroups(receipts: readonly GroupableReceipt[], groups: re
   for (const g of groups) if (!groupByName.has(norm(g.name))) groupByName.set(norm(g.name), g.id);
 
   const plan: GroupPlan = { create: [], join: [] };
+  // Two keys that come to the same name (a vendor cut at its limit) are not put into one group by accident:
+  // the first makes the group, the other waits until a person tells them apart.
+  const planned = new Set<string>();
   for (const members of byKey.values()) {
     if (only && !members.some((m) => only.has(m.id))) continue;
     const first = members[0];
@@ -97,7 +103,10 @@ export function planAutoGroups(receipts: readonly GroupableReceipt[], groups: re
     const existing = groupByName.get(norm(name));
     const ids = members.map((m) => m.id);
     if (existing) plan.join.push({ groupId: existing, memberIds: ids });
-    else if (members.length >= 2) plan.create.push({ name, memberIds: ids });
+    else if (members.length >= 2 && !planned.has(norm(name))) {
+      planned.add(norm(name));
+      plan.create.push({ name, memberIds: ids });
+    }
   }
   return plan;
 }

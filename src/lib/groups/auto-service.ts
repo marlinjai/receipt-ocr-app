@@ -7,7 +7,7 @@ import { tableContext } from '@/lib/meals/service';
 import { AUTO_GROUP_OFF_COLUMN, GROUP_KIND, rowKindColumnId } from '@/lib/receipts-kind';
 import { planAutoGroups, type ExistingGroup, type GroupableReceipt } from './auto';
 import { GroupError } from './rules';
-import { createGroup, moveIntoGroup } from './service';
+import { GROUP_MEMBERS_MAX, createGroup, moveIntoGroup } from './service';
 
 /**
  * Apply the rule of `auto.ts` to a workspace's receipts: create the groups of
@@ -26,6 +26,8 @@ export interface AutoGroupResult {
   grouped: number;
   /** Groups that could not be written, by the code of the error. */
   failed: string[];
+  /** Empty groups removed that had the name of a group that holds receipts (left by two runs at once). */
+  removedEmpty?: number;
 }
 
 export interface AutoGroupOptions {
@@ -48,7 +50,25 @@ interface Raw {
   locked: string | null;
 }
 
-export async function autoGroupRecurring(db: PrismaClient, workspaceId: string, options: AutoGroupOptions = {}): Promise<AutoGroupResult> {
+/**
+ * One run per workspace at a time in this process: a second request that arrives while one runs waits for
+ * it and takes its result, so two page loads cannot both create the group of one key.
+ */
+const running = new Map<string, Promise<AutoGroupResult>>();
+
+export function autoGroupRecurring(db: PrismaClient, workspaceId: string, options: AutoGroupOptions = {}): Promise<AutoGroupResult> {
+  const existing = running.get(workspaceId);
+  // A run that is limited to some receipts is not the whole run: it waits its turn and goes after.
+  if (existing && !options.rowIds && !options.years) return existing;
+  const next = (existing ?? Promise.resolve()).catch(() => undefined).then(() => applyAutoGroups(db, workspaceId, options));
+  running.set(workspaceId, next);
+  void next.finally(() => {
+    if (running.get(workspaceId) === next) running.delete(workspaceId);
+  });
+  return next;
+}
+
+async function applyAutoGroups(db: PrismaClient, workspaceId: string, options: AutoGroupOptions): Promise<AutoGroupResult> {
   const result: AutoGroupResult = { created: 0, joined: 0, grouped: 0, failed: [] };
   const ctx = await tableContext(db, workspaceId);
   if (!ctx) return result;
@@ -104,26 +124,70 @@ export async function autoGroupRecurring(db: PrismaClient, workspaceId: string, 
       result.failed.push(e instanceof GroupError ? e.code : 'failed');
     }
   };
+  const chunks = <T,>(list: readonly T[]): T[][] => {
+    const out: T[][] = [];
+    for (let i = 0; i < list.length; i += GROUP_MEMBERS_MAX) out.push(list.slice(i, i + GROUP_MEMBERS_MAX));
+    return out;
+  };
   for (const g of plan.join) {
-    await attempt(
-      () => moveIntoGroup(db, workspaceId, g.groupId, g.memberIds),
-      (moved) => {
-        result.joined += moved > 0 ? 1 : 0;
-        result.grouped += moved;
-      },
-    );
+    for (const part of chunks(g.memberIds)) {
+      await attempt(
+        () => moveIntoGroup(db, workspaceId, g.groupId, part),
+        (moved) => {
+          result.joined += moved > 0 ? 1 : 0;
+          result.grouped += moved;
+        },
+      );
+    }
   }
   for (const g of plan.create) {
+    const [first, ...rest] = chunks(g.memberIds);
+    let groupId: string | null = null;
     await attempt(
       async () => {
-        await createGroup(db, workspaceId, g.name, g.memberIds);
-        return g.memberIds.length;
+        groupId = await createGroup(db, workspaceId, g.name, first);
+        return first.length;
       },
       (moved) => {
         result.created += 1;
         result.grouped += moved;
       },
     );
+    // A key with more than the limit of receipts: the rest join the group that was just made.
+    for (const part of rest) {
+      if (!groupId) break;
+      const target: string = groupId;
+      await attempt(
+        () => moveIntoGroup(db, workspaceId, target, part),
+        (moved) => {
+          result.grouped += moved;
+        },
+      );
+    }
   }
+  result.removedEmpty = await removeEmptyDuplicates(db, ctx.adapter, ctx.tableId, kindId, nameId);
   return result;
+}
+
+/**
+ * A group with no receipts whose name is the name of a group that has some: what two runs in two processes
+ * leave behind. It is removed. An empty group with a name of its own is a person's and stays.
+ */
+async function removeEmptyDuplicates(
+  db: PrismaClient,
+  adapter: { deleteRow(id: string): Promise<void> },
+  tableId: string,
+  kindId: string,
+  nameId: string,
+): Promise<number> {
+  const rows = await db.$queryRawUnsafe<Array<{ id: string; name: string | null; children: number }>>(
+    `SELECT g.id, g.${safeColumnName(nameId)} AS name,
+            (SELECT count(*)::int FROM ${safeTableName(tableId)} c WHERE c.parent_row_id = g.id AND c._archived = 0) AS children
+     FROM ${safeTableName(tableId)} g
+     WHERE g._archived = 0 AND g.${safeColumnName(kindId)} = '${GROUP_KIND}'`,
+  );
+  const populated = new Set(rows.filter((r) => r.children > 0 && r.name).map((r) => r.name!.trim().toLowerCase()));
+  const doomed = rows.filter((r) => r.children === 0 && r.name && populated.has(r.name.trim().toLowerCase()));
+  for (const g of doomed) await adapter.deleteRow(g.id);
+  return doomed.length;
 }

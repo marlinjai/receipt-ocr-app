@@ -10,7 +10,7 @@ import { deleteReceiptRows } from '@/lib/meals/service';
 import { deleteStoredFile } from '@/lib/stored-files';
 import { tenantIdForWorkspace } from '@/lib/auth-workspace';
 import { stampTableOwner } from '@/lib/receipts-table';
-import { cleanScopeYears, type YearScope } from '@/lib/receipt-years';
+import { cleanScopeYears, yearOfDate, type YearScope } from '@/lib/receipt-years';
 import { groupsHoldingReceipts, yearCounts, type YearCounts } from '@/lib/receipt-year-counts';
 
 /** The most receipts one year of the list returns: far above what a year holds. */
@@ -230,7 +230,10 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
   const { years: asked, ...rest } = query ?? {};
   const years = cleanScopeYears(asked);
   const dateId = columns.find((c) => c.name === 'Date')?.id;
-  if (!years || !dateId) {
+  // A sorted list is not narrowed: the years are queried one by one, so a sort across them (and the place of
+  // the groups in it) could not be right. The browser filters the years then.
+  const sorted = (rest.sorts?.length ?? 0) > 0;
+  if (!years || !dateId || sorted) {
     const result = await adapter.getRows(tableId, rest);
     return { ...result, items: rowsWithoutText(result.items, textIds) };
   }
@@ -240,7 +243,7 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
   // of one choice are few and a year has a few hundred receipts, so they come in one answer, without the
   // recognized text; a further page is empty. The groups that hold some of them come along (a group has
   // no date of its own).
-  if ((rest.offset ?? 0) > 0) return { items: [], total: 0, hasMore: false } as QueryResult<Row>;
+  if ((rest.offset ?? 0) > 0) return { items: [], total: rest.offset ?? 0, hasMore: false } as QueryResult<Row>;
   const perYear = await Promise.all(
     years.map((year) =>
       adapter.getRows(tableId, {
@@ -256,12 +259,22 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
   if (kindId) {
     const parents = await groupsHoldingReceipts(prisma, tableId, dateId, years);
     if (parents.size > 0) {
-      const groups = await adapter.getRows(tableId, { filters: [{ columnId: kindId, operator: 'equals', value: GROUP_KIND }], limit: 1000 });
+      const groups = await adapter.getRows(tableId, { filters: [{ columnId: kindId, operator: 'equals', value: GROUP_KIND }], limit: SCOPED_LIST_LIMIT });
       const have = new Set(items.map((r) => r.id));
       items = [...items, ...groups.items.filter((g) => parents.has(g.id) && !have.has(g.id))];
     }
   }
   return { items: rowsWithoutText(items, textIds), total: items.length, hasMore: false } as QueryResult<Row>;
+}
+
+/** The year of a receipt's invoice date, or null: where to look for a receipt a link names. */
+export async function getReceiptYear(rowId: string): Promise<number | null> {
+  await requireRowAccess(rowId);
+  const adapter = getAdapter();
+  const row = await adapter.getRow(rowId);
+  if (!row) return null;
+  const dateId = (await adapter.getColumns(row.tableId)).find((c) => c.name === 'Date')?.id;
+  return dateId ? yearOfDate(row.cells[dateId]) : null;
 }
 
 /** How many receipts each year has, for the year chips: no row is loaded. */

@@ -40,10 +40,9 @@ export function yearOfDate(value: CellValue | undefined): number | null {
   if (value === null || value === undefined || value === '') return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.getUTCFullYear();
   if (typeof value !== 'string') return null;
+  // Only a written ISO day has a year: the server counts the same way, so chips and filter agree.
   const iso = /^(\d{4})-\d{2}-\d{2}/.exec(value);
-  if (iso) return Number(iso[1]);
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.getUTCFullYear();
+  return iso ? Number(iso[1]) : null;
 }
 
 export interface YearCount {

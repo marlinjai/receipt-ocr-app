@@ -19,7 +19,7 @@ vi.mock('@/lib/auth', () => ({
   },
 }));
 
-import { getRows, getYearCounts } from './actions';
+import { getReceiptYear, getRows, getYearCounts } from './actions';
 import { createGroup } from '@/lib/groups/service';
 
 let ws: TestWorkspace;
@@ -61,7 +61,7 @@ describe('a list narrowed to years', () => {
     expect(counts.undated).toBe(1);
   });
 
-  it('returns only the receipts of the years and, with the last page, the groups that hold some of them', async () => {
+  it('returns only the receipts of the years, with the groups that hold some of them', async () => {
     const tag = randomUUID().slice(0, 6);
     const in24 = await ws.addReceipt({ ...base, Name: `in24 ${tag}`, Date: '2024-05-01T00:00:00.000Z' });
     const in24b = await ws.addReceipt({ ...base, Name: `in24b ${tag}`, Date: '2024-07-01T00:00:00.000Z' });
@@ -86,7 +86,7 @@ describe('a list narrowed to years', () => {
     expect(ids(wide.items)).not.toContain(in23);
   });
 
-  it('is not narrowed when the list is asked for every receipt, and groups keep the receipts of other years', async () => {
+  it('is not narrowed when it is asked for every receipt', async () => {
     const all = await getRows(ws.tableId, { limit: 500 });
     expect(all.items.length).toBeGreaterThan(0);
     const none = await getRows(ws.tableId, { years: [], limit: 500 } as never);
@@ -109,5 +109,20 @@ describe('a list narrowed to years', () => {
   it('answers everything at once and nothing on a further page', async () => {
     const more = await getRows(ws.tableId, { years: [2024], limit: 1, offset: 1 } as never);
     expect(more).toMatchObject({ items: [], hasMore: false });
+  });
+
+  it('is not narrowed when the list is sorted: a sort across the years could not be right', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const a = await ws.addReceipt({ ...base, Name: `sort24 ${tag}`, Date: '2024-05-01T00:00:00.000Z' });
+    const b = await ws.addReceipt({ ...base, Name: `sort23 ${tag}`, Date: '2023-05-01T00:00:00.000Z' });
+    const result = await getRows(ws.tableId, { years: [2024], sorts: [{ columnId: nameColumnId, direction: 'asc' }], limit: 5000 } as never);
+    expect(ids(result.items)).toEqual(expect.arrayContaining([a, b]));
+  });
+
+  it('says in which year a receipt lies, for a link that names it', async () => {
+    const id = await ws.addReceipt({ ...base, Name: 'year of', Date: '2021-12-31T00:00:00.000Z' });
+    const undated = await ws.addReceipt({ ...base, Name: 'no date' });
+    expect(await getReceiptYear(id)).toBe(2021);
+    expect(await getReceiptYear(undated)).toBeNull();
   });
 });

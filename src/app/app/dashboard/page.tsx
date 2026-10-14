@@ -9,6 +9,7 @@ import { RECEIPT_PARAM } from '@/lib/receipt-link';
 import { YEAR_PARAM } from '@/lib/receipt-years';
 import { yearCounts } from '@/lib/receipt-year-counts';
 import { autoGroupRecurring } from '@/lib/groups/auto-service';
+import { initializeReceiptsTable } from '../actions';
 import DashboardClient from './DashboardClient';
 
 type YearCountsProp = Awaited<ReturnType<typeof yearCounts>>;
@@ -28,6 +29,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const session = await auth.requireSession('/app/dashboard');
   const workspaceId = sessionWorkspaceId(session);
 
+  // The layout also does this, but the layout and the page render side by side: the columns this page
+  // groups by must exist before it asks for them.
+  await initializeReceiptsTable();
   const adapter = new PrismaAdapter({ prisma });
   const tables = await adapter.listTables(workspaceId);
   const table = tables.find((t) => t.name === 'Receipts');

@@ -95,10 +95,30 @@ Decided by the owner on 2026-10-14: per vendor and item per year, exactly.
 - The sum of a group is the sum of its receipts that are loaded. In a year view a group made of
   one year is complete; a group a person made across years shows the part in the chosen years.
 
+## Reviewed before the pull request (2026-10-14)
+
+A fresh agent read the branch. Fixed from its findings: two page loads at once could make the
+same group twice (runs are serialised per workspace in the process and an empty group that
+carries the name of a populated one is removed); a link or a check naming a receipt of an older
+year said it was gone (its year is looked up and added to the years shown); a quick second click
+on a year chip could let the first answer win (an answer for a superseded choice is asked again
+or dropped); a sorted list across years had the wrong order (a sorted list is not narrowed); the
+chip counts went stale (they follow the rows); a long item cut the year off a group name (the item
+gives way, the year stays); a key with more than 500 receipts failed on every load (it is moved in
+parts); a failed group delete left its children marked (the mark goes again); the schema is now
+brought up to date by the page itself before it groups; date years are read the same way on the
+server and in the browser.
+
 ## Open
 
-- A sum over a manual group that spans years in a year view (it shows the part in view): decide
-  whether such a group should load all its receipts. Not needed for automatic groups.
+- A group a person renames is a different name for the rule: when two receipts of its key arrive
+  later, a new group with the old name is made. No column tells the rule that a name was changed.
+- A manual group whose name equals the name of a key takes receipts of that key in (joined by
+  name, by design).
+- The group delete dialog and the group panel count only loaded receipts: a group a person made
+  across years under-reports in a year view. Automatic groups lie within one year.
+- Two receipts that look alike (same day, vendor, total) are grouped like any other: the review
+  list still shows them as a possible duplicate, now inside one group.
 - The item is worded per receipt, so one subscription can split into several groups when its
   invoices word the item differently ("exactly" was the owner's rule). The roadmap line for one
   wording per subscription is the fix at the source.

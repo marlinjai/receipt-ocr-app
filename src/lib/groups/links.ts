@@ -1,6 +1,7 @@
 import 'server-only';
 import { safeColumnName, safeTableName } from '@marlinjai/data-table-adapter-shared';
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { AUTO_GROUP_OFF_COLUMN } from '@/lib/receipts-kind';
 
 /**
  * Reads and writes of the link between a receipt and the group it lies in.
@@ -49,11 +50,32 @@ export async function readRowLinks(db: Db, tableId: string, kindColumnId: string
 export async function setParentRow(db: Db, tableId: string, rowIds: readonly string[], parentRowId: string | null): Promise<number> {
   const ids = [...new Set(rowIds)];
   if (ids.length === 0) return 0;
+  // A receipt a person puts back at the top level is not grouped automatically again.
+  if (parentRowId === null) await markAutoGroupOff(db, tableId, ids);
   return db.$executeRawUnsafe(
     `UPDATE ${safeTableName(tableId)} SET parent_row_id = $1::text, _updated_at = $2 WHERE id IN (${placeholders(ids.length, 3)}) AND parent_row_id IS DISTINCT FROM $1::text`,
     parentRowId,
     new Date().toISOString(),
     ...ids,
+  );
+}
+
+/** Mark the given rows, those of them that lie in a group, as not to be grouped automatically. Needs the column; without it nothing is marked. */
+async function autoGroupOffColumn(db: Db, tableId: string): Promise<string | null> {
+  const column = await db.$queryRawUnsafe<Array<{ id: string }>>(
+    'SELECT id FROM dt_columns WHERE table_id = $1 AND name = $2 LIMIT 1',
+    tableId,
+    AUTO_GROUP_OFF_COLUMN,
+  );
+  return column[0]?.id ?? null;
+}
+
+async function markAutoGroupOff(db: Db, tableId: string, rowIds: readonly string[]): Promise<void> {
+  const columnId = await autoGroupOffColumn(db, tableId);
+  if (!columnId || rowIds.length === 0) return;
+  await db.$executeRawUnsafe(
+    `UPDATE ${safeTableName(tableId)} SET ${safeColumnName(columnId)} = '1' WHERE id IN (${placeholders(rowIds.length, 1)}) AND parent_row_id IS NOT NULL`,
+    ...rowIds,
   );
 }
 
@@ -64,6 +86,11 @@ export async function setParentRow(db: Db, tableId: string, rowIds: readonly str
  * with `restoreChildRows`.
  */
 export async function releaseChildRows(db: Db, tableId: string, parentRowId: string): Promise<string[]> {
+  // A group a person dissolves or deletes is not made again by the automatic grouping.
+  const lockId = await autoGroupOffColumn(db, tableId);
+  if (lockId) {
+    await db.$executeRawUnsafe(`UPDATE ${safeTableName(tableId)} SET ${safeColumnName(lockId)} = '1' WHERE parent_row_id = $1`, parentRowId);
+  }
   const rows = await db.$queryRawUnsafe<Array<{ id: string }>>(
     `UPDATE ${safeTableName(tableId)} SET parent_row_id = NULL, _updated_at = $1 WHERE parent_row_id = $2 RETURNING id`,
     new Date().toISOString(),

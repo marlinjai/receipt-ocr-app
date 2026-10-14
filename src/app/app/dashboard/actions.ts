@@ -10,6 +10,11 @@ import { deleteReceiptRows } from '@/lib/meals/service';
 import { deleteStoredFile } from '@/lib/stored-files';
 import { tenantIdForWorkspace } from '@/lib/auth-workspace';
 import { stampTableOwner } from '@/lib/receipts-table';
+import { cleanScopeYears, type YearScope } from '@/lib/receipt-years';
+import { groupsHoldingReceipts, yearCounts, type YearCounts } from '@/lib/receipt-year-counts';
+
+/** The most receipts one year of the list returns: far above what a year holds. */
+const SCOPED_LIST_LIMIT = 5000;
 import { MIN_TEXT_SEARCH_LENGTH, TEXT_SEARCH_LIMIT, likePattern, rowsWithoutText, textColumnIds, withoutText } from '@/lib/receipt-text';
 import { GROUP_KIND, ROW_KIND_COLUMN, rowKindColumnId } from '@/lib/receipts-kind';
 import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
@@ -217,11 +222,53 @@ export async function getRow(rowId: string): Promise<Row | null> {
  * cell): it is several kilobytes per row and only the detail panel needs it,
  * through `getReceiptText`. On 2026-10-12 the full list was 3 MB for 780 rows.
  */
-export async function getRows(tableId: string, query?: QueryOptions): Promise<QueryResult<Row>> {
+export async function getRows(tableId: string, query?: QueryOptions & YearScope): Promise<QueryResult<Row>> {
   await requireTableAccess(tableId);
   const adapter = getAdapter();
-  const result = await adapter.getRows(tableId, query);
-  return { ...result, items: rowsWithoutText(result.items, await textColumnsOf(adapter, tableId)) };
+  const columns = await adapter.getColumns(tableId);
+  const textIds = textColumnIds(columns);
+  const { years: asked, ...rest } = query ?? {};
+  const years = cleanScopeYears(asked);
+  const dateId = columns.find((c) => c.name === 'Date')?.id;
+  if (!years || !dateId) {
+    const result = await adapter.getRows(tableId, rest);
+    return { ...result, items: rowsWithoutText(result.items, textIds) };
+  }
+
+  // A list narrowed to years: one query per year, on the start of the stored invoice date (a plain text
+  // match: the adapter's own date comparisons do not take a text parameter on this database). The years
+  // of one choice are few and a year has a few hundred receipts, so they come in one answer, without the
+  // recognized text; a further page is empty. The groups that hold some of them come along (a group has
+  // no date of its own).
+  if ((rest.offset ?? 0) > 0) return { items: [], total: 0, hasMore: false } as QueryResult<Row>;
+  const perYear = await Promise.all(
+    years.map((year) =>
+      adapter.getRows(tableId, {
+        ...rest,
+        filters: [...(rest.filters ?? []), { columnId: dateId, operator: 'startsWith', value: `${year}-` }],
+        limit: SCOPED_LIST_LIMIT,
+        offset: 0,
+      }),
+    ),
+  );
+  let items = perYear.flatMap((r) => r.items);
+  const kindId = rowKindColumnId(columns);
+  if (kindId) {
+    const parents = await groupsHoldingReceipts(prisma, tableId, dateId, years);
+    if (parents.size > 0) {
+      const groups = await adapter.getRows(tableId, { filters: [{ columnId: kindId, operator: 'equals', value: GROUP_KIND }], limit: 1000 });
+      const have = new Set(items.map((r) => r.id));
+      items = [...items, ...groups.items.filter((g) => parents.has(g.id) && !have.has(g.id))];
+    }
+  }
+  return { items: rowsWithoutText(items, textIds), total: items.length, hasMore: false } as QueryResult<Row>;
+}
+
+/** How many receipts each year has, for the year chips: no row is loaded. */
+export async function getYearCounts(tableId: string): Promise<YearCounts> {
+  await requireTableAccess(tableId);
+  const adapter = getAdapter();
+  return yearCounts(prisma, tableId, await adapter.getColumns(tableId));
 }
 
 /** The recognized text of one receipt, for the detail panel. Empty when there is none. */

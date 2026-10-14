@@ -53,22 +53,52 @@ while the next ones loaded (they stay); a duplicate text column would have kept 
 list (all such columns are emptied); a table not yet migrated made the search fail silently (it is
 migrated first, as the list does).
 
-## Step two (decided direction, not built)
+## Measured after step one (2026-10-14, deployed)
 
-Load only the years chosen. The year chips get their counts from one count query, the default is
-the newest year with receipts, and the other years load when a chip is chosen. This is the real
-fix: the table then holds a year (about 270 receipts now, never all), every sum in it is
-complete for its year, and nothing needs "load more". Drawing only the visible rows (a virtual
-list) is the second half and needs a change in the shared table package.
+| | before | after |
+|---|---|---|
+| Until the count stands still | 35 s | 17 s |
+| Data received (decoded) | 3.1 MB | 1.9 MB (0.19 MB compressed) |
+| Browser memory | 817 MB | 169 MB |
+| Elements on the page | 77,565 | 75,560 (the 500 drawn rows are still the cost) |
 
-## Step three (open question to the owner)
+## Step two (built): the table loads the years it shows
 
-Group recurring receipts automatically, so a subscription of twelve invoices is one row with its
-sum, as in the owner's own expense table. Which key: vendor and item per year (recommended: it
-matches how the returns summed their lines), or by form line. New receipts join an existing
-group by the same key; a group is never a receipt and never counts itself.
+Decided by the owner on 2026-10-14: the table opens on the newest year that has receipts.
+
+- The year chips take their counts from one count query (`getYearCounts`, no row is loaded for
+  it). The page opens on the year in the address (`?jahr=2024`, a range `2022-2024`, or `alle`),
+  otherwise on the newest year. Choosing years fetches the list again for exactly those years.
+- A list for years is one query per year on the start of the stored invoice date and comes in one
+  answer, without the recognized text; groups that hold a receipt of those years come along.
+  Receipts without a date come with "ohne Datum" or "Alle" (those load everything).
+- A text search runs on the server over all years and says how many more receipts it found in
+  years that are not loaded.
+- Found while building it: the table package's own date comparisons ("after", "before") fail on
+  this database because the parameter is text and the column is cast to a timestamp. The scope
+  therefore does not use them. The filter bar's date operators are on the roadmap.
+
+## Step three (built): recurring receipts in groups
+
+Decided by the owner on 2026-10-14: per vendor and item per year, exactly.
+
+- `src/lib/groups/auto.ts` is the rule: key is vendor, item and year of the invoice date, equal as
+  written (case and spacing do not make two keys, no wording is guessed). Only receipts that count
+  for tax (assignment business or university), not business meals, not receipts already in a
+  group. A group is made from two receipts with one key, named "Vendor, Item, Year"; a receipt
+  whose key has a group joins it.
+- It runs each time the dashboard is opened, before the table loads, so the table arrives
+  grouped. A failure leaves the table as it is.
+- A person is not fought: a receipt put back at the top level (taken out of a group, or its group
+  dissolved) is marked in a hidden column "Auto Group Off" and is never grouped automatically
+  again.
+- The sum of a group is the sum of its receipts that are loaded. In a year view a group made of
+  one year is complete; a group a person made across years shows the part in the chosen years.
 
 ## Open
 
-- Step two and step three, after the owner's answers (default year; grouping key).
-- Measure again after step one is deployed and write the numbers here.
+- A sum over a manual group that spans years in a year view (it shows the part in view): decide
+  whether such a group should load all its receipts. Not needed for automatic groups.
+- The item is worded per receipt, so one subscription can split into several groups when its
+  invoices word the item differently ("exactly" was the owner's rule). The roadmap line for one
+  wording per subscription is the fix at the source.

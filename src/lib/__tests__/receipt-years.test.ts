@@ -3,6 +3,8 @@ import type { Row } from '@marlinjai/data-table-core';
 import { ROW_KIND_COLUMN, GROUP_KIND } from '../receipts-kind';
 import {
   NO_YEARS,
+  cleanScopeYears,
+  newestYear,
   filterByYears,
   formatYearParam,
   hasYearFilter,
@@ -126,5 +128,21 @@ describe('the address', () => {
     expect([...parseYearParam(' 2024 , x ').years]).toEqual([2024]);
     expect(hasYearFilter(parseYearParam(null))).toBe(false);
     expect(formatYearParam(NO_YEARS)).toBe('');
+  });
+});
+
+describe('the scope of a list', () => {
+  it('takes whole years in a sane range and nothing else', () => {
+    expect(cleanScopeYears([2024, 2021, 2024])).toEqual([2021, 2024]);
+    expect(cleanScopeYears([])).toBeNull();
+    expect(cleanScopeYears(null)).toBeNull();
+    expect(cleanScopeYears([2024, '2023'])).toBeNull();
+    expect(cleanScopeYears([1500])).toBeNull();
+    expect(cleanScopeYears(Array.from({ length: 41 }, (_, i) => 2000 + i))).toBeNull();
+  });
+
+  it('opens on the newest year with receipts', () => {
+    expect(newestYear([{ year: 2023 }, { year: 2025 }, { year: 2021 }])).toBe(2025);
+    expect(newestYear([])).toBeNull();
   });
 });

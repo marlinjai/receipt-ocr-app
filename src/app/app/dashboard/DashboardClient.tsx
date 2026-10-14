@@ -15,7 +15,9 @@ import {
 } from '@marlinjai/data-table-react';
 import type { Column, ColumnType, Row, GroupConfig, FooterConfig, SubItemsConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
-import { deleteReceiptsForGood, getReceiptText, searchReceiptText } from './actions';
+import { deleteReceiptsForGood, getReceiptText, getYearCounts, searchReceiptText } from './actions';
+import { scopeOf, setYearScope } from './year-scope';
+import type { YearCounts } from '@/lib/receipt-year-counts';
 import { MIN_TEXT_SEARCH_LENGTH, listColumns } from '@/lib/receipt-text';
 import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
 import FxRecomputePanel from './FxRecomputePanel';
@@ -36,7 +38,7 @@ import { isGroupRow, receiptsOnly, visibleColumns } from '@/lib/receipts-kind';
 import { deleteWording, deletedWording, groupCellNote, groupCellValue, groupsOf, receiptsInGroup, searchWithGroupReceipts, selectionKinds } from '@/lib/groups/view';
 import YearFilter from './YearFilter';
 import ReceiptSearch from './ReceiptSearch';
-import { YEAR_PARAM, filterByYears, formatYearParam, hasYearFilter, parseYearParam, yearsOf, type YearSelection } from '@/lib/receipt-years';
+import { ALL_YEARS, YEAR_PARAM, filterByYears, formatYearParam, hasYearFilter, newestYear, parseYearParam, type YearSelection } from '@/lib/receipt-years';
 
 const dbAdapter = createServerActionsAdapter();
 const fileAdapter = new PresignedStorageBrainAdapter();
@@ -51,6 +53,8 @@ interface DashboardClientProps {
   /** The receipt a link from another area asks to open (see `receiptHref`); null without one. */
   openRowId: string | null;
   initialYears: string | null;
+  /** How many receipts each year has, counted on the server (no row is loaded for it). */
+  yearCounts: YearCounts;
 }
 
 const REVIEW_ERROR: Record<ReviewActionError, string> = {
@@ -77,7 +81,7 @@ function receipts(n: number): string {
   return n === 1 ? '1 Beleg' : `${n} Belege`;
 }
 
-function DashboardContent({ tableId, openMealCount, initialReview, openRowId, initialYears }: { tableId: string; openMealCount: number; initialReview: ReviewEntry[] | null; openRowId: string | null; initialYears: string | null }) {
+function DashboardContent({ tableId, openMealCount, initialReview, openRowId, initialSelection, initialCounts }: { tableId: string; openMealCount: number; initialReview: ReviewEntry[] | null; openRowId: string | null; initialSelection: YearSelection; initialCounts: YearCounts }) {
   const {
     table,
     columns,
@@ -155,6 +159,12 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   }, [trimmedTerm, textSearched, tableId]);
   // The hits of the previous term stay until the new ones arrive: typing on must not make receipts blink out.
   const activeTextHits = textSearched ? textHits : null;
+  // Receipts the text search found that lie in years that are not loaded: said next to the count, not shown.
+  const elsewhere = useMemo(() => {
+    if (!activeTextHits) return 0;
+    const loaded = new Set(rows.map((r) => r.id));
+    return [...activeTextHits.ids].filter((id) => !loaded.has(id)).length;
+  }, [activeTextHits, rows]);
   const searchResults = useMemo(() => {
     if (!trimmedTerm) return null;
     if (!activeTextHits || activeTextHits.ids.size === 0) return listHits;
@@ -167,18 +177,24 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     [searchResults, rows, columns],
   );
   // The years chosen above the table. They narrow what every view and the export show (see `lib/receipt-years.ts`).
-  const [yearSelection, setYearSelection] = useState<YearSelection>(() => parseYearParam(initialYears));
-  const changeYears = useCallback((next: YearSelection) => {
-    setYearSelection(next);
-    // Kept in the address, so a reload or a copied link shows the same years.
-    const url = new URL(window.location.href);
-    const value = formatYearParam(next);
-    if (value) url.searchParams.set(YEAR_PARAM, value);
-    else url.searchParams.delete(YEAR_PARAM);
-    window.history.replaceState(null, '', url);
-  }, []);
+  const [yearSelection, setYearSelection] = useState<YearSelection>(initialSelection);
+  const [counts, setCounts] = useState<YearCounts>(initialCounts);
+  const changeYears = useCallback(
+    (next: YearSelection) => {
+      setYearSelection(next);
+      // The server loads only these years; the list is fetched again for the new choice.
+      setYearScope(scopeOf(next));
+      void refresh();
+      void getYearCounts(tableId).then(setCounts).catch(() => undefined);
+      // Kept in the address, so a reload or a copied link shows the same years; "alle" is a choice, not a default.
+      const url = new URL(window.location.href);
+      url.searchParams.set(YEAR_PARAM, formatYearParam(next) || ALL_YEARS);
+      window.history.replaceState(null, '', url);
+    },
+    [refresh, tableId],
+  );
   const displayRows = useMemo(() => filterByYears(searchedRows, columns, yearSelection), [searchedRows, columns, yearSelection]);
-  const yearsInTable = useMemo(() => yearsOf(rows, columns), [rows, columns]);
+  const totalReceipts = useMemo(() => counts.years.reduce((sum, y) => sum + y.count, 0) + counts.undated, [counts]);
 
   const receiptRows = useMemo(() => receiptsOnly(rows, columns), [rows, columns]);
   const displayReceiptRows = useMemo(() => receiptsOnly(displayRows, columns), [displayRows, columns]);
@@ -705,7 +721,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         </div>
         <div className="flex items-center gap-3">
           <p className="text-sm" style={{ color: 'var(--dt-text-secondary)' }}>
-            {receiptRows.length} items · {tableColumns.length} properties
+            {receiptRows.length < totalReceipts ? `${receiptRows.length} von ${totalReceipts}` : receiptRows.length} items · {tableColumns.length} properties
           </p>
           {/* Bulk edits set fields of receipts; a group in the selection is left alone. */}
           <BulkEditBar
@@ -820,6 +836,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           count={searchResults ? receiptsOnly(searchResults, columns).length : null}
           truncated={Boolean(activeTextHits?.truncated)}
           textFailed={textSearched && textSearchFailed}
+          elsewhere={elsewhere}
         />
         <FilterBar
           columns={tableColumns}
@@ -829,11 +846,11 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           bare
         />
         <YearFilter
-          years={yearsInTable.years}
-          undated={yearsInTable.undated}
+          years={counts.years}
+          undated={counts.undated}
           selection={yearSelection}
           shown={displayReceiptRows.length}
-          total={receiptRows.length}
+          total={totalReceipts}
           onChange={changeYears}
         />
       </div>
@@ -911,10 +928,20 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   );
 }
 
-export default function DashboardClient({ tableId, workspaceId, openMealCount, initialReview, openRowId, initialYears }: DashboardClientProps) {
+export default function DashboardClient({ tableId, workspaceId, openMealCount, initialReview, openRowId, initialYears, yearCounts }: DashboardClientProps) {
+  // The table opens on the year the address names, "alle", or the newest year that has receipts. The scope is
+  // set before the table first asks for rows, so the first request is already narrowed.
+  const [initialSelection] = useState<YearSelection>(() => {
+    const named = parseYearParam(initialYears);
+    const all = initialYears?.trim().toLowerCase() === ALL_YEARS;
+    const newest = newestYear(yearCounts.years);
+    const selection: YearSelection = hasYearFilter(named) || all || newest === null ? named : { years: new Set([newest]), undated: false };
+    setYearScope(scopeOf(selection));
+    return selection;
+  });
   return (
     <DataTableProvider dbAdapter={dbAdapter} fileAdapter={fileAdapter} workspaceId={workspaceId}>
-      <DashboardContent tableId={tableId} openMealCount={openMealCount} initialReview={initialReview} openRowId={openRowId} initialYears={initialYears} />
+      <DashboardContent tableId={tableId} openMealCount={openMealCount} initialReview={initialReview} openRowId={openRowId} initialSelection={initialSelection} initialCounts={yearCounts} />
     </DataTableProvider>
   );
 }

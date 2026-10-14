@@ -4,6 +4,7 @@
  */
 import type { DatabaseAdapter } from '@marlinjai/data-table-core';
 import * as actions from './actions';
+import { getYearScope } from './year-scope';
 
 export function createServerActionsAdapter(): DatabaseAdapter {
   return {
@@ -32,7 +33,8 @@ export function createServerActionsAdapter(): DatabaseAdapter {
     // Row operations
     createRow: actions.createRow,
     getRow: actions.getRow,
-    getRows: actions.getRows,
+    // The list asks for the years chosen above the table (see `year-scope.ts`).
+    getRows: (tableId, query) => actions.getRows(tableId, { ...query, years: getYearScope() }),
     updateRow: actions.updateRow,
     deleteRow: actions.deleteRow,
     archiveRow: actions.archiveRow,

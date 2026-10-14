@@ -15,6 +15,7 @@ export default function ReceiptSearch({
   count,
   truncated,
   textFailed,
+  elsewhere,
 }: {
   term: string;
   onTermChange: (term: string) => void;
@@ -24,6 +25,8 @@ export default function ReceiptSearch({
   truncated: boolean;
   /** True when the server search of the recognized text failed: only names, vendors and amounts were searched. */
   textFailed: boolean;
+  /** How many more receipts the text search found that lie in years that are not loaded. */
+  elsewhere: number;
 }) {
   const input = useRef<HTMLInputElement>(null);
 
@@ -65,6 +68,7 @@ export default function ReceiptSearch({
           {count} {count === 1 ? 'Treffer' : 'Treffer'}
           {truncated ? ' (im Text nur die neuesten, bitte genauer suchen)' : ''}
           {textFailed ? ' (der erkannte Text konnte nicht durchsucht werden, nur Name, Händler und Betrag)' : ''}
+          {elsewhere > 0 ? ` · ${elsewhere} weitere in anderen Jahren` : ''}
         </span>
       )}
       {term && (

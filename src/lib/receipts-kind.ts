@@ -18,6 +18,12 @@ import type { Column, Row } from '@marlinjai/data-table-core';
 
 /** The column that holds a row's kind. Text, so no option can be renamed or deleted. */
 export const ROW_KIND_COLUMN = 'Row Kind';
+/**
+ * Set on a receipt a person put back at the top level (took out of a group, or
+ * whose group was dissolved): it is then never grouped automatically again.
+ * Text, hidden in the grid, written only by `setParentRow`.
+ */
+export const AUTO_GROUP_OFF_COLUMN = 'Auto Group Off';
 /** The kind of a group. A receipt has no kind. */
 export const GROUP_KIND = 'group';
 
@@ -49,7 +55,7 @@ export function receiptsOnly<T extends KindRow>(rows: readonly T[], columns: rea
   return rows.filter((row) => row.cells[columnId] !== GROUP_KIND);
 }
 
-/** The columns a person sees and edits: everything except the kind column. */
+/** The columns a person sees and edits: everything except the kind and the automatic-grouping columns. */
 export function visibleColumns<T extends NamedColumn>(columns: readonly T[]): T[] {
-  return columns.filter((c) => c.name !== ROW_KIND_COLUMN);
+  return columns.filter((c) => c.name !== ROW_KIND_COLUMN && c.name !== AUTO_GROUP_OFF_COLUMN);
 }

@@ -190,7 +190,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       url.searchParams.set(YEAR_PARAM, formatYearParam(next) || ALL_YEARS);
       window.history.replaceState(null, '', url);
     },
-    [refresh, tableId],
+    [refresh],
   );
   const displayRows = useMemo(() => filterByYears(searchedRows, columns, yearSelection), [searchedRows, columns, yearSelection]);
   // The chips follow the table: a receipt deleted, added or re-dated changes the rows, and the counts are asked

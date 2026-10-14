@@ -192,10 +192,10 @@
 - [ ] Invoicing and income: the finance area shows "Einnahmen 0" for 2026 because no issued
   invoice is recorded (all of them are PDF files written in a Google Doc). Order: enter the
   invoices of 2024 to 2026 from the list in the tax folder and link their bank payments (ends the
-  zero, no code), tighten the matcher to whole invoice numbers, then the invoice editor with
-  numbering at issue (next number 62) and the PDF, then reading electronic invoices (XRechnung,
-  ZUGFeRD) that arrive in the expenses mailbox. Waiting on the owner: where invoices are written
-  (recommended here, not in framer-clone), invoice 60, invoice 58. Plan:
+  zero, no code), tighten the matcher to whole invoice numbers, then a read-only mirror of the
+  invoices framer-clone issues (the owner decided on 2026-10-14 that invoices are written there,
+  in the Books tier, numbered from 62), then reading electronic invoices (XRechnung, ZUGFeRD) that
+  arrive in the expenses mailbox. Plan:
   [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-10-14)
 - [ ] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
   (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax

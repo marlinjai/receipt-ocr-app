@@ -60,6 +60,9 @@ function memoryTable(initial: Row[]) {
         for (const child of children) store.set(child.id, { ...child, parentRowId: undefined } as Row);
         return children.map((c) => ({ id: c.id }));
       }
+      // The column that keeps a receipt out of the automatic grouping: this table has none, nothing is marked
+      // (the marking itself is proved against a real database).
+      if (sql.includes('FROM dt_columns')) return [];
       if (!sql.startsWith('SELECT id, parent_row_id')) throw new Error(`unexpected query: ${sql}`);
       return ids
         .filter((id) => store.has(id))

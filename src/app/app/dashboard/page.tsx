@@ -7,7 +7,12 @@ import { loadMealRecords } from '@/lib/meals/service';
 import { loadReviewQueue, type ReviewEntry } from '@/lib/review/service';
 import { RECEIPT_PARAM } from '@/lib/receipt-link';
 import { YEAR_PARAM } from '@/lib/receipt-years';
+import { yearCounts } from '@/lib/receipt-year-counts';
+import { autoGroupRecurring } from '@/lib/groups/auto-service';
+import { initializeReceiptsTable } from '../actions';
 import DashboardClient from './DashboardClient';
+
+type YearCountsProp = Awaited<ReturnType<typeof yearCounts>>;
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +29,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const session = await auth.requireSession('/app/dashboard');
   const workspaceId = sessionWorkspaceId(session);
 
+  // The layout also does this, but the layout and the page render side by side: the columns this page
+  // groups by must exist before it asks for them.
+  await initializeReceiptsTable();
   const adapter = new PrismaAdapter({ prisma });
   const tables = await adapter.listTables(workspaceId);
   const table = tables.find((t) => t.name === 'Receipts');
@@ -41,6 +49,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         </div>
       </div>
     );
+  }
+
+  // Recurring receipts are grouped by vendor, item and year each time the table is opened, so it loads
+  // already grouped (see `lib/groups/auto.ts`). A failure leaves the table as it is.
+  try {
+    await autoGroupRecurring(prisma, workspaceId);
+  } catch (e) {
+    console.error('[dashboard] automatic grouping failed', e instanceof Error ? e.name : 'unknown');
+  }
+  // How many receipts each year has: the year chips and the year the table opens on.
+  let counts: YearCountsProp = { years: [], undated: 0 };
+  try {
+    counts = await yearCounts(prisma, table.id, await adapter.getColumns(table.id));
+  } catch (e) {
+    console.error('[dashboard] year counts failed', e instanceof Error ? e.name : 'unknown');
   }
 
   // The badge on the "Bewirtung" link. A failure here must not take the whole
@@ -71,6 +94,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       initialReview={initialReview}
       openRowId={openRowId}
       initialYears={initialYears}
+      yearCounts={counts}
     />
   );
 }

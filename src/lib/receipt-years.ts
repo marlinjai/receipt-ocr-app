@@ -20,6 +20,8 @@ type NamedColumn = Pick<Column, 'id' | 'name'>;
 
 /** The address parameter that carries the choice, the same name the finance area uses for its year. */
 export const YEAR_PARAM = 'jahr';
+/** The value of the parameter for "every year": a choice, where no parameter means "the newest year". */
+export const ALL_YEARS = 'alle';
 
 export interface YearSelection {
   years: ReadonlySet<number>;
@@ -38,10 +40,9 @@ export function yearOfDate(value: CellValue | undefined): number | null {
   if (value === null || value === undefined || value === '') return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.getUTCFullYear();
   if (typeof value !== 'string') return null;
+  // Only a written ISO day has a year: the server counts the same way, so chips and filter agree.
   const iso = /^(\d{4})-\d{2}-\d{2}/.exec(value);
-  if (iso) return Number(iso[1]);
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.getUTCFullYear();
+  return iso ? Number(iso[1]) : null;
 }
 
 export interface YearCount {
@@ -144,4 +145,25 @@ export function parseYearParam(value: string | null | undefined): YearSelection 
     for (let y = from; y <= to; y++) years.add(y);
   }
   return { years, undated };
+}
+
+/** A list query narrowed to years: the server loads only the receipts of exactly these years. */
+export interface YearScope {
+  /** The years asked for. Null or empty: every receipt. */
+  years?: readonly number[] | null;
+}
+
+const FIRST_YEAR = 1990;
+const LAST_YEAR = 2100;
+
+/** The years of a scope as given by a browser: whole numbers in a sane range, at most forty, or null for "all". */
+export function cleanScopeYears(value: unknown): number[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 40) return null;
+  const years = value.filter((y): y is number => Number.isInteger(y) && y >= FIRST_YEAR && y <= LAST_YEAR);
+  return years.length === value.length ? [...new Set(years)].sort((a, b) => a - b) : null;
+}
+
+/** The year the table opens on: the newest year that has receipts, or null when there are none. */
+export function newestYear(years: readonly { year: number }[]): number | null {
+  return years.length === 0 ? null : Math.max(...years.map((y) => y.year));
 }

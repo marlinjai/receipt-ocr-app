@@ -4,6 +4,7 @@
  */
 import type { DatabaseAdapter } from '@marlinjai/data-table-core';
 import * as actions from './actions';
+import { getYearScope } from './year-scope';
 
 export function createServerActionsAdapter(): DatabaseAdapter {
   return {
@@ -32,7 +33,19 @@ export function createServerActionsAdapter(): DatabaseAdapter {
     // Row operations
     createRow: actions.createRow,
     getRow: actions.getRow,
-    getRows: actions.getRows,
+    // The list asks for the years chosen above the table (see `year-scope.ts`).
+    getRows: async (tableId, query) => {
+      const key = (years: number[] | null) => (years ? years.join(',') : 'all');
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const asked = getYearScope();
+        const result = await actions.getRows(tableId, { ...query, years: asked });
+        // The choice of years changed while this was on its way: its rows are for the old choice.
+        // A first page is asked again for the new one; a further page of the old list is dropped.
+        if (key(getYearScope()) === key(asked)) return result;
+        if ((query?.offset ?? 0) > 0) return { items: [], total: query?.offset ?? 0, hasMore: false };
+      }
+      return actions.getRows(tableId, { ...query, years: getYearScope() });
+    },
     updateRow: actions.updateRow,
     deleteRow: actions.deleteRow,
     archiveRow: actions.archiveRow,

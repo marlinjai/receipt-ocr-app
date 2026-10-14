@@ -373,7 +373,9 @@
   the tax office. Open, in this order: the classifier reading lines off a receipt (unblocked:
   the receipt reader rebuild merged on 2026-10-10 as pull request 51); the rest of slice 3 (live bank sync with session
   expiry, card statement and pay-later importers, the ten-day rule for regularly
-  recurring income); the income tax estimate; the year-end entry sheet; reading the
+  recurring income); the income tax estimate (it has no wage input yet: the wage statement
+  model is step 6 of the plan, so the nine 2026 payslips, January to September, wait unentered
+  in the tax folder `Steuern/2026/Lohnabrechnungen 2026`; seen 2026-10-15); the year-end entry sheet; reading the
   expenses mailbox. Open inside what is built,
   each described in the plan's "Reality" sections: (1) the two older receipt columns
   "Business Share %" and "Zuordnung" and the per-vendor share table of the overview
@@ -385,6 +387,18 @@
   without it; (4) tax the buyer owes on services from abroad is not computed;
   (5) invoices carry no link to a contact yet. Plan:
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-10)
+- [x] The 2026 purchase documents up to 2026-10-14 are in the app: 325 receipts under Whiz-Art
+  Media (the purchase folder, 17 invoices saved from the expenses mailbox, 21 paper receipts
+  from the scan of 5 October) and 29 private ones under "marlinjai", assignment and share as in
+  2025. Finance area 2026: 6,847.44 business expenses, 294 receipts counted, employment annex
+  239.25; 2025 unchanged. Log, file table and snapshot in the owner's folder `Steuern/2026`
+  (`import-log-2026.md`). Done 2026-10-15.
+- [ ] 2026 receipts waiting on the owner (31, 1,159.71 euros, listed in section E of
+  `Steuern/2026/import-log-2026.md`): guests and occasion for 14 restaurant receipts; Adobe
+  and the 0176 mobile contract from May on, after the study ended; LinkedIn Premium Career;
+  four small shop receipts. Also: the 2026 bank and PayPal export files are not imported yet
+  (the app holds the 446 N26 payments only), and the freenet payment reminder of 23 June.
+  (2026-10-15)
 - [x] The purchase documents of the tax years 2024, 2023, 2022 and 2021 are in the app: 514
   receipts under Whiz-Art Media (2024: 155 and one ticket dated 2023, 2023: 148, 2022: 119, 2021:
   91), each year a record of its filed return, with a log, a file table and a snapshot per year in

@@ -35,8 +35,11 @@ settles it:
 
 1. **Is it a transfer between own accounts, a fee, a loan instalment, cash?** Those need no
    receipt (rules and answers on counterparties already exist in the payments tab).
-2. **Does a receipt already exist?** The payments tab's proposals match an uploaded receipt by
-   amount, day and vendor. A match is linked; the receipt is not asked for again.
+2. **Does a receipt already exist?** Today the payments tab proposes an uploaded receipt by
+   amount and day alone, and a person confirms it (`proposeMatches` is given no vendor data for
+   euro receipts); only the estimated-amount proposals for foreign-currency receipts use the
+   vendor. Matching on the vendor as well is part of this plan and needs the receipt's vendor
+   passed to the matcher first. A confirmed match is linked; the receipt is not asked for again.
 3. **Is the invoice in the mailbox?** Look in expenses@marlinjai.com for a message from that
    vendor around the day with a matching amount or reference. Take its attachment into the
    normal upload path, so the reader and the vendor rules run as for any receipt.

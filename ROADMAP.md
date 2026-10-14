@@ -99,6 +99,12 @@
 - [ ] A file that holds two invoices becomes one receipt with the second invoice's figures
   (seen on 2026-10-11 on a file with a marketplace invoice and a retailer invoice). The reader
   should say that the file holds more than one document, so it can be split. (2026-10-11)
+- [ ] Private spending in the app (decided by the owner on 2026-10-14): overview by category and
+  month, clean split private versus business, budgets and warnings, a document for every
+  purchase, a live bank connection, and the loop that finds or asks for the receipt of every
+  payment. Build order and open questions (where the notification goes, which vendors may be
+  fetched with a stored login, the budget limits) in the plan:
+  [docs/plans/2026-10-14-personal-spending-and-bank-feed.md](docs/plans/2026-10-14-personal-spending-and-bank-feed.md). (2026-10-14)
 - [ ] Bring the app up to the tax session's draft for 2025. Marlin's 17 answers of 2026-10-11
   (recorded in `Entscheidungen-2025.md` in the tax folder) are carried out, the bank, PayPal and
   pay-later lists are imported, and 112 payments are linked: business expenses in the app went

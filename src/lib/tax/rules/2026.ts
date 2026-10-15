@@ -8,8 +8,11 @@ import type { Source, YearRules } from './types';
  * (letter of 1 September 2026). The form was renumbered against 2025, and not
  * by one constant step: goods moved from 27 to 29, the other expense lines by
  * one, revenue lines not at all. Every number is therefore listed here on its
- * own. The employment annex of 2026 has not been compared with an official
- * source yet, so its amount lines carry no number.
+ * own. The employment annex of 2026 is not public yet: on 2026-10-15 the
+ * federal form portal held forms up to 2025 only and the tax portal's help for
+ * 2026 was empty (the ministry sent the final forms to software vendors on
+ * 13 August 2026, not to the public). Its amount lines therefore carry no
+ * number; the numbering moved in 2023 and again in 2025, so 2025's is no guess.
  */
 
 export const EUER_FORM_2026: Source = {

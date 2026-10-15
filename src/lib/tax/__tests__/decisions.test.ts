@@ -41,6 +41,15 @@ describe('validateTreatment', () => {
     });
   });
 
+  it('accepts the further employment costs as the annex line of an employment share', () => {
+    expect(
+      validateTreatment({ allocations: [{ purpose: 'employment', shareBp: 10000 }], formLineKey: null, employmentLineKey: 'employment.further_costs' }, rules),
+    ).toMatchObject({ employmentLineKey: 'employment.further_costs' });
+    expect(
+      code(() => validateTreatment({ allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'employment.further_costs' }, rules)),
+    ).toBe('form_line_invalid');
+  });
+
   it('drops a line that no share points at', () => {
     expect(
       validateTreatment(

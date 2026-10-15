@@ -71,6 +71,7 @@ export const FORM_LINE_KEYS = [
   'euer.other_travel',
   'employment.work_equipment',
   'employment.study_costs',
+  'employment.further_costs',
   'employment.commute',
   'employment.home_office',
 ] as const;
@@ -100,6 +101,12 @@ export interface FormLine {
   numbering: LineNumbering;
   /** For a `structured` line: what the form asks for instead of an amount. */
   structuredNote?: string;
+  /**
+   * Where the amounts go when the printed line is a total that can hold more
+   * than the app's figure (the further employment costs: the total also holds
+   * ferry and flight costs the app does not record). Shown beside the line.
+   */
+  entryNote?: string;
   /** The German label as printed on the form. */
   label: string;
   kind: 'revenue' | 'expense';

@@ -210,6 +210,8 @@ export interface LineResult {
   line: number | null;
   numbering: LineNumbering;
   label: string;
+  /** See `FormLine.entryNote`. */
+  entryNote?: string;
   kind: 'revenue' | 'expense';
   cents: number;
   nonDeductibleCents: number;

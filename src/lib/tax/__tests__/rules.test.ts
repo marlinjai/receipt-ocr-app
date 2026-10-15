@@ -123,12 +123,30 @@ describe('the years keep their own line numbers', () => {
     expect(line(2026, 'euer.goods').line).not.toBe((line(2025, 'euer.goods').line as number) + 1);
   });
 
-  it('the employment annex of 2025 has its two amount lines, 2026 inherits none of them', () => {
+  it('the employment annex of 2025 has its three amount lines, 2026 inherits none of them', () => {
+    // Read off the official Anlage N 2025: the total of work equipment on line 56,
+    // training costs on 60, the total of the further costs on 64.
     expect(line(2025, 'employment.work_equipment')).toMatchObject({ line: 56, numbering: 'verified' });
     expect(line(2025, 'employment.study_costs')).toMatchObject({ line: 60, numbering: 'verified' });
-    expect(line(2026, 'employment.work_equipment')).toMatchObject({ line: null, numbering: 'unverified' });
-    expect(line(2026, 'employment.study_costs')).toMatchObject({ line: null, numbering: 'unverified' });
+    expect(line(2025, 'employment.further_costs')).toMatchObject({ line: 64, numbering: 'verified', form: 'employment', kind: 'expense' });
+    // The Anlage N 2026 is not public on the check day (2026-10-15): no number, never 2025's.
+    for (const key of ['employment.work_equipment', 'employment.study_costs', 'employment.further_costs'] as const) {
+      expect(line(2026, key)).toMatchObject({ line: null, numbering: 'unverified' });
+    }
     expect(rulesForYear(2026).rules.formSources.employment).toBeNull();
+  });
+
+  it('the further employment costs are a line of their own, not training costs', () => {
+    expect(line(2025, 'employment.further_costs').label).toMatch(/Weitere Werbungskosten/);
+    expect(line(2025, 'employment.further_costs').label).toMatch(/Bewerbungskosten/);
+    expect(line(2025, 'employment.further_costs').line).not.toBe(line(2025, 'employment.study_costs').line);
+  });
+
+  it('says where the further costs are entered, because their printed total holds more than the app records', () => {
+    expect(line(2025, 'employment.further_costs').entryNote).toMatch(/Zeilen 62 und 63/);
+    expect(line(2025, 'employment.further_costs').entryNote).toMatch(/Fähr- und Flugkosten aus Zeile 61/);
+    // Without a number there is nothing to point at.
+    expect(line(2026, 'employment.further_costs').entryNote).toBeUndefined();
   });
 
   it.each([2025, 2026])('in %i days and distances have no amount line at all', (year) => {

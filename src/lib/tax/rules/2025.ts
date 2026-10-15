@@ -5,7 +5,8 @@ import type { AssetRules, FormLine, FormLineKey, Source, YearRules } from './typ
  *
  * The income-surplus lines were read off the ministry's own form (letter of
  * 29 August 2025, file reference IV C 6 - S 2142/00023/010/001). The employment
- * annex lines come from the tax portal's official help for the 2025 return.
+ * annex lines were read off the official form of 2025 (the Anlage N 2025 of the
+ * federal form portal, made by the finance ministry's forms commission).
  */
 
 export const EUER_FORM_2025: Source = {
@@ -16,9 +17,10 @@ export const EUER_FORM_2025: Source = {
 };
 
 export const EMPLOYMENT_FORM_2025: Source = {
-  citation: 'ELSTER, Hilfe zur Einkommensteuererklärung 2025, Anlage N (Werbungskosten)',
-  url: 'https://www.elster.de/elsterweb/helpGlobal?themaGlobal=help_est_ufa_10_2025',
-  checkedOn: '2026-10-10',
+  citation:
+    'Bundesministerium der Finanzen, Vordruck Anlage N 2025 (Formular-Management-System der Bundesfinanzverwaltung, 034027_25); abgeglichen mit ELSTER, Hilfe zur Einkommensteuererklärung 2025, Anlage N (Werbungskosten)',
+  url: 'https://www.formulare-bfinv.de/ffw/catalog/openForm.do?path=catalog%3A%2F%2FSteuerformulare%2Fest%2Fest25%2F034027_25',
+  checkedOn: '2026-10-15',
 };
 
 /**
@@ -137,6 +139,10 @@ export const EUER_LINE_NUMBERS_2025: Record<EuerKey, number> = {
 const EMPLOYMENT_LABELS = {
   'employment.work_equipment': 'Aufwendungen für Arbeitsmittel',
   'employment.study_costs': 'Fortbildungskosten',
+  // The form's section "Weitere Werbungskosten" has a line for ferry and flight
+  // costs of the commute and entries "Sonstiges" with one total; this key is the
+  // entries "Sonstiges" (job applications, account fees and the like).
+  'employment.further_costs': 'Weitere Werbungskosten: Sonstiges (z. B. Bewerbungskosten, Kontoführungsgebühren)',
   'employment.commute': 'Wege zwischen Wohnung und erster Tätigkeitsstätte (Entfernungspauschale)',
   'employment.home_office': 'Tagespauschale für die Tätigkeit in der häuslichen Wohnung',
 } as const;
@@ -164,31 +170,56 @@ const STRUCTURED_EMPLOYMENT: FormLine[] = [
 ];
 
 /**
+ * The printed line of each amount of the employment annex that holds a euro
+ * total: work equipment, training costs, and the further costs.
+ */
+export interface EmploymentLineNumbers {
+  workEquipment: number;
+  studyCosts: number;
+  /**
+   * The total of the further costs, and where their single entries go: the
+   * printed total also holds the ferry and flight costs of the commute, which the
+   * app does not record, so the line alone would mislead.
+   */
+  furtherCosts: { line: number; entryNote: string };
+}
+
+/**
  * The employment annex part of a catalog. `numbers` null: the annex of that
  * year has not been compared with an official source, so its amount lines
  * carry no number (never another year's).
  */
-export function employmentLines(numbers: { workEquipment: number; studyCosts: number } | null): FormLine[] {
-  const amount = (key: 'employment.work_equipment' | 'employment.study_costs', line: number | null): FormLine => ({
+export function employmentLines(numbers: EmploymentLineNumbers | null): FormLine[] {
+  const amount = (key: 'employment.work_equipment' | 'employment.study_costs' | 'employment.further_costs', line: number | null, entryNote?: string): FormLine => ({
     key,
     form: 'employment',
     line,
     numbering: line === null ? 'unverified' : 'verified',
     label: EMPLOYMENT_LABELS[key],
+    ...(entryNote && line !== null ? { entryNote } : {}),
     kind: 'expense',
   });
   return [
     amount('employment.work_equipment', numbers?.workEquipment ?? null),
     amount('employment.study_costs', numbers?.studyCosts ?? null),
+    amount('employment.further_costs', numbers?.furtherCosts.line ?? null, numbers?.furtherCosts.entryNote),
     ...STRUCTURED_EMPLOYMENT,
   ];
 }
 
 export const FORM_LINES_2025: readonly FormLine[] = [
   ...euerLines(EUER_LINE_NUMBERS_2025),
-  // Anlage N 2025: work equipment is entered on lines 54 to 56 with the total on
-  // 56; training costs on line 60.
-  ...employmentLines({ workEquipment: 56, studyCosts: 60 }),
+  // Anlage N 2025: work equipment is entered on lines 54 and 55 with the total on
+  // line 56; training costs on line 60; the further costs ("Sonstiges") on lines
+  // 62 and 63 with the total of the further costs on line 64.
+  ...employmentLines({
+    workEquipment: 56,
+    studyCosts: 60,
+    furtherCosts: {
+      line: 64,
+      entryNote: 'Einzeln in den Zeilen 62 und 63 eintragen; die Summe in Zeile 64 enthält auch Fähr- und Flugkosten aus Zeile 61.',
+    },
+  }),
 ];
 
 const ESTG_6: Source = {

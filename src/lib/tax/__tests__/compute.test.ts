@@ -165,6 +165,27 @@ describe('computeYear: rule sets', () => {
     expect(study('2025-03-01', 2025, 'employment.home_office')).toMatchObject({ line: null, numbering: 'structured' });
   });
 
+  it('a job-search cost counts on the further employment costs and in the employment annex total', () => {
+    const result = run(
+      [item({ id: 'x', date: '2025-03-01', amountCents: 3_999, formLineKey: null, employmentLineKey: 'employment.further_costs', allocations: [{ purpose: 'employment', shareBp: 10000 }] })],
+      2025,
+    );
+    expect(result.lines).toEqual([expect.objectContaining({ key: 'employment.further_costs', form: 'employment', line: 64, cents: 3_999 })]);
+    expect(result.lines[0].entryNote).toMatch(/Zeilen 62 und 63/);
+    expect(result.employmentCostCents).toBe(3_999);
+    expect(result.businessExpenseCents).toBe(0);
+  });
+
+  it('in 2026 the further costs count in the annex total without a printed number', () => {
+    const result = run(
+      [item({ id: 'x', date: '2026-03-01', amountCents: 3_999, formLineKey: null, employmentLineKey: 'employment.further_costs', allocations: [{ purpose: 'employment', shareBp: 10000 }] })],
+      2026,
+    );
+    expect(result.lines).toEqual([expect.objectContaining({ key: 'employment.further_costs', line: null, numbering: 'unverified', cents: 3_999 })]);
+    expect(result.lines[0].entryNote).toBeUndefined();
+    expect(result.employmentCostCents).toBe(3_999);
+  });
+
   it('says which rules a year without its own rule set was computed with', () => {
     const result = run([item({ id: 'x', date: '2031-03-01' })], 2031);
     expect(result).toMatchObject({ year: 2031, rulesExact: false });

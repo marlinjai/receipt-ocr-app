@@ -262,6 +262,16 @@ describe('FinanceClient: the queue', () => {
     });
   });
 
+  it('offers the further employment costs as an annex line of their own', async () => {
+    const user = userEvent.setup();
+    render(<FinanceClient initial={view([item({ rowId: 'a' })])} />);
+    await user.click(screen.getByRole('button', { name: '100 % Studium' }));
+    const select = screen.getByLabelText('Zeile der Anlage N für Studium oder Anstellung') as HTMLSelectElement;
+    const option = [...select.options].find((o) => o.value === 'employment.further_costs');
+    expect(option).toBeDefined();
+    expect(option?.textContent).toMatch(/Weitere Werbungskosten/);
+  });
+
   it('"Privat" is a decision: sent as a fully private item without a line', async () => {
     const user = userEvent.setup();
     actions.decideItem.mockResolvedValue({ ok: true, value: view([]) });

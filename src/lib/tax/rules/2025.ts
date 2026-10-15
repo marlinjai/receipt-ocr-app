@@ -79,6 +79,20 @@ export function euerLines(numbers: Record<EuerKey, number>): FormLine[] {
     .sort((a, b) => a.line - b.line);
 }
 
+/**
+ * The income-surplus part of a catalog for a year whose form is not published
+ * yet: every line by its label, none with a number (never another year's).
+ */
+export function euerUnnumberedLines(): FormLine[] {
+  return (Object.keys(EUER_LABELS) as EuerKey[]).map((key) => ({
+    key,
+    form: 'euer' as const,
+    line: null,
+    numbering: 'unverified' as const,
+    ...EUER_LABELS[key],
+  }));
+}
+
 /** Line numbers of the Anlage EÜR 2025, read off the ministry's form. */
 export const EUER_LINE_NUMBERS_2025: Record<EuerKey, number> = {
   'euer.revenue_small_business': 12,

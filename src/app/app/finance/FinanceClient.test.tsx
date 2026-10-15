@@ -88,6 +88,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     rulesYear: 2025,
     rulesExact: true,
     rulesReviewedOn: rules.reviewedOn,
+    rulesProvisional: rules.provisional ?? null,
     formSources: rules.formSources,
     formLines: [...rules.formLines],
     lines: counted.length
@@ -173,6 +174,24 @@ describe('openQueue', () => {
       item({ rowId: 'c', counted: true, checks: [{ itemId: 'c', kind: 'amount_estimated', blocking: false }] }),
     ]);
     expect(openQueue(v).map((i) => i.rowId)).toEqual(['a']);
+  });
+});
+
+describe('FinanceClient: rules of a year whose forms are not published', () => {
+  it('says the rules are provisional and from which year they are carried', () => {
+    const { rules } = rulesForYear(2027);
+    render(
+      <FinanceClient
+        initial={view([], { year: 2027, rulesYear: 2027, rulesProvisional: rules.provisional ?? null, formSources: rules.formSources, formLines: [...rules.formLines] })}
+      />,
+    );
+    expect(screen.getByText(/Die Regeln für 2027 sind vorläufig/).textContent).toMatch(/Gerechnet wird mit den Werten\s+von 2026/);
+    expect(screen.queryByText(/Zeilennummern noch nicht mit dem amtlichen Vordruck/)).toBeNull();
+  });
+
+  it('says nothing of the kind for a year with its own published rules', () => {
+    render(<FinanceClient initial={view([])} />);
+    expect(screen.queryByText(/sind vorläufig/)).toBeNull();
   });
 });
 

@@ -134,6 +134,20 @@ export interface YearRules {
    * first, the running year must not exceed the second.
    */
   smallBusinessLimits: Sourced<{ previousYearLimitCents: number; currentYearLimitCents: number }>;
+  /**
+   * Set when the year's own figures are not published yet and the legal values
+   * of an earlier year are carried forward. Every surface that shows a figure
+   * of such a year says so, and the form lines of such a year carry no numbers.
+   * Absent: every value was compared with a source for this year.
+   */
+  provisional?: ProvisionalRules;
+}
+
+export interface ProvisionalRules {
+  /** The year whose legal values are carried. */
+  carriedFromYear: number;
+  /** What is not published yet, in the words a person would check. */
+  reason: string;
 }
 
 /** The limits and methods for assets bought in this year. All limits are NET amounts (without value-added tax). */

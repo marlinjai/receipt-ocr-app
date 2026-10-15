@@ -64,7 +64,7 @@ describe.each(RULE_YEARS)('rule set %i', (year) => {
     }
   });
 
-  it('the income-surplus statement is cited from the ministry itself', () => {
+  it.skipIf(rules.provisional !== undefined)('the income-surplus statement is cited from the ministry itself', () => {
     expect(rules.formSources.euer?.url).toMatch(/^https:\/\/www\.bundesfinanzministerium\.de\//);
     expect(rules.formSources.euer?.url).toContain(String(year));
   });
@@ -154,5 +154,39 @@ describe('rulesForYear', () => {
       expect(RULE_YEARS, `add src/lib/tax/rules/${now.getUTCFullYear() + 1}.ts`).toContain(now.getUTCFullYear() + 1);
     }
     expect(RULE_YEARS).toContain(now.getUTCFullYear());
+  });
+});
+
+describe('the provisional rule set of 2027', () => {
+  const { rules: r2027, exact } = rulesForYear(2027);
+  const r2026 = rulesForYear(2026).rules;
+
+  it('exists as its own year and says it is provisional, carried from 2026', () => {
+    expect(exact).toBe(true);
+    expect(r2027.provisional).toMatchObject({ carriedFromYear: 2026 });
+    expect(r2027.provisional?.reason).toMatch(/2027/);
+  });
+
+  it('carries every legal value of 2026 unchanged, so the review knows exactly what to replace', () => {
+    expect(r2027.mealDeductibleShareBp).toEqual(r2026.mealDeductibleShareBp);
+    expect(r2027.assets).toEqual(r2026.assets);
+    expect(r2027.smallBusinessLimits).toEqual(r2026.smallBusinessLimits);
+  });
+
+  it('prints no line number of another year and cites no form', () => {
+    expect(r2027.formSources).toEqual({ euer: null, employment: null });
+    for (const l of r2027.formLines) {
+      expect(l.line, l.key).toBeNull();
+      expect(l.numbering, l.key).not.toBe('verified');
+    }
+  });
+
+  it('the declining method is still open for purchases of 2027', () => {
+    expect(r2027.assets.declining.value.acquiredTo >= '2027-12-31').toBe(true);
+  });
+
+  it('the years with their own published figures are not provisional', () => {
+    expect(rulesForYear(2025).rules.provisional).toBeUndefined();
+    expect(r2026.provisional).toBeUndefined();
   });
 });

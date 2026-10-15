@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { renderPdfPage } from '@/lib/meals/pdf-render';
 import {
   clampPan,
@@ -119,6 +119,15 @@ export default function ReceiptViewer({ files, onRotate, lang = 'de', className 
   );
 }
 
+/**
+ * The address that shows the file turned the way it is stored for this file
+ * reference (see /api/files/[fileId]). Any other address is kept as it is.
+ */
+export function rotatedFileUrl(file: Pick<ViewerFile, 'fileUrl' | 'refId'>): string {
+  if (!/^\/api\/files\/[^/?#]+$/.test(file.fileUrl)) return file.fileUrl;
+  return `${file.fileUrl}?ref=${encodeURIComponent(file.refId)}`;
+}
+
 type Source =
   | { kind: 'loading' }
   | { kind: 'failed' }
@@ -161,7 +170,7 @@ function FileView({
   /** Whether the user (or a stored value) decided the rotation; the shape-based guess applies only before that. */
   const decided = useRef(file.rotation !== null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSave = useRef<(() => void) | null>(null);
+  const pendingSave = useRef<(() => Promise<void>) | null>(null);
 
   /**
    * The picture is there and its size is known. Without a stored rotation, a
@@ -221,10 +230,32 @@ function FileView({
   useEffect(
     () => () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      pendingSave.current?.();
+      void pendingSave.current?.();
     },
     [],
   );
+
+  // Opened outside the app, the receipt is turned on the server by the
+  // rotation stored on its file reference: the link names the reference,
+  // never an angle, so it cannot show an outdated turn.
+  const externalUrl = rotatedFileUrl(file);
+  /**
+   * A turn made just before the click may still wait for its save. The tab is
+   * opened at once (inside the click, so no popup blocker stops it) and sent
+   * to the receipt once the save is through, so it shows the new rotation.
+   */
+  const openExternal = (e: MouseEvent<HTMLAnchorElement>) => {
+    const save = pendingSave.current;
+    if (!save || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+    void save().finally(() => {
+      if (tab && !tab.closed) tab.location.href = externalUrl;
+      else window.open(externalUrl, '_blank', 'noopener');
+    });
+  };
 
   const act = useCallback(
     (action: ViewerAction) => {
@@ -238,7 +269,7 @@ function FileView({
           const run = () => {
             pendingSave.current = null;
             saveTimer.current = null;
-            onRotate(file, next).then(
+            return onRotate(file, next).then(
               (ok) => setSaveFailed(!ok),
               () => setSaveFailed(true),
             );
@@ -328,7 +359,7 @@ function FileView({
               </button>
             </>
           )}
-          <a href={file.fileUrl} target="_blank" rel="noreferrer" className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon" aria-label={t.openTab} title={t.openTab}>
+          <a href={externalUrl} target="_blank" rel="noreferrer" onClick={openExternal} className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon" aria-label={t.openTab} title={t.openTab}>
             <Icon d="M9 3h4v4M13 3 7.5 8.5M11 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2.5" />
           </a>
         </div>
@@ -376,6 +407,7 @@ function FileView({
         {source.kind === 'failed' ? (
           <div className="ui-note ui-note-danger m-4 self-center" role="alert">
             {t.failed(file.originalName)}{' '}
+            {/* The viewer could not read the file, so the stored file itself is offered, untouched. */}
             <a href={file.fileUrl} target="_blank" rel="noreferrer" className="underline">
               {t.openTab}
             </a>

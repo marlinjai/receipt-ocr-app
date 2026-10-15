@@ -15,7 +15,7 @@ import {
 } from '@marlinjai/data-table-react';
 import type { Column, ColumnType, Row, GroupConfig, FooterConfig, SubItemsConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
-import { deleteReceiptsForGood, getReceiptText, getReceiptYear, getYearCounts, searchReceiptText } from './actions';
+import { deleteReceiptsForGood, getReceiptText, getReceiptYear, getYearCounts, searchReceiptText, setFieldOnRows } from './actions';
 import { scopeOf, setYearScope } from './year-scope';
 import { useCompleteRows } from './use-complete-rows';
 import type { YearCounts } from '@/lib/receipt-year-counts';
@@ -771,7 +771,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
                   ? new Set([activeRowId])
                   : selectedRows
             }
-            updateCell={updateCell}
+            setField={setFieldOnRows}
+            onDone={refresh}
           />
           <GroupBar
             groups={groups}

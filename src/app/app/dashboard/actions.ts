@@ -18,6 +18,7 @@ const SCOPED_LIST_LIMIT = 5000;
 import { MIN_TEXT_SEARCH_LENGTH, TEXT_SEARCH_LIMIT, likePattern, rowsWithoutText, textColumnIds, withoutText } from '@/lib/receipt-text';
 import { GROUP_KIND, ROW_KIND_COLUMN, rowKindColumnId } from '@/lib/receipts-kind';
 import { EVERY_ROW_LIMIT, applyDayFilters, boundsYears, readEveryRow, splitDayFilters, yearsWithin } from './day-filters';
+import { BULK_SET_PART, storedAs, type BulkSetFailure, type BulkSetOutcome } from './bulk-set';
 import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
 import { rowKind } from '@/lib/groups/service';
 import { readRowLinks } from '@/lib/groups/links';
@@ -369,7 +370,15 @@ export async function updateRow(rowId: string, cells: Record<string, CellValue>)
   // A rate typed into the grid shows up in the rates text too (see
   // `lib/tax-rates.ts`). Every edit reads the columns to know whether it is
   // one; only an edit of the rate or the tax lines also reads the stored row.
-  const columns = await adapter.getColumns(tableId);
+  return writeCells(adapter, tableId, await adapter.getColumns(tableId), rowId, cells);
+}
+
+/**
+ * The guarded write of a cell edit, for one row the caller has authorized: the
+ * rules on groups, the name that follows its cells, the tax rates text. The row
+ * comes back without its recognized text, as every row of the list.
+ */
+async function writeCells(adapter: PrismaAdapter, tableId: string, columns: Column[], rowId: string, cells: Record<string, CellValue>): Promise<Row> {
   // A group takes its name and the columns the views sort by; no row takes a kind (see `assertCellsWritable`).
   const kind = await rowKind(prisma, tableId, columns, rowId);
   assertCellsWritable(columns, kind, cells);
@@ -393,6 +402,72 @@ async function rowTable(rowId: string): Promise<{ tableId: string }> {
   const tableId = (await resolveRowTableIds([rowId])).get(rowId);
   if (!tableId) throw new Error('Row not found');
   return { tableId };
+}
+
+/**
+ * "Set field" on a part of a selection (see `bulk-set.ts`): one select column,
+ * one option or empty, written row after row through the same guarded write a
+ * cell edit takes, then read back. A row counts as done only when its stored
+ * value is the one asked for; every other row says why it was not set. One row
+ * failing does not stop the others. Access is checked once, on the column's
+ * table; a row of another table is "not found", never written.
+ */
+export async function setFieldOnRows(rowIds: string[], columnId: string, value: string | null): Promise<BulkSetOutcome> {
+  if (
+    !Array.isArray(rowIds) ||
+    rowIds.length === 0 ||
+    rowIds.length > BULK_SET_PART ||
+    rowIds.some((id) => typeof id !== 'string' || !id) ||
+    typeof columnId !== 'string' ||
+    (value !== null && typeof value !== 'string')
+  ) {
+    throw new ReceiptsAuthError(404);
+  }
+  await requireColumnAccess(columnId, 'receipts.row.write');
+  const ids = [...new Set(rowIds)];
+  const adapter = getAdapter();
+  const column = await adapter.getColumn(columnId);
+  if (!column) throw new ReceiptsAuthError(404);
+  const { tableId } = column;
+  const everyRow = (reason: BulkSetFailure): BulkSetOutcome => ({ done: [], failed: ids.map((rowId) => ({ rowId, reason })) });
+  // The bar sets select columns only; the value is an option of that column, or empty.
+  if (column.type !== 'select') return everyRow('not_writable');
+  if (value !== null && !(await adapter.getSelectOptions(columnId)).some((o) => o.id === value)) return everyRow('invalid_value');
+
+  const columns = await adapter.getColumns(tableId);
+  const tableByRow = await resolveRowTableIds(ids);
+  const failed: BulkSetOutcome['failed'] = [];
+  const written: string[] = [];
+  for (const rowId of ids) {
+    if (tableByRow.get(rowId) !== tableId) {
+      failed.push({ rowId, reason: 'not_found' });
+      continue;
+    }
+    try {
+      await writeCells(adapter, tableId, columns, rowId, { [columnId]: value });
+      written.push(rowId);
+    } catch (error) {
+      // A row deleted meanwhile is not found; a cell the row may not take (the kind, an amount on a group) is not writable.
+      const code = error instanceof GroupError ? error.code : null;
+      failed.push({ rowId, reason: code === 'row_not_found' ? 'not_found' : code === 'not_writable' ? 'not_writable' : 'failed' });
+    }
+  }
+
+  // Read back what is stored now, all rows at once: a write that answered is not yet a value that landed.
+  const done: string[] = [];
+  if (written.length > 0) {
+    await ensureRealTable(prisma, tableId);
+    const stored = await prisma.$queryRawUnsafe<Array<{ id: string; value: string | null }>>(
+      `SELECT id, ${safeColumnName(columnId)} AS value FROM ${safeTableName(tableId)} WHERE id = ANY($1::text[])`,
+      written,
+    );
+    const byId = new Map(stored.map((r) => [r.id, r.value]));
+    for (const rowId of written) {
+      if (byId.has(rowId) && storedAs(byId.get(rowId), value)) done.push(rowId);
+      else failed.push({ rowId, reason: byId.has(rowId) ? 'not_stored' : 'not_found' });
+    }
+  }
+  return { done, failed };
 }
 
 /** Why a receipt was kept when a delete was asked for. */

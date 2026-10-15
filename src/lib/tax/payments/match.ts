@@ -171,7 +171,8 @@ function numberNextToInvoiceWord(tokens: readonly Token[], needle: string, amoun
     if (INVOICE_WORDS.has(token) || (NUMBER_WORDS.has(token) && (state === 'word' || index === 0))) {
       state = 'word';
     } else if (isDigits(token) && (state === 'word' || state === 'joiner' || listContinues)) {
-      if (isAmountWithSpace(token, tokens[index + 1], amountCents)) state = 'none';
+      // "19 %" is a rate ("Rechnung 61 + 19% MwSt"), and "1 500,00" may be the payment's amount.
+      if (/^\s*%/.test(tokens[index + 1]?.gapBefore ?? '') || isAmountWithSpace(token, tokens[index + 1], amountCents)) state = 'none';
       else {
         if (stripLeadingZeros(token) === needle) return true;
         state = 'number';
@@ -199,7 +200,8 @@ const isIsoDate = (figure: string) => /^\d{4}-\d{2}-\d{2}$/.test(figure) && !Num
 function longNumberMentioned(tokens: readonly Token[], needle: string): boolean {
   const asDigits = (token: string) => (/^\d+(?:[-/]\d+)*$/.test(token) && !isIsoDate(token) ? token.replace(/[-/]/g, '') : null);
   let run: string[] = [];
-  const runMatches = () => run.length > 0 && stripLeadingZeros(run.join('')) === needle;
+  // A lone group of zeros in front ("Kd 0 2026001") is another figure, not leading zeros of the number.
+  const runMatches = () => run.length > 0 && !(run.length > 1 && /^0+$/.test(run[0])) && stripLeadingZeros(run.join('')) === needle;
   for (const token of tokens) {
     const digits = asDigits(token.text);
     if (digits !== null && run.length > 0 && /^\s+$/.test(token.gapBefore)) {

@@ -144,10 +144,16 @@ describe('referenceMentions for the plain invoice series (decision D5)', () => {
     expect(referenceMentions('Rechnung 61 + 62', '62')).toBe(true);
     expect(referenceMentions('Rechnungen 61 & 62', '62')).toBe(true);
     expect(referenceMentions('Rechnung 61 62', '62')).toBe(false);
+    // A rate is not an invoice number.
+    expect(referenceMentions('Rechnung 61 + 19% MwSt', '19')).toBe(false);
+    expect(referenceMentions('Rechnung 61 + 19 % MwSt', '19')).toBe(false);
+    expect(referenceMentions('Rechnung 61 + 19% MwSt', '61')).toBe(true);
   });
 
   it('reads a long number only as a whole run of figures, and a date never as a number', () => {
     expect(referenceMentions('Tel 030 2026001', '2026001')).toBe(false);
+    expect(referenceMentions('Kd 0 2026001', '2026001')).toBe(false);
+    expect(referenceMentions('Beleg 02026001', '2026001')).toBe(true);
     expect(referenceMentions('Kunde 9 123 4567', '1234567')).toBe(false);
     // Groups spelled with spaces that make up the whole run are the number ("2026 001"), so "123 4567" is 1234567.
     expect(referenceMentions('Kunde 123 4567', '1234567')).toBe(true);

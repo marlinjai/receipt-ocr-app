@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isValidIban,
   normalizeNumber,
   proposeEstimateMatches,
   proposeMatches,
@@ -25,9 +26,151 @@ describe('referenceMentions', () => {
 
   it('does not find a number inside a longer one, a number that is too short, or one without digits', () => {
     expect(referenceMentions('Kundennummer 120260019', '2026001')).toBe(false);
-    expect(referenceMentions('Rechnung 42', '42')).toBe(false);
     expect(referenceMentions('Danke fuer die Rechnung', 'Rechnung')).toBe(false);
     expect(referenceMentions('irgendwas', null)).toBe(false);
+    expect(referenceMentions('Rechnung 0', '0')).toBe(false);
+  });
+});
+
+describe('referenceMentions for the plain invoice series (decision D5)', () => {
+  it('finds a short number next to an invoice keyword or as the whole text', () => {
+    expect(referenceMentions('Rechnung 61', '61')).toBe(true);
+    expect(referenceMentions('RE 61', '61')).toBe(true);
+    expect(referenceMentions('RE61', '61')).toBe(true);
+    expect(referenceMentions('Rechnung-61 Webdesign', '61')).toBe(true);
+    expect(referenceMentions('Rechnung Nr. 61, vielen Dank', '61')).toBe(true);
+    expect(referenceMentions('Rechnungsnummer 061', '61')).toBe(true);
+    expect(referenceMentions('Invoice 7', '7')).toBe(true);
+    expect(referenceMentions('61', '61')).toBe(true);
+    expect(referenceMentions(' 61 ', '61')).toBe(true);
+  });
+
+  it('finds every number of a list after the keyword', () => {
+    expect(referenceMentions('Rechnung 61 und 62', '62')).toBe(true);
+    expect(referenceMentions('Rechnungen 59 u. 60', '60')).toBe(true);
+    expect(referenceMentions('Rechnung 61 und Dank 62', '62')).toBe(false);
+  });
+
+  it('never finds invoice 5 inside another figure', () => {
+    expect(referenceMentions('Rechnung 52', '5')).toBe(false);
+    expect(referenceMentions('RE52', '5')).toBe(false);
+    expect(referenceMentions('52', '5')).toBe(false);
+    expect(referenceMentions('Rechnung 15', '5')).toBe(false);
+    expect(referenceMentions('Rechnung 52 vom 05.10.2026', '5')).toBe(false);
+    expect(referenceMentions('Rechnung 5,00 EUR', '5')).toBe(false);
+    expect(referenceMentions('Rechnung 5/6', '5')).toBe(false);
+  });
+
+  it('never finds a short number inside a date, an amount or an account number', () => {
+    expect(referenceMentions('Rechnung vom 12.10.2026', '12')).toBe(false);
+    expect(referenceMentions('Rechnung 12.10.2026', '12')).toBe(false);
+    expect(referenceMentions('Rechnung 2026-10-12', '12')).toBe(false);
+    expect(referenceMentions('Zahlung 61,00 EUR', '61')).toBe(false);
+    expect(referenceMentions('DE89 3704 0044 0532 0130 61', '61')).toBe(false);
+    expect(referenceMentions('IBAN DE61370400440532013000', '61')).toBe(false);
+  });
+
+  it('does not take a bare number without a keyword next to other text', () => {
+    expect(referenceMentions('Webdesign 61 Danke', '61')).toBe(false);
+    expect(referenceMentions('Kundennr 61', '61')).toBe(false);
+  });
+
+  it('takes "Nr" only after an invoice word or at the start, never for a customer, order or tax number', () => {
+    expect(referenceMentions('Kunden-Nr. 12', '12')).toBe(false);
+    expect(referenceMentions('Kd Nr 12', '12')).toBe(false);
+    expect(referenceMentions('Auftrags-Nr 7', '7')).toBe(false);
+    expect(referenceMentions('Steuer-Nr. 5', '5')).toBe(false);
+    expect(referenceMentions('Mandats-Nr 3', '3')).toBe(false);
+    expect(referenceMentions('Rechnung Nr. 61', '61')).toBe(true);
+    expect(referenceMentions('Rg.-Nr. 61', '61')).toBe(true);
+    expect(referenceMentions('Rechnungs-Nr. 61', '61')).toBe(true);
+    expect(referenceMentions('Nr. 61 Webdesign', '61')).toBe(true);
+  });
+
+  it('closes the list at a bare second number, and reads a thousands group as part of an amount', () => {
+    expect(referenceMentions('Rechnung 61 500 EUR', '500')).toBe(false);
+    expect(referenceMentions('Rechnung 1 500,00 EUR', '1')).toBe(false);
+    expect(referenceMentions('Rechnung 61 2 Stueck', '2')).toBe(false);
+    expect(referenceMentions('RE 61 52', '52')).toBe(false);
+    expect(referenceMentions('Re 1 2 3 4', '4')).toBe(false);
+  });
+
+  it('names neither invoice of a list written without spaces (the safe side)', () => {
+    for (const text of ['Rechnung 61,62', 'Rechnungen 61-62', 'Rechnung 61/62']) {
+      expect(referenceMentions(text, '61')).toBe(false);
+      expect(referenceMentions(text, '62')).toBe(false);
+    }
+  });
+
+  it('treats numbers of four and five digits the same way, leading zeros included', () => {
+    expect(referenceMentions('Zahlung 12.10.2026', '2026')).toBe(false);
+    expect(referenceMentions('Rechnung 12.10.2026', '2026')).toBe(false);
+    expect(referenceMentions('Betrag 1.001,00', '1001')).toBe(false);
+    expect(referenceMentions('DE89 3704 0044 0532 0130 00', '3704')).toBe(false);
+    expect(referenceMentions('10115 Berlin', '10115')).toBe(false);
+    expect(referenceMentions('Rechnung 1001', '1001')).toBe(true);
+    expect(referenceMentions('Rechnung 61', '0061')).toBe(true);
+    expect(referenceMentions('RE 0061', '61')).toBe(true);
+  });
+
+  it('finds a long purely numeric number as a whole figure anywhere, but not inside an account number', () => {
+    expect(referenceMentions('Beleg 2026001 danke', '2026001')).toBe(true);
+    expect(referenceMentions('Beleg 2026-001', '2026001')).toBe(true);
+    expect(referenceMentions('Beleg 2026 001', '2026001')).toBe(true);
+    expect(referenceMentions('Beleg 2026 0019', '2026001')).toBe(false);
+    expect(referenceMentions('IBAN DE89370400440532013000', '370400440532')).toBe(false);
+  });
+
+  it('does not take an invoice word glued into an account-like text for an account number', () => {
+    expect(referenceMentions('RE61 Webdesignleistungen Oktober', '61')).toBe(true);
+    // Shaped like an IBAN, but its check digits are wrong: it is invoice 61 and other figures.
+    expect(isValidIban('RE61 1234 5678 9012')).toBe(false);
+    expect(referenceMentions('RE61 1234 5678 9012', '61')).toBe(true);
+    expect(isValidIban('DE89 3704 0044 0532 0130 00')).toBe(true);
+  });
+
+  it('tells an invoice number followed by the amount from an amount written with a space, by the payment amount', () => {
+    expect(referenceMentions('Rechnung 61 150,00 EUR', '61', 15_000)).toBe(true);
+    expect(referenceMentions('RE 61 250,00', '61', -25_000)).toBe(true);
+    expect(referenceMentions('Rechnung 61 500 EUR', '61', 50_000)).toBe(true);
+    expect(referenceMentions('Rechnung 1 500,00 EUR', '1', 150_000)).toBe(false);
+    expect(referenceMentions('Rechnung 1 500 EUR', '1', 150_000)).toBe(false);
+    // Without the payment's amount it stays on the safe side.
+    expect(referenceMentions('Rechnung 61 150,00 EUR', '61')).toBe(false);
+  });
+
+  it('continues a list after a comma, a plus or an ampersand, never after a bare space', () => {
+    expect(referenceMentions('Rechnung 61, 62', '62')).toBe(true);
+    expect(referenceMentions('Rechnung 61 + 62', '62')).toBe(true);
+    expect(referenceMentions('Rechnungen 61 & 62', '62')).toBe(true);
+    expect(referenceMentions('Rechnung 61 62', '62')).toBe(false);
+    // A rate is not an invoice number.
+    expect(referenceMentions('Rechnung 61 + 19% MwSt', '19')).toBe(false);
+    expect(referenceMentions('Rechnung 61 + 19 % MwSt', '19')).toBe(false);
+    expect(referenceMentions('Rechnung 61 + 19% MwSt', '61')).toBe(true);
+  });
+
+  it('reads a long number only as a whole run of figures, and a date never as a number', () => {
+    expect(referenceMentions('Tel 030 2026001', '2026001')).toBe(false);
+    expect(referenceMentions('Kd 0 2026001', '2026001')).toBe(false);
+    expect(referenceMentions('Beleg 02026001', '2026001')).toBe(true);
+    expect(referenceMentions('Kunde 9 123 4567', '1234567')).toBe(false);
+    // Groups spelled with spaces that make up the whole run are the number ("2026 001"), so "123 4567" is 1234567.
+    expect(referenceMentions('Kunde 123 4567', '1234567')).toBe(true);
+    expect(referenceMentions('Datum 2026-10-01', '20261001')).toBe(false);
+    expect(referenceMentions('Beleg 2026001, danke', '2026001')).toBe(true);
+  });
+
+  it('never counts a number with letters that is shorter than four characters', () => {
+    expect(referenceMentions('Rechnung RE-5', 'RE-5')).toBe(false);
+  });
+
+  it('links a payment that names its invoice to that invoice only, not to one whose number is inside it', () => {
+    const proposals = proposeMatches(
+      [payment({ id: 'p', reference: 'Rechnung 52', amountCents: 50_000 })],
+      [document({ id: 'five', number: '5', openCents: 50_000 }), document({ id: 'fiftytwo', number: '52', openCents: 50_000 })],
+    );
+    expect(unambiguousReferenceMatches(proposals)).toEqual([{ paymentId: 'p', documentId: 'fiftytwo', strength: 'reference' }]);
   });
 });
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import ReceiptViewer, { type ViewerFile } from './meals/ReceiptViewer';
+import ToolIcon from './ui/ToolIcon';
 import type { Rotation } from '@/lib/meals/viewer-state';
 
 /**
@@ -53,33 +54,23 @@ export default function ReceiptLightbox({
         aria-modal="true"
         aria-label="Receipt preview"
         onClick={(e) => e.stopPropagation()}
-        style={{ position: 'relative', width: 'min(92vw, 1100px)', height: '90vh' }}
+        className="flex flex-col gap-2"
+        style={{ width: 'min(92vw, 1100px)', height: '90vh' }}
       >
-        <button
-          ref={closeRef}
-          onClick={onClose}
-          style={{
-            position: 'absolute',
-            top: -12,
-            right: -12,
-            width: 32,
-            height: 32,
-            borderRadius: '50%',
-            border: '1px solid rgba(255,255,255,0.2)',
-            background: 'rgba(0,0,0,0.6)',
-            color: '#fff',
-            fontSize: 18,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1,
-          }}
-          aria-label="Close preview"
-        >
-          &times;
-        </button>
-        <ReceiptViewer files={[file]} onRotate={onRotate} lang="en" className="h-full" />
+        {/* Its own row above the viewer, so it never covers the viewer's tools in the corner. */}
+        <div className="flex justify-end">
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white hover:bg-black/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+            aria-label="Close preview"
+            title="Close preview (Esc)"
+          >
+            <ToolIcon name="close" />
+          </button>
+        </div>
+        <ReceiptViewer files={[file]} onRotate={onRotate} lang="en" className="min-h-0 flex-1" />
       </div>
     </div>
   );

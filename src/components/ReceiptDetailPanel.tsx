@@ -5,6 +5,7 @@ import type { Row, Column, SelectOption } from '@marlinjai/data-table-core';
 import type { FileReference } from '@marlinjai/data-table-core';
 import { validateReceiptFile } from '@/lib/presigned-file-adapter';
 import ReceiptLightbox from './ReceiptLightbox';
+import ToolIcon from './ui/ToolIcon';
 import ReceiptViewer, { type ViewerFile } from './meals/ReceiptViewer';
 import { parseRotation, type Rotation } from '@/lib/meals/viewer-state';
 import { saveReceiptRotation } from '@/app/app/meals/actions';
@@ -30,6 +31,10 @@ interface ReceiptDetailPanelProps {
 }
 
 const MAX_FILES_PER_ROW = 10;
+/** The focus ring of the panel's own buttons, the brushed gold of the rest of the app. */
+const FOCUS_RING = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]';
+/** The icon buttons on a file row: a 40 pixel hit area, like the viewer tools and the app's checkbox. */
+const ROW_ICON_BUTTON = `inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-gray-700 ${FOCUS_RING}`;
 const PANEL_FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 
@@ -453,11 +458,13 @@ export default function ReceiptDetailPanel({
                   className="h-[420px]"
                 />
                 <button
+                  type="button"
                   onClick={() => setLightboxFile(previewFile)}
-                  className="absolute bottom-2 right-2 rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-xs text-gray-300 hover:bg-black/80 hover:text-white"
-                  aria-label="Open full-size preview"
+                  className={`absolute bottom-2 right-2 inline-flex min-h-10 items-center gap-1.5 rounded-md border border-gray-700 bg-black/70 px-3 text-sm text-gray-200 hover:bg-black/85 hover:text-white ${FOCUS_RING}`}
+                  title="Open full-size preview"
                 >
-                  ⤢ Expand
+                  <ToolIcon name="expand" size={18} />
+                  Expand
                 </button>
               </div>
             ) : (
@@ -470,9 +477,14 @@ export default function ReceiptDetailPanel({
                 {files.map((f, idx) => (
                   <li
                     key={f.id}
-                    className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-xs ${idx === previewIdx ? 'bg-gray-800 text-gray-100' : 'text-gray-400 hover:bg-gray-800/60'}`}
+                    className={`flex items-center gap-1 rounded-md py-0.5 pl-2 pr-0.5 text-xs ${idx === previewIdx ? 'bg-gray-800 text-gray-100' : 'text-gray-400 hover:bg-gray-800/60'}`}
                   >
-                    <button onClick={() => setPreviewIdx(idx)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewIdx(idx)}
+                      aria-current={idx === previewIdx ? 'true' : undefined}
+                      className={`flex min-h-10 min-w-0 flex-1 items-center gap-2 self-stretch rounded-md text-left ${FOCUS_RING}`}
+                    >
                       <span aria-hidden>{f.mimeType === 'application/pdf' ? '📄' : '🖼️'}</span>
                       <span className="truncate">{f.originalName}</span>
                       {f.sizeBytes ? (
@@ -480,11 +492,13 @@ export default function ReceiptDetailPanel({
                       ) : null}
                     </button>
                     <button
+                      type="button"
                       onClick={() => setLightboxFile(f)}
-                      className="shrink-0 rounded px-1.5 py-0.5 text-gray-500 hover:bg-gray-700 hover:text-gray-200"
+                      className={`${ROW_ICON_BUTTON} hover:text-gray-100`}
                       aria-label={`Preview ${f.originalName}`}
+                      title="Full-size preview"
                     >
-                      ⤢
+                      <ToolIcon name="expand" />
                     </button>
                     {onDeleteFile && imageColId && (
                       <button
@@ -494,10 +508,12 @@ export default function ReceiptDetailPanel({
                           );
                           setPreviewIdx(0);
                         }}
-                        className="shrink-0 rounded px-1.5 py-0.5 text-gray-500 hover:bg-gray-700 hover:text-red-400"
+                        type="button"
+                        className={`${ROW_ICON_BUTTON} hover:text-red-400`}
                         aria-label={`Remove ${f.originalName}`}
+                        title="Remove file"
                       >
-                        ✕
+                        <ToolIcon name="close" />
                       </button>
                     )}
                   </li>

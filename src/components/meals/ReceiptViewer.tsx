@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useReducer, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { renderPdfPage } from '@/lib/meals/pdf-render';
+import ToolIcon from '@/components/ui/ToolIcon';
 import {
   clampPan,
   fitScale,
@@ -132,15 +133,6 @@ type Source =
   | { kind: 'loading' }
   | { kind: 'failed' }
   | { kind: 'ready'; url: string; size: Size; pageCount: number };
-
-function Icon({ d, flip }: { d: string; flip?: boolean }) {
-  return (
-    <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" focusable="false" style={flip ? { transform: 'scaleX(-1)' } : undefined}>
-      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-const ROTATE_PATH = 'M12.5 8a4.5 4.5 0 1 1-1.6-3.45M12.6 2.4v2.6H10';
 
 function FileView({
   file,
@@ -340,7 +332,7 @@ function FileView({
   const toolButton = (label: string, key: string, action: ViewerAction, icon: ReactNode, disabled = false) => (
     <button
       type="button"
-      className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon"
+      className="ui-btn ui-btn-ghost ui-viewer-tool"
       aria-label={label}
       title={`${label} (${key})`}
       disabled={disabled || source.kind !== 'ready'}
@@ -353,18 +345,18 @@ function FileView({
   return (
     <>
       <div className="ui-viewer-bar">
-        <div className="flex items-center gap-0.5" role="toolbar" aria-label={t.viewer}>
-          {toolButton(t.rotateLeft, 'Shift + R', { type: 'rotate', direction: -1 }, <Icon d={ROTATE_PATH} flip />)}
-          {toolButton(t.rotateRight, 'R', { type: 'rotate', direction: 1 }, <Icon d={ROTATE_PATH} />)}
+        <div className="flex flex-wrap items-center gap-0.5" role="toolbar" aria-label={t.viewer}>
+          {toolButton(t.rotateLeft, 'Shift + R', { type: 'rotate', direction: -1 }, <ToolIcon name="rotateLeft" />)}
+          {toolButton(t.rotateRight, 'R', { type: 'rotate', direction: 1 }, <ToolIcon name="rotateRight" />)}
           <span className="ui-viewer-sep" aria-hidden="true" />
-          {toolButton(t.zoomOut, '-', { type: 'zoom', direction: -1 }, <Icon d="M4 8h8" />, view.zoom <= 1)}
-          <span className="w-11 text-center text-xs tabular-nums" style={{ color: 'var(--muted)' }} aria-hidden="true">
+          {toolButton(t.zoomOut, '-', { type: 'zoom', direction: -1 }, <ToolIcon name="minus" />, view.zoom <= 1)}
+          <span className="w-14 text-center text-sm tabular-nums" style={{ color: 'var(--muted)' }} aria-hidden="true">
             {zoomPercent} %
           </span>
-          {toolButton(t.zoomIn, '+', { type: 'zoom', direction: 1 }, <Icon d="M4 8h8M8 4v8" />)}
+          {toolButton(t.zoomIn, '+', { type: 'zoom', direction: 1 }, <ToolIcon name="plus" />)}
           <button
             type="button"
-            className="ui-btn ui-btn-sm ui-btn-ghost px-2 text-xs"
+            className="ui-btn ui-btn-ghost"
             title={`${t.fit} (0)`}
             disabled={source.kind !== 'ready' || (view.zoom === 1 && view.panX === 0 && view.panY === 0)}
             onClick={() => act({ type: 'fit' })}
@@ -375,19 +367,19 @@ function FileView({
         <div className="flex items-center gap-1">
           {source.kind === 'ready' && source.pageCount > 1 && (
             <>
-              <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon" aria-label={t.prevPage} disabled={page <= 1} onClick={() => turnPage(-1)}>
-                <Icon d="M10 3.5 5.5 8l4.5 4.5" />
+              <button type="button" className="ui-btn ui-btn-ghost ui-viewer-tool" aria-label={t.prevPage} title={t.prevPage} disabled={page <= 1} onClick={() => turnPage(-1)}>
+                <ToolIcon name="chevronLeft" />
               </button>
-              <span className="text-xs tabular-nums" style={{ color: 'var(--muted)' }}>
+              <span className="text-sm tabular-nums" style={{ color: 'var(--muted)' }}>
                 {t.page(page, source.pageCount)}
               </span>
-              <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon" aria-label={t.nextPage} disabled={page >= source.pageCount} onClick={() => turnPage(1)}>
-                <Icon d="M6 3.5 10.5 8 6 12.5" />
+              <button type="button" className="ui-btn ui-btn-ghost ui-viewer-tool" aria-label={t.nextPage} title={t.nextPage} disabled={page >= source.pageCount} onClick={() => turnPage(1)}>
+                <ToolIcon name="chevronRight" />
               </button>
             </>
           )}
-          <a href={externalUrl} target="_blank" rel="noreferrer" onClick={openExternal} onAuxClick={openExternal}className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon" aria-label={t.openTab} title={t.openTab}>
-            <Icon d="M9 3h4v4M13 3 7.5 8.5M11 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2.5" />
+          <a href={externalUrl} target="_blank" rel="noreferrer" onClick={openExternal} onAuxClick={openExternal} className="ui-btn ui-btn-ghost ui-viewer-tool" aria-label={t.openTab} title={t.openTab}>
+            <ToolIcon name="external" />
           </a>
         </div>
       </div>

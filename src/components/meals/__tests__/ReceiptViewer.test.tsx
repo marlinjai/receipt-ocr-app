@@ -383,3 +383,45 @@ describe('ReceiptViewer: opening outside the app', () => {
     open.mockRestore();
   });
 });
+
+describe('ReceiptViewer: the tools are easy to see and to hit', () => {
+  const TOOLS = ['Nach links drehen', 'Nach rechts drehen', 'Verkleinern', 'Vergrößern'];
+
+  it('every icon tool is a 40 pixel tool with a 20 pixel glyph, a German name and a tooltip', () => {
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} />);
+    loadImage(300, 900);
+    const tools = [...TOOLS.map((name) => screen.getByRole('button', { name })), screen.getByRole('link', { name: 'In neuem Tab öffnen' })];
+    for (const tool of tools) {
+      expect(tool.className).toContain('ui-viewer-tool');
+      expect(tool.className).not.toContain('ui-btn-sm');
+      expect(tool.getAttribute('title')).toMatch(/^(Nach|Ver|In neuem)/);
+      const glyph = tool.querySelector('svg')!;
+      expect(glyph.getAttribute('width')).toBe('20');
+      expect(glyph.getAttribute('aria-hidden')).toBe('true');
+    }
+  });
+
+  it('the tooltips name the key as well', () => {
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} />);
+    expect(screen.getByRole('button', { name: 'Nach rechts drehen' }).getAttribute('title')).toBe('Nach rechts drehen (R)');
+    expect(screen.getByRole('button', { name: 'Nach links drehen' }).getAttribute('title')).toBe('Nach links drehen (Shift + R)');
+  });
+
+  it('the page buttons of a multi-page PDF get the same size and a tooltip', async () => {
+    renderPdfPage.mockResolvedValue({ url: 'blob:page', width: 300, height: 900, pageCount: 3 });
+    render(<ReceiptViewer files={[pdf({ rotation: 0 })]} />);
+    const next = await screen.findByRole('button', { name: 'Nächste Seite' });
+    expect(next.className).toContain('ui-viewer-tool');
+    expect(next.getAttribute('title')).toBe('Nächste Seite');
+    expect(next.querySelector('svg')!.getAttribute('width')).toBe('20');
+  });
+
+  it('the rotate left glyph is the rotate right glyph mirrored', () => {
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} />);
+    const left = screen.getByRole('button', { name: 'Nach links drehen' }).querySelector('svg')!;
+    const right = screen.getByRole('button', { name: 'Nach rechts drehen' }).querySelector('svg')!;
+    expect(left.querySelector('path')!.getAttribute('d')).toBe(right.querySelector('path')!.getAttribute('d'));
+    expect(left.style.transform).toBe('scaleX(-1)');
+    expect(right.style.transform).toBe('');
+  });
+});

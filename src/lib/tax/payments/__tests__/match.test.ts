@@ -25,9 +25,61 @@ describe('referenceMentions', () => {
 
   it('does not find a number inside a longer one, a number that is too short, or one without digits', () => {
     expect(referenceMentions('Kundennummer 120260019', '2026001')).toBe(false);
-    expect(referenceMentions('Rechnung 42', '42')).toBe(false);
     expect(referenceMentions('Danke fuer die Rechnung', 'Rechnung')).toBe(false);
     expect(referenceMentions('irgendwas', null)).toBe(false);
+    expect(referenceMentions('Rechnung 0', '0')).toBe(false);
+  });
+});
+
+describe('referenceMentions for the plain invoice series (decision D5)', () => {
+  it('finds a short number next to an invoice keyword or as the whole text', () => {
+    expect(referenceMentions('Rechnung 61', '61')).toBe(true);
+    expect(referenceMentions('RE 61', '61')).toBe(true);
+    expect(referenceMentions('RE61', '61')).toBe(true);
+    expect(referenceMentions('Rechnung-61 Webdesign', '61')).toBe(true);
+    expect(referenceMentions('Rechnung Nr. 61, vielen Dank', '61')).toBe(true);
+    expect(referenceMentions('Rechnungsnummer 061', '61')).toBe(true);
+    expect(referenceMentions('Invoice 7', '7')).toBe(true);
+    expect(referenceMentions('61', '61')).toBe(true);
+    expect(referenceMentions(' 61 ', '61')).toBe(true);
+  });
+
+  it('finds every number of a list after the keyword', () => {
+    expect(referenceMentions('Rechnung 61 und 62', '62')).toBe(true);
+    expect(referenceMentions('Rechnungen 59 u. 60', '60')).toBe(true);
+    expect(referenceMentions('Rechnung 61 und Dank 62', '62')).toBe(false);
+  });
+
+  it('never finds invoice 5 inside another figure', () => {
+    expect(referenceMentions('Rechnung 52', '5')).toBe(false);
+    expect(referenceMentions('RE52', '5')).toBe(false);
+    expect(referenceMentions('52', '5')).toBe(false);
+    expect(referenceMentions('Rechnung 15', '5')).toBe(false);
+    expect(referenceMentions('Rechnung 52 vom 05.10.2026', '5')).toBe(false);
+    expect(referenceMentions('Rechnung 5,00 EUR', '5')).toBe(false);
+    expect(referenceMentions('Rechnung 5/6', '5')).toBe(false);
+  });
+
+  it('never finds a short number inside a date, an amount or an account number', () => {
+    expect(referenceMentions('Rechnung vom 12.10.2026', '12')).toBe(false);
+    expect(referenceMentions('Rechnung 12.10.2026', '12')).toBe(false);
+    expect(referenceMentions('Rechnung 2026-10-12', '12')).toBe(false);
+    expect(referenceMentions('Zahlung 61,00 EUR', '61')).toBe(false);
+    expect(referenceMentions('DE89 3704 0044 0532 0130 61', '61')).toBe(false);
+    expect(referenceMentions('IBAN DE61370400440532013000', '61')).toBe(false);
+  });
+
+  it('does not take a bare number without a keyword next to other text', () => {
+    expect(referenceMentions('Webdesign 61 Danke', '61')).toBe(false);
+    expect(referenceMentions('Kundennr 61', '61')).toBe(false);
+  });
+
+  it('links a payment that names its invoice to that invoice only, not to one whose number is inside it', () => {
+    const proposals = proposeMatches(
+      [payment({ id: 'p', reference: 'Rechnung 52', amountCents: 50_000 })],
+      [document({ id: 'five', number: '5', openCents: 50_000 }), document({ id: 'fiftytwo', number: '52', openCents: 50_000 })],
+    );
+    expect(unambiguousReferenceMatches(proposals)).toEqual([{ paymentId: 'p', documentId: 'fiftytwo', strength: 'reference' }]);
   });
 });
 

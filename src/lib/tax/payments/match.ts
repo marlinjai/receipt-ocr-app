@@ -48,13 +48,89 @@ export function normalizeNumber(text: string): string {
 }
 
 /**
- * Does the payment's text carry the document's number? The number must be
- * long enough to mean something (four characters with at least one digit),
- * and must not merely be a stretch of digits inside a longer number.
+ * Words that announce an invoice number in a transfer text: "Rechnung 61",
+ * "RE 61", "Rechnung Nr. 61", "Rechnungsnummer 61", "Invoice 61". The number
+ * must follow one of them directly (glued is fine: "RE61", "Rechnung-61").
+ */
+export const INVOICE_NUMBER_KEYWORDS: ReadonlySet<string> = new Set([
+  'rechnung',
+  'rechnungen',
+  'rechnungsnr',
+  'rechnungsnummer',
+  'rg',
+  'rgnr',
+  're',
+  'renr',
+  'nr',
+  'no',
+  'invoice',
+  'inv',
+]);
+
+/** Words that continue a list of numbers after a keyword: "Rechnung 61 und 62". */
+const LIST_JOINERS: ReadonlySet<string> = new Set(['und', 'u', 'and', 'sowie']);
+
+/**
+ * The transfer text as words and figures. A figure keeps its inner separators
+ * ("12.10.2026", "61,00", "61/62" are one figure each), so a number inside a
+ * date, an amount or a longer figure never stands as a figure of its own.
+ * Letters and digits glued together are separate tokens ("RE61" is "re", "61").
+ */
+function figureTokens(reference: string): string[] {
+  return reference.toLowerCase().match(/[a-zäöüß]+|\d+(?:[.,/:-]\d+)*/g) ?? [];
+}
+
+/** "061" and "61" are the same short number. */
+const stripLeadingZeros = (digits: string) => digits.replace(/^0+(?=\d)/, '');
+
+/**
+ * Is a short purely numeric invoice number (one to three digits, the plain
+ * series this business uses) named in the text? Only as a whole figure, and
+ * only where it cannot be anything else: the whole text is that number, or the
+ * number follows an invoice keyword directly, or continues such a list
+ * ("Rechnung 61 und 62"). Invoice 5 is never found in "52", "Rechnung 52",
+ * "12.05.2026", an amount of "5,00" or an account number.
+ */
+function shortNumberMentioned(reference: string, digits: string): boolean {
+  const needle = stripLeadingZeros(digits);
+  const tokens = figureTokens(reference);
+  const isNumber = (token: string) => /^\d+$/.test(token);
+  if (tokens.length === 1 && isNumber(tokens[0])) return stripLeadingZeros(tokens[0]) === needle;
+  let inList = false;
+  let previousWasNumber = false;
+  for (const token of tokens) {
+    if (INVOICE_NUMBER_KEYWORDS.has(token)) {
+      inList = true;
+      previousWasNumber = false;
+    } else if (isNumber(token) && inList) {
+      if (stripLeadingZeros(token) === needle) return true;
+      previousWasNumber = true;
+    } else if (LIST_JOINERS.has(token) && inList && previousWasNumber) {
+      previousWasNumber = false;
+    } else {
+      inList = false;
+      previousWasNumber = false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Does the payment's text carry the document's number? Always as a whole
+ * token, never as a stretch of digits inside a longer number (decision D5 of
+ * the invoicing plan).
+ *
+ * A number of four characters or more (with at least one digit) counts
+ * wherever it stands as its own word, or spelled with spaces or dashes
+ * ("RE-2026/001" and "re 2026 001"). A short number of the plain integer
+ * series (invoice 61) says too little on its own, so it counts only when it is
+ * the whole text or follows an invoice keyword ("Rechnung 61", "RE61",
+ * "Rechnung Nr. 61"): see `shortNumberMentioned`.
  */
 export function referenceMentions(reference: string, number: string | null): boolean {
   if (!number) return false;
   const needle = normalizeNumber(number);
+  if (needle.length < 4 && /^\d+$/.test(needle) && /[1-9]/.test(needle)) return shortNumberMentioned(reference, needle);
   if (needle.length < 4 || !/\d/.test(needle)) return false;
   // Compare token-wise first (the number as its own word), then glued spellings.
   const tokens = reference.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);

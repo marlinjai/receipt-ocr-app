@@ -30,6 +30,12 @@ describe('categorise', () => {
     expect(categorise(spend('', 'Betrag netto 100')).category).toBe('unclear');
     expect(categorise(spend('', 'Rechnung 1/1')).category).toBe('unclear');
     expect(categorise(spend('', 'Otto Beispiel Geburtstag')).category).toBe('unclear');
+    // A person with a brand's name as counterparty is no brand.
+    expect(categorise(spend('otto beispiel')).category).toBe('unclear');
+    expect(categorise(spend('penny beispiel')).category).toBe('unclear');
+    expect(categorise(spend('miles beispiel')).category).toBe('unclear');
+    expect(categorise(spend('otto')).category).toBe('shopping_household');
+    expect(categorise(spend('otto versand')).category).toBe('shopping_household');
     // In the counterparty's own name they do count.
     expect(categorise(spend('netto marken discount')).category).toBe('groceries_drugstore');
   });
@@ -94,5 +100,9 @@ describe('spendingCents', () => {
     expect(spendingCents({ kind: 'private', amountCents: 5000 })).toBeNull();
     expect(spendingCents({ kind: 'private', amountCents: -5000 })).toBe(5000);
     expect(spendingCents({ kind: 'spend', amountCents: 5000 })).toBeNull();
+  });
+  it('lets a fee given back lower the fees', () => {
+    expect(spendingCents({ kind: 'fee', amountCents: 300 })).toBe(-300);
+    expect(spendingCents({ kind: 'fee', amountCents: -300 })).toBe(300);
   });
 });

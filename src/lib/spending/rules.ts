@@ -52,8 +52,14 @@ export interface KeywordRule {
   category: SpendingCategory;
   /** Matched as whole words in the counterparty's name and in the payment's text. */
   words: readonly string[];
-  /** Matched in the counterparty's name only: short brands that are also surnames or ordinary words. */
+  /** Matched in the counterparty's name only: short brands that are also ordinary words. */
   nameOnly?: readonly string[];
+  /**
+   * Matched only when they ARE the whole counterparty name: brands that are
+   * also first names or surnames ("otto", "penny"), because money sent to a
+   * person has that person as its counterparty.
+   */
+  exactName?: readonly string[];
 }
 
 /** Rules for money that needs no receipt. Tried first, in the name or the text. */
@@ -99,12 +105,14 @@ export const BRAND_RULES: readonly KeywordRule[] = [
       'deutsche bahn', 'db vertrieb', 'db fernverkehr', 'flixbus', 'flixtrain', 'freenow', 'free now', 'share now',
       'totalenergies', 'tankstelle', 'lufthansa', 'ryanair', 'eurowings', 'easyjet', 'parkhaus',
     ],
-    nameOnly: ['bahn', 'bvg', 'mvg', 'hvv', 'rmv', 'vbb', 'kvb', 'uber', 'bolt', 'tier', 'lime', 'voi', 'miles', 'sixt', 'shell', 'aral', 'esso', 'condor', 'adac'],
+    nameOnly: ['bahn', 'bvg', 'mvg', 'hvv', 'rmv', 'vbb', 'kvb', 'uber', 'shell', 'aral', 'esso', 'adac', 'miles mobility', 'tier mobility', 'lime bike', 'bolt operations', 'sixt autovermietung'],
+    exactName: ['bolt', 'tier', 'lime', 'voi', 'miles', 'sixt', 'condor'],
   },
   {
     category: 'groceries_drugstore',
     words: ['rewe', 'edeka', 'aldi', 'lidl', 'kaufland', 'rossmann', 'dm drogerie', 'mueller drogerie', 'drogerie mueller', 'alnatura', 'bio company', 'supermarkt'],
-    nameOnly: ['netto', 'penny', 'dm', 'budni', 'denns', 'tegut', 'globus', 'flink', 'picnic', 'knuspr'],
+    nameOnly: ['netto', 'netto marken discount', 'penny markt', 'globus markt', 'dm', 'budni', 'denns', 'tegut', 'flink', 'picnic', 'knuspr'],
+    exactName: ['penny', 'globus'],
   },
   {
     category: 'leisure_sport',
@@ -119,7 +127,8 @@ export const BRAND_RULES: readonly KeywordRule[] = [
   {
     category: 'shopping_household',
     words: ['amazon', 'amzn', 'zalando', 'ikea', 'mediamarkt', 'media markt', 'hornbach', 'tchibo', 'primark', 'decathlon', 'ebay', 'etsy', 'temu', 'shein', 'about you', 'galaxus', 'apple store'],
-    nameOnly: ['otto', 'saturn', 'obi', 'bauhaus', 'toom'],
+    nameOnly: ['otto versand', 'otto payments', 'saturn', 'obi', 'bauhaus', 'toom'],
+    exactName: ['otto'],
   },
 ];
 
@@ -132,7 +141,8 @@ export function normalizeText(text: string): string {
 }
 
 const hasPhrase = (text: string, phrase: string) => text.length > 0 && ` ${text} `.includes(` ${phrase} `);
-const inName = (rule: KeywordRule, name: string) => [...rule.words, ...(rule.nameOnly ?? [])].some((w) => hasPhrase(name, w));
+const inName = (rule: KeywordRule, name: string) =>
+  [...rule.words, ...(rule.nameOnly ?? [])].some((w) => hasPhrase(name, w)) || (rule.exactName ?? []).includes(name);
 const inText = (rule: KeywordRule, text: string) => rule.words.some((w) => hasPhrase(text, w));
 
 /** The category the words say, or null (see the order at the top of this file). */
@@ -173,13 +183,14 @@ export function purposeOf(payment: { kind: PaymentKind }, treatment: Counterpart
 
 /**
  * How a payment counts as spending, in cents: money out is positive; money
- * back for a purchase (a refund) is negative and lowers its category. Any
+ * back for a purchase (a refund) or a fee given back is negative and lowers
+ * its category (some banks mark every fee row as a fee, whatever its sign). Any
  * other money coming in (income, or a payment in that a person marked
  * private, such as money paid back by a friend) and moving money between own
  * accounts are not spending: null.
  */
 export function spendingCents(payment: { kind: PaymentKind; amountCents: number }): number | null {
   if (payment.kind === 'income' || payment.kind === 'own_transfer') return null;
-  if (payment.kind === 'refund') return -payment.amountCents;
+  if (payment.kind === 'refund' || payment.kind === 'fee') return -payment.amountCents;
   return payment.amountCents < 0 ? -payment.amountCents : null;
 }

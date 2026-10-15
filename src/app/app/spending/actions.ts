@@ -4,11 +4,13 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
-import { PaymentServiceError, setCounterpartyTreatment } from '@/lib/tax/payments/service';
+import { PaymentServiceError } from '@/lib/tax/payments/service';
 import {
   SpendingServiceError,
   loadSpending,
+  markCounterpartyOwnAccount,
   removeCounterpartyCategory,
+  unmarkCounterpartyOwnAccount,
   setCounterpartyCategory,
   type SpendingContext,
   type SpendingView,
@@ -90,15 +92,22 @@ export async function withdrawCategory(year: unknown, month: unknown, counterpar
   }
 }
 
-/**
- * The counterparty is one of the owner's own accounts (a credit card paid off
- * from the bank, a savings account): the same answer as in the payments tab,
- * so its payments stop counting as spending everywhere.
- */
+/** The counterparty is one of the owner's own accounts (see `markCounterpartyOwnAccount`). */
 export async function markOwnAccount(year: unknown, month: unknown, counterparty: unknown): Promise<Result<SpendingPageView>> {
   try {
     const ctx = await writeContext();
-    await setCounterpartyTreatment(prisma, ctx, { counterparty, treatment: 'own_account' });
+    await markCounterpartyOwnAccount(prisma, ctx, counterparty);
+    return { ok: true, value: await view(ctx.workspaceId, year, month, true) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Take an own-account answer back, by its stored key. */
+export async function unmarkOwnAccount(year: unknown, month: unknown, counterpartyKey: unknown): Promise<Result<SpendingPageView>> {
+  try {
+    const ctx = await writeContext();
+    await unmarkCounterpartyOwnAccount(prisma, ctx, counterpartyKey);
     return { ok: true, value: await view(ctx.workspaceId, year, month, true) };
   } catch (e) {
     return failure(e);

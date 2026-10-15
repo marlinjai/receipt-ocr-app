@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { createAccount, importPayments, setCounterpartyTreatment } from '@/lib/tax/payments/service';
-import { SpendingServiceError, loadSpending, removeCounterpartyCategory, setCounterpartyCategory, type SpendingContext } from '../service';
+import { SpendingServiceError, loadSpending, markCounterpartyOwnAccount, removeCounterpartyCategory, setCounterpartyCategory, unmarkCounterpartyOwnAccount, type SpendingContext } from '../service';
 import { createWorkspace, db } from '../../../../test/db-helpers';
 
 /** The spending overview against a real database (migration 0020). Run with `pnpm test:db`. Every name and amount is invented. */
@@ -61,7 +61,7 @@ describe('spending overview', () => {
     expect(changed.answers).toEqual([{ counterpartyKey: 'zyx handel', label: 'ZYX HANDEL', category: 'leisure_sport' }]);
     expect(changed.overview.byCategory.find((c) => c.category === 'leisure_sport')?.cents).toBe(2000);
 
-    await setCounterpartyCategory(db, ctx, { counterparty: 'Zyx Handel', category: null });
+    await removeCounterpartyCategory(db, ctx, 'zyx handel');
     const back = await loadSpending(db, ctx.workspaceId, 2026, 4);
     expect(back.answers).toEqual([]);
     expect(back.overview.unclear).toHaveLength(1);
@@ -97,6 +97,26 @@ describe('spending overview', () => {
     expect(view.overview.totalCents).toBe(1000);
     expect(view.overview.ownTransfers).toEqual({ cents: 100_000, count: 1 });
     expect(view.overview.split).toEqual({ private: 1000, business: 0, unanswered: 0 });
+  });
+
+  it('marks an own account, takes it back, and never overwrites a business or private answer', async () => {
+    const ctx = await company([line('2026-06-02', 'Karte Beispiel', 'Abrechnung', '-300'), line('2026-06-03', 'Zyx Handel', 'Bestellung', '-50')]);
+    await markCounterpartyOwnAccount(db, ctx, 'Karte Beispiel');
+    let view = await loadSpending(db, ctx.workspaceId, 2026, null);
+    expect(view.overview.totalCents).toBe(5000);
+    expect(view.ownAccounts).toEqual([{ counterpartyKey: 'karte beispiel', label: 'Karte Beispiel' }]);
+    // Saying it twice changes nothing.
+    await markCounterpartyOwnAccount(db, ctx, 'Karte Beispiel');
+
+    await unmarkCounterpartyOwnAccount(db, ctx, 'karte beispiel');
+    view = await loadSpending(db, ctx.workspaceId, 2026, null);
+    expect(view.overview.totalCents).toBe(35_000);
+    expect(view.ownAccounts).toEqual([]);
+
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'Zyx Handel', treatment: 'business' });
+    expect(await code(markCounterpartyOwnAccount(db, ctx, 'Zyx Handel'))).toBe('treatment_exists');
+    expect(await code(unmarkCounterpartyOwnAccount(db, ctx, 'zyx handel'))).toBe('not_own_account');
+    expect((await loadSpending(db, ctx.workspaceId, 2026, null)).overview.split.business).toBe(5000);
   });
 
   it('says when a company has no payments at all', async () => {

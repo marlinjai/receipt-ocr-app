@@ -8,7 +8,7 @@ import { formatCents } from '@/lib/tax/money';
 import { ANSWERABLE_CATEGORIES, SPENDING_CATEGORY_LABELS, isSpendingCategory, type SpendingCategory } from '@/lib/spending/categories';
 import type { CategoryBasis, SpendingPurpose } from '@/lib/spending/rules';
 import type { UnclearCounterparty } from '@/lib/spending/overview';
-import { answerCategory, markOwnAccount, withdrawCategory, type Result, type SpendingPageView } from './actions';
+import { answerCategory, markOwnAccount, unmarkOwnAccount, withdrawCategory, type Result, type SpendingPageView } from './actions';
 
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
@@ -37,6 +37,10 @@ export function spendingActionMessage(result: Extract<Result<unknown>, { ok: fal
   if (result.error === 'forbidden') return 'Für diesen Arbeitsbereich fehlt die Berechtigung zum Ändern.';
   if (result.detail === 'counterparty_required') return 'Diese Zahlung nennt keine Gegenseite, deshalb lässt sich keine Kategorie für sie merken.';
   if (result.detail === 'invalid_category') return 'Diese Kategorie gibt es nicht. Bitte eine aus der Liste wählen.';
+  if (result.detail === 'treatment_exists')
+    return 'Diese Gegenseite ist unter Finanzen, Zahlungen schon als geschäftlich oder privat beantwortet. Das bitte dort ändern, damit die steuerliche Zuordnung nicht unbemerkt verloren geht.';
+  if (result.detail === 'invalid_treatment') return 'Diese Gegenseite lässt sich nicht als eigenes Konto merken, weil die Zahlung keinen Namen nennt.';
+  if (result.detail === 'not_own_account') return 'Diese Gegenseite ist nicht mehr als eigenes Konto beantwortet. Bitte die Seite neu laden.';
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
 
@@ -194,7 +198,6 @@ export default function SpendingClient({ initial }: { initial: SpendingPageView 
       </div>
 
       <div className="mt-4 space-y-2" aria-live="polite">
-        {error?.at === 'page' && <p className="ui-note ui-note-danger">{error.message}</p>}
         {view.noPayments && (
           <p className="ui-note ui-note-warn">
             In diesem Arbeitsbereich sind noch keine Zahlungen. Sie kommen aus den Kontoauszügen, die unter{' '}
@@ -352,6 +355,42 @@ export default function SpendingClient({ initial }: { initial: SpendingPageView 
         )}
       </section>
 
+      {view.ownAccounts.length > 0 && (
+        <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
+          <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+            Eigene Konten ({view.ownAccounts.length})
+          </summary>
+          <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
+            Zahlungen an diese Gegenseiten zählen nicht als Ausgabe. Dieselbe Antwort steht unter Finanzen, Zahlungen.
+          </p>
+          <ul className="mt-2 divide-y">
+            {view.ownAccounts.map((o) => (
+              <li key={o.counterpartyKey} className="py-2 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{o.label}</span>
+                  {view.canWrite && (
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm"
+                      disabled={pending}
+                      aria-label={`${o.label} nicht mehr als eigenes Konto führen`}
+                      onClick={() => run(`own:${o.counterpartyKey}`, () => unmarkOwnAccount(overview.year, overview.month, o.counterpartyKey))}
+                    >
+                      Zurücknehmen
+                    </button>
+                  )}
+                </div>
+                {error?.at === `own:${o.counterpartyKey}` && (
+                  <p className="ui-note ui-note-danger mt-2" role="alert">
+                    {error.message}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
       {view.answers.length > 0 && (
         <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
           <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
@@ -423,7 +462,7 @@ export default function SpendingClient({ initial }: { initial: SpendingPageView 
                     </span>
                   </td>
                   <td className="py-1 pr-3">{p.spendingCents === null ? 'Umbuchung' : PURPOSE_LABELS[p.purpose]}</td>
-                  <td className="py-1 pr-3">{p.hasReceipt ? 'verknüpft' : 'keiner'}</td>
+                  <td className="py-1 pr-3">{p.spendingCents === null ? 'nicht nötig' : p.hasReceipt ? 'verknüpft' : 'keiner'}</td>
                   <td className="py-1 text-right tabular-nums">{euro(-p.amountCents)}</td>
                 </tr>
               ))}

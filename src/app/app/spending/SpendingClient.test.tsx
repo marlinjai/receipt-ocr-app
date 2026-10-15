@@ -7,11 +7,13 @@ import { buildOverview } from '@/lib/spending/overview';
 const answerCategory = vi.fn();
 const markOwnAccount = vi.fn();
 const withdrawCategory = vi.fn();
+const unmarkOwnAccount = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('./actions', () => ({
   answerCategory: (...a: unknown[]) => answerCategory(...a),
   markOwnAccount: (...a: unknown[]) => markOwnAccount(...a),
   withdrawCategory: (...a: unknown[]) => withdrawCategory(...a),
+  unmarkOwnAccount: (...a: unknown[]) => unmarkOwnAccount(...a),
 }));
 
 import SpendingClient, { spendingActionMessage } from './SpendingClient';
@@ -25,6 +27,7 @@ const view = (canWrite: boolean): SpendingPageView => ({
   years: [2026],
   accounts: [],
   answers: [{ counterpartyKey: 'abc markt', label: 'ABC Markt', category: 'groceries_drugstore' }],
+  ownAccounts: [{ counterpartyKey: 'tagesgeld beispiel', label: 'Tagesgeld Beispiel' }],
   noPayments: false,
   canWrite,
 });
@@ -75,6 +78,13 @@ describe('SpendingClient', () => {
     expect(withdrawCategory).toHaveBeenCalledWith(2026, null, 'abc markt');
   });
 
+  it('takes an own-account answer back by its key', async () => {
+    unmarkOwnAccount.mockResolvedValue({ ok: true, value: view(true) });
+    render(<SpendingClient initial={view(true)} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Tagesgeld Beispiel nicht mehr als eigenes Konto führen' }));
+    expect(unmarkOwnAccount).toHaveBeenCalledWith(2026, null, 'tagesgeld beispiel');
+  });
+
   it('offers no controls without the write permission', () => {
     render(<SpendingClient initial={view(false)} />);
     expect(screen.queryByLabelText('Kategorie für Zyx Handel')).toBeNull();
@@ -89,5 +99,7 @@ describe('spendingActionMessage', () => {
     expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'counterparty_required' })).toMatch(/keine Gegenseite/);
     expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'invalid_category' })).toMatch(/Kategorie/);
     expect(spendingActionMessage({ ok: false, error: 'failed' })).toMatch(/noch einmal/);
+    expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'treatment_exists' })).toMatch(/schon als geschäftlich oder privat/);
+    expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'invalid_treatment' })).toMatch(/keinen Namen/);
   });
 });

@@ -145,7 +145,10 @@ warning goes through the same channel as the missing-receipt notification.
   bank): that is the payments tab's own answer, so the money is not counted twice.
 - Brand words that are also surnames or ordinary invoice words ("mueller", "otto", "netto") are
   matched in the counterparty's name only, never in the payment's text.
-- Payments are read only through the payments service's own read (`loadPayments`).
+- Payments are read only through the payments service's own read (`loadPayments`). The one
+  write into the payments area is the own-account answer, through the payments service's public
+  `setCounterpartyTreatment`; it never overwrites a business or private answer (that is changed
+  in the payments tab), and it can be taken back on the page.
 - Open question for the coordinator: payments are imported per company. If the bank files are
   imported under Whiz-Art Media, the overview under "marlinjai" stays empty; the overview itself
   works under whichever company holds them.

@@ -12,7 +12,8 @@ const requireReceiptsSession = vi.fn();
 const loadSpending = vi.fn();
 const setCounterpartyCategory = vi.fn();
 const removeCounterpartyCategory = vi.fn();
-const setCounterpartyTreatment = vi.fn();
+const markCounterpartyOwnAccount = vi.fn();
+const unmarkCounterpartyOwnAccount = vi.fn();
 
 vi.mock('@/lib/auth', () => ({ auth: { requireAction: (...a: unknown[]) => requireAction(...a) } }));
 vi.mock('@/lib/auth-guards', () => {
@@ -35,6 +36,8 @@ vi.mock('@/lib/spending/service', () => {
     loadSpending: (...a: unknown[]) => loadSpending(...a),
     setCounterpartyCategory: (...a: unknown[]) => setCounterpartyCategory(...a),
     removeCounterpartyCategory: (...a: unknown[]) => removeCounterpartyCategory(...a),
+    markCounterpartyOwnAccount: (...a: unknown[]) => markCounterpartyOwnAccount(...a),
+    unmarkCounterpartyOwnAccount: (...a: unknown[]) => unmarkCounterpartyOwnAccount(...a),
   };
 });
 vi.mock('@/lib/tax/payments/service', () => {
@@ -43,19 +46,19 @@ vi.mock('@/lib/tax/payments/service', () => {
       super(code);
     }
   }
-  return { PaymentServiceError, setCounterpartyTreatment: (...a: unknown[]) => setCounterpartyTreatment(...a) };
+  return { PaymentServiceError };
 });
 
 import { ReceiptsAuthError } from '@/lib/auth-guards';
 import { SpendingServiceError } from '@/lib/spending/service';
-import { answerCategory, getSpending, markOwnAccount, withdrawCategory } from './actions';
+import { answerCategory, getSpending, markOwnAccount, unmarkOwnAccount, withdrawCategory } from './actions';
 
 const WS = { id: 'ws-a', slug: 'beispiel', role: 'member', tenantId: 't-a' };
 const SESSION = { memberships: [WS], activeWorkspace: WS };
 const VIEW = { overview: { year: 2026 } };
 
 beforeEach(() => {
-  for (const f of [requireAction, requireReceiptsSession, loadSpending, setCounterpartyCategory, removeCounterpartyCategory, setCounterpartyTreatment]) f.mockReset();
+  for (const f of [requireAction, requireReceiptsSession, loadSpending, setCounterpartyCategory, removeCounterpartyCategory, markCounterpartyOwnAccount, unmarkCounterpartyOwnAccount]) f.mockReset();
   loadSpending.mockResolvedValue(VIEW);
 });
 
@@ -86,9 +89,11 @@ describe('writes', () => {
     expect(await answerCategory(2026, null, 'Zyx', 'cash')).toEqual({ ok: false, error: 'forbidden' });
     expect(await withdrawCategory(2026, null, 'zyx')).toEqual({ ok: false, error: 'forbidden' });
     expect(await markOwnAccount(2026, null, 'Zyx')).toEqual({ ok: false, error: 'forbidden' });
+    expect(await unmarkOwnAccount(2026, null, 'zyx')).toEqual({ ok: false, error: 'forbidden' });
     expect(setCounterpartyCategory).not.toHaveBeenCalled();
     expect(removeCounterpartyCategory).not.toHaveBeenCalled();
-    expect(setCounterpartyTreatment).not.toHaveBeenCalled();
+    expect(markCounterpartyOwnAccount).not.toHaveBeenCalled();
+    expect(unmarkCounterpartyOwnAccount).not.toHaveBeenCalled();
   });
 
   it('write into the session\'s active workspace with its company, never one from the browser', async () => {
@@ -98,7 +103,9 @@ describe('writes', () => {
     await withdrawCategory(2026, 4, 'zyx');
     expect(removeCounterpartyCategory).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, 'zyx');
     await markOwnAccount(2026, 4, 'Zyx');
-    expect(setCounterpartyTreatment).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, { counterparty: 'Zyx', treatment: 'own_account' });
+    expect(markCounterpartyOwnAccount).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, 'Zyx');
+    await unmarkOwnAccount(2026, 4, 'zyx');
+    expect(unmarkCounterpartyOwnAccount).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, 'zyx');
   });
 
   it('return the fresh view after a write', async () => {
@@ -111,6 +118,12 @@ describe('writes', () => {
     requireAction.mockResolvedValue(SESSION);
     setCounterpartyCategory.mockRejectedValue(new SpendingServiceError('invalid_category'));
     expect(await answerCategory(2026, null, 'Zyx', 'yachts')).toEqual({ ok: false, error: 'invalid_input', detail: 'invalid_category' });
+  });
+
+  it('refuse to overwrite a business or private answer with "own account"', async () => {
+    requireAction.mockResolvedValue(SESSION);
+    markCounterpartyOwnAccount.mockRejectedValue(new SpendingServiceError('treatment_exists'));
+    expect(await markOwnAccount(2026, null, 'Zyx')).toEqual({ ok: false, error: 'invalid_input', detail: 'treatment_exists' });
   });
 
   it('report anything unexpected as failed', async () => {

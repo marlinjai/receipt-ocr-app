@@ -1,6 +1,6 @@
 import 'server-only';
 import type { PrismaClient } from '@prisma/client';
-import { counterpartyKey, loadPayments } from '@/lib/tax/payments/service';
+import { counterpartyKey, loadPayments, setCounterpartyTreatment } from '@/lib/tax/payments/service';
 import { isSpendingCategory, type SpendingCategory } from './categories';
 import { berlinYear } from './period';
 import { buildOverview, paymentYears, type SpendingOverview } from './overview';
@@ -17,7 +17,13 @@ export interface SpendingContext {
   tenantId: string | null;
 }
 
-export type SpendingServiceErrorCode = 'counterparty_required' | 'invalid_category';
+export type SpendingServiceErrorCode =
+  | 'counterparty_required'
+  | 'invalid_category'
+  /** The payments tab already answered the counterparty as business or private; that answer is changed there, not overwritten here. */
+  | 'treatment_exists'
+  /** Taking back an own-account answer that is not one. */
+  | 'not_own_account';
 
 export class SpendingServiceError extends Error {
   readonly code: SpendingServiceErrorCode;
@@ -39,6 +45,8 @@ export interface SpendingView {
   years: number[];
   accounts: Array<{ id: string; label: string; completeThrough: string | null }>;
   answers: CategoryAnswerView[];
+  /** Counterparties answered as an own account (here or in the payments tab), with a name to show. */
+  ownAccounts: Array<{ counterpartyKey: string; label: string }>;
   /** True when the workspace holds no payment at all: the page explains where they come from. */
   noPayments: boolean;
 }
@@ -74,6 +82,10 @@ export async function loadSpending(db: PrismaClient, workspaceId: string, year: 
     years: [...new Set([year, ...paymentYears(loaded.payments, berlinYear(today))])].sort((a, b) => b - a),
     accounts: loaded.accounts.map((a) => ({ id: a.id, label: a.label, completeThrough: a.completeThrough })),
     answers,
+    ownAccounts: [...loaded.treatments]
+      .filter(([, treatment]) => treatment === 'own_account')
+      .map(([key]) => ({ counterpartyKey: key, label: loaded.payments.find((p) => p.counterpartyKey === key)?.counterparty ?? key }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'de')),
     noPayments: loaded.payments.length === 0,
   };
 }
@@ -88,19 +100,12 @@ export async function removeCounterpartyCategory(db: PrismaClient, ctx: Spending
   await db.spendingCategoryAnswer.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, counterpartyKey: key } });
 }
 
-/**
- * Give a counterparty a spending category, for all its payments. `category`
- * null takes the answer back; the payments then follow the rules again.
- */
+/** Give a counterparty a spending category, for all its payments (taken back with `removeCounterpartyCategory`). */
 export async function setCounterpartyCategory(db: PrismaClient, ctx: SpendingContext, raw: unknown): Promise<void> {
   const input = (raw ?? {}) as { counterparty?: unknown; category?: unknown };
   const label = typeof input.counterparty === 'string' ? input.counterparty.trim() : '';
   const key = counterpartyKey(label);
   if (!key) throw new SpendingServiceError('counterparty_required');
-  if (input.category === null) {
-    await db.spendingCategoryAnswer.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, counterpartyKey: key } });
-    return;
-  }
   // "Unclear" is what no answer means; storing it would only hide the question.
   if (!isSpendingCategory(input.category) || input.category === 'unclear') throw new SpendingServiceError('invalid_category');
   await db.spendingCategoryAnswer.upsert({
@@ -108,4 +113,32 @@ export async function setCounterpartyCategory(db: PrismaClient, ctx: SpendingCon
     create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, counterpartyKey: key, label, category: input.category },
     update: { label, category: input.category },
   });
+}
+
+/**
+ * The counterparty is one of the owner's own accounts (a credit card paid off
+ * from the bank, a savings account). This writes the payments tab's own answer
+ * through the payments service, so its payments stop counting as spending
+ * everywhere. An existing business or private answer is never overwritten
+ * from here: it may carry the tax treatment of every payment of the
+ * counterparty, so it is changed in the payments tab.
+ */
+export async function markCounterpartyOwnAccount(db: PrismaClient, ctx: SpendingContext, raw: unknown): Promise<void> {
+  const label = typeof raw === 'string' ? raw.trim() : '';
+  const key = counterpartyKey(label);
+  if (!key) throw new SpendingServiceError('counterparty_required');
+  const { treatments } = await loadPayments(db, ctx.workspaceId);
+  const current = treatments.get(key);
+  if (current === 'own_account') return;
+  if (current !== undefined) throw new SpendingServiceError('treatment_exists');
+  await setCounterpartyTreatment(db, ctx, { counterparty: label, treatment: 'own_account' });
+}
+
+/** Take an own-account answer back (by key); any other answer is left alone. */
+export async function unmarkCounterpartyOwnAccount(db: PrismaClient, ctx: SpendingContext, rawKey: unknown): Promise<void> {
+  if (typeof rawKey !== 'string' || !rawKey) throw new SpendingServiceError('counterparty_required');
+  const loaded = await loadPayments(db, ctx.workspaceId);
+  if (loaded.treatments.get(rawKey) !== 'own_account') throw new SpendingServiceError('not_own_account');
+  const label = loaded.payments.find((p) => p.counterpartyKey === rawKey)?.counterparty ?? rawKey;
+  await setCounterpartyTreatment(db, ctx, { counterparty: label, treatment: null });
 }

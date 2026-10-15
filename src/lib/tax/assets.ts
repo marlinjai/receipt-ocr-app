@@ -176,7 +176,8 @@ export function assetChecks(asset: AssetFact, rules: AssetRules): AssetCheck[] {
       add('asset_declining_not_allowed');
     } else if (asset.usefulLifeMonths !== null && asset.usefulLifeMonths > 12) {
       const linearRateBp = Math.floor((12 * 10_000) / asset.usefulLifeMonths);
-      const cap = Math.min(maxRateBp, linearRateBp * maxMultipleOfLinear);
+      // The multiple can be fractional (two and a half times in 2020 to 2022); a rate is whole basis points.
+      const cap = Math.min(maxRateBp, Math.floor(linearRateBp * maxMultipleOfLinear));
       if (asset.decliningRateBp === null || !Number.isInteger(asset.decliningRateBp) || asset.decliningRateBp <= 0) {
         add('asset_declining_rate_too_high');
       } else if (asset.decliningRateBp > cap) {
@@ -190,7 +191,7 @@ export function assetChecks(asset: AssetFact, rules: AssetRules): AssetCheck[] {
 /** The highest declining rate the rules allow for a useful life, in basis points. */
 export function maxDecliningRateBp(usefulLifeMonths: number, rules: AssetRules): number {
   const { maxRateBp, maxMultipleOfLinear } = rules.declining.value;
-  return Math.min(maxRateBp, Math.floor((12 * 10_000) / usefulLifeMonths) * maxMultipleOfLinear);
+  return Math.min(maxRateBp, Math.floor(Math.floor((12 * 10_000) / usefulLifeMonths) * maxMultipleOfLinear));
 }
 
 /**

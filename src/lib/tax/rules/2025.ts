@@ -79,9 +79,9 @@ export type EuerKey = keyof typeof EUER_LABELS;
  * from another year, because the form is renumbered between years and not by
  * a constant offset.
  */
-export function euerLines(numbers: Record<EuerKey, number>): FormLine[] {
+export function euerLines(numbers: Record<EuerKey, number>, labels: Partial<Record<EuerKey, string>> = {}): FormLine[] {
   return (Object.keys(EUER_LABELS) as EuerKey[])
-    .map((key) => ({ key, form: 'euer' as const, line: numbers[key], numbering: 'verified' as const, ...EUER_LABELS[key] }))
+    .map((key) => ({ key, form: 'euer' as const, line: numbers[key], numbering: 'verified' as const, ...EUER_LABELS[key], ...(labels[key] ? { label: labels[key] } : {}) }))
     .sort((a, b) => a.line - b.line);
 }
 

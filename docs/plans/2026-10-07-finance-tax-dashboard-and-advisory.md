@@ -1566,3 +1566,53 @@ like everything else; nothing derived is stored.
   because they were not compared with the official form of each year; the screen names
   the rate instead.
 
+## Reality: rule sets for 2021 to 2024 (2026-10-15)
+
+- **Each of the years 2021 to 2024 has its own rule set**, so the finance area shows
+  them on their own forms instead of computing them with 2025's and saying so. Every
+  line number was read off the official form of its year: the income-surplus statement
+  (Anlage EÜR) from the finance ministry's letters of 31 August 2021, 1 September 2022,
+  31 August 2023 and 2 September 2024; the employment annex (Anlage N) from the federal
+  form portal. The ministry's site answered 404 or 503 for those files on the check day,
+  so they were read from the Internet Archive's copies of the ministry's own files; the
+  rule sets cite the ministry's addresses and say so in their comments.
+- **The forms differ more than "shifted":**
+  - 2024 prints every income-surplus line on the number and with the label of 2025.
+  - 2023 is the shorter form one or two lines lower (low-value assets 35, telecom 41,
+    training 43, work equipment 49, total 72).
+  - 2021 and 2022 are the older, longer form, identical to each other: the numbering
+    jumps from 31 to 41 and from 71 to 81 (low-value assets 43, work equipment 57,
+    other travel 83, total 88).
+  - The home-office day rate had no line of its own before 2024: it was entered on the
+    home-office line (70 in 2021 and 2022, 63 in 2023). The key keeps its meaning and
+    shows that year's printed label, with a note that the flat rate goes there.
+  - Older labels are kept as printed ("Gezahlte Vorsteuerbeträge", "Kraftfahrzeuge",
+    the corona-aid wording of 2021 and 2022).
+  - Employment annex: work equipment total 43 (2021, 2022), 59 (2023, 2024); training
+    costs 46 and 63; further costs total 49 and 67, each with the note where the entries
+    go (the totals also hold ferry and flight costs).
+- **Legal values per year:** small-business limits of 22,000 and 50,000 euros before
+  2025 (section 19 of the value-added tax act as it read then; measured with the tax on
+  the turnover, which for a small business is the same figure); low-value limit, register
+  limit, pool and the 70 percent meal share unchanged; the one-year life of computers
+  from the ministry letter of 26 February 2021 (for 2021) and of 22 February 2022 (from
+  2022). The declining method by year of purchase: open from 2020 to 2022 at up to two
+  and a half times the straight-line rate and 25 percent, closed for purchases from
+  1 January 2023 to 31 March 2024, open from 1 April to 31 December 2024 at twice the
+  rate and 20 percent (growth opportunities act, Federal Law Gazette 2024 I number 108).
+  The cap of a fractional multiple is rounded down to whole basis points, and the asset
+  form prints the multiple in German notation ("2,5-fache").
+- **A share on both forms can now be recorded for every year from 2021.** That roadmap
+  line was blocked only by the missing rule sets: the split between business and study
+  is a finance-area decision checked against the year's rule set, and for 2022 and 2023
+  the importer had not made it because those years printed 2025's line numbers. Nothing
+  else in the code stood in the way (a test records such a share for 2022 and 2023). The
+  coordinator records the shares of the subscriptions the returns of 2022 and 2023 split.
+- **Computed figures of 2025, 2026 and 2027 do not change.** For 2021 to 2024 the line
+  numbers and labels change to those years' own, the "computed with the rules of 2025"
+  note disappears, and an asset bought in one of those years is judged by its own
+  year's limits and declining window (no asset of those years is in the register yet).
+  The small-business forecast of those years measures against 22,000 and 50,000 euros.
+- **Not built here:** the depreciation of an asset's study share onto the employment
+  annex (the laptop of 2022): that is part of the asset schedules line.
+

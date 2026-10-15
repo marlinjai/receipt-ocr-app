@@ -1504,3 +1504,30 @@ like everything else; nothing derived is stored.
   1 December is satisfied for 2026.
 - **Computed figures of 2025 and 2026 do not change**; only the year 2027 now has an
   exact (provisional) rule set instead of falling back to 2026's with a warning.
+
+## Reality: issued invoices with more than one tax rate (2026-10-15)
+
+- **An invoice can carry several rates.** A new treatment "Mit Umsatzsteuer, mehrere
+  Steuersätze" (`mixed`) keeps one group per rate (rate, net amount, tax), stored on
+  the invoice (`tax_groups`, migration `0020_tax_invoice_tax_groups`, one nullable
+  column). An invoice at one rate stores nothing new: its one group follows from its
+  treatment, total and tax, so nothing stored before had to be rewritten.
+- **Checked on save:** at least two groups, each rate (19 or 7 percent) once, the tax of
+  each group the rate applied to its net amount give or take a cent of rounding, and
+  together exactly the invoice's total and its tax. Groups on an invoice at one rate are
+  refused. Changing a mixed invoice back to one rate removes its groups.
+- **The advance return reports each rate.** Every tax event of an issued invoice now
+  carries its rate and the turnover it was charged on; each period and the year list
+  turnover and tax per rate ("zu 19 %: Umsatz ..., Steuer ..."). By issue date the
+  groups are the events; by payment date each payment is split over the groups as
+  differences of cumulative figures, so partial payments add up to exactly the groups,
+  and money above the total carries no tax and counts as turnover of the first group
+  (the invoice is reported as overpaid anyway).
+- **Unchanged for one-rate invoices:** a test proves the split gives the same tax per
+  payment as the formula before; the statement lines (taxable revenue, tax received)
+  are the same sums. The labels of the second half of 2020 (16 and 5 percent) are named
+  for invoices of that time; a mixed invoice takes 19 and 7 percent only.
+- **Not done:** the advance return's form field numbers (Kennzahlen) are not printed,
+  because they were not compared with the official form of each year; the screen names
+  the rate instead.
+

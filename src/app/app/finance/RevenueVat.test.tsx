@@ -37,8 +37,12 @@ const invoiceView = (overrides: Partial<InvoiceView> = {}): InvoiceView => ({
   taxGroups: null,
   declaredInYear: null,
   payments: [{ date: '2026-03-20', cents: 100_000 }],
+  enteredPayments: [{ date: '2026-03-20', cents: 100_000 }],
+  writtenOffCents: 0,
+  writtenOffOn: null,
   receivedCents: 100_000,
   excludedCents: 0,
+  declaredCents: 0,
   outstandingCents: 0,
   checks: [],
   ...overrides,
@@ -125,7 +129,7 @@ describe('RevenueTab', () => {
     await user.click(screen.getByRole('button', { name: 'Rechnung speichern' }));
     expect(props.onSave.mock.calls[0].slice(0, 2)).toEqual([
       null,
-      { number: 'R-2026-002', issueDate: '2026-05-02', grossCents: 125_050, vatCents: 0, treatment: 'small_business', taxGroups: null, declaredInYear: null, payments: [{ date: '2026-05-20', cents: 125_050 }] },
+      { number: 'R-2026-002', issueDate: '2026-05-02', grossCents: 125_050, vatCents: 0, treatment: 'small_business', taxGroups: null, declaredInYear: null, payments: [{ date: '2026-05-20', cents: 125_050 }], writtenOffCents: 0, writtenOffOn: null },
     ]);
   });
 
@@ -157,13 +161,58 @@ describe('RevenueTab', () => {
     expect(open.textContent).toContain('noch nicht bezahlt');
     expect(within(open).getByRole('status').textContent).toContain('Überfällig: 14 Tage oder länger nach Fälligkeit');
     const declared = screen.getByRole('heading', { name: 'Rechnung B' }).closest('li') as HTMLElement;
-    expect(declared.textContent).toContain('bereits 2025 erklärt');
-    expect(declared.textContent).toContain('zählen nicht noch einmal als Einnahme');
+    expect(declared.textContent).toContain('in der Erklärung 2025 nach Rechnung erfasst');
+    expect(declared.textContent).toContain('zählt nicht als Einnahme, weil die Rechnung in der Erklärung 2025');
     expect(within(declared).getByRole('status').textContent).toContain('passt nicht zum Status');
     await user.click(within(open).getByRole('button', { name: 'Ändern' }));
     expect((within(open).getByLabelText('Rechnungsnummer') as HTMLInputElement).value).toBe('A');
     await user.click(within(open).getByRole('button', { name: 'Rechnung speichern' }));
     expect(props.onSave.mock.calls[0][0]).toBe('a');
+  });
+
+  it('an invoice declared by invoice says it counts in that year at its amount', () => {
+    const declared = invoiceView({ id: 'd', number: 'D', issueDate: '2024-12-15', declaredInYear: 2024, payments: [], enteredPayments: [], receivedCents: 0, declaredCents: 100_000, outstandingCents: 100_000 });
+    render(<RevenueTab view={view({ year: 2024, revenue: { recorded: true, receivedCents: 0, turnoverCents: 0, outstandingCents: 100_000, invoices: [declared], overdue: [] } })} {...revenueProps()} />);
+    const card = screen.getByRole('heading', { name: 'Rechnung D' }).closest('li') as HTMLElement;
+    expect(card.textContent).toContain('Zählt 2024 mit dem Rechnungsbetrag von 1.000,00 € als Einnahme');
+  });
+
+  it('edits only the typed-in payments, names the linked ones, and books out the rest of a fee the client kept', async () => {
+    const user = userEvent.setup();
+    const props = revenueProps();
+    // 2,840.00 invoiced; 2,830.00 arrived by a linked bank payment, none typed in; 10.00 kept as a fee.
+    const fee = invoiceView({
+      id: 'f',
+      number: 'F',
+      grossCents: 284_000,
+      payments: [{ date: '2026-02-11', cents: 283_000 }],
+      enteredPayments: [],
+      receivedCents: 283_000,
+      outstandingCents: 1_000,
+    });
+    render(<RevenueTab view={view({ revenue: { recorded: true, receivedCents: 283_000, turnoverCents: 283_000, outstandingCents: 1_000, invoices: [fee], overdue: [] } })} {...props} />);
+    const card = screen.getByRole('heading', { name: 'Rechnung F' }).closest('li') as HTMLElement;
+    await user.click(within(card).getByRole('button', { name: 'Ändern' }));
+    expect(card.textContent).toContain('Dazu 2.830,00 € aus zugeordneten Bankzahlungen');
+    expect(within(card).queryByLabelText('Eingang am')).toBeNull();
+
+    // More than is open is refused before anything is sent.
+    await user.type(within(card).getByLabelText('Ausgebuchter Betrag in €'), '20');
+    await user.type(within(card).getByLabelText('Ausgebucht am'), '2026-10-15');
+    await user.click(within(card).getByRole('button', { name: 'Rechnung speichern' }));
+    expect(within(card).getByRole('alert').textContent).toContain('ausgebuchten Betrag');
+    expect(props.onSave).not.toHaveBeenCalled();
+
+    await user.click(within(card).getByRole('button', { name: 'Rest ausbuchen' }));
+    expect((within(card).getByLabelText('Ausgebuchter Betrag in €') as HTMLInputElement).value).toBe('10,00');
+    await user.click(within(card).getByRole('button', { name: 'Rechnung speichern' }));
+    expect(props.onSave.mock.calls[0][1]).toMatchObject({ payments: [], writtenOffCents: 1_000, writtenOffOn: '2026-10-15' });
+  });
+
+  it('shows a booked-out part on the invoice', () => {
+    const fee = invoiceView({ id: 'f', number: 'F', writtenOffCents: 1_000, writtenOffOn: '2026-10-15' });
+    render(<RevenueTab view={view({ revenue: { recorded: true, receivedCents: 100_000, turnoverCents: 100_000, outstandingCents: 0, invoices: [fee], overdue: [] } })} {...revenueProps()} />);
+    expect(screen.getByText(/ausgebucht 10,00 € am 15\.10\.2026/)).toBeTruthy();
   });
 
   it('takes the owner\'s own expectation, and clears it when left empty', async () => {

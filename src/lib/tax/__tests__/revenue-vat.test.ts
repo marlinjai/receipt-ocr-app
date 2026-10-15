@@ -66,6 +66,70 @@ describe('revenue: cash basis', () => {
     expect(result.revenue.invoices[0]).toMatchObject({ receivedCents: 100_000, excludedCents: 100_000, parts: [] });
   });
 
+  it('an invoice declared by invoice counts in the declared year at its amount, whatever day it was paid', () => {
+    // Issued in December 2024, declared in the 2024 return by invoice, paid in January 2025.
+    const late = invoice({ issueDate: '2024-12-15', declaredInYear: 2024, payments: [{ date: '2025-01-20', cents: 100_000 }] });
+    // Issued and paid in 2024, declared in 2024.
+    const early = invoice({ id: 'inv-2', issueDate: '2024-05-02', grossCents: 30_000, declaredInYear: 2024, payments: [{ date: '2024-05-20', cents: 30_000 }] });
+    const y2024 = run({ invoices: [late, early] }, 2024);
+    expect(y2024.businessRevenueCents).toBe(130_000);
+    expect(y2024.lines).toEqual([expect.objectContaining({ key: 'euer.revenue_small_business', cents: 130_000 })]);
+    expect(y2024.revenue.invoices.find((i) => i.invoiceId === 'inv-1')).toMatchObject({ declaredCents: 100_000, receivedCents: 0 });
+    expect(y2024.revenue.invoices.find((i) => i.invoiceId === 'inv-2')).toMatchObject({ declaredCents: 30_000, receivedCents: 30_000, excludedCents: 30_000 });
+    // The limits still measure money received: only what arrived in 2024.
+    expect(y2024.revenue.turnoverCents).toBe(30_000);
+    const y2025 = run({ invoices: [late, early] }, 2025);
+    expect(y2025.businessRevenueCents).toBe(0);
+    expect(y2025.revenue.turnoverCents).toBe(100_000);
+    expect(y2025.revenue.invoices.find((i) => i.invoiceId === 'inv-1')).toMatchObject({ declaredCents: 0, excludedCents: 100_000 });
+  });
+
+  it('a declared invoice counts in no year after the declared one, paid or overpaid', () => {
+    const declared = invoice({ issueDate: '2024-12-15', declaredInYear: 2024, payments: [{ date: '2025-01-20', cents: 100_500 }] });
+    expect(run({ invoices: [declared] }, 2025).businessRevenueCents).toBe(0);
+    expect(run({ invoices: [declared] }, 2025).revenue.invoices[0].checks).toContain('invoice_overpaid');
+    expect(run({ invoices: [declared] }, 2026).businessRevenueCents).toBe(0);
+  });
+
+  it('a part payment of a declared taxed invoice adds no tax received in the payment year', () => {
+    const taxedDeclared = invoice({
+      treatment: 'standard',
+      grossCents: 119_000,
+      vatCents: 19_000,
+      smallBusinessOnIssue: false,
+      issueDate: '2025-12-01',
+      declaredInYear: 2025,
+      payments: [{ date: '2026-01-10', cents: 59_500 }],
+    });
+    const next = run({ invoices: [taxedDeclared] });
+    expect(cents(next, 'euer.vat_received')).toBe(0);
+    expect(next.businessRevenueCents).toBe(0);
+  });
+
+  it('an unpaid invoice declared by invoice still counts in the declared year', () => {
+    const unpaid = invoice({ issueDate: '2024-11-01', declaredInYear: 2024, payments: [] });
+    expect(run({ invoices: [unpaid] }, 2024).businessRevenueCents).toBe(100_000);
+    expect(run({ invoices: [unpaid] }, 2024).revenue.outstandingCents).toBe(100_000);
+  });
+
+  it('a declared taxed invoice splits its amount into net revenue and tax received in the declared year', () => {
+    const taxedDeclared = invoice({ treatment: 'standard', grossCents: 119_000, vatCents: 19_000, smallBusinessOnIssue: false, declaredInYear: 2026, payments: [] });
+    const result = run({ invoices: [taxedDeclared] });
+    expect(cents(result, 'euer.revenue_taxable')).toBe(100_000);
+    expect(cents(result, 'euer.vat_received')).toBe(19_000);
+  });
+
+  it('a written-off remainder is no claim from its day on and never revenue', () => {
+    // 2,840.00 invoiced, 2,830.00 paid, the client kept a 10.00 transfer fee; booked out on 2026-10-15.
+    const fee = invoice({ grossCents: 284_000, payments: [{ date: '2026-02-11', cents: 283_000 }], writtenOffCents: 1_000, writtenOffOn: '2026-10-15' });
+    const result = run({ invoices: [fee] });
+    expect(result.revenue.outstandingCents).toBe(0);
+    expect(result.businessRevenueCents).toBe(283_000);
+    expect(result.revenue.invoices[0].checks).toEqual([]);
+    // Before the day it was booked out, the remainder was still open.
+    expect(run({ invoices: [{ ...fee, issueDate: '2025-12-01', payments: [{ date: '2025-12-20', cents: 283_000 }] }] }, 2025).revenue.outstandingCents).toBe(1_000);
+  });
+
   it('says nothing about profit while invoices are not recorded at all', () => {
     const result = run({ items: [item({ id: 'x', date: '2026-02-01' })] });
     expect(result.revenue.recorded).toBe(false);

@@ -19,7 +19,15 @@ export interface InvoiceDraft {
   /** Set exactly for a `mixed` invoice. */
   taxGroups: TaxGroup[] | null;
   declaredInYear: number | null;
+  /** Only the payments typed in on the invoice; linked bank payments stay on the payments tab. */
   payments: Array<{ date: string; cents: number }>;
+  writtenOffCents: number;
+  writtenOffOn: string | null;
+}
+
+/** Today in the business's time zone, as an ISO day. */
+function todayIso(): string {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date());
 }
 
 const rateLabel = (rateBp: number) => `${(rateBp / 100).toLocaleString('de-DE')} %`;
@@ -190,7 +198,8 @@ export default function RevenueTab({ view, busy, error, onSave, onDelete, onExpe
                       {invoice.payments.length > 0
                         ? ` · bezahlt ${invoice.payments.map((p) => `${formatDay(p.date)} ${euro(p.cents)}`).join(', ')}`
                         : ' · noch nicht bezahlt'}
-                      {invoice.declaredInYear !== null ? ` · bereits ${invoice.declaredInYear} erklärt` : ''}
+                      {invoice.declaredInYear !== null ? ` · in der Erklärung ${invoice.declaredInYear} nach Rechnung erfasst` : ''}
+                      {invoice.writtenOffCents > 0 ? ` · ausgebucht ${euro(invoice.writtenOffCents)} am ${formatDay(invoice.writtenOffOn)}` : ''}
                     </p>
                     {invoice.taxGroups && (
                       <p className="mt-0.5 text-xs tabular-nums" style={{ color: 'var(--muted)' }}>
@@ -213,10 +222,16 @@ export default function RevenueTab({ view, busy, error, onSave, onDelete, onExpe
                     </div>
                   </dl>
                 </div>
+                {invoice.declaredCents > 0 && (
+                  <p className="ui-note mt-2">
+                    Zählt {view.year} mit dem Rechnungsbetrag von {euro(invoice.declaredCents)} als Einnahme, weil die Erklärung {view.year} sie nach
+                    Rechnung erfasst hat, gleich wann das Geld kam.
+                  </p>
+                )}
                 {invoice.excludedCents > 0 && (
                   <p className="ui-note mt-2">
-                    {euro(invoice.excludedCents)} davon zählen nicht noch einmal als Einnahme, weil die Rechnung bereits{' '}
-                    {invoice.declaredInYear} erklärt wurde. Für die Umsatzgrenzen zählt der Eingang trotzdem.
+                    Der Eingang von {euro(invoice.excludedCents)} in {view.year} zählt nicht als Einnahme, weil die Rechnung in der Erklärung{' '}
+                    {invoice.declaredInYear} mit ihrem Rechnungsbetrag gezählt ist. Für die Umsatzgrenzen zählt der Eingang trotzdem.
                   </p>
                 )}
                 {invoice.checks.length > 0 && (
@@ -274,8 +289,9 @@ function InvoiceForm({
   const [treatment, setTreatment] = useState<InvoiceTreatment>(invoice?.treatment ?? (view.smallBusinessAtYearEnd === false ? 'standard' : 'small_business'));
   const [vat, setVat] = useState(invoice && invoice.vatCents > 0 ? formatCents(invoice.vatCents) : '');
   const [declared, setDeclared] = useState(invoice?.declaredInYear ? String(invoice.declaredInYear) : '');
+  // Only what was typed in is edited here; a bank payment linked to the invoice is changed on the payments tab.
   const [payments, setPayments] = useState<Array<{ date: string; amount: string }>>(
-    () => invoice?.payments.map((p) => ({ date: p.date, amount: formatCents(p.cents) })) ?? [],
+    () => invoice?.enteredPayments.map((p) => ({ date: p.date, amount: formatCents(p.cents) })) ?? [],
   );
   // `offered`: the tax shown was computed from the net amount, not typed, so a
   // changed net amount computes it again until the person types a tax.
@@ -285,6 +301,9 @@ function InvoiceForm({
       return { rateBp, net: stored ? formatCents(stored.netCents) : '', vat: stored ? formatCents(stored.vatCents) : '', offered: false };
     }),
   );
+  const linkedCents = invoice ? invoice.payments.reduce((s, p) => s + p.cents, 0) - invoice.enteredPayments.reduce((s, p) => s + p.cents, 0) : 0;
+  const [writtenOff, setWrittenOff] = useState(invoice && invoice.writtenOffCents > 0 ? formatCents(invoice.writtenOffCents) : '');
+  const [writtenOffOn, setWrittenOffOn] = useState(invoice?.writtenOffOn ?? '');
   const [localError, setLocalError] = useState<string | null>(null);
   const mixed = treatment === 'mixed';
   const taxed = treatment === 'standard' || treatment === 'reduced';
@@ -330,8 +349,46 @@ function InvoiceForm({
       if (!p.date || cents === null || cents <= 0) return setLocalError('Bitte Datum und Betrag jedes Zahlungseingangs prüfen.');
       parsedPayments.push({ date: p.date, cents });
     }
+    let writtenOffCents = 0;
+    // Only an invoice without tax can be booked out here (the form hides the fields otherwise).
+    if (!taxed && !mixed && writtenOff.trim() !== '') {
+      const parsed = parseEuro(writtenOff);
+      const open = grossCents - linkedCents - parsedPayments.reduce((s, p) => s + p.cents, 0);
+      if (parsed === null || parsed < 0 || parsed > Math.max(0, open) || (parsed > 0 && !writtenOffOn)) {
+        return setLocalError('Bitte den ausgebuchten Betrag prüfen: mit Datum, und nicht mehr als nach allen Zahlungseingängen noch offen ist.');
+      }
+      writtenOffCents = parsed;
+    }
     setLocalError(null);
-    onSubmit({ number: number.trim(), issueDate: date || null, grossCents, vatCents, treatment, taxGroups, declaredInYear: declaredYear, payments: parsedPayments });
+    onSubmit({
+      number: number.trim(),
+      issueDate: date || null,
+      grossCents,
+      vatCents,
+      treatment,
+      taxGroups,
+      declaredInYear: declaredYear,
+      payments: parsedPayments,
+      writtenOffCents,
+      writtenOffOn: writtenOffCents > 0 ? writtenOffOn : null,
+    });
+  }
+
+  /** What is still open after every payment, typed in or linked, for "Rest ausbuchen". */
+  function openRemainder(): number {
+    const grossCents = parseEuro(gross) ?? 0;
+    const typed = payments.reduce((s, p) => s + (parseEuro(p.amount) ?? 0), 0);
+    return Math.max(0, grossCents - linkedCents - typed);
+  }
+
+  /**
+   * The day a remainder is booked out by default: the last payment, typed in or
+   * linked, because a fee the client deducted is known when the money arrives.
+   * Today only when nothing was paid yet.
+   */
+  function lastPaymentDay(): string {
+    const days = [...(invoice?.payments ?? []).map((p) => p.date), ...payments.map((p) => p.date)].filter(Boolean);
+    return days.length > 0 ? days.sort().at(-1)! : todayIso();
   }
 
   const shown = localError ?? error;
@@ -412,7 +469,12 @@ function InvoiceForm({
       )}
       <fieldset>
         <legend className="ui-label">Zahlungseingänge</legend>
-        {payments.length === 0 && <p className="text-sm" style={{ color: 'var(--muted)' }}>Noch kein Eingang: die Rechnung steht als offen.</p>}
+        {linkedCents > 0 && (
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>
+            Dazu {euro(linkedCents)} aus zugeordneten Bankzahlungen; die werden unter „Zahlungen“ geändert.
+          </p>
+        )}
+        {payments.length === 0 && linkedCents === 0 && <p className="text-sm" style={{ color: 'var(--muted)' }}>Noch kein Eingang: die Rechnung steht als offen.</p>}
         <ul className="space-y-2">
           {payments.map((p, index) => (
             <li key={index} className="flex flex-wrap items-end gap-2">
@@ -434,7 +496,7 @@ function InvoiceForm({
           onClick={() => {
             // The usual case is one payment of the whole amount: offer what is still open.
             const grossCents = parseEuro(gross) ?? 0;
-            const paid = payments.reduce((s, p) => s + (parseEuro(p.amount) ?? 0), 0);
+            const paid = payments.reduce((s, p) => s + (parseEuro(p.amount) ?? 0), 0) + linkedCents;
             setPayments((list) => [...list, { date: '', amount: grossCents > paid ? formatCents(grossCents - paid) : '' }]);
           }}
         >
@@ -442,13 +504,43 @@ function InvoiceForm({
         </button>
       </fieldset>
       <div className="max-w-xs">
-        <label className="ui-label" htmlFor={`${id}-declared`}>Bereits erklärt im Jahr (nur wenn zutreffend)</label>
+        <label className="ui-label" htmlFor={`${id}-declared`}>Nach Rechnung erklärt im Jahr (nur wenn zutreffend)</label>
         <input id={`${id}-declared`} className="ui-input tabular-nums" inputMode="numeric" value={declared} onChange={(e) => setDeclared(e.target.value)} placeholder="leer lassen" />
         <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-          Für Rechnungen, die eine frühere Erklärung schon nach Rechnungsdatum erfasst hat: ihr Geldeingang zählt dann
-          nicht ein zweites Mal als Einnahme.
+          Für Rechnungen, die eine Erklärung nach Rechnung statt nach Zahlungstag erfasst hat: die Rechnung zählt in
+          diesem Jahr mit ihrem Rechnungsbetrag als Einnahme, ihr Geldeingang in keinem Jahr ein zweites Mal.
         </p>
       </div>
+      {!taxed && !mixed && (
+      <fieldset className="grid max-w-xl gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+        <legend className="ui-label sm:col-span-3">Ausgebucht, wird nicht mehr bezahlt</legend>
+        <div>
+          <label className="ui-label" htmlFor={`${id}-written-off`}>Ausgebuchter Betrag in €</label>
+          <input id={`${id}-written-off`} className="ui-input tabular-nums" inputMode="decimal" value={writtenOff} onChange={(e) => setWrittenOff(e.target.value)} placeholder="leer lassen" />
+        </div>
+        <div>
+          <label className="ui-label" htmlFor={`${id}-written-off-on`}>Ausgebucht am</label>
+          <input id={`${id}-written-off-on`} type="date" className="ui-input" value={writtenOffOn} onChange={(e) => setWrittenOffOn(e.target.value)} />
+        </div>
+        <button
+          type="button"
+          className="ui-btn ui-btn-sm"
+          onClick={() => {
+            const rest = openRemainder();
+            setWrittenOff(rest > 0 ? formatCents(rest) : '');
+            if (rest > 0 && !writtenOffOn) setWrittenOffOn(lastPaymentDay());
+          }}
+        >
+          Rest ausbuchen
+        </button>
+        <p className="text-xs sm:col-span-3" style={{ color: 'var(--muted)' }}>
+          Zum Beispiel eine Überweisungsgebühr, die der Kunde abgezogen hat, oder ein Rest, der nicht mehr einzutreiben ist. Er
+          steht ab diesem Tag nicht mehr als offen und nicht mehr als überfällig, und er kommt nie als Einnahme hinzu. Bei
+          einer Rechnung, die eine Erklärung nach Rechnung schon voll gezählt hat, bucht die App den Ausfall nicht
+          zurück; das wäre eine Korrektur in der Erklärung des Jahres, in dem ausgebucht wird.
+        </p>
+      </fieldset>
+      )}
       {shown && <p className="ui-note ui-note-danger" role="alert">{shown}</p>}
       <div className="flex gap-2">
         <button type="submit" className="ui-btn ui-btn-primary" disabled={busy}>{busy ? 'Speichert …' : 'Rechnung speichern'}</button>

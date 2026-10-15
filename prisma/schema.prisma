@@ -471,6 +471,9 @@ model TaxIssuedInvoice {
   // For an invoice with more than one rate (treatment 'mixed'): [{ rateBp, netCents, vatCents }], one per rate.
   taxGroups       Json?    @map("tax_groups")
   declaredInYear  Int?     @map("declared_in_year")
+  // Booked out as never to be paid (a fee the client deducted, a remainder not collectable); never income.
+  writtenOffCents Int      @default(0) @map("written_off_cents")
+  writtenOffOn    String?  @map("written_off_on")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 

@@ -19,6 +19,9 @@ export interface InvoiceInput {
   taxGroups: TaxGroup[] | null;
   declaredInYear: number | null;
   payments: Array<{ date: string; cents: number }>;
+  /** Booked out as never to be paid (0: nothing), on `writtenOffOn`. */
+  writtenOffCents: number;
+  writtenOffOn: string | null;
 }
 
 export type RevenueInputErrorCode =
@@ -32,6 +35,7 @@ export type RevenueInputErrorCode =
   | 'invalid_treatment'
   | 'invalid_year'
   | 'invalid_payment'
+  | 'invalid_write_off'
   | 'too_many_payments'
   | 'invalid_status'
   | 'invalid_vat_settings'
@@ -101,7 +105,32 @@ export function validateInvoiceInput(raw: unknown): InvoiceInput {
   });
   payments.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.cents - b.cents));
 
-  return { number, issueDate: issueDate as string | null, grossCents, vatCents: vat as number, treatment, taxGroups, declaredInYear: declared as number | null, payments };
+  // An invoice declared by invoice is declared in its issue year or later, never before it existed.
+  if (declared !== null && issueDate !== null && (declared as number) < Number((issueDate as string).slice(0, 4))) fail('invalid_year');
+
+  // A part booked out as never to be paid needs its day (not before the invoice) and cannot exceed what the typed-in
+  // payments leave open (the service also counts the linked bank payments). Only on an invoice without tax: booking out
+  // part of a taxed invoice also corrects the tax charged on it (section 17 of the value-added tax act), not built yet.
+  const writtenOffCents = input.writtenOffCents === undefined || input.writtenOffCents === null || input.writtenOffCents === '' ? 0 : input.writtenOffCents;
+  if (!isInt(writtenOffCents) || writtenOffCents < 0) fail('invalid_write_off');
+  const typedPaid = payments.reduce((sum, p) => sum + p.cents, 0);
+  if ((writtenOffCents as number) > 0 && (writtenOffCents as number) > grossCents - typedPaid) fail('invalid_write_off');
+  if ((writtenOffCents as number) > 0 && (vat as number) > 0) fail('invalid_write_off');
+  const writtenOffOn = (writtenOffCents as number) > 0 ? input.writtenOffOn : null;
+  if (writtenOffOn !== null && (!isIsoDay(writtenOffOn) || (issueDate !== null && (writtenOffOn as string) < (issueDate as string)))) fail('invalid_write_off');
+
+  return {
+    number,
+    issueDate: issueDate as string | null,
+    grossCents,
+    vatCents: vat as number,
+    treatment,
+    taxGroups,
+    declaredInYear: declared as number | null,
+    payments,
+    writtenOffCents: writtenOffCents as number,
+    writtenOffOn: writtenOffOn as string | null,
+  };
 }
 
 /**

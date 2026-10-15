@@ -80,6 +80,7 @@ export type TaxServiceErrorCode =
   | 'row_in_other_asset'
   | 'invoice_not_found'
   | 'invoice_number_taken'
+  | 'invalid_write_off'
   | 'status_not_found'
   | 'status_unanswered'
   | 'settlement_not_found'
@@ -480,6 +481,8 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
       ...loadedPayments.payments.flatMap((p) => p.links.filter((l) => l.invoiceId === i.id).map((l) => ({ date: p.bookingDay, cents: l.cents }))),
     ],
     declaredInYear: i.declaredInYear,
+    writtenOffCents: i.writtenOffCents,
+    writtenOffOn: i.writtenOffOn,
     smallBusinessOnIssue: smallBusinessOn(settings, i.issueDate),
   }));
   const settlementFacts: VatSettlementFact[] = storedSettlements.map((s) => ({
@@ -690,8 +693,12 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
             taxGroups: fact.taxGroups ?? null,
             declaredInYear: fact.declaredInYear,
             payments: [...fact.payments].sort((a, b) => (a.date < b.date ? -1 : 1)),
+            enteredPayments: stored.payments.map((p) => ({ date: p.paidOn, cents: p.cents })).sort((a, b) => (a.date < b.date ? -1 : 1)),
+            writtenOffCents: stored.writtenOffCents,
+            writtenOffOn: stored.writtenOffOn,
             receivedCents: r.receivedCents,
             excludedCents: r.excludedCents,
+            declaredCents: r.declaredCents,
             outstandingCents: r.outstandingCents,
             checks: overdueIds.has(stored.id) ? [...r.checks, 'invoice_overdue'] : r.checks,
           },
@@ -1215,11 +1222,18 @@ export interface InvoiceView {
   /** For an invoice with more than one rate: its groups, highest rate first. */
   taxGroups: TaxGroup[] | null;
   declaredInYear: number | null;
-  /** Every payment of the invoice, whatever year. */
+  /** Every payment of the invoice, whatever year: typed in and linked from the bank. */
   payments: Array<{ date: string; cents: number }>;
-  /** Received in the viewed year, and what of that another year's return already declared. */
+  /** Only the payments typed in on the invoice; the bank payments linked to it are changed on the payments tab. */
+  enteredPayments: Array<{ date: string; cents: number }>;
+  /** Booked out as never to be paid, and its day. */
+  writtenOffCents: number;
+  writtenOffOn: string | null;
+  /** Received in the viewed year, and what of that a return declared by invoice already counted. */
   receivedCents: number;
   excludedCents: number;
+  /** Counted in the viewed year at the invoice amount, because its return declared the invoice by invoice. */
+  declaredCents: number;
   outstandingCents: number;
   checks: InvoiceCheckKind[];
 }
@@ -1238,6 +1252,8 @@ export async function saveInvoice(db: PrismaClient, ctx: TaxContext, invoiceId: 
     // Prisma needs DbNull, not null, to clear a JSON column.
     taxGroups: input.taxGroups === null ? Prisma.DbNull : (input.taxGroups as unknown as Prisma.InputJsonValue),
     declaredInYear: input.declaredInYear,
+    writtenOffCents: input.writtenOffCents,
+    writtenOffOn: input.writtenOffOn,
   };
   const payments = input.payments.map((p) => ({ paidOn: p.date, cents: p.cents, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId }));
   if (invoiceId === null) {
@@ -1249,12 +1265,21 @@ export async function saveInvoice(db: PrismaClient, ctx: TaxContext, invoiceId: 
   const existing = await db.taxIssuedInvoice.findFirst({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId } });
   if (!existing) throw new TaxServiceError('invoice_not_found');
   // The payments of an invoice are few and have no identity of their own, so a
-  // save replaces them as one set, together with the invoice or not at all.
-  await db.$transaction([
-    db.taxInvoicePayment.deleteMany({ where: { invoiceId } }),
-    db.taxIssuedInvoice.update({ where: { id: invoiceId }, data }),
-    db.taxInvoicePayment.createMany({ data: payments.map((p) => ({ ...p, invoiceId })) }),
-  ]);
+  // save replaces them as one set, together with the invoice or not at all. The
+  // invoice row is locked as linking a bank payment locks it, so a link made at
+  // the same moment cannot push what is booked out past what is open.
+  await db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM tax_issued_invoices WHERE id = ${invoiceId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
+    if (input.writtenOffCents > 0) {
+      // What is booked out cannot exceed what the typed-in and the linked bank payments leave open.
+      const linked = await tx.taxPaymentLink.aggregate({ where: { invoiceId, authWorkspaceId: ctx.workspaceId, payment: { cancelledByBatchId: null } }, _sum: { cents: true } });
+      const typed = input.payments.reduce((sum, p) => sum + p.cents, 0);
+      if (input.writtenOffCents > input.grossCents - typed - (linked._sum.cents ?? 0)) throw new TaxServiceError('invalid_write_off');
+    }
+    await tx.taxInvoicePayment.deleteMany({ where: { invoiceId } });
+    await tx.taxIssuedInvoice.update({ where: { id: invoiceId }, data });
+    await tx.taxInvoicePayment.createMany({ data: payments.map((p) => ({ ...p, invoiceId })) });
+  });
   return invoiceId;
 }
 

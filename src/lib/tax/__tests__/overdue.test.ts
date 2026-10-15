@@ -28,6 +28,12 @@ describe('overdueInvoices', () => {
     expect(overdueInvoices([invoice({ id: 'a', payments: [{ date: '2026-09-10', cents: 120_000 }] })], today)).toEqual([]);
   });
 
+  it('never lists a remainder that was booked out as a fee the client kept', () => {
+    const fee = invoice({ id: 'a', grossCents: 284_000, payments: [{ date: '2026-09-10', cents: 283_000 }], writtenOffCents: 1_000 });
+    expect(overdueInvoices([fee], '2026-12-01')).toEqual([]);
+    expect(overdueInvoices([{ ...fee, writtenOffCents: 500 }], '2026-12-01')[0].openCents).toBe(500);
+  });
+
   it('lists what is still open after a part payment', () => {
     const [entry] = overdueInvoices([invoice({ id: 'a', payments: [{ date: '2026-09-10', cents: 30_000 }] })], '2026-10-15');
     expect(entry.openCents).toBe(70_000);

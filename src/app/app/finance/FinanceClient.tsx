@@ -507,6 +507,11 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                                     </span>
                                   )}
                                   {line.label}
+                                  {line.entryNote && (
+                                    <span className="block text-xs" style={{ color: 'var(--muted)' }}>
+                                      {line.entryNote}
+                                    </span>
+                                  )}
                                   <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
                                     {[
                                       line.itemIds.length === 1 ? '1 Beleg' : line.itemIds.length > 1 ? `${line.itemIds.length} Belege` : '',

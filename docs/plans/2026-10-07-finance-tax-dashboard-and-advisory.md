@@ -1487,9 +1487,14 @@ like everything else; nothing derived is stored.
   chosen for a study or employment share like the other annex lines. After this lands
   the three career-subscription receipts of 2026 can be moved from training costs to it.
 - **The 2025 annex was compared with the official form** (Anlage N 2025 from the federal
-  form portal, made by the ministry's forms commission, agreeing with the tax portal's
-  help): work equipment total line 56 (entries 54 and 55), training costs 60, further
-  costs total 64 (entries 62 and 63). The numbers already in the app for 2025 were right.
+  form portal, made by the ministry's forms commission): work equipment total line 56
+  (entries 54 and 55), training costs 60, further costs total 64 (entries 62 and 63).
+  The numbers already in the app for 2025 were right.
+- **The further costs line says where its entries go.** The printed total (64 in 2025)
+  also holds ferry and flight costs of the commute (line 61), which the app does not
+  record, so the line shows the note "Einzeln in den Zeilen 62 und 63 eintragen; die
+  Summe in Zeile 64 enthält auch Fähr- und Flugkosten aus Zeile 61" (`entryNote` on the
+  form line, shown in the finance area under the label).
 - **The 2026 annex cannot be compared yet: it is not public.** On 2026-10-15 the form
   portal held forms up to 2025, the tax portal's 2026 help was empty, and the only
   public copy of the final 2026 forms the ministry sent to software vendors on
@@ -1497,9 +1502,7 @@ like everything else; nothing derived is stored.
   number. The numbering moved in 2023 and again in 2025 (work equipment 43, then 59,
   then 56), so 2025's numbers are no stand-in. Item (2) of the stage 1 line stays open
   until the form is published.
-- **For the rule sets of 2021 to 2024** (built separately) the annex reads: 2021 and
-  2022 work equipment 43, training 46, further costs 49 (no separate total lines; the
-  totals sit on the last entry line); 2023 and 2024 work equipment total 59, training
-  63, further costs total 67.
+- **For the rule sets of 2021 to 2024** the annex numbers are added, with their sources,
+  in the change that builds those rule sets.
 - **Computed figures do not change** for any year: no stored decision points at the new
   key yet, and no other line moved.

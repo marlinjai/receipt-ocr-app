@@ -142,6 +142,13 @@ describe('the years keep their own line numbers', () => {
     expect(line(2025, 'employment.further_costs').line).not.toBe(line(2025, 'employment.study_costs').line);
   });
 
+  it('says where the further costs are entered, because their printed total holds more than the app records', () => {
+    expect(line(2025, 'employment.further_costs').entryNote).toMatch(/Zeilen 62 und 63/);
+    expect(line(2025, 'employment.further_costs').entryNote).toMatch(/Fähr- und Flugkosten aus Zeile 61/);
+    // Without a number there is nothing to point at.
+    expect(line(2026, 'employment.further_costs').entryNote).toBeUndefined();
+  });
+
   it.each([2025, 2026])('in %i days and distances have no amount line at all', (year) => {
     for (const key of ['employment.home_office', 'employment.commute'] as const) {
       expect(line(year, key)).toMatchObject({ line: null, numbering: 'structured' });

@@ -229,6 +229,7 @@ describe('FinanceClient: the queue', () => {
     await user.click(screen.getByRole('button', { name: '100 % Studium' }));
     const select = screen.getByLabelText('Zeile der Anlage N für Studium oder Anstellung') as HTMLSelectElement;
     const option = [...select.options].find((o) => o.value === 'employment.further_costs');
+    expect(option).toBeDefined();
     expect(option?.textContent).toMatch(/Weitere Werbungskosten/);
   });
 

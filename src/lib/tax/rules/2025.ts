@@ -5,9 +5,8 @@ import type { AssetRules, FormLine, FormLineKey, Source, YearRules } from './typ
  *
  * The income-surplus lines were read off the ministry's own form (letter of
  * 29 August 2025, file reference IV C 6 - S 2142/00023/010/001). The employment
- * annex lines were read off the official form of 2025 (the federal form portal's
- * Anlage N 2025, made by the finance ministry's forms commission) and agree with
- * the tax portal's help for the 2025 return.
+ * annex lines were read off the official form of 2025 (the Anlage N 2025 of the
+ * federal form portal, made by the finance ministry's forms commission).
  */
 
 export const EUER_FORM_2025: Source = {
@@ -159,7 +158,12 @@ const STRUCTURED_EMPLOYMENT: FormLine[] = [
 export interface EmploymentLineNumbers {
   workEquipment: number;
   studyCosts: number;
-  furtherCosts: number;
+  /**
+   * The total of the further costs, and where their single entries go: the
+   * printed total also holds the ferry and flight costs of the commute, which the
+   * app does not record, so the line alone would mislead.
+   */
+  furtherCosts: { line: number; entryNote: string };
 }
 
 /**
@@ -168,18 +172,19 @@ export interface EmploymentLineNumbers {
  * carry no number (never another year's).
  */
 export function employmentLines(numbers: EmploymentLineNumbers | null): FormLine[] {
-  const amount = (key: 'employment.work_equipment' | 'employment.study_costs' | 'employment.further_costs', line: number | null): FormLine => ({
+  const amount = (key: 'employment.work_equipment' | 'employment.study_costs' | 'employment.further_costs', line: number | null, entryNote?: string): FormLine => ({
     key,
     form: 'employment',
     line,
     numbering: line === null ? 'unverified' : 'verified',
     label: EMPLOYMENT_LABELS[key],
+    ...(entryNote && line !== null ? { entryNote } : {}),
     kind: 'expense',
   });
   return [
     amount('employment.work_equipment', numbers?.workEquipment ?? null),
     amount('employment.study_costs', numbers?.studyCosts ?? null),
-    amount('employment.further_costs', numbers?.furtherCosts ?? null),
+    amount('employment.further_costs', numbers?.furtherCosts.line ?? null, numbers?.furtherCosts.entryNote),
     ...STRUCTURED_EMPLOYMENT,
   ];
 }
@@ -189,7 +194,14 @@ export const FORM_LINES_2025: readonly FormLine[] = [
   // Anlage N 2025: work equipment is entered on lines 54 and 55 with the total on
   // line 56; training costs on line 60; the further costs ("Sonstiges") on lines
   // 62 and 63 with the total of the further costs on line 64.
-  ...employmentLines({ workEquipment: 56, studyCosts: 60, furtherCosts: 64 }),
+  ...employmentLines({
+    workEquipment: 56,
+    studyCosts: 60,
+    furtherCosts: {
+      line: 64,
+      entryNote: 'Einzeln in den Zeilen 62 und 63 eintragen; die Summe in Zeile 64 enthält auch Fähr- und Flugkosten aus Zeile 61.',
+    },
+  }),
 ];
 
 const ESTG_6: Source = {

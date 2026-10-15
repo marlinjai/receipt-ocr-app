@@ -173,6 +173,7 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
         line: def.numbering === 'verified' ? def.line : null,
         numbering: def.numbering,
         label: def.label,
+        ...(def.entryNote && def.numbering === 'verified' ? { entryNote: def.entryNote } : {}),
         kind: def.kind,
         cents: 0,
         nonDeductibleCents: 0,

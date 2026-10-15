@@ -29,9 +29,12 @@ const YEAR = '(\\d{4}|\\d{2})(?![\\p{N}:])';
 
 interface DatePattern {
   pattern: RegExp;
-  /** Year, month and day of one match, as printed. */
-  read: (m: RegExpMatchArray) => [number, number, number];
+  /** Year, month and day of one match, as printed. `dayFirst` says how the document writes "04/05/2026". */
+  read: (m: RegExpMatchArray, dayFirst: boolean) => [number, number, number];
 }
+
+/** A date written with slashes: two numbers and a year. */
+const SLASH_DATE = new RegExp(`(?<![\\p{N}/])(\\d{1,2})/(\\d{1,2})/${YEAR}`, 'gu');
 
 const DATE_PATTERNS: DatePattern[] = [
   // 2025-03-15
@@ -48,15 +51,35 @@ const DATE_PATTERNS: DatePattern[] = [
   },
   // 15.03.2024, 19.02.25
   { pattern: new RegExp(`(?<![\\p{N}.])(\\d{1,2})\\.(\\d{1,2})\\.${YEAR}`, 'gu'), read: (m) => [Number(m[3]), Number(m[2]), Number(m[1])] },
-  // 03/15/2024: the month first, unless the first number cannot be a month.
+  // 03/15/2024 or 15/03/2024: as the document writes its dates (see slashDayFirst), unless a number cannot be a month.
   {
-    pattern: new RegExp(`(?<![\\p{N}/])(\\d{1,2})/(\\d{1,2})/${YEAR}`, 'gu'),
-    read: (m) => {
+    pattern: SLASH_DATE,
+    read: (m, dayFirst) => {
       const [a, b] = [Number(m[1]), Number(m[2])];
-      return a > 12 ? [Number(m[3]), b, a] : [Number(m[3]), a, b];
+      if (a > 12) return [Number(m[3]), b, a];
+      if (b > 12) return [Number(m[3]), a, b];
+      return dayFirst ? [Number(m[3]), b, a] : [Number(m[3]), a, b];
     },
   },
 ];
+
+/**
+ * Whether the document writes "04/05/2026" day first. A date of its own
+ * settles it ("31/05/2026" can only be day first, "05/31/2026" only month
+ * first). Otherwise the currency decides: an invoice in euros or pounds is
+ * written the European way, one in dollars, or in nothing the text shows,
+ * the American way. A German hosting invoice in euros prints "04/05/2026"
+ * for the 4th of May, and was stored as the 5th of April.
+ */
+export function slashDayFirst(text: string): boolean {
+  for (const match of text.matchAll(SLASH_DATE)) {
+    if (Number(match[1]) > 12) return true;
+    if (Number(match[2]) > 12) return false;
+  }
+  const european = /€|£|(?<![\p{L}])(?:EUR|GBP)(?![\p{L}])/u.test(text);
+  const dollars = /\$|(?<![\p{L}])USD(?![\p{L}])/u.test(text);
+  return european && !dollars;
+}
 
 function toISO(year: number, month: number, day: number): string | null {
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
@@ -76,11 +99,11 @@ interface FoundDate {
 }
 
 /** Every date on a line, left to right. Where two patterns read the same characters, the one that starts first stands. */
-function datesOnLine(line: string): FoundDate[] {
+function datesOnLine(line: string, dayFirst: boolean): FoundDate[] {
   const found: FoundDate[] = [];
   for (const { pattern, read } of DATE_PATTERNS) {
     for (const match of line.matchAll(pattern)) {
-      const iso = toISO(...read(match));
+      const iso = toISO(...read(match, dayFirst));
       if (iso) found.push({ iso, start: match.index, end: match.index + match[0].length });
     }
   }
@@ -198,7 +221,8 @@ export function readDate(text: string): string | null {
 /** The invoice date together with how the text names it and which other days it prints. */
 export function readDateDetail(text: string): DateReading {
   const lines = text.split('\n');
-  const dates = lines.map((line) => (EXPIRY_LINE.test(line) ? [] : datesOnLine(line)));
+  const dayFirst = slashDayFirst(text);
+  const dates = lines.map((line) => (EXPIRY_LINE.test(line) ? [] : datesOnLine(line, dayFirst)));
   const isFiller = (i: number) => FILLER_LINE.test(lines[i]);
   const labelAlone = (i: number): DateKind | null => {
     if (dates[i].length > 0 || EXPIRY_LINE.test(lines[i]) || lines[i].trim().length > LABEL_LINE_MAX) return null;

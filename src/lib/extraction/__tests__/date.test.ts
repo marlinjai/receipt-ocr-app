@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
 import { readAmounts } from '../amounts';
-import { readDate } from '../date';
+import { readDate, slashDayFirst } from '../date';
 import * as F from './invoice-fixtures';
 
 /**
@@ -208,5 +208,39 @@ describe('the totals of the same documents', () => {
   it('the leasing contract bills the first debit: that is its total, not the amount of the later months', () => {
     const r = read(F.LEASING_CONTRACT_FIRST_DEBIT);
     expect(r).toMatchObject({ gross: 185.56, net: 155.93, taxRate: 19, amountChecks: [] });
+  });
+});
+
+describe('a date written with slashes, read as the document writes it', () => {
+  const hosting = (day: string) => ['Example Hosting GmbH', 'Musterstr. 1, 12345 Musterstadt, Germany', 'Invoice', `Invoice date: ${day}`, 'Total € 19.79'].join('\n');
+
+  it('an invoice in euros writes the day first: 04/05/2026 is the 4th of May', () => {
+    expect(readDate(hosting('04/05/2026'))).toBe('2026-05-04T00:00:00.000Z');
+    expect(readDate(hosting('08/10/2026'))).toBe('2026-10-08T00:00:00.000Z');
+    expect(readDate(['Shop Ltd', 'Date 03/02/2026', 'Total £12.00'].join('\n'))).toBe('2026-02-03T00:00:00.000Z');
+  });
+
+  it('an invoice in dollars, or one that shows no currency, writes the month first', () => {
+    expect(readDate(['Example Inc.', 'Invoice date: 04/05/2026', 'Total $19.79'].join('\n'))).toBe('2026-04-05T00:00:00.000Z');
+    expect(readDate(['Example Inc.', 'Invoice date: 04/05/2026'].join('\n'))).toBe('2026-04-05T00:00:00.000Z');
+  });
+
+  it('another date of the same document settles the order, whatever the currency', () => {
+    // 31/03 can only be day first: the 04/03 above it is the 4th of March, also on a dollar invoice.
+    expect(readDate(['Invoice date: 04/03/2026', 'Period 01/03/2026 - 31/03/2026', 'Total $5.00'].join('\n'))).toBe('2026-03-04T00:00:00.000Z');
+    // 03/31 can only be month first: on a euro invoice too.
+    expect(readDate(['Invoice date: 04/03/2026', 'Period 03/01/2026 - 03/31/2026', 'Total 5,00 €'].join('\n'))).toBe('2026-04-03T00:00:00.000Z');
+  });
+
+  it('a number that cannot be a month decides that one date as before', () => {
+    expect(readDate('Date 15/03/2024\nTotal $3.00')).toBe('2024-03-15T00:00:00.000Z');
+    expect(readDate('Date 03/15/2024\nSumme 3,00 €')).toBe('2024-03-15T00:00:00.000Z');
+  });
+
+  it('slashDayFirst on its own', () => {
+    expect(slashDayFirst('Total € 5,00')).toBe(true);
+    expect(slashDayFirst('Total EUR 5,00 and USD 5.40')).toBe(false);
+    expect(slashDayFirst('no currency at all')).toBe(false);
+    expect(slashDayFirst('13/01/2026 $')).toBe(true);
   });
 });

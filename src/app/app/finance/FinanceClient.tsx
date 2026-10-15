@@ -45,6 +45,7 @@ import PaymentsTab from './PaymentsTab';
 import YearBoundaryTab from './YearBoundaryTab';
 import type { ImportResult } from '@/lib/tax/payments/service';
 import RevenueTab from './RevenueTab';
+import OverdueInvoices from './OverdueInvoices';
 import VatTab from './VatTab';
 import AssetsTab, { type AssetDraft, type DisposalDraft } from './AssetsTab';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
@@ -77,7 +78,8 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
   const tabsId = useId();
   const router = useRouter();
   const [view, setView] = useState(initial);
-  const [tab, setTab] = useState<TabKey>(() => (openQueue(initial).length > 0 ? 'open' : 'statement'));
+  // An overdue invoice is an open check too (decision D6 of the invoicing plan), so it opens the "Offen" tab as well.
+  const [tab, setTab] = useState<TabKey>(() => (openQueue(initial).length > 0 || initial.revenue.overdue.length > 0 ? 'open' : 'statement'));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   // The item of the statement tab whose receipt is being split (its lines change the item ids, so both close together).
@@ -111,6 +113,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
   const selected = queue.find((i) => i.itemId === selectedId) ?? queue[0] ?? null;
   const itemsById = useMemo(() => new Map(view.items.map((i) => [i.itemId, i])), [view]);
   const assetsById = useMemo(() => new Map(view.assets.map((a) => [a.id, a])), [view]);
+  const overdue = view.revenue.overdue;
   const openAssets = view.assets.filter((a) => a.checks.length > 0).length;
   const estimated = view.items.filter((i) => i.checks.some((c) => c.kind === 'amount_estimated')).length;
   const blockedBySetting =
@@ -206,7 +209,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
     );
 
   const tabs: Array<{ key: TabKey; label: string; count?: number }> = [
-    { key: 'open', label: 'Offen', count: queue.length },
+    { key: 'open', label: 'Offen', count: queue.length + overdue.length },
     { key: 'statement', label: 'EÜR' },
     { key: 'revenue', label: 'Einnahmen', count: view.revenue.invoices.length },
     { key: 'payments', label: 'Zahlungen', count: view.payments.open.length + view.payments.unclassified.length },
@@ -330,9 +333,13 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
             { label: 'Kosten für die Anlage N', value: euro(view.employmentCostCents), hint: 'Studium und Anstellung' },
             {
               label: 'Offene Prüfungen',
-              value: String(queue.length),
+              value: String(queue.length + overdue.length),
               hint:
-                [estimated > 0 ? `${estimated} mit geschätztem Betrag` : '', openAssets > 0 ? `${openAssets} Anlagen mit offener Prüfung` : '']
+                [
+                  overdue.length > 0 ? (overdue.length === 1 ? '1 Rechnung überfällig' : `${overdue.length} Rechnungen überfällig`) : '',
+                  estimated > 0 ? `${estimated} mit geschätztem Betrag` : '',
+                  openAssets > 0 ? `${openAssets} Anlagen mit offener Prüfung` : '',
+                ]
                   .filter(Boolean)
                   .join(', ') || 'Belege, die eine Entscheidung brauchen',
             },
@@ -386,8 +393,10 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
         )}
 
         <div role="tabpanel" id={`${tabsId}-panel-${tab}`} aria-labelledby={`${tabsId}-tab-${tab}`} className="mt-4">
+          {tab === 'open' && overdue.length > 0 && <OverdueInvoices overdue={overdue} onOpenRevenue={() => setTab('revenue')} />}
           {tab === 'open' &&
             (queue.length === 0 ? (
+              overdue.length > 0 ? null : (
               <div className="glass-panel rounded-xl p-8 text-center">
                 <p className="text-base font-medium" style={{ color: 'var(--foreground)' }}>
                   Keine offenen Prüfungen für {view.year}.
@@ -399,6 +408,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                   Zur EÜR
                 </button>
               </div>
+              )
             ) : (
               <div className="grid gap-6 lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
                 <nav aria-label="Offene Belege">

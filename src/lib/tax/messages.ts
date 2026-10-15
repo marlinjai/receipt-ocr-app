@@ -1,6 +1,7 @@
 import type { TreatmentOrigin } from './facts';
 import type { AssetCheckKind, AssetMethod, DisposalKind } from './assets';
 import type { InvoiceCheckKind, InvoiceTreatment, OpenCheckKind, Purpose } from './types';
+import { REMINDER_AFTER_DAYS } from './overdue';
 
 /** German wording for the finance screens, in one place. */
 
@@ -57,6 +58,7 @@ export const INVOICE_CHECK_LABELS: Record<InvoiceCheckKind, string> = {
     'Ausweis der Umsatzsteuer passt nicht zum Status am Rechnungsdatum (ausgewiesene Steuer wird geschuldet, auch wenn sie zu Unrecht ausgewiesen ist)',
   invoice_no_date: 'Rechnungsdatum fehlt',
   invoice_overpaid: 'Mehr erhalten als der Rechnungsbetrag',
+  invoice_overdue: `Überfällig: ${REMINDER_AFTER_DAYS} Tage oder länger nach Fälligkeit noch nicht ganz bezahlt`,
 };
 
 export const INVOICE_TREATMENT_LABELS: Record<InvoiceTreatment, string> = {

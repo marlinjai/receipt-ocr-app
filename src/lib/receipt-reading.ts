@@ -24,6 +24,7 @@ import { chooseVendor } from '@/lib/extraction/vendor';
 import { defaultTaxRate, mealFactsFromClassification, type MealClassification } from '@/lib/meals/classify';
 import { CURRENCY_OPTIONS, MEAL_CATEGORY } from '@/lib/receipts-constants';
 import type { ReadFlag } from '@/lib/review/reasons';
+import { orderedRates } from '@/lib/tax-rates';
 
 /** What the language model answered, as far as the reading uses it. */
 export interface ModelReading {
@@ -156,15 +157,19 @@ export function settleReading(fullText: string, extracted: TextExtraction, ai: M
   if (amounts.checks.includes('total_conflict')) flags.push('total_conflict');
   else if (amounts.checks.includes('total_unconfirmed')) flags.push('total_unconfirmed');
 
-  const taxRate = amounts.taxRate ?? ai?.taxRate ?? defaultTaxRate(category, date, meal?.consumption ?? null);
+  // One set of tax lines for both rate columns: the groups the receipt's
+  // arithmetic proves where there are any (the model's lines among them where
+  // their figures are printed), else the lines the model read for a meal. The
+  // number column takes the first rate of that set and the text column lists
+  // them all, in the one order of `orderedRates`, so the two never name a
+  // different first rate.
+  const proven = amounts.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax }));
+  if (meal && proven.length > 0) meal.taxLines = proven;
+  const lines = proven.length > 0 ? proven : (meal?.taxLines ?? []);
+  const leading = orderedRates(lines)[0];
+  const taxRate = leading ?? amounts.taxRate ?? ai?.taxRate ?? defaultTaxRate(category, date, meal?.consumption ?? null);
   let net = amounts.net;
   if (amounts.gross !== null && net === null) net = Math.round((amounts.gross / (1 + taxRate / 100)) * 100) / 100;
-  if (meal) {
-    // The printed tax groups and a printed tip, where the model reported none.
-    if (!meal.taxLines?.length && amounts.taxGroups.length > 0) {
-      meal.taxLines = amounts.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax }));
-    }
-    if (amounts.tip != null) meal.tip = amounts.tip;
-  }
+  if (meal && amounts.tip != null) meal.tip = amounts.tip;
   return { category, vendor, date, currency, amounts, gross: amounts.gross, net, taxRate, meal, flags };
 }

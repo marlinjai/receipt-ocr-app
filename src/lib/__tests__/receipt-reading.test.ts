@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { extractReceiptFields } from '../extract-receipt-fields';
 import { settleCurrency, settleDate, settleReading, type ModelReading } from '../receipt-reading';
 import { EMPTY_MEAL_CLASSIFICATION } from '../meals/classify';
+import { formatTaxRates, orderedRates } from '../tax-rates';
 
 /** All documents here are invented, in the layout of real ones. */
 
@@ -157,5 +158,29 @@ describe('a file that holds more than one document', () => {
     expect(settle(INVOICE, answer({ documents: null })).flags).not.toContain('several_documents');
     expect(settle(INVOICE, answer({})).flags).not.toContain('several_documents');
     expect(settle(INVOICE, answer({ documents: 2, sawPage: false })).flags).not.toContain('several_documents');
+describe('the two rate columns follow one set of tax lines', () => {
+  // A restaurant bill: 7 percent food of 100.00 net, 19 percent drinks of 99.00 net, both groups printed.
+  const BILL = ['Trattoria Beispiel', 'Tisch 4', '19.02.2026', 'Speisen 107,00', 'Getränke 117,81', 'MwSt 7% Netto 100,00 MwSt 7,00', 'MwSt 19% Netto 99,00 MwSt 18,81', 'Summe 224,81'].join('\n');
+
+  it('the printed groups decide the rate even where the model listed its lines in another order or with other figures', () => {
+    const meal = { ...EMPTY_MEAL_CLASSIFICATION, taxLines: [{ rate: 7, net: 100, tax: 7 }, { rate: 19, net: 90, tax: 17.1 }] };
+    const settled = settle(BILL, answer({ category: 'Bewirtung', gross: 224.81, taxRate: 7, meal }));
+    expect(settled.taxRate).toBe(19);
+    // The meal's tax lines are the printed groups, so the text column derived from them starts with the same rate.
+    expect(orderedRates(settled.meal?.taxLines)).toEqual([19, 7]);
+    expect(formatTaxRates(settled.meal?.taxLines, settled.taxRate).startsWith('19 %')).toBe(true);
+  });
+
+  it('where nothing is proven, the model lines of a meal decide the number column too', () => {
+    const slip = ['Imbiss Beispiel', 'Tisch 2', '19.02.2026', 'Summe 50,00'].join('\n');
+    const meal = { ...EMPTY_MEAL_CLASSIFICATION, taxLines: [{ rate: 7, net: 20, tax: 1.4 }, { rate: 19, net: 23, tax: 4.37 }] };
+    const settled = settle(slip, answer({ category: 'Bewirtung', gross: 50, taxRate: 7, meal }));
+    expect(settled.taxRate).toBe(19);
+    expect(formatTaxRates(settled.meal?.taxLines, settled.taxRate)).toBe('19 % + 7 %');
+  });
+
+  it('a receipt without any tax lines keeps the rate it had', () => {
+    const settled = settle('Example Cloud Inc.\nInvoice date: 5 Jan 2026\nTotal 10,00 €', answer({ taxRate: 19 }));
+    expect(settled.taxRate).toBe(19);
   });
 });

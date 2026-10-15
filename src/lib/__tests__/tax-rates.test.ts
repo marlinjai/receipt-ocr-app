@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatTaxRates, touchesTaxRates, withTaxRates } from '../tax-rates';
+import { formatTaxRates, orderedRates, touchesTaxRates, withTaxRates } from '../tax-rates';
 
 const COLUMNS = [
   { id: 'c-rate', name: 'Tax Rate' },
@@ -77,5 +77,27 @@ describe('withTaxRates: the text follows every write of the rate or the tax line
   it('reads a rate stored as text and ignores lines that are not lines', () => {
     expect(withTaxRates(COLUMNS, { 'c-rate': '7' })['c-rates']).toBe('7 %');
     expect(withTaxRates(COLUMNS, { 'c-rate': 19, 'c-lines': 'not json' })['c-rates']).toBe('19 %');
+  });
+});
+
+describe('orderedRates: one order for both rate columns', () => {
+  it('orders by the part of the bill a rate carries, net plus tax, not by net alone', () => {
+    // 7 percent on 100.00 is 107.00 of the bill, 19 percent on 99.00 is 117.81: the 19 percent line carries more.
+    const lines = [
+      { rate: 7, net: 100, tax: 7 },
+      { rate: 19, net: 99, tax: 18.81 },
+    ];
+    expect(orderedRates(lines)).toEqual([19, 7]);
+    expect(formatTaxRates(lines, 7)).toBe('19 % + 7 %');
+  });
+
+  it('works the tax out from the rate where a line gives none, and a tie goes to the higher rate', () => {
+    expect(orderedRates([{ rate: 7, net: 100 }, { rate: 19, net: 99 }])).toEqual([19, 7]);
+    expect(orderedRates([{ rate: 7, net: 107, tax: 0 }, { rate: 19, net: 107, tax: 0 }])).toEqual([19, 7]);
+  });
+
+  it('adds the lines of one rate together and skips a line without a usable rate', () => {
+    expect(orderedRates([{ rate: 19, net: 20, tax: 3.8 }, { rate: 7, net: 30, tax: 2.1 }, { rate: 19, net: 20, tax: 3.8 }, { rate: Number.NaN, net: 500 }])).toEqual([19, 7]);
+    expect(orderedRates(null)).toEqual([]);
   });
 });

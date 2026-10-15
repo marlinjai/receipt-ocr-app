@@ -19,6 +19,19 @@
  * total; where given, the net that is stored is judged too) and
  * `duplicate_of` (rows that name another file are skipped).
  *
+ * The import table of the tax folder is read as well: `date` in place of
+ * `invoice_date` (YYYY-MM-DD or "Jul 24, 2026"), `total` in place of
+ * `total_gross`, `currency` (judged where given), and `decision` (only rows
+ * that say "imported" are read). A row whose file names one page of a scan
+ * ("scan.pdf, page 3") is skipped: the script reads whole files.
+ *
+ * The vendor is judged too: right when the reading names the vendor of the
+ * table, also without the legal form or as part of a longer name ("Hetzner"
+ * and "Hetzner Online GmbH"); wrong when it names another (a legal entity
+ * where the table has the name a customer uses, "Anysphere, Inc." for
+ * "Cursor"). A person corrects such a name by hand, so the count says how
+ * much of that work a reading leaves.
+ *
  * Options:
  *   --sample <n>          read at most n documents, spread over the vendors
  *   --must <a,b,...>      vendors (parts of their names) the sample must contain
@@ -45,6 +58,7 @@ import { amountsInText } from '@/lib/extraction/amounts';
 import { classifyReceiptText } from '@/lib/receipt-classifier';
 import { preparePage, sniffMediaType } from '@/lib/receipt-page';
 import { settleReading, type SettledReading } from '@/lib/receipt-reading';
+import { sameVendor } from '@/lib/extraction/vendor';
 import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
 import { recognizeText } from '@/lib/text-recognition';
 
@@ -57,6 +71,8 @@ interface Expected {
   total: number | null;
   /** The tax contained in the total; null when the table does not say. */
   vat: number | null;
+  /** ISO 4217 code; null when the table does not say. */
+  currency: string | null;
 }
 
 type Verdict = 'correct' | 'wrong' | 'missing' | 'not judged';
@@ -78,6 +94,10 @@ interface Outcome {
   total: Verdict;
   /** The stored net against the table's total less its tax; absent where the table names no tax or the total is not right. */
   net?: 'correct' | 'wrong';
+  /** The vendor against the table's; absent in outcomes stored by an older run. */
+  vendorVerdict?: Verdict;
+  /** The currency against the table's; absent where the table does not say. */
+  currency?: 'correct' | 'wrong';
   flags: string[];
   sawPage: boolean;
   /** What the settled total rests on (see TotalBasis in the amount reader). */
@@ -173,18 +193,54 @@ export function parseCsv(text: string): Array<Record<string, string>> {
   return data.map((values) => Object.fromEntries(header.map((name, i) => [name.trim(), (values[i] ?? '').trim()])));
 }
 
-function expectedRows(csv: string): Expected[] {
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/** A day as YYYY-MM-DD, from "2026-07-24" or "Jul 24, 2026". Null for anything else. */
+export function tableDay(value: string): string | null {
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const named = /^([A-Za-z]{3})[a-z]*\.? (\d{1,2}), (\d{4})$/.exec(value);
+  let parts: [number, number, number] | null = null;
+  if (iso) parts = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+  else if (named && MONTHS.includes(named[1].toLowerCase())) parts = [Number(named[3]), MONTHS.indexOf(named[1].toLowerCase()) + 1, Number(named[2])];
+  if (!parts) return null;
+  const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  if (date.getUTCMonth() !== parts[1] - 1 || date.getUTCDate() !== parts[2]) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+/** The rows of the table that can be judged. A row with a date or a total that cannot be read is left out, never guessed. */
+export function expectedRows(csv: string): Expected[] {
   const out: Expected[] = [];
   for (const row of parseCsv(csv)) {
     if (!row.file || row.duplicate_of) continue;
-    const date = row.invoice_date ?? '';
-    if (date !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
-    const total = row.total_gross === '' ? null : Number(row.total_gross);
+    if (row.decision !== undefined && row.decision !== 'imported') continue;
+    if (/,\s*page\s+\d+$/i.test(row.file)) continue;
+    const rawDate = row.invoice_date ?? row.date ?? '';
+    const date = rawDate === '' ? null : tableDay(rawDate);
+    if (rawDate !== '' && date === null) continue;
+    const rawTotal = row.total_gross ?? row.total ?? '';
+    const total = rawTotal === '' ? null : Number(rawTotal);
     if (total !== null && !Number.isFinite(total)) continue;
     const vat = row.vat_amount === undefined || row.vat_amount === '' ? null : Number(row.vat_amount);
-    out.push({ file: row.file, vendor: row.vendor || 'unknown', date: date || null, total, vat: vat !== null && Number.isFinite(vat) ? vat : null });
+    const currency = /^[A-Z]{3}$/.test(row.currency ?? '') ? row.currency : null;
+    out.push({ file: row.file, vendor: row.vendor || 'unknown', date, total, vat: vat !== null && Number.isFinite(vat) ? vat : null, currency });
   }
   return out;
+}
+
+const vendorKey = (name: string) => name.toLocaleLowerCase('de-DE').replace(/[^\p{L}\p{N}]+/gu, '');
+
+/**
+ * The vendor a reading stored against the table's. Right when it is the same
+ * name (see sameVendor), or one name holds the other ("Hetzner" in "Hetzner
+ * Online GmbH"); not judged where the table names none.
+ */
+export function judgeVendor(expected: string, read: string | null): Verdict {
+  if (!expected || expected === 'unknown') return 'not judged';
+  if (!read || !read.trim()) return 'missing';
+  if (sameVendor(expected, read)) return 'correct';
+  const [a, b] = [vendorKey(expected), vendorKey(read)];
+  return a.length >= 3 && b.length >= 3 && (a.includes(b) || b.includes(a)) ? 'correct' : 'wrong';
 }
 
 /**
@@ -213,13 +269,19 @@ export function pickSample<T extends { vendor: string }>(rows: T[], size: number
 
 const sameAmount = (a: number, b: number) => Math.abs(a - b) < 0.005;
 
-function judge(expected: Expected, settled: Pick<SettledReading, 'date' | 'gross' | 'net' | 'flags'>, vendor: string, sawPage: boolean): Outcome {
+export function judge(
+  expected: Expected,
+  settled: Pick<SettledReading, 'date' | 'gross' | 'net' | 'flags' | 'vendor' | 'currency'>,
+  vendor: string,
+  sawPage: boolean,
+): Outcome {
   const day = settled.date?.slice(0, 10) ?? null;
   const date: Verdict = expected.date === null ? 'not judged' : day === null ? 'missing' : day === expected.date ? 'correct' : 'wrong';
   let total: Verdict;
   if (expected.total === null) total = settled.gross === null ? 'correct' : 'wrong';
   else total = settled.gross === null ? 'missing' : sameAmount(settled.gross, expected.total) ? 'correct' : 'wrong';
-  const outcome: Outcome = { vendor, date, total, flags: settled.flags, sawPage };
+  const outcome: Outcome = { vendor, date, total, flags: settled.flags, sawPage, vendorVerdict: judgeVendor(expected.vendor, settled.vendor) };
+  if (expected.currency !== null) outcome.currency = settled.currency === expected.currency ? 'correct' : 'wrong';
   if (total === 'correct' && expected.total !== null && expected.vat !== null) {
     outcome.net = settled.net !== null && Math.abs(settled.net - (expected.total - expected.vat)) < 0.011 ? 'correct' : 'wrong';
   }
@@ -266,7 +328,7 @@ async function readDocument(expected: Expected, folder: string, visionKey: strin
 
   const extracted = extractReceiptFields({ fullText, blocks: [], confidence });
   const result: DocumentResult = {
-    text: judge(expected, { date: extracted.date, gross: extracted.gross, net: extracted.net, flags: [] }, expected.vendor, false),
+    text: judge(expected, { date: extracted.date, gross: extracted.gross, net: extracted.net, flags: [], vendor: extracted.vendor, currency: extracted.currency }, expected.vendor, false),
   };
 
   const page = withPage ? ((await preparePage(bytes)).page ?? null) : null;
@@ -314,7 +376,7 @@ async function readDocument(expected: Expected, folder: string, visionKey: strin
 // ── Tallies ──────────────────────────────────────────────────────────
 
 // A text-only run never shows the model the page, so `page_not_read` there is the mode, not a review flag.
-function tally(outcomes: Outcome[], textOnly = false) {
+export function tally(outcomes: Outcome[], textOnly = false) {
   const count = (pick: (o: Outcome) => boolean) => outcomes.filter(pick).length;
   const flagged = (o: Outcome) => o.flags.some((f) => f === 'total_conflict' || f === 'total_unconfirmed' || f === 'not_classified' || (f === 'page_not_read' && !textOnly));
   return {
@@ -323,6 +385,9 @@ function tally(outcomes: Outcome[], textOnly = false) {
     total: { correct: count((o) => o.total === 'correct'), wrong: count((o) => o.total === 'wrong'), missing: count((o) => o.total === 'missing') },
     // Judged only where the total is right and the table names the tax.
     net: { correct: count((o) => o.net === 'correct'), wrong: count((o) => o.net === 'wrong') },
+    // Judged where the table names the vendor; a legal entity for the name a customer uses counts as wrong.
+    vendor: { correct: count((o) => o.vendorVerdict === 'correct'), wrong: count((o) => o.vendorVerdict === 'wrong'), missing: count((o) => o.vendorVerdict === 'missing') },
+    currency: { correct: count((o) => o.currency === 'correct'), wrong: count((o) => o.currency === 'wrong') },
     // The number that matters most: a wrong total stored with nothing asking for a look.
     wrongTotalWithoutFlag: count((o) => o.total === 'wrong' && !flagged(o)),
     wrongDateWithoutFlag: count((o) => o.date === 'wrong' && !o.flags.includes('date_conflict')),
@@ -349,7 +414,7 @@ function perVendor(outcomes: Outcome[]): Record<string, string> {
       const flagged = n((o) => o.flags.length > 0);
       return [
         vendor,
-        `n=${own.length} date ${n((o) => o.date === 'correct')}/${own.length} (wrong ${n((o) => o.date === 'wrong')}, missing ${n((o) => o.date === 'missing')}) total ${n((o) => o.total === 'correct')}/${own.length} (wrong ${n((o) => o.total === 'wrong')}, missing ${n((o) => o.total === 'missing')}) net wrong ${n((o) => o.net === 'wrong')} flagged ${flagged}${flagged > 0 ? ` [${[...new Set(own.flatMap((o) => o.flags))].sort().join(',')}]` : ''}`,
+        `n=${own.length} vendor ${n((o) => o.vendorVerdict === 'correct')}/${own.length} date ${n((o) => o.date === 'correct')}/${own.length} (wrong ${n((o) => o.date === 'wrong')}, missing ${n((o) => o.date === 'missing')}) total ${n((o) => o.total === 'correct')}/${own.length} (wrong ${n((o) => o.total === 'wrong')}, missing ${n((o) => o.total === 'missing')}) net wrong ${n((o) => o.net === 'wrong')} flagged ${flagged}${flagged > 0 ? ` [${[...new Set(own.flatMap((o) => o.flags))].sort().join(',')}]` : ''}`,
       ];
     }),
   );

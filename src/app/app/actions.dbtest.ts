@@ -435,11 +435,12 @@ describe('rereadReceipt: a stored receipt read again with the page', () => {
 
     expect(await cellOf(ws, rowId, 'Gross')).toBe(58.7);
     expect(await cellOf(ws, rowId, 'Net')).toBe(49.33);
-    expect(await cellOf(ws, rowId, 'Vendor')).toBe('Cafe Morgenrot');
+    // A vendor that is set stays on a receipt that is no restaurant's till receipt.
+    expect(await cellOf(ws, rowId, 'Vendor')).toBe('Laufkunde');
     expect(new Date((await cellOf(ws, rowId, 'Date')) as string).toISOString().slice(0, 10)).toBe('2025-02-19');
     expect(await cellOf(ws, rowId, 'Currency')).toBe('EUR');
-    // The name stated the total that is now read differently: the reader built it, so it is built again.
-    expect(await cellOf(ws, rowId, 'Name')).toBe('Cafe Morgenrot, 58,70 €, 19.02.2025');
+    // The name stated the total that is now read differently: the reader built it, so it is built again, with the vendor the row keeps.
+    expect(await cellOf(ws, rowId, 'Name')).toBe('Laufkunde, 58,70 €, 19.02.2025');
     // The printed tax group replaces whatever the old reading left.
     expect(JSON.parse((await cellOf(ws, rowId, 'Tax Lines')) as string)).toEqual([{ rate: 19, net: 49.33, tax: 9.37 }]);
 
@@ -462,15 +463,26 @@ describe('rereadReceipt: a stored receipt read again with the page', () => {
     expect(await cellOf(ws, rowId, 'Status')).toBe('Processed');
   });
 
-  it('keeps a vendor that is stored in another spelling of the same name, and still corrects a wrong one', async () => {
-    const sameName = await wrongRow({ Vendor: 'CAFE MORGENROT' }, ws, 63);
+  it('keeps a vendor that is set, and corrects a wrong one only on a restaurant\'s till receipt', async () => {
+    const sameName = await wrongRow({ Vendor: 'CAFE MORGENROT', Category: 'Bewirtung' }, ws, 63);
     await rereadReceipt(sameName);
     // The page reads "Cafe Morgenrot": the same vendor, so the stored spelling stands and its rows stay in one group.
     expect(await cellOf(ws, sameName, 'Vendor')).toBe('CAFE MORGENROT');
     expect(await cellOf(ws, sameName, 'Gross')).toBe(58.7);
-    const otherName = await wrongRow({ Vendor: 'Laufkunde' }, ws, 64);
+    // A till receipt prints the restaurant's own name at the top: a heading stored as the vendor is replaced.
+    const otherName = await wrongRow({ Vendor: 'Laufkunde', Category: 'Bewirtung' }, ws, 64);
     await rereadReceipt(otherName);
     expect(await cellOf(ws, otherName, 'Vendor')).toBe('Cafe Morgenrot');
+    // On an invoice the stored name is the one a customer uses; the page's legal name does not replace it.
+    classify.mockResolvedValue({ ...READ, vendor: 'Musterhosting Holdings LLC' });
+    const invoice = await wrongRow({ Vendor: 'Musterhosting' }, ws, 65);
+    await rereadReceipt(invoice);
+    expect(await cellOf(ws, invoice, 'Vendor')).toBe('Musterhosting');
+    // An empty vendor is filled.
+    classify.mockResolvedValue(READ);
+    const empty = await wrongRow({ Vendor: null }, ws, 66);
+    await rereadReceipt(empty);
+    expect(await cellOf(ws, empty, 'Vendor')).toBe('Cafe Morgenrot');
   });
 
   it('keeps a name a person typed', async () => {

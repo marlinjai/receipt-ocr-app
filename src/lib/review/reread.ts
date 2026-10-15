@@ -46,7 +46,7 @@ export interface RereadNote {
 /** What to say after a new reading: that it is done, with every doubt it left, or why nothing changed. */
 export function rereadNote(result: RereadResult): RereadNote {
   if (!result.ok) return { tone: 'danger', text: ERROR_TEXT[result.error] };
-  const done = 'Neu gelesen: Händler, Datum, Beträge und Währung stehen jetzt so am Beleg, wie die Seite sie zeigt.';
+  const done = 'Neu gelesen: Datum, Beträge und Währung stehen jetzt so am Beleg, wie die Seite sie zeigt. Ein eingetragener Händler bleibt.';
   if (result.reviewFlags.length === 0) return { tone: 'ok', text: done };
   return { tone: 'warn', text: `${done} Bitte prüfen: ${result.reviewFlags.map((flag) => REASON_TEXT[flag]).join(' ')}` };
 }

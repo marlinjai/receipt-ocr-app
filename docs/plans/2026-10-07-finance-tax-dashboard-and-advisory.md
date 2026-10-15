@@ -1483,7 +1483,7 @@ like everything else; nothing derived is stored.
 - **2027 has its own rule set, marked provisional.** Neither the income-surplus
   statement (Anlage EÜR) of 2027 nor the employment annex (Anlage N) of 2027 is
   published (the ministry publishes the statement in the late summer of the year
-  itself, the employment annex drafts go out around May). The rule set therefore
+  itself). The rule set therefore
   lists every line by its label and none with a number, and cites no form.
 - **The legal values are 2026's**, carried explicitly: the 70 percent meal share,
   the asset limits and methods (the declining method stays open for purchases before
@@ -1495,9 +1495,11 @@ like everything else; nothing derived is stored.
   25 September 2026 to raise the low-value limit to 1,200 euros and abolish the pool
   for purchases after 31 December 2026; the government said it would examine it. The
   provisional note on the screen names this.
-- **Every surface says so.** The rule set carries `provisional` (the year it carries
-  from and why), the statement view passes it on, and the finance area shows a note
-  instead of the "line numbers not compared" note. A test pins every carried value to
+- **The finance area says so.** The rule set carries `provisional` (the year it
+  carries from and why), the statement view passes it on, and the finance area shows a
+  note instead of the "line numbers not compared" note. The meal register does not
+  read the rule set (it applies its own 70 percent, the same value), so a 2027 meal
+  shows no such note there; no figure differs. A test pins every carried value to
   2026's, so the yearly review knows exactly what to replace, and the forcing test of
   1 December is satisfied for 2026.
 - **Computed figures of 2025 and 2026 do not change**; only the year 2027 now has an

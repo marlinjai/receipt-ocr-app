@@ -178,15 +178,35 @@ describe('openQueue', () => {
 });
 
 describe('FinanceClient: rules of a year whose forms are not published', () => {
-  it('says the rules are provisional and from which year they are carried', () => {
-    const { rules } = rulesForYear(2027);
-    render(
-      <FinanceClient
-        initial={view([], { year: 2027, rulesYear: 2027, rulesProvisional: rules.provisional ?? null, formSources: rules.formSources, formLines: [...rules.formLines] })}
-      />,
-    );
+  const { rules: rules2027 } = rulesForYear(2027);
+  const unnumbered = [
+    {
+      key: 'euer.telecom' as const,
+      form: 'euer' as const,
+      line: null,
+      numbering: 'unverified' as const,
+      label: 'Aufwendungen für Telekommunikation (z. B. Telefon, Internet)',
+      kind: 'expense' as const,
+      cents: 4_200,
+      nonDeductibleCents: 0,
+      itemIds: [],
+      assetIds: [],
+    },
+  ];
+  const view2027 = (rulesProvisional: StatementView['rulesProvisional']) =>
+    view([], { year: 2027, rulesYear: 2027, rulesProvisional, formSources: rules2027.formSources, formLines: [...rules2027.formLines], lines: unnumbered });
+
+  it('says the rules are provisional and from which year they are carried, and prints no line number', () => {
+    render(<FinanceClient initial={view2027(rules2027.provisional ?? null)} />);
     expect(screen.getByText(/Die Regeln für 2027 sind vorläufig/).textContent).toMatch(/Gerechnet wird mit den Werten\s+von 2026/);
     expect(screen.queryByText(/Zeilennummern noch nicht mit dem amtlichen Vordruck/)).toBeNull();
+    expect(screen.queryByText(/Zeile \d+/)).toBeNull();
+  });
+
+  it('control: the same unnumbered lines without the provisional mark show the note about line numbers', () => {
+    render(<FinanceClient initial={view2027(null)} />);
+    expect(screen.getByText(/Zeilennummern noch nicht mit dem amtlichen Vordruck/)).toBeTruthy();
+    expect(screen.queryByText(/sind vorläufig/)).toBeNull();
   });
 
   it('says nothing of the kind for a year with its own published rules', () => {

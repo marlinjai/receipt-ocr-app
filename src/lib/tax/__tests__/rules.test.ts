@@ -167,6 +167,8 @@ describe('the provisional rule set of 2027', () => {
     expect(r2027.provisional?.reason).toMatch(/2027/);
   });
 
+  // This test fails on purpose once the review replaces a 2027 value with a
+  // published one: then delete it together with `provisional`.
   it('carries every legal value of 2026 unchanged, so the review knows exactly what to replace', () => {
     expect(r2027.mealDeductibleShareBp).toEqual(r2026.mealDeductibleShareBp);
     expect(r2027.assets).toEqual(r2026.assets);
@@ -182,6 +184,7 @@ describe('the provisional rule set of 2027', () => {
   });
 
   it('the declining method is still open for purchases of 2027', () => {
+    expect(r2027.assets.declining.value.acquiredFrom <= '2027-01-01').toBe(true);
     expect(r2027.assets.declining.value.acquiredTo >= '2027-12-31').toBe(true);
   });
 

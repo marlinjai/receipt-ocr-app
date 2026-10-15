@@ -34,6 +34,6 @@ export const RULES_2027: YearRules = {
   provisional: {
     carriedFromYear: 2026,
     reason:
-      'Die Anlage EÜR 2027 und die Anlage N 2027 sind noch nicht veröffentlicht. Die gesetzlichen Werte sind die von 2026, nach dem Gesetzesstand vom 15. Oktober 2026; das Jahressteuergesetz 2026 (im Gesetzgebungsverfahren) könnte die Grenzen für geringwertige Wirtschaftsgüter ab 2027 ändern.',
+      'Die Anlage EÜR 2027 und die Anlage N 2027 sind noch nicht veröffentlicht. Gesetzesstand vom 15. Oktober 2026; das Jahressteuergesetz 2026 (im Gesetzgebungsverfahren) könnte die Grenze für geringwertige Wirtschaftsgüter und den Sammelposten ab 2027 ändern.',
   },
 };

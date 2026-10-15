@@ -45,7 +45,7 @@ import {
   validateStatusChange,
   validateVatSettings,
 } from './revenue-input';
-import { RULE_YEARS, isFormLineKey, rulesForYear, type FormLine } from './rules';
+import { RULE_YEARS, isFormLineKey, rulesForYear, type FormLine, type ProvisionalRules } from './rules';
 import type { FormLineKey } from './rules/types';
 import type { InvoiceCheckKind, InvoiceFact, InvoiceTreatment, ItemPart, LineResult, OpenCheck, VatSettlementFact } from './types';
 import { vatYear, type VatFrequency, type VatMethod, type VatYear } from './vat';
@@ -334,7 +334,7 @@ export interface StatementView {
   rulesExact: boolean;
   rulesReviewedOn: string;
   /** Set when the rule set carries an earlier year's legal values because its own are not published yet. */
-  rulesProvisional: { carriedFromYear: number; reason: string } | null;
+  rulesProvisional: ProvisionalRules | null;
   /** Per form: where its lines come from, or null when that form of this year is not compared with an official source. */
   formSources: Record<'euer' | 'employment', { citation: string; url: string; checkedOn: string } | null>;
   /** The lines a person can choose, in form order. */

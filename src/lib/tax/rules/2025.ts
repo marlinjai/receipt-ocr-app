@@ -21,7 +21,11 @@ export const EMPLOYMENT_FORM_2025: Source = {
   checkedOn: '2026-10-10',
 };
 
-/** The labels of the income-surplus statement, shared by the years; the line numbers are per year. */
+/**
+ * The labels of the income-surplus statement, shared by the years; the line
+ * numbers are per year. The key order is the order of the form, which a year
+ * without numbers (`euerUnnumberedLines`) displays in.
+ */
 export const EUER_LABELS: Record<Extract<FormLineKey, `euer.${string}`>, { label: string; kind: 'revenue' | 'expense'; limited?: boolean; assetOnly?: boolean; computedOnly?: boolean }> = {
   'euer.revenue_small_business': { label: 'Betriebseinnahmen als umsatzsteuerlicher Kleinunternehmer (nach § 19 Abs. 1 UStG)', kind: 'revenue' },
   'euer.revenue_taxable': { label: 'Umsatzsteuerpflichtige Betriebseinnahmen', kind: 'revenue' },

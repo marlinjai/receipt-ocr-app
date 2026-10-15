@@ -53,29 +53,59 @@ export async function findFileDuplicate(
   workspaceId: string,
   sha256: string,
 ): Promise<ExistingReceipt | null> {
-  const ctx = await receiptsTable(db, workspaceId);
-  if (!ctx) return null;
+  return (await findFileCopies(db, sha256, [workspaceId])).get(workspaceId) ?? null;
+}
+
+/**
+ * For each of the given workspaces, a live receipt there that holds a file with
+ * this content hash. Workspaces NOT in the list are never looked at, so a
+ * caller that passes only the session's own memberships can never learn that
+ * somebody else holds the file.
+ */
+export async function findFileCopies(
+  db: PrismaClient,
+  sha256: string,
+  workspaceIds: readonly string[],
+): Promise<Map<string, ExistingReceipt>> {
+  const found = new Map<string, ExistingReceipt>();
+  const wanted = new Set(workspaceIds);
+  if (wanted.size === 0) return found;
+  const contexts = new Map<string, Awaited<ReturnType<typeof receiptsTable>>>();
+  const context = async (workspaceId: string) => {
+    if (!contexts.has(workspaceId)) contexts.set(workspaceId, await receiptsTable(db, workspaceId));
+    return contexts.get(workspaceId) ?? null;
+  };
   const pageSize = 50;
   let cursorId: string | undefined;
-  // Page through every hash match: the first page may hold only other
-  // workspaces' copies of the same file.
+  // Page through every hash match: the first page may hold only copies in
+  // workspaces that were not asked about.
   for (;;) {
     const refs = await db.dtFile.findMany({
       where: { metadata: { path: ['sha256'], equals: sha256 } },
-      select: { id: true, rowId: true },
+      select: { id: true, rowId: true, columnId: true },
       orderBy: { id: 'asc' },
       ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
       take: pageSize,
     });
-    for (const rowId of new Set(refs.map((r) => r.rowId))) {
-      // Only rows of this workspace's own table count; a hit in another
-      // workspace must stay invisible (it would leak that someone holds the file).
-      const row = await ctx.adapter.getRow(rowId);
+    const columnIds = [...new Set(refs.map((r) => r.columnId))];
+    const columns = columnIds.length
+      ? await db.dtColumn.findMany({ where: { id: { in: columnIds } }, select: { id: true, table: { select: { id: true, workspaceId: true } } } })
+      : [];
+    const workspaceOfColumn = new Map(columns.map((c) => [c.id, c.table.workspaceId]));
+    const checked = new Set<string>();
+    for (const ref of refs) {
+      const workspaceId = workspaceOfColumn.get(ref.columnId);
+      if (!workspaceId || !wanted.has(workspaceId) || found.has(workspaceId) || checked.has(ref.rowId)) continue;
+      checked.add(ref.rowId);
+      const ctx = await context(workspaceId);
+      if (!ctx) continue;
+      // Only a live receipt of that workspace's own receipts table counts.
+      const row = await ctx.adapter.getRow(ref.rowId);
       if (row && row.tableId === ctx.tableId && !row.archived && !isGroupRow(row, ctx.columns)) {
-        return { rowId, name: rowName(row.cells, ctx.columns) };
+        found.set(workspaceId, { rowId: ref.rowId, name: rowName(row.cells, ctx.columns) });
       }
     }
-    if (refs.length < pageSize) return null;
+    if (refs.length < pageSize || found.size === wanted.size) return found;
     cursorId = refs[refs.length - 1].id;
   }
 }

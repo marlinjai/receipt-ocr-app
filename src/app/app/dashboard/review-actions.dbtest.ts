@@ -103,7 +103,7 @@ afterAll(async () => {
 
 describe('a dollar invoice, uploaded today and taken from the review list', () => {
   it('an upload stores 360 dollars with no German tax, whatever rate the model inferred', async () => {
-    const uploaded = await processReceipt(file(1), ocr(F.DOLLAR_INVOICE_WITH_DISCOUNT), {});
+    const uploaded = await processReceipt(file(1), ocr(F.DOLLAR_INVOICE_WITH_DISCOUNT), { workspaceId: ws.workspaceId });
     expect(uploaded.reviewFlags).toEqual([]);
 
     const columns = await ws.adapter.getColumns(ws.tableId);
@@ -124,14 +124,14 @@ describe('a dollar invoice, uploaded today and taken from the review list', () =
 
   it('without the model the upload reads the same amounts: the discount arithmetic confirms the total', async () => {
     classify.mockRejectedValue(new Error('model unavailable'));
-    const uploaded = await processReceipt(file(2), ocr(F.DOLLAR_INVOICE_WITH_DISCOUNT), {});
+    const uploaded = await processReceipt(file(2), ocr(F.DOLLAR_INVOICE_WITH_DISCOUNT), { workspaceId: ws.workspaceId });
     // Not classified, and nothing else: the total needs no look.
     expect(uploaded.reviewFlags).toEqual(['not_classified']);
     expect(await stateOf(uploaded.rowId)).toMatchObject({ Gross: 360, Net: 360, 'Tax Rate': 0, 'Tax Rates': '0 %', 'FX Rate': 0.8642 });
   });
 
   it('taking the new reading of the old row leaves it exactly as the upload of the same invoice', async () => {
-    const uploaded = await processReceipt(file(3), ocr(F.DOLLAR_INVOICE_WITH_DISCOUNT), {});
+    const uploaded = await processReceipt(file(3), ocr(F.DOLLAR_INVOICE_WITH_DISCOUNT), { workspaceId: ws.workspaceId });
     const old = await ws.addReceipt(OLD_ROW);
 
     const queue = await getReviewQueue();
@@ -173,7 +173,7 @@ describe('a total the model read from the page, in the review list', () => {
 
   it('is stored as read and is not offered back as "an older reading" of 57.09', async () => {
     classify.mockResolvedValue({ ...MODEL_ANSWER, name: 'Zollabfertigung, Musterfracht Express', vendor: 'Musterfracht Express GmbH', gross: 226.14, date: '2025-05-14T00:00:00.000Z', taxRate: 19 });
-    const uploaded = await processReceipt(file(10), ocr(CUSTOMS), {});
+    const uploaded = await processReceipt(file(10), ocr(CUSTOMS), { workspaceId: ws.workspaceId });
     expect(uploaded.reviewFlags).toEqual([]);
     expect(await stateOf(uploaded.rowId)).toMatchObject({ Gross: 226.14, Net: 217.02, 'Tax Rate': 19, Date: '2025-05-14' });
 
@@ -188,7 +188,7 @@ describe('a total the model read from the page, in the review list', () => {
 
   it('the same invoice read by a model that named another amount keeps the proven part and asks for a look', async () => {
     classify.mockResolvedValue({ ...MODEL_ANSWER, vendor: 'Musterfracht Express', gross: 130.65, date: '2025-05-14T00:00:00.000Z', taxRate: 19 });
-    const uploaded = await processReceipt(file(11), ocr(CUSTOMS), {});
+    const uploaded = await processReceipt(file(11), ocr(CUSTOMS), { workspaceId: ws.workspaceId });
     expect(uploaded.reviewFlags).toEqual(['total_conflict']);
     expect(await stateOf(uploaded.rowId)).toMatchObject({ Gross: 57.09 });
   });

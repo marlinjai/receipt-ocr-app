@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createWorkspace, db, type TestWorkspace } from '../../../test/db-helpers';
+import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../../../test/db-helpers';
 
 /**
  * processReceipt, retakeReceipt and rereadReceipt against a real database: the
@@ -8,7 +8,8 @@ import { createWorkspace, db, type TestWorkspace } from '../../../test/db-helper
  * the file store and the exchange-rate lookup are replaced. Run with `pnpm test:db`.
  */
 
-const session = { current: null as null | { memberships: unknown[]; activeWorkspace: { id: string; tenantId: string } } };
+type Membership = { id: string; slug: string; role: string; tenantId: string };
+const session = { current: null as null | { memberships: Membership[]; activeWorkspace: Membership } };
 const classify = vi.fn();
 const loadPage = vi.fn();
 
@@ -66,8 +67,16 @@ const MEAL_ANSWER = {
   meal: { mealType: 'business_meal_external', consumption: 'dine_in', tip: 5, taxLines: [{ rate: 19, net: 40.76, tax: 7.74 }], place: 'Ristorante Beispiel, Musterstraße 1, 12345 Musterstadt' },
 };
 
+const membership = (workspace: TestWorkspace): Membership => ({ id: workspace.workspaceId, slug: 'test', role: 'member', tenantId: workspace.tenantId });
+
+/** A session that is a member of `workspace` only, with it active. */
 async function use(workspace: TestWorkspace) {
-  session.current = { memberships: [], activeWorkspace: { id: workspace.workspaceId, tenantId: workspace.tenantId } };
+  session.current = { memberships: [membership(workspace)], activeWorkspace: membership(workspace) };
+}
+
+/** An upload from a page that names the session's active workspace, as the upload page does by default. */
+function upload(f: Parameters<typeof processReceipt>[0], o: Parameters<typeof processReceipt>[1], options: { sha256?: string } = {}) {
+  return processReceipt(f, o, { ...options, workspaceId: session.current!.activeWorkspace.id });
 }
 
 async function rowCount(workspace: TestWorkspace) {
@@ -97,7 +106,7 @@ afterAll(async () => {
 
 describe('processReceipt', () => {
   it('a restaurant receipt is filed as a meal with what the classifier read, and waits for guests and occasion', async () => {
-    const result = await processReceipt(file(1), ocr(RESTAURANT), { sha256: HASH('1') });
+    const result = await upload(file(1), ocr(RESTAURANT), { sha256: HASH('1') });
     expect(result).toMatchObject({ category: 'Bewirtung', isMeal: true, attention: null, possibleDuplicateOf: null });
     const record = await loadMealRecord(db, ws.workspaceId, result.rowId);
     expect(record).toMatchObject({
@@ -120,7 +129,7 @@ describe('processReceipt', () => {
 
   it('text recognition failed: there is still a row, Pending, with the file attached', async () => {
     const before = await rowCount(ws);
-    const result = await processReceipt(file(2), null, { sha256: HASH('2') });
+    const result = await upload(file(2), null, { sha256: HASH('2') });
     expect(result).toMatchObject({ category: null, isMeal: false, attention: 'ocr_failed' });
     expect(await rowCount(ws)).toBe(before + 1);
     expect(await files(ws, result.rowId)).toHaveLength(1);
@@ -133,13 +142,13 @@ describe('processReceipt', () => {
   });
 
   it('a blurry photo (low confidence) is saved and flagged for a retake', async () => {
-    const result = await processReceipt(file(3), ocr(RESTAURANT, 0.4), {});
+    const result = await upload(file(3), ocr(RESTAURANT, 0.4), {});
     expect(result.attention).toBe('low_quality');
   });
 
   it('the classifier failing does not lose the receipt: fallback rules file it', async () => {
     classify.mockRejectedValue(new Error('model unavailable'));
-    const result = await processReceipt(file(4), ocr('Ristorante Beispiel\nPasta 14,00\nSumme 14,00\n02.02.2026'), {});
+    const result = await upload(file(4), ocr('Ristorante Beispiel\nPasta 14,00\nSumme 14,00\n02.02.2026'), {});
     expect(result).toMatchObject({ category: 'Bewirtung', isMeal: true });
     // 2026 restaurant food without printed tax lines: 7 percent by date.
     expect((await loadMealRecord(db, ws.workspaceId, result.rowId))!.taxRate).toBe(7);
@@ -147,21 +156,21 @@ describe('processReceipt', () => {
 
   it('a supermarket receipt is not a meal even without the classifier', async () => {
     classify.mockRejectedValue(new Error('model unavailable'));
-    const result = await processReceipt(file(5), ocr('REWE Markt GmbH\nBananen 1,99\nSumme 1,99\n02.03.2025'), {});
+    const result = await upload(file(5), ocr('REWE Markt GmbH\nBananen 1,99\nSumme 1,99\n02.03.2025'), {});
     expect(result.isMeal).toBe(false);
   });
 
   it('the same receipt photographed twice is saved and reported as a look-alike', async () => {
     const fresh = await createWorkspace();
     await use(fresh);
-    const first = await processReceipt(file(6), ocr(RESTAURANT), { sha256: HASH('6') });
-    const second = await processReceipt(file(7), ocr(RESTAURANT), { sha256: HASH('7') });
+    const first = await upload(file(6), ocr(RESTAURANT), { sha256: HASH('6') });
+    const second = await upload(file(7), ocr(RESTAURANT), { sha256: HASH('7') });
     expect(first.possibleDuplicateOf).toBeNull();
     expect(second.possibleDuplicateOf).toMatchObject({ rowId: first.rowId });
   });
 
   it('a malformed hash from the browser is not stored', async () => {
-    const result = await processReceipt(file(8), ocr(RESTAURANT), { sha256: 'not-a-hash' });
+    const result = await upload(file(8), ocr(RESTAURANT), { sha256: 'not-a-hash' });
     expect((await files(ws, result.rowId))[0].metadata).toEqual({ source: 'ocr-upload' });
   });
 });
@@ -175,7 +184,7 @@ describe('processReceipt: what the reader cannot settle is recorded, never silen
 
   it('a failed classification is on the receipt and in the review list, and the receipt is still filed from its text', async () => {
     classify.mockRejectedValue(new Error('model unavailable'));
-    const result = await processReceipt(file(20), ocr(CAFE), {});
+    const result = await upload(file(20), ocr(CAFE), {});
 
     expect(result.reviewFlags).toEqual(['not_classified']);
     expect(await stored(result.rowId)).toEqual(['not_classified']);
@@ -188,14 +197,14 @@ describe('processReceipt: what the reader cannot settle is recorded, never silen
 
   it('a clean reading records nothing', async () => {
     classify.mockResolvedValue({ ...MEAL_ANSWER, date: CAFE_DAY });
-    const result = await processReceipt(file(21), ocr(CAFE), {});
+    const result = await upload(file(21), ocr(CAFE), {});
     expect(result.reviewFlags).toEqual([]);
     expect(await db.receiptReview.count({ where: { rowId: result.rowId } })).toBe(0);
   });
 
   it("the model's total never overrules the receipt's own arithmetic, and the disagreement is recorded", async () => {
     classify.mockResolvedValue({ ...MEAL_ANSWER, date: CAFE_DAY, gross: 916752.88, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null } });
-    const result = await processReceipt(file(22), ocr(CAFE), {});
+    const result = await upload(file(22), ocr(CAFE), {});
     expect(await cell(result.rowId, 'Gross')).toBe(58.7);
     expect(result.reviewFlags).toEqual(['total_conflict']);
     expect(await stored(result.rowId)).toEqual(['total_conflict']);
@@ -204,24 +213,24 @@ describe('processReceipt: what the reader cannot settle is recorded, never silen
   it("the model's vendor is taken when the receipt shows it, and refused when it does not", async () => {
     const text = ['Since 2016', 'Fantastic Foodbar Inh.', 'Beispielallee 126, 10437 Musterstadt', 'Rechnung Nr.2-42883', 'Summe 11,90', 'Netto 10,00', 'MwSt 19% 1,90', '21.03.2025'].join('\n');
     classify.mockResolvedValue({ ...MEAL_ANSWER, vendor: 'Fantastic Foodbar', gross: 11.9, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null } });
-    const taken = await processReceipt(file(23), ocr(text), {});
+    const taken = await upload(file(23), ocr(text), {});
     expect(await cell(taken.rowId, 'Vendor')).toBe('Fantastic Foodbar');
 
     classify.mockResolvedValue({ ...MEAL_ANSWER, vendor: 'Some Other Chain', gross: 11.9, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null } });
-    const refused = await processReceipt(file(24), ocr(text), {});
+    const refused = await upload(file(24), ocr(text), {});
     expect(await cell(refused.rowId, 'Vendor')).toBe('Fantastic Foodbar');
   });
 
   it('a restaurant receipt the model filed elsewhere keeps the model\'s category and is put up for a look', async () => {
     classify.mockResolvedValue({ ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', meal: { mealType: null, consumption: null, tip: null, taxLines: null, place: null } });
-    const result = await processReceipt(file(25), ocr(CAFE), {});
+    const result = await upload(file(25), ocr(CAFE), {});
     expect(result.category).toBe('Software & Lizenzen');
     expect(result.reviewFlags).toContain('category_doubt');
   });
 
   it('a page nothing could be read from says so in its name and is not named "Receipt"', async () => {
-    const empty = await processReceipt(file(26), ocr(''), {});
-    const failed = await processReceipt(file(27), null, {});
+    const empty = await upload(file(26), ocr(''), {});
+    const failed = await upload(file(27), null, {});
     expect(await cell(empty.rowId, 'Name')).toBe('Nicht lesbar: foto-26.jpg');
     expect(await cell(failed.rowId, 'Name')).toBe('Nicht lesbar: foto-27.jpg');
     expect(empty.attention).toBe('ocr_failed');
@@ -230,7 +239,7 @@ describe('processReceipt: what the reader cannot settle is recorded, never silen
 
   it('a retake replaces the recorded doubts with those of the new reading', async () => {
     classify.mockRejectedValue(new Error('model unavailable'));
-    const first = await processReceipt(file(28), ocr(CAFE), {});
+    const first = await upload(file(28), ocr(CAFE), {});
     expect(await stored(first.rowId)).toEqual(['not_classified']);
 
     classify.mockResolvedValue({ ...MEAL_ANSWER, date: CAFE_DAY, gross: 58.7, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null } });
@@ -243,7 +252,7 @@ describe('processReceipt: what the reader cannot settle is recorded, never silen
 
 describe('retakeReceipt: never a second row', () => {
   it('replaces the photo and re-reads the receipt on the same row', async () => {
-    const first = await processReceipt(file(10), ocr('unscharf', 0.2), { sha256: HASH('a') });
+    const first = await upload(file(10), ocr('unscharf', 0.2), { sha256: HASH('a') });
     expect(first.attention).toBe('low_quality');
     const before = await rowCount(ws);
 
@@ -259,7 +268,7 @@ describe('retakeReceipt: never a second row', () => {
   });
 
   it('keeps meal details the user already entered, and files attached by hand', async () => {
-    const first = await processReceipt(file(12), ocr(RESTAURANT, 0.4), {});
+    const first = await upload(file(12), ocr(RESTAURANT, 0.4), {});
     const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
     const guest = await contactStore(db, ctx).create({ name: 'Rita Retake', companyOrRole: 'Probe GmbH' });
     await saveMealDetails(db, ctx, first.rowId, {
@@ -295,14 +304,15 @@ describe('retakeReceipt: never a second row', () => {
 
   it('a receipt of another workspace cannot be retaken', async () => {
     await use(other);
-    const foreign = await processReceipt(file(15), ocr(RESTAURANT), {});
+    const foreign = await upload(file(15), ocr(RESTAURANT), {});
     await use(ws);
-    await expect(retakeReceipt(foreign.rowId, file(16), ocr(RESTAURANT), {})).rejects.toThrow('Receipt not found');
+    // The session is not a member of the workspace that owns the row: refused before anything is read.
+    await expect(retakeReceipt(foreign.rowId, file(16), ocr(RESTAURANT), {})).rejects.toMatchObject({ status: 403 });
     expect((await files(other, foreign.rowId)).map((f) => f.fileId)).toEqual([file(15).id]);
   });
 
   it('a retake whose recognition fails again keeps the row and says so', async () => {
-    const first = await processReceipt(file(17), ocr('unscharf', 0.2), {});
+    const first = await upload(file(17), ocr('unscharf', 0.2), {});
     const again = await retakeReceipt(first.rowId, file(18), null, {});
     expect(again).toMatchObject({ rowId: first.rowId, attention: 'ocr_failed' });
   });
@@ -312,7 +322,7 @@ describe('processReceipt: the model is shown the page, and the upload never depe
   const stored = async (rowId: string) => (await db.receiptReview.findUnique({ where: { rowId } }))?.flags ?? [];
 
   it('hands the model the page of the uploaded file', async () => {
-    await processReceipt(file(40), ocr(CAFE), {});
+    await upload(file(40), ocr(CAFE), {});
     expect(loadPage).toHaveBeenCalledWith(file(40).id);
     expect(classify.mock.calls[0][0]).toMatchObject({ page: PAGE });
   });
@@ -320,7 +330,7 @@ describe('processReceipt: the model is shown the page, and the upload never depe
   it('a file that cannot be fetched: the receipt is stored from its text and says the page was not read', async () => {
     loadPage.mockResolvedValue({ skipped: 'missing' });
     classify.mockResolvedValue({ ...MEAL_ANSWER, sawPage: false });
-    const result = await processReceipt(file(41), ocr(CAFE), {});
+    const result = await upload(file(41), ocr(CAFE), {});
     expect(classify.mock.calls[0][0]).toMatchObject({ page: null });
     expect(result.reviewFlags).toEqual(['page_not_read']);
     expect(await stored(result.rowId)).toEqual(['page_not_read']);
@@ -330,14 +340,14 @@ describe('processReceipt: the model is shown the page, and the upload never depe
 
   it('the provider is down: the upload completes with the text reading and a visible note', async () => {
     classify.mockRejectedValue(Object.assign(new Error('Request timed out.'), { name: 'APIConnectionTimeoutError' }));
-    const result = await processReceipt(file(42), ocr(CAFE), {});
+    const result = await upload(file(42), ocr(CAFE), {});
     expect(result.reviewFlags).toEqual(['not_classified']);
     expect(await cellOf(ws, result.rowId, 'Gross')).toBe(58.7);
     expect(await cellOf(ws, result.rowId, 'Status')).toBe('Pending');
   });
 
   it('no recognized text: the model is not asked and the file is not fetched', async () => {
-    await processReceipt(file(43), null, {});
+    await upload(file(43), null, {});
     expect(loadPage).not.toHaveBeenCalled();
     expect(classify).not.toHaveBeenCalled();
   });
@@ -345,7 +355,7 @@ describe('processReceipt: the model is shown the page, and the upload never depe
   it('a document with no total stores none, however a label could be read', async () => {
     const text = 'Musterleasing AG\nLeasingantrag\nAntragsdatum 02.04.2025\nLaufzeit 24 Monate\nMonatlicher Betrag 49,90 EUR';
     classify.mockResolvedValue({ ...MEAL_ANSWER, category: 'Hardware & IT', konto: '4855', gross: null, noTotal: true, date: '2025-04-02T00:00:00.000Z', meal: null });
-    const result = await processReceipt(file(44), ocr(text), {});
+    const result = await upload(file(44), ocr(text), {});
     expect(await cellOf(ws, result.rowId, 'Gross')).toBeNull();
     expect(await cellOf(ws, result.rowId, 'Net')).toBeNull();
     // Nothing to doubt about a total that is not there; the missing amount itself asks for the look.
@@ -356,7 +366,7 @@ describe('processReceipt: the model is shown the page, and the upload never depe
   it('a page date that contradicts the labelled one is recorded, and the labelled one is stored', async () => {
     const text = 'Example Cloud Inc.\nInvoice date: 5 Jan 2025\nDue date: 4 Feb 2025\nTotal $20.00\nAmount due $20.00';
     classify.mockResolvedValue({ ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', gross: 20, currency: 'USD', date: '2025-02-04T00:00:00.000Z', meal: null });
-    const result = await processReceipt(file(45), ocr(text), {});
+    const result = await upload(file(45), ocr(text), {});
     expect(result.reviewFlags).toEqual(['date_conflict']);
     expect(new Date((await cellOf(ws, result.rowId, 'Date')) as string).toISOString().slice(0, 10)).toBe('2025-01-05');
     expect(await cellOf(ws, result.rowId, 'Currency')).toBe('USD');
@@ -364,22 +374,69 @@ describe('processReceipt: the model is shown the page, and the upload never depe
 
   it('a file that another workspace holds is refused: its page is never read into a row here', async () => {
     await use(other);
-    await processReceipt(file(46), ocr(CAFE), {});
+    await upload(file(46), ocr(CAFE), {});
     await use(ws);
     loadPage.mockClear();
     const before = await rowCount(ws);
-    await expect(processReceipt(file(46), ocr(CAFE), {})).rejects.toThrow('File not found');
+    await expect(upload(file(46), ocr(CAFE), {})).rejects.toThrow('File not found');
     expect(loadPage).not.toHaveBeenCalled();
     expect(await rowCount(ws)).toBe(before);
-    const own = await processReceipt(file(47), ocr(CAFE), {});
+    const own = await upload(file(47), ocr(CAFE), {});
     await expect(retakeReceipt(own.rowId, file(46), ocr(CAFE), {})).rejects.toThrow('File not found');
     expect((await files(ws, own.rowId)).map((f) => f.fileId)).toEqual([file(47).id]);
   });
 });
 
+describe('the company an upload names', () => {
+  /** A session that belongs to both workspaces, with `active` the active one. */
+  function both(active: TestWorkspace) {
+    session.current = { memberships: [membership(ws), membership(other)], activeWorkspace: membership(active) };
+  }
+
+  it('is where the receipt lands, even when the session has another company active (another tab switched)', async () => {
+    both(other);
+    const beforeOther = await rowCount(other);
+    const result = await processReceipt(file(60), ocr(CAFE), { workspaceId: ws.workspaceId });
+    expect((await ws.adapter.getRow(result.rowId))?.tableId).toBe(ws.tableId);
+    expect(await rowCount(other)).toBe(beforeOther);
+  });
+
+  it('a company the session is not a member of is refused, and nothing is written anywhere', async () => {
+    await use(ws);
+    const before = [await rowCount(ws), await rowCount(other)];
+    await expect(processReceipt(file(61), ocr(CAFE), { workspaceId: other.workspaceId })).rejects.toMatchObject({ status: 403 });
+    expect([await rowCount(ws), await rowCount(other)]).toEqual(before);
+  });
+
+  it('an upload that names no company, or a malformed one, is refused instead of falling back to the active company', async () => {
+    await use(ws);
+    const before = await rowCount(ws);
+    for (const workspaceId of [undefined, '', ` ${ws.workspaceId}`, 42]) {
+      await expect(processReceipt(file(62), ocr(CAFE), { workspaceId } as never)).rejects.toMatchObject({ status: 403 });
+    }
+    expect(await rowCount(ws)).toBe(before);
+  });
+
+  it('a group of the company is never read from a new photo', async () => {
+    await use(ws);
+    const receipt = await ws.addReceipt(plainMealReceipt());
+    const groupId = await createGroup(db, ws.workspaceId, 'Reise', [receipt]);
+    await expect(retakeReceipt(groupId, file(65), ocr(CAFE), {})).rejects.toThrow('Receipt not found');
+  });
+
+  it('a retake stays with the receipt\'s own company, whatever company is active now', async () => {
+    both(ws);
+    const first = await processReceipt(file(63), ocr('unscharf', 0.2), { workspaceId: ws.workspaceId });
+    both(other);
+    const again = await retakeReceipt(first.rowId, file(64), ocr(CAFE), {});
+    expect(again.rowId).toBe(first.rowId);
+    expect((await files(ws, first.rowId)).map((f) => f.fileId)).toEqual([file(64).id]);
+  });
+});
+
 describe('retakeReceipt: what a person decided stays', () => {
   it('keeps an assignment that is set and a business share that was changed', async () => {
-    const first = await processReceipt(file(50), ocr(CAFE), {});
+    const first = await upload(file(50), ocr(CAFE), {});
     const columns = await ws.adapter.getColumns(ws.tableId);
     const id = (name: string) => columns.find((c) => c.name === name)!.id;
     const privat = (await ws.adapter.getSelectOptions(id('Zuordnung'))).find((o) => o.name === 'Privat')!.id;
@@ -393,7 +450,7 @@ describe('retakeReceipt: what a person decided stays', () => {
 
   it('an assignment nobody gave is filled by the retake, and an untouched share follows the vendor', async () => {
     classify.mockResolvedValue({ ...MEAL_ANSWER, zuordnung: null });
-    const first = await processReceipt(file(52), ocr('unscharf', 0.2), {});
+    const first = await upload(file(52), ocr('unscharf', 0.2), {});
     expect(await cellOf(ws, first.rowId, 'Zuordnung')).toBeNull();
     classify.mockResolvedValue({ ...MEAL_ANSWER, zuordnung: 'Geschäftlich' });
     await retakeReceipt(first.rowId, file(53), ocr(CAFE), {});

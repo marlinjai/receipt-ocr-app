@@ -167,3 +167,57 @@ export function requireSessionTenantId(
   if (session.memberships.length === 0) return devFallbackTenantId();
   throw new MissingTenantError();
 }
+
+/** A company workspace an upload can be filed into, as the upload page offers it. */
+export interface UploadTarget {
+  workspaceId: string;
+  /** The company's name, with the workspace's own name when the company has more than one. */
+  label: string;
+}
+
+interface LabelledMembership {
+  id: string;
+  slug: string;
+  name?: string;
+  tenantId?: string;
+  tenantName?: string;
+}
+
+/**
+ * The name a workspace is shown by wherever a user picks a company or is told
+ * one: the company name, and the workspace's own name only when that company
+ * has several workspaces in this session.
+ */
+export function membershipLabel(membership: LabelledMembership, memberships: readonly LabelledMembership[]): string {
+  const company = membership.tenantName?.trim() || workspaceLabel(membership.slug);
+  const siblings = new Set(memberships.filter((m) => m.tenantId !== undefined && m.tenantId === membership.tenantId).map((m) => m.id));
+  const own = membership.name?.trim();
+  return siblings.size > 1 && own && own !== company ? `${company} / ${own}` : company;
+}
+
+/**
+ * Every workspace this session may upload into, labelled and sorted by label.
+ * The development bypass has no memberships and uploads into its one local
+ * workspace.
+ */
+export function uploadTargets(session: { memberships: readonly LabelledMembership[] }): UploadTarget[] {
+  if (session.memberships.length === 0) return [{ workspaceId: devFallbackWorkspaceId(), label: 'Local development' }];
+  const seen = new Set<string>();
+  const targets: UploadTarget[] = [];
+  for (const m of session.memberships) {
+    if (seen.has(m.id)) continue;
+    seen.add(m.id);
+    targets.push({ workspaceId: m.id, label: membershipLabel(m, session.memberships) });
+  }
+  return targets.sort((a, b) => a.label.localeCompare(b.label, 'de'));
+}
+
+/**
+ * The workspace an upload names, when this session may use it; null otherwise.
+ * Never a fallback to the active workspace: an upload naming a company it
+ * cannot reach is refused, not quietly filed somewhere else.
+ */
+export function requestedUploadWorkspace(session: SessionLike, requested: unknown): string | null {
+  if (typeof requested !== 'string' || requested === '' || requested.trim() !== requested) return null;
+  return sessionMayAccessWorkspace(session, requested) ? requested : null;
+}

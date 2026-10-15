@@ -8,6 +8,9 @@ import {
   tenantIdForWorkspace,
   requireSessionTenantId,
   companyWorkspaceIds,
+  membershipLabel,
+  requestedUploadWorkspace,
+  uploadTargets,
   MissingTenantError,
   type SessionLike,
 } from '../auth-workspace';
@@ -171,5 +174,46 @@ describe('companyWorkspaceIds', () => {
 
   it('gives the dev bypass its one local workspace', () => {
     expect(companyWorkspaceIds({ memberships: [], activeWorkspace: null }, 'dev-tenant')).toEqual(['receipt-ocr']);
+  });
+});
+
+describe('upload targets', () => {
+  const eins = { id: 'ws-1', slug: 'firma-eins', name: 'Bücher', role: 'member', tenantId: 't-1', tenantName: 'Firma Eins' };
+  const zwei = { id: 'ws-2', slug: 'firma-zwei', name: 'Bücher', role: 'member', tenantId: 't-2', tenantName: 'Firma Zwei' };
+  const zweiAlt = { id: 'ws-3', slug: 'firma-zwei-alt', name: 'Archiv', role: 'member', tenantId: 't-2', tenantName: 'Firma Zwei' };
+  const session: SessionLike = { memberships: [zwei, eins], activeWorkspace: zwei };
+
+  it('names a workspace by its company, and by its own name only where the company has several', () => {
+    expect(membershipLabel(eins, [eins, zwei])).toBe('Firma Eins');
+    expect(membershipLabel(zweiAlt, [eins, zwei, zweiAlt])).toBe('Firma Zwei / Archiv');
+    expect(membershipLabel({ id: 'x', slug: 'receipts-lola-stories' }, [])).toBe('Lola Stories');
+  });
+
+  it('offers every membership once, sorted by name', () => {
+    expect(uploadTargets({ memberships: [zwei, eins, zwei] })).toEqual([
+      { workspaceId: 'ws-1', label: 'Firma Eins' },
+      { workspaceId: 'ws-2', label: 'Firma Zwei' },
+    ]);
+  });
+
+  it('gives the dev bypass its one local workspace', () => {
+    expect(uploadTargets({ memberships: [] })).toEqual([{ workspaceId: 'receipt-ocr', label: 'Local development' }]);
+  });
+
+  it('accepts a named workspace of the session, also one that is not active', () => {
+    expect(requestedUploadWorkspace(session, 'ws-1')).toBe('ws-1');
+    expect(requestedUploadWorkspace(session, 'ws-2')).toBe('ws-2');
+  });
+
+  it('refuses a foreign, missing or malformed workspace instead of falling back to the active one', () => {
+    for (const requested of ['ws-9', undefined, null, '', ' ws-1', 7, { id: 'ws-1' }]) {
+      expect(requestedUploadWorkspace(session, requested)).toBeNull();
+    }
+  });
+
+  it('lets the dev bypass name only its local workspace', () => {
+    const dev: SessionLike = { memberships: [], activeWorkspace: null };
+    expect(requestedUploadWorkspace(dev, 'receipt-ocr')).toBe('receipt-ocr');
+    expect(requestedUploadWorkspace(dev, 'ws-1')).toBeNull();
   });
 });

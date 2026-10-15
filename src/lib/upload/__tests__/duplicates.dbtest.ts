@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { findFileDuplicate, findSimilarReceipt } from '../duplicates';
+import { findFileCopies, findFileDuplicate, findSimilarReceipt } from '../duplicates';
 import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../../../../test/db-helpers';
 
 /** Duplicate detection against a real database (`pnpm test:db`). */
@@ -59,6 +59,36 @@ describe('findFileDuplicate', () => {
     await attach(ws, rowId, hash, '00000000-0000-4000-8000-00000000000d');
     await ws.adapter.deleteRow(rowId);
     expect(await findFileDuplicate(db, ws.workspaceId, hash)).toBeNull();
+  });
+});
+
+describe('findFileCopies', () => {
+  it('finds the copy in each asked workspace, and looks at no workspace that was not asked about', async () => {
+    const a = await createWorkspace();
+    const b = await createWorkspace();
+    const stranger = await createWorkspace();
+    const hash = 'e5'.repeat(32);
+    const inA = await a.addReceipt(plainMealReceipt({ Name: 'Rechnung A' }));
+    const inB = await b.addReceipt(plainMealReceipt({ Name: 'Rechnung B' }));
+    const inStranger = await stranger.addReceipt(plainMealReceipt());
+    await attach(stranger, inStranger, hash, '00000000-0000-4000-8000-0000000000e0');
+    await attach(a, inA, hash, '00000000-0000-4000-8000-0000000000e1');
+    await attach(b, inB, hash, '00000000-0000-4000-8000-0000000000e2');
+
+    const found = await findFileCopies(db, hash, [a.workspaceId, b.workspaceId]);
+    expect([...found.keys()].sort()).toEqual([a.workspaceId, b.workspaceId].sort());
+    expect(found.get(a.workspaceId)).toEqual({ rowId: inA, name: 'Rechnung A' });
+    expect(found.has(stranger.workspaceId)).toBe(false);
+    expect((await findFileCopies(db, hash, [])).size).toBe(0);
+  });
+
+  it('a deleted or archived copy in another workspace does not count', async () => {
+    const a = await createWorkspace();
+    const hash = 'f6'.repeat(32);
+    const archived = await a.addReceipt(plainMealReceipt());
+    await attach(a, archived, hash, '00000000-0000-4000-8000-0000000000f1');
+    await a.adapter.archiveRow(archived);
+    expect((await findFileCopies(db, hash, [a.workspaceId])).size).toBe(0);
   });
 });
 

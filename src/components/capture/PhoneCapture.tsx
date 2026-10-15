@@ -15,6 +15,11 @@ import { runUploadPipeline, type ExistingReceiptRef, type PipelineOutcome, type 
 type Done = Extract<PipelineOutcome, { kind: 'done' }>;
 
 interface PhoneCaptureProps {
+  /**
+   * The company photos taken now go into. A photo put aside in the queue keeps
+   * the company it was taken for and is sent there later, whatever this says by then.
+   */
+  workspaceId: string;
   /** Save a recognized photo as a new receipt. */
   onSave: SaveReceipt;
   /** Read a new photo into an EXISTING receipt (retake). */
@@ -51,7 +56,7 @@ const PHASE_LABELS: Record<PipelinePhase, string> = {
  * into a queue in the browser and is sent later, visibly counted. Every
  * failure says what happened and offers the next step.
  */
-export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: injectedStore, notice }: PhoneCaptureProps) {
+export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardRow, store: injectedStore, notice }: PhoneCaptureProps) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const retakeRef = useRef<HTMLInputElement>(null);
   const [view, setView] = useState<View>({ kind: 'idle' });
@@ -74,10 +79,10 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
     }
   }, [injectedStore]);
 
-  const callbacks = useRef({ onSave, onRetake, onDiscardRow });
+  const callbacks = useRef({ onSave, onRetake, onDiscardRow, workspaceId });
   useEffect(() => {
-    callbacks.current = { onSave, onRetake, onDiscardRow };
-  }, [onSave, onRetake, onDiscardRow]);
+    callbacks.current = { onSave, onRetake, onDiscardRow, workspaceId };
+  }, [onSave, onRetake, onDiscardRow, workspaceId]);
 
   const refreshWaiting = useCallback(async () => {
     if (!store) return;
@@ -93,7 +98,7 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
     async (file: File): Promise<boolean> => {
       if (!store) return false;
       try {
-        await store.add(newQueuedCapture(file, 'camera'));
+        await store.add(newQueuedCapture(file, 'camera', Date.now(), callbacks.current.workspaceId));
         await refreshWaiting();
         return true;
       } catch {
@@ -110,16 +115,23 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
         if (!store) return null;
         setDraining(true);
         try {
-          const deps = createBrowserDeps((file, ocr, options) => callbacks.current.onSave(file, ocr, options));
-          const result = await drainQueue(store, (file) => runUploadPipeline(file, deps), {
-            isOnline: () => navigator.onLine,
-          });
+          const save: SaveReceipt = (file, ocr, options) => callbacks.current.onSave(file, ocr, options);
+          // A photo goes to the company it was taken for. Only entries that do not
+          // know one (shared into the app, or taken on the offline page) go to the
+          // company this page shows now.
+          const result = await drainQueue(
+            store,
+            (file, entry) => runUploadPipeline(file, createBrowserDeps(save, entry.workspaceId ?? callbacks.current.workspaceId)),
+            { isOnline: () => navigator.onLine },
+          );
           const saved = result.sent.filter((s) => s.outcome.kind === 'done').length;
           const known = result.sent.length - saved;
           const meals = result.sent.filter((s) => s.outcome.kind === 'done' && s.outcome.isMeal).length;
+          const elsewhere = [...new Set(result.sent.flatMap((s) => (s.outcome.kind === 'done' ? s.outcome.elsewhere : [])))];
           const parts: string[] = [];
           if (saved > 0) parts.push(saved === 1 ? '1 wartendes Foto wurde gesendet.' : `${saved} wartende Fotos wurden gesendet.`);
           if (known > 0) parts.push(known === 1 ? '1 Foto war bereits vorhanden.' : `${known} Fotos waren bereits vorhanden.`);
+          if (elsewhere.length > 0) parts.push(`Mindestens ein gesendetes Foto liegt genau so schon in deiner Firma ${elsewhere.join(', ')}: bitte im Dashboard prüfen.`);
           if (meals > 0) parts.push(meals === 1 ? '1 Bewirtung wartet auf Teilnehmer und Anlass.' : `${meals} Bewirtungen warten auf Teilnehmer und Anlass.`);
           if (result.stopped === 'auth') parts.push('Die Anmeldung ist abgelaufen: bitte neu anmelden, die Fotos bleiben gespeichert.');
           if (result.stopped === 'offline' && result.remaining > 0) parts.push('Keine Verbindung: der Rest wird später gesendet.');
@@ -178,7 +190,7 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
         ? callbacks.current.onRetake(retakeRowId)
         : (f, ocr, o) => callbacks.current.onSave(f, ocr, o);
       try {
-        const outcome = await runUploadPipeline(file, createBrowserDeps(save), {
+        const outcome = await runUploadPipeline(file, createBrowserDeps(save, callbacks.current.workspaceId), {
           allowDuplicate: options.allowDuplicate,
           onPhase: (phase) => setView((v) => (v.kind === 'working' ? { ...v, phase } : v)),
           onProgress: (progress) => setView((v) => (v.kind === 'working' ? { ...v, progress } : v)),
@@ -189,7 +201,7 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
         }
         setView({ kind: 'saved', outcome, retaken: Boolean(retakeRowId) });
         // A well-read business meal: ask for guests and occasion right away.
-        if (outcome.isMeal && !outcome.attention && !outcome.similar) setMealRowId(outcome.rowId);
+        if (outcome.isMeal && !outcome.attention && !outcome.similar && outcome.elsewhere.length === 0) setMealRowId(outcome.rowId);
       } catch (err) {
         const kind = uploadFailureKind(err);
         if ((kind === 'network' || kind === 'auth') && !retakeRowId && (await enqueue(file))) {
@@ -323,6 +335,23 @@ export default function PhoneCapture({ onSave, onRetake, onDiscardRow, store: in
               <span className="font-medium">{view.retaken ? 'Foto ersetzt und neu gelesen.' : 'Gespeichert.'}</span>{' '}
               Eingeordnet als: {saved.category ?? 'noch ohne Kategorie'}.
             </p>
+          )}
+
+          {saved.elsewhere.length > 0 && (
+            <div className="ui-note ui-note-warn">
+              <p>
+                Genau diese Datei liegt schon in deiner Firma {saved.elsewhere.join(', ')}. Dieselbe Rechnung in zwei
+                Firmen ist meist ein Versehen.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button type="button" className="ui-btn ui-btn-sm" disabled={discarding} onClick={() => setView({ kind: 'saved', outcome: { ...saved, elsewhere: [] }, retaken: view.retaken })}>
+                  Hier behalten
+                </button>
+                <button type="button" className="ui-btn ui-btn-sm ui-btn-danger" disabled={discarding} onClick={() => void discard(saved.rowId)}>
+                  {discarding ? 'Wird verworfen…' : 'Hier verwerfen'}
+                </button>
+              </div>
+            </div>
           )}
 
           {saved.similar && (

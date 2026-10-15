@@ -37,13 +37,14 @@ const steps = {
   recognize: vi.fn(),
 };
 vi.mock('@/lib/upload/browser-deps', () => ({
-  createBrowserDeps: (save: PipelineDeps['save']): PipelineDeps => ({
+  // Like the real one: the company travels with the check and the save.
+  createBrowserDeps: (save: (f: unknown, o: unknown, opts: { sha256: string; workspaceId: string }) => Promise<SavedReceipt>, workspaceId: string): PipelineDeps => ({
     prepare: async (f) => f,
     hash: async () => 'a'.repeat(64),
-    checkDuplicate: (...a) => steps.checkDuplicate(...a),
+    checkDuplicate: (sha256) => steps.checkDuplicate(sha256, workspaceId),
     upload: (...a) => steps.upload(...a),
     recognize: (...a) => steps.recognize(...a),
-    save,
+    save: (file, ocr, options) => save(file, ocr, { ...options, workspaceId }),
   }),
 }));
 vi.mock('@/components/meals/MealPanelSection', () => ({
@@ -71,8 +72,10 @@ function photo(name = 'foto.jpg') {
   return new File([new Uint8Array([1, 2, 3])], name, { type: 'image/jpeg' });
 }
 
-function mount() {
-  const utils = render(<PhoneCapture onSave={onSave} onRetake={onRetake} onDiscardRow={onDiscardRow} store={store} />);
+const NO_COPY = { existing: null, elsewhere: [] };
+
+function mount(workspaceId = 'ws-eins') {
+  const utils = render(<PhoneCapture workspaceId={workspaceId} onSave={onSave} onRetake={onRetake} onDiscardRow={onDiscardRow} store={store} />);
   const inputs = utils.container.querySelectorAll('input[type="file"]');
   return { ...utils, camera: inputs[0] as HTMLInputElement, retake: inputs[1] as HTMLInputElement, user: userEvent.setup() };
 }
@@ -87,7 +90,7 @@ beforeEach(() => {
   Object.defineProperty(window.navigator, 'onLine', { configurable: true, get: () => online });
   for (const fn of [steps.checkDuplicate, steps.upload, steps.recognize, onSave, retakeSave, onRetake, onDiscardRow]) fn.mockReset();
   onRetake.mockImplementation(() => retakeSave);
-  steps.checkDuplicate.mockResolvedValue(null);
+  steps.checkDuplicate.mockResolvedValue(NO_COPY);
   steps.upload.mockResolvedValue({ id: 'file-1', originalName: 'foto.jpg', fileType: 'image/jpeg' });
   steps.recognize.mockResolvedValue({ fullText: 'Testlokal 12,50', blocks: [], confidence: 0.9 });
   onSave.mockResolvedValue(MEAL);
@@ -152,13 +155,13 @@ describe('blurry photo and failed recognition: retake on the SAME receipt', () =
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toMatch(/gespeichert, konnte aber nicht gelesen werden/);
     expect(alert.textContent).toMatch(/Die Texterkennung ist fehlgeschlagen \(Fehler 502\)/);
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ id: 'file-1' }), null, { sha256: 'a'.repeat(64) });
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ id: 'file-1' }), null, { sha256: 'a'.repeat(64), workspaceId: 'ws-eins' });
   });
 });
 
 describe('duplicates', () => {
   it('the same photo again: nothing is uploaded; "upload anyway" is explicit', async () => {
-    steps.checkDuplicate.mockResolvedValueOnce({ rowId: 'row-0', name: 'Mittagessen Testlokal' });
+    steps.checkDuplicate.mockResolvedValueOnce({ existing: { rowId: 'row-0', name: 'Mittagessen Testlokal' }, elsewhere: [] });
     const { camera, user } = mount();
     take(camera);
     expect(await screen.findByText(/schon beim Beleg „Mittagessen Testlokal“ hinterlegt/)).toBeTruthy();
@@ -176,6 +179,86 @@ describe('duplicates', () => {
     await user.click(screen.getByRole('button', { name: 'Neuen verwerfen' }));
     await waitFor(() => expect(onDiscardRow).toHaveBeenCalledWith('row-2'));
     expect(await screen.findByText(/Der neue Beleg wurde verworfen/)).toBeTruthy();
+  });
+
+  it('the same file in another company: saved where the page says, warned with that company, and can be discarded here', async () => {
+    steps.checkDuplicate.mockResolvedValue({ existing: null, elsewhere: ['Firma Zwei'] });
+    onDiscardRow.mockResolvedValue(undefined);
+    const { camera, user } = mount();
+    take(camera);
+    expect(await screen.findByText(/Genau diese Datei liegt schon in deiner Firma Firma Zwei/)).toBeTruthy();
+    expect(onSave).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ workspaceId: 'ws-eins' }));
+    // The meal sheet waits: first the question whether this receipt belongs here at all.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Hier verwerfen' }));
+    await waitFor(() => expect(onDiscardRow).toHaveBeenCalledWith('row-1'));
+  });
+
+  it('"keep here" dismisses the warning and the receipt stays', async () => {
+    steps.checkDuplicate.mockResolvedValue({ existing: null, elsewhere: ['Firma Zwei'] });
+    onSave.mockResolvedValue(OTHER);
+    const { camera, user } = mount();
+    take(camera);
+    await screen.findByText(/Genau diese Datei liegt schon/);
+    await user.click(screen.getByRole('button', { name: 'Hier behalten' }));
+    expect(screen.queryByText(/Genau diese Datei liegt schon/)).toBeNull();
+    expect(onDiscardRow).not.toHaveBeenCalled();
+  });
+});
+
+describe('the company a photo goes into', () => {
+  it('a photo is checked and saved in the company the page names, not in another', async () => {
+    onSave.mockResolvedValue(OTHER);
+    const { camera } = mount('ws-zwei');
+    take(camera);
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(steps.checkDuplicate).toHaveBeenCalledWith('a'.repeat(64), 'ws-zwei');
+    expect(onSave.mock.calls[0][2]).toMatchObject({ workspaceId: 'ws-zwei' });
+  });
+
+  it('a photo queued offline keeps its company: changing the page\'s company before it is sent does not move it', async () => {
+    online = false;
+    onSave.mockResolvedValue(OTHER);
+    const { camera, rerender } = mount('ws-eins');
+    take(camera, photo('eins.jpg'));
+    await screen.findByText('1 Foto wartet auf den Versand.');
+    expect((await store.list())[0].workspaceId).toBe('ws-eins');
+
+    rerender(<PhoneCapture workspaceId="ws-zwei" onSave={onSave} onRetake={onRetake} onDiscardRow={onDiscardRow} store={store} />);
+    online = true;
+    window.dispatchEvent(new Event('online'));
+    expect(await screen.findByText(/1 wartendes Foto wurde gesendet/)).toBeTruthy();
+    expect(onSave.mock.calls[0][2]).toMatchObject({ workspaceId: 'ws-eins' });
+  });
+
+  it('resume: a photo from an earlier visit goes to its own company; one without (shared into the app) to the page\'s', async () => {
+    onSave.mockResolvedValue(OTHER);
+    await store.add(newQueuedCapture(photo('von-gestern.jpg'), 'camera', 1, 'ws-eins'));
+    await store.add(newQueuedCapture(photo('geteilt.jpg'), 'share', 2));
+    mount('ws-zwei');
+    expect(await screen.findByText(/2 wartende Fotos wurden gesendet/)).toBeTruthy();
+    expect(onSave.mock.calls.map((c) => c[2].workspaceId)).toEqual(['ws-eins', 'ws-zwei']);
+  });
+
+  it('re-entry after an expired session: the queued photo still goes to the company it was taken for', async () => {
+    steps.checkDuplicate.mockRejectedValueOnce(new UploadStepError('auth', 'Your session has expired.'));
+    onSave.mockResolvedValue(OTHER);
+    const first = mount('ws-eins');
+    take(first.camera);
+    await screen.findByText(/Die Anmeldung ist abgelaufen/);
+    first.unmount();
+    // Signed in again, the page opens on another company.
+    mount('ws-zwei');
+    expect(await screen.findByText(/1 wartendes Foto wurde gesendet/)).toBeTruthy();
+    expect(onSave.mock.calls[0][2]).toMatchObject({ workspaceId: 'ws-eins' });
+  });
+
+  it('a queued photo found in another company is still sent, and the note says where else it is', async () => {
+    onSave.mockResolvedValue(OTHER);
+    steps.checkDuplicate.mockResolvedValue({ existing: null, elsewhere: ['Firma Zwei'] });
+    await store.add(newQueuedCapture(photo('von-gestern.jpg'), 'camera', 1, 'ws-eins'));
+    mount('ws-eins');
+    expect(await screen.findByText(/liegt genau so schon in deiner Firma Firma Zwei/)).toBeTruthy();
   });
 });
 

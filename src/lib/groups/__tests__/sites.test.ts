@@ -173,7 +173,9 @@ describe('export in the DATEV layout', () => {
 
 describe('reader', () => {
   it('a group is never read again from a new photo', async () => {
-    await expect(retakeReceipt('group', { id: 'f1', originalName: 'foto.jpg' }, null)).rejects.toThrow('Receipt not found');
+    // Refused before anything is read: here already by the row lookup (the row is resolved to its own
+    // workspace first), and on a real database by the group check after it.
+    await expect(retakeReceipt('group', { id: 'f1', originalName: 'foto.jpg' }, null)).rejects.toThrow(/not.found/i);
     expect(adapter.updated).toEqual([]);
   });
 });

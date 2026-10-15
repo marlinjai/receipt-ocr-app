@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isValidIban,
   normalizeNumber,
   proposeEstimateMatches,
   proposeMatches,
@@ -122,6 +123,36 @@ describe('referenceMentions for the plain invoice series (decision D5)', () => {
 
   it('does not take an invoice word glued into an account-like text for an account number', () => {
     expect(referenceMentions('RE61 Webdesignleistungen Oktober', '61')).toBe(true);
+    // Shaped like an IBAN, but its check digits are wrong: it is invoice 61 and other figures.
+    expect(isValidIban('RE61 1234 5678 9012')).toBe(false);
+    expect(referenceMentions('RE61 1234 5678 9012', '61')).toBe(true);
+    expect(isValidIban('DE89 3704 0044 0532 0130 00')).toBe(true);
+  });
+
+  it('tells an invoice number followed by the amount from an amount written with a space, by the payment amount', () => {
+    expect(referenceMentions('Rechnung 61 150,00 EUR', '61', 15_000)).toBe(true);
+    expect(referenceMentions('RE 61 250,00', '61', -25_000)).toBe(true);
+    expect(referenceMentions('Rechnung 61 500 EUR', '61', 50_000)).toBe(true);
+    expect(referenceMentions('Rechnung 1 500,00 EUR', '1', 150_000)).toBe(false);
+    expect(referenceMentions('Rechnung 1 500 EUR', '1', 150_000)).toBe(false);
+    // Without the payment's amount it stays on the safe side.
+    expect(referenceMentions('Rechnung 61 150,00 EUR', '61')).toBe(false);
+  });
+
+  it('continues a list after a comma, a plus or an ampersand, never after a bare space', () => {
+    expect(referenceMentions('Rechnung 61, 62', '62')).toBe(true);
+    expect(referenceMentions('Rechnung 61 + 62', '62')).toBe(true);
+    expect(referenceMentions('Rechnungen 61 & 62', '62')).toBe(true);
+    expect(referenceMentions('Rechnung 61 62', '62')).toBe(false);
+  });
+
+  it('reads a long number only as a whole run of figures, and a date never as a number', () => {
+    expect(referenceMentions('Tel 030 2026001', '2026001')).toBe(false);
+    expect(referenceMentions('Kunde 9 123 4567', '1234567')).toBe(false);
+    // Groups spelled with spaces that make up the whole run are the number ("2026 001"), so "123 4567" is 1234567.
+    expect(referenceMentions('Kunde 123 4567', '1234567')).toBe(true);
+    expect(referenceMentions('Datum 2026-10-01', '20261001')).toBe(false);
+    expect(referenceMentions('Beleg 2026001, danke', '2026001')).toBe(true);
   });
 
   it('never counts a number with letters that is shorter than four characters', () => {

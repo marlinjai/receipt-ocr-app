@@ -90,7 +90,26 @@ export const DIGITS_NEEDING_INVOICE_WORD = 5;
  * never an invoice number. Country, check digits, one group that may hold a
  * bank code in letters ("GB29 NWBK ..."), then groups of digits.
  */
-const IBAN = /\b[a-z]{2}\d{2} ?[a-z0-9]{4}(?: ?\d{4}){2,6}(?: ?\d{1,3})?\b/gi;
+const IBAN_CANDIDATE = /\b[a-z]{2}\d{2} ?[a-z0-9]{4}(?: ?\d{4}){2,6}(?: ?\d{1,3})?\b/gi;
+
+/** The IBAN check digits (mod 97 equals 1): "RE61 1234 5678 9012" looks like one but is not. */
+export function isValidIban(text: string): boolean {
+  const compact = text.replace(/ /g, '').toUpperCase();
+  if (compact.length < 15 || compact.length > 34) return false;
+  const rearranged = compact.slice(4) + compact.slice(0, 4);
+  let remainder = 0;
+  for (const char of rearranged) {
+    const value = char >= 'A' && char <= 'Z' ? String(char.charCodeAt(0) - 55) : char;
+    for (const digit of value) remainder = (remainder * 10 + Number(digit)) % 97;
+  }
+  return remainder === 1;
+}
+
+/** A word or a figure of the transfer text, with the text between it and the token before. */
+interface Token {
+  text: string;
+  gapBefore: string;
+}
 
 /**
  * The transfer text as words and figures, account numbers removed. A figure
@@ -99,37 +118,60 @@ const IBAN = /\b[a-z]{2}\d{2} ?[a-z0-9]{4}(?: ?\d{4}){2,6}(?: ?\d{1,3})?\b/gi;
  * stands as a figure of its own. Letters and digits glued together are
  * separate tokens ("RE61" is "re", "61").
  */
-function figureTokens(reference: string): string[] {
-  return reference.toLowerCase().replace(IBAN, ' ').match(/[a-zäöüß]+|\d+(?:[.,/:-]\d+)*/g) ?? [];
+function figureTokens(reference: string): Token[] {
+  const text = reference.toLowerCase().replace(IBAN_CANDIDATE, (match) => (isValidIban(match) ? ' '.repeat(match.length) : match));
+  const tokens: Token[] = [];
+  let end = 0;
+  for (const match of text.matchAll(/[a-zäöüß]+|\d+(?:[.,/:-]\d+)*/g)) {
+    tokens.push({ text: match[0], gapBefore: text.slice(end, match.index) });
+    end = match.index + match[0].length;
+  }
+  return tokens;
 }
 
 /** "061" and "61" are the same number. */
 const stripLeadingZeros = (digits: string) => digits.replace(/^0+(?=\d)/, '');
 const isDigits = (token: string) => /^\d+$/.test(token);
-/** A group of three digits, possibly with cents, after a number: "1 500,00" is one amount, not invoice 1. */
-const isThousandsGroup = (token: string | undefined) => token !== undefined && /^\d{3}(?:[.,]\d{1,2})?$/.test(token);
+/** Between two numbers of a list: "61, 62", "61 + 62", "61 & 62". A bare space is not enough. */
+const isListGap = (gap: string) => /^\s*[,+&]\s*$/.test(gap);
+
+/**
+ * Is "<number> <three digits>[,<cents>]" an amount written with a space as the
+ * thousands separator ("1 500,00")? Only when it equals the payment's amount;
+ * without a known amount it is taken as one, the safe side.
+ */
+function isAmountWithSpace(number: string, next: Token | undefined, amountCents: number | undefined): boolean {
+  if (!next || !/^\s+$/.test(next.gapBefore)) return false;
+  const group = /^(\d{3})(?:[.,](\d{1,2}))?$/.exec(next.text);
+  if (!group) return false;
+  if (amountCents === undefined) return true;
+  const cents = (Number(number) * 1000 + Number(group[1])) * 100 + Number((group[2] ?? '0').padEnd(2, '0'));
+  return cents === Math.abs(amountCents);
+}
 
 /**
  * Is a short purely numeric invoice number named in the text? Only as a whole
  * figure, and only where it cannot be anything else: the whole text is that
  * number, or the number follows an invoice word directly, or continues such a
- * list after "und" ("Rechnung 61 und 62"). A number followed by a group of
- * three digits is taken as part of an amount ("Rechnung 1 500,00 EUR"), and a
- * bare second number closes the list ("Rechnung 61 500 EUR" names 61 at most).
+ * list ("Rechnung 61 und 62", "Rechnung 61, 62", "RE 61 + 62"). A bare
+ * second number closes the list ("Rechnung 61 500 EUR" names 61 only), and a
+ * number that forms the payment's amount with the group after it is an amount
+ * ("Rechnung 1 500,00 EUR" for a payment of 1,500.00 names no invoice).
  * Invoice 5 is never found in "52", "Rechnung 52", "12.05.2026", an amount
  * of "5,00" or an account number. Lists written without spaces ("61,62",
  * "61-62", "61/62") are one figure and name neither invoice: the safe side,
  * the payment is then proposed by amount for a person to confirm.
  */
-function numberNextToInvoiceWord(tokens: readonly string[], needle: string): boolean {
-  if (tokens.length === 1 && isDigits(tokens[0])) return stripLeadingZeros(tokens[0]) === needle;
+function numberNextToInvoiceWord(tokens: readonly Token[], needle: string, amountCents: number | undefined): boolean {
+  if (tokens.length === 1 && isDigits(tokens[0].text)) return stripLeadingZeros(tokens[0].text) === needle;
   let state: 'none' | 'word' | 'number' | 'joiner' = 'none';
   for (let index = 0; index < tokens.length; index++) {
-    const token = tokens[index];
+    const token = tokens[index].text;
+    const listContinues = state === 'number' && isListGap(tokens[index].gapBefore);
     if (INVOICE_WORDS.has(token) || (NUMBER_WORDS.has(token) && (state === 'word' || index === 0))) {
       state = 'word';
-    } else if (isDigits(token) && (state === 'word' || state === 'joiner')) {
-      if (isThousandsGroup(tokens[index + 1])) state = 'none';
+    } else if (isDigits(token) && (state === 'word' || state === 'joiner' || listContinues)) {
+      if (isAmountWithSpace(token, tokens[index + 1], amountCents)) state = 'none';
       else {
         if (stripLeadingZeros(token) === needle) return true;
         state = 'number';
@@ -143,26 +185,31 @@ function numberNextToInvoiceWord(tokens: readonly string[], needle: string): boo
   return false;
 }
 
+/** "2026-10-01" is a date, not the number 20261001. */
+const isIsoDate = (figure: string) => /^\d{4}-\d{2}-\d{2}$/.test(figure) && !Number.isNaN(Date.parse(`${figure}T00:00:00Z`));
+
 /**
- * Is a long purely numeric number named in the text? As a whole figure
- * wherever it stands (a dash or a slash inside it is fine: "2026-001"), or
- * spelled in groups with spaces ("2026 001"); never inside a date, an amount
- * or an account number.
+ * Is a long purely numeric number named in the text? As a whole run of
+ * neighbouring figures (separated by spaces only): one figure ("2026001", or
+ * with a dash or a slash, "2026-001", but not a date) or groups spelled with
+ * spaces ("2026 001"). Never part of a longer run: "Kunde 123 4567" does not
+ * name 1234567 and "Tel 030 2026001" does not name 2026001. Never inside a
+ * date, an amount or an account number.
  */
-function longNumberMentioned(tokens: readonly string[], needle: string): boolean {
-  const asDigits = (token: string) => (/^\d+(?:[-/]\d+)*$/.test(token) ? token.replace(/[-/]/g, '') : null);
-  for (let start = 0; start < tokens.length; start++) {
-    let joined = '';
-    for (let end = start; end < tokens.length; end++) {
-      const digits = asDigits(tokens[end]);
-      if (digits === null) break;
-      joined += digits;
-      const candidate = stripLeadingZeros(joined);
-      if (candidate === needle) return true;
-      if (candidate.length > needle.length) break;
+function longNumberMentioned(tokens: readonly Token[], needle: string): boolean {
+  const asDigits = (token: string) => (/^\d+(?:[-/]\d+)*$/.test(token) && !isIsoDate(token) ? token.replace(/[-/]/g, '') : null);
+  let run: string[] = [];
+  const runMatches = () => run.length > 0 && stripLeadingZeros(run.join('')) === needle;
+  for (const token of tokens) {
+    const digits = asDigits(token.text);
+    if (digits !== null && run.length > 0 && /^\s+$/.test(token.gapBefore)) {
+      run.push(digits);
+      continue;
     }
+    if (runMatches()) return true;
+    run = digits === null ? [] : [digits];
   }
-  return false;
+  return runMatches();
 }
 
 /**
@@ -178,15 +225,19 @@ function longNumberMentioned(tokens: readonly string[], needle: string): boolean
  * - A number with letters ("RE-2026/001") counts wherever it stands as its own
  *   word or spelled with spaces or dashes ("re 2026 001"), from four
  *   characters on; a shorter one ("RE-5") says too little and never counts.
+ *
+ * `amountCents` is the payment's amount (signed or not), used to tell an
+ * amount written with a space ("1 500,00") from an invoice number followed by
+ * an amount ("Rechnung 61 150,00").
  */
-export function referenceMentions(reference: string, number: string | null): boolean {
+export function referenceMentions(reference: string, number: string | null, amountCents?: number): boolean {
   if (!number) return false;
   const needle = normalizeNumber(number);
   if (isDigits(needle)) {
     const digits = stripLeadingZeros(needle);
     if (digits === '0') return false;
     const tokens = figureTokens(reference);
-    return digits.length <= DIGITS_NEEDING_INVOICE_WORD ? numberNextToInvoiceWord(tokens, digits) : longNumberMentioned(tokens, digits);
+    return digits.length <= DIGITS_NEEDING_INVOICE_WORD ? numberNextToInvoiceWord(tokens, digits, amountCents) : longNumberMentioned(tokens, digits);
   }
   if (needle.length < 4 || !/\d/.test(needle)) return false;
   // Compare token-wise first (the number as its own word), then glued spellings.
@@ -223,7 +274,7 @@ export function proposeMatches(payments: readonly MatchPayment[], documents: rea
 
   for (const payment of payments) {
     for (const document of documents) {
-      if (document.openCents <= 0 || !referenceMentions(payment.reference, document.number)) continue;
+      if (document.openCents <= 0 || !referenceMentions(payment.reference, document.number, payment.amountCents)) continue;
       const exact = Math.abs(payment.amountCents) === document.openCents;
       proposals.push({ paymentId: payment.id, documentId: document.id, strength: exact ? 'reference' : 'reference_amount_differs' });
       paymentHasReference.add(payment.id);

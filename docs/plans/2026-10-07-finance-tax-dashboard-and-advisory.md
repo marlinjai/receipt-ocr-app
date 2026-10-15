@@ -1214,6 +1214,37 @@ merged. Fixed in the same pull request:
   a second day on an invoice's payments, as `vatDate` is the second day on a
   receipt, and the forecast and the turnover figure must read that one.
 
+## Reality: the payments tab asks less after a real import (2026-10-15)
+
+The import of 2026-10-11 (2,150 payments) left 586 open payments and 237 unanswered
+counterparties. Three of the causes are fixed here; continuing an account from a second source
+and limiting an import to a year follow in their own change. Decided without asking, say so if
+you disagree:
+
+- **A whole account can be private** ("Ganzes Konto ist privat", `setAccountPrivate`, migration
+  `0020_tax_account_private`, one column with a default). None of its payments is asked about,
+  money in included. The order of what a payment is becomes: counterparty answered "own
+  account", a person's word on the single payment, the funding rule, the private account, the
+  file. So a transfer stays a transfer, and one payment re-labelled by hand stands above the
+  account. Nothing on the payments is rewritten: "Wieder prüfen" brings every question back as
+  it was.
+- **Money in is asked about once, in the counterparty question**, not also payment by payment.
+  It is listed on its own only when the counterparty is answered business, it has no name, or
+  it already looks like the payment of an issued invoice (an invoice proposal exists). Before,
+  every payment in from an unanswered counterparty was asked twice.
+- **A fourth answer, "Teils, teils" (`mixed`)**, for a counterparty that is partly business and
+  partly private (a marketplace, a supermarket): none of its payments is asked about, and what a
+  person links to a receipt is the business part.
+- **Linking without answering.** "Zahlungen ansehen" on an unanswered counterparty, and a search
+  by name, text or amount under the open payments (`findPayments`, read only, at most 100 shown
+  with the total), reach every payment of the year that still has something to link: of an
+  unanswered or mixed counterparty, or on a private account (a business expense paid
+  privately). Linking one of them writes no counterparty answer, so its other payments do not
+  turn into questions. The list is searched again after every change of the statement.
+- **For the private-spending side** the read interface stays `loadPayments` in
+  `src/lib/tax/payments/service.ts`; it now carries `isPrivate` per account and
+  `byPrivateAccount` per payment, and a counterparty answer can be `mixed`.
+
 ## Decisions (2026-10-07)
 
 Answered by the owner on the decision page on 2026-10-07.

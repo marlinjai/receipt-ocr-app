@@ -55,8 +55,13 @@ export class PaymentServiceError extends Error {
 
 export type AccountKind = 'bank' | 'card' | 'payment_service';
 export const ACCOUNT_KINDS: readonly AccountKind[] = ['bank', 'card', 'payment_service'];
-export type CounterpartyTreatment = 'business' | 'private' | 'own_account';
-export const COUNTERPARTY_TREATMENTS: readonly CounterpartyTreatment[] = ['business', 'private', 'own_account'];
+/**
+ * How a counterparty is treated. `mixed`: some of its payments are business and
+ * some are private (a marketplace, a supermarket), so none is asked about; the
+ * ones a person links to a receipt by hand are the business ones.
+ */
+export type CounterpartyTreatment = 'business' | 'private' | 'own_account' | 'mixed';
+export const COUNTERPARTY_TREATMENTS: readonly CounterpartyTreatment[] = ['business', 'private', 'own_account', 'mixed'];
 
 /** The key a counterparty is recognized by; payments without a name share one key per account kind of text. */
 export function counterpartyKey(name: string): string {
@@ -270,12 +275,32 @@ export function effectiveKind(payment: { sourceKind: string; kindOverride: strin
  * What a payment is, in this order: the counterparty is an own account (moving
  * money there is no spend, whatever the file calls it); a person re-labelled
  * this one payment; it only funds another imported payment account, or is
- * money back from one (see `funding.ts`); otherwise what its file says.
+ * money back from one (see `funding.ts`); it is on an account the owner said
+ * is private as a whole; otherwise what its file says.
  */
-function paymentKind(payment: { sourceKind: string; kindOverride: string | null }, treatment: CounterpartyTreatment | undefined, funding: Funding | undefined): PaymentKind {
+function paymentKind(
+  payment: { sourceKind: string; kindOverride: string | null },
+  treatment: CounterpartyTreatment | undefined,
+  funding: Funding | undefined,
+  accountPrivate: boolean,
+): PaymentKind {
   if (treatment === 'own_account') return 'own_transfer';
   if (payment.kindOverride === null && funding) return funding.kind;
+  if (payment.kindOverride === null && accountPrivate) return 'private';
   return effectiveKind(payment);
+}
+
+/**
+ * Say that a whole account is private (true) or not (false). Its payments are
+ * then not asked about, money in included; the funding rule still makes its
+ * transfers transfers, and a single payment can still be linked to a receipt
+ * by hand or re-labelled. Nothing stored on the payments changes, so saying
+ * `false` brings every question back exactly as before.
+ */
+export async function setAccountPrivate(db: PrismaClient, ctx: PaymentContext, accountId: string, isPrivate: unknown): Promise<void> {
+  if (typeof isPrivate !== 'boolean') throw new PaymentServiceError('invalid_treatment');
+  const { count } = await db.taxAccount.updateMany({ where: { id: accountId, authWorkspaceId: ctx.workspaceId }, data: { isPrivate } });
+  if (count === 0) throw new PaymentServiceError('account_not_found');
 }
 
 /** Undo an import: the batch goes, with the payments it added and their links. */
@@ -539,11 +564,13 @@ export interface PaymentRow {
   funding: Funding | null;
   /** True when `kind` comes from the funding rule: nobody said it, and it can be overruled. */
   byRule: boolean;
+  /** True when `kind` is `private` only because the whole account was said to be private. */
+  byPrivateAccount: boolean;
   links: Array<{ id: string; rowId: string | null; invoiceId: string | null; cents: number; method: string }>;
 }
 
 export interface LoadedPayments {
-  accounts: Array<{ id: string; label: string; kind: string; paymentCount: number; completeThrough: string | null; batches: Array<{ id: string; format: string; newCount: number; paymentCount: number; firstDay: string | null; lastDay: string | null; importedAt: string }> }>;
+  accounts: Array<{ id: string; label: string; kind: string; isPrivate: boolean; paymentCount: number; completeThrough: string | null; batches: Array<{ id: string; format: string; newCount: number; paymentCount: number; firstDay: string | null; lastDay: string | null; importedAt: string }> }>;
   payments: PaymentRow[];
   /**
    * Purchases a later import listed as cancelled or refunded in full. They are
@@ -570,9 +597,11 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
     accounts.map((a) => ({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) })),
     payments.map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: counterpartyKey(p.reference), sourceKind: p.sourceKind })),
   );
+  const privateAccounts = new Set(accounts.filter((a) => a.isPrivate).map((a) => a.id));
   const rows: PaymentRow[] = payments.map((p) => {
     const treatment = treatments.get(p.counterpartyKey);
     const funds = funding.get(p.id);
+    const kind = paymentKind(p, treatment, funds, privateAccounts.has(p.accountId));
     return {
       id: p.id,
       accountId: p.accountId,
@@ -581,11 +610,12 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
       counterparty: p.counterparty,
       counterpartyKey: p.counterpartyKey,
       reference: p.reference,
-      kind: paymentKind(p, treatment, funds),
+      kind,
       kindOverridden: p.kindOverride !== null,
       sourceKind: effectiveKind({ sourceKind: p.sourceKind, kindOverride: null }),
       funding: funds ?? null,
       byRule: funds !== undefined && treatment !== 'own_account' && p.kindOverride === null,
+      byPrivateAccount: kind === 'private' && p.kindOverride === null && privateAccounts.has(p.accountId),
       links: p.links.map((l) => ({ id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method })),
     };
   });
@@ -596,6 +626,7 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
         id: a.id,
         label: a.label,
         kind: a.kind,
+        isPrivate: a.isPrivate,
         paymentCount: own.length,
         // The last booked day the account has data for: how fresh this source is.
         completeThrough: own.length > 0 ? own[own.length - 1].bookingDay : null,
@@ -608,6 +639,67 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
       .map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, rowIds: p.links.flatMap((l) => (l.rowId ? [l.rowId] : [])) })),
     treatments,
   };
+}
+
+/** A payment found by `findPayments`, with what it can be linked to by hand. */
+export interface FoundPayment {
+  id: string;
+  bookingDay: string;
+  amountCents: number;
+  /** What of it is not linked to anything yet (positive). */
+  freeCents: number;
+  counterparty: string;
+  reference: string;
+  kind: PaymentKind;
+  accountLabel: string;
+  /** Money received as income goes on an issued invoice; everything else on a receipt. */
+  target: 'receipt' | 'invoice';
+}
+
+/** At most this many payments come back from one search: enough to pick from, small enough to draw. */
+export const FIND_PAYMENTS_LIMIT = 100;
+
+/**
+ * Payments of one year that still have something to link, found by their
+ * counterparty or by a text, whatever the questions say about them: a payment
+ * to a counterparty nobody answered yet, to one answered as mixed, or on an
+ * account said to be private can be linked by hand without answering anything
+ * for its other payments. Read only.
+ */
+export async function findPayments(db: PrismaClient, workspaceId: string, raw: unknown): Promise<{ payments: FoundPayment[]; total: number }> {
+  const input = (raw ?? {}) as { year?: unknown; counterpartyKey?: unknown; text?: unknown };
+  const year = typeof input.year === 'number' && Number.isInteger(input.year) ? input.year : null;
+  if (year === null) throw new PaymentServiceError('invalid_link');
+  const key = typeof input.counterpartyKey === 'string' ? input.counterpartyKey : null;
+  const text = typeof input.text === 'string' ? input.text.trim().toLowerCase().slice(0, 80) : '';
+  if (key === null && text.length < 2) return { payments: [], total: 0 };
+  const loaded = await loadPayments(db, workspaceId);
+  const accountLabel = new Map(loaded.accounts.map((a) => [a.id, a.label]));
+  const found: FoundPayment[] = [];
+  let total = 0;
+  for (const p of loaded.payments) {
+    if (!p.bookingDay.startsWith(`${year}-`)) continue;
+    if (key !== null && p.counterpartyKey !== key) continue;
+    if (text && !`${p.counterparty} ${p.reference} ${(Math.abs(p.amountCents) / 100).toFixed(2).replace('.', ',')}`.toLowerCase().includes(text)) continue;
+    const freeCents = Math.abs(p.amountCents) - p.links.reduce((sum, l) => sum + l.cents, 0);
+    if (freeCents <= 0) continue;
+    // What the file (or a person) says, beneath the account's "private": decides invoice or receipt.
+    const own = p.byPrivateAccount ? p.sourceKind : p.kind;
+    total += 1;
+    if (found.length >= FIND_PAYMENTS_LIMIT) continue;
+    found.push({
+      id: p.id,
+      bookingDay: p.bookingDay,
+      amountCents: p.amountCents,
+      freeCents,
+      counterparty: p.counterparty,
+      reference: p.reference,
+      kind: p.kind,
+      accountLabel: accountLabel.get(p.accountId) ?? '',
+      target: p.amountCents > 0 && own === 'income' ? 'invoice' : 'receipt',
+    });
+  }
+  return { payments: found, total };
 }
 
 export type { MatchProposal };

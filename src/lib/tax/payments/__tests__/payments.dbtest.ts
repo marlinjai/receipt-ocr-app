@@ -5,8 +5,11 @@ import {
   PaymentServiceError,
   createAccount,
   deleteImportBatch,
+  findPayments,
   importPayments,
   linkPayment,
+  loadPayments,
+  setAccountPrivate,
   setCounterpartyTreatment,
   setPaymentKind,
   setPaymentTransfer,
@@ -132,13 +135,15 @@ describe('counterparties, open payments and links', () => {
       ['Vermieter Beispiel', 1, 65_000, 0],
       ['Werkzeug Beispiel GmbH', 1, 10_850, 0],
     ]);
-    // Money received is asked about right away; money out only once the counterparty is business.
-    expect(view.payments.open.map((p) => [p.counterparty, p.check])).toEqual([['Kundin Beispiel', 'income_without_invoice']]);
+    // Nothing is asked about payment by payment before the counterparty is answered: money in neither
+    // (it does not look like the payment of an invoice; see the tests on money in below).
+    expect(view.payments.open).toEqual([]);
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'Kundin Beispiel', treatment: 'business' });
 
     await setCounterpartyTreatment(db, ctx, { counterparty: 'Werkzeug Beispiel GmbH', treatment: 'business' });
     await setCounterpartyTreatment(db, ctx, { counterparty: 'Vermieter Beispiel', treatment: 'private' });
     view = await loadStatement(db, ws.workspaceId, 2026);
-    expect(view.payments.unclassified.map((c) => c.label)).toEqual(['Kundin Beispiel']);
+    expect(view.payments.unclassified).toEqual([]);
     expect(view.payments.open.map((p) => [p.counterparty, p.check])).toEqual([
       ['Werkzeug Beispiel GmbH', 'payment_without_document'],
       ['Kundin Beispiel', 'income_without_invoice'],
@@ -255,8 +260,10 @@ describe('findings of the review on the first version', () => {
     await linkPayment(db, ctx, { paymentId: payment.id, invoiceId }, rowCheck(ctx));
     const view = await loadStatement(db, ws.workspaceId, 2026);
     expect(view.revenue.invoices[0]).toMatchObject({ receivedCents: 50_000, outstandingCents: 0 });
-    // The 300.00 that are left of the payment still wait for an answer.
-    expect(view.payments.open.map((o) => o.freeCents)).toEqual([30_000]);
+    // The 300.00 that are left of the payment still wait for an answer: the counterparty's, then the payment's.
+    expect(view.payments.unclassified.map((c) => c.label)).toEqual(['Kundin Beispiel']);
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'Kundin Beispiel', treatment: 'business' });
+    expect((await loadStatement(db, ws.workspaceId, 2026)).payments.open.map((o) => o.freeCents)).toEqual([30_000]);
     expect(await code(linkPayment(db, ctx, { paymentId: payment.id, invoiceId }, rowCheck(ctx)))).toBe('target_fully_paid');
   });
 
@@ -1076,5 +1083,197 @@ describe('workspace isolation', () => {
     expect(await code(linkPayment(db, ctx, { paymentId: ownPayment.id, rowId: foreignRow }, rowCheck(ctx)))).toBe('target_not_found');
     // The same label may exist in two workspaces.
     await createAccount(db, otherCtx, { label: 'Geschäftskonto 2', kind: 'bank' });
+  });
+});
+
+describe('the tab asks less after a real import: money in, a private account, a mixed counterparty, linking without an answer', () => {
+  const openOf = async (workspaceId: string) => (await loadStatement(db, workspaceId, 2026)).payments.open.map((o) => `${o.counterparty} ${o.check}`).sort();
+  const unanswered = async (workspaceId: string) => (await loadStatement(db, workspaceId, 2026)).payments.unclassified.map((c) => `${c.label} ${c.count}`).sort();
+
+  it('money in from an unanswered counterparty is asked about once, in the counterparty question, unless it names an invoice', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, file(
+      line('2026-02-02', 'Freundin Beispiel', 'Pizza', '12', 'Credit Transfer'),
+      line('2026-02-03', 'Kunde Beispiel', 'Rechnung R-2026-007 Teilzahlung', '400', 'Credit Transfer'),
+    ));
+    // No invoice yet: both are only in the counterparty question.
+    expect(await openOf(ws.workspaceId)).toEqual([]);
+    expect(await unanswered(ws.workspaceId)).toEqual(['Freundin Beispiel 1', 'Kunde Beispiel 1']);
+    // An invoice whose number is in the text: that payment is offered for it right away, the other still waits for the answer.
+    const invoiceId = await saveInvoice(db, ctx, null, { number: 'R-2026-007', issueDate: '2026-01-20', grossCents: 100_000, treatment: 'small_business', payments: [] });
+    const view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.payments.open.map((o) => [o.counterparty, o.proposals.map((x) => [x.targetId, x.strength])])).toEqual([['Kunde Beispiel', [[invoiceId, 'reference_amount_differs']]]]);
+    // Answered private: never asked, even with an invoice number in the text.
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'Kunde Beispiel', treatment: 'private' });
+    expect(await openOf(ws.workspaceId)).toEqual([]);
+    // Answered business: asked about, as before.
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'Freundin Beispiel', treatment: 'business' });
+    expect(await openOf(ws.workspaceId)).toEqual(['Freundin Beispiel income_without_invoice']);
+  });
+
+  describe('a whole account said to be private', () => {
+    const PRIVATE_FILE = file(
+      line('2026-02-02', 'Supermarkt Beispiel', 'Einkauf', '-45.1'),
+      line('2026-02-05', 'Arbeitgeber Beispiel', 'Gehalt', '2500', 'Credit Transfer'),
+      line('2026-02-09', '', 'Kartenzahlung', '-9.99'),
+    );
+
+    it('forward: none of its payments is asked about, money in included; the payments stay and say why they are private', async () => {
+      const { ws, ctx, accountId } = await workspace();
+      const privateAccount = await createAccount(db, ctx, { label: 'Privatkonto', kind: 'bank' });
+      await importPayments(db, ctx, accountId, JANUARY);
+      await importPayments(db, ctx, privateAccount, PRIVATE_FILE);
+      expect(await unanswered(ws.workspaceId)).toEqual(['Arbeitgeber Beispiel 1', 'Kundin Beispiel 1', 'Supermarkt Beispiel 1', 'Vermieter Beispiel 1', 'Werkzeug Beispiel GmbH 1']);
+      expect(await openOf(ws.workspaceId)).toEqual([' payment_without_document']);
+
+      await setAccountPrivate(db, ctx, privateAccount, true);
+      const view = await loadStatement(db, ws.workspaceId, 2026);
+      // The business account's questions are untouched.
+      expect(view.payments.unclassified.map((c) => c.label).sort()).toEqual(['Kundin Beispiel', 'Vermieter Beispiel', 'Werkzeug Beispiel GmbH']);
+      expect(view.payments.open).toEqual([]);
+      expect(view.payments.accounts.find((a) => a.id === privateAccount)).toMatchObject({ isPrivate: true, paymentCount: 3 });
+      expect(view.payments.yearCount).toBe(6);
+      // The read interface says private, and why.
+      const loaded = await loadPayments(db, ws.workspaceId);
+      const own = loaded.payments.filter((p) => p.accountId === privateAccount);
+      expect(own.map((p) => [p.kind, p.byPrivateAccount, p.sourceKind]).sort()).toEqual([
+        ['private', true, 'income'],
+        ['private', true, 'spend'],
+        ['private', true, 'spend'],
+      ]);
+    });
+
+    it('change an earlier input: taking it back asks everything again exactly as before; saying it again hides it again', async () => {
+      const { ws, ctx } = await workspace();
+      const privateAccount = await createAccount(db, ctx, { label: 'Privatkonto', kind: 'bank' });
+      await importPayments(db, ctx, privateAccount, PRIVATE_FILE);
+      const before = [await unanswered(ws.workspaceId), await openOf(ws.workspaceId)];
+      await setAccountPrivate(db, ctx, privateAccount, true);
+      expect(await unanswered(ws.workspaceId)).toEqual([]);
+      await setAccountPrivate(db, ctx, privateAccount, false);
+      expect([await unanswered(ws.workspaceId), await openOf(ws.workspaceId)]).toEqual(before);
+      // Saying the same twice changes nothing.
+      await setAccountPrivate(db, ctx, privateAccount, true);
+      await setAccountPrivate(db, ctx, privateAccount, true);
+      expect(await unanswered(ws.workspaceId)).toEqual([]);
+    });
+
+    it('resume and re-entry: a fresh load shows the same, and a later import into the account is private too', async () => {
+      const { ws, ctx } = await workspace();
+      const privateAccount = await createAccount(db, ctx, { label: 'Privatkonto', kind: 'bank' });
+      await setAccountPrivate(db, ctx, privateAccount, true);
+      const { batchId } = await importPayments(db, ctx, privateAccount, PRIVATE_FILE);
+      expect(await unanswered(ws.workspaceId)).toEqual([]);
+      expect((await db.taxAccount.findUnique({ where: { id: privateAccount } }))?.isPrivate).toBe(true);
+      // Undoing and repeating the import keeps the account's answer.
+      await deleteImportBatch(db, ctx, batchId);
+      await importPayments(db, ctx, privateAccount, PRIVATE_FILE);
+      expect(await openOf(ws.workspaceId)).toEqual([]);
+      expect((await loadPayments(db, ws.workspaceId)).payments.every((p) => p.kind === 'private')).toBe(true);
+    });
+
+    it('a business expense paid from it is found and linked by hand and counts for its receipt; a person’s word on one payment stands above the account', async () => {
+      const { ws, ctx } = await workspace();
+      const privateAccount = await createAccount(db, ctx, { label: 'Privatkonto', kind: 'bank' });
+      await importPayments(db, ctx, privateAccount, PRIVATE_FILE);
+      await setAccountPrivate(db, ctx, privateAccount, true);
+      const rowId = await ws.addReceipt({ Name: 'Druckerpapier', Vendor: 'Supermarkt Beispiel', Gross: 45.1, Date: '2026-02-02', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+      const { payments, total } = await findPayments(db, ws.workspaceId, { year: 2026, text: '45,10' });
+      expect(total).toBe(1);
+      expect(payments[0]).toMatchObject({ counterparty: 'Supermarkt Beispiel', kind: 'private', target: 'receipt', freeCents: 4_510, accountLabel: 'Privatkonto' });
+      await linkPayment(db, ctx, { paymentId: payments[0].id, rowId }, rowCheck(ctx));
+      const view = await loadStatement(db, ws.workspaceId, 2026);
+      expect(view.items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 4_510, amountBasis: 'payment', date: '2026-02-02' });
+      // Linked in full: no longer found.
+      expect((await findPayments(db, ws.workspaceId, { year: 2026, text: '45,10' })).total).toBe(0);
+      // Money in on the account still goes to an invoice when it is one.
+      expect((await findPayments(db, ws.workspaceId, { year: 2026, text: 'Gehalt' })).payments[0]).toMatchObject({ target: 'invoice', kind: 'private' });
+      // A single payment re-labelled by a person is that, whatever the account says.
+      const card = (await findPayments(db, ws.workspaceId, { year: 2026, text: 'Kartenzahlung' })).payments[0];
+      await setPaymentKind(db, ctx, card.id, 'spend');
+      expect((await loadPayments(db, ws.workspaceId)).payments.find((p) => p.id === card.id)).toMatchObject({ kind: 'spend', byPrivateAccount: false });
+      expect(await openOf(ws.workspaceId)).toEqual([' payment_without_document']);
+    });
+
+    it('is refused for another workspace’s account and for anything but yes or no', async () => {
+      const { ctx, accountId } = await workspace();
+      const foreign = await createAccount(db, otherCtx, { label: `Fremd ${Date.now()}`, kind: 'bank' });
+      expect(await code(setAccountPrivate(db, ctx, foreign, true))).toBe('account_not_found');
+      expect(await code(setAccountPrivate(db, ctx, accountId, 'yes'))).toBe('invalid_treatment');
+      expect((await db.taxAccount.findUnique({ where: { id: foreign } }))?.isPrivate).toBe(false);
+    });
+  });
+
+  describe('a counterparty that is partly business and partly private (mixed)', () => {
+    const SHOP_FILE = file(
+      line('2026-03-02', 'Versand Beispiel', 'Bestellung A', '-49.99'),
+      line('2026-03-09', 'Versand Beispiel', 'Bestellung B', '-19.5'),
+      line('2026-03-15', 'Versand Beispiel', 'Bestellung C', '-7'),
+    );
+
+    it('forward: answered mixed nothing is asked; one payment linked by hand is business, the others stay unasked', async () => {
+      const { ws, ctx, accountId } = await workspace();
+      await importPayments(db, ctx, accountId, SHOP_FILE);
+      expect(await unanswered(ws.workspaceId)).toEqual(['Versand Beispiel 3']);
+      await setCounterpartyTreatment(db, ctx, { counterparty: 'Versand Beispiel', treatment: 'mixed' });
+      expect(await unanswered(ws.workspaceId)).toEqual([]);
+      expect(await openOf(ws.workspaceId)).toEqual([]);
+      const rowId = await ws.addReceipt({ Name: 'Monitorkabel', Vendor: 'Versand Beispiel', Gross: 19.5, Date: '2026-03-08', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+      const key = (await loadPayments(db, ws.workspaceId)).payments[0].counterpartyKey;
+      const found = await findPayments(db, ws.workspaceId, { year: 2026, counterpartyKey: key });
+      expect(found.payments.map((p) => p.reference)).toEqual(['Bestellung A', 'Bestellung B', 'Bestellung C']);
+      await linkPayment(db, ctx, { paymentId: found.payments[1].id, rowId }, rowCheck(ctx));
+      const view = await loadStatement(db, ws.workspaceId, 2026);
+      expect(view.items.find((i) => i.rowId === rowId)).toMatchObject({ amountBasis: 'payment', date: '2026-03-09' });
+      expect(view.payments.open).toEqual([]);
+      expect((await findPayments(db, ws.workspaceId, { year: 2026, counterpartyKey: key })).payments.map((p) => p.reference)).toEqual(['Bestellung A', 'Bestellung C']);
+    });
+
+    it('linking a payment of an unanswered counterparty answers nothing: the others keep their single question', async () => {
+      const { ws, ctx, accountId } = await workspace();
+      await importPayments(db, ctx, accountId, SHOP_FILE);
+      const rowId = await ws.addReceipt({ Name: 'Monitorkabel', Vendor: 'Versand Beispiel', Gross: 19.5, Date: '2026-03-08', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+      const key = (await loadPayments(db, ws.workspaceId)).payments[0].counterpartyKey;
+      const b = (await findPayments(db, ws.workspaceId, { year: 2026, counterpartyKey: key })).payments[1];
+      await linkPayment(db, ctx, { paymentId: b.id, rowId }, rowCheck(ctx));
+      expect(await unanswered(ws.workspaceId)).toEqual(['Versand Beispiel 2']);
+      expect(await openOf(ws.workspaceId)).toEqual([]);
+      expect(await db.taxCounterpartyRule.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
+    });
+
+    it('change an earlier input: taking the mixed answer back asks once again for what is not linked; answering business asks per payment', async () => {
+      const { ws, ctx, accountId } = await workspace();
+      await importPayments(db, ctx, accountId, SHOP_FILE);
+      await setCounterpartyTreatment(db, ctx, { counterparty: 'Versand Beispiel', treatment: 'mixed' });
+      const rowId = await ws.addReceipt({ Name: 'Monitorkabel', Vendor: 'Versand Beispiel', Gross: 19.5, Date: '2026-03-08', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+      const b = (await findPayments(db, ws.workspaceId, { year: 2026, text: 'Bestellung B' })).payments[0];
+      await linkPayment(db, ctx, { paymentId: b.id, rowId }, rowCheck(ctx));
+      await setCounterpartyTreatment(db, ctx, { counterparty: 'Versand Beispiel', treatment: null });
+      expect(await unanswered(ws.workspaceId)).toEqual(['Versand Beispiel 2']);
+      await setCounterpartyTreatment(db, ctx, { counterparty: 'Versand Beispiel', treatment: 'business' });
+      expect(await openOf(ws.workspaceId)).toEqual(['Versand Beispiel payment_without_document', 'Versand Beispiel payment_without_document']);
+      // The link made under "mixed" stays through every answer.
+      expect((await loadStatement(db, ws.workspaceId, 2026)).payments.links.map((l) => l.rowId)).toEqual([rowId]);
+    });
+  });
+
+  it('finding payments: only this workspace and this year, only what still has something to link, and a search needs two characters', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, file(
+      line('2025-12-30', 'Werkzeug Beispiel GmbH', 'Bestellung 4700', '-108.5'),
+      line('2026-01-05', 'Werkzeug Beispiel GmbH', 'Bestellung 4711', '-108.5'),
+    ));
+    const foreign = await createAccount(db, otherCtx, { label: `Fremd ${Date.now()}`, kind: 'bank' });
+    await importPayments(db, otherCtx, foreign, JANUARY);
+    expect((await findPayments(db, ws.workspaceId, { year: 2026, text: 'werkzeug' })).payments.map((p) => p.reference)).toEqual(['Bestellung 4711']);
+    expect((await findPayments(db, ws.workspaceId, { year: 2025, text: '108,50' })).payments.map((p) => p.reference)).toEqual(['Bestellung 4700']);
+    expect(await findPayments(db, ws.workspaceId, { year: 2026, text: 'w' })).toEqual({ payments: [], total: 0 });
+    expect((await findPayments(db, ws.workspaceId, { year: 2026, text: 'Miete' })).total).toBe(0);
+    expect(await code(findPayments(db, ws.workspaceId, { text: 'werkzeug' }))).toBe('invalid_link');
+    // Partly linked: what is left is found, with what is left.
+    const rowId = await ws.addReceipt({ Name: 'Teil', Vendor: 'Werkzeug Beispiel GmbH', Gross: 50, Date: '2026-01-03', Category: 'Bürobedarf', Currency: 'EUR', 'FX Rate': 1 });
+    const payment = (await findPayments(db, ws.workspaceId, { year: 2026, text: '4711' })).payments[0];
+    await linkPayment(db, ctx, { paymentId: payment.id, rowId, cents: 5_000 }, rowCheck(ctx));
+    expect((await findPayments(db, ws.workspaceId, { year: 2026, text: '4711' })).payments[0]).toMatchObject({ freeCents: 5_850 });
   });
 });

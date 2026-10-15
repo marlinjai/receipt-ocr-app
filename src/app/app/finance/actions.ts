@@ -8,12 +8,15 @@ import {
   PaymentServiceError,
   createAccount,
   deleteImportBatch,
+  findPayments,
   importPayments,
   linkPayment,
+  setAccountPrivate,
   setCounterpartyTreatment,
   setPaymentKind,
   setPaymentTransfer,
   unlinkPayment,
+  type FoundPayment,
   type ImportResult,
 } from '@/lib/tax/payments/service';
 import { PaymentParseError } from '@/lib/tax/payments/types';
@@ -283,6 +286,26 @@ export async function importPaymentFile(year: number, accountId: string, text: s
 
 export async function undoImport(year: number, batchId: string): Promise<Result<StatementView>> {
   return write(year, (ctx) => deleteImportBatch(prisma, ctx, String(batchId)));
+}
+
+/** Say that a whole account is private (true), so its payments are not asked about, or take that back (false). */
+export async function markAccountPrivate(year: number, accountId: string, isPrivate: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => setAccountPrivate(prisma, ctx, String(accountId), isPrivate));
+}
+
+/**
+ * Find payments of the year that still have something to link, by
+ * counterparty or by text, whatever was answered about them. Read only: the
+ * link itself goes through `confirmPaymentLink`.
+ */
+export async function searchPayments(year: number, query: unknown): Promise<Result<{ payments: FoundPayment[]; total: number }>> {
+  try {
+    const session = await requireReceiptsSession();
+    const q = (query ?? {}) as { counterpartyKey?: unknown; text?: unknown };
+    return { ok: true, value: await findPayments(prisma, sessionWorkspaceId(session), { year: safeYear(year), counterpartyKey: q.counterpartyKey, text: q.text }) };
+  } catch (e) {
+    return failure(e);
+  }
 }
 
 export async function treatCounterparty(year: number, input: unknown): Promise<Result<StatementView>> {

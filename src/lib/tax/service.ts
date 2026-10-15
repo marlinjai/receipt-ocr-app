@@ -956,15 +956,29 @@ function buildPaymentsView(
     unclassified.set(p.counterpartyKey, entry);
   }
 
+  // Money in from a counterparty nobody answered yet is asked about once, in the
+  // counterparty question, unless it already looks like the payment of an issued
+  // invoice: then it is offered for that invoice right away.
+  const outstanding = new Map(invoiceResults.map((i) => [i.invoiceId, i.outstandingCents]));
+  const invoiceDocuments = invoices.map((i) => ({ id: i.id, number: i.number, day: i.issueDate, openCents: outstanding.get(i.id) ?? 0 }));
+  const asMatch = (p: PaymentRow) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, reference: p.reference, counterparty: p.counterparty });
+  const incomeCandidates = inYear.filter((p) => {
+    const treatment = loaded.treatments.get(p.counterpartyKey);
+    return p.kind === 'income' && free(p) > 0 && treatment !== 'private' && treatment !== 'own_account' && treatment !== 'mixed';
+  });
+  const incomeProposals = proposeMatches(incomeCandidates.map(asMatch), invoiceDocuments);
+  const looksLikeInvoicePayment = new Set(incomeProposals.map((x) => x.paymentId));
+
   // What needs a document: money out to a business counterparty, and money in
-  // that is not private and not a refund.
+  // from a business counterparty or for an invoice. Payments on an account said
+  // to be private as a whole are kind `private` and never asked about.
   const needing = inYear.filter((p) => {
     if (free(p) === 0) return false;
     const treatment = loaded.treatments.get(p.counterpartyKey);
     // Money out to a business counterparty, and money out with no name at all
     // (there is nobody to ask about once, so each such payment is asked about).
     if (p.kind === 'spend') return treatment === 'business' || !p.counterpartyKey;
-    if (p.kind === 'income') return treatment !== 'private' && treatment !== 'own_account';
+    if (p.kind === 'income') return treatment !== 'private' && treatment !== 'own_account' && treatment !== 'mixed' && (treatment === 'business' || !p.counterpartyKey || looksLikeInvoicePayment.has(p.id));
     // Money back from a business counterparty belongs on the receipt it refunds.
     // So does money a pay-later service pays back: its list holds no refunds, the bank line is the only record.
     if (p.kind === 'refund') return treatment === 'business' || !p.counterpartyKey || p.byRule;
@@ -987,11 +1001,7 @@ function buildPaymentsView(
     .filter((r) => !r.isMeal && (r.item.date === null || r.item.date.startsWith(`${year}-`) || r.item.date.startsWith(`${year - 1}-`)))
     .map((r) => ({ id: r.item.id, label: r.item.label, day: r.item.date, amountCents: r.item.amountCents, linkedCents: linkedCentsByRow.get(r.item.id) ?? 0 }))
     .sort((a, b) => ((a.day ?? '') < (b.day ?? '') ? 1 : -1));
-  const outstanding = new Map(invoiceResults.map((i) => [i.invoiceId, i.outstandingCents]));
-  const invoiceDocuments = invoices.map((i) => ({ id: i.id, number: i.number, day: i.issueDate, openCents: outstanding.get(i.id) ?? 0 }));
-  const asMatch = (p: PaymentRow) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, reference: p.reference, counterparty: p.counterparty });
   const spendProposals = proposeMatches(needing.filter((p) => p.kind === 'spend').map(asMatch), receiptDocuments);
-  const incomeProposals = proposeMatches(needing.filter((p) => p.kind === 'income').map(asMatch), invoiceDocuments);
 
   // Receipts on an estimated amount. Every receipt without a link takes part
   // (a payment that also fits a euro receipt is not unambiguous), and every

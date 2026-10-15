@@ -554,6 +554,10 @@ model TaxAccount {
   authTenantId    String?  @map("auth_tenant_id")
   label           String
   kind            String
+  // True when the owner said the whole account is private: its payments are
+  // not asked about. A single payment can still be linked to a receipt by hand
+  // (a business expense paid privately) or re-labelled.
+  isPrivate       Boolean  @default(false) @map("is_private")
   createdAt       DateTime @default(now()) @map("created_at")
 
   batches  TaxImportBatch[]

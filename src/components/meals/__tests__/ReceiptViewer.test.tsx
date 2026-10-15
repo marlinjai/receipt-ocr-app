@@ -346,6 +346,22 @@ describe('ReceiptViewer: opening outside the app', () => {
     open.mockRestore();
   });
 
+  it('a middle click keeps the browser behaviour but sends the waiting save at once', () => {
+    const onRotate = vi.fn().mockResolvedValue(true);
+    const open = vi.spyOn(window, 'open');
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={onRotate} />);
+    loadImage(300, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    const event = new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 });
+    external().dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(onRotate).toHaveBeenCalledTimes(1);
+    expect(open).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(2000));
+    expect(onRotate).toHaveBeenCalledTimes(1);
+    open.mockRestore();
+  });
+
   it('with nothing waiting the link opens by itself', () => {
     const open = vi.spyOn(window, 'open');
     render(<ReceiptViewer files={[image({ rotation: 90 })]} onRotate={vi.fn().mockResolvedValue(true)} />);

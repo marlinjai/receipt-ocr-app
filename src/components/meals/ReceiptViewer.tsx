@@ -256,7 +256,9 @@ function FileView({
       saveTimer.current = null;
     }
     const saving = pending ? pending() : savingNow.current;
-    // Nothing to wait for, or a modified click (new window, download) the browser handles itself.
+    // Nothing to wait for, or a modified or middle click (background tab, new
+    // window, download) the browser handles itself; the waiting save was at
+    // least sent at once above, so it usually lands before that tab loads.
     if (!saving || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
     const tab = window.open('', '_blank');
@@ -384,7 +386,7 @@ function FileView({
               </button>
             </>
           )}
-          <a href={externalUrl} target="_blank" rel="noreferrer" onClick={openExternal} className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon" aria-label={t.openTab} title={t.openTab}>
+          <a href={externalUrl} target="_blank" rel="noreferrer" onClick={openExternal} onAuxClick={openExternal}className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon" aria-label={t.openTab} title={t.openTab}>
             <Icon d="M9 3h4v4M13 3 7.5 8.5M11 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2.5" />
           </a>
         </div>

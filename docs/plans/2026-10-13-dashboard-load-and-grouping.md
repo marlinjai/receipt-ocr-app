@@ -1,8 +1,8 @@
 ---
 title: The dashboard under 780 receipts: what loads, and recurring receipts in groups
-summary: Measured on 2026-10-13, the receipts table needs 35 seconds to load all rows and holds 817 MB in the browser. Step one (built) leaves the recognized text out of the list, loads it per receipt and searches it on the server, and takes rows in pages of 200. Step two loads only the chosen years. Step three groups recurring receipts automatically.
+summary: Measured on 2026-10-13, the receipts table needs 35 seconds to load all rows and holds 817 MB in the browser. Step one (built) leaves the recognized text out of the list, loads it per receipt and searches it on the server, and takes rows in pages of 200. Step two loads only the chosen years. Step three groups recurring receipts automatically. All three are deployed; measured on 2026-10-15 the table opens on the newest year in 6 to 8 seconds with 1.8 MB of data.
 type: plan
-status: in-progress
+status: completed
 tags: [receipts, dashboard, performance, groups]
 projects: [receipt-ocr-app]
 date: 2026-10-13
@@ -95,6 +95,36 @@ Decided by the owner on 2026-10-14: per vendor and item per year, exactly.
 - The sum of a group is the sum of its receipts that are loaded. In a year view a group made of
   one year is complete; a group a person made across years shows the part in the chosen years.
 
+## Measured after steps two and three (2026-10-15, deployed, 1,105 receipts)
+
+Production, company Whiz-Art Media, a fresh browser tab per load, time until the count and the rows
+stood still for three seconds. The table now holds 1,105 receipts (325 of them 2026), not 780.
+
+| | before (780 receipts) | after step one | after steps two and three, newest year | all years (`?jahr=alle`) |
+|---|---|---|---|---|
+| Until the count stands still | 35 s | 17 s | 6.4 to 8.0 s (325 receipts) | about 30 s (1,105 receipts, in parts of 150 to 200) |
+| Requests | | | 45 to 49 | 64 |
+| Data received (decoded) | 3.1 MB | 1.9 MB | 1.79 MB (0.14 MB compressed) | 2.27 MB |
+| Browser memory | 817 MB | 169 MB | 178 to 193 MB | 158 MB after 15 s |
+| Rows drawn | | | 308, with 42 groups | 451 after 15 s |
+
+Checked on production the same day:
+
+- The table opens on 2026, the newest year; the chips count per year (2021: 91, 2022: 119,
+  2023: 149, 2024: 155, 2025: 266, 2026: 325); `?jahr=alle` reaches all 1,105.
+- Recurring receipts show as groups named "vendor, item, year" (for example "Anthropic, PBC,
+  Claude Max-Plan, 2026").
+- A receipt taken out of its automatic group (a Vercel invoice of 22 January 2026) stayed out after
+  a reload; it was put back into its group afterwards and is there again.
+- The finance link to a receipt of an older year (the open 2025 meal receipt) widens the table to
+  2025 and 2026 and opens that receipt in the side panel.
+- The 2025 figures of the finance area did not move through the grouped loads: 14,376.04
+  business expenses, 265 receipts, employment annex 667.79.
+
+Seen in passing: when a vendor name is changed after its receipts were grouped (the 2026 import
+shortened "Vercel Inc." to "Vercel"), the group keeps the old name, and receipts of the new key
+will form a second group once two arrive. This is the renamed-key case listed below.
+
 ## Reviewed before the pull request (2026-10-14)
 
 A fresh agent read the branch. Fixed from its findings: two page loads at once could make the
@@ -109,7 +139,7 @@ parts); a failed group delete left its children marked (the mark goes again); th
 brought up to date by the page itself before it groups; date years are read the same way on the
 server and in the browser.
 
-## Open
+## Known limits (accepted when the plan was decided)
 
 - A group a person renames is a different name for the rule: when two receipts of its key arrive
   later, a new group with the old name is made. No column tells the rule that a name was changed.

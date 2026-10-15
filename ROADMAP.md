@@ -75,11 +75,11 @@
   read with or without the third-party charges it lists, differently from month to month, and an
   amount in another currency printed next to the euro amount was taken as euros (once), a euro
   invoice as dollars (once). (2026-10-11)
-- [ ] The dashboard under 780 receipts: step one deployed (35 s to 17 s, 817 MB to 169 MB); step
-  two (the table loads the years it shows, opens on the newest) and step three (recurring
-  receipts grouped automatically by vendor, item and year) are built. Open until deployed and
-  measured on production. Plan:
-  [docs/plans/2026-10-13-dashboard-load-and-grouping.md](docs/plans/2026-10-13-dashboard-load-and-grouping.md). (2026-10-14)
+- [x] The dashboard under 780 receipts: all three steps deployed. Measured on production on
+  2026-10-15 with 1,105 receipts: the table opens on the newest year in 6 to 8 seconds (was 35),
+  1.8 MB of data and about 180 MB of browser memory (was 817 MB); all years load in about 30
+  seconds. Groups, taking a receipt out, the year links and the 2025 figures checked. Plan:
+  [docs/plans/2026-10-13-dashboard-load-and-grouping.md](docs/plans/2026-10-13-dashboard-load-and-grouping.md). Done 2026-10-15.
 - [ ] The filter bar's date operators ("after", "before", "equals") fail on the database: the
   adapter casts the date column to a timestamp and compares it with a text parameter. Found on
   2026-10-14 through the adapter's list query; the year scope avoids them. Fix in the table

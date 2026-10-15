@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { renderPdfPage } from '@/lib/meals/pdf-render';
 import {
   clampPan,
@@ -119,6 +119,15 @@ export default function ReceiptViewer({ files, onRotate, lang = 'de', className 
   );
 }
 
+/**
+ * The address that shows the file turned the way it is stored for this file
+ * reference (see /api/files/[fileId]). Any other address is kept as it is.
+ */
+export function rotatedFileUrl(file: Pick<ViewerFile, 'fileUrl' | 'refId'>): string {
+  if (!/^\/api\/files\/[^/?#]+$/.test(file.fileUrl)) return file.fileUrl;
+  return `${file.fileUrl}?ref=${encodeURIComponent(file.refId)}`;
+}
+
 type Source =
   | { kind: 'loading' }
   | { kind: 'failed' }
@@ -161,7 +170,10 @@ function FileView({
   /** Whether the user (or a stored value) decided the rotation; the shape-based guess applies only before that. */
   const decided = useRef(file.rotation !== null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSave = useRef<(() => void) | null>(null);
+  /** The save waiting for the debounce; resolves whether it was stored. */
+  const pendingSave = useRef<(() => Promise<boolean>) | null>(null);
+  /** The save on its way to the server, until it is answered. */
+  const savingNow = useRef<Promise<boolean> | null>(null);
 
   /**
    * The picture is there and its size is known. Without a stored rotation, a
@@ -221,10 +233,45 @@ function FileView({
   useEffect(
     () => () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      pendingSave.current?.();
+      void pendingSave.current?.();
     },
     [],
   );
+
+  // Opened outside the app, the receipt is turned on the server by the
+  // rotation stored on its file reference: the link names the reference,
+  // never an angle, so it cannot show an outdated turn.
+  const externalUrl = rotatedFileUrl(file);
+  /**
+   * A turn made just before the click may still wait for its save, or the save
+   * may still be on its way. The tab is opened at once (inside the click, so
+   * no popup blocker stops it) and sent to the receipt once the save is
+   * through, so it shows the new rotation. When the save fails the empty tab
+   * is closed again, and the viewer's note says the turn was not stored.
+   */
+  const openExternal = (e: MouseEvent<HTMLAnchorElement>) => {
+    const pending = pendingSave.current;
+    if (pending && saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    const saving = pending ? pending() : savingNow.current;
+    // Nothing to wait for, or a modified or middle click (background tab, new
+    // window, download) the browser handles itself; the waiting save was at
+    // least sent at once above, so it usually lands before that tab loads.
+    if (!saving || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+    void saving.then((stored) => {
+      if (!stored) {
+        tab?.close();
+        return;
+      }
+      if (tab && !tab.closed) tab.location.href = externalUrl;
+      else window.open(externalUrl, '_blank', 'noopener');
+    });
+  };
 
   const act = useCallback(
     (action: ViewerAction) => {
@@ -238,10 +285,21 @@ function FileView({
           const run = () => {
             pendingSave.current = null;
             saveTimer.current = null;
-            onRotate(file, next).then(
-              (ok) => setSaveFailed(!ok),
-              () => setSaveFailed(true),
+            const saving = onRotate(file, next).then(
+              (ok) => {
+                setSaveFailed(!ok);
+                return ok;
+              },
+              () => {
+                setSaveFailed(true);
+                return false;
+              },
             );
+            savingNow.current = saving;
+            void saving.then(() => {
+              if (savingNow.current === saving) savingNow.current = null;
+            });
+            return saving;
           };
           pendingSave.current = run;
           saveTimer.current = setTimeout(run, 350);
@@ -328,7 +386,7 @@ function FileView({
               </button>
             </>
           )}
-          <a href={file.fileUrl} target="_blank" rel="noreferrer" className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon" aria-label={t.openTab} title={t.openTab}>
+          <a href={externalUrl} target="_blank" rel="noreferrer" onClick={openExternal} onAuxClick={openExternal}className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon" aria-label={t.openTab} title={t.openTab}>
             <Icon d="M9 3h4v4M13 3 7.5 8.5M11 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2.5" />
           </a>
         </div>
@@ -376,6 +434,7 @@ function FileView({
         {source.kind === 'failed' ? (
           <div className="ui-note ui-note-danger m-4 self-center" role="alert">
             {t.failed(file.originalName)}{' '}
+            {/* The viewer could not read the file, so the stored file itself is offered, untouched. */}
             <a href={file.fileUrl} target="_blank" rel="noreferrer" className="underline">
               {t.openTab}
             </a>

@@ -241,3 +241,145 @@ describe('ReceiptViewer: files', () => {
     expect(angleOf(loadImage(300, 900))).toBe(270);
   });
 });
+
+describe('ReceiptViewer: opening outside the app', () => {
+  const external = () => screen.getByRole('link', { name: 'In neuem Tab öffnen' });
+
+  it('the link names the file reference, so the server turns the receipt by its stored rotation', () => {
+    render(<ReceiptViewer files={[image({ refId: 'ref-9', rotation: 90 })]} />);
+    expect(external().getAttribute('href')).toBe('/api/files/f-1?ref=ref-9');
+    expect(external().getAttribute('target')).toBe('_blank');
+  });
+
+  it('the link never carries an angle: a turn changes nothing in it', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={vi.fn().mockResolvedValue(true)} />);
+    loadImage(300, 900);
+    const before = external().getAttribute('href');
+    await user.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    expect(external().getAttribute('href')).toBe(before);
+  });
+
+  it('a turn still waiting for its save is stored first, then the new tab goes to the receipt', async () => {
+    let finish: (ok: boolean) => void = () => {};
+    const onRotate = vi.fn<(file: ViewerFile, rotation: number) => Promise<boolean>>(() => new Promise<boolean>((resolve) => (finish = resolve)));
+    const tab = { closed: false, opener: {} as unknown, location: { href: '' } };
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={onRotate} />);
+    loadImage(300, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    // Clicked inside the save delay: the save starts at once instead of later.
+    fireEvent.click(external());
+    expect(onRotate).toHaveBeenCalledTimes(1);
+    expect(onRotate.mock.calls[0][1]).toBe(90);
+    expect(open).toHaveBeenCalledWith('', '_blank');
+    expect(tab.opener).toBeNull();
+    expect(tab.location.href).toBe('');
+    await act(async () => finish(true));
+    expect(tab.location.href).toBe('/api/files/f-1?ref=ref-1');
+    // The flushed save is not made a second time when the delay would have run out.
+    act(() => vi.advanceTimersByTime(2000));
+    expect(onRotate).toHaveBeenCalledTimes(1);
+    open.mockRestore();
+  });
+
+  it('a save already on its way is waited for too', async () => {
+    let finish: (ok: boolean) => void = () => {};
+    const onRotate = vi.fn(() => new Promise<boolean>((resolve) => (finish = resolve)));
+    const tab = { closed: false, opener: {} as unknown, location: { href: '' }, close: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={onRotate} />);
+    loadImage(300, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    // The delay ran out: the save is sent but not answered yet.
+    act(() => vi.advanceTimersByTime(400));
+    expect(onRotate).toHaveBeenCalledTimes(1);
+    fireEvent.click(external());
+    expect(open).toHaveBeenCalledWith('', '_blank');
+    expect(tab.location.href).toBe('');
+    await act(async () => finish(true));
+    expect(tab.location.href).toBe('/api/files/f-1?ref=ref-1');
+    expect(onRotate).toHaveBeenCalledTimes(1);
+    open.mockRestore();
+  });
+
+  it('a failed save closes the empty tab again, and the viewer says the turn was not stored', async () => {
+    const onRotate = vi.fn().mockResolvedValue(false);
+    const tab = { closed: false, opener: {} as unknown, location: { href: '' }, close: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={onRotate} />);
+    loadImage(300, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    fireEvent.click(external());
+    await waitFor(() => expect(tab.close).toHaveBeenCalled());
+    expect(tab.location.href).toBe('');
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alert').textContent).toContain('Die Drehung konnte nicht gespeichert werden');
+    open.mockRestore();
+  });
+
+  it('a save that throws counts as failed as well', async () => {
+    const onRotate = vi.fn().mockRejectedValue(new Error('offline'));
+    const tab = { closed: false, opener: {} as unknown, location: { href: '' }, close: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={onRotate} />);
+    loadImage(300, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    fireEvent.click(external());
+    await waitFor(() => expect(tab.close).toHaveBeenCalled());
+    open.mockRestore();
+  });
+
+  it('once the save is answered, the link opens by itself again', async () => {
+    const onRotate = vi.fn().mockResolvedValue(true);
+    const open = vi.spyOn(window, 'open');
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={onRotate} />);
+    loadImage(300, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    external().dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it('a middle click keeps the browser behaviour but sends the waiting save at once', () => {
+    const onRotate = vi.fn().mockResolvedValue(true);
+    const open = vi.spyOn(window, 'open');
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={onRotate} />);
+    loadImage(300, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    const event = new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 });
+    external().dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(onRotate).toHaveBeenCalledTimes(1);
+    expect(open).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(2000));
+    expect(onRotate).toHaveBeenCalledTimes(1);
+    open.mockRestore();
+  });
+
+  it('with nothing waiting the link opens by itself', () => {
+    const open = vi.spyOn(window, 'open');
+    render(<ReceiptViewer files={[image({ rotation: 90 })]} onRotate={vi.fn().mockResolvedValue(true)} />);
+    loadImage(300, 900);
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    external().dispatchEvent(event);
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it('when the browser blocks the empty tab, the receipt is opened once the save is through', async () => {
+    const onRotate = vi.fn().mockResolvedValue(true);
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={onRotate} />);
+    loadImage(300, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    fireEvent.click(external());
+    await waitFor(() => expect(open).toHaveBeenLastCalledWith('/api/files/f-1?ref=ref-1', '_blank', 'noopener'));
+    open.mockRestore();
+  });
+});

@@ -1250,3 +1250,230 @@ Answered by the owner on the decision page on 2026-10-07.
     question becomes real. Until then the points collected under "what a tax advisor
     should confirm" stay visibly unconfirmed in the app, each on the item or hint it
     concerns.
+
+## Design: entries without a receipt (2026-10-15)
+
+Design only, nothing of this is built. It answers the roadmap line "Flat rates have no
+place in the finance area".
+
+### The gap
+
+Everything the finance area counts today starts from a receipt (a stored purchase
+document). Several deductions have no receipt by nature: they are flat rates the law
+sets per day or per kilometre, or payments whose document is a contract or a bank
+statement. For 2025 this is why the employment annex (Anlage N) shows 667.75 euros
+where the draft return claims 2,101.22 (1,422.14 of that has no purchase document by
+nature), and why the business form (Anlage EÜR, the income-surplus statement) misses
+the 56.00 euros of meal allowance of a business trip. A lease worked only because one
+confirmation document could carry eleven payments.
+
+### One concept: an entry
+
+A new record type, the **entry**, stands beside receipts. An entry is something a
+person states, with its evidence attached, and it lands on a form line like a receipt
+does. It goes through the same `computeYear` (the one place a year is computed), as a
+new kind of fact next to `LedgerItem`, so the dashboard, scenarios and hints cannot
+disagree about it.
+
+Every entry has:
+
+- **a kind** (one of the six below), which decides what is asked and how the amount
+  is computed;
+- **the facts the kind needs** (days, kilometres, a contract rate), never a typed euro
+  amount where the law computes it from days or kilometres;
+- **its purpose and line**: business (a key of the income-surplus statement), study or
+  employment (a key of the employment annex), with a share where the kind allows one;
+- **its evidence**: a link to a stored file (a receipt row used as a document only,
+  for example a fee notice or a contract), to one or more bank payments of the
+  payments import (`TaxPayment`), or a self-made record (Eigenbeleg) the app generates
+  from what was entered, or a combination. An entry without the evidence its kind
+  requires is an open check in the queue, counted nowhere, like a receipt without a
+  decision.
+
+The amount is computed on read from the facts and the rule set of the entry's year,
+like everything else; nothing derived is stored.
+
+### Case 1: meal allowance of a business trip (Verpflegungsmehraufwand)
+
+- **Law.** Section 4 paragraph 5 sentence 1 number 5 of the income tax act
+  (Einkommensteuergesetz, EStG) admits meal costs of temporary work away from home
+  only by the rules of section 9 paragraph 4a. That section sets 28 euros for each
+  calendar day of 24 hours away, 14 euros for the day of arrival and of departure of a
+  trip with an overnight stay, and 14 euros for a day without overnight stay of more
+  than 8 hours away. A meal provided by the employer or the host reduces the 28 euro
+  rate by 20 percent for breakfast and 40 percent each for lunch and dinner. The rates
+  stop after the first three months at the same place.
+  Sources: https://www.gesetze-im-internet.de/estg/__4.html and
+  https://www.gesetze-im-internet.de/estg/__9.html (both opened 2026-10-15).
+- **What a person enters.** Destination, purpose of the trip, departure and return
+  (day and time), overnight stays, and per day which meals were provided. The app
+  computes each day's rate and the reductions.
+- **Evidence.** A self-made trip record generated from the entry, plus whatever
+  documents the trip has anyway (train ticket, hotel invoice, an invitation). Linking
+  the travel receipts the app already holds makes the trip plausible and lets the app
+  check the dates against them.
+- **Line.** Business trip: `euer.travel_meal_allowance` (exists). An employee's trip
+  the employer did not reimburse in full: the employment annex lists meal allowances
+  with the days, so a new structured key `employment.meal_allowance` is needed (days
+  and amounts per category, minus tax-free reimbursement by the employer), shown for
+  overview like `employment.commute`, never printed as one euro line.
+- **Rule set.** The rates and the three-month limit become values of the year's rule
+  set, each with its source, as the asset limits are.
+- **Unhappy paths.** A day that is already a full day of another trip is refused (one
+  rate per calendar day). A trip of more than three months at the same place stops
+  counting after the third month, with the reason shown. A provided meal that reduces
+  the rate below zero gives zero, never a negative amount. A trip whose dates
+  contradict a linked ticket is a note, not a block.
+
+### Case 2: home office day flat rate (Tagespauschale)
+
+- **Law.** Section 4 paragraph 5 sentence 1 number 6c EStG: 6 euros for every calendar
+  day the work is done mainly at home and no first place of work outside the home is
+  visited (or, under sentence 2, also on a day with work elsewhere when no other
+  workplace is permanently available), at most 1,260 euros a year "for the whole
+  business and professional activity". It is excluded where a study at home
+  (Arbeitszimmer, number 6b) is deducted. Section 9 paragraph 5 applies it to
+  employment income as well. Before 2023 the rate was 5 euros a day, at most 600 euros
+  a year (to be confirmed from the statute version of those years when the older rule
+  sets are written).
+  Sources: https://www.gesetze-im-internet.de/estg/__4.html and
+  https://www.gesetze-im-internet.de/estg/__9.html (opened 2026-10-15).
+- **What a person enters.** The days, as a list or a calendar selection, and per day
+  which activity it belongs to (business, employment, study). Not a count typed in: a
+  list of days is what makes double claims detectable.
+- **Evidence.** The self-made list of days. Helpful, not required: calendar entries,
+  the employer's statement that no workplace was available.
+- **Line.** Business days: `euer.home_office_flat` (exists, an amount line). Employment
+  and study days: `employment.home_office` (exists, structured: the form asks for the
+  number of days, not an amount).
+- **The one rule that matters.** The 1,260 euros are one cap for all activities
+  together, and a day counts once. The app therefore keeps one list of days per
+  person and year, assigns each day to exactly one activity, and applies the cap
+  across both forms. Where the cap is reached, the app says which form the remainder
+  was taken from.
+- **Unhappy paths.** A day entered twice is refused. A day that is also a full travel
+  day of case 1 is flagged (a day spent travelling is rarely mainly at home). A year
+  in which a study at home is declared refuses the flat rate. Days beyond the cap are
+  kept but count nothing, with the cap shown.
+
+### Case 3: commuting days (Entfernungspauschale)
+
+- **Law.** Section 9 paragraph 1 sentence 3 number 4 EStG. The current text reads 0.38
+  euros for every full kilometre of distance between home and first place of work, at
+  most 4,500 euros a year unless a car is used (source opened 2026-10-15:
+  https://www.gesetze-im-internet.de/estg/__9.html). The page shows no change history.
+  In earlier years the rate was 0.30 euros for the first 20 kilometres and a higher
+  rate from the 21st (0.35 in 2021, 0.38 from 2022). The rate per year must be read
+  from the statute version of that year when the rule sets are written; until a year's
+  rule set holds its rates, the app shows days and distance only and no amount.
+- **What a person enters.** Per place of work: the distance, the days travelled, the
+  means of transport (the cap does not apply to a car).
+- **Evidence.** The days list. A public transport ticket above the flat rate can be
+  claimed instead (the higher actual cost), which needs the ticket receipt.
+- **Line.** `employment.commute` (exists, structured: the form asks days, distance and
+  transport, so the app shows its sum for overview and never prints a line number).
+  A self-employed person's trips to their own business premises are limited to the same
+  flat rate by section 4 paragraph 5 sentence 1 number 6 EStG; they are out of scope
+  until the business has premises outside the home.
+- **Unhappy paths.** A day that is also a home office day of case 2 under sentence 1
+  (no first place of work visited) is refused for one of the two. A day on a business
+  trip is not a commuting day.
+
+### Case 4: semester fees paid by bank transfer
+
+- **What it is.** The university's semester fee, paid by transfer. Study costs of a
+  first degree after vocational training or of a second degree go on the employment
+  annex as income-related expenses (Werbungskosten); otherwise they are special
+  expenses (Sonderausgaben) on another form. Which applies is a fact about the person,
+  already decided by how 2022 to 2025 were filed.
+- **What a person enters.** Semester, amount, and the parts of the fee: an
+  administration or enrolment fee is a study cost; the student union fee and the
+  semester ticket share are argued both ways (the ticket can be seen as a commuting
+  cost or as private travel). The app keeps the parts apart so each can be decided.
+- **Evidence.** The university's fee notice (stored as a document) and the bank
+  payment from the payments import. The notice alone is enough; the payment alone is
+  enough with a self-made record naming the semester.
+- **Line.** `employment.study_costs` for the parts treated as study cost.
+- **Unhappy paths.** The same payment linked to two entries is refused (a payment is
+  used once, as for receipts). A refund of the fee in a later semester reduces that
+  year's entry, by the cash basis.
+
+### Case 5: an expense that exists only as a bank payment
+
+- **What it is.** A business expense for which no document exists or can be obtained
+  (a parking machine without a receipt, a lost invoice the vendor will not reissue).
+- **Evidence.** The bank payment of the payments import plus a self-made record that
+  holds what a document would: date, payee, what was bought and why it was business,
+  the amount, why there is no document, and the date the record was made. The app
+  generates it from the entry and stores it with the entry; the person confirms it.
+  A self-made record is an emergency, not a habit, so the app counts them per year
+  and shows the total.
+- **Line.** Any business or employment key, chosen like for a receipt. Under regular
+  value-added taxation there is no input tax: without an invoice nothing is
+  deductible, so the gross amount is the cost.
+- **Unhappy paths.** A real receipt that turns up later is linked to the same payment:
+  the entry is then replaced by the receipt (the app offers this, the entry stays
+  visible as replaced, never counted twice). A payment already linked to a receipt
+  cannot be the evidence of an entry.
+
+### Case 6: a recurring contract rate
+
+- **What it is.** A lease, a subscription or an insurance billed by direct debit with
+  one contract and no monthly invoices.
+- **What a person enters.** The contract once: payee, rate, rhythm, start and end, the
+  form line and share. The contract document is stored as the evidence.
+- **Instances.** Every bank payment to that payee in the rhythm and amount becomes an
+  instance of the contract, proposed by the matcher and confirmed by a person, the
+  same way a receipt is linked to a payment today. An instance counts on its payment
+  day. A month with a contract rate but no payment is a note (missed or late debit),
+  never an amount.
+- **Interaction with the ten-day rule.** A contract rate is the textbook case of a
+  regularly recurring payment, so an instance paid between 22 December and 10 January
+  is listed in the "Jahreswechsel" tab like a receipt is today. Unlike a receipt, the
+  contract states the due day, so the app can preselect the answer.
+- **Line.** Whatever the contract is: `euer.leasing_movable`, `euer.fees_insurance`,
+  `euer.telecom` and so on. Under regular taxation the contract must show the tax
+  (a contract with the rate and the tax amount is an invoice for its term);
+  otherwise no input tax.
+- **Unhappy paths.** A changed rate is a new version of the contract from a date.
+  A payment that matches two contracts is asked about, never assigned by itself.
+
+### How it fits the rest
+
+- **Payments import** (`src/lib/tax/payments`): evidence links reuse the payment link
+  model. A payment is used once, whether by a receipt, an invoice or an entry. The
+  questions of the payments tab ("who is this counterparty") gain one answer: "a
+  contract" or "an entry".
+- **Year rule sets** (`src/lib/tax/rules`): the day rates, the cap of the home office
+  flat rate and the commuting rates become sourced values per year. A year without its
+  own values computes no flat rate and says so, rather than using another year's rate:
+  flat rates changed often between 2020 and 2026.
+- **Employment annex**: the structured lines stay structured. The finance area shows
+  days and distances there as the form asks, and their euro sum only for overview.
+- **New line key needed**: `employment.meal_allowance` (structured). Everything else
+  uses existing keys.
+
+### Data model sketch (additive tables only)
+
+- `TaxEntry`: workspace, kind, year, purpose and share, form line key, employment
+  line key, the kind's facts as validated JSON, status (counted, replaced), created
+  and updated.
+- `TaxEntryEvidence`: entry, and one of a stored receipt row used as a document, a
+  `TaxPayment`, or the generated self-made record (its text and the day it was made).
+- `TaxEntryDay`: workspace, person-day (ISO day), entry, activity. Unique per
+  workspace and day for the home office flat rate, which is what refuses a day twice.
+- `TaxContract` and `TaxContractVersion`: payee key, rate, rhythm, valid from and to,
+  line, share, the stored contract document; instances are payment links with a
+  contract id.
+
+### Open questions for the owner, each with a recommendation
+
+1. **Build order.** Recommended: the home office days and the meal allowance first
+   (they are the 1,422.14 and the 56.00 of 2025), then contract rates, then the rest.
+2. **Self-made records for 2025.** Recommended: allowed only for the cases the draft
+   already claims, generated by the app and reviewed by the owner once, not entered
+   freely.
+3. **The semester ticket share.** Recommended: counted as private until a tax adviser
+   says otherwise, shown as a decided item with its reason, so it can be changed.
+4. **Who owns the contract matcher.** Recommended: the payments lane, as an extension
+   of its matcher, with this plan's entry type as the target.

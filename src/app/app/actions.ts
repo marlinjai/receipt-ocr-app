@@ -141,12 +141,21 @@ const DECISION_COLUMNS: string[] = ['Category', 'Konto', 'Zuordnung'];
 /** What was bought is worded by the model and may be reworded by a person: a new reading fills it only where it is empty. */
 const WORDED_COLUMNS: string[] = [ITEM_COLUMN];
 
-/** True when the stored vendor and the newly read one are the same vendor written differently. */
-function storedVendorStands(stored: CellValue | undefined, read: CellValue | undefined): boolean {
-  return typeof stored === 'string' && typeof read === 'string' && stored.trim() !== '' && sameVendor(stored, read);
+/**
+ * True when a new reading keeps the vendor the row holds. A vendor that is set
+ * stays: the name a customer uses ("A2 Hosting") is what groups a vendor's
+ * receipts, and the page prints the legal name ("A2 Hosting LLC"). Only on a
+ * restaurant's till receipt, which prints the restaurant's own name at the
+ * top, is a vendor that is really another name replaced: there the stored one
+ * can be a heading the old reader took ("Laufkunde"). The review list follows
+ * the same rule (src/lib/review/reading.ts).
+ */
+function storedVendorStands(stored: CellValue | undefined, read: CellValue | undefined, isMeal: boolean): boolean {
+  if (typeof stored !== 'string' || stored.trim() === '') return false;
+  return !isMeal || (typeof read === 'string' && sameVendor(stored, read));
 }
 
-/** What a new reading of a stored file always writes: the facts the page prints. */
+/** What a new reading of a stored file always writes: the facts the page prints. The vendor follows `storedVendorStands`. */
 const REREAD_COLUMNS: string[] = ['Vendor', 'Gross', 'Net', 'Tax Rate', 'Date', 'Currency', 'FX Rate'];
 
 const isBlank = (value: unknown) => value === null || value === undefined || value === '';
@@ -546,8 +555,8 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     const cells: Record<string, CellValue> = {};
     for (const column of columns) {
       if (!(column.id in read.cells)) continue;
-      // The same vendor in another spelling (the legal form added) keeps the name it has.
-      if (column.name === 'Vendor' && storedVendorStands(row.cells[column.id], read.cells[column.id])) continue;
+      // A vendor that is set keeps its name (see storedVendorStands).
+      if (column.name === 'Vendor' && storedVendorStands(row.cells[column.id], read.cells[column.id], isMeal)) continue;
       // A row filed as a meal is named by its restaurant, whatever this reading takes it for.
       if (column.name === ITEM_COLUMN && isMeal) continue;
       if (always.has(column.name) || (fillOnly.has(column.name) && isBlank(row.cells[column.id]))) cells[column.id] = read.cells[column.id];

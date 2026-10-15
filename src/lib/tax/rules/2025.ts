@@ -23,7 +23,11 @@ export const EMPLOYMENT_FORM_2025: Source = {
   checkedOn: '2026-10-15',
 };
 
-/** The labels of the income-surplus statement, shared by the years; the line numbers are per year. */
+/**
+ * The labels of the income-surplus statement, shared by the years; the line
+ * numbers are per year. The key order is the order of the form, which a year
+ * without numbers (`euerUnnumberedLines`) displays in.
+ */
 export const EUER_LABELS: Record<Extract<FormLineKey, `euer.${string}`>, { label: string; kind: 'revenue' | 'expense'; limited?: boolean; assetOnly?: boolean; computedOnly?: boolean }> = {
   'euer.revenue_small_business': { label: 'Betriebseinnahmen als umsatzsteuerlicher Kleinunternehmer (nach § 19 Abs. 1 UStG)', kind: 'revenue' },
   'euer.revenue_taxable': { label: 'Umsatzsteuerpflichtige Betriebseinnahmen', kind: 'revenue' },
@@ -79,6 +83,20 @@ export function euerLines(numbers: Record<EuerKey, number>): FormLine[] {
   return (Object.keys(EUER_LABELS) as EuerKey[])
     .map((key) => ({ key, form: 'euer' as const, line: numbers[key], numbering: 'verified' as const, ...EUER_LABELS[key] }))
     .sort((a, b) => a.line - b.line);
+}
+
+/**
+ * The income-surplus part of a catalog for a year whose form is not published
+ * yet: every line by its label, none with a number (never another year's).
+ */
+export function euerUnnumberedLines(): FormLine[] {
+  return (Object.keys(EUER_LABELS) as EuerKey[]).map((key) => ({
+    key,
+    form: 'euer' as const,
+    line: null,
+    numbering: 'unverified' as const,
+    ...EUER_LABELS[key],
+  }));
 }
 
 /** Line numbers of the Anlage EÜR 2025, read off the ministry's form. */

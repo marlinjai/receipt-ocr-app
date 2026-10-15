@@ -548,3 +548,71 @@ Invoice
                                                                           Total                               $23.79
                                                                           Paid                               ($23.79)
                                                                           Amount Due                           $0.00`;
+
+/**
+ * A usage invoice in dollars with two usage lines and no tax (roadmap,
+ * 2026-10-11): 1.30 is about 7 percent of 18.76 and their sum is the printed
+ * total, so the review list offered net 18.76 at 7 percent. The only tax
+ * words are the seller's VAT identification number and a tax line of zero.
+ */
+export const USAGE_TWO_LINES_NO_TAX = `Example Editor, Inc.
+Invoice
+Date of issue
+March 6, 2026
+DE VAT DE123456789
+US$20.06 due March 6, 2026
+Description
+Qty
+Amount
+Usage, model calls
+1
+US$18.76
+Usage, background agents
+1
+US$1.30
+Subtotal
+US$20.06
+Tax (0%)
+US$0.00
+Total
+US$20.06
+Amount due
+US$20.06`;
+
+/**
+ * Five pages of usage lines in cents (2026 import, nine invoices): a pair of
+ * them fits a rate and adds up to another printed cent amount, and was stored
+ * as the total without a flag. The only tax word is a "VAT-Code".
+ */
+export const USAGE_TABLE_OF_CENTS = `Example Cloud, Inc.
+Invoice
+$5.00 USD due February 11, 2026
+VAT-Code: XX-0000
+Qty
+Unit price
+Amount
+Storage reads
+0
+$0.75
+per 1,000,000
+$0.00
+Storage writes
+0
+$0.15
+per 1,000,000
+$0.00
+Queue operations
+0
+$0.90
+per 1,000
+$0.00
+Paid plan
+1
+$5.00
+$5.00
+Subtotal
+$5.00
+Total
+$5.00
+Amount due
+$5.00 USD`;

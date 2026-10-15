@@ -136,3 +136,36 @@ describe('totals that had no label, or the wrong one', () => {
     expect(readAmounts('Gesamtpreis\n35,90 €').gross).toBe(35.9);
   });
 });
+
+describe('a tax needs a line that names it', () => {
+  it('two usage lines that happen to fit 7 percent are no tax: the bill is the net, at rate 0', () => {
+    const reading = readAmounts(F.USAGE_TWO_LINES_NO_TAX, { currency: 'USD' });
+    expect(reading).toMatchObject({ gross: 20.06, net: 20.06, taxRate: 0, taxPrinted: false, taxGroups: [] });
+    // The same figures in euros: no rate is made up from them; the rate is the default, and the check says so.
+    const euros = readAmounts(F.USAGE_TWO_LINES_NO_TAX.replaceAll('US$', '€'), { currency: 'EUR' });
+    expect(euros.gross).toBe(20.06);
+    expect(euros.taxGroups).toEqual([]);
+    expect(euros.checks).toContain('tax_estimated');
+  });
+
+  it('a page of cent amounts holds a pair for a rate, which is not the bill', () => {
+    expect(readAmounts(F.USAGE_TABLE_OF_CENTS, { currency: 'USD' })).toMatchObject({ gross: 5, taxGroups: [] });
+    expect(readAmounts(F.USAGE_TABLE_OF_CENTS.replaceAll('$', '€').replace(' USD', ''), { currency: 'EUR' })).toMatchObject({ gross: 5, taxGroups: [] });
+  });
+
+  it('a word that only contains the letters of a tax word names no tax', () => {
+    // "Musterversand" holds "ust": shipping of 5.90 is about 7 percent of 84.00 and was taken as its tax.
+    const order = ['Musterversand', 'Total 84.00 EUR', 'Shipping 5.90 EUR', 'Grand Total 89.90 EUR'].join('\n');
+    expect(readAmounts(order)).toMatchObject({ gross: 89.9, taxGroups: [], checks: ['total_unconfirmed', 'tax_estimated'] });
+  });
+
+  it('a tax named on its own line still counts, and so does one a label names in a torn block', () => {
+    expect(readAmounts('Shop\nItem 20.00\nVAT 19% 3.80\nTotal 23.80', { currency: 'USD' })).toMatchObject({ gross: 23.8, net: 20, taxRate: 19 });
+    expect(readAmounts('Netto\nMwSt\nSumme\n20,00\n3,80\n23,80')).toMatchObject({ gross: 23.8, net: 20, taxRate: 19, checks: [] });
+  });
+
+  it('a VAT identification number or a tax number is no tax label', () => {
+    expect(readAmounts('Shop\nUSt-IdNr. DE123456789\nItem 20,00\nVersand 3,80\nGesamt 23,80')).toMatchObject({ gross: 23.8, taxGroups: [] });
+    expect(readAmounts('Shop\nSteuernummer 12/345/67890\nItem 20,00\nVersand 3,80\nGesamt 23,80')).toMatchObject({ gross: 23.8, taxGroups: [] });
+  });
+});

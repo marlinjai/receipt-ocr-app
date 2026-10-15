@@ -229,3 +229,13 @@ describe('a total the page reading settled is not "an older reading"', () => {
     expect(byField(proposeReading(customs({ gross: 300, net: 252.1 })))).toMatchObject({ gross: [300, 57.09] });
   });
 });
+
+describe('a new reading never offers a tax two item amounts happen to fit', () => {
+  it('a dollar invoice of two usage lines, stored without tax, gets no offer of net 18.76 at 7 percent', async () => {
+    const { USAGE_TWO_LINES_NO_TAX } = await import('@/lib/extraction/__tests__/invoice-fixtures');
+    const changes = proposeReading(
+      stored(USAGE_TWO_LINES_NO_TAX, { name: 'Example Editor', vendor: 'Example Editor', gross: 20.06, net: 20.06, taxRate: 0, currency: 'USD', category: 'Software & Lizenzen' }),
+    );
+    expect(changes).toEqual([]);
+  });
+});

@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { Fragment, useId, useState } from 'react';
 import Link from 'next/link';
 import { formatDay } from '@/lib/meals/messages';
 import type { StatementView } from '@/lib/tax/service';
@@ -175,26 +175,30 @@ export default function VatTab({ view, busy, error, onStatusChange, onRemoveStat
                   </tr>
                 </thead>
                 <tbody>
-                  {year.periods.map((period) => [
-                    <tr key={period.index} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                  {year.periods.map((period) => (
+                    <Fragment key={period.index}>
+                    <tr className="border-t" style={{ borderColor: 'var(--border)' }}>
                       <th scope="row" className="py-1 text-left font-normal">
                         {year.periods.length === 12 ? MONTHS[period.index - 1] : `${period.index}. Quartal`}
                         <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                          {period.output.length + period.input.length > 0 ? `${period.output.length} Rechnungen, ${period.input.length} Belege` : ''}
+                          {period.output.length + period.input.length > 0
+                            ? `${new Set(period.output.map((e) => e.id)).size} Rechnungen, ${new Set(period.input.map((e) => e.id)).size} Belege`
+                            : ''}
                         </span>
                       </th>
                       <td className="py-1 text-right">{euro(period.outputVatCents)}</td>
                       <td className="py-1 text-right">{euro(period.inputVatCents)}</td>
                       <td className="py-1 text-right">{period.dueCents < 0 ? `Erstattung ${euro(-period.dueCents)}` : euro(period.dueCents)}</td>
-                    </tr>,
-                    period.outputByRate.length > 0 && (
-                      <tr key={`${period.index}-rates`}>
+                    </tr>
+                    {period.outputByRate.length > 0 && (
+                      <tr>
                         <td colSpan={4} className="pb-1 text-xs" style={{ color: 'var(--muted)' }}>
                           {rateLine(period.outputByRate)}
                         </td>
                       </tr>
-                    ),
-                  ])}
+                    )}
+                    </Fragment>
+                  ))}
                 </tbody>
                 <tfoot>
                   <tr className="border-t font-semibold" style={{ borderColor: 'var(--border)' }}>

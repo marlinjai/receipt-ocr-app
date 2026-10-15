@@ -275,10 +275,12 @@ function InvoiceForm({
   const [payments, setPayments] = useState<Array<{ date: string; amount: string }>>(
     () => invoice?.payments.map((p) => ({ date: p.date, amount: formatCents(p.cents) })) ?? [],
   );
-  const [groups, setGroups] = useState<Array<{ rateBp: number; net: string; vat: string }>>(() =>
+  // `offered`: the tax shown was computed from the net amount, not typed, so a
+  // changed net amount computes it again until the person types a tax.
+  const [groups, setGroups] = useState<Array<{ rateBp: number; net: string; vat: string; offered: boolean }>>(() =>
     INVOICE_RATES_BP.map((rateBp) => {
       const stored = invoice?.taxGroups?.find((g) => g.rateBp === rateBp);
-      return { rateBp, net: stored ? formatCents(stored.netCents) : '', vat: stored ? formatCents(stored.vatCents) : '' };
+      return { rateBp, net: stored ? formatCents(stored.netCents) : '', vat: stored ? formatCents(stored.vatCents) : '', offered: false };
     }),
   );
   const [localError, setLocalError] = useState<string | null>(null);
@@ -385,8 +387,8 @@ function InvoiceForm({
                     onBlur={() => {
                       // Offer the tax the rate gives; the invoice's own figure can still be typed over it.
                       const net = parseEuro(g.net);
-                      if (net !== null && net > 0 && g.vat.trim() === '') {
-                        setGroups((list) => list.map((x, i) => (i === index ? { ...x, vat: formatCents(taxAt(net, g.rateBp)) } : x)));
+                      if (net !== null && net > 0 && (g.vat.trim() === '' || g.offered)) {
+                        setGroups((list) => list.map((x, i) => (i === index ? { ...x, vat: formatCents(taxAt(net, g.rateBp)), offered: true } : x)));
                       }
                     }}
                   />
@@ -398,7 +400,7 @@ function InvoiceForm({
                     className="ui-input tabular-nums"
                     inputMode="decimal"
                     value={g.vat}
-                    onChange={(e) => setGroups((list) => list.map((x, i) => (i === index ? { ...x, vat: e.target.value } : x)))}
+                    onChange={(e) => setGroups((list) => list.map((x, i) => (i === index ? { ...x, vat: e.target.value, offered: false } : x)))}
                   />
                 </div>
               </li>

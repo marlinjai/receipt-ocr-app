@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeYear } from '../compute';
-import { invoiceTaxGroups, splitPayment, taxAt } from '../invoice-tax';
+import { invoiceTaxGroups, splitPayment, taxAt, taxDeviationAllowed } from '../invoice-tax';
 import { RevenueInputError, parseTaxGroups, validateInvoiceInput } from '../revenue-input';
 import { rulesForYear } from '../rules';
 import type { InvoiceFact, TaxGroup, YearFacts } from '../types';
@@ -60,14 +60,21 @@ describe('invoiceTaxGroups', () => {
     const reversed = [...GROUPS].reverse();
     expect(invoiceTaxGroups(mixed({ taxGroups: reversed })).map((g) => g.rateBp)).toEqual([1900, 700]);
   });
+
+  it('a mixed invoice without readable groups keeps its stated tax under no rate', () => {
+    expect(invoiceTaxGroups(mixed({ taxGroups: null }))).toEqual([{ rateBp: 0, netCents: 150_000, vatCents: 22_500 }]);
+  });
 });
 
 describe('splitPayment', () => {
   it('a full payment is exactly the groups', () => {
-    expect(splitPayment(GROUPS, 172_500, 0, 172_500)).toEqual([
-      { rateBp: 1900, netCents: 100_000, vatCents: 19_000 },
-      { rateBp: 700, netCents: 50_000, vatCents: 3_500 },
-    ]);
+    expect(splitPayment(GROUPS, 172_500, 0, 172_500)).toEqual({
+      parts: [
+        { rateBp: 1900, netCents: 100_000, vatCents: 19_000 },
+        { rateBp: 700, netCents: 50_000, vatCents: 3_500 },
+      ],
+      excessCents: 0,
+    });
   });
 
   it('partial payments of odd amounts add up to exactly the groups, cent for cent', () => {
@@ -75,11 +82,14 @@ describe('splitPayment', () => {
     let paid = 0;
     const sums = new Map<number, { net: number; vat: number }>();
     for (const p of payments) {
-      for (const part of splitPayment(GROUPS, 172_500, paid, p)) {
+      const { parts, excessCents } = splitPayment(GROUPS, 172_500, paid, p);
+      for (const part of parts) {
         const s = sums.get(part.rateBp) ?? { net: 0, vat: 0 };
         sums.set(part.rateBp, { net: s.net + part.netCents, vat: s.vat + part.vatCents });
+        // Never more tax than money in a group's share of one payment.
+        expect(part.netCents).toBeGreaterThanOrEqual(0);
       }
-      const parts = splitPayment(GROUPS, 172_500, paid, p);
+      expect(excessCents).toBe(0);
       expect(parts.reduce((s, x) => s + x.netCents + x.vatCents, 0)).toBe(p);
       paid += p;
     }
@@ -88,12 +98,40 @@ describe('splitPayment', () => {
     expect(sums.get(700)).toEqual({ net: 50_000, vat: 3_500 });
   });
 
-  it('money above the total carries no tax and stays turnover of the first group', () => {
-    const parts = splitPayment(GROUPS, 172_500, 0, 180_000);
-    expect(parts).toEqual([
-      { rateBp: 1900, netCents: 107_500, vatCents: 19_000 },
-      { rateBp: 700, netCents: 50_000, vatCents: 3_500 },
-    ]);
+  it('money above the total belongs to no rate', () => {
+    expect(splitPayment(GROUPS, 172_500, 0, 180_000)).toEqual({
+      parts: [
+        { rateBp: 1900, netCents: 100_000, vatCents: 19_000 },
+        { rateBp: 700, netCents: 50_000, vatCents: 3_500 },
+      ],
+      excessCents: 7_500,
+    });
+    // A payment entirely after the invoice was paid in full.
+    expect(splitPayment(GROUPS, 172_500, 172_500, 1_000)).toEqual({
+      parts: [
+        { rateBp: 1900, netCents: 0, vatCents: 0 },
+        { rateBp: 700, netCents: 0, vatCents: 0 },
+      ],
+      excessCents: 1_000,
+    });
+  });
+
+  it('one-cent payments: a group never holds more tax than money so far, and a single cent may move between net and tax', () => {
+    // Rounding the tax and the gross share each to the cent can give one tiny
+    // payment -0.01 turnover against +0.01 tax in a group; the running totals
+    // stay exact and never show more tax than money.
+    let paid = 0;
+    const sum = new Map<number, { net: number; vat: number }>();
+    for (let i = 0; i < 50; i++) {
+      const { parts } = splitPayment(GROUPS, 172_500, paid, 1);
+      for (const part of parts) {
+        expect(Math.abs(part.netCents), `payment ${i}`).toBeLessThanOrEqual(1);
+        const s = sum.get(part.rateBp) ?? { net: 0, vat: 0 };
+        sum.set(part.rateBp, { net: s.net + part.netCents, vat: s.vat + part.vatCents });
+        expect(sum.get(part.rateBp)!.net, `payment ${i}`).toBeGreaterThanOrEqual(0);
+      }
+      paid += 1;
+    }
   });
 
   it('for an invoice at one rate it gives the same tax per payment as before groups existed', () => {
@@ -107,9 +145,9 @@ describe('splitPayment', () => {
       const groups = [{ rateBp: 1900, netCents: gross - vat, vatCents: vat }];
       let paid = 0;
       for (const payment of [Math.floor(gross / 3), Math.floor(gross / 7), gross]) {
-        const [part] = splitPayment(groups, gross, paid, payment);
-        expect(part.vatCents).toBe(before(vat, gross, paid, payment));
-        expect(part.netCents + part.vatCents).toBe(payment);
+        const { parts, excessCents } = splitPayment(groups, gross, paid, payment);
+        expect(parts[0].vatCents).toBe(before(vat, gross, paid, payment));
+        expect(parts[0].netCents + parts[0].vatCents + excessCents).toBe(payment);
         paid += payment;
       }
     }
@@ -141,14 +179,17 @@ describe('validating a mixed invoice', () => {
     expect(code({ ...base, taxGroups: null })).toBe('invalid_tax_groups');
   });
 
-  it('allows a cent of rounding per group, not more', () => {
-    const groups = [
-      { rateBp: 1900, netCents: 100_000, vatCents: 19_001 },
-      { rateBp: 700, netCents: 50_000, vatCents: 3_499 },
-    ];
-    expect(parseTaxGroups(groups)).not.toBeNull();
-    expect(parseTaxGroups([{ ...groups[0], vatCents: 19_002 }, groups[1]])).toBeNull();
+  it('accepts the stated tax of a group within one percent of net times rate, at least a cent, and refuses more', () => {
     expect(taxAt(33_333, 700)).toBe(2_333);
+    expect(taxDeviationAllowed(100_000, 1900)).toBe(190);
+    expect(taxDeviationAllowed(10, 700)).toBe(1);
+    const second = { rateBp: 700, netCents: 50_000, vatCents: 3_500 };
+    // Per-line rounding on a long invoice: a few cents off is accepted as stated.
+    expect(parseTaxGroups([{ rateBp: 1900, netCents: 100_000, vatCents: 19_004 }, second])).not.toBeNull();
+    expect(parseTaxGroups([{ rateBp: 1900, netCents: 100_000, vatCents: 19_190 }, second])).not.toBeNull();
+    // A typing error is not.
+    expect(parseTaxGroups([{ rateBp: 1900, netCents: 100_000, vatCents: 19_191 }, second])).toBeNull();
+    expect(parseTaxGroups([{ rateBp: 1900, netCents: 100_000, vatCents: 1_900 }, second])).toBeNull();
   });
 
   it('an invoice at one rate carries no groups', () => {
@@ -202,6 +243,62 @@ describe('a mixed invoice in the statement and the advance return', () => {
     expect(result.outputVatByPayment).toEqual([{ date: '2026-04-05', cents: 19_000, source: 'invoice', id: 'inv-s', rateBp: 1900, netCents: 100_000 }]);
     expect(cents(result, 'euer.revenue_taxable')).toBe(100_000);
     expect(cents(result, 'euer.vat_received')).toBe(19_000);
+  });
+
+  it('paid across two years: each year reports its own share per rate, together exactly the groups', () => {
+    const across = mixed({ issueDate: '2025-12-15', payments: [{ date: '2025-12-30', cents: 50_000 }, { date: '2026-01-20', cents: 122_500 }] });
+    const totals = new Map<number, { net: number; vat: number }>();
+    for (const year of [2025, 2026]) {
+      const result = run({ invoices: [across] }, year);
+      for (const event of result.outputVatByPayment) {
+        const t = totals.get(event.rateBp as number) ?? { net: 0, vat: 0 };
+        totals.set(event.rateBp as number, { net: t.net + (event.netCents as number), vat: t.vat + event.cents });
+      }
+    }
+    expect(totals.get(1900)).toEqual({ net: 100_000, vat: 19_000 });
+    expect(totals.get(700)).toEqual({ net: 50_000, vat: 3_500 });
+    // 50,000 of 172,500 in 2025.
+    expect(run({ invoices: [across] }, 2025).outputVatByPayment.map((e) => [e.rateBp, e.netCents, e.cents])).toEqual([
+      [1900, 28_986, 5_507],
+      [700, 14_493, 1_014],
+    ]);
+  });
+
+  it('an overpayment adds no turnover to any rate, and one-rate invoices behave the same', () => {
+    const over = run({ invoices: [mixed({ payments: [{ date: '2026-04-05', cents: 180_000 }] })] });
+    const year = vatYear(2026, 'quarterly', 'received', { inputVat: [], outputVatByIssue: [], outputVatByPayment: over.outputVatByPayment });
+    expect(year.outputByRate).toEqual([
+      { rateBp: 1900, netCents: 100_000, vatCents: 19_000 },
+      { rateBp: 700, netCents: 50_000, vatCents: 3_500 },
+    ]);
+    expect(over.revenue.invoices[0].checks).toContain('invoice_overpaid');
+    // The statement still counts the money received (as before).
+    expect(cents(over, 'euer.revenue_taxable')).toBe(157_500);
+    const single: InvoiceFact = { ...mixed(), treatment: 'standard', taxGroups: null, grossCents: 119_000, vatCents: 19_000, payments: [{ date: '2026-04-05', cents: 119_000 }, { date: '2026-05-05', cents: 1_000 }] };
+    const result = run({ invoices: [single] });
+    expect(result.outputVatByPayment).toEqual([{ date: '2026-04-05', cents: 19_000, source: 'invoice', id: 'inv-m', rateBp: 1900, netCents: 100_000 }]);
+  });
+
+  it('stored groups that no longer read: the tax still counts, under no rate, and the invoice says so', () => {
+    const result = run({ invoices: [mixed({ taxGroups: null })] });
+    expect(cents(result, 'euer.revenue_taxable')).toBe(150_000);
+    expect(cents(result, 'euer.vat_received')).toBe(22_500);
+    expect(cents(result, 'euer.revenue_not_taxable')).toBe(0);
+    expect(result.revenue.invoices[0].checks).toContain('invoice_tax_groups_unreadable');
+    const year = vatYear(2026, 'quarterly', 'issued', { inputVat: [], outputVatByIssue: result.outputVatByIssue, outputVatByPayment: [] });
+    expect(year.periods[0].outputVatCents).toBe(22_500);
+    expect(year.periods[0].outputByRate).toEqual([]);
+  });
+
+  it('a stated tax a few cents off net times rate is used as stated and noted', () => {
+    const groups = [
+      { rateBp: 1900, netCents: 100_000, vatCents: 19_004 },
+      { rateBp: 700, netCents: 50_000, vatCents: 3_500 },
+    ];
+    const result = run({ invoices: [mixed({ taxGroups: groups, grossCents: 172_504, vatCents: 22_504, payments: [{ date: '2026-04-05', cents: 172_504 }] })] });
+    expect(cents(result, 'euer.vat_received')).toBe(22_504);
+    expect(result.revenue.invoices[0].checks).toEqual(['invoice_tax_group_deviates']);
+    expect(run({ invoices: [mixed()] }).revenue.invoices[0].checks).toEqual([]);
   });
 
   it('a mixed invoice issued under the small-business rule is reported as a mismatch, like any taxed invoice', () => {

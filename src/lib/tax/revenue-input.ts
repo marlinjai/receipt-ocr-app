@@ -1,5 +1,5 @@
 import { isIsoDay } from './decisions';
-import { INVOICE_RATES_BP, taxAt } from './invoice-tax';
+import { INVOICE_RATES_BP, taxAt, taxDeviationAllowed } from './invoice-tax';
 import { INVOICE_TREATMENTS, type InvoiceTreatment, type TaxGroup } from './types';
 import type { VatFrequency, VatMethod } from './vat';
 
@@ -107,8 +107,8 @@ export function validateInvoiceInput(raw: unknown): InvoiceInput {
 /**
  * Read the groups of a mixed invoice: at least two, each rate at most once and
  * one of the rates an invoice can carry, every amount a whole number of cents,
- * and the tax of each group the rate applied to its net amount, give or take a
- * cent of rounding. Null when anything does not hold.
+ * and the tax of each group close to the rate applied to its net amount (see
+ * `taxDeviationAllowed`). Null when anything does not hold.
  */
 export function parseTaxGroups(raw: unknown): TaxGroup[] | null {
   if (!Array.isArray(raw) || raw.length < 2 || raw.length > INVOICE_RATES_BP.length) return null;
@@ -118,7 +118,7 @@ export function parseTaxGroups(raw: unknown): TaxGroup[] | null {
     if (!isInt(g.rateBp) || !INVOICE_RATES_BP.includes(g.rateBp)) return null;
     if (!isInt(g.netCents) || g.netCents <= 0 || g.netCents > MAX_CENTS) return null;
     if (!isInt(g.vatCents) || g.vatCents < 0 || g.vatCents > MAX_CENTS) return null;
-    if (Math.abs(g.vatCents - taxAt(g.netCents, g.rateBp)) > 1) return null;
+    if (Math.abs(g.vatCents - taxAt(g.netCents, g.rateBp)) > taxDeviationAllowed(g.netCents, g.rateBp)) return null;
     if (groups.some((x) => x.rateBp === g.rateBp)) return null;
     groups.push({ rateBp: g.rateBp, netCents: g.netCents, vatCents: g.vatCents });
   }

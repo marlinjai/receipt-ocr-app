@@ -26,10 +26,22 @@ function rateOn(treatment: 'standard' | 'reduced', issueDate: string | null): nu
   return lowered ? 500 : REDUCED_RATE_BP;
 }
 
-/** The groups of an invoice, highest rate first; none for an invoice without tax. */
+/**
+ * The rate of a group whose rate is not known: a mixed invoice whose stored
+ * groups no longer read. Its tax still counts; it is reported under no rate.
+ */
+export const UNKNOWN_RATE_BP = 0;
+
+/**
+ * The groups of an invoice, highest rate first; none for an invoice without
+ * tax. A mixed invoice without readable groups keeps its stated tax as one group
+ * of unknown rate, so it is never booked as untaxed (it carries a check).
+ */
 export function invoiceTaxGroups(invoice: Pick<InvoiceFact, 'treatment' | 'grossCents' | 'vatCents' | 'issueDate' | 'taxGroups'>): TaxGroup[] {
   if (invoice.treatment === 'mixed') {
-    return [...(invoice.taxGroups ?? [])].sort((a, b) => b.rateBp - a.rateBp);
+    if (invoice.taxGroups && invoice.taxGroups.length > 0) return [...invoice.taxGroups].sort((a, b) => b.rateBp - a.rateBp);
+    const vat = Math.max(0, Math.min(invoice.vatCents, invoice.grossCents));
+    return [{ rateBp: UNKNOWN_RATE_BP, netCents: invoice.grossCents - vat, vatCents: vat }];
   }
   if (invoice.treatment !== 'standard' && invoice.treatment !== 'reduced') return [];
   const vat = Math.max(0, Math.min(invoice.vatCents, invoice.grossCents));
@@ -41,6 +53,18 @@ export function taxAt(netCents: number, rateBp: number): number {
   return Math.round((netCents * rateBp) / 10_000);
 }
 
+/**
+ * How far the stated tax of a group may be from its net amount times the rate.
+ * Invoicing software that rounds per line and then adds the lines can be a few
+ * cents off; the invoice's own figure is what is owed (section 14c of the
+ * value-added tax act), so it is accepted within one percent of the tax (at
+ * least one cent) and reported when it is more than a cent off. Beyond that it
+ * is taken for a typing error.
+ */
+export function taxDeviationAllowed(netCents: number, rateBp: number): number {
+  return Math.max(1, Math.round(taxAt(netCents, rateBp) / 100));
+}
+
 export interface PaymentGroupPart {
   rateBp: number;
   /** The turnover (without tax) at this rate the payment contains. */
@@ -48,16 +72,21 @@ export interface PaymentGroupPart {
   vatCents: number;
 }
 
+export interface PaymentSplit {
+  parts: PaymentGroupPart[];
+  /** Money above the invoice total: no tax, no rate (the invoice is reported as overpaid). */
+  excessCents: number;
+}
+
 /**
  * Split one payment of an invoice into its groups. `paidBefore` is what the
  * invoice received before this payment. Every figure is the difference of two
  * cumulative figures, so all payments of an invoice add up to exactly its
- * groups. The tax of a group never exceeds the group's tax; money above the
- * invoice total carries no tax and counts as turnover of the first group, where
- * the invoice already reports it as overpaid.
+ * groups. The tax of a group never exceeds the group's tax nor the group's share
+ * paid so far; money above the invoice total belongs to no group.
  */
-export function splitPayment(groups: readonly TaxGroup[], grossCents: number, paidBefore: number, paymentCents: number): PaymentGroupPart[] {
-  if (groups.length === 0 || grossCents <= 0) return [];
+export function splitPayment(groups: readonly TaxGroup[], grossCents: number, paidBefore: number, paymentCents: number): PaymentSplit {
+  if (groups.length === 0 || grossCents <= 0) return { parts: [], excessCents: 0 };
   const paidAfter = paidBefore + paymentCents;
   const capped = (paid: number) => Math.min(Math.max(paid, 0), grossCents);
   // The gross share of the groups up to and including group k, for an amount paid so far.
@@ -65,13 +94,17 @@ export function splitPayment(groups: readonly TaxGroup[], grossCents: number, pa
     const upTo = groups.slice(0, k + 1).reduce((s, g) => s + g.netCents + g.vatCents, 0);
     return Math.round((capped(paid) * upTo) / grossCents);
   };
-  const vatOf = (group: TaxGroup, paid: number) => Math.min(group.vatCents, Math.round((group.vatCents * capped(paid)) / grossCents));
+  const grossOf = (paid: number, k: number) => grossUpTo(paid, k) - grossUpTo(paid, k - 1);
+  // Capped at the group's gross share paid so far, so a small payment never
+  // gives a group more tax than money (both figures are cumulative, so the
+  // payments still add up to exactly the group).
+  const vatOf = (group: TaxGroup, paid: number, k: number) =>
+    Math.min(group.vatCents, Math.round((group.vatCents * capped(paid)) / grossCents), grossOf(paid, k));
   const parts = groups.map((group, k) => {
-    const grossPart = grossUpTo(paidAfter, k) - grossUpTo(paidAfter, k - 1) - (grossUpTo(paidBefore, k) - grossUpTo(paidBefore, k - 1));
-    const vatPart = vatOf(group, paidAfter) - vatOf(group, paidBefore);
+    const grossPart = grossOf(paidAfter, k) - grossOf(paidBefore, k);
+    const vatPart = vatOf(group, paidAfter, k) - vatOf(group, paidBefore, k);
     return { rateBp: group.rateBp, netCents: grossPart - vatPart, vatCents: vatPart };
   });
   const allocated = parts.reduce((s, p) => s + p.netCents + p.vatCents, 0);
-  parts[0].netCents += paymentCents - allocated;
-  return parts;
+  return { parts, excessCents: paymentCents - allocated };
 }

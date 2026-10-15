@@ -1512,17 +1512,23 @@ like everything else; nothing derived is stored.
   the invoice (`tax_groups`, migration `0020_tax_invoice_tax_groups`, one nullable
   column). An invoice at one rate stores nothing new: its one group follows from its
   treatment, total and tax, so nothing stored before had to be rewritten.
-- **Checked on save:** at least two groups, each rate (19 or 7 percent) once, the tax of
-  each group the rate applied to its net amount give or take a cent of rounding, and
-  together exactly the invoice's total and its tax. Groups on an invoice at one rate are
-  refused. Changing a mixed invoice back to one rate removes its groups.
+- **Checked on save:** at least two groups, each rate (19 or 7 percent) once, and together
+  exactly the invoice's total and its tax. The tax of a group is what the invoice states
+  (an overstated tax is owed as stated, section 14c of the value-added tax act); it is
+  accepted within one percent of net times rate (at least a cent), noted on the invoice
+  when it is more than a cent off, and refused beyond that as a typing error. Groups on
+  an invoice at one rate are refused. Changing a mixed invoice back to one rate removes
+  its groups. Stored groups that no longer read keep the invoice's tax counted, under no
+  rate, with a check on the invoice; it is never booked as untaxed.
 - **The advance return reports each rate.** Every tax event of an issued invoice now
   carries its rate and the turnover it was charged on; each period and the year list
   turnover and tax per rate ("zu 19 %: Umsatz ..., Steuer ..."). By issue date the
   groups are the events; by payment date each payment is split over the groups as
-  differences of cumulative figures, so partial payments add up to exactly the groups,
-  and money above the total carries no tax and counts as turnover of the first group
-  (the invoice is reported as overpaid anyway).
+  differences of cumulative figures, so partial payments add up to exactly the groups
+  (payments across two years included). Money above the total belongs to no rate (the
+  invoice is reported as overpaid; the statement counts it as received, as before). A
+  single cent can move between turnover and tax of a group on a tiny payment; the
+  running totals never show more tax than money.
 - **Unchanged for one-rate invoices:** a test proves the split gives the same tax per
   payment as the formula before; the statement lines (taxable revenue, tax received)
   are the same sums. The labels of the second half of 2020 (16 and 5 percent) are named

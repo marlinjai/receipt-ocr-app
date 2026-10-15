@@ -187,6 +187,16 @@ describe('RevenueTab', () => {
     await user.type(screen.getByLabelText('Netto 19 % in €'), '1.000,00');
     await user.tab();
     expect((screen.getByLabelText('Steuer 19 % in €') as HTMLInputElement).value).toBe('190,00');
+    // A changed net amount computes the offered tax again, until a tax is typed.
+    const net19 = screen.getByLabelText('Netto 19 % in €');
+    await user.clear(net19);
+    await user.type(net19, '2.000,00');
+    await user.tab();
+    expect((screen.getByLabelText('Steuer 19 % in €') as HTMLInputElement).value).toBe('380,00');
+    await user.clear(net19);
+    await user.type(net19, '1.000,00');
+    await user.tab();
+    expect((screen.getByLabelText('Steuer 19 % in €') as HTMLInputElement).value).toBe('190,00');
     await user.type(screen.getByLabelText('Netto 7 % in €'), '400,00');
     await user.tab();
     await user.click(screen.getByRole('button', { name: 'Rechnung speichern' }));
@@ -215,7 +225,7 @@ describe('RevenueTab', () => {
     const invoices = [
       invoiceView({ treatment: 'mixed', grossCents: 172_500, vatCents: 22_500, taxGroups: [{ rateBp: 1900, netCents: 100_000, vatCents: 19_000 }, { rateBp: 700, netCents: 50_000, vatCents: 3_500 }] }),
     ];
-    render(<RevenueTab view={view({ revenue: { recorded: true, receivedCents: 0, turnoverCents: 0, outstandingCents: 0, invoices } })} {...revenueProps()} />);
+    render(<RevenueTab view={view({ revenue: { recorded: true, receivedCents: 0, turnoverCents: 0, outstandingCents: 0, invoices, overdue: [] } })} {...revenueProps()} />);
     const entry = screen.getByRole('heading', { name: 'Rechnung R-2026-001' }).closest('li') as HTMLElement;
     expect(entry.textContent).toContain('19 %: netto 1.000,00 €, Steuer 190,00 €');
     expect(entry.textContent).toContain('7 %: netto 500,00 €, Steuer 35,00 €');

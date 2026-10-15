@@ -59,6 +59,9 @@ export const INVOICE_CHECK_LABELS: Record<InvoiceCheckKind, string> = {
   invoice_no_date: 'Rechnungsdatum fehlt',
   invoice_overpaid: 'Mehr erhalten als der Rechnungsbetrag',
   invoice_overdue: `Überfällig: ${REMINDER_AFTER_DAYS} Tage oder länger nach Fälligkeit noch nicht ganz bezahlt`,
+  invoice_tax_groups_unreadable:
+    'Die Beträge je Steuersatz sind nicht mehr lesbar; die Steuer zählt, wird aber keinem Satz zugeordnet. Bitte die Rechnung öffnen und die Sätze neu eintragen',
+  invoice_tax_group_deviates: 'Die ausgewiesene Steuer eines Satzes weicht um mehr als einen Cent von Netto mal Satz ab; gerechnet wird mit dem Betrag der Rechnung',
 };
 
 export const INVOICE_TREATMENT_LABELS: Record<InvoiceTreatment, string> = {

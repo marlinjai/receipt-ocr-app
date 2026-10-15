@@ -45,11 +45,11 @@ import {
   validateSettlement,
   validateStatusChange,
   validateVatSettings,
+  parseTaxGroups,
 } from './revenue-input';
 import { RULE_YEARS, isFormLineKey, rulesForYear, type FormLine, type ProvisionalRules } from './rules';
 import type { FormLineKey } from './rules/types';
 import { INVOICE_TREATMENTS, type InvoiceCheckKind, type InvoiceFact, type InvoiceTreatment, type ItemPart, type LineResult, type OpenCheck, type TaxGroup, type VatSettlementFact } from './types';
-import { parseTaxGroups } from './revenue-input';
 import { vatYear, type VatFrequency, type VatMethod, type VatYear } from './vat';
 
 /**
@@ -1181,8 +1181,8 @@ function today(): string {
 
 /**
  * The stored groups of a mixed invoice. Stored groups were checked on save; a
- * value that no longer parses is shown as no groups, so the invoice reports no
- * tax rather than a guessed split (its checks then say so).
+ * value that no longer parses is read as no groups: the invoice then keeps its
+ * stated tax under no rate and carries the check `invoice_tax_groups_unreadable`.
  */
 function storedTaxGroups(raw: unknown): TaxGroup[] | null {
   if (raw === null || raw === undefined) return null;

@@ -244,8 +244,9 @@ describe('status over time and regular taxation', () => {
     expect(line(view, 'euer.revenue_taxable')).toBe(150_000);
     expect(line(view, 'euer.vat_received')).toBe(22_500);
 
-    // Groups that do not add up are refused and nothing changes.
-    expect(await code(saveInvoice(db, ctx, id, invoice({ treatment: 'mixed', grossCents: 172_500, vatCents: 22_500, taxGroups: [groups[0]], issueDate: '2026-02-20' })))).toBe('invalid_tax_groups');
+    // Groups that miss the total by a cent are refused, so is a single group, and nothing changes.
+    expect(await code(saveInvoice(db, ctx, id, invoice({ treatment: 'mixed', grossCents: 172_501, vatCents: 22_500, taxGroups: groups, issueDate: '2026-02-20' })))).toBe('invalid_tax_groups');
+    expect(await code(saveInvoice(db, ctx, id, invoice({ treatment: 'mixed', grossCents: 53_500, vatCents: 3_500, taxGroups: [groups[0]], issueDate: '2026-02-20' })))).toBe('invalid_tax_groups');
     view = await loadStatement(db, ws.workspaceId, 2026);
     expect(view.revenue.invoices[0].taxGroups).toHaveLength(2);
 

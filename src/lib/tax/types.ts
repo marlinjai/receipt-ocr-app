@@ -251,7 +251,11 @@ export type InvoiceCheckKind =
    * Set by the finance service, not by `computeYear`, because it depends on
    * today rather than on the year.
    */
-  | 'invoice_overdue';
+  | 'invoice_overdue'
+  /** A mixed invoice whose stored groups no longer read: its tax counts, under no rate. */
+  | 'invoice_tax_groups_unreadable'
+  /** A mixed invoice whose stated tax of a rate differs by more than a cent from net times rate (accepted as stated). */
+  | 'invoice_tax_group_deviates';
 
 export interface InvoiceResult {
   invoiceId: string;

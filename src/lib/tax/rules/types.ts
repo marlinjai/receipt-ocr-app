@@ -71,6 +71,7 @@ export const FORM_LINE_KEYS = [
   'euer.other_travel',
   'employment.work_equipment',
   'employment.study_costs',
+  'employment.further_costs',
   'employment.commute',
   'employment.home_office',
 ] as const;

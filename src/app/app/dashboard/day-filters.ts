@@ -28,11 +28,17 @@ const DATE_TYPES: ReadonlySet<string> = new Set(['date', 'created_time', 'last_e
 export interface DayFilter {
   columnId: string;
   operator: DayOperator;
-  /** The day asked for, as YYYY-MM-DD, or null when the value names no day (then nothing matches). */
+  /**
+   * The day asked for, as YYYY-MM-DD, or null when the value names no day: then no receipt is on, after
+   * or before it, and every receipt is "not" on it.
+   */
   day: string | null;
 }
 
-/** The day a date cell names, as YYYY-MM-DD, or null when it names none. */
+/**
+ * The day a date cell names, as YYYY-MM-DD, or null when it names none. Cells and filter values come as
+ * text; a Date object (which the cell type allows) has lost the written day and is read in UTC.
+ */
 export function dayOf(value: CellValue | undefined): string | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
   if (typeof value !== 'string') return null;
@@ -42,7 +48,9 @@ export function dayOf(value: CellValue | undefined): string | null {
 
 /**
  * Splits the filters of a list query: the date comparisons the app answers, and
- * everything else, which goes to the adapter as before. A date comparison
+ * everything else, which goes to the adapter as before. "Is" a day becomes a
+ * text match on the start of the stored date, which the adapter answers in its
+ * own pages (the day is validated, so it carries no wildcard). A date comparison
  * without a value (the filter was just added and no day is picked yet) filters
  * nothing, as a filter without a value does in the filter bar.
  */
@@ -59,7 +67,12 @@ export function splitDayFilters(
       continue;
     }
     if (filter.value === null || filter.value === undefined || filter.value === '') continue;
-    dayFilters.push({ columnId: filter.columnId, operator: filter.operator as DayOperator, day: dayOf(filter.value) });
+    const day = dayOf(filter.value);
+    if (filter.operator === 'equals' && day !== null) {
+      adapterFilters.push({ columnId: filter.columnId, operator: 'startsWith', value: day });
+      continue;
+    }
+    dayFilters.push({ columnId: filter.columnId, operator: filter.operator as DayOperator, day });
   }
   return { dayFilters, adapterFilters };
 }
@@ -106,4 +119,58 @@ export function applyDayFilters<T extends Pick<Row, 'id' | 'cells' | 'parentRowI
     if (row.parentRowId) holding.add(row.parentRowId);
   }
   return rows.filter((row) => (isGroupRow(row, columns) ? holding.has(row.id) : kept.has(row.id)));
+}
+
+/**
+ * The years a list with date comparisons can hold receipts of, from the bounds
+ * the comparisons on the date column set ("after 31 December 2024" cannot hold
+ * a receipt of 2023), or null when they set none. The list then needs to read
+ * only those years, through the same per-year query the year chips use.
+ */
+export function yearsWithin(filters: readonly DayFilter[], dateColumnId: string, years: readonly number[]): number[] | null {
+  let from = -Infinity;
+  let to = Infinity;
+  let bounded = false;
+  for (const filter of filters) {
+    if (filter.columnId !== dateColumnId) continue;
+    // A comparison with no day matches nothing, so no year can hold a receipt.
+    if (filter.day === null && filter.operator !== 'notEquals') return [];
+    if (filter.day === null) continue;
+    const year = Number(filter.day.slice(0, 4));
+    if (filter.operator === 'greaterThan' || filter.operator === 'greaterThanOrEquals') {
+      from = Math.max(from, year);
+      bounded = true;
+    } else if (filter.operator === 'lessThan' || filter.operator === 'lessThanOrEquals') {
+      to = Math.min(to, year);
+      bounded = true;
+    }
+  }
+  return bounded ? years.filter((y) => y >= from && y <= to) : null;
+}
+
+/** The most rows one list with date comparisons reads when it cannot be narrowed to years. */
+export const EVERY_ROW_LIMIT = 20_000;
+
+/**
+ * Every row of a query, read page by page in the query's order, each once (a
+ * row that moves between two pages while they are read is not counted twice).
+ * Refuses a list longer than the limit instead of reading on without end.
+ */
+export async function readEveryRow<T extends { id: string }>(
+  readPage: (offset: number, limit: number) => Promise<{ items: T[]; hasMore: boolean }>,
+  pageSize: number,
+  limit = EVERY_ROW_LIMIT,
+): Promise<T[]> {
+  const seen = new Set<string>();
+  const rows: T[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    if (offset >= limit) throw new Error(`The list holds more than ${limit} rows; narrow it to years first.`);
+    const page = await readPage(offset, pageSize);
+    for (const row of page.items) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      rows.push(row);
+    }
+    if (!page.hasMore || page.items.length === 0) return rows;
+  }
 }

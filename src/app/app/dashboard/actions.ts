@@ -17,7 +17,7 @@ import { groupsHoldingReceipts, yearCounts, type YearCounts } from '@/lib/receip
 const SCOPED_LIST_LIMIT = 5000;
 import { MIN_TEXT_SEARCH_LENGTH, TEXT_SEARCH_LIMIT, likePattern, rowsWithoutText, textColumnIds, withoutText } from '@/lib/receipt-text';
 import { GROUP_KIND, ROW_KIND_COLUMN, rowKindColumnId } from '@/lib/receipts-kind';
-import { applyDayFilters, splitDayFilters } from './day-filters';
+import { applyDayFilters, readEveryRow, splitDayFilters, yearsWithin } from './day-filters';
 import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
 import { rowKind } from '@/lib/groups/service';
 import { readRowLinks } from '@/lib/groups/links';
@@ -233,7 +233,7 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
   // the adapter's own comparisons fail on this database. Every other filter goes to the adapter as before.
   const { dayFilters, adapterFilters } = splitDayFilters(asks.filters, columns);
   const rest: QueryOptions = { ...asks, filters: adapterFilters };
-  const years = cleanScopeYears(asked);
+  let years = cleanScopeYears(asked);
   const dateId = columns.find((c) => c.name === 'Date')?.id;
   // A sorted list is not narrowed: the years are queried one by one, so a sort across them (and the place of
   // the groups in it) could not be right. The browser filters the years then.
@@ -242,11 +242,17 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
     const result = await adapter.getRows(tableId, rest);
     return { ...result, items: rowsWithoutText(result.items, textIds) };
   }
+  // "After" and "before" on the invoice date bound the years a receipt can lie in: the list then reads only
+  // those years, as the year chips do, and compares the days of what they hold.
+  const bounded = dateId && !sorted ? yearsWithin(dayFilters, dateId, years ?? (await yearCounts(prisma, tableId, columns)).years.map((y) => y.year)) : null;
+  if (bounded && bounded.length === 0) return { items: [], total: 0, hasMore: false } as QueryResult<Row>;
+  if (bounded) years = bounded;
   if (!years || !dateId || sorted) {
-    // A list with a date comparison comes in one answer: which rows pass is only known once they are read,
-    // so a page of the adapter could not be counted. A further page is empty.
+    // A list with a date comparison that names no years comes in one answer: which rows pass is only known
+    // once they are read, so a page of the adapter could not be counted. A further page is empty.
     if ((rest.offset ?? 0) > 0) return { items: [], total: rest.offset ?? 0, hasMore: false } as QueryResult<Row>;
-    const items = applyDayFilters(await everyRow(adapter, tableId, rest), dayFilters, columns);
+    const every = await readEveryRow((offset, limit) => adapter.getRows(tableId, { ...rest, offset, limit }), SCOPED_LIST_LIMIT);
+    const items = applyDayFilters(every, dayFilters, columns);
     return { items: rowsWithoutText(items, textIds), total: items.length, hasMore: false } as QueryResult<Row>;
   }
 
@@ -278,16 +284,6 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
   }
   items = applyDayFilters(items, dayFilters, columns);
   return { items: rowsWithoutText(items, textIds), total: items.length, hasMore: false } as QueryResult<Row>;
-}
-
-/** Every row a query matches, read in pages of the adapter, in the query's order. */
-async function everyRow(adapter: PrismaAdapter, tableId: string, query: QueryOptions): Promise<Row[]> {
-  const rows: Row[] = [];
-  for (;;) {
-    const page = await adapter.getRows(tableId, { ...query, limit: SCOPED_LIST_LIMIT, offset: rows.length });
-    rows.push(...page.items);
-    if (!page.hasMore || page.items.length === 0) return rows;
-  }
 }
 
 /** The year of a receipt's invoice date, or null: where to look for a receipt a link names. */

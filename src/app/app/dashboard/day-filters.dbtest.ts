@@ -58,7 +58,9 @@ const names = (items: Array<{ id: string }>) => {
 };
 
 describe('the filter bar on the date', () => {
-  it('fails in the table adapter itself: the reason the list answers it', async () => {
+  // The reason the list answers these itself. When this starts to fail, the shared adapter compares dates
+  // correctly and the app's own comparison (`day-filters.ts`) can go.
+  it('still fails in the table adapter itself', async () => {
     await expect(ws.adapter.getRows(ws.tableId, { filters: on('greaterThan', '2025-01-01') })).rejects.toThrow();
   });
 
@@ -91,9 +93,35 @@ describe('the filter bar on the date', () => {
     expect(result.items.map((r) => r.cells[nameId])).toEqual(['jun', 'jan2', 'jan1', 'Gruppe']);
   });
 
-  it('comes in one answer: a further page is empty', async () => {
+  it('comes in one answer: a further page is empty, with and without years chosen', async () => {
     const more = await getRows(ws.tableId, { filters: on('greaterThan', '2024-12-31'), limit: 200, offset: 200 });
     expect(more).toMatchObject({ items: [], hasMore: false });
+    const unbounded = await getRows(ws.tableId, { filters: on('notEquals', '2024-12-31'), limit: 200, offset: 200 });
+    expect(unbounded).toMatchObject({ items: [], hasMore: false });
+    const scoped = await getRows(ws.tableId, { filters: on('greaterThan', '2024-12-31'), years: [2025], limit: 200, offset: 200 } as never);
+    expect(scoped).toMatchObject({ items: [], hasMore: false });
+  });
+
+  it('answers on a sorted list with years chosen, over every year, in its order', async () => {
+    const nameId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Name')!.id;
+    const result = await getRows(ws.tableId, {
+      filters: on('lessThan', '2025-01-02'),
+      sorts: [{ columnId: nameId, direction: 'asc' }],
+      years: [2025],
+      limit: 200,
+    } as never);
+    // A sorted list is not narrowed to years (the browser narrows it), so the earlier years come too.
+    expect(result.items.map((r) => r.cells[nameId])).toEqual(['Gruppe', 'dec31', 'jan1', 'old']);
+  });
+
+  it('"is not" a day keeps receipts without a readable date', async () => {
+    const result = await getRows(ws.tableId, { filters: on('notEquals', '2025-01-01'), limit: 200 });
+    expect(names(result.items)).toEqual(['bad', 'dec31', 'group', 'jan2', 'jun', 'none', 'old']);
+  });
+
+  it('nothing is after a day and before an earlier one', async () => {
+    const result = await getRows(ws.tableId, { filters: [...on('greaterThan', '2025-01-01'), ...on('lessThan', '2024-01-01')], limit: 200 });
+    expect(result).toMatchObject({ items: [], total: 0, hasMore: false });
   });
 
   it('a date comparison without a value yet filters nothing', async () => {

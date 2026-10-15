@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Column, QueryFilter, Row } from '@marlinjai/data-table-core';
-import { applyDayFilters, dayOf, matchesDayFilters, splitDayFilters } from './day-filters';
+import { applyDayFilters, dayOf, matchesDayFilters, readEveryRow, splitDayFilters, yearsWithin, type DayFilter } from './day-filters';
 import { GROUP_KIND, ROW_KIND_COLUMN } from '@/lib/receipts-kind';
 
 const columns = [
@@ -47,6 +47,17 @@ describe('splitting the filters of a list query', () => {
     expect(split([{ columnId: 'date', operator: 'lessThan', value: '' }])).toEqual({ dayFilters: [], adapterFilters: [] });
   });
 
+  it('turns "is" a day into a text match on the start of the stored date, which the adapter answers in pages', () => {
+    expect(split([{ columnId: 'date', operator: 'equals', value: '2025-01-02' }])).toEqual({
+      dayFilters: [],
+      adapterFilters: [{ columnId: 'date', operator: 'startsWith', value: '2025-01-02' }],
+    });
+    // A value with a time is the day it names.
+    expect(split([{ columnId: 'date', operator: 'equals', value: '2025-01-02T22:00:00.000Z' }]).adapterFilters).toEqual([
+      { columnId: 'date', operator: 'startsWith', value: '2025-01-02' },
+    ]);
+  });
+
   it('keeps a value that names no day, which then matches nothing', () => {
     const { dayFilters } = split([{ columnId: 'date', operator: 'equals', value: 'gestern' }]);
     expect(dayFilters).toEqual([{ columnId: 'date', operator: 'equals', day: null }]);
@@ -75,12 +86,14 @@ describe('the comparisons', () => {
   });
 
   it('"is" matches the whole day, whatever time is stored with it', () => {
-    expect(pass('equals', '2025-01-02')).toEqual(['jan2']);
-    expect(pass('equals', '2025-01-02T00:00:00.000Z')).toEqual(['jan2']);
+    const on = (day: string | null): DayFilter[] => [{ columnId: 'date', operator: 'equals', day }];
+    expect(ids(rows.filter((r) => matchesDayFilters(r, on('2025-01-02'))))).toEqual(['jan2']);
+    expect(ids(rows.filter((r) => matchesDayFilters(r, on(null))))).toEqual([]);
   });
 
-  it('"is not" keeps receipts without a readable date', () => {
+  it('"is not" keeps receipts without a readable date, and every receipt when the value names no day', () => {
     expect(pass('notEquals', '2025-01-01')).toEqual(['dec31', 'jan2', 'none', 'bad']);
+    expect(pass('notEquals', 'gestern')).toEqual(ids(rows));
   });
 
   it('several comparisons make a range', () => {
@@ -102,5 +115,50 @@ describe('a filtered list with groups', () => {
 
   it('is the list as it was without a date comparison', () => {
     expect(ids(applyDayFilters(list, [], columns))).toEqual(ids(list));
+  });
+});
+
+describe('the years a list with date comparisons can hold', () => {
+  const years = [2026, 2025, 2024, 2023, 2022];
+  const f = (operator: DayFilter['operator'], day: string | null, columnId = 'date'): DayFilter => ({ columnId, operator, day });
+
+  it('are bounded by "after" and "before" on the invoice date', () => {
+    expect(yearsWithin([f('greaterThan', '2024-12-31')], 'date', years)).toEqual([2026, 2025, 2024]);
+    expect(yearsWithin([f('lessThan', '2023-01-01')], 'date', years)).toEqual([2023, 2022]);
+    expect(yearsWithin([f('greaterThanOrEquals', '2023-06-01'), f('lessThanOrEquals', '2024-02-01')], 'date', years)).toEqual([2024, 2023]);
+  });
+
+  it('are none when the bounds exclude each other or a comparison names no day', () => {
+    expect(yearsWithin([f('greaterThan', '2025-01-01'), f('lessThan', '2024-01-01')], 'date', years)).toEqual([]);
+    expect(yearsWithin([f('greaterThan', null)], 'date', years)).toEqual([]);
+  });
+
+  it('are not bounded by "is not" or by another date column', () => {
+    expect(yearsWithin([f('notEquals', '2025-01-01')], 'date', years)).toBeNull();
+    expect(yearsWithin([f('notEquals', null)], 'date', years)).toBeNull();
+    expect(yearsWithin([f('greaterThan', '2025-01-01', 'paid')], 'date', years)).toBeNull();
+  });
+});
+
+describe('reading every row of a list', () => {
+  const all = Array.from({ length: 7 }, (_, i) => ({ id: `r${i}` }));
+  const pages = (items: Array<{ id: string }>) => async (offset: number, limit: number) => ({
+    items: items.slice(offset, offset + limit),
+    hasMore: offset + limit < items.length,
+  });
+
+  it('reads page after page in order', async () => {
+    expect(ids(await readEveryRow(pages(all), 3))).toEqual(ids(all));
+  });
+
+  it('counts a row that moved between two pages once', async () => {
+    // A row edited while the pages are read shows up at the end of one page and the start of the next.
+    const shifted = [...all.slice(0, 3), all[2], ...all.slice(3)];
+    expect(ids(await readEveryRow(pages(shifted), 3))).toEqual(ids(all));
+  });
+
+  it('refuses a list longer than its limit instead of reading on without end', async () => {
+    const endless = async (offset: number, limit: number) => ({ items: Array.from({ length: limit }, (_, i) => ({ id: `e${offset + i}` })), hasMore: true });
+    await expect(readEveryRow(endless, 10, 30)).rejects.toThrow('more than 30 rows');
   });
 });

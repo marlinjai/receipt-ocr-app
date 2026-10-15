@@ -32,7 +32,7 @@ export const SPENDING_CATEGORY_LABELS: Record<SpendingCategory, string> = {
   loans_leasing_credit: 'Kredite, Leasing und Raten',
   leisure_sport: 'Freizeit und Sport',
   fees_interest: 'Gebühren und Zinsen',
-  transfers: 'Überweisungen an Personen und eigene Konten',
+  transfers: 'Überweisungen an Personen',
   cash: 'Bargeld',
   unclear: 'Unklar',
 };

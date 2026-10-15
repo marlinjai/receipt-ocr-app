@@ -2,6 +2,7 @@ import 'server-only';
 import type { PrismaClient } from '@prisma/client';
 import { counterpartyKey, loadPayments } from '@/lib/tax/payments/service';
 import { isSpendingCategory, type SpendingCategory } from './categories';
+import { berlinYear } from './period';
 import { buildOverview, paymentYears, type SpendingOverview } from './overview';
 
 /**
@@ -69,11 +70,22 @@ export async function loadSpending(db: PrismaClient, workspaceId: string, year: 
   );
   return {
     overview,
-    years: paymentYears(loaded.payments, today.getFullYear()),
+    // The year asked for is always offered, so the year picker shows what the page shows even for a year without payments.
+    years: [...new Set([year, ...paymentYears(loaded.payments, berlinYear(today))])].sort((a, b) => b - a),
     accounts: loaded.accounts.map((a) => ({ id: a.id, label: a.label, completeThrough: a.completeThrough })),
     answers,
     noPayments: loaded.payments.length === 0,
   };
+}
+
+/**
+ * Take a category answer back by the key it is stored under (not by the name
+ * shown, so a change in how names are normalized can never leave an answer
+ * that cannot be removed). The payments then follow the rules again.
+ */
+export async function removeCounterpartyCategory(db: PrismaClient, ctx: SpendingContext, key: unknown): Promise<void> {
+  if (typeof key !== 'string' || !key) throw new SpendingServiceError('counterparty_required');
+  await db.spendingCategoryAnswer.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, counterpartyKey: key } });
 }
 
 /**

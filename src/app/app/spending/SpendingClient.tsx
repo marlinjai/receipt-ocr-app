@@ -7,8 +7,8 @@ import { formatDay } from '@/lib/meals/messages';
 import { formatCents } from '@/lib/tax/money';
 import { ANSWERABLE_CATEGORIES, SPENDING_CATEGORY_LABELS, isSpendingCategory, type SpendingCategory } from '@/lib/spending/categories';
 import type { CategoryBasis, SpendingPurpose } from '@/lib/spending/rules';
-import type { SpendingView } from '@/lib/spending/service';
-import { answerCategory, type Result } from './actions';
+import type { UnclearCounterparty } from '@/lib/spending/overview';
+import { answerCategory, markOwnAccount, withdrawCategory, type Result, type SpendingPageView } from './actions';
 
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
@@ -40,11 +40,86 @@ export function spendingActionMessage(result: Extract<Result<unknown>, { ok: fal
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
 
-export default function SpendingClient({ initial }: { initial: SpendingView }) {
+/** The choice in an unclear row: a category, or "this is an own account". */
+const OWN_ACCOUNT = 'own_account';
+
+/**
+ * One unclear counterparty with its own choice and button: choosing in the
+ * list does not save (arrow keys on a closed list change the value in some
+ * browsers), the button does. An error shows in the row it belongs to.
+ */
+function UnclearRow({
+  entry,
+  canWrite,
+  pending,
+  error,
+  onAssign,
+}: {
+  entry: UnclearCounterparty;
+  canWrite: boolean;
+  pending: boolean;
+  error: string | null;
+  onAssign: (choice: string) => void;
+}) {
+  const id = useId();
+  const [choice, setChoice] = useState('');
+  return (
+    <li className="py-2 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span style={{ color: 'var(--foreground)' }}>
+          {entry.counterparty || 'ohne Namen'}
+          <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+            {entry.count} {entry.count === 1 ? 'Zahlung' : 'Zahlungen'}, zuletzt {formatDay(entry.lastDay)}
+          </span>
+        </span>
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="tabular-nums">{euro(entry.cents)}</span>
+          {!entry.counterpartyKey ? (
+            <span className="text-xs" style={{ color: 'var(--muted)' }}>
+              ohne Gegenseite, keine Zuordnung möglich
+            </span>
+          ) : canWrite ? (
+            <>
+              <label className="sr-only" htmlFor={`${id}-choice`}>
+                Kategorie für {entry.counterparty}
+              </label>
+              <select id={`${id}-choice`} className="ui-input" style={{ width: 'auto' }} value={choice} disabled={pending} onChange={(e) => setChoice(e.target.value)}>
+                <option value="">Kategorie wählen</option>
+                {ANSWERABLE_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {SPENDING_CATEGORY_LABELS[c]}
+                  </option>
+                ))}
+                <option value={OWN_ACCOUNT}>Eigenes Konto (keine Ausgabe)</option>
+              </select>
+              <button
+                type="button"
+                className="ui-btn ui-btn-sm"
+                disabled={pending || !choice}
+                aria-label={`Kategorie für ${entry.counterparty} zuordnen`}
+                onClick={() => onAssign(choice)}
+              >
+                Zuordnen
+              </button>
+            </>
+          ) : null}
+        </span>
+      </div>
+      {error && (
+        <p className="ui-note ui-note-danger mt-2" role="alert">
+          {error}
+        </p>
+      )}
+    </li>
+  );
+}
+
+export default function SpendingClient({ initial }: { initial: SpendingPageView }) {
   const id = useId();
   const router = useRouter();
   const [view, setView] = useState(initial);
-  const [error, setError] = useState<string | null>(null);
+  // An error belongs to the place it happened: a row of the unclear list, an answer, or the page.
+  const [error, setError] = useState<{ at: string; message: string } | null>(null);
   const [pending, startTransition] = useTransition();
   const { overview } = view;
   const period = overview.month === null ? `${overview.year}` : `${MONTHS[overview.month - 1]} ${overview.year}`;
@@ -55,13 +130,19 @@ export default function SpendingClient({ initial }: { initial: SpendingView }) {
     router.push(month === null ? `/app/spending?jahr=${year}` : `/app/spending?jahr=${year}&monat=${month}`);
   };
 
-  const answer = (counterparty: string, category: SpendingCategory | null) => {
+  const run = (at: string, action: () => Promise<Result<SpendingPageView>>) => {
     setError(null);
     startTransition(async () => {
-      const result = await answerCategory(overview.year, overview.month, counterparty, category);
+      const result = await action();
       if (result.ok) setView(result.value);
-      else setError(spendingActionMessage(result));
+      else setError({ at, message: spendingActionMessage(result) });
     });
+  };
+
+  const assign = (entry: UnclearCounterparty, choice: string) => {
+    const at = `unclear:${entry.counterpartyKey}`;
+    if (choice === OWN_ACCOUNT) run(at, () => markOwnAccount(overview.year, overview.month, entry.counterparty));
+    else if (isSpendingCategory(choice)) run(at, () => answerCategory(overview.year, overview.month, entry.counterparty, choice as SpendingCategory));
   };
 
   return (
@@ -113,7 +194,7 @@ export default function SpendingClient({ initial }: { initial: SpendingView }) {
       </div>
 
       <div className="mt-4 space-y-2" aria-live="polite">
-        {error && <p className="ui-note ui-note-danger">{error}</p>}
+        {error?.at === 'page' && <p className="ui-note ui-note-danger">{error.message}</p>}
         {view.noPayments && (
           <p className="ui-note ui-note-warn">
             In diesem Arbeitsbereich sind noch keine Zahlungen. Sie kommen aus den Kontoauszügen, die unter{' '}
@@ -245,45 +326,28 @@ export default function SpendingClient({ initial }: { initial: SpendingView }) {
           <>
             <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
               Eine Kategorie gilt für alle Zahlungen der Gegenseite, auch für künftige.
+              {!view.canWrite && ' Zum Zuordnen fehlt in diesem Arbeitsbereich die Berechtigung.'}
             </p>
             <ul className="mt-3 divide-y" style={{ borderColor: 'var(--border, rgba(128,128,128,0.2))' }}>
               {overview.unclear.map((u) => (
-                <li key={u.counterpartyKey || `${u.counterparty}-${u.lastDay}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                  <span style={{ color: 'var(--foreground)' }}>
-                    {u.counterparty || 'ohne Namen'}
-                    <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                      {u.count} {u.count === 1 ? 'Zahlung' : 'Zahlungen'}, zuletzt {formatDay(u.lastDay)}
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-2">
-                    <span className="tabular-nums">{euro(u.cents)}</span>
-                    {u.counterpartyKey ? (
-                      <select
-                        className="ui-input"
-                        style={{ width: 'auto' }}
-                        aria-label={`Kategorie für ${u.counterparty}`}
-                        value=""
-                        disabled={pending}
-                        onChange={(e) => {
-                          if (isSpendingCategory(e.target.value)) answer(u.counterparty, e.target.value);
-                        }}
-                      >
-                        <option value="">Kategorie wählen</option>
-                        {ANSWERABLE_CATEGORIES.map((c) => (
-                          <option key={c} value={c}>
-                            {SPENDING_CATEGORY_LABELS[c]}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="text-xs" style={{ color: 'var(--muted)' }}>
-                        ohne Gegenseite, keine Zuordnung möglich
-                      </span>
-                    )}
-                  </span>
-                </li>
+                <UnclearRow
+                  key={u.counterpartyKey || `${u.counterparty}-${u.lastDay}`}
+                  entry={u}
+                  canWrite={view.canWrite}
+                  pending={pending}
+                  error={error?.at === `unclear:${u.counterpartyKey}` ? error.message : null}
+                  onAssign={(choice) => assign(u, choice)}
+                />
               ))}
             </ul>
+            <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
+              Eine Abbuchung, die nur eine eigene Kreditkarte oder ein eigenes Konto ausgleicht, ist keine Ausgabe: dafür „Eigenes Konto“
+              wählen. Das gilt dann auch unter{' '}
+              <Link href="/app/finance" className="underline">
+                Finanzen, Zahlungen
+              </Link>
+              .
+            </p>
           </>
         )}
       </section>
@@ -295,13 +359,28 @@ export default function SpendingClient({ initial }: { initial: SpendingView }) {
           </summary>
           <ul className="mt-3 divide-y">
             {view.answers.map((a) => (
-              <li key={a.counterpartyKey} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                <span>
-                  {a.label}: {SPENDING_CATEGORY_LABELS[a.category]}
-                </span>
-                <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => answer(a.label, null)}>
-                  Zurücknehmen
-                </button>
+              <li key={a.counterpartyKey} className="py-2 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {a.label}: {SPENDING_CATEGORY_LABELS[a.category]}
+                  </span>
+                  {view.canWrite && (
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm"
+                      disabled={pending}
+                      aria-label={`Zuordnung für ${a.label} zurücknehmen`}
+                      onClick={() => run(`answer:${a.counterpartyKey}`, () => withdrawCategory(overview.year, overview.month, a.counterpartyKey))}
+                    >
+                      Zurücknehmen
+                    </button>
+                  )}
+                </div>
+                {error?.at === `answer:${a.counterpartyKey}` && (
+                  <p className="ui-note ui-note-danger mt-2" role="alert">
+                    {error.message}
+                  </p>
+                )}
               </li>
             ))}
           </ul>
@@ -314,13 +393,15 @@ export default function SpendingClient({ initial }: { initial: SpendingView }) {
         </summary>
         <div className="ui-scroll mt-3 overflow-x-auto">
           <table className="w-full text-left text-sm">
+            <caption className="sr-only">Zahlungen {period} mit Kategorie, Zweck und Beleg</caption>
             <thead>
               <tr className="text-xs" style={{ color: 'var(--muted)' }}>
-                <th className="py-1 pr-3 font-normal">Tag</th>
-                <th className="py-1 pr-3 font-normal">Gegenseite</th>
-                <th className="py-1 pr-3 font-normal">Kategorie</th>
-                <th className="py-1 pr-3 font-normal">Zuordnung</th>
-                <th className="py-1 text-right font-normal">Betrag</th>
+                <th scope="col" className="py-1 pr-3 font-normal">Tag</th>
+                <th scope="col" className="py-1 pr-3 font-normal">Gegenseite</th>
+                <th scope="col" className="py-1 pr-3 font-normal">Kategorie</th>
+                <th scope="col" className="py-1 pr-3 font-normal">Zweck</th>
+                <th scope="col" className="py-1 pr-3 font-normal">Beleg</th>
+                <th scope="col" className="py-1 text-right font-normal">Betrag</th>
               </tr>
             </thead>
             <tbody>
@@ -342,6 +423,7 @@ export default function SpendingClient({ initial }: { initial: SpendingView }) {
                     </span>
                   </td>
                   <td className="py-1 pr-3">{p.spendingCents === null ? 'Umbuchung' : PURPOSE_LABELS[p.purpose]}</td>
+                  <td className="py-1 pr-3">{p.hasReceipt ? 'verknüpft' : 'keiner'}</td>
                   <td className="py-1 text-right tabular-nums">{euro(-p.amountCents)}</td>
                 </tr>
               ))}

@@ -70,6 +70,28 @@ describe('buildOverview', () => {
     expect(o.split).toEqual({ private: 4000, business: 2000, unanswered: 10_400 });
   });
 
+  it('counts an own transfer once when both accounts are imported', () => {
+    const o = buildOverview(
+      [pay('2026-04-01', -10_000, 'tagesgeld', { kind: 'own_transfer' }), pay('2026-04-01', 10_000, 'girokonto', { kind: 'own_transfer', accountId: 'a2' })],
+      none,
+      2026,
+      null,
+    );
+    expect(o.ownTransfers).toEqual({ cents: 10_000, count: 1 });
+    expect(o.totalCents).toBe(0);
+  });
+
+  it('leaves private money coming in out of spending', () => {
+    const o = buildOverview([pay('2026-04-02', 5000, 'freundin', { kind: 'private' })], none, 2026, null);
+    expect(o.totalCents).toBe(0);
+    expect(o.split.private).toBe(0);
+  });
+
+  it('lowers an unclear counterparty by its refund', () => {
+    const o = buildOverview([pay('2026-04-03', -3000, 'zyx handel'), pay('2026-04-09', 1000, 'zyx handel', { kind: 'refund' })], none, 2026, null);
+    expect(o.unclear).toEqual([{ counterpartyKey: 'zyx handel', counterparty: 'zyx handel', cents: 2000, count: 2, lastDay: '2026-04-09' }]);
+  });
+
   it('marks payments that already have a receipt', () => {
     const o = buildOverview([pay('2026-03-01', -100, 'rewe', { linkCount: 1 })], none, 2026, null);
     expect(o.payments[0].hasReceipt).toBe(true);

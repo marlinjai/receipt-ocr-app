@@ -10,7 +10,13 @@ export const metadata = { title: 'Ausgaben' };
 export default async function SpendingPage({ searchParams }: { searchParams: Promise<{ jahr?: string; monat?: string }> }) {
   await auth.requireSession('/app/spending');
   const { jahr, monat } = await searchParams;
-  const data = await getSpending(jahr ? Number(jahr) : new Date().getFullYear(), monat ? Number(monat) : null);
+  const data = await getSpending(jahr ?? null, monat ?? null);
+
+  // "Reload" keeps the period that was asked for.
+  const params = new URLSearchParams();
+  if (jahr) params.set('jahr', jahr);
+  if (monat) params.set('monat', monat);
+  const reload = params.size > 0 ? `/app/spending?${params.toString()}` : '/app/spending';
 
   if (!data.ok) {
     return (
@@ -25,7 +31,7 @@ export default async function SpendingPage({ searchParams }: { searchParams: Pro
               : 'Beim Laden ist ein Fehler aufgetreten. Bitte die Seite neu laden.'}
           </p>
           <div className="mt-4 flex justify-center gap-2">
-            <Link href="/app/spending" className="ui-btn ui-btn-primary">
+            <Link href={reload} className="ui-btn ui-btn-primary">
               Neu laden
             </Link>
             <Link href="/app/dashboard" className="ui-btn">

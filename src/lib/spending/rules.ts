@@ -10,13 +10,16 @@ import type { SpendingCategory } from './categories';
  *
  * 1. Moving money between the owner's own accounts (the counterparty was
  *    answered as an own account, or the payment's kind is a transfer) is
- *    always "transfers". It is not spending, whatever anyone said about the
- *    counterparty's category.
+ *    always "transfers" and never counted as spending, whatever anyone said
+ *    about the counterparty's category.
  * 2. A category a person gave this counterparty.
  * 3. A fee by its kind.
- * 4. Words in the counterparty's name or the payment's text: cash, loans and
- *    fees first (they are what the missing-receipt loop skips), then brand
- *    names. Only generic brand and trade words live here, never a person.
+ * 4. Words: cash, loans and fees first, in the name or the text (they are what
+ *    the missing-receipt loop skips); then brand and trade words, in the
+ *    counterparty's name first and only then in the payment's text, so the
+ *    name "vodafone" wins over the word "Gebühr" in its text. Only generic
+ *    brand and trade words live here, never a person; a word that is also a
+ *    common surname or an ordinary invoice word is matched in the name only.
  * 5. Otherwise "unclear", shown as such until a person answers.
  */
 
@@ -45,11 +48,20 @@ export interface Categorised {
   basis: CategoryBasis;
 }
 
-/** Word rules in the order they are tried. Phrases are matched as whole words of the normalized text. */
-export const KEYWORD_RULES: ReadonlyArray<{ category: SpendingCategory; words: readonly string[] }> = [
+export interface KeywordRule {
+  category: SpendingCategory;
+  /** Matched as whole words in the counterparty's name and in the payment's text. */
+  words: readonly string[];
+  /** Matched in the counterparty's name only: short brands that are also surnames or ordinary words. */
+  nameOnly?: readonly string[];
+}
+
+/** Rules for money that needs no receipt. Tried first, in the name or the text. */
+export const PRIORITY_RULES: readonly KeywordRule[] = [
   {
     category: 'cash',
-    words: ['geldautomat', 'bargeld', 'bargeldauszahlung', 'bargeldabhebung', 'atm', 'cash withdrawal', 'auszahlung gaa'],
+    words: ['geldautomat', 'bargeld', 'bargeldauszahlung', 'bargeldabhebung', 'cash withdrawal', 'auszahlung gaa'],
+    nameOnly: ['atm'],
   },
   {
     category: 'loans_leasing_credit',
@@ -57,65 +69,62 @@ export const KEYWORD_RULES: ReadonlyArray<{ category: SpendingCategory; words: r
   },
   {
     category: 'fees_interest',
-    words: ['entgelt', 'kontofuehrung', 'kontofuehrungsgebuehr', 'gebuehr', 'gebuehren', 'zinsen', 'sollzinsen', 'zins', 'kartengebuehr', 'jahresgebuehr', 'fee'],
+    words: ['entgelt', 'kontofuehrung', 'kontofuehrungsgebuehr', 'gebuehr', 'gebuehren', 'zinsen', 'sollzinsen', 'kartengebuehr', 'jahresgebuehr'],
   },
+];
+
+/** Brand and trade words. The counterparty's name is tried against all of them before the text is. */
+export const BRAND_RULES: readonly KeywordRule[] = [
   {
     category: 'software_ai_hosting',
     words: [
-      'github', 'openai', 'anthropic', 'claude ai', 'chatgpt', 'cursor', 'vercel', 'hetzner', 'cloudflare', 'google cloud',
-      'google workspace', 'gsuite', 'notion', 'figma', 'adobe', 'microsoft', 'amazon web services', 'aws', 'digitalocean',
-      'netlify', 'jetbrains', 'atlassian', 'slack', 'zoom', 'dropbox', 'icloud', 'midjourney', 'elevenlabs', 'webflow',
-      'framer', 'namecheap', 'ionos', 'strato', 'porkbun', 'godaddy', '1password', 'canva', 'replicate', 'supabase',
+      'github', 'openai', 'anthropic', 'chatgpt', 'vercel', 'hetzner', 'cloudflare', 'google cloud', 'google workspace',
+      'gsuite', 'figma', 'adobe', 'microsoft', 'amazon web services', 'digitalocean', 'netlify', 'jetbrains', 'atlassian',
+      'dropbox', 'icloud', 'midjourney', 'elevenlabs', 'webflow', 'namecheap', 'ionos', 'strato', 'porkbun', 'godaddy',
+      '1password', 'canva', 'supabase',
     ],
+    nameOnly: ['cursor', 'notion', 'slack', 'zoom', 'aws', 'framer', 'replicate'],
   },
   {
     category: 'eating_out_coffee',
     words: [
-      'restaurant', 'ristorante', 'trattoria', 'cafe', 'caffe', 'coffee', 'kaffee', 'starbucks', 'mcdonalds', 'burger king',
-      'kfc', 'subway', 'lieferando', 'wolt', 'uber eats', 'deliveroo', 'pizzeria', 'pizza', 'baeckerei', 'backhaus',
-      'sushi', 'doener', 'imbiss', 'kantine', 'bistro',
+      'restaurant', 'ristorante', 'trattoria', 'cafe', 'caffe', 'coffee', 'starbucks', 'mcdonalds', 'burger king',
+      'lieferando', 'uber eats', 'deliveroo', 'pizzeria', 'baeckerei', 'sushi', 'doener', 'imbiss', 'kantine', 'bistro',
     ],
+    nameOnly: ['kfc', 'subway', 'wolt', 'kaffee', 'pizza', 'backhaus'],
   },
   {
     category: 'transport',
     words: [
-      'deutsche bahn', 'db vertrieb', 'db fernverkehr', 'db bahn', 'bahn', 'bvg', 'mvg', 'hvv', 'rmv', 'vbb', 'kvb',
-      'flixbus', 'flixtrain', 'uber', 'bolt', 'freenow', 'free now', 'tier', 'lime', 'voi', 'miles', 'share now', 'sixt',
-      'shell', 'aral', 'esso', 'totalenergies', 'jet tankstelle', 'tankstelle', 'lufthansa', 'ryanair', 'eurowings',
-      'easyjet', 'condor', 'parkhaus', 'parken', 'adac',
+      'deutsche bahn', 'db vertrieb', 'db fernverkehr', 'flixbus', 'flixtrain', 'freenow', 'free now', 'share now',
+      'totalenergies', 'tankstelle', 'lufthansa', 'ryanair', 'eurowings', 'easyjet', 'parkhaus',
     ],
+    nameOnly: ['bahn', 'bvg', 'mvg', 'hvv', 'rmv', 'vbb', 'kvb', 'uber', 'bolt', 'tier', 'lime', 'voi', 'miles', 'sixt', 'shell', 'aral', 'esso', 'condor', 'adac'],
   },
   {
     category: 'groceries_drugstore',
-    words: [
-      'rewe', 'edeka', 'aldi', 'lidl', 'netto', 'penny', 'kaufland', 'dm', 'dm drogerie', 'rossmann', 'mueller', 'budni',
-      'denns', 'alnatura', 'bio company', 'tegut', 'globus', 'flink', 'picnic', 'knuspr', 'supermarkt',
-    ],
+    words: ['rewe', 'edeka', 'aldi', 'lidl', 'kaufland', 'rossmann', 'dm drogerie', 'mueller drogerie', 'drogerie mueller', 'alnatura', 'bio company', 'supermarkt'],
+    nameOnly: ['netto', 'penny', 'dm', 'budni', 'denns', 'tegut', 'globus', 'flink', 'picnic', 'knuspr'],
   },
   {
     category: 'leisure_sport',
-    words: [
-      'netflix', 'spotify', 'disney', 'audible', 'youtube premium', 'apple music', 'playstation', 'steam', 'nintendo',
-      'urban sports', 'urbansportsclub', 'mcfit', 'fitness', 'gym', 'kino', 'cinema', 'eventim', 'ticketmaster', 'theater',
-      'museum',
-    ],
+    words: ['netflix', 'spotify', 'audible', 'youtube premium', 'apple music', 'playstation', 'nintendo', 'urban sports', 'urbansportsclub', 'mcfit', 'eventim', 'ticketmaster'],
+    nameOnly: ['disney', 'steam', 'fitness', 'gym', 'kino', 'cinema', 'theater', 'museum'],
   },
   {
     category: 'housing_utilities',
-    words: [
-      'miete', 'kaltmiete', 'warmmiete', 'nebenkosten', 'hausverwaltung', 'stadtwerke', 'vattenfall', 'eon', 'e on', 'enbw',
-      'strom', 'gas', 'wasser', 'telekom', 'vodafone', 'o2', 'telefonica', '1und1', '1 1', 'congstar', 'rundfunkbeitrag',
-      'beitragsservice',
-    ],
+    words: ['miete', 'kaltmiete', 'warmmiete', 'nebenkosten', 'hausverwaltung', 'stadtwerke', 'vattenfall', 'telekom', 'vodafone', 'telefonica', 'congstar', 'rundfunkbeitrag', 'beitragsservice'],
+    nameOnly: ['eon', 'enbw', 'o2', '1und1'],
   },
   {
     category: 'shopping_household',
-    words: [
-      'amazon', 'amzn', 'otto', 'zalando', 'ikea', 'mediamarkt', 'media markt', 'saturn', 'obi', 'hornbach', 'bauhaus',
-      'toom', 'tchibo', 'primark', 'decathlon', 'ebay', 'etsy', 'temu', 'shein', 'about you', 'galaxus', 'apple store',
-    ],
+    words: ['amazon', 'amzn', 'zalando', 'ikea', 'mediamarkt', 'media markt', 'hornbach', 'tchibo', 'primark', 'decathlon', 'ebay', 'etsy', 'temu', 'shein', 'about you', 'galaxus', 'apple store'],
+    nameOnly: ['otto', 'saturn', 'obi', 'bauhaus', 'toom'],
   },
 ];
+
+/** Every rule, for checks over the whole table. */
+export const KEYWORD_RULES: readonly KeywordRule[] = [...PRIORITY_RULES, ...BRAND_RULES];
 
 /** Lower case words separated by single spaces, the way `vendorKey` writes them; empty when nothing is left. */
 export function normalizeText(text: string): string {
@@ -123,14 +132,16 @@ export function normalizeText(text: string): string {
 }
 
 const hasPhrase = (text: string, phrase: string) => text.length > 0 && ` ${text} `.includes(` ${phrase} `);
+const inName = (rule: KeywordRule, name: string) => [...rule.words, ...(rule.nameOnly ?? [])].some((w) => hasPhrase(name, w));
+const inText = (rule: KeywordRule, text: string) => rule.words.some((w) => hasPhrase(text, w));
 
-/** The first keyword rule whose words appear in the counterparty or the text, or null. */
+/** The category the words say, or null (see the order at the top of this file). */
 export function keywordCategory(counterpartyKey: string, reference: string): SpendingCategory | null {
   const name = counterpartyKey;
   const text = normalizeText(reference);
-  for (const rule of KEYWORD_RULES) {
-    if (rule.words.some((w) => hasPhrase(name, w) || hasPhrase(text, w))) return rule.category;
-  }
+  for (const rule of PRIORITY_RULES) if (inName(rule, name) || inText(rule, text)) return rule.category;
+  for (const rule of BRAND_RULES) if (inName(rule, name)) return rule.category;
+  for (const rule of BRAND_RULES) if (inText(rule, text)) return rule.category;
   return null;
 }
 
@@ -161,11 +172,14 @@ export function purposeOf(payment: { kind: PaymentKind }, treatment: Counterpart
 }
 
 /**
- * How a payment counts as spending, in cents: money out is positive, money
- * back (a refund) negative and lowers its category. Income and moving money
- * between own accounts are not spending: null.
+ * How a payment counts as spending, in cents: money out is positive; money
+ * back for a purchase (a refund) is negative and lowers its category. Any
+ * other money coming in (income, or a payment in that a person marked
+ * private, such as money paid back by a friend) and moving money between own
+ * accounts are not spending: null.
  */
 export function spendingCents(payment: { kind: PaymentKind; amountCents: number }): number | null {
   if (payment.kind === 'income' || payment.kind === 'own_transfer') return null;
-  return -payment.amountCents;
+  if (payment.kind === 'refund') return -payment.amountCents;
+  return payment.amountCents < 0 ? -payment.amountCents : null;
 }

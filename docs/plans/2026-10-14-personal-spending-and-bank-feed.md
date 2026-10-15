@@ -140,7 +140,11 @@ warning goes through the same channel as the missing-receipt notification.
   private or business, or a payment marked private), never from the company the payments were
   imported under: one bank account carries both. Unanswered is shown as such.
 - One new table, `spending_category_answers` (migration 0020, additive): the category the owner
-  gives a counterparty, applied to all its payments, taken back by deleting it.
+  gives a counterparty, applied to all its payments, taken back by deleting it. An unclear
+  counterparty can also be answered "own account" right there (a credit card paid off from the
+  bank): that is the payments tab's own answer, so the money is not counted twice.
+- Brand words that are also surnames or ordinary invoice words ("mueller", "otto", "netto") are
+  matched in the counterparty's name only, never in the payment's text.
 - Payments are read only through the payments service's own read (`loadPayments`).
 - Open question for the coordinator: payments are imported per company. If the bank files are
   imported under Whiz-Art Media, the overview under "marlinjai" stays empty; the overview itself

@@ -25,6 +25,19 @@ describe('categorise', () => {
     expect(categorise(spend('zyx handel', 'Rechnung 4711'))).toEqual({ category: 'unclear', basis: 'none' });
   });
 
+  it('never takes a surname or an ordinary invoice word in the text for a brand', () => {
+    expect(categorise(spend('', 'Danke Mueller fuer das Geschenk')).category).toBe('unclear');
+    expect(categorise(spend('', 'Betrag netto 100')).category).toBe('unclear');
+    expect(categorise(spend('', 'Rechnung 1/1')).category).toBe('unclear');
+    expect(categorise(spend('', 'Otto Beispiel Geburtstag')).category).toBe('unclear');
+    // In the counterparty's own name they do count.
+    expect(categorise(spend('netto marken discount')).category).toBe('groceries_drugstore');
+  });
+
+  it('lets the counterparty\'s name win over a brand word in the text', () => {
+    expect(categorise(spend('vodafone', 'Rechnung Amazon Prime Kanal')).category).toBe('housing_utilities');
+  });
+
   it('matches whole words only', () => {
     expect(keywordCategory('reweland', '')).toBeNull();
     expect(keywordCategory('', 'Kreditkartenabrechnung')).toBeNull();
@@ -50,6 +63,10 @@ describe('categorise', () => {
     expect(categorise({ kind: 'fee', counterpartyKey: 'netflix', reference: '' })).toEqual({ category: 'fees_interest', basis: 'kind' });
   });
 
+  it('still lets a fee word in the text decide before a brand name: fees need no receipt', () => {
+    expect(categorise(spend('vodafone', 'inkl. Gebühr')).category).toBe('fees_interest');
+  });
+
   it('only uses known categories in its rules', () => {
     for (const rule of KEYWORD_RULES) expect(SPENDING_CATEGORIES).toContain(rule.category);
   });
@@ -72,5 +89,10 @@ describe('spendingCents', () => {
     expect(spendingCents({ kind: 'refund', amountCents: 500 })).toBe(-500);
     expect(spendingCents({ kind: 'income', amountCents: 10_000 })).toBeNull();
     expect(spendingCents({ kind: 'own_transfer', amountCents: -10_000 })).toBeNull();
+  });
+  it('never counts money coming in that was marked private (a friend paying back) as negative spending', () => {
+    expect(spendingCents({ kind: 'private', amountCents: 5000 })).toBeNull();
+    expect(spendingCents({ kind: 'private', amountCents: -5000 })).toBe(5000);
+    expect(spendingCents({ kind: 'spend', amountCents: 5000 })).toBeNull();
   });
 });

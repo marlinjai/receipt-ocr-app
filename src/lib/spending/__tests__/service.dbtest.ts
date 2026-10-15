@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { createAccount, importPayments, setCounterpartyTreatment } from '@/lib/tax/payments/service';
-import { SpendingServiceError, loadSpending, setCounterpartyCategory, type SpendingContext } from '../service';
+import { SpendingServiceError, loadSpending, removeCounterpartyCategory, setCounterpartyCategory, type SpendingContext } from '../service';
 import { createWorkspace, db } from '../../../../test/db-helpers';
 
 /** The spending overview against a real database (migration 0020). Run with `pnpm test:db`. Every name and amount is invented. */
@@ -65,6 +65,21 @@ describe('spending overview', () => {
     const back = await loadSpending(db, ctx.workspaceId, 2026, 4);
     expect(back.answers).toEqual([]);
     expect(back.overview.unclear).toHaveLength(1);
+
+    // Taken back by the stored key too, and only in this company.
+    const other = await company([line('2026-04-02', 'Zyx Handel', 'Bestellung', '-20')]);
+    await setCounterpartyCategory(db, ctx, { counterparty: 'Zyx Handel', category: 'cash' });
+    await setCounterpartyCategory(db, other, { counterparty: 'Zyx Handel', category: 'cash' });
+    await removeCounterpartyCategory(db, ctx, 'zyx handel');
+    expect((await loadSpending(db, ctx.workspaceId, 2026, null)).answers).toEqual([]);
+    expect((await loadSpending(db, other.workspaceId, 2026, null)).answers).toHaveLength(1);
+  });
+
+  it('offers the year asked for even when it has no payments', async () => {
+    const ctx = await company([line('2026-04-02', 'Zyx Handel', 'Bestellung', '-20')]);
+    const view = await loadSpending(db, ctx.workspaceId, 2019, null, new Date('2026-06-01T12:00:00Z'));
+    expect(view.years).toEqual([2026, 2019]);
+    expect(view.overview.totalCents).toBe(0);
   });
 
   it('refuses a missing counterparty, an unknown category, and "unclear" as an answer', async () => {

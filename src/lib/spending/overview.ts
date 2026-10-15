@@ -64,7 +64,7 @@ export interface SpendingOverview {
   /** Twelve entries, January first: the year month by month, independent of `month`. */
   byMonth: Array<{ month: number; cents: number; byCategory: Record<SpendingCategory, number> }>;
   split: Record<SpendingPurpose, number>;
-  /** Money moved between own accounts in the period: shown, never counted as spending. */
+  /** Money that left an account for another own account in the period: shown, never counted as spending. */
   ownTransfers: { cents: number; count: number };
   /** Counterparties whose spending in the period is in "unclear", largest first. */
   unclear: UnclearCounterparty[];
@@ -81,7 +81,9 @@ export function classifyPayment(p: OverviewPaymentInput, ctx: OverviewContext): 
   const treatment = p.counterpartyKey ? ctx.treatments.get(p.counterpartyKey) : undefined;
   const answer = p.counterpartyKey ? ctx.answers.get(p.counterpartyKey) : undefined;
   const { category, basis } = categorise(p, { treatment, answer });
-  // An own account is never spending, even when the file calls the line a purchase.
+  // An own account is never spending, even when the file calls the line a purchase. The payments read
+  // already turns such payments into own transfers; this is a deliberate second guard, so the overview
+  // stays right should that read ever change.
   const cents = treatment === 'own_account' ? null : spendingCents(p);
   return {
     id: p.id,
@@ -127,9 +129,12 @@ export function buildOverview(payments: readonly OverviewPaymentInput[], ctx: Ov
   for (const p of inPeriod) {
     if (p.spendingCents === null) {
       if (p.category === 'transfers' && p.basis === 'own_account') {
-        ownTransfers.cents += Math.abs(p.amountCents);
-        ownTransfers.count += 1;
         listed.push(p);
+        // Only the side leaving an account: with both accounts imported, the money arriving is the same money.
+        if (p.amountCents < 0) {
+          ownTransfers.cents += -p.amountCents;
+          ownTransfers.count += 1;
+        }
       }
       continue;
     }

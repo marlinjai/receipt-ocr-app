@@ -60,7 +60,7 @@ function view(overrides: Partial<StatementView> = {}): StatementView {
     limits: { ...rules.smallBusinessLimits.value, currentYearLimit: 'at_once', nextYearLimitCents: rules.smallBusinessLimits.value.previousYearLimitCents, source: rules.smallBusinessLimits.source },
     expectedMonthlyRevenueCents: null,
     statusChanges: [],
-    vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, settlements: [] },
+    vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, reverseChargeYear: null, reverseChargeFrequencyAssumed: true, reverseChargePendingItems: 0, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] },
     ...overrides,
   } as StatementView;
 }
@@ -319,13 +319,16 @@ describe('VatTab', () => {
       to: '',
       outputVatCents: outputByRate.reduce((s, r) => s + r.vatCents, 0),
       inputVatCents: 0,
+      reverseChargeVatCents: 0,
+      reverseChargeInputVatCents: 0,
       dueCents: outputByRate.reduce((s, r) => s + r.vatCents, 0),
       outputByRate,
       output: [],
       input: [],
+      reverseCharge: [],
     });
-    const year = { periods: [period(1, rates), period(2, []), period(3, []), period(4, [])], outputByRate: rates, outputVatCents: 22_500, inputVatCents: 0, dueCents: 22_500 };
-    render(<VatTab view={view({ smallBusinessAtYearEnd: false, vat: { frequency: 'quarterly', method: 'issued', applies: true, year, undeductedInputVatCents: 0, settlements: [] } })} {...vatProps()} />);
+    const year = { periods: [period(1, rates), period(2, []), period(3, []), period(4, [])], outputByRate: rates, outputVatCents: 22_500, inputVatCents: 0, reverseChargeVatCents: 0, reverseChargeInputVatCents: 0, dueCents: 22_500 };
+    render(<VatTab view={view({ smallBusinessAtYearEnd: false, vat: { frequency: 'quarterly', method: 'issued', applies: true, year, undeductedInputVatCents: 0, reverseChargeYear: null, reverseChargeFrequencyAssumed: false, reverseChargePendingItems: 0, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] } })} {...vatProps()} />);
     const lines = screen.getAllByText(/zu 19 %: Umsatz 1.000,00 €, Steuer 190,00 € · zu 7 %: Umsatz 500,00 €, Steuer 35,00 €/);
     // Once under the first quarter, once for the year.
     expect(lines).toHaveLength(2);
@@ -338,7 +341,7 @@ describe('VatTab', () => {
   });
 
   it('under the small-business rule there are no periods, and the tax that could not be deducted is named', () => {
-    render(<VatTab view={view({ vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 38_000, settlements: [] } })} {...vatProps()} />);
+    render(<VatTab view={view({ vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 38_000, reverseChargeYear: null, reverseChargeFrequencyAssumed: true, reverseChargePendingItems: 0, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] } })} {...vatProps()} />);
     expect(screen.getByText(/2026 liegt vollständig unter der Kleinunternehmerregelung/)).toBeTruthy();
     expect(screen.getByText(/nicht abziehbar: 380,00 € Umsatzsteuer/)).toBeTruthy();
   });
@@ -357,7 +360,7 @@ describe('VatTab', () => {
   it('under regular taxation it shows no figures until frequency and method are set, then the periods', async () => {
     const user = userEvent.setup();
     const props = vatProps();
-    const applies = { frequency: null, method: null, applies: true, year: null, undeductedInputVatCents: 0, settlements: [] };
+    const applies = { frequency: null, method: null, applies: true, year: null, undeductedInputVatCents: 0, reverseChargeYear: null, reverseChargeFrequencyAssumed: true, reverseChargePendingItems: 0, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] };
     const { rerender } = render(<VatTab view={view({ smallBusinessAtYearEnd: false, statusChanges: [{ id: 'c1', effectiveFrom: '2026-07-01', smallBusiness: false }], vat: applies })} {...props} />);
     expect(screen.getByText(/vorher gibt es hier keine Zahlen/)).toBeTruthy();
     expect(screen.getByText(/Ab 01.07.2026: Regelbesteuerung/)).toBeTruthy();
@@ -371,12 +374,15 @@ describe('VatTab', () => {
       to: '',
       outputVatCents,
       inputVatCents,
+      reverseChargeVatCents: 0,
+      reverseChargeInputVatCents: 0,
       dueCents: outputVatCents - inputVatCents,
       outputByRate: [],
       output: [],
       input: [],
+      reverseCharge: [],
     });
-    const year = { periods: [period(1, 0, 0), period(2, 0, 0), period(3, 19_000, 1_900), period(4, 0, 28_500)], outputByRate: [], outputVatCents: 19_000, inputVatCents: 30_400, dueCents: -11_400 };
+    const year = { periods: [period(1, 0, 0), period(2, 0, 0), period(3, 19_000, 1_900), period(4, 0, 28_500)], outputByRate: [], outputVatCents: 19_000, inputVatCents: 30_400, reverseChargeVatCents: 0, reverseChargeInputVatCents: 0, dueCents: -11_400 };
     rerender(<VatTab view={view({ smallBusinessAtYearEnd: false, vat: { ...applies, frequency: 'quarterly', method: 'received', year, settlements: [{ id: 's1', date: '2026-10-10', cents: 17_100, direction: 'paid' }] } })} {...props} />);
     const rows = screen.getAllByRole('row');
     expect(rows[3].textContent).toContain('3. Quartal');
@@ -389,7 +395,7 @@ describe('VatTab', () => {
   it('records a payment to the tax office and refuses one without amount', async () => {
     const user = userEvent.setup();
     const props = vatProps();
-    render(<VatTab view={view({ smallBusinessAtYearEnd: false, vat: { frequency: 'quarterly', method: 'issued', applies: true, year: null, undeductedInputVatCents: 0, settlements: [] } })} {...props} />);
+    render(<VatTab view={view({ smallBusinessAtYearEnd: false, vat: { frequency: 'quarterly', method: 'issued', applies: true, year: null, undeductedInputVatCents: 0, reverseChargeYear: null, reverseChargeFrequencyAssumed: true, reverseChargePendingItems: 0, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] } })} {...props} />);
     await user.type(screen.getByLabelText('Datum'), '2026-10-10');
     await user.click(screen.getByRole('button', { name: 'Eintragen' }));
     expect(screen.getByRole('alert').textContent).toContain('Datum und Betrag');
@@ -398,4 +404,109 @@ describe('VatTab', () => {
     await user.click(screen.getByRole('button', { name: 'Eintragen' }));
     expect(props.onSettlement.mock.calls[0][0]).toEqual({ date: '2026-10-10', cents: 17_100, direction: 'refunded' });
   });
+
+  it('section 13b under the small-business rule: the owed tax per period, the statutory quarter, and a way to record the payment', async () => {
+    const user = userEvent.setup();
+    const props = vatProps();
+    const periods = [1, 2, 3, 4].map((index) => ({
+      index,
+      from: '',
+      to: '',
+      outputVatCents: 0,
+      inputVatCents: 0,
+      reverseChargeVatCents: index === 2 ? 1_900 : 0,
+      reverseChargeInputVatCents: 0,
+      dueCents: index === 2 ? 1_900 : 0,
+      output: [],
+      input: [],
+      reverseCharge: index === 2 ? [{ date: '2026-05-20', cents: 1_900, source: 'item' as const, id: 'svc' }] : [],
+      outputByRate: [],
+    }));
+    const reverseChargeYear = { periods, outputByRate: [], outputVatCents: 0, inputVatCents: 0, reverseChargeVatCents: 1_900, reverseChargeInputVatCents: 0, dueCents: 1_900 };
+    render(
+      <VatTab
+        view={view({ vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, reverseChargeYear, reverseChargeFrequencyAssumed: true, reverseChargePendingItems: 1, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] } })}
+        {...props}
+      />,
+    );
+    expect(screen.queryByText(/es gibt keine Voranmeldungen/)).toBeNull();
+    const table = screen.getByRole('table', { name: /Steuer nach § 13b/ });
+    const rows = within(table).getAllByRole('row');
+    // Header, the one period with tax, the year.
+    expect(rows).toHaveLength(3);
+    expect(rows[1].textContent).toContain('2. Quartal');
+    expect(rows[1].textContent).toContain('19,00 €');
+    expect(screen.getByText(/dem gesetzlichen Regelfall/)).toBeTruthy();
+    expect(screen.getByText(/für das Jahr eine\s+Umsatzsteuererklärung/)).toBeTruthy();
+    expect(rows[1].textContent).toContain('1 Beleg');
+    expect(rows[1].textContent).not.toContain('1 Belege');
+    expect(screen.getByText(/Ein Beleg mit § 13b ist noch nicht in diesen Zahlen/)).toBeTruthy();
+    await user.type(screen.getByLabelText('Datum'), '2026-07-10');
+    await user.type(screen.getByLabelText('Betrag in €'), '19,00');
+    await user.click(screen.getByRole('button', { name: 'Eintragen' }));
+    expect(props.onSettlement.mock.calls[0][0]).toEqual({ date: '2026-07-10', cents: 1_900, direction: 'paid' });
+  });
+
+  it('section 13b under regular taxation: its own two columns, and no "not included" sentence any more', () => {
+    const period = (index: number, rc: number) => ({
+      index,
+      from: '',
+      to: '',
+      outputVatCents: 0,
+      inputVatCents: 0,
+      reverseChargeVatCents: rc,
+      reverseChargeInputVatCents: rc,
+      dueCents: 0,
+      output: [],
+      input: [],
+      reverseCharge: [],
+      outputByRate: [],
+    });
+    const year = { periods: [period(1, 0), period(2, 1_900), period(3, 0), period(4, 0)], outputByRate: [], outputVatCents: 0, inputVatCents: 0, reverseChargeVatCents: 1_900, reverseChargeInputVatCents: 1_900, dueCents: 0 };
+    render(<VatTab view={view({ smallBusinessAtYearEnd: false, vat: { frequency: 'quarterly', method: 'issued', applies: true, year, undeductedInputVatCents: 0, reverseChargeYear: null, reverseChargeFrequencyAssumed: false, reverseChargePendingItems: 0, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] } })} {...vatProps()} />);
+    expect(screen.getByRole('columnheader', { name: '§ 13b geschuldet' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '§ 13b abziehbar' })).toBeTruthy();
+    expect(screen.queryByText(/Nicht enthalten/)).toBeNull();
+  });
+
+  it('section 19 with only pending section 13b receipts: no "no advance returns", and the payment form is there', () => {
+    render(
+      <VatTab
+        view={view({ vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, reverseChargeYear: null, reverseChargeFrequencyAssumed: true, reverseChargePendingItems: 2, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] } })}
+        {...vatProps()}
+      />,
+    );
+    expect(screen.queryByText(/es gibt keine Voranmeldungen/)).toBeNull();
+    expect(screen.getByText(/sobald die offenen Belege geklärt sind/)).toBeTruthy();
+    expect(screen.getByText(/2 Belege mit § 13b sind noch nicht in diesen Zahlen/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Eintragen' })).toBeTruthy();
+  });
+
+  it('section 19 without any section 13b receipt says there are no advance returns at all', () => {
+    render(<VatTab view={view()} {...vatProps()} />);
+    expect(screen.getByText(/es gibt keine Voranmeldungen, auch keine für Steuer nach § 13b/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Eintragen' })).toBeNull();
+  });
+
+  it('names the share outside the business and receipts in another currency', () => {
+    const period = (index: number) => ({ index, from: '', to: '', outputVatCents: 0, inputVatCents: 0, reverseChargeVatCents: index === 2 ? 1_900 : 0, reverseChargeInputVatCents: index === 2 ? 1_140 : 0, dueCents: index === 2 ? 760 : 0, output: [], input: [], reverseCharge: [], outputByRate: [] });
+    const year = { periods: [1, 2, 3, 4].map(period), outputByRate: [], outputVatCents: 0, inputVatCents: 0, reverseChargeVatCents: 1_900, reverseChargeInputVatCents: 1_140, dueCents: 760 };
+    render(
+      <VatTab
+        view={view({ smallBusinessAtYearEnd: false, vat: { frequency: 'quarterly', method: 'issued', applies: true, year, undeductedInputVatCents: 0, reverseChargeYear: null, reverseChargeFrequencyAssumed: false, reverseChargePendingItems: 0, reverseChargeNonBusinessCents: 760, reverseChargeForeignCurrencyItems: 1, settlements: [] } })}
+        {...vatProps()}
+      />,
+    );
+    expect(screen.getByText(/Davon entfallen 7,60 € auf private oder andere nicht betriebliche Anteile/)).toBeTruthy();
+    expect(screen.getByText(/Ein Beleg mit § 13b lautet auf eine fremde\s+Währung/)).toBeTruthy();
+    expect(screen.getByText(/Die App ordnet sie dem Belegdatum zu/)).toBeTruthy();
+  });
+
+  it('a year under regular taxation without section 13b keeps its four columns', () => {
+    const period = (index: number) => ({ index, from: '', to: '', outputVatCents: 0, inputVatCents: 0, reverseChargeVatCents: 0, reverseChargeInputVatCents: 0, dueCents: 0, output: [], input: [], reverseCharge: [], outputByRate: [] });
+    const year = { periods: [1, 2, 3, 4].map(period), outputByRate: [], outputVatCents: 0, inputVatCents: 0, reverseChargeVatCents: 0, reverseChargeInputVatCents: 0, dueCents: 0 };
+    render(<VatTab view={view({ smallBusinessAtYearEnd: false, vat: { frequency: 'quarterly', method: 'issued', applies: true, year, undeductedInputVatCents: 0, reverseChargeYear: null, reverseChargeFrequencyAssumed: false, reverseChargePendingItems: 0, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] } })} {...vatProps()} />);
+    expect(screen.getAllByRole('columnheader')).toHaveLength(4);
+  });
 });
+

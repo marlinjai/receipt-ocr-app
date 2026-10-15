@@ -33,13 +33,17 @@ export interface VatPeriod {
   to: string;
   outputVatCents: number;
   inputVatCents: number;
-  /** Output minus input: positive is owed to the tax office, negative is a refund. */
+  /** Tax owed as the buyer of services from abroad (section 13b), and the part of it deductible as input tax. */
+  reverseChargeVatCents: number;
+  reverseChargeInputVatCents: number;
+  /** Output plus section 13b tax, minus input tax: positive is owed to the tax office, negative is a refund. */
   dueCents: number;
   /** The tax charged to clients split by rate, highest rate first, each with the turnover it was charged on. */
   outputByRate: RateTotal[];
-  /** The events behind the two figures, so each can be traced to its invoice or receipt. */
+  /** The events behind the figures, so each can be traced to its invoice or receipt. */
   output: VatEvent[];
   input: VatEvent[];
+  reverseCharge: VatEvent[];
 }
 
 export interface VatYear {
@@ -47,6 +51,8 @@ export interface VatYear {
   outputByRate: RateTotal[];
   outputVatCents: number;
   inputVatCents: number;
+  reverseChargeVatCents: number;
+  reverseChargeInputVatCents: number;
   dueCents: number;
 }
 
@@ -60,7 +66,14 @@ export function vatYear(
   year: number,
   frequency: VatFrequency,
   method: VatMethod,
-  events: { inputVat: VatEvent[]; outputVatByIssue: VatEvent[]; outputVatByPayment: VatEvent[] },
+  events: {
+    inputVat: VatEvent[];
+    outputVatByIssue: VatEvent[];
+    outputVatByPayment: VatEvent[];
+    /** Section 13b: arises on its own day under either method (section 13b (1) and (2)). */
+    reverseCharge?: VatEvent[];
+    reverseChargeInput?: VatEvent[];
+  },
 ): VatYear {
   const monthsPerPeriod = frequency === 'monthly' ? 1 : 3;
   const count = 12 / monthsPerPeriod;
@@ -73,10 +86,13 @@ export function vatYear(
       to: `${year}-${pad(lastMonth)}-${pad(lastDayOfMonth(year, lastMonth))}`,
       outputVatCents: 0,
       inputVatCents: 0,
+      reverseChargeVatCents: 0,
+      reverseChargeInputVatCents: 0,
       dueCents: 0,
       outputByRate: [],
       output: [],
       input: [],
+      reverseCharge: [],
     };
   });
   const periodOf = (isoDay: string): VatPeriod | null => {
@@ -96,8 +112,19 @@ export function vatYear(
     period.inputVatCents += event.cents;
     period.input.push(event);
   }
+  for (const event of events.reverseCharge ?? []) {
+    const period = periodOf(event.date);
+    if (!period) continue;
+    period.reverseChargeVatCents += event.cents;
+    period.reverseCharge.push(event);
+  }
+  for (const event of events.reverseChargeInput ?? []) {
+    const period = periodOf(event.date);
+    if (!period) continue;
+    period.reverseChargeInputVatCents += event.cents;
+  }
   for (const period of periods) {
-    period.dueCents = period.outputVatCents - period.inputVatCents;
+    period.dueCents = period.outputVatCents + period.reverseChargeVatCents - period.inputVatCents - period.reverseChargeInputVatCents;
     period.outputByRate = byRate(period.output);
   }
 
@@ -107,6 +134,8 @@ export function vatYear(
     outputByRate: byRate(periods.flatMap((p) => p.output)),
     outputVatCents: total((p) => p.outputVatCents),
     inputVatCents: total((p) => p.inputVatCents),
+    reverseChargeVatCents: total((p) => p.reverseChargeVatCents),
+    reverseChargeInputVatCents: total((p) => p.reverseChargeInputVatCents),
     dueCents: total((p) => p.dueCents),
   };
 }

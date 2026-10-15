@@ -47,6 +47,17 @@ import {
   validateVatSettings,
   parseTaxGroups,
 } from './revenue-input';
+import {
+  ReverseChargeInputError,
+  reverseChargeFor,
+  validateEffectiveFrom,
+  validateReverseChargeRate,
+  earlierDay,
+  withReverseCharge,
+  type ReverseChargeEntry,
+  type ReverseChargeOrigin,
+  type ReverseChargeRateBp,
+} from './reverse-charge';
 import { RULE_YEARS, isFormLineKey, rulesForYear, type FormLine, type ProvisionalRules } from './rules';
 import type { FormLineKey } from './rules/types';
 import { INVOICE_TREATMENTS, type InvoiceCheckKind, type InvoiceFact, type InvoiceTreatment, type ItemPart, type LineResult, type OpenCheck, type TaxGroup, type VatSettlementFact } from './types';
@@ -325,6 +336,10 @@ export interface StatementItem {
   parts: ItemPart[];
   privateCents: number;
   checks: OpenCheck[];
+  /** Set when the buyer owes the tax on this purchase (section 13b): the rate, and whether the receipt or its vendor says so. */
+  reverseCharge: { rateBp: number; origin: ReverseChargeOrigin } | null;
+  /** The receipt's own statement, when it has one (rateBp null: "not under section 13b", against its vendor). */
+  reverseChargeOwn: { rateBp: number | null } | null;
 }
 
 export interface StatementView {
@@ -401,6 +416,25 @@ export interface StatementView {
     year: VatYear | null;
     /** Tax on purchases of the year that could not be deducted under the small-business rule. */
     undeductedInputVatCents: number;
+    /**
+     * Section 13b in a year fully under the small-business rule: the periods
+     * in which tax is owed as the buyer (an advance return is due for exactly
+     * those, section 18 (4a)). Null when the year has regular taxation (the
+     * figures are then in `year`) or no such tax arose.
+     */
+    reverseChargeYear: VatYear | null;
+    /** True when `reverseChargeYear` uses quarters because no frequency was stated (the statutory default, section 18 (2)). */
+    reverseChargeFrequencyAssumed: boolean;
+    /** Receipts under section 13b whose tax is not in the figures yet (kept out by an open check, or part of an asset). */
+    reverseChargePendingItems: number;
+    /** The part of the section 13b tax on shares outside the business: owed, not deductible, and no business expense when paid. */
+    reverseChargeNonBusinessCents: number;
+    /**
+     * Receipts under section 13b of the year in another currency: their base is
+     * the booked euro amount, while the act asks for the ministry's monthly
+     * average rate unless the tax office allowed the daily rate (section 16 (6)).
+     */
+    reverseChargeForeignCurrencyItems: number;
     /** `date` is the day of the payment; `countsOn` is set when the ten-day rule moved it into this year. */
     settlements: Array<{ id: string; date: string; cents: number; direction: 'paid' | 'refunded'; countsOn?: string }>;
   };
@@ -408,11 +442,18 @@ export interface StatementView {
   yearBoundary: YearBoundaryEntry[];
   payments: PaymentsView;
   vendorRules: VendorRule[];
+  /** The vendors whose purchases are under section 13b, each from its day on. */
+  reverseChargeVendors: Array<{ id: string; label: string; vendorKey: string; effectiveFrom: string; rateBp: number | null }>;
   /** False until the Receipts table exists (first dashboard visit). */
   initialized: boolean;
 }
 
-function toStatementItem(resolved: ResolvedItem, facts: ReceiptFacts, result: { counted: boolean; parts: ItemPart[]; privateCents: number; checks: OpenCheck[] }): StatementItem {
+function toStatementItem(
+  resolved: ResolvedItem,
+  facts: ReceiptFacts,
+  result: { counted: boolean; parts: ItemPart[]; privateCents: number; checks: OpenCheck[] },
+  reverseCharge: { origin: ReverseChargeOrigin | null; own: { rateBp: number | null } | null },
+): StatementItem {
   const { item } = resolved;
   const line = resolved.lineId ? (facts.lines ?? []).find((l) => l.id === resolved.lineId) : undefined;
   return {
@@ -448,6 +489,8 @@ function toStatementItem(resolved: ResolvedItem, facts: ReceiptFacts, result: { 
     parts: result.parts,
     privateCents: result.privateCents,
     checks: result.checks,
+    reverseCharge: item.reverseCharge && reverseCharge.origin ? { rateBp: item.reverseCharge.rateBp, origin: reverseCharge.origin } : null,
+    reverseChargeOwn: reverseCharge.own,
   };
 }
 
@@ -459,13 +502,15 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     getTaxSettings(db, workspaceId),
     db.taxAsset.findMany({ where: { authWorkspaceId: workspaceId }, include: { parts: true }, orderBy: [{ acquisitionDate: 'asc' }, { createdAt: 'asc' }] }),
   ]);
-  const [storedInvoices, storedSettlements, storedChanges, settingsRow, storedBoundaryAnswers] = await Promise.all([
+  const [storedInvoices, storedSettlements, storedChanges, settingsRow, storedBoundaryAnswers, storedReverseCharges] = await Promise.all([
     db.taxIssuedInvoice.findMany({ where: { authWorkspaceId: workspaceId }, include: { payments: true }, orderBy: [{ issueDate: 'asc' }, { number: 'asc' }] }),
     db.taxVatSettlement.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: { settledOn: 'asc' } }),
     db.taxStatusChange.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: { effectiveFrom: 'asc' } }),
     db.workspaceTaxSettings.findUnique({ where: { authWorkspaceId: workspaceId } }),
     db.taxYearBoundaryAnswer.findMany({ where: { authWorkspaceId: workspaceId } }),
+    db.taxReverseCharge.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: [{ subject: 'asc' }, { effectiveFrom: 'asc' }] }),
   ]);
+  const reverseChargeEntries = storedReverseCharges.map(toReverseChargeEntry);
   const boundaryAnswers = new Map(storedBoundaryAnswers.map((a) => [`${a.subjectKind}:${a.subjectId}`, a]));
   const invoiceFacts: InvoiceFact[] = storedInvoices.map((i) => ({
     id: i.id,
@@ -513,12 +558,25 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     return { ...f, countsOnDay: boundaryDay(cashDay) };
   });
   const factsOfItem: ReceiptFacts[] = [];
+  const foreignCurrencyReverseCharge = new Set<string>();
+  const reverseChargeOf = new Map<string, { origin: ReverseChargeOrigin | null; own: { rateBp: number | null } | null }>();
   const resolved = facts.flatMap((f) =>
     resolveItems(f, vendorRules, settings).map((r) => {
       factsOfItem.push(f);
+      // Section 13b: the receipt's own statement, else its vendor's on the
+      // document day. A meal is judged by the register and never carries one.
+      const own = reverseChargeEntries.find((e) => e.scope === 'row' && e.subject === r.rowId);
+      const rc = r.isMeal ? null : reverseChargeFor(reverseChargeEntries, r.rowId, r.vendorKey, f.record.date);
+      reverseChargeOf.set(r.item.id, { origin: rc?.origin ?? null, own: own ? { rateBp: own.rateBp } : null });
+      // The tax arises with the invoice or the service, or earlier with a
+      // payment made before it (section 13b (4) sentence 2): the earlier of the
+      // document day and the payment day, with the status of that day.
+      const taxDay = earlierDay(f.record.date, f.paid?.day);
+      const item = rc ? withReverseCharge(r.item, rc.rateBp, taxDay, smallBusinessOn(settings, taxDay)) : r.item;
+      if (rc && f.record.currency !== 'EUR' && taxDay?.startsWith(`${year}-`)) foreignCurrencyReverseCharge.add(r.rowId);
       // A whole-receipt part covers every line of that receipt.
       const assetId = assetByItem.get(r.item.id) ?? assetByItem.get(r.rowId);
-      return assetId ? { ...r, item: { ...r.item, assetId } } : r;
+      return { ...r, item: assetId ? { ...item, assetId } : item };
     }),
   );
   const itemsByRow = new Map<string, ResolvedItem[]>();
@@ -594,7 +652,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     if (r.item.date) years.add(Number(r.item.date.slice(0, 4)));
     const itemResult = resultById.get(r.item.id);
     // computeYear only returns items of the year and undated ones.
-    if (itemResult) items.push(toStatementItem(r, factsOfItem[index], itemResult));
+    if (itemResult) items.push(toStatementItem(r, factsOfItem[index], itemResult, reverseChargeOf.get(r.item.id) ?? { origin: null, own: null }));
   });
   // By day, then by receipt; the lines of one receipt stay together, in their
   // stored order. Every pair is compared by the same keys, so the order is
@@ -729,9 +787,28 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
               inputVat: result.inputVatEvents,
               outputVatByIssue: result.outputVatByIssue,
               outputVatByPayment: result.outputVatByPayment,
+              reverseCharge: result.reverseChargeEvents,
+              reverseChargeInput: result.reverseChargeInputEvents,
             })
           : null,
       undeductedInputVatCents,
+      // Under the small-business rule the tax owed as a buyer is still owed,
+      // and declared for exactly the periods it arose in. Without a stated
+      // frequency the statutory default applies: the calendar quarter.
+      reverseChargeYear:
+        !regularInYear && result.reverseChargeEvents.length > 0
+          ? vatYear(year, vatFrequency ?? 'quarterly', vatMethod ?? 'issued', {
+              inputVat: [],
+              outputVatByIssue: [],
+              outputVatByPayment: [],
+              reverseCharge: result.reverseChargeEvents,
+              reverseChargeInput: result.reverseChargeInputEvents,
+            })
+          : null,
+      reverseChargeFrequencyAssumed: vatFrequency === null,
+      reverseChargePendingItems: result.reverseChargePendingItems,
+      reverseChargeNonBusinessCents: result.reverseChargeNonBusinessCents,
+      reverseChargeForeignCurrencyItems: foreignCurrencyReverseCharge.size,
       settlements: settlementFacts
         .map((s, index) => ({ ...s, date: storedSettlements[index].settledOn, ...(s.date !== storedSettlements[index].settledOn ? { countsOn: s.date } : {}) }))
         .filter((s) => (s.countsOn ?? s.date).startsWith(`${year}-`)),
@@ -794,6 +871,9 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     },
     businessRevenueCents: result.businessRevenueCents,
     vendorRules,
+    reverseChargeVendors: reverseChargeEntries
+      .filter((e) => e.scope === 'vendor')
+      .map((e) => ({ id: e.id, label: e.label, vendorKey: e.subject, effectiveFrom: e.effectiveFrom, rateBp: e.rateBp })),
     initialized: loaded !== null,
   };
 }
@@ -1875,6 +1955,92 @@ export async function decideForVendor(
   };
 }
 
+function toReverseChargeEntry(row: { id: string; scope: string; subject: string; label: string; effectiveFrom: string; rateBp: number | null }): ReverseChargeEntry {
+  // A stored rate the app no longer knows is read as "no statement", never as a guess.
+  const rateBp = row.rateBp === 1900 || row.rateBp === 700 ? (row.rateBp as ReverseChargeRateBp) : null;
+  return { id: row.id, scope: row.scope === 'vendor' ? 'vendor' : 'row', subject: row.subject, label: row.label, effectiveFrom: row.effectiveFrom, rateBp };
+}
+
+export interface ReverseChargeRequest {
+  /** 1900 or 700 basis points; null states "not under section 13b". */
+  rateBp: unknown;
+  /** Also make this the vendor's statement from a day on (`effectiveFrom` '' or absent: from the beginning). */
+  applyToVendor?: { vendor: string; effectiveFrom?: unknown };
+}
+
+/**
+ * State whether the buyer owes the tax on ONE receipt (section 13b), or on all
+ * of its vendor's receipts from a day on. Like a vendor rule, the receipt then
+ * follows the vendor's entry when that entry is in force on its document day,
+ * and keeps a statement of its own otherwise. A meal is the register's alone.
+ * Everything is checked before anything is written.
+ */
+export async function saveReverseCharge(db: PrismaClient, ctx: TaxContext, rowId: string, request: ReverseChargeRequest): Promise<void> {
+  const rateBp = validateReverseChargeRate(request?.rateBp);
+  const loaded = await loadReceipts(db, ctx.workspaceId, rowId);
+  if (!loaded) throw new TaxServiceError('not_initialized');
+  const facts = loaded.facts[0];
+  if (!facts) throw new TaxServiceError('row_not_found');
+  const [settings, vendorRules, entries] = await Promise.all([
+    getTaxSettings(db, ctx.workspaceId),
+    listVendorRules(db, ctx.workspaceId),
+    db.taxReverseCharge.findMany({ where: { authWorkspaceId: ctx.workspaceId } }),
+  ]);
+  // A meal is the register's alone, also one that is on the meal line only
+  // through its vendor's rule (it is then an open check, never a 13b purchase).
+  const resolved = resolveItem(facts, vendorRules, settings);
+  if (resolved.isMeal || resolved.item.formLineKey === 'euer.meals') throw new TaxServiceError('meal_row');
+  const rowWhere = { authWorkspaceId_scope_subject_effectiveFrom: { authWorkspaceId: ctx.workspaceId, scope: 'row', subject: rowId, effectiveFrom: '' } };
+  if (!request.applyToVendor) {
+    // What the receipt gets without a statement of its own. Choosing exactly
+    // that does not pin the receipt: it keeps following its vendor.
+    const vendorEntries = entries.map(toReverseChargeEntry).filter((e) => e.scope === 'vendor');
+    const fromVendor = reverseChargeFor(vendorEntries, rowId, resolved.vendorKey, facts.record.date)?.rateBp ?? null;
+    if (fromVendor === rateBp) {
+      await db.taxReverseCharge.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, scope: 'row', subject: rowId } });
+      return;
+    }
+    await db.taxReverseCharge.upsert({
+      where: rowWhere,
+      create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, scope: 'row', subject: rowId, rateBp },
+      update: { rateBp },
+    });
+    return;
+  }
+  const vendor = String(request.applyToVendor.vendor ?? '');
+  const key = vendorKey(vendor);
+  if (!key) throw new TaxServiceError('no_vendor');
+  const effectiveFrom = validateEffectiveFrom(request.applyToVendor.effectiveFrom);
+  const covers = effectiveFrom === '' || (facts.record.date !== null && effectiveFrom <= facts.record.date);
+  await db.$transaction([
+    db.taxReverseCharge.upsert({
+      where: { authWorkspaceId_scope_subject_effectiveFrom: { authWorkspaceId: ctx.workspaceId, scope: 'vendor', subject: key, effectiveFrom } },
+      create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, scope: 'vendor', subject: key, label: vendor.trim(), effectiveFrom, rateBp },
+      update: { label: vendor.trim(), rateBp },
+    }),
+    covers
+      ? db.taxReverseCharge.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, scope: 'row', subject: rowId } })
+      : db.taxReverseCharge.upsert({
+          where: rowWhere,
+          create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, scope: 'row', subject: rowId, rateBp },
+          update: { rateBp },
+        }),
+  ]);
+}
+
+/** Remove a receipt's own section 13b statement: it follows its vendor's entry again, if any. */
+export async function clearReverseCharge(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<void> {
+  await db.taxReverseCharge.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, scope: 'row', subject: rowId } });
+}
+
+/** Remove one vendor's section 13b entry. */
+export async function deleteReverseChargeVendorEntry(db: PrismaClient, ctx: TaxContext, entryId: string): Promise<void> {
+  const { count } = await db.taxReverseCharge.deleteMany({ where: { id: entryId, authWorkspaceId: ctx.workspaceId, scope: 'vendor' } });
+  if (count === 0) throw new TaxServiceError('rule_not_found');
+}
+
+export { ReverseChargeInputError };
+
 export async function deleteVendorRule(db: PrismaClient, ctx: TaxContext, ruleId: string): Promise<void> {
   const { count } = await db.taxVendorRule.deleteMany({ where: { id: ruleId, authWorkspaceId: ctx.workspaceId } });
   if (count === 0) throw new TaxServiceError('rule_not_found');
@@ -1884,6 +2050,7 @@ export async function deleteVendorRule(db: PrismaClient, ctx: TaxContext, ruleId
 export async function deleteDecisionsForRows(db: PrismaClient, rowIds: string[]): Promise<void> {
   if (rowIds.length === 0) return;
   await db.taxItemDecision.deleteMany({ where: { rowId: { in: rowIds } } });
+  await db.taxReverseCharge.deleteMany({ where: { scope: 'row', subject: { in: rowIds } } });
   await db.taxReceiptLine.deleteMany({ where: { rowId: { in: rowIds } } });
   // An asset keeps existing without the receipt; with no receipt left it shows
   // up as "no cost" and asks for one, instead of vanishing with its history.

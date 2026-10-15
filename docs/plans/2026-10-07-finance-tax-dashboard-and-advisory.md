@@ -1675,3 +1675,82 @@ like everything else; nothing derived is stored.
 - **Computed figures do not change** for any asset without an annex share (a test
   compares them); no existing asset has one.
 
+## Reality: tax the buyer owes on services from abroad (2026-10-15)
+
+Closes item (4) of stage 1's "open inside what is built": tax the buyer owes on
+services from abroad (reverse charge, section 13b of the value-added tax act) was
+not computed.
+
+- **What the law says, read on 2026-10-15** (gesetze-im-internet.de): for a service
+  (not goods) of a supplier established abroad whose place of supply is Germany, the
+  business that receives it owes the tax itself as an entrepreneur (section 13b (5)
+  sentence 1). A small business is an entrepreneur too, so it owes the tax under the
+  same sentence 1; sentence 9, on buyers under section 19 (1), concerns only the cases
+  of sentences 2 and 5 (construction work, building cleaning). It cannot deduct it,
+  because a small business's turnover is tax free (section 19 (1)) and tax on
+  purchases used for tax-free turnover is excluded from deduction (section 15 (2)
+  sentence 1 number 1). Under regular taxation the tax is deductible input tax
+  (section 15 (1) sentence 1 number 4), for the business share only. The tax is owed
+  in full also for a share used outside the business (section 13b (5) sentence 7).
+  For a service from another member state of the European Union the tax arises at the
+  end of the advance return period in which it was performed (section 13b (1)); in
+  the other cases with the invoice, at the latest at the end of the following month
+  (section 13b (2)); a payment before the service makes it arise in the period of the
+  payment (section 13b (4) sentence 2). A business that owes tax only under section
+  13b (5) files advance returns for exactly the periods in which such tax arises, and
+  an annual return (section 18 (4a)); section 19 (1) sentence 2 leaves that duty
+  untouched for a small business. The period is the calendar quarter unless the tax
+  office set the month (section 18 (2)). Goods bought from another member state are an
+  intra-Community acquisition (section 1a), not section 13b, and are not covered.
+- **A statement of the owner, resolved like a treatment.** `TaxReverseCharge`
+  (migration `0021_tax_reverse_charge`, one new table with check constraints on scope
+  and rate, additive) holds per receipt or per vendor from a day on: the rate (19 or 7
+  percent) or "not under section 13b". The receipt's own statement wins (it can also
+  take one receipt out of its vendor's entry), else the vendor entry in force on the
+  document day. It is set in the statement's "Ändern" panel, which says which
+  services it is for; the vendor entries are listed under "Lieferanten" and can be
+  removed. Choosing for one receipt exactly what its vendor entry gives stores
+  nothing, so the receipt keeps following the vendor; stating it for the vendor from a
+  receipt the new entry covers removes that receipt's own statement, as with vendor
+  rules. A meal is refused, also one on the meal line only through a stored vendor rule.
+- **The figures.** The base is the receipt's euro amount (the supplier's invoice
+  shows no German tax, so that amount is the net price). The tax day is the earlier of
+  the document day and the payment day, and the section 19 status of that day decides
+  whether the tax is deductible (a status change between invoice and payment is
+  judged by the tax day, not by the day the expense counts on). Under regular
+  taxation the item counts with its whole amount and no input tax of its own, the tax
+  is owed in its period, and the business share of it is deductible in the same
+  period. A receipt that is part of an asset owes the tax on its amount and takes the
+  asset's business share. Under section 19 the tax is owed and nothing is deductible;
+  the value-added tax tab shows, also for a year fully under section 19, the periods
+  with tax owed, the annual return, and the form to record the payment to the tax
+  office, which lands on the statement's line for tax paid to the tax office in the
+  year it is paid (the existing settlements).
+- **The share outside the business** (private, study, employment) of the tax is owed
+  but neither deductible nor a business expense. The app computes it per year and
+  shows it beside the figures, asking that only the business part of the payment be
+  entered as an expense; it does not split a payment entered by hand by itself.
+- **Neither figure is money paid**, so neither enters a line of the income-surplus
+  statement by itself; only the payment to the tax office does. Under regular taxation
+  the deductible part and the owed part offset each other in the return, and no money
+  moves for them.
+- **Pending, not guessed:** only what cannot be known (a marked receipt kept out by an
+  open check, an asset part whose asset is unknown, an unanswered section 19 question).
+  The tab then says advance returns may become due once those receipts are resolved,
+  and offers the payment form.
+- **Approximations, stated on the screen:** the earlier of document and payment day
+  stands in for the end of the period of performance, the invoice day and the day of
+  an advance payment; a receipt in another currency uses its booked euro amount (the
+  payment, or the reference rate), while the act asks for the ministry's monthly
+  average rate unless the tax office allowed the daily rate (section 16 (6)): the form
+  and the tab say so for every such receipt.
+- **No figure of an existing year changes**: nothing is computed differently for a
+  receipt without a statement, and no statement exists until the owner records one.
+  A test computes the synthetic year with and without one marked receipt and finds
+  every other item, line, total and output tax event identical.
+- **For a tax advisor to confirm:** whether the income-surplus statement should also
+  show the offsetting owed and deductible amounts under regular taxation (no effect on
+  profit); how the share of the tax outside the business is entered when the payment
+  to the tax office is recorded (private withdrawal, or a cost of the study share on
+  the employment annex); and that a foreign-currency service may use the booked euro
+  amount instead of the monthly rate.

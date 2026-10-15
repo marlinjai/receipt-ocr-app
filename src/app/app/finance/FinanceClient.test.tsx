@@ -25,6 +25,9 @@ const actions = vi.hoisted(() => ({
   decideItem: vi.fn(),
   resetItem: vi.fn(),
   removeVendorRule: vi.fn(),
+  setReverseCharge: vi.fn(),
+  resetReverseCharge: vi.fn(),
+  removeReverseChargeVendor: vi.fn(),
   saveAsset: vi.fn(),
   removeAsset: vi.fn(),
   disposeAsset: vi.fn(),
@@ -73,6 +76,8 @@ function item(overrides: Partial<StatementItem> & { rowId: string }): StatementI
     counted: false,
     parts: [],
     privateCents: 0,
+    reverseCharge: null,
+    reverseChargeOwn: null,
     checks: [{ itemId: overrides.rowId, kind: 'no_allocation', blocking: true }],
     ...overrides,
   };
@@ -146,9 +151,10 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     expectedMonthlyRevenueCents: null,
     smallBusinessAtYearEnd: true,
     statusChanges: [],
-    vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, settlements: [] },
+    vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, reverseChargeYear: null, reverseChargeFrequencyAssumed: true, reverseChargePendingItems: 0, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] },
     payments: { accounts: [], yearCount: 0, linkedCount: 0, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [] },
     vendorRules: [],
+    reverseChargeVendors: [],
     yearBoundary: [],
     initialized: true,
     ...overrides,
@@ -406,6 +412,61 @@ describe('FinanceClient: notices and statement', () => {
     await user.click(within(row).getByRole('button', { name: /Einzelentscheidung entfernen/ }));
     expect(actions.resetItem).toHaveBeenCalledWith(2025, 'a');
     expect(await screen.findByText('Netzwerk Nord GmbH: Einzelentscheidung entfernt.')).toBeTruthy();
+  });
+
+  it('marks a receipt for section 13b, for itself or for its vendor from a day on, and takes its own statement back', async () => {
+    const user = userEvent.setup();
+    const marked = { ...decided('a'), reverseCharge: { rateBp: 1900, origin: 'item' as const }, reverseChargeOwn: { rateBp: 1900 } };
+    actions.setReverseCharge.mockResolvedValue({ ok: true, value: view([marked]) });
+    actions.resetReverseCharge.mockResolvedValue({ ok: true, value: view([decided('a')]) });
+    render(<FinanceClient initial={view([decided('a')])} />);
+    await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
+    let row = screen.getByText('Netzwerk Nord GmbH').closest('li') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: 'Ändern' }));
+    expect(within(row).queryByRole('button', { name: 'Angabe am Beleg entfernen' })).toBeNull();
+    await user.click(within(row).getByRole('button', { name: '19 %' }));
+    await user.click(within(row).getByRole('button', { name: '§ 13b speichern' }));
+    expect(actions.setReverseCharge).toHaveBeenCalledWith(2025, { rowId: 'a', rateBp: 1900 });
+    expect(await screen.findByText('Netzwerk Nord GmbH: § 13b gespeichert.')).toBeTruthy();
+
+    row = screen.getByRole('button', { name: '§ 13b speichern' }).closest('li') as HTMLElement;
+    expect(within(row).getByText(/Derzeit: 19 % \(an diesem Beleg\)/)).toBeTruthy();
+    await user.click(within(row).getByRole('button', { name: '7 %' }));
+    await user.click(within(row).getByLabelText(/§ 13b für alle Belege von Netzwerk Nord GmbH/));
+    await user.type(within(row).getByLabelText(/gilt ab/), '2025-01-01');
+    await user.click(within(row).getByRole('button', { name: '§ 13b speichern' }));
+    expect(actions.setReverseCharge).toHaveBeenLastCalledWith(2025, { rowId: 'a', rateBp: 700, applyToVendor: { vendor: 'Netzwerk Nord GmbH', effectiveFrom: '2025-01-01' } });
+
+    await user.click(within(row).getByRole('button', { name: 'Angabe am Beleg entfernen' }));
+    expect(actions.resetReverseCharge).toHaveBeenCalledWith(2025, 'a');
+  });
+
+  it('the section 13b form says which services it is for, and warns about another currency', async () => {
+    const user = userEvent.setup();
+    render(<FinanceClient initial={view([{ ...decided('a'), currency: 'USD', gross: 42 }])} />);
+    await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
+    const row = screen.getByText('Netzwerk Nord GmbH').closest('li') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: 'Ändern' }));
+    expect(within(row).getByText(/Nicht für Hotel, Bewirtung oder Fahrten/)).toBeTruthy();
+    expect(within(row).getByText(/Dieser Beleg lautet auf USD/)).toBeTruthy();
+  });
+
+  it('a failed section 13b save says why and keeps the view', async () => {
+    const user = userEvent.setup();
+    actions.setReverseCharge.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'invalid_reverse_charge_date' });
+    render(<FinanceClient initial={view([decided('a')])} />);
+    await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
+    const row = screen.getByText('Netzwerk Nord GmbH').closest('li') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: 'Ändern' }));
+    // Nothing chosen yet: saving the receipt's current state would change nothing.
+    expect((within(row).getByRole('button', { name: '§ 13b speichern' }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(within(row).getByRole('button', { name: '19 %' }));
+    await user.click(within(row).getByLabelText(/§ 13b für alle Belege von Netzwerk Nord GmbH/));
+    await user.type(within(row).getByLabelText(/gilt ab/), '2025-04-01');
+    await user.click(within(row).getByRole('button', { name: '§ 13b speichern' }));
+    expect(actions.setReverseCharge).toHaveBeenCalledWith(2025, { rowId: 'a', rateBp: 1900, applyToVendor: { vendor: 'Netzwerk Nord GmbH', effectiveFrom: '2025-04-01' } });
+    expect((await screen.findAllByText(/Das Datum „gilt ab“ ist ungültig/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/§ 13b gespeichert/)).toBeNull();
   });
 
   it('a decided receipt can be split from the statement, and a split can be changed or undone there', async () => {

@@ -21,8 +21,12 @@ import { RULE_YEARS } from '@/lib/tax/rules';
 import {
   AssetInputError,
   LinesInputError,
+  ReverseChargeInputError,
   RevenueInputError,
   TaxServiceError,
+  clearReverseCharge,
+  deleteReverseChargeVendorEntry,
+  saveReverseCharge,
   TreatmentError,
   acceptEstimateProposals,
   clearItemDecision,
@@ -85,6 +89,7 @@ function failure(e: unknown): { ok: false; error: FinanceActionError; detail?: s
   if (e instanceof AssetInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof RevenueInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof LinesInputError) return { ok: false, error: 'invalid_input', detail: e.code };
+  if (e instanceof ReverseChargeInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof PaymentParseError) return { ok: false, error: 'invalid_input', detail: e.row === null ? e.code : `${e.code}:${e.row}` };
   if (e instanceof PaymentServiceError) {
     const missing = ['account_not_found', 'batch_not_found', 'payment_not_found', 'link_not_found', 'target_not_found'];
@@ -169,6 +174,49 @@ export async function resetItem(year: number, rowId: string): Promise<Result<Sta
   try {
     const ctx = await writeContext();
     await clearItemDecision(prisma, ctx, String(rowId));
+    return { ok: true, value: await loadStatement(prisma, ctx.workspaceId, safeYear(year)) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+export interface ReverseChargeActionRequest {
+  rowId: string;
+  /** 1900 or 700; null: "not under section 13b". */
+  rateBp: unknown;
+  applyToVendor?: { vendor: string; effectiveFrom?: string };
+}
+
+/** State that the buyer owes the tax on a receipt (section 13b), or on its vendor's receipts from a day on. */
+export async function setReverseCharge(year: number, request: ReverseChargeActionRequest): Promise<Result<StatementView>> {
+  try {
+    const ctx = await writeContext();
+    await saveReverseCharge(prisma, ctx, String(request?.rowId ?? ''), {
+      rateBp: request?.rateBp,
+      ...(request?.applyToVendor
+        ? { applyToVendor: { vendor: String(request.applyToVendor.vendor ?? ''), effectiveFrom: request.applyToVendor.effectiveFrom } }
+        : {}),
+    });
+    return { ok: true, value: await loadStatement(prisma, ctx.workspaceId, safeYear(year)) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+export async function resetReverseCharge(year: number, rowId: string): Promise<Result<StatementView>> {
+  try {
+    const ctx = await writeContext();
+    await clearReverseCharge(prisma, ctx, String(rowId));
+    return { ok: true, value: await loadStatement(prisma, ctx.workspaceId, safeYear(year)) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+export async function removeReverseChargeVendor(year: number, entryId: string): Promise<Result<StatementView>> {
+  try {
+    const ctx = await writeContext();
+    await deleteReverseChargeVendorEntry(prisma, ctx, String(entryId));
     return { ok: true, value: await loadStatement(prisma, ctx.workspaceId, safeYear(year)) };
   } catch (e) {
     return failure(e);

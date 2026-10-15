@@ -1,6 +1,7 @@
 import { assetChecks, assetSchedule, assetYearParts } from './assets';
 import { UNKNOWN_RATE_BP, invoiceTaxGroups, splitPayment, taxAt } from './invoice-tax';
 import { WHOLE_BP, shareOf } from './money';
+import { reverseChargeTax } from './reverse-charge';
 import { formLine, rulesForYear, type ResolvedRules } from './rules';
 import type { AssetRules } from './rules/types';
 import type { FormLineKey } from './rules/types';
@@ -163,6 +164,7 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
   const checks: OpenCheck[] = [];
   const byLine = new Map<FormLineKey, LineResult>();
   const inputVatEvents: VatEvent[] = [];
+  const computedItems = new Map<string, ItemResult>();
 
   const lineFor = (key: FormLineKey): LineResult => {
     let line = byLine.get(key);
@@ -205,6 +207,7 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
     if (!inYear && !vatInYear) continue;
 
     const result = computeItem(item, rules.assets);
+    computedItems.set(item.id, result);
     if (inYear) {
       items.push(result);
       checks.push(...result.checks);
@@ -222,6 +225,8 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
       if (part.lineKey === INPUT_VAT_LINE && vatInYear) inputVatEvents.push({ date: vatDay, cents: part.cents, source: 'item', id: item.id });
     }
   }
+
+  const reverseCharge = reverseChargeOfYear(facts, rules.assets, computedItems);
 
   const assets: AssetYearResult[] = [];
   for (const stated of facts.assets ?? []) {
@@ -305,6 +310,10 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
     inputVatEvents,
     outputVatByIssue: revenue.outputVatByIssue,
     outputVatByPayment: revenue.outputVatByPayment,
+    reverseChargeEvents: reverseCharge.owed,
+    reverseChargeInputEvents: reverseCharge.input,
+    reverseChargePendingItems: reverseCharge.pending,
+    reverseChargeNonBusinessCents: reverseCharge.nonBusinessCents,
     employmentCostCents: sum('employment', 'expense'),
     privateCents: items.reduce((total, i) => total + i.privateCents, 0),
     items,
@@ -314,6 +323,64 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
     countedItems: items.filter((i) => i.counted).length,
     blockedItems: items.filter((i) => !i.counted).length,
   };
+}
+
+/**
+ * Tax owed as the buyer of services from abroad (section 13b of the
+ * value-added tax act), in the year its tax day falls in, whatever year the
+ * receipt is paid or counted in. The base is the receipt's euro amount: the
+ * supplier's invoice shows no German tax, so that amount is the net price.
+ *
+ * The whole tax is owed, also on a share used outside the business (section
+ * 13b (5) sentence 7). Only the business share is deductible, and only when
+ * the tax day falls under regular taxation (section 15 (1) sentence 1 number
+ * 4); the share outside the business is reported on its own, because when the
+ * tax is paid that part is no business expense. A receipt that is part of an
+ * asset takes the asset's business share. Only what cannot be known is
+ * pending instead of guessed: an amount, a share, or the section 19 status.
+ */
+function reverseChargeOfYear(
+  facts: YearFacts,
+  assetRules: AssetRules,
+  computed: ReadonlyMap<string, ItemResult>,
+): { owed: VatEvent[]; input: VatEvent[]; pending: number; nonBusinessCents: number } {
+  const owed: VatEvent[] = [];
+  const input: VatEvent[] = [];
+  let pending = 0;
+  let nonBusinessCents = 0;
+  const assetShare = new Map((facts.assets ?? []).map((a) => [a.id, a.businessShareBp]));
+  for (const item of facts.items) {
+    const rc = item.reverseCharge;
+    if (!rc || item.meal) continue;
+    if (rc.taxDay === null) {
+      // No day at all: the item is in every year's queue already (no_date).
+      pending += 1;
+      continue;
+    }
+    if (yearOf(rc.taxDay) !== facts.year) continue;
+    let businessBp: number | null;
+    if (item.assetId) {
+      businessBp = assetShare.get(item.assetId) ?? null;
+    } else {
+      // An item of this year was computed in the main loop; one whose tax day
+      // alone falls in this year (paid in another) is computed here.
+      const result = computed.get(item.id) ?? computeItem(item, assetRules);
+      businessBp = result.counted
+        ? (item.allocations ?? []).filter((a) => a.purpose === 'business').reduce((sum, a) => sum + a.shareBp, 0)
+        : null;
+    }
+    if (businessBp === null || item.amountCents === null || rc.smallBusinessOnTaxDay === null) {
+      pending += 1;
+      continue;
+    }
+    const tax = reverseChargeTax(item.amountCents, rc.rateBp);
+    if (tax === 0) continue;
+    owed.push({ date: rc.taxDay, cents: tax, source: 'item', id: item.id });
+    const businessPart = shareOf(tax, businessBp);
+    nonBusinessCents += tax - businessPart;
+    if (rc.smallBusinessOnTaxDay === false && businessPart !== 0) input.push({ date: rc.taxDay, cents: businessPart, source: 'item', id: item.id });
+  }
+  return { owed, input, pending, nonBusinessCents };
 }
 
 /**

@@ -248,10 +248,15 @@ describe('the rows of the receipts table', () => {
     const { adapter, calls } = fakeDatabase();
     const failing = adapter.getRows;
     let fail = false;
-    adapter.getRows = (tableId, query) => (fail ? Promise.reject(new Error('offline')) : failing(tableId, query));
+    let asked = 0;
+    adapter.getRows = (tableId, query) => {
+      asked++;
+      return fail ? Promise.reject(new Error('offline')) : failing(tableId, query);
+    };
     const handle = mount(Guarded, adapter);
     await settle(handle, calls);
     fail = true;
+    const before = asked;
     // The reload resolves; the failure is the error the page shows.
     await act(async () => handle.current!.reload());
     await waitFor(() => expect(handle.current?.error?.message).toBe('offline'));
@@ -259,7 +264,7 @@ describe('the rows of the receipts table', () => {
     // The list as it was stays, and nothing is asked again while the server fails.
     expect(ids(handle.current?.shown)).toEqual(ids(ALL));
     await new Promise((r) => setTimeout(r, 50));
-    expect(calls.length).toBe(0);
+    expect(asked).toBe(before + 1);
     fail = false;
     let again: Promise<void> | undefined;
     act(() => {
@@ -279,6 +284,8 @@ describe('the rows of the receipts table', () => {
     const second = await nthCall(calls, 2);
     await act(async () => second.reject(new Error('offline')));
     await waitFor(() => expect(handle.current?.error?.message).toBe('offline'));
+    // Settled on the failure: a linked receipt is not waited for without end.
+    expect(handle.current?.settled).toBe(true);
     await new Promise((r) => setTimeout(r, 50));
     expect(calls.length).toBe(2);
     expect(ids(handle.current?.shown)).toEqual(['r1', 'r2']);

@@ -144,5 +144,7 @@ export function useCompleteRows(source: RowsSource): {
     }).catch(() => undefined);
   }, [idle, addsUp, error, gaveUp, enqueue]);
 
-  return { rows, reload, settled: idle && (Boolean(error) || addsUp || gaveUp) };
+  // A failed load leaves the package saying there is more, so a failure counts as settled on its own.
+  const settled = !isLoading && pending === 0 && (Boolean(error) || (!hasMore && (addsUp || gaveUp)));
+  return { rows, reload, settled };
 }

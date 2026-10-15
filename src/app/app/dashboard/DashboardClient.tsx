@@ -337,8 +337,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     } finally {
       setPendingDelete(null);
       setWorking(false);
-      // The delete is done and said above. If the table cannot be reloaded now, say that
-      // too: the rows shown may be out of date until the page is loaded again.
+      // The delete is done and said above. If the review list cannot be reloaded now, say that
+      // too; a table that cannot be reloaded says so in its own banner (`rowsError`).
       try {
         await Promise.all([reload(), reloadReview()]);
       } catch {
@@ -364,11 +364,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         setNotice({ tone: 'danger', text: GROUP_ERROR.failed });
       } finally {
         setWorking(false);
-        try {
-          await reload();
-        } catch {
-          setReviewError('Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.');
-        }
+        // A table that cannot be reloaded says so in its own banner (`rowsError`).
+        await reload();
       }
       return ok;
     },
@@ -929,6 +926,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
             // The table and the review list show the receipt as it is read now.
             const note = rereadNote(result);
             if (result.ok) {
+              // The table's own failure shows in its banner; only the review list's is caught here.
               try {
                 await Promise.all([reload(), reloadReview()]);
               } catch {

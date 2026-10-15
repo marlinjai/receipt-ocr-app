@@ -584,3 +584,43 @@ Approved by the owner on 2026-10-06, all six slices to be built.
 
 Still to confirm with the tax advisor before the first export is filed: the amount
 above which the receipt must name the host (default 250 euros in the settings).
+
+## Research: the amount above which the receipt must name the host (2026-10-15)
+
+Read from the statute and the finance ministry's letters on 2026-10-15. Result: **250
+euros is right, and the app applies it the right way.** No code change.
+
+- **The rule is "above 250 euros", not "from 250 euros".** The ministry's letter on
+  business meals of 19 November 2025 (Bundesministerium der Finanzen, IV C 6 -
+  S 2145/00026/005/033), margin number 9: "Rechnungen mit einem Gesamtbetrag von über
+  250 Euro müssen ... zusätzlich ... folgende Angaben enthalten", among them, margin
+  number 12, the name of the host ("Namen des bewirtenden Steuerpflichtigen", from
+  R 4.10 paragraph 8 sentence 4 of the income tax guidelines). Margin number 3 ties
+  the amount to the small-amount invoice of section 33 of the value-added tax
+  implementing regulation ("Rechnungen, deren Gesamtbetrag 250 Euro nicht
+  übersteigt"). An invoice of exactly 250.00 euros does not need the name.
+  Source: https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuerarten/Einkommensteuer/2025-11-19-bewirtungskosten-als-betriebsausgaben.pdf
+  and https://www.gesetze-im-internet.de/ustdv_1980/__33.html
+- **The amount is the invoice's gross total**, tax included ("Gesamtbetrag" in
+  section 33: the price and the tax in one sum). A tip the restaurant did not put on
+  the invoice is not part of it (margin number 8 of the letter: a tip may be shown on
+  the machine-printed invoice; otherwise the host proves it, for example by the
+  waiter's acknowledgement).
+- **The 2025 letter replaces the letter of 30 June 2021** for meals from 1 January
+  2025; the 2021 letter still governs earlier meals. Both use 250 euros. The amount
+  rose from 150 to 250 euros on 1 January 2017 and has not changed since. The
+  guidelines themselves (R 4.10 paragraph 8 sentence 4) still print 150 euros; the
+  administration applies 250 euros through the two letters, which bind it.
+- **New in the 2025 letter:** nothing allows the restaurant to add the host's name by
+  hand any more. The name has to be on the invoice as its recipient (section 14
+  paragraph 4 sentence 1 number 1 of the value-added tax act). Above 250 euros a till
+  receipt can be followed by a corrected electronic invoice that carries the
+  recipient (margin number 13).
+- **How the app does it:** `hostMustBeNamedOnReceipt` in `src/lib/meals/rules.ts`
+  compares the invoice's gross amount in euros, without the separately entered tip,
+  with `> hostAddressThresholdEur` (250). That is exactly the rule. The warning in the
+  meal form appears only above the amount ("liegt über"); its next sentence says "Ab
+  dieser Grenze", which reads loosely but describes the same case.
+- **Left for a tax advisor:** nothing on the amount itself. The wording of the form's
+  warning could mention that a handwritten name no longer suffices for meals from
+  2025; that is a wording change for whoever next touches the meal form.

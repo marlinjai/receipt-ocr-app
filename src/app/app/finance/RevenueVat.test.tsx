@@ -50,7 +50,7 @@ function view(overrides: Partial<StatementView> = {}): StatementView {
     year: 2026,
     smallBusiness: true,
     smallBusinessAtYearEnd: true,
-    revenue: { recorded: true, receivedCents: 640_000, turnoverCents: 640_000, outstandingCents: 50_000, invoices: [invoiceView()] },
+    revenue: { recorded: true, receivedCents: 640_000, turnoverCents: 640_000, outstandingCents: 50_000, invoices: [invoiceView()], overdue: [] },
     forecast: forecast(),
     limits: { ...rules.smallBusinessLimits.value, source: rules.smallBusinessLimits.source },
     expectedMonthlyRevenueCents: null,
@@ -96,7 +96,7 @@ describe('RevenueTab', () => {
   });
 
   it('without any invoice it states that revenue is unknown instead of showing zero', () => {
-    render(<RevenueTab view={view({ revenue: { recorded: false, receivedCents: 0, turnoverCents: 0, outstandingCents: 0, invoices: [] } })} {...revenueProps()} />);
+    render(<RevenueTab view={view({ revenue: { recorded: false, receivedCents: 0, turnoverCents: 0, outstandingCents: 0, invoices: [], overdue: [] } })} {...revenueProps()} />);
     expect(screen.getByText(/Noch keine Rechnung erfasst/)).toBeTruthy();
     expect(screen.queryByText('0,00 €')).toBeNull();
   });
@@ -143,7 +143,7 @@ describe('RevenueTab', () => {
       invoiceView({ id: 'a', number: 'A', payments: [], receivedCents: 0, outstandingCents: 100_000 }),
       invoiceView({ id: 'b', number: 'B', declaredInYear: 2025, excludedCents: 100_000, checks: ['invoice_treatment_mismatch'] }),
     ];
-    render(<RevenueTab view={view({ revenue: { recorded: true, receivedCents: 100_000, turnoverCents: 100_000, outstandingCents: 100_000, invoices } })} {...props} />);
+    render(<RevenueTab view={view({ revenue: { recorded: true, receivedCents: 100_000, turnoverCents: 100_000, outstandingCents: 100_000, invoices, overdue: [] } })} {...props} />);
     const open = screen.getByRole('heading', { name: 'Rechnung A' }).closest('li') as HTMLElement;
     expect(open.textContent).toContain('noch nicht bezahlt');
     const declared = screen.getByRole('heading', { name: 'Rechnung B' }).closest('li') as HTMLElement;

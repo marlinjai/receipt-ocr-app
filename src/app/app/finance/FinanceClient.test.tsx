@@ -125,7 +125,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     },
     businessRevenueCents: 0,
     profitCents: null,
-    revenue: { recorded: false, receivedCents: 0, turnoverCents: 0, outstandingCents: 0, invoices: [] },
+    revenue: { recorded: false, receivedCents: 0, turnoverCents: 0, outstandingCents: 0, invoices: [], overdue: [] },
     forecast: {
       year: 2025,
       monthsElapsed: 12,
@@ -279,6 +279,47 @@ describe('FinanceClient: the queue', () => {
     );
     expect(screen.getByRole('link', { name: 'Im Bewirtungsverzeichnis ergänzen' }).getAttribute('href')).toBe('/app/meals');
     expect(screen.queryByRole('button', { name: 'Speichern und weiter' })).toBeNull();
+  });
+});
+
+describe('FinanceClient: overdue invoices in the open checks (decision D6)', () => {
+  const overdueView = (items: StatementItem[]) =>
+    view(items, {
+      revenue: {
+        recorded: true,
+        receivedCents: 0,
+        turnoverCents: 0,
+        outstandingCents: 90_000,
+        invoices: [],
+        overdue: [{ invoiceId: 'inv-58', number: '58', issueDate: '2026-08-03', dueDate: '2026-08-17', openCents: 90_000, daysPastDue: 59 }],
+      },
+    });
+
+  it('lists an overdue invoice with its due date and what is open, and counts it as an open check', () => {
+    render(<FinanceClient initial={overdueView([item({ rowId: 'a' })])} />);
+    const panel = screen.getByRole('region', { name: '1 Rechnung überfällig' });
+    expect(within(panel).getByText('Rechnung 58 vom 03.08.2026')).toBeTruthy();
+    expect(within(panel).getByText(/fällig 17\.08\.2026, 59 Tage überfällig, offen 900,00 €/)).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Offen/ }).textContent).toContain('2');
+    expect(screen.getByText(/1 Rechnung überfällig,|^1 Rechnung überfällig$/, { selector: 'dd' })).toBeTruthy();
+    // The receipt queue is still there below it.
+    expect(screen.getByText('Noch 1 Beleg offen.')).toBeTruthy();
+  });
+
+  it('shows the reminder instead of "nothing open" when no receipt waits, and leads to the invoices', async () => {
+    const user = userEvent.setup();
+    render(<FinanceClient initial={overdueView([decided('a')])} />);
+    expect(screen.queryByText(/Keine offenen Prüfungen/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Zu den Einnahmen' }));
+    expect(screen.getByRole('tab', { name: /Einnahmen/ }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('shows no reminder when nothing is overdue', async () => {
+    const user = userEvent.setup();
+    render(<FinanceClient initial={view([decided('a')])} />);
+    await user.click(screen.getByRole('tab', { name: /Offen/ }));
+    expect(screen.queryByRole('region', { name: /überfällig/ })).toBeNull();
+    expect(screen.getByText(/Keine offenen Prüfungen/)).toBeTruthy();
   });
 });
 

@@ -22,6 +22,7 @@ import { resolveItem, resolveItems, type ReceiptFacts, type ResolvedItem, type T
 import { answerFor, boundaryDay, otherYearOf, touchesYear, BOUNDARY_SUBJECT_KINDS, type BoundarySubjectKind } from './year-boundary';
 import { LinesInputError, itemIdOf, splitItemId, storedLineTreatment, validateLines, type ReceiptLine } from './lines';
 import { forecastYear, type Forecast } from './forecast';
+import { overdueInvoices, type OverdueInvoice } from './overdue';
 import { proposeEstimateMatches, proposeMatches, type MatchStrength } from './payments/match';
 import { heldService, type ServiceKind } from './payments/funding';
 import {
@@ -369,6 +370,8 @@ export interface StatementView {
     outstandingCents: number;
     /** Every invoice that touches the year: issued in it, paid in it, or still unpaid at its end. */
     invoices: InvoiceView[];
+    /** Issued invoices of every year still unpaid 14 days after their due date, as of today: the reminder of the open checks. */
+    overdue: OverdueInvoice[];
   };
   /** Where the year is heading against the small-business limits, as of today. */
   forecast: Forecast;
@@ -560,6 +563,9 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     if (businessBp > 0) undeductedInputVatCents += Math.round(((item.amountCents - item.netCents) * businessBp) / 10_000);
   }
   const invoiceResults = new Map(result.revenue.invoices.map((i) => [i.invoiceId, i]));
+  // Overdue as of today, whatever year is viewed: a reminder is about now (decision D6 of the invoicing plan).
+  const overdue = overdueInvoices(invoiceFacts, today());
+  const overdueIds = new Set(overdue.map((o) => o.invoiceId));
   const paymentsView = buildPaymentsView(loadedPayments, year, wholeReceipts, invoiceFacts, result.revenue.invoices);
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));
 
@@ -670,10 +676,11 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
             receivedCents: r.receivedCents,
             excludedCents: r.excludedCents,
             outstandingCents: r.outstandingCents,
-            checks: r.checks,
+            checks: overdueIds.has(stored.id) ? [...r.checks, 'invoice_overdue'] : r.checks,
           },
         ];
       }),
+      overdue,
     },
     forecast,
     limits: { ...limits.value, source: limits.source },

@@ -234,7 +234,13 @@ export type InvoiceCheckKind =
   | 'invoice_treatment_mismatch'
   | 'invoice_no_date'
   /** More was received than the invoice total. */
-  | 'invoice_overpaid';
+  | 'invoice_overpaid'
+  /**
+   * Still unpaid 14 days after its due date, as of today (see `overdue.ts`).
+   * Set by the finance service, not by `computeYear`, because it depends on
+   * today rather than on the year.
+   */
+  | 'invoice_overdue';
 
 export interface InvoiceResult {
   invoiceId: string;

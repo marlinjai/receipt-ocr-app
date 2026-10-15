@@ -685,3 +685,26 @@ model ReceiptReview {
   @@index([authWorkspaceId])
   @@map("receipt_reviews")
 }
+
+// ── Private spending ─────────────────────────────────────────────────────────
+//
+// Plan docs/plans/2026-10-14-personal-spending-and-bank-feed.md. Like the
+// finance tables, only what a person SAID is stored; every sum is computed on
+// read from the payments.
+
+// The spending category a person gave a counterparty (one of the twelve keys
+// in src/lib/spending/categories.ts). It applies to every payment of that
+// counterparty in the workspace, past and future, and is taken back by deleting it.
+model SpendingCategoryAnswer {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  counterpartyKey String   @map("counterparty_key")
+  label           String
+  category        String
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, counterpartyKey])
+  @@map("spending_category_answers")
+}

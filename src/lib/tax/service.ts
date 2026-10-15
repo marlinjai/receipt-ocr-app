@@ -45,10 +45,11 @@ import {
   validateSettlement,
   validateStatusChange,
   validateVatSettings,
+  parseTaxGroups,
 } from './revenue-input';
 import { RULE_YEARS, isFormLineKey, rulesForYear, type FormLine, type ProvisionalRules } from './rules';
 import type { FormLineKey } from './rules/types';
-import type { InvoiceCheckKind, InvoiceFact, InvoiceTreatment, ItemPart, LineResult, OpenCheck, VatSettlementFact } from './types';
+import { INVOICE_TREATMENTS, type InvoiceCheckKind, type InvoiceFact, type InvoiceTreatment, type ItemPart, type LineResult, type OpenCheck, type TaxGroup, type VatSettlementFact } from './types';
 import { vatYear, type VatFrequency, type VatMethod, type VatYear } from './vat';
 
 /**
@@ -463,9 +464,8 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     issueDate: i.issueDate,
     grossCents: i.grossCents,
     vatCents: i.vatCents,
-    treatment: (['small_business', 'standard', 'reduced', 'not_taxable'] as const).includes(i.treatment as InvoiceTreatment)
-      ? (i.treatment as InvoiceTreatment)
-      : 'not_taxable',
+    treatment: INVOICE_TREATMENTS.includes(i.treatment as InvoiceTreatment) ? (i.treatment as InvoiceTreatment) : 'not_taxable',
+    taxGroups: storedTaxGroups(i.taxGroups),
     // Money received: what was typed in, plus every bank payment linked to the invoice.
     payments: [
       ...i.payments.map((p) => ({ date: p.paidOn, cents: p.cents })),
@@ -678,6 +678,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
             grossCents: fact.grossCents,
             vatCents: fact.vatCents,
             treatment: fact.treatment,
+            taxGroups: fact.taxGroups ?? null,
             declaredInYear: fact.declaredInYear,
             payments: [...fact.payments].sort((a, b) => (a.date < b.date ? -1 : 1)),
             receivedCents: r.receivedCents,
@@ -1178,6 +1179,16 @@ function today(): string {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date());
 }
 
+/**
+ * The stored groups of a mixed invoice. Stored groups were checked on save; a
+ * value that no longer parses is read as no groups: the invoice then keeps its
+ * stated tax under no rate and carries the check `invoice_tax_groups_unreadable`.
+ */
+function storedTaxGroups(raw: unknown): TaxGroup[] | null {
+  if (raw === null || raw === undefined) return null;
+  return parseTaxGroups(raw);
+}
+
 /** An issued invoice as the finance screens show it for one year. */
 export interface InvoiceView {
   id: string;
@@ -1186,6 +1197,8 @@ export interface InvoiceView {
   grossCents: number;
   vatCents: number;
   treatment: InvoiceTreatment;
+  /** For an invoice with more than one rate: its groups, highest rate first. */
+  taxGroups: TaxGroup[] | null;
   declaredInYear: number | null;
   /** Every payment of the invoice, whatever year. */
   payments: Array<{ date: string; cents: number }>;
@@ -1207,6 +1220,8 @@ export async function saveInvoice(db: PrismaClient, ctx: TaxContext, invoiceId: 
     grossCents: input.grossCents,
     vatCents: input.vatCents,
     treatment: input.treatment,
+    // Prisma needs DbNull, not null, to clear a JSON column.
+    taxGroups: input.taxGroups === null ? Prisma.DbNull : (input.taxGroups as unknown as Prisma.InputJsonValue),
     declaredInYear: input.declaredInYear,
   };
   const payments = input.payments.map((p) => ({ paidOn: p.date, cents: p.cents, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId }));

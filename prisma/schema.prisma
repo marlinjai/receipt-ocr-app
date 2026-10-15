@@ -443,6 +443,8 @@ model TaxIssuedInvoice {
   grossCents      Int      @map("gross_cents")
   vatCents        Int      @default(0) @map("vat_cents")
   treatment       String
+  // For an invoice with more than one rate (treatment 'mixed'): [{ rateBp, netCents, vatCents }], one per rate.
+  taxGroups       Json?    @map("tax_groups")
   declaredInYear  Int?     @map("declared_in_year")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")

@@ -1,4 +1,5 @@
 import { assetChecks, assetSchedule, assetYearParts } from './assets';
+import { UNKNOWN_RATE_BP, invoiceTaxGroups, splitPayment, taxAt } from './invoice-tax';
 import { WHOLE_BP, shareOf } from './money';
 import { formLine, rulesForYear, type ResolvedRules } from './rules';
 import type { AssetRules } from './rules/types';
@@ -335,15 +336,26 @@ function computeRevenue(
 
   for (const invoice of facts.invoices ?? []) {
     const result: InvoiceResult = { invoiceId: invoice.id, receivedCents: 0, excludedCents: 0, outstandingCents: 0, parts: [], checks: [] };
-    const taxed = invoice.treatment === 'standard' || invoice.treatment === 'reduced';
-    const vat = taxed ? Math.max(0, Math.min(invoice.vatCents, invoice.grossCents)) : 0;
+    const groups = invoiceTaxGroups(invoice);
+    const taxed = groups.length > 0;
+    const vat = groups.reduce((s, g) => s + g.vatCents, 0);
+    // The rate of an event; a group of unknown rate is reported under none.
+    const rateOf = (rateBp: number) => (rateBp === UNKNOWN_RATE_BP ? {} : { rateBp });
+    if (invoice.treatment === 'mixed') {
+      if (groups.some((g) => g.rateBp === UNKNOWN_RATE_BP)) result.checks.push('invoice_tax_groups_unreadable');
+      else if (groups.some((g) => Math.abs(g.vatCents - taxAt(g.netCents, g.rateBp)) > 1)) result.checks.push('invoice_tax_group_deviates');
+    }
 
     if (invoice.issueDate === null) result.checks.push('invoice_no_date');
     else {
       if (invoice.smallBusinessOnIssue === false && invoice.treatment === 'small_business') result.checks.push('invoice_treatment_mismatch');
       if (invoice.smallBusinessOnIssue === true && taxed) result.checks.push('invoice_treatment_mismatch');
       if (vat > 0 && yearOf(invoice.issueDate) === facts.year) {
-        outputVatByIssue.push({ date: invoice.issueDate, cents: vat, source: 'invoice', id: invoice.id });
+        // One event per rate: the advance return reports turnover and tax per rate.
+        for (const group of groups) {
+          if (group.vatCents === 0 && group.netCents === 0) continue;
+          outputVatByIssue.push({ date: invoice.issueDate, cents: group.vatCents, source: 'invoice', id: invoice.id, ...rateOf(group.rateBp), netCents: group.netCents });
+        }
       }
     }
 
@@ -355,9 +367,9 @@ function computeRevenue(
     let paidUntilYearEnd = 0;
     for (const payment of payments) {
       const paidAfter = paidBefore + payment.cents;
-      // The tax share of what was paid so far, capped at the tax on the invoice.
-      const vatShare = (paid: number) => (invoice.grossCents > 0 ? Math.min(vat, Math.round((vat * Math.min(paid, invoice.grossCents)) / invoice.grossCents)) : 0);
-      const vatPart = vatShare(paidAfter) - vatShare(paidBefore);
+      // The tax share of what was paid so far, per rate, capped at the tax of each rate.
+      const split = splitPayment(groups, invoice.grossCents, paidBefore, payment.cents).parts;
+      const vatPart = split.reduce((s, part) => s + part.vatCents, 0);
       const netPart = payment.cents - vatPart;
       paidBefore = paidAfter;
       if (payment.date <= yearEnd) paidUntilYearEnd += payment.cents;
@@ -365,7 +377,10 @@ function computeRevenue(
 
       result.receivedCents += payment.cents;
       byMonth[Number(payment.date.slice(5, 7)) - 1] += netPart;
-      if (vatPart !== 0) outputVatByPayment.push({ date: payment.date, cents: vatPart, source: 'invoice', id: invoice.id });
+      for (const part of split) {
+        if (part.vatCents === 0 && part.netCents === 0) continue;
+        outputVatByPayment.push({ date: payment.date, cents: part.vatCents, source: 'invoice', id: invoice.id, ...rateOf(part.rateBp), netCents: part.netCents });
+      }
       if (invoice.declaredInYear !== null && invoice.declaredInYear !== facts.year) {
         result.excludedCents += payment.cents;
         continue;

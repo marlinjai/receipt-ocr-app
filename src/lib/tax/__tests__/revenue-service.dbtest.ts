@@ -227,6 +227,37 @@ describe('status over time and regular taxation', () => {
     expect((await getTaxSettings(db, ws.workspaceId)).smallBusiness).toBe(false);
   });
 
+  it('an invoice with two rates keeps its groups, reports each rate, and loses them when changed to one rate', async () => {
+    const { ws, ctx } = await workspace(false);
+    await saveVatSettings(db, ctx, { frequency: 'quarterly', method: 'issued' });
+    const groups = [
+      { rateBp: 700, netCents: 50_000, vatCents: 3_500 },
+      { rateBp: 1900, netCents: 100_000, vatCents: 19_000 },
+    ];
+    const id = await saveInvoice(db, ctx, null, invoice({ treatment: 'mixed', grossCents: 172_500, vatCents: 22_500, taxGroups: groups, issueDate: '2026-02-20', payments: [{ date: '2026-04-05', cents: 172_500 }] }));
+    let view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.revenue.invoices[0]).toMatchObject({ treatment: 'mixed', taxGroups: [groups[1], groups[0]] });
+    expect(view.vat.year?.periods[0].outputByRate).toEqual([
+      { rateBp: 1900, netCents: 100_000, vatCents: 19_000 },
+      { rateBp: 700, netCents: 50_000, vatCents: 3_500 },
+    ]);
+    expect(line(view, 'euer.revenue_taxable')).toBe(150_000);
+    expect(line(view, 'euer.vat_received')).toBe(22_500);
+
+    // Groups that miss the total by a cent are refused, so is a single group, and nothing changes.
+    expect(await code(saveInvoice(db, ctx, id, invoice({ treatment: 'mixed', grossCents: 172_501, vatCents: 22_500, taxGroups: groups, issueDate: '2026-02-20' })))).toBe('invalid_tax_groups');
+    expect(await code(saveInvoice(db, ctx, id, invoice({ treatment: 'mixed', grossCents: 53_500, vatCents: 3_500, taxGroups: [groups[0]], issueDate: '2026-02-20' })))).toBe('invalid_tax_groups');
+    view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.revenue.invoices[0].taxGroups).toHaveLength(2);
+
+    // Back to one rate: the stored groups go, the one group follows from the total.
+    await saveInvoice(db, ctx, id, invoice({ treatment: 'standard', grossCents: 119_000, vatCents: 19_000, issueDate: '2026-02-20', payments: [{ date: '2026-04-05', cents: 119_000 }] }));
+    expect((await db.taxIssuedInvoice.findUniqueOrThrow({ where: { id } })).taxGroups).toBeNull();
+    view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.revenue.invoices[0].taxGroups).toBeNull();
+    expect(view.vat.year?.periods[0].outputByRate).toEqual([{ rateBp: 1900, netCents: 100_000, vatCents: 19_000 }]);
+  });
+
   it('tax paid to the tax office and refunds are lines of their year, and can be removed', async () => {
     const { ws, ctx } = await workspace(false);
     await saveInvoice(db, ctx, null, invoice({ treatment: 'standard', grossCents: 119_000, vatCents: 19_000 }));

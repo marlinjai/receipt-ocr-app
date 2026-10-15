@@ -110,10 +110,19 @@ export type InvoiceTreatment =
   | 'standard'
   /** Tax at the reduced rate. */
   | 'reduced'
+  /** Tax at more than one rate: the invoice keeps one group per rate (`InvoiceFact.taxGroups`). */
+  | 'mixed'
   /** No tax and outside the small-business rule: exempt, not taxable here, or the client owes the tax. */
   | 'not_taxable';
 
-export const INVOICE_TREATMENTS: readonly InvoiceTreatment[] = ['small_business', 'standard', 'reduced', 'not_taxable'];
+export const INVOICE_TREATMENTS: readonly InvoiceTreatment[] = ['small_business', 'standard', 'reduced', 'mixed', 'not_taxable'];
+
+/** One rate of an issued invoice: the net amount at that rate and the tax on it. */
+export interface TaxGroup {
+  rateBp: number;
+  netCents: number;
+  vatCents: number;
+}
 
 /** An invoice the business issued, with the money received for it. */
 export interface InvoiceFact {
@@ -125,6 +134,8 @@ export interface InvoiceFact {
   /** The value-added tax in the total; 0 where none is shown. */
   vatCents: number;
   treatment: InvoiceTreatment;
+  /** For `mixed` only: one group per rate, adding up to the total and the tax. */
+  taxGroups?: TaxGroup[] | null;
   /** Money received for it, each with its day. Revenue counts on these days (cash basis). */
   payments: Array<{ date: string; cents: number }>;
   /**
@@ -242,7 +253,11 @@ export type InvoiceCheckKind =
    * Set by the finance service, not by `computeYear`, because it depends on
    * today rather than on the year.
    */
-  | 'invoice_overdue';
+  | 'invoice_overdue'
+  /** A mixed invoice whose stored groups no longer read: its tax counts, under no rate. */
+  | 'invoice_tax_groups_unreadable'
+  /** A mixed invoice whose stated tax of a rate differs by more than a cent from net times rate (accepted as stated). */
+  | 'invoice_tax_group_deviates';
 
 export interface InvoiceResult {
   invoiceId: string;
@@ -262,6 +277,9 @@ export interface VatEvent {
   cents: number;
   source: 'invoice' | 'item' | 'asset';
   id: string;
+  /** For tax charged to a client: the rate and the turnover (without tax) the tax was charged on. */
+  rateBp?: number;
+  netCents?: number;
 }
 
 export interface RevenueResult {

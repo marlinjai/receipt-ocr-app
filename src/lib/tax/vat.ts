@@ -18,6 +18,13 @@ export type VatFrequency = 'monthly' | 'quarterly';
 /** `issued`: owed when the invoice is issued. `received`: owed when the client pays. */
 export type VatMethod = 'issued' | 'received';
 
+/** Turnover and the tax on it at one rate, as the advance return asks for them. */
+export interface RateTotal {
+  rateBp: number;
+  netCents: number;
+  vatCents: number;
+}
+
 export interface VatPeriod {
   /** 1 to 12 for months, 1 to 4 for quarters. */
   index: number;
@@ -28,6 +35,8 @@ export interface VatPeriod {
   inputVatCents: number;
   /** Output minus input: positive is owed to the tax office, negative is a refund. */
   dueCents: number;
+  /** The tax charged to clients split by rate, highest rate first, each with the turnover it was charged on. */
+  outputByRate: RateTotal[];
   /** The events behind the two figures, so each can be traced to its invoice or receipt. */
   output: VatEvent[];
   input: VatEvent[];
@@ -35,6 +44,7 @@ export interface VatPeriod {
 
 export interface VatYear {
   periods: VatPeriod[];
+  outputByRate: RateTotal[];
   outputVatCents: number;
   inputVatCents: number;
   dueCents: number;
@@ -64,6 +74,7 @@ export function vatYear(
       outputVatCents: 0,
       inputVatCents: 0,
       dueCents: 0,
+      outputByRate: [],
       output: [],
       input: [],
     };
@@ -85,13 +96,30 @@ export function vatYear(
     period.inputVatCents += event.cents;
     period.input.push(event);
   }
-  for (const period of periods) period.dueCents = period.outputVatCents - period.inputVatCents;
+  for (const period of periods) {
+    period.dueCents = period.outputVatCents - period.inputVatCents;
+    period.outputByRate = byRate(period.output);
+  }
 
   const total = (pick: (p: VatPeriod) => number) => periods.reduce((s, p) => s + pick(p), 0);
   return {
     periods,
+    outputByRate: byRate(periods.flatMap((p) => p.output)),
     outputVatCents: total((p) => p.outputVatCents),
     inputVatCents: total((p) => p.inputVatCents),
     dueCents: total((p) => p.dueCents),
   };
+}
+
+/** Sum output events by rate; an event without a rate is left to the period's totals. */
+function byRate(events: readonly VatEvent[]): RateTotal[] {
+  const totals = new Map<number, RateTotal>();
+  for (const event of events) {
+    if (event.rateBp === undefined) continue;
+    const total = totals.get(event.rateBp) ?? { rateBp: event.rateBp, netCents: 0, vatCents: 0 };
+    total.netCents += event.netCents ?? 0;
+    total.vatCents += event.cents;
+    totals.set(event.rateBp, total);
+  }
+  return [...totals.values()].sort((a, b) => b.rateBp - a.rateBp);
 }

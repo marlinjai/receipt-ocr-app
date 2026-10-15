@@ -1,10 +1,10 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { Fragment, useId, useState } from 'react';
 import Link from 'next/link';
 import { formatDay } from '@/lib/meals/messages';
 import type { StatementView } from '@/lib/tax/service';
-import type { VatFrequency, VatMethod } from '@/lib/tax/vat';
+import type { RateTotal, VatFrequency, VatMethod } from '@/lib/tax/vat';
 import { MONTHS, euro, parseEuro } from './amounts';
 
 interface Props {
@@ -16,6 +16,13 @@ interface Props {
   onSettings: (input: { frequency: VatFrequency; method: VatMethod }) => void;
   onSettlement: (input: { date: string; cents: number; direction: 'paid' | 'refunded' }, done: () => void) => void;
   onRemoveSettlement: (settlementId: string) => void;
+}
+
+/** The turnover and tax per rate, as the advance return asks for them. */
+function rateLine(totals: readonly RateTotal[]): string {
+  return totals
+    .map((t) => `zu ${(t.rateBp / 100).toLocaleString('de-DE')} %: Umsatz ${euro(t.netCents)}, Steuer ${euro(t.vatCents)}`)
+    .join(' · ');
 }
 
 const statusLabel = (smallBusiness: boolean) => (smallBusiness ? 'Kleinunternehmerregelung (§ 19)' : 'Regelbesteuerung');
@@ -169,17 +176,28 @@ export default function VatTab({ view, busy, error, onStatusChange, onRemoveStat
                 </thead>
                 <tbody>
                   {year.periods.map((period) => (
-                    <tr key={period.index} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                    <Fragment key={period.index}>
+                    <tr className="border-t" style={{ borderColor: 'var(--border)' }}>
                       <th scope="row" className="py-1 text-left font-normal">
                         {year.periods.length === 12 ? MONTHS[period.index - 1] : `${period.index}. Quartal`}
                         <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                          {period.output.length + period.input.length > 0 ? `${period.output.length} Rechnungen, ${period.input.length} Belege` : ''}
+                          {period.output.length + period.input.length > 0
+                            ? `${new Set(period.output.map((e) => e.id)).size} Rechnungen, ${new Set(period.input.map((e) => e.id)).size} Belege`
+                            : ''}
                         </span>
                       </th>
                       <td className="py-1 text-right">{euro(period.outputVatCents)}</td>
                       <td className="py-1 text-right">{euro(period.inputVatCents)}</td>
                       <td className="py-1 text-right">{period.dueCents < 0 ? `Erstattung ${euro(-period.dueCents)}` : euro(period.dueCents)}</td>
                     </tr>
+                    {period.outputByRate.length > 0 && (
+                      <tr>
+                        <td colSpan={4} className="pb-1 text-xs" style={{ color: 'var(--muted)' }}>
+                          {rateLine(period.outputByRate)}
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
                 <tfoot>
@@ -189,6 +207,13 @@ export default function VatTab({ view, busy, error, onStatusChange, onRemoveStat
                     <td className="py-1 text-right">{euro(year.inputVatCents)}</td>
                     <td className="py-1 text-right">{year.dueCents < 0 ? `Erstattung ${euro(-year.dueCents)}` : euro(year.dueCents)}</td>
                   </tr>
+                  {year.outputByRate.length > 0 && (
+                    <tr>
+                      <td colSpan={4} className="pb-1 text-xs font-normal" style={{ color: 'var(--muted)' }}>
+                        {rateLine(year.outputByRate)}
+                      </td>
+                    </tr>
+                  )}
                 </tfoot>
               </table>
             )}

@@ -45,18 +45,19 @@ describe('splitting the filters of a list query', () => {
   });
 
   it('drops a date comparison that has no value yet: it filters nothing', () => {
-    expect(split([{ columnId: 'date', operator: 'equals', value: null }])).toEqual({ dayFilters: [], adapterFilters: [] });
-    expect(split([{ columnId: 'date', operator: 'lessThan', value: '' }])).toEqual({ dayFilters: [], adapterFilters: [] });
+    expect(split([{ columnId: 'date', operator: 'equals', value: null }])).toEqual({ dayFilters: [], adapterFilters: [], dayPrefixes: [] });
+    expect(split([{ columnId: 'date', operator: 'lessThan', value: '' }])).toEqual({ dayFilters: [], adapterFilters: [], dayPrefixes: [] });
   });
 
   it('turns "is" a day into a text match on the start of the stored date, which the adapter answers in pages', () => {
     expect(split([{ columnId: 'date', operator: 'equals', value: '2025-01-02' }])).toEqual({
       // Still a date comparison too, so a group is kept or dropped by what it holds.
       dayFilters: [{ columnId: 'date', operator: 'equals', day: '2025-01-02' }],
-      adapterFilters: [{ columnId: 'date', operator: 'startsWith', value: '2025-01-02' }],
+      adapterFilters: [],
+      dayPrefixes: [{ columnId: 'date', operator: 'startsWith', value: '2025-01-02' }],
     });
     // A value with a time is the day it names.
-    expect(split([{ columnId: 'date', operator: 'equals', value: '2025-01-02T22:00:00.000Z' }]).adapterFilters).toEqual([
+    expect(split([{ columnId: 'date', operator: 'equals', value: '2025-01-02T22:00:00.000Z' }]).dayPrefixes).toEqual([
       { columnId: 'date', operator: 'startsWith', value: '2025-01-02' },
     ]);
   });

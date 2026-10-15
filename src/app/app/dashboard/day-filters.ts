@@ -9,7 +9,9 @@ import { isGroupRow } from '@/lib/receipts-kind';
  * whole list even if it did not). Here a date is compared as the DAY it names,
  * read from the start of the stored text and never moved by a time zone, the
  * same rule the year chips use (`lib/receipt-years.ts`): an invoice of
- * 31 December 2024 is on that day whatever the clock of the server says.
+ * 31 December 2024 is on that day whatever the clock of the server says. A
+ * date column that keeps a time (when the meal details were entered) stores it
+ * in UTC, so there the day compared is the UTC day.
  */
 
 type DayOperator = 'equals' | 'notEquals' | 'greaterThan' | 'greaterThanOrEquals' | 'lessThan' | 'lessThanOrEquals';
@@ -49,21 +51,24 @@ export function dayOf(value: CellValue | undefined): string | null {
 
 /**
  * Splits the filters of a list query: the date comparisons the app answers, and
- * everything else, which goes to the adapter as before. "Is" a day also becomes
- * a text match on the start of the stored date for the adapter, so the database
- * reads only that day's receipts (the day is validated, so it carries no
- * wildcard); it stays a date comparison as well, so the groups are kept or
- * dropped by what they hold, as for "after" and "before". A date comparison
+ * everything else, which goes to the adapter as before. "Is" a day also gives
+ * a text match on the start of the stored date (`dayPrefixes`, the day is
+ * validated, so it carries no wildcard) that a query reading only receipts may
+ * add, so the database reads only that day's; it stays a date comparison as
+ * well, so the groups are kept or dropped by what they hold, as for "after" and
+ * "before". A query that also reads the groups must not add it: a group has no
+ * date and the match would drop every group. A date comparison
  * without a value (the filter was just added and no day is picked yet) filters
  * nothing, as a filter without a value does in the filter bar.
  */
 export function splitDayFilters(
   filters: readonly QueryFilter[] | undefined,
   columns: readonly Pick<Column, 'id' | 'type'>[],
-): { dayFilters: DayFilter[]; adapterFilters: QueryFilter[] } {
+): { dayFilters: DayFilter[]; adapterFilters: QueryFilter[]; dayPrefixes: QueryFilter[] } {
   const types = new Map(columns.map((c) => [c.id, c.type as string]));
   const dayFilters: DayFilter[] = [];
   const adapterFilters: QueryFilter[] = [];
+  const dayPrefixes: QueryFilter[] = [];
   for (const filter of filters ?? []) {
     if (!DATE_TYPES.has(types.get(filter.columnId) ?? '') || !DAY_OPERATORS.has(filter.operator)) {
       adapterFilters.push(filter);
@@ -71,10 +76,10 @@ export function splitDayFilters(
     }
     if (filter.value === null || filter.value === undefined || filter.value === '') continue;
     const day = dayOf(filter.value);
-    if (filter.operator === 'equals' && day !== null) adapterFilters.push({ columnId: filter.columnId, operator: 'startsWith', value: day });
+    if (filter.operator === 'equals' && day !== null) dayPrefixes.push({ columnId: filter.columnId, operator: 'startsWith', value: day });
     dayFilters.push({ columnId: filter.columnId, operator: filter.operator as DayOperator, day });
   }
-  return { dayFilters, adapterFilters };
+  return { dayFilters, adapterFilters, dayPrefixes };
 }
 
 function matchesDay(day: string | null, filter: DayFilter): boolean {

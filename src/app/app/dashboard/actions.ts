@@ -231,7 +231,7 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
   const { years: asked, ...asks } = query ?? {};
   // The filter bar's date comparisons are answered here, on the day each date names (see `day-filters.ts`):
   // the adapter's own comparisons fail on this database. Every other filter goes to the adapter as before.
-  const { dayFilters, adapterFilters } = splitDayFilters(asks.filters, columns);
+  const { dayFilters, adapterFilters, dayPrefixes } = splitDayFilters(asks.filters, columns);
   const rest: QueryOptions = { ...asks, filters: adapterFilters };
   let years = cleanScopeYears(asked);
   const dateId = columns.find((c) => c.name === 'Date')?.id;
@@ -252,10 +252,12 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
   if (bounded && bounded.length === 0) return { items: [], total: 0, hasMore: false } as QueryResult<Row>;
   if (bounded) years = bounded;
   if (!years || !dateId || sorted) {
-    // A list with a date comparison that names no years (sorted, or only "is not") comes in one answer: which
-    // rows pass is only known once they are read, so a page of the adapter could not be counted. A further page
-    // is empty. It reads every row the other filters leave, the recognized text included until it is left out
-    // below: a cost paid only for these rare lists, which the filter bar's own operators do not make unsorted.
+    // A list with a date comparison that bounds no years comes in one answer: which rows pass is only known
+    // once they are read, so a page of the adapter could not be counted. A further page is empty. That is a
+    // sorted list, or a comparison on a date column other than the invoice date (when the meal details were
+    // entered). It reads every row the other filters leave, groups included (so no day match is added: it
+    // would drop them), and the recognized text until it is left out below. On the invoice date without a
+    // sort, the filter bar's operators always take the per-year path below.
     if ((rest.offset ?? 0) > 0) return { items: [], total: rest.offset ?? 0, hasMore: false } as QueryResult<Row>;
     const every = await readEveryRow((offset, limit) => adapter.getRows(tableId, { ...rest, offset, limit }), SCOPED_LIST_LIMIT);
     const items = applyDayFilters(every, dayFilters, columns);
@@ -272,7 +274,8 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
     years.map((year) =>
       adapter.getRows(tableId, {
         ...rest,
-        filters: [...(rest.filters ?? []), { columnId: dateId, operator: 'startsWith', value: `${year}-` }],
+        // Only receipts are read here (the groups come below), so "is" a day may narrow them in the database.
+        filters: [...(rest.filters ?? []), ...dayPrefixes, { columnId: dateId, operator: 'startsWith', value: `${year}-` }],
         limit: SCOPED_LIST_LIMIT,
         offset: 0,
       }),

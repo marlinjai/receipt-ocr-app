@@ -20,6 +20,7 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 import { getRows } from './actions';
+import { MEAL_COLUMNS } from '@/lib/receipts-constants';
 import { createGroup } from '@/lib/groups/service';
 
 let ws: TestWorkspace;
@@ -85,6 +86,25 @@ describe('the filter bar on the date', () => {
     expect(names((await getRows(ws.tableId, { filters: on('equals', '2025-06-15'), years: [2025], limit: 200 } as never)).items)).toEqual(['group', 'jun']);
     // A day none of the group's receipts is on: the group does not come along empty.
     expect(names((await getRows(ws.tableId, { filters: on('equals', '2025-01-02'), years: [2025], limit: 200 } as never)).items)).toEqual(['jan2']);
+  });
+
+  it('"is" a day on a sorted list keeps the group too', async () => {
+    const nameId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Name')!.id;
+    const result = await getRows(ws.tableId, { filters: on('equals', '2025-06-15'), sorts: [{ columnId: nameId, direction: 'asc' }], limit: 200 });
+    expect(result.items.map((r) => r.cells[nameId])).toEqual(['Gruppe', 'jun']);
+  });
+
+  it('answers on a second date column, which bounds no years', async () => {
+    const w = await createWorkspace();
+    session.current = { memberships: [{ id: w.workspaceId, tenantId: w.tenantId }], activeWorkspace: { id: w.workspaceId } };
+    const detailsId = (await w.adapter.getColumns(w.tableId)).find((c) => c.name === MEAL_COLUMNS.detailsAt)!.id;
+    const early = await w.addReceipt({ ...base, Name: 'early', Date: '2025-03-01', [MEAL_COLUMNS.detailsAt]: '2025-03-02T12:00:00.000Z' });
+    const late = await w.addReceipt({ ...base, Name: 'late', Date: '2024-03-01', [MEAL_COLUMNS.detailsAt]: '2025-04-02T12:00:00.000Z' });
+    await w.addReceipt({ ...base, Name: 'without', Date: '2025-05-01' });
+    const result = await getRows(w.tableId, { filters: [{ columnId: detailsId, operator: 'greaterThan', value: '2025-03-15' }], limit: 200 });
+    expect(result.items.map((r) => r.id)).toEqual([late]);
+    const sameDay = await getRows(w.tableId, { filters: [{ columnId: detailsId, operator: 'equals', value: '2025-03-02' }], limit: 200 });
+    expect(sameDay.items.map((r) => r.id)).toEqual([early]);
   });
 
   it('answers in the years chosen above the table too', async () => {

@@ -119,6 +119,19 @@ describe('a list narrowed to years', () => {
     expect(ids(result.items)).toEqual(expect.arrayContaining([a, b]));
   });
 
+  it('a sorted list comes in one answer, each row once, whatever the page size asked for', async () => {
+    const categoryId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Category')!.id;
+    // Every receipt shares its category: a paged sort on it could swap rows between pages.
+    const first = await getRows(ws.tableId, { sorts: [{ columnId: categoryId, direction: 'asc' }], limit: 2 });
+    const all = await getRows(ws.tableId, { limit: 5000 });
+    expect(first.hasMore).toBe(false);
+    expect(first.total).toBe(first.items.length);
+    expect(new Set(ids(first.items)).size).toBe(first.items.length);
+    expect([...ids(first.items)].sort()).toEqual([...ids(all.items)].sort());
+    const more = await getRows(ws.tableId, { sorts: [{ columnId: categoryId, direction: 'asc' }], limit: 2, offset: 2 });
+    expect(more).toMatchObject({ items: [], hasMore: false });
+  });
+
   it('says in which year a receipt lies, for a link that names it', async () => {
     const id = await ws.addReceipt({ ...base, Name: 'year of', Date: '2021-12-31T00:00:00.000Z' });
     const undated = await ws.addReceipt({ ...base, Name: 'no date' });

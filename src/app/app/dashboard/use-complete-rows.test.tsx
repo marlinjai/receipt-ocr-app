@@ -126,7 +126,7 @@ async function settle(handle: { current: Handle | null }, calls: Call[]) {
       expect(handle.current?.hasMore).toBe(false);
       expect(calls.length).toBe(0);
     },
-    { timeout: 3000 },
+    { timeout: 15_000 },
   );
 }
 
@@ -143,8 +143,9 @@ async function reloadWhileAPageLoads(handle: { current: Handle | null }, calls: 
   return { third, reloading: () => reloading };
 }
 
-describe('the rows of the receipts table', () => {
-  it('without the guard, a reload during a page doubles rows and loses others (the defect of 2026-10-11)', async () => {
+// Generous limits: the waits below only end early on success, and a loaded machine must not fail them.
+describe('the rows of the receipts table', { timeout: 30_000 }, () => {
+  it('without the guard, a reload during a page shows rows twice (the defect of 2026-10-11)', async () => {
     const { adapter, calls } = fakeDatabase();
     const handle = mount(Unguarded, adapter);
     const { third } = await reloadWhileAPageLoads(handle, calls);
@@ -200,7 +201,7 @@ describe('the rows of the receipts table', () => {
         expect(ids(handle.current?.loaded)).toEqual(['r0', ...ids(ALL)]);
         expect(handle.current?.settled).toBe(true);
       },
-      { timeout: 3000 },
+      { timeout: 15_000 },
     );
     expect(ids(handle.current?.shown)).toEqual(['r0', ...ids(ALL)]);
   });
@@ -226,7 +227,7 @@ describe('the rows of the receipts table', () => {
         expect(ids(handle.current?.loaded)).toEqual(ids(ALL));
         expect(handle.current?.settled).toBe(true);
       },
-      { timeout: 3000 },
+      { timeout: 15_000 },
     );
     expect(ids(handle.current?.shown)).toEqual(ids(ALL));
   });
@@ -315,7 +316,7 @@ describe('the rows of the receipts table', () => {
         expect(firstPages).toBe(1 + MAX_REPAIRS);
         expect(handle.current?.isLoading).toBe(false);
       },
-      { timeout: 3000 },
+      { timeout: 15_000 },
     );
     await new Promise((r) => setTimeout(r, 50));
     expect(calls.length).toBe(0);

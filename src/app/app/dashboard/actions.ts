@@ -238,9 +238,17 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
   // A sorted list is not narrowed: the years are queried one by one, so a sort across them (and the place of
   // the groups in it) could not be right. The browser filters the years then.
   const sorted = (rest.sorts?.length ?? 0) > 0;
-  if ((!years || !dateId || sorted) && dayFilters.length === 0) {
+  if ((!years || !dateId) && !sorted && dayFilters.length === 0) {
     const result = await adapter.getRows(tableId, rest);
     return { ...result, items: rowsWithoutText(result.items, textIds) };
+  }
+  if (sorted && dayFilters.length === 0) {
+    // A sorted list comes in one answer. The adapter orders by the sort column alone, so rows that share a
+    // value (a category, a status) can change places between two pages and a paged list would show some twice
+    // and others never. A further page is empty.
+    if ((rest.offset ?? 0) > 0) return { items: [], total: rest.offset ?? 0, hasMore: false } as QueryResult<Row>;
+    const items = await readEveryRow((offset, limit) => adapter.getRows(tableId, { ...rest, offset, limit }), SCOPED_LIST_LIMIT);
+    return { items: rowsWithoutText(items, textIds), total: items.length, hasMore: false } as QueryResult<Row>;
   }
   // "Is", "after" and "before" on the invoice date bound the years a receipt can lie in: the list then reads
   // only those years, as the year chips do, and compares the days of what they hold. (Like the year chips,

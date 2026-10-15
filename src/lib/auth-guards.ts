@@ -4,7 +4,7 @@ import type { AppSession } from '@marlinjai/auth-brain-nextjs';
 import { safeTableName } from '@marlinjai/data-table-adapter-shared';
 import { prisma } from '@/lib/prisma';
 import { auth, type ReceiptsAction } from '@/lib/auth';
-import { sessionMayAccessWorkspace, sessionWorkspaceId } from '@/lib/auth-workspace';
+import { requestedUploadWorkspace, sessionMayAccessWorkspace, sessionWorkspaceId } from '@/lib/auth-workspace';
 
 export { sessionMayAccessWorkspace, sessionWorkspaceId };
 
@@ -43,6 +43,21 @@ export async function requireReceiptsSession(): Promise<AppSession> {
   const session = await auth.getSession();
   if (!session) throw new ReceiptsAuthError(401);
   return session;
+}
+
+/**
+ * Authorize an upload into the workspace the upload NAMES (the upload page
+ * pins its company when it opens, so a company switch in another tab or
+ * session cannot redirect it). The workspace must be one of this session's
+ * memberships and the session must hold `receipts.upload` on it; anything
+ * else is a 403, never a fallback to the active workspace.
+ */
+export async function requireUploadWorkspace(requested: unknown): Promise<{ session: AppSession; workspaceId: string }> {
+  const session = await requireReceiptsSession();
+  const workspaceId = requestedUploadWorkspace(session, requested);
+  if (!workspaceId) throw new ReceiptsAuthError(403);
+  if (!isDevBypass(session)) await auth.requireAction('receipts.upload', workspaceId);
+  return { session, workspaceId };
 }
 
 

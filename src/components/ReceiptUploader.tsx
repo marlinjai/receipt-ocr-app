@@ -21,8 +21,13 @@ export interface BatchStats {
 export type ProcessedReceipt = SavedReceipt;
 
 interface ReceiptUploaderProps {
-  /** Save one recognized file as a receipt row. Receives the file's content hash. */
-  onProcessFile: (result: UploadResult, options: { sha256: string }) => Promise<ProcessedReceipt>;
+  /**
+   * The company files dropped from now on go into. Each file keeps the company
+   * it was dropped for, even when this changes while it is still on its way.
+   */
+  workspaceId: string;
+  /** Save one recognized file as a receipt row. Receives the file's content hash and its company. */
+  onProcessFile: (result: UploadResult, options: { sha256: string; workspaceId: string }) => Promise<ProcessedReceipt>;
   onAllComplete: (stats: BatchStats) => void;
   /** Delete a row that was just created (the user discarded a look-alike receipt). */
   onDiscardRow: (rowId: string) => Promise<void>;
@@ -40,10 +45,12 @@ interface QueueItem {
   existing?: ExistingReceiptRef;
   /** phase 'done': a look-alike receipt (same vendor, day, total) awaiting the user's call. */
   similar?: ExistingReceiptRef;
+  /** phase 'done': the user's other companies that already hold exactly this file. */
+  elsewhere?: string[];
   rowId?: string;
   /** phase 'done', but the text could not be read: saved for manual entry. */
   notice?: string;
-  /** Set once the user dealt with `existing` or `similar`. */
+  /** Set once the user dealt with `existing`, `similar` or `elsewhere`. */
   resolution?: 'skipped' | 'kept' | 'discarded';
   busy?: boolean;
 }
@@ -66,18 +73,28 @@ const ACTIVE_PHASES: ItemPhase[] = ['pending', 'checking', 'uploading', 'ocr', '
 /** An item still waits for a decision by the user. */
 function needsAttention(item: QueueItem): boolean {
   if (item.resolution) return false;
-  return item.phase === 'duplicate' || (item.phase === 'done' && Boolean(item.similar));
+  return item.phase === 'duplicate' || (item.phase === 'done' && hasWarning(item));
 }
 
-export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscardRow }: ReceiptUploaderProps) {
+/** A saved item that may be one receipt too many: a look-alike here, or the same file in another company. */
+function hasWarning(item: QueueItem): boolean {
+  return Boolean(item.similar) || (item.elsewhere?.length ?? 0) > 0;
+}
+
+/** "Firma A", "Firma A and Firma B", "Firma A, Firma B and Firma C". */
+function listNames(names: string[]): string {
+  return names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+export default function ReceiptUploader({ workspaceId, onProcessFile, onAllComplete, onDiscardRow }: ReceiptUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   // "One receipt per page": a multi-page scan becomes one upload per page.
   const [splitPages, setSplitPages] = useState(false);
   const [preparing, setPreparing] = useState(false);
-  const pendingRef = useRef<{ id: string; file: File; allowDuplicate?: boolean }[]>([]);
-  // Files of items that stopped as duplicates, kept for "upload anyway".
-  const heldFilesRef = useRef(new Map<string, File>());
+  const pendingRef = useRef<{ id: string; file: File; workspaceId: string; allowDuplicate?: boolean }[]>([]);
+  // Files of items that stopped as duplicates, kept for "upload anyway" into the same company.
+  const heldFilesRef = useRef(new Map<string, { file: File; workspaceId: string }>());
   const processingRef = useRef(false);
   const callbackRefs = useRef({ onProcessFile, onAllComplete, onDiscardRow });
   useEffect(() => {
@@ -91,12 +108,12 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscar
   const processQueue = useCallback(async () => {
     if (processingRef.current) return;
     processingRef.current = true;
-    const deps = createBrowserDeps((file, ocr, options) =>
-      callbackRefs.current.onProcessFile({ file: file as FileInfo, ocrResult: ocr }, options),
-    );
-
     while (pendingRef.current.length > 0) {
-      const { id, file, allowDuplicate } = pendingRef.current.shift()!;
+      const { id, file, workspaceId: target, allowDuplicate } = pendingRef.current.shift()!;
+      const deps = createBrowserDeps(
+        (uploaded, ocr, options) => callbackRefs.current.onProcessFile({ file: uploaded as FileInfo, ocrResult: ocr }, options),
+        target,
+      );
 
       updateItem(id, { phase: 'checking', progress: 0, error: undefined });
       try {
@@ -106,13 +123,14 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscar
           onProgress: (progress) => updateItem(id, { progress }),
         });
         if (outcome.kind === 'duplicate') {
-          heldFilesRef.current.set(id, file);
+          heldFilesRef.current.set(id, { file, workspaceId: target });
           updateItem(id, { phase: 'duplicate', existing: outcome.existing });
         } else {
           updateItem(id, {
             phase: 'done',
             rowId: outcome.rowId,
             similar: outcome.similar ?? undefined,
+            elsewhere: outcome.elsewhere.length > 0 ? outcome.elsewhere : undefined,
             notice:
               outcome.attention === 'ocr_failed'
                 ? 'Saved without text: the receipt could not be read. Open it in the dashboard to fill in the fields.'
@@ -157,10 +175,10 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscar
       error: f.error,
     }));
     if (items.length + failed.length === 0) return;
-    pendingRef.current.push(...files.map((f, i) => ({ id: items[i].id, file: f })));
+    pendingRef.current.push(...files.map((f, i) => ({ id: items[i].id, file: f, workspaceId })));
     setQueue(prev => [...prev, ...items, ...failed]);
     if (items.length > 0) processQueue();
-  }, [processQueue]);
+  }, [processQueue, workspaceId]);
 
   const addFiles = useCallback(async (files: File[]) => {
     const valid = files.filter(f => f.type.startsWith('image/') || f.type === 'application/pdf');
@@ -197,11 +215,11 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscar
   }, [splitPages, enqueue]);
 
   const uploadAnyway = useCallback((id: string) => {
-    const file = heldFilesRef.current.get(id);
-    if (!file) return;
+    const held = heldFilesRef.current.get(id);
+    if (!held) return;
     heldFilesRef.current.delete(id);
     updateItem(id, { phase: 'pending', existing: undefined });
-    pendingRef.current.push({ id, file, allowDuplicate: true });
+    pendingRef.current.push({ id, file: held.file, workspaceId: held.workspaceId, allowDuplicate: true });
     processQueue();
   }, [updateItem, processQueue]);
 
@@ -250,7 +268,7 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscar
   const attentionCount = queue.filter(needsAttention).length;
   const succeededCount = queue.filter(q => q.phase === 'done' && q.resolution !== 'discarded').length;
   // The automatic hand-off was held back for a decision; offer it as a button.
-  const showContinue = !isProcessing && queue.length > 0 && queue.some(q => q.existing || q.similar || q.resolution);
+  const showContinue = !isProcessing && queue.length > 0 && queue.some(q => q.existing || hasWarning(q) || q.resolution);
 
   const splitToggle = (
     <label className="mt-3 flex cursor-pointer items-start gap-2.5 text-left text-xs" style={{ color: 'var(--muted)' }}>
@@ -456,18 +474,26 @@ export default function ReceiptUploader({ onProcessFile, onAllComplete, onDiscar
                     )}
                   </div>
                 )}
-                {item.phase === 'done' && item.similar && (
+                {item.phase === 'done' && hasWarning(item) && (
                   <div className="mt-1.5 text-xs" style={{ color: 'var(--muted)' }}>
                     {item.resolution === 'discarded' ? (
-                      <p>Discarded: the existing receipt “{item.similar.name}” was kept.</p>
+                      <p>Discarded: {item.similar ? `the existing receipt “${item.similar.name}” was kept.` : 'the new receipt was removed again.'}</p>
                     ) : item.resolution === 'kept' ? (
-                      <p>Kept both: this one and “{item.similar.name}”.</p>
+                      <p>Kept: {item.similar ? `this one and “${item.similar.name}”.` : 'this receipt stays in this company too.'}</p>
                     ) : (
                       <>
-                        <p>
-                          Saved, but it looks like a receipt you already have: “{item.similar.name}” has the same
-                          vendor, date and total.
-                        </p>
+                        {item.similar && (
+                          <p>
+                            Saved, but it looks like a receipt you already have: “{item.similar.name}” has the same
+                            vendor, date and total.
+                          </p>
+                        )}
+                        {item.elsewhere && item.elsewhere.length > 0 && (
+                          <p role="status">
+                            Saved, but exactly this file is already in your company {listNames(item.elsewhere)}. The
+                            same invoice in two companies is usually a mistake.
+                          </p>
+                        )}
                         <div className="mt-1.5 flex flex-wrap gap-2">
                           <button type="button" className="ui-btn ui-btn-sm" disabled={item.busy} onClick={() => keepSimilar(item.id)}>
                             Keep both

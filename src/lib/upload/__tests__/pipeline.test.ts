@@ -7,7 +7,8 @@ import { SplitPdfError, splitPdfPages } from '../split-pdf';
 
 const OCR = { fullText: 'Testlokal 12,50', blocks: [], confidence: 0.9 };
 const SAVED = { rowId: 'row-1', possibleDuplicateOf: null, category: 'Bewirtung', isMeal: true, attention: null };
-const DONE = { kind: 'done', rowId: 'row-1', similar: null, category: 'Bewirtung', isMeal: true, attention: null, ocrError: null };
+const DONE = { kind: 'done', rowId: 'row-1', similar: null, category: 'Bewirtung', isMeal: true, attention: null, ocrError: null, elsewhere: [] };
+const CLEAN = { existing: null, elsewhere: [] as string[] };
 
 function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps & { calls: string[] } {
   const calls: string[] = [];
@@ -23,7 +24,7 @@ function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps & { calls: st
     }),
     checkDuplicate: vi.fn(async () => {
       calls.push('check');
-      return null;
+      return CLEAN;
     }),
     upload: vi.fn(async (_f, onProgress) => {
       calls.push('upload');
@@ -56,7 +57,7 @@ describe('runUploadPipeline', () => {
   });
 
   it('the same file again: reported as a duplicate and NOTHING is uploaded', async () => {
-    const d = deps({ checkDuplicate: vi.fn(async () => ({ rowId: 'row-0', name: 'Mittagessen Testlokal' })) });
+    const d = deps({ checkDuplicate: vi.fn(async () => ({ existing: { rowId: 'row-0', name: 'Mittagessen Testlokal' }, elsewhere: [] })) });
     const outcome = await runUploadPipeline(file, d);
     expect(outcome).toEqual({ kind: 'duplicate', existing: { rowId: 'row-0', name: 'Mittagessen Testlokal' } });
     expect(d.upload).not.toHaveBeenCalled();
@@ -64,12 +65,20 @@ describe('runUploadPipeline', () => {
     expect(d.save).not.toHaveBeenCalled();
   });
 
-  it('"upload anyway" skips the check and uploads', async () => {
-    const check = vi.fn(async () => ({ rowId: 'row-0', name: 'x' }));
+  it('"upload anyway" (backtrack after the duplicate stop) uploads, and still reports the copy in another company', async () => {
+    const check = vi.fn(async () => ({ existing: { rowId: 'row-0', name: 'x' }, elsewhere: ['Firma Zwei'] }));
     const d = deps({ checkDuplicate: check });
     const outcome = await runUploadPipeline(file, d, { allowDuplicate: true });
-    expect(outcome.kind).toBe('done');
-    expect(check).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ ...DONE, elsewhere: ['Firma Zwei'] });
+    expect(d.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('the same file in another of the user\'s companies: uploaded where asked, with a warning naming that company', async () => {
+    const d = deps({ checkDuplicate: vi.fn(async () => ({ existing: null, elsewhere: ['Firma Zwei'] })) });
+    const outcome = await runUploadPipeline(file, d);
+    expect(outcome).toEqual({ ...DONE, elsewhere: ['Firma Zwei'] });
+    expect(d.calls).toEqual(['prepare', 'hash', 'upload', 'ocr', 'save']);
+    expect(d.checkDuplicate).toHaveBeenCalledTimes(1);
   });
 
   it('the same receipt photographed twice: saved, with the similar receipt handed back for a warning', async () => {

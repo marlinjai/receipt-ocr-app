@@ -34,6 +34,13 @@ export interface QueuedCapture {
    * only tries to remove it. Null while the photo still waits to be sent.
    */
   sentAt: number | null;
+  /**
+   * The workspace (company) the photo was taken for, when the writer knew it:
+   * the app's camera does. The service worker and the offline page do not, and
+   * leave it out; such an entry goes to the company the upload page shows when
+   * it is sent.
+   */
+  workspaceId?: string | null;
 }
 
 export interface CaptureStore {
@@ -98,6 +105,7 @@ export function openCaptureStore(factory: IDBFactory = indexedDB): CaptureStore 
           lastError: typeof e.lastError === 'string' ? e.lastError : null,
           sentAt: typeof e.sentAt === 'number' ? e.sentAt : null,
           source: e.source ?? 'camera',
+          workspaceId: typeof e.workspaceId === 'string' && e.workspaceId ? e.workspaceId : null,
         }))
         .sort((a, b) => a.addedAt - b.addedAt);
     },
@@ -123,7 +131,12 @@ export function openCaptureStore(factory: IDBFactory = indexedDB): CaptureStore 
   };
 }
 
-export function newQueuedCapture(file: File | Blob, source: CaptureSource, now: number = Date.now()): QueuedCapture {
+export function newQueuedCapture(
+  file: File | Blob,
+  source: CaptureSource,
+  now: number = Date.now(),
+  workspaceId: string | null = null,
+): QueuedCapture {
   const name = file instanceof File && file.name ? file.name : `foto-${now}.jpg`;
   return {
     id: `${now}-${Math.random().toString(36).slice(2, 10)}`,
@@ -135,6 +148,7 @@ export function newQueuedCapture(file: File | Blob, source: CaptureSource, now: 
     attempts: 0,
     lastError: null,
     sentAt: null,
+    workspaceId,
   };
 }
 

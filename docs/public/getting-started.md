@@ -67,11 +67,12 @@ The app will be available at [http://localhost:3004](http://localhost:3004).
 
 ## Upload Your First Receipt
 
-1. Open the app in your browser
-2. Drag and drop one or more receipt images or PDFs onto the upload zone (or click to browse and select multiple files)
-3. Each file goes through the pipeline sequentially: upload to Storage Brain, OCR via Google Cloud Vision, AI classification, and saving to D1. Per-file progress indicators show the current phase.
-4. Fields like vendor, amounts, date, category, and SKR03 konto are extracted automatically
-5. You will be redirected to the dashboard once complete
+1. Open the app in your browser. "Upload into" names the company the uploads of this page go into: the company active when the page opened, or another of yours picked there. The choice belongs to this page only, so switching the company in another tab or session never moves an upload that is under way, and a photo waiting in the phone queue is sent to the company it was taken for.
+2. Before anything is uploaded, the file's content hash is checked: exactly this file in the same company stops the upload ("Upload anyway" overrides), the same file in another of your companies is uploaded with a warning naming that company, so it can be discarded right away.
+3. Drag and drop one or more receipt images or PDFs onto the upload zone (or click to browse and select multiple files)
+4. Each file goes through the pipeline sequentially: upload to Storage Brain, OCR via Google Cloud Vision, AI classification, and saving to D1. Per-file progress indicators show the current phase.
+5. Fields like vendor, amounts, date, category, and SKR03 konto are extracted automatically
+6. You will be redirected to the dashboard once complete (unless the uploads went into a company other than the active one, or a warning waits for your decision)
 
 ## View in Dashboard
 

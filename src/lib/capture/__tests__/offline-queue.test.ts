@@ -6,7 +6,7 @@ import { SENT_NOT_CLEARED, drainQueue, singleFlight } from '../drain';
 import { newQueuedCapture, openCaptureStore, queuedFile, type CaptureStore } from '../offline-queue';
 
 const DONE: PipelineOutcome = {
-  kind: 'done', rowId: 'row-1', similar: null, category: 'Bewirtung', isMeal: true, attention: null, ocrError: null,
+  kind: 'done', rowId: 'row-1', similar: null, category: 'Bewirtung', isMeal: true, attention: null, ocrError: null, elsewhere: [],
 };
 
 let factory: IDBFactory;
@@ -28,10 +28,17 @@ describe('capture queue (IndexedDB)', () => {
     const reopened = openCaptureStore(factory);
     const list = await reopened.list();
     expect(list.map((e) => e.name)).toEqual(['erstes.jpg', 'zweites.jpg']);
+    // Taken without naming a company: read back as "the page decides".
+    expect(list.map((e) => e.workspaceId)).toEqual([null, null]);
     expect(list[0]).toMatchObject({ source: 'camera', attempts: 0, lastError: null, type: 'image/jpeg' });
     const file = queuedFile(list[0]);
     expect(file.name).toBe('erstes.jpg');
     expect(file.size).toBe(3);
+  });
+
+  it('keeps the company a photo was taken for across a "reload"', async () => {
+    await store.add(newQueuedCapture(photo('firma.jpg'), 'camera', 1000, 'ws-eins'));
+    expect((await openCaptureStore(factory).list())[0].workspaceId).toBe('ws-eins');
   });
 
   it('removes and updates single entries', async () => {

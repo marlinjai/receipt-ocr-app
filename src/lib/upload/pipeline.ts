@@ -11,6 +11,12 @@ export interface ExistingReceiptRef {
   name: string;
 }
 
+export interface FileCheck {
+  existing: ExistingReceiptRef | null;
+  /** Names of the user's other companies that already hold exactly this file. */
+  elsewhere: string[];
+}
+
 export interface UploadedFileInfo {
   id: string;
   originalName: string;
@@ -32,8 +38,12 @@ export interface PipelineDeps {
   /** Scale and convert a photo for upload; other files pass through. */
   prepare: (file: File) => Promise<File>;
   hash: (file: File) => Promise<string>;
-  /** Is a file with this hash already in the workspace? */
-  checkDuplicate: (sha256: string) => Promise<ExistingReceiptRef | null>;
+  /**
+   * Is a file with this hash already in the workspace the upload is for
+   * (`existing`), and which of the user's other companies hold it too
+   * (`elsewhere`, their names only)?
+   */
+  checkDuplicate: (sha256: string) => Promise<FileCheck>;
   /** Upload the bytes; reports progress 0 to 100. */
   upload: (file: File, onProgress: (percent: number) => void) => Promise<UploadedFileInfo>;
   recognize: (file: UploadedFileInfo) => Promise<OcrResult>;
@@ -55,6 +65,12 @@ export type PipelineOutcome =
       attention: SavedReceipt['attention'];
       /** Why text recognition failed, when it did. The row exists regardless. */
       ocrError: string | null;
+      /**
+       * The user's other companies that already hold exactly this file. A
+       * warning, not a stop: the same invoice in two companies is usually a
+       * mistake, but it was uploaded where the page said, and can be discarded.
+       */
+      elsewhere: string[];
     };
 
 export interface PipelineOptions {
@@ -72,10 +88,10 @@ export async function runUploadPipeline(
   options.onPhase?.('checking');
   const prepared = await deps.prepare(file);
   const sha256 = await deps.hash(prepared);
-  if (!options.allowDuplicate) {
-    const existing = await deps.checkDuplicate(sha256);
-    if (existing) return { kind: 'duplicate', existing };
-  }
+  // The check runs on "upload anyway" too: only the stop is skipped then, the
+  // warning about another company still has to reach the user.
+  const check = await deps.checkDuplicate(sha256);
+  if (check.existing && !options.allowDuplicate) return { kind: 'duplicate', existing: check.existing };
 
   options.onPhase?.('uploading');
   const uploaded = await deps.upload(prepared, options.onProgress ?? (() => {}));
@@ -102,5 +118,6 @@ export async function runUploadPipeline(
     isMeal: saved.isMeal,
     attention: saved.attention,
     ocrError,
+    elsewhere: check.elsewhere,
   };
 }

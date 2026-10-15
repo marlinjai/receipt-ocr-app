@@ -4,7 +4,7 @@ import type { FileInfo } from '@/lib/storage';
 import type { OcrResult } from '@/lib/ocr-types';
 import { UploadStepError } from './errors';
 import { sha256Hex } from './hash';
-import type { ExistingReceiptRef, PipelineDeps, SavedReceipt, UploadedFileInfo } from './pipeline';
+import type { FileCheck, PipelineDeps, SavedReceipt, UploadedFileInfo } from './pipeline';
 import { prepareImage } from './prepare-image';
 
 /** The real endpoints behind the upload pipeline, shared by the batch uploader and the phone capture. */
@@ -44,24 +44,34 @@ async function request(input: string, init: RequestInit | undefined, what: strin
 export type SaveReceipt = (
   file: UploadedFileInfo,
   ocr: OcrResult | null,
-  options: { sha256: string },
+  options: { sha256: string; workspaceId: string },
 ) => Promise<SavedReceipt>;
 
-export function createBrowserDeps(save: SaveReceipt): PipelineDeps {
+/**
+ * The pipeline's network steps for an upload INTO `workspaceId`: the company
+ * the upload page showed when the file was chosen. It travels with the check
+ * and the save, so a company switch elsewhere (another tab, another session)
+ * cannot redirect an upload that is already under way.
+ */
+export function createBrowserDeps(save: SaveReceipt, workspaceId: string): PipelineDeps {
   return {
     prepare: prepareImage,
     hash: sha256Hex,
     async checkDuplicate(sha256) {
       const res = await request(
         '/api/upload/check',
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sha256 }) },
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sha256, workspaceId }) },
         'Duplicate check',
       );
+      if (res.status === 403) {
+        throw new UploadStepError('server', 'This company cannot be uploaded into from your account. Nothing was uploaded; reload the page.');
+      }
       if (!res.ok) {
         throw new UploadStepError('server', `Duplicate check failed (${res.status}). Nothing was uploaded; try again.`);
       }
-      const body = (await res.json()) as { duplicate: ExistingReceiptRef | null };
-      return body.duplicate ?? null;
+      const body = (await res.json()) as Partial<{ duplicate: FileCheck['existing']; elsewhere: unknown }>;
+      const elsewhere = Array.isArray(body.elsewhere) ? body.elsewhere.filter((n): n is string => typeof n === 'string') : [];
+      return { existing: body.duplicate ?? null, elsewhere };
     },
     async upload(file, onProgress) {
       // Step 1: request a presigned URL from our server
@@ -107,6 +117,6 @@ export function createBrowserDeps(save: SaveReceipt): PipelineDeps {
       }
       return (await ocrRes.json()) as OcrResult;
     },
-    save,
+    save: (file, ocr, options) => save(file, ocr, { ...options, workspaceId }),
   };
 }

@@ -30,7 +30,7 @@ import { isGroupRow, receiptsOnly } from '@/lib/receipts-kind';
 import { findSimilarReceipt, type ExistingReceipt } from '@/lib/upload/duplicates';
 import { isSha256Hex } from '@/lib/upload/hash';
 import { auth } from '@/lib/auth';
-import { requireReceiptsSession } from '@/lib/auth-guards';
+import { requireReceiptsSession, requireRowAccess, requireUploadWorkspace } from '@/lib/auth-guards';
 import { sessionWorkspaceId, tenantIdForWorkspace } from '@/lib/auth-workspace';
 import type { CellValue } from '@marlinjai/data-table-core';
 import { sameVendor } from '@/lib/extraction/vendor';
@@ -93,6 +93,14 @@ async function classifyReceipt(
 export interface ProcessReceiptOptions {
   /** SHA-256 of the uploaded bytes (hex), stored on the file reference for duplicate detection. */
   sha256?: string;
+}
+
+export interface NewReceiptOptions extends ProcessReceiptOptions {
+  /**
+   * The workspace the receipt is FOR, as the upload page named it. Checked
+   * against the session's memberships; never replaced by the active workspace.
+   */
+  workspaceId: string;
 }
 
 export interface ProcessReceiptResult {
@@ -350,13 +358,14 @@ async function similarReceipt(workspaceId: string, read: ReadReceipt, rowId: str
 export async function processReceipt(
   file: FileData,
   ocrResult: OcrResult | null,
-  options: ProcessReceiptOptions = {},
+  options: NewReceiptOptions,
 ): Promise<ProcessReceiptResult> {
-  // Inner check (the middleware is the outer fence): the session must hold
-  // receipts.upload on its ACTIVE workspace. The workspace id is resolved
-  // server-side from the verified session, never from the browser.
-  const session = await auth.requireAction('receipts.upload');
-  const workspaceId = sessionWorkspaceId(session);
+  // Inner check (the middleware is the outer fence): the upload names its
+  // workspace, which must be one of the session's memberships with
+  // receipts.upload on it. It is deliberately NOT the active workspace: that is
+  // one switch for the whole signed-in session, and a switch in another tab
+  // would otherwise file this receipt under another company.
+  const { session, workspaceId } = await requireUploadWorkspace(options?.workspaceId);
   const { adapter, tableId } = await getTableId(workspaceId);
   await requireOwnFile(file.id, workspaceId);
   const read = await readReceipt(adapter, tableId, file, ocrResult);
@@ -400,11 +409,12 @@ export async function retakeReceipt(
   ocrResult: OcrResult | null,
   options: ProcessReceiptOptions = {},
 ): Promise<ProcessReceiptResult> {
-  const session = await auth.requireAction('receipts.upload');
-  const workspaceId = sessionWorkspaceId(session);
+  // The row decides the workspace: a retake belongs where its receipt is,
+  // whatever company is active in the session at this moment.
+  const { session, workspaceId } = await requireRowAccess(String(rowId), 'receipts.upload');
   const { adapter, tableId } = await getTableId(workspaceId);
   const row = await adapter.getRow(String(rowId));
-  // Only a row of the active workspace's own table can be retaken.
+  // Only a row of that workspace's own receipts table can be retaken.
   if (!row || row.tableId !== tableId) throw new Error('Receipt not found');
   const columns = await adapter.getColumns(tableId);
   // A group is a container, never a receipt: nothing is read into it.

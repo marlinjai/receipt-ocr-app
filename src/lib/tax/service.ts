@@ -23,6 +23,7 @@ import { answerFor, boundaryDay, otherYearOf, touchesYear, BOUNDARY_SUBJECT_KIND
 import { LinesInputError, itemIdOf, splitItemId, storedLineTreatment, validateLines, type ReceiptLine } from './lines';
 import { forecastYear, type Forecast } from './forecast';
 import { overdueInvoices, type OverdueInvoice } from './overdue';
+import { loadIncomeTax, type IncomeTaxView } from './income-tax/service';
 import { proposeEstimateMatches, proposeMatches, type MatchStrength } from './payments/match';
 import { heldService, type ServiceKind } from './payments/funding';
 import {
@@ -444,6 +445,8 @@ export interface StatementView {
   reverseChargeVendors: Array<{ id: string; label: string; vendorKey: string; effectiveFrom: string; rateBp: number | null }>;
   /** False until the Receipts table exists (first dashboard visit). */
   initialized: boolean;
+  /** Wages, other return items and the income tax estimate of the year (finance plan, slice 6). */
+  incomeTax: IncomeTaxView;
 }
 
 function toStatementItem(
@@ -723,6 +726,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   for (const settlement of settlementFacts) yearOfDay(settlement.date);
   for (const change of storedChanges) yearOfDay(change.effectiveFrom);
   for (const payment of loadedPayments.payments) yearOfDay(payment.bookingDay);
+  const incomeTax = await loadIncomeTax(db, workspaceId, year, { profitCents: result.profitCents, lines: result.lines });
   return {
     year,
     years: [...years].sort((a, b) => b - a),
@@ -884,6 +888,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
       .filter((e) => e.scope === 'vendor')
       .map((e) => ({ id: e.id, label: e.label, vendorKey: e.subject, effectiveFrom: e.effectiveFrom, rateBp: e.rateBp })),
     initialized: loaded !== null,
+    incomeTax,
   };
 }
 

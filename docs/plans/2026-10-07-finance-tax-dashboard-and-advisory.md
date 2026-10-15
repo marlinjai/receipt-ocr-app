@@ -1258,6 +1258,64 @@ disagree:
   mixed counterparty, and one on a private account, by what is linked: the linked cents are
   business, the rest private (`businessShare` in `src/lib/spending/rules.ts`).
 
+## Reality after slice 6: wages and the income tax estimate (2026-10-15)
+
+- **Wage data for every month** (owner, 2026-10-14). `TaxWageStatement` holds the
+  annual wage statement (`month` 0) or the pay slip of one month (1 to 12) per year
+  and employer label, with gross wage, wage tax, solidarity surcharge, church tax
+  and the employee shares of pension, health, care and unemployment insurance plus
+  the employer's pension share (migration `0020_tax_income_estimate`, additive).
+  The annual statement of an employer wins over its pay slips; until it exists the
+  slips are added up, and in the running year the last slip can be projected to
+  December (the screen switches between "projected" and "months entered"). A month
+  missing between two slips is named.
+- **Church tax can end inside a year.** Each pay slip can say whether church tax was
+  due that month; the months of the year are stated once (`TaxYearSettings`, twelve
+  flags) and, while not stated, read off the slips and named as an assumption. Church
+  tax is income tax times the state's rate times the liable months over twelve; the
+  rate comes from the federal state (`WorkspaceTaxSettings.federalState`, 8 percent in
+  Bavaria and Baden-Württemberg, 9 elsewhere).
+- **Other return items** (`TaxReturnItem`, by rule key): home-office days, commutes
+  (days and distance per place), further work-related costs not in the app as
+  receipts, own vocational training (the student loan interest), donations, church
+  tax paid or refunded outside the wage, self-paid and refunded insurance, advance
+  payments.
+- **The estimate** (`src/lib/tax/income-tax/estimate.ts`, pure) takes the business
+  result of the statement, the wages, the amount lines of the employment annex the
+  statement already computes from receipts, and the return items, and returns every
+  step with its inputs and source: employment income (work-related costs against the
+  employee flat allowance), sum of income (a business loss offsets the wage),
+  special expenses, insurance (pension less the employer share, basic health and
+  care with the 4 percent reduction, other insurance only within the cap), taxable
+  income, the tariff, solidarity surcharge, church tax, credits, and the result per
+  tax as refund or payment, plus "what the business changed in your tax". Every
+  amount enters in whole euros in the taxpayer's favour, as the tax office rounds.
+- **Tariff and values per year with sources** in `src/lib/tax/income-tax/rules.ts`
+  (2025 and 2026; a year without its own values uses the nearest one and says so).
+  Kept beside the year rule sets instead of inside them, so the form-line files of
+  the tax rules lane were not touched. 2027 is added when the law is published.
+- **Checked against the filed 2025 return.** A test built from the aggregate figures
+  only (wage statement, loss, home office, four trips, study costs, loan interest,
+  certificates of the insurer, church exit in November in Berlin) reproduces the
+  tax office's provisional calculation line by line: taxable income 28,287, tax
+  3,822, church tax 315.31. The refund differs by 24 cents: the provisional
+  calculation shows the withheld wage tax as 8,072, the wage statement says 8,071.76,
+  and the app credits the cent amount.
+- **Where it shows:** the finance area of the company's workspace, tab
+  "Einkommensteuer" (estimate, wage input, church months and state, other items),
+  and a headline tile beside profit and expenses. All rows carry workspace and
+  company; another workspace reads and changes nothing.
+- **Unhappy paths as built:** no wage data gives a business-only estimate with the
+  prompt to enter one pay slip; no recorded invoice gives an estimate without the
+  business, said so; church tax withheld without stated months, or liable months
+  without a state, leaves church tax open (the total is shown without it); a
+  negative taxable income says that loss carry-back and carry-forward are not
+  computed; a commute above 4,500 euros is not capped and says why.
+- **Not built:** reading a wage statement or pay slip from an uploaded file (entered
+  by hand); the tax office's best-of comparison for insurance contributions; the
+  trade tax credit; loss carry-forward; the track record against the assessment
+  (slice 7).
+
 ## Decisions (2026-10-07)
 
 Answered by the owner on the decision page on 2026-10-07.

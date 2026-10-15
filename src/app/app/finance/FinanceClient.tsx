@@ -54,9 +54,12 @@ import OverdueInvoices from './OverdueInvoices';
 import VatTab from './VatTab';
 import ReverseChargeForm from './ReverseChargeForm';
 import AssetsTab, { type AssetDraft, type DisposalDraft } from './AssetsTab';
+import IncomeTaxTab, { balanceText } from './IncomeTaxTab';
+import { removeTaxReturnItem, removeWage, saveTaxReturnItem, saveWage, setChurchMonths, setFederalState } from './income-tax-actions';
+import { incomeTaxActionMessage } from '@/lib/tax/income-tax/messages';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 
-type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'boundary' | 'vendors';
+type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'tax' | 'boundary' | 'vendors';
 
 /** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
 const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
@@ -73,6 +76,22 @@ function euro(cents: number): string {
 function allocationText(item: StatementItem): string {
   if (!item.allocations) return 'nicht entschieden';
   return item.allocations.map((a) => `${a.shareBp / 100} % ${PURPOSE_LABELS[a.purpose]}`).join(' + ');
+}
+
+/** The headline of the income tax estimate: the expected refund or payment, labelled an estimate, with what it covers. */
+function incomeTaxTile(view: StatementView): { label: string; value: string; hint: string } {
+  const tax = view.incomeTax;
+  const estimate = tax.projected ?? tax.estimate;
+  const label = `Einkommensteuer ${view.year} (Schätzung)`;
+  if (estimate.scope === 'none') return { label, value: 'offen', hint: 'Lohnabrechnung unter „Einkommensteuer“ eintragen' };
+  const value =
+    estimate.totalBalanceCents === null ? balanceText(estimate.totalWithoutChurchCents) : balanceText(estimate.totalBalanceCents);
+  const parts = [
+    estimate.scope === 'business_only' ? 'nur Gewerbe, ohne Lohn' : estimate.scope === 'without_business' ? 'ohne Gewerbe' : 'Lohn und Gewerbe',
+    tax.projected ? 'Lohn hochgerechnet' : '',
+    estimate.missing.length > 0 ? `${estimate.missing.length} Angaben fehlen` : '',
+  ].filter(Boolean);
+  return { label, value, hint: parts.join(', ') };
 }
 
 /** The items a person has to act on, oldest first; workspace-wide questions are left to the notice above. */
@@ -125,7 +144,12 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
   const blockedBySetting =
     view.items.filter((i) => i.checks.some((c) => WORKSPACE_CHECKS.includes(c.kind))).length;
 
-  function run(action: () => Promise<Result<StatementView>>, done: string, after?: (next: StatementView) => void) {
+  function run(
+    action: () => Promise<Result<StatementView>>,
+    done: string,
+    after?: (next: StatementView) => void,
+    message: (error: string, detail?: string) => string = financeActionMessage,
+  ) {
     setError(null);
     setNotice(null);
     startTransition(async () => {
@@ -138,7 +162,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
         return;
       }
       if (!result.ok) {
-        setError(financeActionMessage(result.error, result.detail));
+        setError(message(result.error, result.detail));
         return;
       }
       setView(result.value);
@@ -221,6 +245,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
     { key: 'payments', label: 'Zahlungen', count: view.payments.open.length + view.payments.unclassified.length },
     { key: 'assets', label: 'Anlagen', count: view.assets.length },
     { key: 'vat', label: 'Umsatzsteuer' },
+    { key: 'tax', label: 'Einkommensteuer' },
     // Only when the year has a payment in the ten-day window; the count is what is not answered yet.
     ...(view.yearBoundary.length > 0 ? [{ key: 'boundary' as const, label: 'Jahreswechsel', count: view.yearBoundary.filter((e) => e.answer === null && e.inactive === null).length }] : []),
     { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length + view.reverseChargeVendors.length },
@@ -325,7 +350,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
           )}
         </div>
 
-        <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {[
             {
               label: view.profitCents === null ? `Ergebnis ${view.year}` : view.profitCents < 0 ? `Verlust ${view.year}` : `Gewinn ${view.year}`,
@@ -337,6 +362,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
             },
             { label: `Betriebsausgaben ${view.year}`, value: euro(view.businessExpenseCents), hint: `${view.countedItems} Belege gerechnet` },
             { label: 'Kosten für die Anlage N', value: euro(view.employmentCostCents), hint: 'Studium und Anstellung' },
+            incomeTaxTile(view),
             {
               label: 'Offene Prüfungen',
               value: String(queue.length + overdue.length),
@@ -392,7 +418,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
           {notice}
         </div>
         {/* The forms on the queue, payments and tax tabs show a failure next to what was typed; everywhere else it is shown here. */}
-        {error && tab !== 'open' && tab !== 'payments' && tab !== 'vat' && (
+        {error && tab !== 'open' && tab !== 'payments' && tab !== 'vat' && tab !== 'tax' && (
           <p className="ui-note ui-note-danger mt-2" role="alert">
             {error}
           </p>
@@ -802,6 +828,26 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               onSettings={(input) => run(() => setVatSettings(view.year, input), 'Angaben zur Voranmeldung gespeichert.')}
               onSettlement={(input, done) => run(() => recordVatSettlement(view.year, input), 'Zahlung eingetragen.', done)}
               onRemoveSettlement={(settlementId) => run(() => removeVatSettlement(view.year, settlementId), 'Zahlung gelöscht.')}
+            />
+          )}
+
+          {tab === 'tax' && (
+            <IncomeTaxTab
+              // A different year starts with fresh forms.
+              key={view.year}
+              view={view}
+              busy={pending}
+              error={error}
+              onSaveWage={(wageId, draft, done) =>
+                run(() => saveWage(view.year, wageId, draft), draft.month === 0 ? 'Lohnsteuerbescheinigung gespeichert.' : `Lohnabrechnung ${draft.employer} gespeichert.`, done, incomeTaxActionMessage)
+              }
+              onRemoveWage={(entry) => run(() => removeWage(view.year, entry.id), 'Lohnangabe gelöscht.', undefined, incomeTaxActionMessage)}
+              onSaveItem={(itemId, draft, done) => run(() => saveTaxReturnItem(view.year, itemId, draft), 'Angabe gespeichert.', done, incomeTaxActionMessage)}
+              onRemoveItem={(item) => run(() => removeTaxReturnItem(view.year, item.id), 'Angabe gelöscht.', undefined, incomeTaxActionMessage)}
+              onChurchMonths={(months) =>
+                run(() => setChurchMonths(view.year, months), months ? 'Monate der Kirchensteuerpflicht gespeichert.' : 'Angabe entfernt.', undefined, incomeTaxActionMessage)
+              }
+              onFederalState={(state) => run(() => setFederalState(view.year, state), 'Bundesland gespeichert.', undefined, incomeTaxActionMessage)}
             />
           )}
 

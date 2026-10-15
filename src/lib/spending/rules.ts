@@ -87,7 +87,7 @@ export const BRAND_RULES: readonly KeywordRule[] = [
       'github', 'openai', 'anthropic', 'chatgpt', 'vercel', 'hetzner', 'cloudflare', 'google cloud', 'google workspace',
       'gsuite', 'figma', 'adobe', 'microsoft', 'amazon web services', 'digitalocean', 'netlify', 'jetbrains', 'atlassian',
       'dropbox', 'icloud', 'midjourney', 'elevenlabs', 'webflow', 'namecheap', 'ionos', 'strato', 'porkbun', 'godaddy',
-      '1password', 'canva', 'supabase',
+      'canva', 'supabase',
     ],
     nameOnly: ['cursor', 'notion', 'slack', 'zoom', 'aws', 'framer', 'replicate'],
   },

@@ -612,6 +612,9 @@ textarea.ui-input {
 }
 
 /* ---- Receipt viewer (src/components/meals/ReceiptViewer.tsx) ----
+   The tools are 40 pixel squares with a 20 pixel glyph (the same hit area as
+   the app's checkbox): rotate, zoom and open are used on every receipt and
+   must be easy to hit with a mouse and a thumb alike.
    A panel of a given height with the receipt centred in it. The page is
    turned, zoomed and moved with one transform, so nothing around it moves. */
 .ui-viewer {
@@ -641,9 +644,15 @@ textarea.ui-input {
 }
 .ui-viewer-sep {
   width: 1px;
-  height: 1.125rem;
+  height: 1.5rem;
   margin: 0 0.25rem;
   background: var(--border);
+}
+.ui-viewer-tool {
+  width: 2.5rem;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0;
 }
 .ui-viewer-panel {
   position: relative;

@@ -17,6 +17,7 @@ import { groupsHoldingReceipts, yearCounts, type YearCounts } from '@/lib/receip
 const SCOPED_LIST_LIMIT = 5000;
 import { MIN_TEXT_SEARCH_LENGTH, TEXT_SEARCH_LIMIT, likePattern, rowsWithoutText, textColumnIds, withoutText } from '@/lib/receipt-text';
 import { GROUP_KIND, ROW_KIND_COLUMN, rowKindColumnId } from '@/lib/receipts-kind';
+import { applyDayFilters, splitDayFilters } from './day-filters';
 import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
 import { rowKind } from '@/lib/groups/service';
 import { readRowLinks } from '@/lib/groups/links';
@@ -227,15 +228,26 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
   const adapter = getAdapter();
   const columns = await adapter.getColumns(tableId);
   const textIds = textColumnIds(columns);
-  const { years: asked, ...rest } = query ?? {};
+  const { years: asked, ...asks } = query ?? {};
+  // The filter bar's date comparisons are answered here, on the day each date names (see `day-filters.ts`):
+  // the adapter's own comparisons fail on this database. Every other filter goes to the adapter as before.
+  const { dayFilters, adapterFilters } = splitDayFilters(asks.filters, columns);
+  const rest: QueryOptions = { ...asks, filters: adapterFilters };
   const years = cleanScopeYears(asked);
   const dateId = columns.find((c) => c.name === 'Date')?.id;
   // A sorted list is not narrowed: the years are queried one by one, so a sort across them (and the place of
   // the groups in it) could not be right. The browser filters the years then.
   const sorted = (rest.sorts?.length ?? 0) > 0;
-  if (!years || !dateId || sorted) {
+  if ((!years || !dateId || sorted) && dayFilters.length === 0) {
     const result = await adapter.getRows(tableId, rest);
     return { ...result, items: rowsWithoutText(result.items, textIds) };
+  }
+  if (!years || !dateId || sorted) {
+    // A list with a date comparison comes in one answer: which rows pass is only known once they are read,
+    // so a page of the adapter could not be counted. A further page is empty.
+    if ((rest.offset ?? 0) > 0) return { items: [], total: rest.offset ?? 0, hasMore: false } as QueryResult<Row>;
+    const items = applyDayFilters(await everyRow(adapter, tableId, rest), dayFilters, columns);
+    return { items: rowsWithoutText(items, textIds), total: items.length, hasMore: false } as QueryResult<Row>;
   }
 
   // A list narrowed to years: one query per year, on the start of the stored invoice date (a plain text
@@ -264,7 +276,18 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
       items = [...items, ...groups.items.filter((g) => parents.has(g.id) && !have.has(g.id))];
     }
   }
+  items = applyDayFilters(items, dayFilters, columns);
   return { items: rowsWithoutText(items, textIds), total: items.length, hasMore: false } as QueryResult<Row>;
+}
+
+/** Every row a query matches, read in pages of the adapter, in the query's order. */
+async function everyRow(adapter: PrismaAdapter, tableId: string, query: QueryOptions): Promise<Row[]> {
+  const rows: Row[] = [];
+  for (;;) {
+    const page = await adapter.getRows(tableId, { ...query, limit: SCOPED_LIST_LIMIT, offset: rows.length });
+    rows.push(...page.items);
+    if (!page.hasMore || page.items.length === 0) return rows;
+  }
 }
 
 /** The year of a receipt's invoice date, or null: where to look for a receipt a link names. */

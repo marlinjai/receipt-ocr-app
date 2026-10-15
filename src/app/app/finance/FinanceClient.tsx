@@ -288,7 +288,14 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               {view.rulesYear}.
             </p>
           )}
-          {view.rulesExact && view.lines.some((l) => l.numbering === 'unverified') && (
+          {view.rulesProvisional && (
+            <p className="ui-note ui-note-warn">
+              Die Regeln für {view.rulesYear} sind vorläufig: {view.rulesProvisional.reason} Gerechnet wird mit den Werten
+              von {view.rulesProvisional.carriedFromYear}; die Zeilen werden ohne Nummer gezeigt, bis der amtliche
+              Vordruck vorliegt.
+            </p>
+          )}
+          {view.rulesExact && !view.rulesProvisional && view.lines.some((l) => l.numbering === 'unverified') && (
             <p className="ui-note">
               Für einige Zeilen der Anlage N {view.year} sind die Zeilennummern noch nicht mit dem amtlichen Vordruck
               abgeglichen. Dort wird nur die Bezeichnung angezeigt, keine Nummer eines anderen Jahres.

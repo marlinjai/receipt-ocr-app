@@ -220,3 +220,30 @@ describe('what still names a tax, and what states that there is none', () => {
     expect(readAmounts('Shop\nSt.-Nr. 12/345/67890\nItem 20,00\nVersand 3,80\nGesamt 23,80').taxGroups).toEqual([]);
   });
 });
+
+describe('a line that is tax-free does not make the receipt tax-free', () => {
+  it('a till row "A 19%" and a deposit line at 0 percent: the 19 percent stands', () => {
+    for (const text of [
+      ['Getränkemarkt', 'Summe 2,15', 'A 19% 1,60 0,30 1,90', 'MwSt C 0% 0,25 0,00'].join('\n'),
+      ['Getränkemarkt', 'Summe 2,15', 'MwSt 0,00 % 0,00', 'A 19 % 0,30 1,60 1,90'].join('\n'),
+      ['Getränkemarkt', '19%', 'MwSt 0% 0,00', '1,60', '0,30', '1,90', 'Summe 2,15'].join('\n'),
+    ]) {
+      const reading = readAmounts(text, { date: '2026-03-01' });
+      expect(reading.taxRate).toBe(19);
+      expect(reading.taxGroups[0]).toMatchObject({ rate: 19, net: 1.6, tax: 0.3 });
+    }
+  });
+
+  it('a deposit or a voucher marked "steuerfrei" leaves the printed tax of the other lines', () => {
+    const deposit = ['Discounter', 'Pfand steuerfrei 0,25', 'zu zahlen 2,15', 'MWST% MWST NETTO BRUTTO', 'A 19,00% 0,30 1,60 1,90'].join('\n');
+    expect(readAmounts(deposit, { date: '2026-03-01' }).taxGroups).toEqual([{ rate: 19, net: 1.6, tax: 0.3, gross: 1.9 }]);
+    const voucher = ['Buchladen', 'Gutschein steuerfrei 10,00', 'MwSt', '1,87', '0,13', '2,00', 'Summe 2,00'].join('\n');
+    expect(readAmounts(voucher, { date: '2026-03-01' }).taxGroups).toEqual([{ rate: 7, net: 1.87, tax: 0.13, gross: 2 }]);
+  });
+
+  it('another tax that ends in "steuer" names no value-added tax', () => {
+    const utility = ['Stadtwerke Beispiel', 'Grundsteuer 107,00', 'Wasser 100,00', 'Muell 7,00', 'Gesamtbetrag 214,00'].join('\n');
+    expect(readAmounts(utility, { date: '2026-03-01' })).toMatchObject({ gross: 214, taxGroups: [] });
+    expect(readAmounts(['Zulassungsstelle', 'Kfz-Steuer 100,00', 'Gebühr 7,00', 'Gesamt 107,00'].join('\n'), { date: '2026-03-01' }).taxGroups).toEqual([]);
+  });
+});

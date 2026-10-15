@@ -136,3 +136,114 @@ describe('totals that had no label, or the wrong one', () => {
     expect(readAmounts('Gesamtpreis\n35,90 €').gross).toBe(35.9);
   });
 });
+
+describe('a tax needs a line that names it', () => {
+  it('two usage lines that happen to fit 7 percent are no tax: the bill is the net, at rate 0', () => {
+    const reading = readAmounts(F.USAGE_TWO_LINES_NO_TAX, { currency: 'USD' });
+    // The invoice prints its tax of 0 itself, so the rate 0 is printed, not assumed.
+    expect(reading).toMatchObject({ gross: 20.06, net: 20.06, taxRate: 0, taxPrinted: true, taxGroups: [] });
+    // The same figures in euros: no rate is made up from them; the rate is the default, and the check says so.
+    const euros = readAmounts(F.USAGE_TWO_LINES_NO_TAX.replaceAll('US$', '€'), { currency: 'EUR' });
+    expect(euros.gross).toBe(20.06);
+    expect(euros.taxGroups).toEqual([]);
+    expect(euros.checks).toContain('tax_estimated');
+  });
+
+  it('a page of cent amounts holds a pair for a rate, which is not the bill', () => {
+    expect(readAmounts(F.USAGE_TABLE_OF_CENTS, { currency: 'USD' })).toMatchObject({ gross: 5, taxGroups: [] });
+    expect(readAmounts(F.USAGE_TABLE_OF_CENTS.replaceAll('$', '€').replace(' USD', ''), { currency: 'EUR' })).toMatchObject({ gross: 5, taxGroups: [] });
+  });
+
+  it('a word that only contains the letters of a tax word names no tax', () => {
+    // "Musterversand" holds "ust": shipping of 5.90 is about 7 percent of 84.00 and was taken as its tax.
+    const order = ['Musterversand', 'Total 84.00 EUR', 'Shipping 5.90 EUR', 'Grand Total 89.90 EUR'].join('\n');
+    expect(readAmounts(order)).toMatchObject({ gross: 89.9, taxGroups: [], checks: ['total_unconfirmed', 'tax_estimated'] });
+  });
+
+  it('a tax named on its own line still counts, and so does one a label names in a torn block', () => {
+    expect(readAmounts('Shop\nItem 20.00\nVAT 19% 3.80\nTotal 23.80', { currency: 'USD' })).toMatchObject({ gross: 23.8, net: 20, taxRate: 19 });
+    expect(readAmounts('Netto\nMwSt\nSumme\n20,00\n3,80\n23,80')).toMatchObject({ gross: 23.8, net: 20, taxRate: 19, checks: [] });
+  });
+
+  it('a VAT identification number or a tax number is no tax label', () => {
+    expect(readAmounts('Shop\nUSt-IdNr. DE123456789\nItem 20,00\nVersand 3,80\nGesamt 23,80')).toMatchObject({ gross: 23.8, taxGroups: [] });
+    expect(readAmounts('Shop\nSteuernummer 12/345/67890\nItem 20,00\nVersand 3,80\nGesamt 23,80')).toMatchObject({ gross: 23.8, taxGroups: [] });
+  });
+});
+
+describe('what still names a tax, and what states that there is none', () => {
+  it('a bottle deposit at 0 percent next to the 19 percent line keeps the 19 percent group, with the labels on their lines and torn off', () => {
+    const inline = ['Getränkemarkt', 'Saft 10,00 A', 'Pfand 0,25 B', 'MwSt 19% 10,00 1,90 11,90', 'MwSt 0% 0,25 0,00 0,25', 'Summe 12,15'].join('\n');
+    const torn = ['Getränkemarkt', 'Saft', '10,00', 'Pfand', '0,25', 'MwSt 19%', 'MwSt 0%', 'Summe', '11,90', '0,25', '12,15', '1,90'].join('\n');
+    for (const text of [inline, torn]) {
+      const reading = readAmounts(text, { date: '2026-03-01' });
+      expect(reading).toMatchObject({ taxRate: 19, taxPrinted: true });
+      expect(reading.taxGroups).toEqual([{ rate: 19, net: 10, tax: 1.9, gross: 11.9 }]);
+    }
+  });
+
+  it('the column heading "VAT Code" is a tax label, "VAT-Code: XX-0000" is not', () => {
+    const uk = ['Shop Ltd', 'VAT Code Rate Net VAT', 'A 20% 10.00 2.00', 'Total 12.00'].join('\n');
+    expect(readAmounts(uk, { currency: 'GBP' })).toMatchObject({ gross: 12, net: 10, taxRate: 20 });
+    const german = ['Laden', 'MwSt-Code Netto MwSt Brutto', 'A 19% 10,00 1,90 11,90', 'Summe 11,90'].join('\n');
+    expect(readAmounts(german, { date: '2026-03-01' })).toMatchObject({ gross: 11.9, net: 10, taxRate: 19, checks: [] });
+  });
+
+  it('a long till line with its figures names its tax; a long sentence without any does not', () => {
+    const long = 'Gesamtbetrag 11,90 EUR enthaelt 19% Mehrwertsteuer 1,90 EUR Nettobetrag 10,00 EUR';
+    expect(readAmounts(long, { date: '2026-03-01' })).toMatchObject({ gross: 11.9, net: 10, taxRate: 19 });
+    const sentence = ['Example Inc.', 'Item 18.76', 'Item 1.30', 'Tax will vary based on your jurisdiction and is calculated at checkout', 'Total 20.06'].join('\n');
+    expect(readAmounts(sentence, { currency: 'USD' })).toMatchObject({ gross: 20.06, taxGroups: [] });
+  });
+
+  it('"Steuerberatung" is no tax word, and an invoice stating that no tax is charged gets none', () => {
+    expect(readAmounts('Kanzlei\nSteuerberatung 100,00\nAuslagen 7,00\nGesamt 107,00', { date: '2026-03-01' }).taxGroups).toEqual([]);
+    const smallBusiness = ['Grafikbüro', 'Leistung 10,00', 'Betrag 1,90', 'Gesamt 11,90', 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.'].join('\n');
+    expect(readAmounts(smallBusiness, { date: '2026-03-01' }).taxGroups).toEqual([]);
+    expect(readAmounts(['Agentur', 'Leistung 100,00', 'Gesamt 100,00', 'Reverse Charge'].join('\n')).taxGroups).toEqual([]);
+  });
+
+  it('a till receipt that prints only its rate ("A 19%") still proves its tax', () => {
+    expect(readAmounts(['Laden', 'A 19%', '10,00', '1,90', 'Summe 11,90'].join('\n'), { date: '2026-03-01' })).toMatchObject({ gross: 11.9, net: 10, taxRate: 19 });
+  });
+
+  it('a tax line of 0,00 % or 0 states no tax; one of 10 % does not', () => {
+    expect(readAmounts(['Shop', 'Item 20,00', 'Versand 1,40', 'MwSt 0,00 %', 'Gesamt 21,40'].join('\n'), { date: '2026-03-01' }).taxGroups).toEqual([]);
+    expect(readAmounts(['Shop', 'Item 100.00', 'VAT 10% 10.00', 'Total 110.00'].join('\n'), { currency: 'USD' })).toMatchObject({ gross: 110, net: 100, taxRate: 10 });
+  });
+
+  it('a tax amount on the line below its label counts with a "US$" in front', () => {
+    expect(readAmounts(['Example Inc.', 'Subtotal', 'US$20.00', 'VAT', 'US$3.80', 'Total', 'US$23.80'].join('\n'), { currency: 'USD' })).toMatchObject({ gross: 23.8, net: 20, taxRate: 19 });
+  });
+
+  it('a tax number named "St.-Nr." is no tax label', () => {
+    expect(readAmounts('Shop\nSt.-Nr. 12/345/67890\nItem 20,00\nVersand 3,80\nGesamt 23,80').taxGroups).toEqual([]);
+  });
+});
+
+describe('a line that is tax-free does not make the receipt tax-free', () => {
+  it('a till row "A 19%" and a deposit line at 0 percent: the 19 percent stands', () => {
+    for (const text of [
+      ['Getränkemarkt', 'Summe 2,15', 'A 19% 1,60 0,30 1,90', 'MwSt C 0% 0,25 0,00'].join('\n'),
+      ['Getränkemarkt', 'Summe 2,15', 'MwSt 0,00 % 0,00', 'A 19 % 0,30 1,60 1,90'].join('\n'),
+      ['Getränkemarkt', '19%', 'MwSt 0% 0,00', '1,60', '0,30', '1,90', 'Summe 2,15'].join('\n'),
+    ]) {
+      const reading = readAmounts(text, { date: '2026-03-01' });
+      expect(reading.taxRate).toBe(19);
+      expect(reading.taxGroups[0]).toMatchObject({ rate: 19, net: 1.6, tax: 0.3 });
+    }
+  });
+
+  it('a deposit or a voucher marked "steuerfrei" leaves the printed tax of the other lines', () => {
+    const deposit = ['Discounter', 'Pfand steuerfrei 0,25', 'zu zahlen 2,15', 'MWST% MWST NETTO BRUTTO', 'A 19,00% 0,30 1,60 1,90'].join('\n');
+    expect(readAmounts(deposit, { date: '2026-03-01' }).taxGroups).toEqual([{ rate: 19, net: 1.6, tax: 0.3, gross: 1.9 }]);
+    const voucher = ['Buchladen', 'Gutschein steuerfrei 10,00', 'MwSt', '1,87', '0,13', '2,00', 'Summe 2,00'].join('\n');
+    expect(readAmounts(voucher, { date: '2026-03-01' }).taxGroups).toEqual([{ rate: 7, net: 1.87, tax: 0.13, gross: 2 }]);
+  });
+
+  it('another tax that ends in "steuer" names no value-added tax', () => {
+    const utility = ['Stadtwerke Beispiel', 'Grundsteuer 107,00', 'Wasser 100,00', 'Muell 7,00', 'Gesamtbetrag 214,00'].join('\n');
+    expect(readAmounts(utility, { date: '2026-03-01' })).toMatchObject({ gross: 214, taxGroups: [] });
+    expect(readAmounts(['Zulassungsstelle', 'Kfz-Steuer 100,00', 'Gebühr 7,00', 'Gesamt 107,00'].join('\n'), { date: '2026-03-01' }).taxGroups).toEqual([]);
+  });
+});

@@ -140,7 +140,6 @@ function isTaxOf(netCents: number, taxCents: number, rate: number): boolean {
 const TIP_WORD = /trinkgeld|\btip\b|gratuity|service\s*charge/i;
 /** A line that names a discount ("Rabatt", "Sofortrabatt", "Discount: SPRING"), not one that only mentions the word ("rabattfähig"). */
 const DISCOUNT_WORD = /(?:rabatte?|nachl(?:a|ä)sse?|discounts?|coupons?|gutscheine?)(?![\p{L}])/iu;
-const TAX_WORD = /mwst|ust|vat|steuer|\btax\b/i;
 const TOTAL_LABEL = /(?:^|[^\p{L}])(?:summe|gesamt(?:betrag|summe|preis)?|total|endbetrag|rechnungsbetrag|zu\s+zahlen|betrag|brutto|order\s+total|amount\s+due|balance\s+due|grand\s+total|final\s+cost)(?![\p{L}])/iu;
 const NOT_A_TOTAL = /zwischensumme|sub\s*-?\s*total|item\s*\(?s?\)?\s*total|netto|steuer|mwst|ust\b|vat|(?:excl(?:uding|\.)?|before|without)\s+tax|gegeben|zur(?:ü|u)ck|r(?:ü|u)ckgeld|trinkgeld|\btip\b|rabatt|discount|shipping|versand/i;
 
@@ -156,7 +155,11 @@ const NOT_A_TOTAL = /zwischensumme|sub\s*-?\s*total|item\s*\(?s?\)?\s*total|nett
  * `notTax` are the amounts the receipt itself names as something else (a
  * tip, a discount); `tipCandidates` the amounts that can be a tip on top.
  */
-function taxGroupsIn(values: Set<number>, rates: number[], named: { notTax: number[]; tipCandidates: number[] }): TaxGroup[] {
+function taxGroupsIn(
+  values: Set<number>,
+  rates: number[],
+  named: { notTax: number[]; tipCandidates: number[]; admits: (tax: number, rate: number) => boolean },
+): TaxGroup[] {
   const printed = (sum: number) => values.has(sum) || named.tipCandidates.some((tip) => tip < sum && values.has(sum + tip));
   const sorted = [...values].sort((x, y) => y - x);
   const pairs: Array<{ rate: number; net: number; tax: number; confirmed: boolean }> = [];
@@ -173,7 +176,13 @@ function taxGroupsIn(values: Set<number>, rates: number[], named: { notTax: numb
       let hit: { rate: number; tax: number } | null = null;
       for (const rate of rates) {
         const tax = sorted.find(
-          (t) => t < net && !used.has(t) && !named.notTax.includes(t) && isTaxOf(net, t, rate) && printed(net + t) === wantConfirmed,
+          (t) =>
+            t < net &&
+            !used.has(t) &&
+            !named.notTax.includes(t) &&
+            named.admits(t, rate) &&
+            isTaxOf(net, t, rate) &&
+            printed(net + t) === wantConfirmed,
         );
         if (tax !== undefined) {
           hit = { rate, tax };
@@ -200,11 +209,17 @@ function taxGroupsIn(values: Set<number>, rates: number[], named: { notTax: numb
  * A total printed together with the tax it contains: the net is not printed, the pair still proves the rate.
  * A discount is never that tax (`discounts`): the bill before it would come out as the total.
  */
-function grossWithTax(values: Set<number>, rates: number[], candidates: number[], discounts: number[]): TaxGroup | null {
+function grossWithTax(
+  values: Set<number>,
+  rates: number[],
+  candidates: number[],
+  discounts: number[],
+  admits: (tax: number, rate: number) => boolean,
+): TaxGroup | null {
   for (const gross of candidates) {
     for (const rate of rates) {
       for (const tax of values) {
-        if (tax >= gross || discounts.includes(tax)) continue;
+        if (tax >= gross || discounts.includes(tax) || !admits(tax, rate)) continue;
         if (isTaxOf(gross - tax, tax, rate)) {
           return { rate, net: euros(gross - tax), tax: euros(tax), gross: euros(gross) };
         }
@@ -294,12 +309,51 @@ const NET_LABEL = /(?:^|[^\p{L}])(?:sub\s*-?\s*total|zwischensumme|netto(?:betra
 const TAX_LABEL = /(?:^|[^\p{L}])(?:(?:sales\s+)?tax|vat|mwst\.?|ust\.?|mehrwertsteuer|umsatzsteuer|tva|iva|gst|hst)(?![\p{L}])/iu;
 
 const SUBTOTAL_LABEL = /(?:^|[^\p{L}])(?:sub\s*-?\s*total|zwischensumme)(?![\p{L}])/iu;
-/** A tax label that does not name the tax amount: a net figure, a tax number, the heading "Tax invoice". */
-const NOT_A_TAX_AMOUNT = /sub\s*-?\s*total|zwischensumme|netto|(?:tax|vat|gst|hst|iva|tva|ust|mwst)[\s.-]*(?:id|no\b|nr\b|number|nummer|reg|invoice|receipt|#)/i;
+/**
+ * A tax word that names no amount: a tax number, a VAT identification number
+ * ("DE VAT DE123456789"), a code with its value ("VAT-Code: XX-0000", not the
+ * column heading "VAT Code"), or the heading "Tax invoice".
+ */
+const TAX_IDENTIFIER =
+  /(?:tax|vat|gst|hst|iva|tva|ust|mwst|steuer)[\s.:-]*(?:id|no\b|nr\b|number|nummer|reg|invoice|receipt|code\s*:\s*[a-z0-9]|#|[a-z]{2}\s?\d{6,})|st\.-?\s?nr/i;
+/** A tax label that does not name the tax amount: a net figure, or a tax word that names no amount. */
+const NOT_A_TAX_AMOUNT = new RegExp(`sub\\s*-?\\s*total|zwischensumme|netto|${TAX_IDENTIFIER.source}`, 'i');
+/**
+ * The German words for the value-added tax itself ("Mehrwertsteuer",
+ * "Umsatzsteuer", "MwSt.-Betrag", "Steuer", "Steuersatz"). Not another tax
+ * that ends in the same word ("Grundsteuer", "Kfz-Steuer"), and not
+ * "Steuerberatung".
+ */
+const GERMAN_TAX_WORD = /mwst|(?:(?<![\p{L}-])|mehrwert|umsatz)steuer(?:betrag|satz|anteil)?(?![\p{L}])/iu;
+/** A sentence about tax with neither an amount nor a rate in it is this long at most to count as a label. */
+const TAX_LABEL_MAX = 60;
+
+/**
+ * A line that names a tax: a tax label, or a German word for the tax, that is
+ * not a tax number, a VAT identification number or a code. A sentence about
+ * tax without an amount or a rate in it ("Tax will vary based on your
+ * jurisdiction and is calculated at checkout") names none; a long till line
+ * with its figures does.
+ */
+function namesATax(line: string): boolean {
+  const trimmed = line.trim();
+  if (TAX_IDENTIFIER.test(trimmed)) return false;
+  if (trimmed.length > TAX_LABEL_MAX && !AMOUNT_TEST.test(trimmed) && !/\d\s?%/.test(trimmed)) return false;
+  return TAX_LABEL.test(trimmed) || GERMAN_TAX_WORD.test(trimmed);
+}
+
+/**
+ * Words by which a whole document states that it carries no German
+ * value-added tax: a small business, reverse charge. "steuerfrei" is not
+ * among them: it marks one line (a deposit, a voucher) of a receipt that can
+ * carry tax on the others.
+ */
+const NO_TAX_STATED =
+  /keine\s+(?:umsatz|mehrwert)steuer|(?:§|paragraph)\s*19\s*(?:abs\.?\s*\d\s*)?ustg|reverse\s*-?\s*charge|steuerschuldnerschaft\s+des\s+leistungsempf/iu;
 
 const LINE_END_AMOUNT = /(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})(?![\p{L}\p{N}%]|[.,:/-]\d)\s*(?:€|eur|usd|gbp|\$|£)?\s*$/iu;
 /** A line that is one amount and nothing else ("$360.00", "-90,00 €"): the value of a label that stands alone above it. */
-const BARE_AMOUNT_LINE = /^[-\u2212+]?\s*(?:€|eur|usd|gbp|\$|£)?\s*[-\u2212]?\s*(?:\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})\s*(?:€|eur|usd|gbp|\$|£)?$/iu;
+const BARE_AMOUNT_LINE = /^[-\u2212+]?\s*(?:€|eur|usd|gbp|us\$|\$|£)?\s*[-\u2212]?\s*(?:\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})\s*(?:€|eur|usd|gbp|\$|£)?$/iu;
 
 /** The minus many tills print behind a deduction ("5,00-"). */
 const TRAILING_MINUS = /\s*[-\u2212]$/;
@@ -503,6 +557,37 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     return named?.addsUp ? named : null;
   };
 
+  // A tax is a figure the receipt names as one. Two amounts in the ratio of a
+  // rate are no tax by themselves: two usage lines of 18.76 and 1.30 on an
+  // invoice without tax fit 7 percent, and a page of cent amounts holds a
+  // pair for every rate. So a pair counts only where its tax amount stands on
+  // a line that names a tax, or where the receipt carries a tax label at all:
+  // a receipt whose labels the text recognition tore from their amounts still
+  // prints one somewhere ("MwSt", "Estimated VAT:"). On a euro receipt a
+  // printed rate in force does the same ("A 19%"). A tax number or a VAT
+  // identification number is no tax label, and a receipt that states it
+  // carries no tax has none to pair.
+  const taxNamedAmounts = namedAmounts(text, TAX_LABEL, NOT_A_TAX_AMOUNT);
+  // On the label's own line ("MwSt 0,32" inside a line of net, tax and gross), or the value below a label that stands alone.
+  const taxAmountsNamed = new Set([...taxNamedAmounts, ...found.filter((a) => namesATax(lines[a.line])).map((a) => a.cents)]);
+  // The receipt says it carries no tax: a tax line at 0 percent ("Tax (0%)"),
+  // tax amounts that are all 0.00, or the words of a small-business or
+  // reverse-charge invoice. Never where a tax above 0 is printed: a tax line
+  // with a rate or an amount above 0, or on a euro receipt any rate in force
+  // ("A 19%" on a till row next to a bottle deposit at 0 percent).
+  const taxLines = lines.filter(namesATax);
+  const printedRates = ratesPrinted(text);
+  const positiveTaxPrinted =
+    taxNamedAmounts.some((amount) => amount > 0) ||
+    taxLines.some((l) => ratesPrinted(l).length > 0) ||
+    (german && printedRates.some((rate) => rates.includes(rate)));
+  const zeroRateLine = taxLines.some((l) => /(?<![\p{N}.,])0(?:[.,]0+)?\s?%/u.test(l));
+  const onlyZeroAmounts = taxNamedAmounts.length > 0 && taxNamedAmounts.every((amount) => amount === 0);
+  const zeroTaxStated = !positiveTaxPrinted && (zeroRateLine || onlyZeroAmounts || NO_TAX_STATED.test(text));
+  const taxLabelled = !zeroTaxStated && taxLines.length > 0;
+  const admits = (tax: number, rate?: number) =>
+    taxAmountsNamed.has(tax) || taxLabelled || (german && !zeroTaxStated && rate !== undefined && printedRates.includes(rate));
+
   let groups: TaxGroup[] = [];
   if (german) {
     const modelGroups = (hints.modelTaxLines ?? [])
@@ -511,7 +596,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       // Printed figures only: a line the model worked out, or read from a page the text does not show, proves nothing.
       .filter((l) => values.has(l.net) && values.has(l.tax))
       .map((l) => ({ rate: l.rate, net: euros(l.net), tax: euros(l.tax), gross: euros(l.net + l.tax) }));
-    groups = taxGroupsIn(values, rates, { notTax: [...tipOnLine, ...discounts], tipCandidates });
+    groups = taxGroupsIn(values, rates, { notTax: [...tipOnLine, ...discounts], tipCandidates, admits });
     if (groups.length === 0 && modelGroups.length > 0) groups = modelGroups;
   } else {
     // Another currency: no German rate is assumed for it. A rate the receipt
@@ -519,8 +604,17 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     // invoice), and so does a German rate on a receipt that names a tax
     // without its rate, but only where net, tax and their sum are all printed:
     // the receipt then states the tax, nothing is worked out for it.
-    const candidates = [...new Set([...ratesPrinted(text), ...(TAX_WORD.test(text) ? rates : [])])];
-    groups = taxGroupsIn(values, candidates, { notTax: [...tipOnLine, ...discounts], tipCandidates });
+    const candidates = [...new Set([...ratesPrinted(text), ...(taxLabelled ? rates : [])])];
+    groups = taxGroupsIn(values, candidates, { notTax: [...tipOnLine, ...discounts], tipCandidates, admits });
+  }
+  // Groups whose tax no line names, adding up to less than the total a label
+  // names, are amounts of a usage table that happen to fit a rate (0.75 and
+  // 0.15 on an invoice of 5.00): they are not the bill, and the label reading
+  // below decides.
+  const billOfGroups = groups.reduce((sum, g) => sum + cents(g.gross), 0);
+  const vouched = (g: TaxGroup) => taxAmountsNamed.has(cents(g.tax)) || (german && printedRates.includes(g.rate));
+  if (groups.length > 0 && !groups.some(vouched) && labelled.length > 0 && !labelled.includes(billOfGroups) && billOfGroups < Math.max(...labelled)) {
+    groups = [];
   }
 
   // The total of a model that saw the page, where the recognized text prints that amount.
@@ -608,8 +702,8 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   } else {
     // Largest first: the total is the largest amount a printed tax amount fits.
     const withTax =
-      german && TAX_WORD.test(text)
-        ? grossWithTax(values, rates, unnamed.filter((v) => v <= SANE_TOTAL_CENTS && !tipOnLine.includes(v)).sort((x, y) => y - x), discounts)
+      german && !zeroTaxStated
+        ? grossWithTax(values, rates, unnamed.filter((v) => v <= SANE_TOTAL_CENTS && !tipOnLine.includes(v)).sort((x, y) => y - x), discounts, admits)
         : null;
     if (withTax) {
       groups = [withTax];

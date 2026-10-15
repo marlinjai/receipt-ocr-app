@@ -1,0 +1,168 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { QueryFilter } from '@marlinjai/data-table-core';
+import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
+
+/**
+ * The filter bar's date comparisons ("is", "after", "before") against a real
+ * database: the adapter's own comparison fails here, the list's answers on the
+ * day each date names, across years, in a list narrowed to years and in one that
+ * is not, with groups. Auth is the only thing replaced. Run with `pnpm test:db`.
+ */
+
+const session = { current: null as null | { memberships: Array<{ id: string; tenantId: string }>; activeWorkspace: { id: string } } };
+
+vi.mock('@/lib/prisma', async () => ({ prisma: (await import('../../../../test/db-helpers')).db }));
+vi.mock('@/lib/auth', () => ({
+  auth: {
+    requireAction: vi.fn(async () => session.current),
+    getSession: vi.fn(async () => session.current),
+  },
+}));
+
+import { getRows } from './actions';
+import { MEAL_COLUMNS } from '@/lib/receipts-constants';
+import { createGroup } from '@/lib/groups/service';
+
+let ws: TestWorkspace;
+let dateId: string;
+const rows: Record<string, string> = {};
+let group: string;
+
+const base = { Vendor: 'V', Gross: 5, Category: 'Software & Lizenzen', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 };
+
+beforeAll(async () => {
+  ws = await createWorkspace();
+  session.current = { memberships: [{ id: ws.workspaceId, tenantId: ws.tenantId }], activeWorkspace: { id: ws.workspaceId } };
+  dateId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Date')!.id;
+  // Dates as the app stores them: a full timestamp from the reader, a plain day from an import, one it cannot read.
+  rows.dec31 = await ws.addReceipt({ ...base, Name: 'dec31', Date: '2024-12-31T00:00:00.000Z' });
+  rows.jan1 = await ws.addReceipt({ ...base, Name: 'jan1', Date: '2025-01-01' });
+  rows.jan2 = await ws.addReceipt({ ...base, Name: 'jan2', Date: '2025-01-02T00:00:00.000Z' });
+  rows.jun = await ws.addReceipt({ ...base, Name: 'jun', Date: '2025-06-15T00:00:00.000Z' });
+  rows.old = await ws.addReceipt({ ...base, Name: 'old', Date: '2023-03-01T00:00:00.000Z' });
+  rows.bad = await ws.addReceipt({ ...base, Name: 'bad', Date: 'letzten Sommer' });
+  rows.none = await ws.addReceipt({ ...base, Name: 'none' });
+  group = await createGroup(db, ws.workspaceId, 'Gruppe', [rows.jun, rows.old]);
+});
+beforeEach(() => {
+  session.current = { memberships: [{ id: ws.workspaceId, tenantId: ws.tenantId }], activeWorkspace: { id: ws.workspaceId } };
+});
+afterAll(async () => {
+  await db.$disconnect();
+});
+
+const on = (operator: QueryFilter['operator'], value: string): QueryFilter[] => [{ columnId: dateId, operator, value }];
+const names = (items: Array<{ id: string }>) => {
+  const byId = new Map(Object.entries(rows).map(([name, id]) => [id, name]));
+  byId.set(group, 'group');
+  return items.map((r) => byId.get(r.id) ?? r.id).sort();
+};
+
+describe('the filter bar on the date', () => {
+  // The reason the list answers these itself. When this starts to fail, the shared adapter compares dates
+  // correctly and the app's own comparison (`day-filters.ts`) can go.
+  it('still fails in the table adapter itself', async () => {
+    await expect(ws.adapter.getRows(ws.tableId, { filters: on('greaterThan', '2025-01-01') })).rejects.toThrow();
+  });
+
+  it('"after" a day, across the turn of the year, with every year loaded', async () => {
+    const result = await getRows(ws.tableId, { filters: on('greaterThan', '2024-12-31'), limit: 200 });
+    expect(names(result.items)).toEqual(['group', 'jan1', 'jan2', 'jun']);
+    expect(result).toMatchObject({ total: 4, hasMore: false });
+  });
+
+  it('"before" a day, across the turn of the year', async () => {
+    const result = await getRows(ws.tableId, { filters: on('lessThan', '2025-01-01'), limit: 200 });
+    expect(names(result.items)).toEqual(['dec31', 'group', 'old']);
+  });
+
+  it('"is" a day, whatever time is stored with it', async () => {
+    expect(names((await getRows(ws.tableId, { filters: on('equals', '2025-01-02'), limit: 200 })).items)).toEqual(['jan2']);
+    expect(names((await getRows(ws.tableId, { filters: on('equals', '2025-01-01'), limit: 200 })).items)).toEqual(['jan1']);
+  });
+
+  it('"is" a day keeps the group of a receipt on that day and only that group', async () => {
+    expect(names((await getRows(ws.tableId, { filters: on('equals', '2025-06-15'), limit: 200 })).items)).toEqual(['group', 'jun']);
+    expect(names((await getRows(ws.tableId, { filters: on('equals', '2025-06-15'), years: [2025], limit: 200 } as never)).items)).toEqual(['group', 'jun']);
+    // A day none of the group's receipts is on: the group does not come along empty.
+    expect(names((await getRows(ws.tableId, { filters: on('equals', '2025-01-02'), years: [2025], limit: 200 } as never)).items)).toEqual(['jan2']);
+  });
+
+  it('"is" a day on a sorted list keeps the group too', async () => {
+    const nameId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Name')!.id;
+    const result = await getRows(ws.tableId, { filters: on('equals', '2025-06-15'), sorts: [{ columnId: nameId, direction: 'asc' }], limit: 200 });
+    expect(result.items.map((r) => r.cells[nameId])).toEqual(['Gruppe', 'jun']);
+  });
+
+  it('answers on a second date column, which bounds no years', async () => {
+    const w = await createWorkspace();
+    session.current = { memberships: [{ id: w.workspaceId, tenantId: w.tenantId }], activeWorkspace: { id: w.workspaceId } };
+    const detailsId = (await w.adapter.getColumns(w.tableId)).find((c) => c.name === MEAL_COLUMNS.detailsAt)!.id;
+    const early = await w.addReceipt({ ...base, Name: 'early', Date: '2025-03-01', [MEAL_COLUMNS.detailsAt]: '2025-03-02T12:00:00.000Z' });
+    const late = await w.addReceipt({ ...base, Name: 'late', Date: '2024-03-01', [MEAL_COLUMNS.detailsAt]: '2025-04-02T12:00:00.000Z' });
+    await w.addReceipt({ ...base, Name: 'without', Date: '2025-05-01' });
+    const result = await getRows(w.tableId, { filters: [{ columnId: detailsId, operator: 'greaterThan', value: '2025-03-15' }], limit: 200 });
+    expect(result.items.map((r) => r.id)).toEqual([late]);
+    const sameDay = await getRows(w.tableId, { filters: [{ columnId: detailsId, operator: 'equals', value: '2025-03-02' }], limit: 200 });
+    expect(sameDay.items.map((r) => r.id)).toEqual([early]);
+  });
+
+  it('answers in the years chosen above the table too', async () => {
+    const result = await getRows(ws.tableId, { filters: on('greaterThan', '2025-01-01'), years: [2024, 2025], limit: 200 } as never);
+    expect(names(result.items)).toEqual(['group', 'jan2', 'jun']);
+    const before = await getRows(ws.tableId, { filters: on('lessThan', '2025-01-02'), years: [2025], limit: 200 } as never);
+    expect(names(before.items)).toEqual(['jan1']);
+  });
+
+  it('answers on a sorted list, in its order', async () => {
+    const nameId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Name')!.id;
+    const result = await getRows(ws.tableId, { filters: on('greaterThan', '2024-12-31'), sorts: [{ columnId: nameId, direction: 'desc' }], limit: 200 });
+    expect(result.items.map((r) => r.cells[nameId])).toEqual(['jun', 'jan2', 'jan1', 'Gruppe']);
+  });
+
+  it('comes in one answer: a further page is empty, with and without years chosen', async () => {
+    const more = await getRows(ws.tableId, { filters: on('greaterThan', '2024-12-31'), limit: 200, offset: 200 });
+    expect(more).toMatchObject({ items: [], hasMore: false });
+    const unbounded = await getRows(ws.tableId, { filters: on('notEquals', '2024-12-31'), limit: 200, offset: 200 });
+    expect(unbounded).toMatchObject({ items: [], hasMore: false });
+    const scoped = await getRows(ws.tableId, { filters: on('greaterThan', '2024-12-31'), years: [2025], limit: 200, offset: 200 } as never);
+    expect(scoped).toMatchObject({ items: [], hasMore: false });
+  });
+
+  it('answers on a sorted list with years chosen, over every year, in its order', async () => {
+    const nameId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Name')!.id;
+    const result = await getRows(ws.tableId, {
+      filters: on('lessThan', '2025-01-02'),
+      sorts: [{ columnId: nameId, direction: 'asc' }],
+      years: [2025],
+      limit: 200,
+    } as never);
+    // A sorted list is not narrowed to years (the browser narrows it), so the earlier years come too.
+    expect(result.items.map((r) => r.cells[nameId])).toEqual(['Gruppe', 'dec31', 'jan1', 'old']);
+  });
+
+  it('"is not" a day keeps receipts without a readable date', async () => {
+    const result = await getRows(ws.tableId, { filters: on('notEquals', '2025-01-01'), limit: 200 });
+    expect(names(result.items)).toEqual(['bad', 'dec31', 'group', 'jan2', 'jun', 'none', 'old']);
+  });
+
+  it('nothing is after a day and before an earlier one', async () => {
+    const result = await getRows(ws.tableId, { filters: [...on('greaterThan', '2025-01-01'), ...on('lessThan', '2024-01-01')], limit: 200 });
+    expect(result).toMatchObject({ items: [], total: 0, hasMore: false });
+  });
+
+  it('a date comparison without a value yet filters nothing', async () => {
+    const all = await getRows(ws.tableId, { limit: 200 });
+    const blank = await getRows(ws.tableId, { filters: [{ columnId: dateId, operator: 'equals', value: null }], limit: 200 });
+    expect(names(blank.items)).toEqual(names(all.items));
+  });
+
+  it('goes together with the adapter\'s own filters', async () => {
+    const nameId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Name')!.id;
+    const result = await getRows(ws.tableId, {
+      filters: [...on('greaterThan', '2024-12-31'), { columnId: nameId, operator: 'startsWith', value: 'jan' }],
+      limit: 200,
+    });
+    expect(names(result.items)).toEqual(['jan1', 'jan2']);
+  });
+});

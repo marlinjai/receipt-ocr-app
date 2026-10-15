@@ -17,6 +17,7 @@ import { groupsHoldingReceipts, yearCounts, type YearCounts } from '@/lib/receip
 const SCOPED_LIST_LIMIT = 5000;
 import { MIN_TEXT_SEARCH_LENGTH, TEXT_SEARCH_LIMIT, likePattern, rowsWithoutText, textColumnIds, withoutText } from '@/lib/receipt-text';
 import { GROUP_KIND, ROW_KIND_COLUMN, rowKindColumnId } from '@/lib/receipts-kind';
+import { applyDayFilters, boundsYears, readEveryRow, splitDayFilters, yearsWithin } from './day-filters';
 import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
 import { rowKind } from '@/lib/groups/service';
 import { readRowLinks } from '@/lib/groups/links';
@@ -227,15 +228,40 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
   const adapter = getAdapter();
   const columns = await adapter.getColumns(tableId);
   const textIds = textColumnIds(columns);
-  const { years: asked, ...rest } = query ?? {};
-  const years = cleanScopeYears(asked);
+  const { years: asked, ...asks } = query ?? {};
+  // The filter bar's date comparisons are answered here, on the day each date names (see `day-filters.ts`):
+  // the adapter's own comparisons fail on this database. Every other filter goes to the adapter as before.
+  const { dayFilters, adapterFilters, dayPrefixes } = splitDayFilters(asks.filters, columns);
+  const rest: QueryOptions = { ...asks, filters: adapterFilters };
+  let years = cleanScopeYears(asked);
   const dateId = columns.find((c) => c.name === 'Date')?.id;
   // A sorted list is not narrowed: the years are queried one by one, so a sort across them (and the place of
   // the groups in it) could not be right. The browser filters the years then.
   const sorted = (rest.sorts?.length ?? 0) > 0;
-  if (!years || !dateId || sorted) {
+  if ((!years || !dateId || sorted) && dayFilters.length === 0) {
     const result = await adapter.getRows(tableId, rest);
     return { ...result, items: rowsWithoutText(result.items, textIds) };
+  }
+  // "Is", "after" and "before" on the invoice date bound the years a receipt can lie in: the list then reads
+  // only those years, as the year chips do, and compares the days of what they hold. (Like the year chips,
+  // that path never shows archived rows; the dashboard does not ask for them.)
+  const bounded =
+    dateId && !sorted && boundsYears(dayFilters, dateId)
+      ? yearsWithin(dayFilters, dateId, years ?? (await yearCounts(prisma, tableId, columns)).years.map((y) => y.year))
+      : null;
+  if (bounded && bounded.length === 0) return { items: [], total: 0, hasMore: false } as QueryResult<Row>;
+  if (bounded) years = bounded;
+  if (!years || !dateId || sorted) {
+    // A list with a date comparison that bounds no years comes in one answer: which rows pass is only known
+    // once they are read, so a page of the adapter could not be counted. A further page is empty. That is a
+    // sorted list, or a comparison on a date column other than the invoice date (when the meal details were
+    // entered). It reads every row the other filters leave, groups included (so no day match is added: it
+    // would drop them), and the recognized text until it is left out below. On the invoice date without a
+    // sort, the filter bar's operators always take the per-year path below.
+    if ((rest.offset ?? 0) > 0) return { items: [], total: rest.offset ?? 0, hasMore: false } as QueryResult<Row>;
+    const every = await readEveryRow((offset, limit) => adapter.getRows(tableId, { ...rest, offset, limit }), SCOPED_LIST_LIMIT);
+    const items = applyDayFilters(every, dayFilters, columns);
+    return { items: rowsWithoutText(items, textIds), total: items.length, hasMore: false } as QueryResult<Row>;
   }
 
   // A list narrowed to years: one query per year, on the start of the stored invoice date (a plain text
@@ -248,7 +274,8 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
     years.map((year) =>
       adapter.getRows(tableId, {
         ...rest,
-        filters: [...(rest.filters ?? []), { columnId: dateId, operator: 'startsWith', value: `${year}-` }],
+        // Only receipts are read here (the groups come below), so "is" a day may narrow them in the database.
+        filters: [...(rest.filters ?? []), ...dayPrefixes, { columnId: dateId, operator: 'startsWith', value: `${year}-` }],
         limit: SCOPED_LIST_LIMIT,
         offset: 0,
       }),
@@ -264,6 +291,7 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
       items = [...items, ...groups.items.filter((g) => parents.has(g.id) && !have.has(g.id))];
     }
   }
+  items = applyDayFilters(items, dayFilters, columns);
   return { items: rowsWithoutText(items, textIds), total: items.length, hasMore: false } as QueryResult<Row>;
 }
 

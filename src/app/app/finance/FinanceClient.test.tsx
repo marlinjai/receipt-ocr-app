@@ -300,10 +300,19 @@ describe('FinanceClient: overdue invoices in the open checks (decision D6)', () 
     const panel = screen.getByRole('region', { name: '1 Rechnung überfällig' });
     expect(within(panel).getByText('Rechnung 58 vom 03.08.2026')).toBeTruthy();
     expect(within(panel).getByText(/fällig 17\.08\.2026, 59 Tage überfällig, offen 900,00 €/)).toBeTruthy();
-    expect(screen.getByRole('tab', { name: /Offen/ }).textContent).toContain('2');
+    expect(screen.getByRole('tab', { name: /Offen/ }).textContent).toBe('Offen2');
     expect(screen.getByText(/1 Rechnung überfällig,|^1 Rechnung überfällig$/, { selector: 'dd' })).toBeTruthy();
     // The receipt queue is still there below it.
     expect(screen.getByText('Noch 1 Beleg offen.')).toBeTruthy();
+  });
+
+  it('counts several overdue invoices in the plural', () => {
+    const base = overdueView([]);
+    const second = { invoiceId: 'inv-59', number: '59', issueDate: '2026-08-10', dueDate: '2026-08-24', openCents: 10_000, daysPastDue: 52 };
+    render(<FinanceClient initial={{ ...base, revenue: { ...base.revenue, overdue: [...base.revenue.overdue, second] } }} />);
+    expect(screen.getByRole('region', { name: '2 Rechnungen überfällig' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Offen/ }).textContent).toBe('Offen2');
+    expect(screen.getByText('2 Rechnungen überfällig', { selector: 'dd' })).toBeTruthy();
   });
 
   it('shows the reminder instead of "nothing open" when no receipt waits, and leads to the invoices', async () => {

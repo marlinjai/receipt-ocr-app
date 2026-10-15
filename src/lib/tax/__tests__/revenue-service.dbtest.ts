@@ -97,8 +97,9 @@ describe('revenue: forward, change, re-entry', () => {
     // Issued 2026-03-01 and unpaid: long past its due date (14 days) plus 14 days, so it is a reminder (decision D6).
     expect(view.revenue.invoices[0]).toMatchObject({ id, number: 'R-2026-001', outstandingCents: 100_000, checks: ['invoice_overdue'] });
     expect(view.revenue.overdue).toEqual([expect.objectContaining({ invoiceId: id, number: 'R-2026-001', dueDate: '2026-03-15', openCents: 100_000 })]);
-    // The reminder is about today, so it shows in an earlier year's view as well.
-    expect((await loadStatement(db, ws.workspaceId, 2025)).revenue.overdue).toHaveLength(1);
+    // A later year's view still lists the unpaid invoice, and so the reminder; an earlier year's view lists neither.
+    expect((await loadStatement(db, ws.workspaceId, 2027)).revenue.overdue).toHaveLength(1);
+    expect((await loadStatement(db, ws.workspaceId, 2025)).revenue.overdue).toEqual([]);
 
     await saveInvoice(db, ctx, id, invoice());
     view = await loadStatement(db, ws.workspaceId, 2026);

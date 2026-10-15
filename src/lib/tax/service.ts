@@ -370,7 +370,7 @@ export interface StatementView {
     outstandingCents: number;
     /** Every invoice that touches the year: issued in it, paid in it, or still unpaid at its end. */
     invoices: InvoiceView[];
-    /** Issued invoices of every year still unpaid 14 days after their due date, as of today: the reminder of the open checks. */
+    /** Invoices issued up to this year and still unpaid 14 days after their due date, as of today: the reminder of the open checks. */
     overdue: OverdueInvoice[];
   };
   /** Where the year is heading against the small-business limits, as of today. */
@@ -563,8 +563,12 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     if (businessBp > 0) undeductedInputVatCents += Math.round(((item.amountCents - item.netCents) * businessBp) / 10_000);
   }
   const invoiceResults = new Map(result.revenue.invoices.map((i) => [i.invoiceId, i]));
-  // Overdue as of today, whatever year is viewed: a reminder is about now (decision D6 of the invoicing plan).
-  const overdue = overdueInvoices(invoiceFacts, today());
+  // Overdue as of today (decision D6 of the invoicing plan): a reminder is about now. Only invoices issued up to the
+  // viewed year, because those are the ones its "Einnahmen" tab lists (unpaid, so outstanding at its end).
+  const overdue = overdueInvoices(
+    invoiceFacts.filter((i) => i.issueDate !== null && Number(i.issueDate.slice(0, 4)) <= year),
+    today(),
+  );
   const overdueIds = new Set(overdue.map((o) => o.invoiceId));
   const paymentsView = buildPaymentsView(loadedPayments, year, wholeReceipts, invoiceFacts, result.revenue.invoices);
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));

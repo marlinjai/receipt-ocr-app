@@ -34,9 +34,13 @@ describe('overdueInvoices', () => {
     expect(entry.daysPastDue).toBe(30);
   });
 
-  it('does not count a payment dated after today', () => {
-    const [entry] = overdueInvoices([invoice({ id: 'a', payments: [{ date: '2026-10-20', cents: 100_000 }] })], '2026-10-15');
-    expect(entry.openCents).toBe(100_000);
+  it('counts a linked payment whatever its day: it ends the reminder', () => {
+    expect(overdueInvoices([invoice({ id: 'a', payments: [{ date: '2026-10-20', cents: 100_000 }] })], '2026-10-15')).toEqual([]);
+  });
+
+  it('ignores a stored day that does not exist instead of rolling it over', () => {
+    expect(overdueInvoices([invoice({ id: 'a', issueDate: '2026-02-30' })], '2026-12-01')).toEqual([]);
+    expect(() => overdueInvoices([], '2026-02-30')).toThrow();
   });
 
   it('skips an invoice without a date or without an amount', () => {

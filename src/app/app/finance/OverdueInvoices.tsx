@@ -1,8 +1,9 @@
 'use client';
 
+import { useId } from 'react';
 import { formatDay } from '@/lib/meals/messages';
 import { formatCents } from '@/lib/tax/money';
-import { REMINDER_AFTER_DAYS, type OverdueInvoice } from '@/lib/tax/overdue';
+import { PAYMENT_TERM_DAYS, REMINDER_AFTER_DAYS, type OverdueInvoice } from '@/lib/tax/overdue';
 
 /**
  * The reminder of the open checks (decision D6 of the invoicing plan): issued
@@ -11,14 +12,15 @@ import { REMINDER_AFTER_DAYS, type OverdueInvoice } from '@/lib/tax/overdue';
  * payment on the "Zahlungen" tab; either ends the reminder.
  */
 export default function OverdueInvoices({ overdue, onOpenRevenue }: { overdue: readonly OverdueInvoice[]; onOpenRevenue: () => void }) {
+  const headingId = useId();
   return (
-    <section className="glass-panel mb-6 rounded-xl p-4 sm:p-5" aria-labelledby="overdue-invoices-heading">
-      <h2 id="overdue-invoices-heading" className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>
+    <section className="glass-panel mb-6 rounded-xl p-4 sm:p-5" aria-labelledby={headingId}>
+      <h2 id={headingId} className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>
         {overdue.length === 1 ? '1 Rechnung überfällig' : `${overdue.length} Rechnungen überfällig`}
       </h2>
       <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
-        Stand heute, aus allen Jahren: mehr als {REMINDER_AFTER_DAYS} Tage nach Fälligkeit (Rechnungsdatum plus 14 Tage Zahlungsziel) noch nicht ganz bezahlt.
-        Ist das Geld schon da, die Zahlung unter „Zahlungen“ zuordnen oder unter „Einnahmen“ eintragen; sonst ist eine Erinnerung an den Kunden fällig.
+        Stand heute: {REMINDER_AFTER_DAYS} Tage oder länger nach Fälligkeit (ohne eigene Angabe: Rechnungsdatum plus {PAYMENT_TERM_DAYS} Tage) noch nicht ganz
+        bezahlt. Ist das Geld schon da, die Zahlung unter „Zahlungen“ zuordnen oder unter „Einnahmen“ eintragen; sonst ist eine Erinnerung an den Kunden fällig.
       </p>
       <ul className="mt-3 divide-y" style={{ borderColor: 'var(--border)' }}>
         {overdue.map((invoice) => (

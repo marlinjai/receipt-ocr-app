@@ -140,12 +140,13 @@ describe('RevenueTab', () => {
     const user = userEvent.setup();
     const props = revenueProps();
     const invoices = [
-      invoiceView({ id: 'a', number: 'A', payments: [], receivedCents: 0, outstandingCents: 100_000 }),
+      invoiceView({ id: 'a', number: 'A', payments: [], receivedCents: 0, outstandingCents: 100_000, checks: ['invoice_overdue'] }),
       invoiceView({ id: 'b', number: 'B', declaredInYear: 2025, excludedCents: 100_000, checks: ['invoice_treatment_mismatch'] }),
     ];
     render(<RevenueTab view={view({ revenue: { recorded: true, receivedCents: 100_000, turnoverCents: 100_000, outstandingCents: 100_000, invoices, overdue: [] } })} {...props} />);
     const open = screen.getByRole('heading', { name: 'Rechnung A' }).closest('li') as HTMLElement;
     expect(open.textContent).toContain('noch nicht bezahlt');
+    expect(within(open).getByRole('status').textContent).toContain('Überfällig: 14 Tage oder länger nach Fälligkeit');
     const declared = screen.getByRole('heading', { name: 'Rechnung B' }).closest('li') as HTMLElement;
     expect(declared.textContent).toContain('bereits 2025 erklärt');
     expect(declared.textContent).toContain('zählen nicht noch einmal als Einnahme');

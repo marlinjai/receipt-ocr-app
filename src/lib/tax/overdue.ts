@@ -43,7 +43,8 @@ export interface OverdueInvoice {
 const DAY_MS = 86_400_000;
 const dayNumber = (day: string) => Math.round(Date.parse(`${day}T00:00:00Z`) / DAY_MS);
 const isoDay = (n: number) => new Date(n * DAY_MS).toISOString().slice(0, 10);
-const isIsoDay = (day: string) => /^\d{4}-\d{2}-\d{2}$/.test(day) && !Number.isNaN(Date.parse(`${day}T00:00:00Z`));
+/** A real calendar day in ISO form: "2026-02-30" is refused, not rolled over into March. */
+const isIsoDay = (day: string) => /^\d{4}-\d{2}-\d{2}$/.test(day) && !Number.isNaN(Date.parse(`${day}T00:00:00Z`)) && isoDay(dayNumber(day)) === day;
 
 /** The issue day plus the payment term. */
 export function defaultDueDate(issueDate: string): string {
@@ -52,8 +53,9 @@ export function defaultDueDate(issueDate: string): string {
 
 /**
  * The invoices that are overdue on `today` (an ISO day), oldest due date
- * first. Payments dated after today do not count yet; an invoice paid in full
- * (or more) is never overdue, whatever the order of its payments.
+ * first. Every recorded payment counts, whatever its day: an invoice is
+ * outstanding until a payment is linked to it, so a linked payment ends the
+ * reminder. An invoice paid in full (or more) is never overdue.
  */
 export function overdueInvoices(invoices: readonly OverdueInput[], today: string): OverdueInvoice[] {
   if (!isIsoDay(today)) throw new Error(`overdueInvoices: today must be an ISO day, got ${today}`);
@@ -64,7 +66,7 @@ export function overdueInvoices(invoices: readonly OverdueInput[], today: string
     const dueDate = invoice.dueDate && isIsoDay(invoice.dueDate) ? invoice.dueDate : defaultDueDate(invoice.issueDate);
     const daysPastDue = todayNumber - dayNumber(dueDate);
     if (daysPastDue < REMINDER_AFTER_DAYS) continue;
-    const paid = invoice.payments.filter((p) => p.date <= today).reduce((sum, p) => sum + p.cents, 0);
+    const paid = invoice.payments.reduce((sum, p) => sum + p.cents, 0);
     const openCents = invoice.grossCents - paid;
     if (openCents <= 0) continue;
     overdue.push({ invoiceId: invoice.id, number: invoice.number, issueDate: invoice.issueDate, dueDate, openCents, daysPastDue });

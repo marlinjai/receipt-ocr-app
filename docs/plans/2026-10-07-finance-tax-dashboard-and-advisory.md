@@ -1477,3 +1477,28 @@ like everything else; nothing derived is stored.
    says otherwise, shown as a decided item with its reason, so it can be changed.
 4. **Who owns the contract matcher.** Recommended: the payments lane, as an extension
    of its matcher, with this plan's entry type as the target.
+
+## Reality: the provisional rule set of 2027 (2026-10-15)
+
+- **2027 has its own rule set, marked provisional.** Neither the income-surplus
+  statement (Anlage EÜR) of 2027 nor the employment annex (Anlage N) of 2027 is
+  published (the ministry publishes the statement in the late summer of the year
+  itself, the employment annex drafts go out around May). The rule set therefore
+  lists every line by its label and none with a number, and cites no form.
+- **The legal values are 2026's**, carried explicitly: the 70 percent meal share,
+  the asset limits and methods (the declining method stays open for purchases before
+  1 January 2028) and the small-business limits of 25,000 and 100,000 euros. Checked
+  on 2026-10-15 against the statutes as last amended on 29 June 2026 and the
+  amendments not yet in force: nothing enacted changes them for 2027.
+- **Pending and worth watching:** the annual tax act 2026 (Jahressteuergesetz 2026,
+  government bill, Bundestag printed paper 21/8283). The federal council proposed on
+  25 September 2026 to raise the low-value limit to 1,200 euros and abolish the pool
+  for purchases after 31 December 2026; the government said it would examine it. The
+  provisional note on the screen names this.
+- **Every surface says so.** The rule set carries `provisional` (the year it carries
+  from and why), the statement view passes it on, and the finance area shows a note
+  instead of the "line numbers not compared" note. A test pins every carried value to
+  2026's, so the yearly review knows exactly what to replace, and the forcing test of
+  1 December is satisfied for 2026.
+- **Computed figures of 2025 and 2026 do not change**; only the year 2027 now has an
+  exact (provisional) rule set instead of falling back to 2026's with a warning.

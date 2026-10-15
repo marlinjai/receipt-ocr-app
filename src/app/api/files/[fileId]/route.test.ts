@@ -21,13 +21,14 @@ const verifyRequest = vi.fn();
 const findMany = vi.fn();
 const findUnique = vi.fn();
 const tableFindMany = vi.fn();
+const tableFindUnique = vi.fn();
 const resolveRowTableIds = vi.fn();
 
 vi.mock('@/lib/auth', () => ({ auth: { verifyRequest: (...a: unknown[]) => verifyRequest(...a) } }));
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     dtFile: { findMany: (...a: unknown[]) => findMany(...a), findUnique: (...a: unknown[]) => findUnique(...a) },
-    dtTable: { findMany: (...a: unknown[]) => tableFindMany(...a) },
+    dtTable: { findMany: (...a: unknown[]) => tableFindMany(...a), findUnique: (...a: unknown[]) => tableFindUnique(...a) },
   },
 }));
 vi.mock('@/lib/auth-guards', () => ({ resolveRowTableIds: (...a: unknown[]) => resolveRowTableIds(...a) }));
@@ -55,19 +56,20 @@ function storedFile(bytes: Uint8Array, type: string) {
   fetchMock.mockResolvedValue(new Response(bytes as unknown as BodyInit, { status: 200, headers: { 'Content-Type': type } }));
 }
 function reference(rotation: unknown, overrides: Record<string, unknown> = {}) {
-  findUnique.mockResolvedValue({ fileId: FILE, originalName: 'Kassenbon Bäckerei.pdf', mimeType: 'application/pdf', metadata: { rotation }, ...overrides });
+  findUnique.mockResolvedValue({ fileId: FILE, rowId: 'row-1', originalName: 'Kassenbon Bäckerei.pdf', mimeType: 'application/pdf', metadata: { rotation }, ...overrides });
 }
 const bytesOf = async (res: Response) => new Uint8Array(await res.arrayBuffer());
 
 beforeEach(() => {
   vi.stubEnv('STORAGE_BRAIN_API_KEY', 'test-key');
   vi.stubGlobal('fetch', fetchMock);
-  for (const m of [verifyRequest, findMany, findUnique, tableFindMany, resolveRowTableIds, fetchMock]) m.mockReset();
+  for (const m of [verifyRequest, findMany, findUnique, tableFindMany, tableFindUnique, resolveRowTableIds, fetchMock]) m.mockReset();
   // A member of workspace A; the file is referenced by a row of a table in workspace A.
   verifyRequest.mockResolvedValue({ kind: 'user', email: 'user@example.invalid', memberships: [WS_A], activeWorkspace: WS_A });
   findMany.mockResolvedValue([{ rowId: 'row-1' }]);
   resolveRowTableIds.mockResolvedValue(new Map([['row-1', 'table-1']]));
   tableFindMany.mockResolvedValue([{ workspaceId: 'ws-a' }]);
+  tableFindUnique.mockResolvedValue({ workspaceId: 'ws-a' });
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -159,7 +161,7 @@ describe('GET /api/files/:id?ref=: the receipt as the viewer shows it', () => {
     storedFile(jpegFile(300, 800), 'image/jpeg');
     const res = await call(`?ref=${REF}`);
     expect(res.headers.get('Content-Type')).toBe('application/pdf');
-    expect(res.headers.get('Content-Disposition')).toContain("filename*=UTF-8''Kassenbon%20B%C3%A4ckerei.pdf");
+    expect(res.headers.get('Content-Disposition')).toContain("filename*=UTF-8''Kassenbon%20B%C3%A4ckerei%20%28gedreht%29.pdf");
     expect(await pageRotations(await bytesOf(res))).toEqual([90]);
   });
 
@@ -198,6 +200,49 @@ describe('GET /api/files/:id?ref=: the receipt as the viewer shows it', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('a reference held by a row of another company is answered like an unknown one', async () => {
+    // The file itself is open to the caller (also referenced in workspace A), but this reference sits in B.
+    reference(90);
+    tableFindUnique.mockResolvedValue({ workspaceId: 'ws-b' });
+    const res = await call(`?ref=${REF}`);
+    expect(res.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a reference whose row no longer resolves is answered like an unknown one', async () => {
+    reference(90);
+    resolveRowTableIds.mockResolvedValue(new Map());
+    expect((await call(`?ref=${REF}`)).status).toBe(404);
+  });
+
+  it('a service caller reaches any reference, as with the file itself', async () => {
+    verifyRequest.mockResolvedValue({ kind: 'service' });
+    reference(180);
+    tableFindUnique.mockResolvedValue({ workspaceId: 'ws-b' });
+    storedFile(await pdfFile([{ width: 300, height: 800 }]), 'application/pdf');
+    expect(await pageRotations(await bytesOf(await call(`?ref=${REF}`)))).toEqual([180]);
+  });
+
+  it('a database failure shows the error page offering the stored file, and is logged', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    findUnique.mockRejectedValue(new Error('database down'));
+    const res = await call(`?ref=${REF}`);
+    expect(res.status).toBe(500);
+    expect(await res.text()).toContain(`href="/api/files/${FILE}"`);
+    expect(quiet).toHaveBeenCalled();
+    quiet.mockRestore();
+  });
+
+  it('a file store that cannot be reached shows the error page too', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    reference(90);
+    fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+    const res = await call(`?ref=${REF}`);
+    expect(res.status).toBe(500);
+    expect(res.headers.get('Content-Type')).toBe('text/html; charset=utf-8');
+    quiet.mockRestore();
+  });
+
   it('an unknown reference is 404, a malformed one 400', async () => {
     findUnique.mockResolvedValue(null);
     expect((await call(`?ref=${REF}`)).status).toBe(404);
@@ -210,7 +255,7 @@ describe('GET /api/files/:id?ref=: the receipt as the viewer shows it', () => {
     reference(90);
     storedFile(new TextEncoder().encode('kein pdf'), 'application/pdf');
     const res = await call(`?ref=${REF}`);
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(422);
     expect(res.headers.get('Content-Type')).toBe('text/html; charset=utf-8');
     const html = await res.text();
     expect(html.startsWith('<!doctype html>')).toBe(true);
@@ -224,7 +269,7 @@ describe('GET /api/files/:id?ref=: the receipt as the viewer shows it', () => {
     const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
     reference(90, { mimeType: 'image/webp', originalName: 'foto.webp' });
     storedFile(new Uint8Array([1, 2, 3]), 'image/webp');
-    expect((await call(`?ref=${REF}`)).status).toBe(500);
+    expect((await call(`?ref=${REF}`)).status).toBe(422);
     quiet.mockRestore();
   });
 

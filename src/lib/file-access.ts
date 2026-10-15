@@ -86,6 +86,29 @@ async function workspacesReferencing(fileId: string): Promise<string[]> {
 }
 
 /**
+ * Whether the caller may read the details of one file REFERENCE (its stored
+ * rotation and file name), given the row that holds it. `guardFileAccess`
+ * proves access to the file through SOME workspace; a file referenced from two
+ * workspaces must still not hand one company the other's reference details.
+ * Same precedence as the guard: service callers and the development bypass
+ * are unscoped, everything else must be a member of the row's workspace.
+ */
+export async function fileReferenceOpenToRequest(req: NextRequest, rowId: string): Promise<boolean> {
+  const principal = await auth.verifyRequest(req);
+  if (principal.kind === 'service') return true;
+  if (principal.kind !== 'user') return false;
+  if (principal.memberships.length === 0) return true;
+  const tableId = (await resolveRowTableIds([rowId])).get(rowId);
+  if (!tableId) return false;
+  const table = await prisma.dtTable.findUnique({ where: { id: tableId }, select: { workspaceId: true } });
+  if (!table) return false;
+  return sessionMayAccessWorkspace(
+    { memberships: principal.memberships, activeWorkspace: principal.activeWorkspace },
+    table.workspaceId,
+  );
+}
+
+/**
  * The same rule for a server action that is handed a file id by the browser
  * and works for ONE workspace: the file must be fresh (referenced nowhere) or
  * referenced by that workspace. Without it, a receipt could be saved with

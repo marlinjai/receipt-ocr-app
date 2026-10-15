@@ -153,16 +153,27 @@ describe('names for the turned copy', () => {
   const pdf: Rendition = { kind: 'pdf', bytes: new Uint8Array(), rotation: 90 };
   const original: Rendition = { kind: 'original', rotation: 0 };
 
-  it('keeps the original name; an image that became a PDF says so in its extension', () => {
-    expect(renditionName('Kassenbon Bäckerei.jpg', pdf)).toBe('Kassenbon Bäckerei.pdf');
-    expect(renditionName('scan.PDF', pdf)).toBe('scan.PDF');
+  it('the stored file keeps its name; a turned copy says it is one, as a PDF', () => {
     expect(renditionName('foto.png', original)).toBe('foto.png');
-    expect(renditionName('ohne-endung', pdf)).toBe('ohne-endung.pdf');
+    expect(renditionName('Kassenbon Bäckerei.jpg', pdf)).toBe('Kassenbon Bäckerei (gedreht).pdf');
+    expect(renditionName('scan.PDF', pdf)).toBe('scan (gedreht).pdf');
+    expect(renditionName('ohne-endung', pdf)).toBe('ohne-endung (gedreht).pdf');
   });
 
   it('removes path separators and control characters, and never ends up empty', () => {
-    expect(renditionName('../a/b\\c\r\n.jpg', pdf)).toBe('.. a b c  .pdf');
+    expect(renditionName('../a/b\\c\r\n.jpg', pdf)).toBe('.. a b c (gedreht).pdf');
     expect(renditionName('', original)).toBe('Beleg');
+    expect(renditionName('.pdf', pdf)).toBe('Beleg (gedreht).pdf');
+  });
+
+  it('a long name is cut between characters, so an emoji at the cut never breaks the header', () => {
+    const long = `${'a'.repeat(199)}😀😀.pdf`;
+    const kept = renditionName(long, original);
+    expect(Array.from(kept)).toHaveLength(200);
+    expect(() => inlineDisposition(kept)).not.toThrow();
+    const turned = renditionName(`${'b'.repeat(179)}😀😀.jpg`, pdf);
+    expect(turned).toBe(`${'b'.repeat(179)}😀 (gedreht).pdf`);
+    expect(() => inlineDisposition(turned)).not.toThrow();
   });
 
   it('the disposition shows the file inline and keeps umlauts for the download', () => {

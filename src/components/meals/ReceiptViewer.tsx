@@ -170,7 +170,10 @@ function FileView({
   /** Whether the user (or a stored value) decided the rotation; the shape-based guess applies only before that. */
   const decided = useRef(file.rotation !== null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSave = useRef<(() => Promise<void>) | null>(null);
+  /** The save waiting for the debounce; resolves whether it was stored. */
+  const pendingSave = useRef<(() => Promise<boolean>) | null>(null);
+  /** The save on its way to the server, until it is answered. */
+  const savingNow = useRef<Promise<boolean> | null>(null);
 
   /**
    * The picture is there and its size is known. Without a stored rotation, a
@@ -240,18 +243,29 @@ function FileView({
   // never an angle, so it cannot show an outdated turn.
   const externalUrl = rotatedFileUrl(file);
   /**
-   * A turn made just before the click may still wait for its save. The tab is
-   * opened at once (inside the click, so no popup blocker stops it) and sent
-   * to the receipt once the save is through, so it shows the new rotation.
+   * A turn made just before the click may still wait for its save, or the save
+   * may still be on its way. The tab is opened at once (inside the click, so
+   * no popup blocker stops it) and sent to the receipt once the save is
+   * through, so it shows the new rotation. When the save fails the empty tab
+   * is closed again, and the viewer's note says the turn was not stored.
    */
   const openExternal = (e: MouseEvent<HTMLAnchorElement>) => {
-    const save = pendingSave.current;
-    if (!save || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const pending = pendingSave.current;
+    if (pending && saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    const saving = pending ? pending() : savingNow.current;
+    // Nothing to wait for, or a modified click (new window, download) the browser handles itself.
+    if (!saving || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
-    if (saveTimer.current) clearTimeout(saveTimer.current);
     const tab = window.open('', '_blank');
     if (tab) tab.opener = null;
-    void save().finally(() => {
+    void saving.then((stored) => {
+      if (!stored) {
+        tab?.close();
+        return;
+      }
       if (tab && !tab.closed) tab.location.href = externalUrl;
       else window.open(externalUrl, '_blank', 'noopener');
     });
@@ -269,10 +283,21 @@ function FileView({
           const run = () => {
             pendingSave.current = null;
             saveTimer.current = null;
-            return onRotate(file, next).then(
-              (ok) => setSaveFailed(!ok),
-              () => setSaveFailed(true),
+            const saving = onRotate(file, next).then(
+              (ok) => {
+                setSaveFailed(!ok);
+                return ok;
+              },
+              () => {
+                setSaveFailed(true);
+                return false;
+              },
             );
+            savingNow.current = saving;
+            void saving.then(() => {
+              if (savingNow.current === saving) savingNow.current = null;
+            });
+            return saving;
           };
           pendingSave.current = run;
           saveTimer.current = setTimeout(run, 350);

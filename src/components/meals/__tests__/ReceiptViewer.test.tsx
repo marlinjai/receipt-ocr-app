@@ -283,6 +283,69 @@ describe('ReceiptViewer: opening outside the app', () => {
     open.mockRestore();
   });
 
+  it('a save already on its way is waited for too', async () => {
+    let finish: (ok: boolean) => void = () => {};
+    const onRotate = vi.fn(() => new Promise<boolean>((resolve) => (finish = resolve)));
+    const tab = { closed: false, opener: {} as unknown, location: { href: '' }, close: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={onRotate} />);
+    loadImage(300, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    // The delay ran out: the save is sent but not answered yet.
+    act(() => vi.advanceTimersByTime(400));
+    expect(onRotate).toHaveBeenCalledTimes(1);
+    fireEvent.click(external());
+    expect(open).toHaveBeenCalledWith('', '_blank');
+    expect(tab.location.href).toBe('');
+    await act(async () => finish(true));
+    expect(tab.location.href).toBe('/api/files/f-1?ref=ref-1');
+    expect(onRotate).toHaveBeenCalledTimes(1);
+    open.mockRestore();
+  });
+
+  it('a failed save closes the empty tab again, and the viewer says the turn was not stored', async () => {
+    const onRotate = vi.fn().mockResolvedValue(false);
+    const tab = { closed: false, opener: {} as unknown, location: { href: '' }, close: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={onRotate} />);
+    loadImage(300, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    fireEvent.click(external());
+    await waitFor(() => expect(tab.close).toHaveBeenCalled());
+    expect(tab.location.href).toBe('');
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alert').textContent).toContain('Die Drehung konnte nicht gespeichert werden');
+    open.mockRestore();
+  });
+
+  it('a save that throws counts as failed as well', async () => {
+    const onRotate = vi.fn().mockRejectedValue(new Error('offline'));
+    const tab = { closed: false, opener: {} as unknown, location: { href: '' }, close: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={onRotate} />);
+    loadImage(300, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    fireEvent.click(external());
+    await waitFor(() => expect(tab.close).toHaveBeenCalled());
+    open.mockRestore();
+  });
+
+  it('once the save is answered, the link opens by itself again', async () => {
+    const onRotate = vi.fn().mockResolvedValue(true);
+    const open = vi.spyOn(window, 'open');
+    render(<ReceiptViewer files={[image({ rotation: 0 })]} onRotate={onRotate} />);
+    loadImage(300, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Nach rechts drehen' }));
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    external().dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
   it('with nothing waiting the link opens by itself', () => {
     const open = vi.spyOn(window, 'open');
     render(<ReceiptViewer files={[image({ rotation: 90 })]} onRotate={vi.fn().mockResolvedValue(true)} />);

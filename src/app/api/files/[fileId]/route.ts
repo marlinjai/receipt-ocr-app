@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { guardFileAccess } from '@/lib/file-access';
+import { fileReferenceOpenToRequest, guardFileAccess } from '@/lib/file-access';
 import { prisma } from '@/lib/prisma';
 import { parseRotation } from '@/lib/meals/viewer-state';
 import { RenditionError, canRotate, inlineDisposition, renditionName, rotatedRendition } from '@/lib/files/rotated-rendition';
@@ -72,18 +72,30 @@ export async function GET(
 
 /**
  * The receipt turned by the rotation stored on reference `refId`. Access to
- * the file was already checked; the reference must belong to this very file.
+ * the file was already checked; the reference must belong to this very file
+ * and to a workspace the caller may read.
  */
 async function turnedFile(request: NextRequest, fileId: string, refId: string): Promise<NextResponse> {
   if (!UUID_RE.test(refId)) {
     return NextResponse.json({ error: 'invalid file reference' }, { status: 400 });
   }
+  try {
+    return await turnedFileFor(request, fileId, refId);
+  } catch (e) {
+    // The database or the file store failed on the way: the tab says so instead of a bare server error.
+    console.error(`[files] the turned copy of file ${fileId} could not be served`, e);
+    return turnFailedPage(fileId, 500);
+  }
+}
+
+async function turnedFileFor(request: NextRequest, fileId: string, refId: string): Promise<NextResponse> {
   const ref = await prisma.dtFile.findUnique({
     where: { id: refId },
-    select: { fileId: true, originalName: true, mimeType: true, metadata: true },
+    select: { fileId: true, rowId: true, originalName: true, mimeType: true, metadata: true },
   });
-  // Same answer as an unknown file, so a reference of another file tells nothing.
-  if (!ref || ref.fileId !== fileId) {
+  // Same answer as an unknown file, so a reference of another file, or of
+  // another company's row, tells nothing.
+  if (!ref || ref.fileId !== fileId || !(await fileReferenceOpenToRequest(request, ref.rowId))) {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
 
@@ -117,7 +129,7 @@ async function turnedFile(request: NextRequest, fileId: string, refId: string): 
   if (!canRotate(mimeType)) {
     if (stored) {
       console.error(`[files] file ${fileId} is turned by ${stored} degrees but its type cannot be turned`);
-      return turnFailedPage(fileId);
+      return turnFailedPage(fileId, 422);
     }
     return fileResponse(bytes, upstreamType || 'application/octet-stream', renditionName(ref.originalName, { kind: 'original', rotation: 0 }), caching);
   }
@@ -129,9 +141,11 @@ async function turnedFile(request: NextRequest, fileId: string, refId: string): 
     }
     return fileResponse(rendition.bytes, 'application/pdf', renditionName(ref.originalName, rendition), caching);
   } catch (e) {
-    const code = e instanceof RenditionError ? e.code : 'unexpected';
-    console.error(`[files] the turned copy of file ${fileId} could not be made (${code})`, e);
-    return turnFailedPage(fileId);
+    // A file that cannot be turned (encrypted, broken, mirrored photo) is a
+    // known refusal (422); anything else is a fault of ours (500).
+    const known = e instanceof RenditionError;
+    console.error(`[files] the turned copy of file ${fileId} could not be made (${known ? e.code : 'unexpected'})`, e);
+    return turnFailedPage(fileId, known ? 422 : 500);
   }
 }
 
@@ -156,7 +170,7 @@ function fileResponse(bytes: Uint8Array, contentType: string, name: string, cach
  * The turned copy could not be made: say so in the tab that was opened, and
  * offer the stored file as it is. Never the unturned file as if it were turned.
  */
-function turnFailedPage(fileId: string): NextResponse {
+function turnFailedPage(fileId: string, status: 422 | 500): NextResponse {
   const original = `/api/files/${encodeURIComponent(fileId)}`;
   const html = `<!doctype html>
 <html lang="de">
@@ -179,7 +193,7 @@ function turnFailedPage(fileId: string): NextResponse {
 </body>
 </html>`;
   return new NextResponse(html, {
-    status: 500,
+    status,
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
   });
 }

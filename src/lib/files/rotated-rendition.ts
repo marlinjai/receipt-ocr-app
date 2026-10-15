@@ -9,7 +9,8 @@ import { initialRotation, type Rotation, type Size } from '@/lib/meals/viewer-st
  * tab, a turned copy is made in memory for each request:
  *
  * - a PDF gets the rotation added to every page's own /Rotate entry (the same
- *   rule the meal register export uses), nothing else in it changes;
+ *   rule the meal register export uses); the content stays as it is, but the
+ *   file is written anew, so the copy is named as a copy (see renditionName);
  * - a JPEG or PNG is placed unchanged (no re-encoding) on a one-page PDF whose
  *   page carries the rotation, because a PDF page can be turned losslessly and
  *   the app has no image library on the server.
@@ -170,15 +171,23 @@ function exifOrientation(view: DataView, start: number, end: number): number | n
 }
 
 /**
- * The file name for the turned copy: the original name, with `.pdf` when an
- * image became a PDF. Kept to a sane length and free of path separators and
- * control characters.
+ * The file name for what is served. The stored file keeps its own name. A
+ * turned copy is a rewritten file (a signature or an archive format in the
+ * original does not survive it), so its name says so: "<name> (gedreht).pdf".
+ * Kept to a sane length, cut between characters (never inside one), and free
+ * of path separators and control characters.
  */
 export function renditionName(originalName: string, rendition: Rendition): string {
   const clean = originalName.replace(/[\u0000-\u001f\u007f/\\]/g, ' ').trim() || 'Beleg';
-  if (rendition.kind === 'original' || /\.pdf$/i.test(clean)) return clean.slice(0, 200);
-  const base = clean.replace(/\.[^.]+$/, '') || 'Beleg';
-  return `${base.slice(0, 196)}.pdf`;
+  if (rendition.kind === 'original') return cut(clean, 200);
+  const base = clean.replace(/\.[^.]+$/, '').trim() || 'Beleg';
+  return `${cut(base, 180)} (gedreht).pdf`;
+}
+
+/** The first `max` characters, counted as characters (code points), so an emoji is never split. */
+function cut(text: string, max: number): string {
+  const chars = Array.from(text);
+  return chars.length <= max ? text : chars.slice(0, max).join('');
 }
 
 /**

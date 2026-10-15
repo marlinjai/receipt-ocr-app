@@ -223,16 +223,198 @@ accepted in bulk). What that run showed changed these decisions.
 31. **The list of transfers names the receipt a transfer is linked to**, because a linked
     payment appears in no other list.
 
-## Open question for the owner
+## Which day a pay-later purchase counts on (researched 2026-10-15)
 
-**Which day does a pay-later purchase count on?** The booking day is the purchase day (decision
-2). For "pay in 30 days" and for instalments the money leaves the bank account later, so a
-purchase of December that is collected in January counts in the old year once it is linked.
-Under cash-basis accounting (section 11 of the income tax act) that is a tax judgment: paying
-with a pay-later service can be seen as paid on the purchase day (the service paid the merchant
-and the buyer owes the service, like a credit card), or as paid when the buyer's money leaves.
-Not decided here. Until it is, the purchase day stands, and the payments at the turn of the
-year are the ones to look at.
+The question: under cash-basis profit determination (Einnahmenüberschussrechnung, section 4 (3)
+of the income tax act, EStG) an expense counts in the year it is paid (section 11 (2) sentence 1
+EStG). When a pay-later service (Klarna) stands between buyer and merchant, is that the purchase
+day or the day the money leaves the buyer's bank account? This replaces the open question that
+stood here.
+
+### The finding in plain language
+
+The answer depends on what the service legally does at the purchase (the file shows that only in
+part, see "What the real file holds"). What counts under section 11 is the day the payer gives up control over
+the money ("Verlust der wirtschaftlichen Verfügungsmacht", official hints H 11, "Allgemeines"):
+the day the payer has done everything on his side to make the payment happen.
+
+1. **Card payment (a credit card, the service's card included): the charge day.** A finance
+   court ruled that a business expense paid by credit card is paid when the holder signs the charge slip
+   (or confirms the payment at the terminal), not when the card issuer later debits the bank
+   account. By authorizing the charge the holder has done everything needed; that the bank
+   collects later is the card's credit side, not a later payment. This is a lower fiscal court
+   (Finanzgericht Rheinland-Pfalz), final, and the prevailing view in the commentary. The
+   Federal Fiscal Court (Bundesfinanzhof, BFH) has not ruled on credit cards, and the official
+   hints H 11 have no credit card entry. They do say the same for a bank transfer (paid when the
+   order reaches the bank, not when the account is debited) and for a cheque (paid when handed
+   over or posted), which is the same logic. The service's card is such a card: its terms call
+   it a Visa credit card issued by Klarna Bank AB, using it gives the order to pay (section 6.1:
+   "Du erteilst mit dem Einsatz deiner Karte die Zustimmung (Autorisierung) zur Ausführung eines
+   Zahlungsauftrags"), the service pays the merchant and the holder reimburses the service
+   later, by direct debit, by invoice or on the monthly statement (sections 10.1 to 10.3). How
+   the holder reimburses does not move the day: the card purchase is paid at the charge.
+2. **Instalments financed by the service ("Term Loan"): the purchase day.** The service grants
+   the buyer a consumer credit and the merchant is paid at the purchase. An expense paid with
+   borrowed money is paid when the borrowed money is paid out to the creditor; the later
+   instalments repay the loan and are not expenses (their interest and fees are, when paid). The
+   official hint for special expenses says so in so many words (H 10.1: "Dies gilt auch, wenn sie der
+   Stpfl. mit Darlehensmitteln bestritten hat", BFH 15 March 1974). That hint is written for special expenses
+   (Sonderausgaben) and is applied here by analogy to business expenses; its file number was not
+   found, only the official journal reference.
+3. **"Pay later" at a shop's checkout (Klarna chosen as the way to pay in the shop, by invoice or
+   "In 30 Tagen zahlen", without the card): the day the buyer pays the service, not the
+   purchase day.** Here the service does not pay on the buyer's behalf. Its own terms say that the shop assigns its claim to the service ("Der Shop
+   tritt die Forderung an die Klarna Bank AB ab", Klarna terms "Jetzt kaufen, später bezahlen!",
+   version 3.3.0). The buyer's debt stays the same debt with a new creditor, and the buyer has
+   given up nothing at the purchase: no card was charged, no credit line drawn, no order sent to
+   a bank. So nothing is paid in the sense of section 11 until the buyer's money goes to the
+   service: the day of the bank debit (or the PayPal or other payment) that settles the
+   statement holding the purchase. No court has ruled on Klarna or on an assigned purchase
+   price; this result follows from the statute, the official hints and the service's terms. The
+   purchase day has no support in this case.
+
+The ten-day rule for regularly recurring payments (section 11 (2) sentence 2 with (1) sentence 2)
+does not change this: a single purchase is not a recurring payment.
+
+**Assets are outside the question.** For an asset that is depreciated (or written off as a
+low-value asset), the cash-basis method follows the depreciation rules, not the payment day
+(section 4 (3) sentence 3 EStG). Depreciation starts in the month the asset is acquired, that is
+delivered (section 7 (1) sentence 4 EStG). The app already does this: `acquisitionDate` in
+`src/lib/tax/assets.ts` is "the day the asset was delivered or made ready. Depreciation starts
+here, not at payment." The payment day only decides the year for ordinary expenses (supplies,
+subscriptions, services, items expensed directly).
+
+### What the real file holds
+
+Counted on the owner's file (1,131 rows, counts only). In 2025: 489 purchases "Invoice", 1
+"Term Loan", 2 "Direct Debit". In 2024: 130 "Invoice", 3 "Term Loan". In 2026 so far: 407
+"Invoice", 84 "In 30 Tagen zahlen" (64 of them with the card marked), 1 "Cards", 1 "Direct
+Debit".
+
+"Invoice" does not mean case 3. It names how the service is reimbursed (the statement), and both
+card purchases and checkout purchases carry it. In 2024 and 2025 the file has no field that
+separates the two: `card` is filled only on the 2026 rows read from the service's web pages. A
+merchant text in the card network's form (a `*` between the network or wallet name and the shop,
+"PAYPAL *shop") marks a card purchase: 109 of the 489 "Invoice" rows of 2025 have one, and
+the 83 PayPal purchases charged to the card (see "Reality (2026-10-11)") are card purchases. The
+rest are mostly checkout purchases, with card purchases among them whose text has no `*`.
+
+### Decided, say so if you disagree
+
+**Decision 2 (booking day is the purchase day) stands for card purchases and financed
+instalments, and does not stand for checkout purchases paid later. The code must change; nothing
+was changed in this pull request.** What is to be built:
+
+- Each pay-later purchase is classified, derived on read:
+  - **Card** (case 1, purchase day as today): `payment_method` is `Cards`, or `card` is marked,
+    or the merchant text has the card network's form (a `*` between two names).
+  - **Financed** (case 2, purchase day as today): `Term Loan`.
+  - **Direct debit**: the day the debit leaves the bank; the capture day (`activated`) is the
+    closest value in the file, a day or two after the purchase.
+  - **Checkout, paid later** (case 3): every other `Invoice` or `In 30 Tagen zahlen` row, and any
+    unknown wording (the cautious reading, named after the import like any unknown status).
+    Its tax day is the day the money leaves for the service: the collection (bank debit, or
+    PayPal payment) that settles the statement holding the purchase.
+- A person can relabel one purchase the other way ("Mit der Karte bezahlt" or "Auf Rechnung
+  bezahlt"), stored like the existing re-labelling in `kind_override`, listed and reversible.
+- The residual error is named: a card purchase whose text has no `*` lands on the collection
+  day. That error is in the later direction (it never claims an expense before anything was
+  paid), it only matters for purchases in the last days of a year, and the person can overrule
+  it; the screen lists those December purchases for a look.
+- How to find the collection day: the bank debits the funding rule (decision 14) already
+  recognizes as the service's collections are the candidates. Match by `statement_number` where
+  the bank line carries it; otherwise the first collection on or after the purchase whose amount
+  the open purchases of that statement add up to; otherwise the purchase stays on its purchase
+  day and is listed as "Einzugstag unbekannt" for a look. Nothing is stored and no migration is
+  needed, like the funding rule.
+- The proposals for estimated receipts (decision 11) keep measuring their window from the
+  purchase day: that is the day on the receipt. Only the year a linked purchase counts in moves.
+- The reconciliation per service and year (decision 16) is unchanged: it compares money, not
+  tax days.
+
+Why this and not "keep the purchase day": the purchase day would move expenses into a year in
+which nothing was paid, which section 11 does not allow and an audit can reverse; the error is
+small in amount (only the turn of the year moves) but it is an error, and the app is meant to
+produce a return that holds. Why not "always the collection day": for cards and loans the
+sources say the purchase day, and moving those would be wrong the other way.
+
+### What it means at the turn of the year
+
+- A purchase on the card in December counts in December, even when the service collects it in
+  January (case 1).
+- A purchase financed in instalments in December counts in December in full (case 2).
+- A purchase at a shop's checkout, paid later, in December that the service collects in January
+  counts in **January**, in the new year (case 3).
+- The statements that cross the turn of the year (the December 2024 statement, 1,513.12 euros
+  collected in 2025, and the December 2025 statement, 924.43 euros collected in 2026, see the
+  reconciliation note in `ROADMAP.md`) hold card and checkout purchases together. Only their
+  checkout purchases move year, and only the business ones matter: the checkout business
+  purchases of December 2024 belong to 2025, those of December 2025 to 2026. Their card
+  purchases stay in the year of the purchase.
+- Until the change is built, the app counts every pay-later purchase on its purchase day. For
+  2025 that means: the checkout business purchases of the December 2025 statement are counted in
+  2025 and should be in 2026, and those of the December 2024 statement are missing from 2025.
+  Those are the purchases to check by hand before the 2025 return is filed.
+
+### The financed MacBook
+
+The laptop of 25 November 2025 (2,849.00 euros) was bought through PayPal with the purchase
+financed by a pay-later loan, so the service's list holds it in full while the bank only shows
+instalments. Under case 2 the purchase price is paid when the loan pays the merchant, that is in
+November 2025, and the instalments are loan repayments, not expenses. But that day does not
+decide its year either: a laptop is an asset, depreciated from the month of delivery (section 4
+(3) sentence 3 with section 7 EStG); with the one-year useful life the finance ministry accepts
+for computer hardware (the app's method `computer_one_year`) it is written off in the year of
+acquisition, 2025. The draft's note "paid via PayPal" is therefore harmless for the amount and
+the year, but should say "financed through a pay-later loan, acquired 25 November 2025". Interest
+and fees of the loan, if any, are business expenses in the year each is paid, in the business
+share of the laptop.
+
+### Sources
+
+Statute and official guidance:
+
+- Section 11 EStG (Vereinnahmung und Verausgabung), paragraph 2, Federal Ministry of Justice,
+  gesetze-im-internet.de: https://www.gesetze-im-internet.de/estg/__11.html
+- Section 4 (3) EStG (cash-basis profit determination, sentence 3 on depreciation),
+  gesetze-im-internet.de: https://www.gesetze-im-internet.de/estg/__4.html
+- Official income tax hints H 11 EStH 2024, Federal Ministry of Finance, entries "Allgemeines"
+  (control over the money, BFH of 21 November 1989, BStBl II 1990 p. 310), "Überweisung" (BFH of
+  6 March 1997, BStBl II p. 509), "Scheck" (BFH of 24 September 1985, IX R 2/80, BStBl II 1986
+  p. 284), "Damnum" (outflow at the loan payout, BFH of 10 March 1970, BStBl II p. 453); no entry
+  on credit cards or on loan-financed payments:
+  https://esth.bundesfinanzministerium.de/esth/2024/A-Einkommensteuergesetz/II-Einkommen-2-24b/6-Vereinnahmung-und-Verausgabung-11-11b/Paragraf-11/inhalt.html
+- Official income tax hints H 10.1 EStH 2024, entry "Abzugshöhe/Abzugszeitpunkt" (paid also when
+  paid with borrowed money, BFH of 15 March 1974, BStBl II p. 513; file number not found):
+  https://esth.bundesfinanzministerium.de/esth/2024/A-Einkommensteuergesetz/II-Einkommen-2-24b/5-Sonderausgaben-10-10g/Paragraf-10/inhalt.html
+
+Case law:
+
+- Finanzgericht Rheinland-Pfalz, judgment of 18 March 2013, 5 K 1875/10, final: credit card
+  payment is paid with the signature on the charge slip, not with the account debit. Lower court
+  only; no BFH decision on credit cards was found. Reported in AStW 11/2013 p. 771 (IWW):
+  https://www.iww.de/astw/rechtsprechung/einnahme-ueberschuss-rechnung-wann-liegt-bei-zahlung-mit-einer-kreditkarte-der-abfluss-der-betriebsausgabe-vor-f70318
+- No court decision on Klarna, PayPal "pay later" or an assigned purchase price was found.
+
+Terms of the service (facts about the product, not tax law):
+
+- Klarna, "Klarna Kreditkarte", general terms of the Klarna credit card, version 3.1.0 of 27
+  August 2026: a Visa credit card issued by Klarna Bank AB (section 1.4), using it authorizes a
+  payment order (section 6.1), the service pays the merchant and the holder reimburses it by
+  direct debit, invoice or monthly statement (sections 10.1 to 10.3):
+  https://cdn.klarna.com/1.0/shared/content/legal/terms/0/de_de/cardholder
+
+- Klarna, "Jetzt kaufen, später bezahlen!" (invoice terms, Germany), version 3.3.0 of 10 July
+  2026: the shop assigns its claim to Klarna Bank AB, the buyer pays Klarna:
+  https://cdn.klarna.com/1.0/shared/content/legal/terms/0/de_de/invoice
+- Klarna, "Klarna Ratenkauf" (Germany): instalments are a credit Klarna grants, under a signed
+  instalment contract: https://cdn.klarna.com/1.0/shared/content/legal/terms/0/de_de/account
+
+Commentary (supports, does not decide):
+
+- Haufe Finance Office, "Einnahmen-Überschussrechnung, Zu- und Abfluss von Betriebsausgaben",
+  section 4, overview of outflow by payment type (card: the day of the card payment):
+  https://www.haufe.de/finance/haufe-finance-office-premium/einnahmen-ueberschussrechnung-zu-und-abfluss-von-betrie-4-uebersicht-zeitpunkt-des-abflusses-bei-den-unterschiedlichen-zahlungsarten_idesk_PI20354_HI5302761.html
 
 ## Tests
 
@@ -300,3 +482,12 @@ Where the time went, and what was done:
   suite passes; the five timeouts of the first run came from the shared test database, which
   held about 2,100 tables of earlier runs.
 
+## Reality (2026-10-15)
+
+- The review fixes (pull request #80, branch `fix/pay-later-review-findings`: the bounded and
+  reversible transfer rule, the same money counting once, bulk accept in one write) merged on
+  2026-10-11 as squash commit f23e672. The line above that calls them "not deployed" is
+  outdated.
+- The day question is answered above. The change it calls for (the collection day for invoice
+  and monthly-statement purchases) is not built yet; until it is, the December statements are
+  the payments to check by hand.

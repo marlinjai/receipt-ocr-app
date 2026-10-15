@@ -242,7 +242,9 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
     const regular = stated.smallBusiness === false && stated.opening === null;
     const asset = regular ? { ...stated, costCents: stated.netCostCents } : stated;
     const row = assetSchedule(asset, assetRules, facts.year).find((r) => r.year === facts.year) ?? null;
-    const parts = row ? assetYearParts(asset, row) : [];
+    // The study or employment share is written off from the gross cost: its tax is no input tax.
+    const annexRow = regular && (stated.annexShareBp ?? 0) > 0 ? assetSchedule(stated, assetRules, facts.year).find((r) => r.year === facts.year) ?? null : row;
+    const parts = row ? assetYearParts(asset, row, annexRow ?? row) : [];
     if (regular && firstYear === facts.year) {
       const vat = shareOf((stated.costCents as number) - (stated.netCostCents as number), stated.businessShareBp);
       if (vat !== 0) {

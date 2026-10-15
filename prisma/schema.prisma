@@ -376,6 +376,9 @@ model TaxAsset {
   usefulLifeMonths       Int?     @map("useful_life_months")
   decliningRateBp        Int?     @map("declining_rate_bp")
   businessShareBp        Int      @default(10000) @map("business_share_bp")
+  // The share used for study or employment: its depreciation goes on the employment annex line below.
+  annexShareBp           Int      @default(0) @map("annex_share_bp")
+  annexLineKey           String?  @map("annex_line_key")
   reminderCents          Int      @default(0) @map("reminder_cents")
   openingYear            Int?     @map("opening_year")
   openingBookValueCents  Int?     @map("opening_book_value_cents")

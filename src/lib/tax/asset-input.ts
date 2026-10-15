@@ -1,6 +1,10 @@
 import { ASSET_METHODS, type AssetKind, type AssetMethod, type DisposalKind } from './assets';
 import { isIsoDay } from './decisions';
 import { WHOLE_BP } from './money';
+import type { FormLineKey } from './rules/types';
+
+/** The employment annex lines an asset's study or employment share can go on (amount lines, not days). */
+export const ANNEX_ASSET_LINES: readonly FormLineKey[] = ['employment.work_equipment', 'employment.study_costs', 'employment.further_costs'];
 
 /**
  * What a person states about an asset, and the checks every write passes.
@@ -18,6 +22,9 @@ export interface AssetInput {
   usefulLifeMonths: number | null;
   decliningRateBp: number | null;
   businessShareBp: number;
+  /** The share used for study or employment, and the employment annex line its depreciation goes on (null when the share is 0). */
+  annexShareBp: number;
+  annexLineKey: FormLineKey | null;
   reminderCents: number;
   opening: { year: number; bookValueCents: number; remainingMonths: number } | null;
   /** The receipts and receipt lines that make up the cost, as item ids (a row id, or `row#line`). */
@@ -40,6 +47,7 @@ export type AssetInputErrorCode =
   | 'invalid_useful_life'
   | 'invalid_rate'
   | 'invalid_share'
+  | 'invalid_annex_share'
   | 'invalid_reminder'
   | 'invalid_opening'
   | 'receipts_required'
@@ -95,7 +103,16 @@ export function validateAssetInput(raw: unknown): AssetInput {
   if (decliningRateBp !== null && (!isInt(decliningRateBp) || decliningRateBp < 1 || decliningRateBp > WHOLE_BP)) fail('invalid_rate');
 
   const businessShareBp = input.businessShareBp === undefined ? WHOLE_BP : input.businessShareBp;
-  if (!isInt(businessShareBp) || businessShareBp < 1 || businessShareBp > WHOLE_BP) fail('invalid_share');
+  const annexShareBp = input.annexShareBp === undefined || input.annexShareBp === null ? 0 : input.annexShareBp;
+  if (!isInt(annexShareBp) || annexShareBp < 0 || annexShareBp > WHOLE_BP) fail('invalid_annex_share');
+  // An asset with no business share is in the register only for its study or employment share.
+  const minBusiness = (annexShareBp as number) > 0 ? 0 : 1;
+  if (!isInt(businessShareBp) || businessShareBp < minBusiness || businessShareBp > WHOLE_BP) fail('invalid_share');
+  if ((businessShareBp as number) + (annexShareBp as number) > WHOLE_BP) fail('invalid_annex_share');
+  const annexLineKey = (annexShareBp as number) > 0 ? input.annexLineKey : null;
+  if ((annexShareBp as number) > 0 && !(ANNEX_ASSET_LINES as readonly unknown[]).includes(annexLineKey)) fail('invalid_annex_share');
+  // The pool is an instrument of the business form; the employment annex knows none.
+  if ((annexShareBp as number) > 0 && method === 'pool') fail('invalid_annex_share');
   const reminderCents = input.reminderCents === undefined ? 0 : input.reminderCents;
   if (!isInt(reminderCents) || reminderCents < 0 || reminderCents > 100) fail('invalid_reminder');
 
@@ -115,6 +132,8 @@ export function validateAssetInput(raw: unknown): AssetInput {
     usefulLifeMonths: method === 'linear' || method === 'declining' ? (usefulLifeMonths as number | null) : null,
     decliningRateBp: method === 'declining' ? (decliningRateBp as number | null) : null,
     businessShareBp: businessShareBp as number,
+    annexShareBp: annexShareBp as number,
+    annexLineKey: annexLineKey as FormLineKey | null,
     reminderCents: reminderCents as number,
     opening,
     itemIds,

@@ -134,6 +134,8 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Bitte die Nutzungsdauer in ganzen Jahren oder Monaten eingeben.';
         case 'invalid_rate':
           return 'Bitte den Satz der degressiven Abschreibung in Prozent eingeben.';
+        case 'invalid_annex_share':
+          return 'Bitte den Anteil für Studium oder Anstellung prüfen: zusammen mit dem betrieblichen Anteil höchstens 100 %, mit einer Zeile der Anlage N, und nicht beim Sammelposten.';
         case 'invalid_share':
           return 'Der betriebliche Anteil muss zwischen 1 und 100 % liegen.';
         case 'receipts_required':

@@ -46,6 +46,13 @@ export interface AssetFact {
   decliningRateBp: number | null;
   businessShareBp: number;
   /**
+   * The share used for study or employment (basis points; absent is none). Its
+   * depreciation is a cost of the employment annex, on `annexLineKey`. It is
+   * never part of the income-surplus statement.
+   */
+  annexShareBp?: number;
+  annexLineKey?: FormLineKey | null;
+  /**
    * A reminder value the asset is never written below while it is still in
    * use (commonly one euro), in cents. 0 writes it off completely.
    */
@@ -310,12 +317,24 @@ function depreciationLine(asset: AssetFact): FormLineKey {
 /**
  * What an asset contributes to the statement in one year: its depreciation,
  * the remaining book value when it left, and what was received for it, each
- * at the business share.
+ * at the business share; and the depreciation at the study or employment share
+ * on the employment annex line. `annexRow` is the row the annex share is taken
+ * from: the same row, except under regular taxation, where the business part is
+ * written off from the net cost and the annex part from the gross cost (the tax
+ * on a study or employment share is no input tax and stays in its cost).
+ *
+ * Only depreciation goes on the annex: a remaining book value and proceeds of
+ * a disposal belong to the business form alone (whether the rest of a study
+ * share can be written off when the asset leaves is for a tax advisor).
  */
-export function assetYearParts(asset: AssetFact, row: AssetYearRow): AssetLinePart[] {
+export function assetYearParts(asset: AssetFact, row: AssetYearRow, annexRow: AssetYearRow = row): AssetLinePart[] {
   const parts: AssetLinePart[] = [];
   const share = (cents: number) => shareOf(cents, asset.businessShareBp);
-  if (row.depreciationCents > 0) parts.push({ lineKey: depreciationLine(asset), cents: share(row.depreciationCents) });
+  const annexShare = asset.annexShareBp ?? 0;
+  if (row.depreciationCents > 0 && asset.businessShareBp > 0) parts.push({ lineKey: depreciationLine(asset), cents: share(row.depreciationCents) });
+  if (annexShare > 0 && asset.annexLineKey && annexRow.depreciationCents > 0) {
+    parts.push({ lineKey: asset.annexLineKey, cents: shareOf(annexRow.depreciationCents, annexShare) });
+  }
   if (row.disposalBookValueCents > 0) {
     parts.push({ lineKey: 'euer.remaining_book_value', cents: share(row.disposalBookValueCents) });
   }

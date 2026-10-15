@@ -1634,3 +1634,31 @@ like everything else; nothing derived is stored.
 - **Not built here:** the depreciation of an asset's study share onto the employment
   annex (the laptop of 2022): that is part of the asset schedules line.
 
+## Reality: assets with a study or employment share (2026-10-15)
+
+- **What was missing for the asset schedules of 2021 and 2022.** The register could
+  already hold the camera, stabiliser and tripod of 2021 and the lens of 2022: an asset
+  from its receipts, linear or declining, judged by the limits of its purchase year
+  (the rule sets of 2021 to 2024 supply those). What it could not hold is the laptop of
+  2022, which the return split between the business and the study: an asset had a
+  business share only, and the rest counted nowhere.
+- **An asset now has a study or employment share** (`annexShareBp`, with the employment
+  annex line it goes on, `annexLineKey`; migration `0022_tax_asset_annex_share`, two
+  columns with defaults that leave every existing asset as it was). Its share of each
+  year's depreciation is a cost of the employment annex (work equipment, training costs
+  or further costs); the business share stays on the income-surplus statement. Business
+  and annex share together are at most the whole; an asset can be held for its annex
+  share alone (business share 0). The pool takes no annex share: it is an instrument of
+  the business form only.
+- **Under regular taxation** the business part is written off from the net cost and its
+  tax is input tax; the annex part is written off from the gross cost, because tax on a
+  study or employment share is no input tax.
+- **A disposal** puts the remaining book value and the proceeds on the business form at
+  the business share only. Whether the rest of an annex share can be written off when the
+  asset leaves is a question for a tax advisor; nothing goes on the annex for it.
+- **Entering the assets of 2021 and 2022 is a data step for the coordinator**, with the
+  figures of the returns (the import plan): camera, stabiliser and tripod of 2021, the
+  lens and the laptop of 2022, each built from its receipts in the asset tab.
+- **Computed figures do not change** for any asset without an annex share (a test
+  compares them); no existing asset has one.
+

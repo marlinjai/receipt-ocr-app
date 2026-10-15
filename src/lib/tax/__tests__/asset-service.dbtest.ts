@@ -100,6 +100,26 @@ describe('forward: receipt above the limit, asset, schedule', () => {
     expect(next.years).toContain(2025);
   });
 
+  it('a study share is stored, puts its depreciation on the employment annex, and can be taken back', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await ws.addReceipt(hardware());
+    const assetId = await createAsset(db, ctx, camera([rowId], { businessShareBp: 6000, annexShareBp: 4000, annexLineKey: 'employment.study_costs' }));
+    let view = await loadStatement(db, ws.workspaceId, 2025);
+    expect(line(view, 'euer.depreciation_movable')).toBe(15_000);
+    expect(line(view, 'employment.study_costs')).toBe(10_000);
+    expect(view.employmentCostCents).toBe(10_000);
+    expect(view.assets[0]).toMatchObject({ annexShareBp: 4000, annexLineKey: 'employment.study_costs' });
+    expect(await db.taxAsset.findUnique({ where: { id: assetId } })).toMatchObject({ annexShareBp: 4000, annexLineKey: 'employment.study_costs' });
+
+    expect(await code(createAsset(db, ctx, camera([rowId], { businessShareBp: 7000, annexShareBp: 4000, annexLineKey: 'employment.study_costs' })))).toBe('invalid_annex_share');
+
+    await updateAsset(db, ctx, assetId, camera([rowId], { businessShareBp: 10000 }));
+    view = await loadStatement(db, ws.workspaceId, 2025);
+    expect(line(view, 'euer.depreciation_movable')).toBe(25_000);
+    expect(view.employmentCostCents).toBe(0);
+    expect(await db.taxAsset.findUnique({ where: { id: assetId } })).toMatchObject({ annexShareBp: 0, annexLineKey: null });
+  });
+
   it('shipping and customs belong to the cost of the asset', async () => {
     const { ws, ctx } = await workspace();
     const purchase = await ws.addReceipt(hardware({ Name: 'Filter', Gross: 700, Net: 700, Currency: 'EUR' }));

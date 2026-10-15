@@ -4,7 +4,7 @@ import { rowToMealRecord } from '@/lib/meals/record';
 import { smallBusinessOn } from '@/lib/meals/rules';
 import { allReceiptRows, getTaxSettings, guestsByRow, tableContext } from '@/lib/meals/service';
 import type { MealGuestEntry } from '@/lib/meals/types';
-import { AssetInputError, validateAssetInput, validateDisposalInput, type AssetInput } from './asset-input';
+import { ANNEX_ASSET_LINES, AssetInputError, validateAssetInput, validateDisposalInput, type AssetInput } from './asset-input';
 import { assetSchedule, type AssetCheck, type AssetFact, type AssetKind, type AssetMethod, type AssetYearRow, type DisposalKind } from './assets';
 import { computeYear } from './compute';
 import {
@@ -624,6 +624,8 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
       usefulLifeMonths: fact.usefulLifeMonths,
       decliningRateBp: fact.decliningRateBp,
       businessShareBp: fact.businessShareBp,
+      annexShareBp: fact.annexShareBp ?? 0,
+      annexLineKey: fact.annexLineKey ?? null,
       reminderCents: fact.reminderCents,
       opening: fact.opening,
       disposal: fact.disposal,
@@ -1421,6 +1423,9 @@ export interface AssetView {
   usefulLifeMonths: number | null;
   decliningRateBp: number | null;
   businessShareBp: number;
+  /** The study or employment share and its employment annex line. */
+  annexShareBp: number;
+  annexLineKey: FormLineKey | null;
   reminderCents: number;
   opening: AssetFact['opening'];
   disposal: AssetFact['disposal'];
@@ -1446,6 +1451,8 @@ interface StoredAsset {
   usefulLifeMonths: number | null;
   decliningRateBp: number | null;
   businessShareBp: number;
+  annexShareBp: number;
+  annexLineKey: string | null;
   reminderCents: number;
   openingYear: number | null;
   openingBookValueCents: number | null;
@@ -1504,6 +1511,9 @@ function toAssetFact(
     usefulLifeMonths: stored.usefulLifeMonths,
     decliningRateBp: stored.decliningRateBp,
     businessShareBp: stored.businessShareBp,
+    // A stored line the code no longer knows gives no annex part, rather than a guessed one.
+    annexShareBp: stored.annexLineKey !== null && (ANNEX_ASSET_LINES as readonly string[]).includes(stored.annexLineKey) ? stored.annexShareBp : 0,
+    annexLineKey: stored.annexLineKey !== null && (ANNEX_ASSET_LINES as readonly string[]).includes(stored.annexLineKey) ? (stored.annexLineKey as FormLineKey) : null,
     reminderCents: stored.reminderCents,
     opening,
     disposal,
@@ -1561,6 +1571,8 @@ function assetData(input: AssetInput) {
     usefulLifeMonths: input.usefulLifeMonths,
     decliningRateBp: input.decliningRateBp,
     businessShareBp: input.businessShareBp,
+    annexShareBp: input.annexShareBp,
+    annexLineKey: input.annexLineKey,
     reminderCents: input.reminderCents,
     openingYear: input.opening?.year ?? null,
     openingBookValueCents: input.opening?.bookValueCents ?? null,

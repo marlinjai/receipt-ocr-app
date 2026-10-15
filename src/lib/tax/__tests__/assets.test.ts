@@ -230,6 +230,54 @@ describe('computeYear with assets', () => {
     expect(result.assets[0].row).toMatchObject({ year: 2026, bookValueStartCents: 125_000, bookValueEndCents: 95_000 });
   });
 
+  it('a study share puts its part of the depreciation on the employment annex, never on the business form', () => {
+    // A laptop used 60 percent for the business and 40 percent for study.
+    const laptop = asset({ businessShareBp: 6_000, annexShareBp: 4_000, annexLineKey: 'employment.study_costs' });
+    const result = run(2025, [laptop]);
+    expect(result.lines).toEqual([
+      expect.objectContaining({ key: 'euer.depreciation_movable', cents: 15_000, assetIds: ['a-1'] }),
+      expect.objectContaining({ key: 'employment.study_costs', form: 'employment', line: 60, cents: 10_000, assetIds: ['a-1'] }),
+    ]);
+    expect(result.businessExpenseCents).toBe(15_000);
+    expect(result.employmentCostCents).toBe(10_000);
+    // The next year carries on with both shares.
+    expect(run(2026, [laptop]).employmentCostCents).toBe(12_000);
+  });
+
+  it('an asset kept only for its study share has no business part', () => {
+    const result = run(2025, [asset({ businessShareBp: 0, annexShareBp: 10_000, annexLineKey: 'employment.work_equipment' })]);
+    expect(result.lines).toEqual([expect.objectContaining({ key: 'employment.work_equipment', cents: 25_000 })]);
+    expect(result.businessExpenseCents).toBe(0);
+  });
+
+  it('a computer written off in its first year splits the whole cost between the two forms', () => {
+    const result = run(2022, [asset({ acquisitionDate: '2022-11-25', method: 'computer_one_year', usefulLifeMonths: null, businessShareBp: 5_000, annexShareBp: 5_000, annexLineKey: 'employment.study_costs' })]);
+    expect(result.businessExpenseCents).toBe(75_000);
+    expect(result.employmentCostCents).toBe(75_000);
+  });
+
+  it('under regular taxation the business part is written off from the net cost, the study part from the gross cost', () => {
+    const regular = asset({ smallBusiness: false, businessShareBp: 6_000, annexShareBp: 4_000, annexLineKey: 'employment.study_costs' });
+    const result = run(2025, [regular]);
+    // Net 1,260.50 over 60 months, 10 of them in 2025: 210.08; 60 percent of it 126.05.
+    expect(result.lines.find((l) => l.key === 'euer.depreciation_movable')?.cents).toBe(12_605);
+    // Gross 1,500.00: 250.00 in 2025; 40 percent of it 100.00.
+    expect(result.employmentCostCents).toBe(10_000);
+    // Input tax only at the business share: 60 percent of 239.50.
+    expect(result.lines.find((l) => l.key === 'euer.input_vat')?.cents).toBe(14_370);
+  });
+
+  it('a disposal puts the remaining book value and the proceeds on the business form only, at the business share', () => {
+    const sold = asset({ businessShareBp: 6_000, annexShareBp: 4_000, annexLineKey: 'employment.study_costs', disposal: { date: '2026-07-15', kind: 'sold', proceedsCents: 50_000 } });
+    const parts = run(2026, [sold]).assets[0].parts;
+    expect(parts.filter((p) => p.lineKey.startsWith('employment.')).map((p) => p.lineKey)).toEqual(['employment.study_costs']);
+    expect(parts.find((p) => p.lineKey === 'euer.asset_disposal')?.cents).toBe(30_000);
+  });
+
+  it('an asset without an annex share computes exactly as before', () => {
+    expect(run(2025, [asset({ annexShareBp: 0, annexLineKey: null })]).lines).toEqual(run(2025, [asset()]).lines);
+  });
+
   it('an asset bought later is not part of an earlier year', () => {
     expect(run(2025, [asset({ acquisitionDate: '2026-02-01' })]).assets).toEqual([]);
   });

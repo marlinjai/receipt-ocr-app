@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Row } from '@marlinjai/data-table-core';
 
 /**
@@ -19,15 +19,18 @@ import type { Row } from '@marlinjai/data-table-core';
  *
  * - **One load at a time.** Every next page and every reload of the dashboard
  *   goes through one queue, and each waits until the table has no load in
- *   flight. A reload asked for while a page is loading runs after it.
- * - **Each row once.** Should a row arrive twice anyway (a load the queue does
- *   not see, such as the one the package starts itself when a filter or a sort
- *   changes), the page shows it once: the first place it was drawn, with what
- *   the latest edit stored there (an edit replaces every copy).
+ *   flight. A reload asked for while a page is loading runs after it. The one
+ *   load the queue does not see is the one the package starts itself when a
+ *   filter or a sort changes.
+ * - **Each row once.** Should a row arrive twice anyway (through that load, or
+ *   because a receipt was added elsewhere while the pages came in and moved the
+ *   rest by one), the page shows it once: the first place it was drawn, with
+ *   what the latest edit stored there (an edit replaces every copy).
  * - **A list that does not add up is loaded again.** Once nothing is loading,
  *   a list with a row twice, or with another number of rows than the server
  *   counted, cannot be trusted for counts and sums: it is reloaded, at most
- *   twice in a row, so a list that never adds up cannot reload forever.
+ *   twice until the next reload someone asks for, so a list that never adds up
+ *   cannot reload forever.
  *
  * A load that fails is not asked again by itself (that would ask the server
  * without end while it is down): the list stays as it was and the failure is
@@ -64,10 +67,15 @@ export function uniqueRows(rows: readonly Row[]): Row[] {
 export function useCompleteRows(source: RowsSource): {
   rows: Row[];
   /**
-   * Load the list again, after whatever load is on its way. Resolves when it is done; a failed load
-   * is not a rejection (the package keeps it as `rowsError`).
+   * Load the list again, after whatever load is on its way. Resolves when it is done and never
+   * rejects: a failed load is the package's `rowsError`, which the page shows.
    */
   reload: () => Promise<void>;
+  /**
+   * True once the list is all there: nothing loads or waits, and it adds up (or failed, or was
+   * reloaded as often as it may be). Only then may the page conclude that a receipt is not in it.
+   */
+  settled: boolean;
 } {
   const { rows: loaded, total, hasMore, isLoading, error } = source;
   const rows = useMemo(() => uniqueRows(loaded), [loaded]);
@@ -75,31 +83,47 @@ export function useCompleteRows(source: RowsSource): {
   // The package hands out new functions on every render; the queue always calls the latest.
   const latest = useRef(source);
   const idleWaiters = useRef<Array<() => void>>([]);
-  useEffect(() => {
+  const releaseWaiters = () => {
+    const waiting = idleWaiters.current;
+    idleWaiters.current = [];
+    for (const resume of waiting) resume();
+  };
+  // Synced before the browser paints, so an action right after a render calls this render's functions.
+  useLayoutEffect(() => {
     latest.current = source;
-    if (!source.isLoading) {
-      const waiting = idleWaiters.current;
-      idleWaiters.current = [];
-      for (const resume of waiting) resume();
-    }
+    if (!source.isLoading) releaseWaiters();
   });
+  // A page that is left lets go of everything that waits: a caller awaiting a reload must not hang.
+  const gone = useRef(false);
+  useEffect(() => {
+    gone.current = false;
+    return () => {
+      gone.current = true;
+      releaseWaiters();
+    };
+  }, []);
 
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const [pending, setPending] = useState(0);
   const enqueue = useCallback((op: () => Promise<void>): Promise<void> => {
     setPending((n) => n + 1);
     const whenIdle = () =>
-      latest.current.isLoading ? new Promise<void>((resume) => idleWaiters.current.push(resume)) : Promise.resolve();
+      latest.current.isLoading && !gone.current ? new Promise<void>((resume) => idleWaiters.current.push(resume)) : Promise.resolve();
     const run = queue.current.then(async () => {
       await whenIdle();
-      await op();
+      if (!gone.current) await op();
     });
     // A failed load does not stop the loads after it.
     queue.current = run.catch(() => undefined);
     return run.finally(() => setPending((n) => n - 1));
   }, []);
 
-  const reload = useCallback(() => enqueue(() => latest.current.refresh()), [enqueue]);
+  const [repairs, setRepairs] = useState(0);
+  const reload = useCallback(() => {
+    // A reload someone asked for starts the count of repairs over.
+    setRepairs(0);
+    return enqueue(() => latest.current.refresh()).catch(() => undefined);
+  }, [enqueue]);
 
   // The table shows every receipt of the years it was asked for: sums, groups and the review of a year are
   // wrong on a partial list. The next page is asked for as soon as the previous one is in, until nothing is left.
@@ -109,17 +133,16 @@ export function useCompleteRows(source: RowsSource): {
     }
   }, [hasMore, isLoading, error, pending, enqueue]);
 
-  const repairs = useRef(0);
+  const idle = !hasMore && !isLoading && pending === 0;
+  const addsUp = rows.length === loaded.length && rows.length === total;
+  const gaveUp = repairs >= MAX_REPAIRS;
   useEffect(() => {
-    if (hasMore || isLoading || error || pending > 0) return;
-    if (rows.length === loaded.length && rows.length === total) {
-      repairs.current = 0;
-      return;
-    }
-    if (repairs.current >= MAX_REPAIRS) return;
-    repairs.current += 1;
-    void enqueue(() => latest.current.refresh()).catch(() => undefined);
-  }, [rows, loaded, total, hasMore, isLoading, error, pending, enqueue]);
+    if (!idle || error || addsUp || gaveUp) return;
+    void enqueue(async () => {
+      setRepairs((n) => n + 1);
+      await latest.current.refresh();
+    }).catch(() => undefined);
+  }, [idle, addsUp, error, gaveUp, enqueue]);
 
-  return { rows, reload };
+  return { rows, reload, settled: idle && (Boolean(error) || addsUp || gaveUp) };
 }

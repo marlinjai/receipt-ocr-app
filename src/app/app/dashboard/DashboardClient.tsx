@@ -111,8 +111,10 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     refresh,
   } = useTable({ tableId, pageSize: 200 });
   // The rows complete and each once, every load one after another (see `use-complete-rows.ts`). Every reload
-  // of the table goes through `reload`, never the package's own refresh, so it cannot cross a page on its way.
-  const { rows, reload } = useCompleteRows({ rows: loadedRows, total, hasMore, isLoading: isRowsLoading, error: rowsError, loadMore, refresh });
+  // the dashboard asks for goes through `reload`, never the package's own refresh, so it cannot cross a page on
+  // its way. (A filter or sort change loads beside it, inside the package; a list that then does not add up is
+  // loaded again.)
+  const { rows, reload, settled } = useCompleteRows({ rows: loadedRows, total, hasMore, isLoading: isRowsLoading, error: rowsError, loadMore, refresh });
 
   const {
     views,
@@ -190,7 +192,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       setYearSelection(next);
       // The server loads only these years; the list is fetched again for the new choice.
       setYearScope(scopeOf(next));
-      void reload().catch(() => setReviewError('Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.'));
+      void reload();
       // Kept in the address, so a reload or a copied link shows the same years; "alle" is a choice, not a default.
       const url = new URL(window.location.href);
       url.searchParams.set(YEAR_PARAM, formatYearParam(next) || ALL_YEARS);
@@ -253,13 +255,6 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   }, [pendingDelete, pendingGroupIds, rows, columns]);
   const [working, setWorking] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'danger'; text: string } | null>(null);
-  // A list that failed to load is said: its counts and sums are of what was loaded before, and nothing is
-  // asked again by itself. The next reload (a year chip, an action, the page) starts over and clears it.
-  useEffect(() => {
-    if (rowsError) {
-      setNotice({ tone: 'danger', text: 'Die Belege konnten nicht vollständig geladen werden. Anzahl und Summen gelten nur für die gezeigten Zeilen. Bitte die Seite neu laden.' });
-    }
-  }, [rowsError]);
   const [review, setReview] = useState<ReviewEntry[]>(initialReview ?? []);
   const [reviewError, setReviewError] = useState<string | null>(
     initialReview === null ? 'Die Prüfliste konnte nicht geladen werden. Die Belege unten sind vollständig.' : null,
@@ -420,7 +415,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     (rowId: string, columnId: string, value: CellValue) => {
       updateCell(rowId, columnId, value).catch(() => {
         setNotice({ tone: 'danger', text: 'Die Änderung wurde nicht gespeichert. Die Tabelle zeigt wieder den gespeicherten Stand.' });
-        void reload().catch(() => setReviewError('Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.'));
+        void reload();
       });
     },
     [updateCell, reload],
@@ -483,7 +478,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       else setDetailRow(row);
       return;
     }
-    if (hasMore || isRowsLoading || columns.length === 0) return;
+    // Only a list that is all there can say that a receipt is not in it.
+    if (!settled || columns.length === 0) return;
     const gone = () => {
       setPendingOpenId(null);
       setNotice({ tone: 'warn', text: 'Der verlinkte Beleg ist in dieser Tabelle nicht vorhanden. Er wurde gelöscht oder gehört zu einem anderen Unternehmen.' });
@@ -506,7 +502,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         changeYears({ years: new Set([...yearSelection.years, year]), undated: yearSelection.undated });
       })
       .catch(() => gone());
-  }, [pendingOpenId, rows, columns, hasMore, isRowsLoading, yearSelection, changeYears]);
+  }, [pendingOpenId, rows, columns, settled, yearSelection, changeYears]);
 
   // Load select options for all select columns
   useEffect(() => {
@@ -817,6 +813,14 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         </div>
       </div>
 
+      {/* A list that failed to load is said for as long as it is so: its counts and sums are of the rows shown,
+          and nothing is asked again by itself. The next reload (a year chip, an action, the page) starts over. */}
+      {rowsError && (
+        <p role="alert" className="ui-note ui-note-danger mx-4 mt-3">
+          Die Belege konnten nicht vollständig geladen werden. Anzahl und Summen gelten nur für die gezeigten Zeilen. Bitte die Seite neu laden.
+        </p>
+      )}
+
       {notice && (
         <p role={notice.tone === 'ok' ? 'status' : 'alert'} className={`ui-note ui-note-${notice.tone} mx-4 mt-3 flex items-start justify-between gap-3`}>
           <span>{notice.text}</span>
@@ -917,7 +921,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           onUploadFile={uploadFile}
           onDeleteFile={deleteFile}
           onMealSaved={() => {
-            void reload().catch(() => setReviewError('Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.'));
+            void reload();
             void reloadReview();
           }}
           onReread={async (rowId) => {

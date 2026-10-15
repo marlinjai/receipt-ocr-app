@@ -28,6 +28,8 @@ interface Call {
 /** A database whose list answers wait until the test releases them. */
 function fakeDatabase(options: { claimTotal?: number } = {}) {
   const calls: Call[] = [];
+  // What the database holds; a test may add a receipt while the pages come in.
+  const data = [...ALL];
   const adapter = {
     getTable: async () => ({ id: 't', workspaceId: 'w', name: 'Receipts', createdAt: new Date(0), updatedAt: new Date(0) }),
     getColumns: async () => [{ id: 'name', tableId: 't', name: 'Name', type: 'text', position: 0, width: 200, isPrimary: true, config: {}, createdAt: new Date(0) }],
@@ -40,14 +42,14 @@ function fakeDatabase(options: { claimTotal?: number } = {}) {
           offset,
           // The page as the database holds it at the moment it answers.
           resolve: () => {
-            const items = ALL.slice(offset, offset + limit);
-            resolve({ items, total: options.claimTotal ?? ALL.length, hasMore: offset + items.length < ALL.length });
+            const items = data.slice(offset, offset + limit);
+            resolve({ items, total: options.claimTotal ?? data.length, hasMore: offset + items.length < data.length });
           },
           reject,
         });
       }),
   } as unknown as DatabaseAdapter;
-  return { adapter, calls };
+  return { adapter, calls, data };
 }
 
 interface Handle {
@@ -58,13 +60,14 @@ interface Handle {
   isLoading: boolean;
   hasMore: boolean;
   error: Error | null;
+  settled: boolean;
 }
 type Report = (handle: Handle) => void;
 
 /** The dashboard's way of loading: the package's table plus `useCompleteRows`. */
 function Guarded({ report }: { report: Report }) {
   const table = useTable({ tableId: 't', pageSize: PAGE });
-  const { rows, reload } = useCompleteRows({
+  const { rows, reload, settled } = useCompleteRows({
     rows: table.rows,
     total: table.total,
     hasMore: table.hasMore,
@@ -74,7 +77,7 @@ function Guarded({ report }: { report: Report }) {
     refresh: table.refresh,
   });
   useEffect(() => {
-    report({ shown: rows, loaded: table.rows, reload, refresh: table.refresh, isLoading: table.isRowsLoading, hasMore: table.hasMore, error: table.rowsError });
+    report({ shown: rows, loaded: table.rows, reload, refresh: table.refresh, isLoading: table.isRowsLoading, hasMore: table.hasMore, error: table.rowsError, settled });
   });
   return null;
 }
@@ -87,13 +90,16 @@ function Unguarded({ report }: { report: Report }) {
     if (hasMore && !isRowsLoading) void loadMore();
   }, [hasMore, isRowsLoading, loadMore]);
   useEffect(() => {
-    report({ shown: table.rows, loaded: table.rows, reload: table.refresh, refresh: table.refresh, isLoading: table.isRowsLoading, hasMore: table.hasMore, error: table.rowsError });
+    report({ shown: table.rows, loaded: table.rows, reload: table.refresh, refresh: table.refresh, isLoading: table.isRowsLoading, hasMore: table.hasMore, error: table.rowsError, settled: false });
   });
   return null;
 }
 
 function mount(Loader: typeof Guarded, adapter: DatabaseAdapter) {
   const handle: { current: Handle | null } = { current: null };
+  return mountWith(Loader, adapter, handle);
+}
+function mountWith(Loader: typeof Guarded, adapter: DatabaseAdapter, handle: { current: Handle | null }) {
   render(
     <DataTableProvider dbAdapter={adapter} workspaceId="w">
       <Loader report={(h) => (handle.current = h)} />
@@ -176,7 +182,30 @@ describe('the rows of the receipts table', () => {
     expect(ids(handle.current?.loaded)).toEqual(ids(ALL));
   });
 
-  it('shows a row once and loads the list again when a load it did not see doubled it', async () => {
+  it('shows a row once when the pages overlap, and loads the list again once it is in', async () => {
+    const { adapter, calls, data } = fakeDatabase();
+    const handle = mount(Guarded, adapter);
+    await release(await nthCall(calls, 1)); // r1 r2
+    // A receipt arrives elsewhere (an upload in another tab) and moves every row by one.
+    data.unshift(row(0));
+    await release(await nthCall(calls, 2)); // r2 again, r3
+    expect(ids(handle.current?.loaded)).toEqual(['r1', 'r2', 'r2', 'r3']);
+    expect(ids(handle.current?.shown)).toEqual(['r1', 'r2', 'r3']);
+    expect(handle.current?.settled).toBe(false);
+    await settle(handle, calls);
+    // Once in, it did not add up and was loaded again: now complete, with the new receipt, each once.
+    await waitFor(
+      async () => {
+        for (const call of calls.splice(0)) await release(call);
+        expect(ids(handle.current?.loaded)).toEqual(['r0', ...ids(ALL)]);
+        expect(handle.current?.settled).toBe(true);
+      },
+      { timeout: 3000 },
+    );
+    expect(ids(handle.current?.shown)).toEqual(['r0', ...ids(ALL)]);
+  });
+
+  it('loads the list again when a load beside the queue left rows out', async () => {
     const { adapter, calls } = fakeDatabase();
     const handle = mount(Guarded, adapter);
     await release(await nthCall(calls, 1));
@@ -189,12 +218,30 @@ describe('the rows of the receipts table', () => {
     const beside = await nthCall(calls, 4);
     await release(beside);
     await release(third);
-    // While the list is wrong, each row is still drawn once.
-    expect(new Set(ids(handle.current?.shown)).size).toBe(ids(handle.current?.shown).length);
     await settle(handle, calls);
-    // Once settled, the list was found not to add up and was loaded again, complete.
-    await waitFor(() => expect(ids(handle.current?.loaded)).toEqual(ids(ALL)), { timeout: 3000 });
+    // The list was found not to add up and was loaded again, complete; only then is it settled.
+    await waitFor(
+      async () => {
+        for (const call of calls.splice(0)) await release(call);
+        expect(ids(handle.current?.loaded)).toEqual(ids(ALL));
+        expect(handle.current?.settled).toBe(true);
+      },
+      { timeout: 3000 },
+    );
     expect(ids(handle.current?.shown)).toEqual(ids(ALL));
+  });
+
+  it('a reload waiting for a load lets go when the page is left', async () => {
+    const { adapter, calls } = fakeDatabase();
+    const handle = mount(Guarded, adapter);
+    await nthCall(calls, 1); // the first page never answers
+    let waiting: Promise<void> | undefined;
+    act(() => {
+      waiting = handle.current!.reload();
+    });
+    cleanup();
+    await expect(waiting).resolves.toBeUndefined();
+    expect(calls.length).toBe(1);
   });
 
   it('a failed reload is kept as the error, is not asked again by itself, and the next reload still runs', async () => {
@@ -202,14 +249,13 @@ describe('the rows of the receipts table', () => {
     const failing = adapter.getRows;
     let fail = false;
     adapter.getRows = (tableId, query) => (fail ? Promise.reject(new Error('offline')) : failing(tableId, query));
-    // A failing refresh of the columns makes the package's refresh reject, as a lost session does.
-    const columns = adapter.getColumns;
-    adapter.getColumns = (tableId) => (fail ? Promise.reject(new Error('offline')) : columns(tableId));
     const handle = mount(Guarded, adapter);
     await settle(handle, calls);
     fail = true;
+    // The reload resolves; the failure is the error the page shows.
     await act(async () => handle.current!.reload());
     await waitFor(() => expect(handle.current?.error?.message).toBe('offline'));
+    expect(handle.current?.settled).toBe(true);
     // The list as it was stays, and nothing is asked again while the server fails.
     expect(ids(handle.current?.shown)).toEqual(ids(ALL));
     await new Promise((r) => setTimeout(r, 50));

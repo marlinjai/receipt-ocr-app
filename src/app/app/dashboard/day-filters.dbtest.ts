@@ -80,6 +80,13 @@ describe('the filter bar on the date', () => {
     expect(names((await getRows(ws.tableId, { filters: on('equals', '2025-01-01'), limit: 200 })).items)).toEqual(['jan1']);
   });
 
+  it('"is" a day keeps the group of a receipt on that day and only that group', async () => {
+    expect(names((await getRows(ws.tableId, { filters: on('equals', '2025-06-15'), limit: 200 })).items)).toEqual(['group', 'jun']);
+    expect(names((await getRows(ws.tableId, { filters: on('equals', '2025-06-15'), years: [2025], limit: 200 } as never)).items)).toEqual(['group', 'jun']);
+    // A day none of the group's receipts is on: the group does not come along empty.
+    expect(names((await getRows(ws.tableId, { filters: on('equals', '2025-01-02'), years: [2025], limit: 200 } as never)).items)).toEqual(['jan2']);
+  });
+
   it('answers in the years chosen above the table too', async () => {
     const result = await getRows(ws.tableId, { filters: on('greaterThan', '2025-01-01'), years: [2024, 2025], limit: 200 } as never);
     expect(names(result.items)).toEqual(['group', 'jan2', 'jun']);

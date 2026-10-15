@@ -42,15 +42,18 @@ export interface DayFilter {
 export function dayOf(value: CellValue | undefined): string | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
   if (typeof value !== 'string') return null;
-  const iso = /^(\d{4}-\d{2}-\d{2})/.exec(value.trim());
+  // Not trimmed: the per-year query and the year chips match the stored text from its first character too.
+  const iso = /^(\d{4}-\d{2}-\d{2})/.exec(value);
   return iso ? iso[1] : null;
 }
 
 /**
  * Splits the filters of a list query: the date comparisons the app answers, and
- * everything else, which goes to the adapter as before. "Is" a day becomes a
- * text match on the start of the stored date, which the adapter answers in its
- * own pages (the day is validated, so it carries no wildcard). A date comparison
+ * everything else, which goes to the adapter as before. "Is" a day also becomes
+ * a text match on the start of the stored date for the adapter, so the database
+ * reads only that day's receipts (the day is validated, so it carries no
+ * wildcard); it stays a date comparison as well, so the groups are kept or
+ * dropped by what they hold, as for "after" and "before". A date comparison
  * without a value (the filter was just added and no day is picked yet) filters
  * nothing, as a filter without a value does in the filter bar.
  */
@@ -68,10 +71,7 @@ export function splitDayFilters(
     }
     if (filter.value === null || filter.value === undefined || filter.value === '') continue;
     const day = dayOf(filter.value);
-    if (filter.operator === 'equals' && day !== null) {
-      adapterFilters.push({ columnId: filter.columnId, operator: 'startsWith', value: day });
-      continue;
-    }
+    if (filter.operator === 'equals' && day !== null) adapterFilters.push({ columnId: filter.columnId, operator: 'startsWith', value: day });
     dayFilters.push({ columnId: filter.columnId, operator: filter.operator as DayOperator, day });
   }
   return { dayFilters, adapterFilters };
@@ -121,6 +121,11 @@ export function applyDayFilters<T extends Pick<Row, 'id' | 'cells' | 'parentRowI
   return rows.filter((row) => (isGroupRow(row, columns) ? holding.has(row.id) : kept.has(row.id)));
 }
 
+/** True when a comparison on the date column bounds the years ("is", "after", "before", or one that names no day). */
+export function boundsYears(filters: readonly DayFilter[], dateColumnId: string): boolean {
+  return filters.some((f) => f.columnId === dateColumnId && f.operator !== 'notEquals');
+}
+
 /**
  * The years a list with date comparisons can hold receipts of, from the bounds
  * the comparisons on the date column set ("after 31 December 2024" cannot hold
@@ -137,7 +142,11 @@ export function yearsWithin(filters: readonly DayFilter[], dateColumnId: string,
     if (filter.day === null && filter.operator !== 'notEquals') return [];
     if (filter.day === null) continue;
     const year = Number(filter.day.slice(0, 4));
-    if (filter.operator === 'greaterThan' || filter.operator === 'greaterThanOrEquals') {
+    if (filter.operator === 'equals') {
+      from = Math.max(from, year);
+      to = Math.min(to, year);
+      bounded = true;
+    } else if (filter.operator === 'greaterThan' || filter.operator === 'greaterThanOrEquals') {
       from = Math.max(from, year);
       bounded = true;
     } else if (filter.operator === 'lessThan' || filter.operator === 'lessThanOrEquals') {
@@ -152,9 +161,12 @@ export function yearsWithin(filters: readonly DayFilter[], dateColumnId: string,
 export const EVERY_ROW_LIMIT = 20_000;
 
 /**
- * Every row of a query, read page by page in the query's order, each once (a
- * row that moves between two pages while they are read is not counted twice).
- * Refuses a list longer than the limit instead of reading on without end.
+ * Every row of a query, read page by page in the query's order. A row that a
+ * new row pushes from one page onto the next while they are read is kept once;
+ * a row deleted meanwhile can make the next one slip past, as in any paged
+ * read, and the next reload shows it. Refuses a list longer than the limit
+ * (the list then fails and says so) instead of reading on without end or
+ * showing part of it as if it were all.
  */
 export async function readEveryRow<T extends { id: string }>(
   readPage: (offset: number, limit: number) => Promise<{ items: T[]; hasMore: boolean }>,
@@ -164,7 +176,7 @@ export async function readEveryRow<T extends { id: string }>(
   const seen = new Set<string>();
   const rows: T[] = [];
   for (let offset = 0; ; offset += pageSize) {
-    if (offset >= limit) throw new Error(`The list holds more than ${limit} rows; narrow it to years first.`);
+    if (offset >= limit) throw new Error(`More than ${limit} rows match; the list is refused rather than shown in part.`);
     const page = await readPage(offset, pageSize);
     for (const row of page.items) {
       if (seen.has(row.id)) continue;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Column, QueryFilter, Row } from '@marlinjai/data-table-core';
-import { applyDayFilters, dayOf, matchesDayFilters, readEveryRow, splitDayFilters, yearsWithin, type DayFilter } from './day-filters';
+import { applyDayFilters, boundsYears, dayOf, matchesDayFilters, readEveryRow, splitDayFilters, yearsWithin, type DayFilter } from './day-filters';
 import { GROUP_KIND, ROW_KIND_COLUMN } from '@/lib/receipts-kind';
 
 const columns = [
@@ -24,6 +24,8 @@ describe('the day a date cell names', () => {
     expect(dayOf('2024-12-31T23:30:00.000Z')).toBe('2024-12-31');
     expect(dayOf('2024-12-31T00:30:00+02:00')).toBe('2024-12-31');
     expect(dayOf('2025-03-14')).toBe('2025-03-14');
+    // Read from the first character, as the per-year query reads it.
+    expect(dayOf(' 2025-03-14')).toBeNull();
     expect(dayOf(new Date('2025-03-14T00:00:00.000Z'))).toBe('2025-03-14');
   });
 
@@ -49,7 +51,8 @@ describe('splitting the filters of a list query', () => {
 
   it('turns "is" a day into a text match on the start of the stored date, which the adapter answers in pages', () => {
     expect(split([{ columnId: 'date', operator: 'equals', value: '2025-01-02' }])).toEqual({
-      dayFilters: [],
+      // Still a date comparison too, so a group is kept or dropped by what it holds.
+      dayFilters: [{ columnId: 'date', operator: 'equals', day: '2025-01-02' }],
       adapterFilters: [{ columnId: 'date', operator: 'startsWith', value: '2025-01-02' }],
     });
     // A value with a time is the day it names.
@@ -122,6 +125,11 @@ describe('the years a list with date comparisons can hold', () => {
   const years = [2026, 2025, 2024, 2023, 2022];
   const f = (operator: DayFilter['operator'], day: string | null, columnId = 'date'): DayFilter => ({ columnId, operator, day });
 
+  it('are one year for "is" a day', () => {
+    expect(yearsWithin([f('equals', '2024-05-01')], 'date', years)).toEqual([2024]);
+    expect(yearsWithin([f('equals', '2019-05-01')], 'date', years)).toEqual([]);
+  });
+
   it('are bounded by "after" and "before" on the invoice date', () => {
     expect(yearsWithin([f('greaterThan', '2024-12-31')], 'date', years)).toEqual([2026, 2025, 2024]);
     expect(yearsWithin([f('lessThan', '2023-01-01')], 'date', years)).toEqual([2023, 2022]);
@@ -131,6 +139,13 @@ describe('the years a list with date comparisons can hold', () => {
   it('are none when the bounds exclude each other or a comparison names no day', () => {
     expect(yearsWithin([f('greaterThan', '2025-01-01'), f('lessThan', '2024-01-01')], 'date', years)).toEqual([]);
     expect(yearsWithin([f('greaterThan', null)], 'date', years)).toEqual([]);
+  });
+
+  it('are only looked up when a comparison on the invoice date bounds them', () => {
+    expect(boundsYears([f('notEquals', '2025-01-01')], 'date')).toBe(false);
+    expect(boundsYears([f('greaterThan', '2025-01-01', 'paid')], 'date')).toBe(false);
+    expect(boundsYears([f('lessThan', '2025-01-01')], 'date')).toBe(true);
+    expect(boundsYears([f('equals', null)], 'date')).toBe(true);
   });
 
   it('are not bounded by "is not" or by another date column', () => {
@@ -159,6 +174,6 @@ describe('reading every row of a list', () => {
 
   it('refuses a list longer than its limit instead of reading on without end', async () => {
     const endless = async (offset: number, limit: number) => ({ items: Array.from({ length: limit }, (_, i) => ({ id: `e${offset + i}` })), hasMore: true });
-    await expect(readEveryRow(endless, 10, 30)).rejects.toThrow('more than 30 rows');
+    await expect(readEveryRow(endless, 10, 30)).rejects.toThrow('More than 30 rows match');
   });
 });

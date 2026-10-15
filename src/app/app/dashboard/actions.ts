@@ -17,7 +17,7 @@ import { groupsHoldingReceipts, yearCounts, type YearCounts } from '@/lib/receip
 const SCOPED_LIST_LIMIT = 5000;
 import { MIN_TEXT_SEARCH_LENGTH, TEXT_SEARCH_LIMIT, likePattern, rowsWithoutText, textColumnIds, withoutText } from '@/lib/receipt-text';
 import { GROUP_KIND, ROW_KIND_COLUMN, rowKindColumnId } from '@/lib/receipts-kind';
-import { applyDayFilters, readEveryRow, splitDayFilters, yearsWithin } from './day-filters';
+import { applyDayFilters, boundsYears, readEveryRow, splitDayFilters, yearsWithin } from './day-filters';
 import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
 import { rowKind } from '@/lib/groups/service';
 import { readRowLinks } from '@/lib/groups/links';
@@ -242,14 +242,20 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
     const result = await adapter.getRows(tableId, rest);
     return { ...result, items: rowsWithoutText(result.items, textIds) };
   }
-  // "After" and "before" on the invoice date bound the years a receipt can lie in: the list then reads only
-  // those years, as the year chips do, and compares the days of what they hold.
-  const bounded = dateId && !sorted ? yearsWithin(dayFilters, dateId, years ?? (await yearCounts(prisma, tableId, columns)).years.map((y) => y.year)) : null;
+  // "Is", "after" and "before" on the invoice date bound the years a receipt can lie in: the list then reads
+  // only those years, as the year chips do, and compares the days of what they hold. (Like the year chips,
+  // that path never shows archived rows; the dashboard does not ask for them.)
+  const bounded =
+    dateId && !sorted && boundsYears(dayFilters, dateId)
+      ? yearsWithin(dayFilters, dateId, years ?? (await yearCounts(prisma, tableId, columns)).years.map((y) => y.year))
+      : null;
   if (bounded && bounded.length === 0) return { items: [], total: 0, hasMore: false } as QueryResult<Row>;
   if (bounded) years = bounded;
   if (!years || !dateId || sorted) {
-    // A list with a date comparison that names no years comes in one answer: which rows pass is only known
-    // once they are read, so a page of the adapter could not be counted. A further page is empty.
+    // A list with a date comparison that names no years (sorted, or only "is not") comes in one answer: which
+    // rows pass is only known once they are read, so a page of the adapter could not be counted. A further page
+    // is empty. It reads every row the other filters leave, the recognized text included until it is left out
+    // below: a cost paid only for these rare lists, which the filter bar's own operators do not make unsorted.
     if ((rest.offset ?? 0) > 0) return { items: [], total: rest.offset ?? 0, hasMore: false } as QueryResult<Row>;
     const every = await readEveryRow((offset, limit) => adapter.getRows(tableId, { ...rest, offset, limit }), SCOPED_LIST_LIMIT);
     const items = applyDayFilters(every, dayFilters, columns);

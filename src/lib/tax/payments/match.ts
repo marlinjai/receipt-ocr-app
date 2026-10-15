@@ -49,67 +49,117 @@ export function normalizeNumber(text: string): string {
 
 /**
  * Words that announce an invoice number in a transfer text: "Rechnung 61",
- * "RE 61", "Rechnung Nr. 61", "Rechnungsnummer 61", "Invoice 61". The number
+ * "RE 61", "Rechnungsnummer 61", "Invoice 61", "Rechnungs-Nr. 61". The number
  * must follow one of them directly (glued is fine: "RE61", "Rechnung-61").
  */
-export const INVOICE_NUMBER_KEYWORDS: ReadonlySet<string> = new Set([
+export const INVOICE_WORDS: ReadonlySet<string> = new Set([
   'rechnung',
   'rechnungen',
+  'rechnungs',
   'rechnungsnr',
   'rechnungsnummer',
   'rg',
   'rgnr',
   're',
   'renr',
-  'nr',
-  'no',
   'invoice',
   'inv',
 ]);
 
-/** Words that continue a list of numbers after a keyword: "Rechnung 61 und 62". */
+/**
+ * "Nr", "No" and "Nummer" announce an invoice number only after an invoice
+ * word ("Rechnung Nr. 61", "Rg.-Nr. 61") or at the very start of the text
+ * ("Nr. 61"). After anything else they belong to another number: "Kunden-Nr.
+ * 12", "Auftrags-Nr 7", "Steuer-Nr. 5" name no invoice.
+ */
+const NUMBER_WORDS: ReadonlySet<string> = new Set(['nr', 'no', 'nummer']);
+
+/** Words that continue a list of invoice numbers: "Rechnung 61 und 62". */
 const LIST_JOINERS: ReadonlySet<string> = new Set(['und', 'u', 'and', 'sowie']);
 
 /**
- * The transfer text as words and figures. A figure keeps its inner separators
- * ("12.10.2026", "61,00", "61/62" are one figure each), so a number inside a
- * date, an amount or a longer figure never stands as a figure of its own.
- * Letters and digits glued together are separate tokens ("RE61" is "re", "61").
+ * A purely numeric number up to this many digits says too little on its own
+ * (the plain invoice series, and a postal code or a quantity look the same),
+ * so it counts only next to an invoice word. Longer ones count wherever they
+ * stand as a whole figure.
  */
-function figureTokens(reference: string): string[] {
-  return reference.toLowerCase().match(/[a-zäöüß]+|\d+(?:[.,/:-]\d+)*/g) ?? [];
-}
-
-/** "061" and "61" are the same short number. */
-const stripLeadingZeros = (digits: string) => digits.replace(/^0+(?=\d)/, '');
+export const DIGITS_NEEDING_INVOICE_WORD = 5;
 
 /**
- * Is a short purely numeric invoice number (one to three digits, the plain
- * series this business uses) named in the text? Only as a whole figure, and
- * only where it cannot be anything else: the whole text is that number, or the
- * number follows an invoice keyword directly, or continues such a list
- * ("Rechnung 61 und 62"). Invoice 5 is never found in "52", "Rechnung 52",
- * "12.05.2026", an amount of "5,00" or an account number.
+ * An account number in international form (IBAN), with or without spaces:
+ * never an invoice number. Country, check digits, one group that may hold a
+ * bank code in letters ("GB29 NWBK ..."), then groups of digits.
  */
-function shortNumberMentioned(reference: string, digits: string): boolean {
-  const needle = stripLeadingZeros(digits);
-  const tokens = figureTokens(reference);
-  const isNumber = (token: string) => /^\d+$/.test(token);
-  if (tokens.length === 1 && isNumber(tokens[0])) return stripLeadingZeros(tokens[0]) === needle;
-  let inList = false;
-  let previousWasNumber = false;
-  for (const token of tokens) {
-    if (INVOICE_NUMBER_KEYWORDS.has(token)) {
-      inList = true;
-      previousWasNumber = false;
-    } else if (isNumber(token) && inList) {
-      if (stripLeadingZeros(token) === needle) return true;
-      previousWasNumber = true;
-    } else if (LIST_JOINERS.has(token) && inList && previousWasNumber) {
-      previousWasNumber = false;
+const IBAN = /\b[a-z]{2}\d{2} ?[a-z0-9]{4}(?: ?\d{4}){2,6}(?: ?\d{1,3})?\b/gi;
+
+/**
+ * The transfer text as words and figures, account numbers removed. A figure
+ * keeps its inner separators ("12.10.2026", "61,00", "1.001", "61/62" are one
+ * figure each), so a number inside a date, an amount or a longer figure never
+ * stands as a figure of its own. Letters and digits glued together are
+ * separate tokens ("RE61" is "re", "61").
+ */
+function figureTokens(reference: string): string[] {
+  return reference.toLowerCase().replace(IBAN, ' ').match(/[a-zäöüß]+|\d+(?:[.,/:-]\d+)*/g) ?? [];
+}
+
+/** "061" and "61" are the same number. */
+const stripLeadingZeros = (digits: string) => digits.replace(/^0+(?=\d)/, '');
+const isDigits = (token: string) => /^\d+$/.test(token);
+/** A group of three digits, possibly with cents, after a number: "1 500,00" is one amount, not invoice 1. */
+const isThousandsGroup = (token: string | undefined) => token !== undefined && /^\d{3}(?:[.,]\d{1,2})?$/.test(token);
+
+/**
+ * Is a short purely numeric invoice number named in the text? Only as a whole
+ * figure, and only where it cannot be anything else: the whole text is that
+ * number, or the number follows an invoice word directly, or continues such a
+ * list after "und" ("Rechnung 61 und 62"). A number followed by a group of
+ * three digits is taken as part of an amount ("Rechnung 1 500,00 EUR"), and a
+ * bare second number closes the list ("Rechnung 61 500 EUR" names 61 at most).
+ * Invoice 5 is never found in "52", "Rechnung 52", "12.05.2026", an amount
+ * of "5,00" or an account number. Lists written without spaces ("61,62",
+ * "61-62", "61/62") are one figure and name neither invoice: the safe side,
+ * the payment is then proposed by amount for a person to confirm.
+ */
+function numberNextToInvoiceWord(tokens: readonly string[], needle: string): boolean {
+  if (tokens.length === 1 && isDigits(tokens[0])) return stripLeadingZeros(tokens[0]) === needle;
+  let state: 'none' | 'word' | 'number' | 'joiner' = 'none';
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (INVOICE_WORDS.has(token) || (NUMBER_WORDS.has(token) && (state === 'word' || index === 0))) {
+      state = 'word';
+    } else if (isDigits(token) && (state === 'word' || state === 'joiner')) {
+      if (isThousandsGroup(tokens[index + 1])) state = 'none';
+      else {
+        if (stripLeadingZeros(token) === needle) return true;
+        state = 'number';
+      }
+    } else if (LIST_JOINERS.has(token) && state === 'number') {
+      state = 'joiner';
     } else {
-      inList = false;
-      previousWasNumber = false;
+      state = 'none';
+    }
+  }
+  return false;
+}
+
+/**
+ * Is a long purely numeric number named in the text? As a whole figure
+ * wherever it stands (a dash or a slash inside it is fine: "2026-001"), or
+ * spelled in groups with spaces ("2026 001"); never inside a date, an amount
+ * or an account number.
+ */
+function longNumberMentioned(tokens: readonly string[], needle: string): boolean {
+  const asDigits = (token: string) => (/^\d+(?:[-/]\d+)*$/.test(token) ? token.replace(/[-/]/g, '') : null);
+  for (let start = 0; start < tokens.length; start++) {
+    let joined = '';
+    for (let end = start; end < tokens.length; end++) {
+      const digits = asDigits(tokens[end]);
+      if (digits === null) break;
+      joined += digits;
+      const candidate = stripLeadingZeros(joined);
+      if (candidate === needle) return true;
+      if (candidate.length > needle.length) break;
     }
   }
   return false;
@@ -117,20 +167,27 @@ function shortNumberMentioned(reference: string, digits: string): boolean {
 
 /**
  * Does the payment's text carry the document's number? Always as a whole
- * token, never as a stretch of digits inside a longer number (decision D5 of
+ * token, never as a stretch of digits inside a longer figure (decision D5 of
  * the invoicing plan).
  *
- * A number of four characters or more (with at least one digit) counts
- * wherever it stands as its own word, or spelled with spaces or dashes
- * ("RE-2026/001" and "re 2026 001"). A short number of the plain integer
- * series (invoice 61) says too little on its own, so it counts only when it is
- * the whole text or follows an invoice keyword ("Rechnung 61", "RE61",
- * "Rechnung Nr. 61"): see `shortNumberMentioned`.
+ * - A purely numeric number of up to five digits (the plain invoice series,
+ *   invoice 61) counts only when it is the whole text or follows an invoice
+ *   word: "Rechnung 61", "RE61", "Rechnung Nr. 61". Leading zeros do not
+ *   matter.
+ * - A longer purely numeric number counts as a whole figure anywhere.
+ * - A number with letters ("RE-2026/001") counts wherever it stands as its own
+ *   word or spelled with spaces or dashes ("re 2026 001"), from four
+ *   characters on; a shorter one ("RE-5") says too little and never counts.
  */
 export function referenceMentions(reference: string, number: string | null): boolean {
   if (!number) return false;
   const needle = normalizeNumber(number);
-  if (needle.length < 4 && /^\d+$/.test(needle) && /[1-9]/.test(needle)) return shortNumberMentioned(reference, needle);
+  if (isDigits(needle)) {
+    const digits = stripLeadingZeros(needle);
+    if (digits === '0') return false;
+    const tokens = figureTokens(reference);
+    return digits.length <= DIGITS_NEEDING_INVOICE_WORD ? numberNextToInvoiceWord(tokens, digits) : longNumberMentioned(tokens, digits);
+  }
   if (needle.length < 4 || !/\d/.test(needle)) return false;
   // Compare token-wise first (the number as its own word), then glued spellings.
   const tokens = reference.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);

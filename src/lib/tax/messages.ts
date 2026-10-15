@@ -65,6 +65,7 @@ export const INVOICE_TREATMENT_LABELS: Record<InvoiceTreatment, string> = {
   small_business: 'Ohne Umsatzsteuer (Kleinunternehmer, § 19)',
   standard: 'Mit Umsatzsteuer, Regelsatz',
   reduced: 'Mit Umsatzsteuer, ermäßigter Satz',
+  mixed: 'Mit Umsatzsteuer, mehrere Steuersätze',
   not_taxable: 'Ohne Umsatzsteuer (steuerfrei, nicht steuerbar oder Steuerschuld beim Kunden)',
 };
 
@@ -150,6 +151,8 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Bitte die enthaltene Umsatzsteuer prüfen: bei einer Rechnung mit Umsatzsteuer größer als null und kleiner als der Rechnungsbetrag.';
         case 'vat_without_treatment':
           return 'Eine Rechnung ohne Umsatzsteuer kann keinen Steuerbetrag enthalten.';
+        case 'invalid_tax_groups':
+          return 'Bitte die Steuersätze prüfen: je Satz (19 % und 7 %) ein Nettobetrag und die Steuer darauf, zusammen genau der Rechnungsbetrag und die enthaltene Umsatzsteuer.';
         case 'invalid_payment':
           return 'Bitte Datum und Betrag jedes Zahlungseingangs prüfen.';
         case 'invalid_year':

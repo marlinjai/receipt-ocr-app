@@ -34,6 +34,7 @@ const invoiceView = (overrides: Partial<InvoiceView> = {}): InvoiceView => ({
   grossCents: 100_000,
   vatCents: 0,
   treatment: 'small_business',
+  taxGroups: null,
   declaredInYear: null,
   payments: [{ date: '2026-03-20', cents: 100_000 }],
   receivedCents: 100_000,
@@ -116,7 +117,7 @@ describe('RevenueTab', () => {
     await user.click(screen.getByRole('button', { name: 'Rechnung speichern' }));
     expect(props.onSave.mock.calls[0].slice(0, 2)).toEqual([
       null,
-      { number: 'R-2026-002', issueDate: '2026-05-02', grossCents: 125_050, vatCents: 0, treatment: 'small_business', declaredInYear: null, payments: [{ date: '2026-05-20', cents: 125_050 }] },
+      { number: 'R-2026-002', issueDate: '2026-05-02', grossCents: 125_050, vatCents: 0, treatment: 'small_business', taxGroups: null, declaredInYear: null, payments: [{ date: '2026-05-20', cents: 125_050 }] },
     ]);
   });
 
@@ -173,9 +174,78 @@ describe('RevenueTab', () => {
     await user.click(screen.getByRole('button', { name: 'Übernehmen' }));
     expect(props.onExpectation).toHaveBeenLastCalledWith(null);
   });
+
+  it('an invoice with two rates is entered per rate, the tax offered from the net amount, and must add up to the total', async () => {
+    const user = userEvent.setup();
+    const props = revenueProps();
+    render(<RevenueTab view={view({ smallBusinessAtYearEnd: false })} {...props} />);
+    await user.click(screen.getByRole('button', { name: 'Neue Rechnung' }));
+    await user.type(screen.getByLabelText('Rechnungsnummer'), 'R-2026-010');
+    await user.type(screen.getByLabelText('Rechnungsbetrag in €'), '1.725,00');
+    await user.selectOptions(screen.getByLabelText('Umsatzsteuer auf der Rechnung'), 'mixed');
+    expect(screen.queryByLabelText('Enthaltene Umsatzsteuer in €')).toBeNull();
+    await user.type(screen.getByLabelText('Netto 19 % in €'), '1.000,00');
+    await user.tab();
+    expect((screen.getByLabelText('Steuer 19 % in €') as HTMLInputElement).value).toBe('190,00');
+    await user.type(screen.getByLabelText('Netto 7 % in €'), '400,00');
+    await user.tab();
+    await user.click(screen.getByRole('button', { name: 'Rechnung speichern' }));
+    // 1,000.00 + 190.00 + 400.00 + 28.00 is not the invoice's 1,725.00.
+    expect(screen.getByRole('alert').textContent).toContain('ergeben 1.618,00 €');
+    expect(props.onSave).not.toHaveBeenCalled();
+    const net7 = screen.getByLabelText('Netto 7 % in €');
+    await user.clear(net7);
+    await user.type(net7, '500,00');
+    const tax7 = screen.getByLabelText('Steuer 7 % in €');
+    await user.clear(tax7);
+    await user.type(tax7, '35,00');
+    await user.click(screen.getByRole('button', { name: 'Rechnung speichern' }));
+    expect(props.onSave.mock.calls[0][1]).toMatchObject({
+      grossCents: 172_500,
+      vatCents: 22_500,
+      treatment: 'mixed',
+      taxGroups: [
+        { rateBp: 1900, netCents: 100_000, vatCents: 19_000 },
+        { rateBp: 700, netCents: 50_000, vatCents: 3_500 },
+      ],
+    });
+  });
+
+  it('lists the rates of a mixed invoice', () => {
+    const invoices = [
+      invoiceView({ treatment: 'mixed', grossCents: 172_500, vatCents: 22_500, taxGroups: [{ rateBp: 1900, netCents: 100_000, vatCents: 19_000 }, { rateBp: 700, netCents: 50_000, vatCents: 3_500 }] }),
+    ];
+    render(<RevenueTab view={view({ revenue: { recorded: true, receivedCents: 0, turnoverCents: 0, outstandingCents: 0, invoices } })} {...revenueProps()} />);
+    const entry = screen.getByRole('heading', { name: 'Rechnung R-2026-001' }).closest('li') as HTMLElement;
+    expect(entry.textContent).toContain('19 %: netto 1.000,00 €, Steuer 190,00 €');
+    expect(entry.textContent).toContain('7 %: netto 500,00 €, Steuer 35,00 €');
+  });
 });
 
 describe('VatTab', () => {
+  it('shows the turnover and tax per rate under each period and for the year', () => {
+    const rates = [
+      { rateBp: 1900, netCents: 100_000, vatCents: 19_000 },
+      { rateBp: 700, netCents: 50_000, vatCents: 3_500 },
+    ];
+    const period = (index: number, outputByRate: typeof rates) => ({
+      index,
+      from: '',
+      to: '',
+      outputVatCents: outputByRate.reduce((s, r) => s + r.vatCents, 0),
+      inputVatCents: 0,
+      dueCents: outputByRate.reduce((s, r) => s + r.vatCents, 0),
+      outputByRate,
+      output: [],
+      input: [],
+    });
+    const year = { periods: [period(1, rates), period(2, []), period(3, []), period(4, [])], outputByRate: rates, outputVatCents: 22_500, inputVatCents: 0, dueCents: 22_500 };
+    render(<VatTab view={view({ smallBusinessAtYearEnd: false, vat: { frequency: 'quarterly', method: 'issued', applies: true, year, undeductedInputVatCents: 0, settlements: [] } })} {...vatProps()} />);
+    const lines = screen.getAllByText(/zu 19 %: Umsatz 1.000,00 €, Steuer 190,00 € · zu 7 %: Umsatz 500,00 €, Steuer 35,00 €/);
+    // Once under the first quarter, once for the year.
+    expect(lines).toHaveLength(2);
+  });
+
   it('asks for the first answer before anything else', () => {
     render(<VatTab view={view({ smallBusiness: null })} {...vatProps()} />);
     expect(screen.getByText(/Zuerst muss die Frage zur Kleinunternehmerregelung beantwortet sein/)).toBeTruthy();
@@ -217,10 +287,11 @@ describe('VatTab', () => {
       outputVatCents,
       inputVatCents,
       dueCents: outputVatCents - inputVatCents,
+      outputByRate: [],
       output: [],
       input: [],
     });
-    const year = { periods: [period(1, 0, 0), period(2, 0, 0), period(3, 19_000, 1_900), period(4, 0, 28_500)], outputVatCents: 19_000, inputVatCents: 30_400, dueCents: -11_400 };
+    const year = { periods: [period(1, 0, 0), period(2, 0, 0), period(3, 19_000, 1_900), period(4, 0, 28_500)], outputByRate: [], outputVatCents: 19_000, inputVatCents: 30_400, dueCents: -11_400 };
     rerender(<VatTab view={view({ smallBusinessAtYearEnd: false, vat: { ...applies, frequency: 'quarterly', method: 'received', year, settlements: [{ id: 's1', date: '2026-10-10', cents: 17_100, direction: 'paid' }] } })} {...props} />);
     const rows = screen.getAllByRole('row');
     expect(rows[3].textContent).toContain('3. Quartal');

@@ -6,7 +6,8 @@ import type { LimitOutlook } from '@/lib/tax/forecast';
 import { INVOICE_CHECK_LABELS, INVOICE_TREATMENT_LABELS } from '@/lib/tax/messages';
 import { formatCents } from '@/lib/tax/money';
 import type { InvoiceView, StatementView } from '@/lib/tax/service';
-import type { InvoiceTreatment } from '@/lib/tax/types';
+import { INVOICE_RATES_BP, taxAt } from '@/lib/tax/invoice-tax';
+import type { InvoiceTreatment, TaxGroup } from '@/lib/tax/types';
 import { MONTHS, euro, parseEuro } from './amounts';
 
 export interface InvoiceDraft {
@@ -15,9 +16,13 @@ export interface InvoiceDraft {
   grossCents: number;
   vatCents: number;
   treatment: InvoiceTreatment;
+  /** Set exactly for a `mixed` invoice. */
+  taxGroups: TaxGroup[] | null;
   declaredInYear: number | null;
   payments: Array<{ date: string; cents: number }>;
 }
+
+const rateLabel = (rateBp: number) => `${(rateBp / 100).toLocaleString('de-DE')} %`;
 
 interface Props {
   view: StatementView;
@@ -185,6 +190,11 @@ export default function RevenueTab({ view, busy, error, onSave, onDelete, onExpe
                         : ' · noch nicht bezahlt'}
                       {invoice.declaredInYear !== null ? ` · bereits ${invoice.declaredInYear} erklärt` : ''}
                     </p>
+                    {invoice.taxGroups && (
+                      <p className="mt-0.5 text-xs tabular-nums" style={{ color: 'var(--muted)' }}>
+                        {invoice.taxGroups.map((g) => `${rateLabel(g.rateBp)}: netto ${euro(g.netCents)}, Steuer ${euro(g.vatCents)}`).join(' · ')}
+                      </p>
+                    )}
                   </div>
                   <dl className="flex gap-5 text-right text-xs" style={{ color: 'var(--muted)' }}>
                     <div>
@@ -265,7 +275,14 @@ function InvoiceForm({
   const [payments, setPayments] = useState<Array<{ date: string; amount: string }>>(
     () => invoice?.payments.map((p) => ({ date: p.date, amount: formatCents(p.cents) })) ?? [],
   );
+  const [groups, setGroups] = useState<Array<{ rateBp: number; net: string; vat: string }>>(() =>
+    INVOICE_RATES_BP.map((rateBp) => {
+      const stored = invoice?.taxGroups?.find((g) => g.rateBp === rateBp);
+      return { rateBp, net: stored ? formatCents(stored.netCents) : '', vat: stored ? formatCents(stored.vatCents) : '' };
+    }),
+  );
   const [localError, setLocalError] = useState<string | null>(null);
+  const mixed = treatment === 'mixed';
   const taxed = treatment === 'standard' || treatment === 'reduced';
 
   function submit(event: React.FormEvent) {
@@ -274,7 +291,23 @@ function InvoiceForm({
     const grossCents = parseEuro(gross);
     if (grossCents === null || grossCents <= 0) return setLocalError('Bitte den Rechnungsbetrag als Betrag größer als null eingeben.');
     let vatCents = 0;
-    if (taxed) {
+    let taxGroups: TaxGroup[] | null = null;
+    if (mixed) {
+      taxGroups = [];
+      for (const g of groups) {
+        const net = parseEuro(g.net);
+        const tax = parseEuro(g.vat);
+        if (net === null || net <= 0 || tax === null || tax < 0) {
+          return setLocalError(`Bitte für ${rateLabel(g.rateBp)} den Nettobetrag und die Steuer darauf eingeben.`);
+        }
+        taxGroups.push({ rateBp: g.rateBp, netCents: net, vatCents: tax });
+      }
+      const total = taxGroups.reduce((s, g) => s + g.netCents + g.vatCents, 0);
+      if (total !== grossCents) {
+        return setLocalError(`Netto und Steuer aller Sätze ergeben ${euro(total)}, die Rechnung lautet auf ${euro(grossCents)}. Bitte prüfen.`);
+      }
+      vatCents = taxGroups.reduce((s, g) => s + g.vatCents, 0);
+    } else if (taxed) {
       const parsed = parseEuro(vat);
       if (parsed === null || parsed <= 0 || parsed >= grossCents) {
         return setLocalError('Bitte die enthaltene Umsatzsteuer eingeben: größer als null und kleiner als der Rechnungsbetrag.');
@@ -294,7 +327,7 @@ function InvoiceForm({
       parsedPayments.push({ date: p.date, cents });
     }
     setLocalError(null);
-    onSubmit({ number: number.trim(), issueDate: date || null, grossCents, vatCents, treatment, declaredInYear: declaredYear, payments: parsedPayments });
+    onSubmit({ number: number.trim(), issueDate: date || null, grossCents, vatCents, treatment, taxGroups, declaredInYear: declaredYear, payments: parsedPayments });
   }
 
   const shown = localError ?? error;
@@ -330,6 +363,49 @@ function InvoiceForm({
           </div>
         )}
       </div>
+      {mixed && (
+        <fieldset>
+          <legend className="ui-label">Beträge je Steuersatz</legend>
+          <p className="text-xs" style={{ color: 'var(--muted)' }}>
+            Wie auf der Rechnung ausgewiesen. Die Voranmeldung meldet jeden Satz für sich; zusammen ergeben die Beträge
+            den Rechnungsbetrag.
+          </p>
+          <ul className="mt-2 space-y-2">
+            {groups.map((g, index) => (
+              <li key={g.rateBp} className="flex flex-wrap items-end gap-2">
+                <span className="w-14 pb-2 text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>{rateLabel(g.rateBp)}</span>
+                <div>
+                  <label className="ui-label" htmlFor={`${id}-gn-${g.rateBp}`}>Netto {rateLabel(g.rateBp)} in €</label>
+                  <input
+                    id={`${id}-gn-${g.rateBp}`}
+                    className="ui-input tabular-nums"
+                    inputMode="decimal"
+                    value={g.net}
+                    onChange={(e) => setGroups((list) => list.map((x, i) => (i === index ? { ...x, net: e.target.value } : x)))}
+                    onBlur={() => {
+                      // Offer the tax the rate gives; the invoice's own figure can still be typed over it.
+                      const net = parseEuro(g.net);
+                      if (net !== null && net > 0 && g.vat.trim() === '') {
+                        setGroups((list) => list.map((x, i) => (i === index ? { ...x, vat: formatCents(taxAt(net, g.rateBp)) } : x)));
+                      }
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="ui-label" htmlFor={`${id}-gv-${g.rateBp}`}>Steuer {rateLabel(g.rateBp)} in €</label>
+                  <input
+                    id={`${id}-gv-${g.rateBp}`}
+                    className="ui-input tabular-nums"
+                    inputMode="decimal"
+                    value={g.vat}
+                    onChange={(e) => setGroups((list) => list.map((x, i) => (i === index ? { ...x, vat: e.target.value } : x)))}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </fieldset>
+      )}
       <fieldset>
         <legend className="ui-label">Zahlungseingänge</legend>
         {payments.length === 0 && <p className="text-sm" style={{ color: 'var(--muted)' }}>Noch kein Eingang: die Rechnung steht als offen.</p>}

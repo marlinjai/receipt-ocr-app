@@ -1,5 +1,6 @@
 import { isIsoDay } from './decisions';
-import { INVOICE_TREATMENTS, type InvoiceTreatment } from './types';
+import { INVOICE_RATES_BP, taxAt } from './invoice-tax';
+import { INVOICE_TREATMENTS, type InvoiceTreatment, type TaxGroup } from './types';
 import type { VatFrequency, VatMethod } from './vat';
 
 /**
@@ -14,6 +15,8 @@ export interface InvoiceInput {
   grossCents: number;
   vatCents: number;
   treatment: InvoiceTreatment;
+  /** Set exactly for a `mixed` invoice: one group per rate. */
+  taxGroups: TaxGroup[] | null;
   declaredInYear: number | null;
   payments: Array<{ date: string; cents: number }>;
 }
@@ -25,6 +28,7 @@ export type RevenueInputErrorCode =
   | 'invalid_amount'
   | 'invalid_vat'
   | 'vat_without_treatment'
+  | 'invalid_tax_groups'
   | 'invalid_treatment'
   | 'invalid_year'
   | 'invalid_payment'
@@ -64,13 +68,26 @@ export function validateInvoiceInput(raw: unknown): InvoiceInput {
 
   if (typeof input.treatment !== 'string' || !(INVOICE_TREATMENTS as readonly string[]).includes(input.treatment)) fail('invalid_treatment');
   const treatment = input.treatment as InvoiceTreatment;
-  const taxed = treatment === 'standard' || treatment === 'reduced';
+  const taxed = treatment === 'standard' || treatment === 'reduced' || treatment === 'mixed';
 
   const vat = input.vatCents === undefined || input.vatCents === null ? 0 : input.vatCents;
   if (!isInt(vat) || vat < 0 || vat >= grossCents) fail('invalid_vat');
   // An invoice with tax needs its tax amount; an invoice without tax must not carry one.
   if (taxed && vat === 0) fail('invalid_vat');
   if (!taxed && vat !== 0) fail('vat_without_treatment');
+
+  // Groups belong to a mixed invoice and to nothing else; they must add up to
+  // the invoice's total and its tax, so the return and the statement agree.
+  const hasGroups = input.taxGroups !== undefined && input.taxGroups !== null;
+  if (treatment !== 'mixed' && hasGroups) fail('invalid_tax_groups');
+  let taxGroups: TaxGroup[] | null = null;
+  if (treatment === 'mixed') {
+    taxGroups = parseTaxGroups(input.taxGroups);
+    if (taxGroups === null) fail('invalid_tax_groups');
+    const groups = taxGroups as TaxGroup[];
+    if (groups.reduce((s, g) => s + g.netCents + g.vatCents, 0) !== grossCents) fail('invalid_tax_groups');
+    if (groups.reduce((s, g) => s + g.vatCents, 0) !== vat) fail('invalid_tax_groups');
+  }
 
   const declared = input.declaredInYear === undefined || input.declaredInYear === null || input.declaredInYear === '' ? null : input.declaredInYear;
   if (declared !== null && (!isInt(declared) || declared < 1990 || declared > 2100)) fail('invalid_year');
@@ -84,7 +101,28 @@ export function validateInvoiceInput(raw: unknown): InvoiceInput {
   });
   payments.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.cents - b.cents));
 
-  return { number, issueDate: issueDate as string | null, grossCents, vatCents: vat as number, treatment, declaredInYear: declared as number | null, payments };
+  return { number, issueDate: issueDate as string | null, grossCents, vatCents: vat as number, treatment, taxGroups, declaredInYear: declared as number | null, payments };
+}
+
+/**
+ * Read the groups of a mixed invoice: at least two, each rate at most once and
+ * one of the rates an invoice can carry, every amount a whole number of cents,
+ * and the tax of each group the rate applied to its net amount, give or take a
+ * cent of rounding. Null when anything does not hold.
+ */
+export function parseTaxGroups(raw: unknown): TaxGroup[] | null {
+  if (!Array.isArray(raw) || raw.length < 2 || raw.length > INVOICE_RATES_BP.length) return null;
+  const groups: TaxGroup[] = [];
+  for (const entry of raw) {
+    const g = (entry ?? {}) as Record<string, unknown>;
+    if (!isInt(g.rateBp) || !INVOICE_RATES_BP.includes(g.rateBp)) return null;
+    if (!isInt(g.netCents) || g.netCents <= 0 || g.netCents > MAX_CENTS) return null;
+    if (!isInt(g.vatCents) || g.vatCents < 0 || g.vatCents > MAX_CENTS) return null;
+    if (Math.abs(g.vatCents - taxAt(g.netCents, g.rateBp)) > 1) return null;
+    if (groups.some((x) => x.rateBp === g.rateBp)) return null;
+    groups.push({ rateBp: g.rateBp, netCents: g.netCents, vatCents: g.vatCents });
+  }
+  return groups.sort((a, b) => b.rateBp - a.rateBp);
 }
 
 export interface StatusChangeInput {

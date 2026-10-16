@@ -34,17 +34,20 @@ export function withStructuredInvoice(settled: SettledReading, fields: Structure
   // The vendor: the name the reading found, as a customer uses it. Where the
   // reading was made from the XML's own text, the text reader takes its
   // heading for a name; only the model's answer counts there, else the seller.
-  const vendor = options.textFromStructure ? (options.modelVendor && settled.vendor === options.modelVendor ? settled.vendor : fields.vendor) : (settled.vendor ?? fields.vendor);
-  // A currency the app has no option for cannot be stored: the row would read as euros with that
-  // currency's exchange rate. The reading's currency stays, and a person looks.
-  const known = fields.currency !== null && CURRENCY_OPTIONS.includes(fields.currency);
-  if (fields.currency !== null && !known) flags.push('einvoice_problem');
-  const currency = known ? (fields.currency as string) : settled.currency;
-  if (fields.creditNote) {
+  const key = (name: string | null | undefined) => (name ?? '').toLocaleLowerCase('de-DE').replace(/[^\p{L}\p{N}]+/gu, '');
+  const modelNamed = Boolean(options.modelVendor) && key(settled.vendor) === key(options.modelVendor);
+  const vendor = options.textFromStructure ? (modelNamed ? settled.vendor : fields.vendor) : (settled.vendor ?? fields.vendor);
+  // A currency the app has no option for cannot be stored: the amounts would
+  // be counted as euros. They stay empty, like a credit note's, until a
+  // person enters them; the figures are in the text.
+  const unknownCurrency = fields.currency !== null && !CURRENCY_OPTIONS.includes(fields.currency);
+  if (unknownCurrency) flags.push('currency_unknown');
+  const currency = fields.currency !== null && !unknownCurrency ? fields.currency : settled.currency;
+  if (fields.creditNote || unknownCurrency) {
     // A credit note is money back. The row has no way to say that by itself
     // (a total is a purchase wherever it is counted), so its amounts stay
     // empty until a person books it; the figures are in its text.
-    flags.push('credit_note');
+    if (fields.creditNote) flags.push('credit_note');
     const amounts = { ...settled.amounts, gross: null, net: null, taxGroups: [], checks: [] };
     return { ...settled, vendor, date: fields.date ?? settled.date, currency, gross: null, net: null, amounts, meal: settled.meal ? { ...settled.meal, taxLines: null } : null, flags: [...new Set(flags)] };
   }

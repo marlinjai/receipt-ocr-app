@@ -40,6 +40,7 @@ const SHORT: Record<ReviewReason, string> = {
   page_not_read: 'Nur Text gelesen',
   einvoice_problem: 'E-Rechnung prüfen',
   credit_note: 'Gutschrift',
+  currency_unknown: 'Währung prüfen',
   several_documents: 'Mehrere Belege',
   total_unconfirmed: 'Betrag prüfen',
   total_conflict: 'Betrag prüfen',

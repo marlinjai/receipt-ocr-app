@@ -251,7 +251,7 @@ async function readReceipt(
   // read from the page is taken only where the text prints it.
   const read = extracted ? settleReading(fullText, extracted, ai) : null;
   // Where the text was built from the XML, its heading is no vendor: the seller's name is, unless the model named one.
-  const settled = read && structured ? withStructuredInvoice(read, structured, { textFromStructure: !recognized.trim(), modelVendor: ai?.vendor ?? null }) : read;
+  const settled = read && structured ? withStructuredInvoice(read, structured, { textFromStructure: source?.structured?.source.kind === 'xml', modelVendor: ai?.vendor ?? null }) : read;
   const reviewFlags: ReadFlag[] = settled?.flags ?? [];
   const date = settled?.date ?? null;
   const vendor = settled?.vendor ?? null;
@@ -600,7 +600,12 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     const statusId = columnId('Status');
     const pendingId = statusId ? (await adapter.getSelectOptions(statusId)).find((o) => o.name === 'Pending')?.id : undefined;
     const waiting = statusId !== undefined && (isBlank(row.cells[statusId]) || row.cells[statusId] === pendingId);
-    const always = new Set([...REREAD_COLUMNS, ...(builtByReader ? ['Name'] : []), ...(waiting ? ['Status'] : [])]);
+    // A credit note, or an electronic invoice in a currency the app does not keep, is read without
+    // amounts: what a person entered for it since stays, and only empty amount cells are filled.
+    const amountsHeld = read.reviewFlags.includes('credit_note') || read.reviewFlags.includes('currency_unknown');
+    const heldColumns = amountsHeld ? ['Gross', 'Net', 'Tax Rate', 'Currency', 'FX Rate', MEAL_COLUMNS.taxLines] : [];
+    for (const name of heldColumns) fillOnly.add(name);
+    const always = new Set([...REREAD_COLUMNS.filter((name) => !heldColumns.includes(name)), ...(builtByReader ? ['Name'] : []), ...(waiting ? ['Status'] : [])]);
     const cells: Record<string, CellValue> = {};
     for (const column of columns) {
       if (!(column.id in read.cells)) continue;
@@ -616,7 +621,7 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     // The printed tax groups of the new reading, or none: lines of the old
     // reading must not stand next to amounts they no longer belong to.
     const linesId = columnId(MEAL_COLUMNS.taxLines);
-    if (linesId && !isMeal) cells[linesId] = read.cells[linesId] ?? serializeTaxLines(null);
+    if (linesId && !isMeal && !amountsHeld) cells[linesId] = read.cells[linesId] ?? serializeTaxLines(null);
     // The rates text is derived from what the row holds after this write.
     await adapter.updateRow(row.id, withTaxRates(columns, cells, row.cells) as typeof cells);
     await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read);

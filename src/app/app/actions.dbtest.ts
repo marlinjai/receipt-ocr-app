@@ -392,6 +392,16 @@ describe('processReceipt: the model is shown the page, and the upload never depe
     const credit = await upload(file(93), null, {});
     expect(await cellOf(ws, credit.rowId, 'Gross')).toBeNull();
     expect(credit.reviewFlags).toContain('credit_note');
+    // A person books it; "Seite neu lesen" leaves what they entered.
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    const id = (name: string) => columns.find((c) => c.name === name)!.id;
+    await ws.adapter.updateRow(credit.rowId, { [id('Gross')]: 11.9, [id('Net')]: 10 });
+    const imageColumnId = id('Receipt Image');
+    await ws.adapter.addFileReference({ rowId: credit.rowId, columnId: imageColumnId, fileId: file(94).id, fileUrl: `/api/files/${file(94).id}`, originalName: 'gutschrift.xml', mimeType: 'application/xml', metadata: { source: 'ocr-upload' } });
+    const reread = await rereadReceipt(credit.rowId);
+    expect(reread.ok).toBe(true);
+    expect(await cellOf(ws, credit.rowId, 'Gross')).toBe(11.9);
+    expect(await cellOf(ws, credit.rowId, 'Net')).toBe(10);
   });
 
   it('a document with no total stores none, however a label could be read', async () => {

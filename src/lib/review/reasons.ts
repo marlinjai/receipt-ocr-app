@@ -13,7 +13,7 @@
  */
 
 /** Doubts recorded at reading time. A person can confirm them away ("Geprüft"). */
-export const READ_FLAGS = ['not_classified', 'page_not_read', 'several_documents', 'total_unconfirmed', 'total_conflict', 'date_conflict', 'category_doubt', 'einvoice_problem', 'credit_note'] as const;
+export const READ_FLAGS = ['not_classified', 'page_not_read', 'several_documents', 'total_unconfirmed', 'total_conflict', 'date_conflict', 'category_doubt', 'einvoice_problem', 'credit_note', 'currency_unknown'] as const;
 export type ReadFlag = (typeof READ_FLAGS)[number];
 
 export type ReviewReason =
@@ -216,6 +216,7 @@ export const REASON_TEXT: Record<ReviewReason, string> = {
   not_classified: 'Nicht automatisch eingeordnet: Kategorie und Zuordnung bitte prüfen.',
   several_documents: 'Die Datei enthält mehr als einen Beleg, gelesen wurde nur einer: bitte die Datei aufteilen und jeden Beleg einzeln hochladen.',
   einvoice_problem: 'Die elektronische Rechnung rechnet nicht auf: Summen, Steuer oder Gruppen der XML-Daten passen nicht zusammen. Bitte mit der Rechnung vergleichen.',
+  currency_unknown: 'Die elektronische Rechnung ist in einer Währung, die die App nicht führt: Die Beträge bleiben leer, die Zahlen stehen im erkannten Text. Bitte Betrag und Währung eintragen.',
   credit_note: 'Gutschrift (elektronisch): Geld zurück, kein Kauf. Der Betrag bleibt leer, bis entschieden ist, wie sie verbucht wird; die Zahlen stehen im erkannten Text.',
   page_not_read: 'Nur aus dem erkannten Text gelesen: Die Seite selbst konnte dem Sprachmodell nicht gezeigt werden. Beträge und Datum bitte prüfen.',
   total_unconfirmed: 'Gesamtbetrag nur vom Etikett gelesen, ohne Gegenprobe über die Steuerzeilen.',

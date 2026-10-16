@@ -352,7 +352,9 @@ async function adoptUnreferenced(db: Prisma.TransactionClient, accountId: string
   for (const [key, claimants] of claims) {
     const candidates = unnumbered.filter((p) => sameMovement(p) === key);
     if (claimants.length !== 1 || candidates.length !== 1) continue;
-    await db.taxPayment.update({ where: { id: candidates[0].id }, data: { sourceHash: claimants[0].sourceHash, entryReference: claimants[0].entryReference } });
+    // The numbered row is the authority on how it was paid too: its own number is what a bank line settling it names.
+    const detail = claimants[0].detail ? { sourceDetail: claimants[0].detail as unknown as Prisma.InputJsonValue } : {};
+    await db.taxPayment.update({ where: { id: candidates[0].id }, data: { sourceHash: claimants[0].sourceHash, entryReference: claimants[0].entryReference, ...detail } });
     adopted += 1;
   }
   return adopted;

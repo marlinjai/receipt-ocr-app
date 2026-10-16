@@ -762,6 +762,8 @@ describe('a purchase first listed without the service’s number', () => {
     expect(await importPayments(db, ctx, laterId, MARCH)).toMatchObject({ total: 2, added: 0, alreadyThere: 2, adopted: 1 });
     const after = await db.taxPayment.findMany({ where: { accountId: laterId, amountCents: -2075 } });
     expect(after.map((p) => [p.id, p.entryReference])).toEqual([[before.id, '4000000000001']]);
+    // It takes the numbered row's payment details as well, its own number included.
+    expect(after[0].sourceDetail).toMatchObject({ method: 'Invoice', reference: '4000000000001' });
     expect((await loadStatement(db, ws.workspaceId, 2025)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 2075, amountBasis: 'payment' });
     // From now on it is known by its number: the file again changes nothing.
     expect(await importPayments(db, ctx, laterId, MARCH + '\n')).toMatchObject({ added: 0, adopted: 0 });

@@ -425,7 +425,7 @@ change or add to the list above.
     The stored payment kept neither the payment method, nor the card mark, nor the statement
     number, so the classification cannot be derived from what is stored. Migration
     `0030_tax_payment_pay_later_detail` adds two nullable columns to `tax_payments`:
-    `source_detail` (JSON: the method wording, whether a card is marked, the statement number,
+    `source_detail` (JavaScript Object Notation, JSON: the method wording, whether a card is marked, the statement number,
     the purchase's own number) and `pay_method_override` (a person's "card" or "checkout"). No
     row is rewritten. The tax day itself is still worked out on read (`tax-day.ts`).
 33. **A person's correction is its own column, not `kind_override` (replaces "stored like the
@@ -569,3 +569,8 @@ Where the time went, and what was done:
 - Then look at "Tag der Zahlung bei Später-bezahlen-Käufen" for 2025: the December 2025
   purchases on invoice now count in 2026, those of December 2024 in 2025; a card purchase among
   them whose text did not show the card is put back with "Mit der Karte bezahlt".
+- Known limit: a statement paid from PayPal (not from the bank) is no collection by the funding
+  rule, which on a non-bank account needs a purchase of exactly that amount. Its purchases show
+  as "Einzugstag unbekannt" until a person marks that PayPal payment "Übertrag zwischen eigenen
+  Konten"; from then on it counts as the collection (the same path is tested
+  with a bank debit after the last day the list covers).

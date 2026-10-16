@@ -302,6 +302,15 @@ describe('the pay-later purchase list', () => {
     expect(parsePaymentFile(KLARNA).unknownMethods).toEqual([]);
   });
 
+  it('counts an unknown method once for a purchase listed twice, and knows no card in the shorter list', () => {
+    const twice = klarnaRow({ day: '2025-03-02', amount: '10.00', merchant: 'Laden Beispiel', method: 'Flexible Amount', reference: '1200000000001' });
+    expect(parsePaymentFile(klarna(twice, twice)).notices).toEqual({ unknown_method: 1 });
+    const short = parseCsv(klarna(klarnaRow({ day: '2025-03-02', amount: '10.00', merchant: 'Laden Beispiel', reference: '1200000000002', card: '•••• 0000' })))
+      .map((r) => r.slice(0, 12).map((c) => `"${c}"`).join(','))
+      .join('\n');
+    expect(parsePaymentFile(short).payments[0].detail).toMatchObject({ card: null });
+  });
+
   it('is recognized by its column names: the shorter variant and reordered columns read the same', () => {
     const rows = parseCsv(KLARNA);
     const short = rows.map((r) => r.slice(0, 12).map((c) => `"${c}"`).join(',')).join('\n');

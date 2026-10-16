@@ -580,16 +580,16 @@ describe('PaymentsTab', () => {
     expect(within(section).getAllByText(/zugeordnet: Lampe/).length).toBe(2);
     expect(within(section).getByText('Einzugstag unbekannt')).toBeTruthy();
     expect(within(section).getByText(/2 Käufe wurden eingelesen, bevor die Zahlungsart/)).toBeTruthy();
-    const card = within(section).getAllByRole('button', { name: 'Mit der Karte bezahlt' });
-    expect(card.length).toBe(2);
-    await user.click(card[0]);
+    // Each button names the purchase it changes.
+    await user.click(within(section).getByRole('button', { name: 'Mit der Karte bezahlt: Laden Beispiel, 10.12.2025, 40,00 €' }));
     expect(p.onPayMethod).toHaveBeenLastCalledWith('k-1', 'card');
-    await user.click(card[1]);
+    await user.click(within(section).getByRole('button', { name: /^Mit der Karte bezahlt: Kiosk Beispiel/ }));
     expect(p.onPayMethod).toHaveBeenLastCalledWith('k-2', 'card');
+    expect(within(section).getAllByText(/Später zahlen ·/).length).toBe(3);
     // A purchase a person said was paid by card can be said to be on invoice, or put back.
-    await user.click(within(section).getByRole('button', { name: 'Auf Rechnung bezahlt' }));
+    await user.click(within(section).getByRole('button', { name: /^Auf Rechnung bezahlt: Café Beispiel/ }));
     expect(p.onPayMethod).toHaveBeenLastCalledWith('k-3', 'checkout');
-    await user.click(within(section).getByRole('button', { name: 'Zurücksetzen' }));
+    await user.click(within(section).getByRole('button', { name: /^Zurücksetzen: Café Beispiel/ }));
     expect(p.onPayMethod).toHaveBeenLastCalledWith('k-3', null);
   });
 

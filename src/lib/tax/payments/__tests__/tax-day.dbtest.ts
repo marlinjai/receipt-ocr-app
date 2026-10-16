@@ -214,6 +214,28 @@ describe('the day a pay-later purchase counts on: forward, change an earlier inp
     expect(await code(importPayments(db, ctx, laterId, LIST, { onlyYear: 2026 }))).toBe('nothing_new');
   });
 
+  it('re-entry: a card mark the shorter list could not give is taken from the longer one, and only that', async () => {
+    const ws = await createWorkspace();
+    const ctx: TaxContext = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    const laterId = await createAccount(db, ctx, { label: 'Später zahlen', kind: 'payment_service' });
+    const otherId = await createAccount(db, ctx, { label: 'Zweite Liste', kind: 'payment_service' });
+    // The shorter variant ends after `statement_number`: no card column.
+    const short = (text: string) => text.split('\n').map((line) => line.split(',').slice(0, 12).join(',')).join('\n');
+    await importPayments(db, ctx, laterId, short(laterFile(later(CARD))));
+    await importPayments(db, ctx, otherId, short(laterFile(later(CARD))));
+    const purchase = await db.taxPayment.findFirstOrThrow({ where: { accountId: laterId } });
+    expect(purchase.sourceDetail).toMatchObject({ card: null, method: 'Invoice' });
+    expect((await loadPayments(db, ws.workspaceId)).payments.find((p) => p.id === purchase.id)?.payLater).toMatchObject({ method: 'checkout' });
+
+    expect(await importPayments(db, ctx, laterId, laterFile(later(CARD)))).toMatchObject({ added: 0, detailFilled: 1 });
+    const after = await db.taxPayment.findUniqueOrThrow({ where: { id: purchase.id } });
+    expect(after.sourceDetail).toEqual({ method: 'Invoice', card: true, statement: '7ABCDEFG', reference: '5000000000002' });
+    expect({ ...after, sourceDetail: null }).toEqual({ ...purchase, sourceDetail: null });
+    expect((await loadPayments(db, ws.workspaceId)).payments.find((p) => p.id === purchase.id)?.payLater).toMatchObject({ method: 'card' });
+    // The same purchase on another account is not touched.
+    expect((await db.taxPayment.findFirstOrThrow({ where: { accountId: otherId } })).sourceDetail).toMatchObject({ card: null });
+  });
+
   it('re-entry: an unknown payment method is reported after the import and read as checkout', async () => {
     const ws = await createWorkspace();
     const ctx: TaxContext = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
@@ -231,5 +253,8 @@ describe('the day a pay-later purchase counts on: forward, change an earlier inp
     const stranger = await createWorkspace();
     expect(await code(setPaymentMethod(db, { workspaceId: stranger.workspaceId, tenantId: stranger.tenantId }, checkoutId, 'card'))).toBe('payment_not_found');
     expect((await db.taxPayment.findUniqueOrThrow({ where: { id: checkoutId } })).payMethodOverride).toBeNull();
+    // A purchase a later list cancelled counts nowhere: there is no day to correct.
+    await db.taxPayment.update({ where: { id: checkoutId }, data: { cancelledByBatchId: (await db.taxImportBatch.findFirstOrThrow({ where: { accountId: (await db.taxPayment.findUniqueOrThrow({ where: { id: checkoutId } })).accountId } })).id } });
+    expect(await code(setPaymentMethod(db, ctx, checkoutId, 'card'))).toBe('payment_not_found');
   });
 });

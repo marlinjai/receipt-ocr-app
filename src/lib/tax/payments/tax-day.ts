@@ -60,7 +60,7 @@ export function knownPayLaterMethod(wording: string): PayLaterMethod | null {
  */
 export function classifyPayLater(detail: PayLaterDetail, merchant: string): PayLaterMethod {
   const known = knownPayLaterMethod(detail.method);
-  if (known === 'card' || detail.card || looksLikeCardText(merchant)) return 'card';
+  if (known === 'card' || detail.card === true || looksLikeCardText(merchant)) return 'card';
   return known ?? 'checkout';
 }
 
@@ -68,7 +68,7 @@ export interface TaxDayPurchase {
   id: string;
   bookingDay: string;
   valueDay: string | null;
-  /** Signed cents; a purchase is money out. */
+  /** Signed cents: a purchase is money out, money back for one (a refund on the same statement) money in. */
   amountCents: number;
   counterparty: string;
   detail: PayLaterDetail | null;
@@ -82,7 +82,21 @@ export interface TaxDayCollection {
   amountCents: number;
   /** The collection's text (counterparty and remittance information). */
   text: string;
+  /**
+   * The purchase the funding rule pairs this debit with (its twin), when it
+   * found one. A debit twinned with a purchase that is not paid at the
+   * checkout (a direct debit, a card purchase) is that purchase's own money and
+   * settles no statement.
+   */
+  twinId?: string | null;
 }
+
+/**
+ * How long after a statement's last purchase its collection is looked for by
+ * amount alone: the service's invoice is due after 14 or 30 days, a reminder
+ * adds a few weeks. A debit of the same sum months later is another statement's.
+ */
+export const COLLECTION_DAYS_AFTER = 60;
 
 export interface PayLaterDay {
   /**
@@ -104,51 +118,72 @@ export interface PayLaterDay {
 }
 
 const words = (text: string) => new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+const dayNumber = (day: string) => Math.round(Date.parse(`${day}T00:00:00Z`) / 86_400_000);
+const byDay = <T extends { id: string; bookingDay: string }>(a: T, b: T) => (a.bookingDay === b.bookingDay ? (a.id < b.id ? -1 : 1) : a.bookingDay < b.bookingDay ? -1 : 1);
+
+/** How a purchase was paid: a person's word, then what the list says, then a card text; null when nothing is known. */
+function methodOf(purchase: TaxDayPurchase): PayLaterMethod | null {
+  if (purchase.override) return purchase.override;
+  if (purchase.detail) return classifyPayLater(purchase.detail, purchase.counterparty);
+  return looksLikeCardText(purchase.counterparty) ? 'card' : null;
+}
 
 /**
  * For every purchase of one pay-later service, the day it counts on.
- * `purchases` are the purchases of the service's own list that count
- * (cancelled ones left out); `collections` are the debits the funding rule
- * recognizes as the service collecting from another account (and a person
- * did not say otherwise).
+ * `purchases` are the rows of the service's own list that count (cancelled
+ * ones left out): purchases, and money back booked on a statement, which
+ * lowers what the service collects for it. `collections` are the debits the
+ * funding rule recognizes as the service collecting from another account, and
+ * the ones a person marked as such.
  *
  * How a checkout purchase finds its collection, in this order:
- * 1. a collection whose text holds the purchase's own number (an invoice paid by transfer);
+ * 1. a collection of exactly its amount whose text holds the purchase's own
+ *    number (an invoice paid by transfer); a part payment naming it settles nothing;
  * 2. a collection whose text holds the purchase's statement number;
- * 3. the first collection on or after the statement's last open purchase whose
- *    amount is exactly what the statement's open purchases add up to (every
- *    purchase of the statement, card and financed ones included: the service
- *    collects the whole statement).
- * Each collection settles one statement (or one purchase by its number).
+ * 3. the first collection from the statement's last open purchase up to
+ *    `COLLECTION_DAYS_AFTER` days later whose amount is exactly what the
+ *    statement's open purchases add up to, less money back on it (card and
+ *    financed purchases of the statement included: the service collects the
+ *    whole statement).
+ * Each collection settles one statement (or one purchase by its number), and
+ * a debit twinned with a purchase not paid at the checkout settles none.
  * Statements are worked through in the order of their last purchase, so the
  * same data always pairs the same way.
  */
-export function resolvePayLaterDays(purchases: readonly TaxDayPurchase[], collections: readonly TaxDayCollection[]): Map<string, PayLaterDay> {
+export function resolvePayLaterDays(rows: readonly TaxDayPurchase[], collections: readonly TaxDayCollection[]): Map<string, PayLaterDay> {
   const out = new Map<string, PayLaterDay>();
-  const ordered = [...collections].sort((a, b) => (a.bookingDay === b.bookingDay ? (a.id < b.id ? -1 : 1) : a.bookingDay < b.bookingDay ? -1 : 1));
+  const purchases = rows.filter((r) => r.amountCents < 0);
+  const methods = new Map(purchases.map((p) => [p.id, methodOf(p)]));
+  const ordered = collections
+    .filter((c) => !c.twinId || !methods.has(c.twinId) || methods.get(c.twinId) === 'checkout')
+    .sort(byDay);
   const textWords = new Map(ordered.map((c) => [c.id, words(c.text)]));
   const used = new Set<string>();
   const settledBy = new Map<string, { collection: TaxDayCollection; by: 'statement' | 'reference' | 'amount' }>();
 
-  // 1. A collection naming the purchase's own number settles that purchase.
-  for (const purchase of purchases) {
+  // 1. A collection of exactly the purchase's amount naming its own number settles that purchase.
+  for (const purchase of [...purchases].sort(byDay)) {
     const reference = purchase.detail?.reference?.toLowerCase();
     if (!reference) continue;
-    const collection = ordered.find((c) => !used.has(c.id) && c.bookingDay >= purchase.bookingDay && textWords.get(c.id)?.has(reference));
+    const collection = ordered.find(
+      (c) => !used.has(c.id) && c.bookingDay >= purchase.bookingDay && c.amountCents === purchase.amountCents && textWords.get(c.id)?.has(reference),
+    );
     if (!collection) continue;
     used.add(collection.id);
     settledBy.set(purchase.id, { collection, by: 'reference' });
   }
 
-  // The statements, with the purchases not settled on their own.
+  // The statements: the purchases not settled on their own, and money back booked on them.
   const statements = new Map<string, TaxDayPurchase[]>();
-  for (const purchase of purchases) {
-    const statement = purchase.detail?.statement;
-    if (!statement || settledBy.has(purchase.id)) continue;
-    statements.set(statement, [...(statements.get(statement) ?? []), purchase]);
+  for (const row of rows) {
+    const statement = row.detail?.statement;
+    if (!statement || settledBy.has(row.id)) continue;
+    statements.set(statement, [...(statements.get(statement) ?? []), row]);
   }
-  const lastDay = (list: readonly TaxDayPurchase[]) => list.reduce((day, p) => (p.bookingDay > day ? p.bookingDay : day), '');
-  const statementOrder = [...statements.entries()].sort(([a, la], [b, lb]) => (lastDay(la) === lastDay(lb) ? (a < b ? -1 : 1) : lastDay(la) < lastDay(lb) ? -1 : 1));
+  const lastDay = (list: readonly TaxDayPurchase[]) => list.reduce((day, p) => (p.amountCents < 0 && p.bookingDay > day ? p.bookingDay : day), '');
+  const statementOrder = [...statements.entries()]
+    .filter(([, list]) => list.some((p) => p.amountCents < 0))
+    .sort(([a, la], [b, lb]) => (lastDay(la) === lastDay(lb) ? (a < b ? -1 : 1) : lastDay(la) < lastDay(lb) ? -1 : 1));
 
   // 2. A collection naming the statement settles all of it.
   const open: Array<[string, TaxDayPurchase[]]> = [];
@@ -163,19 +198,19 @@ export function resolvePayLaterDays(purchases: readonly TaxDayPurchase[], collec
     for (const purchase of list) settledBy.set(purchase.id, { collection, by: 'statement' });
   }
 
-  // 3. Otherwise the first collection of exactly the statement's sum, on or after its last purchase.
+  // 3. Otherwise the first collection of exactly the statement's sum, soon after its last purchase.
   for (const [, list] of open) {
     const total = list.reduce((sum, p) => sum - p.amountCents, 0);
     const day = lastDay(list);
-    const collection = ordered.find((c) => !used.has(c.id) && c.bookingDay >= day && -c.amountCents === total);
+    const latest = dayNumber(day) + COLLECTION_DAYS_AFTER;
+    const collection = ordered.find((c) => !used.has(c.id) && c.bookingDay >= day && dayNumber(c.bookingDay) <= latest && -c.amountCents === total);
     if (!collection) continue;
     used.add(collection.id);
     for (const purchase of list) settledBy.set(purchase.id, { collection, by: 'amount' });
   }
 
   for (const purchase of purchases) {
-    const classified = purchase.detail ? classifyPayLater(purchase.detail, purchase.counterparty) : looksLikeCardText(purchase.counterparty) ? 'card' : null;
-    const method: PayLaterMethod | null = purchase.override ?? classified;
+    const method = methods.get(purchase.id) ?? null;
     const base = { method, byPerson: purchase.override !== null, collectionId: null, matchedBy: null, dayUnknown: false } as const;
     if (method === 'direct_debit') {
       out.set(purchase.id, { ...base, taxDay: purchase.valueDay ?? purchase.bookingDay });

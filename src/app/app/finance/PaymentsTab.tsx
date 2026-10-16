@@ -72,7 +72,7 @@ const SKIP_LABELS: Record<string, string> = {
 const NOTICE_LABELS: Record<string, string> = {
   part_refunded: 'teilweise erstattet (der Kauf zählt voll; die Erstattung steht auf dem Bankkonto und wird dort dem Beleg zugeordnet)',
   unknown_status: 'mit unbekanntem Status (als Kauf eingelesen; falls storniert oder noch offen, die Zahlung bitte als privat oder Umbuchung kennzeichnen)',
-  unknown_method: 'mit unbekannter Zahlungsart (als Kauf auf Rechnung gelesen: er zählt am Tag, an dem der Dienst ihn einzieht; war es die Karte, unter „Tag der Zahlung“ ändern)',
+  unknown_method: 'mit unbekannter Zahlungsart (als Kauf auf Rechnung gelesen: er zählt am Tag, an dem der Dienst ihn einzieht; fällt der in ein anderes Jahr oder ist er unbekannt, steht der Kauf unter „Tag der Zahlung bei Später-bezahlen-Käufen“ und lässt sich dort umstellen)',
 };
 const PAY_METHOD_LABELS: Record<PayLaterMethod, string> = {
   card: 'mit der Karte bezahlt',
@@ -669,10 +669,13 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
  */
 function PayLaterDays({ days, year, busy, onPayMethod }: { days: StatementView['payments']['payLaterDays']; year: number; busy: boolean; onPayMethod: Props['onPayMethod'] }) {
   if (days.moved.length === 0 && days.unknown.length === 0 && days.relabelled.length === 0 && days.withoutDetail === 0) return null;
+  // Every row has the same buttons: the label says which purchase a button changes.
+  const about = (entry: PayLaterDayEntry) => `${entry.counterparty || 'ohne Namen'}, ${formatDay(entry.bookingDay)}, ${euro(Math.abs(entry.amountCents))}`;
   const line = (entry: PayLaterDayEntry, extra: string) => (
     <span>
       {formatDay(entry.bookingDay)} {entry.counterparty || 'ohne Namen'} {euro(Math.abs(entry.amountCents))}
       <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+        {entry.accountLabel ? `${entry.accountLabel} · ` : ''}
         {entry.method ? PAY_METHOD_LABELS[entry.method] : 'Zahlungsart unbekannt'}
         {extra}
         {entry.linkedTo.length > 0 ? ` · zugeordnet: ${entry.linkedTo.join(', ')}` : ''}
@@ -698,7 +701,7 @@ function PayLaterDays({ days, year, busy, onPayMethod }: { days: StatementView['
               <li key={entry.id} className="flex flex-wrap items-baseline justify-between gap-2">
                 {line(entry, ` · zählt am ${formatDay(entry.taxDay)}`)}
                 {!entry.byPerson && (
-                  <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onPayMethod(entry.id, 'card')}>Mit der Karte bezahlt</button>
+                  <button type="button" className="ui-btn ui-btn-sm" disabled={busy} aria-label={`Mit der Karte bezahlt: ${about(entry)}`} onClick={() => onPayMethod(entry.id, 'card')}>Mit der Karte bezahlt</button>
                 )}
               </li>
             ))}
@@ -709,15 +712,17 @@ function PayLaterDays({ days, year, busy, onPayMethod }: { days: StatementView['
         <>
           <h3 className="mt-3 text-sm font-medium" style={{ color: 'var(--foreground)' }}>Einzugstag unbekannt</h3>
           <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-            Für diese Käufe auf Rechnung fand sich kein Einzug, der ihre Abrechnung bezahlt (Bankkonto nicht eingelesen,
-            oder in Teilen bezahlt). Sie zählen bis dahin an ihrem Kauftag ({year}).
+            Für diese Käufe auf Rechnung fand sich kein Einzug, der ihre Abrechnung bezahlt: das Bankkonto ist für diese
+            Tage nicht eingelesen, die Abrechnung wurde in Teilen oder zusammen mit anderen bezahlt, oder der Einzug liegt
+            nach dem letzten Tag der Liste. Im letzten Fall die Abbuchung auf dem Bankkonto als „Übertrag zwischen eigenen
+            Konten“ kennzeichnen, dann zählt sie als Einzug. Bis dahin zählen die Käufe an ihrem Kauftag ({year}).
           </p>
           <ul className="mt-2 space-y-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
             {days.unknown.map((entry) => (
               <li key={entry.id} className="flex flex-wrap items-baseline justify-between gap-2">
                 {line(entry, '')}
                 {!entry.byPerson && (
-                  <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onPayMethod(entry.id, 'card')}>Mit der Karte bezahlt</button>
+                  <button type="button" className="ui-btn ui-btn-sm" disabled={busy} aria-label={`Mit der Karte bezahlt: ${about(entry)}`} onClick={() => onPayMethod(entry.id, 'card')}>Mit der Karte bezahlt</button>
                 )}
               </li>
             ))}
@@ -733,11 +738,11 @@ function PayLaterDays({ days, year, busy, onPayMethod }: { days: StatementView['
                 {line(entry, entry.taxDay !== entry.bookingDay ? ` · zählt am ${formatDay(entry.taxDay)}` : '')}
                 <span className="flex flex-wrap gap-2">
                   {entry.method === 'card' ? (
-                    <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onPayMethod(entry.id, 'checkout')}>Auf Rechnung bezahlt</button>
+                    <button type="button" className="ui-btn ui-btn-sm" disabled={busy} aria-label={`Auf Rechnung bezahlt: ${about(entry)}`} onClick={() => onPayMethod(entry.id, 'checkout')}>Auf Rechnung bezahlt</button>
                   ) : (
-                    <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onPayMethod(entry.id, 'card')}>Mit der Karte bezahlt</button>
+                    <button type="button" className="ui-btn ui-btn-sm" disabled={busy} aria-label={`Mit der Karte bezahlt: ${about(entry)}`} onClick={() => onPayMethod(entry.id, 'card')}>Mit der Karte bezahlt</button>
                   )}
-                  <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onPayMethod(entry.id, null)}>Zurücksetzen</button>
+                  <button type="button" className="ui-btn ui-btn-sm" disabled={busy} aria-label={`Zurücksetzen: ${about(entry)}`} onClick={() => onPayMethod(entry.id, null)}>Zurücksetzen</button>
                 </span>
               </li>
             ))}
@@ -748,8 +753,9 @@ function PayLaterDays({ days, year, busy, onPayMethod }: { days: StatementView['
         <p className="ui-note mt-3 text-xs">
           {days.withoutDetail} {days.withoutDetail === 1 ? 'Kauf wurde' : 'Käufe wurden'} eingelesen, bevor die Zahlungsart
           aufbewahrt wurde, und {days.withoutDetail === 1 ? 'zählt' : 'zählen'} vorerst am Kauftag. Die Liste des Dienstes
-          einmal neu einlesen (mit „Nur Zahlungen aus {year}“ oder nach dem Rückgängigmachen des Imports): dann wird die
-          Zahlungsart ergänzt, sonst ändert sich nichts.
+          einmal neu einlesen, mit „Nur Zahlungen aus {year}“ (ein Jahr mit Käufen genügt, die Zahlungsart wird für alle
+          Jahre der Datei ergänzt, sonst ändert sich nichts und die Zuordnungen bleiben). Liest die neue Datei nur einen
+          Teil der Tage, bleiben die übrigen Käufe am Kauftag.
         </p>
       )}
     </section>

@@ -306,8 +306,10 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
  * Purchases of the pay-later list imported before its payment details were
  * kept have none. When a later import of the same list meets such a purchase
  * (same identity), it fills the details in and changes nothing else. A row
- * that already has details keeps them. One statement per few thousand rows:
- * row by row, a year of purchases took seconds with the database a network away.
+ * that already has details keeps them, except that a card mark nobody knew
+ * (read from the shorter list, which has no card column) is taken from a list
+ * that has one. One statement per few thousand rows: row by row, a year of
+ * purchases took seconds with the database a network away.
  */
 async function fillMissingDetail(db: Prisma.TransactionClient, accountId: string, payments: readonly NormalizedPayment[]): Promise<number> {
   const withDetail = payments.filter((p): p is NormalizedPayment & { detail: PayLaterDetail } => p.detail !== undefined);
@@ -315,9 +317,11 @@ async function fillMissingDetail(db: Prisma.TransactionClient, accountId: string
   for (let i = 0; i < withDetail.length; i += 5000) {
     const values = withDetail.slice(i, i + 5000).map((p) => Prisma.sql`(${p.sourceHash}, ${JSON.stringify(p.detail)})`);
     filled += await db.$executeRaw`
-      UPDATE tax_payments AS t SET source_detail = v.detail::jsonb
+      UPDATE tax_payments AS t
+      SET source_detail = CASE WHEN t.source_detail IS NULL THEN v.detail::jsonb ELSE jsonb_set(t.source_detail, '{card}', v.detail::jsonb -> 'card') END
       FROM (VALUES ${Prisma.join(values)}) AS v(hash, detail)
-      WHERE t.account_id = ${accountId} AND t.source_hash = v.hash AND t.source_detail IS NULL`;
+      WHERE t.account_id = ${accountId} AND t.source_hash = v.hash
+        AND (t.source_detail IS NULL OR (t.source_detail -> 'card' = 'null'::jsonb AND v.detail::jsonb -> 'card' <> 'null'::jsonb))`;
   }
   return filled;
 }
@@ -858,7 +862,9 @@ function applyPayLaterDays(
     if (service?.kind === 'pay_later') holders.set(account.id, service.name);
   }
   for (const name of new Set(holders.values())) {
-    const purchases = rows.filter((r) => holders.get(r.accountId) === name && r.amountCents < 0 && r.sourceKind === 'spend');
+    // Purchases, and money back the list books on a statement (it lowers what the service collects for it).
+    const listed = rows.filter((r) => holders.get(r.accountId) === name && ((r.amountCents < 0 && r.sourceKind === 'spend') || (r.amountCents > 0 && r.sourceKind === 'refund')));
+    const purchases = listed.filter((r) => r.amountCents < 0);
     const collections = rows.filter(
       (r) =>
         holders.get(r.accountId) !== name &&
@@ -867,7 +873,7 @@ function applyPayLaterDays(
         (r.funding?.service === name || (r.kindOverridden && r.counterpartyKey.split(' ').includes(name))),
     );
     const days = resolvePayLaterDays(
-      purchases.map((r) => {
+      listed.map((r) => {
         const own = storedById.get(r.id);
         const override = own?.payMethodOverride ?? null;
         return {
@@ -880,7 +886,7 @@ function applyPayLaterDays(
           override: (PAY_METHOD_OVERRIDES as readonly string[]).includes(override ?? '') ? (override as PayMethodOverride) : null,
         };
       }),
-      collections.map((r) => ({ id: r.id, bookingDay: r.bookingDay, amountCents: r.amountCents, text: `${r.counterparty} ${r.reference}` })),
+      collections.map((r) => ({ id: r.id, bookingDay: r.bookingDay, amountCents: r.amountCents, text: `${r.counterparty} ${r.reference}`, twinId: r.funding?.twinId ?? null })),
     );
     for (const row of purchases) {
       const day = days.get(row.id);
@@ -895,10 +901,10 @@ function applyPayLaterDays(
 function payLaterDetailOf(value: Prisma.JsonValue | null): PayLaterDetail | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
-  if (typeof v.method !== 'string' || typeof v.card !== 'boolean') return null;
+  if (typeof v.method !== 'string' || (typeof v.card !== 'boolean' && v.card !== null)) return null;
   return {
     method: v.method,
-    card: v.card,
+    card: v.card as boolean | null,
     statement: typeof v.statement === 'string' && v.statement !== '' ? v.statement : null,
     reference: typeof v.reference === 'string' && v.reference !== '' ? v.reference : null,
   };
@@ -913,7 +919,8 @@ function payLaterDetailOf(value: Prisma.JsonValue | null): PayLaterDetail | null
 export async function setPaymentMethod(db: PrismaClient, ctx: PaymentContext, paymentId: string, method: unknown): Promise<void> {
   if (method !== null && (typeof method !== 'string' || !(PAY_METHOD_OVERRIDES as readonly string[]).includes(method))) throw new PaymentServiceError('invalid_kind');
   const payment = await db.taxPayment.findFirst({ where: { id: paymentId, authWorkspaceId: ctx.workspaceId }, include: { batch: true } });
-  if (!payment) throw new PaymentServiceError('payment_not_found');
+  // A cancelled purchase counts nowhere: there is no day to correct.
+  if (!payment || payment.cancelledByBatchId !== null) throw new PaymentServiceError('payment_not_found');
   if (payment.batch.format !== 'klarna_csv' || payment.amountCents >= 0 || payment.sourceKind !== 'spend') throw new PaymentServiceError('invalid_kind');
   await db.taxPayment.update({ where: { id: payment.id }, data: { payMethodOverride: method as string | null } });
 }

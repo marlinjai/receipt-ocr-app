@@ -73,8 +73,12 @@ export interface NormalizedPayment {
 export interface PayLaterDetail {
   /** The list's `payment_method` as written ("Invoice", "Cards", "Term Loan", "In 30 Tagen zahlen"); '' when empty. */
   method: string;
-  /** The list marks a card on the purchase (its `card` column is filled). */
-  card: boolean;
+  /**
+   * The list marks a card on the purchase (its `card` column is filled): true or
+   * false. Null when the list has no `card` column (its shorter variant), so
+   * nobody knows; a later longer list fills it in.
+   */
+  card: boolean | null;
   /** The statement the purchase is billed on, when the list names one. */
   statement: string | null;
   /** The service's own number for the purchase, when the list has one. */

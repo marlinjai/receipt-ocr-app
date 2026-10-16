@@ -448,16 +448,22 @@ change or add to the list above.
     how many there are and that the list is to be read again once.
 36. **Reading the list again fills in the details only.** When an import meets a stored purchase
     of the same identity without details, it writes the details and nothing else (one statement
-    per 5,000 rows); details already there are never overwritten. The import says how many it
+    per 5,000 rows); details already there are never overwritten, with one exception: the
+    shorter variant of the list has no card column, so its purchases store the card mark as
+    unknown (not as "no card"), and a later longer list fills in that one field. The import says how many it
     filled ("Bei n schon vorhandenen Käufen wurde die Zahlungsart ergänzt"). An import limited
     to one year fills in the purchases of every year of the file, and counts as not empty when
     it filled something in.
-37. **How a collection is found, in this order:** a bank line naming the purchase's own number
-    settles that purchase (an invoice paid by transfer; 14 lines of the real bank files carry
-    such a number); a bank line naming the statement number settles the statement; otherwise
-    the first collection on or after the statement's last open purchase whose amount is exactly
-    what the statement's open purchases add up to (card and financed purchases of the statement
-    included: the service collects the whole statement). Each collection settles one statement,
+37. **How a collection is found, in this order:** a bank line of exactly the purchase's amount
+    naming its own number settles that purchase (an invoice paid by transfer; 14 lines of the
+    real bank files carry such a number; a part payment naming it settles nothing, the purchase
+    stays "unknown"); a bank line naming the statement number settles the statement; otherwise
+    the first collection from the statement's last open purchase up to 60 days later whose
+    amount is exactly what the statement's open purchases add up to, less money back booked on
+    it (card and financed purchases of the statement included: the service collects the whole
+    statement). The 60 days keep a later month of the same sum (a subscription) from being
+    taken for a statement whose own collection is missing. A bank debit the funding rule pairs
+    with a purchase not paid at the checkout (a direct debit's own debit) settles no statement. Each collection settles one statement,
     statements in the order of their last purchase. A collection is a debit the funding rule
     makes a transfer, or one a person marked a transfer whose counterparty names the service (a
     collection after the last day the list covers). A debit a person said is a payment of its
@@ -566,9 +572,20 @@ Where the time went, and what was done:
   earlier import and importing again also works but drops the links made on its purchases, so
   the year option is the better way. Until then every stored purchase counts on its purchase day
   as before, and the tab says how many are waiting.
-- Then look at "Tag der Zahlung bei Später-bezahlen-Käufen" for 2025: the December 2025
-  purchases on invoice now count in 2026, those of December 2024 in 2025; a card purchase among
-  them whose text did not show the card is put back with "Mit der Karte bezahlt".
+- **Checked on the real list after the review: its `statement_number` is not the monthly
+  statement.** 1,129 numbers for 1,131 purchases, so it is a number per purchase (every
+  payment method carries one, the list holds no money back). The amount rule therefore finds a
+  collection only where the service collected exactly one purchase. A consolidated monthly
+  collection matches nothing, and those checkout purchases stay on their purchase day as
+  "Einzugstag unbekannt": the same day as before this change, now listed for a look. Which
+  purchases a consolidated collection pays is not in any file the app reads; finding it (the
+  service's monthly statement, or a sum over the open purchases before a collection) is open
+  and needs a decision on how far to guess.
+- Then look at "Tag der Zahlung bei Später-bezahlen-Käufen" for 2025: December purchases on
+  invoice whose collection was found count in the next year (a card purchase among them whose
+  text did not show the card is put back with "Mit der Karte bezahlt"); the December purchases
+  under "Einzugstag unbekannt" are, until the open point above is settled, the ones to check
+  by hand before the 2025 return, as before.
 - Known limit: a statement paid from PayPal (not from the bank) is no collection by the funding
   rule, which on a non-bank account needs a purchase of exactly that amount. Its purchases show
   as "Einzugstag unbekannt" until a person marks that PayPal payment "Übertrag zwischen eigenen

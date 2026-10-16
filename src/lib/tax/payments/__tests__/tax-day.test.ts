@@ -140,4 +140,53 @@ describe('the day a pay-later purchase counts on', () => {
     expect([...backward.entries()].sort()).toEqual([...forward.entries()].sort());
     expect(forward.get('a')?.collectionId).toBe('c1');
   });
+
+  it('a debit the funding rule pairs with a purchase not paid at the checkout settles no statement', () => {
+    const days = resolvePayLaterDays(
+      [
+        purchase({ id: 'checkout', bookingDay: '2025-12-05', amountCents: -4_000, detail: detail({ statement: 'S1' }) }),
+        purchase({ id: 'debit', bookingDay: '2025-12-10', amountCents: -4_000, detail: detail({ method: 'Direct Debit', statement: 'S2' }) }),
+      ],
+      [collection({ id: 'its-own', bookingDay: '2025-12-11', amountCents: -4_000, twinId: 'debit' }), collection({ id: 'real', bookingDay: '2026-01-08', amountCents: -4_000 })],
+    );
+    expect(days.get('checkout')).toMatchObject({ taxDay: '2026-01-08', collectionId: 'real' });
+    // Counter-case: a debit twinned with the checkout purchase itself is its collection.
+    const own = resolvePayLaterDays([purchase({ id: 'c', amountCents: -4_000 })], [collection({ id: 'twin', bookingDay: '2025-12-12', amountCents: -4_000, twinId: 'c' })]);
+    expect(own.get('c')?.collectionId).toBe('twin');
+  });
+
+  it('looks for a collection by amount only shortly after the statement: a later month of the same sum is another statement', () => {
+    const days = resolvePayLaterDays(
+      [purchase({ id: 'nov', bookingDay: '2025-11-03', amountCents: -999, detail: detail({ statement: 'NOV' }) }), purchase({ id: 'dec', bookingDay: '2025-12-03', amountCents: -999, detail: detail({ statement: 'DEC' }) })],
+      [collection({ id: 'jan', bookingDay: '2026-01-15', amountCents: -999 })],
+    );
+    // November's own collection is missing; January's is 73 days after it, so it belongs to December.
+    expect(days.get('nov')).toMatchObject({ dayUnknown: true, taxDay: '2025-11-03' });
+    expect(days.get('dec')).toMatchObject({ collectionId: 'jan', taxDay: '2026-01-15' });
+  });
+
+  it('money back booked on a statement lowers its sum', () => {
+    const days = resolvePayLaterDays(
+      [purchase({ id: 'a', amountCents: -4_000 }), purchase({ id: 'b', amountCents: -2_500 }), purchase({ id: 'back', amountCents: 1_000, bookingDay: '2025-12-20' })],
+      [collection({ id: 'c', amountCents: -5_500 })],
+    );
+    expect(days.get('a')).toMatchObject({ collectionId: 'c', matchedBy: 'amount' });
+    // Money back gets no day of its own here.
+    expect(days.has('back')).toBe(false);
+  });
+
+  it('a part payment naming the purchase settles nothing; the whole amount naming it does', () => {
+    const rows = [purchase({ id: 'p', amountCents: -40_000, detail: detail({ reference: '1000000000009', statement: null }) })];
+    const parts = resolvePayLaterDays(rows, [
+      collection({ id: 'half', bookingDay: '2025-12-28', amountCents: -20_000, text: 'Klarna 1000000000009' }),
+      collection({ id: 'other-half', bookingDay: '2026-01-10', amountCents: -20_000, text: 'Klarna 1000000000009' }),
+    ]);
+    expect(parts.get('p')).toMatchObject({ dayUnknown: true, taxDay: '2025-12-10' });
+    const whole = resolvePayLaterDays(rows, [collection({ id: 'all', bookingDay: '2025-12-28', amountCents: -40_000, text: 'Klarna 1000000000009' })]);
+    expect(whole.get('p')).toMatchObject({ collectionId: 'all', matchedBy: 'reference' });
+  });
+
+  it('a card nobody knows of (the shorter list) is no card', () => {
+    expect(classifyPayLater(detail({ card: null }), 'Laden Beispiel')).toBe('checkout');
+  });
 });

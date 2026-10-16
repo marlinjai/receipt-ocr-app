@@ -1082,7 +1082,7 @@ export interface PayLaterDayEntry {
  * checkout, so a purchase that moves into the next year is listed for a look.
  */
 export interface PayLaterDaysView {
-  /** Checkout purchases bought in one year and collected in the next, touching this year. */
+  /** Checkout purchases bought in one year and collected in the next, touching this year (a person's corrections are under `relabelled`). */
   moved: PayLaterDayEntry[];
   /** Checkout purchases of the year no collection was found for: they count on their purchase day ("Einzugstag unbekannt"). */
   unknown: PayLaterDayEntry[];
@@ -1109,7 +1109,8 @@ function buildPayLaterDays(loaded: LoadedPayments, year: number, accountLabel: M
   const purchases = loaded.payments.filter((p) => p.payLater !== null && p.kind !== 'private' && p.kind !== 'own_transfer');
   return {
     moved: purchases
-      .filter((p) => p.payLater?.method === 'checkout' && p.taxDay.slice(0, 4) !== p.bookingDay.slice(0, 4) && (inYear(p.bookingDay) || inYear(p.taxDay)))
+      // A purchase a person said was on invoice is listed under the corrections, with its day.
+      .filter((p) => p.payLater?.method === 'checkout' && !p.payLater.byPerson && p.taxDay.slice(0, 4) !== p.bookingDay.slice(0, 4) && (inYear(p.bookingDay) || inYear(p.taxDay)))
       .map(entry)
       .sort((a, b) => (a.bookingDay < b.bookingDay ? -1 : 1)),
     unknown: purchases.filter((p) => p.payLater?.dayUnknown && inYear(p.bookingDay)).map(entry).sort((a, b) => (a.bookingDay < b.bookingDay ? -1 : 1)),
@@ -1951,7 +1952,6 @@ export async function saveLineDecision(db: PrismaClient, ctx: TaxContext, lineId
   });
 }
 
-/** The day of the first payment out linked to a receipt, when there is one. */
 /** The day a receipt was paid as the statement counts it (`linkedByRow`): the same money once, on its tax day. */
 async function paymentDayOfRow(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<string | null> {
   if ((await db.taxPaymentLink.count({ where: { authWorkspaceId: ctx.workspaceId, rowId } })) === 0) return null;

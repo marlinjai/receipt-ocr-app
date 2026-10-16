@@ -1244,14 +1244,19 @@ disagree:
   payment of the year that still has something to link, whatever was answered: also those of an
   unanswered or mixed counterparty and those on a private account. Left out is what no document
   belongs to: fees, transfers a person or a counterparty answer made, and money in that is
-  neither income nor money back. Linking one of them writes no counterparty answer, so its
+  neither income nor money back. Money in on a private account that its file calls income can
+  still go on an issued invoice (a customer may pay into it). A number typed into the search is
+  compared as an amount ("45" finds 45,00 euros, not 45,10), and as text against name and
+  purpose. Linking one of them writes no counterparty answer, so its
   other payments do not turn into questions. The list is searched again after every change of
   the statement, with the last results kept on screen meanwhile.
 - **For the private-spending side** the read interface stays `loadPayments` in
   `src/lib/tax/payments/service.ts`; it now carries `isPrivate` per account and
   `byPrivateAccount` per payment, and a counterparty answer can be `mixed`. Kind `private` now
   also covers money in on a private account (a salary), so private spending is read from the
-  sign of `amountCents`, not from the kind alone.
+  sign of `amountCents`, not from the kind alone. The spending overview splits a payment of a
+  mixed counterparty, and one on a private account, by what is linked: the linked cents are
+  business, the rest private (`businessShare` in `src/lib/spending/rules.ts`).
 
 ## Decisions (2026-10-07)
 

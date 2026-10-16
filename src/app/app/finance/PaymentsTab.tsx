@@ -295,7 +295,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                     type="button"
                     className="ui-btn ui-btn-sm"
                     aria-expanded={browsing === c.key}
-                    aria-controls={`${id}-browse`}
+                    aria-controls={browsing === c.key ? `${id}-browse` : undefined}
                     onClick={() => setBrowsing(browsing === c.key ? null : c.key)}
                   >
                     Zahlungen ansehen
@@ -765,11 +765,14 @@ function PaymentFinder({
   const queryKey = 'counterpartyKey' in query ? `c:${query.counterpartyKey}` : `t:${query.text}`;
   // What the search was last run for: a new query, a new press, a retry or a new statement searches again.
   const runKey = `${queryKey}|${round}|${retry}`;
-  const [searched, setSearched] = useState<{ key: string; view: StatementView } | null>(null);
+  const [searched, setSearched] = useState<{ query: string; key: string; view: StatementView } | null>(null);
   if (searched === null || searched.key !== runKey || searched.view !== view) {
-    // A different query starts from nothing; the same query keeps its last results while it reloads.
-    if (searched !== null && !searched.key.startsWith(`${queryKey}|`)) setFound(null);
-    setSearched({ key: runKey, view });
+    // A different query starts from nothing; the same query keeps its last results and its open picker while it reloads.
+    if (searched !== null && searched.query !== queryKey) {
+      setFound(null);
+      setOpen(null);
+    }
+    setSearched({ query: queryKey, key: runKey, view });
     setLoading(true);
     setFailed(false);
   }
@@ -797,7 +800,10 @@ function PaymentFinder({
   const p = view.payments;
   return (
     <div id={id} className="mt-2 w-full">
-      {loading && <p className="text-xs" style={{ color: 'var(--muted)' }} role="status">Sucht …</p>}
+      {/* One live region, always there, so a screen reader hears the search start and what it found. */}
+      <p className="text-xs" style={{ color: 'var(--muted)' }} role="status">
+        {loading ? 'Sucht …' : found !== null && !failed ? (found.total === 1 ? '1 Zahlung gefunden.' : `${found.total} Zahlungen gefunden.`) : ''}
+      </p>
       {failed && (
         <p className="ui-note ui-note-danger" role="alert">
           Die Zahlungen konnten nicht geladen werden.{' '}

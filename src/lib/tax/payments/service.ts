@@ -5,6 +5,7 @@ import { vendorKey } from '../decisions';
 import { resolveFunding, type Funding } from './funding';
 import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from './match';
 import { parsePaymentFile, referenceHash } from './parse';
+import { amountQuery } from './search';
 import { PAYMENT_KINDS, type NormalizedPayment, type PaymentFormat, type PaymentKind } from './types';
 
 /**
@@ -665,21 +666,6 @@ export interface FoundPayment {
   target: 'receipt' | 'invoice';
 }
 
-/**
- * A search text read as an amount ("45,10", "45.10", "1.234,56", "1234.56",
- * "12"), in cents; null when it is no amount.
- */
-export function amountQuery(text: string): number | null {
-  const t = text.replace(/\s|€/g, '');
-  let euros: string;
-  if (/^\d{1,3}(\.\d{3})+(,\d{1,2})?$/.test(t)) euros = t.replace(/\./g, '').replace(',', '.');
-  else if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(t)) euros = t.replace(/,/g, '');
-  else if (/^\d+([.,]\d{1,2})?$/.test(t)) euros = t.replace(',', '.');
-  else return null;
-  const cents = Math.round(Number(euros) * 100);
-  return Number.isFinite(cents) && cents > 0 ? cents : null;
-}
-
 /** At most this many payments come back from one search: enough to pick from, small enough to draw. */
 export const FIND_PAYMENTS_LIMIT = 100;
 
@@ -714,7 +700,7 @@ export async function findPayments(db: PrismaClient, workspaceId: string, raw: u
     if (freeCents <= 0) continue;
     // What the file (or a person) says, beneath the account's "private": decides invoice or receipt.
     const own = p.byPrivateAccount ? p.sourceKind : p.kind;
-    if (p.kind === 'fee' || (p.kind === 'own_transfer' && !p.byRule)) continue;
+    if (own === 'fee' || (own === 'own_transfer' && !p.byRule)) continue;
     if (p.amountCents > 0 && own !== 'income' && own !== 'refund') continue;
     total += 1;
     if (found.length >= FIND_PAYMENTS_LIMIT) continue;

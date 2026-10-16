@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SPENDING_CATEGORIES } from '../categories';
-import { KEYWORD_RULES, categorise, keywordCategory, purposeOf, spendingCents } from '../rules';
+import { KEYWORD_RULES, businessShare, categorise, keywordCategory, purposeOf, spendingCents } from '../rules';
 
 /** Every name here is a brand or an invented word, never a person. */
 const spend = (counterpartyKey: string, reference = '') => ({ kind: 'spend' as const, counterpartyKey, reference });
@@ -91,6 +91,23 @@ describe('purposeOf', () => {
     expect(purposeOf({ kind: 'spend', linkCount: 1 }, 'mixed')).toBe('business');
     expect(purposeOf({ kind: 'spend', linkCount: 0 }, 'mixed')).toBe('private');
     expect(purposeOf({ kind: 'spend' }, 'mixed')).toBe('private');
+  });
+  it('on an account said to be private, what is linked is business; a counterparty answer stands above it', () => {
+    expect(purposeOf({ kind: 'private', byPrivateAccount: true, linkCount: 1 }, undefined)).toBe('business');
+    expect(purposeOf({ kind: 'private', byPrivateAccount: true, linkCount: 0 }, undefined)).toBe('private');
+    expect(purposeOf({ kind: 'private', byPrivateAccount: true, linkCount: 1 }, 'private')).toBe('private');
+    expect(purposeOf({ kind: 'private', linkCount: 1 }, undefined)).toBe('private');
+  });
+});
+
+describe('businessShare', () => {
+  it('is all of a business payment, the linked part of a partly business one, never more than it counts', () => {
+    expect(businessShare(10_000, 'business', false, 0)).toBe(10_000);
+    expect(businessShare(10_000, 'business', true, 3_000)).toBe(3_000);
+    expect(businessShare(10_000, 'business', true, 12_000)).toBe(10_000);
+    expect(businessShare(10_000, 'private', true, 3_000)).toBe(0);
+    // Money back of a partly business purchase is not split.
+    expect(businessShare(-500, 'business', true, 0)).toBe(-500);
   });
 });
 

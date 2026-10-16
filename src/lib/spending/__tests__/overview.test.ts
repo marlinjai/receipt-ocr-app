@@ -65,6 +65,28 @@ describe('buildOverview', () => {
     expect(answered.totalCents).toBe(10_400);
   });
 
+  it('a payment only partly business is split by what is linked: a mixed counterparty, a private account', () => {
+    const o = buildOverview(
+      [
+        // 100.00 at a marketplace answered mixed, 30.00 of it linked to a receipt.
+        pay('2026-03-02', -10_000, 'versand beispiel', { linkCount: 1, linkedCents: 3_000 }),
+        // Unlinked: private.
+        pay('2026-03-03', -2_000, 'versand beispiel'),
+        // A business expense paid from a private account, linked in full.
+        pay('2026-03-04', -4_510, 'supermarkt beispiel', { kind: 'private', byPrivateAccount: true, linkCount: 1, linkedCents: 4_510 }),
+        // The rest of the private account: private.
+        pay('2026-03-05', -1_000, 'baecker beispiel', { kind: 'private', byPrivateAccount: true }),
+        // A payment a person marked private stays private even when linked.
+        pay('2026-03-06', -700, 'kiosk beispiel', { kind: 'private', linkCount: 1, linkedCents: 700 }),
+      ],
+      { treatments: new Map([['versand beispiel', 'mixed' as const]]), answers: new Map() },
+      2026,
+      null,
+    );
+    expect(o.split).toEqual({ business: 3_000 + 4_510, private: 7_000 + 2_000 + 1_000 + 700, unanswered: 0 });
+    expect(o.payments.find((p) => p.amountCents === -10_000)).toMatchObject({ purpose: 'business', businessCents: 3_000 });
+  });
+
   it('splits private, business and unanswered by what was said', () => {
     const o = buildOverview(payments, { treatments: new Map([['rewe', 'private' as const], ['netflix', 'business' as const]]), answers: new Map() }, 2026, null);
     expect(o.split).toEqual({ private: 4000, business: 2000, unanswered: 10_400 });

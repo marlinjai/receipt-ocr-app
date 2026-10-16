@@ -1229,6 +1229,20 @@ describe('the tab asks less after a real import: money in, a private account, a 
       expect((await loadPayments(db, ws.workspaceId)).payments.filter((p) => p.kind === 'private').length).toBe(2);
     });
 
+    it('a fee or a transfer the file names on it is not found for linking; its money in that the file calls income goes to an invoice', async () => {
+      const { ws, ctx } = await workspace();
+      const privateAccount = await createAccount(db, ctx, { label: 'Privatkonto', kind: 'bank' });
+      await importPayments(db, ctx, privateAccount, PRIVATE_FILE);
+      await setAccountPrivate(db, ctx, privateAccount, true);
+      const card = (await findPayments(db, ws.workspaceId, { year: 2026, text: 'Kartenzahlung' })).payments[0];
+      await setPaymentKind(db, ctx, card.id, 'fee');
+      expect((await findPayments(db, ws.workspaceId, { year: 2026, text: 'Kartenzahlung' })).total).toBe(0);
+      await setPaymentKind(db, ctx, card.id, 'own_transfer');
+      expect((await findPayments(db, ws.workspaceId, { year: 2026, text: 'Kartenzahlung' })).total).toBe(0);
+      // Decided: money in on a private account that its file calls income can still pay an invoice.
+      expect((await findPayments(db, ws.workspaceId, { year: 2026, text: 'Gehalt' })).payments[0]).toMatchObject({ target: 'invoice' });
+    });
+
     it('is refused for another workspace’s account and for anything but yes or no', async () => {
       const { ctx, accountId } = await workspace();
       const foreign = await createAccount(db, otherCtx, { label: `Fremd ${Date.now()}`, kind: 'bank' });

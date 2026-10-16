@@ -44,9 +44,8 @@ export function withStructuredInvoice(settled: SettledReading, fields: Structure
   if (unknownCurrency) flags.push('currency_unknown');
   const currency = fields.currency !== null && !unknownCurrency ? fields.currency : settled.currency;
   if (unknownCurrency) {
-    // Its amounts stay empty until a person enters them; the figures are in its text. A credit
-    // note says so here too, so that a person does not enter money back as a purchase.
-    if (fields.creditNote) flags.push('credit_note');
+    // Its amounts stay empty until a person enters them; the figures are in its text. A credit note
+    // is still recorded as one (its reference), and the review list says so.
     const amounts = { ...settled.amounts, gross: null, net: null, taxGroups: [], checks: [] };
     return { ...settled, vendor, date: fields.date ?? settled.date, currency, gross: null, net: null, amounts, meal: settled.meal ? { ...settled.meal, taxLines: null } : null, flags: [...new Set(flags)] };
   }

@@ -7,7 +7,7 @@ CREATE TABLE "receipt_references" (
     "auth_workspace_id" TEXT NOT NULL,
     "auth_tenant_id" TEXT,
     "kind" TEXT NOT NULL,
-    "referenced_invoice_number" TEXT NOT NULL,
+    "referenced_invoice_number" TEXT,
     "referenced_row_id" TEXT,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,

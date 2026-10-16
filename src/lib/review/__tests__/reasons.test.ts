@@ -185,3 +185,11 @@ describe('a credit note stored with a negative amount', () => {
     expect(derivedReasons(receipt({ gross: 11.9, net: 0 }))).not.toContain('tax_implausible');
   });
 });
+
+describe('a credit note without its invoice', () => {
+  it('is asked for from the link, also without any stored doubt, until a person confirms it', () => {
+    expect(reviewReasons(receipt({ gross: -11.9, net: -10, creditNoteUnlinked: true }), undefined, [])).toEqual(['credit_note']);
+    expect(reviewReasons(receipt({ gross: -11.9, net: -10, creditNoteUnlinked: false }), { flags: ['credit_note'], checkedAt: null }, [])).toEqual([]);
+    expect(reviewReasons(receipt({ gross: -11.9, net: -10, creditNoteUnlinked: true }), { flags: [], checkedAt: new Date() }, [])).toEqual([]);
+  });
+});

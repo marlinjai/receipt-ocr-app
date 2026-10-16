@@ -23,7 +23,7 @@ import type { ReceiptPage } from '@/lib/receipt-page';
 import { loadReceiptSource } from '@/lib/receipt-page-source';
 import { structuredReceiptFields } from '@/lib/einvoice';
 import { withStructuredInvoice } from '@/lib/structured-reading';
-import { linkCreditNote, linkWaitingCreditNotes } from '@/lib/receipt-references';
+import { linkCreditNote, relinkCreditNotes } from '@/lib/receipt-references';
 import { settleFromPageOnly, settleReading, type ModelReading } from '@/lib/receipt-reading';
 import { fileOpenToWorkspace } from '@/lib/file-access';
 import type { ReadFlag } from '@/lib/review/reasons';
@@ -399,24 +399,14 @@ function fileMetadata(options: ProcessReceiptOptions) {
  * (the facts that can be seen on the row itself are found on read anyway).
  */
 async function storeReviewFlags(workspaceId: string, tenantId: string | null, rowId: string, read: ReadReceipt, adapter: ReceiptsAdapter, tableId: string) {
-  // A credit note is linked to the invoice it corrects; where that invoice is not found among the
-  // receipts (or the link cannot be stored), the review list asks for it.
-  if (read.creditNote) {
-    let linked: string | null = null;
-    try {
-      linked = await linkCreditNote(prisma, adapter, tableId, { workspaceId, tenantId }, rowId, read.creditNote.referencedInvoiceNumber);
-    } catch (err) {
-      console.error('[processReceipt] linking the credit note failed:', err instanceof Error ? err.name : 'error');
-    }
-    if (!linked && !read.reviewFlags.includes('credit_note')) read.reviewFlags.push('credit_note');
-  } else {
-    try {
-      await linkCreditNote(prisma, adapter, tableId, { workspaceId, tenantId }, rowId, null);
-      // An invoice that arrives after its credit note takes the credit notes waiting for it.
-      await linkWaitingCreditNotes(prisma, { workspaceId, tenantId }, rowId, read.fullText);
-    } catch (err) {
-      console.error('[processReceipt] the credit note references could not be brought up to date:', err instanceof Error ? err.name : 'error');
-    }
+  // A credit note keeps the number of the invoice it corrects (a reading that is no credit note drops
+  // an earlier one); then every credit note of the workspace is linked to the receipt that now carries
+  // its number. Where none does, the review list asks for it (derived on read, see reviewReasons).
+  try {
+    await linkCreditNote(prisma, adapter, tableId, { workspaceId, tenantId }, rowId, read.creditNote ? read.creditNote.referencedInvoiceNumber : undefined);
+    await relinkCreditNotes(prisma, adapter, tableId, { workspaceId, tenantId });
+  } catch (err) {
+    console.error('[processReceipt] the credit note references could not be brought up to date:', err instanceof Error ? err.name : 'error');
   }
   try {
     await recordReadFlags(prisma, { workspaceId, tenantId }, rowId, read.reviewFlags, read.gross);

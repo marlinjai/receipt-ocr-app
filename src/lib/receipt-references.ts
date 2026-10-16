@@ -70,10 +70,10 @@ export interface ReferenceContext {
 }
 
 /**
- * Record which invoice a credit note corrects, and link it where its receipt
- * is found. Returns the linked row id, or null when only the number is kept.
- * A reading that is no credit note (or names no invoice) removes an earlier
- * reference of the row.
+ * Record that a receipt is a credit note and which invoice it corrects, and
+ * link it where that invoice's receipt is found. Returns the linked row id,
+ * or null when it is not linked (the review list then asks). A reading that
+ * is no credit note removes an earlier reference of the row.
  */
 export async function linkCreditNote(
   db: PrismaClient,
@@ -81,15 +81,16 @@ export async function linkCreditNote(
   tableId: string,
   ctx: ReferenceContext,
   rowId: string,
-  referencedInvoiceNumber: string | null,
+  /** Undefined for a reading that is no credit note; null for a credit note that names no invoice. */
+  referencedInvoiceNumber: string | null | undefined,
 ): Promise<string | null> {
-  if (!referencedInvoiceNumber?.trim()) {
+  if (referencedInvoiceNumber === undefined) {
     await db.receiptReference.deleteMany({ where: { rowId, authWorkspaceId: ctx.workspaceId } });
     return null;
   }
-  const number = referencedInvoiceNumber.trim();
+  const number = referencedInvoiceNumber?.trim() || null;
   const others = await db.receiptReference.findMany({ where: { authWorkspaceId: ctx.workspaceId }, select: { rowId: true } });
-  const referencedRowId = await findInvoiceRow(adapter, tableId, number, rowId, new Set(others.map((r) => r.rowId)));
+  const referencedRowId = number ? await findInvoiceRow(adapter, tableId, number, rowId, new Set(others.map((r) => r.rowId))) : null;
   await db.receiptReference.upsert({
     where: { rowId },
     create: { rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, kind: 'credit_note', referencedInvoiceNumber: number, referencedRowId },
@@ -99,24 +100,22 @@ export async function linkCreditNote(
 }
 
 /**
- * An invoice that arrives after its credit note: the credit notes of the
- * workspace still waiting for their invoice, whose number this receipt's text
- * carries, are linked to it, and their "credit note without invoice" doubt
- * ends. Returns the credit notes linked. A receipt that is itself a credit
- * note links nothing.
+ * Bring every credit note reference of the workspace up to date: each is
+ * linked to the one stored receipt that now carries its number (never
+ * another credit note or a negative row), or to none. Run after any receipt
+ * is stored or read again, so an invoice arriving after its credit note, a
+ * second carrier of the number, an invoice read again with other text, and a
+ * credit note and its invoice uploaded together all end in the same state.
+ * Credit notes are few: one lookup each.
  */
-export async function linkWaitingCreditNotes(db: PrismaClient, ctx: ReferenceContext, rowId: string, text: string): Promise<string[]> {
-  if (!text.trim()) return [];
-  const waiting = await db.receiptReference.findMany({ where: { authWorkspaceId: ctx.workspaceId, referencedRowId: null, NOT: { rowId } } });
-  const linked: string[] = [];
-  for (const reference of waiting) {
-    if (!carriesInvoiceNumber(text, reference.referencedInvoiceNumber)) continue;
-    await db.receiptReference.update({ where: { rowId: reference.rowId }, data: { referencedRowId: rowId } });
-    const review = await db.receiptReview.findUnique({ where: { rowId: reference.rowId } });
-    if (review?.flags.includes('credit_note')) {
-      await db.receiptReview.update({ where: { rowId: reference.rowId }, data: { flags: review.flags.filter((f) => f !== 'credit_note') } });
+export async function relinkCreditNotes(db: PrismaClient, adapter: ReferenceAdapter, tableId: string, ctx: ReferenceContext): Promise<void> {
+  const references = await db.receiptReference.findMany({ where: { authWorkspaceId: ctx.workspaceId } });
+  if (references.length === 0) return;
+  const creditNotes = new Set(references.map((r) => r.rowId));
+  for (const reference of references) {
+    const found = reference.referencedInvoiceNumber ? await findInvoiceRow(adapter, tableId, reference.referencedInvoiceNumber, reference.rowId, creditNotes) : null;
+    if (found !== reference.referencedRowId) {
+      await db.receiptReference.update({ where: { rowId: reference.rowId }, data: { referencedRowId: found } });
     }
-    linked.push(reference.rowId);
   }
-  return linked;
 }

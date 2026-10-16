@@ -1007,7 +1007,7 @@ model ReceiptReference {
   authWorkspaceId         String   @map("auth_workspace_id")
   authTenantId            String?  @map("auth_tenant_id")
   kind                    String
-  referencedInvoiceNumber String   @map("referenced_invoice_number")
+  referencedInvoiceNumber String?  @map("referenced_invoice_number")
   referencedRowId         String?  @map("referenced_row_id")
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")

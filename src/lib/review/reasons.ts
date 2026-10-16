@@ -70,6 +70,8 @@ export interface ReviewSnapshot {
    * payment bears out needs no "Betrag prüfen".
    */
   totalPaid?: boolean;
+  /** True for a credit note whose invoice is not linked among the receipts (see src/lib/receipt-references.ts). */
+  creditNoteUnlinked?: boolean;
 }
 
 /** No tax rate of a real receipt is above this (the highest standard rate in the European Union is 27 percent). */
@@ -186,7 +188,9 @@ export function reviewReasons(
   const derived = derivedReasons(snapshot);
   if (derived.includes('read_failed')) return ['read_failed'];
   // In the order of READ_FLAGS, whatever order they were recorded in.
-  const recorded = stored && !stored.checkedAt ? stored.flags : [];
+  // "Credit note without its invoice" is worked out from the link, not stored: it ends when the
+  // invoice arrives and comes back when it is deleted. A person can still confirm it away.
+  const recorded = !stored?.checkedAt ? [...(stored?.flags ?? []).filter((f) => f !== 'credit_note'), ...(snapshot.creditNoteUnlinked ? ['credit_note'] : [])] : [];
   const flags = READ_FLAGS.filter((f) => recorded.includes(f));
   // A doubt about the total is moot once there is no total at all, and ends
   // once the total was corrected or payments bear it out.
@@ -219,8 +223,8 @@ export const REASON_TEXT: Record<ReviewReason, string> = {
   not_classified: 'Nicht automatisch eingeordnet: Kategorie und Zuordnung bitte prüfen.',
   several_documents: 'Die Datei enthält mehr als einen Beleg, gelesen wurde nur einer: bitte die Datei aufteilen und jeden Beleg einzeln hochladen.',
   einvoice_problem: 'Die elektronische Rechnung rechnet nicht auf: Summen, Steuer oder Gruppen der XML-Daten passen nicht zusammen. Bitte mit der Rechnung vergleichen.',
-  currency_unknown: 'Die elektronische Rechnung ist in einer Währung, die die App nicht führt: Die Beträge bleiben leer, die Zahlen stehen im erkannten Text. Bitte Betrag und Währung eintragen.',
-  credit_note: 'Gutschrift (elektronisch): Geld zurück, als negativer Betrag gebucht. Die Rechnung, die sie korrigiert, ist unter den Belegen nicht gefunden; die Rechnungsnummer steht im erkannten Text. Sobald die Rechnung hochgeladen ist, wird sie zugeordnet.',
+  currency_unknown: 'Die elektronische Rechnung ist in einer Währung, die die App nicht führt: Die Beträge bleiben leer, die Zahlen stehen im erkannten Text. Bitte Betrag und Währung eintragen, bei einer Gutschrift als negativen Betrag.',
+  credit_note: 'Gutschrift (elektronisch): Geld zurück, als negativer Betrag gebucht. Die Rechnung, die sie korrigiert, ist unter den Belegen nicht eindeutig gefunden, oder die Gutschrift nennt keine. Sobald die Rechnung hochgeladen ist, wird sie zugeordnet.',
   page_not_read: 'Nur aus dem erkannten Text gelesen: Die Seite selbst konnte dem Sprachmodell nicht gezeigt werden. Beträge und Datum bitte prüfen.',
   image_only: 'Unbestätigt, nur aus dem Bild gelesen: Auf dem Beleg wurde kein Text erkannt, Datum, Betrag und Währung hat das Sprachmodell vom Bild abgelesen. Bitte mit dem Beleg vergleichen.',
   total_unconfirmed: 'Gesamtbetrag nur vom Etikett gelesen, ohne Gegenprobe über die Steuerzeilen.',

@@ -203,6 +203,9 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
     db.receiptReview.findMany({ where: { authWorkspaceId: workspaceId, rowId: { in: rowIds } } }),
   ]);
   // Only a receipt with an open doubt about its total (or one read from its image alone) needs its payments.
+  const unlinkedCreditNotes = new Set(
+    (await db.receiptReference.findMany({ where: { authWorkspaceId: workspaceId, referencedRowId: null }, select: { rowId: true } })).map((r) => r.rowId),
+  );
   const inDoubt = stored.filter((r) => !r.checkedAt && r.flags.some((f) => f === 'total_unconfirmed' || f === 'total_conflict' || f === 'image_only')).map((r) => r.rowId);
   const paid = await paidByRow(db, workspaceId, inDoubt);
   const storedByRow = new Map(stored.map((r) => [r.rowId, r]));
@@ -215,6 +218,7 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
     ...s,
     assignmentSettled: s.isMeal || treated.has(s.rowId),
     totalPaid: paymentsCoverTotal(paid.get(s.rowId) ?? 0, s),
+    creditNoteUnlinked: unlinkedCreditNotes.has(s.rowId),
   }));
   const byId = new Map(snapshots.map((s) => [s.rowId, s]));
   const alike = lookAlikes(snapshots, distinct);

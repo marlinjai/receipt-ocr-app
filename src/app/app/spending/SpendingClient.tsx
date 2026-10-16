@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState, useTransition } from 'react';
+import { useId, useState, useTransition, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { formatDay } from '@/lib/meals/messages';
@@ -118,7 +118,7 @@ function UnclearRow({
   );
 }
 
-export default function SpendingClient({ initial }: { initial: SpendingPageView }) {
+export default function SpendingClient({ initial, children }: { initial: SpendingPageView; children?: ReactNode }) {
   const id = useId();
   const router = useRouter();
   const [view, setView] = useState(initial);
@@ -251,6 +251,8 @@ export default function SpendingClient({ initial }: { initial: SpendingPageView 
           Nicht mitgezählt: {overview.ownTransfers.count} Umbuchungen zwischen eigenen Konten über {euro(overview.ownTransfers.cents)}.
         </p>
       )}
+
+      {children}
 
       <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-months`}>
         <h2 id={`${id}-months`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>

@@ -5,6 +5,11 @@ export function berlinYear(now: Date = new Date()): number {
   return Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin', year: 'numeric' }).format(now));
 }
 
+/** Today as an ISO day in the owner's time zone. */
+export function berlinToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(now);
+}
+
 /** A year a person can sensibly ask for; anything else falls back to the current year. */
 export function safeYear(year: unknown, now: Date = new Date()): number {
   const n = typeof year === 'number' ? year : Number(year);

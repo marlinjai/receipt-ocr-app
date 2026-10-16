@@ -741,3 +741,63 @@ model SpendingCategoryAnswer {
   @@unique([authWorkspaceId, counterpartyKey])
   @@map("spending_category_answers")
 }
+
+// A person saying "no receipt exists for this payment", with the reason. The
+// only thing the missing-receipt loop stores about a payment: every other state
+// (linked, needs none, a receipt fits, missing) is worked out on read
+// (src/lib/spending/loop.ts). `paymentId` has no foreign key on purpose: an
+// undone import takes the payment away and the answer simply stops applying;
+// should the same movement come back, its id is new and it is asked about again.
+model SpendingReceiptAnswer {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  paymentId       String   @map("payment_id")
+  reason          String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([authWorkspaceId, paymentId])
+  @@map("spending_receipt_answers")
+}
+
+// How the owner wants to be told (src/lib/spending/notify/port.ts): 'push'
+// (then e-mail as the fallback), 'email' or 'in_app'. No row: push.
+model SpendingSettings {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @unique @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  channel         String   @default("push")
+  notifyEmail     String?  @map("notify_email")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("spending_settings")
+}
+
+// The in-app queue of notifications, and the record of their delivery.
+// `subjectKey` makes a notification happen at most once per workspace
+// ("missing_receipt:<payment id>"). `channel` is the channel that delivered
+// it, NULL when it is in the app only; `attempts` says what each channel
+// answered. A delivery that failed is tried again on a later run until
+// `tries` reaches the limit; one that was merely unavailable is not.
+model SpendingNotification {
+  id              String    @id @default(uuid())
+  authWorkspaceId String    @map("auth_workspace_id")
+  authTenantId    String?   @map("auth_tenant_id")
+  subjectKey      String    @map("subject_key")
+  kind            String
+  title           String
+  body            String
+  path            String
+  channel         String?
+  attempts        String[]  @default([])
+  failed          Boolean   @default(false)
+  tries           Int       @default(0)
+  readAt          DateTime? @map("read_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, subjectKey])
+  @@index([authWorkspaceId, readAt])
+  @@map("spending_notifications")
+}

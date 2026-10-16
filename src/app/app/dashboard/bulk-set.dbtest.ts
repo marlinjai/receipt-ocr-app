@@ -63,9 +63,60 @@ describe('"Set field" on a selection', () => {
     // has many of: a generous limit, so the time of that lookup does not fail the test.
   }, 180_000);
 
+  it('a row that already holds the value is done without a write, so a retry never writes twice', async () => {
+    const ids = await receipts(3, 'already');
+    await setFieldOnRows(ids.slice(0, 2), assignmentId, business);
+    const stamp = async (id: string) => (await getRow(id))?.updatedAt?.valueOf();
+    const before = await Promise.all(ids.slice(0, 2).map(stamp));
+    const outcome = await setFieldOnRows(ids, assignmentId, business);
+    expect(outcome.done.sort()).toEqual([...ids].sort());
+    expect(await Promise.all(ids.slice(0, 2).map(stamp))).toEqual(before);
+  });
+
+  it('sets a column no rule changes for the whole part in one go, and a group only where it may', async () => {
+    const [a, b, inside] = await receipts(3, 'plain');
+    const group = await createGroup(db, ws.workspaceId, 'Gruppe plain', [inside]);
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    const categoryId = columns.find((c) => c.name === 'Category')!.id;
+    const options = await ws.adapter.getSelectOptions(categoryId);
+    const other = options.find((o) => o.name !== 'Software & Lizenzen')!.id;
+    const outcome = await setFieldOnRows([a, b, group], categoryId, other);
+    expect(outcome.failed).toEqual([]);
+    expect(outcome.done.sort()).toEqual([a, b, group].sort());
+    for (const id of [a, b, group]) expect((await getRow(id))?.cells[categoryId]).toBe(other);
+    // Clearing goes the same way.
+    expect((await setFieldOnRows([a], categoryId, null)).done).toEqual([a]);
+    expect((await getRow(a))?.cells[categoryId] ?? null).toBeNull();
+  });
+
+  it('a group refuses a plain column it may not take', async () => {
+    const [inside] = await receipts(1, 'status');
+    const group = await createGroup(db, ws.workspaceId, 'Gruppe status', [inside]);
+    const statusId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Status')!.id;
+    const option = (await ws.adapter.getSelectOptions(statusId))[0].id;
+    expect(await setFieldOnRows([group, inside], statusId, option)).toEqual({ done: [inside], failed: [{ rowId: group, reason: 'not_writable' }], left: [] });
+  });
+
+  it('hands back the rows it did not touch when its time budget runs out, after writing at least one', async () => {
+    const ids = await receipts(3, 'budget');
+    const real = Date.now.bind(Date);
+    let clock = real();
+    // Every look at the clock is ten seconds later: the budget is spent after the first row.
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => (clock += 10_000));
+    try {
+      const outcome = await setFieldOnRows(ids, assignmentId, business);
+      expect(outcome.done).toEqual([ids[0]]);
+      expect(outcome.left).toEqual(ids.slice(1));
+      expect(outcome.failed).toEqual([]);
+    } finally {
+      now.mockRestore();
+    }
+    for (const id of ids.slice(1)) expect(await stored(id)).toBe(personal);
+  });
+
   it('clears the field', async () => {
     const [id] = await receipts(1, 'clear');
-    expect(await setFieldOnRows([id], assignmentId, null)).toEqual({ done: [id], failed: [] });
+    expect(await setFieldOnRows([id], assignmentId, null)).toEqual({ done: [id], failed: [], left: [] });
     expect(await stored(id)).toBeNull();
   });
 
@@ -89,20 +140,20 @@ describe('"Set field" on a selection', () => {
   it('refuses a value that is no option of the column, writing nothing', async () => {
     const [id] = await receipts(1, 'badvalue');
     const outcome = await setFieldOnRows([id], assignmentId, 'not-an-option');
-    expect(outcome).toEqual({ done: [], failed: [{ rowId: id, reason: 'invalid_value' }] });
+    expect(outcome).toEqual({ done: [], failed: [{ rowId: id, reason: 'invalid_value' }], left: [] });
     expect(await stored(id)).toBe(personal);
   });
 
   it('refuses a column the bar does not set', async () => {
     const [id] = await receipts(1, 'text');
     const nameId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Name')!.id;
-    expect(await setFieldOnRows([id], nameId, 'x')).toEqual({ done: [], failed: [{ rowId: id, reason: 'not_writable' }] });
+    expect(await setFieldOnRows([id], nameId, 'x')).toEqual({ done: [], failed: [{ rowId: id, reason: 'not_writable' }], left: [] });
   });
 
   it('a group takes the assignment like a receipt', async () => {
     const [id] = await receipts(1, 'grouped');
     const group = await createGroup(db, ws.workspaceId, 'Gruppe bulk', [id]);
-    expect(await setFieldOnRows([group], assignmentId, business)).toEqual({ done: [group], failed: [] });
+    expect(await setFieldOnRows([group], assignmentId, business)).toEqual({ done: [group], failed: [], left: [] });
   });
 
   it('a group refuses a column it may not take, and the receipts beside it are set', async () => {
@@ -111,7 +162,7 @@ describe('"Set field" on a selection', () => {
     const currencyId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Currency')!.id;
     const usd = (await ws.adapter.getSelectOptions(currencyId)).find((o) => o.name === 'USD')!.id;
     const outcome = await setFieldOnRows([group, beside], currencyId, usd);
-    expect(outcome).toEqual({ done: [beside], failed: [{ rowId: group, reason: 'not_writable' }] });
+    expect(outcome).toEqual({ done: [beside], failed: [{ rowId: group, reason: 'not_writable' }], left: [] });
   });
 
   it('refuses more rows than one part, and a call without rows', async () => {

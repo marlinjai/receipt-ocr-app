@@ -3,7 +3,7 @@
 import { touchesTaxRates, withTaxRates } from '@/lib/tax-rates';
 import { touchesNameParts, withFollowingName } from '@/lib/receipt-name-cells';
 import { PrismaAdapter, ensureRealTable } from '@marlinjai/data-table-adapter-prisma';
-import { safeColumnName, safeTableName } from '@marlinjai/data-table-adapter-shared';
+import { safeColumnName, safeTableName, serializeCell } from '@marlinjai/data-table-adapter-shared';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
 import { deleteReceiptRows } from '@/lib/meals/service';
@@ -18,7 +18,7 @@ const SCOPED_LIST_LIMIT = 5000;
 import { MIN_TEXT_SEARCH_LENGTH, TEXT_SEARCH_LIMIT, likePattern, rowsWithoutText, textColumnIds, withoutText } from '@/lib/receipt-text';
 import { GROUP_KIND, ROW_KIND_COLUMN, rowKindColumnId } from '@/lib/receipts-kind';
 import { EVERY_ROW_LIMIT, applyDayFilters, boundsYears, readEveryRow, splitDayFilters, yearsWithin } from './day-filters';
-import { BULK_SET_PART, storedAs, type BulkSetFailure, type BulkSetOutcome } from './bulk-set';
+import { BULK_SET_BUDGET_MS, BULK_SET_PART, storedAs, type BulkSetFailure, type BulkSetOutcome } from './bulk-set';
 import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
 import { rowKind } from '@/lib/groups/service';
 import { readRowLinks } from '@/lib/groups/links';
@@ -374,6 +374,20 @@ export async function updateRow(rowId: string, cells: Record<string, CellValue>)
 }
 
 /**
+ * True when the guarded write below stores these cells exactly as given (after its group check): no name
+ * follows them, no tax rates text, no finance decision. "Set field" writes such cells for many rows in one
+ * statement, so **a rule added to `writeCells` that changes cells on their way must make this false for
+ * them**. The assignment and the business share are left to the per-row write already: they are to follow
+ * the finance decision.
+ */
+function writesCellsAsGiven(columns: readonly Column[], kind: string | null, cells: Record<string, CellValue>): boolean {
+  const names = new Set(Object.keys(cells).map((id) => columns.find((c) => c.id === id)?.name));
+  if (names.has('Zuordnung') || names.has('Business Share %')) return false;
+  const followsName = kind !== GROUP_KIND && touchesNameParts(columns, cells);
+  return !followsName && !touchesTaxRates(columns, cells);
+}
+
+/**
  * The guarded write of a cell edit, for one row the caller has authorized: the
  * rules on groups, the name that follows its cells, the tax rates text. The row
  * comes back without its recognized text, as every row of the list.
@@ -388,7 +402,7 @@ async function writeCells(adapter: PrismaAdapter, tableId: string, columns: Colu
   const ratesChange = touchesTaxRates(columns, cells);
   const textId = textColumnIds(columns);
   // The table puts the returned row in its list: without the recognized text, like every row of the list.
-  if (!followsName && !ratesChange) return withoutText(await adapter.updateRow(rowId, cells), textId);
+  if (writesCellsAsGiven(columns, kind, cells)) return withoutText(await adapter.updateRow(rowId, cells), textId);
   const stored = await adapter.getRow(rowId);
   const named = followsName ? await withFollowingName(adapter, columns, cells, stored?.cells) : cells;
   return withoutText(
@@ -425,7 +439,7 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
   }
   await requireColumnAccess(columnId, 'receipts.row.write');
   const ids = [...new Set(rowIds)];
-  const everyRow = (reason: BulkSetFailure): BulkSetOutcome => ({ done: [], failed: ids.map((rowId) => ({ rowId, reason })) });
+  const everyRow = (reason: BulkSetFailure): BulkSetOutcome => ({ done: [], failed: ids.map((rowId) => ({ rowId, reason })), left: [] });
   const adapter = getAdapter();
   const column = await adapter.getColumn(columnId);
   // The column was deleted between the access check and here: nothing can be set, and a retry would not help.
@@ -436,17 +450,65 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
   if (value !== null && !(await adapter.getSelectOptions(columnId)).some((o) => o.id === value)) return everyRow('invalid_value');
 
   const columns = await adapter.getColumns(tableId);
+  const cells = { [columnId]: value };
   const tableByRow = await resolveRowTableIds(ids);
   const failed: BulkSetOutcome['failed'] = [];
+  const done: string[] = [];
+  const mine = ids.filter((rowId) => {
+    if (tableByRow.get(rowId) === tableId) return true;
+    failed.push({ rowId, reason: 'not_found' });
+    return false;
+  });
+
+  // What every row holds now, in one query. A row that already holds the value is done without a write: a
+  // retry of a part that got no answer sets only what is still missing, and never writes a row twice.
+  await ensureRealTable(prisma, tableId);
+  const before = await storedCells(tableId, columnId, rowKindColumnId(columns), mine);
+  const toWrite: Array<{ rowId: string; kind: string | null }> = [];
+  for (const rowId of mine) {
+    const row = before.get(rowId);
+    if (!row) failed.push({ rowId, reason: 'not_found' });
+    else if (storedAs(row.value, value)) done.push(rowId);
+    else toWrite.push({ rowId, kind: row.kind });
+  }
+
   const written: string[] = [];
   const uncertain: string[] = [];
-  for (const rowId of ids) {
-    if (tableByRow.get(rowId) !== tableId) {
-      failed.push({ rowId, reason: 'not_found' });
+  const plain = toWrite.filter(({ kind }) => writesCellsAsGiven(columns, kind, cells));
+  if (plain.length > 0) {
+    // A cell no rule changes on its way (a category, a status) is written for the whole part in one
+    // statement, after the same group check a cell edit makes. Through the table adapter each row costs two
+    // look-ups across every table of the database; on 2026-10-16 a part of 25 got no answer on production.
+    const allowed: string[] = [];
+    for (const { rowId, kind } of plain) {
+      try {
+        assertCellsWritable(columns, kind, cells);
+        allowed.push(rowId);
+      } catch {
+        failed.push({ rowId, reason: 'not_writable' });
+      }
+    }
+    try {
+      await writeCellOnRows(tableId, column, value, allowed);
+      written.push(...allowed);
+    } catch {
+      // The statement may or may not have run: the read-back below decides.
+      uncertain.push(...allowed);
+    }
+  }
+  // Every other cell takes the guarded write of a cell edit, row after row (the name that follows its cells,
+  // the tax rates text, the finance decision). That costs the table adapter's look-ups per row, so the part
+  // stops after a time budget and hands back the rows it has not touched; the bar sends them again. At least
+  // one row is written per call, so a slow server still moves on.
+  const startedAt = Date.now();
+  const left: string[] = [];
+  for (const { rowId } of toWrite.filter(({ kind }) => !writesCellsAsGiven(columns, kind, cells))) {
+    if (written.length + uncertain.length > 0 && Date.now() - startedAt > BULK_SET_BUDGET_MS) {
+      left.push(rowId);
       continue;
     }
     try {
-      await writeCells(adapter, tableId, columns, rowId, { [columnId]: value });
+      await writeCells(adapter, tableId, columns, rowId, cells);
       written.push(rowId);
     } catch (error) {
       // A row deleted meanwhile is not found; a cell the row may not take (the kind, an amount on a group) is not writable.
@@ -461,24 +523,47 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
   }
 
   // Read back what is stored now, all rows at once: a write that answered is not yet a value that landed.
-  const done: string[] = [];
   if (written.length + uncertain.length > 0) {
-    await ensureRealTable(prisma, tableId);
-    const stored = await prisma.$queryRawUnsafe<Array<{ id: string; value: string | null }>>(
-      `SELECT id, ${safeColumnName(columnId)} AS value FROM ${safeTableName(tableId)} WHERE id = ANY($1::text[])`,
-      [...written, ...uncertain],
-    );
-    const byId = new Map(stored.map((r) => [r.id, r.value]));
+    const after = await storedCells(tableId, columnId, null, [...written, ...uncertain]);
     for (const rowId of written) {
-      if (byId.has(rowId) && storedAs(byId.get(rowId), value)) done.push(rowId);
-      else failed.push({ rowId, reason: byId.has(rowId) ? 'not_stored' : 'not_found' });
+      const row = after.get(rowId);
+      if (row && storedAs(row.value, value)) done.push(rowId);
+      else failed.push({ rowId, reason: row ? 'not_stored' : 'not_found' });
     }
     for (const rowId of uncertain) {
-      if (byId.has(rowId) && storedAs(byId.get(rowId), value)) done.push(rowId);
-      else failed.push({ rowId, reason: byId.has(rowId) ? 'failed' : 'not_found' });
+      const row = after.get(rowId);
+      if (row && storedAs(row.value, value)) done.push(rowId);
+      else failed.push({ rowId, reason: row ? 'failed' : 'not_found' });
     }
   }
-  return { done, failed };
+  return { done, failed, left };
+}
+
+/** The stored value of one column, and the kind, of the given rows of a real table that are not archived. */
+async function storedCells(
+  tableId: string,
+  columnId: string,
+  kindColumnId: string | null,
+  rowIds: readonly string[],
+): Promise<Map<string, { value: string | null; kind: string | null }>> {
+  if (rowIds.length === 0) return new Map();
+  const kind = kindColumnId ? safeColumnName(kindColumnId) : 'NULL';
+  const rows = await prisma.$queryRawUnsafe<Array<{ id: string; value: string | null; kind: string | null }>>(
+    `SELECT id, ${safeColumnName(columnId)} AS value, ${kind} AS kind FROM ${safeTableName(tableId)} WHERE _archived = 0 AND id = ANY($1::text[])`,
+    [...rowIds],
+  );
+  return new Map(rows.map((r) => [r.id, { value: r.value, kind: r.kind }]));
+}
+
+/** One select cell on many rows of a real table, in one statement, stored as the table adapter stores it. */
+async function writeCellOnRows(tableId: string, column: Column, value: string | null, rowIds: readonly string[]): Promise<void> {
+  if (rowIds.length === 0) return;
+  await prisma.$executeRawUnsafe(
+    `UPDATE ${safeTableName(tableId)} SET ${safeColumnName(column.id)} = $1, _updated_at = $2 WHERE _archived = 0 AND id = ANY($3::text[])`,
+    serializeCell(value, column.type),
+    new Date().toISOString(),
+    [...rowIds],
+  );
 }
 
 /** Why a receipt was kept when a delete was asked for. */

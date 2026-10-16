@@ -126,6 +126,29 @@ describe('"Set field" on a selection', () => {
     );
   });
 
+  it('sends again the rows the server handed back, until every row is answered', async () => {
+    // The server stops after three rows of each part, as when its time budget runs out.
+    const setField = vi.fn<SetField>(async (ids) => ({ done: ids.slice(0, 3), failed: [], left: ids.slice(3) }));
+    bar(selection(8), setField);
+    const user = await choose('biz');
+    await user.click(screen.getByRole('button', { name: 'Apply to 8' }));
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('8 von 8 gesetzt.'));
+    expect(setField.mock.calls.map(([ids]) => ids)).toEqual([
+      ['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7'],
+      ['r3', 'r4', 'r5', 'r6', 'r7'],
+      ['r6', 'r7'],
+    ]);
+  });
+
+  it('stops sending a part that moves nothing and counts it as unanswered', async () => {
+    const setField = vi.fn<SetField>(async (ids) => ({ done: [], failed: [], left: ids }));
+    bar(selection(2), setField);
+    const user = await choose('biz');
+    await user.click(screen.getByRole('button', { name: 'Apply to 2' }));
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('0 von 2 gesetzt. 2 nicht gesetzt: 2 keine Antwort, Stand unklar.'));
+    expect(setField).toHaveBeenCalledTimes(1);
+  });
+
   it('clears the field with the empty choice', async () => {
     const setField = vi.fn(async (ids: string[]) => ({ done: ids, failed: [] }));
     bar(selection(2), setField);

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { Column, SelectOption } from '@marlinjai/data-table-core';
-import { joinOutcomes, outcomeWording, partsOf, unconfirmed, type BulkSetFailure, type BulkSetOutcome } from './bulk-set';
+import { BULK_SET_PART, joinOutcomes, outcomeWording, partsOf, unconfirmed, type BulkSetFailure, type BulkSetOutcome } from './bulk-set';
 
 const inputStyle = {
   background: 'var(--background)',
@@ -60,19 +60,32 @@ export default function BulkEditBar({
     if (busy || rowIds.length === 0) return;
     setBusy(true);
     setRetry(null);
-    const parts = partsOf(rowIds);
-    const total = parts.reduce((n, p) => n + p.length, 0);
+    // Each row once, sent in parts one after another. Rows the server hands back untouched (its time budget
+    // ran out) go to the front of the queue and are sent again; a row already holding the value is done on
+    // the server without a write, so nothing is ever written twice.
+    const queue = partsOf(rowIds).flat();
+    const total = queue.length;
     const outcomes: BulkSetOutcome[] = [];
     let handled = 0;
     setProgress(`0 von ${total} …`);
-    for (const part of parts) {
+    while (queue.length > 0) {
+      const part = queue.splice(0, BULK_SET_PART);
+      let outcome: BulkSetOutcome;
       try {
-        outcomes.push(await setField(part, forColumn, forValue === CLEAR ? null : forValue));
+        outcome = await setField(part, forColumn, forValue === CLEAR ? null : forValue);
       } catch {
         // No answer for this part (a lost connection, an expired session): none of it is counted as set.
-        outcomes.push(unconfirmed(part));
+        outcome = unconfirmed(part);
       }
-      handled += part.length;
+      const back = (outcome.left ?? []).filter((id) => part.includes(id));
+      if (back.length === part.length) {
+        // A part that moved nothing would be sent forever: its rows count as unanswered instead.
+        outcomes.push(unconfirmed(back));
+      } else {
+        queue.unshift(...back);
+        outcomes.push({ ...outcome, left: [] });
+      }
+      handled += back.length === part.length ? part.length : part.length - back.length;
       setProgress(`${handled} von ${total} …`);
     }
     const outcome = joinOutcomes(outcomes);

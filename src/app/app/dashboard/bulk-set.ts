@@ -35,10 +35,18 @@ export type BulkSetFailure =
   | 'unconfirmed';
 
 export interface BulkSetOutcome {
-  /** Rows whose stored value is now the value asked for, read back after the writes. */
+  /** Rows whose stored value is now the value asked for, read back after the writes (or already before). */
   done: string[];
   failed: Array<{ rowId: string; reason: BulkSetFailure }>;
+  /** Rows the call did not touch because its time budget ran out: sent again, as they are. None when absent. */
+  left?: string[];
 }
+
+/**
+ * How long one call writes row after row before it hands back the rest. Well inside any request limit on the
+ * way (a part that got no answer on production on 2026-10-16 is why there is one).
+ */
+export const BULK_SET_BUDGET_MS = 8_000;
 
 /** The selection in parts of at most `size`, each row once, in its order. */
 export function partsOf(rowIds: readonly string[], size = BULK_SET_PART): string[][] {
@@ -50,12 +58,12 @@ export function partsOf(rowIds: readonly string[], size = BULK_SET_PART): string
 
 /** The outcomes of several parts as one. */
 export function joinOutcomes(outcomes: readonly BulkSetOutcome[]): BulkSetOutcome {
-  return { done: outcomes.flatMap((o) => o.done), failed: outcomes.flatMap((o) => o.failed) };
+  return { done: outcomes.flatMap((o) => o.done), failed: outcomes.flatMap((o) => o.failed), left: outcomes.flatMap((o) => o.left ?? []) };
 }
 
 /** A part that got no answer: none of its rows is counted as set. */
 export function unconfirmed(rowIds: readonly string[]): BulkSetOutcome {
-  return { done: [], failed: rowIds.map((rowId) => ({ rowId, reason: 'unconfirmed' as const })) };
+  return { done: [], failed: rowIds.map((rowId) => ({ rowId, reason: 'unconfirmed' as const })), left: [] };
 }
 
 /** Whether a stored cell holds the value asked for. A cleared cell is stored empty or not at all. */

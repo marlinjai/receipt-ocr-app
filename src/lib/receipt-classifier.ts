@@ -123,6 +123,8 @@ export interface ReceiptClassification {
   currency: string | null;
   /** True when the model says the document states no total to pay at all. */
   noTotal: boolean;
+  /** How many separate invoices or receipts the file holds, as the model counts them; null when it does not say. */
+  documents: number | null;
   /** What could be read about a meal (only meaningful for category Bewirtung). */
   meal: MealClassification;
 }
@@ -147,6 +149,11 @@ function invoiceDay(value: unknown): string | null {
 
 function currencyCode(value: unknown): string | null {
   return typeof value === 'string' && /^[A-Za-z]{3}$/.test(value.trim()) ? value.trim().toUpperCase() : null;
+}
+
+/** A count of documents as the model was asked to give it: a whole number from 1. Null for anything else. */
+function documentCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 50 ? value : null;
 }
 
 function vendorName(value: unknown): string | null {
@@ -186,6 +193,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
       currency: currencyCode(parsed.currency),
       // Only an explicit "no total" counts, and never next to a total.
       noTotal: parsed.totalStated === false && gross === null,
+      documents: documentCount(parsed.documents),
       meal: parseMealClassification(parsed),
     };
   } catch {
@@ -193,7 +201,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
     return {
       item: null, category: null, konto: null, zuordnung: null, taxRate: null, confidence: 0,
       reasoning: 'Failed to parse classification response',
-      vendor: null, gross: null, net: null, date: null, currency: null, noTotal: false,
+      vendor: null, gross: null, net: null, date: null, currency: null, noTotal: false, documents: null,
       meal: parseMealClassification(null),
     };
   }
@@ -249,7 +257,8 @@ Classify the receipt and read these facts from it:
 2. **vendor**: the name of the business that issued the receipt, as a customer would call it ("Trattoria Beispiel", "Musterbräu Berlin"). Never a slogan ("Since 2016"), never a product or an extra ("+ mit Haferdrink"), never a bare description ("Indisches"), never a receipt heading ("Rechnung", "Bewirtungsbeleg"). Null when the text does not name it.
 3. **gross**: the total the customer had to pay, as a number, exactly as printed (the line labelled Summe, Gesamt, Total, Betrag, zu zahlen, or the sum of the tax lines). Where several totals are printed (a subtotal, "Total" and "Grand Total", a total per section), give the final one, with tax, shipping and duties. Never a receipt number, table number, transaction number, card number or telephone number. An invoice settled from a credit or balance still has its total: give the line "Total", never an amount due of 0. Null when the document does not show a total.
 4. **totalStated**: false when the document states no total to pay at all: an application, a contract or an offer that names only a monthly rate or an instalment, a delivery note without prices. Then "gross" is null: a monthly rate is not a total. Otherwise true.
-5. **net**: the amount before tax as a number, exactly as printed. Null when the document prints none. Never compute it.
+5. **documents**: how many separate invoices or receipts this file holds, as a whole number. Two invoices of different sellers, or with different invoice numbers, are two (a marketplace invoice and the retailer's invoice in one file); the pages of one invoice, its terms and a payment slip that belongs to it are one. When the file holds more than one, read every other field from the first of them.
+5a. **net**: the amount before tax as a number, exactly as printed. Null when the document prints none. Never compute it.
 6. **currency**: the ISO 4217 code of the currency the total is in ("EUR", "USD", "GBP").
 7. **date**: the invoice date (the day the document was issued; for a till receipt the day of the purchase) as YYYY-MM-DD. Never the due date, a renewal or expiry date, a delivery date or the start or end of the period billed. Null when the document prints no such date.
 8. **category**: one of: ${input.categoryNames.join(', ')}
@@ -270,7 +279,7 @@ Only when the category is "Bewirtung", also give:
 ${input.userRules || ''}
 
 Respond with ONLY a JSON object (no markdown, no explanation):
-{ "item": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "..." }`;
+{ "item": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "documents": 1, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "..." }`;
 }
 
 /** Told only where the vendor's earlier receipts name what was bought; the list itself is in the user message. */

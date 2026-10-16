@@ -38,6 +38,7 @@ const SHORT: Record<ReviewReason, string> = {
   tax_implausible: 'Steuer prüfen',
   not_classified: 'Nicht eingeordnet',
   page_not_read: 'Nur Text gelesen',
+  several_documents: 'Mehrere Belege',
   total_unconfirmed: 'Betrag prüfen',
   total_conflict: 'Betrag prüfen',
   date_conflict: 'Datum prüfen',

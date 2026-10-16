@@ -42,6 +42,8 @@ export interface ModelReading {
   currency: string | null;
   /** The model says the document states no total to pay. */
   noTotal: boolean;
+  /** How many separate invoices the file holds, as the model counts them; absent or null when it does not say. */
+  documents?: number | null;
   /** True when the model was given the page; false when it read the recognized text alone. */
   sawPage: boolean;
   meal: MealClassification | null;
@@ -122,6 +124,10 @@ export function settleReading(fullText: string, extracted: TextExtraction, ai: M
   if (!ai) flags.push('not_classified');
   // The model answered, but from the text alone: the file was missing, unreadable, over a limit or refused.
   else if (!ai.sawPage) flags.push('page_not_read');
+  // A file with two invoices is read as one: its figures are those of one of
+  // them, and a person splits the file. Believed only from a model that saw
+  // the pages: the recognized text alone does not show where a document ends.
+  if (ai?.sawPage && (ai.documents ?? 1) > 1) flags.push('several_documents');
 
   // Category: the model's answer, else what the text itself shows. A receipt
   // with a table, a waiter and a tip line that the model filed elsewhere is

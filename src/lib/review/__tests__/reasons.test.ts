@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REASON_TEXT, derivedReasons, lookAlikes, reviewReasons, type ReviewSnapshot } from '../reasons';
+import { REASON_TEXT, derivedReasons, isConfirmable, lookAlikes, reviewReasons, type ReviewSnapshot } from '../reasons';
 
 const receipt = (overrides: Partial<ReviewSnapshot> = {}): ReviewSnapshot => ({
   rowId: 'r1',
@@ -80,6 +80,12 @@ describe('reviewReasons', () => {
 
   it('a doubt about the total is dropped once there is no total at all', () => {
     expect(reviewReasons(receipt({ gross: null, net: null }), { flags: ['total_conflict', 'not_classified'], checkedAt: null }, [])).toEqual(['amount_missing', 'not_classified']);
+  });
+
+  it('a file read as one that holds several documents asks to be split, before the doubts about its figures', () => {
+    const stored = { flags: ['total_conflict', 'several_documents'], checkedAt: null };
+    expect(reviewReasons(receipt(), stored, [])).toEqual(['several_documents', 'total_conflict']);
+    expect(isConfirmable('several_documents')).toBe(true);
   });
 
   it('ignores a stored value that is not a known flag', () => {

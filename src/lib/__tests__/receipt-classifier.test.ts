@@ -154,3 +154,22 @@ describe('what was bought, for the name', () => {
     expect(parseItemResponse('')).toBeNull();
   });
 });
+
+describe('how many documents the file holds', () => {
+  const parse = (documents: unknown) => parseClassificationResponse(JSON.stringify({ category: INPUT.categoryNames[0], documents }), INPUT).documents;
+
+  it('is a whole number from 1, anything else is no answer', () => {
+    expect(parse(2)).toBe(2);
+    expect(parse(1)).toBe(1);
+    expect(parse(0)).toBeNull();
+    expect(parse(1.5)).toBeNull();
+    expect(parse('2')).toBeNull();
+    expect(parse(undefined)).toBeNull();
+    expect(parseClassificationResponse('no json at all', INPUT).documents).toBeNull();
+  });
+
+  it('is asked for in the prompt', () => {
+    expect(classificationPrompt(INPUT, { webSearch: false })).toContain('**documents**');
+    expect(classificationPrompt(INPUT, { webSearch: false })).toContain('"documents": 1');
+  });
+});

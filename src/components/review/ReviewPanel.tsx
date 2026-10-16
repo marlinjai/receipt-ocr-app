@@ -38,6 +38,8 @@ const SHORT: Record<ReviewReason, string> = {
   tax_implausible: 'Steuer prüfen',
   not_classified: 'Nicht eingeordnet',
   page_not_read: 'Nur Text gelesen',
+  einvoice_problem: 'E-Rechnung prüfen',
+  credit_note: 'Gutschrift',
   several_documents: 'Mehrere Belege',
   total_unconfirmed: 'Betrag prüfen',
   total_conflict: 'Betrag prüfen',

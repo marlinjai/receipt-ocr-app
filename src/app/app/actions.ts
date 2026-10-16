@@ -20,7 +20,9 @@ import { serializeTaxLines } from '@/lib/meals/rules';
 import { receiptAttention, type ReceiptAttention } from '@/lib/upload/quality';
 import { ClassifierUnavailableError, classifyReceiptText } from '@/lib/receipt-classifier';
 import type { ReceiptPage } from '@/lib/receipt-page';
-import { loadReceiptPage } from '@/lib/receipt-page-source';
+import { loadReceiptSource } from '@/lib/receipt-page-source';
+import { structuredReceiptFields } from '@/lib/einvoice';
+import { withStructuredInvoice } from '@/lib/structured-reading';
 import { settleReading, type ModelReading } from '@/lib/receipt-reading';
 import { fileOpenToWorkspace } from '@/lib/file-access';
 import type { ReadFlag } from '@/lib/review/reasons';
@@ -227,12 +229,19 @@ async function readReceipt(
   /** The row read again, if any: its vendor names the vendor's items, and its own item is no earlier one. */
   stored?: { rowId: string; vendor: string | null },
 ): Promise<ReadReceipt> {
-  const fullText = ocrResult?.fullText ?? '';
-  const extracted = ocrResult && fullText.trim() ? extractReceiptFields(ocrResult) : null;
+  // The stored file, fetched once: its page for the model and, for an
+  // electronic invoice (XRechnung, ZUGFeRD, Factur-X), its structured data,
+  // which stands over every reading of the page.
+  const source = file.id ? await loadReceiptSource(file.id) : null;
+  const structured = source?.structured ? structuredReceiptFields(source.structured.invoice) : null;
+  // An XRechnung has no page to recognize: its figures as text take the place of the recognized text.
+  const recognized = ocrResult?.fullText ?? '';
+  const fullText = recognized.trim() ? recognized : (structured?.text ?? '');
+  const extracted = fullText.trim() ? extractReceiptFields({ fullText, blocks: ocrResult?.blocks ?? [], confidence: ocrResult?.confidence ?? 1 }) : null;
   // The model is given the page itself where the stored file can be fetched and
-  // is within the limits. Without recognized text nothing could check its
-  // answer, so it is not asked at all.
-  const page = extracted && file.id ? ((await loadReceiptPage(file.id)).page ?? null) : null;
+  // is within the limits. Without any text nothing could check its answer, so
+  // it is not asked at all.
+  const page = extracted ? (source?.page.page ?? null) : null;
   // What the vendor's earlier receipts name as bought: the model reuses a wording that fits.
   const lookupVendor = stored?.vendor?.trim() || extracted?.vendor || null;
   const knownItems = extracted ? await knownItemsOfVendor(adapter, tableId, lookupVendor, stored?.rowId) : [];
@@ -240,7 +249,8 @@ async function readReceipt(
   const classificationFailed = extracted !== null && ai === null;
   // The two readings, settled: what the text proves stands, what the model
   // read from the page is taken only where the text prints it.
-  const settled = extracted ? settleReading(fullText, extracted, ai) : null;
+  const read = extracted ? settleReading(fullText, extracted, ai) : null;
+  const settled = read && structured ? withStructuredInvoice(read, structured) : read;
   const reviewFlags: ReadFlag[] = settled?.flags ?? [];
   const date = settled?.date ?? null;
   const vendor = settled?.vendor ?? null;

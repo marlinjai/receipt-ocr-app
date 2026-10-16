@@ -28,7 +28,10 @@ vi.mock('@/lib/receipt-classifier', async (original) => ({
 }));
 vi.mock('@/lib/fx-rates', () => ({ getFxRate: (...a: unknown[]) => fxRate(...a) }));
 // The file store is not there in a test: the page is one the loader would have prepared.
-vi.mock('@/lib/receipt-page-source', () => ({ loadReceiptPage: vi.fn(async () => ({ page: { mediaType: 'application/pdf', base64: 'UERG', pagesSent: 1, pagesTotal: 1 } })) }));
+vi.mock('@/lib/receipt-page-source', () => ({
+  loadReceiptPage: vi.fn(async () => ({ page: { mediaType: 'application/pdf', base64: 'UERG', pagesSent: 1, pagesTotal: 1 } })),
+  loadReceiptSource: vi.fn(async () => ({ page: { page: { mediaType: 'application/pdf', base64: 'UERG', pagesSent: 1, pagesTotal: 1 } }, structured: null })),
+}));
 
 import { processReceipt } from '../actions';
 import { getReviewQueue, takeNewReading } from './review-actions';

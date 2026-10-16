@@ -153,7 +153,7 @@ function currencyCode(value: unknown): string | null {
 
 /** A count of documents as the model was asked to give it: a whole number from 1. Null for anything else. */
 function documentCount(value: unknown): number | null {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 50 ? value : null;
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : null;
 }
 
 function vendorName(value: unknown): string | null {

@@ -56,9 +56,18 @@ const stored = async (id: string) => (await getRow(id))?.cells[assignmentId] ?? 
 describe('"Set field" on a selection', () => {
   it('sets every row of a full part and reads each back', async () => {
     const ids = await receipts(BULK_SET_PART, 'full');
-    const outcome = await setFieldOnRows(ids, assignmentId, business);
-    expect(outcome.failed).toEqual([]);
-    expect(outcome.done.sort()).toEqual([...ids].sort());
+    // The assignment goes through the finance decision row by row, so a slow database may hand rows back in
+    // `left` when the time budget runs out; the bar sends them again, and so does this test, until none is left.
+    const done: string[] = [];
+    let pending = ids;
+    for (let round = 0; pending.length > 0 && round < BULK_SET_PART; round++) {
+      const outcome = await setFieldOnRows(pending, assignmentId, business);
+      expect(outcome.failed).toEqual([]);
+      done.push(...outcome.done);
+      pending = outcome.left ?? [];
+    }
+    expect(pending).toEqual([]);
+    expect(done.sort()).toEqual([...ids].sort());
     for (const id of ids) expect(await stored(id)).toBe(business);
     // The adapter finds a row by looking through every table of the database, which a long-used test database
     // has many of: a generous limit, so the time of that lookup does not fail the test.

@@ -303,7 +303,7 @@ const DEDUCTION =
 const NOT_A_DEDUCTION =
   /(?<![\p{L}])(?:zahlungen?|bezahlt|payments?|paid)(?![\p{L}])|(?<![\p{L}])(?:zzgl|exkl|excl|excluding|ohne)\.?\s*(?:ust|mwst|vat|tax)|(?<![\p{L}-])netto(?![\p{L}-])|(?:before|without)\s+tax/iu;
 /** A deduction the receipt names as one: a discount, a coupon, a promotion. It stays a deduction whatever else its line says. */
-const NAMED_DEDUCTION = /aktion|promo|bonus/i;
+const NAMED_DEDUCTION = /(?<![\p{L}])(?:aktion|promo|bonus)/iu;
 const isNamedDeduction = (line: string) => DISCOUNT_WORD.test(line) || NAMED_DEDUCTION.test(line);
 
 function deductionsIn(text: string): Array<{ cents: number; line: number }> {
@@ -553,7 +553,8 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   const settled = BALANCE_APPLIED.test(text) && named.some((t) => !t.due);
   // The total the invoice names as its own is taken as the last labelled one, so it stands over later labels.
   const kept = named.filter((t) => !settled || !t.due);
-  const invoiceTotal = kept.findLast((t) => t.invoice);
+  // The first such label is the invoice's own: a later one belongs to an earlier invoice listed under account movements.
+  const invoiceTotal = kept.find((t) => t.invoice);
   const labelled = (invoiceTotal ? [...kept.filter((t) => t !== invoiceTotal), invoiceTotal] : kept).map((t) => t.cents);
 
   // A tip is an amount on a line that names it; with columns torn apart it is
@@ -710,10 +711,18 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     // an amount that carries its minus sign and stands below the bill.
     const minus = deductionsIn(text);
     const deductions = [...minus.map((d) => d.cents), ...discounts];
+    // Whatever its wording, an amount taken off that leaves exactly the tax is
+    // the net set off by a dash ("Nettobetrag - 3,35 €"), never a deduction.
     const afterDeduction =
-      labelled.findLast((total) => total < bill && deductions.includes(bill - total)) ??
+      labelled.findLast((total) => total < bill && total !== taxSum && deductions.includes(bill - total)) ??
       minus
-        .filter((d) => d.cents < bill && found.some((a) => a.cents === bill && a.line < d.line) && found.some((a) => a.cents === bill - d.cents && a.line > d.line))
+        .filter(
+          (d) =>
+            d.cents < bill &&
+            bill - d.cents !== taxSum &&
+            found.some((a) => a.cents === bill && a.line < d.line) &&
+            found.some((a) => a.cents === bill - d.cents && a.line > d.line),
+        )
         .map((d) => bill - d.cents)[0];
     // A total above the tax groups that a label in the text AND the page
     // reading both name: the groups then cover a part of the bill only (one

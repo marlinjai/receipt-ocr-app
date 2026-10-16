@@ -363,3 +363,34 @@ describe('the invoice total above the taxed part needs the part to be printed', 
     expect(readAmounts(misread, { date: '2026-03-01' }).gross).toBe(11.9);
   });
 });
+
+describe('the net set off by a dash, whatever it is called, and an earlier invoice with the same label', () => {
+  const paid = (netLine: string) =>
+    ['Example Post GmbH', 'Gesamtsumme', '3,99 €', 'Zahlungen', '-3,99 €', 'Fälliger Betrag (EUR)', '0,00 €', netLine, 'USt. bei 19 % (0,64 €).'].join('\n');
+
+  it('a minus that leaves exactly the tax is never a deduction', () => {
+    for (const line of ['Nettobetrag - 3,35 €', 'Zwischensumme - 3,35 €', 'Subtotal - 3,35 €', 'Gesamtsumme Aktionstarif (zzgl. USt.) - 3,35 €', 'Transaktion - 3,35 €']) {
+      expect(readAmounts(paid(line), { date: '2021-02-01' }).gross).toBe(3.99);
+    }
+  });
+
+  it('an earlier invoice listed below with the same label does not take the place of the invoice own total', () => {
+    const bill = [
+      'Ihre Mobilfunk Rechnung',
+      'Rechnungsbetrag netto (0% USt.)',
+      'Rechnungsbetrag netto (19% USt.)',
+      '4,5000 €',
+      '37,7732 €',
+      'USt. Betrag (0%)',
+      'USt. Betrag (19%)',
+      '0,00 €',
+      '7,18 €',
+      'Rechnungsbetrag gesamt',
+      '49,45 €',
+      'Kontobewegungen',
+      'Rechnung vom 17.03.2026',
+      'Rechnungsbetrag gesamt 44,95 €',
+    ].join('\n');
+    expect(readAmounts(bill, { date: '2026-04-16' })).toMatchObject({ gross: 49.45, net: 42.27 });
+  });
+});

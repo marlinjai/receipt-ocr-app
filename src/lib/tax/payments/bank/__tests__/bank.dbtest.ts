@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { saveTaxSettings } from '@/lib/meals/service';
 import { createAccount, importPayments, loadPayments, type PaymentContext } from '../../service';
-import { BankApiError, type Aspsp, type BankApi, type SessionAccount, type StartInput } from '../client';
+import { BankApiError, type Aspsp, type BankApi, type PsuPresence, type SessionAccount, type StartInput } from '../client';
 import {
   BankServiceError,
   chooseBankAccount,
@@ -67,7 +67,7 @@ class FakeBank implements BankApi {
   async deleteSession(id: string) {
     this.deleted.push(id);
   }
-  async fetchTransactions(uid: string, from: string, to: string) {
+  async fetchTransactions(uid: string, from: string, to: string, _psu?: PsuPresence) {
     this.fetchCalls.push({ uid, from, to });
     const always = this.failFor.get(uid);
     if (always) throw always;
@@ -241,6 +241,39 @@ describe('bank connection: an earlier input changes', () => {
     expect(view).toMatchObject({ id, status: 'active', aspspName: BANK.name, pendingAspspName: 'Zweitbank' });
   });
 
+  it('a renewal whose single account is another one than before asks instead of binding it', async () => {
+    const s = await setup();
+    s.bank.transactions.set('uid-a1', [tx('2026-10-01', -1000, 'A', 'a')]);
+    const id = await connect(s);
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
+    s.bank.nextAccounts = [{ uid: 'uid-card', mask: '•••• 9999', name: 'Kreditkarte', currency: 'EUR' }];
+    await startConsent(db, s.ctx, s.deps, s.accountId, BANK);
+    expect((await completeConsent(db, s.ctx.workspaceId, s.deps, { state: s.bank.lastState, code: 'ok' })).outcome).toBe('choose_account');
+    expect(await connectionOf(s.accountId)).toMatchObject({ status: 'choose_account', accountUid: null, boundMask: '•••• 1111', lastBookedThrough: '2026-10-01' });
+    expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'not_active', added: 0 });
+  });
+
+  it('a fetch racing a change of the bound account does not write its stale start day', async () => {
+    const s = await setup();
+    s.bank.nextAccounts = [
+      { uid: 'uid-1', mask: '•••• 1111', name: 'Girokonto', currency: 'EUR' },
+      { uid: 'uid-2', mask: '•••• 2222', name: 'Tagesgeld', currency: 'EUR' },
+    ];
+    await startConsent(db, s.ctx, s.deps, s.accountId, BANK);
+    const { connectionId } = await completeConsent(db, s.ctx.workspaceId, s.deps, { state: s.bank.lastState, code: 'ok' });
+    await chooseBankAccount(db, s.ctx, connectionId, 'uid-1');
+    s.bank.transactions.set('uid-1', [tx('2026-10-01', -100, 'A', 'a')]);
+    // While the fetch of uid-1 is under way, the person switches to uid-2.
+    const original = s.bank.fetchTransactions.bind(s.bank);
+    s.bank.fetchTransactions = async (uid, from, to) => {
+      const list = await original(uid, from, to);
+      await chooseBankAccount(db, s.ctx, connectionId, 'uid-2');
+      return list;
+    };
+    expect(await syncConnection(db, s.ctx, s.deps, connectionId, { today: TODAY })).toEqual({ status: 'synced', added: 1 });
+    expect(await connectionOf(s.accountId)).toMatchObject({ accountUid: 'uid-2', lastBookedThrough: null, lastSyncedAt: null });
+  });
+
   it('choosing another account of the session starts that account afresh', async () => {
     const s = await setup();
     s.bank.nextAccounts = [
@@ -300,6 +333,48 @@ describe('bank connection: an earlier input changes', () => {
     // And the next fetch of the same days adds nothing.
     expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'nothing_new', added: 0 });
     expect(await paymentCount(s.accountId)).toBe(5);
+  });
+});
+
+describe('bank connection: the fetch window', () => {
+  it('a booking dated after today never moves the next start into the future', async () => {
+    const s = await setup();
+    s.bank.transactions.set('uid-a1', [tx('2026-10-10', -1000, 'A', 'a'), tx('2026-11-01', -2000, 'Karte', 'künftig gebucht')]);
+    // A real bank may return such a booking whatever the window says.
+    s.bank.fetchTransactions = async (uid: string, from: string, to: string) => {
+      s.bank.fetchCalls.push({ uid, from, to });
+      return s.bank.transactions.get(uid) ?? [];
+    };
+    const id = await connect(s);
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
+    expect((await connectionOf(s.accountId)).lastBookedThrough).toBe('2026-10-10');
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
+    expect(s.bank.fetchCalls.at(-1)).toMatchObject({ from: '2026-10-05', to: TODAY });
+  });
+
+  it('a quiet account never asks for more than 89 days', async () => {
+    const s = await setup();
+    s.bank.transactions.set('uid-a1', [tx('2026-07-20', -1000, 'A', 'a')]);
+    const id = await connect(s);
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
+    expect((await connectionOf(s.accountId)).lastBookedThrough).toBe('2026-07-20');
+    // Months later, nothing booked since.
+    await syncConnection(db, s.ctx, s.deps, id, { today: '2026-12-31' });
+    expect(s.bank.fetchCalls.at(-1)).toMatchObject({ from: '2026-10-03', to: '2026-12-31' });
+  });
+
+  it('presence of the person is passed to the bank only when given', async () => {
+    const s = await setup();
+    const seen: unknown[] = [];
+    const original = s.bank.fetchTransactions.bind(s.bank);
+    s.bank.fetchTransactions = async (uid, from, to, psu) => {
+      seen.push(psu);
+      return original(uid, from, to);
+    };
+    const id = await connect(s);
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY, psu: { ipAddress: '192.0.2.1', userAgent: 'Testbrowser' } });
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
+    expect(seen).toEqual([{ ipAddress: '192.0.2.1', userAgent: 'Testbrowser' }, undefined]);
   });
 });
 

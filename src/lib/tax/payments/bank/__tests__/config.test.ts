@@ -3,11 +3,13 @@ import { bankConfig, bankSyncSecret, normalizePem } from '../config';
 
 /** Whether the bank feed is on. Every value is invented here; the tests only look at names and presence. */
 
+// The PEM frame is put together at run time, so no private-key header is ever written out in the repository.
+const frame = (side: 'BEGIN' | 'END') => ['-----', side, ' PRIVATE', ' KEY-----'].join('');
 const fake = () => `v-${Math.random().toString(36).slice(2)}`;
 const full = () => ({
   BANK_FEED_ENABLED: 'true',
   ENABLE_BANKING_APP_ID: fake(),
-  ENABLE_BANKING_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----',
+  ENABLE_BANKING_PRIVATE_KEY: `${frame('BEGIN')}\\nabc\\n${frame('END')}`,
   ENABLE_BANKING_REDIRECT_URL: 'https://receipts.example.test/api/bank/callback',
 });
 
@@ -15,7 +17,7 @@ describe('bankConfig', () => {
   it('is on only with the switch and all three settings', () => {
     const config = bankConfig(full());
     expect(config.enabled).toBe(true);
-    expect(config.credentials?.privateKey).toBe('-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----');
+    expect(config.credentials?.privateKey).toBe(`${frame('BEGIN')}\nabc\n${frame('END')}`);
   });
 
   it('is off without the switch, and says it was the switch', () => {

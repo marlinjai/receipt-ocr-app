@@ -26,6 +26,8 @@ const connection = (o: Partial<BankConnectionView> = {}): BankConnectionView => 
   lastErrorAt: null,
   candidates: [],
   accountUid: 'uid-1',
+  boundMask: null,
+  boundName: null,
   ...o,
 });
 
@@ -103,6 +105,36 @@ describe('BankAccountStatus', () => {
     await userEvent.selectOptions(screen.getByLabelText('Welches Konto der Bank ist dieses?'), 'u2');
     await userEvent.click(screen.getByRole('button', { name: 'Übernehmen' }));
     expect(acts.chooseBankConnectionAccount).toHaveBeenCalledWith('con-1', 'u2');
+  });
+
+  it('after a renewal a single account that is not the one read before is asked about, with a warning', async () => {
+    const acts = actions();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const c = connection({ status: 'choose_account', accountUid: null, boundMask: '•••• 1111', boundName: 'Girokonto', candidates: [{ uid: 'u9', mask: '•••• 9999', name: 'Kreditkarte', currency: 'EUR' }] });
+    render(<Harness bank={{ enabled: true, connections: [c] }} acts={acts} />);
+    expect(screen.getByText(/bis dahin wird nichts abgeholt/)).toBeTruthy();
+    await userEvent.selectOptions(screen.getByLabelText('Welches Konto der Bank ist dieses?'), 'u9');
+    await userEvent.click(screen.getByRole('button', { name: 'Übernehmen' }));
+    expect(confirm).toHaveBeenCalled();
+    expect(acts.chooseBankConnectionAccount).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Übernehmen' }));
+    expect(acts.chooseBankConnectionAccount).toHaveBeenCalledWith('con-1', 'u9');
+    confirm.mockRestore();
+  });
+
+  it('the selection follows the bound account after a choice', async () => {
+    const two = [{ uid: 'u1', mask: '•••• 1111', name: 'Girokonto', currency: 'EUR' }, { uid: 'u2', mask: '•••• 2222', name: 'Tagesgeld', currency: 'EUR' }];
+    const acts = actions({ chooseBankConnectionAccount: vi.fn(async () => ({ ok: true as const, value: { enabled: true, connections: [connection({ accountUid: 'u2', candidates: two, boundMask: '•••• 2222', boundName: 'Tagesgeld' })] } })) });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<Harness bank={{ enabled: true, connections: [connection({ accountUid: 'u1', candidates: two })] }} acts={acts} />);
+    const select = screen.getByLabelText('Konto der Bank') as HTMLSelectElement;
+    expect(select.value).toBe('u1');
+    await userEvent.selectOptions(select, 'u2');
+    await userEvent.click(screen.getByRole('button', { name: 'Übernehmen' }));
+    expect(await screen.findByText(/Konto übernommen/)).toBeTruthy();
+    expect((screen.getByLabelText('Konto der Bank') as HTMLSelectElement).value).toBe('u2');
+    expect((screen.getByRole('button', { name: 'Übernehmen' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('disconnecting asks first and keeps the payments', async () => {

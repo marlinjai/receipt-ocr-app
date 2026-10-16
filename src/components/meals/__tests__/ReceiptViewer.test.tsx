@@ -12,7 +12,8 @@ import userEvent from '@testing-library/user-event';
 const renderPdfPage = vi.fn();
 vi.mock('@/lib/meals/pdf-render', () => ({ renderPdfPage: (...a: unknown[]) => renderPdfPage(...a) }));
 
-import ReceiptViewer, { type ViewerFile } from '../ReceiptViewer';
+import ReceiptViewer, { viewerFileKind, type ViewerFile } from '../ReceiptViewer';
+import { CII_INVOICE, UBL_INVOICE } from '@/lib/einvoice/__tests__/samples';
 
 function image(overrides: Partial<ViewerFile> = {}): ViewerFile {
   return { refId: 'ref-1', fileId: 'f-1', fileUrl: '/api/files/f-1', mimeType: 'image/jpeg', originalName: 'beleg.jpg', rotation: null, ...overrides };
@@ -423,5 +424,165 @@ describe('ReceiptViewer: the tools are easy to see and to hit', () => {
     expect(left.querySelector('path')!.getAttribute('d')).toBe(right.querySelector('path')!.getAttribute('d'));
     expect(left.style.transform).toBe('scaleX(-1)');
     expect(right.style.transform).toBe('');
+  });
+});
+
+describe('ReceiptViewer: files without a page', () => {
+  const xml = (overrides: Partial<ViewerFile> = {}) =>
+    image({ refId: 'ref-x', fileId: 'f-x', fileUrl: '/api/files/f-x', mimeType: 'application/xml', originalName: 'rechnung.xml', ...overrides });
+  const answer = (body: string, status = 200) => new Response(body, { status, headers: { 'Content-Type': 'application/xml' } });
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('tells the kinds apart by media type, and an XML file by its name too', () => {
+    expect(viewerFileKind({ mimeType: 'application/pdf', originalName: 'a.pdf' })).toBe('pdf');
+    expect(viewerFileKind({ mimeType: 'image/png', originalName: 'a.png' })).toBe('image');
+    expect(viewerFileKind({ mimeType: 'application/xml', originalName: 'a' })).toBe('xml');
+    expect(viewerFileKind({ mimeType: 'text/xml; charset=utf-8', originalName: 'a' })).toBe('xml');
+    expect(viewerFileKind({ mimeType: 'application/octet-stream', originalName: 'XRechnung.XML' })).toBe('xml');
+    expect(viewerFileKind({ mimeType: 'application/zip', originalName: 'a.zip' })).toBe('other');
+  });
+
+  it('an XRechnung shows its details as text, with no rotate or zoom tools, and opens as the file itself', async () => {
+    fetchMock.mockResolvedValue(answer(UBL_INVOICE));
+    render(<ReceiptViewer files={[xml()]} />);
+    expect(screen.getByText('Elektronische Rechnung (XML)')).toBeTruthy();
+    expect(await screen.findByText(/Rechnung \(elektronisch\)/)).toBeTruthy();
+    expect(screen.getByText(/Gesamt: 172\.50 EUR/)).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith('/api/files/f-x', expect.objectContaining({ credentials: 'same-origin' }));
+    expect(screen.queryByRole('button', { name: 'Nach rechts drehen' })).toBeNull();
+    expect(screen.queryByRole('toolbar')).toBeNull();
+    expect(screen.getByRole('link', { name: 'In neuem Tab öffnen' }).getAttribute('href')).toBe('/api/files/f-x');
+    expect(screen.queryByRole('note')).toBeNull();
+  });
+
+  it('figures that do not add up are listed beside the details', async () => {
+    fetchMock.mockResolvedValue(answer(UBL_INVOICE.replace('<cbc:TaxInclusiveAmount currencyID="EUR">172.50', '<cbc:TaxInclusiveAmount currencyID="EUR">180.00')));
+    render(<ReceiptViewer files={[xml()]} />);
+    const note = await screen.findByRole('note');
+    expect(note.textContent).toContain('Netto und Steuer ergeben nicht den Rechnungsbetrag.');
+  });
+
+  it('an XML file that is no electronic invoice says so', async () => {
+    fetchMock.mockResolvedValue(answer('<?xml version="1.0"?><Bestellung><Nummer>1</Nummer></Bestellung>'));
+    render(<ReceiptViewer files={[xml()]} />);
+    expect(await screen.findByText(/ist eine XML-Datei, aber keine lesbare elektronische Rechnung/)).toBeTruthy();
+  });
+
+  it('a file that cannot be loaded says so, and the error is logged', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue(answer('nope', 404));
+    render(<ReceiptViewer files={[xml()]} />);
+    expect((await screen.findByRole('alert')).textContent).toContain('„rechnung.xml“ konnte nicht geladen werden.');
+    expect(quiet).toHaveBeenCalled();
+    quiet.mockRestore();
+  });
+
+  it('another file without a page is offered as a file, nothing is fetched', () => {
+    render(<ReceiptViewer files={[xml({ mimeType: 'application/zip', originalName: 'archiv.zip' })]} lang="en" />);
+    expect(screen.getByText('File without a page')).toBeTruthy();
+    expect(screen.getByText(/"archiv\.zip" has no page that can be shown here/)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('the text has its own name and is busy while the invoice is read', async () => {
+    let answerNow: (r: Response) => void = () => {};
+    fetchMock.mockReturnValue(new Promise<Response>((resolve) => (answerNow = resolve)));
+    render(<ReceiptViewer files={[xml()]} />);
+    const region = screen.getByRole('region', { name: 'Elektronische Rechnung (XML)' });
+    expect(region.getAttribute('aria-busy')).toBe('true');
+    await act(async () => answerNow(answer(UBL_INVOICE)));
+    await screen.findByText(/Rechnung \(elektronisch\)/);
+    expect(region.getAttribute('aria-busy')).toBe('false');
+  });
+
+  it('closing the viewer while loading cancels the request, and nothing is set or logged after', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let signal: AbortSignal | undefined;
+    fetchMock.mockImplementation((_url: string, init: RequestInit) => {
+      signal = init.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+    });
+    const { unmount } = render(<ReceiptViewer files={[xml()]} />);
+    unmount();
+    expect(signal?.aborted).toBe(true);
+    await act(async () => {});
+    expect(quiet).not.toHaveBeenCalled();
+    quiet.mockRestore();
+  });
+
+  it('switching between two XML files shows only the second, even when the first answers late', async () => {
+    let first: (r: Response) => void = () => {};
+    fetchMock.mockImplementation((url: string) =>
+      url === '/api/files/f-x' ? new Promise<Response>((resolve) => (first = resolve)) : Promise.resolve(answer(CII_INVOICE)),
+    );
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ReceiptViewer files={[xml(), xml({ refId: 'ref-y', fileId: 'f-y', fileUrl: '/api/files/f-y', originalName: 'zweite.xml' })]} />);
+    await user.click(screen.getByRole('button', { name: 'Datei 2' }));
+    const text = await screen.findByText(/Rechnung \(elektronisch\)/);
+    const shown = text.textContent;
+    // The second file's invoice, not the first one's.
+    expect(shown).toContain('RE-2026-913');
+    expect(shown).not.toContain('BSP-2026-0042');
+    await act(async () => first(answer(UBL_INVOICE)));
+    expect(screen.queryByText(/BSP-2026-0042/)).toBeNull();
+    expect(screen.getByText(/Rechnung \(elektronisch\)/).textContent).toBe(shown);
+    expect(screen.getAllByText(/Rechnung \(elektronisch\)/)).toHaveLength(1);
+  });
+
+  it('a network error shows the failure and logs it', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    render(<ReceiptViewer files={[xml()]} />);
+    expect((await screen.findByRole('alert')).textContent).toContain('konnte nicht geladen werden');
+    expect(quiet).toHaveBeenCalled();
+    quiet.mockRestore();
+  });
+
+  it('a sign-in page instead of the file is a failed load, not "no invoice"', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue(new Response('<html>Anmelden</html>', { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }));
+    render(<ReceiptViewer files={[xml()]} />);
+    expect((await screen.findByRole('alert')).textContent).toContain('konnte nicht geladen werden');
+    expect(screen.queryByText(/keine lesbare elektronische Rechnung/)).toBeNull();
+    quiet.mockRestore();
+  });
+
+  it('when the reader itself fails, the failure is shown and logged', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.doMock('@/lib/einvoice', () => ({
+      readStructuredInvoice: () => Promise.reject(new Error('reader broke')),
+      structuredReceiptFields: () => ({ text: '', problems: [] }),
+    }));
+    try {
+      fetchMock.mockResolvedValue(answer(UBL_INVOICE));
+      render(<ReceiptViewer files={[xml()]} />);
+      expect((await screen.findByRole('alert')).textContent).toContain('konnte nicht geladen werden');
+      expect(quiet).toHaveBeenCalled();
+    } finally {
+      vi.doUnmock('@/lib/einvoice');
+      quiet.mockRestore();
+    }
+  });
+
+  it('a PDF that merely carries an .xml name is no invoice either', async () => {
+    fetchMock.mockResolvedValue(new Response(new TextEncoder().encode('%PDF-1.7\n%%EOF'), { status: 200, headers: { 'Content-Type': 'application/octet-stream' } }));
+    render(<ReceiptViewer files={[xml({ mimeType: 'application/octet-stream' })]} />);
+    expect(await screen.findByText(/keine lesbare elektronische Rechnung/)).toBeTruthy();
+  });
+
+  it('switching from an XML invoice to a picture brings the tools back', async () => {
+    fetchMock.mockResolvedValue(answer(UBL_INVOICE));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ReceiptViewer files={[xml(), image({ refId: 'ref-2', fileId: 'f-2', fileUrl: '/api/files/f-2' })]} />);
+    await screen.findByText(/Rechnung \(elektronisch\)/);
+    await user.click(screen.getByRole('button', { name: 'Datei 2' }));
+    expect(screen.getByRole('button', { name: 'Nach rechts drehen' })).toBeTruthy();
+    expect(screen.queryByText('Elektronische Rechnung (XML)')).toBeNull();
   });
 });

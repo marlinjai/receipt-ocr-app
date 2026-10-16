@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { Row, Column, SelectOption } from '@marlinjai/data-table-core';
 import type { FileReference } from '@marlinjai/data-table-core';
-import { validateReceiptFile } from '@/lib/presigned-file-adapter';
+import { ACCEPTED_RECEIPT_TYPES, validateReceiptFile } from '@/lib/presigned-file-adapter';
+import { acceptAttribute, acceptedKindsLabel } from '@/lib/receipt-file-accept';
 import ReceiptLightbox from './ReceiptLightbox';
 import ToolIcon from './ui/ToolIcon';
 import ReceiptViewer, { type ViewerFile } from './meals/ReceiptViewer';
@@ -438,7 +439,7 @@ export default function ReceiptDetailPanel({
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.png,.jpg,.jpeg"
+              accept={acceptAttribute(ACCEPTED_RECEIPT_TYPES)}
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
@@ -469,7 +470,7 @@ export default function ReceiptDetailPanel({
               </div>
             ) : (
               <p className="text-xs text-gray-500">
-                No files attached yet. Upload, paste (Cmd+V), or drop PDF, PNG, or JPEG files here.
+                No files attached yet. Upload, paste (Cmd+V), or drop {acceptedKindsLabel(ACCEPTED_RECEIPT_TYPES)} files here.
               </p>
             )}
             {files.length > 0 && (
@@ -485,7 +486,7 @@ export default function ReceiptDetailPanel({
                       aria-current={idx === previewIdx ? 'true' : undefined}
                       className={`flex min-h-10 min-w-0 flex-1 items-center gap-2 self-stretch rounded-md text-left ${FOCUS_RING}`}
                     >
-                      <span aria-hidden>{f.mimeType === 'application/pdf' ? '📄' : '🖼️'}</span>
+                      <span aria-hidden>{f.mimeType.startsWith('image/') ? '🖼️' : '📄'}</span>
                       <span className="truncate">{f.originalName}</span>
                       {f.sizeBytes ? (
                         <span className="shrink-0 text-[10px] text-gray-500">{(f.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>

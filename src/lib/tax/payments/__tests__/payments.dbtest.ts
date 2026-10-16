@@ -1496,7 +1496,53 @@ describe('an import limited to a year, and an account continued from a second so
     const onlyCancel = laterFile(later('2025-02-01', 'Kiosk Beispiel', '2.00', '4000000000102', 'Storniert'));
     expect(await importPayments(db, ctx, laterId, onlyCancel, { onlyYear: 2026 })).toMatchObject({ added: 0, cancelledEarlier: 1 });
     // The year import holds a cancellation and a later import of the list exists: it is not undone first.
-    expect(await code(deleteImportBatch(db, ctx, year.batchId))).toBe('batch_has_later_overlap');
+    expect(await code(deleteImportBatch(db, ctx, year.batchId))).toBe('batch_has_later_cancellation');
+  });
+
+  it('an import whose purchase a later list cancelled is not undone first, even on other days', async () => {
+    const { ctx, laterId } = await withLaterAccount();
+    const first = await importPayments(db, ctx, laterId, laterFile(later('2024-12-10', 'Laden Beispiel', '30.00', '4000000000201')));
+    await importPayments(db, ctx, laterId, laterFile(later('2024-12-10', 'Laden Beispiel', '30.00', '4000000000201', 'Storniert'), later('2025-03-01', 'Kiosk Beispiel', '4.00', '4000000000202')), { onlyYear: 2025 });
+    expect(await code(deleteImportBatch(db, ctx, first.batchId))).toBe('batch_has_later_cancellation');
+  });
+
+  it('a day the first source exported only in part is filled by the second: what is beyond the stored movements is added', async () => {
+    const { ctx, accountId } = await workspace();
+    // The export was taken at noon on 30 June: it has the morning's 20.00, not the afternoon's 7.00.
+    await importPayments(db, ctx, accountId, EXPORT);
+    const list = interfaceList([
+      ['2025-06-30', 'Werkzeug Beispiel GmbH', '-20'],
+      ['2025-06-30', 'Laden Beispiel', '-7'],
+      ['2025-07-02', 'Werkzeug Beispiel GmbH', '-30'],
+    ]);
+    expect(await importPayments(db, ctx, accountId, list)).toMatchObject({ added: 2, skipped: { covered_by_other_source: 1 } });
+    expect(await days(accountId)).toEqual(['2025-01-10 -1000', '2025-06-30 -2000', '2025-06-30 -700', '2025-07-02 -3000']);
+    // Read again: nothing doubled.
+    expect(await importPayments(db, ctx, accountId, list + ' ')).toMatchObject({ added: 0 });
+    expect(await db.taxPayment.count({ where: { accountId } })).toBe(4);
+  });
+
+  it('limited to a year whose rows another source holds: the refusal says so, not that the year is empty', async () => {
+    const { ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, EXPORT);
+    const list = interfaceList([['2025-01-10', 'Werkzeug Beispiel GmbH', '-10'], ['2026-02-01', 'Laden Beispiel', '-3']]);
+    expect(await code(importPayments(db, ctx, accountId, list, { onlyYear: 2025 }))).toBe('nothing_uncovered');
+    expect(await code(importPayments(db, ctx, accountId, list, { onlyYear: 2024 }))).toBe('nothing_in_year');
+  });
+
+  it('an import of one source and the undo of another at the same moment leave no day empty', async () => {
+    const { ctx, accountId } = await workspace();
+    const exported = await importPayments(db, ctx, accountId, EXPORT);
+    const results = await Promise.allSettled([importPayments(db, ctx, accountId, LIST, { onlyYear: 2025 }), deleteImportBatch(db, ctx, exported.batchId)]);
+    const undone = results[1].status === 'fulfilled';
+    if (undone) {
+      // The undo went first: the list then holds every day of 2025 itself.
+      expect(await days(accountId)).toEqual(['2025-06-30 -2000', '2025-07-02 -3000', '2025-12-31 -4000']);
+    } else {
+      // The import went first: the export stays, and so do its days.
+      expect((results[1] as PromiseRejectedResult).reason).toMatchObject({ code: 'batch_has_later_source' });
+      expect(await days(accountId)).toEqual(['2025-01-10 -1000', '2025-06-30 -2000', '2025-07-02 -3000', '2025-12-31 -4000']);
+    }
   });
 });
 

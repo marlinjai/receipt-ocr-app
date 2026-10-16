@@ -216,9 +216,11 @@ export function financeActionMessage(error: string, detail?: string): string {
         case 'nothing_in_year':
           return 'In dieser Datei liegt keine Zahlung aus dem gewählten Jahr. Es wurde nichts eingelesen.';
         case 'nothing_uncovered':
-          return 'Alle Tage dieser Datei deckt schon eine andere Quelle dieses Kontos ab. Es wurde nichts eingelesen.';
+          return 'Alle Zahlungen dieser Datei hat schon eine andere Quelle dieses Kontos. Es wurde nichts eingelesen. Soll diese Datei die Tage übernehmen, bitte zuerst den Import der anderen Quelle rückgängig machen.';
         case 'nothing_new':
           return 'Die Zahlungen dieses Jahres aus der Datei sind alle schon eingelesen. Es wurde nichts angelegt.';
+        case 'batch_has_later_cancellation':
+          return 'Ein später eingelesener Import betrifft stornierte Käufe dieses Imports. Bitte zuerst den späteren Import rückgängig machen.';
         case 'batch_has_later_source':
           return 'Später wurde dieses Konto aus einer anderen Quelle fortgesetzt; sie hat die Tage dieses Imports ausgelassen. Bitte zuerst den späteren Import rückgängig machen, sonst fehlen diese Tage.';
         case 'batch_has_later_overlap':

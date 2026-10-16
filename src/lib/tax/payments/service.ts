@@ -4,7 +4,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { vendorKey } from '../decisions';
 import { resolveFunding, type Funding } from './funding';
 import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from './match';
-import { batchCoverage, covers, coveredByOtherSources, overlaps } from './coverage';
+import { batchCoverage, beyondStored, covers, coveredByOtherSources, orderBatches, overlaps } from './coverage';
 import { parsePaymentFile, referenceHash } from './parse';
 import { amountQuery } from './search';
 import { PAYMENT_KINDS, type NormalizedPayment, type PaymentFormat, type PaymentKind } from './types';
@@ -35,10 +35,12 @@ export type PaymentServiceErrorCode =
   | 'nothing_in_year'
   /** Every day of the file is held by another source of the account already, and it cancels nothing. */
   | 'nothing_uncovered'
-  /** Limited to a year, the file brings nothing that is not stored already and cancels nothing. */
+  /** Limited to a year, the file adds, recognizes and cancels nothing. */
   | 'nothing_new'
   /** A later import from another source of the account relied on this one's days: undo that one first. */
   | 'batch_has_later_source'
+  /** A later import cancelled purchases of this one, or this one cancelled purchases a later import may report too. */
+  | 'batch_has_later_cancellation'
   | 'batch_has_later_overlap'
   | 'batch_not_found'
   | 'payment_not_found'
@@ -173,7 +175,8 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
   // automatic links: a failure leaves no batch behind that would refuse a retry.
   const { batch, added, autoLinked, adopted, cancelledEarlier, releasedLinks, parsed } = await db.$transaction(async (tx) => {
     // One import per account at a time: what other sources hold is read and judged without another import slipping in.
-    await tx.$queryRaw`SELECT id FROM tax_accounts WHERE id = ${accountId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM tax_accounts WHERE id = ${accountId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
+    if (locked.length === 0) throw new PaymentServiceError('account_not_found');
     if (await tx.taxImportBatch.findFirst({ where: { accountId, contentHash } })) throw new PaymentServiceError('file_already_imported');
     const batches = await tx.taxImportBatch.findMany({ where: { accountId }, select: { id: true, format: true, firstDay: true, lastDay: true, createdAt: true } });
     // A bank account may be continued from another bank source; a payment service's list holds other
@@ -181,20 +184,26 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     if (batches.some((b) => b.format !== file.format && !(BANK_FORMATS.includes(b.format) && BANK_FORMATS.includes(file.format)))) throw new PaymentServiceError('format_mismatch');
     const otherSources = coveredByOtherSources(batches, file.format);
     const skipped = { ...file.skipped };
-    // Whole days only: identical movements of one day are numbered in order (see `parse.ts`), so a day is never split.
-    const reasonToLeaveOut = (day: string): string | null => {
-      if (onlyYear !== null && !day.startsWith(`${onlyYear}-`)) return 'other_year';
-      if (covers(otherSources, day)) return 'covered_by_other_source';
-      return null;
-    };
-    const kept = file.payments.filter((p) => {
-      const reason = reasonToLeaveOut(p.bookingDay);
-      if (reason !== null) skipped[reason] = (skipped[reason] ?? 0) + 1;
-      return reason === null;
+    const inYear = file.payments.filter((p) => onlyYear === null || p.bookingDay.startsWith(`${onlyYear}-`));
+    if (inYear.length < file.payments.length) skipped.other_year = file.payments.length - inYear.length;
+    // Days another source holds are its own. Only on the first and the last of its days, which an export taken in
+    // the middle of a day may hold in part, what goes beyond its stored movements is new. The identity of a row
+    // does not change by leaving others out: identical movements are numbered over the whole file.
+    const onCovered = inYear.filter((p) => covers(otherSources, p.bookingDay));
+    const edges = new Set(otherSources.flatMap((i) => [i.from, i.to]));
+    const onEdge = onCovered.filter((p) => edges.has(p.bookingDay));
+    const stored = onEdge.length === 0 ? [] : await tx.taxPayment.findMany({
+      where: { accountId, bookingDay: { in: [...new Set(onEdge.map((p) => p.bookingDay))] }, batch: { format: { not: file.format } } },
+      select: { bookingDay: true, amountCents: true },
     });
+    const { beyond } = beyondStored(onEdge, stored);
+    const beyondRows = new Set(beyond);
+    const leftOut = new Set(onCovered.filter((p) => !beyondRows.has(p)));
+    if (leftOut.size > 0) skipped.covered_by_other_source = leftOut.size;
+    const kept = inYear.filter((p) => !leftOut.has(p));
     // A file that keeps nothing still counts when it cancels purchases: those apply to any year and any day.
     if (kept.length === 0 && file.payments.length > 0 && file.cancelled.length === 0) {
-      throw new PaymentServiceError((skipped.other_year ?? 0) > 0 ? 'nothing_in_year' : 'nothing_uncovered');
+      throw new PaymentServiceError(inYear.length === 0 ? 'nothing_in_year' : 'nothing_uncovered');
     }
     const days = kept.map((p) => p.bookingDay).sort();
     const parsed = { ...file, payments: kept, skipped, firstDay: days[0] ?? null, lastDay: days[days.length - 1] ?? null };
@@ -203,10 +212,11 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
       (await tx.taxPayment.findMany({ where: { accountId, sourceHash: { in: parsed.payments.map((p) => p.sourceHash) } }, select: { sourceHash: true } })).map((p) => p.sourceHash),
     );
     const fresh = parsed.payments.filter((p) => !existing.has(p.sourceHash));
-    // A year of a file already read whole adds nothing; its empty import would only stand in the way of undoing.
-    if (onlyYear !== null && fresh.length === 0 && adopted === 0 && parsed.cancelled.length === 0) throw new PaymentServiceError('nothing_new');
+    // After every import before it, also when they share a millisecond: the order of imports decides which source holds a day.
+    const newest = batches.reduce((max, b) => Math.max(max, b.createdAt.getTime()), 0);
     const created = await tx.taxImportBatch.create({
       data: {
+        createdAt: new Date(Math.max(Date.now(), newest + 1)),
         authWorkspaceId: ctx.workspaceId,
         authTenantId: ctx.tenantId,
         accountId,
@@ -252,6 +262,9 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
       releasedLinks = await tx.taxPaymentLink.count({ where: { payment: where } });
       cancelledEarlier = (await tx.taxPayment.updateMany({ where, data: { cancelledByBatchId: created.id } })).count;
     }
+    // A year of a file that adds, recognizes and cancels nothing: its empty import would only stand in the way of
+    // undoing. Undone with the rest. (A whole file that brings nothing new is still recorded, as before.)
+    if (onlyYear !== null && inserted === 0 && adopted === 0 && cancelledEarlier === 0) throw new PaymentServiceError('nothing_new');
     return { batch: created, added: inserted, autoLinked: await linkByReference(tx, ctx, created.id), adopted, cancelledEarlier, releasedLinks, parsed };
     // A year of payments on a busy server takes longer than the five seconds a transaction gets by default.
   }, { maxWait: 20_000, timeout: 120_000 });
@@ -392,22 +405,28 @@ export async function setAccountPrivate(db: PrismaClient, ctx: PaymentContext, a
 
 /** Undo an import: the batch goes, with the payments it added and their links. */
 export async function deleteImportBatch(db: PrismaClient, ctx: PaymentContext, batchId: string): Promise<void> {
-  const batch = await db.taxImportBatch.findFirst({ where: { id: batchId, authWorkspaceId: ctx.workspaceId } });
-  if (!batch) throw new PaymentServiceError('batch_not_found');
-  // A payment belongs to the file that brought it first. A later file covering
-  // the same days relied on those payments being there, so undoing this import
-  // would silently take days out of that later file. Imports are undone newest first.
-  const batches = await db.taxImportBatch.findMany({ where: { accountId: batch.accountId }, select: { id: true, format: true, firstDay: true, lastDay: true, createdAt: true } });
-  const later = batches.filter((b) => b.createdAt > batch.createdAt);
-  // Another source read later left out the days this one held; undoing this one would leave them empty.
-  if (later.some((b) => b.format !== batch.format)) throw new PaymentServiceError('batch_has_later_source');
-  const coverage = batchCoverage(batches);
-  const own = coverage.get(batch.id) ?? [];
-  if (later.some((b) => overlaps(coverage.get(b.id) ?? [], own))) throw new PaymentServiceError('batch_has_later_overlap');
-  // This import marked purchases cancelled: a later file of the same list may report the same, and undoing
-  // this one would make them count again although that file still says otherwise.
-  if (later.length > 0 && (await db.taxPayment.count({ where: { cancelledByBatchId: batch.id } })) > 0) throw new PaymentServiceError('batch_has_later_overlap');
-  await db.taxImportBatch.deleteMany({ where: { id: batchId, authWorkspaceId: ctx.workspaceId } });
+  await db.$transaction(async (tx) => {
+    const batch = await tx.taxImportBatch.findFirst({ where: { id: batchId, authWorkspaceId: ctx.workspaceId } });
+    if (!batch) throw new PaymentServiceError('batch_not_found');
+    // The same lock an import takes: no import of another source reads this one's days while it goes.
+    await tx.$queryRaw`SELECT id FROM tax_accounts WHERE id = ${batch.accountId} FOR UPDATE`;
+    const batches = orderBatches(await tx.taxImportBatch.findMany({ where: { accountId: batch.accountId }, select: { id: true, format: true, firstDay: true, lastDay: true, createdAt: true } }));
+    const later = batches.slice(batches.findIndex((b) => b.id === batch.id) + 1);
+    // Another source read later left out the days this one held; undoing this one would leave them empty.
+    if (later.some((b) => b.format !== batch.format)) throw new PaymentServiceError('batch_has_later_source');
+    // A payment belongs to the file that brought it first. A later file covering the same days relied on those
+    // payments being there, so undoing this import would silently take days out of that later file.
+    const coverage = batchCoverage(batches);
+    const own = coverage.get(batch.id) ?? [];
+    if (later.some((b) => overlaps(coverage.get(b.id) ?? [], own))) throw new PaymentServiceError('batch_has_later_overlap');
+    // A later import cancelled a purchase this one brought: undone and read again, the purchase would count as paid
+    // although that list still says cancelled. And this import cancelled purchases a later file of the list may
+    // report too: undone, they would count again.
+    const cancelledHere = await tx.taxPayment.count({ where: { batchId: batch.id, cancelledByBatchId: { not: null } } });
+    const cancelledByThis = later.length > 0 ? await tx.taxPayment.count({ where: { cancelledByBatchId: batch.id } }) : 0;
+    if (cancelledHere > 0 || cancelledByThis > 0) throw new PaymentServiceError('batch_has_later_cancellation');
+    await tx.taxImportBatch.deleteMany({ where: { id: batchId, authWorkspaceId: ctx.workspaceId } });
+  }, { maxWait: 20_000, timeout: 60_000 });
 }
 
 /** Say once how a counterparty is treated; `null` takes the answer back. */

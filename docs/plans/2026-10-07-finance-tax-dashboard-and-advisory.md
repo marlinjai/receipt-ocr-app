@@ -1187,20 +1187,24 @@ Two more complaints of the import of 2026-10-11, decided without asking, say so 
   only, so the numbering of identical movements of one day never splits. Only bank sources
   continue each other (bank export, bank interface): a payment service's list holds other
   movements than a bank and still never shares an account (`format_mismatch`). One import per
-  account at a time (the account row is locked), so two sources read at once store a day once.
-  A file wholly on covered days is refused (`nothing_uncovered`) unless it cancels purchases.
-  An import that another source continued cannot be undone before that one
-  (`batch_has_later_source`), so no day is left empty without a word. Known limit: a day the
-  first source exported only in part (an export taken at noon) keeps its part; undoing both
-  imports in order and reading them again the other way round fills it.
+  account at a time (the account row is locked, by imports and by undoing alike), and every
+  import is stamped after all imports before it, so their order is never a tie. On the first
+  and the last day another source holds, which an export taken in the middle of a day may hold
+  in part, a movement beyond what that source stored there (per day and amount) is added; days
+  inside its range stay its own. A file wholly on covered days is refused (`nothing_uncovered`,
+  with the way out: undo the other source first) unless it cancels purchases. An import that
+  another source continued cannot be undone before that one (`batch_has_later_source`), so no
+  day is left empty without a word.
 - **An import can be limited to a year** ("Nur Zahlungen aus 2025"). The other rows are counted
   as "außerhalb des gewählten Jahres" and left out. Such an import is a different import from
   the whole file: the whole file, or another year of it, can be read later and adds only what
   is new. A cancellation the file reports still applies to a purchase of any year, also when
-  nothing of the year is in the file; an import that marked cancellations is not undone while a
-  later import of the same list exists, so a cancellation the later file repeats never comes
-  undone. A year that brings nothing new is refused (`nothing_new`), and a year with no row at
-  all (`nothing_in_year`). The counts of rows left out are over the whole file and say so.
+  nothing of the year is in the file. An import that marked cancellations is not undone while a
+  later import exists, and an import whose purchase a later list cancelled is not undone first
+  either (`batch_has_later_cancellation`), so a cancellation never comes undone without the
+  file that reported it. A year that adds, recognizes and cancels nothing is refused
+  (`nothing_new`; a whole file that brings nothing new is still recorded, as before), and a
+  year with no row at all (`nothing_in_year`). The counts of rows left out are over the whole file and say so.
   Nothing new is stored (no migration): the year is part of the import's fingerprint.
 
 ## Reality after the ten-day rule (2026-10-10)

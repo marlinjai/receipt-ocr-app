@@ -263,7 +263,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                   lastImport.releasedLinks > 0 ? `; ${lastImport.releasedLinks} ${lastImport.releasedLinks === 1 ? 'Zuordnung wurde' : 'Zuordnungen wurden'} gelöst, siehe „Stornierte Käufe“` : ''
                 }.`}
               {Object.keys(lastImport.notices).length > 0 &&
-                ` Bitte ansehen: ${Object.entries(lastImport.notices)
+                ` Bitte ansehen${lastImport.onlyYear !== null ? ' (gezählt über die ganze Datei)' : ''}: ${Object.entries(lastImport.notices)
                   .map(([reason, count]) => `${count} ${NOTICE_LABELS[reason] ?? reason}`)
                   .join(', ')}.`}
               {lastImport.unknownStatuses.length > 0 && ` Unbekannte Statusangaben: ${lastImport.unknownStatuses.map((w) => `„${w}“`).join(', ')}.`}

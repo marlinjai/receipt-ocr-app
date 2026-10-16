@@ -644,3 +644,37 @@ describe('recomputeFxRates', () => {
     await expect(recomputeFxRates('gestern', 'heute')).rejects.toThrow(/YYYY-MM-DD/);
   });
 });
+
+describe('the item: one subscription keeps one wording', () => {
+  const INVOICE = 'Example Video Tools\nInvoice\nInvoice date: 5 Jan 2026\nPlan monthly\nTotal $4.99';
+  const ANSWER = { ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', vendor: 'Example Video Tools', gross: 4.99, currency: 'USD', date: '2026-01-05T00:00:00.000Z', meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null, place: null } };
+
+  it('the model is shown the wordings the vendor already has, and an answer in other words takes the stored one', async () => {
+    const own = await createWorkspace();
+    await use(own);
+    await own.addReceipt({ Vendor: 'Example Video Tools', Item: 'Example Video Abo' } as Parameters<TestWorkspace['addReceipt']>[0]);
+    await own.addReceipt({ Vendor: 'Example Video Tools Inc.', Item: 'Example Video Abo' } as Parameters<TestWorkspace['addReceipt']>[0]);
+    await own.addReceipt({ Vendor: 'Example Video Tools', Item: 'Kanal-Paket' } as Parameters<TestWorkspace['addReceipt']>[0]);
+    // Another vendor's items are never shown.
+    await own.addReceipt({ Vendor: 'Other Shop', Item: 'Example Video Abo Pro' } as Parameters<TestWorkspace['addReceipt']>[0]);
+
+    classify.mockResolvedValue({ ...ANSWER, item: 'Example Video Mitgliedschaft' });
+    const result = await upload(file(80), ocr(INVOICE));
+    expect(classify.mock.calls[0][0].knownItems).toEqual(['Example Video Abo', 'Kanal-Paket']);
+    expect(await cellOf(own, result.rowId, 'Item')).toBe('Example Video Abo');
+
+    // Something else bought from the same vendor is worded anew.
+    classify.mockResolvedValue({ ...ANSWER, item: 'Speicher-Erweiterung' });
+    const other = await upload(file(81), ocr(INVOICE.replace('4.99', '9.99')));
+    expect(await cellOf(own, other.rowId, 'Item')).toBe('Speicher-Erweiterung');
+  });
+
+  it('a vendor without earlier receipts reads as before', async () => {
+    const own = await createWorkspace();
+    await use(own);
+    classify.mockResolvedValue({ ...ANSWER, item: 'Example Video Abo' });
+    const result = await upload(file(82), ocr(INVOICE));
+    expect(classify.mock.calls[0][0].knownItems).toEqual([]);
+    expect(await cellOf(own, result.rowId, 'Item')).toBe('Example Video Abo');
+  });
+});

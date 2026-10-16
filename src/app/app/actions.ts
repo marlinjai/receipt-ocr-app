@@ -35,6 +35,8 @@ import { requireReceiptsSession, requireRowAccess, requireUploadWorkspace } from
 import { sessionWorkspaceId, tenantIdForWorkspace } from '@/lib/auth-workspace';
 import type { CellValue } from '@marlinjai/data-table-core';
 import { sameVendor } from '@/lib/extraction/vendor';
+import { pickKnownItem } from '@/lib/extraction/known-items';
+import { knownItemsOfVendor } from '@/lib/receipt-known-items';
 import { ITEM_COLUMN, receiptName } from '@/lib/receipt-name';
 import { nameFromCells } from '@/lib/receipt-name-cells';
 import type { OcrResult } from '@/lib/ocr-types';
@@ -65,9 +67,11 @@ async function classifyReceipt(
   extracted: ReturnType<typeof extractReceiptFields>,
   fullText: string,
   page: ReceiptPage | null,
+  knownItems: readonly string[],
 ): Promise<ModelReading | null> {
   try {
     const result = await classifyReceiptText({
+      knownItems,
       vendor: extracted.vendor,
       gross: extracted.gross,
       date: extracted.date,
@@ -220,6 +224,8 @@ async function readReceipt(
   file: FileData,
   ocrResult: OcrResult | null,
   rules: readonly ClassificationRule[],
+  /** The row read again, if any: its vendor names the vendor's items, and its own item is no earlier one. */
+  stored?: { rowId: string; vendor: string | null },
 ): Promise<ReadReceipt> {
   const fullText = ocrResult?.fullText ?? '';
   const extracted = ocrResult && fullText.trim() ? extractReceiptFields(ocrResult) : null;
@@ -227,7 +233,10 @@ async function readReceipt(
   // is within the limits. Without recognized text nothing could check its
   // answer, so it is not asked at all.
   const page = extracted && file.id ? ((await loadReceiptPage(file.id)).page ?? null) : null;
-  const ai = extracted ? await classifyReceipt(extracted, fullText, page) : null;
+  // What the vendor's earlier receipts name as bought: the model reuses a wording that fits.
+  const lookupVendor = stored?.vendor?.trim() || extracted?.vendor || null;
+  const knownItems = extracted ? await knownItemsOfVendor(adapter, tableId, lookupVendor, stored?.rowId) : [];
+  const ai = extracted ? await classifyReceipt(extracted, fullText, page, knownItems) : null;
   const classificationFailed = extracted !== null && ai === null;
   // The two readings, settled: what the text proves stands, what the model
   // read from the page is taken only where the text prints it.
@@ -247,7 +256,9 @@ async function readReceipt(
   const finalTaxRate = settled?.taxRate ?? 19;
   const finalNet = settled?.net ?? null;
   // A meal is named by its restaurant; what was eaten belongs to the meal register.
-  const item = finalCategory === MEAL_CATEGORY ? null : (ai?.item ?? null);
+  // An earlier wording of the same item is taken over as it is stored, also where the vendor settled differs from the one looked up.
+  const settledKnown = vendor && !(lookupVendor && sameVendor(vendor, lookupVendor)) ? await knownItemsOfVendor(adapter, tableId, vendor, stored?.rowId) : knownItems;
+  const item = finalCategory === MEAL_CATEGORY ? null : pickKnownItem(ai?.item ?? null, settledKnown);
 
   // Multi-currency: detected currency, historical FX rate (looked up live, on save).
   const currency = settled?.currency ?? 'EUR';
@@ -442,7 +453,8 @@ export async function retakeReceipt(
   if (isGroupRow(row, columns)) throw new Error('Receipt not found');
   await requireOwnFile(file.id, workspaceId);
 
-  const read = await readReceipt(adapter, tableId, file, ocrResult, await rulesOf(workspaceId));
+  // A retake replaces a photo that was read badly, its vendor with it: the items are looked up by the vendor read now.
+  const read = await readReceipt(adapter, tableId, file, ocrResult, await rulesOf(workspaceId), { rowId: row.id, vendor: null });
 
   // Date, amount, category and the like are re-read: that is what a retake is
   // for. Meal facts the user (or an earlier reading) already filled in stay,
@@ -550,6 +562,8 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
       { id: stored.fileId, originalName: stored.originalName, fileType: stored.mimeType },
       { fullText, blocks: [], confidence: Number.isFinite(confidence) ? confidence / 100 : 0 },
       await rulesOf(workspaceId),
+      // The vendor the row holds names the items its earlier receipts carry.
+      { rowId: row.id, vendor: typeof cell('Vendor') === 'string' ? (cell('Vendor') as string) : null },
     );
 
     if (read.reviewFlags.includes('not_classified')) return { ok: false, error: 'model_unavailable' };

@@ -109,7 +109,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'enable_banking_json', total: 4, added: 4, alreadyThere: 0, skipped: { other_year: 454, covered_by_other_source: 120 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], onlyYear: 2026, firstDay: '2026-07-01', lastDay: '2026-07-04' }}
+        lastImport={{ batchId: 'b', format: 'enable_banking_json', total: 4, added: 4, alreadyThere: 0, skipped: { other_year: 454, covered_by_other_source: 120 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], unknownMethods: [], detailFilled: 0, onlyYear: 2026, firstDay: '2026-07-01', lastDay: '2026-07-04' }}
       />,
     );
     const status = screen.getByRole('status').textContent;

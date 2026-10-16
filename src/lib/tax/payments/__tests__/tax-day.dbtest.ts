@@ -201,6 +201,19 @@ describe('the day a pay-later purchase counts on: forward, change an earlier inp
     expect((await db.taxPayment.findUniqueOrThrow({ where: { id: checkoutId } })).sourceDetail).toMatchObject({ method: 'Term Loan' });
   });
 
+  it('re-entry: the same list limited to one year fills in the details of every year, and is no empty import', async () => {
+    const { ws, ctx, laterId, lampRow } = await setUp();
+    await db.taxPayment.updateMany({ where: { accountId: laterId }, data: { sourceDetail: Prisma.DbNull } });
+    // Every purchase of 2025 is stored already: the import adds nothing, yet it is kept because it filled in the
+    // details, of 2026 too.
+    const result = await importPayments(db, ctx, laterId, LIST, { onlyYear: 2025 });
+    expect(result).toMatchObject({ added: 0, alreadyThere: 2, detailFilled: 3, onlyYear: 2025 });
+    expect(await db.taxPayment.count({ where: { accountId: laterId, sourceDetail: { equals: Prisma.DbNull } } })).toBe(0);
+    expect(await item(ws.workspaceId, 2026, lampRow)).toMatchObject({ date: '2026-01-08' });
+    // Once filled, the next year has nothing to do and is refused as empty, as before.
+    expect(await code(importPayments(db, ctx, laterId, LIST, { onlyYear: 2026 }))).toBe('nothing_new');
+  });
+
   it('re-entry: an unknown payment method is reported after the import and read as checkout', async () => {
     const ws = await createWorkspace();
     const ctx: TaxContext = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };

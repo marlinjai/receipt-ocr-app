@@ -748,7 +748,7 @@ function PayLaterDays({ days, year, busy, onPayMethod }: { days: StatementView['
         <p className="ui-note mt-3 text-xs">
           {days.withoutDetail} {days.withoutDetail === 1 ? 'Kauf wurde' : 'Käufe wurden'} eingelesen, bevor die Zahlungsart
           aufbewahrt wurde, und {days.withoutDetail === 1 ? 'zählt' : 'zählen'} vorerst am Kauftag. Die Liste des Dienstes
-          einmal neu einlesen (mit „Nur Zahlungen aus einem Jahr“ oder nach dem Rückgängigmachen des Imports): dann wird die
+          einmal neu einlesen (mit „Nur Zahlungen aus {year}“ oder nach dem Rückgängigmachen des Imports): dann wird die
           Zahlungsart ergänzt, sonst ändert sich nichts.
         </p>
       )}

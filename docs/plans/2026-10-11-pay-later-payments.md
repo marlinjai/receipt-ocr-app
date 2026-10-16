@@ -449,7 +449,9 @@ change or add to the list above.
 36. **Reading the list again fills in the details only.** When an import meets a stored purchase
     of the same identity without details, it writes the details and nothing else (one statement
     per 5,000 rows); details already there are never overwritten. The import says how many it
-    filled ("Bei n schon vorhandenen Käufen wurde die Zahlungsart ergänzt").
+    filled ("Bei n schon vorhandenen Käufen wurde die Zahlungsart ergänzt"). An import limited
+    to one year fills in the purchases of every year of the file, and counts as not empty when
+    it filled something in.
 37. **How a collection is found, in this order:** a bank line naming the purchase's own number
     settles that purchase (an invoice paid by transfer; 14 lines of the real bank files carry
     such a number); a bank line naming the statement number settles the statement; otherwise
@@ -557,11 +559,13 @@ Where the time went, and what was done:
   on an invented line. 14 Tomorrow lines carry a purchase's own number, which the first rule uses.
 - **What the owner does once after the deploy:** read the pay-later list again into the same
   account, so the purchases already stored get their payment details. The identical file is
-  refused as already imported, so either import it with the option "Nur Zahlungen aus <Jahr>"
-  (pull request `feat/payments-import-scope`, which makes it a different import) or undo the
-  earlier import of the list and import it again (undoing drops the links made on its purchases,
-  so the first way is the better one). Until then every stored purchase counts on its purchase
-  day as before, and the tab says how many are waiting.
+  refused as already imported, so import it with the option "Nur Zahlungen aus 2025" (pull
+  request #141, the import limited to one year, which makes it a different import): any year in
+  which the list has purchases will do, because the details are filled in for the purchases of
+  every year of the file, and such an import is kept even though it adds nothing. Undoing the
+  earlier import and importing again also works but drops the links made on its purchases, so
+  the year option is the better way. Until then every stored purchase counts on its purchase day
+  as before, and the tab says how many are waiting.
 - Then look at "Tag der Zahlung bei Später-bezahlen-Käufen" for 2025: the December 2025
   purchases on invoice now count in 2026, those of December 2024 in 2025; a card purchase among
   them whose text did not show the card is put back with "Mit der Karte bezahlt".

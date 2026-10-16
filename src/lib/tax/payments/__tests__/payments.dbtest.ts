@@ -186,7 +186,8 @@ describe('counterparties, open payments and links', () => {
     expect(result.autoLinked).toBe(0);
     await setCounterpartyTreatment(db, ctx, { counterparty: 'Werkzeug Beispiel GmbH', treatment: 'business' });
     const open = (await loadStatement(db, ws.workspaceId, 2026)).payments.open.find((p) => p.check === 'payment_without_document')!;
-    expect(open.proposals).toEqual([{ target: 'receipt', targetId: rowId, label: 'Werkzeugkauf', strength: 'amount_and_date' }]);
+    // The payment names the receipt's vendor: a candidate of amount, date and vendor, still never linked by itself.
+    expect(open.proposals).toEqual([{ target: 'receipt', targetId: rowId, label: 'Werkzeugkauf', strength: 'amount_date_vendor' }]);
   });
 
   it('a refund linked to the same receipt is taken off; a fully refunded purchase is no expense', async () => {

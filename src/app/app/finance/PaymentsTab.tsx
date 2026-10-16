@@ -49,6 +49,7 @@ const TREATMENT_LABELS: Record<CounterpartyTreatment, string> = { business: 'Bet
 const STRENGTH_LABELS: Record<MatchStrength | RefundStrength, string> = {
   reference: 'Nummer im Verwendungszweck, Betrag passt',
   reference_amount_differs: 'Nummer im Verwendungszweck, Betrag weicht ab',
+  amount_date_vendor: 'Betrag, Datum und Lieferant passen',
   amount_and_date: 'nur Betrag und Datum passen',
   refund_reference: 'Erstattung: dieselbe Bestellnummer wie der Kauf',
   refund_full: 'Erstattung des ganzen Kaufs',

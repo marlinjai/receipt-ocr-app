@@ -1109,14 +1109,17 @@ function buildPaymentsView(
   const linkedRows = new Set(loaded.payments.flatMap((p) => p.links.map((l) => l.rowId).filter((id): id is string => id !== null)));
   const receiptDocuments = resolved
     .filter((r) => !r.isMeal && !linkedRows.has(r.item.id) && r.item.amountCents !== null && r.item.date !== null && r.item.date.startsWith(`${year}-`))
-    .map((r) => ({ id: r.item.id, number: null, day: r.item.date, openCents: r.item.amountCents as number }));
+    .map((r) => ({ id: r.item.id, number: null, day: r.item.date, openCents: r.item.amountCents as number, vendorKey: r.vendorKey }));
   // Candidates for linking by hand: also last year's receipts, and receipts that
   // already have a payment (a refund goes on the receipt its purchase is linked to).
   const receiptTargets = resolved
     .filter((r) => !r.isMeal && (r.item.date === null || r.item.date.startsWith(`${year}-`) || r.item.date.startsWith(`${year - 1}-`)))
     .map((r) => ({ id: r.item.id, label: r.item.label, day: r.item.date, amountCents: r.item.amountCents, linkedCents: linkedCentsByRow.get(r.item.id) ?? 0 }))
     .sort((a, b) => ((a.day ?? '') < (b.day ?? '') ? 1 : -1));
-  const spendProposals = proposeMatches(needing.filter((p) => p.kind === 'spend').map(asMatch), receiptDocuments);
+  const spendProposals = proposeMatches(
+    needing.filter((p) => p.kind === 'spend').map((p) => ({ ...asMatch(p), counterpartyKey: p.counterpartyKey, referenceKey: vendorKey(p.reference) ?? '' })),
+    receiptDocuments,
+  );
 
   // Receipts on an estimated amount. Every receipt without a link takes part
   // (a payment that also fits a euro receipt is not unambiguous), and every

@@ -421,15 +421,16 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
     typeof columnId !== 'string' ||
     (value !== null && typeof value !== 'string')
   ) {
-    throw new ReceiptsAuthError(404);
+    throw new Error('Set field: invalid input.');
   }
   await requireColumnAccess(columnId, 'receipts.row.write');
   const ids = [...new Set(rowIds)];
+  const everyRow = (reason: BulkSetFailure): BulkSetOutcome => ({ done: [], failed: ids.map((rowId) => ({ rowId, reason })) });
   const adapter = getAdapter();
   const column = await adapter.getColumn(columnId);
-  if (!column) throw new ReceiptsAuthError(404);
+  // The column was deleted between the access check and here: nothing can be set, and a retry would not help.
+  if (!column) return everyRow('not_writable');
   const { tableId } = column;
-  const everyRow = (reason: BulkSetFailure): BulkSetOutcome => ({ done: [], failed: ids.map((rowId) => ({ rowId, reason })) });
   // The bar sets select columns only; the value is an option of that column, or empty.
   if (column.type !== 'select') return everyRow('not_writable');
   if (value !== null && !(await adapter.getSelectOptions(columnId)).some((o) => o.id === value)) return everyRow('invalid_value');
@@ -448,8 +449,10 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
       written.push(rowId);
     } catch (error) {
       // A row deleted meanwhile is not found; a cell the row may not take (the kind, an amount on a group) is not writable.
+      // (The adapter says a row deleted between its two reads with a plain "Row not found".)
       const code = error instanceof GroupError ? error.code : null;
-      failed.push({ rowId, reason: code === 'row_not_found' ? 'not_found' : code === 'not_writable' ? 'not_writable' : 'failed' });
+      const gone = code === 'row_not_found' || (error instanceof Error && error.message === 'Row not found');
+      failed.push({ rowId, reason: gone ? 'not_found' : code === 'not_writable' ? 'not_writable' : 'failed' });
     }
   }
 

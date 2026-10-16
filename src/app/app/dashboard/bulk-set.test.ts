@@ -3,9 +3,9 @@ import { BULK_SET_PART, joinOutcomes, outcomeWording, partsOf, storedAs, unconfi
 
 describe('a selection in parts', () => {
   it('is cut into parts of at most the part size, each row once, in order', () => {
-    const ids = Array.from({ length: 250 }, (_, i) => `r${i}`);
+    const ids = Array.from({ length: 2 * BULK_SET_PART + 7 }, (_, i) => `r${i}`);
     const parts = partsOf([...ids, 'r0', 'r1']);
-    expect(parts.map((p) => p.length)).toEqual([BULK_SET_PART, BULK_SET_PART, 50]);
+    expect(parts.map((p) => p.length)).toEqual([BULK_SET_PART, BULK_SET_PART, 7]);
     expect(parts.flat()).toEqual(ids);
   });
 

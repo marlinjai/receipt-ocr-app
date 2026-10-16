@@ -3,15 +3,19 @@
  * of each row, and how the dashboard says it. No server-only import: the bar
  * in the browser and the server action share these.
  *
- * On 2026-10-11 a selection of 30 reported success and left 14 of 81 rows
- * unchanged; the bar wrote cell by cell through the table and counted every
- * answer as done. Now the server writes a part of the selection one row after
+ * On 2026-10-11, setting the assignment on selections of 30 rows reported
+ * success while 14 of the 81 rows set that way kept their old value (selections
+ * of 7 went through); the bar wrote cell by cell through the table and counted
+ * every answer as done. Now the server writes a part of the selection one row after
  * another, reads the column back afterwards and calls a row done only when the
  * stored value is the one asked for. Nothing that did not land is counted.
  */
 
-/** The most rows one server call writes; a larger selection goes in parts of this size. */
-export const BULK_SET_PART = 100;
+/**
+ * The most rows one server call writes; a larger selection goes in parts of this size. Each row is a few
+ * reads and a write, so a part stays well inside a request's time, and the bar can say how far it got.
+ */
+export const BULK_SET_PART = 25;
 
 /** Why a row was not set. */
 export type BulkSetFailure =

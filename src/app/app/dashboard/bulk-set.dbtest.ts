@@ -59,7 +59,9 @@ describe('"Set field" on a selection', () => {
     expect(outcome.failed).toEqual([]);
     expect(outcome.done.sort()).toEqual([...ids].sort());
     for (const id of ids) expect(await stored(id)).toBe(business);
-  });
+    // The adapter finds a row by looking through every table of the database, which a long-used test database
+    // has many of: a generous limit, so the time of that lookup does not fail the test.
+  }, 180_000);
 
   it('clears the field', async () => {
     const [id] = await receipts(1, 'clear');
@@ -103,6 +105,15 @@ describe('"Set field" on a selection', () => {
     expect(await setFieldOnRows([group], assignmentId, business)).toEqual({ done: [group], failed: [] });
   });
 
+  it('a group refuses a column it may not take, and the receipts beside it are set', async () => {
+    const [inside, beside] = await receipts(2, 'currency');
+    const group = await createGroup(db, ws.workspaceId, 'Gruppe currency', [inside]);
+    const currencyId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Currency')!.id;
+    const usd = (await ws.adapter.getSelectOptions(currencyId)).find((o) => o.name === 'USD')!.id;
+    const outcome = await setFieldOnRows([group, beside], currencyId, usd);
+    expect(outcome).toEqual({ done: [beside], failed: [{ rowId: group, reason: 'not_writable' }] });
+  });
+
   it('refuses more rows than one part, and a call without rows', async () => {
     const many = Array.from({ length: BULK_SET_PART + 1 }, (_, i) => `r${i}`);
     await expect(setFieldOnRows(many, assignmentId, business)).rejects.toThrow();
@@ -117,7 +128,7 @@ describe('"Set field" on a selection', () => {
     for (const id of ids) expect(await stored(id)).toBe(personal);
   });
 
-  it('is refused without write access', async () => {
+  it('is refused for a session that is no member of the workspace', async () => {
     const [id] = await receipts(1, 'noaccess');
     session.current = { memberships: [{ id: 'another-ws', tenantId: 't' }], activeWorkspace: { id: 'another-ws' } };
     await expect(setFieldOnRows([id], assignmentId, business)).rejects.toThrow();

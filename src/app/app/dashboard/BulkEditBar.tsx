@@ -56,7 +56,7 @@ export default function BulkEditBar({
 
   const options = columnId ? (selectOptions.get(columnId) ?? []) : [];
 
-  const run = async (rowIds: string[], forColumn: string, forValue: string) => {
+  const run = async (rowIds: string[], forColumn: string, forValue: string, isRetry = false) => {
     if (busy || rowIds.length === 0) return;
     setBusy(true);
     setRetry(null);
@@ -76,22 +76,55 @@ export default function BulkEditBar({
       setProgress(`${handled} von ${total} …`);
     }
     const outcome = joinOutcomes(outcomes);
-    setProgress(outcomeWording(outcome, total));
+    let said = outcomeWording(outcome, total);
     const again = outcome.failed.filter((f) => RETRIABLE.has(f.reason)).map((f) => f.rowId);
-    setRetry(again.length > 0 ? { rowIds: again, columnId: forColumn, value: forValue } : null);
+    // A retry on which no part answered at all (an expired session, a lost connection) would only fail the same
+    // way again: the page has to be loaded anew instead.
+    const allUnanswered = outcome.done.length === 0 && outcome.failed.every((f) => f.reason === 'unconfirmed');
+    if (isRetry && allUnanswered) said += ' Bitte die Seite neu laden und dann noch einmal versuchen.';
+    setRetry(again.length > 0 && !(isRetry && allUnanswered) ? { rowIds: again, columnId: forColumn, value: forValue } : null);
     try {
       await onDone();
+    } catch {
+      said += ' Die Tabelle konnte nicht neu geladen werden, bitte die Seite neu laden.';
     } finally {
+      setProgress(said);
       setBusy(false);
     }
   };
+
+  // The retry names what it writes: the rows of the last run that were not set, whatever is selected now.
+  function retryButton(r: { rowIds: string[]; columnId: string; value: string }) {
+    return (
+      <button
+        type="button"
+        onClick={() => void run(r.rowIds, r.columnId, r.value, true)}
+        className="px-2.5 py-1 text-xs font-medium rounded-md"
+        style={inputStyle}
+      >
+        {`Erneut versuchen für die ${r.rowIds.length} nicht gesetzten`}
+      </button>
+    );
+  }
 
   const apply = () => {
     if (!columnId || !value || selectedRows.size === 0) return;
     void run([...selectedRows], columnId, value);
   };
 
-  if (selectedRows.size === 0) return null;
+  // The outcome of a run stays in view even when the reload afterwards emptied the selection (a view that
+  // filters on the column just set drops those rows): it is the one place that says what was really set.
+  if (selectedRows.size === 0) {
+    if (!progress && !retry) return null;
+    return (
+      <div className="inline-flex items-center gap-1.5">
+        {progress && (
+          <span role="status" className="text-[11px]" style={{ color: 'var(--dt-text-secondary)' }}>{progress}</span>
+        )}
+        {retry && !busy && retryButton(retry)}
+      </div>
+    );
+  }
 
   return (
     <div className="inline-flex items-center gap-1.5">
@@ -143,16 +176,7 @@ export default function BulkEditBar({
       {progress && (
         <span role="status" className="text-[11px]" style={{ color: 'var(--dt-text-secondary)' }}>{progress}</span>
       )}
-      {retry && !busy && (
-        <button
-          type="button"
-          onClick={() => void run(retry.rowIds, retry.columnId, retry.value)}
-          className="px-2.5 py-1 text-xs font-medium rounded-md"
-          style={inputStyle}
-        >
-          Erneut versuchen ({retry.rowIds.length})
-        </button>
-      )}
+      {retry && !busy && retryButton(retry)}
     </div>
   );
 }

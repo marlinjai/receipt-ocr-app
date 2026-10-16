@@ -60,6 +60,7 @@ const found = (o: Partial<FoundPayment> = {}): FoundPayment => ({
   kind: 'spend',
   accountLabel: 'Geschäftskonto',
   target: 'receipt',
+  linkedTo: null,
   ...o,
 });
 
@@ -189,7 +190,7 @@ describe('PaymentsTab', () => {
     await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
     await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
     expect(screen.getByRole('alert').textContent).toContain('Bitte einen Beleg');
-    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r-9');
+    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r:r-9');
     await user.type(screen.getByLabelText(/Teilbetrag/), '200');
     await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
     expect(screen.getByRole('alert').textContent).toContain('noch offen');
@@ -206,10 +207,14 @@ describe('PaymentsTab', () => {
     const income = open({ amountCents: 50_000, freeCents: 50_000, kind: 'income', check: 'income_without_invoice' });
     render(<PaymentsTab view={view({ open: [income], invoiceTargets: [{ id: 'i-1', label: 'Rechnung R-2026-050', openCents: 20_000 }], receiptTargets: [{ id: 'r-9', label: 'x', day: null, amountCents: null, linkedCents: 0 }] })} {...p} />);
     await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
-    expect(screen.queryByLabelText('Beleg von Hand wählen')).toBeNull();
-    await user.selectOptions(screen.getByLabelText('Rechnung von Hand wählen'), 'i-1');
+    // Money in goes on an invoice, or on a receipt as money back: both are offered, grouped.
+    const picker = screen.getByLabelText('Rechnung oder Beleg (Erstattung) von Hand wählen');
+    await user.selectOptions(picker, 'i:i-1');
     await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
     expect(p.onLink).toHaveBeenCalledWith({ paymentId: 'p-1', invoiceId: 'i-1' });
+    await user.selectOptions(picker, 'r:r-9');
+    await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
+    expect(p.onLink).toHaveBeenLastCalledWith({ paymentId: 'p-1', rowId: 'r-9' });
   });
 
   it('a payment without a name can be marked private, and what was re-labelled can be put back', async () => {
@@ -232,17 +237,17 @@ describe('PaymentsTab', () => {
     const receiptTargets = Array.from({ length: 30 }, (_, i) => ({ id: `r-${i}`, label: `Beleg ${i}`, day: '2026-01-02', amountCents: 1_000, linkedCents: i === 0 ? 400 : 0 }));
     const { container } = render(<PaymentsTab view={view({ open: many, receiptTargets })} {...props()} />);
     // Before: 40 pickers of 30 receipts each. Now none until one is opened, and one at a time.
-    expect(container.querySelectorAll('option[value^="r-"]').length).toBe(0);
+    expect(container.querySelectorAll('option[value^="r:"]').length).toBe(0);
     const openers = screen.getAllByRole('button', { name: 'Von Hand zuordnen' });
     expect(openers.length).toBe(40);
     await user.click(openers[3]);
-    expect(container.querySelectorAll('option[value^="r-"]').length).toBe(30);
+    expect(container.querySelectorAll('option[value^="r:"]').length).toBe(30);
     expect(openers[3].getAttribute('aria-expanded')).toBe('true');
     await user.click(openers[7]);
-    expect(container.querySelectorAll('option[value^="r-"]').length).toBe(30);
+    expect(container.querySelectorAll('option[value^="r:"]').length).toBe(30);
     expect(openers[3].getAttribute('aria-expanded')).toBe('false');
     await user.click(openers[7]);
-    expect(container.querySelectorAll('option[value^="r-"]').length).toBe(0);
+    expect(container.querySelectorAll('option[value^="r:"]').length).toBe(0);
   });
 
   it('without anything to link to, no picker is offered', () => {
@@ -485,7 +490,7 @@ describe('PaymentsTab', () => {
     expect(within(list).getAllByRole('listitem').length).toBe(2);
     // Each payment's button says which payment it is for.
     await user.click(within(list).getByRole('button', { name: 'Beleg wählen für 03.02.2026 Versand Beispiel 49,99 €' }));
-    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r-1');
+    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r:r-1');
     await user.click(within(list).getByRole('button', { name: 'Zuordnen' }));
     expect(p.onLink).toHaveBeenCalledWith({ paymentId: 'f-1', rowId: 'r-1' });
     expect(p.onTreat).not.toHaveBeenCalled();
@@ -531,5 +536,24 @@ describe('PaymentsTab', () => {
     await user.click(screen.getByRole('button', { name: 'Erneut versuchen' }));
     expect(await screen.findByText('Keine Zahlung aus 2026 mit offenem Betrag.')).toBeTruthy();
     expect(p.onSearch).toHaveBeenCalledTimes(3);
+  });
+
+  it('money in found by the search goes on an invoice or, as money back, on a receipt; one already on an invoice stays with invoices', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const targets = { invoiceTargets: [{ id: 'i-1', label: 'Rechnung R-2026-050', openCents: 2_000 }], receiptTargets: [{ id: 'r-1', label: 'Kabel', day: '2026-02-01', amountCents: 2_000, linkedCents: 0 }] };
+    p.onSearch.mockResolvedValueOnce({
+      ok: true,
+      value: { payments: [found({ id: 'f-in', amountCents: 2_000, freeCents: 2_000, kind: 'income', target: 'invoice' }), found({ id: 'f-inv', amountCents: 3_000, freeCents: 1_000, kind: 'income', target: 'invoice', linkedTo: 'invoice' })], total: 2 },
+    });
+    render(<PaymentsTab view={view(targets)} {...p} />);
+    await user.type(screen.getByLabelText('Andere Zahlung suchen und von Hand zuordnen'), 'Versand');
+    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    const choosers = await screen.findAllByRole('button', { name: /^Rechnung wählen für/ });
+    await user.click(choosers[0]);
+    expect(screen.getByLabelText('Rechnung oder Beleg (Erstattung) von Hand wählen')).toBeTruthy();
+    await user.click(choosers[0]);
+    await user.click(choosers[1]);
+    expect(screen.getByLabelText('Rechnung von Hand wählen')).toBeTruthy();
   });
 });

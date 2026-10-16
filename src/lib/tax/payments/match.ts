@@ -16,6 +16,9 @@ export interface MatchPayment {
   amountCents: number;
   reference: string;
   counterparty: string;
+  /** The counterparty and the text as vendor keys; given, a candidate by amount and date says whether the vendor is named. */
+  counterpartyKey?: string;
+  referenceKey?: string;
 }
 
 export interface MatchDocument {
@@ -26,6 +29,8 @@ export interface MatchDocument {
   day: string | null;
   /** The amount that is still unpaid, in cents, as a positive number. */
   openCents: number;
+  /** The receipt's vendor as a key; null or absent: none known. */
+  vendorKey?: string | null;
 }
 
 export type MatchStrength =
@@ -33,6 +38,8 @@ export type MatchStrength =
   | 'reference'
   /** The number appears, but the amount differs (a part payment, a fee kept on the way). */
   | 'reference_amount_differs'
+  /** Amount and date fit and the payment names the receipt's vendor. A candidate to confirm, never linked on its own. */
+  | 'amount_date_vendor'
   /** Only amount and date fit. A candidate to confirm, never linked on its own. */
   | 'amount_and_date';
 
@@ -290,10 +297,20 @@ export function proposeMatches(payments: readonly MatchPayment[], documents: rea
       if (documentHasReference.has(document.id) || document.openCents <= 0 || document.day === null) continue;
       if (Math.abs(payment.amountCents) !== document.openCents) continue;
       const gap = daysBetween(document.day, payment.bookingDay);
-      if (gap >= -5 && gap <= 60) proposals.push({ paymentId: payment.id, documentId: document.id, strength: 'amount_and_date' });
+      if (gap < -5 || gap > 60) continue;
+      const named = payment.counterpartyKey !== undefined && vendorNamed(document.vendorKey ?? null, payment.counterpartyKey, payment.referenceKey ?? '');
+      proposals.push({ paymentId: payment.id, documentId: document.id, strength: named ? 'amount_date_vendor' : 'amount_and_date' });
     }
   }
-  return proposals;
+  // The vendor named first: of several receipts of the same amount, the one of this vendor is the likely one.
+  // Ordered within each payment's proposals only; the payments keep their order.
+  const firstOf = new Map<string, number>();
+  proposals.forEach((p, i) => firstOf.has(p.paymentId) || firstOf.set(p.paymentId, i));
+  const rank = (p: MatchProposal) => (p.strength === 'amount_date_vendor' ? 0 : p.strength === 'amount_and_date' ? 1 : -1);
+  return proposals
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => (firstOf.get(a.p.paymentId) as number) - (firstOf.get(b.p.paymentId) as number) || rank(a.p) - rank(b.p) || a.i - b.i)
+    .map(({ p }) => p);
 }
 
 /**
@@ -305,7 +322,7 @@ export function unambiguousReferenceMatches(proposals: readonly MatchProposal[])
   const strong = proposals.filter((p) => p.strength === 'reference');
   const perPayment = new Map<string, number>();
   const perDocument = new Map<string, number>();
-  for (const p of proposals.filter((x) => x.strength !== 'amount_and_date')) {
+  for (const p of proposals.filter((x) => x.strength !== 'amount_and_date' && x.strength !== 'amount_date_vendor')) {
     perPayment.set(p.paymentId, (perPayment.get(p.paymentId) ?? 0) + 1);
     perDocument.set(p.documentId, (perDocument.get(p.documentId) ?? 0) + 1);
   }

@@ -175,6 +175,19 @@ describe('referenceMentions for the plain invoice series (decision D5)', () => {
 });
 
 describe('proposeMatches', () => {
+  it('a candidate by amount and date says whether the payment names the receipt’s vendor, and that one comes first', () => {
+    const payment = { id: 'p', bookingDay: '2026-01-05', amountCents: -10_850, reference: 'Bestellung 4711', counterparty: 'Werkzeug Beispiel GmbH', counterpartyKey: 'werkzeug beispiel', referenceKey: 'bestellung 4711' };
+    const other = { id: 'd-other', number: null, day: '2026-01-03', openCents: 10_850, vendorKey: 'laden beispiel' };
+    const own = { id: 'd-own', number: null, day: '2026-01-04', openCents: 10_850, vendorKey: 'werkzeug beispiel' };
+    expect(proposeMatches([payment], [other, own])).toEqual([
+      { paymentId: 'p', documentId: 'd-own', strength: 'amount_date_vendor' },
+      { paymentId: 'p', documentId: 'd-other', strength: 'amount_and_date' },
+    ]);
+    // Without the payment's keys nothing is judged about the vendor.
+    const plain = { ...payment, counterpartyKey: undefined, referenceKey: undefined };
+    expect(proposeMatches([plain], [own]).map((p) => p.strength)).toEqual(['amount_and_date']);
+  });
+
   it('links on the reference when the amount fits', () => {
     const proposals = proposeMatches([payment({ id: 'p', reference: 'Rechnung R-2026-001' })], [document({ id: 'd', number: 'R-2026-001' })]);
     expect(proposals).toEqual([{ paymentId: 'p', documentId: 'd', strength: 'reference' }]);

@@ -6,6 +6,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { formatDay } from '@/lib/meals/messages';
 import type { MatchStrength } from '@/lib/tax/payments/match';
 import type { AccountKind, CounterpartyTreatment, FoundPayment, ImportResult } from '@/lib/tax/payments/service';
+import type { RefundStrength } from '@/lib/tax/payments/refunds';
 import { PAYMENT_FORMAT_LABELS } from '@/lib/tax/payments/types';
 import type { OpenPayment, StatementView } from '@/lib/tax/service';
 import type { Result } from './actions';
@@ -45,10 +46,14 @@ interface Props {
 
 const ACCOUNT_KIND_LABELS: Record<AccountKind, string> = { bank: 'Bankkonto', card: 'Kreditkarte', payment_service: 'Zahlungsdienst' };
 const TREATMENT_LABELS: Record<CounterpartyTreatment, string> = { business: 'Betrieblich', private: 'Privat', own_account: 'Eigenes Konto', mixed: 'Teils, teils' };
-const STRENGTH_LABELS: Record<MatchStrength, string> = {
+const STRENGTH_LABELS: Record<MatchStrength | RefundStrength, string> = {
   reference: 'Nummer im Verwendungszweck, Betrag passt',
   reference_amount_differs: 'Nummer im Verwendungszweck, Betrag weicht ab',
+  amount_date_vendor: 'Betrag, Datum und Lieferant passen',
   amount_and_date: 'nur Betrag und Datum passen',
+  refund_reference: 'Erstattung: dieselbe Bestellnummer wie der Kauf',
+  refund_full: 'Erstattung des ganzen Kaufs',
+  refund_part: 'Teilerstattung eines Kaufs bei derselben Gegenseite',
 };
 const SKIP_LABELS: Record<string, string> = {
   not_booked: 'noch nicht gebucht',
@@ -415,7 +420,9 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 </div>
                 <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
                   {payment.check === 'income_without_invoice'
-                    ? 'Geldeingang ohne Rechnung: Einnahme (dann fehlt die Rechnung unter „Einnahmen“) oder privat?'
+                    ? payment.proposals.some((x) => x.target === 'receipt')
+                      ? 'Geldeingang ohne Rechnung: eine Erstattung zu einem Beleg (Vorschlag unten; sie wird dann von seinen Kosten abgezogen), eine Einnahme oder privat?'
+                      : 'Geldeingang ohne Rechnung: Einnahme (dann fehlt die Rechnung unter „Einnahmen“) oder privat?'
                     : payment.check === 'refund_without_receipt'
                       ? 'Erstattung: dem Beleg zuordnen, dessen Kauf sie rückgängig macht; sie wird dann von seinen Kosten abgezogen.'
                       : 'Betriebliche Zahlung ohne Beleg: Beleg hochladen und zuordnen.'}
@@ -437,7 +444,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                       Keine Einnahme (Erstattung oder Umbuchung)
                     </button>
                   )}
-                  {(payment.check === 'income_without_invoice' ? p.invoiceTargets.length : p.receiptTargets.length) > 0 && (
+                  {(payment.check === 'income_without_invoice' ? p.invoiceTargets.length + p.receiptTargets.length : p.receiptTargets.length) > 0 && (
                     <button
                       type="button"
                       className="ui-btn ui-btn-sm"
@@ -465,7 +472,8 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 {manualFor === payment.id && (
                   <ManualLink
                     payment={payment}
-                    receipts={payment.check === 'income_without_invoice' ? [] : p.receiptTargets}
+                    // Money in partly on an invoice already stays with invoices: a payment is on one kind of target only.
+                    receipts={payment.check === 'income_without_invoice' && payment.freeCents !== Math.abs(payment.amountCents) ? [] : p.receiptTargets}
                     invoices={payment.check === 'income_without_invoice' ? p.invoiceTargets : []}
                     busy={busy}
                     onLink={onLink}
@@ -673,21 +681,32 @@ function ManualLink({
           return setLocalError('Der Betrag muss größer als null sein und darf nicht über dem liegen, was von der Zahlung noch offen ist.');
         }
         setLocalError(null);
-        onLink({ paymentId: payment.id, ...(invoices.length > 0 ? { invoiceId: target } : { rowId: target }), ...(cents !== undefined ? { cents } : {}) });
+        const [kind, targetId] = [target.slice(0, 2), target.slice(2)];
+        onLink({ paymentId: payment.id, ...(kind === 'i:' ? { invoiceId: targetId } : { rowId: targetId }), ...(cents !== undefined ? { cents } : {}) });
       }}
     >
       <div>
-        <label className="ui-label" htmlFor={`${id}-target`}>{invoices.length > 0 ? 'Rechnung von Hand wählen' : 'Beleg von Hand wählen'}</label>
+        <label className="ui-label" htmlFor={`${id}-target`}>
+          {invoices.length > 0 && receipts.length > 0 ? 'Rechnung oder Beleg (Erstattung) von Hand wählen' : invoices.length > 0 ? 'Rechnung von Hand wählen' : 'Beleg von Hand wählen'}
+        </label>
         <select id={`${id}-target`} className="ui-input" value={target} onChange={(e) => setTarget(e.target.value)}>
           <option value="">Bitte wählen</option>
-          {invoices.map((i) => (
-            <option key={i.id} value={i.id}>{i.label} (offen {euro(i.openCents)})</option>
-          ))}
-          {receipts.map((r) => (
-            <option key={r.id} value={r.id}>
-              {formatDay(r.day)} {r.label.slice(0, 60)}{r.amountCents !== null ? ` (${euro(r.amountCents)})` : ''}{r.linkedCents > 0 ? `, schon zugeordnet ${euro(r.linkedCents)}` : ''}
-            </option>
-          ))}
+          {invoices.length > 0 && (
+            <optgroup label="Rechnungen">
+              {invoices.map((i) => (
+                <option key={i.id} value={`i:${i.id}`}>{i.label} (offen {euro(i.openCents)})</option>
+              ))}
+            </optgroup>
+          )}
+          {receipts.length > 0 && (
+            <optgroup label={invoices.length > 0 ? 'Belege (das Geld ist eine Erstattung)' : 'Belege'}>
+              {receipts.map((r) => (
+                <option key={r.id} value={`r:${r.id}`}>
+                  {formatDay(r.day)} {r.label.slice(0, 60)}{r.amountCents !== null ? ` (${euro(r.amountCents)})` : ''}{r.linkedCents > 0 ? `, schon zugeordnet ${euro(r.linkedCents)}` : ''}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
       </div>
       <div>
@@ -832,7 +851,10 @@ function PaymentFinder({
       {found !== null && found.payments.length > 0 && (
         <ul className="mt-1 space-y-1.5" aria-label="Gefundene Zahlungen">
           {found.payments.map((payment) => {
-            const targets = payment.target === 'invoice' ? p.invoiceTargets.length : p.receiptTargets.length;
+            // Money in goes on an invoice, or on a receipt as money back, unless it is on one of them already.
+            const invoices = payment.target === 'invoice' && payment.linkedTo !== 'receipt' ? p.invoiceTargets : [];
+            const receipts = payment.target === 'receipt' || payment.linkedTo !== 'invoice' ? p.receiptTargets : [];
+            const targets = invoices.length + receipts.length;
             const what = `${formatDay(payment.bookingDay)} ${payment.counterparty || 'ohne Namen'} ${euro(Math.abs(payment.amountCents))}`;
             return (
               <li key={payment.id} className="rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
@@ -863,8 +885,8 @@ function PaymentFinder({
                   (targets > 0 ? (
                     <ManualLink
                       payment={payment}
-                      receipts={payment.target === 'invoice' ? [] : p.receiptTargets}
-                      invoices={payment.target === 'invoice' ? p.invoiceTargets : []}
+                      receipts={receipts}
+                      invoices={invoices}
                       busy={busy}
                       onLink={onLink}
                     />

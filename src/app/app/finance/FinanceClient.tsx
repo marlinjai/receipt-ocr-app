@@ -188,6 +188,11 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
             question = `Dieser Beleg hat schon eine Zahlung über ${euro(Number(paid))} (Belegbetrag ${euro(Number(own))}). Diese Zahlung zusätzlich zuordnen? Der Beleg zählt dann mit der Summe aller zugeordneten Zahlungen.`;
             return { ok: true, value: view };
           }
+          // Money back a little above what the receipt still costs (exchange rates): asked once, then within the tolerance.
+          if (code === 'refund_exceeds_receipt' && !confirmed && Number(paid) > 0) {
+            question = `Diese Erstattung ist größer als das, was der Beleg noch kostet (${euro(Number(paid))}). Nur diese ${euro(Number(paid))} zuordnen? Der Rest der Zahlung bleibt offen (zum Beispiel ein Kursgewinn oder eine Erstattung für etwas anderes).`;
+            return { ok: true, value: view };
+          }
           return result;
         }
         moved = result.value.moved;
@@ -196,7 +201,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
       'Zahlung zugeordnet.',
       () => {
         if (question !== null) {
-          setNotice('Nichts zugeordnet: der Beleg hat schon eine Zahlung.');
+          setNotice(question.startsWith('Diese Erstattung') ? 'Nichts zugeordnet: die Erstattung ist größer als der Rest des Belegs.' : 'Nichts zugeordnet: der Beleg hat schon eine Zahlung.');
           if (window.confirm(question)) linkWithQuestion(input, true);
         } else if (moved) {
           setNotice('Zahlung zugeordnet. Die bisherige Zuordnung dieses Belegs zur Abbuchung auf dem Bankkonto wurde hierher verschoben: es ist dasselbe Geld.');

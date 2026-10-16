@@ -57,6 +57,8 @@ export type PaymentServiceErrorCode =
   | 'receipt_already_paid'
   /** The pair is no proposal any more (one side was linked in the meantime). */
   | 'proposal_gone'
+  /** Money back beyond what the receipt still costs; the detail is what it still costs, in cents. */
+  | 'refund_exceeds_receipt'
   /** A search for payments without a year, or a whole-account answer that is neither yes nor no. */
   | 'invalid_query'
   | 'invalid_private';
@@ -538,18 +540,20 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
       await tx.$queryRaw`SELECT id FROM tax_issued_invoices WHERE id = ${invoiceId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
       const invoice = await tx.taxIssuedInvoice.findFirst({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId }, include: { payments: true, paymentLinks: { where: { payment: { cancelledByBatchId: null } } } } });
       if (!invoice) throw new PaymentServiceError('target_not_found');
-      // Only money received as income pays an invoice: no money going out, no refund, no own transfer.
-      if (payment.amountCents <= 0 || effectiveKind(payment) !== 'income') throw new PaymentServiceError('invalid_link');
+      // Only money received as income pays an invoice: no money going out, no refund, no own transfer, nothing already on a receipt.
+      if (payment.amountCents <= 0 || effectiveKind(payment) !== 'income' || payment.links.some((l) => l.rowId !== null)) throw new PaymentServiceError('invalid_link');
       // Never more than the invoice still has open: what was typed in by hand
       // and what other payments already cover is not counted a second time.
       const open = invoiceOpenCents(invoice);
       if (open <= 0) throw new PaymentServiceError(invoice.writtenOffCents > 0 && invoice.writtenOffOn !== null ? 'target_written_off' : 'target_fully_paid');
       free = Math.min(free, open);
     }
-    const cents = input.cents === undefined || input.cents === null ? free : input.cents;
+    let cents = input.cents === undefined || input.cents === null ? free : input.cents;
     if (!Number.isInteger(cents) || cents <= 0) throw new PaymentServiceError('invalid_link');
     if (cents > free) throw new PaymentServiceError('link_exceeds_payment');
 
+    // Money in on an invoice is revenue; it does not also go on a receipt as money back.
+    if (rowId !== null && payment.amountCents > 0 && payment.links.some((l) => l.invoiceId !== null)) throw new PaymentServiceError('invalid_link');
     if (rowId !== null) {
       // One writer per receipt (always after the payment): what the receipt
       // already carries is read and judged without another link slipping in.
@@ -575,6 +579,35 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
           const twinOnReceipt = twinId !== null && loaded.payments.some((p) => p.id === twinId && onReceipt(p).length > 0);
           const adds = funders.length > 0 || twinOnReceipt ? 0 : cents;
           if (adds > 0 && paidSoFar > 0 && paidSoFar + adds > limit) throw new PaymentServiceError('receipt_already_paid', `${paidSoFar}:${receipt.amountCents}`);
+        }
+      } else {
+        // Money back never takes a receipt below nothing: what is left is what its purchases cost (or, without one
+        // linked, its own amount) less the money back already on it. Beyond that it is refused, with what is left.
+        let out = 0;
+        let back = 0;
+        for (const { payment: p, link } of countedReceiptLinks(loaded.payments)) {
+          if (link.rowId !== rowId) continue;
+          if (p.amountCents < 0) out += link.cents;
+          else back += link.cents;
+        }
+        const base = out > 0 ? out : receipt?.amountCents ?? null;
+        // The other side of the same money may be on the receipt already (`countedReceiptLinks` counts it once).
+        // This refund's own funding twin there: this link would not count, so it may not say more than the twin does.
+        // A payment this refund funds there: its link stops counting and this one counts instead.
+        const row = loaded.payments.find((p) => p.id === payment.id);
+        const centsOn = (p: PaymentRow) => onReceipt(p).reduce((sum, l) => sum + l.cents, 0);
+        const twinCents = row?.funding?.twinId != null ? loaded.payments.filter((p) => p.id === row.funding?.twinId).reduce((sum, p) => sum + centsOn(p), 0) : 0;
+        const fundedCents = loaded.payments.filter((p) => p.funding?.twinId === payment.id).reduce((sum, p) => sum + centsOn(p), 0);
+        if (twinCents > 0) {
+          if (cents > twinCents) throw new PaymentServiceError('refund_exceeds_receipt', String(twinCents));
+        } else if (base !== null) {
+          const left = Math.max(0, base - back + fundedCents);
+          if (cents > left) {
+            // Confirmed (a few cents more through exchange rates, or a refund that also covers something else):
+            // what is left is linked, the rest of the payment stays open and is asked about.
+            if (!input.confirmed || left === 0) throw new PaymentServiceError('refund_exceeds_receipt', String(left));
+            cents = left;
+          }
         }
       }
     }
@@ -718,7 +751,10 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
   const rows: PaymentRow[] = payments.map((p) => {
     const treatment = treatments.get(p.counterpartyKey);
     const funds = funding.get(p.id);
-    const kind = paymentKind(p, treatment, funds, privateAccounts.has(p.accountId));
+    const resolved = paymentKind(p, treatment, funds, privateAccounts.has(p.accountId));
+    // Money in that the file calls income and that a person put on a receipt is money back, not revenue. Derived
+    // from the link, nothing stored: taking the link back makes it income again.
+    const kind = resolved === 'income' && p.kindOverride === null && p.amountCents > 0 && p.links.some((l) => l.rowId !== null) ? 'refund' : resolved;
     return {
       id: p.id,
       accountId: p.accountId,
@@ -769,8 +805,10 @@ export interface FoundPayment {
   reference: string;
   kind: PaymentKind;
   accountLabel: string;
-  /** Money received as income goes on an issued invoice; money out and money back on a receipt. */
+  /** Money received as income goes on an issued invoice (or, as money back, on a receipt); money out and money back on a receipt. */
   target: 'receipt' | 'invoice';
+  /** What the payment is already on: a payment is on invoices or on receipts, never both. */
+  linkedTo: 'invoice' | 'receipt' | null;
 }
 
 /** At most this many payments come back from one search: enough to pick from, small enough to draw. */
@@ -821,6 +859,7 @@ export async function findPayments(db: PrismaClient, workspaceId: string, raw: u
       kind: p.kind,
       accountLabel: accountLabel.get(p.accountId) ?? '',
       target: p.amountCents > 0 && own === 'income' ? 'invoice' : 'receipt',
+      linkedTo: p.links.some((l) => l.invoiceId !== null) ? 'invoice' : p.links.some((l) => l.rowId !== null) ? 'receipt' : null,
     });
   }
   return { payments: found, total };

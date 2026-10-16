@@ -26,6 +26,7 @@ import { overdueInvoices, type OverdueInvoice } from './overdue';
 import { loadIncomeTax, type IncomeTaxView } from './income-tax/service';
 import { proposeEstimateMatches, proposeMatches, type MatchStrength } from './payments/match';
 import { heldService, type ServiceKind } from './payments/funding';
+import { countOrderNumbers, proposeRefunds, type RefundStrength, type RefundTarget } from './payments/refunds';
 import {
   PaymentServiceError,
   countedReceiptLinks,
@@ -896,7 +897,8 @@ export interface PaymentProposal {
   target: 'receipt' | 'invoice';
   targetId: string;
   label: string;
-  strength: MatchStrength;
+  /** How a payment matches a document, or, for money back, how it matches the purchase it refunds. */
+  strength: MatchStrength | RefundStrength;
 }
 
 export interface OpenPayment {
@@ -1025,6 +1027,9 @@ export interface PaymentsView {
   }>;
 }
 
+/** Payment providers that stand for many shops: money back from them names its shop only by a number. */
+const PAYMENT_INTERMEDIARIES = new Set(['paypal', 'klarna', 'stripe', 'adyen', 'sumup', 'mollie']);
+
 function buildPaymentsView(
   loaded: LoadedPayments,
   year: number,
@@ -1037,18 +1042,6 @@ function buildPaymentsView(
   const itemById = new Map(resolved.map((r) => [r.item.id, r.item]));
   const invoiceById = new Map(invoices.map((i) => [i.id, i]));
   const free = (p: PaymentRow) => Math.abs(p.amountCents) - p.links.reduce((s, l) => s + l.cents, 0);
-
-  // Counterparties without an answer, by what moved (own transfers and fees ask nothing).
-  const unclassified = new Map<string, { key: string; label: string; count: number; outCents: number; inCents: number }>();
-  for (const p of inYear) {
-    // Money back from a pay-later service is asked about payment by payment, not once for the service.
-    if (p.kind === 'own_transfer' || p.kind === 'fee' || p.kind === 'private' || p.byRule || !p.counterpartyKey || loaded.treatments.has(p.counterpartyKey) || free(p) === 0) continue;
-    const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: p.counterparty, count: 0, outCents: 0, inCents: 0 };
-    entry.count += 1;
-    if (p.amountCents < 0) entry.outCents += -p.amountCents;
-    else entry.inCents += p.amountCents;
-    unclassified.set(p.counterpartyKey, entry);
-  }
 
   // Money in from a counterparty nobody answered yet is asked about once, in the
   // counterparty question, unless it already looks like the payment of an issued
@@ -1063,6 +1056,35 @@ function buildPaymentsView(
   });
   const incomeProposals = proposeMatches(incomeCandidates.map(asMatch), invoiceDocuments);
   const looksLikeInvoicePayment = new Set(incomeProposals.map((x) => x.paymentId));
+  // Money back proposed for the receipt of the purchase it refunds (see `refunds.ts`): money in of the
+  // year, refund or income, from a counterparty a receipt carries a purchase from or names as vendor.
+  const purchasesByRow = new Map<string, RefundTarget['purchases']>();
+  for (const { payment, link } of countedReceiptLinks(loaded.payments)) {
+    if (payment.amountCents >= 0) continue;
+    const list = purchasesByRow.get(link.rowId) ?? [];
+    list.push({ bookingDay: payment.bookingDay, cents: link.cents, counterpartyKey: payment.counterpartyKey, reference: payment.reference });
+    purchasesByRow.set(link.rowId, list);
+  }
+  // A payment service or a payment provider stands for many shops: from it only a shared number proposes a receipt.
+  const heldNames = new Set(loaded.accounts.flatMap((a) => heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) })?.name ?? []));
+  const namesService = (p: PaymentRow) => p.counterpartyKey.split(' ').some((word) => heldNames.has(word));
+  const intermediary = (p: PaymentRow) => namesService(p) || p.counterpartyKey.split(' ').some((word) => PAYMENT_INTERMEDIARIES.has(word));
+  const refundTargets: RefundTarget[] = resolved
+    .filter((r) => !r.isMeal && r.item.amountCents !== null && r.item.amountCents > 0)
+    .map((r) => ({ rowId: r.item.id, day: r.item.date, vendorKey: r.vendorKey, remainingCents: r.item.amountCents as number, purchases: purchasesByRow.get(r.item.id) ?? [] }));
+  const refundProposals = proposeRefunds(
+    inYear
+      .filter((p) => p.amountCents > 0 && (p.kind === 'refund' || p.kind === 'income') && Math.abs(p.amountCents) === free(p))
+      .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, reference: p.reference, kind: p.kind as 'refund' | 'income', intermediary: intermediary(p) })),
+    refundTargets,
+    // A number is an order's only when no other purchase of the counterparty carries it, linked or not.
+    countOrderNumbers(
+      loaded.payments
+        .filter((p) => p.amountCents < 0 && p.counterpartyKey)
+        .map((p) => ({ counterpartyKey: p.counterpartyKey, reference: p.reference, group: p.links.find((l) => l.rowId)?.rowId ?? `payment:${p.id}` })),
+    ),
+  );
+  const refundProposalIds = new Set(refundProposals.map((x) => x.paymentId));
 
   // What needs a document: money out to a business counterparty, and money in
   // from a business counterparty or for an invoice. Payments on an account said
@@ -1073,14 +1095,28 @@ function buildPaymentsView(
     // Money out to a business counterparty, and money out with no name at all
     // (there is nobody to ask about once, so each such payment is asked about).
     if (p.kind === 'spend') return treatment === 'business' || !p.counterpartyKey;
-    if (p.kind === 'income') return treatment === 'business' || ((treatment === undefined || treatment === 'mixed') && (!p.counterpartyKey || looksLikeInvoicePayment.has(p.id)));
+    if (p.kind === 'income') return treatment === 'business' || ((treatment === undefined || treatment === 'mixed') && (!p.counterpartyKey || looksLikeInvoicePayment.has(p.id) || refundProposalIds.has(p.id)));
     // Money back from a business counterparty belongs on the receipt it refunds.
     // So does money a pay-later service pays back: its list holds no refunds, the bank line is the only record.
-    if (p.kind === 'refund') return treatment === 'business' || !p.counterpartyKey || p.byRule;
+    // And money back from anyone a receipt carries a purchase from: it is proposed for that receipt.
+    if (p.kind === 'refund') return treatment === 'business' || !p.counterpartyKey || p.byRule || (treatment !== 'private' && treatment !== 'own_account' && refundProposalIds.has(p.id));
     return false;
   });
-  const heldNames = new Set(loaded.accounts.flatMap((a) => heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) })?.name ?? []));
-  const namesService = (p: PaymentRow) => p.counterpartyKey.split(' ').some((word) => heldNames.has(word));
+
+  // Counterparties without an answer, by what moved (own transfers and fees ask nothing).
+  const unclassified = new Map<string, { key: string; label: string; count: number; outCents: number; inCents: number }>();
+  // A payment already asked about on its own (an invoice's payment, money back with a proposal) is not counted here too.
+  const askedAlone = new Set(needing.map((p) => p.id));
+  for (const p of inYear) {
+    if (askedAlone.has(p.id)) continue;
+    // Money back from a pay-later service is asked about payment by payment, not once for the service.
+    if (p.kind === 'own_transfer' || p.kind === 'fee' || p.kind === 'private' || p.byRule || !p.counterpartyKey || loaded.treatments.has(p.counterpartyKey) || free(p) === 0) continue;
+    const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: p.counterparty, count: 0, outCents: 0, inCents: 0 };
+    entry.count += 1;
+    if (p.amountCents < 0) entry.outCents += -p.amountCents;
+    else entry.inCents += p.amountCents;
+    unclassified.set(p.counterpartyKey, entry);
+  }
   const counted = countedReceiptLinks(loaded.payments);
   const countedLinkIds = new Set(counted.map((c) => c.link.id));
   // What each receipt already carries, so the picker for linking by hand can say so.
@@ -1089,14 +1125,17 @@ function buildPaymentsView(
   const linkedRows = new Set(loaded.payments.flatMap((p) => p.links.map((l) => l.rowId).filter((id): id is string => id !== null)));
   const receiptDocuments = resolved
     .filter((r) => !r.isMeal && !linkedRows.has(r.item.id) && r.item.amountCents !== null && r.item.date !== null && r.item.date.startsWith(`${year}-`))
-    .map((r) => ({ id: r.item.id, number: null, day: r.item.date, openCents: r.item.amountCents as number }));
+    .map((r) => ({ id: r.item.id, number: null, day: r.item.date, openCents: r.item.amountCents as number, vendorKey: r.vendorKey }));
   // Candidates for linking by hand: also last year's receipts, and receipts that
   // already have a payment (a refund goes on the receipt its purchase is linked to).
   const receiptTargets = resolved
     .filter((r) => !r.isMeal && (r.item.date === null || r.item.date.startsWith(`${year}-`) || r.item.date.startsWith(`${year - 1}-`)))
     .map((r) => ({ id: r.item.id, label: r.item.label, day: r.item.date, amountCents: r.item.amountCents, linkedCents: linkedCentsByRow.get(r.item.id) ?? 0 }))
     .sort((a, b) => ((a.day ?? '') < (b.day ?? '') ? 1 : -1));
-  const spendProposals = proposeMatches(needing.filter((p) => p.kind === 'spend').map(asMatch), receiptDocuments);
+  const spendProposals = proposeMatches(
+    needing.filter((p) => p.kind === 'spend').map((p) => ({ ...asMatch(p), counterpartyKey: p.counterpartyKey, referenceKey: vendorKey(p.reference) ?? '' })),
+    receiptDocuments,
+  );
 
   // Receipts on an estimated amount. Every receipt without a link takes part
   // (a payment that also fits a euro receipt is not unambiguous), and every
@@ -1143,6 +1182,8 @@ function buildPaymentsView(
     })
     .sort((a, b) => (a.receiptDay === b.receiptDay ? (a.bookingDay < b.bookingDay ? -1 : 1) : a.receiptDay < b.receiptDay ? -1 : 1));
 
+  const refundsFor = (p: PaymentRow): PaymentProposal[] =>
+    refundProposals.filter((x) => x.paymentId === p.id).map((x) => ({ target: 'receipt' as const, targetId: x.rowId, label: itemById.get(x.rowId)?.label ?? 'Beleg', strength: x.strength }));
   const open: OpenPayment[] = needing.map((p) => ({
     id: p.id,
     bookingDay: p.bookingDay,
@@ -1156,9 +1197,13 @@ function buildPaymentsView(
     namesService: p.kind !== 'refund' && namesService(p),
     proposals:
       p.kind === 'refund'
-        ? []
+        ? refundsFor(p)
         : p.kind === 'income'
-        ? incomeProposals.filter((x) => x.paymentId === p.id).map((x) => ({ target: 'invoice' as const, targetId: x.documentId, label: `Rechnung ${invoiceById.get(x.documentId)?.number ?? ''}`, strength: x.strength }))
+        ? [
+            ...incomeProposals.filter((x) => x.paymentId === p.id).map((x) => ({ target: 'invoice' as const, targetId: x.documentId, label: `Rechnung ${invoiceById.get(x.documentId)?.number ?? ''}`, strength: x.strength })),
+            // Money in that the file calls income can still be money back for a purchase (a card refund, a returned order).
+            ...refundsFor(p),
+          ]
         : spendProposals.filter((x) => x.paymentId === p.id).map((x) => ({ target: 'receipt' as const, targetId: x.documentId, label: itemById.get(x.documentId)?.label ?? 'Beleg', strength: x.strength })),
   }));
 

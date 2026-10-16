@@ -1149,6 +1149,41 @@ twelve defects, all fixed in the receipt lines pull request:
   **re-labelled payments** are listed and can be put back; **refunds** from a
   business counterparty ask for the receipt they belong to.
 
+## Reality: a refunded purchase nets out, and candidates name the vendor (2026-10-16)
+
+The roadmap line "A refunded purchase has no representation" (three orders of 2025 refunded in
+full and kept out by hand). Decided without asking, say so if you disagree:
+
+- **Money back is proposed for the receipt of the purchase it refunds** (`proposeRefunds` in
+  `src/lib/tax/payments/refunds.ts`). A refund, or money in that the file calls income, from a
+  counterparty a receipt carries a linked purchase from (or, without one, names as vendor),
+  booked after the purchase, at most 180 days later and in the same year (under cash-basis
+  accounting money back counts in the year it arrives; linking it to last year's receipt would
+  change that year), never more than the receipt still costs. Strongest when the two texts
+  share an order number that no other purchase of the counterparty carries (a customer or
+  mandate number is on all of them; days, masked cards, account numbers and creditor ids never
+  count), then a refund of exactly the purchase, then a part. Money in that the file calls
+  income is proposed only on such a number or in full; from a payment service (PayPal, Klarna
+  and the like) only on such a number. At most three per payment. Linked with one click; once
+  linked the existing rule takes it off the receipt, so a purchase refunded in full costs
+  nothing. Never linked without a click (the rule of the payments area).
+- **Money back never takes a receipt below nothing**: a link beyond what the receipt still
+  costs is refused with what is left (`refund_exceeds_receipt`); confirmed, what is left is
+  linked and the rest of the payment stays open and is asked about (a few cents of an exchange
+  rate, or a refund that also covers something else). The other side of the same money (a
+  refund's funding twin) is counted once here as everywhere. Money in the file calls income
+  that is on a receipt is money back, derived from the link and not stored: taking the link
+  back makes it income again. A payment is on invoices or on receipts, never both.
+- Such money in is asked about payment by payment when a proposal exists, also from a
+  counterparty nobody answered yet or one answered mixed (and then not counted in the
+  counterparty question as well); never from one answered private or own account.
+- **A credit note as a document** nets its invoice out already: a receipt with a negative
+  amount counts negatively in the year (tested). Pairing an invoice and its credit note in the
+  receipts table is the table's business, not built here.
+- **Candidates by amount and date say whether the payment names the receipt's vendor**
+  (`amount_date_vendor`, shown first); amount and date alone stay a weaker candidate. Asked
+  for by the private-spending side, which matches vendor, amount and day in its own loop.
+
 ## Reality after the review of receipt lines (2026-10-10)
 
 A second fresh agent reviewed receipt lines and the payment fixes before they

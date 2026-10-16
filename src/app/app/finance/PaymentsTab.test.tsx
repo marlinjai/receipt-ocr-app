@@ -557,4 +557,44 @@ describe('PaymentsTab', () => {
     await user.click(choosers[1]);
     expect(screen.getByLabelText('Rechnung von Hand wählen')).toBeTruthy();
   });
+
+  it('lists pay-later purchases whose year moves or whose collection is unknown, and a person says how one was paid or takes it back', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const entry = (o: Record<string, unknown>) => ({ id: 'k-1', bookingDay: '2025-12-10', taxDay: '2026-01-08', amountCents: -4_000, counterparty: 'Laden Beispiel', accountLabel: 'Später zahlen', method: 'checkout' as const, byPerson: false, linkedTo: ['Lampe'], ...o });
+    render(
+      <PaymentsTab
+        view={view({
+          payLaterDays: {
+            moved: [entry({})],
+            unknown: [entry({ id: 'k-2', counterparty: 'Kiosk Beispiel', taxDay: '2025-12-10', linkedTo: [] })],
+            relabelled: [entry({ id: 'k-3', counterparty: 'Café Beispiel', method: 'card', byPerson: true, taxDay: '2025-12-12', bookingDay: '2025-12-12' })],
+            withoutDetail: 2,
+          },
+        })}
+        {...p}
+      />,
+    );
+    const section = screen.getByRole('region', { name: 'Tag der Zahlung bei Käufen über den Später-bezahlen-Dienst' });
+    expect(within(section).getByText(/zählt am 08\.01\.2026/)).toBeTruthy();
+    expect(within(section).getAllByText(/zugeordnet: Lampe/).length).toBe(2);
+    expect(within(section).getByText('Einzugstag unbekannt')).toBeTruthy();
+    expect(within(section).getByText(/2 Käufe wurden eingelesen, bevor die Zahlungsart/)).toBeTruthy();
+    const card = within(section).getAllByRole('button', { name: 'Mit der Karte bezahlt' });
+    expect(card.length).toBe(2);
+    await user.click(card[0]);
+    expect(p.onPayMethod).toHaveBeenLastCalledWith('k-1', 'card');
+    await user.click(card[1]);
+    expect(p.onPayMethod).toHaveBeenLastCalledWith('k-2', 'card');
+    // A purchase a person said was paid by card can be said to be on invoice, or put back.
+    await user.click(within(section).getByRole('button', { name: 'Auf Rechnung bezahlt' }));
+    expect(p.onPayMethod).toHaveBeenLastCalledWith('k-3', 'checkout');
+    await user.click(within(section).getByRole('button', { name: 'Zurücksetzen' }));
+    expect(p.onPayMethod).toHaveBeenLastCalledWith('k-3', null);
+  });
+
+  it('shows no pay-later section when nothing needs a look', () => {
+    render(<PaymentsTab view={view()} {...props()} />);
+    expect(screen.queryByRole('region', { name: 'Tag der Zahlung bei Käufen über den Später-bezahlen-Dienst' })).toBeNull();
+  });
 });

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { auth } from '@/lib/auth';
 import { initializeReceiptsTable } from './actions';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
@@ -36,6 +37,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           )}
         </div>
         <div className="flex items-center gap-4">
+          <Link href="/app/spending" className="text-xs transition-colors hover:underline" style={{ color: 'var(--muted)' }}>
+            Ausgaben
+          </Link>
           <WorkspaceSwitcher session={session} />
           <a
             href={auth.logoutUrl()}

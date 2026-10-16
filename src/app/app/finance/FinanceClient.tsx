@@ -866,8 +866,8 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
           {tab === 'vendors' &&
             (view.vendorRules.length === 0 ? (
               <div className="glass-panel rounded-xl p-8 text-center text-sm" style={{ color: 'var(--muted)' }}>
-                Noch keine Regel für einen Lieferanten. Eine Regel entsteht, wenn bei einem Beleg „Für alle Belege von …
-                so behandeln“ angehakt wird.
+                Noch keine Zuordnungsregel für einen Lieferanten. Eine Regel entsteht, wenn bei einem Beleg „Für alle Belege
+                von … so behandeln“ angehakt wird.
               </div>
             ) : (
               <ul className="glass-panel divide-y rounded-xl" style={{ borderColor: 'var(--border)' }}>

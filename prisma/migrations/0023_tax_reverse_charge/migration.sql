@@ -16,7 +16,9 @@ CREATE TABLE "tax_reverse_charges" (
 
     CONSTRAINT "tax_reverse_charges_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "tax_reverse_charges_scope_check" CHECK ("scope" IN ('row', 'vendor')),
-    CONSTRAINT "tax_reverse_charges_rate_check" CHECK ("rate_bp" IS NULL OR "rate_bp" IN (1900, 700))
+    CONSTRAINT "tax_reverse_charges_rate_check" CHECK ("rate_bp" IS NULL OR "rate_bp" IN (1900, 700)),
+    -- A receipt's own entry has no start day; a vendor entry has one or none.
+    CONSTRAINT "tax_reverse_charges_row_day_check" CHECK ("scope" = 'vendor' OR "effective_from" = '')
 );
 
 CREATE UNIQUE INDEX "tax_reverse_charges_subject_key" ON "tax_reverse_charges"("auth_workspace_id", "scope", "subject", "effective_from");

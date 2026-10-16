@@ -105,9 +105,10 @@ export function withReverseCharge(
   };
 }
 
-/** The tax owed on a base, rounded to the cent. */
+/** The tax owed on a base, rounded to the cent, a credit note the same way as an invoice. */
 export function reverseChargeTax(baseCents: number, rateBp: number): number {
-  return Math.round((baseCents * rateBp) / 10_000);
+  const tax = Math.round((Math.abs(baseCents) * rateBp) / 10_000);
+  return baseCents < 0 ? -tax : tax;
 }
 
 export type ReverseChargeInputErrorCode = 'invalid_reverse_charge_rate' | 'invalid_reverse_charge_date';

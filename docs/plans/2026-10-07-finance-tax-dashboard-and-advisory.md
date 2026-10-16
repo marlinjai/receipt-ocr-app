@@ -1748,9 +1748,31 @@ not computed.
   receipt without a statement, and no statement exists until the owner records one.
   A test computes the synthetic year with and without one marked receipt and finds
   every other item, line, total and output tax event identical.
-- **For a tax advisor to confirm:** whether the income-surplus statement should also
-  show the offsetting owed and deductible amounts under regular taxation (no effect on
-  profit); how the share of the tax outside the business is entered when the payment
-  to the tax office is recorded (private withdrawal, or a cost of the study share on
-  the employment annex); and that a foreign-currency service may use the booked euro
-  amount instead of the monthly rate.
+- **Open, each with a recommendation** (the owner files himself, so these are decided
+  here rather than parked):
+  - Under regular taxation the owed and the deductible 13b tax offset; they reach the
+    statement through the payments to and refunds from the tax office, as all
+    value-added tax does. Recommendation: no extra lines.
+  - The tax on a share outside the business is owed but no business expense. The
+    payment to the tax office is recorded as paid (so it matches the bank), and the
+    screen names the non-business part. It is not subtracted automatically, because a
+    payment to the tax office is not linked to the periods it settles. Recommendation:
+    when payments are linked to periods (with the year-end entry sheet), subtract that
+    part from "An das Finanzamt gezahlte Umsatzsteuer" in the year of payment; until
+    then the owner subtracts the shown amount in the return. Today no receipt of the
+    owner has such a share.
+  - A service invoiced in another currency is converted at the ministry's monthly rate
+    (section 16 (6)) unless the tax office allowed the daily rate. The app holds no
+    monthly rates and uses the booked euro amount; the form and the tab say so per
+    receipt. Recommendation: enter the euro amount at the monthly rate on such receipts.
+- **Re-review (2026-10-16):** a second fresh review found no blocking issue. Fixed: a
+  vendor entry no longer attaches tax to a receipt that is on the meal line through
+  its treatment; under section 19 the periods are always calendar quarters (a frequency
+  stored for an earlier regular year does not carry over); an empty receipt id is
+  refused; a credit note rounds like an invoice; a blank currency is not foreign; the
+  filing text names that the tax office can decide otherwise; the vendor tab's empty
+  message speaks of assignment rules; a receipt's own entry can have no start day
+  (check constraint). Tested: an asset built from a marked receipt depreciates on the
+  whole amount with no open check; tax read off a marked receipt is ignored.
+  The migration is `0023_tax_reverse_charge` (main already has two migrations numbered
+  0021 and one 0022).

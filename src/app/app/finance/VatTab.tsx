@@ -170,11 +170,10 @@ export default function VatTab({ view, busy, error, onStatusChange, onRemoveStat
           <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
             Auch unter der Kleinunternehmerregelung schuldet der Betrieb als Unternehmer die Steuer für sonstige Leistungen
             aus dem Ausland selbst (§ 13b Absatz 5 Satz 1 Umsatzsteuergesetz) und kann sie nicht als Vorsteuer abziehen.
-            Für jeden Zeitraum mit einem Betrag ist eine Voranmeldung abzugeben, und für das Jahr eine
-            Umsatzsteuererklärung (§ 18 Absatz 4a, den § 19 Absatz 1 Satz 2 ausdrücklich unberührt lässt). Die Zahlung an das
-            Finanzamt ist im Jahr der Zahlung eine Betriebsausgabe, soweit sie auf betriebliche Anteile entfällt, und wird
-            unten unter „Zahlungen an das Finanzamt“ eingetragen.
-            {view.vat.reverseChargeFrequencyAssumed ? ' Gerechnet in Kalendervierteljahren, dem gesetzlichen Regelfall (§ 18 Absatz 2), solange kein anderer Zeitraum festgelegt ist.' : ''}
+            Für jedes Kalendervierteljahr mit einem Betrag ist eine Voranmeldung abzugeben, sofern das Finanzamt nichts
+            anderes bestimmt hat, und für das Jahr eine Umsatzsteuererklärung (§ 18 Absatz 4a, den § 19 Umsatzsteuergesetz
+            unberührt lässt). Die Zahlung an das Finanzamt ist im Jahr der Zahlung eine Betriebsausgabe, soweit sie auf
+            betriebliche Anteile entfällt, und wird unten unter „Zahlungen an das Finanzamt“ eingetragen.
           </p>
           <table className="mt-3 w-full text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
             <caption className="sr-only">Steuer nach § 13b je Zeitraum {view.year}</caption>
@@ -357,8 +356,9 @@ function ReverseChargeNotes({ view }: { view: StatementView }) {
       {nonBusiness > 0 && (
         <p className="ui-note mt-3">
           Davon entfallen {euro(nonBusiness)} auf private oder andere nicht betriebliche Anteile. Diese Steuer ist ebenfalls
-          geschuldet (§ 13b Absatz 5 Satz 7), aber weder abziehbar noch eine Betriebsausgabe: beim Eintragen der Zahlung an
-          das Finanzamt bitte nur den betrieblichen Teil als Ausgabe ansetzen.
+          geschuldet (§ 13b Absatz 5 Satz 7), aber weder abziehbar noch eine Betriebsausgabe. Die Zahlung an das Finanzamt
+          bitte so eintragen, wie sie gezahlt wurde; dieser Teil davon ist in der Erklärung keine Betriebsausgabe. Die App
+          zieht ihn noch nicht selbst ab.
         </p>
       )}
       {foreign > 0 && (

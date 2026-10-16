@@ -151,7 +151,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     expectedMonthlyRevenueCents: null,
     smallBusinessAtYearEnd: true,
     statusChanges: [],
-    vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, reverseChargeYear: null, reverseChargeFrequencyAssumed: true, reverseChargePendingItems: 0, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] },
+    vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, reverseChargeYear: null, reverseChargePendingItems: 0, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] },
     payments: { accounts: [], yearCount: 0, linkedCount: 0, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [] },
     vendorRules: [],
     reverseChargeVendors: [],
@@ -432,7 +432,7 @@ describe('FinanceClient: notices and statement', () => {
     row = screen.getByRole('button', { name: '§ 13b speichern' }).closest('li') as HTMLElement;
     expect(within(row).getByText(/Derzeit: 19 % \(an diesem Beleg\)/)).toBeTruthy();
     await user.click(within(row).getByRole('button', { name: '7 %' }));
-    await user.click(within(row).getByLabelText(/§ 13b für alle Belege von Netzwerk Nord GmbH/));
+    await user.click(within(row).getByLabelText(/Angabe für alle Belege von Netzwerk Nord GmbH/));
     await user.type(within(row).getByLabelText(/gilt ab/), '2025-01-01');
     await user.click(within(row).getByRole('button', { name: '§ 13b speichern' }));
     expect(actions.setReverseCharge).toHaveBeenLastCalledWith(2025, { rowId: 'a', rateBp: 700, applyToVendor: { vendor: 'Netzwerk Nord GmbH', effectiveFrom: '2025-01-01' } });
@@ -461,7 +461,7 @@ describe('FinanceClient: notices and statement', () => {
     // Nothing chosen yet: saving the receipt's current state would change nothing.
     expect((within(row).getByRole('button', { name: '§ 13b speichern' }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(within(row).getByRole('button', { name: '19 %' }));
-    await user.click(within(row).getByLabelText(/§ 13b für alle Belege von Netzwerk Nord GmbH/));
+    await user.click(within(row).getByLabelText(/Angabe für alle Belege von Netzwerk Nord GmbH/));
     await user.type(within(row).getByLabelText(/gilt ab/), '2025-04-01');
     await user.click(within(row).getByRole('button', { name: '§ 13b speichern' }));
     expect(actions.setReverseCharge).toHaveBeenCalledWith(2025, { rowId: 'a', rateBp: 1900, applyToVendor: { vendor: 'Netzwerk Nord GmbH', effectiveFrom: '2025-04-01' } });

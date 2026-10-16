@@ -18,7 +18,7 @@ import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../..
 
 /**
  * Tax the buyer owes on services from abroad (section 13b), stored and
- * resolved against a real database (migration 0021). Run with `pnpm test:db`.
+ * resolved against a real database (migration 0023). Run with `pnpm test:db`.
  */
 
 async function workspace(smallBusiness = true): Promise<{ ws: TestWorkspace; ctx: TaxContext }> {
@@ -66,7 +66,8 @@ describe('section 13b: forward, change, re-entry', () => {
     const after = await loadStatement(db, ws.workspaceId, 2026);
     expect(after.businessExpenseCents).toBe(before.businessExpenseCents);
     expect(after.vat.applies).toBe(false);
-    expect(after.vat.reverseChargeFrequencyAssumed).toBe(true);
+    // Calendar quarters under section 19, whatever frequency is stored.
+    expect(after.vat.reverseChargeYear?.periods).toHaveLength(4);
     expect(after.vat.reverseChargeYear?.periods.map((p) => p.dueCents)).toEqual([0, 1900, 0, 0]);
     expect(after.items.find((i) => i.rowId === rowId)).toMatchObject({ reverseCharge: { rateBp: 1900, origin: 'item' }, reverseChargeOwn: { rateBp: 1900 } });
 
@@ -150,6 +151,21 @@ describe('section 13b: assets, shares, currencies and vendor entries', () => {
     expect(view.vat.reverseChargePendingItems).toBe(0);
     expect(view.vat.year?.periods[1]).toMatchObject({ reverseChargeVatCents: 38_000, reverseChargeInputVatCents: 30_400 });
     expect(view.vat.reverseChargeNonBusinessCents).toBe(7600);
+    // The asset is built from the receipt as marked: its net cost is the whole
+    // amount (no German tax in it), so it has no open check and depreciates on
+    // 2,000.00: 8 of 36 months in 2026 is 444.44, at 80 percent 355.55.
+    expect(view.assets[0]).toMatchObject({ counted: true, netCostCents: 200_000 });
+    expect(view.assets[0].checks.filter((c) => c.blocking)).toEqual([]);
+    expect(view.lines.find((l) => l.key === 'euer.depreciation_intangible')?.cents).toBe(35_555);
+  });
+
+  it('under section 19 a frequency stored for an earlier year of regular taxation is not carried over', async () => {
+    const { ws, ctx } = await workspace(true);
+    await saveVatSettings(db, ctx, { frequency: 'monthly', method: 'issued' });
+    const rowId = await ws.addReceipt(foreign());
+    await saveReverseCharge(db, ctx, rowId, { rateBp: 1900 });
+    const view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.vat.reverseChargeYear?.periods).toHaveLength(4);
   });
 
   it('the share outside the business is owed and reported; a receipt in another currency is counted for the note', async () => {
@@ -190,6 +206,27 @@ describe('section 13b: assets, shares, currencies and vendor entries', () => {
       data: { authWorkspaceId: ws.workspaceId, authTenantId: ws.tenantId, vendorKey: 'restaurant beispiel', vendorLabel: 'Restaurant Beispiel', allocations: [{ purpose: 'business', shareBp: 10_000 }], formLineKey: 'euer.meals' },
     });
     expect(await code(saveReverseCharge(db, ctx, rowId, { rateBp: 1900 }))).toBe('meal_row');
+    expect(await db.taxReverseCharge.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
+  });
+
+  it('a vendor entry saved before its vendor\'s receipts moved to the meal line attaches no tax to them', async () => {
+    const { ws, ctx } = await workspace(true);
+    const rowId = await ws.addReceipt(foreign({ Vendor: 'Restaurant Beispiel' }));
+    await saveReverseCharge(db, ctx, rowId, { rateBp: 1900, applyToVendor: { vendor: 'Restaurant Beispiel' } });
+    await db.taxVendorRule.create({
+      data: { authWorkspaceId: ws.workspaceId, authTenantId: ws.tenantId, vendorKey: 'restaurant beispiel', vendorLabel: 'Restaurant Beispiel', allocations: [{ purpose: 'business', shareBp: 10_000 }], formLineKey: 'euer.meals' },
+    });
+    const view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.vat.reverseChargeYear).toBeNull();
+    expect(view.vat.reverseChargePendingItems).toBe(0);
+    expect(view.items.find((i) => i.rowId === rowId)?.reverseCharge ?? null).toBeNull();
+  });
+
+  it('an empty receipt id is refused before anything is read or written', async () => {
+    const { ws, ctx } = await workspace(true);
+    await ws.addReceipt(foreign());
+    expect(await code(saveReverseCharge(db, ctx, '', { rateBp: 1900 }))).toBe('row_not_found');
+    expect(await code(clearReverseCharge(db, ctx, ''))).toBe('row_not_found');
     expect(await db.taxReverseCharge.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
   });
 });

@@ -306,3 +306,19 @@ describe('the advance return periods', () => {
     expect(year.periods[0]).toMatchObject({ outputVatCents: 1900, reverseChargeVatCents: 0, reverseChargeInputVatCents: 0, dueCents: 1900 });
   });
 });
+
+describe('a marked receipt whose own figures show German tax', () => {
+  it('ignores the tax read off the receipt: no input tax from the receipt itself, the expense is the whole amount', () => {
+    // The reader took a 19 percent line off a foreign invoice: 119.00 with 100.00 net.
+    const read = item({ id: 'r', date: '2026-05-20', amountCents: 11_900, netCents: 10_000, smallBusiness: false, formLineKey: 'euer.it_running' });
+    const marked = withReverseCharge(read, 1900, '2026-05-20', false);
+    const result = computeYear({ year: 2026, items: [marked] }, rulesForYear(2026));
+    expect(result.inputVatEvents.filter((e) => e.source === 'item')).toEqual([]);
+    expect(result.lines.find((l) => l.key === 'euer.it_running')?.cents).toBe(11_900);
+  });
+
+  it('a credit note owes the same tax as an invoice, with the opposite sign', () => {
+    expect(reverseChargeTax(250, 1900)).toBe(48);
+    expect(reverseChargeTax(-250, 1900)).toBe(-48);
+  });
+});

@@ -423,8 +423,6 @@ export interface StatementView {
      * figures are then in `year`) or no such tax arose.
      */
     reverseChargeYear: VatYear | null;
-    /** True when `reverseChargeYear` uses quarters because no frequency was stated (the statutory default, section 18 (2)). */
-    reverseChargeFrequencyAssumed: boolean;
     /** Receipts under section 13b whose tax is not in the figures yet (kept out by an open check, or part of an asset). */
     reverseChargePendingItems: number;
     /** The part of the section 13b tax on shares outside the business: owed, not deductible, and no business expense when paid. */
@@ -559,21 +557,31 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   });
   const factsOfItem: ReceiptFacts[] = [];
   const foreignCurrencyReverseCharge = new Set<string>();
+  // One pass over the entries: a receipt's own entry by row, the vendor entries by vendor.
+  const ownReverseCharge = new Map(reverseChargeEntries.filter((e) => e.scope === 'row').map((e) => [e.subject, e]));
+  const vendorReverseCharge = new Map<string, typeof reverseChargeEntries>();
+  for (const e of reverseChargeEntries) if (e.scope === 'vendor') vendorReverseCharge.set(e.subject, [...(vendorReverseCharge.get(e.subject) ?? []), e]);
+  const reverseChargeLookup = (rowId: string, vendor: string | null) => {
+    const own = ownReverseCharge.get(rowId);
+    return [...(own ? [own] : []), ...((vendor ? vendorReverseCharge.get(vendor) : undefined) ?? [])];
+  };
   const reverseChargeOf = new Map<string, { origin: ReverseChargeOrigin | null; own: { rateBp: number | null } | null }>();
   const resolved = facts.flatMap((f) =>
     resolveItems(f, vendorRules, settings).map((r) => {
       factsOfItem.push(f);
       // Section 13b: the receipt's own statement, else its vendor's on the
       // document day. A meal is judged by the register and never carries one.
-      const own = reverseChargeEntries.find((e) => e.scope === 'row' && e.subject === r.rowId);
-      const rc = r.isMeal ? null : reverseChargeFor(reverseChargeEntries, r.rowId, r.vendorKey, f.record.date);
+      const own = ownReverseCharge.get(r.rowId);
+      // Also a receipt on the meal line through its treatment: the register judges it, never 13b.
+      const mealLine = r.isMeal || r.item.formLineKey === 'euer.meals';
+      const rc = mealLine ? null : reverseChargeFor(reverseChargeLookup(r.rowId, r.vendorKey), r.rowId, r.vendorKey, f.record.date);
       reverseChargeOf.set(r.item.id, { origin: rc?.origin ?? null, own: own ? { rateBp: own.rateBp } : null });
       // The tax arises with the invoice or the service, or earlier with a
       // payment made before it (section 13b (4) sentence 2): the earlier of the
       // document day and the payment day, with the status of that day.
       const taxDay = earlierDay(f.record.date, f.paid?.day);
       const item = rc ? withReverseCharge(r.item, rc.rateBp, taxDay, smallBusinessOn(settings, taxDay)) : r.item;
-      if (rc && f.record.currency !== 'EUR' && taxDay?.startsWith(`${year}-`)) foreignCurrencyReverseCharge.add(r.rowId);
+      if (rc && f.record.currency && f.record.currency !== 'EUR' && taxDay?.startsWith(`${year}-`)) foreignCurrencyReverseCharge.add(r.rowId);
       // A whole-receipt part covers every line of that receipt.
       const assetId = assetByItem.get(r.item.id) ?? assetByItem.get(r.rowId);
       return { ...r, item: assetId ? { ...item, assetId } : item };
@@ -793,11 +801,13 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
           : null,
       undeductedInputVatCents,
       // Under the small-business rule the tax owed as a buyer is still owed,
-      // and declared for exactly the periods it arose in. Without a stated
-      // frequency the statutory default applies: the calendar quarter.
+      // and declared for exactly the periods it arose in, by calendar quarter
+      // (section 18 (2) through (4a)); a frequency stored for an earlier year
+      // of regular taxation does not carry over, and the voluntary month of
+      // section 18 (2a) is not open to these returns.
       reverseChargeYear:
         !regularInYear && result.reverseChargeEvents.length > 0
-          ? vatYear(year, vatFrequency ?? 'quarterly', vatMethod ?? 'issued', {
+          ? vatYear(year, 'quarterly', vatMethod ?? 'issued', {
               inputVat: [],
               outputVatByIssue: [],
               outputVatByPayment: [],
@@ -805,7 +815,6 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
               reverseChargeInput: result.reverseChargeInputEvents,
             })
           : null,
-      reverseChargeFrequencyAssumed: vatFrequency === null,
       reverseChargePendingItems: result.reverseChargePendingItems,
       reverseChargeNonBusinessCents: result.reverseChargeNonBusinessCents,
       reverseChargeForeignCurrencyItems: foreignCurrencyReverseCharge.size,
@@ -1976,6 +1985,7 @@ export interface ReverseChargeRequest {
  * Everything is checked before anything is written.
  */
 export async function saveReverseCharge(db: PrismaClient, ctx: TaxContext, rowId: string, request: ReverseChargeRequest): Promise<void> {
+  if (!rowId) throw new TaxServiceError('row_not_found');
   const rateBp = validateReverseChargeRate(request?.rateBp);
   const loaded = await loadReceipts(db, ctx.workspaceId, rowId);
   if (!loaded) throw new TaxServiceError('not_initialized');
@@ -2030,6 +2040,7 @@ export async function saveReverseCharge(db: PrismaClient, ctx: TaxContext, rowId
 
 /** Remove a receipt's own section 13b statement: it follows its vendor's entry again, if any. */
 export async function clearReverseCharge(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<void> {
+  if (!rowId) throw new TaxServiceError('row_not_found');
   await db.taxReverseCharge.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, scope: 'row', subject: rowId } });
 }
 

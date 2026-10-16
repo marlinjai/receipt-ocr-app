@@ -55,7 +55,7 @@ export default function ReverseChargeForm({ item, busy, onSubmit, onReset }: Pro
           {item.reverseCharge ? ` Derzeit: ${item.reverseCharge.rateBp / 100} % (${ORIGIN_TEXT[item.reverseCharge.origin]}).` : ''}
           {item.lineId ? ' Die Angabe gilt für den ganzen Beleg.' : ''}
         </p>
-        {item.currency !== 'EUR' && (
+        {item.currency && item.currency !== 'EUR' && (
           <p className="ui-note ui-note-warn mt-1 text-xs">
             Dieser Beleg lautet auf {item.currency}. Gerechnet wird mit dem gebuchten Euro-Betrag; für die Umsatzsteuer gilt
             der monatliche Durchschnittskurs des Bundesfinanzministeriums, sofern das Finanzamt nicht den Tageskurs gestattet
@@ -72,7 +72,7 @@ export default function ReverseChargeForm({ item, busy, onSubmit, onReset }: Pro
         <div className="flex flex-wrap items-end gap-2 text-sm" style={{ color: 'var(--foreground)' }}>
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={forVendor} onChange={(e) => setForVendor(e.target.checked)} />
-            § 13b für alle Belege von {item.vendor}
+            Angabe für alle Belege von {item.vendor}
           </label>
           {forVendor && (
             <div>

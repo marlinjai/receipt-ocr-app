@@ -57,6 +57,8 @@ export type PaymentServiceErrorCode =
   | 'receipt_already_paid'
   /** The pair is no proposal any more (one side was linked in the meantime). */
   | 'proposal_gone'
+  /** Money back beyond what the receipt still costs; the detail is what it still costs, in cents. */
+  | 'refund_exceeds_receipt'
   /** A search for payments without a year, or a whole-account answer that is neither yes nor no. */
   | 'invalid_query'
   | 'invalid_private';
@@ -576,6 +578,20 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
           const adds = funders.length > 0 || twinOnReceipt ? 0 : cents;
           if (adds > 0 && paidSoFar > 0 && paidSoFar + adds > limit) throw new PaymentServiceError('receipt_already_paid', `${paidSoFar}:${receipt.amountCents}`);
         }
+      } else {
+        // Money back never takes a receipt below nothing: what is left is what its purchases cost (or, without one
+        // linked, its own amount) less the money back already on it. Beyond that it is refused, with what is left.
+        let out = 0;
+        let back = 0;
+        for (const { payment: p, link } of countedReceiptLinks(loaded.payments)) {
+          if (link.rowId !== rowId) continue;
+          if (p.amountCents < 0) out += link.cents;
+          else back += link.cents;
+        }
+        const base = out > 0 ? out : receipt?.amountCents ?? null;
+        if (base !== null && cents > base - back) throw new PaymentServiceError('refund_exceeds_receipt', String(Math.max(0, base - back)));
+        // Money in the file calls income and a person puts on a receipt is money back: it is no revenue.
+        if (effectiveKind(payment) === 'income') await tx.taxPayment.update({ where: { id: payment.id }, data: { kindOverride: 'refund' } });
       }
     }
     const link = await tx.taxPaymentLink.create({

@@ -1085,7 +1085,7 @@ describe('workspace isolation', () => {
     const foreignAccount = await createAccount(db, otherCtx, { label: 'Fremdes Konto', kind: 'bank' });
     const { batchId } = await importPayments(db, otherCtx, foreignAccount, JANUARY);
     await setCounterpartyTreatment(db, otherCtx, { counterparty: 'Werkzeug Beispiel GmbH', treatment: 'business' });
-    const foreignPayment = (await db.taxPayment.findFirst({ where: { accountId: foreignAccount } }))!;
+    const foreignPayment = (await db.taxPayment.findFirst({ where: { accountId: foreignAccount, amountCents: -10_850 } }))!;
     const foreignRow = await other.addReceipt({ Name: 'Fremd', Vendor: 'Werkzeug Beispiel GmbH', Gross: 108.5, Date: '2026-01-03', Currency: 'EUR', 'FX Rate': 1 });
     const { linkId: foreignLink } = await linkPayment(db, otherCtx, { paymentId: foreignPayment.id, rowId: foreignRow }, rowCheck(otherCtx));
 
@@ -1630,19 +1630,52 @@ describe('a refunded purchase: money back is proposed for the purchase’s recei
     expect((await refundOpen(ws.workspaceId))[0].proposals.map((p) => p.strength)).toEqual(['refund_reference']);
   });
 
-  it('resume and re-entry: a fresh load shows the same; a link taken back is proposed again; a part refund leaves the rest', async () => {
+  it('resume: a fresh load shows the same proposal, nothing is linked by loading', async () => {
+    const { ws, rowId } = await refundedOrder();
+    const first = (await refundOpen(ws.workspaceId))[0].proposals;
+    const again = (await refundOpen(ws.workspaceId))[0].proposals;
+    expect(again).toEqual(first);
+    expect(first.map((p) => p.targetId)).toEqual([rowId]);
+    expect(await db.taxPaymentLink.count({ where: { rowId } })).toBe(1);
+  });
+
+  it('re-entry: a link taken back is proposed again; a part refund leaves the rest, and money back beyond the rest is refused', async () => {
     const { ws, ctx, rowId, back, accountId } = await refundedOrder();
     const { linkId } = await linkPayment(db, ctx, { paymentId: back.id, rowId }, rowCheck(ctx));
     await unlinkPayment(db, ctx, linkId);
     expect((await refundOpen(ws.workspaceId))[0].proposals.map((p) => p.targetId)).toEqual([rowId]);
-    // A second, smaller refund of the same order: both fit while the receipt still costs 49.99.
     await importPayments(db, ctx, accountId, file(line('2026-03-25', 'Versand Beispiel', 'Teilerstattung', '10', 'Credit Transfer')));
     const part = (await db.taxPayment.findFirst({ where: { accountId, amountCents: 1_000 } }))!;
     await setPaymentKind(db, ctx, part.id, 'refund');
     await linkPayment(db, ctx, { paymentId: part.id, rowId }, rowCheck(ctx));
     expect((await loadStatement(db, ws.workspaceId, 2026)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 3_999 });
-    // The full refund no longer fits what is left, so it is not proposed for this receipt any more.
+    // The full refund no longer fits what is left: not proposed, and refused by hand with what is left.
     expect((await refundOpen(ws.workspaceId))[0].proposals).toEqual([]);
+    expect(await code(linkPayment(db, ctx, { paymentId: back.id, rowId }, rowCheck(ctx)))).toBe('refund_exceeds_receipt');
+    // A part of it that fits is fine.
+    await linkPayment(db, ctx, { paymentId: back.id, rowId, cents: 3_999 }, rowCheck(ctx));
+    expect((await loadStatement(db, ws.workspaceId, 2026)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 0 });
+  });
+
+  it('a counterparty answered mixed is asked about its money back when a purchase of its is on a receipt; one answered own account is not', async () => {
+    const { ws, ctx } = await refundedOrder();
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'Versand Beispiel', treatment: 'mixed' });
+    expect((await refundOpen(ws.workspaceId)).length).toBe(1);
+    // Not counted in the counterparty question as well.
+    expect((await loadStatement(db, ws.workspaceId, 2026)).payments.unclassified).toEqual([]);
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'Versand Beispiel', treatment: 'own_account' });
+    expect(await refundOpen(ws.workspaceId)).toEqual([]);
+  });
+
+  it('money back in January for a December purchase is not proposed for last year’s receipt', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    const rowId = await ws.addReceipt({ Name: 'Lampe', Vendor: 'Laden Beispiel', Gross: 30, Date: '2025-12-20', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    await importPayments(db, ctx, accountId, file(line('2025-12-20', 'Laden Beispiel', 'Kartenzahlung', '-30'), line('2026-01-05', 'Laden Beispiel', 'Rückerstattung', '30', 'Credit Transfer')));
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'Laden Beispiel', treatment: 'business' });
+    const purchase = (await db.taxPayment.findFirst({ where: { accountId, amountCents: -3_000 } }))!;
+    await linkPayment(db, ctx, { paymentId: purchase.id, rowId }, rowCheck(ctx));
+    const open = (await loadStatement(db, ws.workspaceId, 2026)).payments.open.find((o) => o.amountCents === 3_000)!;
+    expect(open.proposals.filter((p) => p.target === 'receipt')).toEqual([]);
   });
 
   it('money in that the file calls income is offered for the purchase it refunds too, and a counterparty never asked about is', async () => {
@@ -1656,6 +1689,10 @@ describe('a refunded purchase: money back is proposed for the purchase’s recei
     await linkPayment(db, ctx, { paymentId: purchase.id, rowId }, rowCheck(ctx));
     const open = (await loadStatement(db, ws.workspaceId, 2026)).payments.open.find((o) => o.amountCents === 1_200)!;
     expect(open.proposals).toEqual([{ target: 'receipt', targetId: rowId, label: 'Kabel', strength: 'refund_full' }]);
+    // Linked to the receipt it is money back, not revenue: the payment says so, and that can be put back.
+    await linkPayment(db, ctx, { paymentId: open.id, rowId }, rowCheck(ctx));
+    expect((await loadStatement(db, ws.workspaceId, 2026)).payments.overridden.map((o) => [o.id, o.kind])).toEqual([[open.id, 'refund']]);
+    await unlinkPayment(db, ctx, (await db.taxPaymentLink.findFirst({ where: { paymentId: open.id } }))!.id);
     // Answered private: nothing is proposed or asked.
     await setCounterpartyTreatment(db, ctx, { counterparty: 'Laden Beispiel', treatment: 'private' });
     expect((await loadStatement(db, ws.workspaceId, 2026)).payments.open.find((o) => o.amountCents === 1_200)).toBeUndefined();

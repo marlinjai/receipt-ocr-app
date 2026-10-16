@@ -1027,6 +1027,9 @@ export interface PaymentsView {
   }>;
 }
 
+/** Payment providers that stand for many shops: money back from them names its shop only by a number. */
+const PAYMENT_INTERMEDIARIES = new Set(['paypal', 'klarna', 'stripe', 'adyen', 'sumup', 'mollie']);
+
 function buildPaymentsView(
   loaded: LoadedPayments,
   year: number,
@@ -1039,18 +1042,6 @@ function buildPaymentsView(
   const itemById = new Map(resolved.map((r) => [r.item.id, r.item]));
   const invoiceById = new Map(invoices.map((i) => [i.id, i]));
   const free = (p: PaymentRow) => Math.abs(p.amountCents) - p.links.reduce((s, l) => s + l.cents, 0);
-
-  // Counterparties without an answer, by what moved (own transfers and fees ask nothing).
-  const unclassified = new Map<string, { key: string; label: string; count: number; outCents: number; inCents: number }>();
-  for (const p of inYear) {
-    // Money back from a pay-later service is asked about payment by payment, not once for the service.
-    if (p.kind === 'own_transfer' || p.kind === 'fee' || p.kind === 'private' || p.byRule || !p.counterpartyKey || loaded.treatments.has(p.counterpartyKey) || free(p) === 0) continue;
-    const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: p.counterparty, count: 0, outCents: 0, inCents: 0 };
-    entry.count += 1;
-    if (p.amountCents < 0) entry.outCents += -p.amountCents;
-    else entry.inCents += p.amountCents;
-    unclassified.set(p.counterpartyKey, entry);
-  }
 
   // Money in from a counterparty nobody answered yet is asked about once, in the
   // counterparty question, unless it already looks like the payment of an issued
@@ -1070,15 +1061,21 @@ function buildPaymentsView(
   const purchasesByRow = new Map<string, RefundTarget['purchases']>();
   for (const { payment, link } of countedReceiptLinks(loaded.payments)) {
     if (payment.amountCents >= 0) continue;
-    purchasesByRow.set(link.rowId, [...(purchasesByRow.get(link.rowId) ?? []), { bookingDay: payment.bookingDay, cents: link.cents, counterpartyKey: payment.counterpartyKey, reference: payment.reference }]);
+    const list = purchasesByRow.get(link.rowId) ?? [];
+    list.push({ bookingDay: payment.bookingDay, cents: link.cents, counterpartyKey: payment.counterpartyKey, reference: payment.reference });
+    purchasesByRow.set(link.rowId, list);
   }
+  // A payment service or a payment provider stands for many shops: from it only a shared number proposes a receipt.
+  const heldNames = new Set(loaded.accounts.flatMap((a) => heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) })?.name ?? []));
+  const namesService = (p: PaymentRow) => p.counterpartyKey.split(' ').some((word) => heldNames.has(word));
+  const intermediary = (p: PaymentRow) => namesService(p) || p.counterpartyKey.split(' ').some((word) => PAYMENT_INTERMEDIARIES.has(word));
   const refundTargets: RefundTarget[] = resolved
     .filter((r) => !r.isMeal && r.item.amountCents !== null && r.item.amountCents > 0)
     .map((r) => ({ rowId: r.item.id, day: r.item.date, vendorKey: r.vendorKey, remainingCents: r.item.amountCents as number, purchases: purchasesByRow.get(r.item.id) ?? [] }));
   const refundProposals = proposeRefunds(
     inYear
       .filter((p) => p.amountCents > 0 && (p.kind === 'refund' || p.kind === 'income') && Math.abs(p.amountCents) === free(p))
-      .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, reference: p.reference })),
+      .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, reference: p.reference, kind: p.kind as 'refund' | 'income', intermediary: intermediary(p) })),
     refundTargets,
   );
   const refundProposalIds = new Set(refundProposals.map((x) => x.paymentId));
@@ -1099,8 +1096,21 @@ function buildPaymentsView(
     if (p.kind === 'refund') return treatment === 'business' || !p.counterpartyKey || p.byRule || (treatment !== 'private' && treatment !== 'own_account' && refundProposalIds.has(p.id));
     return false;
   });
-  const heldNames = new Set(loaded.accounts.flatMap((a) => heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) })?.name ?? []));
-  const namesService = (p: PaymentRow) => p.counterpartyKey.split(' ').some((word) => heldNames.has(word));
+
+  // Counterparties without an answer, by what moved (own transfers and fees ask nothing).
+  const unclassified = new Map<string, { key: string; label: string; count: number; outCents: number; inCents: number }>();
+  // A payment already asked about on its own (an invoice's payment, money back with a proposal) is not counted here too.
+  const askedAlone = new Set(needing.map((p) => p.id));
+  for (const p of inYear) {
+    if (askedAlone.has(p.id)) continue;
+    // Money back from a pay-later service is asked about payment by payment, not once for the service.
+    if (p.kind === 'own_transfer' || p.kind === 'fee' || p.kind === 'private' || p.byRule || !p.counterpartyKey || loaded.treatments.has(p.counterpartyKey) || free(p) === 0) continue;
+    const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: p.counterparty, count: 0, outCents: 0, inCents: 0 };
+    entry.count += 1;
+    if (p.amountCents < 0) entry.outCents += -p.amountCents;
+    else entry.inCents += p.amountCents;
+    unclassified.set(p.counterpartyKey, entry);
+  }
   const counted = countedReceiptLinks(loaded.payments);
   const countedLinkIds = new Set(counted.map((c) => c.link.id));
   // What each receipt already carries, so the picker for linking by hand can say so.

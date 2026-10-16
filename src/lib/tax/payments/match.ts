@@ -303,7 +303,14 @@ export function proposeMatches(payments: readonly MatchPayment[], documents: rea
     }
   }
   // The vendor named first: of several receipts of the same amount, the one of this vendor is the likely one.
-  return proposals.sort((a, b) => (a.paymentId === b.paymentId ? Number(b.strength === 'amount_date_vendor') - Number(a.strength === 'amount_date_vendor') : 0));
+  // Ordered within each payment's proposals only; the payments keep their order.
+  const firstOf = new Map<string, number>();
+  proposals.forEach((p, i) => firstOf.has(p.paymentId) || firstOf.set(p.paymentId, i));
+  const rank = (p: MatchProposal) => (p.strength === 'amount_date_vendor' ? 0 : p.strength === 'amount_and_date' ? 1 : -1);
+  return proposals
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => (firstOf.get(a.p.paymentId) as number) - (firstOf.get(b.p.paymentId) as number) || rank(a.p) - rank(b.p) || a.i - b.i)
+    .map(({ p }) => p);
 }
 
 /**

@@ -10,11 +10,15 @@
  * A refund is proposed for a receipt only through its counterparty: the
  * receipt carries a purchase from the same counterparty (a linked payment out),
  * or, without one, names that counterparty as its vendor. Never by amount
- * alone, and never linked without a person's click.
+ * alone, and never linked without a person's click. Only within one year: under
+ * cash-basis accounting money back counts in the year it arrives, and linking
+ * it to last year's receipt would change that year.
  */
 
+import { vendorNamed } from './match';
+
 export type RefundStrength =
-  /** The refund's text and the purchase's text share an order or transaction number. */
+  /** The refund's text and the purchase's text share an order or transaction number no other purchase carries. */
   | 'refund_reference'
   /** The refund is exactly what the purchase on the receipt cost: refunded in full. */
   | 'refund_full'
@@ -28,6 +32,10 @@ export interface RefundMoney {
   amountCents: number;
   counterpartyKey: string;
   reference: string;
+  /** What the file says it is: money back, or money in it calls income (then only a strong match is proposed). */
+  kind: 'refund' | 'income';
+  /** True when the counterparty is a payment service or marketplace that stands for many shops (PayPal): only a shared number counts. */
+  intermediary?: boolean;
 }
 
 /** A receipt that can take money back, with what it still costs and the purchases on it. */
@@ -60,18 +68,25 @@ function daysBetween(a: string, b: string): number {
   return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 }
 
+/** A run of digits that reads as a day: 20250320, 200325, 2025-03-20, 20-03-25. */
+const DATE_LIKE = /^(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{2,4}|(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])|(0[1-9]|[12]\d|3[01])(0[1-9]|1[0-2])\d{2})$/;
+
 /**
- * Numbers that identify an order or a transaction: a run of letters and digits
- * at least six long with at least four digits, lower case, separators removed
- * ("302-1234567-1234567" is one). A day written with dashes is left out;
- * amounts (with a decimal comma) and short numbers never qualify.
+ * Numbers that may identify an order or a transaction: a run of letters and
+ * digits at least six long with at least four digits, lower case, separators
+ * removed ("302-1234567-1234567" is one). Left out are what banks print on
+ * every line of a shop: a day, a masked card ("XXXX1234"), an account number
+ * (IBAN, International Bank Account Number), a direct-debit creditor id (with
+ * "ZZZ"). Whether a number really names one order is judged against the other
+ * purchases (`proposeRefunds`).
  */
 export function orderNumbers(text: string): Set<string> {
   const out = new Set<string>();
   for (const raw of text.toLowerCase().match(/[a-z0-9][a-z0-9-]{4,}[a-z0-9]/g) ?? []) {
-    // A day written with dashes is no number of an order.
-    if (/^\d{4}-\d{2}-\d{2}$|^\d{2}-\d{2}-\d{4}$/.test(raw)) continue;
+    if (DATE_LIKE.test(raw)) continue;
     const token = raw.replace(/-/g, '');
+    if (DATE_LIKE.test(token)) continue;
+    if (/^x+\d+$/.test(token) || /^[a-z]{2}\d{2}[a-z0-9]{10,30}$/.test(token) || token.includes('zzz')) continue;
     if (token.length >= 6 && (token.match(/\d/g)?.length ?? 0) >= 4) out.add(token);
   }
   return out;
@@ -79,51 +94,60 @@ export function orderNumbers(text: string): Set<string> {
 
 /**
  * For each refund, the receipts it can belong to, best first: same
- * counterparty, the purchase before the refund and not more than
- * `REFUND_WINDOW_DAYS` earlier, and never more money back than the receipt
- * still costs.
+ * counterparty, the purchase (or the receipt) before the refund, in the same
+ * year and not more than `REFUND_WINDOW_DAYS` earlier, and never more money
+ * back than the receipt still costs. A shared number counts only when no other
+ * purchase of that counterparty carries it (a customer or mandate number is on
+ * all of them). Money in the file calls income is proposed only on a shared
+ * number or as a refund in full; from a payment service or marketplace only on
+ * a shared number.
  */
 export function proposeRefunds(refunds: readonly RefundMoney[], targets: readonly RefundTarget[]): RefundProposal[] {
+  // Indexed once: the purchases by counterparty with their numbers, and how many purchases carry each number.
+  const byCounterparty = new Map<string, Array<{ target: RefundTarget; bookingDay: string; cents: number; numbers: Set<string> }>>();
+  const numberCount = new Map<string, number>();
+  const withoutPurchase: RefundTarget[] = [];
+  for (const target of targets) {
+    if (target.purchases.length === 0) withoutPurchase.push(target);
+    for (const purchase of target.purchases) {
+      const numbers = orderNumbers(purchase.reference);
+      const list = byCounterparty.get(purchase.counterpartyKey) ?? [];
+      list.push({ target, bookingDay: purchase.bookingDay, cents: purchase.cents, numbers });
+      byCounterparty.set(purchase.counterpartyKey, list);
+      for (const n of numbers) numberCount.set(`${purchase.counterpartyKey}|${n}`, (numberCount.get(`${purchase.counterpartyKey}|${n}`) ?? 0) + 1);
+    }
+  }
+
   const proposals: RefundProposal[] = [];
   for (const refund of refunds) {
     if (!refund.counterpartyKey || refund.amountCents <= 0) continue;
+    const year = refund.bookingDay.slice(0, 4);
     const refundNumbers = orderNumbers(refund.reference);
-    const found: Array<RefundProposal & { gap: number }> = [];
-    for (const target of targets) {
-      if (target.remainingCents < refund.amountCents) continue;
-      const purchases = target.purchases.filter((p) => p.counterpartyKey === refund.counterpartyKey);
-      let strength: RefundStrength | null = null;
-      let gap = Number.POSITIVE_INFINITY;
-      if (purchases.length > 0) {
-        for (const purchase of purchases) {
-          const days = daysBetween(purchase.bookingDay, refund.bookingDay);
-          if (days < 0 || days > REFUND_WINDOW_DAYS) continue;
-          const shared = [...orderNumbers(purchase.reference)].some((n) => refundNumbers.has(n));
-          const candidate: RefundStrength = shared ? 'refund_reference' : purchase.cents === refund.amountCents ? 'refund_full' : 'refund_part';
-          if (strength === null || RANK[candidate] < RANK[strength] || (RANK[candidate] === RANK[strength] && days < gap)) {
-            strength = candidate;
-            gap = days;
-          }
-        }
-      } else if (target.purchases.length === 0 && target.vendorKey && target.day !== null && sameName(target.vendorKey, refund.counterpartyKey)) {
-        // A receipt without a linked purchase (paid in cash, or its payment is not imported) by its vendor.
-        const days = daysBetween(target.day, refund.bookingDay);
-        if (days >= 0 && days <= REFUND_WINDOW_DAYS) {
-          strength = target.remainingCents === refund.amountCents ? 'refund_full' : 'refund_part';
-          gap = days;
-        }
-      }
-      if (strength !== null) found.push({ paymentId: refund.id, rowId: target.rowId, strength, gap });
+    const allowed = (strength: RefundStrength) =>
+      strength === 'refund_reference' || (!refund.intermediary && (refund.kind === 'refund' || strength === 'refund_full'));
+    const best = new Map<string, { strength: RefundStrength; gap: number }>();
+    const offer = (target: RefundTarget, strength: RefundStrength, gap: number) => {
+      if (!allowed(strength) || target.remainingCents < refund.amountCents) return;
+      const current = best.get(target.rowId);
+      if (!current || RANK[strength] < RANK[current.strength] || (RANK[strength] === RANK[current.strength] && gap < current.gap)) best.set(target.rowId, { strength, gap });
+    };
+    for (const purchase of byCounterparty.get(refund.counterpartyKey) ?? []) {
+      const gap = daysBetween(purchase.bookingDay, refund.bookingDay);
+      if (gap < 0 || gap > REFUND_WINDOW_DAYS || !purchase.bookingDay.startsWith(year)) continue;
+      const shared = [...purchase.numbers].some((n) => refundNumbers.has(n) && numberCount.get(`${refund.counterpartyKey}|${n}`) === 1);
+      offer(purchase.target, shared ? 'refund_reference' : purchase.cents === refund.amountCents ? 'refund_full' : 'refund_part', gap);
     }
-    found.sort((a, b) => RANK[a.strength] - RANK[b.strength] || a.gap - b.gap);
-    for (const { paymentId, rowId, strength } of found.slice(0, REFUND_PROPOSALS_PER_PAYMENT)) proposals.push({ paymentId, rowId, strength });
+    // A receipt without a linked purchase (paid in cash, or its payment is not imported) by its vendor.
+    for (const target of withoutPurchase) {
+      if (target.day === null || !target.day.startsWith(year) || !vendorNamed(target.vendorKey, refund.counterpartyKey, '')) continue;
+      const gap = daysBetween(target.day, refund.bookingDay);
+      if (gap < 0 || gap > REFUND_WINDOW_DAYS) continue;
+      offer(target, target.remainingCents === refund.amountCents ? 'refund_full' : 'refund_part', gap);
+    }
+    [...best.entries()]
+      .sort(([, a], [, b]) => RANK[a.strength] - RANK[b.strength] || a.gap - b.gap)
+      .slice(0, REFUND_PROPOSALS_PER_PAYMENT)
+      .forEach(([rowId, { strength }]) => proposals.push({ paymentId: refund.id, rowId, strength }));
   }
   return proposals;
-}
-
-/** The vendor on a receipt and the name on a bank line are the same business when one contains the other word by word. */
-function sameName(vendorKey: string, counterpartyKey: string): boolean {
-  const words = (key: string) => key.split(' ').filter(Boolean);
-  const contains = (outer: string[], inner: string[]) => inner.length > 0 && ` ${outer.join(' ')} `.includes(` ${inner.join(' ')} `);
-  return contains(words(counterpartyKey), words(vendorKey)) || contains(words(vendorKey), words(counterpartyKey));
 }

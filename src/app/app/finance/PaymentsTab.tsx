@@ -420,7 +420,9 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 </div>
                 <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
                   {payment.check === 'income_without_invoice'
-                    ? 'Geldeingang ohne Rechnung: Einnahme (dann fehlt die Rechnung unter „Einnahmen“) oder privat?'
+                    ? payment.proposals.some((x) => x.target === 'receipt')
+                      ? 'Geldeingang ohne Rechnung: eine Erstattung zu einem Beleg (Vorschlag unten; sie wird dann von seinen Kosten abgezogen), eine Einnahme oder privat?'
+                      : 'Geldeingang ohne Rechnung: Einnahme (dann fehlt die Rechnung unter „Einnahmen“) oder privat?'
                     : payment.check === 'refund_without_receipt'
                       ? 'Erstattung: dem Beleg zuordnen, dessen Kauf sie rückgängig macht; sie wird dann von seinen Kosten abgezogen.'
                       : 'Betriebliche Zahlung ohne Beleg: Beleg hochladen und zuordnen.'}

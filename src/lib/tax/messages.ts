@@ -248,6 +248,10 @@ export function financeActionMessage(error: string, detail?: string): string {
         case 'invalid_date':
           return 'Das Datum „gilt ab“ ist ungültig.';
         default:
+          if (detail?.startsWith('refund_exceeds_receipt:')) {
+            const left = Number(detail.split(':')[1]);
+            return `Diese Erstattung ist größer als das, was der Beleg noch kostet (${(left / 100).toFixed(2).replace('.', ',')} €). Bitte einen Teilbetrag zuordnen oder einen anderen Beleg wählen.`;
+          }
           if (detail?.startsWith('unreadable_row:')) {
             return `Zeile ${detail.split(':')[1]} der Datei lässt sich nicht lesen (Datum oder Betrag). Es wurde nichts eingelesen, auch nicht die Zeilen davor.`;
           }

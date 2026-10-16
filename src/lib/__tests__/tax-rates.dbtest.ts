@@ -3,7 +3,7 @@ import * as F from '@/lib/extraction/__tests__/fixtures';
 import { contactStore, saveMealDetails } from '@/lib/meals/service';
 import { serializeTaxLines } from '@/lib/meals/rules';
 import { ensureReceiptsTable } from '@/lib/receipts-table';
-import { applyNewReading } from '@/lib/review/service';
+import { applyNewReading, loadReviewQueue } from '@/lib/review/service';
 import { withTaxRates } from '@/lib/tax-rates';
 import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../../../test/db-helpers';
 
@@ -256,7 +256,18 @@ describe('the one order, after the third review', () => {
     await ensureReceiptsTable(ws.adapter, ws.workspaceId, { db, tenantId: ws.tenantId });
     expect(await ratesOf(ws, first)).toBe('19 % + 7 %');
     expect(await ratesOf(ws, second)).toBe('19 % + 7 %');
-    expect(await valueOf(ws, first, 'Tax Rate')).toBe(19);
+    // 7 is not what the old reader put there (it took the largest line, 19): a rate a person or a model gave stays.
+    expect(await valueOf(ws, first, 'Tax Rate')).toBe(7);
+  });
+
+  it('a row with lines, an old number and no text gets both in the one order', async () => {
+    const ws = await createWorkspace();
+    const lines = serializeTaxLines([{ rate: 7, net: 50, tax: 3.5 }, { rate: 7, net: 40, tax: 2.8 }, { rate: 19, net: 80, tax: 15.2 }]);
+    const rowId = await ws.addReceipt({ Name: 'Einkauf', Gross: 191.5, 'Tax Rate': 19, 'Tax Lines': lines });
+    await asOldTable(ws);
+    await ensureReceiptsTable(ws.adapter, ws.workspaceId, { db, tenantId: ws.tenantId });
+    expect(await valueOf(ws, rowId, 'Tax Rate')).toBe(7);
+    expect(await ratesOf(ws, rowId)).toBe('7 % + 19 %');
   });
 
   it('taking the total in the review list takes the rate read with it, so the two columns agree', async () => {
@@ -276,6 +287,9 @@ describe('the one order, after the third review', () => {
     const text = 'Musterladen\nNetto 100,00\nMwSt 8,00\nSumme 108,00';
     const typedLines = serializeTaxLines([{ rate: 7, net: 100.93, tax: 7.07 }]);
     const rowId = await ws.addReceipt(plainMealReceipt({ 'OCR Text': text, Gross: 108, Net: 100.93, 'Tax Rate': 7, 'Tax Lines': typedLines }));
+    // The list does not offer the rate at all, so it can never be left offered and unwritable.
+    const entry = (await loadReviewQueue(db, ws.workspaceId)).find((e) => e.rowId === rowId);
+    expect(entry?.proposal.some((c) => c.field === 'taxRate')).toBe(false);
     await applyNewReading(db, ctx, rowId, ['net', 'taxRate']);
     expect(await valueOf(ws, rowId, 'Tax Lines')).toBe(typedLines);
     expect(await valueOf(ws, rowId, 'Tax Rate')).toBe(7);

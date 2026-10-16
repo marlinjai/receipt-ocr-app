@@ -303,8 +303,8 @@ async function fillTaxRates(adapter: PrismaAdapter, tableId: string): Promise<bo
    * What a row stored before the one order of rates needs, or null. The text
    * is rewritten where it is exactly what the old order (by net) made of the
    * row's own lines; a text a person typed stays. The number is set to the
-   * first rate of the lines where it is what an old reading put there: the
-   * rate of the largest single line, or the first rate of the old text.
+   * first rate of the lines where it is what the old reader put there: the
+   * rate of the largest single line. A blank text is filled with it.
    */
   const reorder = (cells: Record<string, unknown>): Record<string, string | number> | null => {
     const lines = linesId ? parseTaxLines(cells[linesId]) : null;
@@ -314,11 +314,11 @@ async function fillTaxRates(adapter: PrismaAdapter, tableId: string): Promise<bo
     if (leading === undefined) return null;
     const out: Record<string, string | number> = {};
     const largestLine = [...lines].sort((x, y) => y.net + y.tax - (x.net + x.tax))[0]?.rate;
-    const oldFirst = orderedRatesByNet(lines)[0];
-    if (rateId && rate !== null && rate !== leading && (rate === largestLine || rate === oldFirst)) out[rateId] = leading;
+    if (rateId && rate !== null && rate !== leading && rate === largestLine) out[rateId] = leading;
     const text = cells[ratesId];
     const newRate = rateId && rateId in out ? leading : rate;
-    if (typeof text === 'string' && text !== '' && text === ratesTextByNet(lines, rate) && text !== formatTaxRates(lines, newRate)) out[ratesId] = formatTaxRates(lines, newRate);
+    const oldText = typeof text === 'string' && text !== '' && text === ratesTextByNet(lines, rate) && text !== formatTaxRates(lines, newRate);
+    if (oldText || (rateId !== undefined && rateId in out && blank(text))) out[ratesId] = formatTaxRates(lines, newRate);
     return Object.keys(out).length > 0 ? out : null;
   };
   const deadline = Date.now() + FILL_BUDGET_MS;

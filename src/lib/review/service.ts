@@ -77,7 +77,7 @@ function snapshotOf(
   columns: Column[],
   selectOptions: SelectOptionsByColumn,
   hashes: ReadonlyMap<string, string[]>,
-): ReviewSnapshot & { isMeal: boolean; reading: StoredReading } {
+): ReviewSnapshot & { isMeal: boolean; cells: Record<string, unknown>; reading: StoredReading } {
   const byName = firstColumnIdByName(columns);
   const cell = (name: string): unknown => {
     const id = byName.get(name);
@@ -107,6 +107,7 @@ function snapshotOf(
     // A table without the column has nothing to answer: the field is left out.
     ...(byName.has('Zuordnung') ? { assignment: optionName('Zuordnung') } : {}),
     isMeal: category === MEAL_CATEGORY,
+    cells: row.cells,
     reading: {
       name: text(cell('Name')).trim(),
       vendor,
@@ -128,8 +129,21 @@ function snapshotOf(
  * name that states them, are not offered either: taken alone they would land
  * in a row that says another currency.
  */
-function readingOf(stored: StoredReading, columns: Column[], selectOptions: SelectOptionsByColumn): NewReading {
-  const reading = newReading(stored);
+function readingOf(
+  stored: StoredReading,
+  columns: Column[],
+  selectOptions: SelectOptionsByColumn,
+  /** The row's stored tax lines, and whether it is a meal: a meal's typed lines are the person's answer. */
+  row: { isMeal: boolean; cells: Record<string, unknown> },
+): NewReading {
+  const read = newReading(stored);
+  // A rate the reading brings without lines of its own is not offered against
+  // the tax lines a person typed for a meal: the person's lines decide its rate.
+  const linesId = firstColumnIdByName(columns).get(MEAL_COLUMNS.taxLines);
+  const storedLines = linesId ? parseTaxLines(row.cells[linesId]) : null;
+  const rateOffer = read.changes.find((c) => c.field === 'taxRate');
+  const linesDecide = row.isMeal && read.taxLines.length === 0 && rateOffer !== undefined && Boolean(storedLines?.length) && orderedRates(storedLines)[0] !== Number(rateOffer.to);
+  const reading = linesDecide ? { ...read, changes: read.changes.filter((c) => c.field !== 'taxRate') } : read;
   const currency = reading.changes.find((c) => c.field === 'currency');
   if (!currency) return reading;
   const columnId = firstColumnIdByName(columns).get('Currency');
@@ -178,7 +192,7 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
     const duplicates = alike.get(s.rowId) ?? [];
     const record = storedByRow.get(s.rowId);
     // Reading the stored text again costs nothing (no model is asked); a confirmed receipt is left alone.
-    const proposal = record?.checkedAt ? [] : readingOf(s.reading, ctx.columns, ctx.selectOptions).changes;
+    const proposal = record?.checkedAt ? [] : readingOf(s.reading, ctx.columns, ctx.selectOptions, { isMeal: s.isMeal, cells: s.cells }).changes;
     const reasons = reviewReasons(s, record, duplicates, proposal.length > 0);
     if (reasons.length === 0) continue;
     entries.push({
@@ -283,7 +297,7 @@ export async function applyNewReading(
   if (!row || row.tableId !== table.tableId || isGroupRow(row, table.columns)) throw new ReviewError('row_not_found');
 
   const snapshot = snapshotOf(row, table.columns, table.selectOptions, new Map());
-  const reading = readingOf(snapshot.reading, table.columns, table.selectOptions);
+  const reading = readingOf(snapshot.reading, table.columns, table.selectOptions, { isMeal: snapshot.isMeal, cells: row.cells });
   const wanted = new Set(fields);
   // An amount is read in the receipt's currency: 360 dollars taken into a row
   // that still says euros would be a wrong amount. Whoever takes an amount
@@ -291,12 +305,8 @@ export async function applyNewReading(
   if (AMOUNT_FIELDS.some((f) => wanted.has(f))) wanted.add('currency');
   const linesColumn = firstColumnIdByName(table.columns).get(MEAL_COLUMNS.taxLines);
   const storedLines = linesColumn ? parseTaxLines(row.cells[linesColumn]) : null;
+  // `readingOf` offers no rate against a meal's typed lines, so none is taken here either.
   const rateOffer = reading.changes.find((c) => c.field === 'taxRate');
-  // Tax lines a person typed in the meal form are their answer: a rate the
-  // reading brings without lines of its own does not override them.
-  if (snapshot.isMeal && reading.taxLines.length === 0 && rateOffer && storedLines?.length && orderedRates(storedLines)[0] !== Number(rateOffer.to)) {
-    wanted.delete('taxRate');
-  }
   const take = reading.changes.filter((c) => wanted.has(c.field));
   if (take.length === 0) return [];
   // A total or a net taken brings the printed tax lines with it (below), and

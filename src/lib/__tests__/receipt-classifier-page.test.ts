@@ -173,3 +173,12 @@ describe('parseClassificationResponse: the facts read from the page', () => {
     expect(parse({ gross: null }).noTotal).toBe(false);
   });
 });
+
+describe('a page without recognized text', () => {
+  it('the model is told to read everything from the page and to give null rather than guess', () => {
+    const prompt = classificationPrompt({ ...input(PHOTO), fullText: '' }, { webSearch: false });
+    expect(prompt).toContain('No text could be recognized');
+    expect(prompt).toContain('never a guess');
+    expect(classificationPrompt(input(PHOTO), { webSearch: false })).not.toContain('No text could be recognized');
+  });
+});

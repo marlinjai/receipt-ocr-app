@@ -229,10 +229,13 @@ export const ITEM_RULE =
   'what was bought, in two to four words, in German, for a list of receipts: the product or the plan by its own name where it has one ("ChatGPT Plus", "Creative Cloud Foto-Abo", "Notion Plus"), otherwise the kind of thing ("SSD-Gehäuse", "Domainverlängerung", "Mobilfunkvertrag", "Deutschlandticket"). With several different line items, the main one and how many more follow ("USB-Stick + 2"). Never the vendor\'s name alone, never an amount, a date, a quantity, an order or invoice number, a period ("Januar 2024") or the name of a person. Null for a meal in a restaurant and when the document does not show what was bought.';
 
 /** What the model is told about what it is looking at. */
-function sourceParagraph(page: ReceiptPage | null | undefined): string {
+function sourceParagraph(page: ReceiptPage | null | undefined, hasText = true): string {
   const ocrCaveat =
     'It can contain misread characters, lines out of order, and a second printed form on the same page (a German hospitality form, "Bewirtungsbeleg" or "Angaben zum Nachweis der Höhe und der betrieblichen Veranlassung von Bewirtungsaufwendungen", is printed on or stapled to many restaurant receipts).';
   if (!page) return `The text below comes from optical character recognition of a photographed or scanned receipt. ${ocrCaveat}`;
+  if (!hasText) {
+    return `You are given the document itself (${page.mediaType === 'application/pdf' ? 'its pages as a PDF' : 'an image of it'}). No text could be recognized on it, so read every name, amount and date from the document itself, exactly as printed. Nothing can check your answer: give null for anything you cannot read with certainty, never a guess.`;
+  }
   const cut =
     page.pagesTotal !== undefined && page.pagesSent !== undefined && page.pagesSent < page.pagesTotal
       ? ` Only the first and the last pages are attached (${page.pagesSent} of ${page.pagesTotal}).`
@@ -249,7 +252,7 @@ export function classificationPrompt(input: ClassifyInput, options: { webSearch:
 
 ${search}
 
-${sourceParagraph(input.page)}
+${sourceParagraph(input.page, input.fullText.trim().length > 0)}
 
 Classify the receipt and read these facts from it:
 

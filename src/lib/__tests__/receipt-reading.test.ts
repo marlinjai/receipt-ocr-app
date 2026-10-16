@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { extractReceiptFields } from '../extract-receipt-fields';
-import { settleCurrency, settleDate, settleReading, type ModelReading } from '../receipt-reading';
+import { settleCurrency, settleDate, settleFromPageOnly, settleReading, type ModelReading } from '../receipt-reading';
 import { EMPTY_MEAL_CLASSIFICATION } from '../meals/classify';
 import { formatTaxRates, orderedRates } from '../tax-rates';
 
@@ -226,5 +226,35 @@ describe('the net follows the same lines', () => {
     expect(adds.net).toBe(43);
     const off = settle(slip.replace('48,77', '50,00'), answer({ category: 'Bewirtung', gross: 50, meal: { ...meal, taxLines: [...meal.taxLines] } }));
     expect(off.net).toBe(42.02);
+  });
+});
+
+describe('settleFromPageOnly: a page without text, read by the model alone', () => {
+  it('stores its date, total and currency, all unverified', () => {
+    const settled = settleFromPageOnly(answer({ gross: 5, currency: 'USD', date: day('2026-03-02'), taxRate: 0 }));
+    expect(settled).toMatchObject({ gross: 5, net: 5, currency: 'USD', date: day('2026-03-02'), taxRate: 0, flags: ['image_only'] });
+  });
+
+  it('a net above the total is not taken; without one it is worked out from the rate', () => {
+    expect(settleFromPageOnly(answer({ gross: 11.9, net: 20, taxRate: 19, currency: 'EUR' })).net).toBe(10);
+    expect(settleFromPageOnly(answer({ gross: 11.9, net: 10, taxRate: 19, currency: 'EUR' })).net).toBe(10);
+  });
+
+  it('a total in a currency the model could not read is not stored as euros', () => {
+    expect(settleFromPageOnly(answer({ gross: 11.9, currency: null }))).toMatchObject({ gross: null, net: null });
+  });
+
+  it('another currency without a printed rate gets no German rate: the bill is the net', () => {
+    expect(settleFromPageOnly(answer({ gross: 20, currency: 'USD', taxRate: null }))).toMatchObject({ gross: 20, net: 20, taxRate: 0 });
+    expect(settleFromPageOnly(answer({ gross: 11.9, currency: 'EUR', taxRate: null, category: 'Software & Lizenzen' }))).toMatchObject({ taxRate: 19, net: 10 });
+  });
+
+  it('a currency the app has no option for leaves the amounts empty', () => {
+    expect(settleFromPageOnly(answer({ gross: 20, currency: 'CHF' }))).toMatchObject({ gross: null, net: null, currency: 'EUR', flags: ['image_only'] });
+  });
+
+  it('a meal keeps its facts from the model', () => {
+    const settled = settleFromPageOnly(answer({ category: 'Bewirtung', gross: 30, currency: 'EUR', vendor: 'Trattoria Beispiel', date: day('2026-03-02'), meal: { ...EMPTY_MEAL_CLASSIFICATION, mealType: 'business_meal_external' } }));
+    expect(settled.meal?.mealType).toBe('business_meal_external');
   });
 });

@@ -33,7 +33,7 @@ vi.mock('@/lib/receipt-page-source', () => ({
 }));
 
 import { contactStore, loadMealRecord, saveMealDetails } from '@/lib/meals/service';
-import { mealStatus } from '@/lib/meals/rules';
+import { mealStatus, serializeTaxLines } from '@/lib/meals/rules';
 import { createGroup } from '@/lib/groups/service';
 import { saveRule } from '@/lib/classification-rules-store';
 import { processReceipt, recomputeFxRates, rereadReceipt, retakeReceipt } from './actions';
@@ -135,7 +135,8 @@ describe('processReceipt', () => {
     expect((await files(ws, result.rowId))[0].metadata).toMatchObject({ source: 'ocr-upload', sha256: HASH('1') });
   });
 
-  it('text recognition failed: there is still a row, Pending, with the file attached', async () => {
+  it('text recognition failed and the page cannot be read either: there is still a row, Pending, with the file attached', async () => {
+    loadPage.mockResolvedValue({ skipped: 'unreadable' });
     const before = await rowCount(ws);
     const result = await upload(file(2), null, { sha256: HASH('2') });
     expect(result).toMatchObject({ category: null, isMeal: false, attention: 'ocr_failed' });
@@ -237,6 +238,7 @@ describe('processReceipt: what the reader cannot settle is recorded, never silen
   });
 
   it('a page nothing could be read from says so in its name and is not named "Receipt"', async () => {
+    loadPage.mockResolvedValue({ skipped: 'unreadable' });
     const empty = await upload(file(26), ocr(''), {});
     const failed = await upload(file(27), null, {});
     expect(await cell(empty.rowId, 'Name')).toBe('Nicht lesbar: foto-26.jpg');
@@ -321,6 +323,7 @@ describe('retakeReceipt: never a second row', () => {
 
   it('a retake whose recognition fails again keeps the row and says so', async () => {
     const first = await upload(file(17), ocr('unscharf', 0.2), {});
+    loadPage.mockResolvedValue({ skipped: 'unreadable' });
     const again = await retakeReceipt(first.rowId, file(18), null, {});
     expect(again).toMatchObject({ rowId: first.rowId, attention: 'ocr_failed' });
   });
@@ -354,8 +357,9 @@ describe('processReceipt: the model is shown the page, and the upload never depe
     expect(await cellOf(ws, result.rowId, 'Status')).toBe('Pending');
   });
 
-  it('no recognized text and no structured data: the model is not asked', async () => {
+  it('no recognized text, no structured data and no page: the model is not asked', async () => {
     // The file is fetched: an XRechnung has no text to recognize, and only its bytes say it is one.
+    loadPage.mockResolvedValue({ skipped: 'unreadable' });
     await upload(file(43), null, {});
     expect(loadStructured).toHaveBeenCalledWith(file(43).id);
     expect(classify).not.toHaveBeenCalled();
@@ -666,9 +670,11 @@ describe('rereadReceipt: a stored receipt read again with the page', () => {
     const noFile = await ws.addReceipt({ Name: 'Von Hand', Gross: 10, 'OCR Text': CAFE });
     expect(await rereadReceipt(noFile)).toEqual({ ok: false, error: 'no_file' });
     const noText = await wrongRow({ 'OCR Text': '' }, ws, 66);
+    // Without text the page alone is read; a model that cannot answer leaves the row as it is, and says why.
+    classify.mockRejectedValue(new Error('provider down'));
+    expect(await rereadReceipt(noText)).toEqual({ ok: false, error: 'model_unavailable' });
+    loadPage.mockResolvedValue({ skipped: 'missing' });
     expect(await rereadReceipt(noText)).toEqual({ ok: false, error: 'no_text' });
-    expect(classify).not.toHaveBeenCalled();
-    expect(loadPage).not.toHaveBeenCalled();
   });
 
   it('a group is never read, and neither is a receipt of another workspace', async () => {
@@ -727,5 +733,79 @@ describe('the item: one subscription keeps one wording', () => {
     const result = await upload(file(82), ocr(INVOICE));
     expect(classify.mock.calls[0][0].knownItems).toEqual([]);
     expect(await cellOf(own, result.rowId, 'Item')).toBe('Example Video Abo');
+  });
+});
+
+describe('a page without any recognized text is read by the model alone, unverified', () => {
+  const FROM_IMAGE = { ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', vendor: 'Example Media', gross: 5, net: null, currency: 'USD', date: '2026-03-02T00:00:00.000Z', taxRate: 0, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null, place: null } };
+
+  it('upload: date, total and currency are stored, and the review list asks a person to confirm them', async () => {
+    classify.mockResolvedValue(FROM_IMAGE);
+    const result = await upload(file(100), null, {});
+    expect(classify.mock.calls[0][0]).toMatchObject({ fullText: '', page: PAGE });
+    expect(await cellOf(ws, result.rowId, 'Gross')).toBe(5);
+    expect(await cellOf(ws, result.rowId, 'Currency')).toBe('USD');
+    expect(new Date((await cellOf(ws, result.rowId, 'Date')) as string).toISOString().slice(0, 10)).toBe('2026-03-02');
+    expect(await cellOf(ws, result.rowId, 'Status')).toBe('Processed');
+    expect(result.reviewFlags).toEqual(['image_only']);
+    expect(result.attention).toBe('low_quality');
+  });
+
+  it('a model that names neither a total nor a date, fails, or gets no page: the row waits as unreadable, as before', async () => {
+    classify.mockResolvedValue({ ...FROM_IMAGE, gross: null, date: null });
+    const empty = await upload(file(101), null, {});
+    expect(await cellOf(ws, empty.rowId, 'Gross')).toBeNull();
+    expect(await cellOf(ws, empty.rowId, 'Status')).toBe('Pending');
+    classify.mockRejectedValue(new Error('provider down'));
+    const failed = await upload(file(102), null, {});
+    expect(String(await cellOf(ws, failed.rowId, 'Name'))).toContain('Nicht lesbar');
+    classify.mockClear();
+    loadPage.mockResolvedValue({ skipped: 'missing' });
+    await upload(file(103), null, {});
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it('"Seite neu lesen" on a row without text reads its page alone; without a readable page nothing is written', async () => {
+    classify.mockResolvedValue(FROM_IMAGE);
+    const rowId = await (async () => {
+      const id = await ws.addReceipt({ Name: 'scan.pdf', 'OCR Text': '' } as Parameters<TestWorkspace['addReceipt']>[0]);
+      const columns = await ws.adapter.getColumns(ws.tableId);
+      await ws.adapter.addFileReference({ rowId: id, columnId: columns.find((c) => c.name === 'Receipt Image')!.id, fileId: file(104).id, fileUrl: `/api/files/${file(104).id}`, originalName: 'scan.pdf', mimeType: 'application/pdf', metadata: { source: 'ocr-upload' } });
+      return id;
+    })();
+    expect(await rereadReceipt(rowId)).toEqual({ ok: true, reviewFlags: ['image_only'] });
+    expect(await cellOf(ws, rowId, 'Gross')).toBe(5);
+    // A total a person typed stays: an unverified reading only fills empty cells.
+    await ws.adapter.updateRow(rowId, { [(await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Gross')!.id]: 6 });
+    classify.mockResolvedValue({ ...FROM_IMAGE, gross: 7 });
+    expect((await rereadReceipt(rowId)).ok).toBe(true);
+    expect(await cellOf(ws, rowId, 'Gross')).toBe(6);
+    // The model down on a readable page: said as such, nothing written.
+    classify.mockRejectedValue(new Error('provider down'));
+    expect(await rereadReceipt(rowId)).toEqual({ ok: false, error: 'model_unavailable' });
+    loadPage.mockResolvedValue({ skipped: 'missing' });
+    expect(await rereadReceipt(rowId)).toEqual({ ok: false, error: 'no_text' });
+    expect(await cellOf(ws, rowId, 'Gross')).toBe(6);
+  });
+
+  it('an unreadable upload\'s defaults are replaced as one group; stored tax lines stay', async () => {
+    classify.mockResolvedValue(FROM_IMAGE);
+    const lines = serializeTaxLines([{ rate: 19, net: 10, tax: 1.9 }]);
+    const rowId = await ws.addReceipt({ Name: 'scan.pdf', 'OCR Text': '', Currency: 'EUR', 'FX Rate': 1, 'Tax Rate': 19, 'Tax Lines': lines } as Parameters<TestWorkspace['addReceipt']>[0]);
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    await ws.adapter.addFileReference({ rowId, columnId: columns.find((c) => c.name === 'Receipt Image')!.id, fileId: file(107).id, fileUrl: `/api/files/${file(107).id}`, originalName: 'scan.pdf', mimeType: 'application/pdf', metadata: { source: 'ocr-upload' } });
+    expect((await rereadReceipt(rowId)).ok).toBe(true);
+    expect(await cellOf(ws, rowId, 'Gross')).toBe(5);
+    expect(await cellOf(ws, rowId, 'Currency')).toBe('USD');
+    expect(await cellOf(ws, rowId, 'Tax Rate')).toBe(0);
+    expect(await cellOf(ws, rowId, 'Tax Lines')).toBe(lines);
+  });
+
+  it('a retake whose text recognition fails is read from the page and offered again as a poor reading', async () => {
+    const first = await upload(file(105), ocr(CAFE), {});
+    classify.mockResolvedValue(FROM_IMAGE);
+    const retaken = await retakeReceipt(first.rowId, file(106), null, {});
+    expect(retaken).toMatchObject({ reviewFlags: ['image_only'], attention: 'low_quality' });
+    expect(await cellOf(ws, first.rowId, 'Gross')).toBe(5);
   });
 });

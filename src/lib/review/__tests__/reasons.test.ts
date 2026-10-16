@@ -165,3 +165,13 @@ describe('when a doubt about the total ends by itself', () => {
     expect(totalSettled(receipt({ gross: 121.5 }), { flags: [], checkedAt: null, readGrossCents: null })).toBe(false);
   });
 });
+
+describe('a reading from the image alone', () => {
+  it('stays until a person confirms it or payments cover its total; a corrected total does not end it', () => {
+    const stored = { flags: ['image_only'], checkedAt: null, readGrossCents: 500 };
+    expect(reviewReasons(receipt({ gross: 5, net: 5 }), stored, [])).toEqual(['image_only']);
+    expect(reviewReasons(receipt({ gross: 6, net: 6 }), stored, [])).toEqual(['image_only']);
+    expect(reviewReasons(receipt({ gross: 5, net: 5, totalPaid: true }), stored, [])).toEqual([]);
+    expect(reviewReasons(receipt({ gross: 5, net: 5 }), { ...stored, checkedAt: new Date() }, [])).toEqual([]);
+  });
+});

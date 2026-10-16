@@ -13,7 +13,7 @@
  */
 
 /** Doubts recorded at reading time. A person can confirm them away ("Geprüft"). */
-export const READ_FLAGS = ['not_classified', 'page_not_read', 'several_documents', 'total_unconfirmed', 'total_conflict', 'date_conflict', 'category_doubt', 'einvoice_problem', 'credit_note', 'currency_unknown'] as const;
+export const READ_FLAGS = ['not_classified', 'page_not_read', 'several_documents', 'total_unconfirmed', 'total_conflict', 'date_conflict', 'category_doubt', 'einvoice_problem', 'credit_note', 'currency_unknown', 'image_only'] as const;
 export type ReadFlag = (typeof READ_FLAGS)[number];
 
 export type ReviewReason =
@@ -189,7 +189,8 @@ export function reviewReasons(
   // A doubt about the total is moot once there is no total at all, and ends
   // once the total was corrected or payments bear it out.
   const totalDoubtEnds = derived.includes('amount_missing') || totalSettled(snapshot, stored);
-  const kept = flags.filter((f) => !(totalDoubtEnds && (f === 'total_unconfirmed' || f === 'total_conflict')));
+  // A reading from the image alone is settled by a person, or by payments that cover its total; never by an edit.
+  const kept = flags.filter((f) => !(totalDoubtEnds && (f === 'total_unconfirmed' || f === 'total_conflict')) && !(f === 'image_only' && snapshot.totalPaid));
   // A person who confirmed the receipt has seen it as it is: the offer is not repeated.
   const offer = readingDiffers && !stored?.checkedAt;
   return [
@@ -219,6 +220,7 @@ export const REASON_TEXT: Record<ReviewReason, string> = {
   currency_unknown: 'Die elektronische Rechnung ist in einer Währung, die die App nicht führt: Die Beträge bleiben leer, die Zahlen stehen im erkannten Text. Bitte Betrag und Währung eintragen.',
   credit_note: 'Gutschrift (elektronisch): Geld zurück, kein Kauf. Der Betrag bleibt leer, bis entschieden ist, wie sie verbucht wird; die Zahlen stehen im erkannten Text.',
   page_not_read: 'Nur aus dem erkannten Text gelesen: Die Seite selbst konnte dem Sprachmodell nicht gezeigt werden. Beträge und Datum bitte prüfen.',
+  image_only: 'Unbestätigt, nur aus dem Bild gelesen: Auf dem Beleg wurde kein Text erkannt, Datum, Betrag und Währung hat das Sprachmodell vom Bild abgelesen. Bitte mit dem Beleg vergleichen.',
   total_unconfirmed: 'Gesamtbetrag nur vom Etikett gelesen, ohne Gegenprobe über die Steuerzeilen.',
   total_conflict: 'Zwei Lesarten des Gesamtbetrags widersprechen sich.',
   date_conflict: 'Das Rechnungsdatum ist nicht gesichert: Zwei Lesarten widersprechen sich, oder das Datum steht nicht im erkannten Text.',

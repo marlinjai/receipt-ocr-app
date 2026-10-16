@@ -53,14 +53,19 @@ export function knownPayLaterMethod(wording: string): PayLaterMethod | null {
 }
 
 /**
- * How a purchase was paid, from what the list says. A card marker wins over
- * the wording, because "Invoice" only names how the service is reimbursed and
- * card purchases carry it too. An unknown wording is read as checkout: the
- * cautious reading, which never claims an expense before anything was paid.
+ * How a purchase was paid, from what the list says. A card the list marks
+ * wins over the wording, because "Invoice" only names how the service is
+ * reimbursed and card purchases carry it too. A loan or a direct debit the
+ * list names is that, whatever the merchant text. The card network's text
+ * ("PAYPAL *shop") marks a card where the wording says invoice or nothing
+ * known. An unknown wording is read as checkout: the cautious reading, which
+ * never claims an expense before anything was paid.
  */
 export function classifyPayLater(detail: PayLaterDetail, merchant: string): PayLaterMethod {
   const known = knownPayLaterMethod(detail.method);
-  if (known === 'card' || detail.card === true || looksLikeCardText(merchant)) return 'card';
+  if (known === 'card' || detail.card === true) return 'card';
+  if (known === 'financed' || known === 'direct_debit') return known;
+  if (looksLikeCardText(merchant)) return 'card';
   return known ?? 'checkout';
 }
 
@@ -84,9 +89,10 @@ export interface TaxDayCollection {
   text: string;
   /**
    * The purchase the funding rule pairs this debit with (its twin), when it
-   * found one. A debit twinned with a purchase that is not paid at the
-   * checkout (a direct debit, a card purchase) is that purchase's own money and
-   * settles no statement.
+   * found one. A debit twinned with a direct-debit purchase is that purchase's
+   * own money and settles no statement. Any other twin is only the nearest
+   * purchase of the same amount (a checkout invoice is collected weeks later,
+   * outside the twin window), so such a debit still counts as a collection.
    */
   twinId?: string | null;
 }
@@ -117,7 +123,10 @@ export interface PayLaterDay {
   dayUnknown: boolean;
 }
 
-const words = (text: string) => new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+/** Text as its words, lower case, separated and enclosed by single spaces: "AB-1234/x" is " ab 1234 x ". */
+const spaced = (text: string) => ` ${text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean).join(' ')} `;
+/** Whether a text names a number: its words appear one after the other, whatever punctuation stands between them. */
+const names = (text: string, number: string) => spaced(number).trim() !== '' && text.includes(spaced(number));
 const dayNumber = (day: string) => Math.round(Date.parse(`${day}T00:00:00Z`) / 86_400_000);
 const byDay = <T extends { id: string; bookingDay: string }>(a: T, b: T) => (a.bookingDay === b.bookingDay ? (a.id < b.id ? -1 : 1) : a.bookingDay < b.bookingDay ? -1 : 1);
 
@@ -146,7 +155,7 @@ function methodOf(purchase: TaxDayPurchase): PayLaterMethod | null {
  *    financed purchases of the statement included: the service collects the
  *    whole statement).
  * Each collection settles one statement (or one purchase by its number), and
- * a debit twinned with a purchase not paid at the checkout settles none.
+ * a debit twinned with a direct-debit purchase settles none.
  * Statements are worked through in the order of their last purchase, so the
  * same data always pairs the same way.
  */
@@ -155,18 +164,18 @@ export function resolvePayLaterDays(rows: readonly TaxDayPurchase[], collections
   const purchases = rows.filter((r) => r.amountCents < 0);
   const methods = new Map(purchases.map((p) => [p.id, methodOf(p)]));
   const ordered = collections
-    .filter((c) => !c.twinId || !methods.has(c.twinId) || methods.get(c.twinId) === 'checkout')
+    .filter((c) => !c.twinId || methods.get(c.twinId) !== 'direct_debit')
     .sort(byDay);
-  const textWords = new Map(ordered.map((c) => [c.id, words(c.text)]));
+  const texts = new Map(ordered.map((c) => [c.id, spaced(c.text)]));
   const used = new Set<string>();
   const settledBy = new Map<string, { collection: TaxDayCollection; by: 'statement' | 'reference' | 'amount' }>();
 
   // 1. A collection of exactly the purchase's amount naming its own number settles that purchase.
   for (const purchase of [...purchases].sort(byDay)) {
-    const reference = purchase.detail?.reference?.toLowerCase();
+    const reference = purchase.detail?.reference;
     if (!reference) continue;
     const collection = ordered.find(
-      (c) => !used.has(c.id) && c.bookingDay >= purchase.bookingDay && c.amountCents === purchase.amountCents && textWords.get(c.id)?.has(reference),
+      (c) => !used.has(c.id) && c.bookingDay >= purchase.bookingDay && c.amountCents === purchase.amountCents && names(texts.get(c.id) ?? '', reference),
     );
     if (!collection) continue;
     used.add(collection.id);
@@ -188,8 +197,7 @@ export function resolvePayLaterDays(rows: readonly TaxDayPurchase[], collections
   // 2. A collection naming the statement settles all of it.
   const open: Array<[string, TaxDayPurchase[]]> = [];
   for (const [statement, list] of statementOrder) {
-    const key = statement.toLowerCase();
-    const collection = ordered.find((c) => !used.has(c.id) && c.bookingDay >= lastDay(list) && textWords.get(c.id)?.has(key));
+    const collection = ordered.find((c) => !used.has(c.id) && c.bookingDay >= lastDay(list) && names(texts.get(c.id) ?? '', statement));
     if (!collection) {
       open.push([statement, list]);
       continue;

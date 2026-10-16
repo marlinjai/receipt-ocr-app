@@ -561,7 +561,7 @@ describe('PaymentsTab', () => {
   it('lists pay-later purchases whose year moves or whose collection is unknown, and a person says how one was paid or takes it back', async () => {
     const user = userEvent.setup();
     const p = props();
-    const entry = (o: Record<string, unknown>) => ({ id: 'k-1', bookingDay: '2025-12-10', taxDay: '2026-01-08', amountCents: -4_000, counterparty: 'Laden Beispiel', accountLabel: 'Später zahlen', method: 'checkout' as const, byPerson: false, linkedTo: ['Lampe'], ...o });
+    const entry = (o: Record<string, unknown>) => ({ id: 'k-1', bookingDay: '2025-12-10', taxDay: '2026-01-08', amountCents: -4_000, counterparty: 'Laden Beispiel', accountLabel: 'Später zahlen', method: 'checkout' as const, byPerson: false, dayUnknown: false, linkedTo: ['Lampe'], ...o });
     render(
       <PaymentsTab
         view={view({

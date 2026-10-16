@@ -175,7 +175,33 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
   const account = await db.taxAccount.findFirst({ where: { id: accountId, authWorkspaceId: ctx.workspaceId } });
   if (!account) throw new PaymentServiceError('account_not_found');
   const contentHash = createHash('sha256').update(onlyYear === null ? text : `${text}\u0000only-year:${onlyYear}`).digest('hex');
-  if (await db.taxImportBatch.findFirst({ where: { accountId, contentHash } })) throw new PaymentServiceError('file_already_imported');
+  const known = await db.taxImportBatch.findFirst({ where: { accountId, contentHash } });
+  if (known) {
+    // The same file again adds nothing. It can still bring the payment details of purchases stored before they
+    // were kept: then it fills them in and says so, and only then is it not refused.
+    const again = parsePaymentFile(text);
+    const detailFilled = again.payments.some((p) => p.detail) ? await db.$transaction((tx) => fillMissingDetail(tx, accountId, again.payments), { maxWait: 20_000, timeout: 120_000 }) : 0;
+    if (detailFilled === 0) throw new PaymentServiceError('file_already_imported');
+    return {
+      batchId: known.id,
+      format: again.format,
+      total: again.payments.length,
+      added: 0,
+      alreadyThere: again.payments.length,
+      skipped: again.skipped,
+      autoLinked: 0,
+      cancelledEarlier: 0,
+      releasedLinks: 0,
+      adopted: 0,
+      notices: again.notices,
+      unknownStatuses: again.unknownStatuses,
+      unknownMethods: again.unknownMethods,
+      detailFilled,
+      onlyYear,
+      firstDay: again.firstDay,
+      lastDay: again.lastDay,
+    };
+  }
   const file = parsePaymentFile(text);
 
   // Everything from here on happens together or not at all, including the
@@ -357,7 +383,10 @@ async function adoptUnreferenced(db: Prisma.TransactionClient, accountId: string
     const candidates = unnumbered.filter((p) => sameMovement(p) === key);
     if (claimants.length !== 1 || candidates.length !== 1) continue;
     // The numbered row is the authority on how it was paid too: its own number is what a bank line settling it names.
-    const detail = claimants[0].detail ? { sourceDetail: claimants[0].detail as unknown as Prisma.InputJsonValue } : {};
+    // A card the stored row marked stays marked: one of the two rows saw it.
+    const storedCard = payLaterDetailOf(candidates[0].sourceDetail)?.card === true;
+    const claimed = claimants[0].detail;
+    const detail = claimed ? { sourceDetail: { ...claimed, card: storedCard ? true : claimed.card } as unknown as Prisma.InputJsonValue } : {};
     await db.taxPayment.update({ where: { id: candidates[0].id }, data: { sourceHash: claimants[0].sourceHash, entryReference: claimants[0].entryReference, ...detail } });
     adopted += 1;
   }

@@ -434,10 +434,11 @@ change or add to the list above.
     private and paid by card, so the two answers must not wipe each other. The corrections are
     listed in their own block, "Von dir umgestellt", each with the other answer and
     "Zurücksetzen".
-34. **The order of the rules.** A card marker wins over the wording (`Cards`, the `card` column
-    filled, or a `*` between two names in the merchant text), because "Invoice" is carried by
-    card purchases too. Then `Term Loan` is financed, `Direct Debit` direct debit, `Invoice` and
-    `In <n> Tagen zahlen` (any number) checkout. Every other wording is checkout and named after
+34. **The order of the rules.** A card the list marks wins over the wording (`Cards`, or the
+    `card` column filled), because "Invoice" is carried by card purchases too. Then `Term Loan`
+    is financed and `Direct Debit` direct debit, whatever the merchant text. Then a `*` between
+    two names in the merchant text marks a card. Then `Invoice` and `In <n> Tagen zahlen` (any
+    number) are checkout. Every other wording is checkout and named after
     the import ("Unbekannte Zahlungsarten"). The real list has four such wordings besides the
     known ones (`Flexible Amount`, `Fixed Amount`, `Direct Bank Transfer`, an empty one; 6 rows
     of 1,131): read as checkout they stay on the purchase day as "Einzugstag unbekannt" unless a
@@ -451,9 +452,12 @@ change or add to the list above.
     per 5,000 rows); details already there are never overwritten, with one exception: the
     shorter variant of the list has no card column, so its purchases store the card mark as
     unknown (not as "no card"), and a later longer list fills in that one field. The import says how many it
-    filled ("Bei n schon vorhandenen Käufen wurde die Zahlungsart ergänzt"). An import limited
+    filled ("Bei n schon vorhandenen Käufen wurde die Zahlungsart ergänzt"). The very same file
+    imported again is no longer refused when it has details to fill in: it fills them, records
+    no new import and says so; with nothing to fill it is refused as before. An import limited
     to one year fills in the purchases of every year of the file, and counts as not empty when
-    it filled something in.
+    it filled something in. When a purchase listed twice (once from the web pages without a
+    number) is merged, a card either row marked stays marked.
 37. **How a collection is found, in this order:** a bank line of exactly the purchase's amount
     naming its own number settles that purchase (an invoice paid by transfer; 14 lines of the
     real bank files carry such a number; a part payment naming it settles nothing, the purchase
@@ -463,7 +467,10 @@ change or add to the list above.
     it (card and financed purchases of the statement included: the service collects the whole
     statement). The 60 days keep a later month of the same sum (a subscription) from being
     taken for a statement whose own collection is missing. A bank debit the funding rule pairs
-    with a purchase not paid at the checkout (a direct debit's own debit) settles no statement. Each collection settles one statement,
+    with a direct-debit purchase is that purchase's own money and settles no statement; a debit
+    it pairs with any other purchase still can (the pairing only takes the nearest purchase of
+    the same amount, and a checkout invoice is collected outside its window). Numbers are found
+    in the bank text whatever punctuation stands in or around them. Each collection settles one statement,
     statements in the order of their last purchase. A collection is a debit the funding rule
     makes a transfer, or one a person marked a transfer whose counterparty names the service (a
     collection after the last day the list covers). A debit a person said is a payment of its
@@ -472,12 +479,17 @@ change or add to the list above.
     the tax day of its linked purchase. The ten-day rule (`yearBoundary` and the check behind
     saving an answer, `paymentDayOfRow`) reads the same day; `paymentDayOfRow` now goes through
     `linkedByRow`, so it also counts the same money once and leaves cancelled purchases out, as
-    the statement does. The list of years includes a year a purchase is collected in. Lists,
+    the statement does (it reads all payments of the workspace when the receipt has a link,
+    which is slower than before but the same answer as the statement). The reverse charge
+    (section 13b of the value-added tax act, where the buyer owes the tax) dates a receipt by
+    the same paid day, so it follows the tax day too, which is intended. The list of years
+    includes a year a purchase is collected in. Lists,
     proposals, reconciliation, the spending pages and invoice income keep the booking day.
 39. **What is listed for a look:** checkout purchases bought in one year and collected in the next
-    (in both years' tabs, with "Mit der Karte bezahlt"), checkout purchases of the year without a
-    collection ("Einzugstag unbekannt", same button), the corrections, and the count of purchases
-    without details. Private purchases and transfers are left out: they decide no year.
+    (in both years' tabs, with "Mit der Karte bezahlt"), direct debits captured in the next year,
+    checkout purchases of the year without a collection ("Einzugstag unbekannt", same button),
+    the corrections (in the year of the purchase and the year it counts in, each listed once),
+    and the count of purchases without details. Private purchases and transfers are left out: they decide no year.
 
 ## Tests
 
@@ -563,15 +575,12 @@ Where the time went, and what was done:
   exports carries a statement number** (0 of 109 lines naming the service). The amount rule is
   therefore the one that works on production; the statement match is built as decided and tested
   on an invented line. 14 Tomorrow lines carry a purchase's own number, which the first rule uses.
-- **What the owner does once after the deploy:** read the pay-later list again into the same
-  account, so the purchases already stored get their payment details. The identical file is
-  refused as already imported, so import it with the option "Nur Zahlungen aus 2025" (pull
-  request #141, the import limited to one year, which makes it a different import): any year in
-  which the list has purchases will do, because the details are filled in for the purchases of
-  every year of the file, and such an import is kept even though it adds nothing. Undoing the
-  earlier import and importing again also works but drops the links made on its purchases, so
-  the year option is the better way. Until then every stored purchase counts on its purchase day
-  as before, and the tab says how many are waiting.
+- **What the owner does once after the deploy:** import the same pay-later list file again into
+  the same account. The purchases already stored get their payment details and nothing else of
+  them changes, links included; the import says how many were filled in. (Importing it with
+  "Nur Zahlungen aus 2025", pull request #141, works as well.) Never undo the earlier import for
+  this: that drops the links made on its purchases. Until then every stored purchase counts on
+  its purchase day as before, and the tab says how many are waiting.
 - **Checked on the real list after the review: its `statement_number` is not the monthly
   statement.** 1,129 numbers for 1,131 purchases, so it is a number per purchase (every
   payment method carries one, the list holds no money back). The amount rule therefore finds a

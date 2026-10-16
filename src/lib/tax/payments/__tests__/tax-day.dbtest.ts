@@ -100,6 +100,30 @@ describe('the day a pay-later purchase counts on: forward, change an earlier inp
     expect(await item(ws.workspaceId, 2025, lampRow)).toBeDefined();
   });
 
+  it('change an earlier input: an answer of the ten-day rule holds only for the day it was given; it is back when the day is', async () => {
+    const { ws, ctx, lampRow, checkoutId } = await setUp();
+    await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: lampRow, cashDay: '2026-01-08', belongsToOtherYear: true });
+    // Counted on the last day of 2025, the year it was said to belong to.
+    expect((await item(ws.workspaceId, 2025, lampRow))?.date).toBe('2025-12-31');
+    // Said to be a card purchase: it counts on 10 December, the answer for 8 January no longer applies and is not asked.
+    await setPaymentMethod(db, ctx, checkoutId, 'card');
+    expect(await item(ws.workspaceId, 2025, lampRow)).toMatchObject({ date: '2025-12-10' });
+    expect((await loadStatement(db, ws.workspaceId, 2025)).yearBoundary.find((e) => e.subjectId === lampRow)).toBeUndefined();
+    // Taken back: the day is 8 January again, and so is the answer given for it.
+    await setPaymentMethod(db, ctx, checkoutId, null);
+    expect((await loadStatement(db, ws.workspaceId, 2026)).yearBoundary.find((e) => e.subjectId === lampRow)).toMatchObject({ cashDay: '2026-01-08', answer: true });
+    expect(await item(ws.workspaceId, 2026, lampRow)).toBeUndefined();
+  });
+
+  it('a direct debit bought on 31 December and captured in January is listed with the year it counts in', async () => {
+    const ws = await createWorkspace();
+    const ctx: TaxContext = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    const laterId = await createAccount(db, ctx, { label: 'Später zahlen', kind: 'payment_service' });
+    await importPayments(db, ctx, laterId, laterFile(later({ day: '2025-12-31', merchant: 'Laden Beispiel', amount: '15.00', reference: '5000000000009', statement: '9ZZZZZZZ', method: 'Direct Debit', activated: '2026-01-02 08:00' })));
+    const moved = (await loadStatement(db, ws.workspaceId, 2025)).payments.payLaterDays.moved;
+    expect(moved).toEqual([expect.objectContaining({ bookingDay: '2025-12-31', taxDay: '2026-01-02', method: 'direct_debit' })]);
+  });
+
   it('change an earlier input: a person says the checkout purchase was paid by card, and takes it back', async () => {
     const { ws, ctx, lampRow, checkoutId } = await setUp();
     await setPaymentMethod(db, ctx, checkoutId, 'card');
@@ -212,6 +236,16 @@ describe('the day a pay-later purchase counts on: forward, change an earlier inp
     expect(await item(ws.workspaceId, 2026, lampRow)).toMatchObject({ date: '2026-01-08' });
     // Once filled, the next year has nothing to do and is refused as empty, as before.
     expect(await code(importPayments(db, ctx, laterId, LIST, { onlyYear: 2026 }))).toBe('nothing_new');
+  });
+
+  it('re-entry: the very same file again fills in missing details and records no new import; with nothing to fill it is refused', async () => {
+    const { ws, ctx, laterId, lampRow } = await setUp();
+    await db.taxPayment.updateMany({ where: { accountId: laterId }, data: { sourceDetail: Prisma.DbNull } });
+    const batches = await db.taxImportBatch.count({ where: { accountId: laterId } });
+    expect(await importPayments(db, ctx, laterId, LIST)).toMatchObject({ added: 0, alreadyThere: 3, detailFilled: 3 });
+    expect(await db.taxImportBatch.count({ where: { accountId: laterId } })).toBe(batches);
+    expect(await item(ws.workspaceId, 2026, lampRow)).toMatchObject({ date: '2026-01-08' });
+    expect(await code(importPayments(db, ctx, laterId, LIST))).toBe('file_already_imported');
   });
 
   it('re-entry: a card mark the shorter list could not give is taken from the longer one, and only that', async () => {

@@ -394,6 +394,9 @@ function parseKlarna(rows: string[][]): ParsedFile {
   const kept = drafts.filter((d) => {
     if (d.identity || referenced.get(sameMovement(d)) !== 1 || unreferenced.get(sameMovement(d)) !== 1) return true;
     skip(skipped, 'duplicate_row');
+    // A card the dropped row marked (the web pages show it) stays with the purchase.
+    const twin = drafts.find((other) => other.identity && sameMovement(other) === sameMovement(d));
+    if (d.detail?.card === true && twin?.detail) twin.detail = { ...twin.detail, card: true };
     return false;
   });
   // A wording the reader does not know is read as paid later at the checkout and named after the import, like an

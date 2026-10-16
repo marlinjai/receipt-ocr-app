@@ -694,13 +694,13 @@ function PayLaterDays({ days, year, busy, onPayMethod }: { days: StatementView['
         <>
           <h3 className="mt-3 text-sm font-medium" style={{ color: 'var(--foreground)' }}>Gekauft im einen Jahr, eingezogen im nächsten</h3>
           <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-            Diese Käufe zählen im Jahr des Einzugs. Bitte ansehen: war einer davon mit der Karte bezahlt, zählt er im Jahr des Kaufs.
+            Diese Käufe zählen im Jahr, in dem das Geld vom Konto ging. Bitte ansehen: war einer davon mit der Karte bezahlt, zählt er im Jahr des Kaufs.
           </p>
           <ul className="mt-2 space-y-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
             {days.moved.map((entry) => (
               <li key={entry.id} className="flex flex-wrap items-baseline justify-between gap-2">
                 {line(entry, ` · zählt am ${formatDay(entry.taxDay)}`)}
-                {!entry.byPerson && (
+                {entry.method === 'checkout' && (
                   <button type="button" className="ui-btn ui-btn-sm" disabled={busy} aria-label={`Mit der Karte bezahlt: ${about(entry)}`} onClick={() => onPayMethod(entry.id, 'card')}>Mit der Karte bezahlt</button>
                 )}
               </li>
@@ -735,7 +735,7 @@ function PayLaterDays({ days, year, busy, onPayMethod }: { days: StatementView['
           <ul className="mt-2 space-y-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
             {days.relabelled.map((entry) => (
               <li key={entry.id} className="flex flex-wrap items-baseline justify-between gap-2">
-                {line(entry, entry.taxDay !== entry.bookingDay ? ` · zählt am ${formatDay(entry.taxDay)}` : '')}
+                {line(entry, entry.dayUnknown ? ' · Einzugstag unbekannt, zählt am Kauftag' : entry.taxDay !== entry.bookingDay ? ` · zählt am ${formatDay(entry.taxDay)}` : '')}
                 <span className="flex flex-wrap gap-2">
                   {entry.method === 'card' ? (
                     <button type="button" className="ui-btn ui-btn-sm" disabled={busy} aria-label={`Auf Rechnung bezahlt: ${about(entry)}`} onClick={() => onPayMethod(entry.id, 'checkout')}>Auf Rechnung bezahlt</button>
@@ -753,9 +753,9 @@ function PayLaterDays({ days, year, busy, onPayMethod }: { days: StatementView['
         <p className="ui-note mt-3 text-xs">
           {days.withoutDetail} {days.withoutDetail === 1 ? 'Kauf wurde' : 'Käufe wurden'} eingelesen, bevor die Zahlungsart
           aufbewahrt wurde, und {days.withoutDetail === 1 ? 'zählt' : 'zählen'} vorerst am Kauftag. Die Liste des Dienstes
-          einmal neu einlesen, mit „Nur Zahlungen aus {year}“ (ein Jahr mit Käufen genügt, die Zahlungsart wird für alle
-          Jahre der Datei ergänzt, sonst ändert sich nichts und die Zuordnungen bleiben). Liest die neue Datei nur einen
-          Teil der Tage, bleiben die übrigen Käufe am Kauftag.
+          einmal neu einlesen, dieselbe Datei genügt: die Zahlungsart wird für alle Jahre der Datei ergänzt, sonst ändert
+          sich nichts und die Zuordnungen bleiben. Liest die neue Datei nur einen Teil der Tage, bleiben die übrigen Käufe
+          am Kauftag.
         </p>
       )}
     </section>

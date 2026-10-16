@@ -1070,6 +1070,8 @@ export interface PayLaterDayEntry {
   method: PayLaterMethod | null;
   /** True when a person said how it was paid. */
   byPerson: boolean;
+  /** A checkout purchase no collection was found for: it counts on its purchase day. */
+  dayUnknown: boolean;
   /** The receipts it is linked to: only for those does the day decide a year. */
   linkedTo: string[];
 }
@@ -1082,11 +1084,11 @@ export interface PayLaterDayEntry {
  * checkout, so a purchase that moves into the next year is listed for a look.
  */
 export interface PayLaterDaysView {
-  /** Checkout purchases bought in one year and collected in the next, touching this year (a person's corrections are under `relabelled`). */
+  /** Checkout purchases bought in one year and collected in the next, and direct debits captured in the next, touching this year (a person's corrections are under `relabelled`). */
   moved: PayLaterDayEntry[];
   /** Checkout purchases of the year no collection was found for: they count on their purchase day ("Einzugstag unbekannt"). */
   unknown: PayLaterDayEntry[];
-  /** Purchases of the year a person said were paid by card or at the checkout, so each can be put back. */
+  /** Purchases bought or counting in the year that a person said were paid by card or at the checkout, so each can be put back. */
   relabelled: PayLaterDayEntry[];
   /** Purchases of the year imported before the list's payment details were kept: on their purchase day until the list is read again. */
   withoutDetail: number;
@@ -1103,18 +1105,21 @@ function buildPayLaterDays(loaded: LoadedPayments, year: number, accountLabel: M
     accountLabel: accountLabel.get(p.accountId) ?? '',
     method: p.payLater?.method ?? null,
     byPerson: p.payLater?.byPerson ?? false,
+    dayUnknown: p.payLater?.dayUnknown ?? false,
     linkedTo: p.links.flatMap((l) => (l.rowId ? [labelOfRow(l.rowId)] : [])),
   });
   // What nobody claims (private, a transfer) has no year to decide.
   const purchases = loaded.payments.filter((p) => p.payLater !== null && p.kind !== 'private' && p.kind !== 'own_transfer');
   return {
     moved: purchases
-      // A purchase a person said was on invoice is listed under the corrections, with its day.
-      .filter((p) => p.payLater?.method === 'checkout' && !p.payLater.byPerson && p.taxDay.slice(0, 4) !== p.bookingDay.slice(0, 4) && (inYear(p.bookingDay) || inYear(p.taxDay)))
+      // Paid later at the checkout, or by a direct debit captured after New Year. A purchase a person said was on
+      // invoice is listed under the corrections, with its day.
+      .filter((p) => (p.payLater?.method === 'checkout' || p.payLater?.method === 'direct_debit') && !p.payLater.byPerson && p.taxDay.slice(0, 4) !== p.bookingDay.slice(0, 4) && (inYear(p.bookingDay) || inYear(p.taxDay)))
       .map(entry)
       .sort((a, b) => (a.bookingDay < b.bookingDay ? -1 : 1)),
-    unknown: purchases.filter((p) => p.payLater?.dayUnknown && inYear(p.bookingDay)).map(entry).sort((a, b) => (a.bookingDay < b.bookingDay ? -1 : 1)),
-    relabelled: loaded.payments.filter((p) => p.payLater?.byPerson && inYear(p.bookingDay)).map(entry).sort((a, b) => (a.bookingDay < b.bookingDay ? -1 : 1)),
+    unknown: purchases.filter((p) => p.payLater?.dayUnknown && !p.payLater.byPerson && inYear(p.bookingDay)).map(entry).sort((a, b) => (a.bookingDay < b.bookingDay ? -1 : 1)),
+    // Listed in the year it was bought and in the year it counts in.
+    relabelled: loaded.payments.filter((p) => p.payLater?.byPerson && (inYear(p.bookingDay) || inYear(p.taxDay))).map(entry).sort((a, b) => (a.bookingDay < b.bookingDay ? -1 : 1)),
     withoutDetail: purchases.filter((p) => p.payLater?.method === null && inYear(p.bookingDay)).length,
   };
 }

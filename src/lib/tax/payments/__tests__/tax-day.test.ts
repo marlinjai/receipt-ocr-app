@@ -189,4 +189,28 @@ describe('the day a pay-later purchase counts on', () => {
   it('a card nobody knows of (the shorter list) is no card', () => {
     expect(classifyPayLater(detail({ card: null }), 'Laden Beispiel')).toBe('checkout');
   });
+
+  it('a debit the funding rule happened to pair with a card purchase of the same amount still settles a checkout purchase', () => {
+    const days = resolvePayLaterDays(
+      [
+        purchase({ id: 'checkout', bookingDay: '2025-12-20', amountCents: -4_999, detail: detail({ statement: 'S1' }) }),
+        purchase({ id: 'card', bookingDay: '2026-01-08', amountCents: -4_999, detail: detail({ card: true, statement: 'S2' }) }),
+      ],
+      [collection({ id: 'debit', bookingDay: '2026-01-15', amountCents: -4_999, twinId: 'card' })],
+    );
+    expect(days.get('checkout')).toMatchObject({ taxDay: '2026-01-15', collectionId: 'debit' });
+  });
+
+  it('finds a number in the bank text whatever punctuation stands in it or around it', () => {
+    const rows = [purchase({ id: 'p', amountCents: -1_000, detail: detail({ statement: 'AB-1234' }) })];
+    expect(resolvePayLaterDays(rows, [collection({ id: 'c', amountCents: -1_500, text: 'Klarna Abrechnung AB 1234.' })]).get('p')).toMatchObject({ collectionId: 'c', matchedBy: 'statement' });
+    expect(resolvePayLaterDays(rows, [collection({ id: 'c', amountCents: -1_500, text: 'Klarna Abrechnung AB-12345' })]).get('p')).toMatchObject({ dayUnknown: true });
+  });
+
+  it('a loan or a direct debit the list names stays that, even with a card text', () => {
+    expect(classifyPayLater(detail({ method: 'Direct Debit' }), 'ZAHLDIENST *Laden')).toBe('direct_debit');
+    expect(classifyPayLater(detail({ method: 'Term Loan' }), 'ZAHLDIENST *Laden')).toBe('financed');
+    // A card the list marks wins over every wording.
+    expect(classifyPayLater(detail({ method: 'Direct Debit', card: true }), 'Laden')).toBe('card');
+  });
 });

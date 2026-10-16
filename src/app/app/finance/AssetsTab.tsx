@@ -6,6 +6,8 @@ import type { AssetKind, AssetMethod, DisposalKind } from '@/lib/tax/assets';
 import { ASSET_CHECK_LABELS, ASSET_METHOD_LABELS, DISPOSAL_LABELS } from '@/lib/tax/messages';
 import { formatCents } from '@/lib/tax/money';
 import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service';
+import { ANNEX_ASSET_LINES } from '@/lib/tax/asset-input';
+import type { FormLineKey } from '@/lib/tax/rules/types';
 import { euro, parseEuro } from './amounts';
 
 export interface AssetDraft {
@@ -16,6 +18,8 @@ export interface AssetDraft {
   usefulLifeMonths: number | null;
   decliningRateBp: number | null;
   businessShareBp: number;
+  annexShareBp: number;
+  annexLineKey: FormLineKey | null;
   reminderCents: number;
   opening: { year: number; bookValueCents: number; remainingMonths: number } | null;
   itemIds: string[];
@@ -106,7 +110,8 @@ export default function AssetsTab({ view, busy, error, startFromRowId, onStartHa
                       {' · '}
                       {ASSET_METHOD_LABELS[asset.method]}
                       {asset.usefulLifeMonths ? ` (${asset.usefulLifeMonths} Monate)` : ''}
-                      {asset.businessShareBp < 10000 ? ` · ${asset.businessShareBp / 100} % betrieblich` : ''}
+                      {asset.businessShareBp < 10000 ? ` · ${(asset.businessShareBp / 100).toLocaleString('de-DE')} % betrieblich` : ''}
+                      {asset.annexShareBp > 0 ? ` · ${(asset.annexShareBp / 100).toLocaleString('de-DE')} % Studium oder Anstellung (Anlage N)` : ''}
                       {asset.disposal ? ` · ${DISPOSAL_LABELS[asset.disposal.kind]} am ${formatDay(asset.disposal.date)}` : ''}
                     </p>
                   </div>
@@ -258,6 +263,9 @@ function AssetForm({
   const [years, setYears] = useState(asset?.usefulLifeMonths ? String(asset.usefulLifeMonths / 12).replace('.', ',') : '');
   const [rate, setRate] = useState(asset?.decliningRateBp ? String(asset.decliningRateBp / 100).replace('.', ',') : String(view.assetLimits.decliningMaxRateBp / 100));
   const [share, setShare] = useState(String((asset?.businessShareBp ?? 10000) / 100).replace('.', ','));
+  const [annexShare, setAnnexShare] = useState(asset && asset.annexShareBp > 0 ? String(asset.annexShareBp / 100).replace('.', ',') : '');
+  const [annexLine, setAnnexLine] = useState<string>(asset?.annexLineKey ?? 'employment.study_costs');
+  const annexLines = view.formLines.filter((l) => (ANNEX_ASSET_LINES as readonly string[]).includes(l.key));
   const [reminder, setReminder] = useState((asset?.reminderCents ?? 0) > 0);
   const [selected, setSelected] = useState<string[]>(() => (asset ? asset.itemIds.filter((r) => candidates.some((c) => c.itemId === r)) : start ? [start.itemId] : []));
   const [openingYear, setOpeningYear] = useState(String(asset?.opening?.year ?? view.year));
@@ -273,8 +281,15 @@ function AssetForm({
   function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!label.trim()) return setLocalError('Bitte eine Bezeichnung für die Anlage eingeben.');
+    const annexNumber = annexShare.trim() === '' ? 0 : parseNumber(annexShare);
+    if (annexNumber === null || annexNumber < 0 || annexNumber > 100) return setLocalError('Der Anteil für Studium oder Anstellung muss zwischen 0 und 100 % liegen.');
     const shareNumber = parseNumber(share);
-    if (shareNumber === null || shareNumber < 1 || shareNumber > 100) return setLocalError('Der betriebliche Anteil muss zwischen 1 und 100 % liegen.');
+    const minShare = annexNumber > 0 ? 0 : 1;
+    if (shareNumber === null || shareNumber < minShare || shareNumber > 100) return setLocalError('Der betriebliche Anteil muss zwischen 1 und 100 % liegen (0 % nur, wenn ein Anteil für Studium oder Anstellung eingetragen ist).');
+    if (Math.round(shareNumber * 100) + Math.round(annexNumber * 100) > 10000) return setLocalError('Betrieblicher Anteil und Anteil für Studium oder Anstellung ergeben zusammen mehr als 100 %.');
+    if (annexNumber > 0 && method === 'pool' && !carried) return setLocalError('Der Sammelposten gilt nur für den Betrieb; für eine Anlage mit Anteil für Studium oder Anstellung bitte eine andere Methode wählen.');
+    if (annexNumber > 0 && method === 'declining' && !carried) return setLocalError('Arbeitsmittel werden linear abgeschrieben: für eine Anlage mit Anteil für Studium oder Anstellung ist die degressive Abschreibung nicht zulässig.');
+    if (annexNumber > 0 && annexLines.length === 0) return setLocalError('Für dieses Jahr gibt es keine Zeile der Anlage N, auf die der Anteil gehen kann.');
 
     let opening: AssetDraft['opening'] = null;
     let usefulLifeMonths: number | null = null;
@@ -313,6 +328,8 @@ function AssetForm({
       usefulLifeMonths,
       decliningRateBp,
       businessShareBp: Math.round(shareNumber * 100),
+      annexShareBp: Math.round(annexNumber * 100),
+      annexLineKey: annexNumber > 0 ? (annexLine as FormLineKey) : null,
       reminderCents: reminder ? 100 : 0,
       opening,
       itemIds: carried ? [] : [...hiddenRowIds, ...selected],
@@ -438,6 +455,24 @@ function AssetForm({
           <label className="ui-label" htmlFor={`${id}-share`}>Betrieblicher Anteil in %</label>
           <input id={`${id}-share`} className="ui-input tabular-nums" inputMode="decimal" value={share} onChange={(e) => setShare(e.target.value)} />
         </div>
+        <div>
+          <label className="ui-label" htmlFor={`${id}-annex-share`}>Anteil Studium oder Anstellung in % (Anlage N)</label>
+          <input id={`${id}-annex-share`} className="ui-input tabular-nums" inputMode="decimal" value={annexShare} onChange={(e) => setAnnexShare(e.target.value)} placeholder="0" />
+        </div>
+        {annexShare.trim() !== '' && annexShare.trim() !== '0' && (
+          <div>
+            <label className="ui-label" htmlFor={`${id}-annex-line`}>Zeile der Anlage N für diesen Anteil</label>
+            <select id={`${id}-annex-line`} className="ui-input" value={annexLine} onChange={(e) => setAnnexLine(e.target.value)}>
+              {annexLines.map((l) => (
+                <option key={l.key} value={l.key}>{l.line !== null ? `Zeile ${l.line}: ` : ''}{l.label}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+              Die Abschreibung dieses Anteils steht in der Anlage N, nicht in der Einnahmenüberschussrechnung. Kosten
+              eines Erststudiums sind keine Werbungskosten, sondern Sonderausgaben; dafür ist diese Zeile nicht gedacht.
+            </p>
+          </div>
+        )}
         <label className="flex items-center gap-2 self-end pb-2 text-sm" style={{ color: 'var(--foreground)' }}>
           <input type="checkbox" checked={reminder} onChange={(e) => setReminder(e.target.checked)} />
           Erinnerungswert von 1 € stehen lassen

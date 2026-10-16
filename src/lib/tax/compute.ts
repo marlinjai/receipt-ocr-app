@@ -242,9 +242,13 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
     const regular = stated.smallBusiness === false && stated.opening === null;
     const asset = regular ? { ...stated, costCents: stated.netCostCents } : stated;
     const row = assetSchedule(asset, assetRules, facts.year).find((r) => r.year === facts.year) ?? null;
-    const parts = row ? assetYearParts(asset, row) : [];
+    // The study or employment share is written off from the gross cost: its tax is no input tax.
+    const annexRow = regular && (stated.annexShareBp ?? 0) > 0 ? assetSchedule(stated, assetRules, facts.year).find((r) => r.year === facts.year) ?? null : row;
+    const parts = row ? assetYearParts(asset, row, annexRow ?? row) : [];
     if (regular && firstYear === facts.year) {
-      const vat = shareOf((stated.costCents as number) - (stated.netCostCents as number), stated.businessShareBp);
+      // Input tax is deductible only when the business uses the asset at least
+      // 10 percent (section 15 paragraph 1 sentence 2 of the value-added tax act).
+      const vat = stated.businessShareBp >= 1_000 ? shareOf((stated.costCents as number) - (stated.netCostCents as number), stated.businessShareBp) : 0;
       if (vat !== 0) {
         parts.push({ lineKey: INPUT_VAT_LINE, cents: vat });
         inputVatEvents.push({ date: stated.acquisitionDate as string, cents: vat, source: 'asset', id: stated.id });

@@ -37,6 +37,7 @@ export const ASSET_CHECK_LABELS: Record<AssetCheckKind, string> = {
   asset_opening_method: 'Übernommene Anlagen werden linear über die Restnutzungsdauer abgeschrieben',
   asset_opening_no_life: 'Buchwert über dem Erinnerungswert, aber keine Restnutzungsdauer: so würde nie abgeschrieben',
   asset_disposal_before_acquisition: 'Abgang liegt vor der Anschaffung',
+  asset_annex_line_unknown: 'Anteil für Studium oder Anstellung ohne gültige Zeile der Anlage N: bitte die Anlage öffnen und die Zeile wählen',
 };
 
 export const ASSET_METHOD_LABELS: Record<AssetMethod, string> = {
@@ -134,6 +135,8 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Bitte die Nutzungsdauer in ganzen Jahren oder Monaten eingeben.';
         case 'invalid_rate':
           return 'Bitte den Satz der degressiven Abschreibung in Prozent eingeben.';
+        case 'invalid_annex_share':
+          return 'Bitte den Anteil für Studium oder Anstellung prüfen: zusammen mit dem betrieblichen Anteil höchstens 100 %, mit einer Zeile der Anlage N, und weder beim Sammelposten noch bei degressiver Abschreibung (Arbeitsmittel werden linear abgeschrieben).';
         case 'invalid_share':
           return 'Der betriebliche Anteil muss zwischen 1 und 100 % liegen.';
         case 'receipts_required':

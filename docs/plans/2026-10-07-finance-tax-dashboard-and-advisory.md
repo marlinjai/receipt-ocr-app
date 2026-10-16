@@ -1634,3 +1634,44 @@ like everything else; nothing derived is stored.
 - **Not built here:** the depreciation of an asset's study share onto the employment
   annex (the laptop of 2022): that is part of the asset schedules line.
 
+## Reality: assets with a study or employment share (2026-10-15)
+
+- **What was missing for the asset schedules of 2021 and 2022.** The register could
+  already hold the camera, stabiliser and tripod of 2021 and the lens of 2022: an asset
+  from its receipts, linear or declining, judged by the limits of its purchase year
+  (the rule sets of 2021 to 2024 supply those). What it could not hold is the laptop of
+  2022, which the return split between the business and the study: an asset had a
+  business share only, and the rest counted nowhere.
+- **An asset now has a study or employment share** (`annexShareBp`, with the employment
+  annex line it goes on, `annexLineKey`; migration `0022_tax_asset_annex_share`, two
+  columns with defaults that leave every existing asset as it was). Its share of each
+  year's depreciation is a cost of the employment annex (work equipment, training costs
+  or further costs); the business share stays on the income-surplus statement. Business
+  and annex share together are at most the whole; an asset can be held for its annex
+  share alone (business share 0). The pool takes no annex share (an instrument of the
+  business form only), and neither does declining depreciation: it is open to business
+  fixed assets alone (section 7 paragraph 2 of the income tax act), work equipment of an
+  employee or student is written off in equal amounts. A stored annex line the code no
+  longer knows blocks the asset with a check instead of counting the share nowhere.
+- **Under regular taxation** the business part is written off from the net cost and its
+  tax is input tax; the annex part is written off from the gross cost, because tax on a
+  study or employment share is no input tax. Input tax needs at least 10 percent business
+  use (section 15 paragraph 1 sentence 2 of the value-added tax act); below that none is
+  taken. When business and annex share make the whole asset, the annex part is the
+  depreciation minus the business part, so the two never exceed it by a rounding cent.
+- **A disposal** puts the remaining book value and the proceeds on the business form at
+  the business share. For the annex share it depends on how the asset leaves: a sale or a
+  private withdrawal of work equipment is private, the rest is not deductible; an asset
+  scrapped or destroyed writes off the rest of the annex share on the annex line
+  (extraordinary depreciation, section 7 paragraph 1 sentence 7 with section 9
+  paragraph 1 sentence 3 number 7 of the income tax act).
+- **A carried-in asset** has one opening book value for both shares; under regular
+  taxation enter it gross only if the asset has an annex share (the app does not split
+  it). Costs of a first degree are special expenses, not employment costs; the form says
+  so under the line choice.
+- **Entering the assets of 2021 and 2022 is a data step for the coordinator**, with the
+  figures of the returns (the import plan): camera, stabiliser and tripod of 2021, the
+  lens and the laptop of 2022, each built from its receipts in the asset tab.
+- **Computed figures do not change** for any asset without an annex share (a test
+  compares them); no existing asset has one.
+

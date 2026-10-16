@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REASON_TEXT, derivedReasons, isConfirmable, lookAlikes, reviewReasons, type ReviewSnapshot } from '../reasons';
+import { REASON_TEXT, derivedReasons, isConfirmable, lookAlikes, paymentsCoverTotal, reviewReasons, totalSettled, type ReviewSnapshot } from '../reasons';
 
 const receipt = (overrides: Partial<ReviewSnapshot> = {}): ReviewSnapshot => ({
   rowId: 'r1',
@@ -138,5 +138,30 @@ describe('lookAlikes', () => {
     const b = receipt({ rowId: 'b' });
     expect(lookAlikes([a, b], new Map([['a', new Set(['b'])]])).size).toBe(0);
     expect(lookAlikes([a, b], new Map([['b', new Set(['a'])]])).size).toBe(0);
+  });
+});
+
+describe('when a doubt about the total ends by itself', () => {
+  it('payments cover the total: to the cent in euros, within the card spread in another currency, never without a rate', () => {
+    expect(paymentsCoverTotal(2499, { gross: 24.99, currency: 'EUR', fxRate: 1 })).toBe(true);
+    expect(paymentsCoverTotal(2498, { gross: 24.99, currency: 'EUR', fxRate: 1 })).toBe(false);
+    expect(paymentsCoverTotal(2497, { gross: 24.99, currency: 'EUR', fxRate: 1 })).toBe(false);
+    expect(paymentsCoverTotal(2000, { gross: 50, currency: 'EUR', fxRate: 1 })).toBe(false);
+    // 20.06 dollars at 0.92 euros per dollar is 18.46 euros; the card charged 18.80 (1.9 percent more).
+    expect(paymentsCoverTotal(1880, { gross: 20.06, currency: 'USD', fxRate: 0.92 })).toBe(true);
+    expect(paymentsCoverTotal(2006, { gross: 20.06, currency: 'USD', fxRate: 0.92 })).toBe(false);
+    expect(paymentsCoverTotal(1880, { gross: 20.06, currency: 'USD', fxRate: null })).toBe(false);
+    expect(paymentsCoverTotal(0, { gross: 20, currency: 'EUR', fxRate: 1 })).toBe(false);
+    expect(paymentsCoverTotal(2000, { gross: null, currency: 'EUR', fxRate: 1 })).toBe(false);
+  });
+
+  it('a corrected total or a paid one settles the doubt, a total as read does not', () => {
+    const stored = { flags: ['total_conflict', 'not_classified'], checkedAt: null, readGrossCents: 11900 };
+    expect(reviewReasons(receipt({ gross: 119 }), stored, [])).toEqual(['not_classified', 'total_conflict']);
+    expect(reviewReasons(receipt({ gross: 121.5 }), stored, [])).toEqual(['not_classified']);
+    expect(reviewReasons(receipt({ gross: 119, totalPaid: true }), stored, [])).toEqual(['not_classified']);
+    // Without the total of the reading there is nothing to compare: the doubt stands.
+    expect(totalSettled(receipt({ gross: 121.5 }), { flags: [], checkedAt: null })).toBe(false);
+    expect(totalSettled(receipt({ gross: 121.5 }), { flags: [], checkedAt: null, readGrossCents: null })).toBe(false);
   });
 });

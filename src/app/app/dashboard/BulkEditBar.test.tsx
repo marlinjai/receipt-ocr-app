@@ -39,7 +39,7 @@ async function choose(value: string) {
 
 describe('"Set field" on a selection', () => {
   it('sends a large selection in parts and says how many were really set', async () => {
-    const setField = vi.fn(async (ids: string[]) => ({ done: ids, failed: [] }));
+    const setField = vi.fn<SetField>(async (ids) => ({ done: ids, failed: [] }));
     const { onDone } = bar(selection(2 * BULK_SET_PART + 5), setField);
     const user = await choose('biz');
     await user.click(screen.getByRole('button', { name: `Apply to ${2 * BULK_SET_PART + 5}` }));
@@ -106,10 +106,10 @@ describe('"Set field" on a selection', () => {
 
   it('keeps the outcome in view when the reload afterwards empties the selection', async () => {
     const setField = vi.fn(async (ids: string[]): Promise<BulkSetOutcome> => ({ done: ids.slice(1), failed: [{ rowId: ids[0], reason: 'not_stored' }] }));
-    let view: ReturnType<typeof bar> | undefined;
+    const view: { current?: ReturnType<typeof bar> } = {};
     // The view filters on the column just set: after the reload none of the rows is shown or selected.
-    const onDone = vi.fn(async () => view!.select(new Set()));
-    view = bar(selection(4), setField, onDone);
+    const onDone = vi.fn(async () => view.current!.select(new Set()));
+    view.current = bar(selection(4), setField, onDone);
     const user = await choose('biz');
     await user.click(screen.getByRole('button', { name: 'Apply to 4' }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('3 von 4 gesetzt. 1 nicht gesetzt: 1 nicht gespeichert.'));

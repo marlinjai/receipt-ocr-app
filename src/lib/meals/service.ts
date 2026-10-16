@@ -511,6 +511,9 @@ export async function deleteReceiptRows(
       await db.taxReverseCharge.deleteMany({ where: { authWorkspaceId: mealCtx.workspaceId, scope: 'row', subject: rowId } });
       // The review state hangs off the row id the same way (review/service imports this module).
       await db.receiptReview.deleteMany({ where: { rowId } });
+      // A credit note's reference to its invoice goes with it; one pointing at this row forgets the row, keeps the number.
+      await db.receiptReference.deleteMany({ where: { rowId } });
+      await db.receiptReference.updateMany({ where: { referencedRowId: rowId }, data: { referencedRowId: null } });
       // Same for a link into an asset's cost: the asset then asks for its cost again.
       await db.taxAssetPart.deleteMany({ where: { rowId } });
       await db.taxReceiptLine.deleteMany({ where: { rowId } });

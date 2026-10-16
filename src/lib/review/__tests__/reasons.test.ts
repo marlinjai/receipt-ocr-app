@@ -175,3 +175,13 @@ describe('a reading from the image alone', () => {
     expect(reviewReasons(receipt({ gross: 5, net: 5 }), { ...stored, checkedAt: new Date() }, [])).toEqual([]);
   });
 });
+
+describe('a credit note stored with a negative amount', () => {
+  it('is no missing amount; its net is judged by amount and sign', () => {
+    expect(derivedReasons(receipt({ gross: -11.9, net: -10 }))).toEqual([]);
+    expect(derivedReasons(receipt({ gross: -11.9, net: -12 }))).toContain('tax_implausible');
+    expect(derivedReasons(receipt({ gross: -11.9, net: 10 }))).toContain('tax_implausible');
+    expect(derivedReasons(receipt({ gross: 0, net: null }))).toContain('amount_missing');
+    expect(derivedReasons(receipt({ gross: 11.9, net: 0 }))).not.toContain('tax_implausible');
+  });
+});

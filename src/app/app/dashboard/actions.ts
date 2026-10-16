@@ -16,7 +16,7 @@ import { groupsHoldingReceipts, yearCounts, type YearCounts } from '@/lib/receip
 /** The most receipts one year of the list returns: far above what a year holds. */
 const SCOPED_LIST_LIMIT = 5000;
 import { MIN_TEXT_SEARCH_LENGTH, TEXT_SEARCH_LIMIT, likePattern, rowsWithoutText, textColumnIds, withoutText } from '@/lib/receipt-text';
-import { GROUP_KIND, ROW_KIND_COLUMN, rowKindColumnId } from '@/lib/receipts-kind';
+import { GROUP_KIND, GROUP_WRITABLE_COLUMNS, ROW_KIND_COLUMN, rowKindColumnId } from '@/lib/receipts-kind';
 import { EVERY_ROW_LIMIT, applyDayFilters, boundsYears, readEveryRow, splitDayFilters, yearsWithin } from './day-filters';
 import { BULK_SET_BUDGET_MS, BULK_SET_PART, storedAs, type BulkSetFailure, type BulkSetOutcome } from './bulk-set';
 import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
@@ -375,14 +375,11 @@ export async function updateRow(rowId: string, cells: Record<string, CellValue>)
 
 /**
  * True when the guarded write below stores these cells exactly as given (after its group check): no name
- * follows them, no tax rates text, no finance decision. "Set field" writes such cells for many rows in one
- * statement, so **a rule added to `writeCells` that changes cells on their way must make this false for
- * them**. The assignment and the business share are left to the per-row write already: they are to follow
- * the finance decision.
+ * follows them and no tax rates text. "Set field" writes such cells for many rows in one statement, so **a
+ * rule added to `writeCells` that changes cells on their way, or reacts to them, must make this false for
+ * them, or run for the rows "Set field" wrote in one go.**
  */
 function writesCellsAsGiven(columns: readonly Column[], kind: string | null, cells: Record<string, CellValue>): boolean {
-  const names = new Set(Object.keys(cells).map((id) => columns.find((c) => c.id === id)?.name));
-  if (names.has('Zuordnung') || names.has('Business Share %')) return false;
   const followsName = kind !== GROUP_KIND && touchesNameParts(columns, cells);
   return !followsName && !touchesTaxRates(columns, cells);
 }
@@ -420,11 +417,12 @@ async function rowTable(rowId: string): Promise<{ tableId: string }> {
 
 /**
  * "Set field" on a part of a selection (see `bulk-set.ts`): one select column,
- * one option or empty, written row after row through the same guarded write a
- * cell edit takes, then read back. A row counts as done only when its stored
- * value is the one asked for; every other row says why it was not set. One row
- * failing does not stop the others. Access is checked once, on the column's
- * table; a row of another table is "not found", never written.
+ * one option or empty, under the same rules a cell edit takes (see
+ * `writesCellsAsGiven`), then read back. A row counts as done only when its
+ * stored value is the one asked for; every other row says why it was not set.
+ * One row failing does not stop the others. Access is checked once, on the
+ * column's table; a row of another table, or an archived one (the list does not
+ * show it), is "not found", never written.
  */
 export async function setFieldOnRows(rowIds: string[], columnId: string, value: string | null): Promise<BulkSetOutcome> {
   if (
@@ -467,8 +465,18 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
   const toWrite: Array<{ rowId: string; kind: string | null }> = [];
   for (const rowId of mine) {
     const row = before.get(rowId);
-    if (!row) failed.push({ rowId, reason: 'not_found' });
-    else if (storedAs(row.value, value)) done.push(rowId);
+    if (!row) {
+      failed.push({ rowId, reason: 'not_found' });
+      continue;
+    }
+    // The group check a cell edit makes, before anything else: a group never "holds" a value it may not take.
+    try {
+      assertCellsWritable(columns, row.kind, cells);
+    } catch {
+      failed.push({ rowId, reason: 'not_writable' });
+      continue;
+    }
+    if (storedAs(row.value, value)) done.push(rowId);
     else toWrite.push({ rowId, kind: row.kind });
   }
 
@@ -476,20 +484,12 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
   const uncertain: string[] = [];
   const plain = toWrite.filter(({ kind }) => writesCellsAsGiven(columns, kind, cells));
   if (plain.length > 0) {
-    // A cell no rule changes on its way (a category, a status) is written for the whole part in one
-    // statement, after the same group check a cell edit makes. Through the table adapter each row costs two
-    // look-ups across every table of the database; on 2026-10-16 a part of 25 got no answer on production.
-    const allowed: string[] = [];
-    for (const { rowId, kind } of plain) {
-      try {
-        assertCellsWritable(columns, kind, cells);
-        allowed.push(rowId);
-      } catch {
-        failed.push({ rowId, reason: 'not_writable' });
-      }
-    }
+    // A cell no rule changes on its way (a category, a status, the assignment) is written for the whole part
+    // in one statement. Through the table adapter each row costs two look-ups across every table of the
+    // database; on 2026-10-16 a part of 25 got no answer on production.
+    const allowed = plain.map(({ rowId }) => rowId);
     try {
-      await writeCellOnRows(tableId, column, value, allowed);
+      await writeCellOnRows(tableId, column, rowKindColumnId(columns), value, allowed);
       written.push(...allowed);
     } catch {
       // The statement may or may not have run: the read-back below decides.
@@ -497,13 +497,14 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
     }
   }
   // Every other cell takes the guarded write of a cell edit, row after row (the name that follows its cells,
-  // the tax rates text, the finance decision). That costs the table adapter's look-ups per row, so the part
+  // the tax rates text). That costs the table adapter's look-ups per row, so the part
   // stops after a time budget and hands back the rows it has not touched; the bar sends them again. At least
   // one row is written per call, so a slow server still moves on.
-  const startedAt = Date.now();
+  // A monotonic clock, independent of the time of day.
+  const startedAt = performance.now();
   const left: string[] = [];
   for (const { rowId } of toWrite.filter(({ kind }) => !writesCellsAsGiven(columns, kind, cells))) {
-    if (written.length + uncertain.length > 0 && Date.now() - startedAt > BULK_SET_BUDGET_MS) {
+    if (written.length + uncertain.length > 0 && performance.now() - startedAt > BULK_SET_BUDGET_MS) {
       left.push(rowId);
       continue;
     }
@@ -555,11 +556,16 @@ async function storedCells(
   return new Map(rows.map((r) => [r.id, { value: r.value, kind: r.kind }]));
 }
 
-/** One select cell on many rows of a real table, in one statement, stored as the table adapter stores it. */
-async function writeCellOnRows(tableId: string, column: Column, value: string | null, rowIds: readonly string[]): Promise<void> {
+/**
+ * One select cell on many rows of a real table, in one statement, stored as the table adapter stores it. A
+ * column a group may not take is never written onto a group, even one that became a group since it was read
+ * (the read-back then says the row was not set).
+ */
+async function writeCellOnRows(tableId: string, column: Column, kindColumnId: string | null, value: string | null, rowIds: readonly string[]): Promise<void> {
   if (rowIds.length === 0) return;
+  const notGroup = kindColumnId && !GROUP_WRITABLE_COLUMNS.includes(column.name) ? `AND ${safeColumnName(kindColumnId)} IS DISTINCT FROM '${GROUP_KIND}'` : '';
   await prisma.$executeRawUnsafe(
-    `UPDATE ${safeTableName(tableId)} SET ${safeColumnName(column.id)} = $1, _updated_at = $2 WHERE _archived = 0 AND id = ANY($3::text[])`,
+    `UPDATE ${safeTableName(tableId)} SET ${safeColumnName(column.id)} = $1, _updated_at = $2 WHERE _archived = 0 AND id = ANY($3::text[]) ${notGroup}`,
     serializeCell(value, column.type),
     new Date().toISOString(),
     [...rowIds],

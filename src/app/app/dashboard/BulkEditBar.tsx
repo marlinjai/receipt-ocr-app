@@ -77,7 +77,7 @@ export default function BulkEditBar({
         // No answer for this part (a lost connection, an expired session): none of it is counted as set.
         outcome = unconfirmed(part);
       }
-      const back = (outcome.left ?? []).filter((id) => part.includes(id));
+      const back = [...new Set(outcome.left ?? [])].filter((id) => part.includes(id));
       if (back.length === part.length) {
         // A part that moved nothing would be sent forever: its rows count as unanswered instead.
         outcomes.push(unconfirmed(back));

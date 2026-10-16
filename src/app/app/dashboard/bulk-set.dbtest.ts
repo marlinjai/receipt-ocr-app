@@ -73,7 +73,7 @@ describe('"Set field" on a selection', () => {
     expect(await Promise.all(ids.slice(0, 2).map(stamp))).toEqual(before);
   });
 
-  it('sets a column no rule changes for the whole part in one go, and a group only where it may', async () => {
+  it('sets a column no rule changes for the whole part in one statement', async () => {
     const [a, b, inside] = await receipts(3, 'plain');
     const group = await createGroup(db, ws.workspaceId, 'Gruppe plain', [inside]);
     const columns = await ws.adapter.getColumns(ws.tableId);
@@ -84,9 +84,28 @@ describe('"Set field" on a selection', () => {
     expect(outcome.failed).toEqual([]);
     expect(outcome.done.sort()).toEqual([a, b, group].sort());
     for (const id of [a, b, group]) expect((await getRow(id))?.cells[categoryId]).toBe(other);
+    // One statement stamps every row it writes with the same time.
+    const stamps = await Promise.all([a, b, group].map(async (id) => (await getRow(id))?.updatedAt?.valueOf()));
+    expect(new Set(stamps).size).toBe(1);
     // Clearing goes the same way.
     expect((await setFieldOnRows([a], categoryId, null)).done).toEqual([a]);
     expect((await getRow(a))?.cells[categoryId] ?? null).toBeNull();
+  });
+
+  it('a group refuses a column it may not take even when it already holds the value', async () => {
+    const [inside] = await receipts(1, 'emptystatus');
+    const group = await createGroup(db, ws.workspaceId, 'Gruppe emptystatus', [inside]);
+    const statusId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Status')!.id;
+    // A group's Status is empty; clearing it is still a value a group may not take.
+    expect(await setFieldOnRows([group], statusId, null)).toEqual({ done: [], failed: [{ rowId: group, reason: 'not_writable' }], left: [] });
+  });
+
+  it('an archived row is not found and not written', async () => {
+    const [id] = await receipts(1, 'archived');
+    await ws.adapter.archiveRow(id);
+    expect(await setFieldOnRows([id], assignmentId, business)).toEqual({ done: [], failed: [{ rowId: id, reason: 'not_found' }], left: [] });
+    await ws.adapter.unarchiveRow(id);
+    expect(await stored(id)).toBe(personal);
   });
 
   it('a group refuses a plain column it may not take', async () => {
@@ -97,21 +116,25 @@ describe('"Set field" on a selection', () => {
     expect(await setFieldOnRows([group, inside], statusId, option)).toEqual({ done: [inside], failed: [{ rowId: group, reason: 'not_writable' }], left: [] });
   });
 
-  it('hands back the rows it did not touch when its time budget runs out, after writing at least one', async () => {
+  it('writes a column the name follows row by row, and hands back what it did not touch when its time budget runs out', async () => {
     const ids = await receipts(3, 'budget');
-    const real = Date.now.bind(Date);
-    let clock = real();
-    // Every look at the clock is ten seconds later: the budget is spent after the first row.
-    const now = vi.spyOn(Date, 'now').mockImplementation(() => (clock += 10_000));
+    const currencyId = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Currency')!.id;
+    const currencies = await ws.adapter.getSelectOptions(currencyId);
+    const eur = currencies.find((o) => o.name === 'EUR')!.id;
+    const usd = currencies.find((o) => o.name === 'USD')!.id;
+    let clock = 0;
+    // Every look at the budget's clock is ten seconds later: the budget is spent after the first row.
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 10_000));
     try {
-      const outcome = await setFieldOnRows(ids, assignmentId, business);
+      const outcome = await setFieldOnRows(ids, currencyId, usd);
       expect(outcome.done).toEqual([ids[0]]);
       expect(outcome.left).toEqual(ids.slice(1));
       expect(outcome.failed).toEqual([]);
     } finally {
       now.mockRestore();
     }
-    for (const id of ids.slice(1)) expect(await stored(id)).toBe(personal);
+    for (const id of ids.slice(1)) expect((await getRow(id))?.cells[currencyId]).toBe(eur);
+    expect((await getRow(ids[0]))?.cells[currencyId]).toBe(usd);
   });
 
   it('clears the field', async () => {

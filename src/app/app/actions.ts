@@ -370,7 +370,7 @@ function fileMetadata(options: ProcessReceiptOptions) {
  */
 async function storeReviewFlags(workspaceId: string, tenantId: string | null, rowId: string, read: ReadReceipt) {
   try {
-    await recordReadFlags(prisma, { workspaceId, tenantId }, rowId, read.reviewFlags);
+    await recordReadFlags(prisma, { workspaceId, tenantId }, rowId, read.reviewFlags, read.gross);
   } catch (err) {
     console.error('[processReceipt] storing the review flags failed:', err);
   }

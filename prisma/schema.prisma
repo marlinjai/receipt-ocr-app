@@ -813,6 +813,9 @@ model ReceiptReview {
   flags           String[]  @default([])
   distinctFrom    String[]  @default([]) @map("distinct_from")
   checkedAt       DateTime? @map("checked_at")
+  // The total the reader read when it recorded `flags`, in cents. A stored
+  // total that differs from it was corrected since: a doubt about the total ends.
+  readGrossCents  Int?      @map("read_gross_cents")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 

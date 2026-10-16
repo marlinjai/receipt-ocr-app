@@ -12,6 +12,8 @@ export interface TreatmentDraft {
   formLineKey: FormLineKey | null;
   employmentLineKey: FormLineKey | null;
   severalLowValueItems: boolean;
+  /** Why, in the owner's words; only for a whole receipt. */
+  note?: string;
 }
 
 export interface TreatmentSubmit {
@@ -67,6 +69,7 @@ export default function TreatmentForm({ item, formLines, busy, error, submitLabe
   const [formLineKey, setFormLineKey] = useState<string>(item.formLineKey && item.formLineKey !== 'euer.meals' ? item.formLineKey : '');
   const [employmentLineKey, setEmploymentLineKey] = useState<string>(item.employmentLineKey ?? '');
   const [several, setSeveral] = useState(item.severalLowValueItems);
+  const [note, setNote] = useState(item.decisionNote ?? '');
   const [forVendor, setForVendor] = useState(false);
   const [effectiveFrom, setEffectiveFrom] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
@@ -102,6 +105,9 @@ export default function TreatmentForm({ item, formLines, busy, error, submitLabe
         formLineKey: needsFormLine ? (formLineKey as FormLineKey) : null,
         employmentLineKey: needsEmploymentLine ? (employmentLineKey as FormLineKey) : null,
         severalLowValueItems: needsFormLine && formLineKey === 'euer.low_value_assets' && item.lineId === null && several,
+        // Sent when there is one, or to remove one that was stored.
+        // A rule carries no note: with "for the vendor" the receipt's note is left as it is.
+        ...(item.lineId === null && !forVendor && (note.trim() !== '' || item.decisionNote) ? { note } : {}),
       },
       applyToVendor: forVendor && item.vendor ? { vendor: item.vendor, effectiveFrom: effectiveFrom || undefined } : null,
     });
@@ -225,6 +231,29 @@ export default function TreatmentForm({ item, formLines, busy, error, submitLabe
               <input id={`${id}-from`} type="date" className="ui-input" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} />
             </div>
           )}
+        </div>
+      )}
+
+      {item.lineId === null && forVendor && item.decisionNote && (
+        <p className="ui-note ui-note-warn">
+          Folgt der Beleg danach der Regel, entfällt seine eigene Entscheidung und mit ihr die Notiz „{item.decisionNote}“.
+        </p>
+      )}
+
+      {item.lineId === null && !forVendor && (
+        <div>
+          <label htmlFor={`${id}-note`} className="ui-label">
+            Notiz (optional)
+          </label>
+          <textarea
+            id={`${id}-note`}
+            className="ui-input w-full"
+            rows={2}
+            maxLength={1000}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Warum dieser Beleg so behandelt wird, zum Beispiel: Rechnung bis Jahresende nicht bezahlt"
+          />
         </div>
       )}
 

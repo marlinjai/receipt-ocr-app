@@ -30,6 +30,7 @@ import type { RereadResult } from '@/lib/review/reread';
 import { recordReadFlags } from '@/lib/review/service';
 import { ensureReceiptsTable } from '@/lib/receipts-table';
 import { isGroupRow, receiptsOnly } from '@/lib/receipts-kind';
+import { followTreatment } from '@/lib/tax/assignment-sync';
 import { findSimilarReceipt, type ExistingReceipt } from '@/lib/upload/duplicates';
 import { isSha256Hex } from '@/lib/upload/hash';
 import { auth } from '@/lib/auth';
@@ -440,6 +441,8 @@ export async function processReceipt(
   }
 
   await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read);
+  // A receipt just read may fall under a vendor rule, or leave one: its assignment cells show that.
+  await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
 
   return {
     rowId: row.id,
@@ -516,6 +519,8 @@ export async function retakeReceipt(
   }
 
   await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read);
+  // A receipt just read may fall under a vendor rule, or leave one: its assignment cells show that.
+  await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
 
   return {
     rowId: row.id,
@@ -655,6 +660,8 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     // The rates text is derived from what the row holds after this write.
     await adapter.updateRow(row.id, withTaxRates(columns, cells, row.cells) as typeof cells);
     await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read);
+    // A receipt just read may fall under a vendor rule, or leave one: its assignment cells show that.
+  await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
     return { ok: true, reviewFlags: read.reviewFlags };
   } catch (e) {
     const status = e instanceof ReceiptsAuthError ? e.status : (e as { status?: number })?.status;

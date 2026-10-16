@@ -398,11 +398,36 @@ model TaxItemDecision {
   // The owner's statement that a receipt on the low-value asset line holds
   // several assets, each within the limit on its own, although their sum is not.
   severalLowValueItems Boolean  @default(false) @map("several_low_value_items")
+  // Why the receipt is treated this way, in the owner's words. Not a figure.
+  note                 String?
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
   @@index([authWorkspaceId])
   @@map("tax_item_decisions")
+}
+
+// What a receipt's "Zuordnung" and "Business Share %" cells held before a
+// decision or a vendor rule first decided it, from then on the cells show that
+// treatment (src/lib/tax/assignment-sync.ts). When neither decides the receipt
+// any more, the cells get these values back, so removing a decision restores
+// exactly the figures from before it. No foreign key on `rowId`, like
+// tax_item_decisions; the row delete paths remove it in code.
+model TaxAssignmentOrigin {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  rowId           String   @unique @map("row_id")
+  zuordnung       String?
+  sharePercent    Float?   @map("share_percent")
+  // "decided": kept when a decision or a vendor rule took the cells over.
+  // "private_share": the share a private receipt held before it was set to 0
+  // (it plays no role while the receipt is private, and returns if it stops being).
+  reason          String   @default("decided")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([authWorkspaceId])
+  @@map("tax_assignment_origins")
 }
 
 // An asset: something bought for the business that is written off instead of

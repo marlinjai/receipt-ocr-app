@@ -401,5 +401,12 @@ export async function applyNewReading(
   // A vendor or a total taken from the proposal is said by the name too, unless the proposal names the receipt itself.
   const named = await withFollowingName(table.adapter, table.columns, cells, row.cells);
   await table.adapter.updateRow(rowId, withTaxRates(table.columns, named, row.cells));
+  // A vendor or category taken from the reading may move the receipt under a vendor
+  // rule or into the meal register: its assignment cells follow (loaded on demand,
+  // that module reads receipts through the meal service).
+  if (take.some((c) => c.field === 'vendor' || c.field === 'category')) {
+    const { followTreatment } = await import('@/lib/tax/assignment-sync');
+    await followTreatment(db, ctx, { rowIds: [rowId] });
+  }
   return take.map((c) => c.field);
 }

@@ -8,6 +8,7 @@
     "start": "next start",
     "test": "vitest run",
     "test:db": "vitest run --config vitest.db.config.ts",
+    "check:copy": "vitest run --config vitest.copy.config.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "check:roadmap": "npx --yes github:marlinjai/actions-shared#roadmap-check-v1 --root .",

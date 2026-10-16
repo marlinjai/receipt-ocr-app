@@ -21,6 +21,7 @@ import { EVERY_ROW_LIMIT, applyDayFilters, boundsYears, readEveryRow, splitDayFi
 import { BULK_SET_BUDGET_MS, BULK_SET_PART, storedAs, type BulkSetFailure, type BulkSetOutcome } from './bulk-set';
 import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
 import { rowKind } from '@/lib/groups/service';
+import { AssignmentEditError, assignmentEditContext, followTreatment, routeAssignmentEdit, type AssignmentEditContext } from '@/lib/tax/assignment-sync';
 import { readRowLinks } from '@/lib/groups/links';
 import {
   requireReceiptsSession,
@@ -199,12 +200,17 @@ async function requireCreatableRow(input: CreateRowInput, columns: Column[]): Pr
 }
 
 export async function createRow(input: CreateRowInput): Promise<Row> {
-  await requireTableAccess(input.tableId, 'receipts.row.write');
+  const { session, workspaceId } = await requireTableAccess(input.tableId, 'receipts.row.write');
   const adapter = getAdapter();
   const columns = await adapter.getColumns(input.tableId);
   await requireCreatableRow(input, columns);
-  if (!input.cells) return adapter.createRow(input);
-  return adapter.createRow({ ...input, cells: withTaxRates(columns, input.cells) as Record<string, CellValue> });
+  const row = await adapter.createRow(input.cells ? { ...input, cells: withTaxRates(columns, input.cells) as Record<string, CellValue> } : input);
+  // A new receipt may fall under a vendor rule: its assignment cells show it.
+  if (input.cells) {
+    await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
+    return (await adapter.getRow(row.id)) ?? row;
+  }
+  return row;
 }
 
 /** The recognized-text column ids of a table, for the actions that return rows to the list. */
@@ -363,14 +369,14 @@ export async function searchReceiptText(tableId: string, term: string): Promise<
   return { ids: rows.slice(0, TEXT_SEARCH_LIMIT).map((r) => r.id), truncated: rows.length > TEXT_SEARCH_LIMIT };
 }
 
-export async function updateRow(rowId: string, cells: Record<string, CellValue>): Promise<Row> {
-  await requireRowAccess(rowId, 'receipts.row.write');
+export async function updateRow(rowId: string, edited: Record<string, CellValue>): Promise<Row> {
+  const { session, workspaceId } = await requireRowAccess(rowId, 'receipts.row.write');
   const { tableId } = await rowTable(rowId);
   const adapter = getAdapter();
   // A rate typed into the grid shows up in the rates text too (see
   // `lib/tax-rates.ts`). Every edit reads the columns to know whether it is
   // one; only an edit of the rate or the tax lines also reads the stored row.
-  return writeCells(adapter, tableId, await adapter.getColumns(tableId), rowId, cells);
+  return writeCells(adapter, tableId, await adapter.getColumns(tableId), rowId, edited, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) });
 }
 
 /**
@@ -381,31 +387,57 @@ export async function updateRow(rowId: string, cells: Record<string, CellValue>)
  */
 function writesCellsAsGiven(columns: readonly Column[], kind: string | null, cells: Record<string, CellValue>): boolean {
   const followsName = kind !== GROUP_KIND && touchesNameParts(columns, cells);
-  return !followsName && !touchesTaxRates(columns, cells);
+  // An edit of the assignment on a decided receipt becomes a finance decision BEFORE the cells are written,
+  // which then show it (`routeAssignmentEdit`): it cannot be written as given and brought in step after.
+  // A category is written as given; "Set field" brings those rows in step in one pass after (see there).
+  const assignment = kind !== GROUP_KIND && columns.some((c) => ASSIGNMENT_COLUMNS.includes(c.name) && c.id in cells);
+  return !followsName && !assignment && !touchesTaxRates(columns, cells);
 }
+
+/** The cells who bears a receipt is shown in (see `lib/tax/assignment.ts`). */
+const ASSIGNMENT_COLUMNS = ['Zuordnung', 'Business Share %'];
 
 /**
  * The guarded write of a cell edit, for one row the caller has authorized: the
  * rules on groups, the name that follows its cells, the tax rates text. The row
  * comes back without its recognized text, as every row of the list.
  */
-async function writeCells(adapter: PrismaAdapter, tableId: string, columns: Column[], rowId: string, cells: Record<string, CellValue>): Promise<Row> {
+async function writeCells(
+  adapter: PrismaAdapter,
+  tableId: string,
+  columns: Column[],
+  rowId: string,
+  edited: Record<string, CellValue>,
+  ctx: { workspaceId: string; tenantId: string | null },
+  assignment?: AssignmentEditContext,
+): Promise<Row> {
   // A group takes its name and the columns the views sort by; no row takes a kind (see `assertCellsWritable`).
   const kind = await rowKind(prisma, tableId, columns, rowId);
-  assertCellsWritable(columns, kind, cells);
+  assertCellsWritable(columns, kind, edited);
+  // Who bears a receipt has one source, the finance decision: an edit of
+  // "Zuordnung" or "Business Share %" on a decided receipt becomes a decision,
+  // and the cells are written from it (see `lib/tax/assignment-sync.ts`).
+  const routed = kind === GROUP_KIND ? { cells: edited, afterWrite: async () => {}, rewrites: false } : await routeAssignmentEdit(prisma, ctx, rowId, edited, assignment);
+  const cells = routed.cells;
   // A corrected vendor, item, total, currency or date is said by the name too
   // (see `lib/receipt-name-cells.ts`); a group's name is its own.
   const followsName = kind !== GROUP_KIND && touchesNameParts(columns, cells);
   const ratesChange = touchesTaxRates(columns, cells);
   const textId = textColumnIds(columns);
+  let written: Row;
+  if (writesCellsAsGiven(columns, kind, cells) || (!followsName && !ratesChange)) {
+    written = await adapter.updateRow(rowId, cells);
+  } else {
+    const stored = await adapter.getRow(rowId);
+    const named = followsName ? await withFollowingName(adapter, columns, cells, stored?.cells) : cells;
+    written = await adapter.updateRow(rowId, (ratesChange ? withTaxRates(columns, named, stored?.cells) : named) as Record<string, CellValue>);
+  }
+  // The decision the edit means is stored only once the cells are; a follow-up
+  // (another rule now applies) may have written the cells again: read them back.
+  await routed.afterWrite();
+  const after = routed.rewrites ? ((await adapter.getRow(rowId)) ?? written) : written;
   // The table puts the returned row in its list: without the recognized text, like every row of the list.
-  if (writesCellsAsGiven(columns, kind, cells)) return withoutText(await adapter.updateRow(rowId, cells), textId);
-  const stored = await adapter.getRow(rowId);
-  const named = followsName ? await withFollowingName(adapter, columns, cells, stored?.cells) : cells;
-  return withoutText(
-    await adapter.updateRow(rowId, (ratesChange ? withTaxRates(columns, named, stored?.cells) : named) as Record<string, CellValue>),
-    textId,
-  );
+  return withoutText(after, textId);
 }
 
 /** The table a row belongs to; the row was authorized just before. */
@@ -437,7 +469,8 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
   }
   // The time budget below counts from here, so one call stays bounded as a whole.
   const startedAt = performance.now();
-  await requireColumnAccess(columnId, 'receipts.row.write');
+  const { session, workspaceId } = await requireColumnAccess(columnId, 'receipts.row.write');
+  const ctx = { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) };
   const ids = [...new Set(rowIds)];
   const everyRow = (reason: BulkSetFailure): BulkSetOutcome => ({ done: [], failed: ids.map((rowId) => ({ rowId, reason })), left: [] });
   const adapter = getAdapter();
@@ -452,6 +485,10 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
   const columns = await adapter.getColumns(tableId);
   const cells = { [columnId]: value };
   const tableByRow = await resolveRowTableIds(ids);
+  // Read once for the whole part, and only for a column the treatment depends
+  // on: every row's assignment edit touches only that row, and the rows whose
+  // category changed are brought in step in one go after the writes.
+  const assignment = ['Zuordnung', 'Category'].includes(column.name) ? { ...(await assignmentEditContext(prisma, workspaceId)), followRows: [] as string[] } : undefined;
   const failed: BulkSetOutcome['failed'] = [];
   const done: string[] = [];
   const mine = ids.filter((rowId) => {
@@ -496,9 +533,13 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
     try {
       await writeCellOnRows(tableId, column, rowKindColumnId(columns), value, allowed);
       written.push(...allowed);
+      // A new category may move these receipts under a vendor rule or into the meal register: their
+      // assignment cells are brought in step, in one pass after the loop.
+      assignment?.followRows?.push(...allowed);
     } catch {
       // The statement may or may not have run: the read-back below decides.
       uncertain.push(...allowed);
+      assignment?.followRows?.push(...allowed);
     }
   }
   // Every other cell takes the guarded write of a cell edit, row after row (the name that follows its cells,
@@ -513,19 +554,23 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
     }
     try {
       perRow.add(rowId);
-      await writeCells(adapter, tableId, columns, rowId, cells);
+      await writeCells(adapter, tableId, columns, rowId, cells, ctx, assignment);
       written.push(rowId);
     } catch (error) {
       // A row deleted meanwhile is not found; a cell the row may not take (the kind, an amount on a group) is not writable.
       // (The adapter says a row deleted between its two reads with a plain "Row not found".)
       const code = error instanceof GroupError ? error.code : null;
       const gone = code === 'row_not_found' || (error instanceof Error && error.message === 'Row not found');
-      if (gone || code === 'not_writable') failed.push({ rowId, reason: gone ? 'not_found' : 'not_writable' });
+      // A receipt whose assignment the finance area decides and cannot take this edit (a vendor rule, an asset).
+      if (error instanceof AssignmentEditError) failed.push({ rowId, reason: 'not_writable' });
+      else if (gone || code === 'not_writable') failed.push({ rowId, reason: gone ? 'not_found' : 'not_writable' });
       // Any other error may have come after the value was stored (the adapter reads the row again after its
       // write): the read-back below decides.
       else uncertain.push(rowId);
     }
   }
+
+  if (assignment?.followRows && assignment.followRows.length > 0) await followTreatment(prisma, ctx, { rowIds: assignment.followRows, treatmentOnly: true });
 
   // Read back what is stored now, all rows at once: a write that answered is not yet a value that landed.
   if (written.length + uncertain.length > 0) {
@@ -657,8 +702,10 @@ export async function archiveRow(rowId: string): Promise<void> {
 }
 
 export async function unarchiveRow(rowId: string): Promise<void> {
-  await requireRowAccess(rowId, 'receipts.row.write');
-  return getAdapter().unarchiveRow(rowId);
+  const { session, workspaceId } = await requireRowAccess(rowId, 'receipts.row.write');
+  await getAdapter().unarchiveRow(rowId);
+  // While archived the receipt was out of every rule change: its cells follow what applies now.
+  await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [rowId] });
 }
 
 export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<Row[]> {
@@ -670,9 +717,16 @@ export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<Row[]> {
   // The columns of each table once, not once per row.
   const columnsByTable = new Map(await Promise.all(tableIds.map(async (tableId) => [tableId, await adapter.getColumns(tableId)] as const)));
   for (const input of inputs) await requireCreatableRow(input, columnsByTable.get(input.tableId) ?? []);
-  return adapter.bulkCreateRows(
+  const rows = await adapter.bulkCreateRows(
     inputs.map((i) => (i.cells ? { ...i, cells: withTaxRates(columnsByTable.get(i.tableId) ?? [], i.cells) as Record<string, CellValue> } : i)),
   );
+  // New receipts may fall under a vendor rule: their assignment cells show it.
+  for (const tableId of tableIds) {
+    const { session, workspaceId } = await requireTableAccess(tableId);
+    const ids = rows.filter((r) => r.tableId === tableId).map((r) => r.id);
+    if (ids.length > 0) await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: ids });
+  }
+  return rows;
 }
 
 async function requireRowsAccess(rowIds: string[]): Promise<void> {

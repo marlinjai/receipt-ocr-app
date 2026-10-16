@@ -2,6 +2,7 @@ import 'server-only';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
 import { receiptsOnly } from '@/lib/receipts-kind';
+import { rowsWithDerivedShare } from '@/lib/tax/assignment-sync';
 
 /**
  * Workspace-editable per-vendor attribution %, which replaced a hardcoded
@@ -112,8 +113,13 @@ export async function applyAttributionToLedger(workspaceId: string): Promise<num
     offset += page.items.length;
   }
 
+  // A receipt a finance decision or vendor rule decides, or a private one, has
+  // its share from there: writing a vendor share onto it would make the table
+  // say something the finance area does not.
+  const derived = await rowsWithDerivedShare(prisma, workspaceId);
   let updated = 0;
   for (const row of rows) {
+    if (derived.has(row.id)) continue;
     const want = resolveShare(row.vendor, rules, defaultShare);
     if (Number(row.current) !== want) {
       await adapter.updateRow(row.id, { [shareCol.id]: want });

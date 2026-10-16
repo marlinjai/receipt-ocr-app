@@ -592,7 +592,8 @@ describe('rereadReceipt: a stored receipt read again with the page', () => {
     expect(await cellOf(ws, rowId, 'Category')).toBe('Software & Lizenzen');
     expect(await cellOf(ws, rowId, 'Konto')).toBe('4806');
     expect(await cellOf(ws, rowId, 'Zuordnung')).toBe('Privat');
-    expect(await cellOf(ws, rowId, 'Business Share %')).toBe(40);
+    // A private receipt carries share 0 (the share plays no role for it, see lib/tax/assignment.ts).
+    expect(await cellOf(ws, rowId, 'Business Share %')).toBe(0);
     expect(await cellOf(ws, rowId, 'Status')).toBe('Rejected');
     expect(await rowCount(ws)).toBeGreaterThan(0);
     expect(await files(ws, rowId)).toHaveLength(1);

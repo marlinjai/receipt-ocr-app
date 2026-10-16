@@ -100,7 +100,8 @@ export type TaxServiceErrorCode =
   | 'line_not_found'
   | 'boundary_subject_not_found'
   | 'not_in_year_boundary'
-  | 'year_boundary_changed';
+  | 'year_boundary_changed'
+  | 'assignment_columns_missing';
 
 export class TaxServiceError extends Error {
   readonly code: TaxServiceErrorCode;
@@ -174,7 +175,7 @@ export async function rowsWithOwnTreatment(
   return out;
 }
 
-interface LoadedReceipts {
+export interface LoadedReceipts {
   facts: ReceiptFacts[];
 }
 
@@ -222,7 +223,7 @@ export function linkedByRow(payments: readonly PaymentRow[]): Map<string, Linked
   return out;
 }
 
-async function loadReceipts(
+export async function loadReceipts(
   db: PrismaClient,
   workspaceId: string,
   onlyRowId?: string,
@@ -254,6 +255,7 @@ async function loadReceipts(
     linesByRow.set(line.rowId, list);
   }
   const decisionByRow = new Map(decisions.map((d) => [d.rowId, storedTreatment(d)]));
+  const noteByRow = new Map(decisions.map((d) => [d.rowId, d.note]));
   const shareColumn = ctx.columns.find((c) => c.name === BUSINESS_SHARE_COLUMN);
   const noGuests: MealGuestEntry[] = [];
   const facts = rows.map((row): ReceiptFacts => {
@@ -263,6 +265,7 @@ async function loadReceipts(
       record: rowToMealRecord(row, ctx.columns, ctx.selectOptions, guests.get(row.id) ?? noGuests),
       businessSharePercent: shareNumber !== null && Number.isFinite(shareNumber) ? shareNumber : null,
       decision: decisionByRow.get(row.id) ?? null,
+      decisionNote: noteByRow.get(row.id) ?? null,
       paid: linked?.get(row.id)?.paid ?? null,
       refundedCents: linked?.get(row.id)?.refundedCents ?? 0,
       lines: linesByRow.get(row.id) ?? [],
@@ -330,6 +333,8 @@ export interface StatementItem {
   severalLowValueItems: boolean;
   /** True when the item has its own decision (which can be removed again). */
   hasDecision: boolean;
+  /** The note stored with the receipt's own decision. */
+  decisionNote: string | null;
   vendorRuleId: string | null;
   isMeal: boolean;
   /** The asset this receipt is part of, if any. */
@@ -484,6 +489,7 @@ function toStatementItem(
     employmentLineKey: item.employmentLineKey,
     severalLowValueItems: item.severalLowValueItems === true,
     hasDecision: facts.decision !== null,
+    decisionNote: facts.decision !== null ? (facts.decisionNote ?? null) : null,
     vendorRuleId: resolved.vendorRuleId,
     isMeal: resolved.isMeal,
     assetId: item.assetId ?? null,
@@ -1899,28 +1905,79 @@ export interface SaveDecisionResult {
   changed: boolean;
 }
 
-/** Decide how ONE receipt is treated, overriding its vendor rule. */
+export const DECISION_NOTE_MAX = 1000;
+
+/** A decision's note from untrusted input: trimmed, at most 1000 characters, empty as none. */
+export function cleanDecisionNote(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const note = raw.trim().slice(0, DECISION_NOTE_MAX);
+  return note === '' ? null : note;
+}
+
+/**
+ * Bring the receipt table's "Zuordnung" and "Business Share %" in step with
+ * the treatment just written (see `assignment-sync.ts`). Loaded on demand: that
+ * module reads receipts through this one.
+ */
+async function syncCells(db: PrismaClient, ctx: TaxContext, scope: { rowIds?: string[]; vendor?: string }): Promise<void> {
+  // The treatment is stored at this point: a failure here must not report the
+  // save as failed. It is logged, and the cells are brought in step by the next
+  // write that touches the receipt or by a run of scripts/sync-assignment-cells.ts.
+  const { followTreatment } = await import('./assignment-sync');
+  await followTreatment(db, ctx, scope);
+}
+
+/** Refuse BEFORE a treatment is written when the table could not show it (a column or option renamed or deleted). */
+async function precheckCells(db: PrismaClient, ctx: TaxContext): Promise<void> {
+  const { AssignmentEditError, assertAssignmentColumns } = await import('./assignment-sync');
+  try {
+    await assertAssignmentColumns(db, ctx.workspaceId);
+  } catch (err) {
+    if (err instanceof AssignmentEditError) throw new TaxServiceError('assignment_columns_missing');
+    throw err;
+  }
+}
+
+/**
+ * Decide how ONE receipt is treated, overriding its vendor rule. `raw.note`
+ * is an optional note of why (stored with the decision, not a figure).
+ */
 export async function saveItemDecision(db: PrismaClient, ctx: TaxContext, rowId: string, raw: unknown): Promise<SaveDecisionResult> {
   const facts = await requireOrdinaryRow(db, ctx, rowId);
   const treatment = validateTreatment(raw, rulesFor(facts.record.date));
-  if (facts.decision && sameTreatment(facts.decision, treatment)) return { changed: false };
+  await precheckCells(db, ctx);
+  const stored = facts.decision ? await db.taxItemDecision.findUnique({ where: { rowId }, select: { note: true } }) : null;
+  // Only a note that is sent changes it: a save without one keeps what is stored.
+  const sentNote = raw !== null && typeof raw === 'object' && 'note' in raw;
+  const note = sentNote ? cleanDecisionNote((raw as { note?: unknown }).note) : (stored?.note ?? null);
+  if (facts.decision && sameTreatment(facts.decision, treatment) && (stored?.note ?? null) === note) {
+    // Nothing to store; the cells are still brought in step, which repairs any left stale.
+    await syncCells(db, ctx, { rowIds: [rowId] });
+    return { changed: false };
+  }
   const data = {
     allocations: treatment.allocations as unknown as Prisma.InputJsonValue,
     formLineKey: treatment.formLineKey,
     employmentLineKey: treatment.employmentLineKey,
     severalLowValueItems: treatment.severalLowValueItems === true,
+    note,
   };
   await db.taxItemDecision.upsert({
     where: { rowId },
     create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, rowId, ...data },
     update: data,
   });
+  await syncCells(db, ctx, { rowIds: [rowId] });
   return { changed: true };
 }
 
 /** Remove the decision on one receipt: it follows its vendor rule or the defaults again. */
 export async function clearItemDecision(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<SaveDecisionResult> {
+  await precheckCells(db, ctx);
   const { count } = await db.taxItemDecision.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId } });
+  // The cells get back what they held before the decision (or show the vendor
+  // rule), so removing a decision restores the earlier figures exactly.
+  if (count > 0) await syncCells(db, ctx, { rowIds: [rowId] });
   return { changed: count > 0 };
 }
 
@@ -1943,6 +2000,7 @@ export async function saveVendorRule(db: PrismaClient, ctx: TaxContext, input: V
   const effectiveFrom = input.effectiveFrom ?? '';
   if (effectiveFrom !== '' && !isIsoDay(effectiveFrom)) throw new TaxServiceError('invalid_date');
   const treatment = validateTreatment(input.treatment, rulesFor(effectiveFrom || null));
+  await precheckCells(db, ctx);
   const data = {
     vendorLabel: input.vendor.trim(),
     allocations: treatment.allocations as unknown as Prisma.InputJsonValue,
@@ -1954,6 +2012,7 @@ export async function saveVendorRule(db: PrismaClient, ctx: TaxContext, input: V
     create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, vendorKey: key, effectiveFrom, ...data },
     update: data,
   });
+  await syncCells(db, ctx, { vendor: input.vendor });
   return { id: row.id, vendorKey: key, vendorLabel: row.vendorLabel, effectiveFrom, ...treatment, severalLowValueItems: false };
 }
 
@@ -1985,6 +2044,7 @@ export async function decideForVendor(
   // the rules of both dates it is judged on.
   const forRule = validateTreatment(input.treatment, rulesFor(effectiveFrom || null));
   const forItem = validateTreatment(input.treatment, rulesFor(facts.record.date));
+  await precheckCells(db, ctx);
 
   // The statement "several small items on this receipt" belongs to the one
   // receipt and a rule cannot carry it, so a receipt that has it keeps its own
@@ -2018,6 +2078,7 @@ export async function decideForVendor(
           update: itemData,
         }),
   ]);
+  await syncCells(db, ctx, { vendor: input.vendor });
   return {
     // The statement about several small items belongs to one receipt, never to a rule.
     rule: { id: row.id, vendorKey: key, vendorLabel: row.vendorLabel, effectiveFrom, ...forRule, severalLowValueItems: false },
@@ -2114,8 +2175,11 @@ export async function deleteReverseChargeVendorEntry(db: PrismaClient, ctx: TaxC
 export { ReverseChargeInputError };
 
 export async function deleteVendorRule(db: PrismaClient, ctx: TaxContext, ruleId: string): Promise<void> {
+  await precheckCells(db, ctx);
+  const rule = await db.taxVendorRule.findFirst({ where: { id: ruleId, authWorkspaceId: ctx.workspaceId }, select: { vendorLabel: true } });
   const { count } = await db.taxVendorRule.deleteMany({ where: { id: ruleId, authWorkspaceId: ctx.workspaceId } });
-  if (count === 0) throw new TaxServiceError('rule_not_found');
+  if (count === 0 || !rule) throw new TaxServiceError('rule_not_found');
+  await syncCells(db, ctx, { vendor: rule.vendorLabel });
 }
 
 /** Called by the row delete paths: a deleted receipt takes its decision with it. */
@@ -2123,6 +2187,7 @@ export async function deleteDecisionsForRows(db: PrismaClient, rowIds: string[])
   if (rowIds.length === 0) return;
   await db.taxItemDecision.deleteMany({ where: { rowId: { in: rowIds } } });
   await db.taxReverseCharge.deleteMany({ where: { scope: 'row', subject: { in: rowIds } } });
+  await db.taxAssignmentOrigin.deleteMany({ where: { rowId: { in: rowIds } } });
   await db.taxReceiptLine.deleteMany({ where: { rowId: { in: rowIds } } });
   // An asset keeps existing without the receipt; with no receipt left it shows
   // up as "no cost" and asks for one, instead of vanishing with its history.

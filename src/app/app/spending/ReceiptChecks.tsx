@@ -7,7 +7,9 @@ import { receiptHref } from '@/lib/receipt-link';
 import { formatCents } from '@/lib/tax/money';
 import { createBrowserDeps, type SaveReceipt } from '@/lib/upload/browser-deps';
 import { processReceipt } from '../actions';
+import { switchWorkspace } from '../workspace-actions';
 import { takeOverMail, takeOverMessage } from './take-over-mail';
+import { browserPushEnvironment, currentSubscription, pushSwitchMessage, switchPushOff, switchPushOn, type PushEnvironment } from './push-device';
 import type { PaymentCheck } from '@/lib/spending/loop-service';
 import type { ChecksRun } from '@/lib/spending/checks';
 import { useRouter } from 'next/navigation';
@@ -16,6 +18,9 @@ import {
   checkNow,
   confirmReceipt,
   dismissMail,
+  disablePush,
+  enablePush,
+  pushStateOfDevice,
   getReceiptChecks,
   linkTakenOver,
   readNotification,
@@ -77,6 +82,168 @@ export function runSummary(checks: ChecksRun): string {
   return sentences.join(' ');
 }
 
+/** What the push switch asks of the page; each resolves true when the server took it. */
+export interface PushActions {
+  enable(subscription: unknown): Promise<boolean>;
+  disable(endpoint: string): Promise<boolean>;
+  /** What the server holds for this device, or null when it could not be asked. */
+  stateOf(endpoint: string): Promise<{ here: boolean; elsewhere: boolean } | null>;
+}
+
+/**
+ * Push on this device: switch it on (asks for permission straight from the
+ * tap, subscribes, and counts as on only once the server stored it) or off.
+ * On opening the page with push on, the device renews itself, so a browser
+ * that changed its push address keeps getting messages. The browser part is
+ * passed in for the tests.
+ */
+export function PushSwitch({
+  publicKey,
+  devices,
+  channel,
+  actions,
+  error,
+  environment,
+}: {
+  publicKey: string | null;
+  devices: number;
+  channel: ChannelSetting;
+  actions: PushActions;
+  error: string | null;
+  environment?: PushEnvironment | null;
+}) {
+  const id = useId();
+  const [env] = useState(() => (environment === undefined ? browserPushEnvironment() : environment));
+  const [onHere, setOnHere] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!env || !publicKey) return;
+    let active = true;
+    void (async () => {
+      const current = await currentSubscription(env);
+      if (!current) {
+        if (active) setOnHere(false);
+        return;
+      }
+      // Renewing is done on every page of the app (PushRenewal in the layout); here only the state is read.
+      const state = await actions.stateOf(current.endpoint);
+      if (!active) return;
+      setOnHere(Boolean(state?.here));
+    })();
+    return () => {
+      active = false;
+    };
+    // Runs once per page: renewing on every render would be noise.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [env, publicKey]);
+
+  if (!publicKey) {
+    return (
+      <p className="text-xs" style={{ color: 'var(--muted)' }}>
+        Push ist auf dem Server noch nicht eingerichtet; bis dahin kommt eine E-Mail.
+      </p>
+    );
+  }
+  if (channel !== 'push') {
+    return (
+      <p className="text-xs" style={{ color: 'var(--muted)' }}>
+        Push wird nur benutzt, wenn oben „{CHANNEL_LABELS.push}“ gewählt und gespeichert ist.
+      </p>
+    );
+  }
+
+  const switchOn = async () => {
+    if (!env) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      // First call, no await before it: the permission prompt must belong to the tap.
+      const result = await switchPushOn(env, publicKey);
+      if (!result.ok) {
+        setMessage(pushSwitchMessage(result));
+        return;
+      }
+      if (await actions.enable(result.subscription)) {
+        setOnHere(true);
+        setMessage(pushSwitchMessage(result));
+      } else {
+        // The server did not store it: the browser's subscription is taken back unless another company
+        // uses it; when the server cannot even say that, it is kept (a later page tidies up).
+        const state = await actions.stateOf(result.endpoint);
+        if (state) await switchPushOff(env, state.elsewhere);
+        setOnHere(false);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const switchOff = async () => {
+    if (!env) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const current = await currentSubscription(env);
+      if (!current) {
+        setOnHere(false);
+        return;
+      }
+      const state = await actions.stateOf(current.endpoint);
+      if (!state) {
+        // Without the server's answer the browser's subscription might be another company's too: nothing is ended.
+        setMessage('Push ließ sich nicht ausschalten, der Server antwortet gerade nicht. Bitte noch einmal versuchen.');
+        return;
+      }
+      const endpoint = await switchPushOff(env, state.elsewhere);
+      if (endpoint && (await actions.disable(endpoint))) {
+        setOnHere(false);
+        setMessage('Push ist auf diesem Gerät ausgeschaltet.');
+      }
+    } catch (e) {
+      console.warn('[push] switching off failed', e);
+      setMessage('Push ließ sich nicht ausschalten. Bitte noch einmal versuchen.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const status = devices === 0 ? 'Auf keinem Gerät eingeschaltet.' : devices === 1 ? 'Auf einem Gerät eingeschaltet.' : `Auf ${devices} Geräten eingeschaltet.`;
+  return (
+    <fieldset className="space-y-1" aria-labelledby={`${id}-legend`}>
+      <legend id={`${id}-legend`} className="ui-label">
+        Push auf diesem Gerät
+      </legend>
+      <p className="text-xs" style={{ color: 'var(--muted)' }}>
+        {status}
+      </p>
+      {!env ? (
+        <p className="text-xs" style={{ color: 'var(--muted)' }}>
+          {pushSwitchMessage({ ok: false, reason: 'unsupported' })}
+        </p>
+      ) : onHere ? (
+        <button type="button" className="ui-btn ui-btn-sm" disabled={busy} aria-busy={busy} onClick={switchOff}>
+          {busy ? 'Wird ausgeschaltet …' : 'Push auf diesem Gerät ausschalten'}
+        </button>
+      ) : (
+        <button type="button" className="ui-btn ui-btn-sm" disabled={busy || onHere === null} aria-busy={busy} onClick={switchOn}>
+          {busy ? 'Wird eingeschaltet …' : 'Push auf diesem Gerät einschalten'}
+        </button>
+      )}
+      {/* Always there, so a screen reader announces what is filled in later. */}
+      <p className={message ? 'text-xs' : 'sr-only'} role="status">
+        {message ?? ''}
+      </p>
+      {error && (
+        <p className="ui-note ui-note-danger" role="alert">
+          {error}
+        </p>
+      )}
+    </fieldset>
+  );
+}
+
 /** What went wrong, in words a person can act on. */
 export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok: false }>): string {
   if (result.error === 'unauthorized') return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und neu anmelden.';
@@ -87,6 +254,7 @@ export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok:
   if (result.detail === 'invalid_email') return 'Diese E-Mail-Adresse sieht nicht gültig aus.';
   if (result.detail === 'invalid_channel') return 'Bitte einen der angebotenen Wege wählen.';
   if (result.detail === 'candidate_not_found') return 'Diese Mail wird nicht mehr angeboten. Bitte die Seite neu laden.';
+  if (result.detail === 'invalid_subscription') return 'Das Gerät hat keine gültige Push-Anmeldung geliefert. Bitte Push noch einmal einschalten.';
   if (result.error === 'not_found') return 'Das gibt es nicht mehr (die Zahlung wurde vielleicht mit ihrem Import zurückgenommen). Bitte die Seite neu laden.';
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
@@ -260,7 +428,16 @@ function OpenCheck({
   );
 }
 
-export default function ReceiptChecks({ initial, focusPaymentId }: { initial: ChecksView; focusPaymentId: string | null }) {
+export default function ReceiptChecks({
+  initial,
+  focusPaymentId,
+  forCompany = null,
+}: {
+  initial: ChecksView;
+  focusPaymentId: string | null;
+  /** The company a notification was about (`firma` in its link); the page offers to switch when another one is active. */
+  forCompany?: string | null;
+}) {
   const id = useId();
   const [view, setView] = useState(initial);
   const [error, setError] = useState<{ at: string; message: string } | null>(null);
@@ -276,7 +453,8 @@ export default function ReceiptChecks({ initial, focusPaymentId }: { initial: Ch
     item?.scrollIntoView({ block: 'center' });
     item?.focus();
   }, [focusPaymentId]);
-  const focusSettled = focusPaymentId !== null && !loop.open.some((c) => c.paymentId === focusPaymentId);
+  const otherCompany = forCompany !== null && forCompany !== view.workspaceId;
+  const focusSettled = !otherCompany && focusPaymentId !== null && !loop.open.some((c) => c.paymentId === focusPaymentId);
 
   const router = useRouter();
   const run = (at: string, action: () => Promise<ChecksResult<ChecksView>>) => {
@@ -292,6 +470,26 @@ export default function ReceiptChecks({ initial, focusPaymentId }: { initial: Ch
   };
 
   const errorAt = (at: string) => (error?.at === at ? error.message : null);
+
+  /** The push switch's calls to the server; each says whether the server took it, and a refusal shows at the switch. */
+  const pushActions: PushActions = {
+    enable: async (subscription) => {
+      const result = await enablePush(subscription);
+      if (result.ok) setView(result.value);
+      else setError({ at: 'push', message: checksActionMessage(result) });
+      return result.ok;
+    },
+    disable: async (endpoint) => {
+      const result = await disablePush(endpoint);
+      if (result.ok) setView(result.value);
+      else setError({ at: 'push', message: checksActionMessage(result) });
+      return result.ok;
+    },
+    stateOf: async (endpoint) => {
+      const result = await pushStateOfDevice(endpoint);
+      return result.ok ? result.value : null;
+    },
+  };
   const [notice, setNotice] = useState<{ at: string; message: string } | null>(null);
   const [takingOver, setTakingOver] = useState<string | null>(null);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
@@ -358,6 +556,25 @@ export default function ReceiptChecks({ initial, focusPaymentId }: { initial: Ch
       <p className={pageNotice ? 'ui-note ui-note-ok mt-2' : 'sr-only'} role="status">
         {pageNotice ?? ''}
       </p>
+      {otherCompany && (
+        <div className="ui-note ui-note-warn mt-2 flex flex-wrap items-center justify-between gap-2">
+          <span>Die Benachrichtigung gehört zu einer anderen Firma als der gerade gewählten.</span>
+          <button
+            type="button"
+            className="ui-btn ui-btn-sm"
+            disabled={pending}
+            onClick={() =>
+              startTransition(async () => {
+                const switched = await switchWorkspace(forCompany as string).catch(() => ({ ok: false }));
+                if (switched.ok) router.refresh();
+                else setError({ at: 'run', message: 'Der Wechsel hat nicht geklappt; vielleicht fehlt der Zugang zu dieser Firma.' });
+              })
+            }
+          >
+            Zu dieser Firma wechseln
+          </button>
+        </div>
+      )}
       {focusSettled && (
         <p className="ui-note mt-2">Die Zahlung aus der Benachrichtigung ist inzwischen erledigt: sie hat einen Beleg, braucht keinen oder wurde beantwortet.</p>
       )}
@@ -484,11 +701,19 @@ export default function ReceiptChecks({ initial, focusPaymentId }: { initial: Ch
               <input type="email" className="ui-input" value={email} maxLength={254} onChange={(e) => setEmail(e.target.value)} />
             </label>
             <p className="text-xs" style={{ color: 'var(--muted)' }}>
-              Alles erscheint immer auch hier. Push aufs Telefon wird noch eingerichtet; bis dahin geht es per E-Mail, sobald eine Adresse eingetragen und der Versand auf dem Server eingerichtet ist.
+              Alles erscheint immer auch hier. Push kommt auf jedes Gerät, auf dem es unten eingeschaltet ist; geht das nicht, kommt eine E-Mail, sobald eine
+              Adresse eingetragen und der Versand auf dem Server eingerichtet ist.
             </p>
             <button type="submit" className="ui-btn ui-btn-sm" disabled={pending} aria-label="Einstellung speichern">
               Speichern
             </button>
+            <PushSwitch
+              publicKey={view.pushPublicKey}
+              devices={view.pushDevices}
+              channel={view.settings.channel}
+              actions={pushActions}
+              error={errorAt('push')}
+            />
             {errorAt('settings') && (
               <p className="ui-note ui-note-danger" role="alert">
                 {errorAt('settings')}

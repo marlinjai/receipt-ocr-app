@@ -965,3 +965,31 @@ model SpendingMailCandidate {
   @@index([authWorkspaceId, paymentId])
   @@map("spending_mail_candidates")
 }
+
+// A phone (or browser) that asked for push notifications for this workspace:
+// the push service's address for it and its two public keys
+// (src/lib/spending/notify/push.ts), and the person who switched it on.
+// `renewedAt` is set each time that person opens the spending page with push
+// on: a device not renewed for 30 days gets nothing more, so a person who
+// lost access (removed from the company, signed out for good) stops getting
+// its messages. A device the push service reports gone (404 or 410) is
+// deleted; `failures` counts failed sends in a row, and at ten the device is
+// deleted too.
+model SpendingPushSubscription {
+  id              String    @id @default(uuid())
+  authWorkspaceId String    @map("auth_workspace_id")
+  authTenantId    String?   @map("auth_tenant_id")
+  userId          String    @map("user_id")
+  endpoint        String
+  p256dh          String
+  auth            String
+  failures        Int       @default(0)
+  lastSuccessAt   DateTime? @map("last_success_at")
+  renewedAt       DateTime  @default(now()) @map("renewed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, endpoint])
+  @@index([endpoint])
+  @@map("spending_push_subscriptions")
+}

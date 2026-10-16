@@ -6,6 +6,7 @@ import { SPENDING_CATEGORIES, SPENDING_CATEGORY_LABELS, isSpendingCategory } fro
 import { MAX_LIMIT_CENTS, budgetSubject, computeBudgets, type BudgetLine, type BudgetScope, type StoredLimit } from './budgets';
 import { classifyPayment } from './overview';
 import { loadCategoryAnswers, toOverviewInput } from './service';
+import { spendingPath } from './paths';
 import { notify, serverChannels, settleAllBut, type NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
 
@@ -160,8 +161,8 @@ export async function runBudgetWarnings(db: PrismaClient, ctx: NotifyContext, op
   const fresh = due.filter((w) => !known.has(w.subjectKey)).sort((a, b) => (a.level === b.level ? b.overshootCents - a.overshootCents : a.level === 'passed' ? -1 : 1));
   let sent = 0;
   for (const w of fresh.slice(0, MAX_WARNINGS_PER_RUN)) {
-    const message = { subjectKey: w.subjectKey, title: w.title, body: w.body, kind: 'budget' as const, path: '/app/spending#budgets' };
-    if ((await notify(db, ctx, message, options.channels ?? serverChannels())) === 'sent') sent += 1;
+    const message = { subjectKey: w.subjectKey, title: w.title, body: w.body, kind: 'budget' as const, path: spendingPath(ctx.workspaceId, {}, 'budgets') };
+    if ((await notify(db, ctx, message, options.channels ?? serverChannels(db))) === 'sent') sent += 1;
   }
   return { sent, deferred: Math.max(0, fresh.length - MAX_WARNINGS_PER_RUN), settled };
 }

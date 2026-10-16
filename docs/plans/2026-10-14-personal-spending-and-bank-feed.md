@@ -208,6 +208,30 @@ warning goes through the same channel as the missing-receipt notification.
   Open Authorization (OAuth) client with the read-only mail scope, a refresh token granted once by
   the owner of the mailbox the expenses address delivers into, the address, and the company.
 
+### Push to the phone, the owner's default channel (2026-10-16)
+
+- The push channel behind the notification port (`src/lib/spending/notify/push.ts`) sends every
+  message to each device that switched push on for the company, signed with the server's Voluntary
+  Application Server Identification (VAPID) key pair and encrypted per device by the `web-push`
+  library. When no device has push, or every delivery failed, the port falls back to e-mail, as the
+  owner decided.
+- A device belongs to the person who switched it on and gets messages only while that person
+  renewed it within 7 days (every page of the app renews it while push is on): a person who lost
+  access stops getting the company's messages within a week, and signing out switches push off on
+  the device at once. When the browser gives the device a new push address on its own, the
+  service worker reports old and new and the person's rows move along. Rows not renewed for 90
+  days are deleted. Only addresses of the known push services are
+  accepted (the server never sends to an address someone typed), with keys of the sizes browsers
+  make. A device the push service reports gone is forgotten, and so is one that failed ten times
+  in a row. Wrong keys on the server keep push off instead of failing every device.
+- On the spending page ("Wie benachrichtigt wird") each device switches push on or off; it counts
+  as on only once the server stored it, and switching off in one company keeps the browser's
+  subscription when another company of the same person still uses it. The service worker shows the
+  message and opens only pages of this app. A link names its company; when another one is active,
+  the page offers to switch. On the iPhone push works only from the installed app.
+- Stored: the devices (`spending_push_subscriptions`, migration 0029, additive).
+- Off until the server holds `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`.
+
 ### Build order 4, budgets and warnings (2026-10-16)
 
 - A monthly budget per category and, where the owner adds one, per counterparty

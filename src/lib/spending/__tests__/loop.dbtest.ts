@@ -83,7 +83,7 @@ describe('forward', () => {
     const run = await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] });
     expect(run).toMatchObject({ notified: 1, open: 2 });
     expect(push.sent.map((m) => m.subjectKey)).toEqual([`missing_receipt:${ids.get('Abc Laden')}`]);
-    expect(push.sent[0].path).toBe(`/app/spending?pruefen=${ids.get('Abc Laden')}`);
+    expect(push.sent[0].path).toBe(`/app/spending?pruefen=${ids.get('Abc Laden')}&firma=${encodeURIComponent(ctx.workspaceId)}`);
 
     const zyx = overview.open.find((c) => c.counterparty === 'Zyx Handel');
     const rowId = zyx?.state.state === 'proposed' ? zyx.state.candidates[0].rowId : '';

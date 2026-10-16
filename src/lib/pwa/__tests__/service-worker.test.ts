@@ -12,7 +12,7 @@ const SW_SOURCE = readFileSync(path.join(PUBLIC, 'sw.js'), 'utf8');
 const OFFLINE_SOURCE = readFileSync(path.join(PUBLIC, 'offline.html'), 'utf8');
 
 /** Run public/sw.js itself inside a fake worker scope. */
-function loadWorker(options: { online?: boolean; existingCaches?: string[] } = {}) {
+function loadWorker(options: { online?: boolean; existingCaches?: string[]; windows?: Array<Record<string, unknown>>; fetchImpl?: (...a: unknown[]) => unknown } = {}) {
   const listeners = new Map<string, (event: unknown) => void>();
   const stores = new Map<string, Map<string, Response>>();
   for (const name of options.existingCaches ?? []) stores.set(name, new Map());
@@ -55,7 +55,15 @@ function loadWorker(options: { online?: boolean; existingCaches?: string[] } = {
     location: { origin: 'https://receipts.example.invalid' },
     addEventListener: (type: string, fn: (event: unknown) => void) => listeners.set(type, fn),
     skipWaiting: vi.fn(async () => {}),
-    clients: { claim: vi.fn(async () => {}) },
+    clients: {
+      claim: vi.fn(async () => {}),
+      matchAll: vi.fn(async () => options.windows ?? []),
+      openWindow: vi.fn(async () => null),
+    },
+    registration: {
+      showNotification: vi.fn(async () => {}),
+      pushManager: { getSubscription: vi.fn(async () => null), subscribe: vi.fn(async () => ({})) },
+    },
   };
 
   // In a worker a relative URL resolves against the worker's origin; under node it does not.
@@ -66,7 +74,7 @@ function loadWorker(options: { online?: boolean; existingCaches?: string[] } = {
   }
 
   const idb = new IDBFactory();
-  new Function('self', 'caches', 'fetch', 'Request', 'indexedDB', SW_SOURCE)(scope, caches, network, ScopedRequest, idb);
+  new Function('self', 'caches', 'fetch', 'Request', 'indexedDB', SW_SOURCE)(scope, caches, options.fetchImpl ?? network, ScopedRequest, idb);
 
   async function lifecycle(type: 'install' | 'activate') {
     let pending: Promise<unknown> = Promise.resolve();
@@ -90,7 +98,14 @@ function loadWorker(options: { online?: boolean; existingCaches?: string[] } = {
     return responded ? await (responded as Promise<Response>) : null;
   }
 
-  return { scope, caches, stores, network, lifecycle, request, idb, setOnline: (v: boolean) => (online = v) };
+  /** Dispatch any other event (push, notificationclick) and wait for what it handed to waitUntil. */
+  async function dispatch(type: string, event: Record<string, unknown>) {
+    let pending: Promise<unknown> = Promise.resolve();
+    listeners.get(type)!({ ...event, waitUntil: (p: Promise<unknown>) => (pending = p) });
+    await pending;
+  }
+
+  return { scope, caches, stores, network, lifecycle, request, dispatch, idb, setOnline: (v: boolean) => (online = v) };
 }
 
 describe('public/sw.js: it never serves application code', () => {
@@ -313,5 +328,94 @@ describe('syncServiceWorker (registration and kill switch)', () => {
     expect(await syncServiceWorker({ container: null, caches: null, fetchConfig: async () => ({ serviceWorker: true }) })).toBe('unsupported');
     container.register.mockRejectedValueOnce(new Error('SecurityError'));
     expect(await syncServiceWorker({ container, caches: null, fetchConfig: async () => ({ serviceWorker: true }) })).toBe('failed');
+  });
+});
+
+describe('public/sw.js: push', () => {
+  const ORIGIN = 'https://receipts.example.invalid';
+  const pushEvent = (data: unknown) => ({ data: { json: () => (typeof data === 'string' ? JSON.parse(data) : data) } });
+
+  it('shows the pushed message with its tag and the page it leads to', async () => {
+    const worker = loadWorker();
+    await worker.dispatch('push', pushEvent({ title: 'Beleg fehlt: Zyx', body: 'Bitte hochladen.', path: '/app/spending?pruefen=p1&firma=ws', tag: 'missing_receipt:p1' }));
+    expect(worker.scope.registration.showNotification).toHaveBeenCalledWith('Beleg fehlt: Zyx', {
+      body: 'Bitte hochladen.',
+      tag: 'missing_receipt:p1',
+      icon: '/icons/notification-192.png',
+      badge: '/icons/notification-badge-96.png',
+      data: { url: `${ORIGIN}/app/spending?pruefen=p1&firma=ws` },
+    });
+  });
+
+  it('still shows something for a message without data or with broken data', async () => {
+    const worker = loadWorker();
+    await worker.dispatch('push', { data: null });
+    await worker.dispatch('push', { data: { json: () => JSON.parse('{broken') } });
+    expect(worker.scope.registration.showNotification).toHaveBeenCalledTimes(2);
+    expect(worker.scope.registration.showNotification.mock.calls[1]).toEqual(['Receipt OCR', expect.objectContaining({ data: { url: `${ORIGIN}/app/spending` } })]);
+  });
+
+  it.each(['https://evil.example/x', '//evil.example/x', '/\\evil.example/x', 'javascript:alert(1)'])('never leads to another site (%s)', async (path) => {
+    const worker = loadWorker();
+    await worker.dispatch('push', pushEvent({ title: 't', path }));
+    const url = (worker.scope.registration.showNotification.mock.calls[0] as unknown as [string, { data: { url: string } }])[1].data.url;
+    expect(new URL(url).origin).toBe(ORIGIN);
+  });
+
+  it('a tap opens the page in an open window, or a new one when there is none or it cannot be steered', async () => {
+    const notification = { close: vi.fn(), data: { url: `${ORIGIN}/app/spending?pruefen=p1` } };
+    const navigate = vi.fn(async () => null);
+    const window = { focus: vi.fn(async function (this: unknown) { return null; }), navigate };
+    const withWindow = loadWorker({ windows: [window] });
+    await withWindow.dispatch('notificationclick', { notification });
+    expect(notification.close).toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith(`${ORIGIN}/app/spending?pruefen=p1`);
+
+    const none = loadWorker();
+    await none.dispatch('notificationclick', { notification });
+    expect(none.scope.clients.openWindow).toHaveBeenCalledWith(`${ORIGIN}/app/spending?pruefen=p1`);
+
+    const stubborn = loadWorker({ windows: [{ focus: vi.fn(async () => null), navigate: vi.fn(async () => { throw new TypeError('not controlled'); }) }] });
+    await stubborn.dispatch('notificationclick', { notification });
+    expect(stubborn.scope.clients.openWindow).toHaveBeenCalledWith(`${ORIGIN}/app/spending?pruefen=p1`);
+  });
+
+  it('a tap on a message carrying another site opens the app instead', async () => {
+    const worker = loadWorker();
+    await worker.dispatch('notificationclick', { notification: { close: vi.fn(), data: { url: 'https://evil.example/' } } });
+    expect(worker.scope.clients.openWindow).toHaveBeenCalledWith(`${ORIGIN}/app/spending`);
+  });
+});
+
+describe('public/sw.js: a new push address', () => {
+  const sub = (endpoint: string) => ({ endpoint, toJSON: () => ({ endpoint, keys: { p256dh: 'p', auth: 'a' } }) });
+
+  it('subscribes again with the old options and tells the server old and new', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}'));
+    const worker = loadWorker({ fetchImpl });
+    worker.scope.registration.pushManager.subscribe.mockResolvedValue(sub('https://fcm.googleapis.com/fcm/send/new'));
+    await worker.dispatch('pushsubscriptionchange', { oldSubscription: { endpoint: 'https://fcm.googleapis.com/fcm/send/old', options: { userVisibleOnly: true } } });
+    expect(worker.scope.registration.pushManager.subscribe).toHaveBeenCalledWith({ userVisibleOnly: true });
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/spending/push-renew');
+    expect(init.credentials).toBe('same-origin');
+    expect(JSON.parse(init.body as string)).toEqual({ oldEndpoint: 'https://fcm.googleapis.com/fcm/send/old', subscription: { endpoint: 'https://fcm.googleapis.com/fcm/send/new', keys: { p256dh: 'p', auth: 'a' } } });
+  });
+
+  it('uses a subscription the device already has instead of subscribing again', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}'));
+    const worker = loadWorker({ fetchImpl });
+    worker.scope.registration.pushManager.getSubscription.mockResolvedValue(sub('https://fcm.googleapis.com/fcm/send/current') as never);
+    await worker.dispatch('pushsubscriptionchange', { oldSubscription: { endpoint: 'https://fcm.googleapis.com/fcm/send/old', options: {} } });
+    expect(worker.scope.registration.pushManager.subscribe).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('swallows a failing subscription and tells nobody anything', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}'));
+    const worker = loadWorker({ fetchImpl });
+    worker.scope.registration.pushManager.subscribe.mockRejectedValue(new Error('denied'));
+    await worker.dispatch('pushsubscriptionchange', { oldSubscription: { endpoint: 'https://fcm.googleapis.com/fcm/send/old', options: {} } });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

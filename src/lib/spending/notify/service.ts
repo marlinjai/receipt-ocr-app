@@ -9,7 +9,8 @@ import {
   type NotificationChannel,
   type NotificationMessage,
 } from './port';
-import { createPushChannel } from './push';
+import webpush from 'web-push';
+import { createPushChannel, isPushServiceAddress, vapidConfigFromEnv, type SendPush, type SubscriptionStore, type VapidConfig } from './push';
 
 /**
  * Notifications of one workspace: the in-app queue, the setting, and delivery
@@ -21,7 +22,7 @@ export interface NotifyContext {
   tenantId: string | null;
 }
 
-export type NotifyServiceErrorCode = 'invalid_channel' | 'invalid_email' | 'notification_not_found';
+export type NotifyServiceErrorCode = 'invalid_channel' | 'invalid_email' | 'notification_not_found' | 'invalid_subscription';
 
 export class NotifyServiceError extends Error {
   readonly code: NotifyServiceErrorCode;
@@ -40,9 +41,162 @@ export interface NotifySettings {
   notifyEmail: string | null;
 }
 
+/**
+ * The server's push keys when they are present AND valid. Wrong keys would
+ * make every send fail and count against every device; they are refused once
+ * here, logged, and push stays off.
+ */
+export function validVapidConfig(env: Record<string, string | undefined> = process.env): VapidConfig | null {
+  const config = vapidConfigFromEnv(env);
+  if (!config) return null;
+  // Checked once per set of keys and process: a wrong key is logged once, not on every page.
+  const fingerprint = `${config.subject}\n${config.publicKey}\n${config.privateKey}`;
+  if (checkedVapid?.fingerprint === fingerprint) return checkedVapid.valid ? config : null;
+  let valid = true;
+  try {
+    webpush.setVapidDetails(config.subject, config.publicKey, config.privateKey);
+  } catch (e) {
+    valid = false;
+    console.error('[spending] the push keys on the server are not valid; push stays off', e instanceof Error ? e.message : e);
+  }
+  checkedVapid = { fingerprint, valid };
+  return valid ? config : null;
+}
+
+let checkedVapid: { fingerprint: string; valid: boolean } | null = null;
+
 /** The channels the server offers: push first, then e-mail. Each says by itself when it cannot deliver. */
-export function serverChannels(): NotificationChannel[] {
-  return [createPushChannel(), createEmailChannel(emailConfigFromEnv())];
+export function serverChannels(db: PrismaClient): NotificationChannel[] {
+  const send: SendPush = webpush.sendNotification;
+  return [createPushChannel(validVapidConfig(), subscriptionStore(db), send), createEmailChannel(emailConfigFromEnv())];
+}
+
+/**
+ * A device gets messages only while its person renewed it within this many
+ * days (every page of the app renews it while push is on). Short on purpose:
+ * someone who lost access to the company cannot renew, so their device stops
+ * getting its messages within a week. Signing out ends it at once.
+ */
+export const DEVICE_VALID_DAYS = 7;
+/** Rows not renewed for this long are deleted: they hold a person's id and a device's keys that no longer matter. */
+export const DEVICE_FORGET_DAYS = 90;
+/** A device whose sends failed this many times in a row is forgotten. */
+export const MAX_DEVICE_FAILURES = 10;
+
+/** The push devices of a workspace in the database. */
+export function subscriptionStore(db: PrismaClient, now: () => Date = () => new Date()): SubscriptionStore {
+  return {
+    list: async (workspaceId) => {
+      await db.spendingPushSubscription.deleteMany({ where: { authWorkspaceId: workspaceId, renewedAt: { lt: new Date(now().getTime() - DEVICE_FORGET_DAYS * 86_400_000) } } });
+      return db.spendingPushSubscription.findMany({
+        where: { authWorkspaceId: workspaceId, renewedAt: { gte: new Date(now().getTime() - DEVICE_VALID_DAYS * 86_400_000) } },
+        select: { id: true, endpoint: true, p256dh: true, auth: true },
+      });
+    },
+    remove: async (id, workspaceId) => {
+      await db.spendingPushSubscription.deleteMany({ where: { id, authWorkspaceId: workspaceId } });
+    },
+    succeeded: async (id, workspaceId) => {
+      await db.spendingPushSubscription.updateMany({ where: { id, authWorkspaceId: workspaceId }, data: { failures: 0, lastSuccessAt: now() } });
+    },
+    failed: async (id, workspaceId) => {
+      await db.spendingPushSubscription.updateMany({ where: { id, authWorkspaceId: workspaceId }, data: { failures: { increment: 1 } } });
+      await db.spendingPushSubscription.deleteMany({ where: { id, authWorkspaceId: workspaceId, failures: { gte: MAX_DEVICE_FAILURES } } });
+    },
+  };
+}
+
+/** The longest push address accepted: push services use a few hundred characters. */
+const MAX_ENDPOINT_LENGTH = 2048;
+
+/** Decoded length of a base64url key, or -1 when it is none. */
+function keyLength(key: string, firstByte?: number): number {
+  if (!/^[A-Za-z0-9_-]+=*$/.test(key) || key.length > 200) return -1;
+  const bytes = Buffer.from(key.replace(/=+$/, ''), 'base64url');
+  if (firstByte !== undefined && bytes[0] !== firstByte) return -1;
+  return bytes.length;
+}
+
+export interface PushContext extends NotifyContext {
+  /** The person switching push on: a device belongs to the person who switched it on. */
+  userId: string;
+}
+
+/**
+ * Remember a device that switched push on (the browser's subscription: its
+ * push address and two public keys), or renew it. The address must be one of
+ * the known push services, the keys must have the sizes browsers make (an
+ * uncompressed curve point of 65 bytes, a secret of 16). The same device
+ * switching on again replaces its keys and renews it.
+ */
+/** A browser's subscription, checked: an address of a known push service and keys of the sizes browsers make. */
+function checkedSubscription(raw: unknown): { endpoint: string; p256dh: string; auth: string } {
+  const input = (raw ?? {}) as { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } };
+  const endpoint = typeof input.endpoint === 'string' ? input.endpoint.trim() : '';
+  const p256dh = typeof input.keys?.p256dh === 'string' ? input.keys.p256dh : '';
+  const auth = typeof input.keys?.auth === 'string' ? input.keys.auth : '';
+  if (endpoint.length > MAX_ENDPOINT_LENGTH || !isPushServiceAddress(endpoint) || keyLength(p256dh, 0x04) !== 65 || keyLength(auth) !== 16) {
+    throw new NotifyServiceError('invalid_subscription');
+  }
+  return { endpoint, p256dh, auth };
+}
+
+export async function savePushSubscription(db: PrismaClient, ctx: PushContext, raw: unknown, now: Date = new Date()): Promise<void> {
+  const { endpoint, p256dh, auth } = checkedSubscription(raw);
+  await db.spendingPushSubscription.upsert({
+    where: { authWorkspaceId_endpoint: { authWorkspaceId: ctx.workspaceId, endpoint } },
+    create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, userId: ctx.userId, endpoint, p256dh, auth, renewedAt: now },
+    update: { userId: ctx.userId, p256dh, auth, failures: 0, renewedAt: now },
+  });
+}
+
+/**
+ * The browser gave this device a new push address on its own (the service
+ * worker reports old and new): this person's rows with the old address, in
+ * every company, take the new one, so push goes on without anyone noticing.
+ * Returns how many rows were moved.
+ */
+export async function replacePushSubscription(db: PrismaClient, userId: string, oldEndpoint: unknown, raw: unknown, now: Date = new Date()): Promise<number> {
+  const next = checkedSubscription(raw);
+  if (typeof oldEndpoint !== 'string' || !oldEndpoint) return 0;
+  const rows = await db.spendingPushSubscription.findMany({ where: { userId, endpoint: oldEndpoint }, select: { id: true, authWorkspaceId: true } });
+  for (const row of rows) {
+    // The new address may already be stored for that company (renewed by the page first): then the old row just goes.
+    const clash = await db.spendingPushSubscription.findFirst({ where: { authWorkspaceId: row.authWorkspaceId, endpoint: next.endpoint }, select: { id: true } });
+    if (clash) await db.spendingPushSubscription.deleteMany({ where: { id: row.id } });
+    else await db.spendingPushSubscription.updateMany({ where: { id: row.id }, data: { ...next, failures: 0, renewedAt: now } });
+  }
+  return rows.length;
+}
+
+/** Signing out: this person's device gets nothing more from any company. */
+export async function forgetDeviceEverywhere(db: PrismaClient, userId: string, endpoint: unknown): Promise<number> {
+  if (typeof endpoint !== 'string' || !endpoint) return 0;
+  const { count } = await db.spendingPushSubscription.deleteMany({ where: { userId, endpoint } });
+  return count;
+}
+
+/** Forget a device for this company (push switched off). Unknown addresses are fine: it is gone either way. */
+export async function removePushSubscription(db: PrismaClient, ctx: NotifyContext, endpoint: unknown): Promise<void> {
+  if (typeof endpoint !== 'string' || !endpoint) return;
+  await db.spendingPushSubscription.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, endpoint } });
+}
+
+/** How many devices of the workspace get push (switched on and renewed lately). */
+export async function pushDeviceCount(db: PrismaClient, workspaceId: string, now: Date = new Date()): Promise<number> {
+  return db.spendingPushSubscription.count({ where: { authWorkspaceId: workspaceId, renewedAt: { gte: new Date(now.getTime() - DEVICE_VALID_DAYS * 86_400_000) } } });
+}
+
+/**
+ * What the server knows about one device: whether this company has it, and
+ * whether other companies of the same person still use it (then switching off
+ * here must not end the browser's subscription). Only the person's own rows
+ * are looked at, and only a yes or no comes back.
+ */
+export async function devicePushState(db: PrismaClient, ctx: PushContext, endpoint: unknown): Promise<{ here: boolean; elsewhere: boolean }> {
+  if (typeof endpoint !== 'string' || !endpoint) return { here: false, elsewhere: false };
+  const rows = await db.spendingPushSubscription.findMany({ where: { endpoint, userId: ctx.userId }, select: { authWorkspaceId: true } });
+  return { here: rows.some((r) => r.authWorkspaceId === ctx.workspaceId), elsewhere: rows.some((r) => r.authWorkspaceId !== ctx.workspaceId) };
 }
 
 export async function getNotifySettings(db: PrismaClient, workspaceId: string): Promise<NotifySettings> {
@@ -82,7 +236,7 @@ async function deliver(db: PrismaClient, id: string, workspaceId: string, messag
  * whose subject was notified before (in this workspace) is not sent again:
  * 'duplicate'.
  */
-export async function notify(db: PrismaClient, ctx: NotifyContext, message: NotificationMessage, channels: readonly NotificationChannel[] = serverChannels()): Promise<'sent' | 'duplicate'> {
+export async function notify(db: PrismaClient, ctx: NotifyContext, message: NotificationMessage, channels: readonly NotificationChannel[] = serverChannels(db)): Promise<'sent' | 'duplicate'> {
   let id: string;
   try {
     // Created as "not delivered yet" (`failed`, no tries): should the run stop
@@ -119,7 +273,7 @@ export const MAX_RETRIES_PER_RUN = 10;
 export async function retryFailedDeliveries(
   db: PrismaClient,
   workspaceId: string,
-  channels: readonly NotificationChannel[] = serverChannels(),
+  channels: readonly NotificationChannel[] = serverChannels(db),
   now: Date = new Date(),
 ): Promise<number> {
   const due = await db.spendingNotification.findMany({

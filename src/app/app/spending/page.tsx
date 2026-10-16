@@ -11,9 +11,9 @@ export const dynamic = 'force-dynamic';
 
 export const metadata = { title: 'Ausgaben' };
 
-export default async function SpendingPage({ searchParams }: { searchParams: Promise<{ jahr?: string; monat?: string; pruefen?: string }> }) {
+export default async function SpendingPage({ searchParams }: { searchParams: Promise<{ jahr?: string; monat?: string; pruefen?: string; firma?: string }> }) {
   await auth.requireSession('/app/spending');
-  const { jahr, monat, pruefen } = await searchParams;
+  const { jahr, monat, pruefen, firma } = await searchParams;
   const [data, checks, budgets] = await Promise.all([getSpending(jahr ?? null, monat ?? null), getReceiptChecks(), getBudgets()]);
 
   // "Reload" keeps the period that was asked for.
@@ -51,7 +51,7 @@ export default async function SpendingPage({ searchParams }: { searchParams: Pro
   return (
     <SpendingClient key={`${data.value.overview.year}-${data.value.overview.month ?? 'all'}`} initial={data.value}>
       {checks.ok ? (
-        <ReceiptChecks initial={checks.value} focusPaymentId={pruefen ?? null} />
+        <ReceiptChecks initial={checks.value} focusPaymentId={pruefen ?? null} forCompany={firma ?? null} />
       ) : (
         <p className="ui-note ui-note-danger mt-4">Die offenen Belege konnten nicht geladen werden. Bitte die Seite neu laden.</p>
       )}

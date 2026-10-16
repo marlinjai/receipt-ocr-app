@@ -61,7 +61,7 @@ describe('forward', () => {
     expect(await groceries(ctx.workspaceId, '2026-03-05')).toMatchObject({ limitCents: 20_000, basis: 'average', averageMonths: 2, spentCents: 25_000, level: 'passed' });
     const push = recorder();
     expect(await runBudgetWarnings(db, ctx, { today: '2026-03-05', channels: [push.channel] })).toMatchObject({ sent: 1, deferred: 0 });
-    expect(push.sent[0]).toMatchObject({ kind: 'budget', subjectKey: 'budget:category:groceries_drugstore:2026-03:passed:avg', path: '/app/spending#budgets' });
+    expect(push.sent[0]).toMatchObject({ kind: 'budget', subjectKey: 'budget:category:groceries_drugstore:2026-03:passed:avg', path: `/app/spending?firma=${encodeURIComponent(ctx.workspaceId)}#budgets` });
     expect(push.sent[0].body).toContain('März 2026');
   });
 

@@ -12,6 +12,7 @@ import { notify, retryFailedDeliveries, serverChannels, settleAllBut, settleNoti
 import type { NotificationChannel } from './notify/port';
 import { serverMailbox } from './mailbox/gmail';
 import { mailWordsFor, type MailboxPort } from './mailbox/port';
+import { spendingPath } from './paths';
 import { forgetGonePayments, loadMailCandidates, searchMailbox, type MailboxRun } from './mailbox/service';
 
 /**
@@ -157,20 +158,20 @@ export async function loadLoopOverview(db: PrismaClient, workspaceId: string): P
   return { open: open.sort(newest), answered: answered.sort(newest), counts };
 }
 
-function missingMessage(p: PaymentRow, inMailbox: boolean): { title: string; body: string; path: string } {
+function missingMessage(p: PaymentRow, inMailbox: boolean, workspaceId: string): { title: string; body: string; path: string } {
   const who = p.counterparty || p.reference || 'eine Zahlung ohne Namen';
   const [y, m, d] = p.bookingDay.split('-');
   if (inMailbox) {
     return {
       title: `Rechnung im Postfach: ${who}`,
       body: `Für ${formatCents(-p.amountCents)} € an ${who} am ${d}.${m}.${y} liegt im Ausgaben-Postfach eine passende Rechnung. Mit einem Tipp wird sie als Beleg übernommen.`,
-      path: `/app/spending?pruefen=${encodeURIComponent(p.id)}`,
+      path: spendingPath(workspaceId, { pruefen: p.id }),
     };
   }
   return {
     title: `Beleg fehlt: ${who}`,
     body: `Für ${formatCents(-p.amountCents)} € an ${who} am ${d}.${m}.${y} gibt es noch keinen Beleg. Bitte fotografieren oder hochladen, oder sagen, dass es keinen gibt.`,
-    path: `/app/spending?pruefen=${encodeURIComponent(p.id)}`,
+    path: spendingPath(workspaceId, { pruefen: p.id }),
   };
 }
 
@@ -202,7 +203,7 @@ export async function runReceiptLoop(
   ctx: NotifyContext,
   options: { today: string; channels?: readonly NotificationChannel[]; now?: Date; mailbox?: MailboxPort },
 ): Promise<RunResult> {
-  const channels = options.channels ?? serverChannels();
+  const channels = options.channels ?? serverChannels(db);
   await forgetGonePayments(db, ctx.workspaceId);
   let { payments, states, aliases } = await computeStates(db, ctx.workspaceId);
   // Step 3: look in the mailbox for the invoices of recent payments still missing one, by the
@@ -255,7 +256,7 @@ export async function runReceiptLoop(
       deferred += 1;
       continue;
     }
-    const message = missingMessage(p, inMailbox.has(p.id));
+    const message = missingMessage(p, inMailbox.has(p.id), ctx.workspaceId);
     if ((await notify(db, ctx, { subjectKey: subjectOf(p), kind: 'missing_receipt', ...message }, channels)) === 'sent') notified += 1;
   }
   return { notified, deferred, settled, retried, open, mailbox };

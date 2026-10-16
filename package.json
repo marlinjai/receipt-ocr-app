@@ -39,7 +39,8 @@
     "postgres": "^3.4.5",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "server-only": "^0.0.1"
+    "server-only": "^0.0.1",
+    "web-push": "3.6.7"
   },
   "packageManager": "pnpm@9.15.0",
   "devDependencies": {
@@ -55,6 +56,7 @@
     "@types/node": "^20.19.33",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/web-push": "3.6.4",
     "clsx": "^2.1.1",
     "eslint": "^9.39.3",
     "eslint-config-next": "16.1.1",

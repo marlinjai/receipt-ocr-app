@@ -26,6 +26,8 @@ vi.mock('./loop-actions', () => ({
   getReceiptChecks: (...a: unknown[]) => getReceiptChecks(...a),
 }));
 vi.mock('../actions', () => ({ processReceipt: vi.fn() }));
+const switchWorkspace = vi.fn();
+vi.mock('../workspace-actions', () => ({ switchWorkspace: (...a: unknown[]) => switchWorkspace(...a) }));
 vi.mock('@/lib/upload/browser-deps', () => ({ createBrowserDeps: () => ({}) }));
 vi.mock('./take-over-mail', async (orig) => ({ ...(await orig<typeof import('./take-over-mail')>()), takeOverMail: (...a: unknown[]) => takeOverMail(...a) }));
 
@@ -49,6 +51,8 @@ const view = (canWrite = true): ChecksView => ({
   lastRun: null,
   workspaceId: 'ws-a',
   mailbox: 'off',
+  pushPublicKey: null,
+  pushDevices: 0,
 });
 
 beforeEach(() => {
@@ -131,6 +135,29 @@ describe('ReceiptChecks', () => {
     expect(screen.queryByRole('button', { name: 'Jetzt prüfen' })).toBeNull();
     expect(screen.queryByRole('button', { name: /bestätigen/ })).toBeNull();
     expect(screen.queryByText('Wie benachrichtigt wird')).toBeNull();
+  });
+});
+
+describe('a notification for another company', () => {
+  it('offers to switch, and switches', async () => {
+    switchWorkspace.mockReset().mockResolvedValue({ ok: true });
+    render(<ReceiptChecks initial={view()} focusPaymentId="p1" forCompany="ws-b" />);
+    expect(screen.getByText(/gehört zu einer anderen Firma/)).toBeTruthy();
+    expect(screen.queryByText(/inzwischen erledigt/)).toBeNull();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Zu dieser Firma wechseln' }));
+    expect(switchWorkspace).toHaveBeenCalledWith('ws-b');
+  });
+
+  it('says so when the switch does not work', async () => {
+    switchWorkspace.mockReset().mockResolvedValue({ ok: false });
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} forCompany="ws-b" />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Zu dieser Firma wechseln' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/Der Wechsel hat nicht geklappt/);
+  });
+
+  it('says nothing when the link is about the active company', () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} forCompany="ws-a" />);
+    expect(screen.queryByText(/anderen Firma/)).toBeNull();
   });
 });
 

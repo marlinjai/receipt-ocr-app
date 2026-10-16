@@ -175,3 +175,21 @@ describe('a reading from the image alone', () => {
     expect(reviewReasons(receipt({ gross: 5, net: 5 }), { ...stored, checkedAt: new Date() }, [])).toEqual([]);
   });
 });
+
+describe('a credit note stored with a negative amount', () => {
+  it('is no missing amount; its net is judged by amount and sign', () => {
+    expect(derivedReasons(receipt({ gross: -11.9, net: -10 }))).toEqual([]);
+    expect(derivedReasons(receipt({ gross: -11.9, net: -12 }))).toContain('tax_implausible');
+    expect(derivedReasons(receipt({ gross: -11.9, net: 10 }))).toContain('tax_implausible');
+    expect(derivedReasons(receipt({ gross: 0, net: null }))).toContain('amount_missing');
+    expect(derivedReasons(receipt({ gross: 11.9, net: 0 }))).not.toContain('tax_implausible');
+  });
+});
+
+describe('a credit note without its invoice', () => {
+  it('is asked for from the link, also without any stored doubt, until a person confirms it', () => {
+    expect(reviewReasons(receipt({ gross: -11.9, net: -10, creditNoteUnlinked: true }), undefined, [])).toEqual(['credit_note']);
+    expect(reviewReasons(receipt({ gross: -11.9, net: -10, creditNoteUnlinked: false }), { flags: ['credit_note'], checkedAt: null }, [])).toEqual([]);
+    expect(reviewReasons(receipt({ gross: -11.9, net: -10, creditNoteUnlinked: true }), { flags: [], checkedAt: new Date() }, [])).toEqual([]);
+  });
+});

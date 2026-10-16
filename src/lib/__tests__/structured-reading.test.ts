@@ -82,12 +82,16 @@ describe('withStructuredInvoice: the structured data is the invoice', () => {
     expect(settled.gross).toBe(fields.gross);
   });
 
-  it('a credit note keeps no amount until a person books it; figures that do not add up are put up for a look', async () => {
+  it('a credit note is a receipt with a negative amount on its own day; figures that do not add up are put up for a look', async () => {
     const credit = await fieldsOf(UBL_CREDIT_NOTE);
     const settled = withStructuredInvoice(settle(credit.text, answer()), credit);
-    expect(settled.flags).toContain('credit_note');
-    expect(settled).toMatchObject({ gross: null, net: null });
+    expect(settled.gross).toBe(-Math.abs(credit.gross!));
+    expect(settled.net).toBeLessThan(0);
+    expect(Math.abs(settled.net!)).toBeLessThanOrEqual(Math.abs(settled.gross!));
+    expect(settled.date).toBe(credit.date);
+    // A tax line is never negative: the rate is kept, the lines are not.
     expect(settled.amounts.taxGroups).toEqual([]);
+    expect(settled.taxRate).toBe(credit.taxRate);
     const fields = await fieldsOf(UBL_INVOICE);
     const broken = { ...fields, problems: ['the tax groups do not add up to the total'] };
     expect(withStructuredInvoice(settle(fields.text, answer()), broken).flags).toContain('einvoice_problem');

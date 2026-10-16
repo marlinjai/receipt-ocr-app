@@ -40,6 +40,8 @@ export interface StructuredReceiptFields {
   taxGroups: TaxGroup[];
   currency: string | null;
   invoiceNumber: string | null;
+  /** The invoice this one refers to (the one a credit note corrects); null when the XML names none. */
+  referencedInvoiceNumber: string | null;
   creditNote: boolean;
   /** Figures that do not add up, for the review list; empty when consistent. */
   problems: string[];
@@ -86,6 +88,7 @@ export function structuredReceiptFields(invoice: StructuredInvoice): StructuredR
     invoice.seller.vatId ? `USt-IdNr.: ${invoice.seller.vatId}` : '',
     invoice.seller.taxNumber ? `Steuernummer: ${invoice.seller.taxNumber}` : '',
     invoice.number ? `Rechnungsnummer: ${invoice.number}` : '',
+    invoice.referencedInvoiceNumber ? `Bezieht sich auf Rechnung: ${invoice.referencedInvoiceNumber}` : '',
     invoice.issueDate ? `Rechnungsdatum: ${invoice.issueDate}` : '',
     invoice.dueDate ? `Fällig: ${invoice.dueDate}` : '',
     ...groups.map((g) => `Steuer ${g.ratePercent} % (${g.category ?? '?'}): netto ${amountText(g.netCents, invoice.currency)}, Steuer ${amountText(g.taxCents, invoice.currency)}`),
@@ -103,6 +106,7 @@ export function structuredReceiptFields(invoice: StructuredInvoice): StructuredR
     taxGroups: groups.map((g) => ({ rate: g.ratePercent, net: Math.abs(g.netCents) / 100, tax: Math.abs(g.taxCents) / 100, gross: Math.abs(g.netCents + g.taxCents) / 100 })),
     currency: invoice.currency,
     invoiceNumber: invoice.number,
+    referencedInvoiceNumber: invoice.referencedInvoiceNumber,
     // A credit note, or an invoice with a negative total (EN 16931 allows one), is money back; both negative is a charge.
     creditNote: (invoice.kind === 'credit_note') !== (invoice.grossCents !== null && invoice.grossCents < 0),
     problems: invoice.problems,

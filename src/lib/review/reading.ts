@@ -114,7 +114,10 @@ export function newReading(stored: StoredReading): NewReading {
   const amounts = storedStands
     ? { gross: asPageReading.gross, net: asPageReading.net, taxRate: asPageReading.taxRate, taxGroups: asPageReading.taxGroups, checks: asPageReading.checks }
     : { gross: read.gross, net: read.net, taxRate: read.taxRate, taxGroups: read.taxGroups, checks: read.amountChecks };
-  const confirmed = amounts.gross !== null && amounts.checks.length === 0;
+  // A credit note is stored with a negative amount; its text prints positive figures. The text never
+  // speaks for its sign, so its amounts are not offered.
+  const creditNote = stored.gross !== null && stored.gross < 0;
+  const confirmed = !creditNote && amounts.gross !== null && amounts.checks.length === 0;
   if (confirmed) {
     if (!sameAmount(amounts.gross, stored.gross)) changes.push({ field: 'gross', from: stored.gross, to: amounts.gross! });
     if (amounts.net !== null && !sameAmount(amounts.net, stored.net)) changes.push({ field: 'net', from: stored.net, to: amounts.net });

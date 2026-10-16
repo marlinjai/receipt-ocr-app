@@ -32,7 +32,8 @@ vi.mock('@/lib/receipt-page-source', () => ({
   loadReceiptSource: async (...a: unknown[]) => ({ page: () => loadPage(...a), structured: await loadStructured(...a) }),
 }));
 
-import { contactStore, loadMealRecord, saveMealDetails } from '@/lib/meals/service';
+import { contactStore, deleteReceiptRows, loadMealRecord, saveMealDetails } from '@/lib/meals/service';
+import { loadReviewQueue } from '@/lib/review/service';
 import { mealStatus, serializeTaxLines } from '@/lib/meals/rules';
 import { createGroup } from '@/lib/groups/service';
 import { saveRule } from '@/lib/classification-rules-store';
@@ -389,23 +390,73 @@ describe('processReceipt: the model is shown the page, and the upload never depe
     expect(await cellOf(ws, unclassified.rowId, 'Vendor')).toBe('Muster Software GmbH');
   });
 
-  it('an electronic credit note keeps no amount until a person books it', async () => {
+  it('an electronic credit note is a negative receipt linked to the invoice it corrects', async () => {
     const { readStructuredInvoice } = await import('@/lib/einvoice');
     const { UBL_CREDIT_NOTE } = await import('@/lib/einvoice/__tests__/samples');
-    loadStructured.mockResolvedValue(await readStructuredInvoice(new TextEncoder().encode(UBL_CREDIT_NOTE)));
+    const own = await createWorkspace();
+    await use(own);
+    // The invoice it corrects, stored earlier with its number in its text.
+    const invoice = await own.addReceipt({ Name: 'Rechnung', Gross: 11.9, 'OCR Text': 'Muster Software\nRechnungsnummer: R-2026-17\nGesamt 11,90 €' } as Parameters<TestWorkspace['addReceipt']>[0]);
+    const referring = UBL_CREDIT_NOTE.replace(
+      '<cbc:DocumentCurrencyCode>EUR</cbc:DocumentCurrencyCode>',
+      '<cbc:DocumentCurrencyCode>EUR</cbc:DocumentCurrencyCode><cac:BillingReference><cac:InvoiceDocumentReference><cbc:ID>R-2026-17</cbc:ID></cac:InvoiceDocumentReference></cac:BillingReference>',
+    );
+    loadStructured.mockResolvedValue(await readStructuredInvoice(new TextEncoder().encode(referring)));
     const credit = await upload(file(93), null, {});
+    expect(Number(await cellOf(own, credit.rowId, 'Gross'))).toBeLessThan(0);
+    expect(new Date((await cellOf(own, credit.rowId, 'Date')) as string).toISOString().slice(0, 10)).toBe('2026-10-01');
+    expect(await db.receiptReference.findUnique({ where: { rowId: credit.rowId } })).toMatchObject({ kind: 'credit_note', referencedInvoiceNumber: 'R-2026-17', referencedRowId: invoice });
+    const reasonsOf = async (rowId: string) => (await loadReviewQueue(db, own.workspaceId)).find((e) => e.rowId === rowId)?.reasons ?? [];
+    expect(await reasonsOf(credit.rowId)).not.toContain('credit_note');
+
+    // No such invoice among the receipts: the number is kept and the review list asks.
+    loadStructured.mockResolvedValue(await readStructuredInvoice(new TextEncoder().encode(referring.replace('R-2026-17', 'R-2026-99'))));
+    const orphan = await upload(file(94), null, {});
+    expect(await db.receiptReference.findUnique({ where: { rowId: orphan.rowId } })).toMatchObject({ referencedInvoiceNumber: 'R-2026-99', referencedRowId: null });
+    expect(await reasonsOf(orphan.rowId)).toContain('credit_note');
+
+    // A second credit note for the same invoice links to the invoice too, not to the first credit note.
+    loadStructured.mockResolvedValue(await readStructuredInvoice(new TextEncoder().encode(referring.replace('GS-7', 'GS-8'))));
+    const second = await upload(file(95), null, {});
+    expect(await db.receiptReference.findUnique({ where: { rowId: second.rowId } })).toMatchObject({ referencedRowId: invoice });
+
+    // The invoice arriving after its credit note takes it, and the credit note's doubt ends.
+    loadStructured.mockResolvedValue(null);
+    classify.mockResolvedValue({ ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', vendor: 'Muster Software', gross: 11.9, date: '2026-09-20T00:00:00.000Z', meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null, place: null } });
+    const late = await upload(file(96), ocr('Muster Software\nRechnungsnummer: R-2026-99\nNetto 10,00\nMwSt 19% 1,90\nGesamt 11,90 €'), {});
+    expect(await db.receiptReference.findUnique({ where: { rowId: orphan.rowId } })).toMatchObject({ referencedRowId: late.rowId });
+    expect(await reasonsOf(orphan.rowId)).not.toContain('credit_note');
+
+    // A reminder that names the same invoice number makes it ambiguous: the link is let go and the review list asks.
+    const reminder = await upload(file(98), ocr('Muster Software\nZahlungserinnerung zu Rechnung R-2026-99\nNetto 10,00\nMwSt 19% 1,90\nGesamt 11,90 €'), {});
+    expect(reminder.rowId).toBeTruthy();
+    expect(await db.receiptReference.findUnique({ where: { rowId: orphan.rowId } })).toMatchObject({ referencedRowId: null });
+    expect(await reasonsOf(orphan.rowId)).toContain('credit_note');
+
+    // The reminder deleted: one carrier is left, and the credit note is linked again.
+    await deleteReceiptRows(db, { workspaceId: own.workspaceId, tenantId: own.tenantId }, [reminder.rowId], { deleteStoredFile: async () => {} });
+    expect(await db.receiptReference.findUnique({ where: { rowId: orphan.rowId } })).toMatchObject({ referencedRowId: late.rowId });
+    expect(await reasonsOf(orphan.rowId)).not.toContain('credit_note');
+
+    // Its invoice archived: no live receipt is linked, and the review list asks again.
+    await own.adapter.archiveRow(late.rowId);
+    expect(await reasonsOf(orphan.rowId)).toContain('credit_note');
+
+    // The invoice deleted: the credit note it corrected asks again.
+    await deleteReceiptRows(db, { workspaceId: own.workspaceId, tenantId: own.tenantId }, [invoice], { deleteStoredFile: async () => {} });
+    expect(await db.receiptReference.findUnique({ where: { rowId: credit.rowId } })).toMatchObject({ referencedRowId: null });
+    expect(await reasonsOf(credit.rowId)).toContain('credit_note');
+    await use(ws);
+  });
+
+  it('a credit note in a currency the app does not keep still says it is one', async () => {
+    const { readStructuredInvoice } = await import('@/lib/einvoice');
+    const { UBL_CREDIT_NOTE } = await import('@/lib/einvoice/__tests__/samples');
+    loadStructured.mockResolvedValue(await readStructuredInvoice(new TextEncoder().encode(UBL_CREDIT_NOTE.replaceAll('EUR', 'CHF'))));
+    const credit = await upload(file(97), null, {});
     expect(await cellOf(ws, credit.rowId, 'Gross')).toBeNull();
-    expect(credit.reviewFlags).toContain('credit_note');
-    // A person books it; "Seite neu lesen" leaves what they entered.
-    const columns = await ws.adapter.getColumns(ws.tableId);
-    const id = (name: string) => columns.find((c) => c.name === name)!.id;
-    await ws.adapter.updateRow(credit.rowId, { [id('Gross')]: 11.9, [id('Net')]: 10 });
-    const imageColumnId = id('Receipt Image');
-    await ws.adapter.addFileReference({ rowId: credit.rowId, columnId: imageColumnId, fileId: file(94).id, fileUrl: `/api/files/${file(94).id}`, originalName: 'gutschrift.xml', mimeType: 'application/xml', metadata: { source: 'ocr-upload' } });
-    const reread = await rereadReceipt(credit.rowId);
-    expect(reread.ok).toBe(true);
-    expect(await cellOf(ws, credit.rowId, 'Gross')).toBe(11.9);
-    expect(await cellOf(ws, credit.rowId, 'Net')).toBe(10);
+    expect(credit.reviewFlags).toContain('currency_unknown');
+    expect(await db.receiptReference.findUnique({ where: { rowId: credit.rowId } })).toMatchObject({ kind: 'credit_note' });
   });
 
   it('a document with no total stores none, however a label could be read', async () => {

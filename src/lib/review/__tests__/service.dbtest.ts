@@ -608,3 +608,23 @@ describe('paid totals, more paths', () => {
     expect((await entryFor(rowId))?.reasons ?? []).not.toContain('total_unconfirmed');
   });
 });
+
+describe('a credit note\'s reference when receipts are deleted', () => {
+  it('deleting the credit note removes its reference; deleting the invoice keeps the number and forgets the row', async () => {
+    const invoice = await ws.addReceipt(clean({ Gross: 11.9 }));
+    const credit = await ws.addReceipt(clean({ Gross: -11.9, Net: -10 }));
+    const other = await ws.addReceipt(clean({ Gross: -5, Net: -4.2 }));
+    await db.receiptReference.create({ data: { rowId: credit, authWorkspaceId: ws.workspaceId, kind: 'credit_note', referencedInvoiceNumber: 'R-1', referencedRowId: invoice } });
+    await db.receiptReference.create({ data: { rowId: other, authWorkspaceId: ws.workspaceId, kind: 'credit_note', referencedInvoiceNumber: 'R-2', referencedRowId: invoice } });
+    await deleteReceiptRows(db, ctx, [credit], { deleteStoredFile: async () => {} });
+    expect(await db.receiptReference.findUnique({ where: { rowId: credit } })).toBeNull();
+    await deleteReceiptRows(db, ctx, [invoice], { deleteStoredFile: async () => {} });
+    expect(await db.receiptReference.findUnique({ where: { rowId: other } })).toMatchObject({ referencedInvoiceNumber: 'R-2', referencedRowId: null });
+  });
+
+  it('a credit note with its negative amount is no missing amount and no implausible tax', async () => {
+    const credit = await ws.addReceipt(clean({ Gross: -11.9, Net: -10 }));
+    expect((await entryFor(credit))?.reasons ?? []).not.toContain('amount_missing');
+    expect((await entryFor(credit))?.reasons ?? []).not.toContain('tax_implausible');
+  });
+});

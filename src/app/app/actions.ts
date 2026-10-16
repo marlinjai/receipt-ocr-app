@@ -23,6 +23,7 @@ import type { ReceiptPage } from '@/lib/receipt-page';
 import { loadReceiptSource } from '@/lib/receipt-page-source';
 import { structuredReceiptFields } from '@/lib/einvoice';
 import { withStructuredInvoice } from '@/lib/structured-reading';
+import { linkCreditNote, relinkCreditNotes } from '@/lib/receipt-references';
 import { settleFromPageOnly, settleReading, type ModelReading } from '@/lib/receipt-reading';
 import { fileOpenToWorkspace } from '@/lib/file-access';
 import type { ReadFlag } from '@/lib/review/reasons';
@@ -200,6 +201,10 @@ interface ReadReceipt {
   fromImage: boolean;
   /** True when there was a page but no text, and the model did not answer. */
   modelFailedOnPage: boolean;
+  /** The text the receipt was read from, as stored in its "OCR Text" cell. */
+  fullText: string;
+  /** Set for an electronic credit note: the number of the invoice it corrects, where the XML names one. */
+  creditNote: { referencedInvoiceNumber: string | null } | null;
 }
 
 /**
@@ -364,6 +369,8 @@ async function readReceipt(
     mealCategoryOptionId: await optionId('Category', MEAL_CATEGORY),
     fromImage: fromImage !== null,
     modelFailedOnPage: imageOnly && ai === null,
+    creditNote: structured?.creditNote ? { referencedInvoiceNumber: structured.referencedInvoiceNumber } : null,
+    fullText,
   };
 }
 
@@ -391,7 +398,16 @@ function fileMetadata(options: ProcessReceiptOptions) {
  * already saved at this point: a failure here is logged and the save stands
  * (the facts that can be seen on the row itself are found on read anyway).
  */
-async function storeReviewFlags(workspaceId: string, tenantId: string | null, rowId: string, read: ReadReceipt) {
+async function storeReviewFlags(workspaceId: string, tenantId: string | null, rowId: string, read: ReadReceipt, adapter: ReceiptsAdapter, tableId: string) {
+  // A credit note keeps the number of the invoice it corrects (a reading that is no credit note drops
+  // an earlier one); then every credit note of the workspace is linked to the receipt that now carries
+  // its number. Where none does, the review list asks for it (derived on read, see reviewReasons).
+  try {
+    await linkCreditNote(prisma, adapter, tableId, { workspaceId, tenantId }, rowId, read.creditNote ? read.creditNote.referencedInvoiceNumber : undefined);
+    await relinkCreditNotes(prisma, adapter, tableId, { workspaceId, tenantId }, { rowId, text: read.fullText });
+  } catch (err) {
+    console.error('[processReceipt] the credit note references could not be brought up to date:', err instanceof Error ? err.name : 'error');
+  }
   try {
     await recordReadFlags(prisma, { workspaceId, tenantId }, rowId, read.reviewFlags, read.gross);
   } catch (err) {
@@ -439,7 +455,7 @@ export async function processReceipt(
     });
   }
 
-  await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read);
+  await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read, adapter, tableId);
 
   return {
     rowId: row.id,
@@ -515,7 +531,7 @@ export async function retakeReceipt(
     });
   }
 
-  await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read);
+  await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read, adapter, tableId);
 
   return {
     rowId: row.id,
@@ -615,10 +631,10 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     const statusId = columnId('Status');
     const pendingId = statusId ? (await adapter.getSelectOptions(statusId)).find((o) => o.name === 'Pending')?.id : undefined;
     const waiting = statusId !== undefined && (isBlank(row.cells[statusId]) || row.cells[statusId] === pendingId);
-    // A credit note, or an electronic invoice in a currency the app does not keep, is read without
-    // amounts: what a person entered for it since stays, and only empty amount cells are filled.
-    // Figures read from the image alone are unverified: they too fill empty cells only.
-    const amountsHeld = read.reviewFlags.includes('credit_note') || read.reviewFlags.includes('currency_unknown') || read.fromImage;
+    // An electronic invoice in a currency the app does not keep is read without amounts: what a
+    // person entered for it since stays, and only empty amount cells are filled. Figures read from
+    // the image alone are unverified: they too fill empty cells only.
+    const amountsHeld = read.reviewFlags.includes('currency_unknown') || read.fromImage;
     const amountColumns = ['Gross', 'Net', 'Tax Rate', 'Currency', 'FX Rate', MEAL_COLUMNS.taxLines];
     // From the image alone, the amounts are one group: written together where the row holds no total
     // (over the defaults an unreadable upload left), never one by one next to a total a person entered.
@@ -654,7 +670,7 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     if (linesId && !isMeal && !amountsHeld) cells[linesId] = read.cells[linesId] ?? serializeTaxLines(null);
     // The rates text is derived from what the row holds after this write.
     await adapter.updateRow(row.id, withTaxRates(columns, cells, row.cells) as typeof cells);
-    await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read);
+    await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read, adapter, tableId);
     return { ok: true, reviewFlags: read.reviewFlags };
   } catch (e) {
     const status = e instanceof ReceiptsAuthError ? e.status : (e as { status?: number })?.status;

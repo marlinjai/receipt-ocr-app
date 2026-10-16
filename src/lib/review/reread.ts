@@ -32,7 +32,7 @@ const ERROR_TEXT: Record<RereadError, string> = {
   forbidden: 'Dafür fehlt die Berechtigung.',
   not_found: 'Der Beleg wurde nicht gefunden.',
   no_file: 'An diesem Beleg hängt keine Datei, die gelesen werden könnte.',
-  no_text: 'Zu diesem Beleg ist kein erkannter Text gespeichert. Bitte das Foto neu aufnehmen.',
+  no_text: 'Zu diesem Beleg ist kein erkannter Text gespeichert, und die Seite allein ließ sich nicht lesen. Bitte das Foto neu aufnehmen.',
   model_unavailable: 'Das Sprachmodell hat nicht geantwortet. Am Beleg wurde nichts geändert. Bitte später noch einmal versuchen.',
   page_unavailable: 'Die Seite konnte nicht gelesen werden: Die Datei fehlt, ist zu groß oder lässt sich nicht öffnen. Am Beleg wurde nichts geändert.',
   failed: 'Das neue Lesen ist fehlgeschlagen. Am Beleg wurde nichts geändert.',

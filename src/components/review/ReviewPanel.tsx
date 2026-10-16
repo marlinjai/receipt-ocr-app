@@ -41,6 +41,7 @@ const SHORT: Record<ReviewReason, string> = {
   einvoice_problem: 'E-Rechnung prüfen',
   credit_note: 'Gutschrift',
   currency_unknown: 'Währung prüfen',
+  image_only: 'Nur aus dem Bild',
   several_documents: 'Mehrere Belege',
   total_unconfirmed: 'Betrag prüfen',
   total_conflict: 'Betrag prüfen',

@@ -117,6 +117,30 @@ export function settleDate(fullText: string, ai: ModelReading | null): { date: s
 }
 
 /**
+ * A receipt with no recognized text at all (an image-only PDF, a photo the
+ * recognition found nothing on), read by a model that saw the page. Nothing
+ * can check the answer, so every figure is stored with the flag
+ * `image_only`, which only a person or payments that cover the total settle.
+ * A currency the app has no option for is not taken: the receipt is then
+ * read without amounts.
+ */
+export function settleFromPageOnly(ai: ModelReading): SettledReading {
+  const category = ai.category || null;
+  const vendor = ai.vendor ? ai.vendor.trim() || null : null;
+  // Amounts are taken only in a currency the model read and the app keeps: a total in a currency it
+  // could not read would be stored as euros.
+  const known = ai.currency !== null && CURRENCY_OPTIONS.includes(ai.currency);
+  const gross = known ? ai.gross : null;
+  const currency = known ? (ai.currency as string) : 'EUR';
+  const meal = category === MEAL_CATEGORY ? mealFactsFromClassification(ai, '', vendor) : null;
+  // No German rate is assumed for another currency (as the text reader does): the bill is then the net.
+  const taxRate = ai.taxRate ?? (currency !== 'EUR' ? 0 : defaultTaxRate(category, ai.date, meal?.consumption ?? null));
+  const net = gross === null ? null : (ai.net !== null && ai.net <= gross ? ai.net : Math.round((gross / (1 + taxRate / 100)) * 100) / 100);
+  const amounts: AmountReading = { gross, basis: gross === null ? 'none' : 'model_alone', net, taxRate, taxPrinted: false, taxGroups: [], tip: null, checks: [] };
+  return { category, vendor, date: ai.date, currency, amounts, gross, net, taxRate, meal, flags: ['image_only'] };
+}
+
+/**
  * Settle one receipt. `ai` is null when no model answer could be had; the
  * receipt is then read from the text alone and says so.
  */

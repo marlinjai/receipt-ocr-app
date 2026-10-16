@@ -202,8 +202,8 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
     fileHashesByRow(db, rowIds),
     db.receiptReview.findMany({ where: { authWorkspaceId: workspaceId, rowId: { in: rowIds } } }),
   ]);
-  // Only a receipt with an open doubt about its total needs its payments.
-  const inDoubt = stored.filter((r) => !r.checkedAt && r.flags.some((f) => f === 'total_unconfirmed' || f === 'total_conflict')).map((r) => r.rowId);
+  // Only a receipt with an open doubt about its total (or one read from its image alone) needs its payments.
+  const inDoubt = stored.filter((r) => !r.checkedAt && r.flags.some((f) => f === 'total_unconfirmed' || f === 'total_conflict' || f === 'image_only')).map((r) => r.rowId);
   const paid = await paidByRow(db, workspaceId, inDoubt);
   const storedByRow = new Map(stored.map((r) => [r.rowId, r]));
   const distinct = new Map(stored.map((r) => [r.rowId, new Set(r.distinctFrom)]));

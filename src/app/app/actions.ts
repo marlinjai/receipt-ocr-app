@@ -23,7 +23,7 @@ import type { ReceiptPage } from '@/lib/receipt-page';
 import { loadReceiptSource } from '@/lib/receipt-page-source';
 import { structuredReceiptFields } from '@/lib/einvoice';
 import { withStructuredInvoice } from '@/lib/structured-reading';
-import { settleReading, type ModelReading } from '@/lib/receipt-reading';
+import { settleFromPageOnly, settleReading, type ModelReading } from '@/lib/receipt-reading';
 import { fileOpenToWorkspace } from '@/lib/file-access';
 import type { ReadFlag } from '@/lib/review/reasons';
 import type { RereadResult } from '@/lib/review/reread';
@@ -66,7 +66,8 @@ interface FileData {
 
 /** Null when no classification could be had. The caller records that on the receipt: it is never silent. */
 async function classifyReceipt(
-  extracted: ReturnType<typeof extractReceiptFields>,
+  /** Null for a page without any recognized text: the model reads it from the page alone. */
+  extracted: ReturnType<typeof extractReceiptFields> | null,
   fullText: string,
   page: ReceiptPage | null,
   knownItems: readonly string[],
@@ -74,9 +75,9 @@ async function classifyReceipt(
   try {
     const result = await classifyReceiptText({
       knownItems,
-      vendor: extracted.vendor,
-      gross: extracted.gross,
-      date: extracted.date,
+      vendor: extracted?.vendor ?? null,
+      gross: extracted?.gross ?? null,
+      date: extracted?.date ?? null,
       fullText,
       categoryNames: CATEGORY_NAMES,
       categoryToKonto: CATEGORY_TO_KONTO,
@@ -195,6 +196,10 @@ interface ReadReceipt {
   reviewFlags: ReadFlag[];
   /** The id of the option "Bewirtung" in the category column, to tell whether a stored row is a meal. */
   mealCategoryOptionId: string | null;
+  /** True when no text was recognized and the figures were read by the model from the page alone. */
+  fromImage: boolean;
+  /** True when there was a page but no text, and the model did not answer. */
+  modelFailedOnPage: boolean;
 }
 
 /**
@@ -239,17 +244,21 @@ async function readReceipt(
   const fullText = recognized.trim() ? recognized : (structured?.text ?? '');
   const extracted = fullText.trim() ? extractReceiptFields({ fullText, blocks: ocrResult?.blocks ?? [], confidence: ocrResult?.confidence ?? 1 }) : null;
   // The model is given the page itself where the stored file can be fetched and
-  // is within the limits. Without any text nothing could check its answer, so
-  // it is not asked at all.
-  const page = extracted && source ? ((await source.page()).page ?? null) : null;
+  // is within the limits. Where no text was recognized at all (an image-only
+  // PDF), the model is asked from the page alone; its answer is stored as
+  // unverified.
+  const page = source ? ((await source.page()).page ?? null) : null;
+  const imageOnly = !extracted && page !== null;
   // What the vendor's earlier receipts name as bought: the model reuses a wording that fits.
   const lookupVendor = stored?.vendor?.trim() || extracted?.vendor || null;
   const knownItems = extracted ? await knownItemsOfVendor(adapter, tableId, lookupVendor, stored?.rowId) : [];
-  const ai = extracted ? await classifyReceipt(extracted, fullText, page, knownItems) : null;
+  const ai = extracted || imageOnly ? await classifyReceipt(extracted, fullText, page, knownItems) : null;
   const classificationFailed = extracted !== null && ai === null;
+  // A model answer from the image alone that names neither a total nor a date is no reading.
+  const fromImage = imageOnly && ai !== null && (ai.gross !== null || ai.date !== null) ? ai : null;
   // The two readings, settled: what the text proves stands, what the model
   // read from the page is taken only where the text prints it.
-  const read = extracted ? settleReading(fullText, extracted, ai) : null;
+  const read = extracted ? settleReading(fullText, extracted, ai) : fromImage ? settleFromPageOnly(fromImage) : null;
   // Where the text was built from the XML, its heading is no vendor: the seller's name is, unless the model named one.
   const settled = read && structured ? withStructuredInvoice(read, structured, { textFromStructure: source?.structured?.source.kind === 'xml', modelVendor: ai?.vendor ?? null }) : read;
   const reviewFlags: ReadFlag[] = settled?.flags ?? [];
@@ -288,7 +297,7 @@ async function readReceipt(
     return (await adapter.getSelectOptions(col.id)).find((o) => o.name === optionName)?.id ?? null;
   };
 
-  const statusName = classificationFailed || !extracted ? 'Pending' : 'Processed';
+  const statusName = classificationFailed || (!extracted && !fromImage) ? 'Pending' : 'Processed';
   const confidence = ocrResult?.confidence ? Math.round(ocrResult.confidence * 100) : 0;
 
   const values: Record<string, CellValue> = {
@@ -344,7 +353,8 @@ async function readReceipt(
     vendor,
     date,
     gross: finalGross,
-    attention: receiptAttention({
+    // Read from the image alone: read, but unverified, so the upload offers a retake like a poor photo.
+    attention: fromImage ? 'low_quality' : receiptAttention({
       ocrOk: extracted !== null,
       confidence: ocrResult ? confidence : null,
       gross: finalGross,
@@ -352,6 +362,8 @@ async function readReceipt(
     }),
     reviewFlags,
     mealCategoryOptionId: await optionId('Category', MEAL_CATEGORY),
+    fromImage: fromImage !== null,
+    modelFailedOnPage: imageOnly && ai === null,
   };
 }
 
@@ -563,8 +575,9 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     // The file the capture uploaded, else the first one a person attached.
     const stored = files.find((f) => f.metadata?.source === 'ocr-upload') ?? files[0];
     if (!stored) return { ok: false, error: 'no_file' };
+    // Without stored text the page is read alone: the reading is then unverified, and a page that
+    // cannot be read leaves the row exactly as it is.
     const fullText = typeof cell('OCR Text') === 'string' ? (cell('OCR Text') as string) : '';
-    if (!fullText.trim()) return { ok: false, error: 'no_text' };
 
     const confidence = Number(cell('Confidence'));
     const read = await readReceipt(
@@ -577,6 +590,8 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
       { rowId: row.id, vendor: typeof cell('Vendor') === 'string' ? (cell('Vendor') as string) : null },
     );
 
+    if (read.modelFailedOnPage) return { ok: false, error: 'model_unavailable' };
+    if (!fullText.trim() && !read.fromImage) return { ok: false, error: 'no_text' };
     if (read.reviewFlags.includes('not_classified')) return { ok: false, error: 'model_unavailable' };
     if (read.reviewFlags.includes('page_not_read')) return { ok: false, error: 'page_unavailable' };
 
@@ -602,8 +617,9 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     const waiting = statusId !== undefined && (isBlank(row.cells[statusId]) || row.cells[statusId] === pendingId);
     // A credit note, or an electronic invoice in a currency the app does not keep, is read without
     // amounts: what a person entered for it since stays, and only empty amount cells are filled.
+    // Figures read from the image alone are unverified: they too fill empty cells only.
     const amountsHeld = read.reviewFlags.includes('credit_note') || read.reviewFlags.includes('currency_unknown');
-    const heldColumns = amountsHeld ? ['Gross', 'Net', 'Tax Rate', 'Currency', 'FX Rate', MEAL_COLUMNS.taxLines] : [];
+    const heldColumns = read.fromImage ? REREAD_COLUMNS : amountsHeld ? ['Gross', 'Net', 'Tax Rate', 'Currency', 'FX Rate', MEAL_COLUMNS.taxLines] : [];
     for (const name of heldColumns) fillOnly.add(name);
     const always = new Set([...REREAD_COLUMNS.filter((name) => !heldColumns.includes(name)), ...(builtByReader ? ['Name'] : []), ...(waiting ? ['Status'] : [])]);
     const cells: Record<string, CellValue> = {};

@@ -482,3 +482,21 @@ describe('an unnamed tip after the recheck', () => {
     expect(readAmounts(slip('Grand total Friseur 20,00'), { date: '2026-03-01' }).tip).toBe(2);
   });
 });
+
+describe('an unnamed tip, third round', () => {
+  const cafe = (extra: string[], after: string[] = []) => ['Example Cafe', ...extra, 'Netto 15,13', 'MwSt 19% 2,87', 'Summe', '18,00', 'Grand total 20,00', 'Karte', ...after].join('\n');
+
+  it('an item priced like the tip above the bill does not hide it', () => {
+    expect(readAmounts(cafe(['Wasser 2,00', 'Pasta 16,00']), { date: '2026-03-01' }).tip).toBe(2);
+  });
+
+  it('a weekday after the paid line is no currency', () => {
+    expect(readAmounts(cafe([], ['Fr 16.10.26 14:22']), { date: '2026-03-01' }).tip).toBe(2);
+    expect(readAmounts(cafe([]).replace('Grand total 20,00', 'Grand total 20,00 Fr.'), { date: '2026-03-01' }).tip).toBeNull();
+  });
+
+  it('a card line naming the paid amount is no fee', () => {
+    const slip = ['Example Cafe', 'Netto 15,13', 'MwSt 19% 2,87', 'Summe 18,00', 'Kartenzahlung 20,00', 'Grand total 20,00'].join('\n');
+    expect(readAmounts(slip, { date: '2026-03-01' }).tip).toBe(2);
+  });
+});

@@ -145,9 +145,12 @@ function currencyOf(line: string): string | null {
   if (line.includes('€')) return 'EUR';
   if (line.includes('£')) return 'GBP';
   if (line.includes('$')) return 'USD';
-  const code = /(?<![\p{L}])(EUR|USD|GBP|CHF|DKK|SEK|NOK|PLN|CZK|HUF|JPY|CAD|AUD|TRY|RON|BGN|kr|Fr)\.?(?![\p{L}])/u.exec(line)?.[1];
-  if (!code) return null;
-  return code === 'kr' ? 'DKK' : code === 'Fr' ? 'CHF' : code;
+  const code = /(?<![\p{L}])(EUR|USD|GBP|CHF|DKK|SEK|NOK|PLN|CZK|HUF|JPY|CAD|AUD|TRY|RON|BGN)(?![\p{L}])/u.exec(line)?.[1];
+  if (code) return code;
+  // "kr" and "Fr." name a currency only next to an amount: "Fr 16.10.26" is a Friday.
+  const short = /(?<![\p{L}])(kr|Fr)\.?\s*\d+[.,]\d{2}(?!\d)|\d[.,]\d{2}\s*(kr|Fr)(?![\p{L}])/u.exec(line);
+  if (!short) return null;
+  return (short[1] ?? short[2]) === 'kr' ? 'DKK' : 'CHF';
 }
 
 /** A label for what was paid in the end, tip included: "Grand total", "Endsumme", "Bezahlt", "Amount paid". */
@@ -617,14 +620,17 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       const billLine = billLines.filter((line) => line < i).pop() as number;
       const own = [...lines[i].matchAll(AMOUNT)].map((m) => toCents(m[1])).filter((v): v is number => v !== null);
       const next = (lines[i + 1] ?? '').trim();
+      const fromNext = own.length === 0;
       const paid = own[own.length - 1] ?? (BARE_AMOUNT_LINE.test(next) ? (lineEndAmount(next) ?? undefined) : undefined);
       if (paid === undefined || paid <= billCents || paid - billCents > billCents * 0.3) return null;
       // Another figure between the bill and the paid amount is a charge or a deposit, never part of a tip.
-      const between = found.filter((a) => a.line > billLine && a.line < i && a.cents !== billCents && !figuresOfTheBill.includes(a.cents));
-      if (between.length > 0 || values.has(paid - billCents)) return null;
+      // The paid amount itself may stand between (paid by card, "Kartenzahlung 20,00").
+      const between = found.filter((a) => a.line > billLine && a.line < i && a.cents !== billCents && a.cents !== paid && !figuresOfTheBill.includes(a.cents));
+      // The difference printed after the bill is a charge; an item price above the bill that happens to equal it is not.
+      if (between.length > 0 || found.some((a) => a.cents === paid - billCents && a.line > billLines[0])) return null;
       // A currency named on the paid line other than the receipt's own is another currency.
       const receiptCurrency = (hints.currency ?? 'EUR').toUpperCase();
-      const named = currencyOf(lines[i]) ?? currencyOf(next);
+      const named = currencyOf(lines[i]) ?? (fromNext ? currencyOf(next) : null);
       if (named !== null && named !== receiptCurrency) return null;
       return paid - billCents;
     }

@@ -12,6 +12,8 @@ type Membership = { id: string; slug: string; role: string; tenantId: string };
 const session = { current: null as null | { memberships: Membership[]; activeWorkspace: Membership } };
 const classify = vi.fn();
 const loadPage = vi.fn();
+/** The structured invoice data the stored file holds: none for an ordinary receipt. */
+const loadStructured = vi.fn();
 
 vi.mock('@/lib/prisma', async () => ({ prisma: (await import('../../../test/db-helpers')).db }));
 vi.mock('@/lib/auth', () => ({
@@ -25,7 +27,10 @@ vi.mock('@/lib/receipt-classifier', async (original) => ({
   classifyReceiptText: (...a: unknown[]) => classify(...a),
 }));
 vi.mock('@/lib/fx-rates', () => ({ getFxRate: vi.fn(async () => 0.9) }));
-vi.mock('@/lib/receipt-page-source', () => ({ loadReceiptPage: (...a: unknown[]) => loadPage(...a) }));
+vi.mock('@/lib/receipt-page-source', () => ({
+  loadReceiptPage: (...a: unknown[]) => loadPage(...a),
+  loadReceiptSource: async (...a: unknown[]) => ({ page: () => loadPage(...a), structured: await loadStructured(...a) }),
+}));
 
 import { contactStore, loadMealRecord, saveMealDetails } from '@/lib/meals/service';
 import { mealStatus } from '@/lib/meals/rules';
@@ -99,6 +104,8 @@ beforeEach(async () => {
   classify.mockResolvedValue(MEAL_ANSWER);
   loadPage.mockReset();
   loadPage.mockResolvedValue({ page: PAGE });
+  loadStructured.mockReset();
+  loadStructured.mockResolvedValue(null);
   await use(ws);
 });
 afterAll(async () => {
@@ -347,10 +354,54 @@ describe('processReceipt: the model is shown the page, and the upload never depe
     expect(await cellOf(ws, result.rowId, 'Status')).toBe('Pending');
   });
 
-  it('no recognized text: the model is not asked and the file is not fetched', async () => {
+  it('no recognized text and no structured data: the model is not asked', async () => {
+    // The file is fetched: an XRechnung has no text to recognize, and only its bytes say it is one.
     await upload(file(43), null, {});
-    expect(loadPage).not.toHaveBeenCalled();
+    expect(loadStructured).toHaveBeenCalledWith(file(43).id);
     expect(classify).not.toHaveBeenCalled();
+  });
+
+  it('an electronic invoice: its structured figures stand over the page reading, and its text is stored where nothing was recognized', async () => {
+    const { readStructuredInvoice } = await import('@/lib/einvoice');
+    const { UBL_INVOICE } = await import('@/lib/einvoice/__tests__/samples');
+    loadStructured.mockResolvedValue(await readStructuredInvoice(new TextEncoder().encode(UBL_INVOICE)));
+    classify.mockResolvedValue({ ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', vendor: 'Muster Software', gross: 150, date: '2026-09-15T00:00:00.000Z', meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null, place: null } });
+    // A ZUGFeRD PDF: the page was recognized, and read wrong.
+    const pdf = await upload(file(90), ocr('Muster Software\nRechnung\nDatum 15.09.2026\nGesamt 150,00 €'), {});
+    expect(await cellOf(ws, pdf.rowId, 'Gross')).toBe(172.5);
+    expect(await cellOf(ws, pdf.rowId, 'Net')).toBe(150);
+    expect(await cellOf(ws, pdf.rowId, 'Tax Rate')).toBe(19);
+    expect(new Date((await cellOf(ws, pdf.rowId, 'Date')) as string).toISOString().slice(0, 10)).toBe('2026-09-14');
+    expect(await cellOf(ws, pdf.rowId, 'Vendor')).toBe('Muster Software');
+    expect(pdf.reviewFlags).not.toContain('total_conflict');
+    // An XRechnung: no text was recognized, its figures as text are stored and read.
+    const xml = await upload(file(91), null, {});
+    expect(await cellOf(ws, xml.rowId, 'Gross')).toBe(172.5);
+    expect(String(await cellOf(ws, xml.rowId, 'OCR Text'))).toContain('Rechnung (elektronisch)');
+    expect(await cellOf(ws, xml.rowId, 'Status')).toBe('Processed');
+    // Without a model answer, the vendor is the seller the XML names, never the heading of its text.
+    classify.mockRejectedValue(new Error('provider down'));
+    const unclassified = await upload(file(92), null, {});
+    expect(await cellOf(ws, unclassified.rowId, 'Vendor')).toBe('Muster Software GmbH');
+  });
+
+  it('an electronic credit note keeps no amount until a person books it', async () => {
+    const { readStructuredInvoice } = await import('@/lib/einvoice');
+    const { UBL_CREDIT_NOTE } = await import('@/lib/einvoice/__tests__/samples');
+    loadStructured.mockResolvedValue(await readStructuredInvoice(new TextEncoder().encode(UBL_CREDIT_NOTE)));
+    const credit = await upload(file(93), null, {});
+    expect(await cellOf(ws, credit.rowId, 'Gross')).toBeNull();
+    expect(credit.reviewFlags).toContain('credit_note');
+    // A person books it; "Seite neu lesen" leaves what they entered.
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    const id = (name: string) => columns.find((c) => c.name === name)!.id;
+    await ws.adapter.updateRow(credit.rowId, { [id('Gross')]: 11.9, [id('Net')]: 10 });
+    const imageColumnId = id('Receipt Image');
+    await ws.adapter.addFileReference({ rowId: credit.rowId, columnId: imageColumnId, fileId: file(94).id, fileUrl: `/api/files/${file(94).id}`, originalName: 'gutschrift.xml', mimeType: 'application/xml', metadata: { source: 'ocr-upload' } });
+    const reread = await rereadReceipt(credit.rowId);
+    expect(reread.ok).toBe(true);
+    expect(await cellOf(ws, credit.rowId, 'Gross')).toBe(11.9);
+    expect(await cellOf(ws, credit.rowId, 'Net')).toBe(10);
   });
 
   it('a document with no total stores none, however a label could be read', async () => {

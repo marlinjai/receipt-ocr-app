@@ -20,7 +20,9 @@ import { serializeTaxLines } from '@/lib/meals/rules';
 import { receiptAttention, type ReceiptAttention } from '@/lib/upload/quality';
 import { ClassifierUnavailableError, classifyReceiptText } from '@/lib/receipt-classifier';
 import type { ReceiptPage } from '@/lib/receipt-page';
-import { loadReceiptPage } from '@/lib/receipt-page-source';
+import { loadReceiptSource } from '@/lib/receipt-page-source';
+import { structuredReceiptFields } from '@/lib/einvoice';
+import { withStructuredInvoice } from '@/lib/structured-reading';
 import { settleReading, type ModelReading } from '@/lib/receipt-reading';
 import { fileOpenToWorkspace } from '@/lib/file-access';
 import type { ReadFlag } from '@/lib/review/reasons';
@@ -227,12 +229,19 @@ async function readReceipt(
   /** The row read again, if any: its vendor names the vendor's items, and its own item is no earlier one. */
   stored?: { rowId: string; vendor: string | null },
 ): Promise<ReadReceipt> {
-  const fullText = ocrResult?.fullText ?? '';
-  const extracted = ocrResult && fullText.trim() ? extractReceiptFields(ocrResult) : null;
+  // The stored file, fetched once: its page for the model and, for an
+  // electronic invoice (XRechnung, ZUGFeRD, Factur-X), its structured data,
+  // which stands over every reading of the page.
+  const source = file.id ? await loadReceiptSource(file.id) : null;
+  const structured = source?.structured ? structuredReceiptFields(source.structured.invoice) : null;
+  // An XRechnung has no page to recognize: its figures as text take the place of the recognized text.
+  const recognized = ocrResult?.fullText ?? '';
+  const fullText = recognized.trim() ? recognized : (structured?.text ?? '');
+  const extracted = fullText.trim() ? extractReceiptFields({ fullText, blocks: ocrResult?.blocks ?? [], confidence: ocrResult?.confidence ?? 1 }) : null;
   // The model is given the page itself where the stored file can be fetched and
-  // is within the limits. Without recognized text nothing could check its
-  // answer, so it is not asked at all.
-  const page = extracted && file.id ? ((await loadReceiptPage(file.id)).page ?? null) : null;
+  // is within the limits. Without any text nothing could check its answer, so
+  // it is not asked at all.
+  const page = extracted && source ? ((await source.page()).page ?? null) : null;
   // What the vendor's earlier receipts name as bought: the model reuses a wording that fits.
   const lookupVendor = stored?.vendor?.trim() || extracted?.vendor || null;
   const knownItems = extracted ? await knownItemsOfVendor(adapter, tableId, lookupVendor, stored?.rowId) : [];
@@ -240,7 +249,9 @@ async function readReceipt(
   const classificationFailed = extracted !== null && ai === null;
   // The two readings, settled: what the text proves stands, what the model
   // read from the page is taken only where the text prints it.
-  const settled = extracted ? settleReading(fullText, extracted, ai) : null;
+  const read = extracted ? settleReading(fullText, extracted, ai) : null;
+  // Where the text was built from the XML, its heading is no vendor: the seller's name is, unless the model named one.
+  const settled = read && structured ? withStructuredInvoice(read, structured, { textFromStructure: source?.structured?.source.kind === 'xml', modelVendor: ai?.vendor ?? null }) : read;
   const reviewFlags: ReadFlag[] = settled?.flags ?? [];
   const date = settled?.date ?? null;
   const vendor = settled?.vendor ?? null;
@@ -589,7 +600,12 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     const statusId = columnId('Status');
     const pendingId = statusId ? (await adapter.getSelectOptions(statusId)).find((o) => o.name === 'Pending')?.id : undefined;
     const waiting = statusId !== undefined && (isBlank(row.cells[statusId]) || row.cells[statusId] === pendingId);
-    const always = new Set([...REREAD_COLUMNS, ...(builtByReader ? ['Name'] : []), ...(waiting ? ['Status'] : [])]);
+    // A credit note, or an electronic invoice in a currency the app does not keep, is read without
+    // amounts: what a person entered for it since stays, and only empty amount cells are filled.
+    const amountsHeld = read.reviewFlags.includes('credit_note') || read.reviewFlags.includes('currency_unknown');
+    const heldColumns = amountsHeld ? ['Gross', 'Net', 'Tax Rate', 'Currency', 'FX Rate', MEAL_COLUMNS.taxLines] : [];
+    for (const name of heldColumns) fillOnly.add(name);
+    const always = new Set([...REREAD_COLUMNS.filter((name) => !heldColumns.includes(name)), ...(builtByReader ? ['Name'] : []), ...(waiting ? ['Status'] : [])]);
     const cells: Record<string, CellValue> = {};
     for (const column of columns) {
       if (!(column.id in read.cells)) continue;
@@ -605,7 +621,7 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     // The printed tax groups of the new reading, or none: lines of the old
     // reading must not stand next to amounts they no longer belong to.
     const linesId = columnId(MEAL_COLUMNS.taxLines);
-    if (linesId && !isMeal) cells[linesId] = read.cells[linesId] ?? serializeTaxLines(null);
+    if (linesId && !isMeal && !amountsHeld) cells[linesId] = read.cells[linesId] ?? serializeTaxLines(null);
     // The rates text is derived from what the row holds after this write.
     await adapter.updateRow(row.id, withTaxRates(columns, cells, row.cells) as typeof cells);
     await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read);

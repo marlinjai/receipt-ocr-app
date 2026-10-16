@@ -61,6 +61,24 @@ export interface NormalizedPayment {
   sourceHash: string;
   /** True when `sourceHash` is built from the source's own number alone (see `referenceHash`). */
   byReference?: boolean;
+  /** How the purchase was paid, as the pay-later list says; only that list fills it. */
+  detail?: PayLaterDetail;
+}
+
+/**
+ * What the pay-later list says about how one purchase was paid. Stored with
+ * the payment (`source_detail`), because the day a purchase counts on for tax
+ * depends on it (see `tax-day.ts`).
+ */
+export interface PayLaterDetail {
+  /** The list's `payment_method` as written ("Invoice", "Cards", "Term Loan", "In 30 Tagen zahlen"); '' when empty. */
+  method: string;
+  /** The list marks a card on the purchase (its `card` column is filled). */
+  card: boolean;
+  /** The statement the purchase is billed on, when the list names one. */
+  statement: string | null;
+  /** The service's own number for the purchase, when the list has one. */
+  reference: string | null;
 }
 
 export type ParseErrorCode =
@@ -100,6 +118,12 @@ export interface ParsedFile {
    * looks at it; it is never dropped in silence.
    */
   unknownStatuses: string[];
+  /**
+   * Payment method wordings of the pay-later list the reader did not know.
+   * Such a purchase is read as paid later at the checkout (the cautious
+   * reading: it counts on the day the service collects it) and named here.
+   */
+  unknownMethods: string[];
   firstDay: string | null;
   lastDay: string | null;
 }

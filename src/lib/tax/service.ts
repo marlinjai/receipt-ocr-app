@@ -39,6 +39,7 @@ import {
   type PaymentRow,
   type ReceiptForLink,
 } from './payments/service';
+import type { PayLaterMethod } from './payments/tax-day';
 import type { PaymentKind } from './payments/types';
 import {
   RevenueInputError,
@@ -181,7 +182,8 @@ interface LoadedReceipts {
 /**
  * What linked payments say each receipt cost: money out counts, a refund
  * linked to the same receipt is taken off, and the day is that of the first
- * payment out.
+ * payment out, on the day it counts for tax (`PaymentRow.taxDay`: a pay-later
+ * purchase paid later at the checkout counts when the service collects it).
  */
 export function paidByRow(payments: readonly PaymentRow[]): Map<string, { day: string; cents: number }> {
   const out = new Map<string, { day: string; cents: number }>();
@@ -220,7 +222,7 @@ export function linkedByRow(payments: readonly PaymentRow[]): Map<string, Linked
     const current = sums.get(link.rowId) ?? { day: null, backDay: null, outCents: 0, backCents: 0 };
     if (payment.amountCents < 0) {
       current.outCents += link.cents;
-      if (current.day === null || payment.bookingDay < current.day) current.day = payment.bookingDay;
+      if (current.day === null || payment.taxDay < current.day) current.day = payment.taxDay;
     } else {
       current.backCents += link.cents;
       if (current.backDay === null || payment.bookingDay < current.backDay) current.backDay = payment.bookingDay;
@@ -746,7 +748,11 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   }
   for (const settlement of settlementFacts) yearOfDay(settlement.date);
   for (const change of storedChanges) yearOfDay(change.effectiveFrom);
-  for (const payment of loadedPayments.payments) yearOfDay(payment.bookingDay);
+  for (const payment of loadedPayments.payments) {
+    yearOfDay(payment.bookingDay);
+    // A purchase collected in the next year counts there, so that year must be reachable.
+    yearOfDay(payment.taxDay);
+  }
   const incomeTax = await loadIncomeTax(db, workspaceId, year, { profitCents: result.profitCents, lines: result.lines });
   return {
     year,
@@ -1014,6 +1020,8 @@ export interface PaymentsView {
   open: OpenPayment[];
   /** Receipts of the year on an estimated euro amount, with the payment that looks like theirs. */
   estimateProposals: EstimateProposalView[];
+  /** Which day pay-later purchases count on, where it is worth a look (see `PayLaterDaysView`). */
+  payLaterDays: PayLaterDaysView;
   /** Payments of the year a person re-labelled (private, refund, a transfer or no transfer), so each can be put back. */
   overridden: Array<{ id: string; bookingDay: string; amountCents: number; counterparty: string; kind: PaymentKind }>;
   /** Payments of the year the funding rule made a transfer, newest first, and what they add up to (money out less money in). */
@@ -1049,6 +1057,66 @@ export interface PaymentsView {
 
 /** Payment providers that stand for many shops: money back from them names its shop only by a number. */
 const PAYMENT_INTERMEDIARIES = new Set(['paypal', 'klarna', 'stripe', 'adyen', 'sumup', 'mollie']);
+
+/** One pay-later purchase as the day lists show it. */
+export interface PayLaterDayEntry {
+  id: string;
+  bookingDay: string;
+  /** The day it counts on for tax. */
+  taxDay: string;
+  amountCents: number;
+  counterparty: string;
+  accountLabel: string;
+  method: PayLaterMethod | null;
+  /** True when a person said how it was paid. */
+  byPerson: boolean;
+  /** The receipts it is linked to: only for those does the day decide a year. */
+  linkedTo: string[];
+}
+
+/**
+ * The day pay-later purchases count on, where a person should look. A
+ * purchase paid later at a shop's checkout counts when the service collects
+ * it; a card purchase on its purchase day. Which one it was is read from the
+ * list, and a card purchase whose text does not show the card is read as
+ * checkout, so a purchase that moves into the next year is listed for a look.
+ */
+export interface PayLaterDaysView {
+  /** Checkout purchases bought in one year and collected in the next, touching this year. */
+  moved: PayLaterDayEntry[];
+  /** Checkout purchases of the year no collection was found for: they count on their purchase day ("Einzugstag unbekannt"). */
+  unknown: PayLaterDayEntry[];
+  /** Purchases of the year a person said were paid by card or at the checkout, so each can be put back. */
+  relabelled: PayLaterDayEntry[];
+  /** Purchases of the year imported before the list's payment details were kept: on their purchase day until the list is read again. */
+  withoutDetail: number;
+}
+
+function buildPayLaterDays(loaded: LoadedPayments, year: number, accountLabel: Map<string, string>, labelOfRow: (rowId: string) => string): PayLaterDaysView {
+  const inYear = (day: string) => day.startsWith(`${year}-`);
+  const entry = (p: PaymentRow): PayLaterDayEntry => ({
+    id: p.id,
+    bookingDay: p.bookingDay,
+    taxDay: p.taxDay,
+    amountCents: p.amountCents,
+    counterparty: p.counterparty,
+    accountLabel: accountLabel.get(p.accountId) ?? '',
+    method: p.payLater?.method ?? null,
+    byPerson: p.payLater?.byPerson ?? false,
+    linkedTo: p.links.flatMap((l) => (l.rowId ? [labelOfRow(l.rowId)] : [])),
+  });
+  // What nobody claims (private, a transfer) has no year to decide.
+  const purchases = loaded.payments.filter((p) => p.payLater !== null && p.kind !== 'private' && p.kind !== 'own_transfer');
+  return {
+    moved: purchases
+      .filter((p) => p.payLater?.method === 'checkout' && p.taxDay.slice(0, 4) !== p.bookingDay.slice(0, 4) && (inYear(p.bookingDay) || inYear(p.taxDay)))
+      .map(entry)
+      .sort((a, b) => (a.bookingDay < b.bookingDay ? -1 : 1)),
+    unknown: purchases.filter((p) => p.payLater?.dayUnknown && inYear(p.bookingDay)).map(entry).sort((a, b) => (a.bookingDay < b.bookingDay ? -1 : 1)),
+    relabelled: loaded.payments.filter((p) => p.payLater?.byPerson && inYear(p.bookingDay)).map(entry).sort((a, b) => (a.bookingDay < b.bookingDay ? -1 : 1)),
+    withoutDetail: purchases.filter((p) => p.payLater?.method === null && inYear(p.bookingDay)).length,
+  };
+}
 
 function buildPaymentsView(
   loaded: LoadedPayments,
@@ -1290,6 +1358,7 @@ function buildPaymentsView(
     })),
     open,
     estimateProposals,
+    payLaterDays: buildPayLaterDays(loaded, year, accountLabel, (rowId) => itemById.get(rowId)?.label ?? 'Beleg (nicht mehr vorhanden)'),
     overridden: inYear.filter((p) => p.kindOverridden).map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, kind: p.kind })),
     ruleTransfers,
     ruleTransferCents: ruled.reduce((sum, p) => sum - p.amountCents, 0),
@@ -1883,10 +1952,10 @@ export async function saveLineDecision(db: PrismaClient, ctx: TaxContext, lineId
 }
 
 /** The day of the first payment out linked to a receipt, when there is one. */
+/** The day a receipt was paid as the statement counts it (`linkedByRow`): the same money once, on its tax day. */
 async function paymentDayOfRow(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<string | null> {
-  const links = await db.taxPaymentLink.findMany({ where: { authWorkspaceId: ctx.workspaceId, rowId }, include: { payment: true } });
-  const days = links.filter((l) => l.payment.amountCents < 0).map((l) => l.payment.bookingDay);
-  return days.length > 0 ? days.sort()[0] : null;
+  if ((await db.taxPaymentLink.count({ where: { authWorkspaceId: ctx.workspaceId, rowId } })) === 0) return null;
+  return linkedByRow((await loadPayments(db, ctx.workspaceId)).payments).get(rowId)?.paid?.day ?? null;
 }
 
 async function requireOrdinaryRow(

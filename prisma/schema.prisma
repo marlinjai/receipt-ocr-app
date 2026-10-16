@@ -712,6 +712,14 @@ model TaxPayment {
   // counts nowhere. Undoing that import sets it back to NULL (the foreign key
   // does), so the payment and its links count again.
   cancelledByBatchId String? @map("cancelled_by_batch_id")
+  // What the pay-later list says about how a purchase was paid: payment method
+  // wording, whether a card is marked, the statement number (see
+  // `PayLaterDetail`). NULL for other sources and for rows imported before the
+  // column existed; a later import of the same list fills it in.
+  sourceDetail    Json?    @map("source_detail")
+  // A person's correction of how one pay-later purchase was paid: 'card'
+  // (counts on the purchase day) or 'checkout' (counts on the collection day).
+  payMethodOverride String? @map("pay_method_override")
   createdAt       DateTime @default(now()) @map("created_at")
 
   account     TaxAccount      @relation(fields: [accountId], references: [id], onDelete: Cascade)

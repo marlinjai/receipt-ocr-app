@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { PaymentParseError, type NormalizedPayment, type ParsedFile, type PaymentFormat, type PaymentKind } from './types';
+import { knownPayLaterMethod } from './tax-day';
+import { PaymentParseError, type NormalizedPayment, type ParsedFile, type PayLaterDetail, type PaymentFormat, type PaymentKind } from './types';
 
 /**
  * Readers for the payment files the owner can export. Pure: text in, payments
@@ -93,6 +94,7 @@ interface Draft {
   kind: PaymentKind;
   /** The source's own unique number for the movement; when set it alone is the identity. */
   identity?: string;
+  detail?: PayLaterDetail;
 }
 
 /** Give every draft its identity; identical movements are numbered in order of appearance. */
@@ -111,7 +113,7 @@ function finish(
   format: PaymentFormat,
   drafts: Draft[],
   skipped: Record<string, number>,
-  extra: { cancelled: string[]; notices: Record<string, number>; unknownStatuses: string[] } = { cancelled: [], notices: {}, unknownStatuses: [] },
+  extra: { cancelled: string[]; notices: Record<string, number>; unknownStatuses: string[]; unknownMethods: string[] } = { cancelled: [], notices: {}, unknownStatuses: [], unknownMethods: [] },
 ): ParsedFile {
   if (drafts.length === 0 && Object.keys(skipped).length === 0) throw new PaymentParseError('empty');
   const days = drafts.map((d) => d.bookingDay).sort();
@@ -316,6 +318,7 @@ function parseKlarna(rows: string[][]): ParsedFile {
   const notices: Record<string, number> = {};
   const cancelled: string[] = [];
   const unknownStatuses: string[] = [];
+  const unknownMethods: string[] = [];
   const drafts: Draft[] = [];
   const seen = new Set<string>();
   for (const r of records(rows)) {
@@ -359,6 +362,14 @@ function parseKlarna(rows: string[][]): ParsedFile {
       seen.add(identity);
     }
     if (status === 'part_refunded') notices.part_refunded = (notices.part_refunded ?? 0) + 1;
+    // How it was paid decides the day it counts on (see `tax-day.ts`). A wording the reader does not know is
+    // read as paid later at the checkout and named after the import, like an unknown status.
+    const method = clean(r.get('payment_method'));
+    if (amountCents > 0 && knownPayLaterMethod(method) === null) {
+      notices.unknown_method = (notices.unknown_method ?? 0) + 1;
+      const shown = method.slice(0, 60) || '(leer)';
+      if (!unknownMethods.includes(shown) && unknownMethods.length < 5) unknownMethods.push(shown);
+    }
     drafts.push({
       bookingDay,
       // The day the merchant captured the purchase, when the list has it.
@@ -370,6 +381,7 @@ function parseKlarna(rows: string[][]): ParsedFile {
       entryReference: reference || clean(r.get('statement_number')) || null,
       kind: amountCents < 0 ? 'refund' : 'spend',
       ...(identity ? { identity } : {}),
+      detail: { method, card: clean(r.get('card')) !== '', statement: clean(r.get('statement_number')) || null, reference: reference || null },
     });
   }
   // A row without a reference that a referenced row repeats (the same purchase
@@ -388,7 +400,7 @@ function parseKlarna(rows: string[][]): ParsedFile {
     skip(skipped, 'duplicate_row');
     return false;
   });
-  return finish('klarna_csv', kept, skipped, { cancelled, notices, unknownStatuses });
+  return finish('klarna_csv', kept, skipped, { cancelled, notices, unknownStatuses, unknownMethods });
 }
 
 function parseEnableBanking(data: unknown): ParsedFile {

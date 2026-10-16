@@ -228,3 +228,81 @@ Other findings:
 - All 12 Splice invoices stayed right in date and total, without a flag.
 - The rules of this section were written against these documents, so its numbers are in-sample
   like the first. The vendor cell is not judged by the script. Cost: about 1.50 US dollars.
+
+### Third measurement: the unseen documents of the 2026 import
+
+Measured on 2026-10-15 and 2026-10-16 on the purchase documents of 2026, imported on 2026-10-14
+and never used to write a rule: 354 imported rows, 332 files with text, against the owner's
+corrected table (`kaufbelege-2026-extracted.csv` in the tax folder: vendor, total, currency,
+date) and the reader's errors listed in its import log (section B). This answers open point (2)
+of the roadmap line. The text was extracted locally from the PDFs (`pdftotext`), with empty lines
+removed to come close to what text recognition returns; the text reader alone, no model. With the
+empty lines left in, the reader missed 28 more totals: whether production text looks like either
+is what `scripts/rerun-stored-readings.ts` (#140) counts on the stored "OCR Text" cells.
+
+What production stored with the model that sees the page (import log): totals right on the first
+reading 344 of 354, dates 346 of 354. The text reader alone, before and after this lane's changes,
+on the 329 documents with text:
+
+| | Dates right | Totals right | Totals wrong | Totals missing |
+|---|---|---|---|---|
+| Before (main of 2026-10-15) | 323 | 309 | 13 | 7 |
+| After #109 (slash dates as the document writes them) | 329 | 309 | 13 | 7 |
+| After #121 (a tax needs a line that names it) | 329 | 318 | 4 | 7 |
+| After #142 (the invoice's own total, payments, a net after a dash) | 329 | 321 | 1 | 7 |
+
+- The six wrong dates were all one hosting provider's invoices in euros, printed "04/05/2026"
+  for the 4th of May and read month first (#109).
+- Nine wrong totals were one cloud provider's usage invoices: a pair of cent amounts in a
+  five-page usage table fitted 19 percent and was stored as the total (0.90 for 5.00) without a
+  flag (#121). Their only tax word was a "VAT-Code".
+- Three were mobile bills: the earlier invoice's "Summe Brutto", the amount to pay with an
+  earlier balance, or a chance figure, instead of "Rechnungsbetrag gesamt" (#142). The fee at 0
+  percent is part of the total, as the owner's table has it.
+- The one wrong total left is not a reading error: an invoice paid partly from credit, stored
+  at the amount paid by the owner's decision.
+- The seven missing totals: two GitHub and three Namecheap invoices, one Lemon Squeezy and one
+  Z.ai screenshot, whose text puts no label next to the total; the model that sees the page reads
+  them.
+- The vendor cell, judged since #111 (the evaluation script counts it): the text reader alone
+  names the table's vendor on 58 of 329, a wrong one on 106, none on 165. The vendor is the
+  model's job; the import log shows 243 names shortened by hand from legal entities, which is
+  why a new reading now keeps a vendor that is set (#111).
+
+The mail-scanning invoices of 2021 to 2023 (the value-added tax stored as the total): 44 of the
+70 monthly invoices carry text. Before #142 the text reader read the tax as the total on all 44
+(it took the dash before the net, "Gesamtsumme (zzgl. USt.) - 3,35 €", for a deduction); after,
+42 of 44 are right and the two others are invoices of 0.00.
+
+Not measured with the model: running `scripts/evaluate-page-reading.ts` needs the text
+recognition and model keys and reads the documents themselves, so it is for whoever holds both:
+`npx tsx scripts/evaluate-page-reading.ts <Finanzen folder> <Steuern/2026/kaufbelege-2026-extracted.csv> --state <file outside the repo>`
+(it reads the import table's format since #111).
+
+### Where the open points stand (2026-10-16)
+
+1. A new reading keeps a vendor that is set: done (#111). Only a restaurant's till receipt, which
+   prints its own name, has a heading stored as the vendor replaced.
+2. Measured on unseen documents: above, for the text reader. The model run is open (keys).
+3. The evaluation script judges the vendor cell: done (#111).
+
+Built alongside in this lane: the item reuses the wording the vendor's receipts already carry
+(#122, restored as #130 after #124 overwrote it), the reader says when a file holds more than one
+document (#138), a corrected or paid total ends its "Betrag prüfen" (#143), both tax rate columns
+follow one order (#144), and an electronic invoice's structured data stands over the page
+reading (#146, the reading side of #134).
+
+Still open, with their reasons:
+
+- An amount in another currency printed next to the euro amount, and a euro invoice read as
+  dollars (one each in the 2026-10-11 import): the model is told now which currency to give (#142),
+  but without the two documents the rule cannot be checked.
+- Restaurant receipts read before the tip where the owner's table has the paid total (three in the
+  2026 import): what the Gross cell holds for a meal with a tip (the bill, with the tip in its own
+  column, or the amount paid) is a decision for the meal register, not the reader.
+- Image-only invoices without a total (four in the 2026 import): there is no text, so the model is
+  not asked. Asking it there would store a total nothing checks.
+- A file with two documents is now said to be one; splitting it is the upload's.
+- A credit note received as an electronic invoice is kept without an amount until a person books
+  it: how a credit note is booked (a negative receipt, a reduction of the purchase it refers to)
+  is the owner's call.

@@ -6,12 +6,12 @@ import { firstColumnIdByName } from '@/lib/column-lookup';
 import { isoDay, type SelectOptionsByColumn } from '@/lib/meals/record';
 import { allReceiptRows, tableContext } from '@/lib/meals/service';
 import { isGroupRow } from '@/lib/receipts-kind';
-import { serializeTaxLines } from '@/lib/meals/rules';
+import { parseTaxLines, serializeTaxLines } from '@/lib/meals/rules';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 import { kontoFor, newReading, type NewReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
 import { isConfirmable, isReadFlag, lookAlikes, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
 import { getFxRate } from '@/lib/fx-rates';
-import { withTaxRates } from '@/lib/tax-rates';
+import { orderedRates, withTaxRates } from '@/lib/tax-rates';
 import { rowsWithOwnTreatment } from '@/lib/tax/service';
 
 /**
@@ -326,8 +326,17 @@ export async function applyNewReading(
   // The printed tax groups go with the amounts, so a meal's tax split in the register matches the new
   // total. A receipt that is no meal keeps them too: they are what its rates text is derived from.
   const amountsTaken = take.some((c) => c.field === 'gross' || c.field === 'net' || c.field === 'taxRate');
+  const rateChange = take.find((c) => c.field === 'taxRate');
+  const rateTaken = rateChange ? Number(rateChange.to) : undefined;
   if (amountsTaken && reading.taxLines.length > 0) {
     cells[columnId(MEAL_COLUMNS.taxLines)] = serializeTaxLines(reading.taxLines);
+  } else if (rateTaken !== undefined) {
+    // A rate taken without lines of its own: stored lines that start with
+    // another rate contradict it and go, so the rates text and the number
+    // column name the same first rate (the rule of settleReading).
+    const linesId = firstColumnIdByName(table.columns).get(MEAL_COLUMNS.taxLines);
+    const storedLines = linesId ? parseTaxLines(row.cells[linesId]) : null;
+    if (linesId && storedLines?.length && orderedRates(storedLines)[0] !== rateTaken) cells[linesId] = serializeTaxLines(null);
   }
   // A vendor or a total taken from the proposal is said by the name too, unless the proposal names the receipt itself.
   const named = await withFollowingName(table.adapter, table.columns, cells, row.cells);

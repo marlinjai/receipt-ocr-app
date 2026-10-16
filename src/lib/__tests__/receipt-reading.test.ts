@@ -216,3 +216,15 @@ describe('one line set, also where the proof covers part of the bill or the read
     expect(orderedRates(settled.meal?.taxLines)).toEqual([19, 7]);
   });
 });
+
+describe('the net follows the same lines', () => {
+  it('model lines that add up to the bill give the net; lines that do not leave it to the rate', () => {
+    const slip = ['Imbiss Beispiel', 'Tisch 2', '19.02.2026', 'Summe 48,77'].join('\n');
+    const meal = { ...EMPTY_MEAL_CLASSIFICATION, taxLines: [{ rate: 7, net: 20, tax: 1.4 }, { rate: 19, net: 23, tax: 4.37 }] };
+    const adds = settle(slip, answer({ category: 'Bewirtung', gross: 48.77, meal }));
+    expect(adds.taxRate).toBe(19);
+    expect(adds.net).toBe(43);
+    const off = settle(slip.replace('48,77', '50,00'), answer({ category: 'Bewirtung', gross: 50, meal: { ...meal, taxLines: [...meal.taxLines] } }));
+    expect(off.net).toBe(42.02);
+  });
+});

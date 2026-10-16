@@ -106,7 +106,8 @@ describe('later writes keep the text in step', () => {
     await saveMealDetails(db, ctx, rowId, { ...details, taxLines: [{ rate: 7, net: 60, tax: 4.2 }, { rate: 19, net: 30, tax: 5.7 }] });
     expect(await ratesOf(ws, rowId)).toBe('7 % + 19 %');
     await saveMealDetails(db, ctx, rowId, { ...details, taxLines: null });
-    expect(await ratesOf(ws, rowId)).toBe('19 %');
+    // The lines had brought the number column to their first rate, 7: without lines the row says that single rate.
+    expect(await ratesOf(ws, rowId)).toBe('7 %');
   });
 
   it('the meal form saved without touching the tax lines leaves the text alone, also one typed by hand', async () => {
@@ -152,5 +153,59 @@ describe('later writes keep the text in step', () => {
     const mixed = await ws.addReceipt(plainMealReceipt({ 'Tax Rate': 7, 'Tax Lines': serializeTaxLines([{ rate: 7, net: 30, tax: 2.1 }, { rate: 19, net: 12, tax: 2.28 }]) }));
     await edit(mixed, 19);
     expect(await ratesOf(ws, mixed)).toBe('7 % + 19 %');
+  });
+});
+
+describe('one order of rates, also for receipts stored before it', () => {
+  async function valueOf(ws: TestWorkspace, rowId: string, name: string): Promise<unknown> {
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    return (await ws.adapter.getRow(rowId))!.cells[columns.find((c) => c.name === name)!.id] ?? null;
+  }
+
+  it('a table filled in the old order gets one more pass: a text the old order made is rewritten, a typed one stays', async () => {
+    const ws = await createWorkspace();
+    // 7 percent 100.00/7.00 (107.00) and 19 percent 99.00/18.81 (117.81): by net 7 came first, by the bill 19 does.
+    const lines = serializeTaxLines([{ rate: 7, net: 100, tax: 7 }, { rate: 19, net: 99, tax: 18.81 }]);
+    const old = await ws.addReceipt(plainMealReceipt({ 'Tax Rate': 19, 'Tax Lines': lines, 'Tax Rates': '7 % + 19 %' }));
+    const typed = await ws.addReceipt(plainMealReceipt({ 'Tax Rate': 19, 'Tax Lines': lines, 'Tax Rates': 'von Hand' }));
+    const right = await ws.addReceipt({ Name: 'Bürobedarf', Gross: 11.9, 'Tax Rate': 19, 'Tax Rates': '19 %' });
+    // As a table filled before: only the first marker.
+    const ratesColumn = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Tax Rates')!;
+    await ws.adapter.updateColumn(ratesColumn.id, { config: { taxRatesFilled: true } });
+
+    await ensureReceiptsTable(ws.adapter, ws.workspaceId, { db, tenantId: ws.tenantId });
+    expect(await ratesOf(ws, old)).toBe('19 % + 7 %');
+    expect(await ratesOf(ws, typed)).toBe('von Hand');
+    expect(await ratesOf(ws, right)).toBe('19 %');
+
+    // Done once: a text set back to the old order later is left as it is.
+    await ws.adapter.updateRow(old, { [ratesColumn.id]: '7 % + 19 %' });
+    await ensureReceiptsTable(ws.adapter, ws.workspaceId, { db, tenantId: ws.tenantId });
+    expect(await ratesOf(ws, old)).toBe('7 % + 19 %');
+  });
+
+  it('the meal form: new tax lines bring the number column with them', async () => {
+    const ws = await createWorkspace();
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    const rowId = await ws.addReceipt(plainMealReceipt({ 'Tax Rate': 19 }));
+    const guest = await contactStore(db, ctx).create({ name: 'Erika Beispiel', companyOrRole: 'Beispiel GmbH' });
+    await saveMealDetails(db, ctx, rowId, {
+      mealType: 'business_meal_external', occasion: 'Abstimmung Relaunch Webshop', place: 'Testlokal, Musterstraße 1, 12345 Musterstadt',
+      host: 'Inhaber Beispiel', tip: null, consumption: 'dine_in', guestContactIds: [guest.id], date: null, gross: null,
+      taxLines: [{ rate: 7, net: 60, tax: 4.2 }, { rate: 19, net: 30, tax: 5.7 }],
+    });
+    expect(await valueOf(ws, rowId, 'Tax Rate')).toBe(7);
+    expect(await ratesOf(ws, rowId)).toBe('7 % + 19 %');
+  });
+
+  it('a rate taken from the review list without lines of its own clears stored lines that start with another rate', async () => {
+    const ws = await createWorkspace();
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    // The text proves 19 percent on the whole bill; the stored lines (typed or read by a model) say 7 percent.
+    const text = 'Musterladen\nNetto 100,00\nMwSt 19% 19,00\nSumme 119,00';
+    const rowId = await ws.addReceipt({ Name: 'Einkauf', Vendor: 'Musterladen', 'OCR Text': text, Gross: 119, Net: 111.21, 'Tax Rate': 7, Category: 'Bürobedarf', 'Tax Lines': serializeTaxLines([{ rate: 7, net: 111.21, tax: 7.79 }]) });
+    await applyNewReading(db, ctx, rowId, ['net', 'taxRate']);
+    expect(await valueOf(ws, rowId, 'Tax Rate')).toBe(19);
+    expect(await ratesOf(ws, rowId)).toBe('19 %');
   });
 });

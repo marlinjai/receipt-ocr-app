@@ -216,8 +216,30 @@ export async function ensureReceiptsTable(
   await underSchemaLock(owner.db, workspaceId, isCurrent, () => bringReceiptsTableUpToDate(adapter, workspaceId, owner));
 }
 
-/** Set on the rates column's config once every receipt that existed before it has its text. */
-const RATES_FILLED = 'taxRatesFilled';
+/**
+ * Set on the rates column's config once every receipt that existed before it
+ * has its text in the one order of rates (by the share of the bill, see
+ * src/lib/extraction/rate-order.ts). The first marker, `taxRatesFilled`, was
+ * set when the text was still ordered by net; a table that carries only that
+ * one gets one more pass, which rewrites the texts the old order made.
+ */
+const RATES_FILLED = 'taxRatesOrdered';
+
+/** The text the rates column got before the one order: the rates of the lines by their net, the largest first. */
+export function ratesTextByNet(lines: ReadonlyArray<{ rate: number; net?: number | null }> | null, fallbackRate: number | null): string {
+  const netByRate = new Map<number, number>();
+  for (const line of lines ?? []) {
+    if (typeof line.rate !== 'number' || !Number.isFinite(line.rate)) continue;
+    netByRate.set(line.rate, (netByRate.get(line.rate) ?? 0) + (typeof line.net === 'number' && Number.isFinite(line.net) ? line.net : 0));
+  }
+  if (netByRate.size > 0) {
+    return [...netByRate.entries()]
+      .sort((a, b) => b[1] - a[1] || b[0] - a[0])
+      .map(([rate]) => formatTaxRates([{ rate, net: 1 }], null))
+      .join(' + ');
+  }
+  return formatTaxRates(null, fallbackRate);
+}
 /** How long one page load works on the fill before it leaves the rest to the next one. */
 const FILL_BUDGET_MS = 45_000;
 
@@ -281,12 +303,25 @@ async function fillTaxRates(adapter: PrismaAdapter, tableId: string): Promise<bo
   for (;;) {
     const page = await adapter.getRows(tableId, { limit: 500, offset, includeArchived: true });
     for (const listed of page.items) {
-      if (!blank(listed.cells[ratesId])) continue;
+      // A text the old order made from the row's own lines is rewritten in the one order; any other text (typed by a person) stays.
+      const outdated = (cells: Record<string, unknown>) => {
+        const lines = linesId ? parseTaxLines(cells[linesId]) : null;
+        const rate = rateId ? numberOrNull(cells[rateId]) : null;
+        const text = cells[ratesId];
+        return typeof text === 'string' && text !== '' && text === ratesTextByNet(lines, rate) && text !== formatTaxRates(lines, rate);
+      };
+      if (!blank(listed.cells[ratesId]) && !outdated(listed.cells)) continue;
       if (Date.now() > deadline) return false;
       try {
         // Read again: the row may have been edited since the page was listed.
         const row = await adapter.getRow(listed.id);
-        if (!row || !blank(row.cells[ratesId])) continue;
+        if (!row || !(blank(row.cells[ratesId]) || outdated(row.cells))) continue;
+        if (!blank(row.cells[ratesId])) {
+          await adapter.updateRow(row.id, {
+            [ratesId]: formatTaxRates(linesId ? parseTaxLines(row.cells[linesId]) : null, rateId ? numberOrNull(row.cells[rateId]) : null),
+          });
+          continue;
+        }
         const printed = linesId ? printedTaxLines(row.cells, ids) : null;
         const lines = printed && linesId ? { [linesId]: serializeTaxLines(printed) } : {};
         // The text any write of these lines, or of this rate, would get.

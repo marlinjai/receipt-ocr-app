@@ -181,6 +181,12 @@ export function settleReading(fullText: string, extracted: TextExtraction, ai: M
   }
   const taxRate = orderedRates(lines)[0] ?? amounts.taxRate ?? ai?.taxRate ?? defaultTaxRate(category, date, meal?.consumption ?? null);
   let net = amounts.net;
+  // The net of the same lines where they add up to the bill: the register's
+  // input tax and the Net column then come from one set of figures.
+  const linesSum = lines.reduce((sum, l) => sum + l.net + l.tax, 0);
+  if (net === null && amounts.gross !== null && lines.length > 0 && Math.abs(linesSum - amounts.gross) <= 0.02) {
+    net = Math.round(lines.reduce((sum, l) => sum + l.net, 0) * 100) / 100;
+  }
   if (amounts.gross !== null && net === null) net = Math.round((amounts.gross / (1 + taxRate / 100)) * 100) / 100;
   if (meal && amounts.tip != null) meal.tip = amounts.tip;
   return { category, vendor, date, currency, amounts, gross: amounts.gross, net, taxRate, meal, flags };

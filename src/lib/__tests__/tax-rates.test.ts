@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatTaxRates, orderedRates, touchesTaxRates, withTaxRates } from '../tax-rates';
+import { orderLines } from '../extraction/rate-order';
 
 const COLUMNS = [
   { id: 'c-rate', name: 'Tax Rate' },
@@ -109,5 +110,40 @@ describe('orderedRates: shares in cents, nothing negative', () => {
 
   it('a line that carries nothing or less does not take part', () => {
     expect(orderedRates([{ rate: 19, net: 10, tax: 1.9 }, { rate: 7, net: -50, tax: -3.5 }, { rate: 0, net: 0, tax: 0 }])).toEqual([19]);
+  });
+});
+
+describe('orderLines and refunds', () => {
+  it('orders the lines by the share their rate carries, the larger line first within a rate, a rate carrying nothing last', () => {
+    const lines = [
+      { rate: 19, net: 10, tax: 1.9 },
+      { rate: 7, net: 60, tax: 4.2 },
+      { rate: 19, net: 50, tax: 9.5 },
+      { rate: 0, net: 0, tax: 0 },
+    ];
+    // 19 percent carries 71.40 in all, 7 percent 64.20.
+    expect(orderLines(lines)).toEqual([
+      { rate: 19, net: 50, tax: 9.5 },
+      { rate: 19, net: 10, tax: 1.9 },
+      { rate: 7, net: 60, tax: 4.2 },
+      { rate: 0, net: 0, tax: 0 },
+    ]);
+  });
+
+  it('a refund at a rate is set against that rate before the order is decided', () => {
+    // 19 percent: 100.00 sold, 60.00 refunded, 40.00 left; 7 percent: 50.00.
+    expect(orderedRates([{ rate: 19, net: 100, tax: 19 }, { rate: 19, net: -60, tax: -11.4 }, { rate: 7, net: 50, tax: 3.5 }])).toEqual([7, 19]);
+  });
+});
+
+describe('withTaxRates: new tax lines bring the number column with them', () => {
+  it('the rate follows the first of the new lines where the write does not set it', () => {
+    const out = withTaxRates(COLUMNS, { 'c-lines': lines([7, 100], [19, 20]) }, { 'c-rate': 19, 'c-lines': lines([19, 20]) });
+    expect(out).toMatchObject({ 'c-rate': 7, 'c-rates': '7 % + 19 %' });
+  });
+
+  it('a rate the write sets itself stands, and a rate typed on a row with lines stays as typed', () => {
+    expect(withTaxRates(COLUMNS, { 'c-rate': 19, 'c-lines': lines([7, 100], [19, 20]) })).toMatchObject({ 'c-rate': 19, 'c-rates': '7 % + 19 %' });
+    expect(withTaxRates(COLUMNS, { 'c-rate': 19 }, { 'c-lines': lines([7, 100]), 'c-rate': 7 })).toMatchObject({ 'c-rate': 19, 'c-rates': '7 %' });
   });
 });

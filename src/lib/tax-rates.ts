@@ -67,7 +67,7 @@ export function withTaxRates<V>(
   columns: ReadonlyArray<{ id: string; name: string }>,
   cells: Record<string, V>,
   stored?: Record<string, unknown> | null,
-): Record<string, V | string> {
+): Record<string, V | string | number> {
   const ids = firstColumnIdByName(columns);
   const ratesId = ids.get(TAX_RATES_COLUMN);
   if (!ratesId || ratesId in cells) return cells;
@@ -79,5 +79,12 @@ export function withTaxRates<V>(
   const changes = (id: string | undefined): boolean => id !== undefined && id in cells && (!stored || !sameCell(cells[id], stored[id]));
   if (!changes(rateId) && !changes(linesId)) return cells;
   const value = (id: string | undefined): unknown => (id === undefined ? null : id in cells ? cells[id] : (stored?.[id] ?? null));
-  return { ...cells, [ratesId]: formatTaxRates(parseTaxLines(value(linesId)), numberOrNull(value(rateId))) };
+  const lines = parseTaxLines(value(linesId));
+  // New tax lines bring the number column with them where the write does not
+  // set it itself: the first rate of the lines, so both columns name the same
+  // first rate. A rate a person types on a row with lines stands as typed.
+  const leading = orderedRates(lines)[0];
+  const rateFollows = changes(linesId) && rateId !== undefined && !(rateId in cells) && leading !== undefined;
+  const rate = rateFollows ? leading : numberOrNull(value(rateId));
+  return { ...cells, ...(rateFollows ? { [rateId]: leading } : {}), [ratesId]: formatTaxRates(lines, rate) };
 }

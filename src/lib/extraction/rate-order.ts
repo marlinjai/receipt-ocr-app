@@ -29,19 +29,21 @@ function shareInCents(line: RateLine): number {
 }
 
 /**
- * The rates of the lines, each once, in the one order. A line without a
- * usable rate, or one that carries nothing or less (a refund, a discount at
- * a rate), does not take part.
+ * The rates of the lines, each once, in the one order. The lines of one rate
+ * are added up first, so a refund at a rate is set against that rate's sale;
+ * a rate that carries nothing or less in all, and a line without a usable
+ * rate, do not take part.
  */
 export function orderedRates(lines: ReadonlyArray<RateLine> | null | undefined): number[] {
   const byRate = new Map<number, number>();
   for (const line of lines ?? []) {
     if (!finite(line.rate)) continue;
-    const share = shareInCents(line);
-    if (share <= 0) continue;
-    byRate.set(line.rate, (byRate.get(line.rate) ?? 0) + share);
+    byRate.set(line.rate, (byRate.get(line.rate) ?? 0) + shareInCents(line));
   }
-  return [...byRate.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0]).map(([rate]) => rate);
+  return [...byRate.entries()]
+    .filter(([, share]) => share > 0)
+    .sort((a, b) => b[1] - a[1] || b[0] - a[0])
+    .map(([rate]) => rate);
 }
 
 /** The lines themselves in the one order: by the share their rate carries, then the larger line first. */

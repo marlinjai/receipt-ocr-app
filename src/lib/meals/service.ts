@@ -18,7 +18,7 @@ import { rowToMealRecord, type SelectOptionsByColumn } from './record';
 import { isDismissedMeal, isMealRelated, serializeTaxLines } from './rules';
 import { parseRotation, type Rotation } from './viewer-state';
 import { DEFAULT_TAX_SETTINGS, type MealGuestEntry, type MealRecord, type MealTaxSettings } from './types';
-import { TAX_RATES_COLUMN, formatTaxRates } from '@/lib/tax-rates';
+import { TAX_RATES_COLUMN, TAX_RATE_COLUMN, formatTaxRates, orderedRates } from '@/lib/tax-rates';
 import { isGroupRow, receiptsOnly } from '@/lib/receipts-kind';
 import { releaseChildRows, restoreChildRows } from '@/lib/groups/links';
 
@@ -296,7 +296,12 @@ async function writeMealInput(
   // leaves the text alone, also one a person has typed.
   const ratesColumn = ctx.columns.find((c) => c.name === TAX_RATES_COLUMN);
   if (ratesColumn && serializeTaxLines(merged.taxLines) !== serializeTaxLines(current.taxLines)) {
-    cells[ratesColumn.id] = formatTaxRates(merged.taxLines, current.taxRate);
+    // New lines bring the number column with them: its rate is the first of
+    // the lines in the one order, so the two columns name the same first rate.
+    const leading = orderedRates(merged.taxLines)[0];
+    const rateColumn = ctx.columns.find((c) => c.name === TAX_RATE_COLUMN);
+    if (rateColumn && leading !== undefined) cells[rateColumn.id] = leading;
+    cells[ratesColumn.id] = formatTaxRates(merged.taxLines, leading ?? current.taxRate);
   }
   if (merged.date !== stored.date) cells[columnId('Date')] = merged.date;
   if (merged.gross !== null && merged.gross !== stored.gross) cells[columnId('Gross')] = merged.gross;

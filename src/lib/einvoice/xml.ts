@@ -7,7 +7,11 @@
  * their namespaces, and the prefixes differ from one issuer to the next.
  * Anything an invoice never contains is refused instead of interpreted: a
  * document type declaration (no entity can expand), an unknown entity, a tag
- * that does not close. A file it refuses is read like any other receipt.
+ * that does not close, a duplicate attribute. A file it refuses is read like
+ * any other receipt.
+ *
+ * It reads with a cursor, never searching the rest of the file twice, so its
+ * time grows with the length of the file even for hostile input.
  */
 
 export interface XmlElement {
@@ -31,63 +35,108 @@ export const MAX_XML_CHARS = 5_000_000;
 
 const ENTITIES: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
 
+/** Decode the five XML entities and character references; anything else with "&" is refused. */
 function decode(text: string): string {
-  return text.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (whole, ref: string) => {
-    if (ref.startsWith('#x')) return String.fromCodePoint(Number.parseInt(ref.slice(2), 16));
-    if (ref.startsWith('#')) return String.fromCodePoint(Number.parseInt(ref.slice(1), 10));
-    const named = ENTITIES[ref];
-    if (named === undefined) throw new XmlError(`unknown entity ${whole}`);
-    return named;
-  });
+  if (!text.includes('&')) return text;
+  let out = '';
+  let pos = 0;
+  while (pos < text.length) {
+    const amp = text.indexOf('&', pos);
+    if (amp === -1) {
+      out += text.slice(pos);
+      break;
+    }
+    out += text.slice(pos, amp);
+    const semi = text.indexOf(';', amp);
+    if (semi === -1 || semi - amp > 12) throw new XmlError('bare ampersand');
+    const ref = text.slice(amp + 1, semi);
+    let value: string | undefined;
+    if (/^#x[0-9a-fA-F]{1,6}$/.test(ref)) value = String.fromCodePoint(Number.parseInt(ref.slice(2), 16));
+    else if (/^#\d{1,7}$/.test(ref)) value = String.fromCodePoint(Number.parseInt(ref.slice(1), 10));
+    else value = ENTITIES[ref];
+    if (value === undefined) throw new XmlError(`unknown entity &${ref};`);
+    out += value;
+    pos = semi + 1;
+  }
+  return out;
 }
 
 const localName = (qualified: string) => qualified.slice(qualified.indexOf(':') + 1);
 
-const TOKEN =
-  /<!--[\s\S]*?-->|<!\[CDATA\[([\s\S]*?)\]\]>|<\?[\s\S]*?\?>|<!([A-Za-z][^>]*)>|<\/([A-Za-z_][\w:.-]*)\s*>|<([A-Za-z_][\w:.-]*)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g;
-const ATTRIBUTE = /([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+const NAME = /[A-Za-z_][\w:.-]*/y;
+const ATTRIBUTE = /\s+([A-Za-z_][\w:.-]*)\s*=\s*(?:"([^"<]*)"|'([^'<]*)')/y;
+const TAG_END = /\s*(\/?)>/y;
+
+function matchAt(pattern: RegExp, text: string, pos: number): RegExpExecArray | null {
+  pattern.lastIndex = pos;
+  return pattern.exec(text);
+}
 
 /** Parse a whole document; returns its root element. Throws `XmlError` on anything malformed or unsupported. */
 export function parseXml(source: string): XmlElement {
   if (source.length > MAX_XML_CHARS) throw new XmlError('document too large');
   const text = source.replace(/^﻿/, '');
-  const stack: XmlElement[] = [];
+  const stack: Array<{ element: XmlElement; qualified: string }> = [];
   let root: XmlElement | null = null;
-  let last = 0;
+  let pos = 0;
   const addText = (chunk: string) => {
-    if (stack.length > 0) stack[stack.length - 1].text += chunk;
+    if (stack.length > 0) stack[stack.length - 1].element.text += chunk;
     else if (chunk.trim()) throw new XmlError('text outside the root element');
   };
-  for (const match of text.matchAll(TOKEN)) {
-    const between = text.slice(last, match.index);
-    if (between.includes('<')) throw new XmlError('malformed tag');
-    addText(decode(between));
-    last = match.index + match[0].length;
-    const [whole, cdata, declaration, closing, opening, attributeText, selfClosing] = match;
-    if (whole.startsWith('<!--') || whole.startsWith('<?')) continue;
-    if (cdata !== undefined) {
-      addText(cdata);
-      continue;
+  /** Skip to just after `terminator`, which must follow; otherwise the document is broken. */
+  const skipTo = (terminator: string, from: number): number => {
+    const end = text.indexOf(terminator, from);
+    if (end === -1) throw new XmlError(`unterminated ${terminator}`);
+    return end + terminator.length;
+  };
+
+  while (pos < text.length) {
+    const lt = text.indexOf('<', pos);
+    if (lt === -1) {
+      addText(decode(text.slice(pos)));
+      break;
     }
-    if (declaration !== undefined) throw new XmlError('document type declarations are not accepted');
-    if (closing !== undefined) {
+    if (lt > pos) addText(decode(text.slice(pos, lt)));
+    if (text.startsWith('<!--', lt)) {
+      pos = skipTo('-->', lt + 4);
+    } else if (text.startsWith('<![CDATA[', lt)) {
+      const end = skipTo(']]>', lt + 9);
+      if (stack.length === 0) throw new XmlError('CDATA outside the root element');
+      addText(text.slice(lt + 9, end - 3));
+      pos = end;
+    } else if (text.startsWith('<?', lt)) {
+      pos = skipTo('?>', lt + 2);
+    } else if (text.startsWith('<!', lt)) {
+      throw new XmlError('document type declarations are not accepted');
+    } else if (text.startsWith('</', lt)) {
+      const name = matchAt(NAME, text, lt + 2);
+      const end = name && matchAt(/\s*>/y, text, lt + 2 + name[0].length);
+      if (!name || !end) throw new XmlError('malformed closing tag');
       const open = stack.pop();
-      if (!open || open.name !== localName(closing)) throw new XmlError(`unexpected closing tag ${closing}`);
-      continue;
+      if (!open || open.qualified !== name[0]) throw new XmlError(`unexpected closing tag ${name[0]}`);
+      pos = lt + 2 + name[0].length + end[0].length;
+    } else {
+      const name = matchAt(NAME, text, lt + 1);
+      if (!name) throw new XmlError('malformed tag');
+      const element: XmlElement = { name: localName(name[0]), attributes: {}, children: [], text: '' };
+      const seen = new Set<string>();
+      let cursor = lt + 1 + name[0].length;
+      for (let attribute = matchAt(ATTRIBUTE, text, cursor); attribute; attribute = matchAt(ATTRIBUTE, text, cursor)) {
+        if (seen.has(attribute[1])) throw new XmlError(`duplicate attribute ${attribute[1]}`);
+        seen.add(attribute[1]);
+        element.attributes[localName(attribute[1])] = decode(attribute[2] ?? attribute[3] ?? '');
+        cursor += attribute[0].length;
+      }
+      const end = matchAt(TAG_END, text, cursor);
+      if (!end) throw new XmlError('malformed tag');
+      if (stack.length > 0) stack[stack.length - 1].element.children.push(element);
+      else if (root) throw new XmlError('more than one root element');
+      else root = element;
+      if (!end[1]) stack.push({ element, qualified: name[0] });
+      pos = cursor + end[0].length;
     }
-    const element: XmlElement = { name: localName(opening), attributes: {}, children: [], text: '' };
-    for (const attribute of (attributeText ?? '').matchAll(ATTRIBUTE)) {
-      element.attributes[localName(attribute[1])] = decode(attribute[2] ?? attribute[3] ?? '');
-    }
-    if (stack.length > 0) stack[stack.length - 1].children.push(element);
-    else if (root) throw new XmlError('more than one root element');
-    else root = element;
-    if (!selfClosing) stack.push(element);
   }
-  const rest = text.slice(last);
-  if (rest.includes('<')) throw new XmlError('malformed tag');
-  addText(decode(rest));
-  if (stack.length > 0) throw new XmlError(`unclosed element ${stack[stack.length - 1].name}`);
+  if (stack.length > 0) throw new XmlError(`unclosed element ${stack[stack.length - 1].qualified}`);
   if (!root) throw new XmlError('no root element');
   return root;
 }

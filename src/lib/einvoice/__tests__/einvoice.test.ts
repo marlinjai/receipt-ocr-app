@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readStructuredInvoice, structuredReceiptFields } from '../index';
 import { centsOf, readInvoiceXml } from '../parse';
 import { parseXml, XmlError } from '../xml';
-import { CII_INVOICE, pdfWithEmbeddedXml, UBL_CREDIT_NOTE, UBL_INVOICE } from './samples';
+import { CII_INVOICE, pdfWithEmbeddedXml, pdfWithLayout, UBL_CREDIT_NOTE, UBL_INVOICE } from './samples';
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 
@@ -155,5 +155,115 @@ describe('structuredReceiptFields', () => {
 
   it('marks a credit note and keeps its amount positive', () => {
     expect(structuredReceiptFields(readInvoiceXml(UBL_CREDIT_NOTE)!)).toMatchObject({ creditNote: true, gross: 11.9 });
+  });
+});
+
+describe('hostile and unusual input', () => {
+  it('refuses unfinished comments, instructions and CDATA near the size limit quickly', () => {
+    for (const opener of ['<!--', '<?', '<![CDATA[']) {
+      const hostile = '<r>' + opener.repeat(Math.floor(4_000_000 / opener.length));
+      const start = performance.now();
+      expect(() => parseXml(hostile)).toThrow(XmlError);
+      expect(performance.now() - start).toBeLessThan(500);
+    }
+  });
+
+  it('is strict about names, attributes and ampersands', () => {
+    expect(() => parseXml('<a:x xmlns:a="1" xmlns:b="2"></b:x>')).toThrow(XmlError);
+    expect(() => parseXml('<x k="1" k="2"/>')).toThrow(XmlError);
+    expect(() => parseXml('<x>A & B</x>')).toThrow(XmlError);
+    expect(() => parseXml('<x k="<"/>')).toThrow(XmlError);
+  });
+
+  it('refuses an XML file over the size limit before decoding it', async () => {
+    const huge = new Uint8Array(5_000_001).fill(0x20);
+    huge[0] = 0x3c;
+    expect(await readStructuredInvoice(huge)).toBeNull();
+  });
+
+  it('reads an invoice from a name tree with Kids and from the associated files only', async () => {
+    const file = { name: 'factur-x.xml', bytes: bytes(CII_INVOICE) };
+    expect((await readStructuredInvoice(await pdfWithLayout({ files: [file], tree: 'kids' })))?.invoice.number).toBe('RE-2026-913');
+    expect((await readStructuredInvoice(await pdfWithLayout({ files: [file], tree: 'af' })))?.invoice.number).toBe('RE-2026-913');
+    expect((await readStructuredInvoice(await pdfWithLayout({ files: [{ ...file, compress: false }], tree: 'flat' })))?.invoice.number).toBe('RE-2026-913');
+  });
+
+  it('visits each node of a looping name tree once', async () => {
+    const start = performance.now();
+    const reading = await readStructuredInvoice(await pdfWithLayout({ files: [{ name: 'factur-x.xml', bytes: bytes(CII_INVOICE) }], tree: 'loop' }));
+    expect(reading?.invoice.number).toBe('RE-2026-913');
+    expect(performance.now() - start).toBeLessThan(2_000);
+  });
+
+  it('tries every embedded XML file: an unrelated one listed first does not hide the invoice', async () => {
+    const pdf = await pdfWithLayout({
+      files: [
+        { name: 'metadata.xml', bytes: bytes('<Order><ID>1</ID></Order>') },
+        { name: 'rechnung-daten.xml', bytes: bytes(UBL_INVOICE) },
+      ],
+      tree: 'flat',
+    });
+    expect((await readStructuredInvoice(pdf))?.source).toEqual({ kind: 'pdf_embedded', name: 'rechnung-daten.xml' });
+  });
+
+  it('stops inflating an embedded file at the bound, and trusts no declared size over it', async () => {
+    const bomb = new Uint8Array(6_000_000).fill(0x20);
+    expect(await readStructuredInvoice(await pdfWithLayout({ files: [{ name: 'factur-x.xml', bytes: bomb }], tree: 'flat' }))).toBeNull();
+    const declared = { name: 'factur-x.xml', bytes: bytes(CII_INVOICE), declaredSize: 9_000_000 };
+    expect(await readStructuredInvoice(await pdfWithLayout({ files: [declared], tree: 'flat' }))).toBeNull();
+  });
+
+  it('reads nothing from an encrypted PDF', async () => {
+    expect(await readStructuredInvoice(await pdfWithLayout({ files: [{ name: 'factur-x.xml', bytes: bytes(CII_INVOICE) }], tree: 'flat', encrypted: true }))).toBeNull();
+  });
+});
+
+describe('more of the standards', () => {
+  it('reads a CII credit note and the tax stated twice in two currencies', () => {
+    const credit = CII_INVOICE.replace('<ram:TypeCode>380</ram:TypeCode>', '<ram:TypeCode>381</ram:TypeCode>').replace(
+      '<ram:TaxTotalAmount currencyID="EUR">38.00</ram:TaxTotalAmount>',
+      '<ram:TaxTotalAmount currencyID="USD">41.00</ram:TaxTotalAmount><ram:TaxTotalAmount currencyID="EUR">38.00</ram:TaxTotalAmount>',
+    );
+    expect(readInvoiceXml(credit)).toMatchObject({ kind: 'credit_note', taxCents: 3_800, problems: [] });
+  });
+
+  it('takes the UBL tax total in the invoice currency when it comes second', () => {
+    const twice = UBL_INVOICE.replace('<cac:TaxTotal>', '<cac:TaxTotal><cbc:TaxAmount currencyID="USD">25.00</cbc:TaxAmount></cac:TaxTotal><cac:TaxTotal>');
+    expect(readInvoiceXml(twice)).toMatchObject({ taxCents: 2_250, taxGroups: [expect.objectContaining({ ratePercent: 19 }), expect.objectContaining({ ratePercent: 7 })] });
+  });
+
+  it('reads a credit note due date from its payment means, and type codes 81 and 83 as credit notes', () => {
+    const due = UBL_CREDIT_NOTE.replace('<cac:TaxTotal>', '<cac:PaymentMeans><cbc:PaymentMeansCode>58</cbc:PaymentMeansCode><cbc:PaymentDueDate>2026-10-31</cbc:PaymentDueDate></cac:PaymentMeans><cac:TaxTotal>');
+    expect(readInvoiceXml(due)?.dueDate).toBe('2026-10-31');
+    expect(readInvoiceXml(UBL_INVOICE.replace('<cbc:InvoiceTypeCode>380', '<cbc:InvoiceTypeCode>81'))?.kind).toBe('credit_note');
+    expect(readInvoiceXml(UBL_INVOICE.replace('<cbc:InvoiceTypeCode>380', '<cbc:InvoiceTypeCode>83'))?.kind).toBe('credit_note');
+  });
+
+  it('checks the amount due against prepaid and rounding amounts', () => {
+    const prepaid = UBL_INVOICE.replace(
+      '<cbc:PayableAmount currencyID="EUR">172.50</cbc:PayableAmount>',
+      '<cbc:PrepaidAmount currencyID="EUR">72.50</cbc:PrepaidAmount><cbc:PayableRoundingAmount currencyID="EUR">0.01</cbc:PayableRoundingAmount><cbc:PayableAmount currencyID="EUR">100.01</cbc:PayableAmount>',
+    );
+    expect(readInvoiceXml(prepaid)).toMatchObject({ prepaidCents: 7_250, roundingCents: 1, payableCents: 10_001, problems: [] });
+    expect(readInvoiceXml(prepaid.replace('>100.01<', '>90.00<'))?.problems).toContain('Zu zahlen passt nicht zu Gesamt minus Vorauszahlung.');
+    expect(readInvoiceXml(CII_INVOICE.replace('<ram:DuePayableAmount>188.00', '<ram:DuePayableAmount>238.00'))?.problems).toContain('Zu zahlen passt nicht zu Gesamt minus Vorauszahlung.');
+  });
+
+  it('takes a tax number marked otherwise than "FC" when it is not the VAT identification number', () => {
+    const other = UBL_INVOICE.replace('<cac:TaxScheme><cbc:ID>FC</cbc:ID></cac:TaxScheme>', '<cac:TaxScheme><cbc:ID>TAX</cbc:ID></cac:TaxScheme>');
+    expect(readInvoiceXml(other)?.seller).toMatchObject({ vatId: 'DE000000000', taxNumber: '00/000/00000' });
+  });
+
+  it('treats an invoice with negative totals as money back, and a credit note with negative totals as a charge', () => {
+    const negative = (xml: string) => xml.replace(/currencyID="EUR">(\d)/g, 'currencyID="EUR">-$1');
+    expect(structuredReceiptFields(readInvoiceXml(negative(UBL_INVOICE))!)).toMatchObject({ creditNote: true, gross: 172.5 });
+    expect(structuredReceiptFields(readInvoiceXml(negative(UBL_CREDIT_NOTE))!)).toMatchObject({ creditNote: false, gross: 11.9 });
+  });
+
+  it('reads decimal edge cases and refuses figures too long to stay exact', () => {
+    expect(centsOf('.5')).toBe(50);
+    expect(centsOf('5.')).toBe(500);
+    expect(centsOf('.')).toBeNull();
+    expect(centsOf('12345678901234')).toBeNull();
   });
 });

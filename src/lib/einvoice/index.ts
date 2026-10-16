@@ -12,7 +12,8 @@
  */
 
 import type { TaxGroup } from '@/lib/extraction/amounts';
-import { embeddedInvoiceXml } from './pdf';
+import { embeddedXmlFiles } from './pdf';
+import { MAX_XML_CHARS } from './xml';
 import { readInvoiceXml, type StructuredInvoice } from './parse';
 
 export type { StructuredInvoice, StructuredTaxGroup } from './parse';
@@ -59,12 +60,15 @@ const looksLikePdf = (bytes: Uint8Array) => bytes.length > 4 && String.fromCharC
  */
 export async function readStructuredInvoice(bytes: Uint8Array): Promise<StructuredReading | null> {
   if (looksLikePdf(bytes)) {
-    const embedded = await embeddedInvoiceXml(bytes);
-    if (!embedded) return null;
-    const invoice = readInvoiceXml(embedded.xml);
-    return invoice ? { source: { kind: 'pdf_embedded', name: embedded.name }, invoice, xml: embedded.xml } : null;
+    // Every embedded XML file in turn: an unrelated attachment may come before the invoice.
+    for (const embedded of await embeddedXmlFiles(bytes)) {
+      const invoice = readInvoiceXml(embedded.xml);
+      if (invoice) return { source: { kind: 'pdf_embedded', name: embedded.name }, invoice, xml: embedded.xml };
+    }
+    return null;
   }
-  if (!looksLikeXml(bytes)) return null;
+  // The size is checked before decoding. XRechnung is UTF-8 by rule (EN 16931); another declared encoding is read as UTF-8.
+  if (bytes.length > MAX_XML_CHARS || !looksLikeXml(bytes)) return null;
   const xml = new TextDecoder('utf-8').decode(bytes);
   const invoice = readInvoiceXml(xml);
   return invoice ? { source: { kind: 'xml' }, invoice, xml } : null;
@@ -99,7 +103,8 @@ export function structuredReceiptFields(invoice: StructuredInvoice): StructuredR
     taxGroups: groups.map((g) => ({ rate: g.ratePercent, net: Math.abs(g.netCents) / 100, tax: Math.abs(g.taxCents) / 100, gross: Math.abs(g.netCents + g.taxCents) / 100 })),
     currency: invoice.currency,
     invoiceNumber: invoice.number,
-    creditNote: invoice.kind === 'credit_note',
+    // A credit note, or an invoice with a negative total (EN 16931 allows one), is money back; both negative is a charge.
+    creditNote: (invoice.kind === 'credit_note') !== (invoice.grossCents !== null && invoice.grossCents < 0),
     problems: invoice.problems,
     text: text.join('\n'),
   };

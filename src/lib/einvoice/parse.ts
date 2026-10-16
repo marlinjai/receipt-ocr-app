@@ -41,6 +41,10 @@ export interface StructuredInvoice {
   grossCents: number | null;
   /** What is still to be paid: the total minus what was prepaid, plus rounding. */
   payableCents: number | null;
+  /** Paid before the invoice (0 when none is stated). */
+  prepaidCents: number;
+  /** Rounding added to the amount due (0 when none is stated). */
+  roundingCents: number;
   taxGroups: StructuredTaxGroup[];
   /** Figures that do not add up, in plain words; empty when the invoice is consistent. */
   problems: string[];
@@ -49,11 +53,12 @@ export interface StructuredInvoice {
 /** Cents from a decimal text ("1234.5", "-12.345"), rounded half away from zero; null when it is no number. */
 export function centsOf(text: string | null): number | null {
   if (text === null) return null;
-  const match = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(text.trim());
-  if (!match) return null;
+  // An XML decimal: "5", "5.", ".5", "-12.345". At most 13 whole digits, so cents stay exact.
+  const match = /^([+-]?)(\d{0,13})(?:\.(\d*))?$/.exec(text.trim());
+  if (!match || (match[2] === '' && !match[3])) return null;
   const [, sign, whole, fraction = ''] = match;
   const padded = (fraction + '000').slice(0, 3);
-  let cents = Number(whole) * 100 + Number(padded.slice(0, 2));
+  let cents = Number(whole || '0') * 100 + Number(padded.slice(0, 2));
   if (Number(padded[2]) >= 5) cents += 1;
   return sign === '-' ? -cents : cents;
 }
@@ -75,12 +80,16 @@ function dayOf(text: string | null): string | null {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day ? day : null;
 }
 
-const CREDIT_NOTE_CODES = new Set(['381', '261', '262', '296', '308', '396', '420', '458', '532']);
+/** The credit note type codes of EN 16931 (UNTDID 1001 subset). */
+const CREDIT_NOTE_CODES = new Set(['81', '83', '261', '262', '296', '308', '381', '396', '420', '458', '532']);
 
 function check(invoice: StructuredInvoice): string[] {
   const problems: string[] = [];
   const { netCents, taxCents, grossCents, taxGroups } = invoice;
   if (grossCents === null) problems.push('Kein Rechnungsbetrag angegeben.');
+  if (grossCents !== null && invoice.payableCents !== null && grossCents - invoice.prepaidCents + invoice.roundingCents !== invoice.payableCents) {
+    problems.push('Zu zahlen passt nicht zu Gesamt minus Vorauszahlung.');
+  }
   if (netCents !== null && taxCents !== null && grossCents !== null && netCents + taxCents !== grossCents) {
     problems.push('Netto und Steuer ergeben nicht den Rechnungsbetrag.');
   }
@@ -112,6 +121,8 @@ function readUbl(root: XmlElement): StructuredInvoice {
   const party = child(root, 'AccountingSupplierParty', 'Party');
   const schemes = children(party, 'PartyTaxScheme');
   const scheme = (id: string) => textAt(schemes.find((s) => textAt(s, 'TaxScheme', 'ID') === id), 'CompanyID');
+  // The seller's tax number (BT-32) is the party tax scheme that is not VAT; German issuers mostly mark it "FC".
+  const taxNumber = scheme('FC') ?? textAt(schemes.find((s) => textAt(s, 'TaxScheme', 'ID') !== 'VAT'), 'CompanyID');
   const totals = child(root, 'LegalMonetaryTotal');
   const taxTotals = children(root, 'TaxTotal');
   const taxTotal = taxTotals.find((t) => currency !== null && child(t, 'TaxAmount')?.attributes.currencyID === currency) ?? taxTotals[0] ?? null;
@@ -134,12 +145,14 @@ function readUbl(root: XmlElement): StructuredInvoice {
     seller: {
       name: textAt(party, 'PartyLegalEntity', 'RegistrationName') ?? textAt(party, 'PartyName', 'Name'),
       vatId: scheme('VAT'),
-      taxNumber: scheme('FC'),
+      taxNumber,
     },
     netCents: centsOf(textAt(totals, 'TaxExclusiveAmount')),
     taxCents: centsOf(amountInCurrency(children(taxTotal, 'TaxAmount'), currency)),
     grossCents: centsOf(textAt(totals, 'TaxInclusiveAmount')),
     payableCents: centsOf(textAt(totals, 'PayableAmount')),
+    prepaidCents: centsOf(textAt(totals, 'PrepaidAmount')) ?? 0,
+    roundingCents: centsOf(textAt(totals, 'PayableRoundingAmount')) ?? 0,
     taxGroups: groups,
     problems: [],
   };
@@ -176,6 +189,8 @@ function readCii(root: XmlElement): StructuredInvoice {
     taxCents: centsOf(amountInCurrency(children(summary, 'TaxTotalAmount'), currency)),
     grossCents: centsOf(textAt(summary, 'GrandTotalAmount')),
     payableCents: centsOf(textAt(summary, 'DuePayableAmount')),
+    prepaidCents: centsOf(textAt(summary, 'TotalPrepaidAmount')) ?? 0,
+    roundingCents: centsOf(textAt(summary, 'RoundingAmount')) ?? 0,
     taxGroups: groups,
     problems: [],
   };
@@ -184,6 +199,8 @@ function readCii(root: XmlElement): StructuredInvoice {
 /**
  * Read an electronic invoice from its XML text. Null when the text is no XML
  * the reader accepts, or XML of another kind (an order, a delivery note).
+ * ZUGFeRD 1.0 (root `CrossIndustryDocument`, issued until 2019) is not read:
+ * such a file falls back to reading the page, as before.
  */
 export function readInvoiceXml(xml: string): StructuredInvoice | null {
   let root: XmlElement;

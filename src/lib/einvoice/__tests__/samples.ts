@@ -4,7 +4,7 @@
  * CII) and Factur-X. No real invoice is used anywhere.
  */
 
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFHexString, PDFName, PDFString, StandardFonts, type PDFRef } from 'pdf-lib';
 
 /** A UBL invoice over 100.00 net at 19 % and 50.00 net at 7 %: 119.00 + 53.50 = 172.50. */
 export const UBL_INVOICE = `<?xml version="1.0" encoding="UTF-8"?>
@@ -144,4 +144,46 @@ export async function pdfWithEmbeddedXml(xml: string | null, name = 'factur-x.xm
   page.drawText('Rechnung Gesamt 999,99 EUR', { x: 20, y: 250, size: 12, font });
   if (xml !== null) await document.attach(new TextEncoder().encode(xml), name, { mimeType: 'text/xml', description: 'Factur-X' });
   return document.save();
+}
+
+/** How a hand-built PDF stores its embedded files. */
+export interface EmbeddingLayout {
+  files: Array<{ name: string; bytes: Uint8Array; compress?: boolean; declaredSize?: number }>;
+  /** 'flat': Names array on the root of the tree; 'kids': one level of Kids; 'af': only the catalog's AF array; 'loop': a Kids array that points back at itself. */
+  tree: 'flat' | 'kids' | 'af' | 'loop';
+  /** Mark the document as encrypted (an /Encrypt entry in the trailer). */
+  encrypted?: boolean;
+}
+
+/** A PDF built object by object, to test the paths `document.attach` never writes. */
+export async function pdfWithLayout(layout: EmbeddingLayout): Promise<Uint8Array> {
+  const document = await PDFDocument.create();
+  document.addPage([200, 200]);
+  const { context } = document;
+  const specs: Array<{ name: string; ref: PDFRef }> = layout.files.map((file) => {
+    const streamDict: Record<string, unknown> = { Type: 'EmbeddedFile', Subtype: 'text/xml' };
+    if (file.declaredSize !== undefined) streamDict.Params = { Size: file.declaredSize };
+    const stream = file.compress === false ? context.stream(file.bytes, streamDict as never) : context.flateStream(file.bytes, streamDict as never);
+    const streamRef = context.register(stream);
+    const spec = context.obj({ Type: 'Filespec', F: PDFString.of(file.name), UF: PDFHexString.fromText(file.name), EF: { F: streamRef, UF: streamRef }, AFRelationship: 'Alternative' });
+    return { name: file.name, ref: context.register(spec) };
+  });
+  const namesArray = specs.flatMap((s) => [PDFString.of(s.name), s.ref]);
+  if (layout.tree === 'af') {
+    document.catalog.set(PDFName.of('AF'), context.obj(specs.map((s) => s.ref)));
+  } else if (layout.tree === 'flat') {
+    document.catalog.set(PDFName.of('Names'), context.obj({ EmbeddedFiles: { Names: namesArray } }));
+  } else {
+    const leaf = context.register(context.obj({ Names: namesArray }));
+    const root = context.obj({ Kids: [leaf] });
+    const rootRef = context.register(root);
+    if (layout.tree === 'loop') {
+      // Fifty references back to the root itself: walked naively this is 50 to the power of the depth.
+      const loop = context.obj(Array.from({ length: 50 }, () => rootRef));
+      root.set(PDFName.of('Kids'), context.obj([leaf, ...loop.asArray()]));
+    }
+    document.catalog.set(PDFName.of('Names'), context.obj({ EmbeddedFiles: rootRef }));
+  }
+  if (layout.encrypted) context.trailerInfo.Encrypt = context.register(context.obj({ Filter: 'Standard', V: 2, R: 3 }));
+  return document.save({ useObjectStreams: false });
 }

@@ -41,6 +41,6 @@ describe('validateReceiptFile (attaching by hand)', () => {
   });
 
   it('still refuses other types', () => {
-    expect(validateReceiptFile(file('r.txt', 'text/plain'))).toMatch(/Only PDF, PNG, JPEG or XML/);
+    expect(validateReceiptFile(file('r.txt', 'text/plain'))).toBe('Only PDF, PNG, JPEG or XML files are supported.');
   });
 });

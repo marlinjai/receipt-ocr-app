@@ -20,7 +20,8 @@ interface Props {
   error: string | null;
   lastImport: ImportResult | null;
   onAddAccount: (input: { label: string; kind: AccountKind }, done: () => void) => void;
-  onImport: (accountId: string, text: string, done: () => void) => void;
+  /** With `onlyThisYear` only the payments booked in the year on screen are read. */
+  onImport: (accountId: string, text: string, onlyThisYear: boolean, done: () => void) => void;
   onUndoImport: (batchId: string) => void;
   onTreat: (counterparty: string, treatment: CounterpartyTreatment | null) => void;
   onLink: (input: { paymentId: string; rowId?: string; invoiceId?: string; cents?: number }) => void;
@@ -57,6 +58,8 @@ const SKIP_LABELS: Record<string, string> = {
   cancelled: 'storniert oder vollständig erstattet',
   zero_amount: 'ohne Betrag',
   duplicate_row: 'doppelt in der Datei',
+  other_year: 'außerhalb des gewählten Jahres',
+  covered_by_other_source: 'an Tagen, die eine andere Quelle dieses Kontos schon abdeckt',
 };
 const NOTICE_LABELS: Record<string, string> = {
   part_refunded: 'teilweise erstattet (der Kauf zählt voll; die Erstattung steht auf dem Bankkonto und wird dort dem Beleg zugeordnet)',
@@ -88,6 +91,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
   const [kind, setKind] = useState<AccountKind>('bank');
   const [accountId, setAccountId] = useState(view.payments.accounts[0]?.id ?? '');
   const [localError, setLocalError] = useState<string | null>(null);
+  const [onlyThisYear, setOnlyThisYear] = useState(false);
   // The payment whose picker for linking by hand is open. One at a time: the
   // picker lists every receipt, and one per open payment made the page draw
   // hundreds of thousands of entries on every action.
@@ -119,7 +123,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
       return setLocalError('Die Datei konnte nicht gelesen werden.');
     }
     setLocalError(null);
-    onImport(selectedAccount, text, () => {
+    onImport(selectedAccount, text, onlyThisYear, () => {
       if (fileInput.current) fileInput.current.value = '';
     });
   }
@@ -233,17 +237,24 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
               <label className="ui-label" htmlFor={`${id}-file`}>Datei (CSV oder JSON)</label>
               <input id={`${id}-file`} ref={fileInput} type="file" accept=".csv,.json,text/csv,application/json" className="ui-input" />
             </div>
+            <label className="flex items-center gap-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
+              <input type="checkbox" checked={onlyThisYear} onChange={(e) => setOnlyThisYear(e.target.checked)} />
+              Nur Zahlungen aus {view.year}
+            </label>
             <button type="button" className="ui-btn ui-btn-primary" disabled={busy} onClick={readAndImport}>{busy ? 'Liest ein …' : 'Einlesen'}</button>
           </div>
           <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
             Unterstützt: Exporte von N26, Tomorrow und PayPal, die Kaufliste von Klarna sowie die Umsatzliste der
             Bankschnittstelle. Eine Datei wird ganz oder gar nicht eingelesen; überlappende Zeiträume legen nichts doppelt
             an. Was ein Zahlungsdienst später vom Bankkonto einzieht, gilt als Umbuchung zwischen eigenen Konten, sobald
-            die Liste des Dienstes eingelesen ist.
+            die Liste des Dienstes eingelesen ist. Ein Konto lässt sich aus einer zweiten Quelle fortsetzen (ein
+            Bankexport, der mitten im Jahr endet, weiter mit der Umsatzliste der Bankschnittstelle): ein Tag gehört der
+            Quelle, die ihn zuerst gebracht hat, die andere Datei liest nur die übrigen Tage. Mit „Nur Zahlungen aus{' '}
+            {view.year}“ bleibt der Rest der Datei draußen; er lässt sich später noch einlesen.
           </p>
           {lastImport && (
             <p className="ui-note ui-note-ok mt-3" role="status">
-              Eingelesen: {lastImport.added} neue Zahlungen
+              Eingelesen{lastImport.onlyYear !== null ? ` (nur ${lastImport.onlyYear})` : ''}: {lastImport.added} neue Zahlungen
               {lastImport.alreadyThere > 0 ? `, ${lastImport.alreadyThere} waren schon vorhanden` : ''}
               {lastImport.autoLinked > 0 ? `, ${lastImport.autoLinked} über die Rechnungsnummer einer Rechnung zugeordnet` : ''}
               {lastImport.adopted > 0 ? `, ${lastImport.adopted} schon vorhandene an ihrer neuen Nummer wiedererkannt` : ''}.

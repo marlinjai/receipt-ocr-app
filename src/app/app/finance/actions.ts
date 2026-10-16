@@ -323,12 +323,13 @@ export async function addAccount(year: number, input: unknown): Promise<Result<S
 
 /**
  * Import one export file into an account. The file's text travels in the
- * request; it is parsed whole on the server before anything is stored.
+ * request; it is parsed whole on the server before anything is stored. With
+ * `onlyThisYear` only the payments booked in the year on screen are read.
  */
-export async function importPaymentFile(year: number, accountId: string, text: string): Promise<Result<{ view: StatementView; imported: ImportResult }>> {
+export async function importPaymentFile(year: number, accountId: string, text: string, onlyThisYear = false): Promise<Result<{ view: StatementView; imported: ImportResult }>> {
   try {
     const ctx = await writeContext();
-    const imported = await importPayments(prisma, ctx, String(accountId), String(text ?? ''));
+    const imported = await importPayments(prisma, ctx, String(accountId), String(text ?? ''), { onlyYear: onlyThisYear === true ? safeYear(year) : null });
     // The missing-receipt loop and the budget warnings run on what was just
     // imported (plan 2026-10-14, personal spending), after the answer is sent: notifying can take a while
     // and must never hold or fail the import. A failure is logged.

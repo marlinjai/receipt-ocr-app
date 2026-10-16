@@ -94,7 +94,25 @@ describe('PaymentsTab', () => {
     await user.upload(screen.getByLabelText('Datei (CSV oder JSON)'), new File(['a,b\n1,2\n'], 'export.csv', { type: 'text/csv' }));
     await user.click(screen.getByRole('button', { name: 'Einlesen' }));
     await vi.waitFor(() => expect(p.onImport).toHaveBeenCalled());
-    expect(p.onImport.mock.calls[0].slice(0, 2)).toEqual(['acc-1', 'a,b\n1,2\n']);
+    expect(p.onImport.mock.calls[0].slice(0, 3)).toEqual(['acc-1', 'a,b\n1,2\n', false]);
+    // Limited to the year on screen.
+    await user.click(screen.getByLabelText('Nur Zahlungen aus 2026'));
+    await user.click(screen.getByRole('button', { name: 'Einlesen' }));
+    await vi.waitFor(() => expect(p.onImport).toHaveBeenCalledTimes(2));
+    expect(p.onImport.mock.calls[1].slice(0, 3)).toEqual(['acc-1', 'a,b\n1,2\n', true]);
+  });
+
+  it('reports an import limited to a year and rows left out because another source covers their days', () => {
+    render(
+      <PaymentsTab
+        view={view()}
+        {...props()}
+        lastImport={{ batchId: 'b', format: 'enable_banking_json', total: 4, added: 4, alreadyThere: 0, skipped: { other_year: 454, covered_by_other_source: 120 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], onlyYear: 2026, firstDay: '2026-07-01', lastDay: '2026-07-04' }}
+      />,
+    );
+    const status = screen.getByRole('status').textContent;
+    expect(status).toContain('Eingelesen (nur 2026): 4 neue Zahlungen');
+    expect(status).toContain('454 außerhalb des gewählten Jahres, 120 an Tagen, die eine andere Quelle dieses Kontos schon abdeckt');
   });
 
   it('reports what an import did, including what was deliberately left out', () => {
@@ -102,7 +120,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 10, added: 7, alreadyThere: 3, skipped: { other_currency: 2, not_completed: 4 }, autoLinked: 1, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], firstDay: null, lastDay: null }}
+        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 10, added: 7, alreadyThere: 3, skipped: { other_currency: 2, not_completed: 4 }, autoLinked: 1, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], onlyYear: null, firstDay: null, lastDay: null }}
       />,
     );
     const status = screen.getByRole('status').textContent;
@@ -339,7 +357,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'klarna_csv', total: 5, added: 5, alreadyThere: 0, skipped: { cancelled: 2, duplicate_row: 1, zero_amount: 1 }, autoLinked: 0, cancelledEarlier: 2, releasedLinks: 1, adopted: 1, notices: { part_refunded: 1, unknown_status: 1 }, unknownStatuses: ['Angefochten'], firstDay: null, lastDay: null }}
+        lastImport={{ batchId: 'b', format: 'klarna_csv', total: 5, added: 5, alreadyThere: 0, skipped: { cancelled: 2, duplicate_row: 1, zero_amount: 1 }, autoLinked: 0, cancelledEarlier: 2, releasedLinks: 1, adopted: 1, notices: { part_refunded: 1, unknown_status: 1 }, unknownStatuses: ['Angefochten'], onlyYear: null, firstDay: null, lastDay: null }}
       />,
     );
     const status = screen.getByRole('status').textContent;

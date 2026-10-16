@@ -762,11 +762,11 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               error={error}
               lastImport={lastImport}
               onAddAccount={(input, done) => run(() => addAccount(view.year, input), `Konto ${input.label} angelegt.`, done)}
-              onImport={(accountId, text, done) => {
+              onImport={(accountId, text, onlyThisYear, done) => {
                 setLastImport(null);
                 run(
                   async () => {
-                    const result = await importPaymentFile(view.year, accountId, text);
+                    const result = await importPaymentFile(view.year, accountId, text, onlyThisYear);
                     if (!result.ok) return result;
                     setLastImport(result.value.imported);
                     return { ok: true, value: result.value.view };

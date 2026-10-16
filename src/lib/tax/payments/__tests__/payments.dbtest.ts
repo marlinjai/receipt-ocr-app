@@ -299,12 +299,14 @@ describe('findings of the review on the first version', () => {
     expect(await db.taxPayment.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
   });
 
-  it('an account stays with one source, so no movement is stored twice under two identities', async () => {
+  it('an account continued from a second source stores no movement twice: a day belongs to the source that brought it first', async () => {
     const { ws, ctx, accountId } = await workspace();
     await importPayments(db, ctx, accountId, JANUARY);
-    const tomorrow = 'account_type,booking_date,valuta_date,sender_or_recipient,iban,booking_type,description,category,amount,currency\nPersonal Account,2026-02-01,2026-02-01,Laden Beispiel,,Card Payment,Einkauf,shopping,"-12,00",EUR\n';
-    expect(await code(importPayments(db, ctx, accountId, tomorrow))).toBe('format_mismatch');
-    expect(await db.taxImportBatch.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(1);
+    // The other source repeats 22 January (stored by the first under another identity) and continues on 1 February.
+    const tomorrow = 'account_type,booking_date,valuta_date,sender_or_recipient,iban,booking_type,description,category,amount,currency\nPersonal Account,2026-01-22,2026-01-22,Vermieter Beispiel,,Debit Transfer,Miete,housing,"-650,00",EUR\nPersonal Account,2026-02-01,2026-02-01,Laden Beispiel,,Card Payment,Einkauf,shopping,"-12,00",EUR\n';
+    expect(await importPayments(db, ctx, accountId, tomorrow)).toMatchObject({ format: 'tomorrow_csv', total: 1, added: 1, skipped: { covered_by_other_source: 1 }, firstDay: '2026-02-01', lastDay: '2026-02-01' });
+    expect(await db.taxPayment.count({ where: { accountId } })).toBe(4);
+    expect(await db.taxImportBatch.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(2);
   });
 
   it('an earlier unlinked payment naming the same invoice makes a new one ambiguous: no automatic link', async () => {
@@ -541,10 +543,11 @@ describe('the pay-later purchase list: forward, change an earlier input, resume,
     expect(await db.taxPayment.count({ where: { accountId: laterId } })).toBe(0);
 
     expect(await importPayments(db, ctx, laterId, MARCH)).toMatchObject({ added: 2 });
-    // The account now stays with its source: a bank export into it is refused, and so is the list into the bank account.
-    expect(await code(importPayments(db, ctx, laterId, JANUARY))).toBe('format_mismatch');
+    // A day belongs to the source that brought it first: another source on the list's days adds nothing and is refused,
+    // and so is the list on the days a bank export covers.
+    expect(await code(importPayments(db, ctx, laterId, file(line('2025-03-05', 'Laden Beispiel', 'Einkauf', '-3'))))).toBe('nothing_in_scope');
     await importPayments(db, ctx, accountId, JANUARY);
-    expect(await code(importPayments(db, ctx, accountId, laterFile(later('2025-04-01', 'Laden Beispiel', '3.00', '4000000000009'))))).toBe('format_mismatch');
+    expect(await code(importPayments(db, ctx, accountId, laterFile(later('2026-01-10', 'Laden Beispiel', '3.00', '4000000000009'))))).toBe('nothing_in_scope');
     expect(await db.taxPayment.count({ where: { accountId: laterId } })).toBe(2);
   });
 
@@ -1376,6 +1379,88 @@ describe('the tab asks less after a real import: money in, a private account, a 
     const desk = (await findPayments(db, ws.workspaceId, { year: 2026, text: 'Schreibtisch' })).payments[0];
     await setPaymentKind(db, ctx, desk.id, 'fee');
     expect((await findPayments(db, ws.workspaceId, { year: 2026, text: 'Schreibtisch' })).total).toBe(0);
+
+describe('an import limited to a year, and an account continued from a second source: forward, change an earlier input, resume, re-entry', () => {
+  // A bank export of the first half of 2025, and the bank interface's list that runs from late 2024 into 2026.
+  const EXPORT = file(
+    line('2025-01-10', 'Werkzeug Beispiel GmbH', 'Bestellung 1', '-10'),
+    line('2025-06-30', 'Werkzeug Beispiel GmbH', 'Bestellung 2', '-20'),
+  );
+  const interfaceList = (rows: Array<[string, string, string]>) =>
+    JSON.stringify({
+      transactions: rows.map(([day, name, amount], i) => ({
+        entry_reference: `e-${day}-${i}`,
+        booking_date: day,
+        value_date: day,
+        transaction_amount: { amount: amount.replace('-', ''), currency: 'EUR' },
+        credit_debit_indicator: amount.startsWith('-') ? 'DBIT' : 'CRDT',
+        status: 'BOOK',
+        creditor: amount.startsWith('-') ? { name } : null,
+        debtor: amount.startsWith('-') ? null : { name },
+        remittance_information: [`Zahlung ${i}`],
+      })),
+    });
+  const LIST = interfaceList([
+    ['2024-12-20', 'Werkzeug Beispiel GmbH', '-5'],
+    ['2025-06-30', 'Werkzeug Beispiel GmbH', '-20'],
+    ['2025-07-02', 'Werkzeug Beispiel GmbH', '-30'],
+    ['2025-12-31', 'Werkzeug Beispiel GmbH', '-40'],
+    ['2026-01-02', 'Werkzeug Beispiel GmbH', '-50'],
+  ]);
+  const days = async (accountId: string) => (await db.taxPayment.findMany({ where: { accountId }, orderBy: { bookingDay: 'asc' } })).map((p) => `${p.bookingDay} ${p.amountCents}`);
+
+  it('forward: limited to 2025, the list continues the export from its last day on and leaves the other years out, all counted', async () => {
+    const { ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, EXPORT);
+    const result = await importPayments(db, ctx, accountId, LIST, { onlyYear: 2025 });
+    expect(result).toMatchObject({ format: 'enable_banking_json', onlyYear: 2025, total: 2, added: 2, skipped: { other_year: 2, covered_by_other_source: 1 }, firstDay: '2025-07-02', lastDay: '2025-12-31' });
+    expect(await days(accountId)).toEqual(['2025-01-10 -1000', '2025-06-30 -2000', '2025-07-02 -3000', '2025-12-31 -4000']);
+  });
+
+  it('change an earlier input: the whole list after the year-limited one adds only the other years; undoing it takes only those back', async () => {
+    const { ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, EXPORT);
+    await importPayments(db, ctx, accountId, LIST, { onlyYear: 2025 });
+    const whole = await importPayments(db, ctx, accountId, LIST);
+    // 2025 is there already from the same source; 30 June is still the export's day.
+    expect(whole).toMatchObject({ onlyYear: null, added: 2, alreadyThere: 2, skipped: { covered_by_other_source: 1 } });
+    expect(await days(accountId)).toEqual(['2024-12-20 -500', '2025-01-10 -1000', '2025-06-30 -2000', '2025-07-02 -3000', '2025-12-31 -4000', '2026-01-02 -5000']);
+    await deleteImportBatch(db, ctx, whole.batchId);
+    expect(await days(accountId)).toEqual(['2025-01-10 -1000', '2025-06-30 -2000', '2025-07-02 -3000', '2025-12-31 -4000']);
+  });
+
+  it('change an earlier input: undoing the export frees its days for the other source once its import is read again', async () => {
+    const { ctx, accountId } = await workspace();
+    const exported = await importPayments(db, ctx, accountId, EXPORT);
+    const listed = await importPayments(db, ctx, accountId, LIST, { onlyYear: 2025 });
+    // The list's import lies after the export's days, so the export can be undone on its own.
+    await deleteImportBatch(db, ctx, exported.batchId);
+    expect(await days(accountId)).toEqual(['2025-07-02 -3000', '2025-12-31 -4000']);
+    // The same import again is refused (nothing doubled); undone and read again, it fills the freed days from the list.
+    expect(await code(importPayments(db, ctx, accountId, LIST, { onlyYear: 2025 }))).toBe('file_already_imported');
+    await deleteImportBatch(db, ctx, listed.batchId);
+    expect(await importPayments(db, ctx, accountId, LIST, { onlyYear: 2025 })).toMatchObject({ added: 3, skipped: { other_year: 2 } });
+    expect(await days(accountId)).toEqual(['2025-06-30 -2000', '2025-07-02 -3000', '2025-12-31 -4000']);
+  });
+
+  it('resume: the same file for the same year is refused, for another year it is a new import; nothing is doubled', async () => {
+    const { ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, LIST, { onlyYear: 2025 });
+    expect(await code(importPayments(db, ctx, accountId, LIST, { onlyYear: 2025 }))).toBe('file_already_imported');
+    expect(await importPayments(db, ctx, accountId, LIST, { onlyYear: 2026 })).toMatchObject({ added: 1, skipped: { other_year: 4 } });
+    expect(await db.taxPayment.count({ where: { accountId } })).toBe(4);
+  });
+
+  it('re-entry after failure: a year with nothing in it and a year that makes no sense write nothing, and the next import starts clean', async () => {
+    const { ctx, accountId } = await workspace();
+    expect(await code(importPayments(db, ctx, accountId, LIST, { onlyYear: 2023 }))).toBe('nothing_in_scope');
+    expect(await code(importPayments(db, ctx, accountId, LIST, { onlyYear: 25 }))).toBe('invalid_import_year');
+    expect(await code(importPayments(db, ctx, accountId, LIST, { onlyYear: 2025.5 }))).toBe('invalid_import_year');
+    expect(await db.taxImportBatch.count({ where: { accountId } })).toBe(0);
+    // A file wholly on days another source covers is refused the same way.
+    await importPayments(db, ctx, accountId, EXPORT);
+    expect(await code(importPayments(db, ctx, accountId, interfaceList([['2025-03-01', 'Laden Beispiel', '-3']])))).toBe('nothing_in_scope');
+    expect(await importPayments(db, ctx, accountId, LIST)).toMatchObject({ added: 4 });
   });
 });
 

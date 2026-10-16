@@ -209,8 +209,10 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Die Datei enthält keine Umsätze.';
         case 'too_large':
           return 'Die Datei ist zu groß für einen Kontoexport (mehr als 8 MB).';
-        case 'format_mismatch':
-          return 'Dieses Konto wurde bisher aus einer anderen Quelle eingelesen. Damit keine Zahlung doppelt entsteht, bleibt ein Konto bei einer Quelle; für die andere Quelle bitte ein eigenes Konto anlegen.';
+        case 'invalid_import_year':
+          return 'Das gewählte Jahr ist ungültig. Bitte die Seite neu laden.';
+        case 'nothing_in_scope':
+          return 'In dieser Datei liegt keine Zahlung im gewählten Jahr oder an einem Tag, den noch keine andere Quelle dieses Kontos abdeckt. Es wurde nichts eingelesen.';
         case 'batch_has_later_overlap':
           return 'Ein später eingelesener Export deckt dieselben Tage ab. Bitte zuerst den späteren Import rückgängig machen.';
         case 'proposal_gone':

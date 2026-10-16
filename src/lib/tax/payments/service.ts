@@ -26,7 +26,10 @@ export type PaymentServiceErrorCode =
   | 'account_label_taken'
   | 'invalid_account_kind'
   | 'file_already_imported'
-  | 'format_mismatch'
+  /** The year an import is limited to is no sensible year. */
+  | 'invalid_import_year'
+  /** Every row of the file lies outside the chosen year or on days another source of the account already covers. */
+  | 'nothing_in_scope'
   | 'batch_has_later_overlap'
   | 'batch_not_found'
   | 'payment_not_found'
@@ -92,8 +95,15 @@ export interface ImportResult {
   total: number;
   added: number;
   alreadyThere: number;
-  /** Rows of the file left out on purpose (pending, other currency, memo lines), by reason. */
+  /**
+   * Rows of the file left out on purpose (pending, other currency, memo lines),
+   * by reason. Two reasons come from the import itself: `other_year` (outside
+   * the year the import was limited to) and `covered_by_other_source` (on a day
+   * another source of the same account already covers).
+   */
   skipped: Record<string, number>;
+  /** The year the import was limited to; null: every day of the file. */
+  onlyYear: number | null;
   /** Payments linked to an issued invoice because its number is in the payment's text. */
   autoLinked: number;
   /** Payments of an earlier import that this file lists as cancelled or refunded in full: they stopped counting. */
@@ -110,23 +120,61 @@ export interface ImportResult {
   lastDay: string | null;
 }
 
+export interface ImportOptions {
+  /** Read only the payments booked in this year; the rest of the file is counted and left out. */
+  onlyYear?: number | null;
+}
+
+/** The years an import can be limited to: the same range the finance area offers. */
+function validImportYear(raw: unknown): number | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 2000 || raw > 2100) throw new PaymentServiceError('invalid_import_year');
+  return raw;
+}
+
 /**
  * Import one export file into one account. The file is parsed whole before
  * anything is written (a `PaymentParseError` leaves the database untouched),
  * and batch and payments are written together or not at all.
+ *
+ * An account can be continued from another source (a bank export that ends in
+ * the middle of the year, continued from the bank interface's list). The
+ * identity of a movement is built from the text of its source, so the same
+ * movement from two sources would be stored twice; therefore a day belongs to
+ * the source that brought it first: rows of this file on a day an import of
+ * ANOTHER format of the account covers (its first to its last day) are left
+ * out and counted. Days no other source covers are read as usual.
+ *
+ * With `onlyYear` only the payments booked in that year are read. Such an
+ * import is a different import from the whole file: the whole file (or another
+ * year of it) can be read later and adds only what is new.
  */
-export async function importPayments(db: PrismaClient, ctx: PaymentContext, accountId: string, text: string): Promise<ImportResult> {
+export async function importPayments(db: PrismaClient, ctx: PaymentContext, accountId: string, text: string, options: ImportOptions = {}): Promise<ImportResult> {
+  const onlyYear = validImportYear(options.onlyYear);
   const account = await db.taxAccount.findFirst({ where: { id: accountId, authWorkspaceId: ctx.workspaceId } });
   if (!account) throw new PaymentServiceError('account_not_found');
-  const contentHash = createHash('sha256').update(text).digest('hex');
+  const contentHash = createHash('sha256').update(onlyYear === null ? text : `${text}\u0000only-year:${onlyYear}`).digest('hex');
   if (await db.taxImportBatch.findFirst({ where: { accountId, contentHash } })) throw new PaymentServiceError('file_already_imported');
 
-  const parsed = parsePaymentFile(text);
-  // One account, one source: the identity of a movement is built from the text
-  // of its source, so the same account imported once as a bank export and once
-  // through the bank interface would hold every movement twice.
-  const earlier = await db.taxImportBatch.findFirst({ where: { accountId } });
-  if (earlier && earlier.format !== parsed.format) throw new PaymentServiceError('format_mismatch');
+  const file = parsePaymentFile(text);
+  const otherSources = (await db.taxImportBatch.findMany({ where: { accountId, format: { not: file.format } } })).flatMap((b) =>
+    b.firstDay !== null && b.lastDay !== null ? [{ firstDay: b.firstDay, lastDay: b.lastDay }] : [],
+  );
+  const skipped = { ...file.skipped };
+  // Whole days only: identical movements of one day are numbered in order (see `parse.ts`), so a day is never split.
+  const reasonToLeaveOut = (day: string): string | null => {
+    if (onlyYear !== null && !day.startsWith(`${onlyYear}-`)) return 'other_year';
+    if (otherSources.some((b) => b.firstDay <= day && day <= b.lastDay)) return 'covered_by_other_source';
+    return null;
+  };
+  const kept = file.payments.filter((p) => {
+    const reason = reasonToLeaveOut(p.bookingDay);
+    if (reason !== null) skipped[reason] = (skipped[reason] ?? 0) + 1;
+    return reason === null;
+  });
+  if (kept.length === 0 && file.payments.length > 0) throw new PaymentServiceError('nothing_in_scope');
+  const days = kept.map((p) => p.bookingDay).sort();
+  const parsed = { ...file, payments: kept, skipped, firstDay: days[0] ?? null, lastDay: days[days.length - 1] ?? null };
 
   // Everything from here on happens together or not at all, including the
   // automatic links: a failure leaves no batch behind that would refuse a retry.
@@ -194,6 +242,7 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     added,
     alreadyThere: parsed.payments.length - added,
     skipped: parsed.skipped,
+    onlyYear,
     autoLinked,
     cancelledEarlier,
     releasedLinks,

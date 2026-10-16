@@ -1149,6 +1149,29 @@ twelve defects, all fixed in the receipt lines pull request:
   **re-labelled payments** are listed and can be put back; **refunds** from a
   business counterparty ask for the receipt they belong to.
 
+## Reality: a refunded purchase nets out, and candidates name the vendor (2026-10-16)
+
+The roadmap line "A refunded purchase has no representation" (three orders of 2025 refunded in
+full and kept out by hand). Decided without asking, say so if you disagree:
+
+- **Money back is proposed for the receipt of the purchase it refunds** (`proposeRefunds` in
+  `src/lib/tax/payments/refunds.ts`). A refund, or money in that the file calls income, from a
+  counterparty a receipt carries a linked purchase from (or, without one, names as vendor),
+  booked after the purchase and at most 180 days later, never more than the receipt still
+  costs. Strongest when the two texts share an order number, then a refund of exactly the
+  purchase, then a part. At most three per payment. Linked with one click; once linked the
+  existing rule takes it off the receipt, so a purchase refunded in full costs nothing. Never
+  linked without a click (the rule of the payments area).
+- Such money in is asked about payment by payment when a proposal exists, also from a
+  counterparty nobody answered yet or one answered mixed; never from one answered private or
+  own account.
+- **A credit note as a document** nets its invoice out already: a receipt with a negative
+  amount counts negatively in the year (tested). Pairing an invoice and its credit note in the
+  receipts table is the table's business, not built here.
+- **Candidates by amount and date say whether the payment names the receipt's vendor**
+  (`amount_date_vendor`, shown first); amount and date alone stay a weaker candidate. Asked
+  for by the private-spending side, which matches vendor, amount and day in its own loop.
+
 ## Reality after the review of receipt lines (2026-10-10)
 
 A second fresh agent reviewed receipt lines and the payment fixes before they

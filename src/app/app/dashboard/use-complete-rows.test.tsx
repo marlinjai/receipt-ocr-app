@@ -232,6 +232,34 @@ describe('the rows of the receipts table', { timeout: 30_000 }, () => {
     expect(ids(handle.current?.shown)).toEqual(ids(ALL));
   });
 
+  it('many reloads asked for while one waits its turn are that one reload', async () => {
+    const { adapter, calls } = fakeDatabase();
+    const asked: number[] = [];
+    const read = adapter.getRows;
+    adapter.getRows = (tableId, query) => {
+      asked.push(query?.offset ?? 0);
+      return read(tableId, query);
+    };
+    const handle = mount(Guarded, adapter);
+    await release(await nthCall(calls, 1));
+    const second = await nthCall(calls, 2); // a page on its way
+    let reloads: Array<Promise<void>> = [];
+    act(() => {
+      // Dozens of failed edits, each asking for a reload.
+      reloads = Array.from({ length: 12 }, () => handle.current!.reload());
+    });
+    await release(second);
+    calls.splice(0, 2);
+    expect((await nthCall(calls, 1)).offset).toBe(0);
+    await settle(handle, calls);
+    await act(async () => {
+      await Promise.all(reloads);
+    });
+    // The first page was asked for twice in all: when the page opened, and once for all twelve reloads.
+    expect(asked.filter((offset) => offset === 0).length).toBe(2);
+    expect(ids(handle.current?.shown)).toEqual(ids(ALL));
+  });
+
   it('a reload waiting for a load lets go when the page is left', async () => {
     const { adapter, calls } = fakeDatabase();
     const handle = mount(Guarded, adapter);

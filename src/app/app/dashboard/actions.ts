@@ -17,7 +17,7 @@ import { groupsHoldingReceipts, yearCounts, type YearCounts } from '@/lib/receip
 const SCOPED_LIST_LIMIT = 5000;
 import { MIN_TEXT_SEARCH_LENGTH, TEXT_SEARCH_LIMIT, likePattern, rowsWithoutText, textColumnIds, withoutText } from '@/lib/receipt-text';
 import { GROUP_KIND, ROW_KIND_COLUMN, rowKindColumnId } from '@/lib/receipts-kind';
-import { applyDayFilters, boundsYears, readEveryRow, splitDayFilters, yearsWithin } from './day-filters';
+import { EVERY_ROW_LIMIT, applyDayFilters, boundsYears, readEveryRow, splitDayFilters, yearsWithin } from './day-filters';
 import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
 import { rowKind } from '@/lib/groups/service';
 import { readRowLinks } from '@/lib/groups/links';
@@ -247,7 +247,7 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
     // value (a category, a status) can change places between two pages and a paged list would show some twice
     // and others never. A further page is empty.
     if ((rest.offset ?? 0) > 0) return { items: [], total: rest.offset ?? 0, hasMore: false } as QueryResult<Row>;
-    const items = await readEveryRow((offset, limit) => adapter.getRows(tableId, { ...rest, offset, limit }), SCOPED_LIST_LIMIT);
+    const items = await readEveryRow((offset, limit) => adapter.getRows(tableId, { ...rest, offset, limit }), EVERY_ROW_LIMIT);
     return { items: rowsWithoutText(items, textIds), total: items.length, hasMore: false } as QueryResult<Row>;
   }
   // "Is", "after" and "before" on the invoice date bound the years a receipt can lie in: the list then reads
@@ -267,7 +267,7 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
     // would drop them), and the recognized text until it is left out below. On the invoice date without a
     // sort, the filter bar's operators always take the per-year path below.
     if ((rest.offset ?? 0) > 0) return { items: [], total: rest.offset ?? 0, hasMore: false } as QueryResult<Row>;
-    const every = await readEveryRow((offset, limit) => adapter.getRows(tableId, { ...rest, offset, limit }), SCOPED_LIST_LIMIT);
+    const every = await readEveryRow((offset, limit) => adapter.getRows(tableId, { ...rest, offset, limit }), EVERY_ROW_LIMIT);
     const items = applyDayFilters(every, dayFilters, columns);
     return { items: rowsWithoutText(items, textIds), total: items.length, hasMore: false } as QueryResult<Row>;
   }

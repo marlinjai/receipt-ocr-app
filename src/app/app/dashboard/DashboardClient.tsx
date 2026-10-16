@@ -113,7 +113,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   // The rows complete and each once, every load one after another (see `use-complete-rows.ts`). Every reload
   // the dashboard asks for goes through `reload`, never the package's own refresh, so it cannot cross a page on
   // its way. (A filter or sort change loads beside it, inside the package; a list that then does not add up is
-  // loaded again.)
+  // loaded again, at most twice per reload the dashboard asks for.)
   const { rows, reload, settled } = useCompleteRows({ rows: loadedRows, total, hasMore, isLoading: isRowsLoading, error: rowsError, loadMore, refresh });
 
   const {
@@ -475,8 +475,9 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       else setDetailRow(row);
       return;
     }
-    // Only a list that is all there can say that a receipt is not in it.
-    if (!settled || columns.length === 0) return;
+    // Only a list that is all there can say that a receipt is not in it. A list that failed to load says so in
+    // its banner, and the link waits for the next reload instead of calling the receipt deleted.
+    if (!settled || rowsError || columns.length === 0) return;
     const gone = () => {
       setPendingOpenId(null);
       setNotice({ tone: 'warn', text: 'Der verlinkte Beleg ist in dieser Tabelle nicht vorhanden. Er wurde gelöscht oder gehört zu einem anderen Unternehmen.' });
@@ -499,7 +500,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         changeYears({ years: new Set([...yearSelection.years, year]), undated: yearSelection.undated });
       })
       .catch(() => gone());
-  }, [pendingOpenId, rows, columns, settled, yearSelection, changeYears]);
+  }, [pendingOpenId, rows, columns, settled, rowsError, yearSelection, changeYears]);
 
   // Load select options for all select columns
   useEffect(() => {

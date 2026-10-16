@@ -119,10 +119,19 @@ export function useCompleteRows(source: RowsSource): {
   }, []);
 
   const [repairs, setRepairs] = useState(0);
+  // A reload asked for while another is still waiting its turn is that same reload: dozens of failed edits make
+  // one reload, not dozens one after another (each would drop the table back to its first page).
+  const waitingReload = useRef<Promise<void> | null>(null);
   const reload = useCallback(() => {
     // A reload someone asked for starts the count of repairs over.
     setRepairs(0);
-    return enqueue(() => latest.current.refresh()).catch(() => undefined);
+    if (waitingReload.current) return waitingReload.current;
+    const next = enqueue(async () => {
+      waitingReload.current = null;
+      await latest.current.refresh();
+    }).catch(() => undefined);
+    waitingReload.current = next;
+    return next;
   }, [enqueue]);
 
   // The table shows every receipt of the years it was asked for: sums, groups and the review of a year are

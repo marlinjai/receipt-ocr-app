@@ -38,7 +38,41 @@ interface Row {
  * currency and must add up to its total; the form shows what is still to be
  * distributed while typing and can put it into the first line without an amount.
  */
-export default function LinesForm({ item, existing, busy, error, onCancel, onSubmit, onRemove }: Props) {
+export default function LinesForm(props: Props) {
+  // A credit note (negative total) is never split: an old split of it can only be removed.
+  if ((props.item.receiptGrossCents ?? 0) < 0) return <CreditNoteSplit {...props} />;
+  return <SplitForm {...props} />;
+}
+
+function CreditNoteSplit({ busy, error, onCancel, onRemove }: Props) {
+  return (
+    <div className="space-y-3">
+      <p className="ui-note">
+        Der Beleg ist eine Rechnungskorrektur (Gutschrift) und wird nicht in Positionen aufgeteilt. Die frühere
+        Aufteilung passt nicht mehr zu seinem Betrag; nach dem Aufheben gilt eine Behandlung für den ganzen Beleg.
+      </p>
+      {error && <p className="ui-note ui-note-danger" role="alert">{error}</p>}
+      <div className="flex flex-wrap gap-2">
+        {onRemove && (
+          <button
+            type="button"
+            className="ui-btn ui-btn-danger"
+            disabled={busy}
+            onClick={() => {
+              if (!window.confirm('Die Aufteilung aufheben? Der Beleg ist dann wieder eine Position; Entscheidungen zu einzelnen Positionen gehen verloren.')) return;
+              onRemove();
+            }}
+          >
+            Aufteilung aufheben
+          </button>
+        )}
+        {onCancel && <button type="button" className="ui-btn" onClick={onCancel}>Abbrechen</button>}
+      </div>
+    </div>
+  );
+}
+
+function SplitForm({ item, existing, busy, error, onCancel, onSubmit, onRemove }: Props) {
   const id = useId();
   const total = item.receiptGrossCents ?? 0;
   const [rows, setRows] = useState<Row[]>(() =>

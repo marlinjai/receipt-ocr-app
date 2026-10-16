@@ -38,6 +38,13 @@ export interface ReceiptFacts {
    */
   refundedCents?: number;
   /**
+   * Money back and money out linked to the receipt, apart. A credit note
+   * (negative total) is paid by money coming back: it counts on the day of the
+   * first, with that amount. Money out linked to a credit note is a question.
+   */
+  moneyBack?: { day: string; cents: number } | null;
+  moneyOutCents?: number;
+  /**
    * Set when a person confirmed the ten-day rule for this receipt (see
    * `year-boundary.ts`): the day it counts on instead of the day it was paid.
    */
@@ -63,6 +70,13 @@ export interface ResolvedItem {
   lineDescription: string | null;
 }
 
+/** The same day one year earlier (29 February gives 28 February). */
+function yearBefore(isoDay: string): string {
+  const year = Number(isoDay.slice(0, 4)) - 1;
+  const rest = isoDay.slice(4) === '-02-29' ? '-02-28' : isoDay.slice(4);
+  return `${year}${rest}`;
+}
+
 /**
  * Does a stated net amount fit its total? Net and total carry the same sign
  * (a credit note is negative in both) and the net is not larger in amount than
@@ -83,7 +97,12 @@ function netOf(record: MealRecord): number | null {
   if (!netFits(record.net, record.gross)) return null;
   if (record.currency === 'EUR') return toCents(record.net as number);
   if (record.fxRate === null || !(record.fxRate > 0)) return null;
-  return Math.round(toCents(record.net as number) * record.fxRate);
+  return roundCents(toCents(record.net as number) * record.fxRate);
+}
+
+/** Round to the cent, half away from zero, so a credit note mirrors its invoice exactly. */
+function roundCents(value: number): number {
+  return Math.sign(value) * Math.round(Math.abs(value));
 }
 
 function amountOf(record: MealRecord): Pick<LedgerItem, 'amountCents' | 'amountBasis' | 'missingAmount'> {
@@ -96,7 +115,7 @@ function amountOf(record: MealRecord): Pick<LedgerItem, 'amountCents' | 'amountB
   }
   // A foreign-currency document converted at the reference rate: an estimate
   // until the euro amount the bank charged is known.
-  return { amountCents: Math.round(toCents(record.gross) * record.fxRate), amountBasis: 'reference_rate' };
+  return { amountCents: roundCents(toCents(record.gross) * record.fxRate), amountBasis: 'reference_rate' };
 }
 
 /**
@@ -106,7 +125,7 @@ function amountOf(record: MealRecord): Pick<LedgerItem, 'amountCents' | 'amountB
 function netOfPaid(record: MealRecord, paidCents: number): number | null {
   if (!netFits(record.net, record.gross)) return null;
   // The proportion of net to total is positive for an invoice and a credit note alike.
-  return Math.round((paidCents * toCents(record.net as number)) / toCents(record.gross as number));
+  return roundCents((paidCents * toCents(record.net as number)) / toCents(record.gross as number));
 }
 
 function mealFact(record: MealRecord, settings: MealTaxSettings): MealFact | null {
@@ -140,14 +159,19 @@ export function resolveItem(
   settings: MealTaxSettings,
 ): ResolvedItem {
   const { record, decision } = facts;
-  const paid = facts.paid ?? null;
   const stated = amountOf(record);
+  const creditNote = stated.amountCents !== null && stated.amountCents < 0;
+  // A credit note is paid by money coming back, on the day of the first; money
+  // out linked to it is a question for a person (see `creditNotePaymentOut`).
+  const creditNoteBack = creditNote && (facts.moneyOutCents ?? 0) === 0 && facts.moneyBack ? facts.moneyBack : null;
+  const paid = creditNote ? (creditNoteBack ? { day: creditNoteBack.day, cents: -creditNoteBack.cents } : null) : (facts.paid ?? null);
   // A refund reduces a purchase; a credit note is already the money coming back.
-  const refunded = paid || stated.amountCents === null || stated.amountCents < 0 ? 0 : Math.max(0, facts.refundedCents ?? 0);
+  const refunded = paid || stated.amountCents === null || creditNote ? 0 : Math.max(0, facts.refundedCents ?? 0);
   const document = refunded > 0 && stated.amountCents !== null ? { ...stated, amountCents: Math.max(0, stated.amountCents - refunded) } : stated;
   const key = vendorKey(record.vendor);
   const rule = ruleInForce(vendorRules, key, record.date);
-  const meal = mealFact(record, settings);
+  // The meal register holds what was spent on a meal; a credit note is no meal of its own.
+  const meal = creditNote ? null : mealFact(record, settings);
   const cashDay = paid ? paid.day : record.date;
   // The ten-day rule moves the year a recurring payment counts in, nothing
   // else. A meal is never moved: the meal register lists it by its own day.
@@ -164,6 +188,10 @@ export function resolveItem(
     ...(countsOn ? { vatDate: cashDay } : {}),
     ...(paid ? { amountCents: paid.cents, amountBasis: 'payment' as const } : document),
     netCents: paid ? netOfPaid(record, paid.cents) : refunded > 0 && document.amountCents !== null ? netOfPaid(record, document.amountCents) : netOf(record),
+    // A net amount the receipt states but that cannot be its net (larger than the total, or the other sign).
+    ...(record.net !== null && record.net !== 0 && !netFits(record.net, record.gross) && record.gross !== null && record.gross !== 0 ? { netDoesNotFit: true } : {}),
+    ...(creditNote && (facts.moneyOutCents ?? 0) > 0 ? { creditNotePaymentOut: true } : {}),
+    ...(creditNote && cashDay !== null && smallBusinessOn(settings, yearBefore(cashDay)) !== smallBusinessOn(settings, cashDay) ? { creditNoteStatusChanged: true } : {}),
     // The status on the receipt's own date: a later change leaves earlier receipts alone.
     smallBusiness: smallBusinessOn(settings, cashDay),
   };

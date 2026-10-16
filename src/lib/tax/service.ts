@@ -195,6 +195,14 @@ export interface LinkedMoney {
   paid: { day: string; cents: number } | null;
   /** Refunds linked while no payment out is: taken off the document's own amount. */
   refundedCents: number;
+  /**
+   * Money back linked to the receipt: the day of the first and the sum. For a
+   * credit note this is its payment (see `resolveItem`); for a purchase it is a
+   * refund, already in `paid` or `refundedCents`.
+   */
+  back: { day: string; cents: number } | null;
+  /** Money out linked to the receipt, whatever came back. */
+  outCents: number;
 }
 
 /**
@@ -203,21 +211,28 @@ export interface LinkedMoney {
  * payment is not imported) the receipt keeps its own amount and day, less the refund.
  */
 export function linkedByRow(payments: readonly PaymentRow[]): Map<string, LinkedMoney> {
-  const sums = new Map<string, { day: string | null; outCents: number; backCents: number }>();
+  const sums = new Map<string, { day: string | null; backDay: string | null; outCents: number; backCents: number }>();
   // A payment and the debit that funds it are the same money and count once (`countedReceiptLinks`).
   for (const { payment, link } of countedReceiptLinks(payments)) {
-    const current = sums.get(link.rowId) ?? { day: null, outCents: 0, backCents: 0 };
+    const current = sums.get(link.rowId) ?? { day: null, backDay: null, outCents: 0, backCents: 0 };
     if (payment.amountCents < 0) {
       current.outCents += link.cents;
       if (current.day === null || payment.bookingDay < current.day) current.day = payment.bookingDay;
     } else {
       current.backCents += link.cents;
+      if (current.backDay === null || payment.bookingDay < current.backDay) current.backDay = payment.bookingDay;
     }
     sums.set(link.rowId, current);
   }
   const out = new Map<string, LinkedMoney>();
   for (const [rowId, s] of sums) {
-    out.set(rowId, s.day !== null ? { paid: { day: s.day, cents: Math.max(0, s.outCents - s.backCents) }, refundedCents: 0 } : { paid: null, refundedCents: s.backCents });
+    const back = s.backDay !== null ? { day: s.backDay, cents: s.backCents } : null;
+    out.set(
+      rowId,
+      s.day !== null
+        ? { paid: { day: s.day, cents: Math.max(0, s.outCents - s.backCents) }, refundedCents: 0, back, outCents: s.outCents }
+        : { paid: null, refundedCents: s.backCents, back, outCents: 0 },
+    );
   }
   return out;
 }
@@ -265,6 +280,8 @@ async function loadReceipts(
       decision: decisionByRow.get(row.id) ?? null,
       paid: linked?.get(row.id)?.paid ?? null,
       refundedCents: linked?.get(row.id)?.refundedCents ?? 0,
+      moneyBack: linked?.get(row.id)?.back ?? null,
+      moneyOutCents: linked?.get(row.id)?.outCents ?? 0,
       lines: linesByRow.get(row.id) ?? [],
     };
   });

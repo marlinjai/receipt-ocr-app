@@ -1979,6 +1979,24 @@ not computed.
   small-business status it reduces the expense by 119.00.
 - **A refund linked to a credit note** does not reduce it again (a refund reduces a
   purchase; a credit note already is the money coming back).
-- **A credit note is not split into positions**: the screen offers no split for it, and
-  the server refuses one with its own message.
+- **A credit note is not split into positions**: the screen offers no split for it (an
+  old split that no longer fits can only be removed), and the server refuses one with its
+  own message.
+- **A credit note's payment is money coming back.** Linked payments now keep money out and
+  money back apart. A credit note counts on the day of the first money back and with that
+  amount (cash basis, section 11 of the income tax act), so a credit note of December
+  refunded in January reduces the January figures; the input tax correction lands in that
+  period too (section 17 of the value-added tax act: the period the reduction happens).
+  Money out linked to a credit note (an offset against another invoice) blocks it with a
+  question instead of turning it into an expense.
+- **Further cases:** the private share of a credit note is negative, so its parts add up to
+  its amount; a credit note on the meal line is its own question (the meal register holds
+  no credit notes); a credit note in a year after a status change is noted, because the
+  correction follows the status of the purchase it corrects; a net amount larger than the
+  total or of the other sign is reported as "does not fit" instead of "missing" (for every
+  receipt, only the wording of that check changes); foreign-currency amounts round half
+  away from zero, so a credit note mirrors its invoice to the cent.
+- **Reviewed** by a fresh agent before the pull request; both blocking findings (money out
+  turning a credit note into an expense, and the credit note never counting on its refund
+  day) and all further findings are fixed with tests.
 

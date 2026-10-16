@@ -14,6 +14,8 @@ vi.mock('@/app/app/meals/actions', () => ({ saveReceiptRotation: vi.fn() }));
 vi.mock('../meals/MealPanelSection', () => ({ default: () => null }));
 
 import ReceiptDetailPanel from '../ReceiptDetailPanel';
+import { ACCEPTED_RECEIPT_TYPES } from '@/lib/presigned-file-adapter';
+import { acceptAttribute } from '@/lib/receipt-file-accept';
 
 const IMAGE_COL = 'col-image';
 const files = [
@@ -91,5 +93,34 @@ describe('ReceiptDetailPanel: file row buttons', () => {
     expect(expand.className).toContain('min-h-10');
     fireEvent.click(expand);
     expect(screen.getByRole('dialog', { name: 'Receipt preview' })).toBeTruthy();
+  });
+
+  it('the file picker follows the list of accepted types, so a newly accepted type needs no edit here', () => {
+    renderPanel();
+    const input = document.querySelector('input[type="file"]')!;
+    expect(input.getAttribute('accept')).toBe(acceptAttribute(ACCEPTED_RECEIPT_TYPES));
+    expect(input.getAttribute('accept')).toContain('.pdf');
+  });
+});
+
+describe('ReceiptDetailPanel: a file without a page', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('an XML invoice is listed as a document and shown as text, not as a picture', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('<Bestellung/>', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const row = {
+      id: 'row-x',
+      tableId: 't-1',
+      cells: { [IMAGE_COL]: [{ id: 'ref-x', fileId: 'f-x', fileUrl: '/api/files/f-x', originalName: 'rechnung.xml', mimeType: 'application/xml', sizeBytes: 900 }] },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const columns = [{ id: IMAGE_COL, tableId: 't-1', name: 'Receipt Image', type: 'file', position: 0, width: 100, isPrimary: false, config: {}, createdAt: new Date() }];
+    render(<ReceiptDetailPanel row={row as never} columns={columns as never} selectOptions={new Map()} onClose={() => {}} />);
+    expect(within(screen.getByRole('list')).getByText('📄')).toBeTruthy();
+    expect(screen.getByText('Electronic invoice (XML)')).toBeTruthy();
+    expect(await screen.findByText(/is an XML file but no readable electronic invoice/)).toBeTruthy();
+    expect(document.querySelector('img.ui-viewer-page')).toBeNull();
   });
 });

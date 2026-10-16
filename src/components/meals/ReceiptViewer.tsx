@@ -46,6 +46,14 @@ const TEXT = {
     saveFailed: 'Die Drehung konnte nicht gespeichert werden. Sie gilt nur für diese Ansicht.',
     keys: 'Tasten: R dreht, Plus und Minus zoomen, 0 passt ein. Ziehen verschiebt.',
     status: (rotation: number, zoom: number) => `Gedreht um ${rotation} Grad, Zoom ${zoom} Prozent.`,
+    einvoice: 'Elektronische Rechnung (XML)',
+    pageless: 'Datei ohne Seite',
+    einvoiceIntro: 'Diese Rechnung ist eine reine XML-Datei ohne Seite. Ihre Angaben, wie sie in der Datei stehen:',
+    einvoiceProblems: 'Diese Angaben der Rechnung passen nicht zusammen:',
+    notEinvoice: (name: string) => `„${name}“ ist eine XML-Datei, aber keine lesbare elektronische Rechnung (XRechnung, ZUGFeRD oder Factur-X). Sie lässt sich nur als Datei öffnen.`,
+    noPage: (name: string) => `„${name}“ hat keine Seite, die sich hier zeigen lässt. Sie lässt sich als Datei öffnen.`,
+    readingFailed: (name: string) => `„${name}“ konnte nicht geladen werden.`,
+    reading: 'Rechnung wird gelesen…',
   },
   en: {
     viewer: 'Receipt viewer',
@@ -66,6 +74,14 @@ const TEXT = {
     saveFailed: 'The rotation could not be saved. It applies to this view only.',
     keys: 'Keys: R rotates, plus and minus zoom, 0 fits. Drag to move.',
     status: (rotation: number, zoom: number) => `Rotated by ${rotation} degrees, zoom ${zoom} percent.`,
+    einvoice: 'Electronic invoice (XML)',
+    pageless: 'File without a page',
+    einvoiceIntro: 'This invoice is a plain XML file without a page. Its details as the invoice reader lists them (in German):',
+    einvoiceProblems: 'These figures of the invoice do not add up:',
+    notEinvoice: (name: string) => `"${name}" is an XML file but no readable electronic invoice (XRechnung, ZUGFeRD or Factur-X). It can only be opened as a file.`,
+    noPage: (name: string) => `"${name}" has no page that can be shown here. It can be opened as a file.`,
+    readingFailed: (name: string) => `"${name}" could not be loaded.`,
+    reading: 'Reading the invoice…',
   },
 } as const;
 
@@ -85,7 +101,8 @@ interface ReceiptViewerProps {
 /**
  * The receipt beside the form: one picture that can be turned in quarter
  * steps, zoomed, dragged and fitted. A PDF receipt is drawn to a picture
- * first, so both kinds behave the same.
+ * first, so both kinds behave the same. A file without a page (an XML
+ * invoice) shows what it says instead; see PagelessView.
  */
 export default function ReceiptViewer({ files, onRotate, lang = 'de', className }: ReceiptViewerProps) {
   const t = TEXT[lang];
@@ -105,8 +122,8 @@ export default function ReceiptViewer({ files, onRotate, lang = 'de', className 
   return (
     <div className={`ui-viewer ${className ?? ''}`.trim()}>
       {/* Keyed on the file: another file starts with its own rotation and a fresh view. */}
-      <FileView key={file.refId} file={file} onRotate={onRotate} lang={lang}>
-        {files.length > 1 && (
+      {(() => {
+        const switcher = files.length > 1 && (
           <div className="flex flex-wrap gap-1">
             {files.map((f, i) => (
               <button key={f.refId} type="button" className="ui-btn ui-btn-sm" aria-pressed={i === index} onClick={() => setIndex(i)}>
@@ -114,8 +131,18 @@ export default function ReceiptViewer({ files, onRotate, lang = 'de', className 
               </button>
             ))}
           </div>
-        )}
-      </FileView>
+        );
+        const kind = viewerFileKind(file);
+        return kind === 'pdf' || kind === 'image' ? (
+          <FileView key={file.refId} file={file} onRotate={onRotate} lang={lang}>
+            {switcher}
+          </FileView>
+        ) : (
+          <PagelessView key={file.refId} file={file} kind={kind} lang={lang}>
+            {switcher}
+          </PagelessView>
+        );
+      })()}
     </div>
   );
 }
@@ -127,6 +154,132 @@ export default function ReceiptViewer({ files, onRotate, lang = 'de', className 
 export function rotatedFileUrl(file: Pick<ViewerFile, 'fileUrl' | 'refId'>): string {
   if (!/^\/api\/files\/[^/?#]+$/.test(file.fileUrl)) return file.fileUrl;
   return `${file.fileUrl}?ref=${encodeURIComponent(file.refId)}`;
+}
+
+/**
+ * What the viewer can do with a file: draw a PDF page or an image, or (for
+ * a file without a page) show what it says. An XRechnung arrives as a pure
+ * XML file; anything else without a page is offered as a file only.
+ */
+export type ViewerFileKind = 'pdf' | 'image' | 'xml' | 'other';
+
+export function viewerFileKind(file: Pick<ViewerFile, 'mimeType' | 'originalName'>): ViewerFileKind {
+  const type = file.mimeType.toLowerCase().split(';')[0].trim();
+  if (type === 'application/pdf') return 'pdf';
+  if (type.startsWith('image/')) return 'image';
+  if (type === 'application/xml' || type === 'text/xml' || type.endsWith('+xml') || /\.xml$/i.test(file.originalName)) return 'xml';
+  return 'other';
+}
+
+type PagelessState =
+  | { kind: 'loading' }
+  | { kind: 'failed' }
+  | { kind: 'not_einvoice' }
+  | { kind: 'einvoice'; text: string; problems: string[] };
+
+/**
+ * A stored file without a page. An electronic invoice is read in the
+ * browser with the same reader the upload uses, and its details are shown as
+ * plain text; the rotate and zoom tools have nothing to act on and are left
+ * out. The file itself can always be opened as it is.
+ */
+function PagelessView({
+  file,
+  kind,
+  lang,
+  children,
+}: {
+  file: ViewerFile;
+  kind: 'xml' | 'other';
+  lang: keyof typeof TEXT;
+  children?: ReactNode;
+}) {
+  const t = TEXT[lang];
+  const [state, setState] = useState<PagelessState>(kind === 'xml' ? { kind: 'loading' } : { kind: 'not_einvoice' });
+
+  useEffect(() => {
+    if (kind !== 'xml') return;
+    const abort = new AbortController();
+    (async () => {
+      const response = await fetch(file.fileUrl, { credentials: 'same-origin', signal: abort.signal });
+      if (!response.ok) throw new Error(`the file answered ${response.status}`);
+      // A page instead of the file (a sign-in page after the session ran out) is a failed load, not "no invoice".
+      if ((response.headers.get('Content-Type') ?? '').toLowerCase().startsWith('text/html')) {
+        throw new Error('the file answered with an HTML page');
+      }
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      // Loaded only for an XML file: the reader brings the PDF library along.
+      const { readStructuredInvoice, structuredReceiptFields } = await import('@/lib/einvoice');
+      const reading = await readStructuredInvoice(bytes);
+      if (abort.signal.aborted) return;
+      if (!reading) {
+        setState({ kind: 'not_einvoice' });
+        return;
+      }
+      const fields = structuredReceiptFields(reading.invoice);
+      setState({ kind: 'einvoice', text: fields.text, problems: fields.problems });
+    })().catch((e: unknown) => {
+      if (abort.signal.aborted) return;
+      console.error('[receipt viewer] the XML file could not be read', e);
+      setState({ kind: 'failed' });
+    });
+    return () => abort.abort();
+  }, [kind, file.fileUrl]);
+
+  return (
+    <>
+      <div className="ui-viewer-bar">
+        <p className="px-2 text-sm" style={{ color: 'var(--muted)' }}>
+          {kind === 'xml' ? t.einvoice : t.pageless}
+        </p>
+        <a href={file.fileUrl} target="_blank" rel="noreferrer" className="ui-btn ui-btn-ghost ui-viewer-tool" aria-label={t.openTab} title={t.openTab}>
+          <ToolIcon name="external" />
+        </a>
+      </div>
+      <div
+        className="ui-viewer-text"
+        role="region"
+        aria-label={kind === 'xml' ? t.einvoice : t.pageless}
+        aria-busy={state.kind === 'loading'}
+        tabIndex={0}
+      >
+        {state.kind === 'loading' && (
+          <p className="text-sm" style={{ color: 'var(--muted)' }} role="status">
+            {t.reading}
+          </p>
+        )}
+        {state.kind === 'failed' && (
+          <p className="ui-note ui-note-danger" role="alert">
+            {t.readingFailed(file.originalName)}
+          </p>
+        )}
+        {state.kind === 'not_einvoice' && (
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>
+            {kind === 'xml' ? t.notEinvoice(file.originalName) : t.noPage(file.originalName)}
+          </p>
+        )}
+        {state.kind === 'einvoice' && (
+          <>
+            <p className="mb-3 text-sm" style={{ color: 'var(--muted)' }}>
+              {t.einvoiceIntro}
+            </p>
+            <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">{state.text}</pre>
+            {state.problems.length > 0 && (
+              <div className="ui-note ui-note-danger mt-3" role="note">
+                <p>{t.einvoiceProblems}</p>
+                <ul className="mt-1 list-disc pl-5">
+                  {state.problems.map((problem, i) => (
+                    <li key={`${i}-${problem}`}>{problem}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      {children && <div className="mt-2">{children}</div>}
+    </>
+  );
 }
 
 type Source =

@@ -101,3 +101,13 @@ describe('orderedRates: one order for both rate columns', () => {
     expect(orderedRates(null)).toEqual([]);
   });
 });
+
+describe('orderedRates: shares in cents, nothing negative', () => {
+  it('a tie in cents is a tie, whatever the floating point sum makes of it', () => {
+    expect(orderedRates([{ rate: 7, net: 0.1, tax: 0.2 }, { rate: 19, net: 0.3, tax: 0 }])).toEqual([19, 7]);
+  });
+
+  it('a line that carries nothing or less does not take part', () => {
+    expect(orderedRates([{ rate: 19, net: 10, tax: 1.9 }, { rate: 7, net: -50, tax: -3.5 }, { rate: 0, net: 0, tax: 0 }])).toEqual([19]);
+  });
+});

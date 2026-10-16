@@ -157,17 +157,29 @@ export function settleReading(fullText: string, extracted: TextExtraction, ai: M
   if (amounts.checks.includes('total_conflict')) flags.push('total_conflict');
   else if (amounts.checks.includes('total_unconfirmed')) flags.push('total_unconfirmed');
 
-  // One set of tax lines for both rate columns: the groups the receipt's
-  // arithmetic proves where there are any (the model's lines among them where
-  // their figures are printed), else the lines the model read for a meal. The
-  // number column takes the first rate of that set and the text column lists
-  // them all, in the one order of `orderedRates`, so the two never name a
-  // different first rate.
+  // One set of tax lines for both rate columns: the number column takes the
+  // first rate of that set and the text column lists them all, in the one
+  // order of `orderedRates`, so the two never name a different first rate.
+  //  - The groups the receipt's arithmetic proves, where they cover the whole
+  //    bill without a conflict. They replace the lines the model read for a
+  //    meal: printed figures that add up outrank figures nobody checked.
+  //  - Otherwise a meal keeps the model's lines (a proof of one part of the
+  //    bill must not cut the register's input tax down to that part), unless
+  //    the reader settled a rate of its own from printed figures and the
+  //    model's lines start with another: then they contradict the receipt
+  //    and are not kept (a dollar bill the reader found no tax on).
   const proven = amounts.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax }));
-  if (meal && proven.length > 0) meal.taxLines = proven;
-  const lines = proven.length > 0 ? proven : (meal?.taxLines ?? []);
-  const leading = orderedRates(lines)[0];
-  const taxRate = leading ?? amounts.taxRate ?? ai?.taxRate ?? defaultTaxRate(category, date, meal?.consumption ?? null);
+  const provenSum = proven.reduce((sum, l) => sum + l.net + l.tax, 0);
+  const provenCovers =
+    proven.length > 0 && !amounts.checks.includes('total_conflict') && amounts.gross !== null && Math.abs(provenSum - amounts.gross) <= 0.02;
+  let lines: Array<{ rate: number; net: number; tax: number }> = proven;
+  if (meal) {
+    const model = meal.taxLines ?? [];
+    if (proven.length > 0 && (provenCovers || model.length === 0)) meal.taxLines = proven;
+    else if (proven.length === 0 && model.length > 0 && amounts.taxRate !== null && orderedRates(model)[0] !== amounts.taxRate) meal.taxLines = null;
+    if (meal.taxLines?.length) lines = meal.taxLines;
+  }
+  const taxRate = orderedRates(lines)[0] ?? amounts.taxRate ?? ai?.taxRate ?? defaultTaxRate(category, date, meal?.consumption ?? null);
   let net = amounts.net;
   if (amounts.gross !== null && net === null) net = Math.round((amounts.gross / (1 + taxRate / 100)) * 100) / 100;
   if (meal && amounts.tip != null) meal.tip = amounts.tip;

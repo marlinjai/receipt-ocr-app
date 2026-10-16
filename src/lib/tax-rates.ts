@@ -1,6 +1,7 @@
 import { firstColumnIdByName } from '@/lib/column-lookup';
 import { parseTaxLines } from '@/lib/meals/rules';
 import { MEAL_COLUMNS } from '@/lib/receipts-constants';
+import { orderedRates, type RateLine } from '@/lib/extraction/rate-order';
 
 /**
  * The tax rates of a receipt, as a person reads them: "19 %", or
@@ -29,41 +30,7 @@ function numberOrNull(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** One printed tax line as far as the order of rates needs it. The tax may be missing: then it is worked out from the rate. */
-export interface RateLine {
-  rate: number;
-  net?: number | null;
-  tax?: number | null;
-}
-
-const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
-
-/** The part of the bill a line carries: its net plus its tax. */
-function grossOf(line: RateLine): number {
-  const net = finite(line.net) ? line.net : 0;
-  const tax = finite(line.tax) ? line.tax : (net * line.rate) / 100;
-  return net + tax;
-}
-
-/**
- * The rates of the tax lines, each once, the one that carries most of the
- * bill (net plus tax) first; of two that carry the same, the higher rate.
- *
- * The one order both columns follow: the number column "Tax Rate" holds the
- * first of them (the amount reader orders its groups the same way, see
- * src/lib/extraction/amounts.ts), and the text column "Tax Rates" lists them
- * in this order. Ordered by net, a 7 percent line of 100.00 came before a 19
- * percent line of 99.00 that carries more of the bill (117.81 against 107.00),
- * and the two columns named a different first rate.
- */
-export function orderedRates(lines: ReadonlyArray<RateLine> | null | undefined): number[] {
-  const byRate = new Map<number, number>();
-  for (const line of lines ?? []) {
-    if (!finite(line.rate)) continue;
-    byRate.set(line.rate, (byRate.get(line.rate) ?? 0) + grossOf(line));
-  }
-  return [...byRate.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0]).map(([rate]) => rate);
-}
+export { orderedRates, type RateLine } from '@/lib/extraction/rate-order';
 
 /**
  * The rates of the tax lines in `orderedRates` order. Without tax lines: the
@@ -72,7 +39,7 @@ export function orderedRates(lines: ReadonlyArray<RateLine> | null | undefined):
 export function formatTaxRates(lines: ReadonlyArray<RateLine> | null | undefined, fallbackRate: number | null | undefined): string {
   const rates = orderedRates(lines);
   if (rates.length > 0) return rates.map(formatRate).join(' + ');
-  return finite(fallbackRate) ? formatRate(fallbackRate) : '';
+  return typeof fallbackRate === 'number' && Number.isFinite(fallbackRate) ? formatRate(fallbackRate) : '';
 }
 
 function sameCell(a: unknown, b: unknown): boolean {

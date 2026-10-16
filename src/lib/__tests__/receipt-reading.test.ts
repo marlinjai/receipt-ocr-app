@@ -158,6 +158,9 @@ describe('a file that holds more than one document', () => {
     expect(settle(INVOICE, answer({ documents: null })).flags).not.toContain('several_documents');
     expect(settle(INVOICE, answer({})).flags).not.toContain('several_documents');
     expect(settle(INVOICE, answer({ documents: 2, sawPage: false })).flags).not.toContain('several_documents');
+  });
+});
+
 describe('the two rate columns follow one set of tax lines', () => {
   // A restaurant bill: 7 percent food of 100.00 net, 19 percent drinks of 99.00 net, both groups printed.
   const BILL = ['Trattoria Beispiel', 'Tisch 4', '19.02.2026', 'Speisen 107,00', 'Getränke 117,81', 'MwSt 7% Netto 100,00 MwSt 7,00', 'MwSt 19% Netto 99,00 MwSt 18,81', 'Summe 224,81'].join('\n');
@@ -182,5 +185,34 @@ describe('the two rate columns follow one set of tax lines', () => {
   it('a receipt without any tax lines keeps the rate it had', () => {
     const settled = settle('Example Cloud Inc.\nInvoice date: 5 Jan 2026\nTotal 10,00 €', answer({ taxRate: 19 }));
     expect(settled.taxRate).toBe(19);
+  });
+});
+
+describe('one line set, also where the proof covers part of the bill or the reader settled its own rate', () => {
+  it('a proof of one part of a meal does not cut the model\'s lines down to that part', () => {
+    // 7 percent food 100.00/7.00 is printed apart from its label; 19 percent drinks 50.00/9.50 is proven; the bill is 166.50.
+    const bill = ['Trattoria Beispiel', 'Tisch 4', '19.02.2026', 'Getränke MwSt 19% Netto 50,00 MwSt 9,50 Brutto 59,50', 'Speisen 107,00', 'Summe 166,50'].join('\n');
+    const meal = { ...EMPTY_MEAL_CLASSIFICATION, taxLines: [{ rate: 7, net: 100, tax: 7 }, { rate: 19, net: 50, tax: 9.5 }] };
+    const settled = settle(bill, answer({ category: 'Bewirtung', gross: 166.5, meal }));
+    expect(settled.meal?.taxLines).toEqual([{ rate: 7, net: 100, tax: 7 }, { rate: 19, net: 50, tax: 9.5 }]);
+    expect(settled.taxRate).toBe(orderedRates(settled.meal?.taxLines)[0]);
+  });
+
+  it('model lines that contradict the rate the reader settled from printed figures are not kept', () => {
+    // A dollar diner bill: no tax is printed, so the reader settles rate 0; the model read a sales tax of 8.875 percent.
+    const diner = ['Example Diner', 'Table 3', 'Jan 5, 2026', 'Burger 20.00', 'Total $20.00'].join('\n');
+    const meal = { ...EMPTY_MEAL_CLASSIFICATION, taxLines: [{ rate: 8.875, net: 18.37, tax: 1.63 }] };
+    const settled = settle(diner, answer({ category: 'Bewirtung', gross: 20, currency: 'USD', meal }));
+    expect(settled.taxRate).toBe(0);
+    expect(settled.net).toBe(20);
+    expect(settled.meal?.taxLines).toBeNull();
+  });
+
+  it('model lines whose figures are printed in another order still give the printed groups and their order', () => {
+    const bill = ['Trattoria Beispiel', 'Tisch 4', '19.02.2026', 'MwSt 7% Netto 100,00 MwSt 7,00', 'MwSt 19% Netto 99,00 MwSt 18,81', 'Summe 224,81'].join('\n');
+    const meal = { ...EMPTY_MEAL_CLASSIFICATION, taxLines: [{ rate: 19, net: 99, tax: 18.81 }, { rate: 7, net: 100, tax: 7 }] };
+    const settled = settle(bill, answer({ category: 'Bewirtung', gross: 224.81, meal }));
+    expect(settled.taxRate).toBe(19);
+    expect(orderedRates(settled.meal?.taxLines)).toEqual([19, 7]);
   });
 });

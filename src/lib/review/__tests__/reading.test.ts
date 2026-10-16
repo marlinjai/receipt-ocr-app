@@ -239,3 +239,11 @@ describe('a new reading never offers a tax two item amounts happen to fit', () =
     expect(changes).toEqual([]);
   });
 });
+
+describe('the review list compares the rate in the one order', () => {
+  it('two 7 percent groups that carry more than the 19 percent one: a stored 7 is not offered 19', () => {
+    const text = ['Musterladen', 'MwSt 7% 50,00 3,50 53,50', 'MwSt 7% 40,00 2,80 42,80', 'MwSt 19% 80,00 15,20 95,20', 'Summe 191,50'].join('\n');
+    const changes = proposeReading(stored(text, { name: 'Einkauf', vendor: 'Musterladen', gross: 191.5, net: 170, taxRate: 7, category: 'Sonstige Ausgaben' }));
+    expect(changes.find((c) => c.field === 'taxRate')).toBeUndefined();
+  });
+});

@@ -6,13 +6,13 @@ import { firstColumnIdByName } from '@/lib/column-lookup';
 import { isoDay, type SelectOptionsByColumn } from '@/lib/meals/record';
 import { allReceiptRows, tableContext } from '@/lib/meals/service';
 import { isGroupRow } from '@/lib/receipts-kind';
-import { serializeTaxLines } from '@/lib/meals/rules';
+import { parseTaxLines, serializeTaxLines } from '@/lib/meals/rules';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 import { kontoFor, newReading, type NewReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
 import { isConfirmable, isReadFlag, lookAlikes, paymentsCoverTotal, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
 import { countedReceiptLinks, loadPayments } from '@/lib/tax/payments/service';
 import { getFxRate } from '@/lib/fx-rates';
-import { withTaxRates } from '@/lib/tax-rates';
+import { orderedRates, withTaxRates } from '@/lib/tax-rates';
 import { rowsWithOwnTreatment } from '@/lib/tax/service';
 
 /**
@@ -78,7 +78,7 @@ function snapshotOf(
   columns: Column[],
   selectOptions: SelectOptionsByColumn,
   hashes: ReadonlyMap<string, string[]>,
-): ReviewSnapshot & { isMeal: boolean; fxRate: number | null; reading: StoredReading } {
+): ReviewSnapshot & { isMeal: boolean; fxRate: number | null; cells: Record<string, unknown>; reading: StoredReading } {
   const byName = firstColumnIdByName(columns);
   const cell = (name: string): unknown => {
     const id = byName.get(name);
@@ -109,6 +109,7 @@ function snapshotOf(
     // A table without the column has nothing to answer: the field is left out.
     ...(byName.has('Zuordnung') ? { assignment: optionName('Zuordnung') } : {}),
     isMeal: category === MEAL_CATEGORY,
+    cells: row.cells,
     reading: {
       name: text(cell('Name')).trim(),
       vendor,
@@ -130,8 +131,21 @@ function snapshotOf(
  * name that states them, are not offered either: taken alone they would land
  * in a row that says another currency.
  */
-function readingOf(stored: StoredReading, columns: Column[], selectOptions: SelectOptionsByColumn): NewReading {
-  const reading = newReading(stored);
+function readingOf(
+  stored: StoredReading,
+  columns: Column[],
+  selectOptions: SelectOptionsByColumn,
+  /** The row's stored tax lines, and whether it is a meal: a meal's typed lines are the person's answer. */
+  row: { isMeal: boolean; cells: Record<string, unknown> },
+): NewReading {
+  const read = newReading(stored);
+  // A rate the reading brings without lines of its own is not offered against
+  // the tax lines a person typed for a meal: the person's lines decide its rate.
+  const linesId = firstColumnIdByName(columns).get(MEAL_COLUMNS.taxLines);
+  const storedLines = linesId ? parseTaxLines(row.cells[linesId]) : null;
+  const rateOffer = read.changes.find((c) => c.field === 'taxRate');
+  const linesDecide = row.isMeal && read.taxLines.length === 0 && rateOffer !== undefined && Boolean(storedLines?.length) && orderedRates(storedLines)[0] !== Number(rateOffer.to);
+  const reading = linesDecide ? { ...read, changes: read.changes.filter((c) => c.field !== 'taxRate') } : read;
   const currency = reading.changes.find((c) => c.field === 'currency');
   if (!currency) return reading;
   const columnId = firstColumnIdByName(columns).get('Currency');
@@ -210,7 +224,7 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
     const duplicates = alike.get(s.rowId) ?? [];
     const record = storedByRow.get(s.rowId);
     // Reading the stored text again costs nothing (no model is asked); a confirmed receipt is left alone.
-    const proposal = record?.checkedAt ? [] : readingOf(s.reading, ctx.columns, ctx.selectOptions).changes;
+    const proposal = record?.checkedAt ? [] : readingOf(s.reading, ctx.columns, ctx.selectOptions, { isMeal: s.isMeal, cells: s.cells }).changes;
     const reasons = reviewReasons(s, record, duplicates, proposal.length > 0);
     if (reasons.length === 0) continue;
     entries.push({
@@ -323,14 +337,22 @@ export async function applyNewReading(
   if (!row || row.tableId !== table.tableId || isGroupRow(row, table.columns)) throw new ReviewError('row_not_found');
 
   const snapshot = snapshotOf(row, table.columns, table.selectOptions, new Map());
-  const reading = readingOf(snapshot.reading, table.columns, table.selectOptions);
+  const reading = readingOf(snapshot.reading, table.columns, table.selectOptions, { isMeal: snapshot.isMeal, cells: row.cells });
   const wanted = new Set(fields);
   // An amount is read in the receipt's currency: 360 dollars taken into a row
   // that still says euros would be a wrong amount. Whoever takes an amount
   // takes the currency it was read in with it.
   if (AMOUNT_FIELDS.some((f) => wanted.has(f))) wanted.add('currency');
+  const linesColumn = firstColumnIdByName(table.columns).get(MEAL_COLUMNS.taxLines);
+  const storedLines = linesColumn ? parseTaxLines(row.cells[linesColumn]) : null;
+  // `readingOf` offers no rate against a meal's typed lines, so none is taken here either.
+  const rateOffer = reading.changes.find((c) => c.field === 'taxRate');
   const take = reading.changes.filter((c) => wanted.has(c.field));
   if (take.length === 0) return [];
+  // A total or a net taken brings the printed tax lines with it (below), and
+  // those bring the rate read with them: a rate left behind would name
+  // another first rate than the lines do.
+  if (rateOffer && !wanted.has('taxRate') && reading.taxLines.length > 0 && take.some((c) => c.field === 'gross' || c.field === 'net')) take.push(rateOffer);
 
   const byName = firstColumnIdByName(table.columns);
   const columnId = (name: string): string => {
@@ -366,8 +388,15 @@ export async function applyNewReading(
   // The printed tax groups go with the amounts, so a meal's tax split in the register matches the new
   // total. A receipt that is no meal keeps them too: they are what its rates text is derived from.
   const amountsTaken = take.some((c) => c.field === 'gross' || c.field === 'net' || c.field === 'taxRate');
+  const rateChange = take.find((c) => c.field === 'taxRate');
+  const rateTaken = rateChange ? Number(rateChange.to) : undefined;
   if (amountsTaken && reading.taxLines.length > 0) {
     cells[columnId(MEAL_COLUMNS.taxLines)] = serializeTaxLines(reading.taxLines);
+  } else if (rateTaken !== undefined && linesColumn && storedLines?.length && orderedRates(storedLines)[0] !== rateTaken) {
+    // A rate taken without lines of its own on a receipt that is no meal: the
+    // stored lines are the printed groups of an older reading and contradict
+    // it, so they go and the two rate columns name the same first rate.
+    cells[linesColumn] = serializeTaxLines(null);
   }
   // A vendor or a total taken from the proposal is said by the name too, unless the proposal names the receipt itself.
   const named = await withFollowingName(table.adapter, table.columns, cells, row.cells);

@@ -20,6 +20,8 @@
  * tax label on it names, and where it names none the bill is the net.
  */
 
+import { orderLines, orderedRates } from './rate-order';
+
 export interface TaxGroup {
   /** Percent, one of the rates valid on the receipt date. */
   rate: number;
@@ -686,7 +688,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   let stated: { net: number; tax: number; rate: number } | null = null;
 
   if (groups.length > 0) {
-    groups.sort((a, b) => b.gross - a.gross);
+    groups = orderLines(groups);
     const bill = groups.reduce((sum, g) => sum + cents(g.gross), 0);
     const taxSum = groups.reduce((sum, g) => sum + cents(g.tax), 0);
     gross = euros(bill);
@@ -741,7 +743,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     const agreedAbove = above && pageTotal !== null && (labelled.includes(pageTotal) || (!hasTipWord && values.has(pageTotal - bill)));
     if (agreedAbove && pageTotal !== null) {
       checks.push('total_conflict');
-      return { gross: euros(pageTotal), basis: labelled.includes(pageTotal) ? 'label_agreed' : 'page_reading', net: euros(pageTotal - taxSum), taxRate: groups[0].rate, taxPrinted: true, taxGroups: groups, tip, checks };
+      return { gross: euros(pageTotal), basis: labelled.includes(pageTotal) ? 'label_agreed' : 'page_reading', net: euros(pageTotal - taxSum), taxRate: (orderedRates(groups)[0] ?? null), taxPrinted: true, taxGroups: groups, tip, checks };
     }
     const paid = withUntaxed > 0 ? withUntaxed : (afterDeduction ?? bill);
     if (noTotal || (model !== null && model !== paid && !(tipCents !== undefined && model === paid + tipCents))) checks.push('total_conflict');
@@ -749,7 +751,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       // The rate is printed; the net is the total less the tax where the tax
       // still stands, and left to the rate where a deduction changed it.
       const net = withUntaxed > 0 ? euros(paid - taxSum) : null;
-      return { gross: euros(paid), basis, net, taxRate: groups[0].rate, taxPrinted: true, taxGroups: withUntaxed > 0 ? groups : [], tip, checks };
+      return { gross: euros(paid), basis, net, taxRate: (orderedRates(groups)[0] ?? null), taxPrinted: true, taxGroups: withUntaxed > 0 ? groups : [], tip, checks };
     }
   } else {
     // Largest first: the total is the largest amount a printed tax amount fits.
@@ -875,7 +877,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     return { gross, basis, net: gross, taxRate: 0, taxPrinted: false, taxGroups: [], tip, checks };
   }
   const net = groups.length > 0 ? euros(groups.reduce((sum, g) => sum + cents(g.net), 0)) : null;
-  const taxRate = groups.length > 0 ? groups[0].rate : null;
+  const taxRate = groups.length > 0 ? (orderedRates(groups)[0] ?? null) : null;
   if (gross !== null && groups.length === 0) checks.push('tax_estimated');
   return { gross, basis, net, taxRate, taxPrinted: groups.length > 0, taxGroups: groups, tip, checks };
 }

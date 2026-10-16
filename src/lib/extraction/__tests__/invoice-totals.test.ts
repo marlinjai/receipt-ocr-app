@@ -398,3 +398,18 @@ describe('the net set off by a dash, whatever it is called, and an earlier invoi
     expect(readAmounts(bill, { date: '2026-04-16' })).toMatchObject({ gross: 49.45, net: 42.27 });
   });
 });
+
+describe('the amount reader names the first rate in the one order', () => {
+  it('two 7 percent groups that together carry more than the 19 percent one: 7 comes first', () => {
+    // 7 percent: 50.00/3.50 and 40.00/2.80 (96.30 together); 19 percent: 80.00/15.20 (95.20).
+    const text = ['Musterladen', 'MwSt 7% 50,00 3,50 53,50', 'MwSt 7% 40,00 2,80 42,80', 'MwSt 19% 80,00 15,20 95,20', 'Summe 191,50'].join('\n');
+    const reading = readAmounts(text, { date: '2026-03-01' });
+    expect(reading.taxRate).toBe(7);
+    expect(reading.taxGroups.map((g) => g.rate)).toEqual([7, 7, 19]);
+  });
+
+  it('a tie goes to the higher rate', () => {
+    const text = ['Musterladen', 'MwSt 7% 100,00 7,00 107,00', 'MwSt 19% 89,92 17,08 107,00', 'Summe 214,00'].join('\n');
+    expect(readAmounts(text, { date: '2026-03-01' }).taxRate).toBe(19);
+  });
+});

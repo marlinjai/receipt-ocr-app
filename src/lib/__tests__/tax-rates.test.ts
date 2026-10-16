@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { formatTaxRates, touchesTaxRates, withTaxRates } from '../tax-rates';
+import { formatTaxRates, orderedRates, touchesTaxRates, withTaxRates } from '../tax-rates';
+import { orderLines } from '../extraction/rate-order';
 
 const COLUMNS = [
   { id: 'c-rate', name: 'Tax Rate' },
@@ -77,5 +78,72 @@ describe('withTaxRates: the text follows every write of the rate or the tax line
   it('reads a rate stored as text and ignores lines that are not lines', () => {
     expect(withTaxRates(COLUMNS, { 'c-rate': '7' })['c-rates']).toBe('7 %');
     expect(withTaxRates(COLUMNS, { 'c-rate': 19, 'c-lines': 'not json' })['c-rates']).toBe('19 %');
+  });
+});
+
+describe('orderedRates: one order for both rate columns', () => {
+  it('orders by the part of the bill a rate carries, net plus tax, not by net alone', () => {
+    // 7 percent on 100.00 is 107.00 of the bill, 19 percent on 99.00 is 117.81: the 19 percent line carries more.
+    const lines = [
+      { rate: 7, net: 100, tax: 7 },
+      { rate: 19, net: 99, tax: 18.81 },
+    ];
+    expect(orderedRates(lines)).toEqual([19, 7]);
+    expect(formatTaxRates(lines, 7)).toBe('19 % + 7 %');
+  });
+
+  it('works the tax out from the rate where a line gives none, and a tie goes to the higher rate', () => {
+    expect(orderedRates([{ rate: 7, net: 100 }, { rate: 19, net: 99 }])).toEqual([19, 7]);
+    expect(orderedRates([{ rate: 7, net: 107, tax: 0 }, { rate: 19, net: 107, tax: 0 }])).toEqual([19, 7]);
+  });
+
+  it('adds the lines of one rate together and skips a line without a usable rate', () => {
+    expect(orderedRates([{ rate: 19, net: 20, tax: 3.8 }, { rate: 7, net: 30, tax: 2.1 }, { rate: 19, net: 20, tax: 3.8 }, { rate: Number.NaN, net: 500 }])).toEqual([19, 7]);
+    expect(orderedRates(null)).toEqual([]);
+  });
+});
+
+describe('orderedRates: shares in cents, nothing negative', () => {
+  it('a tie in cents is a tie, whatever the floating point sum makes of it', () => {
+    expect(orderedRates([{ rate: 7, net: 0.1, tax: 0.2 }, { rate: 19, net: 0.3, tax: 0 }])).toEqual([19, 7]);
+  });
+
+  it('a line that carries nothing or less does not take part', () => {
+    expect(orderedRates([{ rate: 19, net: 10, tax: 1.9 }, { rate: 7, net: -50, tax: -3.5 }, { rate: 0, net: 0, tax: 0 }])).toEqual([19]);
+  });
+});
+
+describe('orderLines and refunds', () => {
+  it('orders the lines by the share their rate carries, the larger line first within a rate, a rate carrying nothing last', () => {
+    const lines = [
+      { rate: 19, net: 10, tax: 1.9 },
+      { rate: 7, net: 60, tax: 4.2 },
+      { rate: 19, net: 50, tax: 9.5 },
+      { rate: 0, net: 0, tax: 0 },
+    ];
+    // 19 percent carries 71.40 in all, 7 percent 64.20.
+    expect(orderLines(lines)).toEqual([
+      { rate: 19, net: 50, tax: 9.5 },
+      { rate: 19, net: 10, tax: 1.9 },
+      { rate: 7, net: 60, tax: 4.2 },
+      { rate: 0, net: 0, tax: 0 },
+    ]);
+  });
+
+  it('a refund at a rate is set against that rate before the order is decided', () => {
+    // 19 percent: 100.00 sold, 60.00 refunded, 40.00 left; 7 percent: 50.00.
+    expect(orderedRates([{ rate: 19, net: 100, tax: 19 }, { rate: 19, net: -60, tax: -11.4 }, { rate: 7, net: 50, tax: 3.5 }])).toEqual([7, 19]);
+  });
+});
+
+describe('withTaxRates: new tax lines bring the number column with them', () => {
+  it('the rate follows the first of the new lines where the write does not set it', () => {
+    const out = withTaxRates(COLUMNS, { 'c-lines': lines([7, 100], [19, 20]) }, { 'c-rate': 19, 'c-lines': lines([19, 20]) });
+    expect(out).toMatchObject({ 'c-rate': 7, 'c-rates': '7 % + 19 %' });
+  });
+
+  it('a rate the write sets itself stands, and a rate typed on a row with lines stays as typed', () => {
+    expect(withTaxRates(COLUMNS, { 'c-rate': 19, 'c-lines': lines([7, 100], [19, 20]) })).toMatchObject({ 'c-rate': 19, 'c-rates': '7 % + 19 %' });
+    expect(withTaxRates(COLUMNS, { 'c-rate': 19 }, { 'c-lines': lines([7, 100]), 'c-rate': 7 })).toMatchObject({ 'c-rate': 19, 'c-rates': '7 %' });
   });
 });

@@ -1,6 +1,7 @@
 import { firstColumnIdByName } from '@/lib/column-lookup';
 import { parseTaxLines } from '@/lib/meals/rules';
 import { MEAL_COLUMNS } from '@/lib/receipts-constants';
+import { orderedRates, type RateLine } from '@/lib/extraction/rate-order';
 
 /**
  * The tax rates of a receipt, as a person reads them: "19 %", or
@@ -29,23 +30,15 @@ function numberOrNull(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+export { orderedRates, type RateLine } from '@/lib/extraction/rate-order';
+
 /**
- * The rates of the tax lines, each once, the one with the largest net amount
- * first (so the text starts with what the number column shows). Without tax
- * lines: the single rate. Empty when neither is known.
+ * The rates of the tax lines in `orderedRates` order. Without tax lines: the
+ * single rate. Empty when neither is known.
  */
-export function formatTaxRates(lines: ReadonlyArray<{ rate: number; net?: number | null }> | null | undefined, fallbackRate: number | null | undefined): string {
-  const netByRate = new Map<number, number>();
-  for (const line of lines ?? []) {
-    if (typeof line.rate !== 'number' || !Number.isFinite(line.rate)) continue;
-    netByRate.set(line.rate, (netByRate.get(line.rate) ?? 0) + (typeof line.net === 'number' && Number.isFinite(line.net) ? line.net : 0));
-  }
-  if (netByRate.size > 0) {
-    return [...netByRate.entries()]
-      .sort((a, b) => b[1] - a[1] || b[0] - a[0])
-      .map(([rate]) => formatRate(rate))
-      .join(' + ');
-  }
+export function formatTaxRates(lines: ReadonlyArray<RateLine> | null | undefined, fallbackRate: number | null | undefined): string {
+  const rates = orderedRates(lines);
+  if (rates.length > 0) return rates.map(formatRate).join(' + ');
   return typeof fallbackRate === 'number' && Number.isFinite(fallbackRate) ? formatRate(fallbackRate) : '';
 }
 
@@ -74,7 +67,7 @@ export function withTaxRates<V>(
   columns: ReadonlyArray<{ id: string; name: string }>,
   cells: Record<string, V>,
   stored?: Record<string, unknown> | null,
-): Record<string, V | string> {
+): Record<string, V | string | number> {
   const ids = firstColumnIdByName(columns);
   const ratesId = ids.get(TAX_RATES_COLUMN);
   if (!ratesId || ratesId in cells) return cells;
@@ -86,5 +79,12 @@ export function withTaxRates<V>(
   const changes = (id: string | undefined): boolean => id !== undefined && id in cells && (!stored || !sameCell(cells[id], stored[id]));
   if (!changes(rateId) && !changes(linesId)) return cells;
   const value = (id: string | undefined): unknown => (id === undefined ? null : id in cells ? cells[id] : (stored?.[id] ?? null));
-  return { ...cells, [ratesId]: formatTaxRates(parseTaxLines(value(linesId)), numberOrNull(value(rateId))) };
+  const lines = parseTaxLines(value(linesId));
+  // New tax lines bring the number column with them where the write does not
+  // set it itself: the first rate of the lines, so both columns name the same
+  // first rate. A rate a person types on a row with lines stands as typed.
+  const leading = orderedRates(lines)[0];
+  const rateFollows = changes(linesId) && rateId !== undefined && !(rateId in cells) && leading !== undefined;
+  const rate = rateFollows ? leading : numberOrNull(value(rateId));
+  return { ...cells, ...(rateFollows ? { [rateId]: leading } : {}), [ratesId]: formatTaxRates(lines, rate) };
 }

@@ -211,6 +211,9 @@ export interface LinkedMoney {
  * payment is not imported) the receipt keeps its own amount and day, less the refund.
  */
 export function linkedByRow(payments: readonly PaymentRow[]): Map<string, LinkedMoney> {
+  // Note for the ten-day rule (year-boundary days): it looks at money out only,
+  // so a credit note refunded between 22 December and 10 January is not listed
+  // there. Credit notes are not regularly recurring payments, so none is missed.
   const sums = new Map<string, { day: string | null; backDay: string | null; outCents: number; backCents: number }>();
   // A payment and the debit that funds it are the same money and count once (`countedReceiptLinks`).
   for (const { payment, link } of countedReceiptLinks(payments)) {

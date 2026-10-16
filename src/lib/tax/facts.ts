@@ -70,6 +70,15 @@ export interface ResolvedItem {
   lineDescription: string | null;
 }
 
+/**
+ * Did the section 19 status change in the year up to `day`? A credit note then
+ * may correct a purchase made under the other status.
+ */
+function statusChangedWithinYear(settings: MealTaxSettings, day: string): boolean {
+  const from = yearBefore(day);
+  return (settings.statusChanges ?? []).some((c) => c.effectiveFrom > from && c.effectiveFrom <= day);
+}
+
 /** The same day one year earlier (29 February gives 28 February). */
 function yearBefore(isoDay: string): string {
   const year = Number(isoDay.slice(0, 4)) - 1;
@@ -160,7 +169,8 @@ export function resolveItem(
 ): ResolvedItem {
   const { record, decision } = facts;
   const stated = amountOf(record);
-  const creditNote = stated.amountCents !== null && stated.amountCents < 0;
+  // Decided from the document, so a credit note in another currency without a rate is still one.
+  const creditNote = record.gross !== null && Number.isFinite(record.gross) && record.gross < 0;
   // A credit note is paid by money coming back, on the day of the first; money
   // out linked to it is a question for a person (see `creditNotePaymentOut`).
   const creditNoteBack = creditNote && (facts.moneyOutCents ?? 0) === 0 && facts.moneyBack ? facts.moneyBack : null;
@@ -189,9 +199,9 @@ export function resolveItem(
     ...(paid ? { amountCents: paid.cents, amountBasis: 'payment' as const } : document),
     netCents: paid ? netOfPaid(record, paid.cents) : refunded > 0 && document.amountCents !== null ? netOfPaid(record, document.amountCents) : netOf(record),
     // A net amount the receipt states but that cannot be its net (larger than the total, or the other sign).
-    ...(record.net !== null && record.net !== 0 && !netFits(record.net, record.gross) && record.gross !== null && record.gross !== 0 ? { netDoesNotFit: true } : {}),
+    ...(record.gross !== null && record.gross !== 0 && record.net !== null && record.net !== 0 && !netFits(record.net, record.gross) ? { netDoesNotFit: true } : {}),
     ...(creditNote && (facts.moneyOutCents ?? 0) > 0 ? { creditNotePaymentOut: true } : {}),
-    ...(creditNote && cashDay !== null && smallBusinessOn(settings, yearBefore(cashDay)) !== smallBusinessOn(settings, cashDay) ? { creditNoteStatusChanged: true } : {}),
+    ...(creditNote && cashDay !== null && statusChangedWithinYear(settings, cashDay) ? { creditNoteStatusChanged: true } : {}),
     // The status on the receipt's own date: a later change leaves earlier receipts alone.
     smallBusiness: smallBusinessOn(settings, cashDay),
   };

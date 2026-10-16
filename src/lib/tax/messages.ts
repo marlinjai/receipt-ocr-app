@@ -22,13 +22,13 @@ export const CHECK_LABELS: Record<OpenCheckKind, string> = {
   lines_do_not_sum: 'Die Positionen ergeben nicht mehr den Belegbetrag',
   needs_asset: 'Über der Grenze für geringwertige Wirtschaftsgüter: als Anlage führen',
   net_amount_needed: 'Nettobetrag fehlt: nahe an der Grenze für geringwertige Wirtschaftsgüter',
-  net_does_not_fit: 'Nettobetrag passt nicht zum Betrag (größer als der Betrag oder mit anderem Vorzeichen): bitte im Beleg korrigieren',
+  net_does_not_fit: 'Nettobetrag passt nicht zum Bruttobetrag (größer als dieser oder mit anderem Vorzeichen): bitte im Beleg korrigieren',
   credit_note_payment_out:
     'Rechnungskorrektur (Gutschrift) mit zugeordneter Ausgabe: bitte unter „Zahlungen“ prüfen und die Ausgabe der Rechnung zuordnen, mit der die Gutschrift verrechnet wurde',
   credit_note_on_meal_line:
     'Rechnungskorrektur (Gutschrift) auf der Zeile für Bewirtungen: das Bewirtungsverzeichnis führt keine Gutschriften. Bitte die Bewirtung im Verzeichnis berichtigen und hier eine andere Zeile wählen oder „Privat“',
   credit_note_status_review:
-    'Rechnungskorrektur (Gutschrift) nach einem Wechsel bei der Kleinunternehmerregelung: die Korrektur folgt dem Status, unter dem die ursprüngliche Rechnung gezählt wurde (§ 17 Umsatzsteuergesetz)',
+    'Rechnungskorrektur (Gutschrift) nach einem Wechsel bei der Kleinunternehmerregelung: gerechnet wird mit dem Status am Tag der Korrektur. Galt für den ursprünglichen Einkauf der andere Status, folgt die Korrektur diesem (§ 17 Umsatzsteuergesetz): dann in der Voranmeldung die Vorsteuer nicht berichtigen (Einkauf unter § 19) oder berichtigen (Einkauf unter Regelbesteuerung) und den Betrag in der Einnahmenüberschussrechnung entsprechend brutto oder netto ansetzen',
 };
 
 export const ASSET_CHECK_LABELS: Record<AssetCheckKind, string> = {

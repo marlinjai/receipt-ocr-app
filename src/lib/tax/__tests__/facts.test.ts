@@ -172,10 +172,23 @@ describe('resolveItem: amounts', () => {
     expect(credit.netCents).toBe(-453);
   });
 
+  it('a credit note in another currency without a rate is still a credit note', () => {
+    const usd = (extra: Partial<ReceiptFacts>) =>
+      resolveItem(facts(receipt({ currency: 'USD', gross: -119, net: -100, fxRate: null, date: '2026-03-01' }), extra), [], REGULAR_BUSINESS).item;
+    // Settled by the euro money back: it counts with that amount and its net in proportion.
+    expect(usd({ moneyBack: { day: '2026-03-10', cents: 10_710 }, moneyOutCents: 0 })).toMatchObject({ amountCents: -10_710, netCents: -9_000, date: '2026-03-10' });
+    // Money out linked to it is a question, never an expense.
+    const out = usd({ paid: { day: '2026-03-05', cents: 10_710 }, moneyBack: null, moneyOutCents: 10_710 });
+    expect(out).toMatchObject({ amountCents: null, creditNotePaymentOut: true });
+    const result = computeYear({ year: 2026, items: [{ ...out, allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.telecom' }] }, rulesForYear(2026));
+    expect(result.checks.map((c) => c.kind)).toContain('credit_note_payment_out');
+    expect(result.businessExpenseCents).toBe(0);
+  });
+
   it('a net amount of the other sign is reported as not fitting, not as missing', () => {
-    const r = resolveItem(facts(receipt({ gross: -119, net: 100 })), [], REGULAR_BUSINESS).item;
+    const r = resolveItem(facts(receipt({ gross: -119, net: 100, date: '2025-03-01' })), [], REGULAR_BUSINESS).item;
     expect(r).toMatchObject({ netCents: null, netDoesNotFit: true });
-    const result = computeYear({ year: r.date ? Number(r.date.slice(0, 4)) : 2025, items: [{ ...r, allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.telecom' }] }, rulesForYear(2025));
+    const result = computeYear({ year: 2025, items: [{ ...r, allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.telecom' }] }, rulesForYear(2025));
     expect(result.checks.map((c) => c.kind)).toContain('net_does_not_fit');
     expect(result.checks.map((c) => c.kind)).not.toContain('net_amount_missing');
   });
@@ -249,6 +262,12 @@ describe('a credit note in the statement, under both statuses', () => {
     const result = computeYear({ year: 2025, items: [credit] }, rulesForYear(2025));
     expect(result.checks).toEqual([{ itemId: 'cn', kind: 'credit_note_status_review', blocking: false }]);
     expect(result.lines.find((l) => l.key === 'euer.input_vat')?.cents).toBe(-1_900);
+    // A change and a change back within the year are caught too.
+    const back = { ...REGULAR_BUSINESS, smallBusiness: true, statusChanges: [{ effectiveFrom: '2025-02-01', smallBusiness: false }, { effectiveFrom: '2025-06-01', smallBusiness: true }] };
+    expect(resolveItem(facts(receipt({ rowId: 'cn2', gross: -119, net: -100, date: '2025-09-01' })), [], back).item.creditNoteStatusChanged).toBe(true);
+    // A change more than a year back asks nothing.
+    const long = { ...REGULAR_BUSINESS, smallBusiness: true, statusChanges: [{ effectiveFrom: '2024-01-01', smallBusiness: false }] };
+    expect(resolveItem(facts(receipt({ rowId: 'cn3', gross: -119, net: -100, date: '2025-09-01' })), [], long).item.creditNoteStatusChanged).toBeUndefined();
     // An invoice in the same situation asks nothing.
     const invoice = resolveItem(facts(receipt({ rowId: 'inv', gross: 119, net: 100, date: '2025-09-01' })), [], changed).item;
     expect(invoice.creditNoteStatusChanged).toBeUndefined();

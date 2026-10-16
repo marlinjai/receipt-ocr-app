@@ -1996,7 +1996,23 @@ not computed.
   total or of the other sign is reported as "does not fit" instead of "missing" (for every
   receipt, only the wording of that check changes); foreign-currency amounts round half
   away from zero, so a credit note mirrors its invoice to the cent.
-- **Reviewed** by a fresh agent before the pull request; both blocking findings (money out
-  turning a credit note into an expense, and the credit note never counting on its refund
-  day) and all further findings are fixed with tests.
+- **A credit note refunded in two parts** counts the whole sum on the day of the first
+  money back, as a purchase paid in parts counts on its first payment day.
+- **Reviewed twice** by fresh agents before the pull request; the blocking findings (money
+  out turning a credit note into an expense, the credit note never counting on its refund
+  day, a credit note in another currency without a rate read as a purchase) and the
+  further findings are fixed with tests.
+- **Open, not built here (outside this fix's scope):**
+  - *The status of the purchase a credit note corrects.* After a change of the section 19
+    status the app computes a credit note under the status on its own day; when the
+    purchase was under the other status, the correction follows the purchase (section 17
+    of the value-added tax act). The credit note carries a note that says what to do by
+    hand. Proposed build: an answer per credit note ("Einkauf unter Kleinunternehmer-
+    regelung / Regelbesteuerung"), stored with the receipt's decision, and the
+    computation under that status. Needed only once the status changes; the owner is
+    under section 19 today.
+  - *Proposing the money back for a credit note.* Refund proposals in the payments module
+    consider receipts with a positive amount only, so the money back for a credit note is
+    linked by hand; until then the credit note counts on its own day. This belongs to the
+    payments module (proposals for money in that matches a credit note's amount in full).
 

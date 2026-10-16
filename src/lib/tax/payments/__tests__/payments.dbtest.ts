@@ -543,11 +543,10 @@ describe('the pay-later purchase list: forward, change an earlier input, resume,
     expect(await db.taxPayment.count({ where: { accountId: laterId } })).toBe(0);
 
     expect(await importPayments(db, ctx, laterId, MARCH)).toMatchObject({ added: 2 });
-    // A day belongs to the source that brought it first: another source on the list's days adds nothing and is refused,
-    // and so is the list on the days a bank export covers.
-    expect(await code(importPayments(db, ctx, laterId, file(line('2025-03-05', 'Laden Beispiel', 'Einkauf', '-3'))))).toBe('nothing_in_scope');
+    // A payment service's list holds other movements than a bank: a bank export into it is refused, and the list into a bank account.
+    expect(await code(importPayments(db, ctx, laterId, JANUARY))).toBe('format_mismatch');
     await importPayments(db, ctx, accountId, JANUARY);
-    expect(await code(importPayments(db, ctx, accountId, laterFile(later('2026-01-10', 'Laden Beispiel', '3.00', '4000000000009'))))).toBe('nothing_in_scope');
+    expect(await code(importPayments(db, ctx, accountId, laterFile(later('2026-01-10', 'Laden Beispiel', '3.00', '4000000000009'))))).toBe('format_mismatch');
     expect(await db.taxPayment.count({ where: { accountId: laterId } })).toBe(2);
   });
 
@@ -1379,6 +1378,8 @@ describe('the tab asks less after a real import: money in, a private account, a 
     const desk = (await findPayments(db, ws.workspaceId, { year: 2026, text: 'Schreibtisch' })).payments[0];
     await setPaymentKind(db, ctx, desk.id, 'fee');
     expect((await findPayments(db, ws.workspaceId, { year: 2026, text: 'Schreibtisch' })).total).toBe(0);
+  });
+});
 
 describe('an import limited to a year, and an account continued from a second source: forward, change an earlier input, resume, re-entry', () => {
   // A bank export of the first half of 2025, and the bank interface's list that runs from late 2024 into 2026.
@@ -1429,18 +1430,36 @@ describe('an import limited to a year, and an account continued from a second so
     expect(await days(accountId)).toEqual(['2025-01-10 -1000', '2025-06-30 -2000', '2025-07-02 -3000', '2025-12-31 -4000']);
   });
 
-  it('change an earlier input: undoing the export frees its days for the other source once its import is read again', async () => {
+  it('change an earlier input: the export cannot be undone while the list that continued it is there; undone in order, the list fills the freed days', async () => {
     const { ctx, accountId } = await workspace();
     const exported = await importPayments(db, ctx, accountId, EXPORT);
     const listed = await importPayments(db, ctx, accountId, LIST, { onlyYear: 2025 });
-    // The list's import lies after the export's days, so the export can be undone on its own.
-    await deleteImportBatch(db, ctx, exported.batchId);
-    expect(await days(accountId)).toEqual(['2025-07-02 -3000', '2025-12-31 -4000']);
-    // The same import again is refused (nothing doubled); undone and read again, it fills the freed days from the list.
-    expect(await code(importPayments(db, ctx, accountId, LIST, { onlyYear: 2025 }))).toBe('file_already_imported');
+    // The list left out the export's days: undoing the export alone would leave them empty.
+    expect(await code(deleteImportBatch(db, ctx, exported.batchId))).toBe('batch_has_later_source');
     await deleteImportBatch(db, ctx, listed.batchId);
+    await deleteImportBatch(db, ctx, exported.batchId);
     expect(await importPayments(db, ctx, accountId, LIST, { onlyYear: 2025 })).toMatchObject({ added: 3, skipped: { other_year: 2 } });
     expect(await days(accountId)).toEqual(['2025-06-30 -2000', '2025-07-02 -3000', '2025-12-31 -4000']);
+  });
+
+  it('a later export of the first source fills its own days, also those the other source’s range spans', async () => {
+    const { ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, EXPORT);
+    // The whole list keeps late 2024 and the second half of 2025: its range spans the export's days but does not hold them.
+    await importPayments(db, ctx, accountId, LIST);
+    const more = file(line('2025-03-03', 'Werkzeug Beispiel GmbH', 'Bestellung 3', '-15'), line('2025-08-01', 'Werkzeug Beispiel GmbH', 'Bestellung 4', '-99'));
+    expect(await importPayments(db, ctx, accountId, more)).toMatchObject({ added: 1, skipped: { covered_by_other_source: 1 } });
+    expect(await days(accountId)).toContain('2025-03-03 -1500');
+    expect(await days(accountId)).not.toContain('2025-08-01 -9900');
+  });
+
+  it('two sources imported into one account at the same moment store every day once', async () => {
+    const { ctx, accountId } = await workspace();
+    const results = await Promise.allSettled([importPayments(db, ctx, accountId, EXPORT), importPayments(db, ctx, accountId, LIST, { onlyYear: 2025 })]);
+    expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+    // 30 June is in both files; whichever came first holds it, and it is stored once.
+    expect((await days(accountId)).filter((d) => d.startsWith('2025-06-30'))).toEqual(['2025-06-30 -2000']);
+    expect(await db.taxPayment.count({ where: { accountId } })).toBe(4);
   });
 
   it('resume: the same file for the same year is refused, for another year it is a new import; nothing is doubled', async () => {
@@ -1453,14 +1472,31 @@ describe('an import limited to a year, and an account continued from a second so
 
   it('re-entry after failure: a year with nothing in it and a year that makes no sense write nothing, and the next import starts clean', async () => {
     const { ctx, accountId } = await workspace();
-    expect(await code(importPayments(db, ctx, accountId, LIST, { onlyYear: 2023 }))).toBe('nothing_in_scope');
+    expect(await code(importPayments(db, ctx, accountId, LIST, { onlyYear: 2023 }))).toBe('nothing_in_year');
     expect(await code(importPayments(db, ctx, accountId, LIST, { onlyYear: 25 }))).toBe('invalid_import_year');
     expect(await code(importPayments(db, ctx, accountId, LIST, { onlyYear: 2025.5 }))).toBe('invalid_import_year');
     expect(await db.taxImportBatch.count({ where: { accountId } })).toBe(0);
     // A file wholly on days another source covers is refused the same way.
     await importPayments(db, ctx, accountId, EXPORT);
-    expect(await code(importPayments(db, ctx, accountId, interfaceList([['2025-03-01', 'Laden Beispiel', '-3']])))).toBe('nothing_in_scope');
+    expect(await code(importPayments(db, ctx, accountId, interfaceList([['2025-03-01', 'Laden Beispiel', '-3']])))).toBe('nothing_uncovered');
     expect(await importPayments(db, ctx, accountId, LIST)).toMatchObject({ added: 4 });
+    // A year of a file already read whole brings nothing new: refused, no empty import.
+    expect(await code(importPayments(db, ctx, accountId, LIST, { onlyYear: 2026 }))).toBe('nothing_new');
+    expect(await db.taxImportBatch.count({ where: { accountId } })).toBe(2);
+  });
+
+  it('a pay-later list limited to a year still applies its cancellations of other years, and the import that made them is not undone under a later one', async () => {
+    const { ctx, laterId } = await withLaterAccount();
+    await importPayments(db, ctx, laterId, laterFile(later('2024-12-10', 'Laden Beispiel', '30.00', '4000000000101'), later('2025-02-01', 'Kiosk Beispiel', '2.00', '4000000000102')));
+    // The 2025 part of the next list: one purchase of 2025 and the 2024 one now cancelled.
+    const next = laterFile(later('2024-12-10', 'Laden Beispiel', '30.00', '4000000000101', 'Storniert'), later('2025-03-01', 'Kiosk Beispiel', '4.00', '4000000000103'));
+    const year = await importPayments(db, ctx, laterId, next, { onlyYear: 2025 });
+    expect(year).toMatchObject({ added: 1, cancelledEarlier: 1 });
+    // Only cancellations, nothing in the year: still read, so the cancellation applies.
+    const onlyCancel = laterFile(later('2025-02-01', 'Kiosk Beispiel', '2.00', '4000000000102', 'Storniert'));
+    expect(await importPayments(db, ctx, laterId, onlyCancel, { onlyYear: 2026 })).toMatchObject({ added: 0, cancelledEarlier: 1 });
+    // The year import holds a cancellation and a later import of the list exists: it is not undone first.
+    expect(await code(deleteImportBatch(db, ctx, year.batchId))).toBe('batch_has_later_overlap');
   });
 });
 

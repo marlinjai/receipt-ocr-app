@@ -1182,16 +1182,26 @@ Two more complaints of the import of 2026-10-11, decided without asking, say so 
   die eine andere Quelle dieses Kontos schon abdeckt". So a bank export that ends in the middle
   of the year is continued from the bank interface's list, and the live bank connection will
   continue a file-fed account the same way. An import's first and last day are now those of the
-  rows it kept. Whole days only, so the numbering of identical movements of one day never
-  splits. A file wholly on covered days is refused (`nothing_in_scope`) and writes nothing.
-  Known limit: a day the first source exported only in part (an export taken at noon) keeps its
-  part; undoing that import frees the day, and the other source's import, undone and read
-  again, fills it.
+  rows it kept, and its own days are those less the days older imports of other sources held
+  (`coverage.ts`), so a range that spans another source's days never claims them. Whole days
+  only, so the numbering of identical movements of one day never splits. Only bank sources
+  continue each other (bank export, bank interface): a payment service's list holds other
+  movements than a bank and still never shares an account (`format_mismatch`). One import per
+  account at a time (the account row is locked), so two sources read at once store a day once.
+  A file wholly on covered days is refused (`nothing_uncovered`) unless it cancels purchases.
+  An import that another source continued cannot be undone before that one
+  (`batch_has_later_source`), so no day is left empty without a word. Known limit: a day the
+  first source exported only in part (an export taken at noon) keeps its part; undoing both
+  imports in order and reading them again the other way round fills it.
 - **An import can be limited to a year** ("Nur Zahlungen aus 2025"). The other rows are counted
   as "außerhalb des gewählten Jahres" and left out. Such an import is a different import from
   the whole file: the whole file, or another year of it, can be read later and adds only what
-  is new. A cancellation the file reports still applies to a purchase of any year. Nothing new
-  is stored for it (no migration): the year is part of the import's fingerprint.
+  is new. A cancellation the file reports still applies to a purchase of any year, also when
+  nothing of the year is in the file; an import that marked cancellations is not undone while a
+  later import of the same list exists, so a cancellation the later file repeats never comes
+  undone. A year that brings nothing new is refused (`nothing_new`), and a year with no row at
+  all (`nothing_in_year`). The counts of rows left out are over the whole file and say so.
+  Nothing new is stored (no migration): the year is part of the import's fingerprint.
 
 ## Reality after the ten-day rule (2026-10-10)
 

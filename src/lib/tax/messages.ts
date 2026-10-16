@@ -211,8 +211,16 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Die Datei ist zu groß für einen Kontoexport (mehr als 8 MB).';
         case 'invalid_import_year':
           return 'Das gewählte Jahr ist ungültig. Bitte die Seite neu laden.';
-        case 'nothing_in_scope':
-          return 'In dieser Datei liegt keine Zahlung im gewählten Jahr oder an einem Tag, den noch keine andere Quelle dieses Kontos abdeckt. Es wurde nichts eingelesen.';
+        case 'format_mismatch':
+          return 'Die Liste eines Zahlungsdienstes (PayPal, Klarna) und ein Bankexport gehören nicht in dasselbe Konto: sie enthalten verschiedene Buchungen. Für die andere Quelle bitte ein eigenes Konto anlegen. Ein Bankkonto lässt sich dagegen aus einer zweiten Bankquelle fortsetzen.';
+        case 'nothing_in_year':
+          return 'In dieser Datei liegt keine Zahlung aus dem gewählten Jahr. Es wurde nichts eingelesen.';
+        case 'nothing_uncovered':
+          return 'Alle Tage dieser Datei deckt schon eine andere Quelle dieses Kontos ab. Es wurde nichts eingelesen.';
+        case 'nothing_new':
+          return 'Die Zahlungen dieses Jahres aus der Datei sind alle schon eingelesen. Es wurde nichts angelegt.';
+        case 'batch_has_later_source':
+          return 'Später wurde dieses Konto aus einer anderen Quelle fortgesetzt; sie hat die Tage dieses Imports ausgelassen. Bitte zuerst den späteren Import rückgängig machen, sonst fehlen diese Tage.';
         case 'batch_has_later_overlap':
           return 'Ein später eingelesener Export deckt dieselben Tage ab. Bitte zuerst den späteren Import rückgängig machen.';
         case 'proposal_gone':

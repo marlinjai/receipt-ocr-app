@@ -268,7 +268,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                   .join(', ')}.`}
               {lastImport.unknownStatuses.length > 0 && ` Unbekannte Statusangaben: ${lastImport.unknownStatuses.map((w) => `„${w}“`).join(', ')}.`}
               {Object.keys(lastImport.skipped).length > 0 &&
-                ` Bewusst ausgelassen: ${Object.entries(lastImport.skipped)
+                ` Bewusst ausgelassen${lastImport.onlyYear !== null ? ' (gezählt über die ganze Datei)' : ''}: ${Object.entries(lastImport.skipped)
                   .map(([reason, count]) => `${count} ${SKIP_LABELS[reason] ?? reason}`)
                   .join(', ')}.`}
             </p>

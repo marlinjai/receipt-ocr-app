@@ -1703,7 +1703,7 @@ not computed.
   office set the month (section 18 (2)). Goods bought from another member state are an
   intra-Community acquisition (section 1a), not section 13b, and are not covered.
 - **A statement of the owner, resolved like a treatment.** `TaxReverseCharge`
-  (migration `0021_tax_reverse_charge`, one new table with check constraints on scope
+  (migration `0023_tax_reverse_charge`, one new table with check constraints on scope
   and rate, additive) holds per receipt or per vendor from a day on: the rate (19 or 7
   percent) or "not under section 13b". The receipt's own statement wins (it can also
   take one receipt out of its vendor's entry), else the vendor entry in force on the

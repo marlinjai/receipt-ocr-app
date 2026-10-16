@@ -216,7 +216,7 @@ export const REASON_TEXT: Record<ReviewReason, string> = {
   not_classified: 'Nicht automatisch eingeordnet: Kategorie und Zuordnung bitte prüfen.',
   several_documents: 'Die Datei enthält mehr als einen Beleg, gelesen wurde nur einer: bitte die Datei aufteilen und jeden Beleg einzeln hochladen.',
   einvoice_problem: 'Die elektronische Rechnung rechnet nicht auf: Summen, Steuer oder Gruppen der XML-Daten passen nicht zusammen. Bitte mit der Rechnung vergleichen.',
-  credit_note: 'Gutschrift (elektronisch): Geld zurück, kein Kauf. Bitte prüfen, wie sie verbucht wird.',
+  credit_note: 'Gutschrift (elektronisch): Geld zurück, kein Kauf. Der Betrag bleibt leer, bis entschieden ist, wie sie verbucht wird; die Zahlen stehen im erkannten Text.',
   page_not_read: 'Nur aus dem erkannten Text gelesen: Die Seite selbst konnte dem Sprachmodell nicht gezeigt werden. Beträge und Datum bitte prüfen.',
   total_unconfirmed: 'Gesamtbetrag nur vom Etikett gelesen, ohne Gegenprobe über die Steuerzeilen.',
   total_conflict: 'Zwei Lesarten des Gesamtbetrags widersprechen sich.',

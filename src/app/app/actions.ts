@@ -241,7 +241,7 @@ async function readReceipt(
   // The model is given the page itself where the stored file can be fetched and
   // is within the limits. Without any text nothing could check its answer, so
   // it is not asked at all.
-  const page = extracted ? (source?.page.page ?? null) : null;
+  const page = extracted && source ? ((await source.page()).page ?? null) : null;
   // What the vendor's earlier receipts name as bought: the model reuses a wording that fits.
   const lookupVendor = stored?.vendor?.trim() || extracted?.vendor || null;
   const knownItems = extracted ? await knownItemsOfVendor(adapter, tableId, lookupVendor, stored?.rowId) : [];
@@ -250,7 +250,8 @@ async function readReceipt(
   // The two readings, settled: what the text proves stands, what the model
   // read from the page is taken only where the text prints it.
   const read = extracted ? settleReading(fullText, extracted, ai) : null;
-  const settled = read && structured ? withStructuredInvoice(read, structured) : read;
+  // Where the text was built from the XML, its heading is no vendor: the seller's name is, unless the model named one.
+  const settled = read && structured ? withStructuredInvoice(read, structured, { textFromStructure: !recognized.trim(), modelVendor: ai?.vendor ?? null }) : read;
   const reviewFlags: ReadFlag[] = settled?.flags ?? [];
   const date = settled?.date ?? null;
   const vendor = settled?.vendor ?? null;

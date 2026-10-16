@@ -16,23 +16,46 @@
 import type { StructuredReceiptFields } from '@/lib/einvoice';
 import type { SettledReading } from '@/lib/receipt-reading';
 import type { ReadFlag } from '@/lib/review/reasons';
+import { CURRENCY_OPTIONS } from '@/lib/receipts-constants';
 
 /** Doubts about figures the structured data settles. */
 const SETTLED_BY_STRUCTURE: readonly ReadFlag[] = ['total_unconfirmed', 'total_conflict', 'date_conflict', 'page_not_read'];
 
-export function withStructuredInvoice(settled: SettledReading, fields: StructuredReceiptFields): SettledReading {
+export interface StructuredOptions {
+  /** True when the text the reading was made from is the XML's own text (an XRechnung has no page to recognize). */
+  textFromStructure?: boolean;
+  /** The vendor the model answered, if any. */
+  modelVendor?: string | null;
+}
+
+export function withStructuredInvoice(settled: SettledReading, fields: StructuredReceiptFields, options: StructuredOptions = {}): SettledReading {
   const flags = settled.flags.filter((f) => !SETTLED_BY_STRUCTURE.includes(f));
-  // Figures in the XML that do not add up, and a credit note (money back, which the row cannot say by itself): a person looks.
   if (fields.problems.length > 0) flags.push('einvoice_problem');
-  if (fields.creditNote) flags.push('credit_note');
+  // The vendor: the name the reading found, as a customer uses it. Where the
+  // reading was made from the XML's own text, the text reader takes its
+  // heading for a name; only the model's answer counts there, else the seller.
+  const vendor = options.textFromStructure ? (options.modelVendor && settled.vendor === options.modelVendor ? settled.vendor : fields.vendor) : (settled.vendor ?? fields.vendor);
+  // A currency the app has no option for cannot be stored: the row would read as euros with that
+  // currency's exchange rate. The reading's currency stays, and a person looks.
+  const known = fields.currency !== null && CURRENCY_OPTIONS.includes(fields.currency);
+  if (fields.currency !== null && !known) flags.push('einvoice_problem');
+  const currency = known ? (fields.currency as string) : settled.currency;
+  if (fields.creditNote) {
+    // A credit note is money back. The row has no way to say that by itself
+    // (a total is a purchase wherever it is counted), so its amounts stay
+    // empty until a person books it; the figures are in its text.
+    flags.push('credit_note');
+    const amounts = { ...settled.amounts, gross: null, net: null, taxGroups: [], checks: [] };
+    return { ...settled, vendor, date: fields.date ?? settled.date, currency, gross: null, net: null, amounts, meal: settled.meal ? { ...settled.meal, taxLines: null } : null, flags: [...new Set(flags)] };
+  }
   const taxGroups = fields.taxGroups.length > 0 ? fields.taxGroups : settled.amounts.taxGroups;
   const meal = settled.meal && fields.taxGroups.length > 0 ? { ...settled.meal, taxLines: fields.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax })) } : settled.meal;
   const gross = fields.gross ?? settled.gross;
   return {
     ...settled,
-    vendor: settled.vendor ?? fields.vendor,
+    vendor,
     date: fields.date ?? settled.date,
-    currency: fields.currency ?? settled.currency,
+    currency,
     gross,
     // The net the XML states; else the nets of its tax groups; else, where the XML names no total either, the reading's.
     net: fields.net ?? (fields.taxGroups.length > 0 ? Math.round(fields.taxGroups.reduce((sum, g) => sum + g.net, 0) * 100) / 100 : fields.gross !== null ? null : settled.net),

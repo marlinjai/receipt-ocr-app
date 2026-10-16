@@ -9,12 +9,13 @@ import { readStructuredInvoice, type StructuredReading } from '@/lib/einvoice';
  * the receipt then says, never a failed upload. Nothing of the file is logged.
  */
 export async function loadReceiptPage(fileId: string): Promise<PreparedPage> {
-  return (await loadReceiptSource(fileId)).page;
+  return (await loadReceiptSource(fileId)).page();
 }
 
 /** The page for the model and, for an electronic invoice, its structured data: from one download of the stored file. */
 export interface ReceiptSource {
-  page: PreparedPage;
+  /** The page, prepared only when asked for: a receipt without text never shows the model a page. */
+  page: () => Promise<PreparedPage>;
   /** Null for every ordinary receipt, and where the file could not be fetched or its XML not read. */
   structured: StructuredReading | null;
 }
@@ -30,7 +31,7 @@ export async function loadReceiptSource(fileId: string): Promise<ReceiptSource> 
     bytes = await downloadStoredFile(fileId);
   } catch (err) {
     console.error('[receipt-page] the stored file could not be fetched:', err instanceof Error ? err.message : 'unknown error');
-    return { page: { skipped: 'missing' }, structured: null };
+    return { page: async () => ({ skipped: 'missing' }), structured: null };
   }
   let structured: StructuredReading | null = null;
   try {
@@ -39,7 +40,7 @@ export async function loadReceiptSource(fileId: string): Promise<ReceiptSource> 
     // An XML that cannot be read is a receipt read from its page, as before.
     console.error('[receipt-page] the structured invoice data could not be read:', err instanceof Error ? err.name : 'unknown error');
   }
-  return { page: await preparedPage(bytes), structured };
+  return { page: () => preparedPage(bytes), structured };
 }
 
 async function preparedPage(bytes: Uint8Array): Promise<PreparedPage> {

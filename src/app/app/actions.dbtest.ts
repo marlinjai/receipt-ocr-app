@@ -29,7 +29,7 @@ vi.mock('@/lib/receipt-classifier', async (original) => ({
 vi.mock('@/lib/fx-rates', () => ({ getFxRate: vi.fn(async () => 0.9) }));
 vi.mock('@/lib/receipt-page-source', () => ({
   loadReceiptPage: (...a: unknown[]) => loadPage(...a),
-  loadReceiptSource: async (...a: unknown[]) => ({ page: await loadPage(...a), structured: await loadStructured(...a) }),
+  loadReceiptSource: async (...a: unknown[]) => ({ page: () => loadPage(...a), structured: await loadStructured(...a) }),
 }));
 
 import { contactStore, loadMealRecord, saveMealDetails } from '@/lib/meals/service';
@@ -379,6 +379,19 @@ describe('processReceipt: the model is shown the page, and the upload never depe
     expect(await cellOf(ws, xml.rowId, 'Gross')).toBe(172.5);
     expect(String(await cellOf(ws, xml.rowId, 'OCR Text'))).toContain('Rechnung (elektronisch)');
     expect(await cellOf(ws, xml.rowId, 'Status')).toBe('Processed');
+    // Without a model answer, the vendor is the seller the XML names, never the heading of its text.
+    classify.mockRejectedValue(new Error('provider down'));
+    const unclassified = await upload(file(92), null, {});
+    expect(await cellOf(ws, unclassified.rowId, 'Vendor')).toBe('Muster Software GmbH');
+  });
+
+  it('an electronic credit note keeps no amount until a person books it', async () => {
+    const { readStructuredInvoice } = await import('@/lib/einvoice');
+    const { UBL_CREDIT_NOTE } = await import('@/lib/einvoice/__tests__/samples');
+    loadStructured.mockResolvedValue(await readStructuredInvoice(new TextEncoder().encode(UBL_CREDIT_NOTE)));
+    const credit = await upload(file(93), null, {});
+    expect(await cellOf(ws, credit.rowId, 'Gross')).toBeNull();
+    expect(credit.reviewFlags).toContain('credit_note');
   });
 
   it('a document with no total stores none, however a label could be read', async () => {

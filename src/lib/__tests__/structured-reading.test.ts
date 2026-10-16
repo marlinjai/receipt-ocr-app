@@ -45,10 +45,26 @@ describe('withStructuredInvoice: the structured data is the invoice', () => {
 
   it('the name a customer uses stays; the legal name of the XML fills a gap only', async () => {
     const fields = await fieldsOf(UBL_INVOICE);
-    const named = settle(fields.text, answer({ vendor: 'Muster Software' }));
-    expect(withStructuredInvoice(named, fields).vendor).toBe('Muster Software');
-    const unnamed = { ...named, vendor: null };
-    expect(withStructuredInvoice(unnamed, fields).vendor).toBe(fields.vendor);
+    const page = 'Muster Software\nRechnung\nDatum 14.09.2026\nGesamt 172,50 €';
+    expect(withStructuredInvoice(settle(page, answer({ vendor: 'Muster Software' })), fields).vendor).toBe('Muster Software');
+    expect(withStructuredInvoice({ ...settle(page, answer()), vendor: null }, fields).vendor).toBe(fields.vendor);
+  });
+
+  it('read from the XML\'s own text, the heading is no vendor: the model\'s name, else the seller', async () => {
+    const fields = await fieldsOf(UBL_INVOICE);
+    const withModel = settle(fields.text, answer({ vendor: 'Muster Software' }));
+    expect(withStructuredInvoice(withModel, fields, { textFromStructure: true, modelVendor: 'Muster Software' }).vendor).toBe('Muster Software');
+    // No model answer: the text reader alone takes the heading line.
+    const alone = settle(fields.text, null);
+    expect(alone.vendor).not.toBe(fields.vendor);
+    expect(withStructuredInvoice(alone, fields, { textFromStructure: true, modelVendor: null }).vendor).toBe(fields.vendor);
+  });
+
+  it('a currency the app has no option for is not stored: the reading\'s stays and a person looks', async () => {
+    const fields = { ...(await fieldsOf(UBL_INVOICE)), currency: 'CHF' };
+    const settled = withStructuredInvoice(settle(fields.text, answer()), fields);
+    expect(settled.currency).toBe('EUR');
+    expect(settled.flags).toContain('einvoice_problem');
   });
 
   it('an XRechnung without a page: its figures as text are read, and the reading says nothing about a page', async () => {
@@ -58,9 +74,12 @@ describe('withStructuredInvoice: the structured data is the invoice', () => {
     expect(settled.gross).toBe(fields.gross);
   });
 
-  it('a credit note is put up for a look; so are figures that do not add up', async () => {
+  it('a credit note keeps no amount until a person books it; figures that do not add up are put up for a look', async () => {
     const credit = await fieldsOf(UBL_CREDIT_NOTE);
-    expect(withStructuredInvoice(settle(credit.text, answer()), credit).flags).toContain('credit_note');
+    const settled = withStructuredInvoice(settle(credit.text, answer()), credit);
+    expect(settled.flags).toContain('credit_note');
+    expect(settled).toMatchObject({ gross: null, net: null });
+    expect(settled.amounts.taxGroups).toEqual([]);
     const fields = await fieldsOf(UBL_INVOICE);
     const broken = { ...fields, problems: ['the tax groups do not add up to the total'] };
     expect(withStructuredInvoice(settle(fields.text, answer()), broken).flags).toContain('einvoice_problem');

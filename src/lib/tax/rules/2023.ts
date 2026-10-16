@@ -1,6 +1,6 @@
 import { EUER_LABELS_BEFORE_2024, RULES_2021, SMALL_BUSINESS_LIMITS_BEFORE_2025 } from './2021';
 import { ASSET_RULES_2022 } from './2022';
-import { type EuerKey, employmentLines, euerLines } from './2025';
+import { EUER_LABELS_2023_2025, type EuerKey, type EuerLineOverride, employmentLines, euerLines } from './2025';
 import type { Source, YearRules } from './types';
 
 /**
@@ -63,11 +63,15 @@ export const EUER_LINE_NUMBERS_2023: Record<EuerKey, number> = {
   'euer.other_travel': 67,
 };
 
-const EUER_LABELS_2023: Partial<Record<EuerKey, string>> = {
+const EUER_LABELS_2023: Partial<Record<EuerKey, EuerLineOverride>> = {
   ...EUER_LABELS_BEFORE_2024,
-  'euer.revenue_taxable': 'Umsatzsteuerpflichtige Betriebseinnahmen (ohne solche zum ermäßigten Steuersatz von 0 %)',
-  // No line of its own: the day rate is entered here (instructions to line 63).
-  'euer.home_office_flat': 'Aufwendungen für die Tätigkeit in der häuslichen Wohnung (siehe Anleitung); dort auch die Tagespauschale',
+  ...EUER_LABELS_2023_2025,
+  // No line of its own: the day rate is entered here (instructions to line 63),
+  // in the "abziehbar" column (field 172) beside the "nicht abziehbar" one (162).
+  'euer.home_office_flat': {
+    label: 'Aufwendungen für die Tätigkeit in der häuslichen Wohnung (siehe Anleitung); die Tagespauschale in die Spalte „abziehbar“ (Kennzahl 172)',
+    limited: true,
+  },
 };
 
 /**

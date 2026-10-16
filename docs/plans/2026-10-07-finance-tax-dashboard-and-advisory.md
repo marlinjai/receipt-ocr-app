@@ -1602,6 +1602,24 @@ like everything else; nothing derived is stored.
   rate and 20 percent (growth opportunities act, Federal Law Gazette 2024 I number 108).
   The cap of a fractional multiple is rounded down to whole basis points, and the asset
   form prints the multiple in German notation ("2,5-fache").
+- **The small-business forecast before 2025 says what the law said then.** The 50,000
+  euros of the running year were a forecast made at the start of the year: going over
+  them during the year did not end the rule in that year (section 19 paragraph 1 as it
+  read until 2024). The rule set marks this (`currentYearLimit: 'forecast_at_start'`)
+  and the revenue tab says so instead of "ends at once". The outlook for the next year
+  now uses the next year's own previous-year limit, so 2024 turnover is measured against
+  the 25,000 of 2025, not the 22,000 of 2024 (for 2025 and later both are the same).
+- **The declining cap is rounded once.** The highest rate is the multiple of the
+  straight-line rate computed exactly and rounded down once to whole basis points;
+  before, the straight-line rate was rounded first, so for example fifteen years at three
+  times gave 19.98 instead of 20 percent and an asset entered at the legal maximum was
+  refused. This relaxes the cap by at most a few basis points in every year; it changes
+  no figure of an asset that was already counted.
+- **Labels as printed:** 2023 to 2025 print the zero-rate clause on both revenue lines
+  (2025 also names section 4 on the tax-free line), and 2021 to 2025 the corona note on
+  other expenses. Before 2024 the home-office line has a "nicht abziehbar" column beside
+  the "abziehbar" one (field 172), where the flat rate goes; the line says so. The
+  employment annex of 2021 and 2022 names the day count "Homeoffice-Pauschale".
 - **A share on both forms can now be recorded for every year from 2021.** That roadmap
   line was blocked only by the missing rule sets: the split between business and study
   is a finance-area decision checked against the year's rule set, and for 2022 and 2023

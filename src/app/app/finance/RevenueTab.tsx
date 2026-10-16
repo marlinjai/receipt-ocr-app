@@ -62,13 +62,15 @@ export default function RevenueTab({ view, busy, error, onSave, onDelete, onExpe
   const f = view.forecast;
   const next = outlookText(
     f.nextYear,
-    euro(view.limits.previousYearLimitCents),
+    euro(view.limits.nextYearLimitCents),
     `Dann endet die Kleinunternehmerregelung zum 1. Januar ${view.year + 1}.`,
   );
   const current = outlookText(
     f.currentYear,
     euro(view.limits.currentYearLimitCents),
-    'Dann endet die Kleinunternehmerregelung sofort, mit dem Umsatz, der die Grenze überschreitet.',
+    view.limits.currentYearLimit === 'forecast_at_start'
+      ? `Bis 2024 war diese Grenze eine Prognose zu Jahresbeginn: Wer sie zu Beginn von ${view.year} nicht erwarten musste, blieb das ganze Jahr Kleinunternehmer; der Umsatz zählt dann für die Grenze des Folgejahres.`
+      : 'Dann endet die Kleinunternehmerregelung sofort, mit dem Umsatz, der die Grenze überschreitet.',
   );
   const prepare = view.smallBusinessAtYearEnd === true && (next.warn || current.warn);
 

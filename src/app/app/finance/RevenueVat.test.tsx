@@ -53,7 +53,7 @@ function view(overrides: Partial<StatementView> = {}): StatementView {
     smallBusinessAtYearEnd: true,
     revenue: { recorded: true, receivedCents: 640_000, turnoverCents: 640_000, outstandingCents: 50_000, invoices: [invoiceView()], overdue: [] },
     forecast: forecast(),
-    limits: { ...rules.smallBusinessLimits.value, source: rules.smallBusinessLimits.source },
+    limits: { ...rules.smallBusinessLimits.value, currentYearLimit: 'at_once', nextYearLimitCents: rules.smallBusinessLimits.value.previousYearLimitCents, source: rules.smallBusinessLimits.source },
     expectedMonthlyRevenueCents: null,
     statusChanges: [],
     vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, settlements: [] },
@@ -94,6 +94,14 @@ describe('RevenueTab', () => {
     expect(screen.getByText(/Der Umsatz 2025 ist hier nicht erfasst/)).toBeTruthy();
     rerender(<RevenueTab view={view({ forecast: forecast({ previousYearWithinLimit: false }) })} {...revenueProps()} />);
     expect(screen.getByRole('alert').textContent).toContain('Der Umsatz 2025 lag über 25.000,00 €');
+  });
+
+  it('before 2025 the running-year limit is described as the forecast it was, and next year is judged by the next year\'s limit', () => {
+    const limits = { previousYearLimitCents: 2_200_000, currentYearLimitCents: 5_000_000, currentYearLimit: 'forecast_at_start' as const, nextYearLimitCents: 2_500_000, source: { citation: '§ 19', url: 'https://example.org', checkedOn: '2026-10-15' } };
+    render(<RevenueTab view={view({ year: 2024, limits, forecast: forecast({ currentYear: { state: 'crossed', month: 11 } }) })} {...revenueProps()} />);
+    expect(screen.getByText(/Prognose zu Jahresbeginn/)).toBeTruthy();
+    expect(screen.queryByText(/endet die Kleinunternehmerregelung sofort/)).toBeNull();
+    expect(screen.getByText(/Die Grenze von 25.000,00 € wird nach heutigem Stand nicht erreicht/)).toBeTruthy();
   });
 
   it('without any invoice it states that revenue is unknown instead of showing zero', () => {

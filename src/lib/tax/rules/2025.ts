@@ -79,11 +79,29 @@ export type EuerKey = keyof typeof EUER_LABELS;
  * from another year, because the form is renumbered between years and not by
  * a constant offset.
  */
-export function euerLines(numbers: Record<EuerKey, number>, labels: Partial<Record<EuerKey, string>> = {}): FormLine[] {
+/** What a year's form prints differently for a line: its label, and whether it has a "not deductible" column. */
+export type EuerLineOverride = { label: string; limited?: boolean };
+
+export function euerLines(numbers: Record<EuerKey, number>, overrides: Partial<Record<EuerKey, EuerLineOverride>> = {}): FormLine[] {
   return (Object.keys(EUER_LABELS) as EuerKey[])
-    .map((key) => ({ key, form: 'euer' as const, line: numbers[key], numbering: 'verified' as const, ...EUER_LABELS[key], ...(labels[key] ? { label: labels[key] } : {}) }))
+    .map((key) => ({ key, form: 'euer' as const, line: numbers[key], numbering: 'verified' as const, ...EUER_LABELS[key], ...(overrides[key] ?? {}) }))
     .sort((a, b) => a.line - b.line);
 }
+
+/**
+ * Labels the forms of 2023 to 2025 print beyond the shared labels (read off
+ * those forms): the zero-rate clause of the revenue lines and the corona note
+ * of the other expenses. 2026 keeps the shared labels until its form is read
+ * for its wording.
+ */
+export const EUER_LABELS_2023_2025: Partial<Record<EuerKey, EuerLineOverride>> = {
+  'euer.revenue_taxable': { label: 'Umsatzsteuerpflichtige Betriebseinnahmen (ohne solche zum ermäßigten Steuersatz von 0 %)' },
+  'euer.revenue_not_taxable': {
+    label:
+      'Betriebseinnahmen, die umsatzsteuerfrei oder nicht umsatzsteuerbar sind oder nach § 12 Abs. 3 UStG dem ermäßigten Steuersatz von 0 % unterliegen oder für die der Leistungsempfänger die Umsatzsteuer nach § 13b UStG schuldet',
+  },
+  'euer.other_unlimited': { label: 'Übrige unbeschränkt abziehbare Betriebsausgaben (auch zurückgezahlte Hilfen/Zuschüsse aufgrund der Corona-Pandemie)' },
+};
 
 /**
  * The income-surplus part of a catalog for a year whose form is not published
@@ -189,7 +207,7 @@ export interface EmploymentLineNumbers {
  * year has not been compared with an official source, so its amount lines
  * carry no number (never another year's).
  */
-export function employmentLines(numbers: EmploymentLineNumbers | null): FormLine[] {
+export function employmentLines(numbers: EmploymentLineNumbers | null, labels: Partial<Record<FormLineKey, string>> = {}): FormLine[] {
   const amount = (key: 'employment.work_equipment' | 'employment.study_costs' | 'employment.further_costs', line: number | null, entryNote?: string): FormLine => ({
     key,
     form: 'employment',
@@ -203,12 +221,19 @@ export function employmentLines(numbers: EmploymentLineNumbers | null): FormLine
     amount('employment.work_equipment', numbers?.workEquipment ?? null),
     amount('employment.study_costs', numbers?.studyCosts ?? null),
     amount('employment.further_costs', numbers?.furtherCosts.line ?? null, numbers?.furtherCosts.entryNote),
-    ...STRUCTURED_EMPLOYMENT,
+    ...STRUCTURED_EMPLOYMENT.map((l) => (labels[l.key] ? { ...l, label: labels[l.key] as string } : l)),
   ];
 }
 
 export const FORM_LINES_2025: readonly FormLine[] = [
-  ...euerLines(EUER_LINE_NUMBERS_2025),
+  ...euerLines(EUER_LINE_NUMBERS_2025, {
+    ...EUER_LABELS_2023_2025,
+    // The 2025 form also names the exemptions' section.
+    'euer.revenue_not_taxable': {
+      label:
+        'Betriebseinnahmen, die umsatzsteuerfrei (§ 4 UStG) oder nicht umsatzsteuerbar sind oder nach § 12 Abs. 3 UStG dem ermäßigten Steuersatz von 0 % unterliegen oder für die der Leistungsempfänger die Umsatzsteuer nach § 13b UStG schuldet',
+    },
+  }),
   // Anlage N 2025: work equipment is entered on lines 54 and 55 with the total on
   // line 56; training costs on line 60; the further costs ("Sonstiges") on lines
   // 62 and 63 with the total of the further costs on line 64.

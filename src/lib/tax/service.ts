@@ -378,7 +378,15 @@ export interface StatementView {
   };
   /** Where the year is heading against the small-business limits, as of today. */
   forecast: Forecast;
-  limits: { previousYearLimitCents: number; currentYearLimitCents: number; source: { citation: string; url: string; checkedOn: string } };
+  limits: {
+    previousYearLimitCents: number;
+    currentYearLimitCents: number;
+    /** How the running-year limit binds; see `YearRules['smallBusinessLimits']`. */
+    currentYearLimit: 'at_once' | 'forecast_at_start';
+    /** The limit this year's turnover is measured against for next year (next year's previous-year limit). */
+    nextYearLimitCents: number;
+    source: { citation: string; url: string; checkedOn: string };
+  };
   expectedMonthlyRevenueCents: number | null;
   /** The status on the last day of the year, and every recorded change. */
   smallBusinessAtYearEnd: boolean | null;
@@ -535,6 +543,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   // The previous year's turnover decides whether this year's status stands.
   const previous = revenueRecorded ? computeYear({ year: year - 1, items: [], invoices: invoiceFacts }, rulesForYear(year - 1)) : null;
   const limits = resolvedRules.rules.smallBusinessLimits;
+  const nextYearLimitCents = rulesForYear(year + 1).rules.smallBusinessLimits.value.previousYearLimitCents;
   const expectedMonthlyRevenueCents = settingsRow?.expectedMonthlyRevenueCents ?? null;
   const forecast = forecastYear(
     {
@@ -545,7 +554,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
       outstandingCents: result.revenue.outstandingTurnoverCents,
       expectedMonthlyCents: expectedMonthlyRevenueCents,
     },
-    limits.value,
+    { ...limits.value, nextYearLimitCents },
   );
   const vatFrequency: VatFrequency | null = settingsRow?.vatFrequency === 'monthly' || settingsRow?.vatFrequency === 'quarterly' ? settingsRow.vatFrequency : null;
   const vatMethod: VatMethod | null = settingsRow?.vatMethod === 'issued' || settingsRow?.vatMethod === 'received' ? settingsRow.vatMethod : null;
@@ -691,7 +700,13 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
       overdue,
     },
     forecast,
-    limits: { ...limits.value, source: limits.source },
+    limits: {
+      previousYearLimitCents: limits.value.previousYearLimitCents,
+      currentYearLimitCents: limits.value.currentYearLimitCents,
+      currentYearLimit: limits.value.currentYearLimit ?? 'at_once',
+      nextYearLimitCents,
+      source: limits.source,
+    },
     expectedMonthlyRevenueCents,
     smallBusinessAtYearEnd,
     statusChanges: storedChanges.map((c) => ({ id: c.id, effectiveFrom: c.effectiveFrom, smallBusiness: c.smallBusiness })),

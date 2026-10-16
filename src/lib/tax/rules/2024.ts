@@ -1,13 +1,14 @@
 import { RULES_2021, SMALL_BUSINESS_LIMITS_BEFORE_2025 } from './2021';
 import { EMPLOYMENT_LINE_NUMBERS_2023 } from './2023';
-import { ASSET_RULES_2025, EUER_LINE_NUMBERS_2025, employmentLines, euerLines } from './2025';
+import { ASSET_RULES_2025, EUER_LABELS_2023_2025, EUER_LINE_NUMBERS_2025, employmentLines, euerLines } from './2025';
 import type { AssetRules, Source, YearRules } from './types';
 
 /**
  * Rule set for 2024.
  *
  * The income-surplus statement of 2024 has every line on the same number as
- * 2025, with the same labels (total of business expenses on line 75). The
+ * 2025 (total of business expenses on line 75), and the same labels except the
+ * reference to section 4 on the tax-free revenue line, which 2025 added. The
  * employment annex of 2024 is laid out like 2023's. The ministry's file
  * answered 503 on the check day; it was read from the Internet Archive's copy
  * of that same file (capture of 2 December 2024).
@@ -46,7 +47,7 @@ export const RULES_2024: YearRules = {
   year: 2024,
   reviewedOn: '2026-10-15',
   formSources: { euer: EUER_FORM_2024, employment: EMPLOYMENT_FORM_2024 },
-  formLines: [...euerLines(EUER_LINE_NUMBERS_2025), ...employmentLines(EMPLOYMENT_LINE_NUMBERS_2023)],
+  formLines: [...euerLines(EUER_LINE_NUMBERS_2025, EUER_LABELS_2023_2025), ...employmentLines(EMPLOYMENT_LINE_NUMBERS_2023)],
   mealDeductibleShareBp: RULES_2021.mealDeductibleShareBp,
   assets: ASSET_RULES_2024,
   smallBusinessLimits: SMALL_BUSINESS_LIMITS_BEFORE_2025,

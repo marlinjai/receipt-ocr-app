@@ -1,5 +1,5 @@
-import { ASSET_RULES_2025, type EuerKey, employmentLines, euerLines } from './2025';
-import type { AssetRules, Source, YearRules } from './types';
+import { ASSET_RULES_2025, type EuerKey, type EuerLineOverride, employmentLines, euerLines } from './2025';
+import type { AssetRules, FormLineKey, Source, YearRules } from './types';
 
 /**
  * Rule set for 2021.
@@ -64,21 +64,34 @@ export const EUER_LINE_NUMBERS_2021: Record<EuerKey, number> = {
 };
 
 /** Labels the forms of 2021 to 2023 print differently from 2025. */
-export const EUER_LABELS_BEFORE_2024: Partial<Record<EuerKey, string>> = {
-  'euer.goods': 'Waren, Rohstoffe und Hilfsstoffe einschl. der Nebenkosten',
-  'euer.remaining_book_value': 'Restbuchwert der ausgeschiedenen Anlagegüter',
-  'euer.leasing_movable': 'Miete/Leasing für bewegliche Wirtschaftsgüter (ohne Kraftfahrzeuge)',
-  'euer.maintenance': 'Erhaltungsaufwendungen (z. B. Instandhaltung, Wartung, Reparatur; ohne solche für Gebäude und Kraftfahrzeuge)',
-  'euer.fees_insurance': 'Beiträge, Gebühren, Abgaben und Versicherungen (ohne solche für Gebäude und Kraftfahrzeuge)',
-  'euer.input_vat': 'Gezahlte Vorsteuerbeträge',
+export const EUER_LABELS_BEFORE_2024: Partial<Record<EuerKey, EuerLineOverride>> = {
+  'euer.goods': { label: 'Waren, Rohstoffe und Hilfsstoffe einschl. der Nebenkosten' },
+  'euer.remaining_book_value': { label: 'Restbuchwert der ausgeschiedenen Anlagegüter' },
+  'euer.leasing_movable': { label: 'Miete/Leasing für bewegliche Wirtschaftsgüter (ohne Kraftfahrzeuge)' },
+  'euer.maintenance': { label: 'Erhaltungsaufwendungen (z. B. Instandhaltung, Wartung, Reparatur; ohne solche für Gebäude und Kraftfahrzeuge)' },
+  'euer.fees_insurance': { label: 'Beiträge, Gebühren, Abgaben und Versicherungen (ohne solche für Gebäude und Kraftfahrzeuge)' },
+  'euer.input_vat': { label: 'Gezahlte Vorsteuerbeträge' },
+  'euer.other_unlimited': { label: 'Übrige unbeschränkt abziehbare Betriebsausgaben (auch zurückgezahlte Hilfen/Zuschüsse aufgrund der Corona-Pandemie)' },
 };
 
-export const EUER_LABELS_2021: Partial<Record<EuerKey, string>> = {
+export const EUER_LABELS_2021: Partial<Record<EuerKey, EuerLineOverride>> = {
   ...EUER_LABELS_BEFORE_2024,
-  'euer.revenue_not_taxable':
-    'Umsatzsteuerfreie, nicht umsatzsteuerbare Betriebseinnahmen (auch Hilfen/Zuschüsse aufgrund der Corona-Pandemie) sowie Betriebseinnahmen, für die der Leistungsempfänger die Umsatzsteuer nach § 13b UStG schuldet',
-  // No line of its own: the flat rate is entered with the home office (instructions to line 70).
-  'euer.home_office_flat': 'Aufwendungen für ein häusliches Arbeitszimmer (einschl. AfA und Schuldzinsen); dort auch die Home-Office-Pauschale',
+  'euer.revenue_not_taxable': {
+    label:
+      'Umsatzsteuerfreie, nicht umsatzsteuerbare Betriebseinnahmen (auch Hilfen/Zuschüsse aufgrund der Corona-Pandemie) sowie Betriebseinnahmen, für die der Leistungsempfänger die Umsatzsteuer nach § 13b UStG schuldet',
+  },
+  // No line of its own: the flat rate is entered with the home office (instructions
+  // to line 70), in its "abziehbar" column (field 172); the line has a "nicht
+  // abziehbar" column (field 162) as well.
+  'euer.home_office_flat': {
+    label: 'Aufwendungen für ein häusliches Arbeitszimmer (einschl. AfA und Schuldzinsen); die Home-Office-Pauschale in die Spalte „abziehbar“ (Kennzahl 172)',
+    limited: true,
+  },
+};
+
+/** The employment annex of 2021 and 2022 names the home-office day count differently. */
+export const EMPLOYMENT_LABELS_2021: Partial<Record<FormLineKey, string>> = {
+  'employment.home_office': 'Homeoffice-Pauschale (Kalendertage, an denen die berufliche Tätigkeit ausschließlich in der häuslichen Wohnung ausgeübt wurde)',
 };
 
 /**
@@ -91,7 +104,7 @@ export const EMPLOYMENT_LINE_NUMBERS_2021 = {
   studyCosts: 46,
   furtherCosts: {
     line: 49,
-    entryNote: 'Einzeln in den Zeilen 48 und 49 eintragen; die Summe auf Zeile 49 enthält auch Fähr- und Flugkosten aus Zeile 47.',
+    entryNote: 'Einzeln in den Zeilen 48 und 49 eintragen; die Summe in Zeile 49 enthält auch Fähr- und Flugkosten aus Zeile 47.',
   },
 };
 
@@ -106,9 +119,13 @@ const ESTG_7_2020_2022: AssetRules['declining'] = {
   },
 };
 
-/** The limits of section 19 before 2025: 22,000 and 50,000 euros, turnover with the tax on it. */
+/**
+ * The limits of section 19 before 2025: 22,000 and 50,000 euros, turnover with
+ * the tax on it. The 50,000 was a forecast made at the start of the year: going
+ * over it during the year did not end the rule in that year.
+ */
 export const SMALL_BUSINESS_LIMITS_BEFORE_2025: YearRules['smallBusinessLimits'] = {
-  value: { previousYearLimitCents: 2_200_000, currentYearLimitCents: 5_000_000 },
+  value: { previousYearLimitCents: 2_200_000, currentYearLimitCents: 5_000_000, currentYearLimit: 'forecast_at_start' },
   source: {
     citation: '§ 19 Abs. 1 Umsatzsteuergesetz in der bis 31. Dezember 2024 geltenden Fassung (Umsatz zuzüglich der darauf entfallenden Steuer)',
     url: 'https://web.archive.org/web/20240531000000/https://www.gesetze-im-internet.de/ustg_1980/__19.html',
@@ -134,7 +151,7 @@ export const RULES_2021: YearRules = {
   year: 2021,
   reviewedOn: '2026-10-15',
   formSources: { euer: EUER_FORM_2021, employment: EMPLOYMENT_FORM_2021 },
-  formLines: [...euerLines(EUER_LINE_NUMBERS_2021, EUER_LABELS_2021), ...employmentLines(EMPLOYMENT_LINE_NUMBERS_2021)],
+  formLines: [...euerLines(EUER_LINE_NUMBERS_2021, EUER_LABELS_2021), ...employmentLines(EMPLOYMENT_LINE_NUMBERS_2021, EMPLOYMENT_LABELS_2021)],
   mealDeductibleShareBp: {
     value: 7000,
     source: {

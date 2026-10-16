@@ -1,4 +1,12 @@
-import { ASSET_RULES_2021, EMPLOYMENT_LINE_NUMBERS_2021, EUER_LABELS_2021, EUER_LINE_NUMBERS_2021, RULES_2021, SMALL_BUSINESS_LIMITS_BEFORE_2025 } from './2021';
+import {
+  ASSET_RULES_2021,
+  EMPLOYMENT_LABELS_2021,
+  EMPLOYMENT_LINE_NUMBERS_2021,
+  EUER_LABELS_2021,
+  EUER_LINE_NUMBERS_2021,
+  RULES_2021,
+  SMALL_BUSINESS_LIMITS_BEFORE_2025,
+} from './2021';
 import { ASSET_RULES_2025, employmentLines, euerLines } from './2025';
 import type { AssetRules, Source, YearRules } from './types';
 
@@ -37,7 +45,7 @@ export const RULES_2022: YearRules = {
   year: 2022,
   reviewedOn: '2026-10-15',
   formSources: { euer: EUER_FORM_2022, employment: EMPLOYMENT_FORM_2022 },
-  formLines: [...euerLines(EUER_LINE_NUMBERS_2021, EUER_LABELS_2021), ...employmentLines(EMPLOYMENT_LINE_NUMBERS_2021)],
+  formLines: [...euerLines(EUER_LINE_NUMBERS_2021, EUER_LABELS_2021), ...employmentLines(EMPLOYMENT_LINE_NUMBERS_2021, EMPLOYMENT_LABELS_2021)],
   mealDeductibleShareBp: RULES_2021.mealDeductibleShareBp,
   assets: ASSET_RULES_2022,
   smallBusinessLimits: SMALL_BUSINESS_LIMITS_BEFORE_2025,

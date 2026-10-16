@@ -140,7 +140,17 @@ export interface YearRules {
    * measured by money received: the previous year must not have exceeded the
    * first, the running year must not exceed the second.
    */
-  smallBusinessLimits: Sourced<{ previousYearLimitCents: number; currentYearLimitCents: number }>;
+  smallBusinessLimits: Sourced<{
+    previousYearLimitCents: number;
+    currentYearLimitCents: number;
+    /**
+     * How the running-year limit binds. Absent or `at_once` (from 2025): crossing
+     * it ends the rule with that turnover. `forecast_at_start` (before 2025): it
+     * was a forecast made at the start of the year, so crossing it during the
+     * year did not end the rule in that year.
+     */
+    currentYearLimit?: 'at_once' | 'forecast_at_start';
+  }>;
   /**
    * Set when the year's own figures are not published yet and the legal values
    * of an earlier year are carried forward. Every surface that shows a figure

@@ -235,7 +235,8 @@ const DUE_LABEL = /(?:amount|balance)\s+due|f(?:ä|ae)lliger\s+betrag|offener\s+
 const DUE_HEADLINE =
   /^\s*(?:US\$|[$€£]|EUR|USD|GBP)?\s*(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})\s*(?:€|EUR|USD|GBP)?\s+(?:due|f(?:ä|ae)llig)(?![\p{L}])/iu;
 /** A credit, or a balance carried over, set against the invoice: the amount due is then not the invoice total. */
-const BALANCE_APPLIED = /applied\s+balance|balance\s+applied|credit\s+applied|applied\s+credit|guthaben\s+verrechnet|verrechnetes\s+guthaben|kontostand/i;
+const BALANCE_APPLIED =
+  /applied\s+balance|balance\s+applied|credit\s+applied|applied\s+credit|guthaben\s+verrechnet|verrechnetes\s+guthaben|kontostand\s+(?:vom|alt|vor)|(?:alter|bisheriger)\s+kontostand/i;
 /**
  * A label that names the total of this invoice as such ("Rechnungsbetrag
  * gesamt"). A mobile bill prints it above the amount to pay with an earlier
@@ -299,16 +300,23 @@ const DEDUCTION =
  * (zzgl. USt.) - 3,35 €"). Taken as deductions, they turned a mail-scanning
  * invoice of 3.99 into its tax of 0.64.
  */
-const NOT_A_DEDUCTION = /zahlung|bezahlt|payments?(?![\p{L}])|paid|zzgl|exkl|excl|netto|(?:before|without)\s+tax|ohne\s+(?:mwst|ust)/iu;
+const NOT_A_DEDUCTION =
+  /(?<![\p{L}])(?:zahlungen?|bezahlt|payments?|paid)(?![\p{L}])|(?<![\p{L}])(?:zzgl|exkl|excl|excluding|ohne)\.?\s*(?:ust|mwst|vat|tax)|(?<![\p{L}-])netto(?![\p{L}-])|(?:before|without)\s+tax/iu;
+/** A deduction the receipt names as one: a discount, a coupon, a promotion. It stays a deduction whatever else its line says. */
+const NAMED_DEDUCTION = /aktion|promo|bonus/i;
+const isNamedDeduction = (line: string) => DISCOUNT_WORD.test(line) || NAMED_DEDUCTION.test(line);
 
 function deductionsIn(text: string): Array<{ cents: number; line: number }> {
   const out: Array<{ cents: number; line: number }> = [];
   const lines = text.split('\n');
   lines.forEach((line, i) => {
     // On the line itself, or on a label that stands alone above a bare amount.
-    if (NOT_A_DEDUCTION.test(line)) return;
     const above = lines[i - 1];
-    if (above !== undefined && !AMOUNT_TEST.test(above) && NOT_A_DEDUCTION.test(above) && BARE_AMOUNT_LINE.test(line.trim())) return;
+    const labelAbove = above !== undefined && !AMOUNT_TEST.test(above) && BARE_AMOUNT_LINE.test(line.trim()) ? above : null;
+    if (!isNamedDeduction(line) && !(labelAbove !== null && isNamedDeduction(labelAbove))) {
+      if (NOT_A_DEDUCTION.test(line)) return;
+      if (labelAbove !== null && NOT_A_DEDUCTION.test(labelAbove)) return;
+    }
     for (const match of line.matchAll(DEDUCTION)) {
       const value = toCents(match[1] ?? match[2]);
       if (value !== null) out.push({ cents: value, line: i });
@@ -606,6 +614,9 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   // money. The total the invoice names as its own then stands above the taxed
   // part the arithmetic proves.
   const zeroRatedPart = taxLines.some((l) => /(?<![\p{N}.,])0\s?%/u.test(l));
+  // The part above the taxed one must be printed: as money, or as a net with four decimals ("4,5000 €").
+  const fourDecimals = [...text.matchAll(/(?<![\p{N}.,])(\d{1,6})[.,](\d{4})(?![\p{N}])/gu)].map((m) => Math.round(Number(`${m[1]}.${m[2]}`) * 100));
+  const gapPrinted = (gap: number) => gap > 0 && (values.has(gap) || fourDecimals.includes(gap));
   const printedRates = ratesPrinted(text);
   const positiveTaxPrinted =
     taxNamedAmounts.some((amount) => amount > 0) ||
@@ -691,7 +702,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     const totals = pageTotal !== null ? [...labelled, pageTotal] : labelled;
     // Or the total the invoice names as its own, above the taxed part, on an
     // invoice that prints a part at 0 percent (see zeroRatedPart).
-    const invoiceAbove = invoiceTotal !== undefined && invoiceTotal.cents > bill && zeroRatedPart ? [invoiceTotal.cents] : [];
+    const invoiceAbove = invoiceTotal !== undefined && invoiceTotal.cents > bill && zeroRatedPart && gapPrinted(invoiceTotal.cents - bill) ? [invoiceTotal.cents] : [];
     const withUntaxed = Math.max(0, ...totals.filter((total) => total > bill && values.has(total - taxSum)), ...invoiceAbove);
     // And a total below them, where the difference is printed as an amount
     // taken off (a promotion after the tax lines): one a label calls the
@@ -747,7 +758,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
             admits,
           )
         : null;
-    if (withTax && invoiceTotal !== undefined && invoiceTotal.cents > cents(withTax.gross) && zeroRatedPart) {
+    if (withTax && invoiceTotal !== undefined && invoiceTotal.cents > cents(withTax.gross) && zeroRatedPart && gapPrinted(invoiceTotal.cents - cents(withTax.gross))) {
       if (noTotal || (pageTotal !== null && pageTotal !== invoiceTotal.cents)) checks.push('total_conflict');
       const tax = cents(withTax.tax);
       return { gross: euros(invoiceTotal.cents), basis: 'gross_with_tax', net: euros(invoiceTotal.cents - tax), taxRate: withTax.rate, taxPrinted: true, taxGroups: [withTax], tip, checks };

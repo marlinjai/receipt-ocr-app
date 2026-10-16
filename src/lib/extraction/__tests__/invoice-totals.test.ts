@@ -335,3 +335,31 @@ describe('the total a mobile bill names as its own', () => {
     expect(readAmounts(plain, { date: '2026-08-17' })).toMatchObject({ gross: 44.95, net: 37.77, taxRate: 19 });
   });
 });
+
+describe('what still is a deduction, and what is no earlier balance', () => {
+  const bill = (minusLine: string) => ['Musterladen', 'Netto 10,00', 'MwSt 19% 1,90', 'Zwischensumme 11,90', minusLine, 'Summe 9,90'].join('\n');
+
+  it('a discount, a coupon or a promotion stays a deduction whatever else its line says', () => {
+    for (const line of ['Rabatt bei Zahlung per App -2,00', 'Netto-Coupon -2,00', 'Exklusiv-Aktion -2,00', 'Prepaid Bonus -2,00', 'Zuzahlung Kasse -2,00']) {
+      expect(readAmounts(bill(line), { date: '2026-03-01' }).gross).toBe(9.9);
+    }
+    // A label above a bare amount, too.
+    expect(readAmounts(['Musterladen', 'Netto 10,00', 'MwSt 19% 1,90', 'Zwischensumme 11,90', 'Gutschein netto', '-2,00', 'Summe 9,90'].join('\n'), { date: '2026-03-01' }).gross).toBe(9.9);
+  });
+
+  it('a payment, also with its label above the amount, is none', () => {
+    expect(readAmounts(['Musterladen', 'Netto 10,00', 'MwSt 19% 1,90', 'Gesamtsumme 11,90', 'Zahlungen', '-11,90', 'Fälliger Betrag 0,00'].join('\n'), { date: '2026-03-01' })).toMatchObject({ gross: 11.9, checks: [] });
+  });
+
+  it('a new account balance is no balance set against the bill', () => {
+    const slip = ['Musterladen', 'Netto 10,00', 'MwSt 19% 1,90', 'Summe 11,90', 'Neuer Kontostand 20,00', 'Zu zahlender Betrag 11,90'].join('\n');
+    expect(readAmounts(slip, { date: '2026-03-01' }).gross).toBe(11.9);
+  });
+});
+
+describe('the invoice total above the taxed part needs the part to be printed', () => {
+  it('a gap no printed figure explains keeps the taxed part', () => {
+    const misread = ['Ihre Rechnung', 'Netto 10,00', 'MwSt 19% 1,90', 'Leistung brutto 11,90', 'Gebühr USt 0 %', 'Rechnungsbetrag gesamt', '1.190,00 €'].join('\n');
+    expect(readAmounts(misread, { date: '2026-03-01' }).gross).toBe(11.9);
+  });
+});

@@ -37,6 +37,8 @@ export type PaymentServiceErrorCode =
   | 'link_exceeds_payment'
   | 'target_not_found'
   | 'target_fully_paid'
+  /** The invoice's rest was booked out as never to be paid: take the write-off back first if the client paid after all. */
+  | 'target_written_off'
   /** The receipt already carries payments, and this one would take it beyond its own amount: asked about, not refused. */
   | 'receipt_already_paid'
   /** The pair is no proposal any more (one side was linked in the meantime). */
@@ -249,7 +251,7 @@ async function linkByReference(db: Prisma.TransactionClient, ctx: PaymentContext
   // payment of the workspace, not only this file's: an earlier payment naming
   // the same invoice makes the new one ambiguous too.
   const payments = await db.taxPayment.findMany({ where: { authWorkspaceId: ctx.workspaceId, amountCents: { gt: 0 }, cancelledByBatchId: null }, include: { links: true } });
-  const invoices = await db.taxIssuedInvoice.findMany({ where: { authWorkspaceId: ctx.workspaceId }, include: { payments: true, paymentLinks: true } });
+  const invoices = await db.taxIssuedInvoice.findMany({ where: { authWorkspaceId: ctx.workspaceId }, include: { payments: true, paymentLinks: { where: { payment: { cancelledByBatchId: null } } } } });
   const proposals = unambiguousReferenceMatches(
     proposeMatches(
       payments.filter((p) => p.links.length === 0 && effectiveKind(p) === 'income').map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, reference: p.reference, counterparty: p.counterparty })),
@@ -265,9 +267,18 @@ async function linkByReference(db: Prisma.TransactionClient, ctx: PaymentContext
   return proposals.length;
 }
 
-function invoiceOpenCents(invoice: { grossCents: number; payments: Array<{ cents: number }>; paymentLinks: Array<{ cents: number }> }): number {
+/**
+ * What an invoice still has open for a payment: its amount less what was typed
+ * in, what payments are linked (a purchase list's cancelled payments do not
+ * count), and a remainder booked out as never to be paid (a fee the client
+ * kept). A booked-out remainder is never offered or linked, whatever its date:
+ * the revenue figures count it from its day, but a payment linked on top of it
+ * would take payments and write-off beyond the invoice's amount.
+ */
+function invoiceOpenCents(invoice: { grossCents: number; writtenOffCents: number; writtenOffOn: string | null; payments: Array<{ cents: number }>; paymentLinks: Array<{ cents: number }> }): number {
   const paid = invoice.payments.reduce((s, p) => s + p.cents, 0) + invoice.paymentLinks.reduce((s, l) => s + l.cents, 0);
-  return Math.max(0, invoice.grossCents - paid);
+  const writtenOff = invoice.writtenOffCents > 0 && invoice.writtenOffOn !== null ? invoice.writtenOffCents : 0;
+  return Math.max(0, invoice.grossCents - paid - writtenOff);
 }
 
 export function effectiveKind(payment: { sourceKind: string; kindOverride: string | null }): PaymentKind {
@@ -429,14 +440,14 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
       // The invoice is locked too (always after the payment): two payments
       // confirmed for it at the same moment cannot both use what it has open.
       await tx.$queryRaw`SELECT id FROM tax_issued_invoices WHERE id = ${invoiceId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
-      const invoice = await tx.taxIssuedInvoice.findFirst({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId }, include: { payments: true, paymentLinks: true } });
+      const invoice = await tx.taxIssuedInvoice.findFirst({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId }, include: { payments: true, paymentLinks: { where: { payment: { cancelledByBatchId: null } } } } });
       if (!invoice) throw new PaymentServiceError('target_not_found');
       // Only money received as income pays an invoice: no money going out, no refund, no own transfer.
       if (payment.amountCents <= 0 || effectiveKind(payment) !== 'income') throw new PaymentServiceError('invalid_link');
       // Never more than the invoice still has open: what was typed in by hand
       // and what other payments already cover is not counted a second time.
       const open = invoiceOpenCents(invoice);
-      if (open <= 0) throw new PaymentServiceError('target_fully_paid');
+      if (open <= 0) throw new PaymentServiceError(invoice.writtenOffCents > 0 && invoice.writtenOffOn !== null ? 'target_written_off' : 'target_fully_paid');
       free = Math.min(free, open);
     }
     const cents = input.cents === undefined || input.cents === null ? free : input.cents;

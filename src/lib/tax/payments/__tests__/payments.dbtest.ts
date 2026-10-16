@@ -1378,3 +1378,38 @@ describe('the tab asks less after a real import: money in, a private account, a 
     expect((await findPayments(db, ws.workspaceId, { year: 2026, text: 'Schreibtisch' })).total).toBe(0);
   });
 });
+
+describe('an invoice whose remainder is booked out as never to be paid', () => {
+  const base = { number: 'R-2026-090', issueDate: '2026-02-01', grossCents: 50_000, treatment: 'small_business', payments: [] };
+  const links = async (invoiceId: string) => (await db.taxPaymentLink.findMany({ where: { invoiceId }, orderBy: { cents: 'desc' } })).map((l) => l.cents);
+
+  it('forward, write-off saved before the import: the transfer of the invoice less the kept fee is the exact rest and links on its number; nothing more is offered', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    const invoiceId = await saveInvoice(db, ctx, null, { ...base, writtenOffCents: 2_000, writtenOffOn: '2026-02-20' });
+    expect((await importPayments(db, ctx, accountId, file(line('2026-02-15', 'Kunde Beispiel', 'Rechnung R-2026-090', '480', 'Credit Transfer')))).autoLinked).toBe(1);
+    expect(await links(invoiceId)).toEqual([48_000]);
+    await importPayments(db, ctx, accountId, file(line('2026-02-25', 'Kunde Beispiel', 'Nachzahlung', '20', 'Credit Transfer')));
+    const late = (await db.taxPayment.findFirst({ where: { accountId, amountCents: 2_000 } }))!;
+    expect(await code(linkPayment(db, ctx, { paymentId: late.id, invoiceId }, rowCheck(ctx)))).toBe('target_written_off');
+    expect((await loadStatement(db, ws.workspaceId, 2026)).payments.invoiceTargets).toEqual([]);
+
+    // Change an earlier input: taking the write-off back opens the 20.00 again everywhere, and the late payment links.
+    await saveInvoice(db, ctx, invoiceId, { ...base, writtenOffCents: 0, writtenOffOn: null });
+    expect((await loadStatement(db, ws.workspaceId, 2026)).payments.invoiceTargets).toEqual([{ id: invoiceId, label: 'Rechnung R-2026-090', openCents: 2_000 }]);
+    await linkPayment(db, ctx, { paymentId: late.id, invoiceId }, rowCheck(ctx));
+    expect(await links(invoiceId)).toEqual([48_000, 2_000]);
+    // Paid in full now, a write-off cannot be put back on top.
+    await expect(saveInvoice(db, ctx, invoiceId, { ...base, writtenOffCents: 2_000, writtenOffOn: '2026-02-26' })).rejects.toMatchObject({ code: 'invalid_write_off' });
+  });
+
+  it('the usual order, payment first and write-off after: the link by hand is capped at the payment, the rest stays booked out', async () => {
+    const { ctx, accountId } = await workspace();
+    const invoiceId = await saveInvoice(db, ctx, null, base);
+    // 480 against 500 open: the amount differs, so nothing links by itself.
+    expect((await importPayments(db, ctx, accountId, file(line('2026-02-15', 'Kunde Beispiel', 'Rechnung R-2026-090', '480', 'Credit Transfer')))).autoLinked).toBe(0);
+    await saveInvoice(db, ctx, invoiceId, { ...base, writtenOffCents: 2_000, writtenOffOn: '2026-02-20' });
+    const payment = (await db.taxPayment.findFirst({ where: { accountId } }))!;
+    await linkPayment(db, ctx, { paymentId: payment.id, invoiceId }, rowCheck(ctx));
+    expect(await links(invoiceId)).toEqual([48_000]);
+  });
+});

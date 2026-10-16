@@ -215,6 +215,8 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Ein später eingelesener Export deckt dieselben Tage ab. Bitte zuerst den späteren Import rückgängig machen.';
         case 'proposal_gone':
           return 'Dieser Vorschlag gilt nicht mehr: Zahlung oder Beleg wurde inzwischen zugeordnet. Die Liste ist jetzt aktuell.';
+        case 'target_written_off':
+          return 'Der Rest dieser Rechnung ist als nicht mehr zu zahlen ausgebucht. Hat die Kundschaft doch gezahlt, zuerst die Ausbuchung an der Rechnung zurücknehmen.';
         case 'target_fully_paid':
           return 'Diese Rechnung ist bereits vollständig bezahlt.';
         case 'link_exceeds_payment':

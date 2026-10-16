@@ -247,3 +247,154 @@ describe('a line that is tax-free does not make the receipt tax-free', () => {
     expect(readAmounts(['Zulassungsstelle', 'Kfz-Steuer 100,00', 'Gebühr 7,00', 'Gesamt 107,00'].join('\n'), { date: '2026-03-01' }).taxGroups).toEqual([]);
   });
 });
+
+describe('a payment or a net figure set off by a dash is no deduction', () => {
+  // A mail-scanning invoice, paid on issue: the net is printed after a dash, the payment with a minus.
+  const PAID_ON_ISSUE = [
+    'Example Post GmbH',
+    'Rechnungsbetrag 3,99 €',
+    'USt.-Nr. : DE123456789',
+    'BESCHREIBUNG',
+    'BETRAG (EUR)',
+    'Tarif "Minimal", Jahresabonnement',
+    '3,99 €',
+    '3,99 €',
+    'Gesamtsumme',
+    '3,99 €',
+    'Zahlungen',
+    '-3,99 €',
+    'Fälliger Betrag (EUR)',
+    '0,00 €',
+    '(inkl. USt.)',
+    'UST.-DETAILS',
+    'Gesamtsumme (zzgl. USt.) - 3,35 €',
+    'USt. bei 19 % (0,64 €).',
+    '3,99 € wurden am 01 Feb, 2021 bezahlt.',
+  ].join('\n');
+
+  it('3.99 is the total, not the tax of 0.64 that was left after taking off the net', () => {
+    expect(readAmounts(PAID_ON_ISSUE, { date: '2021-02-01' })).toMatchObject({ gross: 3.99, net: 3.35, taxRate: 19, checks: [] });
+    expect(readAmounts(PAID_ON_ISSUE.replaceAll('3,99', '12,99').replace('3,35', '10,92').replace('0,64', '2,07'), { date: '2023-04-01' })).toMatchObject({ gross: 12.99, net: 10.92, taxRate: 19 });
+  });
+
+  it('a page reading of the tax amount does not move it', () => {
+    expect(readAmounts(PAID_ON_ISSUE, { date: '2021-02-01', modelGross: 0.64, modelSawPage: true })).toMatchObject({ gross: 3.99, checks: ['total_conflict'] });
+  });
+
+  it('a real deduction with a minus still counts', () => {
+    expect(readAmounts(F.MARKETPLACE_PROMOTION_TORN).gross).toBe(197.7);
+  });
+});
+
+describe('the total a mobile bill names as its own', () => {
+  // A taxed part (net with four decimals, tax 7.18), a fee at 0 percent, then the sum to pay with an earlier balance
+  // and a list of account movements whose "Summe Brutto" is the earlier invoice.
+  const BILL = [
+    'Ihre Mobilfunk Rechnung',
+    'Rechnungsbetrag netto (0% USt.)',
+    'Rechnungsbetrag netto (19% USt.)',
+    '4,5000 €',
+    '37,7732 €',
+    'USt. Betrag (0%)',
+    'USt. Betrag (19%)',
+    '0,00 €',
+    '7,18 €',
+    'Rechnungsbetrag gesamt',
+    '49,45 €',
+    'Kontostand vom 15.04.2026',
+    'Zu zahlender Betrag',
+    '44,95 €',
+    '94,40 €',
+    'Kontobewegungen',
+    'Rechnung vom 17.03.2026',
+    '44,95 €',
+    'Summe Brutto',
+    '44,95 €',
+  ].join('\n');
+
+  it('the invoice total with the fee at 0 percent stands over the taxed part and over the sum to pay', () => {
+    expect(readAmounts(BILL, { date: '2026-04-16' })).toMatchObject({ gross: 49.45, net: 42.27, taxRate: 19 });
+    // A page reading of the earlier invoice's sum is a conflict, never the total.
+    expect(readAmounts(BILL, { date: '2026-04-16', modelGross: 44.95, modelSawPage: true })).toMatchObject({ gross: 49.45, checks: ['total_conflict'] });
+  });
+
+  it('without a fee, a small balance on top is not the total either', () => {
+    const plain = [
+      'Ihre Mobilfunk Rechnung',
+      'Rechnungsbetrag netto',
+      'USt.-Betrag (19%)',
+      '37,7732 €',
+      '7,18 €',
+      'Rechnungsbetrag gesamt',
+      '44,95 €',
+      'Kontostand vom 16.08.2026',
+      'Zu zahlender Betrag',
+      '0,04 €',
+      '44,99 €',
+    ].join('\n');
+    expect(readAmounts(plain, { date: '2026-08-17' })).toMatchObject({ gross: 44.95, net: 37.77, taxRate: 19 });
+  });
+});
+
+describe('what still is a deduction, and what is no earlier balance', () => {
+  const bill = (minusLine: string) => ['Musterladen', 'Netto 10,00', 'MwSt 19% 1,90', 'Zwischensumme 11,90', minusLine, 'Summe 9,90'].join('\n');
+
+  it('a discount, a coupon or a promotion stays a deduction whatever else its line says', () => {
+    for (const line of ['Rabatt bei Zahlung per App -2,00', 'Netto-Coupon -2,00', 'Exklusiv-Aktion -2,00', 'Prepaid Bonus -2,00', 'Zuzahlung Kasse -2,00', 'Sommeraktion netto -2,00', 'Neukundenbonus (zzgl. MwSt.) -2,00']) {
+      expect(readAmounts(bill(line), { date: '2026-03-01' }).gross).toBe(9.9);
+    }
+    // A label above a bare amount, too.
+    expect(readAmounts(['Musterladen', 'Netto 10,00', 'MwSt 19% 1,90', 'Zwischensumme 11,90', 'Gutschein netto', '-2,00', 'Summe 9,90'].join('\n'), { date: '2026-03-01' }).gross).toBe(9.9);
+  });
+
+  it('"Transaktion" is no promotion: a payment line that names one is still a payment', () => {
+    expect(readAmounts(bill('Zahlung Transaktion 4711 -2,00'), { date: '2026-03-01' }).gross).toBe(11.9);
+  });
+
+  it('a payment, also with its label above the amount, is none', () => {
+    expect(readAmounts(['Musterladen', 'Netto 10,00', 'MwSt 19% 1,90', 'Gesamtsumme 11,90', 'Zahlungen', '-11,90', 'Fälliger Betrag 0,00'].join('\n'), { date: '2026-03-01' })).toMatchObject({ gross: 11.9, checks: [] });
+  });
+
+  it('a new account balance is no balance set against the bill', () => {
+    const slip = ['Musterladen', 'Netto 10,00', 'MwSt 19% 1,90', 'Summe 11,90', 'Neuer Kontostand 20,00', 'Zu zahlender Betrag 11,90'].join('\n');
+    expect(readAmounts(slip, { date: '2026-03-01' }).gross).toBe(11.9);
+  });
+});
+
+describe('the invoice total above the taxed part needs the part to be printed', () => {
+  it('a gap no printed figure explains keeps the taxed part', () => {
+    const misread = ['Ihre Rechnung', 'Netto 10,00', 'MwSt 19% 1,90', 'Leistung brutto 11,90', 'Gebühr USt 0 %', 'Rechnungsbetrag gesamt', '1.190,00 €'].join('\n');
+    expect(readAmounts(misread, { date: '2026-03-01' }).gross).toBe(11.9);
+  });
+});
+
+describe('the net set off by a dash, whatever it is called, and an earlier invoice with the same label', () => {
+  const paid = (netLine: string) =>
+    ['Example Post GmbH', 'Gesamtsumme', '3,99 €', 'Zahlungen', '-3,99 €', 'Fälliger Betrag (EUR)', '0,00 €', netLine, 'USt. bei 19 % (0,64 €).'].join('\n');
+
+  it('a minus that leaves exactly the tax is never a deduction', () => {
+    for (const line of ['Nettobetrag - 3,35 €', 'Zwischensumme - 3,35 €', 'Subtotal - 3,35 €', 'Gesamtsumme Aktionstarif (zzgl. USt.) - 3,35 €', 'Transaktion - 3,35 €']) {
+      expect(readAmounts(paid(line), { date: '2021-02-01' }).gross).toBe(3.99);
+    }
+  });
+
+  it('an earlier invoice listed below with the same label does not take the place of the invoice own total', () => {
+    const bill = [
+      'Ihre Mobilfunk Rechnung',
+      'Rechnungsbetrag netto (0% USt.)',
+      'Rechnungsbetrag netto (19% USt.)',
+      '4,5000 €',
+      '37,7732 €',
+      'USt. Betrag (0%)',
+      'USt. Betrag (19%)',
+      '0,00 €',
+      '7,18 €',
+      'Rechnungsbetrag gesamt',
+      '49,45 €',
+      'Kontobewegungen',
+      'Rechnung vom 17.03.2026',
+      'Rechnungsbetrag gesamt 44,95 €',
+    ].join('\n');
+    expect(readAmounts(bill, { date: '2026-04-16' })).toMatchObject({ gross: 49.45, net: 42.27 });
+  });
+});

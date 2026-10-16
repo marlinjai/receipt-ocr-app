@@ -230,12 +230,20 @@ function grossWithTax(
 }
 
 /** A label for what is left to pay. It is the total, unless a credit or an earlier balance stands between the two. */
-const DUE_LABEL = /(?:amount|balance)\s+due|f(?:ä|ae)lliger\s+betrag|offener\s+betrag/iu;
+const DUE_LABEL = /(?:amount|balance)\s+due|f(?:ä|ae)lliger\s+betrag|offener\s+betrag|zu\s+zahlender\s+betrag/iu;
 /** The line many invoices open with: "US$19.22 due October 29, 2025", "178,50 € fällig am 18. Januar 2025". */
 const DUE_HEADLINE =
   /^\s*(?:US\$|[$€£]|EUR|USD|GBP)?\s*(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})\s*(?:€|EUR|USD|GBP)?\s+(?:due|f(?:ä|ae)llig)(?![\p{L}])/iu;
 /** A credit, or a balance carried over, set against the invoice: the amount due is then not the invoice total. */
-const BALANCE_APPLIED = /applied\s+balance|balance\s+applied|credit\s+applied|applied\s+credit|guthaben\s+verrechnet|verrechnetes\s+guthaben/i;
+const BALANCE_APPLIED =
+  /applied\s+balance|balance\s+applied|credit\s+applied|applied\s+credit|guthaben\s+verrechnet|verrechnetes\s+guthaben|kontostand\s+(?:vom|alt|vor)|(?:alter|bisheriger)\s+kontostand/i;
+/**
+ * A label that names the total of this invoice as such ("Rechnungsbetrag
+ * gesamt"). A mobile bill prints it above the amount to pay with an earlier
+ * balance and above a list of account movements whose "Summe Brutto" is an
+ * earlier invoice: the invoice total stands over a later labelled amount.
+ */
+const INVOICE_TOTAL_LABEL = /rechnungsbetrag\s+gesamt|gesamtrechnungsbetrag|rechnungsgesamtsumme|gesamtbetrag\s+(?:der|dieser)\s+rechnung|invoice\s+total(?![\p{L}])/iu;
 /** Any label of the totals block, standing alone on its line. */
 const BLOCK_LABEL = /balance|guthaben|credit/i;
 
@@ -243,6 +251,8 @@ interface LabelledTotal {
   cents: number;
   /** Named as what is left to pay, not as the total. */
   due: boolean;
+  /** Named as the total of this invoice itself (see INVOICE_TOTAL_LABEL). */
+  invoice?: boolean;
 }
 
 /**
@@ -269,13 +279,13 @@ function labelledTotals(text: string): LabelledTotal[] {
     const due = DUE_LABEL.test(line);
     const own = amountsOn(line);
     if (own.length > 0) {
-      out.push({ cents: own[own.length - 1], due });
+      out.push({ cents: own[own.length - 1], due, invoice: INVOICE_TOTAL_LABEL.test(line) });
       continue;
     }
     const next = lines[i + 1] ?? '';
     if (NOT_A_TOTAL.test(next) || TOTAL_LABEL.test(next) || bareLabel(lines[i - 1])) continue;
     const following = amountsOn(next);
-    if (following.length > 0) out.push({ cents: following[following.length - 1], due });
+    if (following.length > 0) out.push({ cents: following[following.length - 1], due, invoice: INVOICE_TOTAL_LABEL.test(line) });
   }
   return out;
 }
@@ -284,9 +294,29 @@ function labelledTotals(text: string): LabelledTotal[] {
 const DEDUCTION =
   /(?<![\p{L}\p{N}.,])[-\u2212]\s*(?:US\$|[$€£]|EUR|USD|GBP)?\s*(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})(?![\p{N}%])|(?<![\p{L}\p{N}.,:/#-])(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})\s*(?:€|EUR)?\s*[-\u2212](?=\s|$)/gmu;
 
+/**
+ * A line whose minus is no deduction from the bill: a payment made against it
+ * ("Zahlungen -3,99 €"), or a net figure set off by a dash ("Gesamtsumme
+ * (zzgl. USt.) - 3,35 €"). Taken as deductions, they turned a mail-scanning
+ * invoice of 3.99 into its tax of 0.64.
+ */
+const NOT_A_DEDUCTION =
+  /(?<![\p{L}])(?:zahlung(?:en)?|bezahlt|payments?|paid)(?![\p{L}])|(?<![\p{L}])(?:zzgl|exkl|excl|excluding|ohne)\.?\s*(?:ust|mwst|vat|tax)|(?<![\p{L}-])netto(?![\p{L}-])|(?:before|without)\s+tax/iu;
+/** A deduction the receipt names as one: a discount, a coupon, a promotion. It stays a deduction whatever else its line says. */
+const NAMED_DEDUCTION = /(?<!trans)aktion|promo|bonus/iu;
+const isNamedDeduction = (line: string) => DISCOUNT_WORD.test(line) || NAMED_DEDUCTION.test(line);
+
 function deductionsIn(text: string): Array<{ cents: number; line: number }> {
   const out: Array<{ cents: number; line: number }> = [];
-  text.split('\n').forEach((line, i) => {
+  const lines = text.split('\n');
+  lines.forEach((line, i) => {
+    // On the line itself, or on a label that stands alone above a bare amount.
+    const above = lines[i - 1];
+    const labelAbove = above !== undefined && !AMOUNT_TEST.test(above) && BARE_AMOUNT_LINE.test(line.trim()) ? above : null;
+    if (!isNamedDeduction(line) && !(labelAbove !== null && isNamedDeduction(labelAbove))) {
+      if (NOT_A_DEDUCTION.test(line)) return;
+      if (labelAbove !== null && NOT_A_DEDUCTION.test(labelAbove)) return;
+    }
     for (const match of line.matchAll(DEDUCTION)) {
       const value = toCents(match[1] ?? match[2]);
       if (value !== null) out.push({ cents: value, line: i });
@@ -521,7 +551,10 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   // was set against the invoice: then the line that says "Total" is.
   const named = labelledTotals(text).filter((t) => t.cents <= SANE_TOTAL_CENTS);
   const settled = BALANCE_APPLIED.test(text) && named.some((t) => !t.due);
-  const labelled = named.filter((t) => !settled || !t.due).map((t) => t.cents);
+  const kept = named.filter((t) => !settled || !t.due);
+  // The first such label is the invoice's own: a later one belongs to an earlier invoice listed under account movements.
+  const invoiceTotal = kept.find((t) => t.invoice);
+  const labelled = (invoiceTotal ? [...kept.filter((t) => t !== invoiceTotal), invoiceTotal] : kept).map((t) => t.cents);
 
   // A tip is an amount on a line that names it; with columns torn apart it is
   // any amount that, added to a printed sum, gives another printed sum.
@@ -576,6 +609,14 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   // with a rate or an amount above 0, or on a euro receipt any rate in force
   // ("A 19%" on a till row next to a bottle deposit at 0 percent).
   const taxLines = lines.filter(namesATax);
+  // A tax line at 0 percent next to a taxed part: a mobile bill's fee at 0
+  // percent, its net printed with four decimals that the reader counts as no
+  // money. The total the invoice names as its own then stands above the taxed
+  // part the arithmetic proves.
+  const zeroRatedPart = taxLines.some((l) => /(?<![\p{N}.,])0\s?%/u.test(l));
+  // The part above the taxed one must be printed: as money, or as a net with four decimals ("4,5000 €").
+  const fourDecimals = [...text.matchAll(/(?<![\p{N}.,])(\d{1,6})[.,](\d{4})(?![\p{N}])/gu)].map((m) => Math.round(Number(`${m[1]}.${m[2]}`) * 100));
+  const gapPrinted = (gap: number) => gap > 0 && (values.has(gap) || fourDecimals.includes(gap));
   const printedRates = ratesPrinted(text);
   const positiveTaxPrinted =
     taxNamedAmounts.some((amount) => amount > 0) ||
@@ -659,17 +700,28 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     // The total a model read from the page counts like a labelled one here: the
     // page pairs the amount with its label, the printed figure proves it.
     const totals = pageTotal !== null ? [...labelled, pageTotal] : labelled;
-    const withUntaxed = Math.max(0, ...totals.filter((total) => total > bill && values.has(total - taxSum)));
+    // Or the total the invoice names as its own, above the taxed part, on an
+    // invoice that prints a part at 0 percent (see zeroRatedPart).
+    const invoiceAbove = invoiceTotal !== undefined && invoiceTotal.cents > bill && zeroRatedPart && gapPrinted(invoiceTotal.cents - bill) ? [invoiceTotal.cents] : [];
+    const withUntaxed = Math.max(0, ...totals.filter((total) => total > bill && values.has(total - taxSum)), ...invoiceAbove);
     // And a total below them, where the difference is printed as an amount
     // taken off (a promotion after the tax lines): one a label calls the
     // total, or, with the labels torn from their amounts, one printed below
     // an amount that carries its minus sign and stands below the bill.
     const minus = deductionsIn(text);
     const deductions = [...minus.map((d) => d.cents), ...discounts];
+    // Whatever its wording, an amount taken off that leaves exactly the tax is
+    // the net set off by a dash ("Nettobetrag - 3,35 €"), never a deduction.
     const afterDeduction =
-      labelled.findLast((total) => total < bill && deductions.includes(bill - total)) ??
+      labelled.findLast((total) => total < bill && total !== taxSum && deductions.includes(bill - total)) ??
       minus
-        .filter((d) => d.cents < bill && found.some((a) => a.cents === bill && a.line < d.line) && found.some((a) => a.cents === bill - d.cents && a.line > d.line))
+        .filter(
+          (d) =>
+            d.cents < bill &&
+            bill - d.cents !== taxSum &&
+            found.some((a) => a.cents === bill && a.line < d.line) &&
+            found.some((a) => a.cents === bill - d.cents && a.line > d.line),
+        )
         .map((d) => bill - d.cents)[0];
     // A total above the tax groups that a label in the text AND the page
     // reading both name: the groups then cover a part of the bill only (one
@@ -703,9 +755,22 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     // Largest first: the total is the largest amount a printed tax amount fits.
     const withTax =
       german && !zeroTaxStated
-        ? grossWithTax(values, rates, unnamed.filter((v) => v <= SANE_TOTAL_CENTS && !tipOnLine.includes(v)).sort((x, y) => y - x), discounts, admits)
+        ? grossWithTax(
+            values,
+            rates,
+            // The total the invoice names as its own is tried first: the largest amount can be the sum to pay with an earlier balance.
+            unnamed
+              .filter((v) => v <= SANE_TOTAL_CENTS && !tipOnLine.includes(v))
+              .sort((x, y) => (y === invoiceTotal?.cents ? 1 : 0) - (x === invoiceTotal?.cents ? 1 : 0) || y - x),
+            discounts,
+            admits,
+          )
         : null;
-    if (withTax) {
+    if (withTax && invoiceTotal !== undefined && invoiceTotal.cents > cents(withTax.gross) && zeroRatedPart && gapPrinted(invoiceTotal.cents - cents(withTax.gross))) {
+      if (noTotal || (pageTotal !== null && pageTotal !== invoiceTotal.cents)) checks.push('total_conflict');
+      const tax = cents(withTax.tax);
+      return { gross: euros(invoiceTotal.cents), basis: 'gross_with_tax', net: euros(invoiceTotal.cents - tax), taxRate: withTax.rate, taxPrinted: true, taxGroups: [withTax], tip, checks };
+    } else if (withTax) {
       groups = [withTax];
       gross = withTax.gross;
       basis = 'gross_with_tax';

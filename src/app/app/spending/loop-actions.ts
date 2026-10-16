@@ -4,7 +4,8 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
-import { LoopServiceError, answerNoReceipt, confirmCandidate, loadLoopOverview, runReceiptLoop, withdrawNoReceipt, type LoopOverview, type RunResult } from '@/lib/spending/loop-service';
+import { LoopServiceError, answerNoReceipt, confirmCandidate, loadLoopOverview, withdrawNoReceipt, type LoopOverview } from '@/lib/spending/loop-service';
+import { runSpendingChecks, type ChecksRun } from '@/lib/spending/checks';
 import { NotifyServiceError, getNotifySettings, listUnreadNotifications, markNotificationRead, saveNotifySettings, type NotificationView, type NotifySettings, type NotifyContext } from '@/lib/spending/notify/service';
 import { berlinToday } from '@/lib/spending/period';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
@@ -26,7 +27,7 @@ export interface ChecksView {
   settings: NotifySettings;
   canWrite: boolean;
   /** Set after "check now": what the run did. */
-  lastRun: RunResult | null;
+  lastRun: ChecksRun | null;
 }
 
 function failure(e: unknown): { ok: false; error: ChecksActionError; detail?: string } {
@@ -48,7 +49,7 @@ async function writeContext(): Promise<NotifyContext> {
   return { workspaceId, tenantId: requireSessionTenantId(session, workspaceId) };
 }
 
-async function view(workspaceId: string, canWrite: boolean, lastRun: RunResult | null = null): Promise<ChecksView> {
+async function view(workspaceId: string, canWrite: boolean, lastRun: ChecksView['lastRun'] = null): Promise<ChecksView> {
   const [loop, notifications, settings] = await Promise.all([
     loadLoopOverview(prisma, workspaceId),
     canWrite ? listUnreadNotifications(prisma, workspaceId) : Promise.resolve([]),
@@ -74,7 +75,7 @@ export async function getReceiptChecks(): Promise<ChecksResult<ChecksView>> {
 export async function checkNow(): Promise<ChecksResult<ChecksView>> {
   try {
     const ctx = await writeContext();
-    const run = await runReceiptLoop(prisma, ctx, { today: berlinToday() });
+    const run = await runSpendingChecks(prisma, ctx, { today: berlinToday() });
     return { ok: true, value: await view(ctx.workspaceId, true, run) };
   } catch (e) {
     return failure(e);

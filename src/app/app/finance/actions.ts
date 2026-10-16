@@ -5,7 +5,7 @@ import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { after } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { runReceiptLoop } from '@/lib/spending/loop-service';
+import { runSpendingChecks } from '@/lib/spending/checks';
 import { berlinToday } from '@/lib/spending/period';
 import {
   PaymentServiceError,
@@ -329,14 +329,14 @@ export async function importPaymentFile(year: number, accountId: string, text: s
   try {
     const ctx = await writeContext();
     const imported = await importPayments(prisma, ctx, String(accountId), String(text ?? ''));
-    // The missing-receipt loop runs on what was just imported (plan 2026-10-14,
-    // personal spending), after the answer is sent: notifying can take a while
+    // The missing-receipt loop and the budget warnings run on what was just
+    // imported (plan 2026-10-14, personal spending), after the answer is sent: notifying can take a while
     // and must never hold or fail the import. A failure is logged.
     after(async () => {
       try {
-        await runReceiptLoop(prisma, ctx, { today: berlinToday() });
+        await runSpendingChecks(prisma, ctx, { today: berlinToday() });
       } catch (e) {
-        console.error('[finance] missing-receipt loop after import failed', e);
+        console.error('[finance] spending checks after import failed', e);
       }
     });
     return { ok: true, value: { view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)), imported } };

@@ -4,6 +4,8 @@ import { getSpending } from './actions';
 import SpendingClient from './SpendingClient';
 import ReceiptChecks from './ReceiptChecks';
 import { getReceiptChecks } from './loop-actions';
+import BudgetsPanel from './BudgetsPanel';
+import { getBudgets } from './budget-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +14,7 @@ export const metadata = { title: 'Ausgaben' };
 export default async function SpendingPage({ searchParams }: { searchParams: Promise<{ jahr?: string; monat?: string; pruefen?: string }> }) {
   await auth.requireSession('/app/spending');
   const { jahr, monat, pruefen } = await searchParams;
-  const [data, checks] = await Promise.all([getSpending(jahr ?? null, monat ?? null), getReceiptChecks()]);
+  const [data, checks, budgets] = await Promise.all([getSpending(jahr ?? null, monat ?? null), getReceiptChecks(), getBudgets()]);
 
   // "Reload" keeps the period that was asked for.
   const params = new URLSearchParams();
@@ -52,6 +54,11 @@ export default async function SpendingPage({ searchParams }: { searchParams: Pro
         <ReceiptChecks initial={checks.value} focusPaymentId={pruefen ?? null} />
       ) : (
         <p className="ui-note ui-note-danger mt-4">Die offenen Belege konnten nicht geladen werden. Bitte die Seite neu laden.</p>
+      )}
+      {budgets.ok ? (
+        <BudgetsPanel initial={budgets.value} />
+      ) : (
+        <p className="ui-note ui-note-danger mt-4">Die Budgets konnten nicht geladen werden. Bitte die Seite neu laden.</p>
       )}
     </SpendingClient>
   );

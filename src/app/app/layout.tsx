@@ -1,7 +1,7 @@
-import Link from 'next/link';
 import { auth } from '@/lib/auth';
 import { initializeReceiptsTable } from './actions';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
+import BrowserRulesImport from '@/components/BrowserRulesImport';
 import { workspaceLabel } from '@/lib/auth-workspace';
 
 export const dynamic = 'force-dynamic';
@@ -37,9 +37,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           )}
         </div>
         <div className="flex items-center gap-4">
-          <Link href="/app/spending" className="text-xs transition-colors hover:underline" style={{ color: 'var(--muted)' }}>
-            Ausgaben
-          </Link>
           <WorkspaceSwitcher session={session} />
           <a
             href={auth.logoutUrl()}
@@ -51,6 +48,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </a>
         </div>
       </header>
+      <BrowserRulesImport />
       {children}
     </>
   );

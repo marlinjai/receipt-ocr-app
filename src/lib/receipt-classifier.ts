@@ -90,8 +90,6 @@ export interface ClassifyInput {
   userRules?: string;
   /** The page itself, when the stored file could be fetched and is within the limits. */
   page?: ReceiptPage | null;
-  /** What the vendor's earlier receipts name as bought, the most used first: one subscription keeps one wording. */
-  knownItems?: readonly string[];
 }
 
 /** What one call used, for the log and the evaluation. Never anything of the document. */
@@ -245,7 +243,7 @@ ${sourceParagraph(input.page)}
 
 Classify the receipt and read these facts from it:
 
-1. **item**: ${ITEM_RULE}${input.knownItems?.length ? ` ${KNOWN_ITEMS_RULE}` : ''}
+1. **item**: ${ITEM_RULE}
 2. **vendor**: the name of the business that issued the receipt, as a customer would call it ("Trattoria Beispiel", "Musterbräu Berlin"). Never a slogan ("Since 2016"), never a product or an extra ("+ mit Haferdrink"), never a bare description ("Indisches"), never a receipt heading ("Rechnung", "Bewirtungsbeleg"). Null when the text does not name it.
 3. **gross**: the total the customer had to pay, as a number, exactly as printed (the line labelled Summe, Gesamt, Total, Betrag, zu zahlen, or the sum of the tax lines). Where several totals are printed (a subtotal, "Total" and "Grand Total", a total per section), give the final one, with tax, shipping and duties. Never a receipt number, table number, transaction number, card number or telephone number. An invoice settled from a credit or balance still has its total: give the line "Total", never an amount due of 0. Null when the document does not show a total.
 4. **totalStated**: false when the document states no total to pay at all: an application, a contract or an offer that names only a monthly rate or an instalment, a delivery note without prices. Then "gross" is null: a monthly rate is not a total. Otherwise true.
@@ -273,13 +271,8 @@ Respond with ONLY a JSON object (no markdown, no explanation):
 { "item": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "..." }`;
 }
 
-/** Told only where the vendor's earlier receipts name what was bought; the list itself is in the user message. */
-export const KNOWN_ITEMS_RULE =
-  'Earlier receipts of this vendor are listed below under "Earlier items of this vendor". When this document bought one of them (the same product or plan, also in another month or at another price), answer with that wording exactly as listed. Only when it bought something else, word it anew.';
-
 function userText(input: ClassifyInput): string {
   return [
-    input.knownItems?.length && `Earlier items of this vendor: ${input.knownItems.map((item) => JSON.stringify(item)).join(', ')}`,
     input.vendor && `First reading of the vendor (may be wrong): ${input.vendor}`,
     input.gross !== null && `First reading of the total (may be wrong): ${input.gross}`,
     input.date && `First reading of the date (may be wrong): ${input.date.slice(0, 10)}`,

@@ -111,6 +111,12 @@ export interface BankSession {
   validUntil: Date | null;
 }
 
+/** Who is present at a call made while the person uses the app; sent so the bank does not count it as an unattended fetch. */
+export interface PsuPresence {
+  ipAddress: string;
+  userAgent: string;
+}
+
 export interface StartInput {
   aspsp: { name: string; country: string };
   validUntil: Date;
@@ -125,7 +131,7 @@ export interface BankApi {
   createSession(code: string): Promise<BankSession>;
   deleteSession(sessionId: string): Promise<void>;
   /** Every booked and pending transaction of the account between the two days (both included), all pages. Raw, as the interface gives them. */
-  fetchTransactions(accountUid: string, dateFrom: string, dateTo: string): Promise<unknown[]>;
+  fetchTransactions(accountUid: string, dateFrom: string, dateTo: string, psu?: PsuPresence): Promise<unknown[]>;
 }
 
 /** "•••• 1234" from an account number; never more than its last four characters. */
@@ -169,13 +175,13 @@ export function createBankClient(credentials: BankCredentials, options: { fetch?
     return key;
   };
 
-  async function call(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<unknown> {
+  async function call(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<unknown> {
     const token = signToken(credentials, signingKey(), Math.floor(now().getTime() / 1000));
     let response: Awaited<ReturnType<FetchLike>>;
     try {
       response = await doFetch(`${baseUrl}${path}`, {
         method,
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+        headers: { ...extraHeaders, Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -226,13 +232,14 @@ export function createBankClient(credentials: BankCredentials, options: { fetch?
     async deleteSession(sessionId) {
       await call('DELETE', `/sessions/${encodeURIComponent(sessionId)}`);
     },
-    async fetchTransactions(accountUid, dateFrom, dateTo) {
+    async fetchTransactions(accountUid, dateFrom, dateTo, psu) {
+      const presence: Record<string, string> = psu ? { 'Psu-Ip-Address': psu.ipAddress.slice(0, 64), 'Psu-User-Agent': psu.userAgent.slice(0, 256) } : {};
       const out: unknown[] = [];
       let continuation: string | null = null;
       for (let page = 0; page < MAX_PAGES; page++) {
         const query = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
         if (continuation) query.set('continuation_key', continuation);
-        const data = (await call('GET', `/accounts/${encodeURIComponent(accountUid)}/transactions?${query}`)) as { transactions?: unknown; continuation_key?: unknown };
+        const data = (await call('GET', `/accounts/${encodeURIComponent(accountUid)}/transactions?${query}`, undefined, presence)) as { transactions?: unknown; continuation_key?: unknown };
         if (Array.isArray(data?.transactions)) out.push(...data.transactions);
         continuation = typeof data?.continuation_key === 'string' && data.continuation_key ? data.continuation_key : null;
         if (!continuation) return out;

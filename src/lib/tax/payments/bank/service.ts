@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { importPayments, PaymentServiceError, type PaymentContext } from '../service';
 import { PaymentParseError } from '../types';
-import { BankApiError, type BankApi, type BankErrorKind, type SessionAccount } from './client';
+import { BankApiError, type BankApi, type BankErrorKind, type PsuPresence, type SessionAccount } from './client';
 
 /**
  * The live bank connection of one account (finance plan, slice 3, Enable
@@ -142,9 +142,15 @@ export async function startConsent(db: PrismaClient, ctx: PaymentContext, deps: 
       data: existing.sessionId ? consent : { ...consent, aspspName: name, aspspCountry: country, status: 'pending', lastError: null, lastErrorAt: null },
     });
   } else {
-    await db.taxBankConnection.create({
-      data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, accountId, aspspName: name, aspspCountry: country, status: 'pending', ...consent },
-    });
+    try {
+      await db.taxBankConnection.create({
+        data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, accountId, aspspName: name, aspspCountry: country, status: 'pending', ...consent },
+      });
+    } catch (e) {
+      // Two starts at the same moment: the other one created the connection; this consent is the one that counts now.
+      if ((e as { code?: string })?.code !== 'P2002') throw e;
+      await db.taxBankConnection.updateMany({ where: { accountId, authWorkspaceId: ctx.workspaceId }, data: consent });
+    }
   }
   return { url };
 }
@@ -206,7 +212,10 @@ export async function completeConsent(
     throw new BankServiceError('bank_error', 'no_accounts');
   }
   const previous = { boundMask: connection.boundMask, boundName: connection.boundName };
-  const pick = accounts.length === 1 ? accounts[0] : sameAccount(accounts, previous);
+  const boundBefore = previous.boundMask !== null || previous.boundName !== null;
+  // A first consent with one account binds it. After a renewal only the same bank account binds by itself;
+  // another one (another account, or another institution) is asked about, so it never flows into this account unseen.
+  const pick = boundBefore ? sameAccount(accounts, previous) : accounts.length === 1 ? accounts[0] : null;
   // The same bank account as before keeps its last fetched day, so the next fetch continues; another starts afresh.
   const same = pick !== null && pick.mask === previous.boundMask && pick.name === (previous.boundName ?? '');
   const candidates = accounts.map((a) => ({ uid: a.uid, mask: a.mask, name: a.name, currency: a.currency }));
@@ -290,20 +299,33 @@ const NOTHING_NEW = new Set(['nothing_new', 'file_already_imported', 'nothing_un
  * everything; a rate limit keeps it active for the next run; any other
  * failure is recorded on the connection and shown.
  */
-export async function syncConnection(db: PrismaClient, ctx: PaymentContext, deps: BankDeps, connectionId: string, options: { today: string }): Promise<SyncOutcome> {
+export async function syncConnection(
+  db: PrismaClient,
+  ctx: PaymentContext,
+  deps: BankDeps,
+  connectionId: string,
+  options: { today: string; /** Set when the person is present ("Jetzt abholen"), so the bank does not count the call as unattended. */ psu?: PsuPresence },
+): Promise<SyncOutcome> {
   const now = (deps.now ?? (() => new Date()))();
   const connection = await ownConnection(db, ctx.workspaceId, connectionId);
   if (connection.status !== 'active' || !connection.sessionId || !connection.accountUid) return { status: 'not_active', added: 0 };
   if (connection.validUntil && connection.validUntil.getTime() <= now.getTime()) {
-    await db.taxBankConnection.update({ where: { id: connection.id }, data: { status: 'expired' } });
+    await db.taxBankConnection.updateMany({ where: { id: connection.id, sessionId: connection.sessionId }, data: { status: 'expired' } });
     return { status: 'expired', added: 0 };
   }
-  const record = (data: Prisma.TaxBankConnectionUpdateInput) => db.taxBankConnection.update({ where: { id: connection.id }, data });
-  const dateFrom = connection.lastBookedThrough ? shiftDay(connection.lastBookedThrough, -OVERLAP_DAYS) : shiftDay(options.today, -FIRST_FETCH_DAYS);
+  // Written only while the connection still reads the same session and account: a renewal or another choice
+  // in the meantime has reset what it needed, and this run's view of it is stale.
+  const record = (data: Prisma.TaxBankConnectionUpdateManyMutationInput) =>
+    db.taxBankConnection.updateMany({ where: { id: connection.id, sessionId: connection.sessionId, accountUid: connection.accountUid }, data });
+  // Never further back than the 90 days the bank gives without a fresh confirmation: a quiet account
+  // whose last booking is older would otherwise be refused on every run. Days before that are left to a file import.
+  const earliest = shiftDay(options.today, -FIRST_FETCH_DAYS);
+  const continued = connection.lastBookedThrough ? shiftDay(connection.lastBookedThrough, -OVERLAP_DAYS) : earliest;
+  const dateFrom = continued < earliest ? earliest : continued > options.today ? options.today : continued;
 
   let transactions: unknown[];
   try {
-    transactions = await deps.api.fetchTransactions(connection.accountUid, dateFrom, options.today);
+    transactions = await deps.api.fetchTransactions(connection.accountUid, dateFrom, options.today, options.psu);
   } catch (e) {
     const kind: BankErrorKind | 'unknown' = e instanceof BankApiError ? e.kind : 'unknown';
     if (!(e instanceof BankApiError)) console.error('[bank] fetch failed', (e as Error)?.name ?? 'error');
@@ -335,7 +357,8 @@ export async function syncConnection(db: PrismaClient, ctx: PaymentContext, deps
       }
     }
   }
-  const latest = [connection.lastBookedThrough, ...bookedDays].filter((d): d is string => !!d).sort().pop() ?? null;
+  // A booking dated after today (a card's future booking day) never moves the start of the next fetch past today.
+  const latest = [connection.lastBookedThrough, ...bookedDays.filter((d) => d <= options.today)].filter((d): d is string => !!d).sort().pop() ?? null;
   await record({ lastSyncedAt: now, lastBookedThrough: latest, lastError: null, lastErrorAt: null });
   return { status: added > 0 ? 'synced' : 'nothing_new', added };
 }
@@ -403,6 +426,9 @@ export interface BankConnectionView {
   candidates: Array<{ uid: string; mask: string | null; name: string; currency: string | null }>;
   /** The uid of the bound account of the session. */
   accountUid: string | null;
+  /** The masked number and name of the bank account read before (a renewal asks when the new session lacks it). */
+  boundMask: string | null;
+  boundName: string | null;
 }
 
 export async function loadBankConnections(db: PrismaClient, workspaceId: string, now: Date = new Date()): Promise<BankConnectionView[]> {
@@ -426,6 +452,8 @@ export async function loadBankConnections(db: PrismaClient, workspaceId: string,
         typeof c.uid === 'string' ? [{ uid: c.uid, mask: typeof c.mask === 'string' ? c.mask : null, name: typeof c.name === 'string' ? c.name : '', currency: typeof c.currency === 'string' ? c.currency : null }] : [],
       ),
       accountUid: r.accountUid,
+      boundMask: r.boundMask,
+      boundName: r.boundName,
     };
   });
 }

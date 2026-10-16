@@ -102,7 +102,7 @@ function statusLine(connection: BankConnectionView | undefined): { text: string;
         tone: 'warn',
       };
     case 'choose_account':
-      return { text: `${connection.aspspName}: bitte das Konto wählen`, tone: 'warn' };
+      return { text: `${connection.aspspName}: bitte das Konto wählen; bis dahin wird nichts abgeholt`, tone: 'warn' };
     case 'pending':
       return { text: `Freigabe bei ${connection.pendingAspspName ?? connection.aspspName} nicht abgeschlossen`, tone: 'warn' };
     case 'error':
@@ -133,6 +133,12 @@ export function BankAccountStatus({
   const [search, setSearch] = useState('');
   const [chosen, setChosen] = useState('');
   const [uid, setUid] = useState(connection?.accountUid ?? '');
+  // A renewal or a choice elsewhere changes the bound account: the selection follows it.
+  const [seenUid, setSeenUid] = useState(connection?.accountUid ?? null);
+  if ((connection?.accountUid ?? null) !== seenUid) {
+    setSeenUid(connection?.accountUid ?? null);
+    setUid(connection?.accountUid ?? '');
+  }
   const busy = feed.pending;
   const line = statusLine(connection);
   const message = feed.message?.accountId === account.id ? feed.message : null;
@@ -198,12 +204,22 @@ export function BankAccountStatus({
           )}
         </div>
       )}
-      {enabled && connection && connection.candidates.length > 1 && (connection.status === 'choose_account' || connection.status === 'active') && (
+      {enabled && connection && (connection.status === 'choose_account' || (connection.status === 'active' && connection.candidates.length > 1)) && (
         <form
           className="mt-2 flex flex-wrap items-end gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (uid) feed.choose(account.id, connection.id, uid);
+            if (!uid) return;
+            const pick = connection.candidates.find((c) => c.uid === uid);
+            const other = (connection.boundMask !== null || connection.boundName !== null) && (pick?.mask !== connection.boundMask || pick?.name !== (connection.boundName ?? ''));
+            if (
+              other &&
+              !window.confirm(
+                `Das ist nicht das Konto, das bisher gelesen wurde (${[connection.boundName, connection.boundMask].filter(Boolean).join(' ')}). Seine Zahlungen kommen dann in „${account.label}“. Nur übernehmen, wenn es dasselbe Konto ist; für ein anderes Konto bitte ein eigenes Konto anlegen.`,
+              )
+            )
+              return;
+            feed.choose(account.id, connection.id, uid);
           }}
         >
           <div>

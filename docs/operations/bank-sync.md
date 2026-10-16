@@ -24,8 +24,8 @@ production change; the steps are below.
 | Name | Needed for | What it is |
 |---|---|---|
 | `BANK_FEED_ENABLED` | everything | The switch: the feature is on only when this is exactly `true`. |
-| `ENABLE_BANKING_APP_ID` | everything | The application id from the Enable Banking control panel. It is the key id (`kid`) of every signed token. |
-| `ENABLE_BANKING_PRIVATE_KEY` | everything | The application's private RSA key as PEM text. Line breaks may be written as `\n`. Never leaves the server. |
+| `ENABLE_BANKING_APP_ID` | everything | The application id from the Enable Banking control panel. It is the key id (`kid`) of every signed JSON Web Token (JWT). |
+| `ENABLE_BANKING_PRIVATE_KEY` | everything | The application's private key (Rivest-Shamir-Adleman, RSA) as text in the Privacy-Enhanced Mail (PEM) format. Line breaks may be written as `\n`. Never leaves the server. |
 | `ENABLE_BANKING_REDIRECT_URL` | everything | `https://receipts.lumitra.co/api/bank/callback`. Must be registered on the application exactly like this. |
 | `BANK_SYNC_SECRET` | the daily route only | The shared secret of the Hash-based Message Authentication Code (HMAC) the scheduled task signs with. |
 
@@ -55,16 +55,18 @@ in `src/lib/tax/payments/bank/config.ts` lists the missing names (names only).
    bank released several accounts, the tab asks which one belongs to this account. Then
    "Jetzt abholen" fetches the last 89 days.
 5. **Check before the schedule.** Through the secrets proxy with the receipts production
-   secrets injected, compute `sha256=` plus the hex HMAC-SHA256 of the body `{}` under
-   `BANK_SYNC_SECRET` and POST that body to `https://receipts.lumitra.co/api/internal/bank-sync`
+   secrets injected, compute `sha256=` plus the hex HMAC-SHA256 (Secure Hash Algorithm 256) of
+   the body `{"ts":<the current Unix time in seconds>}` under `BANK_SYNC_SECRET` and POST that body to `https://receipts.lumitra.co/api/internal/bank-sync`
    with the header `x-lumitra-erasure-signature` (declared in `src/lib/erasure-signature.ts`).
    Never print the secret or the signature. Expect 200 and per-connection counts; a second
-   call right after adds nothing. Check that a missing signature answers 401.
+   call right after adds nothing. Check that a missing signature answers 401, and that the
+   same signed body sent again after five minutes answers 401 too (a signed request cannot
+   be replayed later).
 6. **Scheduled task** (Coolify, on the receipts application, once a day, for example 06:30
    Europe/Berlin), run inside the container where `BANK_SYNC_SECRET` is in the environment:
 
    ```sh
-   node -e "const c=require('node:crypto');const b='{}';const s=c.createHmac('sha256',process.env.BANK_SYNC_SECRET).update(b).digest('hex');fetch('http://localhost:3000/api/internal/bank-sync',{method:'POST',headers:{'content-type':'application/json','x-lumitra-erasure-signature':'sha256='+s},body:b,signal:AbortSignal.timeout(280000)}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)}).catch(e=>{console.error(e.name);process.exit(1)})"
+   node -e "const c=require('node:crypto');const b=JSON.stringify({ts:Math.floor(Date.now()/1000)});const s=c.createHmac('sha256',process.env.BANK_SYNC_SECRET).update(b).digest('hex');fetch('http://localhost:3000/api/internal/bank-sync',{method:'POST',headers:{'content-type':'application/json','x-lumitra-erasure-signature':'sha256='+s},body:b,signal:AbortSignal.timeout(280000)}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)}).catch(e=>{console.error(e.name);process.exit(1)})"
    ```
 
    The answer holds counts only (connections, added, failed, and per connection its id,

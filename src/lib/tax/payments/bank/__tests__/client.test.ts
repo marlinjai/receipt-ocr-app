@@ -79,6 +79,15 @@ describe('createBankClient', () => {
     expect(calls[2].url).toContain('continuation_key=k2');
   });
 
+  it('marks a fetch with the person present only when asked to', async () => {
+    const { fetch, calls } = fakeFetch([{ status: 200, body: { transactions: [] } }, { status: 200, body: { transactions: [] } }]);
+    const client = createBankClient(credentials, { fetch });
+    await client.fetchTransactions('u', '2026-10-01', '2026-10-16', { ipAddress: '192.0.2.1', userAgent: 'Testbrowser' });
+    await client.fetchTransactions('u', '2026-10-01', '2026-10-16');
+    expect(calls[0].headers).toMatchObject({ 'Psu-Ip-Address': '192.0.2.1', 'Psu-User-Agent': 'Testbrowser' });
+    expect(calls[1].headers['Psu-Ip-Address']).toBeUndefined();
+  });
+
   it('never loops forever on a bank that keeps paging', async () => {
     const { fetch, calls } = fakeFetch(Array.from({ length: MAX_PAGES + 5 }, () => ({ status: 200, body: { transactions: [], continuation_key: 'again' } })));
     await expect(createBankClient(credentials, { fetch }).fetchTransactions('u', '2026-01-01', '2026-01-02')).rejects.toMatchObject({ code: 'TOO_MANY_PAGES' });

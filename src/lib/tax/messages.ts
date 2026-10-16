@@ -213,7 +213,7 @@ export function financeActionMessage(error: string, detail?: string): string {
         case 'invalid_import_year':
           return 'Das gewählte Jahr ist ungültig. Bitte die Seite neu laden.';
         case 'format_mismatch':
-          return 'Die Liste eines Zahlungsdienstes (PayPal, Klarna) und ein Bankexport gehören nicht in dasselbe Konto: sie enthalten verschiedene Buchungen. Für die andere Quelle bitte ein eigenes Konto anlegen. Ein Bankkonto lässt sich dagegen aus einer zweiten Bankquelle fortsetzen.';
+          return 'Die Liste eines Zahlungsdienstes (PayPal, Klarna) und ein Bankexport oder die Live-Verbindung einer Bank gehören nicht in dasselbe Konto: sie enthalten verschiedene Buchungen. Für die andere Quelle bitte ein eigenes Konto anlegen. Ein Bankkonto lässt sich dagegen aus einer zweiten Bankquelle fortsetzen.';
         case 'nothing_in_year':
           return 'In dieser Datei liegt keine Zahlung aus dem gewählten Jahr. Es wurde nichts eingelesen.';
         case 'nothing_uncovered':

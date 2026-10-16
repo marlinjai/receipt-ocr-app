@@ -1978,8 +1978,9 @@ for every account.**
 What exists:
 
 - **Client** `src/lib/tax/payments/bank/client.ts`: the Enable Banking interface with
-  `node:crypto` only (no new dependency): a JSON Web Token signed RS256 with the
-  application's private key per call, valid one hour. Institutions, consent, session,
+  `node:crypto` only (no new dependency): a JSON Web Token (JWT) signed with RS256 (a
+  Rivest-Shamir-Adleman, RSA, signature over a Secure Hash Algorithm 256, SHA-256, digest)
+  with the application's private key per call, valid one hour. Institutions, consent, session,
   closing a session, the transaction list with all its pages (at most 50). Errors are
   mapped by the interface's machine code (field `error`; `code` is the HTTP status) into
   what the connection acts on. Nothing it logs or throws carries a token, a key, a session
@@ -2032,11 +2033,24 @@ Decided without asking, say so if you disagree:
   of its own and stop importing the list for the days after.
 - **The last booked day** is the latest booking day among the booked movements fetched, not
   the end of the fetch window, so a movement the bank books late is still inside the next
-  five-day overlap.
+  five-day overlap. A booking dated after today (a card's future booking day) does not count
+  for it, so the next fetch never starts in the future and skips nothing.
+- **No fetch reaches back more than 89 days**, also when the last booked day is older (a quiet
+  account, or a consent that lapsed for months): banks refuse older days without a fresh
+  confirmation, and the run would fail every day. Days before that are filled by a file
+  import; the account's "vollständig bis" shows where the gap is.
+- **"Jetzt abholen" tells the bank the person is present** (the headers `Psu-Ip-Address` and
+  `Psu-User-Agent` with the browser's address and agent, sent to the interface, never stored),
+  so it does not use up the few unattended fetches a bank allows per day; the daily run sends
+  none.
+- **The daily route's signed body carries the time** (`{"ts": ...}`, at most five minutes off),
+  so a signed request seen once cannot be replayed later to use up those fetches.
 - **A renewed session finds the same bank account by its masked number and name** (the
   interface gives every session new account uids). Exactly one match binds it and keeps its
-  last booked day; otherwise the tab asks. Another account than before starts afresh (89
-  days). The interface's own `identification_hash` would match more reliably but is a hash
+  last booked day; otherwise the tab asks, also when the new session holds a single account
+  that is not the one read before (another account or another institution never flows into
+  this account unseen). Choosing another account than before asks for confirmation and
+  starts afresh (89 days). The interface's own `identification_hash` would match more reliably but is a hash
   of the account number, which the payments area decided never to store.
 - **Disconnect when the bank cannot be reached** removes the connection here anyway and says
   so; the consent then runs out on its own day.
@@ -2051,6 +2065,11 @@ reads it at run time; an institution missing there gets "wird über die Bankschn
 angeboten, das Konto bleibt beim Datei-Import". Advanzia has no file importer either (no
 reader for its statement exists yet).
 
-Not built: a header marking a call as made with the person present (the reference does not
-document one for this interface, so "Jetzt abholen" and the daily run look the same to the
-bank); the daily scheduled task itself (a production change, see the operations page).
+Not built: the daily scheduled task itself (a production change, see the operations page).
+
+Reviewed before opening by a fresh agent that saw only the diff: no isolation hole, no leak of
+a token, key, session id or account number. Its twelve findings are fixed in the same change
+(the future booking day and the 89-day bound above, a renewal to a different single account,
+a fetch racing a renewal no longer overwrites the reset start day, the replay window and the
+presence headers, two simultaneous starts, a stale choice on screen, wording, and the test
+key frame built at run time).

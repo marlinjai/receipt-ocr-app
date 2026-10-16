@@ -1,5 +1,6 @@
 'use server';
 
+import { headers } from 'next/headers';
 import { after } from 'next/server';
 import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
@@ -127,7 +128,12 @@ export async function syncBankNow(year: number, connectionId: string): Promise<R
     const deps = serverBankDeps();
     if (!deps) return OFF;
     const today = berlinToday();
-    const outcome = await syncConnection(prisma, ctx, deps, String(connectionId), { today });
+    // The person is present: say so to the bank, so this fetch does not use up the few unattended ones a day.
+    const h = await headers();
+    const ipAddress = (h.get('x-forwarded-for') ?? '').split(',')[0].trim() || h.get('x-real-ip') || '';
+    const userAgent = h.get('user-agent') ?? '';
+    const psu = ipAddress && userAgent ? { ipAddress, userAgent } : undefined;
+    const outcome = await syncConnection(prisma, ctx, deps, String(connectionId), { today, psu });
     if (outcome.added > 0) {
       // The missing-receipt loop and the budget warnings run on what arrived, after the answer is sent.
       after(async () => {

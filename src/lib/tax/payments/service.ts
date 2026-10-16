@@ -4,7 +4,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { vendorKey } from '../decisions';
 import { resolveFunding, type Funding } from './funding';
 import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from './match';
-import { batchCoverage, beyondStored, covers, coveredByOtherSources, orderBatches, overlaps } from './coverage';
+import { batchCoverage, beyondStored, covers, coveredByOtherSources, mergeIntervals, orderBatches, overlaps } from './coverage';
 import { parsePaymentFile, referenceHash } from './parse';
 import { amountQuery } from './search';
 import { PAYMENT_KINDS, type NormalizedPayment, type PaymentFormat, type PaymentKind } from './types';
@@ -186,19 +186,20 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     const skipped = { ...file.skipped };
     const inYear = file.payments.filter((p) => onlyYear === null || p.bookingDay.startsWith(`${onlyYear}-`));
     if (inYear.length < file.payments.length) skipped.other_year = file.payments.length - inYear.length;
-    // Days another source holds are its own. Only on the first and the last of its days, which an export taken in
-    // the middle of a day may hold in part, what goes beyond its stored movements is new. The identity of a row
-    // does not change by leaving others out: identical movements are numbered over the whole file.
+    // Days another source holds are its own. Only on the first and the last day of a range it holds as a whole,
+    // which an export taken in the middle of a day may hold in part, what goes beyond its stored movements is new.
+    // On this source's own days the same comparison runs against what another source added on such an edge day,
+    // so a fuller export of a day that another source completed stores nothing twice. The identity of a row does
+    // not change by leaving others out: identical movements are numbered over the whole file.
     const onCovered = inYear.filter((p) => covers(otherSources, p.bookingDay));
-    const edges = new Set(otherSources.flatMap((i) => [i.from, i.to]));
-    const onEdge = onCovered.filter((p) => edges.has(p.bookingDay));
-    const stored = onEdge.length === 0 ? [] : await tx.taxPayment.findMany({
-      where: { accountId, bookingDay: { in: [...new Set(onEdge.map((p) => p.bookingDay))] }, batch: { format: { not: file.format } } },
+    const edges = new Set(mergeIntervals(otherSources).flatMap((i) => [i.from, i.to]));
+    const compared = inYear.filter((p) => !covers(otherSources, p.bookingDay) || edges.has(p.bookingDay));
+    const stored = compared.length === 0 ? [] : await tx.taxPayment.findMany({
+      where: { accountId, bookingDay: { in: [...new Set(compared.map((p) => p.bookingDay))] }, batch: { format: { not: file.format } } },
       select: { bookingDay: true, amountCents: true },
     });
-    const { beyond } = beyondStored(onEdge, stored);
-    const beyondRows = new Set(beyond);
-    const leftOut = new Set(onCovered.filter((p) => !beyondRows.has(p)));
+    const { same } = beyondStored(compared, stored);
+    const leftOut = new Set([...onCovered.filter((p) => !edges.has(p.bookingDay)), ...same]);
     if (leftOut.size > 0) skipped.covered_by_other_source = leftOut.size;
     const kept = inYear.filter((p) => !leftOut.has(p));
     // A file that keeps nothing still counts when it cancels purchases: those apply to any year and any day.
@@ -425,7 +426,9 @@ export async function deleteImportBatch(db: PrismaClient, ctx: PaymentContext, b
     const cancelledHere = await tx.taxPayment.count({ where: { batchId: batch.id, cancelledByBatchId: { not: null } } });
     const cancelledByThis = later.length > 0 ? await tx.taxPayment.count({ where: { cancelledByBatchId: batch.id } }) : 0;
     if (cancelledHere > 0 || cancelledByThis > 0) throw new PaymentServiceError('batch_has_later_cancellation');
-    await tx.taxImportBatch.deleteMany({ where: { id: batchId, authWorkspaceId: ctx.workspaceId } });
+    // Undone twice at the same moment: the second finds nothing left and says so.
+    const { count } = await tx.taxImportBatch.deleteMany({ where: { id: batchId, authWorkspaceId: ctx.workspaceId } });
+    if (count === 0) throw new PaymentServiceError('batch_not_found');
   }, { maxWait: 20_000, timeout: 60_000 });
 }
 

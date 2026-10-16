@@ -103,3 +103,16 @@ export function beyondStored<T extends { bookingDay: string; amountCents: number
   }
   return { beyond, same };
 }
+
+/** Intervals joined where they overlap or touch: the ranges a source holds as a whole. */
+export function mergeIntervals(intervals: readonly Interval[]): Interval[] {
+  const sorted = [...intervals].sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  const out: Interval[] = [];
+  for (const i of sorted) {
+    const last = out[out.length - 1];
+    if (last && i.from <= shift(last.to, 1)) {
+      if (i.to > last.to) last.to = i.to;
+    } else out.push({ ...i });
+  }
+  return out;
+}

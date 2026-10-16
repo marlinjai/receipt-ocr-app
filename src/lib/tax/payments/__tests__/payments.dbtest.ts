@@ -1522,6 +1522,16 @@ describe('an import limited to a year, and an account continued from a second so
     expect(await db.taxPayment.count({ where: { accountId } })).toBe(4);
   });
 
+  it('a fuller export of a day the other source completed stores nothing twice', async () => {
+    const { ctx, accountId } = await workspace();
+    await importPayments(db, ctx, accountId, EXPORT);
+    await importPayments(db, ctx, accountId, interfaceList([['2025-06-30', 'Werkzeug Beispiel GmbH', '-20'], ['2025-06-30', 'Laden Beispiel', '-7']]));
+    // The bank's own export, taken later, has the whole of 30 June.
+    const fuller = file(line('2025-06-30', 'Werkzeug Beispiel GmbH', 'Bestellung 2', '-20'), line('2025-06-30', 'Laden Beispiel', 'Einkauf', '-7'), line('2025-07-01', 'Laden Beispiel', 'Einkauf', '-1'));
+    expect(await importPayments(db, ctx, accountId, fuller)).toMatchObject({ added: 1, skipped: { covered_by_other_source: 1 } });
+    expect((await days(accountId)).sort()).toEqual(['2025-01-10 -1000', '2025-06-30 -2000', '2025-06-30 -700', '2025-07-01 -100']);
+  });
+
   it('limited to a year whose rows another source holds: the refusal says so, not that the year is empty', async () => {
     const { ctx, accountId } = await workspace();
     await importPayments(db, ctx, accountId, EXPORT);

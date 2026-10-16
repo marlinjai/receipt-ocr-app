@@ -1191,7 +1191,8 @@ Two more complaints of the import of 2026-10-11, decided without asking, say so 
   import is stamped after all imports before it, so their order is never a tie. On the first
   and the last day another source holds, which an export taken in the middle of a day may hold
   in part, a movement beyond what that source stored there (per day and amount) is added; days
-  inside its range stay its own. A file wholly on covered days is refused (`nothing_uncovered`,
+  inside its range stay its own. The same comparison keeps a later, fuller export of such a day
+  from storing again what the other source added there. A file wholly on covered days is refused (`nothing_uncovered`,
   with the way out: undo the other source first) unless it cancels purchases. An import that
   another source continued cannot be undone before that one (`batch_has_later_source`), so no
   day is left empty without a word.

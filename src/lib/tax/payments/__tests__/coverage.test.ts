@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { batchCoverage, beyondStored, covers, coveredByOtherSources, orderBatches, overlaps, subtract } from '../coverage';
+import { batchCoverage, beyondStored, covers, coveredByOtherSources, mergeIntervals, orderBatches, overlaps, subtract } from '../coverage';
 
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 15, 12, minute));
 const batch = (id: string, format: string, firstDay: string | null, lastDay: string | null, minute: number) => ({ id, format, firstDay, lastDay, createdAt: at(minute) });
@@ -65,5 +65,14 @@ describe('edges', () => {
     const { beyond, same } = beyondStored(rows, [{ bookingDay: '2025-06-30', amountCents: -2_000 }]);
     expect(same.map((r) => r.n)).toEqual([1]);
     expect(beyond.map((r) => r.n)).toEqual([2, 3]);
+  });
+});
+
+describe('mergeIntervals', () => {
+  it('joins pieces that overlap or touch, keeps apart what has a gap', () => {
+    expect(mergeIntervals([{ from: '2025-03-01', to: '2025-03-31' }, { from: '2025-01-01', to: '2025-02-28' }, { from: '2025-04-02', to: '2025-04-05' }])).toEqual([
+      { from: '2025-01-01', to: '2025-03-31' },
+      { from: '2025-04-02', to: '2025-04-05' },
+    ]);
   });
 });

@@ -437,3 +437,24 @@ describe('a tip nothing names, between the bill and what was paid', () => {
     expect(readAmounts(named, { date: '2026-04-05' })).toMatchObject({ gross: 11.3, tip: 3.7 });
   });
 });
+
+describe('what between the bill and the paid amount is no tip', () => {
+  const groups = (between: string[], paid: string) => ['Pizzeria Beispiel', 'Netto 15,13', 'MwSt 19% 2,87', 'Summe', '18,00', ...between, paid].join('\n');
+
+  it('delivery fees or deposits, however many', () => {
+    expect(readAmounts(groups(['Lieferkosten 2,49', 'Servicegebühr 0,99'], 'Bezahlt 21,48'), { date: '2026-03-01' }).tip).toBeNull();
+    expect(readAmounts(groups(['Pfand 0,25', 'Pfand 0,25'], 'Endsumme 18,50'), { date: '2026-03-01' }).tip).toBeNull();
+  });
+
+  it('a balance carried over, cash handed over, another currency', () => {
+    expect(readAmounts(groups(['Status: Bezahlt'], 'Gesamt inkl. Vorsaldo 22,40'), { date: '2026-03-01' }).tip).toBeNull();
+    expect(readAmounts(groups(['Bar 20,00'], 'Bezahlt 20,00'), { date: '2026-03-01' }).tip).toBeNull();
+    expect(readAmounts(groups([], 'Grand total CHF 20,00').replace('18,00', '18,00 EUR'), { date: '2026-03-01' }).tip).toBeNull();
+  });
+
+  it('paid by card, the difference is the tip, also where the model read the paid amount from the page', () => {
+    const slip = groups([], 'Grand total 20,00') + '\nKartenzahlung';
+    expect(readAmounts(slip, { date: '2026-03-01' })).toMatchObject({ gross: 18, tip: 2, checks: [] });
+    expect(readAmounts(slip, { date: '2026-03-01', modelGross: 20, modelSawPage: true })).toMatchObject({ gross: 18, tip: 2, checks: [] });
+  });
+});

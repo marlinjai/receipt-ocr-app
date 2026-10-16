@@ -788,7 +788,7 @@ describe('FinanceClient: assets', () => {
     render(<FinanceClient initial={initial} />);
     await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
     await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
-    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r-1');
+    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r:r-1');
 
     await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
@@ -802,6 +802,26 @@ describe('FinanceClient: assets', () => {
     await vi.waitFor(() => expect(actions.confirmPaymentLink).toHaveBeenCalledTimes(3));
     expect(actions.confirmPaymentLink.mock.calls[2][1]).toEqual({ paymentId: 'p-1', rowId: 'r-1', confirmed: true });
     expect(await screen.findByText('Zahlung zugeordnet.')).toBeTruthy();
+    confirm.mockRestore();
+  });
+
+  it('money back a little above what the receipt still costs is asked about once and sent confirmed on a yes', async () => {
+    const user = userEvent.setup();
+    const payments = view([]).payments;
+    const refund = { id: 'p-2', bookingDay: '2025-03-20', amountCents: 2_050, freeCents: 2_050, counterparty: 'Laden Beispiel', reference: '', kind: 'refund' as const, accountLabel: 'Geschäftskonto', check: 'refund_without_receipt' as const, proposals: [], namesService: false };
+    const receiptTargets = [{ id: 'r-1', label: 'Einkauf Laden', day: '2025-03-11', amountCents: 1_999, linkedCents: 1_999 }];
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(true);
+    actions.confirmPaymentLink.mockImplementation(async (_year: number, input: { confirmed?: boolean }) =>
+      input.confirmed ? { ok: true, value: { view: view([]), moved: false } } : { ok: false, error: 'invalid_input', detail: 'refund_exceeds_receipt:1999' },
+    );
+    render(<FinanceClient initial={view([], { payments: { ...payments, open: [refund], receiptTargets } })} />);
+    await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
+    await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
+    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r:r-1');
+    await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
+    await vi.waitFor(() => expect(actions.confirmPaymentLink).toHaveBeenCalledTimes(2));
+    expect(confirm.mock.calls[0][0]).toContain('Diese Erstattung ist größer als das, was der Beleg noch kostet (19,99 €)');
+    expect(actions.confirmPaymentLink.mock.calls[1][1]).toEqual({ paymentId: 'p-2', rowId: 'r-1', confirmed: true });
     confirm.mockRestore();
   });
 

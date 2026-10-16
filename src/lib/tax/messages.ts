@@ -1,3 +1,4 @@
+import { formatCents } from './money';
 import type { TreatmentOrigin } from './facts';
 import type { AssetCheckKind, AssetMethod, DisposalKind } from './assets';
 import type { InvoiceCheckKind, InvoiceTreatment, OpenCheckKind, Purpose } from './types';
@@ -250,7 +251,8 @@ export function financeActionMessage(error: string, detail?: string): string {
         default:
           if (detail?.startsWith('refund_exceeds_receipt:')) {
             const left = Number(detail.split(':')[1]);
-            return `Diese Erstattung ist größer als das, was der Beleg noch kostet (${(left / 100).toFixed(2).replace('.', ',')} €). Bitte einen Teilbetrag zuordnen oder einen anderen Beleg wählen.`;
+            if (!(left > 0)) return 'Dieser Beleg ist schon vollständig erstattet. Bitte einen anderen Beleg wählen.';
+            return `Diese Erstattung ist größer als das, was der Beleg noch kostet (${formatCents(left)}). Bitte einen Teilbetrag zuordnen oder einen anderen Beleg wählen.`;
           }
           if (detail?.startsWith('unreadable_row:')) {
             return `Zeile ${detail.split(':')[1]} der Datei lässt sich nicht lesen (Datum oder Betrag). Es wurde nichts eingelesen, auch nicht die Zeilen davor.`;

@@ -189,7 +189,7 @@ describe('PaymentsTab', () => {
     await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
     await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
     expect(screen.getByRole('alert').textContent).toContain('Bitte einen Beleg');
-    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r-9');
+    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r:r-9');
     await user.type(screen.getByLabelText(/Teilbetrag/), '200');
     await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
     expect(screen.getByRole('alert').textContent).toContain('noch offen');
@@ -206,10 +206,14 @@ describe('PaymentsTab', () => {
     const income = open({ amountCents: 50_000, freeCents: 50_000, kind: 'income', check: 'income_without_invoice' });
     render(<PaymentsTab view={view({ open: [income], invoiceTargets: [{ id: 'i-1', label: 'Rechnung R-2026-050', openCents: 20_000 }], receiptTargets: [{ id: 'r-9', label: 'x', day: null, amountCents: null, linkedCents: 0 }] })} {...p} />);
     await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
-    expect(screen.queryByLabelText('Beleg von Hand wählen')).toBeNull();
-    await user.selectOptions(screen.getByLabelText('Rechnung von Hand wählen'), 'i-1');
+    // Money in goes on an invoice, or on a receipt as money back: both are offered, grouped.
+    const picker = screen.getByLabelText('Rechnung oder Beleg (Erstattung) von Hand wählen');
+    await user.selectOptions(picker, 'i:i-1');
     await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
     expect(p.onLink).toHaveBeenCalledWith({ paymentId: 'p-1', invoiceId: 'i-1' });
+    await user.selectOptions(picker, 'r:r-9');
+    await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
+    expect(p.onLink).toHaveBeenLastCalledWith({ paymentId: 'p-1', rowId: 'r-9' });
   });
 
   it('a payment without a name can be marked private, and what was re-labelled can be put back', async () => {
@@ -232,17 +236,17 @@ describe('PaymentsTab', () => {
     const receiptTargets = Array.from({ length: 30 }, (_, i) => ({ id: `r-${i}`, label: `Beleg ${i}`, day: '2026-01-02', amountCents: 1_000, linkedCents: i === 0 ? 400 : 0 }));
     const { container } = render(<PaymentsTab view={view({ open: many, receiptTargets })} {...props()} />);
     // Before: 40 pickers of 30 receipts each. Now none until one is opened, and one at a time.
-    expect(container.querySelectorAll('option[value^="r-"]').length).toBe(0);
+    expect(container.querySelectorAll('option[value^="r:"]').length).toBe(0);
     const openers = screen.getAllByRole('button', { name: 'Von Hand zuordnen' });
     expect(openers.length).toBe(40);
     await user.click(openers[3]);
-    expect(container.querySelectorAll('option[value^="r-"]').length).toBe(30);
+    expect(container.querySelectorAll('option[value^="r:"]').length).toBe(30);
     expect(openers[3].getAttribute('aria-expanded')).toBe('true');
     await user.click(openers[7]);
-    expect(container.querySelectorAll('option[value^="r-"]').length).toBe(30);
+    expect(container.querySelectorAll('option[value^="r:"]').length).toBe(30);
     expect(openers[3].getAttribute('aria-expanded')).toBe('false');
     await user.click(openers[7]);
-    expect(container.querySelectorAll('option[value^="r-"]').length).toBe(0);
+    expect(container.querySelectorAll('option[value^="r:"]').length).toBe(0);
   });
 
   it('without anything to link to, no picker is offered', () => {
@@ -485,7 +489,7 @@ describe('PaymentsTab', () => {
     expect(within(list).getAllByRole('listitem').length).toBe(2);
     // Each payment's button says which payment it is for.
     await user.click(within(list).getByRole('button', { name: 'Beleg wählen für 03.02.2026 Versand Beispiel 49,99 €' }));
-    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r-1');
+    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r:r-1');
     await user.click(within(list).getByRole('button', { name: 'Zuordnen' }));
     expect(p.onLink).toHaveBeenCalledWith({ paymentId: 'f-1', rowId: 'r-1' });
     expect(p.onTreat).not.toHaveBeenCalled();

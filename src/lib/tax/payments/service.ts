@@ -540,8 +540,8 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
       await tx.$queryRaw`SELECT id FROM tax_issued_invoices WHERE id = ${invoiceId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
       const invoice = await tx.taxIssuedInvoice.findFirst({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId }, include: { payments: true, paymentLinks: { where: { payment: { cancelledByBatchId: null } } } } });
       if (!invoice) throw new PaymentServiceError('target_not_found');
-      // Only money received as income pays an invoice: no money going out, no refund, no own transfer.
-      if (payment.amountCents <= 0 || effectiveKind(payment) !== 'income') throw new PaymentServiceError('invalid_link');
+      // Only money received as income pays an invoice: no money going out, no refund, no own transfer, nothing already on a receipt.
+      if (payment.amountCents <= 0 || effectiveKind(payment) !== 'income' || payment.links.some((l) => l.rowId !== null)) throw new PaymentServiceError('invalid_link');
       // Never more than the invoice still has open: what was typed in by hand
       // and what other payments already cover is not counted a second time.
       const open = invoiceOpenCents(invoice);
@@ -552,6 +552,8 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
     if (!Number.isInteger(cents) || cents <= 0) throw new PaymentServiceError('invalid_link');
     if (cents > free) throw new PaymentServiceError('link_exceeds_payment');
 
+    // Money in on an invoice is revenue; it does not also go on a receipt as money back.
+    if (rowId !== null && payment.amountCents > 0 && payment.links.some((l) => l.invoiceId !== null)) throw new PaymentServiceError('invalid_link');
     if (rowId !== null) {
       // One writer per receipt (always after the payment): what the receipt
       // already carries is read and judged without another link slipping in.
@@ -589,9 +591,15 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
           else back += link.cents;
         }
         const base = out > 0 ? out : receipt?.amountCents ?? null;
-        if (base !== null && cents > base - back) throw new PaymentServiceError('refund_exceeds_receipt', String(Math.max(0, base - back)));
-        // Money in the file calls income and a person puts on a receipt is money back: it is no revenue.
-        if (effectiveKind(payment) === 'income') await tx.taxPayment.update({ where: { id: payment.id }, data: { kindOverride: 'refund' } });
+        // The other side of the same money already on the receipt (this refund's funding twin, or a payment it funds):
+        // counted once (`countedReceiptLinks`), so this link adds nothing.
+        const row = loaded.payments.find((p) => p.id === payment.id);
+        const twinOnReceipt =
+          (row?.funding?.twinId != null && loaded.payments.some((p) => p.id === row.funding?.twinId && onReceipt(p).length > 0)) ||
+          loaded.payments.some((p) => p.funding?.twinId === payment.id && onReceipt(p).length > 0);
+        // Exchange rates move: up to the tolerance of money out is asked about, not refused.
+        const limit = base === null ? null : base - back + (input.confirmed ? Math.round((base * OVERPAID_TOLERANCE_PERCENT) / 100) : 0);
+        if (!twinOnReceipt && limit !== null && cents > limit) throw new PaymentServiceError('refund_exceeds_receipt', String(Math.max(0, base! - back)));
       }
     }
     const link = await tx.taxPaymentLink.create({
@@ -734,7 +742,10 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
   const rows: PaymentRow[] = payments.map((p) => {
     const treatment = treatments.get(p.counterpartyKey);
     const funds = funding.get(p.id);
-    const kind = paymentKind(p, treatment, funds, privateAccounts.has(p.accountId));
+    const resolved = paymentKind(p, treatment, funds, privateAccounts.has(p.accountId));
+    // Money in that the file calls income and that a person put on a receipt is money back, not revenue. Derived
+    // from the link, nothing stored: taking the link back makes it income again.
+    const kind = resolved === 'income' && p.amountCents > 0 && p.links.some((l) => l.rowId !== null) ? 'refund' : resolved;
     return {
       id: p.id,
       accountId: p.accountId,

@@ -102,21 +102,40 @@ export function orderNumbers(text: string): Set<string> {
  * number or as a refund in full; from a payment service or marketplace only on
  * a shared number.
  */
-export function proposeRefunds(refunds: readonly RefundMoney[], targets: readonly RefundTarget[]): RefundProposal[] {
-  // Indexed once: the purchases by counterparty with their numbers, and how many purchases carry each number.
+/**
+ * How many purchases of a counterparty carry each number, counted over all of
+ * its money out, linked or not, one count per receipt (an order paid in two
+ * debits is one purchase) or per payment while it is on none. Keyed
+ * `counterpartyKey|number`.
+ */
+export function countOrderNumbers(moneyOut: ReadonlyArray<{ counterpartyKey: string; reference: string; group: string }>): Map<string, number> {
+  const groups = new Map<string, Set<string>>();
+  for (const m of moneyOut) {
+    for (const n of orderNumbers(m.reference)) {
+      const key = `${m.counterpartyKey}|${n}`;
+      groups.set(key, (groups.get(key) ?? new Set()).add(m.group));
+    }
+  }
+  return new Map([...groups].map(([key, set]) => [key, set.size]));
+}
+
+export function proposeRefunds(refunds: readonly RefundMoney[], targets: readonly RefundTarget[], numberCount: ReadonlyMap<string, number> = new Map()): RefundProposal[] {
+  // Indexed once: the purchases by counterparty with their numbers.
   const byCounterparty = new Map<string, Array<{ target: RefundTarget; bookingDay: string; cents: number; numbers: Set<string> }>>();
-  const numberCount = new Map<string, number>();
   const withoutPurchase: RefundTarget[] = [];
   for (const target of targets) {
     if (target.purchases.length === 0) withoutPurchase.push(target);
     for (const purchase of target.purchases) {
-      const numbers = orderNumbers(purchase.reference);
       const list = byCounterparty.get(purchase.counterpartyKey) ?? [];
-      list.push({ target, bookingDay: purchase.bookingDay, cents: purchase.cents, numbers });
+      list.push({ target, bookingDay: purchase.bookingDay, cents: purchase.cents, numbers: orderNumbers(purchase.reference) });
       byCounterparty.set(purchase.counterpartyKey, list);
-      for (const n of numbers) numberCount.set(`${purchase.counterpartyKey}|${n}`, (numberCount.get(`${purchase.counterpartyKey}|${n}`) ?? 0) + 1);
     }
   }
+  // Without counts given, the linked purchases are all there is to count.
+  const counts =
+    numberCount.size > 0
+      ? numberCount
+      : countOrderNumbers(targets.flatMap((t) => t.purchases.map((p) => ({ counterpartyKey: p.counterpartyKey, reference: p.reference, group: t.rowId }))));
 
   const proposals: RefundProposal[] = [];
   for (const refund of refunds) {
@@ -134,7 +153,7 @@ export function proposeRefunds(refunds: readonly RefundMoney[], targets: readonl
     for (const purchase of byCounterparty.get(refund.counterpartyKey) ?? []) {
       const gap = daysBetween(purchase.bookingDay, refund.bookingDay);
       if (gap < 0 || gap > REFUND_WINDOW_DAYS || !purchase.bookingDay.startsWith(year)) continue;
-      const shared = [...purchase.numbers].some((n) => refundNumbers.has(n) && numberCount.get(`${refund.counterpartyKey}|${n}`) === 1);
+      const shared = [...purchase.numbers].some((n) => refundNumbers.has(n) && counts.get(`${refund.counterpartyKey}|${n}`) === 1);
       offer(purchase.target, shared ? 'refund_reference' : purchase.cents === refund.amountCents ? 'refund_full' : 'refund_part', gap);
     }
     // A receipt without a linked purchase (paid in cash, or its payment is not imported) by its vendor.

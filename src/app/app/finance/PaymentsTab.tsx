@@ -444,7 +444,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                       Keine Einnahme (Erstattung oder Umbuchung)
                     </button>
                   )}
-                  {(payment.check === 'income_without_invoice' ? p.invoiceTargets.length : p.receiptTargets.length) > 0 && (
+                  {(payment.check === 'income_without_invoice' ? p.invoiceTargets.length + p.receiptTargets.length : p.receiptTargets.length) > 0 && (
                     <button
                       type="button"
                       className="ui-btn ui-btn-sm"
@@ -472,7 +472,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 {manualFor === payment.id && (
                   <ManualLink
                     payment={payment}
-                    receipts={payment.check === 'income_without_invoice' ? [] : p.receiptTargets}
+                    receipts={p.receiptTargets}
                     invoices={payment.check === 'income_without_invoice' ? p.invoiceTargets : []}
                     busy={busy}
                     onLink={onLink}
@@ -680,21 +680,32 @@ function ManualLink({
           return setLocalError('Der Betrag muss größer als null sein und darf nicht über dem liegen, was von der Zahlung noch offen ist.');
         }
         setLocalError(null);
-        onLink({ paymentId: payment.id, ...(invoices.length > 0 ? { invoiceId: target } : { rowId: target }), ...(cents !== undefined ? { cents } : {}) });
+        const [kind, targetId] = [target.slice(0, 2), target.slice(2)];
+        onLink({ paymentId: payment.id, ...(kind === 'i:' ? { invoiceId: targetId } : { rowId: targetId }), ...(cents !== undefined ? { cents } : {}) });
       }}
     >
       <div>
-        <label className="ui-label" htmlFor={`${id}-target`}>{invoices.length > 0 ? 'Rechnung von Hand wählen' : 'Beleg von Hand wählen'}</label>
+        <label className="ui-label" htmlFor={`${id}-target`}>
+          {invoices.length > 0 && receipts.length > 0 ? 'Rechnung oder Beleg (Erstattung) von Hand wählen' : invoices.length > 0 ? 'Rechnung von Hand wählen' : 'Beleg von Hand wählen'}
+        </label>
         <select id={`${id}-target`} className="ui-input" value={target} onChange={(e) => setTarget(e.target.value)}>
           <option value="">Bitte wählen</option>
-          {invoices.map((i) => (
-            <option key={i.id} value={i.id}>{i.label} (offen {euro(i.openCents)})</option>
-          ))}
-          {receipts.map((r) => (
-            <option key={r.id} value={r.id}>
-              {formatDay(r.day)} {r.label.slice(0, 60)}{r.amountCents !== null ? ` (${euro(r.amountCents)})` : ''}{r.linkedCents > 0 ? `, schon zugeordnet ${euro(r.linkedCents)}` : ''}
-            </option>
-          ))}
+          {invoices.length > 0 && (
+            <optgroup label="Rechnungen">
+              {invoices.map((i) => (
+                <option key={i.id} value={`i:${i.id}`}>{i.label} (offen {euro(i.openCents)})</option>
+              ))}
+            </optgroup>
+          )}
+          {receipts.length > 0 && (
+            <optgroup label={invoices.length > 0 ? 'Belege (das Geld ist eine Erstattung)' : 'Belege'}>
+              {receipts.map((r) => (
+                <option key={r.id} value={`r:${r.id}`}>
+                  {formatDay(r.day)} {r.label.slice(0, 60)}{r.amountCents !== null ? ` (${euro(r.amountCents)})` : ''}{r.linkedCents > 0 ? `, schon zugeordnet ${euro(r.linkedCents)}` : ''}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
       </div>
       <div>

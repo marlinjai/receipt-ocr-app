@@ -1649,9 +1649,11 @@ describe('a refunded purchase: money back is proposed for the purchase’s recei
     await setPaymentKind(db, ctx, part.id, 'refund');
     await linkPayment(db, ctx, { paymentId: part.id, rowId }, rowCheck(ctx));
     expect((await loadStatement(db, ws.workspaceId, 2026)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 3_999 });
-    // The full refund no longer fits what is left: not proposed, and refused by hand with what is left.
+    // The full refund no longer fits what is left: not proposed, and refused by hand with what is left, also when confirmed
+    // (confirming allows only the tolerance of exchange rates above it).
     expect((await refundOpen(ws.workspaceId))[0].proposals).toEqual([]);
     expect(await code(linkPayment(db, ctx, { paymentId: back.id, rowId }, rowCheck(ctx)))).toBe('refund_exceeds_receipt');
+    expect(await code(linkPayment(db, ctx, { paymentId: back.id, rowId, confirmed: true }, rowCheck(ctx)))).toBe('refund_exceeds_receipt');
     // A part of it that fits is fine.
     await linkPayment(db, ctx, { paymentId: back.id, rowId, cents: 3_999 }, rowCheck(ctx));
     expect((await loadStatement(db, ws.workspaceId, 2026)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 0 });
@@ -1665,6 +1667,33 @@ describe('a refunded purchase: money back is proposed for the purchase’s recei
     expect((await loadStatement(db, ws.workspaceId, 2026)).payments.unclassified).toEqual([]);
     await setCounterpartyTreatment(db, ctx, { counterparty: 'Versand Beispiel', treatment: 'own_account' });
     expect(await refundOpen(ws.workspaceId)).toEqual([]);
+  });
+
+  it('a refund a few cents above what is left (exchange rates) is linked once confirmed', async () => {
+    const { ws, ctx, accountId, rowId } = await refundedOrder();
+    await importPayments(db, ctx, accountId, file(line('2026-03-27', 'Versand Beispiel', 'Erstattung Kurs', '50.10', 'Credit Transfer')));
+    const above = (await db.taxPayment.findFirst({ where: { accountId, amountCents: 5_010 } }))!;
+    await setPaymentKind(db, ctx, above.id, 'refund');
+    expect(await code(linkPayment(db, ctx, { paymentId: above.id, rowId }, rowCheck(ctx)))).toBe('refund_exceeds_receipt');
+    await linkPayment(db, ctx, { paymentId: above.id, rowId, confirmed: true }, rowCheck(ctx));
+    expect((await loadStatement(db, ws.workspaceId, 2026)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 0 });
+  });
+
+  it('a number every purchase of the counterparty carries, linked or not, proposes nothing as an order number', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    const rowId = await ws.addReceipt({ Name: 'Kabel', Vendor: 'Laden Beispiel', Gross: 40, Date: '2026-05-01', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    await importPayments(db, ctx, accountId, file(
+      line('2026-05-01', 'Laden Beispiel', 'Kunde 88123456 Einkauf', '-40'),
+      line('2026-05-03', 'Laden Beispiel', 'Kunde 88123456 Einkauf', '-15'),
+      line('2026-05-09', 'Laden Beispiel', 'Gutschrift Kunde 88123456', '10', 'Credit Transfer'),
+    ));
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'Laden Beispiel', treatment: 'business' });
+    const purchase = (await db.taxPayment.findFirst({ where: { accountId, amountCents: -4_000 } }))!;
+    await linkPayment(db, ctx, { paymentId: purchase.id, rowId }, rowCheck(ctx));
+    const back = (await db.taxPayment.findFirst({ where: { accountId, amountCents: 1_000 } }))!;
+    await setPaymentKind(db, ctx, back.id, 'refund');
+    const open = (await loadStatement(db, ws.workspaceId, 2026)).payments.open.find((o) => o.id === back.id)!;
+    expect(open.proposals.map((p) => p.strength)).toEqual(['refund_part']);
   });
 
   it('money back in January for a December purchase is not proposed for last year’s receipt', async () => {
@@ -1689,10 +1718,19 @@ describe('a refunded purchase: money back is proposed for the purchase’s recei
     await linkPayment(db, ctx, { paymentId: purchase.id, rowId }, rowCheck(ctx));
     const open = (await loadStatement(db, ws.workspaceId, 2026)).payments.open.find((o) => o.amountCents === 1_200)!;
     expect(open.proposals).toEqual([{ target: 'receipt', targetId: rowId, label: 'Kabel', strength: 'refund_full' }]);
-    // Linked to the receipt it is money back, not revenue: the payment says so, and that can be put back.
-    await linkPayment(db, ctx, { paymentId: open.id, rowId }, rowCheck(ctx));
-    expect((await loadStatement(db, ws.workspaceId, 2026)).payments.overridden.map((o) => [o.id, o.kind])).toEqual([[open.id, 'refund']]);
-    await unlinkPayment(db, ctx, (await db.taxPaymentLink.findFirst({ where: { paymentId: open.id } }))!.id);
+    // Linked to the receipt it is money back, not revenue; nothing is stored for that, and taking the link back makes it income again.
+    const invoiceId = await saveInvoice(db, ctx, null, { number: 'R-2026-400', issueDate: '2026-04-01', grossCents: 1_200, treatment: 'small_business', payments: [] });
+    const { linkId } = await linkPayment(db, ctx, { paymentId: open.id, rowId }, rowCheck(ctx));
+    expect((await loadPayments(db, ws.workspaceId)).payments.find((p) => p.id === open.id)).toMatchObject({ kind: 'refund', kindOverridden: false });
+    expect((await loadStatement(db, ws.workspaceId, 2026)).payments.overridden).toEqual([]);
+    // On a receipt it does not also pay an invoice.
+    expect(await code(linkPayment(db, ctx, { paymentId: open.id, invoiceId }, rowCheck(ctx)))).toBe('invalid_link');
+    await unlinkPayment(db, ctx, linkId);
+    expect((await loadPayments(db, ws.workspaceId)).payments.find((p) => p.id === open.id)).toMatchObject({ kind: 'income' });
+    // On an invoice it does not also go on a receipt.
+    const { linkId: onInvoice } = await linkPayment(db, ctx, { paymentId: open.id, invoiceId }, rowCheck(ctx));
+    expect(await code(linkPayment(db, ctx, { paymentId: open.id, rowId }, rowCheck(ctx)))).toBe('invalid_link');
+    await unlinkPayment(db, ctx, onInvoice);
     // Answered private: nothing is proposed or asked.
     await setCounterpartyTreatment(db, ctx, { counterparty: 'Laden Beispiel', treatment: 'private' });
     expect((await loadStatement(db, ws.workspaceId, 2026)).payments.open.find((o) => o.amountCents === 1_200)).toBeUndefined();

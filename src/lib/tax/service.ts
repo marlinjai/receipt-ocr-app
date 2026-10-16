@@ -26,7 +26,7 @@ import { overdueInvoices, type OverdueInvoice } from './overdue';
 import { loadIncomeTax, type IncomeTaxView } from './income-tax/service';
 import { proposeEstimateMatches, proposeMatches, type MatchStrength } from './payments/match';
 import { heldService, type ServiceKind } from './payments/funding';
-import { proposeRefunds, type RefundStrength, type RefundTarget } from './payments/refunds';
+import { countOrderNumbers, proposeRefunds, type RefundStrength, type RefundTarget } from './payments/refunds';
 import {
   PaymentServiceError,
   countedReceiptLinks,
@@ -1077,6 +1077,12 @@ function buildPaymentsView(
       .filter((p) => p.amountCents > 0 && (p.kind === 'refund' || p.kind === 'income') && Math.abs(p.amountCents) === free(p))
       .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, reference: p.reference, kind: p.kind as 'refund' | 'income', intermediary: intermediary(p) })),
     refundTargets,
+    // A number is an order's only when no other purchase of the counterparty carries it, linked or not.
+    countOrderNumbers(
+      loaded.payments
+        .filter((p) => p.amountCents < 0 && p.counterpartyKey)
+        .map((p) => ({ counterpartyKey: p.counterpartyKey, reference: p.reference, group: p.links.find((l) => l.rowId)?.rowId ?? `payment:${p.id}` })),
+    ),
   );
   const refundProposalIds = new Set(refundProposals.map((x) => x.paymentId));
 

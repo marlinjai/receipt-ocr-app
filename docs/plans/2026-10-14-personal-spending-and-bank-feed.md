@@ -2,7 +2,7 @@
 title: Personal spending, the live bank connection and the missing-receipt loop
 summary: The owner decided on 2026-10-14 that private spending lives in the receipts app (company "marlinjai"), with an overview, a clean split for tax, budgets and warnings, a document for every purchase, and a live bank connection that finds or asks for the receipt of every payment. This plan records the decisions and the loop that does it.
 type: plan
-status: in-progress
+status: decided
 tags: [receipts, personal-spending, bank, payments, notifications, budgets]
 projects: [receipt-ocr-app]
 date: 2026-10-14
@@ -46,55 +46,12 @@ settles it:
 4. **Can the vendor's own account give it?** Only for vendors that offer a download after a
    login or an interface key. Stored logins are secrets and the owner's decision per vendor
    (see "Open"). Not built in the first version.
-4b. **Fetch through the owner's signed-in browser** (the owner's idea of 2026-10-15; designed
-   below, not built). For a recurring payment whose invoice did not arrive by mail.
 5. **Otherwise ask.** A notification to the owner with the payment (vendor, amount, day) and a
    one-tap way to photograph or upload the receipt. The payment then sits in the open checks
    until a receipt is linked or the owner says "no receipt exists" (with the reason).
 
 A payment that has been answered once is never asked again, and a vendor whose invoices always
 arrive by mail is handled by step 3 without a notification.
-
-## Owner's answers of 2026-10-15
-
-- **Notification channel:** push to the installed phone app by default, e-mail as the fallback
-  whenever push is not possible (no subscription on the phone, or delivery failed).
-- **Vendor logins (step 4):** none for now. Step 4 stays unbuilt.
-- **Step 4b, below:** his idea, to be designed now and built later.
-
-## Design: step 4b, fetch through the owner's signed-in browser (not built)
-
-The automation Chrome on the owner's own machine is already signed in to vendors such as iCloud+
-or Cursor. For a payment the app knows as recurring whose invoice did not arrive by mail, that
-browser could download the invoice. No password is ever stored in the app; the existing browser
-session is the only credential, and it never leaves the owner's machine.
-
-- **Why a worker:** the app runs on a server and cannot reach a browser on the owner's machine. A
-  small worker on that machine polls the app for fetch jobs (outbound only, so nothing on the
-  machine is exposed), runs them, and uploads the result through the normal upload path, so the
-  reader and the vendor rules run as for any receipt. It authenticates as a machine identity of
-  the receipts app with one permission: take jobs and upload receipts for its own workspace.
-- **Job queue:** a table of fetch jobs in the app (workspace, payment, vendor key, period, status
-  `queued`, `running`, `done`, `session_expired`, `failed`, attempts, the resulting receipt). The
-  loop creates a job only for a vendor that has a recipe and only after step 3 found nothing. A
-  job is taken by one worker at a time (a lease with an expiry, so a crashed run is retried), and
-  a payment has at most one open job.
-- **Per-vendor fetch recipe:** a recipe lives in the worker's code, reviewed like any code, one per
-  vendor: how to open the vendor's billing page, find the invoice for a period, and download it.
-  The app only knows which vendor keys have a recipe (the worker reports its list).
-- **Serial rule:** browser work on that machine is strictly one script at a time, machine-wide
-  (the dev-browser daemon runs one script at a time; parallel runs only queue and starve other
-  sessions). The worker therefore takes one job, finishes it, and only then takes the next;
-  it never runs two, and it waits while another script holds the browser.
-- **Expired session:** when the vendor shows a sign-in page instead of the billing page, the job
-  ends as `session_expired`, nothing is retried, and the loop goes on to step 5: the owner gets
-  the normal missing-receipt notification, with the note that signing in to that vendor in the
-  automation browser again lets the next payment be fetched by itself.
-- **Security:** a job names only a vendor key and a period (a month), never a web address, a
-  selector or a script. The worker refuses a job whose vendor it has no recipe for. So a
-  compromised app or a forged job can at most make the worker fetch an invoice of a known vendor
-  for some month; it can never steer the signed-in browser anywhere else. The worker uploads
-  only files it downloaded itself, and only to the workspace its identity belongs to.
 
 ## What the budgets are
 
@@ -123,32 +80,3 @@ warning goes through the same channel as the missing-receipt notification.
 - **Budget limits.** The numbers are the owner's.
 - **The bank connection needs the owner's consent at each bank, repeated periodically.** Which
   accounts: the ledger holds four (Tomorrow, N26, Klarna, Advanzia) plus the payment service.
-
-## Reality
-
-### Build order 1, the overview (2026-10-15)
-
-- Page `/app/spending` ("Ausgaben", linked from the header of every app page), for the active
-  company only: total, private, business and "not assigned" for a year or one month, the year
-  month by month, the twelve categories, the unclear counterparties, and every payment with its
-  category and where the category came from.
-- Categories (`src/lib/spending/rules.ts`), first hit wins: an own account or a transfer between
-  own accounts is "transfers" and is not counted as spending; a category the owner gave the
-  counterparty; a fee by its kind; words in the name or text (cash, loans and fees first, then
-  brand and trade words, never a person); otherwise "unclear", shown as its own list.
-- Private or business comes only from what was said in the payments tab (a counterparty answered
-  private or business, or a payment marked private), never from the company the payments were
-  imported under: one bank account carries both. Unanswered is shown as such.
-- One new table, `spending_category_answers` (migration 0020, additive): the category the owner
-  gives a counterparty, applied to all its payments, taken back by deleting it. An unclear
-  counterparty can also be answered "own account" right there (a credit card paid off from the
-  bank): that is the payments tab's own answer, so the money is not counted twice.
-- Brand words that are also surnames or ordinary invoice words ("mueller", "otto", "netto") are
-  matched in the counterparty's name only, never in the payment's text.
-- Payments are read only through the payments service's own read (`loadPayments`). The one
-  write into the payments area is the own-account answer, through the payments service's public
-  `setCounterpartyTreatment`; it never overwrites a business or private answer (that is changed
-  in the payments tab), and it can be taken back on the page.
-- Open question for the coordinator: payments are imported per company. If the bank files are
-  imported under Whiz-Art Media, the overview under "marlinjai" stays empty; the overview itself
-  works under whichever company holds them.

@@ -151,6 +151,14 @@ function UploadPageContent({ targets, initialWorkspaceId }: UploadPageProps) {
           </p>
         )}
 
+        <p className="text-center mt-6 text-xs" style={{ color: 'var(--muted)' }}>
+          A vendor that is always private, or always university?{' '}
+          <Link href="/app/rules" className="underline" style={{ color: 'var(--accent)' }}>
+            Assignment rules
+          </Link>{' '}
+          apply to every receipt read from now on.
+        </p>
+
         {/* Dashboard link */}
         <div className="text-center mt-8">
           <Link

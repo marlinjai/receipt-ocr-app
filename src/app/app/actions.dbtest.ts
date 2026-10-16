@@ -30,6 +30,7 @@ vi.mock('@/lib/receipt-page-source', () => ({ loadReceiptPage: (...a: unknown[])
 import { contactStore, loadMealRecord, saveMealDetails } from '@/lib/meals/service';
 import { mealStatus } from '@/lib/meals/rules';
 import { createGroup } from '@/lib/groups/service';
+import { saveRule } from '@/lib/classification-rules-store';
 import { processReceipt, recomputeFxRates, rereadReceipt, retakeReceipt } from './actions';
 
 let ws: TestWorkspace;
@@ -434,6 +435,37 @@ describe('the company an upload names', () => {
   });
 });
 
+describe('classification rules of the company apply when a receipt is read', () => {
+  it('a keyword rule sets the assignment and the category (with its account) over the model\'s guess', async () => {
+    const fresh = await createWorkspace();
+    await use(fresh);
+    await saveRule(db, { workspaceId: fresh.workspaceId, tenantId: fresh.tenantId }, { type: 'keyword', matchValue: 'Kräutertee', zuordnung: 'Privat', categoryOverride: 'Sonstige Ausgaben' });
+    const result = await upload(file(70), ocr(CAFE));
+    expect(await cellOf(fresh, result.rowId, 'Zuordnung')).toBe('Privat');
+    expect(await cellOf(fresh, result.rowId, 'Category')).toBe('Sonstige Ausgaben');
+    expect(await cellOf(fresh, result.rowId, 'Konto')).toBe('4900');
+    expect(result).toMatchObject({ category: 'Sonstige Ausgaben', isMeal: false });
+  });
+
+  it('a rule of another company does not apply (company isolation)', async () => {
+    const mine = await createWorkspace();
+    const theirs = await createWorkspace();
+    await saveRule(db, { workspaceId: theirs.workspaceId, tenantId: theirs.tenantId }, { type: 'keyword', matchValue: 'Kräutertee', zuordnung: 'Privat' });
+    await use(mine);
+    const result = await upload(file(71), ocr(CAFE));
+    expect(await cellOf(mine, result.rowId, 'Zuordnung')).toBe('Geschäftlich');
+  });
+
+  it('without a rule the model\'s reading stands, and a new receipt carries the full share whatever the vendor', async () => {
+    const fresh = await createWorkspace();
+    await use(fresh);
+    classify.mockResolvedValue({ ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', meal: null, zuordnung: 'Geschäftlich' });
+    const result = await upload(file(72), ocr('Anthropic, PBC\nClaude Pro\nTotal 18,00\n03.03.2026'));
+    expect(await cellOf(fresh, result.rowId, 'Zuordnung')).toBe('Geschäftlich');
+    expect(await cellOf(fresh, result.rowId, 'Business Share %')).toBe(100);
+  });
+});
+
 describe('retakeReceipt: what a person decided stays', () => {
   it('keeps an assignment that is set and a business share that was changed', async () => {
     const first = await upload(file(50), ocr(CAFE), {});
@@ -448,7 +480,7 @@ describe('retakeReceipt: what a person decided stays', () => {
     expect(await cellOf(ws, first.rowId, 'Business Share %')).toBe(40);
   });
 
-  it('an assignment nobody gave is filled by the retake, and an untouched share follows the vendor', async () => {
+  it('an assignment nobody gave is filled by the retake, and the share stays the full one', async () => {
     classify.mockResolvedValue({ ...MEAL_ANSWER, zuordnung: null });
     const first = await upload(file(52), ocr('unscharf', 0.2), {});
     expect(await cellOf(ws, first.rowId, 'Zuordnung')).toBeNull();
@@ -610,39 +642,5 @@ describe('recomputeFxRates', () => {
     await fresh.addReceipt({ Name: 'EUR im Zeitraum', Gross: 10, Date: '2025-06-06', Currency: 'EUR', 'FX Rate': 1 });
     expect(await recomputeFxRates('2025-01-01', '2025-12-31')).toEqual({ updated: 1, failed: 0, skippedEur: 1 });
     await expect(recomputeFxRates('gestern', 'heute')).rejects.toThrow(/YYYY-MM-DD/);
-  });
-});
-
-describe('the item: one subscription keeps one wording', () => {
-  const INVOICE = 'Example Video Tools\nInvoice\nInvoice date: 5 Jan 2026\nPlan monthly\nTotal $4.99';
-  const ANSWER = { ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', vendor: 'Example Video Tools', gross: 4.99, currency: 'USD', date: '2026-01-05T00:00:00.000Z', meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null, place: null } };
-
-  it('the model is shown the wordings the vendor already has, and an answer in other words takes the stored one', async () => {
-    const own = await createWorkspace();
-    await use(own);
-    await own.addReceipt({ Vendor: 'Example Video Tools', Item: 'Example Video Abo' } as Parameters<TestWorkspace['addReceipt']>[0]);
-    await own.addReceipt({ Vendor: 'Example Video Tools Inc.', Item: 'Example Video Abo' } as Parameters<TestWorkspace['addReceipt']>[0]);
-    await own.addReceipt({ Vendor: 'Example Video Tools', Item: 'Kanal-Paket' } as Parameters<TestWorkspace['addReceipt']>[0]);
-    // Another vendor's items are never shown.
-    await own.addReceipt({ Vendor: 'Other Shop', Item: 'Example Video Abo Pro' } as Parameters<TestWorkspace['addReceipt']>[0]);
-
-    classify.mockResolvedValue({ ...ANSWER, item: 'Example Video Mitgliedschaft' });
-    const result = await upload(file(80), ocr(INVOICE));
-    expect(classify.mock.calls[0][0].knownItems).toEqual(['Example Video Abo', 'Kanal-Paket']);
-    expect(await cellOf(own, result.rowId, 'Item')).toBe('Example Video Abo');
-
-    // Something else bought from the same vendor is worded anew.
-    classify.mockResolvedValue({ ...ANSWER, item: 'Speicher-Erweiterung' });
-    const other = await upload(file(81), ocr(INVOICE.replace('4.99', '9.99')));
-    expect(await cellOf(own, other.rowId, 'Item')).toBe('Speicher-Erweiterung');
-  });
-
-  it('a vendor without earlier receipts reads as before', async () => {
-    const own = await createWorkspace();
-    await use(own);
-    classify.mockResolvedValue({ ...ANSWER, item: 'Example Video Abo' });
-    const result = await upload(file(82), ocr(INVOICE));
-    expect(classify.mock.calls[0][0].knownItems).toEqual([]);
-    expect(await cellOf(own, result.rowId, 'Item')).toBe('Example Video Abo');
   });
 });

@@ -3,6 +3,11 @@ import { getAiClient, getChatModel } from '@/lib/ai-client';
 import { TABLE_TOOLS } from '@/lib/ai-chat-tools';
 import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
 import type OpenAI from 'openai';
+import { auth } from '@/lib/auth';
+import { sessionWorkspaceId } from '@/lib/auth-workspace';
+import { prisma } from '@/lib/prisma';
+import { rulesToPromptText } from '@/lib/classification-rules';
+import { listRules } from '@/lib/classification-rules-store';
 
 const CATEGORY_NAMES = Object.keys(CATEGORY_TO_KONTO);
 
@@ -51,6 +56,17 @@ ${tableContext.userRules || ''}
 - If the user asks you to classify receipts, read the rows first, then use update_cells or bulk_update to set Category, Konto, and optionally Zuordnung.`;
 }
 
+async function companyRulesText(): Promise<string> {
+  try {
+    const session = await auth.getSession();
+    if (!session) return '';
+    return rulesToPromptText(await listRules(prisma, sessionWorkspaceId(session)));
+  } catch (err) {
+    console.error('[chat] loading the classification rules failed:', err instanceof Error ? err.name : 'error');
+    return '';
+  }
+}
+
 export async function POST(request: NextRequest) {
   let client: ReturnType<typeof getAiClient>;
   try {
@@ -69,11 +85,13 @@ export async function POST(request: NextRequest) {
       columns: Array<{ name: string; type: string }>;
       rowCount: number;
       selectOptions: Record<string, Array<{ id: string; name: string }>>;
-      userRules?: string;
     };
   };
 
-  const systemPrompt = buildSystemPrompt(tableContext);
+  // The rules come from the server, for the company the dashboard shows (the
+  // active workspace), never from text the browser sends.
+  const userRules = await companyRulesText();
+  const systemPrompt = buildSystemPrompt({ ...tableContext, userRules });
   const model = getChatModel();
 
   const encoder = new TextEncoder();

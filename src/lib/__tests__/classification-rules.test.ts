@@ -1,289 +1,111 @@
-/**
- * @vitest-environment jsdom
- */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
-  getRules,
-  saveRules,
-  addRule,
-  deleteRule,
+  RuleInputError,
+  matchRules,
+  parseBrowserRules,
   rulesToPromptText,
+  validateRuleInput,
   type ClassificationRule,
 } from '@/lib/classification-rules';
 
-// ── Mock crypto.randomUUID ───────────────────────────────────────────
-
-let uuidCounter = 0;
-vi.stubGlobal('crypto', {
-  ...globalThis.crypto,
-  randomUUID: () => `test-uuid-${++uuidCounter}`,
+const rule = (over: Partial<ClassificationRule>): ClassificationRule => ({
+  id: 'r',
+  label: '',
+  type: 'vendor',
+  matchValue: 'Amazon',
+  zuordnung: 'Geschäftlich',
+  categoryOverride: null,
+  ...over,
 });
 
-beforeEach(() => {
-  localStorage.clear();
-  uuidCounter = 0;
-});
-
-// ── getRules ─────────────────────────────────────────────────────────
-
-describe('getRules', () => {
-  it('returns empty array when localStorage is empty', () => {
-    expect(getRules()).toEqual([]);
-  });
-
-  it('returns parsed rules from localStorage', () => {
-    const rules: ClassificationRule[] = [
-      {
-        id: 'r1',
-        label: 'Test Rule',
-        type: 'vendor',
-        matchValue: 'Amazon',
-        zuordnung: 'Geschäftlich',
-      },
-    ];
-    localStorage.setItem('receipt-ocr-classification-rules', JSON.stringify(rules));
-    expect(getRules()).toEqual(rules);
-  });
-
-  it('returns empty array on invalid JSON', () => {
-    localStorage.setItem('receipt-ocr-classification-rules', '{broken json');
-    expect(getRules()).toEqual([]);
-  });
-});
-
-// ── saveRules ────────────────────────────────────────────────────────
-
-describe('saveRules', () => {
-  it('persists rules to localStorage', () => {
-    const rules: ClassificationRule[] = [
-      {
-        id: 'r1',
-        label: 'Test',
-        type: 'keyword',
-        matchValue: 'coffee',
-        zuordnung: 'Privat',
-      },
-    ];
-    saveRules(rules);
-    const stored = localStorage.getItem('receipt-ocr-classification-rules');
-    expect(stored).toBe(JSON.stringify(rules));
-  });
-});
-
-// ── addRule ──────────────────────────────────────────────────────────
-
-describe('addRule', () => {
-  it('adds a rule with a generated id', () => {
-    const newRule = addRule({
-      label: 'Starbucks',
+describe('validateRuleInput', () => {
+  it('normalizes a valid rule: text trimmed and spaces folded, empty category as none', () => {
+    expect(validateRuleInput({ type: 'vendor', matchValue: '  Deutsche   Bahn ', zuordnung: 'Privat', categoryOverride: '' })).toEqual({
       type: 'vendor',
-      matchValue: 'Starbucks',
-      zuordnung: 'Geschäftlich',
-    });
-
-    expect(newRule.id).toBe('test-uuid-1');
-    expect(newRule.label).toBe('Starbucks');
-    expect(newRule.type).toBe('vendor');
-    expect(newRule.matchValue).toBe('Starbucks');
-    expect(newRule.zuordnung).toBe('Geschäftlich');
-  });
-
-  it('appends to existing rules', () => {
-    addRule({
-      label: 'Rule A',
-      type: 'vendor',
-      matchValue: 'A',
+      matchValue: 'Deutsche Bahn',
       zuordnung: 'Privat',
+      categoryOverride: null,
+      label: '',
     });
-    addRule({
-      label: 'Rule B',
-      type: 'keyword',
-      matchValue: 'B',
-      zuordnung: 'Universität',
-    });
-
-    const rules = getRules();
-    expect(rules).toHaveLength(2);
-    expect(rules[0].label).toBe('Rule A');
-    expect(rules[1].label).toBe('Rule B');
   });
 
-  it('preserves categoryOverride when provided', () => {
-    const newRule = addRule({
-      label: 'Override Test',
-      type: 'freetext',
-      matchValue: 'any hotel',
-      zuordnung: 'Geschäftlich',
+  it('keeps a known category and a label', () => {
+    expect(validateRuleInput({ type: 'keyword', matchValue: 'Hotel', zuordnung: 'Universität', categoryOverride: 'Reisekosten', label: 'Tagung' })).toMatchObject({
       categoryOverride: 'Reisekosten',
+      label: 'Tagung',
     });
+  });
 
-    expect(newRule.categoryOverride).toBe('Reisekosten');
-    const stored = getRules();
-    expect(stored[0].categoryOverride).toBe('Reisekosten');
+  it.each([
+    [{ type: 'regex', matchValue: 'x', zuordnung: 'Privat' }, 'invalid_type'],
+    [{ type: 'vendor', matchValue: '   ', zuordnung: 'Privat' }, 'match_value_required'],
+    [{ type: 'vendor', matchValue: 'x'.repeat(301), zuordnung: 'Privat' }, 'match_value_too_long'],
+    [{ type: 'vendor', matchValue: 'x', zuordnung: 'Halb' }, 'invalid_zuordnung'],
+    [{ type: 'vendor', matchValue: 'x', zuordnung: 'Privat', categoryOverride: 'Kaffee' }, 'invalid_category'],
+    [null, 'invalid_type'],
+  ])('refuses %j with %s', (raw, code) => {
+    expect(() => validateRuleInput(raw)).toThrow(RuleInputError);
+    try {
+      validateRuleInput(raw);
+    } catch (e) {
+      expect((e as RuleInputError).code).toBe(code);
+    }
   });
 });
 
-// ── deleteRule ───────────────────────────────────────────────────────
-
-describe('deleteRule', () => {
-  it('removes a rule by id', () => {
-    const rule = addRule({
-      label: 'To Delete',
-      type: 'vendor',
-      matchValue: 'test',
-      zuordnung: 'Privat',
-    });
-
-    expect(getRules()).toHaveLength(1);
-    deleteRule(rule.id);
-    expect(getRules()).toHaveLength(0);
+describe('matchRules', () => {
+  it('a vendor rule matches the vendor by substring, ignoring case', () => {
+    const rules = [rule({ id: 'a', matchValue: 'netflix', zuordnung: 'Privat' })];
+    expect(matchRules(rules, { vendor: 'Netflix International B.V.', fullText: '' })).toMatchObject({ zuordnung: 'Privat', category: null });
   });
 
-  it('does not affect other rules', () => {
-    const ruleA = addRule({
-      label: 'A',
-      type: 'vendor',
-      matchValue: 'a',
-      zuordnung: 'Privat',
-    });
-    addRule({
-      label: 'B',
-      type: 'keyword',
-      matchValue: 'b',
-      zuordnung: 'Geschäftlich',
-    });
-
-    deleteRule(ruleA.id);
-    const remaining = getRules();
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0].label).toBe('B');
+  it('a keyword rule matches the recognized text', () => {
+    const rules = [rule({ type: 'keyword', matchValue: 'Matrikelnummer', zuordnung: 'Universität', categoryOverride: 'Fachliteratur' })];
+    expect(matchRules(rules, { vendor: 'Buchhandlung', fullText: 'Ihre MATRIKELNUMMER 123' })).toMatchObject({ zuordnung: 'Universität', category: 'Fachliteratur' });
   });
 
-  it('is a no-op for non-existent id', () => {
-    addRule({
-      label: 'Keep',
-      type: 'vendor',
-      matchValue: 'keep',
-      zuordnung: 'Privat',
-    });
+  it('a vendor rule goes before a keyword rule, and the longest text wins within a kind', () => {
+    const rules = [
+      rule({ id: 'k', type: 'keyword', matchValue: 'Amazon', zuordnung: 'Privat' }),
+      rule({ id: 'short', matchValue: 'Amazon', zuordnung: 'Privat' }),
+      rule({ id: 'long', matchValue: 'Amazon Web Services', zuordnung: 'Geschäftlich' }),
+    ];
+    expect(matchRules(rules, { vendor: 'Amazon Web Services EMEA', fullText: 'Amazon' })?.rule.id).toBe('long');
+    expect(matchRules(rules, { vendor: 'Amazon EU', fullText: '' })?.rule.id).toBe('short');
+    expect(matchRules(rules, { vendor: 'Händler', fullText: 'via Amazon Marketplace' })?.rule.id).toBe('k');
+  });
 
-    deleteRule('non-existent-id');
-    expect(getRules()).toHaveLength(1);
+  it('a freetext rule never applies by itself, and nothing matches without a vendor or text', () => {
+    const rules = [rule({ type: 'freetext', matchValue: 'Amazon', zuordnung: 'Privat' })];
+    expect(matchRules(rules, { vendor: 'Amazon', fullText: 'Amazon' })).toBeNull();
+    expect(matchRules([rule({})], { vendor: null, fullText: '' })).toBeNull();
   });
 });
-
-// ── rulesToPromptText ────────────────────────────────────────────────
 
 describe('rulesToPromptText', () => {
-  it('returns empty string for empty rules array', () => {
+  it('is empty without rules', () => {
     expect(rulesToPromptText([])).toBe('');
   });
 
-  it('formats vendor rule correctly', () => {
-    const rules: ClassificationRule[] = [
-      {
-        id: 'r1',
-        label: 'Amazon',
-        type: 'vendor',
-        matchValue: 'Amazon',
-        zuordnung: 'Geschäftlich',
-      },
-    ];
-    const text = rulesToPromptText(rules);
+  it('lists every kind, with the category when given', () => {
+    const text = rulesToPromptText([
+      rule({ matchValue: 'Amazon' }),
+      rule({ type: 'keyword', matchValue: 'coffee', zuordnung: 'Privat' }),
+      rule({ type: 'freetext', matchValue: 'any hotel receipt', zuordnung: 'Universität', categoryOverride: 'Reisekosten' }),
+    ]);
     expect(text).toContain('User classification rules:');
-    expect(text).toContain('When vendor matches "Amazon"');
-    expect(text).toContain('Zuordnung: Geschäftlich');
+    expect(text).toContain('When vendor matches "Amazon" → Zuordnung: Geschäftlich');
+    expect(text).toContain('When receipt contains keyword "coffee" → Zuordnung: Privat');
+    expect(text).toContain('Rule: any hotel receipt → Zuordnung: Universität, Category: Reisekosten');
+    expect(text.split('\n')).toHaveLength(4);
   });
+});
 
-  it('formats keyword rule correctly', () => {
-    const rules: ClassificationRule[] = [
-      {
-        id: 'r2',
-        label: 'Coffee',
-        type: 'keyword',
-        matchValue: 'coffee',
-        zuordnung: 'Privat',
-      },
-    ];
-    const text = rulesToPromptText(rules);
-    expect(text).toContain('When receipt contains keyword "coffee"');
-    expect(text).toContain('Zuordnung: Privat');
-  });
-
-  it('formats freetext rule correctly', () => {
-    const rules: ClassificationRule[] = [
-      {
-        id: 'r3',
-        label: 'Hotel',
-        type: 'freetext',
-        matchValue: 'any hotel receipt',
-        zuordnung: 'Universität',
-      },
-    ];
-    const text = rulesToPromptText(rules);
-    expect(text).toContain('Rule: any hotel receipt');
-    expect(text).toContain('Zuordnung: Universität');
-  });
-
-  it('includes categoryOverride when present', () => {
-    const rules: ClassificationRule[] = [
-      {
-        id: 'r4',
-        label: 'Override',
-        type: 'vendor',
-        matchValue: 'SomeVendor',
-        zuordnung: 'Geschäftlich',
-        categoryOverride: 'Reisekosten',
-      },
-    ];
-    const text = rulesToPromptText(rules);
-    expect(text).toContain('Category: Reisekosten');
-  });
-
-  it('does not include Category when categoryOverride is absent', () => {
-    const rules: ClassificationRule[] = [
-      {
-        id: 'r5',
-        label: 'No Override',
-        type: 'vendor',
-        matchValue: 'test',
-        zuordnung: 'Privat',
-      },
-    ];
-    const text = rulesToPromptText(rules);
-    expect(text).not.toContain('Category:');
-  });
-
-  it('formats multiple rules as bullet list', () => {
-    const rules: ClassificationRule[] = [
-      {
-        id: 'r1',
-        label: 'A',
-        type: 'vendor',
-        matchValue: 'VendorA',
-        zuordnung: 'Privat',
-      },
-      {
-        id: 'r2',
-        label: 'B',
-        type: 'keyword',
-        matchValue: 'keywordB',
-        zuordnung: 'Geschäftlich',
-      },
-      {
-        id: 'r3',
-        label: 'C',
-        type: 'freetext',
-        matchValue: 'free text C',
-        zuordnung: 'Universität',
-      },
-    ];
-    const text = rulesToPromptText(rules);
-    const lines = text.split('\n');
-    // First line is the header
-    expect(lines[0]).toBe('User classification rules:');
-    // Remaining lines are bullet points
-    const bullets = lines.filter((l) => l.startsWith('- '));
-    expect(bullets).toHaveLength(3);
+describe('parseBrowserRules', () => {
+  it('reads the list the earlier version stored, and nothing from a missing or broken entry', () => {
+    expect(parseBrowserRules(JSON.stringify([{ type: 'vendor' }]))).toEqual([{ type: 'vendor' }]);
+    expect(parseBrowserRules(null)).toEqual([]);
+    expect(parseBrowserRules('{broken')).toEqual([]);
+    expect(parseBrowserRules('{"a":1}')).toEqual([]);
   });
 });

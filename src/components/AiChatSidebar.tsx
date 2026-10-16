@@ -4,7 +4,6 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { Column, Row, CellValue } from '@marlinjai/data-table-core';
 import type { ChatMessage, PendingToolCall, AppliedToolCall, ChatStreamEvent } from '@/lib/ai-chat-types';
 import { isReadOnlyTool } from '@/lib/ai-chat-tools';
-import { getRules, rulesToPromptText } from '@/lib/classification-rules';
 
 interface SelectOption {
   id: string;
@@ -231,12 +230,11 @@ export default function AiChatSidebar({
       }
     }
 
-    const rules = getRules();
+    // The company's classification rules are added by the server (see /api/chat).
     return {
       columns: columns.map((c) => ({ name: c.name, type: c.type })),
       rowCount: rows.length,
       selectOptions: selectOptsRecord,
-      userRules: rulesToPromptText(rules),
     };
   }, [columns, rows.length, selectOptions]);
 

@@ -173,8 +173,8 @@ model SheetImportRow {
   @@map("sheet_import_rows")
 }
 
-// Workspace-editable per-vendor attribution %, the configurable replacement for
-// the hardcoded VENDOR_BUSINESS_SHARE_DEFAULTS. `share` is 0-100. The reserved
+// Workspace-editable per-vendor attribution %, which replaced a hardcoded
+// per-vendor table (removed from the code 2026-10-15). `share` is 0-100. The reserved
 // vendor `*` row carries the workspace default for unlisted vendors (else 100).
 // "Apply to ledger" writes these onto each matching row's Business Share %.
 model WorkspaceVendorAttribution {
@@ -188,6 +188,31 @@ model WorkspaceVendorAttribution {
 
   @@unique([authWorkspaceId, vendor])
   @@map("workspace_vendor_attribution")
+}
+
+// A classification rule a person wrote for one workspace (company): "this
+// vendor is private", "a receipt mentioning X is university". Applied when a
+// receipt is read (upload, retake, reread): a `vendor` rule matches the vendor
+// by case-insensitive substring, a `keyword` rule the recognized text; a match
+// sets the assignment ("Zuordnung") and, when given, the category. A
+// `freetext` rule is never applied by the app itself: it is an instruction
+// for the chat assistant. These are reading rules, not tax treatment: how a
+// vendor's receipts are taxed is a TaxVendorRule. Until 2026-10-15 the rules
+// lived in the browser's local storage; the app imports them once.
+model ClassificationRule {
+  id               String   @id @default(uuid())
+  authWorkspaceId  String   @map("auth_workspace_id")
+  authTenantId     String?  @map("auth_tenant_id")
+  type             String
+  matchValue       String   @map("match_value")
+  zuordnung        String
+  categoryOverride String?  @map("category_override")
+  label            String   @default("")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, type, matchValue])
+  @@map("classification_rules")
 }
 
 // A named, saved chart selection on the overview: time frame (preset or custom
@@ -686,27 +711,4 @@ model ReceiptReview {
 
   @@index([authWorkspaceId])
   @@map("receipt_reviews")
-}
-
-// ── Private spending ─────────────────────────────────────────────────────────
-//
-// Plan docs/plans/2026-10-14-personal-spending-and-bank-feed.md. Like the
-// finance tables, only what a person SAID is stored; every sum is computed on
-// read from the payments.
-
-// The spending category a person gave a counterparty (one of the twelve keys
-// in src/lib/spending/categories.ts). It applies to every payment of that
-// counterparty in the workspace, past and future, and is taken back by deleting it.
-model SpendingCategoryAnswer {
-  id              String   @id @default(uuid())
-  authWorkspaceId String   @map("auth_workspace_id")
-  authTenantId    String?  @map("auth_tenant_id")
-  counterpartyKey String   @map("counterparty_key")
-  label           String
-  category        String
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  @@unique([authWorkspaceId, counterpartyKey])
-  @@map("spending_category_answers")
 }

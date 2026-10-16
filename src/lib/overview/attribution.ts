@@ -4,10 +4,10 @@ import { prisma } from '@/lib/prisma';
 import { receiptsOnly } from '@/lib/receipts-kind';
 
 /**
- * Workspace-editable per-vendor attribution %, the configurable replacement for
- * the hardcoded VENDOR_BUSINESS_SHARE_DEFAULTS. A vendor "keyword" matches an
- * invoice vendor by case-insensitive substring (same semantics as the
- * constant), so "Anthropic" covers "Anthropic (Claude)". The reserved `*` row
+ * Workspace-editable per-vendor attribution %, which replaced a hardcoded
+ * per-vendor table (removed 2026-10-15). A vendor "keyword" matches an
+ * invoice vendor by case-insensitive substring, so "Anthropic" covers
+ * "Anthropic (Claude)". The reserved `*` row
  * holds the workspace default for unlisted vendors (else 100%).
  */
 

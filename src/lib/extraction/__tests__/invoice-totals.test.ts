@@ -340,11 +340,15 @@ describe('what still is a deduction, and what is no earlier balance', () => {
   const bill = (minusLine: string) => ['Musterladen', 'Netto 10,00', 'MwSt 19% 1,90', 'Zwischensumme 11,90', minusLine, 'Summe 9,90'].join('\n');
 
   it('a discount, a coupon or a promotion stays a deduction whatever else its line says', () => {
-    for (const line of ['Rabatt bei Zahlung per App -2,00', 'Netto-Coupon -2,00', 'Exklusiv-Aktion -2,00', 'Prepaid Bonus -2,00', 'Zuzahlung Kasse -2,00']) {
+    for (const line of ['Rabatt bei Zahlung per App -2,00', 'Netto-Coupon -2,00', 'Exklusiv-Aktion -2,00', 'Prepaid Bonus -2,00', 'Zuzahlung Kasse -2,00', 'Sommeraktion netto -2,00', 'Neukundenbonus (zzgl. MwSt.) -2,00']) {
       expect(readAmounts(bill(line), { date: '2026-03-01' }).gross).toBe(9.9);
     }
     // A label above a bare amount, too.
     expect(readAmounts(['Musterladen', 'Netto 10,00', 'MwSt 19% 1,90', 'Zwischensumme 11,90', 'Gutschein netto', '-2,00', 'Summe 9,90'].join('\n'), { date: '2026-03-01' }).gross).toBe(9.9);
+  });
+
+  it('"Transaktion" is no promotion: a payment line that names one is still a payment', () => {
+    expect(readAmounts(bill('Zahlung Transaktion 4711 -2,00'), { date: '2026-03-01' }).gross).toBe(11.9);
   });
 
   it('a payment, also with its label above the amount, is none', () => {

@@ -301,9 +301,9 @@ const DEDUCTION =
  * invoice of 3.99 into its tax of 0.64.
  */
 const NOT_A_DEDUCTION =
-  /(?<![\p{L}])(?:zahlungen?|bezahlt|payments?|paid)(?![\p{L}])|(?<![\p{L}])(?:zzgl|exkl|excl|excluding|ohne)\.?\s*(?:ust|mwst|vat|tax)|(?<![\p{L}-])netto(?![\p{L}-])|(?:before|without)\s+tax/iu;
+  /(?<![\p{L}])(?:zahlung(?:en)?|bezahlt|payments?|paid)(?![\p{L}])|(?<![\p{L}])(?:zzgl|exkl|excl|excluding|ohne)\.?\s*(?:ust|mwst|vat|tax)|(?<![\p{L}-])netto(?![\p{L}-])|(?:before|without)\s+tax/iu;
 /** A deduction the receipt names as one: a discount, a coupon, a promotion. It stays a deduction whatever else its line says. */
-const NAMED_DEDUCTION = /(?<![\p{L}])(?:aktion|promo|bonus)/iu;
+const NAMED_DEDUCTION = /(?<!trans)aktion|promo|bonus/iu;
 const isNamedDeduction = (line: string) => DISCOUNT_WORD.test(line) || NAMED_DEDUCTION.test(line);
 
 function deductionsIn(text: string): Array<{ cents: number; line: number }> {
@@ -551,7 +551,6 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   // was set against the invoice: then the line that says "Total" is.
   const named = labelledTotals(text).filter((t) => t.cents <= SANE_TOTAL_CENTS);
   const settled = BALANCE_APPLIED.test(text) && named.some((t) => !t.due);
-  // The total the invoice names as its own is taken as the last labelled one, so it stands over later labels.
   const kept = named.filter((t) => !settled || !t.due);
   // The first such label is the invoice's own: a later one belongs to an earlier invoice listed under account movements.
   const invoiceTotal = kept.find((t) => t.invoice);

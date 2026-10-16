@@ -17,6 +17,7 @@ import type { Column, ColumnType, Row, GroupConfig, FooterConfig, SubItemsConfig
 import { createServerActionsAdapter } from './server-actions-adapter';
 import { deleteReceiptsForGood, getReceiptText, getReceiptYear, getYearCounts, searchReceiptText } from './actions';
 import { scopeOf, setYearScope } from './year-scope';
+import { useCompleteRows } from './use-complete-rows';
 import type { YearCounts } from '@/lib/receipt-year-counts';
 import { MIN_TEXT_SEARCH_LENGTH, listColumns } from '@/lib/receipt-text';
 import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
@@ -85,7 +86,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   const {
     table,
     columns,
-    rows,
+    rows: loadedRows,
+    total,
     selectOptions,
     updateCell,
     addRow,
@@ -104,9 +106,15 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     hasMore,
     loadMore,
     isRowsLoading,
+    rowsError,
     loadSelectOptions,
     refresh,
   } = useTable({ tableId, pageSize: 200 });
+  // The rows complete and each once, every load one after another (see `use-complete-rows.ts`). Every reload
+  // the dashboard asks for goes through `reload`, never the package's own refresh, so it cannot cross a page on
+  // its way. (A filter or sort change loads beside it, inside the package; a list that then does not add up is
+  // loaded again, at most twice per reload the dashboard asks for.)
+  const { rows, reload, settled } = useCompleteRows({ rows: loadedRows, total, hasMore, isLoading: isRowsLoading, error: rowsError, loadMore, refresh });
 
   const {
     views,
@@ -184,13 +192,13 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       setYearSelection(next);
       // The server loads only these years; the list is fetched again for the new choice.
       setYearScope(scopeOf(next));
-      void refresh();
+      void reload();
       // Kept in the address, so a reload or a copied link shows the same years; "alle" is a choice, not a default.
       const url = new URL(window.location.href);
       url.searchParams.set(YEAR_PARAM, formatYearParam(next) || ALL_YEARS);
       window.history.replaceState(null, '', url);
     },
-    [refresh],
+    [reload],
   );
   const displayRows = useMemo(() => filterByYears(searchedRows, columns, yearSelection), [searchedRows, columns, yearSelection]);
   // The chips follow the table: a receipt deleted, added or re-dated changes the rows, and the counts are asked
@@ -329,15 +337,15 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     } finally {
       setPendingDelete(null);
       setWorking(false);
-      // The delete is done and said above. If the table cannot be reloaded now, say that
-      // too: the rows shown may be out of date until the page is loaded again.
+      // The delete is done and said above. If the review list cannot be reloaded now, say that
+      // too; a table that cannot be reloaded says so in its own banner (`rowsError`).
       try {
-        await Promise.all([refresh(), reloadReview()]);
+        await Promise.all([reload(), reloadReview()]);
       } catch {
         setReviewError('Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.');
       }
     }
-  }, [pendingDelete, pendingGroupIds, working, refresh, reloadReview]);
+  }, [pendingDelete, pendingGroupIds, working, reload, reloadReview]);
 
   // --- Groups ---
 
@@ -356,15 +364,12 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         setNotice({ tone: 'danger', text: GROUP_ERROR.failed });
       } finally {
         setWorking(false);
-        try {
-          await refresh();
-        } catch {
-          setReviewError('Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.');
-        }
+        // A table that cannot be reloaded says so in its own banner (`rowsError`).
+        await reload();
       }
       return ok;
     },
-    [working, refresh],
+    [working, reload],
   );
 
   const createGroup = useCallback(
@@ -407,10 +412,10 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     (rowId: string, columnId: string, value: CellValue) => {
       updateCell(rowId, columnId, value).catch(() => {
         setNotice({ tone: 'danger', text: 'Die Änderung wurde nicht gespeichert. Die Tabelle zeigt wieder den gespeicherten Stand.' });
-        void refresh().catch(() => setReviewError('Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.'));
+        void reload();
       });
     },
-    [updateCell, refresh],
+    [updateCell, reload],
   );
 
   // Which groups are folded is kept with the view, like its folded sections, so a reload shows the same table.
@@ -452,13 +457,6 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [selectedRows, handleDeleteSelected]);
 
-  // The table shows every receipt of the years it was asked for: sums, groups and the review of a year
-  // are wrong on a partial list. It loads in pages, so the next page is fetched as soon as the
-  // previous one has arrived, until nothing is left.
-  useEffect(() => {
-    if (hasMore && !isRowsLoading) void loadMore();
-  }, [hasMore, isRowsLoading, loadMore]);
-
   // A link from another area (a finance line, a payment) opens its receipt:
   // once, as soon as the row has arrived. The table loads in pages, so the row
   // may come with a later one; only when every page is in and it is still
@@ -477,7 +475,9 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       else setDetailRow(row);
       return;
     }
-    if (hasMore || isRowsLoading || columns.length === 0) return;
+    // Only a list that is all there can say that a receipt is not in it. A list that failed to load says so in
+    // its banner, and the link waits for the next reload instead of calling the receipt deleted.
+    if (!settled || rowsError || columns.length === 0) return;
     const gone = () => {
       setPendingOpenId(null);
       setNotice({ tone: 'warn', text: 'Der verlinkte Beleg ist in dieser Tabelle nicht vorhanden. Er wurde gelöscht oder gehört zu einem anderen Unternehmen.' });
@@ -500,7 +500,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         changeYears({ years: new Set([...yearSelection.years, year]), undated: yearSelection.undated });
       })
       .catch(() => gone());
-  }, [pendingOpenId, rows, columns, hasMore, isRowsLoading, yearSelection, changeYears]);
+  }, [pendingOpenId, rows, columns, settled, rowsError, yearSelection, changeYears]);
 
   // Load select options for all select columns
   useEffect(() => {
@@ -811,6 +811,14 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         </div>
       </div>
 
+      {/* A list that failed to load is said for as long as it is so: its counts and sums are of the rows shown,
+          and nothing is asked again by itself. The next reload (a year chip, an action, the page) starts over. */}
+      {rowsError && (
+        <p role="alert" className="ui-note ui-note-danger mx-4 mt-3">
+          Die Belege konnten nicht vollständig geladen werden. Anzahl und Summen gelten nur für die gezeigten Zeilen. Bitte die Seite neu laden.
+        </p>
+      )}
+
       {notice && (
         <p role={notice.tone === 'ok' ? 'status' : 'alert'} className={`ui-note ui-note-${notice.tone} mx-4 mt-3 flex items-start justify-between gap-3`}>
           <span>{notice.text}</span>
@@ -837,7 +845,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           void runReviewAction(async () => {
             const result = await takeNewReading(rowId, fields);
             // The table shows the receipt with its new values.
-            if (result.ok) await refresh();
+            if (result.ok) await reload();
             return result;
           })
         }
@@ -911,7 +919,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           onUploadFile={uploadFile}
           onDeleteFile={deleteFile}
           onMealSaved={() => {
-            void refresh();
+            void reload();
             void reloadReview();
           }}
           onReread={async (rowId) => {
@@ -919,8 +927,9 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
             // The table and the review list show the receipt as it is read now.
             const note = rereadNote(result);
             if (result.ok) {
+              // The table's own failure shows in its banner; only the review list's is caught here.
               try {
-                await Promise.all([refresh(), reloadReview()]);
+                await Promise.all([reload(), reloadReview()]);
               } catch {
                 return { ...note, text: `${note.text} Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.` };
               }

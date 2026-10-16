@@ -413,3 +413,90 @@ describe('the amount reader names the first rate in the one order', () => {
     expect(readAmounts(text, { date: '2026-03-01' }).taxRate).toBe(19);
   });
 });
+
+describe('a tip nothing names, between the bill and what was paid', () => {
+  const CAFE_SLIP = ['Example Bakery', '09.07.2026', 'Zimtschnecke 5,00', 'Kaffee 4,50', 'Total', '19,30', 'Grand total', '21,23', 'Given (Kartenzahlung)', '21,23', 'MwSt 7% 1,26'].join('\n');
+
+  it('the bill stays the total, and the difference to the paid amount is the tip', () => {
+    expect(readAmounts(CAFE_SLIP, { date: '2026-07-09' })).toMatchObject({ gross: 19.3, tip: 1.93 });
+  });
+
+  it('a difference printed as a figure of its own (shipping, a fee) is no tip', () => {
+    const order = CAFE_SLIP.replace('Grand total', 'Versand 1,93\nGrand total');
+    expect(readAmounts(order, { date: '2026-07-09' }).tip).toBeNull();
+  });
+
+  it('more than 30 percent on top is no tip, and a paid amount above the bill line is not looked at', () => {
+    expect(readAmounts(CAFE_SLIP.replaceAll('21,23', '29,00'), { date: '2026-07-09' }).tip).toBeNull();
+    const before = ['Example Bakery', 'Grand total 21,23', 'Total', '19,30', 'MwSt 7% 1,26'].join('\n');
+    expect(readAmounts(before, { date: '2026-07-09' }).tip).toBeNull();
+  });
+
+  it('a named tip is read as before', () => {
+    const named = ['Example Cafe', 'Summe 11,30', 'MwSt 19% 1,80', 'TIP / TOTAL', '3,70', '15,00'].join('\n');
+    expect(readAmounts(named, { date: '2026-04-05' })).toMatchObject({ gross: 11.3, tip: 3.7 });
+  });
+});
+
+describe('what between the bill and the paid amount is no tip', () => {
+  const groups = (between: string[], paid: string) => ['Pizzeria Beispiel', 'Netto 15,13', 'MwSt 19% 2,87', 'Summe', '18,00', ...between, paid].join('\n');
+
+  it('delivery fees or deposits, however many', () => {
+    expect(readAmounts(groups(['Lieferkosten 2,49', 'Servicegebühr 0,99'], 'Bezahlt 21,48'), { date: '2026-03-01' }).tip).toBeNull();
+    expect(readAmounts(groups(['Pfand 0,25', 'Pfand 0,25'], 'Endsumme 18,50'), { date: '2026-03-01' }).tip).toBeNull();
+  });
+
+  it('a balance carried over, cash handed over, another currency', () => {
+    expect(readAmounts(groups(['Status: Bezahlt'], 'Gesamt inkl. Vorsaldo 22,40'), { date: '2026-03-01' }).tip).toBeNull();
+    expect(readAmounts(groups(['Bar 20,00'], 'Bezahlt 20,00'), { date: '2026-03-01' }).tip).toBeNull();
+    expect(readAmounts(groups([], 'Grand total CHF 20,00').replace('18,00', '18,00 EUR'), { date: '2026-03-01' }).tip).toBeNull();
+  });
+
+  it('paid by card, the difference is the tip, also where the model read the paid amount from the page', () => {
+    const slip = groups([], 'Grand total 20,00') + '\nKartenzahlung';
+    expect(readAmounts(slip, { date: '2026-03-01' })).toMatchObject({ gross: 18, tip: 2, checks: [] });
+    expect(readAmounts(slip, { date: '2026-03-01', modelGross: 20, modelSawPage: true })).toMatchObject({ gross: 18, tip: 2, checks: [] });
+  });
+});
+
+describe('an unnamed tip after the recheck', () => {
+  it('the own tax lines of the bill between the bill and the paid amount are no fee', () => {
+    const taxAfter = ['Example Cafe', 'Summe 18,00', 'MwSt 19% 2,87', 'Netto 15,13', 'Kartenzahlung', 'Bezahlt 20,00'].join('\n');
+    expect(readAmounts(taxAfter, { date: '2026-03-01' })).toMatchObject({ gross: 18, tip: 2 });
+    const itemThenSum = ['Example Cafe', 'Kaffee 18,00', 'Summe 18,00', 'enth. MwSt 2,87', 'Grand total 20,00', 'Karte'].join('\n');
+    expect(readAmounts(itemThenSum, { date: '2026-03-01' })).toMatchObject({ gross: 18, tip: 2 });
+    expect(readAmounts(itemThenSum, { date: '2026-03-01', modelGross: 20, modelSawPage: true }).checks).not.toContain('total_conflict');
+  });
+
+  it('a terminal status line, a bar in the venue name: still a tip; cash next to an amount: none', () => {
+    const slip = (extra: string) => ['Sky Bar', 'Netto 15,13', 'MwSt 19% 2,87', 'Summe', '18,00', 'Grand total 20,00', extra].join('\n');
+    expect(readAmounts(slip('Status: Approved'), { date: '2026-03-01' }).tip).toBe(2);
+    expect(readAmounts(slip('Danke'), { date: '2026-03-01' }).tip).toBe(2);
+    expect(readAmounts(slip('Barzahlung 20,00'), { date: '2026-03-01' }).tip).toBeNull();
+  });
+
+  it('a paid amount in another currency, also one not kept by the app, is no tip; a word holding "eur" names none', () => {
+    const slip = (paid: string) => ['Example Cafe', 'Netto 15,13', 'MwSt 19% 2,87', 'Summe', '18,00', paid, 'Karte'].join('\n');
+    expect(readAmounts(slip('Grand total DKK 20,00'), { date: '2026-03-01' }).tip).toBeNull();
+    expect(readAmounts(slip('Grand total 20,00 kr'), { date: '2026-03-01' }).tip).toBeNull();
+    expect(readAmounts(slip('Grand total Friseur 20,00'), { date: '2026-03-01' }).tip).toBe(2);
+  });
+});
+
+describe('an unnamed tip, third round', () => {
+  const cafe = (extra: string[], after: string[] = []) => ['Example Cafe', ...extra, 'Netto 15,13', 'MwSt 19% 2,87', 'Summe', '18,00', 'Grand total 20,00', 'Karte', ...after].join('\n');
+
+  it('an item priced like the tip above the bill does not hide it', () => {
+    expect(readAmounts(cafe(['Wasser 2,00', 'Pasta 16,00']), { date: '2026-03-01' }).tip).toBe(2);
+  });
+
+  it('a weekday after the paid line is no currency', () => {
+    expect(readAmounts(cafe([], ['Fr 16.10.26 14:22']), { date: '2026-03-01' }).tip).toBe(2);
+    expect(readAmounts(cafe([]).replace('Grand total 20,00', 'Grand total 20,00 Fr.'), { date: '2026-03-01' }).tip).toBeNull();
+  });
+
+  it('a card line naming the paid amount is no fee', () => {
+    const slip = ['Example Cafe', 'Netto 15,13', 'MwSt 19% 2,87', 'Summe 18,00', 'Kartenzahlung 20,00', 'Grand total 20,00'].join('\n');
+    expect(readAmounts(slip, { date: '2026-03-01' }).tip).toBe(2);
+  });
+});

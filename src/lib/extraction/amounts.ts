@@ -140,6 +140,21 @@ function isTaxOf(netCents: number, taxCents: number, rate: number): boolean {
 }
 
 const TIP_WORD = /trinkgeld|\btip\b|gratuity|service\s*charge/i;
+/** The currency a line names, as an ISO code; null where it names none. Word-bounded: "Friseur" names no euro. */
+function currencyOf(line: string): string | null {
+  if (line.includes('€')) return 'EUR';
+  if (line.includes('£')) return 'GBP';
+  if (line.includes('$')) return 'USD';
+  const code = /(?<![\p{L}])(EUR|USD|GBP|CHF|DKK|SEK|NOK|PLN|CZK|HUF|JPY|CAD|AUD|TRY|RON|BGN)(?![\p{L}])/u.exec(line)?.[1];
+  if (code) return code;
+  // "kr" and "Fr." name a currency only next to an amount: "Fr 16.10.26" is a Friday.
+  const short = /(?<![\p{L}])(kr|Fr)\.?\s*\d+[.,]\d{2}(?!\d)|\d[.,]\d{2}\s*(kr|Fr)(?![\p{L}])/u.exec(line);
+  if (!short) return null;
+  return (short[1] ?? short[2]) === 'kr' ? 'DKK' : 'CHF';
+}
+
+/** A label for what was paid in the end, tip included: "Grand total", "Endsumme", "Bezahlt", "Amount paid". */
+const PAID_TOTAL_LABEL = /grand\s+total|endsumme|(?<![\p{L}])bezahlt(?:er\s+betrag)?(?![\p{L}])|amount\s+paid|total\s+paid/iu;
 /** A line that names a discount ("Rabatt", "Sofortrabatt", "Discount: SPRING"), not one that only mentions the word ("rabattfähig"). */
 const DISCOUNT_WORD = /(?:rabatte?|nachl(?:a|ä)sse?|discounts?|coupons?|gutscheine?)(?![\p{L}])/iu;
 const TOTAL_LABEL = /(?:^|[^\p{L}])(?:summe|gesamt(?:betrag|summe|preis)?|total|endbetrag|rechnungsbetrag|zu\s+zahlen|betrag|brutto|order\s+total|amount\s+due|balance\s+due|grand\s+total|final\s+cost)(?![\p{L}])/iu;
@@ -582,6 +597,45 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   // Cash handed over minus the bill is the change, not a tip: with change on the
   // receipt only an amount the receipt itself labels as the tip is taken.
   const hasChange = /zur(?:ü|u)ck|r(?:ü|u)ckgeld|wechselgeld|\bchange\b/i.test(text);
+  // A tip nothing names, on a bill the tax arithmetic proves: a label further
+  // down calls a larger amount what was paid ("Grand total", the card slip of
+  // a cafe that adds the tip at the terminal), and nothing else stands between
+  // the two (a delivery fee, a deposit, a balance carried over, cash handed
+  // over). The difference is the tip where it is a tip's size, at most 30
+  // percent of the bill, and the paid amount is in the bill's currency.
+  const paidByCard = /karte|kartenzahlung|card|girocard|visa|mastercard|maestro|(?<![\p{L}])ec(?![\p{L}])/iu.test(text);
+  const cashOrBalance =
+    hasChange ||
+    BALANCE_APPLIED.test(text) ||
+    /(?<![\p{L}])(?:saldo|vorsaldo)(?![\p{L}])/iu.test(text) ||
+    // Cash handed over: the word next to an amount, not a venue's name ("Sky Bar").
+    (!paidByCard && /(?<![\p{L}])(?:bar(?:zahlung|geld)?|cash|given|gegeben)(?![\p{L}])[^\n]*\d[.,]\d{2}/iu.test(text));
+  const unnamedTip = (billCents: number, figuresOfTheBill: readonly number[]): number | null => {
+    if (hasTipWord || cashOrBalance) return null;
+    const billLines = found.filter((a) => a.cents === billCents).map((a) => a.line);
+    if (billLines.length === 0) return null;
+    for (let i = billLines[0] + 1; i < lines.length; i++) {
+      if (!PAID_TOTAL_LABEL.test(lines[i]) || /status/i.test(lines[i])) continue;
+      // The bill as printed last before the paid line ("Kaffee 18,00 / Summe 18,00").
+      const billLine = billLines.filter((line) => line < i).pop() as number;
+      const own = [...lines[i].matchAll(AMOUNT)].map((m) => toCents(m[1])).filter((v): v is number => v !== null);
+      const next = (lines[i + 1] ?? '').trim();
+      const fromNext = own.length === 0;
+      const paid = own[own.length - 1] ?? (BARE_AMOUNT_LINE.test(next) ? (lineEndAmount(next) ?? undefined) : undefined);
+      if (paid === undefined || paid <= billCents || paid - billCents > billCents * 0.3) return null;
+      // Another figure between the bill and the paid amount is a charge or a deposit, never part of a tip.
+      // The paid amount itself may stand between (paid by card, "Kartenzahlung 20,00").
+      const between = found.filter((a) => a.line > billLine && a.line < i && a.cents !== billCents && a.cents !== paid && !figuresOfTheBill.includes(a.cents));
+      // The difference printed after the bill is a charge; an item price above the bill that happens to equal it is not.
+      if (between.length > 0 || found.some((a) => a.cents === paid - billCents && a.line > billLines[0])) return null;
+      // A currency named on the paid line other than the receipt's own is another currency.
+      const receiptCurrency = (hints.currency ?? 'EUR').toUpperCase();
+      const named = currencyOf(lines[i]) ?? (fromNext ? currencyOf(next) : null);
+      if (named !== null && named !== receiptCurrency) return null;
+      return paid - billCents;
+    }
+    return null;
+  };
   const unnamed = [...values].filter((v) => !discounts.includes(v));
   const tipCandidates = !hasTipWord ? [] : hasChange ? tipOnLine : [...new Set([...tipOnLine, ...unnamed])];
   // Net and tax by their labels, where they bear a total out. German figures
@@ -694,7 +748,7 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
     gross = euros(bill);
     basis = 'tax_groups';
     const isTip = (t: number) => t < bill && values.has(bill + t);
-    const tipCents = tipOnLine.find(isTip) ?? tipCandidates.find(isTip);
+    const tipCents = tipOnLine.find(isTip) ?? tipCandidates.find(isTip) ?? unnamedTip(bill, groups.flatMap((g) => [cents(g.net), cents(g.tax), cents(g.gross)])) ?? undefined;
     if (tipCents !== undefined) tip = euros(tipCents);
     // The tax groups can cover a part of the bill only. A labelled total above
     // them that the receipt bears out is the total: one that, less the tax,
@@ -777,7 +831,10 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       gross = withTax.gross;
       basis = 'gross_with_tax';
       // The page reading names another total, or none: the printed pair stands and a person looks.
-      if (noTotal || (pageTotal !== null && pageTotal !== cents(withTax.gross))) checks.push('total_conflict');
+      const withTaxTip = unnamedTip(cents(withTax.gross), [cents(withTax.net), cents(withTax.tax)]);
+      if (withTaxTip !== null) tip = euros(withTaxTip);
+      // The page reading naming the bill plus the tip agrees with it.
+      if (noTotal || (pageTotal !== null && pageTotal !== cents(withTax.gross) && !(withTaxTip !== null && pageTotal === cents(withTax.gross) + withTaxTip))) checks.push('total_conflict');
     } else if (pageProof && pageTotal !== null) {
       gross = euros(pageTotal);
       basis = 'page_proof';

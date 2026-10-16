@@ -1964,3 +1964,93 @@ not computed.
   whole amount with no open check; tax read off a marked receipt is ignored.
   The migration is `0023_tax_reverse_charge` (main already has two migrations numbered
   0021 and one 0022).
+
+## Reality: the live bank connection (2026-10-16)
+
+The second half of slice 3: the live sync through Enable Banking, per account, next to the
+file importers. Off until the server holds its settings (`docs/operations/bank-sync.md`);
+the daily scheduled task is described there and not created.
+
+**The owner's decision (2026-10-16): all five accounts are tried live (Tomorrow, N26, PayPal,
+Klarna, Advanzia), each connected on its own, and the file importers stay as the fallback
+for every account.**
+
+What exists:
+
+- **Client** `src/lib/tax/payments/bank/client.ts`: the Enable Banking interface with
+  `node:crypto` only (no new dependency): a JSON Web Token signed RS256 with the
+  application's private key per call, valid one hour. Institutions, consent, session,
+  closing a session, the transaction list with all its pages (at most 50). Errors are
+  mapped by the interface's machine code (field `error`; `code` is the HTTP status) into
+  what the connection acts on. Nothing it logs or throws carries a token, a key, a session
+  id or an account number; the accounts of a session leave it masked ("•••• 1234").
+- **Settings** `bank/config.ts`, read by name: `BANK_FEED_ENABLED` (exactly `true`),
+  `ENABLE_BANKING_APP_ID`, `ENABLE_BANKING_PRIVATE_KEY`, `ENABLE_BANKING_REDIRECT_URL`,
+  and for the daily route `BANK_SYNC_SECRET`.
+- **One table**, `tax_bank_connections` (migration `0032_tax_bank_connections`, additive),
+  one connection per account: institution, status (`pending`, `choose_account`, `active`,
+  `expired`, `revoked`, `error`), the hash of the consent's random state with its expiry,
+  the session id, the bound account's uid, the masked accounts of the session to choose
+  from, the consent's end, when it last fetched, the last booked day it saw, and the last
+  error as a code. No second copy of bank data: movements go into `tax_payments` through
+  the normal import.
+- **Consent flow** (`bank/service.ts`, route `/api/bank/callback`): the institution is
+  picked from the live list for Germany (search box; the one named in the account's label
+  is preselected), the consent asks for the institution's maximum or 180 days, whichever is
+  shorter. The callback needs a signed-in session with write permission; the state must
+  belong to a consent of the session's active company and be at most 30 minutes old, and it
+  is used up before the bank is asked, so a replayed answer is refused. One account in the
+  session binds itself; several ask which one. A renewal is the same start on the existing
+  connection: the account and its imports stay, the old session keeps reading until the new
+  one is taken and is then closed at the bank. Disconnect closes the session at the bank and
+  removes the connection; the payments stay.
+- **Sync**: the first fetch reaches back 89 days, later ones start five days before the last
+  booked day seen, up to today. The fetched list goes into `importPayments` as the bank
+  interface's format, so the bank is one more source of the account: a day belongs to the
+  source that brought it first (`coverage.ts`), every movement is kept once. A new import
+  option `refuseEmpty` refuses an import that adds, recognizes and cancels nothing, so the
+  daily overlapping fetch leaves no empty import behind; `nothing_new`,
+  `file_already_imported` and `nothing_uncovered` all count as "nothing new". "Jetzt
+  abholen" (person present) and the daily machine route `/api/internal/bank-sync` (HMAC
+  over the raw body with `BANK_SYNC_SECRET`, the header and verifier of the erasure
+  webhook, listed in `publicPaths`, 503 without the secret or with the feed off). After a
+  fetch that added payments the spending checks run; their failure is only logged.
+- **Payments tab**, per account: "Live über die Bankschnittstelle (Bank), zuletzt abgeholt
+  am ...", "Datei-Import", "Verbindung abgelaufen am ..., bitte erneuern. Vollständig bis
+  ...", "Fehler: ...", a warning 14 days before the consent ends, and the buttons "Live mit
+  der Bank verbinden", "Jetzt abholen", "Freigabe erneuern", "Trennen". The file import stays
+  for every account.
+
+Decided without asking, say so if you disagree:
+
+- **The session id is stored in the database.** It opens nothing without the application's
+  private key, which stays in Infisical.
+- **An account fed from a PayPal or Klarna list cannot be connected live** (refused before
+  the bank is asked, with the way out). The payment services' lists describe purchases in
+  other words than any bank source, so continuing them day by day would store purchases
+  twice (the existing `format_mismatch` rule). For PayPal and Klarna live, create an account
+  of its own and stop importing the list for the days after.
+- **The last booked day** is the latest booking day among the booked movements fetched, not
+  the end of the fetch window, so a movement the bank books late is still inside the next
+  five-day overlap.
+- **A renewed session finds the same bank account by its masked number and name** (the
+  interface gives every session new account uids). Exactly one match binds it and keeps its
+  last booked day; otherwise the tab asks. Another account than before starts afresh (89
+  days). The interface's own `identification_hash` would match more reliably but is a hash
+  of the account number, which the payments area decided never to store.
+- **Disconnect when the bank cannot be reached** removes the connection here anyway and says
+  so; the consent then runs out on its own day.
+
+Which institutions Enable Banking offers for Germany (checked 2026-10-16): the documented
+markets page (https://enablebanking.com/docs/markets/de/) names none of the five. The list
+the Enable Banking website loads (https://enablebanking.com/api/aspsps, public, undocumented)
+has **Tomorrow, N26 and PayPal** for Germany (personal, redirect login, 180 days), **Klarna**
+for Germany as beta (personal, approval in the Klarna app), and **no Advanzia** in any country.
+The authenticated `GET /aspsps` of the application is the final word, which is why the tab
+reads it at run time; an institution missing there gets "wird über die Bankschnittstelle nicht
+angeboten, das Konto bleibt beim Datei-Import". Advanzia has no file importer either (no
+reader for its statement exists yet).
+
+Not built: a header marking a call as made with the person present (the reference does not
+document one for this interface, so "Jetzt abholen" and the daily run look the same to the
+bank); the daily scheduled task itself (a production change, see the operations page).

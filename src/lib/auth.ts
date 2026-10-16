@@ -37,11 +37,13 @@ export const auth = createAuthBrainNextjs({
   // /api/internal/erasure is auth-brain's signed erasure webhook: a machine caller
   // that authenticates by HMAC over the raw body (see src/lib/erasure.ts). The
   // retention purge and the workspace move (src/lib/workspace-move.ts) are machine
-  // callers of the same kind, each with its own secret, each refusing without it.
+  // callers of the same kind, each with its own secret, each refusing without it,
+  // and so is the daily bank fetch (/api/internal/bank-sync, BANK_SYNC_SECRET).
   publicPaths: [
     '/api/health',
     '/api/internal/erasure',
     '/api/internal/retention/purge',
+    '/api/internal/bank-sync',
     '/api/internal/workspace-move',
     '/manifest.json',
     '/icons/*',

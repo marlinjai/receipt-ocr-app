@@ -657,8 +657,9 @@ model TaxAccount {
   isPrivate       Boolean  @default(false) @map("is_private")
   createdAt       DateTime @default(now()) @map("created_at")
 
-  batches  TaxImportBatch[]
-  payments TaxPayment[]
+  batches        TaxImportBatch[]
+  payments       TaxPayment[]
+  bankConnection TaxBankConnection?
 
   @@unique([authWorkspaceId, label])
   @@map("tax_accounts")
@@ -995,4 +996,51 @@ model SpendingPushSubscription {
   @@unique([authWorkspaceId, endpoint])
   @@index([endpoint])
   @@map("spending_push_subscriptions")
+}
+
+// The live bank connection of one account (Enable Banking, plan 2026-10-07,
+// "Reality: the live bank connection"). One per account. The movements it
+// fetches go into TaxPayment through the normal import; nothing of the bank's
+// data is kept here except the masked choices of a session (`candidates`).
+// `sessionId` is stored on purpose: without the application's private key,
+// which lives only in Infisical, it opens nothing.
+// `stateHash` is the SHA-256 of the random state of a consent in progress,
+// cleared when the bank's answer is taken, so the answer cannot be replayed.
+model TaxBankConnection {
+  id                  String    @id @default(uuid())
+  authWorkspaceId     String    @map("auth_workspace_id")
+  authTenantId        String?   @map("auth_tenant_id")
+  accountId           String    @unique @map("account_id")
+  aspspName           String    @map("aspsp_name")
+  aspspCountry        String    @map("aspsp_country")
+  // The institution a consent in progress asks (a renewal may change it); taken over when it succeeds.
+  pendingAspspName    String?   @map("pending_aspsp_name")
+  pendingAspspCountry String?   @map("pending_aspsp_country")
+  // 'pending' | 'choose_account' | 'active' | 'expired' | 'revoked' | 'error'
+  status              String
+  stateHash           String?   @map("state_hash")
+  stateExpiresAt      DateTime? @map("state_expires_at")
+  sessionId           String?   @map("session_id")
+  accountUid          String?   @map("account_uid")
+  // [{ uid, mask, name, currency }]: the accounts of the session, masked; kept after the choice for a renewal.
+  candidates          Json?
+  // The masked number and name of the bank account this connection reads, to find it again in a renewed session.
+  boundMask           String?   @map("bound_mask")
+  boundName           String?   @map("bound_name")
+  validUntil          DateTime? @map("valid_until")
+  lastSyncedAt        DateTime? @map("last_synced_at")
+  // The last booked day fetched; the next fetch starts five days before it.
+  lastBookedThrough   String?   @map("last_booked_through")
+  // A code, never bank data.
+  lastError           String?   @map("last_error")
+  lastErrorAt         DateTime? @map("last_error_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  account TaxAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([authWorkspaceId])
+  @@index([stateHash])
+  @@index([status])
+  @@map("tax_bank_connections")
 }

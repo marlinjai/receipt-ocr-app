@@ -35,7 +35,7 @@ export type PaymentServiceErrorCode =
   | 'nothing_in_year'
   /** Every day of the file is held by another source of the account already, and it cancels nothing. */
   | 'nothing_uncovered'
-  /** Limited to a year, the file adds, recognizes and cancels nothing. */
+  /** Limited to a year (or asked to refuse an empty import), the file adds, recognizes and cancels nothing. */
   | 'nothing_new'
   /** A later import from another source of the account relied on this one's days: undo that one first. */
   | 'batch_has_later_source'
@@ -139,6 +139,13 @@ const BANK_FORMATS: readonly string[] = ['enable_banking_json', 'n26_csv', 'tomo
 export interface ImportOptions {
   /** Read only the payments booked in this year; the rest of the file is counted and left out. */
   onlyYear?: number | null;
+  /**
+   * Refuse (`nothing_new`) an import that adds, recognizes and cancels
+   * nothing, instead of recording it. The live bank feed fetches overlapping
+   * days on every run; an empty import each time would only stand in the way
+   * of undoing.
+   */
+  refuseEmpty?: boolean;
 }
 
 /** The years an import can be limited to: the same range the finance area offers. */
@@ -267,7 +274,7 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     }
     // A year of a file that adds, recognizes and cancels nothing: its empty import would only stand in the way of
     // undoing. Undone with the rest. (A whole file that brings nothing new is still recorded, as before.)
-    if (onlyYear !== null && inserted === 0 && adopted === 0 && cancelledEarlier === 0) throw new PaymentServiceError('nothing_new');
+    if ((onlyYear !== null || options.refuseEmpty === true) && inserted === 0 && adopted === 0 && cancelledEarlier === 0) throw new PaymentServiceError('nothing_new');
     return { batch: created, added: inserted, autoLinked: await linkByReference(tx, ctx, created.id), adopted, cancelledEarlier, releasedLinks, parsed };
     // A year of payments on a busy server takes longer than the five seconds a transaction gets by default.
   }, { maxWait: 20_000, timeout: 120_000 });

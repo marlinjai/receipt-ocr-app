@@ -64,6 +64,12 @@ export interface ReviewSnapshot {
    * a tax decision on the receipt or on each of its lines, a rule for its vendor.
    */
   assignmentSettled?: boolean;
+  /**
+   * True when payments linked to the receipt cover its whole total (in euros,
+   * at the receipt's exchange rate where it is in another currency). A total a
+   * payment bears out needs no "Betrag prüfen".
+   */
+  totalPaid?: boolean;
 }
 
 /** No tax rate of a real receipt is above this (the highest standard rate in the European Union is 27 percent). */
@@ -134,6 +140,37 @@ export function lookAlikes(
 export interface StoredReview {
   flags: string[];
   checkedAt: Date | string | null;
+  /** The total the reader read when it recorded the flags, in cents; null for a review recorded before it was kept. */
+  readGrossCents?: number | null;
+}
+
+/** How far a payment in euros may be from a total in another currency at its exchange rate: the card's conversion spread. */
+const FX_SPREAD = 0.03;
+
+/**
+ * True when the payments linked to a receipt cover its whole total: to the
+ * cent in euros; in another currency, the total at the receipt's exchange
+ * rate (euros per unit) within the conversion spread of a card payment.
+ * Never without a total, or in another currency without a rate.
+ */
+export function paymentsCoverTotal(paidCents: number, receipt: { gross: number | null; currency: string; fxRate: number | null }): boolean {
+  if (receipt.gross === null || !(receipt.gross > 0) || !(paidCents > 0)) return false;
+  if (receipt.currency === 'EUR') return paidCents === Math.round(receipt.gross * 100);
+  if (receipt.fxRate === null || !(receipt.fxRate > 0)) return false;
+  const expected = receipt.gross * receipt.fxRate * 100;
+  return Math.abs(paidCents - expected) <= expected * FX_SPREAD;
+}
+
+/**
+ * True when the doubts about the total are settled without a person
+ * confirming them: the stored total was corrected since the reading (it
+ * differs from the total the reader recorded its doubt about), or payments
+ * linked to the receipt bear it out.
+ */
+export function totalSettled(snapshot: Pick<ReviewSnapshot, 'gross' | 'totalPaid'>, stored: StoredReview | undefined): boolean {
+  if (snapshot.totalPaid) return true;
+  const read = stored?.readGrossCents;
+  return read !== null && read !== undefined && snapshot.gross !== null && Math.round(snapshot.gross * 100) !== read;
 }
 
 /** Everything that currently asks for a look at one receipt, most serious first. */
@@ -149,8 +186,10 @@ export function reviewReasons(
   // In the order of READ_FLAGS, whatever order they were recorded in.
   const recorded = stored && !stored.checkedAt ? stored.flags : [];
   const flags = READ_FLAGS.filter((f) => recorded.includes(f));
-  // A doubt about the total is moot once there is no total at all.
-  const kept = flags.filter((f) => !(derived.includes('amount_missing') && (f === 'total_unconfirmed' || f === 'total_conflict')));
+  // A doubt about the total is moot once there is no total at all, and ends
+  // once the total was corrected or payments bear it out.
+  const totalDoubtEnds = derived.includes('amount_missing') || totalSettled(snapshot, stored);
+  const kept = flags.filter((f) => !(totalDoubtEnds && (f === 'total_unconfirmed' || f === 'total_conflict')));
   // A person who confirmed the receipt has seen it as it is: the offer is not repeated.
   const offer = readingDiffers && !stored?.checkedAt;
   return [

@@ -9,7 +9,8 @@ import { isGroupRow } from '@/lib/receipts-kind';
 import { serializeTaxLines } from '@/lib/meals/rules';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 import { kontoFor, newReading, type NewReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
-import { isConfirmable, isReadFlag, lookAlikes, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
+import { isConfirmable, isReadFlag, lookAlikes, paymentsCoverTotal, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
+import { countedReceiptLinks, loadPayments } from '@/lib/tax/payments/service';
 import { getFxRate } from '@/lib/fx-rates';
 import { withTaxRates } from '@/lib/tax-rates';
 import { rowsWithOwnTreatment } from '@/lib/tax/service';
@@ -77,7 +78,7 @@ function snapshotOf(
   columns: Column[],
   selectOptions: SelectOptionsByColumn,
   hashes: ReadonlyMap<string, string[]>,
-): ReviewSnapshot & { isMeal: boolean; reading: StoredReading } {
+): ReviewSnapshot & { isMeal: boolean; fxRate: number | null; reading: StoredReading } {
   const byName = firstColumnIdByName(columns);
   const cell = (name: string): unknown => {
     const id = byName.get(name);
@@ -101,6 +102,7 @@ function snapshotOf(
     net: numberOrNull(cell('Net')),
     taxRate: numberOrNull(cell('Tax Rate')),
     currency: optionName('Currency') ?? 'EUR',
+    fxRate: numberOrNull(cell('FX Rate')),
     hasText: text(cell('OCR Text')).trim().length > 0,
     hasFile: Array.isArray(files) && files.length > 0,
     fileHashes: hashes.get(row.id) ?? [],
@@ -151,6 +153,29 @@ async function fileHashesByRow(db: PrismaClient, rowIds: string[]): Promise<Map<
   return out;
 }
 
+/**
+ * What the payments linked to each receipt add up to, in euro cents: money out
+ * less money back, a payment and the debit that funds it counted once (see
+ * `countedReceiptLinks`). A failure to load them is logged and settles no
+ * doubt: the review list then shows the doubts as recorded.
+ */
+async function paidByRow(db: PrismaClient, workspaceId: string, rowIds: readonly string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (rowIds.length === 0) return out;
+  try {
+    // The payments are loaded only where a receipt in doubt has a link at all.
+    const linked = await db.taxPaymentLink.count({ where: { authWorkspaceId: workspaceId, rowId: { in: [...rowIds] } } });
+    if (linked === 0) return out;
+    const loaded = await loadPayments(db, workspaceId);
+    for (const { payment, link } of countedReceiptLinks(loaded.payments)) {
+      out.set(link.rowId, (out.get(link.rowId) ?? 0) + (payment.amountCents < 0 ? link.cents : -link.cents));
+    }
+  } catch (err) {
+    console.error('[review] the linked payments could not be read:', err instanceof Error ? err.name : 'error');
+  }
+  return out;
+}
+
 /** Every receipt of the workspace that needs a look, oldest receipt first, undated ones last. */
 export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Promise<ReviewEntry[]> {
   const ctx = await tableContext(db, workspaceId);
@@ -163,13 +188,20 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
     fileHashesByRow(db, rowIds),
     db.receiptReview.findMany({ where: { authWorkspaceId: workspaceId, rowId: { in: rowIds } } }),
   ]);
+  // Only a receipt with an open doubt about its total needs its payments.
+  const inDoubt = stored.filter((r) => !r.checkedAt && r.flags.some((f) => f === 'total_unconfirmed' || f === 'total_conflict')).map((r) => r.rowId);
+  const paid = await paidByRow(db, workspaceId, inDoubt);
   const storedByRow = new Map(stored.map((r) => [r.rowId, r]));
   const distinct = new Map(stored.map((r) => [r.rowId, new Set(r.distinctFrom)]));
   const read = rows.map((row) => snapshotOf(row, ctx.columns, ctx.selectOptions, hashes));
   // Who bears a receipt is settled without the assignment column where the
   // meal register judges it or the tax side holds a decision or a vendor rule.
   const treated = await rowsWithOwnTreatment(db, workspaceId, read);
-  const snapshots = read.map((s) => ({ ...s, assignmentSettled: s.isMeal || treated.has(s.rowId) }));
+  const snapshots = read.map((s) => ({
+    ...s,
+    assignmentSettled: s.isMeal || treated.has(s.rowId),
+    totalPaid: paymentsCoverTotal(paid.get(s.rowId) ?? 0, s),
+  }));
   const byId = new Map(snapshots.map((s) => [s.rowId, s]));
   const alike = lookAlikes(snapshots, distinct);
 
@@ -216,17 +248,25 @@ async function requireRow(db: PrismaClient, ctx: ReviewContext, rowId: string): 
  * reading replaces the old doubts and reopens the receipt for confirmation;
  * the look-alike decisions a person made stay.
  */
-export async function recordReadFlags(db: PrismaClient, ctx: ReviewContext, rowId: string, flags: readonly ReadFlag[]): Promise<void> {
+export async function recordReadFlags(
+  db: PrismaClient,
+  ctx: ReviewContext,
+  rowId: string,
+  flags: readonly ReadFlag[],
+  /** The total the reading stored, so a later correction of it ends a doubt about it. */
+  readGross: number | null = null,
+): Promise<void> {
   const clean = [...new Set(flags.filter(isReadFlag))];
+  const readGrossCents = readGross !== null && Number.isFinite(readGross) ? Math.round(readGross * 100) : null;
   if (clean.length === 0) {
     // Nothing to doubt: drop stale doubts of an earlier reading, keep the decisions.
-    await db.receiptReview.updateMany({ where: { rowId, authWorkspaceId: ctx.workspaceId }, data: { flags: [], checkedAt: null } });
+    await db.receiptReview.updateMany({ where: { rowId, authWorkspaceId: ctx.workspaceId }, data: { flags: [], checkedAt: null, readGrossCents } });
     return;
   }
   await db.receiptReview.upsert({
     where: { rowId },
-    create: { rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, flags: clean },
-    update: { flags: clean, checkedAt: null },
+    create: { rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, flags: clean, readGrossCents },
+    update: { flags: clean, checkedAt: null, readGrossCents },
   });
 }
 

@@ -710,8 +710,10 @@ export async function unarchiveRow(rowId: string): Promise<void> {
 
 export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<Row[]> {
   const tableIds = [...new Set(inputs.map((i) => i.tableId))];
+  // The authorization of each table is kept: the follow-up after the write must not depend on a second lookup.
+  const access = new Map<string, Awaited<ReturnType<typeof requireTableAccess>>>();
   for (const tableId of tableIds) {
-    await requireTableAccess(tableId, 'receipts.row.write');
+    access.set(tableId, await requireTableAccess(tableId, 'receipts.row.write'));
   }
   const adapter = getAdapter();
   // The columns of each table once, not once per row.
@@ -722,7 +724,7 @@ export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<Row[]> {
   );
   // New receipts may fall under a vendor rule: their assignment cells show it.
   for (const tableId of tableIds) {
-    const { session, workspaceId } = await requireTableAccess(tableId);
+    const { session, workspaceId } = access.get(tableId)!;
     const ids = rows.filter((r) => r.tableId === tableId).map((r) => r.id);
     if (ids.length > 0) await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: ids });
   }

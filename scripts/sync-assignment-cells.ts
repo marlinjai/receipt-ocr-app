@@ -64,7 +64,15 @@ export async function syncAllWorkspaces(db: PrismaClient, apply: boolean): Promi
       privateShare: count('legacy_columns'),
       restored: count('restore'),
       originsKept: plans.filter((p) => p.kept !== null && p.kept.op !== 'drop').length,
-      ...(apply ? await writeAssignmentCells(db, { workspaceId, tenantId: authTenantId }, plans).then((r) => ({ written: r.written, failed: r.failed.length })) : { written: 0, failed: 0 }),
+      ...(apply
+        ? await writeAssignmentCells(db, { workspaceId, tenantId: authTenantId }, plans)
+            .then((r) => ({ written: r.written, failed: r.failed.length }))
+            .catch((err) => {
+              // One workspace failing must not stop the others: count it as failed and go on.
+              console.error(`${workspaceId}: sync failed:`, err instanceof Error ? err.message : 'error');
+              return { written: 0, failed: Math.max(plans.length, 1) };
+            })
+        : { written: 0, failed: 0 }),
     });
   }
   return reports;

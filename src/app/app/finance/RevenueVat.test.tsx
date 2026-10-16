@@ -209,6 +209,24 @@ describe('RevenueTab', () => {
     expect(props.onSave.mock.calls[0][1]).toMatchObject({ payments: [], writtenOffCents: 1_000, writtenOffOn: '2026-10-15' });
   });
 
+  it('offers no write-off on an invoice with tax, and refuses to drop one silently when the invoice turns taxed', async () => {
+    const user = userEvent.setup();
+    const props = revenueProps();
+    const fee = invoiceView({ id: 'f', number: 'F', grossCents: 100_000, payments: [{ date: '2026-03-20', cents: 99_000 }], enteredPayments: [{ date: '2026-03-20', cents: 99_000 }], writtenOffCents: 1_000, writtenOffOn: '2026-03-20' });
+    render(<RevenueTab view={view({ revenue: { recorded: true, receivedCents: 99_000, turnoverCents: 99_000, outstandingCents: 0, invoices: [fee], overdue: [] } })} {...props} />);
+    const card = screen.getByRole('heading', { name: 'Rechnung F' }).closest('li') as HTMLElement;
+    await user.click(within(card).getByRole('button', { name: 'Ändern' }));
+    await user.selectOptions(within(card).getByLabelText('Umsatzsteuer auf der Rechnung'), 'standard');
+    await user.type(within(card).getByLabelText('Enthaltene Umsatzsteuer in €'), '159,66');
+    await user.click(within(card).getByRole('button', { name: 'Rechnung speichern' }));
+    expect(within(card).getByRole('alert').textContent).toContain('keinen Rest ausbuchen');
+    expect(props.onSave).not.toHaveBeenCalled();
+    await user.clear(within(card).getByLabelText('Ausgebuchter Betrag in €'));
+    expect(card.textContent).toContain('nur bei Rechnungen ohne Umsatzsteuer');
+    await user.click(within(card).getByRole('button', { name: 'Rechnung speichern' }));
+    expect(props.onSave.mock.calls[0][1]).toMatchObject({ treatment: 'standard', writtenOffCents: 0, writtenOffOn: null });
+  });
+
   it('shows a booked-out part on the invoice', () => {
     const fee = invoiceView({ id: 'f', number: 'F', writtenOffCents: 1_000, writtenOffOn: '2026-10-15' });
     render(<RevenueTab view={view({ revenue: { recorded: true, receivedCents: 100_000, turnoverCents: 100_000, outstandingCents: 0, invoices: [fee], overdue: [] } })} {...revenueProps()} />);

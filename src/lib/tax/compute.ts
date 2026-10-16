@@ -403,7 +403,7 @@ function computeRevenue(
     // Outstanding at the end of this year; an invoice issued later is not this year's business. A part booked out
     // as never to be paid (a fee the client deducted) is no claim any more from its day on.
     const writtenOff = invoice.writtenOffCents ?? 0;
-    const writtenOffByYearEnd = writtenOff > 0 && (invoice.writtenOffOn == null || invoice.writtenOffOn <= yearEnd) ? writtenOff : 0;
+    const writtenOffByYearEnd = writtenOff > 0 && invoice.writtenOffOn != null && invoice.writtenOffOn <= yearEnd ? writtenOff : 0;
     if (invoice.issueDate === null || invoice.issueDate <= yearEnd) {
       result.outstandingCents = Math.max(0, invoice.grossCents - paidUntilYearEnd - writtenOffByYearEnd);
     }

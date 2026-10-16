@@ -26,8 +26,9 @@ export interface OverdueInput {
   /** Stated due day, when the record has one; otherwise the issue date plus the term. */
   dueDate?: string | null;
   grossCents: number;
-  /** Booked out as never to be paid (a fee the client deducted): no longer open, so never overdue. */
+  /** Booked out as never to be paid (a fee the client deducted) on `writtenOffOn`: from that day no longer open. */
   writtenOffCents?: number;
+  writtenOffOn?: string | null;
   payments: ReadonlyArray<{ date: string; cents: number }>;
 }
 
@@ -69,7 +70,8 @@ export function overdueInvoices(invoices: readonly OverdueInput[], today: string
     const daysPastDue = todayNumber - dayNumber(dueDate);
     if (daysPastDue < REMINDER_AFTER_DAYS) continue;
     const paid = invoice.payments.reduce((sum, p) => sum + p.cents, 0);
-    const openCents = invoice.grossCents - paid - (invoice.writtenOffCents ?? 0);
+    const writtenOff = invoice.writtenOffOn != null && invoice.writtenOffOn <= today ? (invoice.writtenOffCents ?? 0) : 0;
+    const openCents = invoice.grossCents - paid - writtenOff;
     if (openCents <= 0) continue;
     overdue.push({ invoiceId: invoice.id, number: invoice.number, issueDate: invoice.issueDate, dueDate, openCents, daysPastDue });
   }

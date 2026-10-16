@@ -26,6 +26,7 @@ describe('validateInvoiceInput: a part booked out as never to be paid', () => {
 
   it('refuses a write-off without a day, a negative or fractional one, and one above what the payments leave open', () => {
     expect(code({ ...base, writtenOffCents: 1_000 })).toBe('invalid_write_off');
+    expect(code({ ...base, writtenOffCents: 1_000, writtenOffOn: null })).toBe('invalid_write_off');
     expect(code({ ...base, writtenOffCents: 1_000, writtenOffOn: '15.10.2026' })).toBe('invalid_write_off');
     expect(code({ ...base, writtenOffCents: -1, writtenOffOn: '2026-10-15' })).toBe('invalid_write_off');
     expect(code({ ...base, writtenOffCents: 10.5, writtenOffOn: '2026-10-15' })).toBe('invalid_write_off');

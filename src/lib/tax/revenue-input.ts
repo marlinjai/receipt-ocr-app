@@ -117,7 +117,7 @@ export function validateInvoiceInput(raw: unknown): InvoiceInput {
   if ((writtenOffCents as number) > 0 && (writtenOffCents as number) > grossCents - typedPaid) fail('invalid_write_off');
   if ((writtenOffCents as number) > 0 && (vat as number) > 0) fail('invalid_write_off');
   const writtenOffOn = (writtenOffCents as number) > 0 ? input.writtenOffOn : null;
-  if (writtenOffOn !== null && (!isIsoDay(writtenOffOn) || (issueDate !== null && (writtenOffOn as string) < (issueDate as string)))) fail('invalid_write_off');
+  if ((writtenOffCents as number) > 0 && (!isIsoDay(writtenOffOn) || (issueDate !== null && (writtenOffOn as string) < (issueDate as string)))) fail('invalid_write_off');
 
   return {
     number,

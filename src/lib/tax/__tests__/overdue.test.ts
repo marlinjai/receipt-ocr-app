@@ -29,9 +29,11 @@ describe('overdueInvoices', () => {
   });
 
   it('never lists a remainder that was booked out as a fee the client kept', () => {
-    const fee = invoice({ id: 'a', grossCents: 284_000, payments: [{ date: '2026-09-10', cents: 283_000 }], writtenOffCents: 1_000 });
+    const fee = invoice({ id: 'a', grossCents: 284_000, payments: [{ date: '2026-09-10', cents: 283_000 }], writtenOffCents: 1_000, writtenOffOn: '2026-09-10' });
     expect(overdueInvoices([fee], '2026-12-01')).toEqual([]);
     expect(overdueInvoices([{ ...fee, writtenOffCents: 500 }], '2026-12-01')[0].openCents).toBe(500);
+    // Booked out from a later day: until then the reminder stands.
+    expect(overdueInvoices([{ ...fee, writtenOffOn: '2026-12-15' }], '2026-12-01')[0].openCents).toBe(1_000);
   });
 
   it('lists what is still open after a part payment', () => {

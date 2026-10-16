@@ -350,8 +350,11 @@ function InvoiceForm({
       parsedPayments.push({ date: p.date, cents });
     }
     let writtenOffCents = 0;
-    // Only an invoice without tax can be booked out here (the form hides the fields otherwise).
-    if (!taxed && !mixed && writtenOff.trim() !== '') {
+    // Only an invoice without tax can be booked out here: the tax correction (section 17 of the value-added tax act) is not built.
+    if (writtenOff.trim() !== '') {
+      if ((taxed || mixed) && (parseEuro(writtenOff) ?? 0) > 0) {
+        return setLocalError('Bei einer Rechnung mit Umsatzsteuer kann die App keinen Rest ausbuchen. Bitte den ausgebuchten Betrag leeren.');
+      }
       const parsed = parseEuro(writtenOff);
       const open = grossCents - linkedCents - parsedPayments.reduce((s, p) => s + p.cents, 0);
       if (parsed === null || parsed < 0 || parsed > Math.max(0, open) || (parsed > 0 && !writtenOffOn)) {
@@ -511,35 +514,39 @@ function InvoiceForm({
           diesem Jahr mit ihrem Rechnungsbetrag als Einnahme, ihr Geldeingang in keinem Jahr ein zweites Mal.
         </p>
       </div>
-      {!taxed && !mixed && (
-      <fieldset className="grid max-w-xl gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-        <legend className="ui-label sm:col-span-3">Ausgebucht, wird nicht mehr bezahlt</legend>
-        <div>
-          <label className="ui-label" htmlFor={`${id}-written-off`}>Ausgebuchter Betrag in €</label>
-          <input id={`${id}-written-off`} className="ui-input tabular-nums" inputMode="decimal" value={writtenOff} onChange={(e) => setWrittenOff(e.target.value)} placeholder="leer lassen" />
-        </div>
-        <div>
-          <label className="ui-label" htmlFor={`${id}-written-off-on`}>Ausgebucht am</label>
-          <input id={`${id}-written-off-on`} type="date" className="ui-input" value={writtenOffOn} onChange={(e) => setWrittenOffOn(e.target.value)} />
-        </div>
-        <button
-          type="button"
-          className="ui-btn ui-btn-sm"
-          onClick={() => {
-            const rest = openRemainder();
-            setWrittenOff(rest > 0 ? formatCents(rest) : '');
-            if (rest > 0 && !writtenOffOn) setWrittenOffOn(lastPaymentDay());
-          }}
-        >
-          Rest ausbuchen
-        </button>
-        <p className="text-xs sm:col-span-3" style={{ color: 'var(--muted)' }}>
-          Zum Beispiel eine Überweisungsgebühr, die der Kunde abgezogen hat, oder ein Rest, der nicht mehr einzutreiben ist. Er
-          steht ab diesem Tag nicht mehr als offen und nicht mehr als überfällig, und er kommt nie als Einnahme hinzu. Bei
-          einer Rechnung, die eine Erklärung nach Rechnung schon voll gezählt hat, bucht die App den Ausfall nicht
-          zurück; das wäre eine Korrektur in der Erklärung des Jahres, in dem ausgebucht wird.
+      {(taxed || mixed) && writtenOff.trim() === '' ? (
+        <p className="text-xs" style={{ color: 'var(--muted)' }}>
+          Einen Rest ausbuchen geht nur bei Rechnungen ohne Umsatzsteuer: die Korrektur der Umsatzsteuer (§ 17 UStG) ist nicht gebaut.
         </p>
-      </fieldset>
+      ) : (
+        <fieldset className="grid max-w-xl gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+          <legend className="ui-label sm:col-span-3">Ausgebucht, wird nicht mehr bezahlt</legend>
+          <div>
+            <label className="ui-label" htmlFor={`${id}-written-off`}>Ausgebuchter Betrag in €</label>
+            <input id={`${id}-written-off`} className="ui-input tabular-nums" inputMode="decimal" value={writtenOff} onChange={(e) => setWrittenOff(e.target.value)} placeholder="leer lassen" />
+          </div>
+          <div>
+            <label className="ui-label" htmlFor={`${id}-written-off-on`}>Ausgebucht am</label>
+            <input id={`${id}-written-off-on`} type="date" className="ui-input" value={writtenOffOn} onChange={(e) => setWrittenOffOn(e.target.value)} />
+          </div>
+          <button
+            type="button"
+            className="ui-btn ui-btn-sm"
+            onClick={() => {
+              const rest = openRemainder();
+              setWrittenOff(rest > 0 ? formatCents(rest) : '');
+              if (rest > 0 && !writtenOffOn) setWrittenOffOn(lastPaymentDay());
+            }}
+          >
+            Rest ausbuchen
+          </button>
+          <p className="text-xs sm:col-span-3" style={{ color: 'var(--muted)' }}>
+            Zum Beispiel eine Überweisungsgebühr, die der Kunde abgezogen hat, oder ein Rest, der nicht mehr einzutreiben ist. Er
+            steht ab diesem Tag nicht mehr als offen und nicht mehr als überfällig, und er kommt nie als Einnahme hinzu. Bei
+            einer Rechnung, die eine Erklärung nach Rechnung schon voll gezählt hat, bucht die App den Ausfall nicht
+            zurück; das wäre eine Korrektur in der Erklärung des Jahres, in dem ausgebucht wird.
+          </p>
+        </fieldset>
       )}
       {shown && <p className="ui-note ui-note-danger" role="alert">{shown}</p>}
       <div className="flex gap-2">

@@ -209,8 +209,20 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Die Datei enthält keine Umsätze.';
         case 'too_large':
           return 'Die Datei ist zu groß für einen Kontoexport (mehr als 8 MB).';
+        case 'invalid_import_year':
+          return 'Das gewählte Jahr ist ungültig. Bitte die Seite neu laden.';
         case 'format_mismatch':
-          return 'Dieses Konto wurde bisher aus einer anderen Quelle eingelesen. Damit keine Zahlung doppelt entsteht, bleibt ein Konto bei einer Quelle; für die andere Quelle bitte ein eigenes Konto anlegen.';
+          return 'Die Liste eines Zahlungsdienstes (PayPal, Klarna) und ein Bankexport gehören nicht in dasselbe Konto: sie enthalten verschiedene Buchungen. Für die andere Quelle bitte ein eigenes Konto anlegen. Ein Bankkonto lässt sich dagegen aus einer zweiten Bankquelle fortsetzen.';
+        case 'nothing_in_year':
+          return 'In dieser Datei liegt keine Zahlung aus dem gewählten Jahr. Es wurde nichts eingelesen.';
+        case 'nothing_uncovered':
+          return 'Alle Zahlungen dieser Datei hat schon eine andere Quelle dieses Kontos. Es wurde nichts eingelesen. Soll diese Datei die Tage übernehmen, bitte zuerst den Import der anderen Quelle rückgängig machen.';
+        case 'nothing_new':
+          return 'Die Zahlungen dieses Jahres aus der Datei sind alle schon eingelesen. Es wurde nichts angelegt.';
+        case 'batch_has_later_cancellation':
+          return 'Ein später eingelesener Import betrifft stornierte Käufe dieses Imports. Bitte zuerst den späteren Import rückgängig machen.';
+        case 'batch_has_later_source':
+          return 'Später wurde dieses Konto aus einer anderen Quelle fortgesetzt; sie hat die Tage dieses Imports ausgelassen. Bitte zuerst den späteren Import rückgängig machen, sonst fehlen diese Tage.';
         case 'batch_has_later_overlap':
           return 'Ein später eingelesener Export deckt dieselben Tage ab. Bitte zuerst den späteren Import rückgängig machen.';
         case 'proposal_gone':

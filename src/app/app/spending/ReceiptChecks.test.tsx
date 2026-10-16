@@ -1,0 +1,138 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+
+const checkNow = vi.fn();
+const confirmReceipt = vi.fn();
+const sayNoReceipt = vi.fn();
+const takeBackNoReceipt = vi.fn();
+const readNotification = vi.fn();
+const saveNotificationSettings = vi.fn();
+vi.mock('./loop-actions', () => ({
+  checkNow: (...a: unknown[]) => checkNow(...a),
+  confirmReceipt: (...a: unknown[]) => confirmReceipt(...a),
+  sayNoReceipt: (...a: unknown[]) => sayNoReceipt(...a),
+  takeBackNoReceipt: (...a: unknown[]) => takeBackNoReceipt(...a),
+  readNotification: (...a: unknown[]) => readNotification(...a),
+  saveNotificationSettings: (...a: unknown[]) => saveNotificationSettings(...a),
+}));
+
+import ReceiptChecks, { checksActionMessage, runSummary } from './ReceiptChecks';
+import type { ChecksView } from './loop-actions';
+
+afterEach(cleanup);
+
+const view = (canWrite = true): ChecksView => ({
+  loop: {
+    open: [
+      { paymentId: 'p1', bookingDay: '2026-05-10', cents: 2999, counterparty: 'Zyx Handel', reference: '', state: { state: 'proposed', candidates: [{ rowId: 'r1', label: 'Zyx Rechnung', day: '2026-05-09', amountCents: 2999, estimated: false }] } },
+      { paymentId: 'p2', bookingDay: '2026-05-12', cents: 1250, counterparty: 'Abc Laden', reference: '', state: { state: 'missing' } },
+    ],
+    answered: [{ paymentId: 'p3', bookingDay: '2026-05-01', cents: 300, counterparty: 'Parkhaus', reference: '', state: { state: 'no_receipt', reason: 'Automat' } }],
+    counts: { hasReceipt: 4, notNeeded: { own_transfer: 1, income: 0, refund: 0, fee: 0, loan: 1, cash: 0, transfer: 0 }, noReceipt: 1, proposed: 1, missing: 1 },
+  },
+  notifications: [{ id: 'n1', subjectKey: 'missing_receipt:p2', kind: 'missing_receipt', title: 'Beleg fehlt: Abc Laden', body: '', path: '/app/spending?pruefen=p2', channel: null, failed: false, createdAt: '2026-05-12T10:00:00Z' }],
+  settings: { channel: 'push', notifyEmail: null },
+  canWrite,
+  lastRun: null,
+});
+
+beforeEach(() => {
+  for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
+  Element.prototype.scrollIntoView = vi.fn();
+});
+
+describe('ReceiptChecks', () => {
+  it('confirms a proposed receipt for its payment', async () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Zyx Rechnung als Beleg für diese Zahlung bestätigen' }));
+    expect(confirmReceipt).toHaveBeenCalledWith('p1', 'r1');
+  });
+
+  it('asks for a reason before saying there is no receipt', async () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Es gibt keinen Beleg' })[1]);
+    const save = screen.getByRole('button', { name: 'Antwort ohne Beleg für Abc Laden speichern' });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+    await user.type(screen.getByLabelText('Warum es keinen Beleg gibt'), 'Parkautomat');
+    await user.click(save);
+    expect(sayNoReceipt).toHaveBeenCalledWith('p2', 'Parkautomat');
+  });
+
+  it('takes a "no receipt" answer back, marks a notification read, and runs a check', async () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByText(/Ohne Beleg beantwortet/));
+    await user.click(screen.getByRole('button', { name: 'Antwort für Parkhaus zurücknehmen' }));
+    expect(takeBackNoReceipt).toHaveBeenCalledWith('p3');
+    await user.click(screen.getByRole('button', { name: 'Beleg fehlt: Abc Laden als gelesen markieren' }));
+    expect(readNotification).toHaveBeenCalledWith('n1');
+    await user.click(screen.getByRole('button', { name: 'Jetzt prüfen' }));
+    expect(checkNow).toHaveBeenCalled();
+  });
+
+  it('shows a failure at the payment it belongs to', async () => {
+    confirmReceipt.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'not_a_candidate' });
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Zyx Rechnung als Beleg für diese Zahlung bestätigen' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.closest('li')?.id).toBe('pruefen-p1');
+  });
+
+  it('brings the payment a notification points at into view and gives it the focus', () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId="p2" />);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    expect(document.activeElement?.id).toBe('pruefen-p2');
+    expect(document.activeElement?.getAttribute('aria-current')).toBe('true');
+  });
+
+  it('says when the payment of a notification is settled by now', () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId="p-gone" />);
+    expect(screen.getByText(/inzwischen erledigt/)).toBeTruthy();
+  });
+
+  it('focuses the reason field, and gives the focus back on cancel', async () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    const opener = screen.getAllByRole('button', { name: 'Es gibt keinen Beleg' })[1];
+    await user.click(opener);
+    expect(document.activeElement).toBe(screen.getByLabelText('Warum es keinen Beleg gibt'));
+    await user.click(screen.getByRole('button', { name: 'Abbrechen' }));
+    expect(document.activeElement?.textContent).toBe('Es gibt keinen Beleg');
+  });
+
+  it('saves the notification setting', async () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Wie benachrichtigt wird'));
+    await user.click(screen.getByLabelText('Nur E-Mail'));
+    await user.type(screen.getByLabelText('E-Mail-Adresse für Benachrichtigungen'), 'owner@example.com');
+    await user.click(screen.getByRole('button', { name: 'Einstellung speichern' }));
+    expect(saveNotificationSettings).toHaveBeenCalledWith({ channel: 'email', notifyEmail: 'owner@example.com' });
+  });
+
+  it('offers no controls without the write permission', () => {
+    render(<ReceiptChecks initial={view(false)} focusPaymentId={null} />);
+    expect(screen.queryByRole('button', { name: 'Jetzt prüfen' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /bestätigen/ })).toBeNull();
+    expect(screen.queryByText('Wie benachrichtigt wird')).toBeNull();
+  });
+});
+
+describe('runSummary', () => {
+  it('says what a run did, in singular and plural', () => {
+    expect(runSummary({ notified: 1, deferred: 0, open: 1 })).toBe('Geprüft: 1 neue Benachrichtigung, 1 Zahlung wartet auf einen Beleg.');
+    expect(runSummary({ notified: 10, deferred: 2, open: 14 })).toBe('Geprüft: 10 neue Benachrichtigungen, 14 Zahlungen warten auf einen Beleg, 2 weitere folgen beim nächsten Prüfen.');
+  });
+});
+
+describe('checksActionMessage', () => {
+  it('says what to do', () => {
+    expect(checksActionMessage({ ok: false, error: 'invalid_input', detail: 'reason_required' })).toMatch(/warum/);
+    expect(checksActionMessage({ ok: false, error: 'invalid_input', detail: 'receipt_already_paid:100:90' })).toMatch(/schon durch andere Zahlungen/);
+    expect(checksActionMessage({ ok: false, error: 'not_found' })).toMatch(/gibt es nicht mehr/);
+    expect(checksActionMessage({ ok: false, error: 'invalid_input', detail: 'invalid_email' })).toMatch(/E-Mail/);
+  });
+});

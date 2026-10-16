@@ -2,15 +2,17 @@ import Link from 'next/link';
 import { auth } from '@/lib/auth';
 import { getSpending } from './actions';
 import SpendingClient from './SpendingClient';
+import ReceiptChecks from './ReceiptChecks';
+import { getReceiptChecks } from './loop-actions';
 
 export const dynamic = 'force-dynamic';
 
 export const metadata = { title: 'Ausgaben' };
 
-export default async function SpendingPage({ searchParams }: { searchParams: Promise<{ jahr?: string; monat?: string }> }) {
+export default async function SpendingPage({ searchParams }: { searchParams: Promise<{ jahr?: string; monat?: string; pruefen?: string }> }) {
   await auth.requireSession('/app/spending');
-  const { jahr, monat } = await searchParams;
-  const data = await getSpending(jahr ?? null, monat ?? null);
+  const { jahr, monat, pruefen } = await searchParams;
+  const [data, checks] = await Promise.all([getSpending(jahr ?? null, monat ?? null), getReceiptChecks()]);
 
   // "Reload" keeps the period that was asked for.
   const params = new URLSearchParams();
@@ -44,5 +46,13 @@ export default async function SpendingPage({ searchParams }: { searchParams: Pro
   }
 
   // Keyed by the period, so a new year or month starts from the server's view, not the previous one's state.
-  return <SpendingClient key={`${data.value.overview.year}-${data.value.overview.month ?? 'all'}`} initial={data.value} />;
+  return (
+    <SpendingClient key={`${data.value.overview.year}-${data.value.overview.month ?? 'all'}`} initial={data.value}>
+      {checks.ok ? (
+        <ReceiptChecks initial={checks.value} focusPaymentId={pruefen ?? null} />
+      ) : (
+        <p className="ui-note ui-note-danger mt-4">Die offenen Belege konnten nicht geladen werden. Bitte die Seite neu laden.</p>
+      )}
+    </SpendingClient>
+  );
 }

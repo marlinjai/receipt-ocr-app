@@ -152,3 +152,29 @@ warning goes through the same channel as the missing-receipt notification.
 - Open question for the coordinator: payments are imported per company. If the bank files are
   imported under Whiz-Art Media, the overview under "marlinjai" stays empty; the overview itself
   works under whichever company holds them.
+
+### Build order 2, the loop's steps 1, 2 and 5 (2026-10-16)
+
+- The state of every payment is worked out on read (`src/lib/spending/loop.ts`), first hit
+  wins: linked to a receipt; step 1, needs none (own transfer, income, refund, fee, loan, cash,
+  money to a person); a person said "no receipt exists" with the reason; step 2, unlinked receipts
+  of the same company fit by vendor (named in the counterparty or the text, or paired by an earlier
+  link), exact amount (within 8 percent for a foreign-currency estimate) and a receipt day from 60
+  days before to 5 days after the payment, and a person confirms one (the link goes through the
+  payments service's `linkPayment`); step 5, otherwise the receipt is missing. Private purchases
+  need a receipt too (decision 3).
+- Stored: only the "no receipt" answer (`spending_receipt_answers`), the notification setting
+  (`spending_settings`) and the notifications (`spending_notifications`), migration 0024, additive.
+- Notifications go through a port (`src/lib/spending/notify/port.ts`): always into the in-app queue
+  on the spending page, then push, then e-mail (the owner's answer). Each payment is notified about
+  at most once, ever, and only when it was booked within the last 14 days, so importing a year of
+  history sends nothing. A failed delivery is retried on later runs, at most three tries in all.
+  E-mail goes through Resend over the Hypertext Transfer Protocol (HTTP) and is off until the server holds `RESEND_API_KEY`,
+  `SPENDING_MAIL_FROM` and `APP_BASE_URL`. Push is prepared behind the port and reports itself
+  unavailable until the push change (subscriptions from the phone, the server's key pair) lands.
+- A run (`runReceiptLoop`) takes settled payments out of the queue, retries failed deliveries and
+  notifies about new missing receipts, at most ten per run (the rest on the next run). It runs
+  after every payment file import (from the finance action, logged and never failing the import)
+  and from "Jetzt prüfen" on the page; the live bank feed should call it the same way.
+- Step 3 (the mailbox) and budgets follow as their own changes.
+

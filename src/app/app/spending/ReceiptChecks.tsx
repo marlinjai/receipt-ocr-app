@@ -1,0 +1,374 @@
+'use client';
+
+import { useEffect, useId, useRef, useState, useTransition } from 'react';
+import Link from 'next/link';
+import { formatDay } from '@/lib/meals/messages';
+import { receiptHref } from '@/lib/receipt-link';
+import { formatCents } from '@/lib/tax/money';
+import type { PaymentCheck } from '@/lib/spending/loop-service';
+import type { ChannelSetting } from '@/lib/spending/notify/port';
+import {
+  checkNow,
+  confirmReceipt,
+  readNotification,
+  saveNotificationSettings,
+  sayNoReceipt,
+  takeBackNoReceipt,
+  type ChecksResult,
+  type ChecksView,
+} from './loop-actions';
+
+/**
+ * The missing-receipt loop on the spending page: payments waiting for a
+ * receipt (with a proposed receipt to confirm where one fits), the "no
+ * receipt exists" answers, the in-app notifications, and how the owner wants
+ * to be told.
+ */
+
+function euro(cents: number): string {
+  return `${formatCents(cents)} €`;
+}
+
+const CHANNEL_LABELS: Record<ChannelSetting, string> = {
+  push: 'Push aufs Telefon, sonst E-Mail',
+  email: 'Nur E-Mail',
+  in_app: 'Nur hier in der App',
+};
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** What a run did, in a sentence. */
+export function runSummary(run: { notified: number; deferred: number; open: number }): string {
+  const parts = [
+    `Geprüft: ${plural(run.notified, 'neue Benachrichtigung', 'neue Benachrichtigungen')}`,
+    `${plural(run.open, 'Zahlung wartet', 'Zahlungen warten')} auf einen Beleg`,
+  ];
+  if (run.deferred > 0) parts.push(`${plural(run.deferred, 'weitere folgt', 'weitere folgen')} beim nächsten Prüfen`);
+  return `${parts.join(', ')}.`;
+}
+
+/** What went wrong, in words a person can act on. */
+export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok: false }>): string {
+  if (result.error === 'unauthorized') return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und neu anmelden.';
+  if (result.error === 'forbidden') return 'Für diesen Arbeitsbereich fehlt die Berechtigung zum Ändern.';
+  if (result.detail === 'reason_required') return 'Bitte kurz sagen, warum es keinen Beleg gibt.';
+  if (result.detail === 'not_a_candidate') return 'Dieser Beleg passt nicht mehr zu der Zahlung (er wurde inzwischen verknüpft oder geändert). Bitte die Seite neu laden.';
+  if (result.detail?.startsWith('receipt_already_paid')) return 'Dieser Beleg ist schon durch andere Zahlungen bezahlt. Das bitte unter Finanzen, Zahlungen prüfen.';
+  if (result.detail === 'invalid_email') return 'Diese E-Mail-Adresse sieht nicht gültig aus.';
+  if (result.detail === 'invalid_channel') return 'Bitte einen der angebotenen Wege wählen.';
+  if (result.error === 'not_found') return 'Das gibt es nicht mehr (die Zahlung wurde vielleicht mit ihrem Import zurückgenommen). Bitte die Seite neu laden.';
+  return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
+}
+
+function OpenCheck({
+  check,
+  focused,
+  canWrite,
+  pending,
+  error,
+  onConfirm,
+  onNoReceipt,
+}: {
+  check: PaymentCheck;
+  focused: boolean;
+  canWrite: boolean;
+  pending: boolean;
+  error: string | null;
+  onConfirm: (rowId: string) => void;
+  onNoReceipt: (reason: string) => void;
+}) {
+  const id = useId();
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState('');
+  const opener = useRef<HTMLButtonElement>(null);
+  const reopened = useRef(false);
+  // "Abbrechen" gives the focus back to the button that opened the form.
+  useEffect(() => {
+    if (!asking && reopened.current) opener.current?.focus();
+  }, [asking]);
+  return (
+    <li
+      id={`pruefen-${check.paymentId}`}
+      tabIndex={focused ? -1 : undefined}
+      aria-current={focused ? 'true' : undefined}
+      className="py-3 text-sm"
+      style={focused ? { outline: '2px solid var(--accent)', outlineOffset: 4, borderRadius: 6 } : undefined}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span style={{ color: 'var(--foreground)' }}>
+          {check.counterparty || 'ohne Namen'}
+          <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+            {formatDay(check.bookingDay)}
+            {check.reference ? `, ${check.reference}` : ''}
+          </span>
+        </span>
+        <span className="tabular-nums">{euro(check.cents)}</span>
+      </div>
+      {check.state.state === 'proposed' && (
+        <ul className="mt-2 space-y-1">
+          {check.state.candidates.map((c) => (
+            <li key={c.rowId} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span>
+                Passender Beleg:{' '}
+                <Link href={receiptHref(c.rowId)} className="underline">
+                  {c.label}
+                </Link>{' '}
+                vom {formatDay(c.day)}, {euro(c.amountCents)}
+                {c.estimated ? ' (umgerechnet)' : ''}
+              </span>
+              {canWrite && (
+                <button type="button" className="ui-btn ui-btn-sm ui-btn-primary" disabled={pending} onClick={() => onConfirm(c.rowId)} aria-label={`${c.label} als Beleg für diese Zahlung bestätigen`}>
+                  Das ist der Beleg
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {check.state.state === 'missing' && (
+        <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+          Kein Beleg gefunden.
+        </p>
+      )}
+      {canWrite && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Link href="/app" className="ui-btn ui-btn-sm">
+            Beleg fotografieren oder hochladen
+          </Link>
+          {!asking ? (
+            <button
+              ref={opener}
+              type="button"
+              className="ui-btn ui-btn-sm ui-btn-ghost"
+              disabled={pending}
+              onClick={() => {
+                reopened.current = true;
+                setAsking(true);
+              }}
+            >
+              Es gibt keinen Beleg
+            </button>
+          ) : (
+            <form
+              className="flex flex-wrap items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                onNoReceipt(reason);
+              }}
+            >
+              <label className="sr-only" htmlFor={`${id}-reason`}>
+                Warum es keinen Beleg gibt
+              </label>
+              <input
+                id={`${id}-reason`}
+                className="ui-input"
+                style={{ width: 'auto', minWidth: 220 }}
+                placeholder="Warum? z. B. Parkautomat"
+                value={reason}
+                maxLength={500}
+                autoFocus
+                onChange={(e) => setReason(e.target.value)}
+              />
+              <button type="submit" className="ui-btn ui-btn-sm" disabled={pending || !reason.trim()} aria-label={`Antwort ohne Beleg für ${check.counterparty || 'diese Zahlung'} speichern`}>
+                Speichern
+              </button>
+              <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" onClick={() => setAsking(false)}>
+                Abbrechen
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+      {error && (
+        <p className="ui-note ui-note-danger mt-2" role="alert">
+          {error}
+        </p>
+      )}
+    </li>
+  );
+}
+
+export default function ReceiptChecks({ initial, focusPaymentId }: { initial: ChecksView; focusPaymentId: string | null }) {
+  const id = useId();
+  const [view, setView] = useState(initial);
+  const [error, setError] = useState<{ at: string; message: string } | null>(null);
+  const [pending, startTransition] = useTransition();
+  const [channel, setChannel] = useState<ChannelSetting>(initial.settings.channel);
+  const [email, setEmail] = useState(initial.settings.notifyEmail ?? '');
+  const { loop } = view;
+
+  // A notification links here with the payment: bring it into view and give it the focus.
+  useEffect(() => {
+    if (!focusPaymentId) return;
+    const item = document.getElementById(`pruefen-${focusPaymentId}`);
+    item?.scrollIntoView({ block: 'center' });
+    item?.focus();
+  }, [focusPaymentId]);
+  const focusSettled = focusPaymentId !== null && !loop.open.some((c) => c.paymentId === focusPaymentId);
+
+  const run = (at: string, action: () => Promise<ChecksResult<ChecksView>>) => {
+    setError(null);
+    startTransition(async () => {
+      const result = await action();
+      if (result.ok) setView(result.value);
+      else setError({ at, message: checksActionMessage(result) });
+    });
+  };
+
+  const errorAt = (at: string) => (error?.at === at ? error.message : null);
+  const notNeeded = Object.values(loop.counts.notNeeded).reduce((s, n) => s + n, 0);
+
+  return (
+    <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-title`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 id={`${id}-title`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+          Belege prüfen ({loop.open.length} offen)
+        </h2>
+        {view.canWrite && (
+          <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => run('run', checkNow)}>
+            Jetzt prüfen
+          </button>
+        )}
+      </div>
+      <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+        {loop.counts.hasReceipt} mit Beleg, {notNeeded} brauchen keinen (Umbuchungen, Einnahmen, Erstattungen, Gebühren, Raten, Bargeld, Geld an Personen),{' '}
+        {loop.counts.noReceipt} ohne Beleg beantwortet.
+      </p>
+      {focusSettled && (
+        <p className="ui-note mt-2">Die Zahlung aus der Benachrichtigung ist inzwischen erledigt: sie hat einen Beleg, braucht keinen oder wurde beantwortet.</p>
+      )}
+      {/* Always rendered, so a screen reader announces what is filled in later. */}
+      <p className={view.lastRun ? 'ui-note ui-note-ok mt-2' : 'sr-only'} role="status">
+        {view.lastRun ? runSummary(view.lastRun) : ''}
+      </p>
+      {errorAt('run') && (
+        <p className="ui-note ui-note-danger mt-2" role="alert">
+          {errorAt('run')}
+        </p>
+      )}
+
+      {view.canWrite && view.notifications.length > 0 && (
+        <div className="mt-3">
+          <h3 className="text-xs font-semibold" style={{ color: 'var(--foreground)' }}>
+            Benachrichtigungen
+          </h3>
+          <ul className="mt-1 divide-y">
+            {view.notifications.map((n) => (
+              <li key={n.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                <span>
+                  <Link href={n.path} className="underline">
+                    {n.title}
+                  </Link>
+                  <span className="ml-2 text-xs" style={{ color: n.failed ? 'var(--danger, var(--foreground))' : 'var(--muted)' }}>
+                    {n.channel === 'push' ? 'aufs Telefon geschickt' : n.channel === 'email' ? 'per E-Mail geschickt' : n.failed ? 'Zustellung fehlgeschlagen, nur hier' : 'nur hier'}
+                  </span>
+                </span>
+                {view.canWrite && (
+                  <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => run(`note:${n.id}`, () => readNotification(n.id))} aria-label={`${n.title} als gelesen markieren`}>
+                    Gelesen
+                  </button>
+                )}
+                {errorAt(`note:${n.id}`) && (
+                  <p className="ui-note ui-note-danger w-full" role="alert">
+                    {errorAt(`note:${n.id}`)}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {loop.open.length === 0 ? (
+        <p className="mt-3 text-sm" style={{ color: 'var(--muted)' }}>
+          Für jede Zahlung, die einen Beleg braucht, ist einer da oder gesagt, warum es keinen gibt.
+        </p>
+      ) : (
+        <ul className="mt-3 divide-y">
+          {loop.open.map((c) => (
+            <OpenCheck
+              key={c.paymentId}
+              check={c}
+              focused={c.paymentId === focusPaymentId}
+              canWrite={view.canWrite}
+              pending={pending}
+              error={errorAt(`check:${c.paymentId}`)}
+              onConfirm={(rowId) => run(`check:${c.paymentId}`, () => confirmReceipt(c.paymentId, rowId))}
+              onNoReceipt={(reason) => run(`check:${c.paymentId}`, () => sayNoReceipt(c.paymentId, reason))}
+            />
+          ))}
+        </ul>
+      )}
+
+      {loop.answered.length > 0 && (
+        <details className="ui-disclosure mt-3">
+          <summary className="cursor-pointer text-xs font-semibold">Ohne Beleg beantwortet ({loop.answered.length})</summary>
+          <ul className="mt-2 divide-y">
+            {loop.answered.map((c) => (
+              <li key={c.paymentId} className="py-2 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {c.counterparty || 'ohne Namen'}, {formatDay(c.bookingDay)}, {euro(c.cents)}
+                    {c.state.state === 'no_receipt' && (
+                      <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                        {c.state.reason}
+                      </span>
+                    )}
+                  </span>
+                  {view.canWrite && (
+                    <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => run(`answered:${c.paymentId}`, () => takeBackNoReceipt(c.paymentId))} aria-label={`Antwort für ${c.counterparty || 'diese Zahlung'} zurücknehmen`}>
+                      Zurücknehmen
+                    </button>
+                  )}
+                </div>
+                {errorAt(`answered:${c.paymentId}`) && (
+                  <p className="ui-note ui-note-danger mt-2" role="alert">
+                    {errorAt(`answered:${c.paymentId}`)}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {view.canWrite && (
+        <details className="ui-disclosure mt-3">
+          <summary className="cursor-pointer text-xs font-semibold">Wie benachrichtigt wird</summary>
+          <form
+            className="mt-2 space-y-2 text-sm"
+            onSubmit={(e) => {
+              e.preventDefault();
+              run('settings', () => saveNotificationSettings({ channel, notifyEmail: email }));
+            }}
+          >
+            <fieldset>
+              <legend className="sr-only">Weg der Benachrichtigung</legend>
+              {(Object.keys(CHANNEL_LABELS) as ChannelSetting[]).map((c) => (
+                <label key={c} className="mr-4 inline-flex items-center gap-1">
+                  <input type="radio" name={`${id}-channel`} value={c} checked={channel === c} onChange={() => setChannel(c)} />
+                  {CHANNEL_LABELS[c]}
+                </label>
+              ))}
+            </fieldset>
+            <label className="block">
+              <span className="ui-label">E-Mail-Adresse für Benachrichtigungen</span>
+              <input type="email" className="ui-input" value={email} maxLength={254} onChange={(e) => setEmail(e.target.value)} />
+            </label>
+            <p className="text-xs" style={{ color: 'var(--muted)' }}>
+              Alles erscheint immer auch hier. Push aufs Telefon wird noch eingerichtet; bis dahin geht es per E-Mail, sobald eine Adresse eingetragen und der Versand auf dem Server eingerichtet ist.
+            </p>
+            <button type="submit" className="ui-btn ui-btn-sm" disabled={pending} aria-label="Einstellung speichern">
+              Speichern
+            </button>
+            {errorAt('settings') && (
+              <p className="ui-note ui-note-danger" role="alert">
+                {errorAt('settings')}
+              </p>
+            )}
+          </form>
+        </details>
+      )}
+    </section>
+  );
+}

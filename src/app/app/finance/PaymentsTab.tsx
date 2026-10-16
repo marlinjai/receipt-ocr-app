@@ -11,6 +11,7 @@ import { PAYMENT_FORMAT_LABELS } from '@/lib/tax/payments/types';
 import type { OpenPayment, StatementView } from '@/lib/tax/service';
 import type { Result } from './actions';
 import { euro, parseEuro } from './amounts';
+import { BankAccountStatus, type BankActions, type BankFeed } from './BankConnection';
 
 /** A search for payments to link by hand: one counterparty's, or any whose name, text or amount contains the words. */
 export type PaymentQuery = { counterpartyKey: string } | { text: string };
@@ -42,6 +43,8 @@ interface Props {
   onAccountPrivate: (account: { id: string; label: string }, isPrivate: boolean) => void;
   /** Find payments of the year that still have something to link, whatever was answered about them. Read only. */
   onSearch: (query: PaymentQuery) => Promise<Result<{ payments: FoundPayment[]; total: number }>>;
+  /** The live bank connection per account; absent where the screen is shown without it. */
+  bank?: { feed: BankFeed; actions: BankActions; returnNotice: { text: string; ok: boolean } | null } | null;
 }
 
 const ACCOUNT_KIND_LABELS: Record<AccountKind, string> = { bank: 'Bankkonto', card: 'Kreditkarte', payment_service: 'Zahlungsdienst' };
@@ -89,7 +92,7 @@ const LINK_METHOD_LABELS: Record<string, string> = {
  * a counterparty is treated, and linking payments to receipts and invoices.
  * A link is only made on a reference or by a person's confirmation.
  */
-export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onSearch }: Props) {
+export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onSearch, bank }: Props) {
   const id = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState('');
@@ -137,6 +140,16 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
     <div className="space-y-6">
       <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Konten">
         <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Konten und Stand</h2>
+        {bank?.returnNotice && (
+          <p className={`ui-note mt-3${bank.returnNotice.ok ? '' : ' ui-note-danger'}`} role={bank.returnNotice.ok ? 'status' : 'alert'}>
+            {bank.returnNotice.text}
+          </p>
+        )}
+        {bank && !bank.feed.bank.enabled && p.accounts.length > 0 && (
+          <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
+            Die Live-Anbindung an Banken ist auf diesem Server nicht eingeschaltet; die Konten werden aus Dateien eingelesen.
+          </p>
+        )}
         {p.accounts.length === 0 ? (
           <p className="ui-note mt-3">
             Noch kein Konto angelegt. Zahlungen geben einem Beleg sein tatsächliches Zahlungsdatum und den Eurobetrag,
@@ -173,6 +186,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                     </button>
                   )}
                 </div>
+                {bank && <BankAccountStatus account={account} feed={bank.feed} actions={bank.actions} enabled={bank.feed.bank.enabled} />}
                 {account.batches.length > 0 && (
                   <ul className="mt-2 space-y-1 text-xs" style={{ color: 'var(--muted)' }}>
                     {account.batches.map((batch) => (

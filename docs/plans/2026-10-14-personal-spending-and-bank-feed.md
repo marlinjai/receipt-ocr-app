@@ -124,6 +124,8 @@ warning goes through the same channel as the missing-receipt notification.
   owner's own twelve-month average from the payments, and he edits every number in the app.
 - **The bank connection needs the owner's consent at each bank, repeated periodically.** Which
   accounts: the ledger holds four (Tomorrow, N26, Klarna, Advanzia) plus the payment service.
+  Decided by the owner on 2026-10-16: all five are tried live, each on its own, with the file
+  importers as the fallback (see build order 3 below).
 
 ## Reality
 
@@ -255,3 +257,17 @@ warning goes through the same channel as the missing-receipt notification.
   "Jetzt prüfen". The budgets section on `/app/spending` shows each budget, where its limit comes
   from, and where the month is heading.
 
+
+### Build order 3, the live bank connection (2026-10-16)
+
+- Built in the finance area (finance plan, "Reality: the live bank connection (2026-10-16)"):
+  per account, consent at the bank, "Jetzt abholen" and a daily machine run, off until the server
+  holds its settings (`docs/operations/bank-sync.md`). Movements go into the same payments through
+  the normal import, so the overview, the loop and the budgets read them like imported ones.
+- After every fetch that added payments, `runSpendingChecks` runs for that company (from the
+  button after the answer is sent, from the daily run once per company); a failure is logged only.
+- The owner's decision: all five accounts tried live, each on its own, file importers as fallback.
+  Publicly, Enable Banking lists Tomorrow, N26 and PayPal for Germany, Klarna as beta, and no
+  Advanzia; the application's own list, read in the tab at run time, decides. An account already
+  fed from the PayPal or Klarna list is not continued live (it would store purchases twice): such
+  an account gets a new account of its own for the live connection.

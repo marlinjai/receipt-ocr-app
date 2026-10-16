@@ -68,9 +68,13 @@ describe('"Set field" on a selection', () => {
     await setFieldOnRows(ids.slice(0, 2), assignmentId, business);
     const stamp = async (id: string) => (await getRow(id))?.updatedAt?.valueOf();
     const before = await Promise.all(ids.slice(0, 2).map(stamp));
+    const third = await stamp(ids[2]);
+    await new Promise((resolve) => setTimeout(resolve, 5));
     const outcome = await setFieldOnRows(ids, assignmentId, business);
     expect(outcome.done.sort()).toEqual([...ids].sort());
     expect(await Promise.all(ids.slice(0, 2).map(stamp))).toEqual(before);
+    // The stamps do move when a row is written: the third row was, the first two were not.
+    expect((await stamp(ids[2]))!).toBeGreaterThan(third!);
   });
 
   it('sets a column no rule changes for the whole part in one statement', async () => {

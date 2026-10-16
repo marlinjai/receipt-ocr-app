@@ -435,6 +435,8 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
   ) {
     throw new Error('Set field: invalid input.');
   }
+  // The time budget below counts from here, so one call stays bounded as a whole.
+  const startedAt = performance.now();
   await requireColumnAccess(columnId, 'receipts.row.write');
   const ids = [...new Set(rowIds)];
   const everyRow = (reason: BulkSetFailure): BulkSetOutcome => ({ done: [], failed: ids.map((rowId) => ({ rowId, reason })), left: [] });
@@ -482,6 +484,9 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
 
   const written: string[] = [];
   const uncertain: string[] = [];
+  // Rows written through the table adapter, which does not look at the archive mark: one archived between
+  // the first read and its write is not missing but in an unclear state.
+  const perRow = new Set<string>();
   const plain = toWrite.filter(({ kind }) => writesCellsAsGiven(columns, kind, cells));
   if (plain.length > 0) {
     // A cell no rule changes on its way (a category, a status, the assignment) is written for the whole part
@@ -500,8 +505,6 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
   // the tax rates text). That costs the table adapter's look-ups per row, so the part
   // stops after a time budget and hands back the rows it has not touched; the bar sends them again. At least
   // one row is written per call, so a slow server still moves on.
-  // A monotonic clock, independent of the time of day.
-  const startedAt = performance.now();
   const left: string[] = [];
   for (const { rowId } of toWrite.filter(({ kind }) => !writesCellsAsGiven(columns, kind, cells))) {
     if (written.length + uncertain.length > 0 && performance.now() - startedAt > BULK_SET_BUDGET_MS) {
@@ -509,6 +512,7 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
       continue;
     }
     try {
+      perRow.add(rowId);
       await writeCells(adapter, tableId, columns, rowId, cells);
       written.push(rowId);
     } catch (error) {
@@ -529,7 +533,7 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
     for (const rowId of written) {
       const row = after.get(rowId);
       if (row && storedAs(row.value, value)) done.push(rowId);
-      else failed.push({ rowId, reason: row ? 'not_stored' : 'not_found' });
+      else failed.push({ rowId, reason: row ? 'not_stored' : perRow.has(rowId) ? 'failed' : 'not_found' });
     }
     for (const rowId of uncertain) {
       const row = after.get(rowId);

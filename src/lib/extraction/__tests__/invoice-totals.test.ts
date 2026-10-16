@@ -413,3 +413,27 @@ describe('the amount reader names the first rate in the one order', () => {
     expect(readAmounts(text, { date: '2026-03-01' }).taxRate).toBe(19);
   });
 });
+
+describe('a tip nothing names, between the bill and what was paid', () => {
+  const CAFE_SLIP = ['Example Bakery', '09.07.2026', 'Zimtschnecke 5,00', 'Kaffee 4,50', 'Total', '19,30', 'Grand total', '21,23', 'Given (Kartenzahlung)', '21,23', 'MwSt 7% 1,26'].join('\n');
+
+  it('the bill stays the total, and the difference to the paid amount is the tip', () => {
+    expect(readAmounts(CAFE_SLIP, { date: '2026-07-09' })).toMatchObject({ gross: 19.3, tip: 1.93 });
+  });
+
+  it('a difference printed as a figure of its own (shipping, a fee) is no tip', () => {
+    const order = CAFE_SLIP.replace('Grand total', 'Versand 1,93\nGrand total');
+    expect(readAmounts(order, { date: '2026-07-09' }).tip).toBeNull();
+  });
+
+  it('more than 30 percent on top is no tip, and a paid amount above the bill line is not looked at', () => {
+    expect(readAmounts(CAFE_SLIP.replaceAll('21,23', '29,00'), { date: '2026-07-09' }).tip).toBeNull();
+    const before = ['Example Bakery', 'Grand total 21,23', 'Total', '19,30', 'MwSt 7% 1,26'].join('\n');
+    expect(readAmounts(before, { date: '2026-07-09' }).tip).toBeNull();
+  });
+
+  it('a named tip is read as before', () => {
+    const named = ['Example Cafe', 'Summe 11,30', 'MwSt 19% 1,80', 'TIP / TOTAL', '3,70', '15,00'].join('\n');
+    expect(readAmounts(named, { date: '2026-04-05' })).toMatchObject({ gross: 11.3, tip: 3.7 });
+  });
+});

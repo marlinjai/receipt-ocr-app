@@ -140,6 +140,8 @@ function isTaxOf(netCents: number, taxCents: number, rate: number): boolean {
 }
 
 const TIP_WORD = /trinkgeld|\btip\b|gratuity|service\s*charge/i;
+/** A label for what was paid in the end, tip included: "Grand total", "Endsumme", "Bezahlt", "Amount paid". */
+const PAID_TOTAL_LABEL = /grand\s+total|endsumme|(?<![\p{L}])bezahlt(?:er\s+betrag)?(?![\p{L}])|amount\s+paid|total\s+paid/iu;
 /** A line that names a discount ("Rabatt", "Sofortrabatt", "Discount: SPRING"), not one that only mentions the word ("rabattfähig"). */
 const DISCOUNT_WORD = /(?:rabatte?|nachl(?:a|ä)sse?|discounts?|coupons?|gutscheine?)(?![\p{L}])/iu;
 const TOTAL_LABEL = /(?:^|[^\p{L}])(?:summe|gesamt(?:betrag|summe|preis)?|total|endbetrag|rechnungsbetrag|zu\s+zahlen|betrag|brutto|order\s+total|amount\s+due|balance\s+due|grand\s+total|final\s+cost)(?![\p{L}])/iu;
@@ -853,6 +855,26 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       const bill = cents(gross);
       const tipCents = tipOnLine.find((t) => t < bill && values.has(bill + t));
       if (tipCents !== undefined) tip = euros(tipCents);
+    }
+  }
+
+  // A tip nothing names: the tax arithmetic proves the bill, and a label
+  // further down calls a larger amount what was paid ("Grand total", the card
+  // slip of a cafe that adds the tip at the terminal). The difference is the
+  // tip where the receipt prints it nowhere as a figure of its own (a printed
+  // difference is shipping or a fee, which the label path settles), and where
+  // it is a tip's size: at most 30 percent of the bill.
+  if (gross !== null && tip === null && !hasTipWord && (basis === 'tax_groups' || basis === 'gross_with_tax')) {
+    const bill = cents(gross);
+    const firstBillLine = found.find((a) => a.cents === bill)?.line ?? -1;
+    for (let i = firstBillLine + 1; i < lines.length && firstBillLine >= 0; i++) {
+      if (!PAID_TOTAL_LABEL.test(lines[i])) continue;
+      const own = [...lines[i].matchAll(AMOUNT)].map((m) => toCents(m[1])).filter((v): v is number => v !== null);
+      const below = own.length === 0 ? [...(lines[i + 1] ?? '').matchAll(AMOUNT)].map((m) => toCents(m[1])).filter((v): v is number => v !== null) : [];
+      const paid = own[own.length - 1] ?? below[0];
+      if (paid === undefined || paid <= bill || paid - bill > bill * 0.3 || values.has(paid - bill)) continue;
+      tip = euros(paid - bill);
+      break;
     }
   }
 

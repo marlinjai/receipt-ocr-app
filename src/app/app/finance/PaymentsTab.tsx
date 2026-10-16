@@ -6,6 +6,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { formatDay } from '@/lib/meals/messages';
 import type { MatchStrength } from '@/lib/tax/payments/match';
 import type { AccountKind, CounterpartyTreatment, FoundPayment, ImportResult } from '@/lib/tax/payments/service';
+import type { RefundStrength } from '@/lib/tax/payments/refunds';
 import { PAYMENT_FORMAT_LABELS } from '@/lib/tax/payments/types';
 import type { OpenPayment, StatementView } from '@/lib/tax/service';
 import type { Result } from './actions';
@@ -45,10 +46,13 @@ interface Props {
 
 const ACCOUNT_KIND_LABELS: Record<AccountKind, string> = { bank: 'Bankkonto', card: 'Kreditkarte', payment_service: 'Zahlungsdienst' };
 const TREATMENT_LABELS: Record<CounterpartyTreatment, string> = { business: 'Betrieblich', private: 'Privat', own_account: 'Eigenes Konto', mixed: 'Teils, teils' };
-const STRENGTH_LABELS: Record<MatchStrength, string> = {
+const STRENGTH_LABELS: Record<MatchStrength | RefundStrength, string> = {
   reference: 'Nummer im Verwendungszweck, Betrag passt',
   reference_amount_differs: 'Nummer im Verwendungszweck, Betrag weicht ab',
   amount_and_date: 'nur Betrag und Datum passen',
+  refund_reference: 'Erstattung: dieselbe Bestellnummer wie der Kauf',
+  refund_full: 'Erstattung des ganzen Kaufs',
+  refund_part: 'Teilerstattung eines Kaufs bei derselben Gegenseite',
 };
 const SKIP_LABELS: Record<string, string> = {
   not_booked: 'noch nicht gebucht',

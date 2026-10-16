@@ -1590,3 +1590,83 @@ describe('an invoice whose remainder is booked out as never to be paid', () => {
     expect(await links(invoiceId)).toEqual([48_000]);
   });
 });
+
+describe('a refunded purchase: money back is proposed for the purchase’s receipt and nets it out', () => {
+  const ORDER = file(
+    line('2026-03-02', 'Versand Beispiel', 'Bestellung 302-1234567-7654321', '-49.99'),
+    line('2026-03-20', 'Versand Beispiel', 'Erstattung 302-1234567-7654321', '49.99', 'Credit Transfer'),
+  );
+  async function refundedOrder() {
+    const base = await workspace();
+    const rowId = await base.ws.addReceipt({ Name: 'Tastatur', Vendor: 'Versand Beispiel', Gross: 49.99, Date: '2026-03-01', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    await importPayments(db, base.ctx, base.accountId, ORDER);
+    await setCounterpartyTreatment(db, base.ctx, { counterparty: 'Versand Beispiel', treatment: 'business' });
+    const purchase = (await db.taxPayment.findFirst({ where: { accountId: base.accountId, amountCents: { lt: 0 } } }))!;
+    const back = (await db.taxPayment.findFirst({ where: { accountId: base.accountId, amountCents: { gt: 0 } } }))!;
+    await setPaymentKind(db, base.ctx, back.id, 'refund');
+    await linkPayment(db, base.ctx, { paymentId: purchase.id, rowId }, rowCheck(base.ctx));
+    return { ...base, rowId, purchase, back };
+  }
+  const refundOpen = async (workspaceId: string) => (await loadStatement(db, workspaceId, 2026)).payments.open.filter((o) => o.check === 'refund_without_receipt');
+
+  it('forward: the refund names the receipt of its purchase, and once linked the receipt costs nothing', async () => {
+    const { ws, ctx, rowId, back } = await refundedOrder();
+    const [open] = await refundOpen(ws.workspaceId);
+    expect(open.proposals).toEqual([{ target: 'receipt', targetId: rowId, label: 'Tastatur', strength: 'refund_reference' }]);
+    await linkPayment(db, ctx, { paymentId: back.id, rowId: open.proposals[0].targetId }, rowCheck(ctx));
+    const view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 0 });
+    expect(await refundOpen(ws.workspaceId)).toEqual([]);
+  });
+
+  it('change an earlier input: taking the purchase’s link back takes the proposal with it, linking it again brings it back', async () => {
+    const { ws, ctx, rowId, purchase } = await refundedOrder();
+    const link = (await db.taxPaymentLink.findFirst({ where: { paymentId: purchase.id } }))!;
+    await unlinkPayment(db, ctx, link.id);
+    // Without the purchase the receipt is still proposed by its vendor, as a refund of the whole receipt.
+    expect((await refundOpen(ws.workspaceId))[0].proposals).toEqual([{ target: 'receipt', targetId: rowId, label: 'Tastatur', strength: 'refund_full' }]);
+    await linkPayment(db, ctx, { paymentId: purchase.id, rowId }, rowCheck(ctx));
+    expect((await refundOpen(ws.workspaceId))[0].proposals.map((p) => p.strength)).toEqual(['refund_reference']);
+  });
+
+  it('resume and re-entry: a fresh load shows the same; a link taken back is proposed again; a part refund leaves the rest', async () => {
+    const { ws, ctx, rowId, back, accountId } = await refundedOrder();
+    const { linkId } = await linkPayment(db, ctx, { paymentId: back.id, rowId }, rowCheck(ctx));
+    await unlinkPayment(db, ctx, linkId);
+    expect((await refundOpen(ws.workspaceId))[0].proposals.map((p) => p.targetId)).toEqual([rowId]);
+    // A second, smaller refund of the same order: both fit while the receipt still costs 49.99.
+    await importPayments(db, ctx, accountId, file(line('2026-03-25', 'Versand Beispiel', 'Teilerstattung', '10', 'Credit Transfer')));
+    const part = (await db.taxPayment.findFirst({ where: { accountId, amountCents: 1_000 } }))!;
+    await setPaymentKind(db, ctx, part.id, 'refund');
+    await linkPayment(db, ctx, { paymentId: part.id, rowId }, rowCheck(ctx));
+    expect((await loadStatement(db, ws.workspaceId, 2026)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 3_999 });
+    // The full refund no longer fits what is left, so it is not proposed for this receipt any more.
+    expect((await refundOpen(ws.workspaceId))[0].proposals).toEqual([]);
+  });
+
+  it('money in that the file calls income is offered for the purchase it refunds too, and a counterparty never asked about is', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    const rowId = await ws.addReceipt({ Name: 'Kabel', Vendor: 'Laden Beispiel', Gross: 12, Date: '2026-04-01', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    await importPayments(db, ctx, accountId, file(
+      line('2026-04-01', 'Laden Beispiel', 'Kartenzahlung', '-12'),
+      line('2026-04-09', 'Laden Beispiel', 'Gutschrift', '12', 'Credit Transfer'),
+    ));
+    const purchase = (await db.taxPayment.findFirst({ where: { accountId, amountCents: -1_200 } }))!;
+    await linkPayment(db, ctx, { paymentId: purchase.id, rowId }, rowCheck(ctx));
+    const open = (await loadStatement(db, ws.workspaceId, 2026)).payments.open.find((o) => o.amountCents === 1_200)!;
+    expect(open.proposals).toEqual([{ target: 'receipt', targetId: rowId, label: 'Kabel', strength: 'refund_full' }]);
+    // Answered private: nothing is proposed or asked.
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'Laden Beispiel', treatment: 'private' });
+    expect((await loadStatement(db, ws.workspaceId, 2026)).payments.open.find((o) => o.amountCents === 1_200)).toBeUndefined();
+  });
+
+  it('a credit note entered as a receipt with a negative amount nets its invoice out in the year', async () => {
+    const { ws } = await workspace();
+    await ws.addReceipt({ Name: 'Rechnung Monitor', Vendor: 'Versand Beispiel', Gross: 199, Date: '2026-05-02', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    await ws.addReceipt({ Name: 'Gutschrift Monitor', Vendor: 'Versand Beispiel', Gross: -199, Date: '2026-05-20', Category: 'Bürobedarf', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    const view = await loadStatement(db, ws.workspaceId, 2026);
+    const items = view.items.filter((i) => i.vendor === 'Versand Beispiel');
+    expect(items.map((i) => i.amountCents).sort()).toEqual([-19_900, 19_900]);
+    expect(items.reduce((sum, i) => sum + (i.amountCents ?? 0), 0)).toBe(0);
+  });
+});

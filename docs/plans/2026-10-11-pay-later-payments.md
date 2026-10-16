@@ -416,6 +416,81 @@ Commentary (supports, does not decide):
   section 4, overview of outflow by payment type (card: the day of the card payment):
   https://www.haufe.de/finance/haufe-finance-office-premium/einnahmen-ueberschussrechnung-zu-und-abfluss-von-betrie-4-uebersicht-zeitpunkt-des-abflusses-bei-den-unterschiedlichen-zahlungsarten_idesk_PI20354_HI5302761.html
 
+### Built (2026-10-16), decided, say so if you disagree
+
+Built on the branch `feat/pay-later-tax-day`. These decisions were taken while building and
+change or add to the list above.
+
+32. **Two stored columns after all (replaces "nothing is stored and no migration is needed").**
+    The stored payment kept neither the payment method, nor the card mark, nor the statement
+    number, so the classification cannot be derived from what is stored. Migration
+    `0030_tax_payment_pay_later_detail` adds two nullable columns to `tax_payments`:
+    `source_detail` (JavaScript Object Notation, JSON: the method wording, whether a card is marked, the statement number,
+    the purchase's own number) and `pay_method_override` (a person's "card" or "checkout"). No
+    row is rewritten. The tax day itself is still worked out on read (`tax-day.ts`).
+33. **A person's correction is its own column, not `kind_override` (replaces "stored like the
+    existing re-labelling in `kind_override`").** `kind_override` says what a payment is (spend,
+    private, a transfer) and its "Zurücksetzen" clears it; one purchase can be both re-labelled
+    private and paid by card, so the two answers must not wipe each other. The corrections are
+    listed in their own block, "Von dir umgestellt", each with the other answer and
+    "Zurücksetzen".
+34. **The order of the rules.** A card the list marks wins over the wording (`Cards`, or the
+    `card` column filled), because "Invoice" is carried by card purchases too. Then `Term Loan`
+    is financed and `Direct Debit` direct debit, whatever the merchant text. Then a `*` between
+    two names in the merchant text marks a card. Then `Invoice` and `In <n> Tagen zahlen` (any
+    number) are checkout. Every other wording is checkout and named after
+    the import ("Unbekannte Zahlungsarten"). The real list has four such wordings besides the
+    known ones (`Flexible Amount`, `Fixed Amount`, `Direct Bank Transfer`, an empty one; 6 rows
+    of 1,131): read as checkout they stay on the purchase day as "Einzugstag unbekannt" unless a
+    collection of their statement's sum exists, which errs in the later direction only.
+35. **Purchases imported before the details were kept stay on their purchase day.** They are not
+    read as checkout: that would list about 1,100 purchases as "Einzugstag unbekannt" on
+    production. A `*` in the stored merchant text still makes one a card purchase. The tab says
+    how many there are and that the list is to be read again once.
+36. **Reading the list again fills in the details only.** When an import meets a stored purchase
+    of the same identity without details, it writes the details and nothing else (one statement
+    per 5,000 rows); details already there are never overwritten, with one exception: the
+    shorter variant of the list has no card column, so its purchases store the card mark as
+    unknown (not as "no card"), and a later longer list fills in that one field. The import says how many it
+    filled ("Bei n schon vorhandenen Käufen wurde die Zahlungsart ergänzt"). The very same file
+    imported again is no longer refused when it has details to fill in: it fills them, records
+    no new import and says so; with nothing to fill it is refused as before. An import limited
+    to one year fills in the purchases of every year of the file, and counts as not empty when
+    it filled something in. When a purchase listed twice (once from the web pages without a
+    number) is merged, a card either row marked stays marked.
+37. **How a collection is found, in this order:** a bank line of exactly the purchase's amount
+    naming its own number settles that purchase (an invoice paid by transfer; 14 lines of the
+    real bank files carry such a number; a part payment naming it settles nothing, the purchase
+    stays "unknown"); a bank line naming the statement number settles the statement; otherwise
+    the first collection from the statement's last open purchase up to 60 days later whose
+    amount is exactly what the statement's open purchases add up to, less money back booked on
+    it (card and financed purchases of the statement included: the service collects the whole
+    statement). The 60 days keep a later month of the same sum (a subscription) from being
+    taken for a statement whose own collection is missing. A bank debit the funding rule pairs
+    with a direct-debit purchase is that purchase's own money and settles no statement; a debit
+    it pairs with any other purchase still can (the pairing only takes the nearest purchase of
+    the same amount, and a checkout invoice is collected outside its window). Numbers are found
+    in the bank text whatever punctuation stands in or around them. Each collection settles one statement,
+    statements in the order of their last purchase. A collection is a debit the funding rule
+    makes a transfer, or one a person marked a transfer whose counterparty names the service (a
+    collection after the last day the list covers). A debit a person said is a payment of its
+    own settles nothing.
+38. **Where the day is used.** The receipt's cash day (`linkedByRow`, and so `paidByRow`) takes
+    the tax day of its linked purchase. The ten-day rule (`yearBoundary` and the check behind
+    saving an answer, `paymentDayOfRow`) reads the same day; `paymentDayOfRow` now goes through
+    `linkedByRow`, so it also counts the same money once and leaves cancelled purchases out, as
+    the statement does (it reads all payments of the workspace when the receipt has a link,
+    which is slower than before but the same answer as the statement). The reverse charge
+    (section 13b of the value-added tax act, where the buyer owes the tax) dates a receipt by
+    the same paid day, so it follows the tax day too, which is intended. The list of years
+    includes a year a purchase is collected in. Lists,
+    proposals, reconciliation, the spending pages and invoice income keep the booking day.
+39. **What is listed for a look:** checkout purchases bought in one year and collected in the next
+    (in both years' tabs, with "Mit der Karte bezahlt"), direct debits captured in the next year,
+    checkout purchases of the year without a collection ("Einzugstag unbekannt", same button),
+    the corrections (in the year of the purchase and the year it counts in, each listed once),
+    and the count of purchases without details. Private purchases and transfers are left out: they decide no year.
+
 ## Tests
 
 Parser and matching as unit tests; the import flow against a real database on all four paths of
@@ -491,3 +566,37 @@ Where the time went, and what was done:
 - The day question is answered above. The change it calls for (the collection day for invoice
   and monthly-statement purchases) is not built yet; until it is, the December statements are
   the payments to check by hand.
+
+## Reality (2026-10-16)
+
+- The day rule is built on `feat/pay-later-tax-day` (decisions 32 to 39), not merged when this
+  was written.
+- Checked on the owner's files, counts and shapes only: **no bank line of the N26 and Tomorrow
+  exports carries a statement number** (0 of 109 lines naming the service). The amount rule is
+  therefore the one that works on production; the statement match is built as decided and tested
+  on an invented line. 14 Tomorrow lines carry a purchase's own number, which the first rule uses.
+- **What the owner does once after the deploy:** import the same pay-later list file again into
+  the same account. The purchases already stored get their payment details and nothing else of
+  them changes, links included; the import says how many were filled in. (Importing it with
+  "Nur Zahlungen aus 2025", pull request #141, works as well.) Never undo the earlier import for
+  this: that drops the links made on its purchases. Until then every stored purchase counts on
+  its purchase day as before, and the tab says how many are waiting.
+- **Checked on the real list after the review: its `statement_number` is not the monthly
+  statement.** 1,129 numbers for 1,131 purchases, so it is a number per purchase (every
+  payment method carries one, the list holds no money back). The amount rule therefore finds a
+  collection only where the service collected exactly one purchase. A consolidated monthly
+  collection matches nothing, and those checkout purchases stay on their purchase day as
+  "Einzugstag unbekannt": the same day as before this change, now listed for a look. Which
+  purchases a consolidated collection pays is not in any file the app reads; finding it (the
+  service's monthly statement, or a sum over the open purchases before a collection) is open
+  and needs a decision on how far to guess.
+- Then look at "Tag der Zahlung bei Später-bezahlen-Käufen" for 2025: December purchases on
+  invoice whose collection was found count in the next year (a card purchase among them whose
+  text did not show the card is put back with "Mit der Karte bezahlt"); the December purchases
+  under "Einzugstag unbekannt" are, until the open point above is settled, the ones to check
+  by hand before the 2025 return, as before.
+- Known limit: a statement paid from PayPal (not from the bank) is no collection by the funding
+  rule, which on a non-bank account needs a purchase of exactly that amount. Its purchases show
+  as "Einzugstag unbekannt" until a person marks that PayPal payment "Übertrag zwischen eigenen
+  Konten"; from then on it counts as the collection (the same path is tested
+  with a bank debit after the last day the list covers).

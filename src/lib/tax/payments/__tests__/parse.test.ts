@@ -238,8 +238,8 @@ describe('parsePaymentFile: unhappy paths', () => {
 
 // The purchase list of the pay-later service, in its longer variant. The shorter one ends after `statement_number`.
 const KLARNA_HEADER = 'created_date,created_time,activated,settled,amount,currency,merchant,items,payment_method,status,payment_reference,statement_number,category,purchase_type,card,source,timezone';
-const klarnaRow = (o: { day: string; amount: string; merchant: string; items?: string; status?: string; reference?: string; order?: string; activated?: string; currency?: string; method?: string; time?: string; zone?: string }) =>
-  [o.day, o.time ?? '09:30', o.activated ?? `${o.day} 09:31`, '', o.amount, o.currency ?? 'EUR', `"${o.merchant}"`, `"${o.items ?? ''}"`, o.method ?? 'Invoice', `"${o.status ?? 'Normal'}"`, o.reference ?? '', o.order ?? 'ORDER0001', '', '', '', 'beispiel-quelle', o.zone ?? 'Europe/Berlin'].join(',');
+const klarnaRow = (o: { day: string; amount: string; merchant: string; items?: string; status?: string; reference?: string; order?: string; activated?: string; currency?: string; method?: string; time?: string; zone?: string; card?: string }) =>
+  [o.day, o.time ?? '09:30', o.activated ?? `${o.day} 09:31`, '', o.amount, o.currency ?? 'EUR', `"${o.merchant}"`, `"${o.items ?? ''}"`, o.method ?? 'Invoice', `"${o.status ?? 'Normal'}"`, o.reference ?? '', o.order ?? 'ORDER0001', '', '', o.card ?? '', 'beispiel-quelle', o.zone ?? 'Europe/Berlin'].join(',');
 const klarna = (...rows: string[]) => [KLARNA_HEADER, ...rows].join('\r\n') + '\r\n';
 const KLARNA = klarna(
   klarnaRow({ day: '2025-03-02', activated: '2025-03-03 08:00', amount: '21.37', merchant: 'Editor Beispiel', items: 'Editor Beispiel Pro Monat', reference: '1000000000001' }),
@@ -260,13 +260,55 @@ describe('the pay-later purchase list', () => {
   it('reads a purchase as money out on the day it was made, with the capture day as value day', () => {
     const parsed = parsePaymentFile(KLARNA);
     expect(parsed).toMatchObject({ format: 'klarna_csv', skipped: {}, firstDay: '2025-03-02', lastDay: '2025-03-09' });
-    expect(parsed.payments.map((p) => ({ ...p, sourceHash: undefined, byReference: undefined }))).toEqual([
+    expect(parsed.payments.map((p) => ({ ...p, sourceHash: undefined, byReference: undefined, detail: undefined }))).toEqual([
       { bookingDay: '2025-03-02', valueDay: '2025-03-03', amountCents: -2137, counterparty: 'Editor Beispiel', reference: 'Editor Beispiel Pro Monat', entryReference: '1000000000001', kind: 'spend', sourceHash: undefined },
       // Bought on instalments: one spend of the full amount on the purchase day.
       { bookingDay: '2025-03-05', valueDay: '2025-03-05', amountCents: -24_000, counterparty: 'Möbel Beispiel', reference: 'Schreibtisch', entryReference: '1000000000002', kind: 'spend', sourceHash: undefined },
       // A row read from the web pages: no capture day, no payment reference, the order number stands in.
       { bookingDay: '2025-03-09', valueDay: null, amountCents: -999, counterparty: 'ZAHLDIENST *Laden Beispiel', reference: '', entryReference: 'ORDER0003', kind: 'spend', sourceHash: undefined },
     ]);
+  });
+
+  it('keeps how each purchase was paid: the method wording, a marked card, the statement and its own number', () => {
+    const parsed = parsePaymentFile(
+      klarna(
+        klarnaRow({ day: '2025-03-02', amount: '21.37', merchant: 'Editor Beispiel', reference: '1000000000001', order: '7ABCDEFG' }),
+        klarnaRow({ day: '2025-03-03', amount: '12.00', merchant: 'Café Beispiel', method: 'In 30 Tagen zahlen', card: '•••• 1234', reference: '1000000000002' }),
+        klarnaRow({ day: '2025-03-04', amount: '5.00', merchant: 'Laden Beispiel', method: '', reference: '1000000000003', order: '' }),
+      ),
+    );
+    expect(parsed.payments.map((p) => p.detail)).toEqual([
+      { method: 'Invoice', card: false, statement: '7ABCDEFG', reference: '1000000000001' },
+      { method: 'In 30 Tagen zahlen', card: true, statement: 'ORDER0001', reference: '1000000000002' },
+      { method: '', card: false, statement: null, reference: '1000000000003' },
+    ]);
+  });
+
+  it('names a payment method wording it does not know, and still reads the purchase', () => {
+    const parsed = parsePaymentFile(
+      klarna(
+        klarnaRow({ day: '2025-03-02', amount: '10.00', merchant: 'Laden Beispiel', method: 'Flexible Amount', reference: '1100000000001' }),
+        klarnaRow({ day: '2025-03-03', amount: '20.00', merchant: 'Laden Beispiel', method: 'Flexible Amount', reference: '1100000000002' }),
+        klarnaRow({ day: '2025-03-04', amount: '30.00', merchant: 'Laden Beispiel', method: '', reference: '1100000000003' }),
+        klarnaRow({ day: '2025-03-05', amount: '40.00', merchant: 'Laden Beispiel', method: 'In 14 Tagen zahlen', reference: '1100000000004' }),
+        klarnaRow({ day: '2025-03-06', amount: '50.00', merchant: 'Laden Beispiel', method: 'Cards', reference: '1100000000005' }),
+        klarnaRow({ day: '2025-03-07', amount: '60.00', merchant: 'Laden Beispiel', method: 'Direct Debit', reference: '1100000000006' }),
+      ),
+    );
+    expect(parsed.payments).toHaveLength(6);
+    expect(parsed.notices).toEqual({ unknown_method: 3 });
+    expect(parsed.unknownMethods).toEqual(['Flexible Amount', '(leer)']);
+    // Known wordings (Invoice, Term Loan) are not named.
+    expect(parsePaymentFile(KLARNA).unknownMethods).toEqual([]);
+  });
+
+  it('counts an unknown method once for a purchase listed twice, and knows no card in the shorter list', () => {
+    const twice = klarnaRow({ day: '2025-03-02', amount: '10.00', merchant: 'Laden Beispiel', method: 'Flexible Amount', reference: '1200000000001' });
+    expect(parsePaymentFile(klarna(twice, twice)).notices).toEqual({ unknown_method: 1 });
+    const short = parseCsv(klarna(klarnaRow({ day: '2025-03-02', amount: '10.00', merchant: 'Laden Beispiel', reference: '1200000000002', card: '•••• 0000' })))
+      .map((r) => r.slice(0, 12).map((c) => `"${c}"`).join(','))
+      .join('\n');
+    expect(parsePaymentFile(short).payments[0].detail).toMatchObject({ card: null });
   });
 
   it('is recognized by its column names: the shorter variant and reordered columns read the same', () => {

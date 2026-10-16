@@ -137,7 +137,7 @@ describe('IncomeTaxTab', () => {
     await userEvent.type(within(form).getByLabelText('Entfernung in km'), '20');
     await userEvent.click(within(form).getByRole('button', { name: 'Speichern' }));
     expect(p.onSaveItem).toHaveBeenCalledWith(null, { year: 2026, key: 'employment.commute', amountCents: null, days: 4, distanceKm: 20, ownCar: false, note: null }, expect.any(Function));
-    await userEvent.click(within(form).getByLabelText('mit dem eigenen Wagen'));
+    await userEvent.click(within(form).getByLabelText('mit eigenem oder überlassenem Wagen (auch Firmenwagen)'));
     await userEvent.click(within(form).getByRole('button', { name: 'Speichern' }));
     expect(p.onSaveItem).toHaveBeenLastCalledWith(null, expect.objectContaining({ ownCar: true }), expect.any(Function));
   });

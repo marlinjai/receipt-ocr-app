@@ -58,7 +58,7 @@ export const RETURN_ITEM_KINDS: Record<ReturnItemKey, ReturnItemKind> = {
     label: 'Wege zur ersten Tätigkeitsstätte oder Hochschule',
     group: 'employment',
     measure: 'commute',
-    hint: 'Tage und einfache Entfernung in vollen Kilometern, je Ort und Verkehrsmittel ein Eintrag. Ohne eigenen Wagen gilt ein Höchstbetrag von 4.500 Euro.',
+    hint: 'Tage und einfache Entfernung in vollen Kilometern, je Ort und Verkehrsmittel ein Eintrag. Ohne eigenen oder überlassenen Wagen (auch Firmenwagen) gilt ein Höchstbetrag von 4.500 Euro.',
   },
   'employment.union_dues': {
     key: 'employment.union_dues',
@@ -177,7 +177,7 @@ export interface ReturnItemFact {
   days: number | null;
   /** For `commute` items: the one-way distance in full kilometres. */
   distanceKm: number | null;
-  /** For `commute` items: travelled by one's own car (no 4,500 euro cap). */
+  /** For `commute` items: travelled by one's own car or a car provided for use, such as a company car (no 4,500 euro cap). */
   ownCar: boolean;
   note: string | null;
 }

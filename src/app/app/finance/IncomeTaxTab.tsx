@@ -535,7 +535,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
                   {RETURN_ITEM_KINDS[item.key].label}:{' '}
                   {item.amountCents !== null
                     ? euro(item.amountCents)
-                    : `${item.days} Tage${item.distanceKm !== null ? ` × ${item.distanceKm} km${item.ownCar ? ', eigener Wagen' : ''}` : ''}`}
+                    : `${item.days} Tage${item.distanceKm !== null ? ` × ${item.distanceKm} km${item.ownCar ? ', eigener oder überlassener Wagen' : ''}` : ''}`}
                   {item.note ? ` (${item.note})` : ''}
                 </span>
                 <span className="inline-flex gap-1">
@@ -601,7 +601,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
             {RETURN_ITEM_KINDS[itemKey].measure === 'commute' && (
               <label className="inline-flex items-center gap-2 text-sm" style={{ color: 'var(--foreground)' }}>
                 <input type="checkbox" checked={itemOwnCar} onChange={(e) => setItemOwnCar(e.target.checked)} />
-                mit dem eigenen Wagen
+                mit eigenem oder überlassenem Wagen (auch Firmenwagen)
               </label>
             )}
             <div className="min-w-[12rem] flex-1">

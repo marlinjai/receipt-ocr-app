@@ -15,7 +15,7 @@ import { createWorkspace, db } from '../../../../../test/db-helpers';
 
 /**
  * Wages, return items and church months against a real database (migration
- * 0021), with the four paths of an input flow: forward, backtrack and
+ * 0022), with the four paths of an input flow: forward, backtrack and
  * revise, resume from what is stored, and re-entry after the year is
  * complete. Run with `pnpm test:db`.
  */
@@ -161,6 +161,14 @@ describe('income tax facts: isolation and the statement', () => {
     const settings = await db.taxYearSettings.findFirst({ where: { authWorkspaceId: ctx.workspaceId } });
     expect(row!.authTenantId).toBe(ctx.tenantId);
     expect(settings!.authTenantId).toBe(ctx.tenantId);
+  });
+
+  it('keeps the own-car answer of a commute through a change', async () => {
+    const ctx = await workspace();
+    const id = await saveReturnItem(db, ctx, null, { year: 2026, key: 'employment.commute', days: 200, distanceKm: 30, ownCar: true });
+    expect((await loadIncomeTax(db, ctx.workspaceId, 2026, noStatement, today)).returnItems[0].ownCar).toBe(true);
+    await saveReturnItem(db, ctx, id, { year: 2026, key: 'employment.commute', days: 200, distanceKm: 30, ownCar: false });
+    expect((await loadIncomeTax(db, ctx.workspaceId, 2026, noStatement, today)).returnItems[0].ownCar).toBe(false);
   });
 
   it('refuses invalid input before writing', async () => {

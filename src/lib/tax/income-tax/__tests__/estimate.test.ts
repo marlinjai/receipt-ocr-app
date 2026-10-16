@@ -338,6 +338,16 @@ describe('estimateIncomeTax: the rules one by one', () => {
     expect(figure(e, 'insurance.basic').cents).toBe(0);
   });
 
+  it('takes the 4 percent sick-pay reduction from the contributions as paid, not from the rounded-up euros', () => {
+    // 2,499.90: 4 % is 99.996, so 99 euros come off. From the rounded 2,500 it would be 100.
+    const wages = aggregateWages([entry(0, { grossCents: 3_000_000, healthEmployeeCents: 249_990 })], false);
+    const fromWage = estimateIncomeTax(plain({ wages }));
+    expect(figure(fromWage, 'insurance.basic').inputs.find((i) => i.label.startsWith('Kürzung'))!.cents).toBe(-9_900);
+    const selfPaid = estimateIncomeTax(plain({ wages: null, businessProfitCents: 3_000_000, returnItems: [item('insurance.health_self_paid_sick_pay', { amountCents: 249_990 })] }));
+    expect(figure(selfPaid, 'insurance.basic').inputs.find((i) => i.label.startsWith('Kürzung'))!.cents).toBe(-9_900);
+    expect(figure(selfPaid, 'insurance.basic').cents).toBe(250_000 - 9_900);
+  });
+
   it('measures the donation cap without a refund excess', () => {
     const e = estimateIncomeTax(
       plain({

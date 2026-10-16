@@ -1264,7 +1264,7 @@ disagree:
   annual wage statement (`month` 0) or the pay slip of one month (1 to 12) per year
   and employer label, with gross wage, wage tax, solidarity surcharge, church tax
   and the employee shares of pension, health, care and unemployment insurance plus
-  the employer's pension share (migration `0021_tax_income_estimate`, additive).
+  the employer's pension share (migration `0022_tax_income_estimate`, additive).
   The annual statement of an employer wins over its pay slips; until it exists the
   slips are added up, and in the running year the last slip can be projected to
   December (the screen switches between "projected" and "months entered"). A month
@@ -1310,7 +1310,7 @@ disagree:
   business, said so; church tax withheld without stated months, or liable months
   without a state, leaves church tax open (the total is shown without it); a
   negative taxable income says that loss carry-back and carry-forward are not
-  computed; a commute above 4,500 euros is not capped and says why.
+  computed; a commute is capped at 4,500 euros unless travelled by own or provided car.
 - **The headline tile of the running year shows the projected estimate** (wages
   projected to December, business as recorded so far) and says "Lohn hochgerechnet";
   the tab switches to the months entered.

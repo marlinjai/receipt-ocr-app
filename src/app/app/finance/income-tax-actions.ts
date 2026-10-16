@@ -5,11 +5,6 @@ import { ReceiptsAuthError } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
 import { IncomeTaxInputError } from '@/lib/tax/income-tax/input';
-
-/** A save for another year than the one on screen would answer with a view that does not show it: refused. */
-function sameYear(year: number, input: unknown): void {
-  if ((input as { year?: unknown } | null)?.year !== year) throw new IncomeTaxInputError('invalid_year');
-}
 import {
   IncomeTaxServiceError,
   deleteReturnItem,
@@ -53,6 +48,11 @@ function safeYear(year: unknown): number {
   const current = new Date().getFullYear();
   const oldest = Math.min(...RULE_YEARS) - 10;
   return Number.isInteger(n) && n >= oldest && n <= current + 1 ? n : current;
+}
+
+/** A save for another year than the one on screen would answer with a view that does not show it: refused. */
+function sameYear(year: number, input: unknown): void {
+  if ((input as { year?: unknown } | null)?.year !== safeYear(year)) throw new IncomeTaxInputError('invalid_year');
 }
 
 async function write(year: number, run: (ctx: IncomeTaxContext) => Promise<unknown>): Promise<Result<StatementView>> {

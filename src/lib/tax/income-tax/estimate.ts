@@ -233,8 +233,9 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
     const homeOfficeCents = countedDays * rules.homeOfficeDay.value.centsPerDay;
     const commuteRate = rules.commute.value;
     const commuteInputs: FigureInput[] = [];
-    // The 4,500 euro cap applies to every way of commuting except one's own
-    // car, so trips by car are added uncapped and the rest is capped.
+    // The 4,500 euro cap applies to every way of commuting except one's own car
+    // or a car provided for use (§ 9 Abs. 2 EStG), so those trips are added
+    // uncapped and the rest is capped. Rounded up once, on the total.
     let carCents = 0;
     let otherWaysCents = 0;
     for (const c of itemsOf(items, 'employment.commute')) {
@@ -244,17 +245,17 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
       if (c.ownCar) carCents += days * perDay;
       else otherWaysCents += days * perDay;
       commuteInputs.push({
-        label: `${c.note || 'Weg'}${c.ownCar ? ' (eigener Wagen)' : ''}`,
+        label: `${c.note || 'Weg'}${c.ownCar ? ' (eigener oder überlassener Wagen)' : ''}`,
         cents: days * perDay,
         text: `${days} Tage × ${km} km`,
         origin: 'return_item',
       });
     }
-    const cappedOtherWays = Math.min(ceilEuro(otherWaysCents), commuteRate.capCents);
-    if (cappedOtherWays < ceilEuro(otherWaysCents)) {
-      commuteInputs.push({ label: 'Höchstbetrag ohne eigenen Wagen', cents: commuteRate.capCents, origin: RULE_ORIGIN });
+    const cappedOtherWays = Math.min(otherWaysCents, commuteRate.capCents);
+    if (cappedOtherWays < otherWaysCents) {
+      commuteInputs.push({ label: 'Höchstbetrag ohne eigenen oder überlassenen Wagen', cents: commuteRate.capCents, origin: RULE_ORIGIN });
     }
-    const commuteCents = ceilEuro(carCents) + cappedOtherWays;
+    const commuteCents = ceilEuro(carCents + cappedOtherWays);
     const otherItems = itemsOf(items, 'employment.other');
     const otherCents = otherItems.reduce((s, i) => s + ceilEuro(i.amountCents ?? 0), 0);
     // Union dues: work-related costs like any other until 2025; from 2026 they
@@ -533,7 +534,7 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
   }
   const liableMonths = churchMonths ? churchMonths.filter(Boolean).length : null;
   if (churchMonths === null) {
-    missing.push({ code: 'church_months', text: 'Kirchensteuer wurde einbehalten, aber die Monate der Kirchensteuerpflicht sind nicht angegeben.' });
+    missing.push({ code: 'church_months', text: 'Kirchensteuer wurde einbehalten oder vorausgezahlt, aber die Monate der Kirchensteuerpflicht sind nicht angegeben.' });
   }
   let churchRateBp: number | null = null;
   if (liableMonths !== null && liableMonths > 0) {

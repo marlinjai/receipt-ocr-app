@@ -144,3 +144,18 @@ describe('settleReading: one receipt from its two readings', () => {
     expect(settle(text, answer({ category: 'Sonstige Ausgaben' })).flags).toContain('category_doubt');
   });
 });
+
+describe('a file that holds more than one document', () => {
+  const INVOICE = 'Example Shop\nInvoice date: 5 Jan 2026\nTotal 10,00 €';
+
+  it('is flagged where the model saw the pages and counts two', () => {
+    expect(settle(INVOICE, answer({ documents: 2 })).flags).toContain('several_documents');
+  });
+
+  it('is not flagged for one document, for no count, or for a model that read the text alone', () => {
+    expect(settle(INVOICE, answer({ documents: 1 })).flags).not.toContain('several_documents');
+    expect(settle(INVOICE, answer({ documents: null })).flags).not.toContain('several_documents');
+    expect(settle(INVOICE, answer({})).flags).not.toContain('several_documents');
+    expect(settle(INVOICE, answer({ documents: 2, sawPage: false })).flags).not.toContain('several_documents');
+  });
+});

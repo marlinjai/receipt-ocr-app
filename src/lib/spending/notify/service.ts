@@ -129,7 +129,8 @@ export async function retryFailedDeliveries(
   });
   const failed: typeof due = [];
   for (const n of due) {
-    const { count } = await db.spendingNotification.updateMany({ where: { id: n.id, authWorkspaceId: workspaceId, updatedAt: n.updatedAt }, data: { updatedAt: new Date() } });
+    // The claim is stamped with the run's own clock, so a second run on that clock sees it as just claimed.
+    const { count } = await db.spendingNotification.updateMany({ where: { id: n.id, authWorkspaceId: workspaceId, updatedAt: n.updatedAt }, data: { updatedAt: now } });
     if (count === 1) failed.push(n);
   }
   for (const n of failed) {

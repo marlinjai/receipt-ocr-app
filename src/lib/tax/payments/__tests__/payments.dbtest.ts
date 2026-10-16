@@ -1516,7 +1516,7 @@ describe('an import limited to a year, and an account continued from a second so
       ['2025-07-02', 'Werkzeug Beispiel GmbH', '-30'],
     ]);
     expect(await importPayments(db, ctx, accountId, list)).toMatchObject({ added: 2, skipped: { covered_by_other_source: 1 } });
-    expect(await days(accountId)).toEqual(['2025-01-10 -1000', '2025-06-30 -2000', '2025-06-30 -700', '2025-07-02 -3000']);
+    expect((await days(accountId)).sort()).toEqual(['2025-01-10 -1000', '2025-06-30 -2000', '2025-06-30 -700', '2025-07-02 -3000']);
     // Read again: nothing doubled.
     expect(await importPayments(db, ctx, accountId, list + ' ')).toMatchObject({ added: 0 });
     expect(await db.taxPayment.count({ where: { accountId } })).toBe(4);

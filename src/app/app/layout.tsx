@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { initializeReceiptsTable } from './actions';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import BrowserRulesImport from '@/components/BrowserRulesImport';
+import { PushRenewal, SignOutLink } from './spending/PushSession';
 import { workspaceLabel } from '@/lib/auth-workspace';
 
 export const dynamic = 'force-dynamic';
@@ -42,17 +43,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             Ausgaben
           </Link>
           <WorkspaceSwitcher session={session} />
-          <a
-            href={auth.logoutUrl()}
-            className="text-xs transition-colors hover:underline"
-            style={{ color: 'var(--muted)' }}
-            title={session.email}
-          >
+          <SignOutLink href={auth.logoutUrl()} title={session.email}>
             Sign out
-          </a>
+          </SignOutLink>
         </div>
       </header>
       <BrowserRulesImport />
+      <PushRenewal />
       {children}
     </>
   );

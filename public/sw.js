@@ -8,13 +8,15 @@
  * here can repeat that, because the only thing ever cached is one small,
  * self-contained page.
  *
- * It does exactly two things:
+ * It does exactly three things:
  *  1. When a page navigation fails because there is no connection, it answers
  *     with /offline.html, where a photo can still be taken into the capture queue.
  *  2. SHARE TARGET (Android only; iOS offers no share target to web apps): a
  *     file shared to the installed app arrives as a POST to /share-target. The
  *     worker puts it into the capture queue and sends the browser to /app,
  *     which processes it like a photo taken there.
+ *  3. PUSH: shows a notification the server pushed (a missing receipt, a
+ *     budget warning) and opens the page it points at when tapped.
  * Every other request goes to the network untouched.
  *
  * Kill switch: the app asks /api/client-config on load and unregisters this
@@ -129,4 +131,82 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Everything else (scripts, styles, API calls, uploads): not handled here.
+});
+
+// ── Push ─────────────────────────────────────────────────────────────────────
+// The payload is JSON from src/lib/spending/notify/push.ts: title, body, path
+// (a page of this app) and tag (one notification per subject on the phone).
+
+/** A page of this app for a path from a message; anything else (another site, a broken path) is the spending page. */
+function appUrl(raw) {
+  const fallback = new URL('/app/spending', self.location.origin).href;
+  if (typeof raw !== 'string' || !raw) return fallback;
+  try {
+    const url = new URL(raw, self.location.origin);
+    return url.origin === self.location.origin ? url.href : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+  const title = typeof data.title === 'string' && data.title ? data.title : 'Receipt OCR';
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: typeof data.body === 'string' ? data.body : '',
+      tag: typeof data.tag === 'string' ? data.tag : undefined,
+      icon: '/icons/notification-192.png',
+      badge: '/icons/notification-badge-96.png',
+      data: { url: appUrl(data.path) },
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = appUrl(event.notification.data && event.notification.data.url);
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window' }).then((windows) => {
+      const target = windows.find((client) => 'focus' in client && 'navigate' in client);
+      if (!target) return self.clients.openWindow(url);
+      // Focus first, while the tap still counts; a window that cannot be steered gets a new one instead.
+      return target
+        .focus()
+        .then((focused) => (focused || target).navigate(url))
+        .catch(() => self.clients.openWindow(url));
+    }),
+  );
+});
+
+// The browser gave this device a new push address on its own: the old one stops working. The
+// worker subscribes again when needed and tells the server old and new address (the session
+// cookie travels with this same-origin request), so push goes on. Should that fail, the page
+// renews what it can the next time it opens, and the server forgets a device that keeps failing.
+self.addEventListener('pushsubscriptionchange', (event) => {
+  const oldEndpoint = event.oldSubscription && event.oldSubscription.endpoint;
+  event.waitUntil(
+    self.registration.pushManager
+      .getSubscription()
+      .then((current) => {
+        if (current) return current;
+        const options = event.newSubscription ? null : event.oldSubscription && event.oldSubscription.options;
+        return event.newSubscription || (options ? self.registration.pushManager.subscribe(options) : null);
+      })
+      .then((subscription) => {
+        if (!subscription || !oldEndpoint || subscription.endpoint === oldEndpoint) return null;
+        return fetch('/api/spending/push-renew', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ oldEndpoint: oldEndpoint, subscription: subscription.toJSON() }),
+        });
+      })
+      .catch(() => null),
+  );
 });

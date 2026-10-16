@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createEmailChannel, emailConfigFromEnv, idempotencyKey, renderEmail } from '../notify/email';
 import { channelOrder, deliverThroughChannels, type NotificationChannel, type NotificationMessage } from '../notify/port';
-import { createPushChannel } from '../notify/push';
+import { createPushChannel, isPushServiceAddress, pushPayload, vapidConfigFromEnv } from '../notify/push';
 
 const message: NotificationMessage = { subjectKey: 'missing_receipt:p1', kind: 'missing_receipt', title: 'Beleg fehlt: Zyx', body: 'Für 29,99 € an Zyx <Handel> fehlt der Beleg.', path: '/app/spending?pruefen=p1' };
 const recipient = { workspaceId: 'ws-a', email: 'owner@example.com' };
@@ -17,8 +17,8 @@ describe('channelOrder', () => {
 
 describe('deliverThroughChannels', () => {
   it('falls back to e-mail when push is not possible', async () => {
-    const result = await deliverThroughChannels([createPushChannel(), channel('email', async () => ({ status: 'sent' }))], 'push', recipient, message);
-    expect(result).toEqual({ channel: 'email', attempts: ['push: unavailable (push is not set up yet)', 'email: sent'], failed: false });
+    const result = await deliverThroughChannels([createPushChannel(null, null, null), channel('email', async () => ({ status: 'sent' }))], 'push', recipient, message);
+    expect(result).toEqual({ channel: 'email', attempts: ['push: unavailable (push is not configured on the server)', 'email: sent'], failed: false });
   });
 
   it('falls back to e-mail when push fails or throws, and records the failure', async () => {
@@ -31,11 +31,11 @@ describe('deliverThroughChannels', () => {
   });
 
   it('leaves it in the app when no channel delivers, and says whether that was a failure', async () => {
-    const unavailable = await deliverThroughChannels([createPushChannel(), createEmailChannel(null)], 'push', recipient, message);
+    const unavailable = await deliverThroughChannels([createPushChannel(null, null, null), createEmailChannel(null)], 'push', recipient, message);
     expect(unavailable).toMatchObject({ channel: null, failed: false });
     const failed = await deliverThroughChannels([channel('email', async () => ({ status: 'failed', detail: 'mail service answered 500' }))], 'email', recipient, message);
     expect(failed).toMatchObject({ channel: null, failed: true });
-    expect(await deliverThroughChannels([createPushChannel()], 'in_app', recipient, message)).toEqual({ channel: null, attempts: [], failed: false });
+    expect(await deliverThroughChannels([createPushChannel(null, null, null)], 'in_app', recipient, message)).toEqual({ channel: null, attempts: [], failed: false });
   });
 });
 
@@ -75,5 +75,83 @@ describe('e-mail channel', () => {
 
   it('renders the body as text and as escaped markup', () => {
     expect(renderEmail(message, 'https://x').subject).toBe('Beleg fehlt: Zyx');
+  });
+});
+
+describe('push channel', () => {
+  const vapid = { publicKey: 'pub', privateKey: 'priv', subject: 'mailto:owner@example.com' };
+  const store = (devices: Array<{ id: string; endpoint: string }>) => {
+    const calls: string[] = [];
+    return {
+      calls,
+      store: {
+        list: async () => devices.map((d) => ({ ...d, p256dh: 'p', auth: 'a' })),
+        remove: async (id: string) => void calls.push(`remove:${id}`),
+        succeeded: async (id: string) => void calls.push(`ok:${id}`),
+        failed: async (id: string) => void calls.push(`failed:${id}`),
+      },
+    };
+  };
+
+  it('is unavailable without the server keys or without any device', async () => {
+    expect(await createPushChannel(null, store([]).store, vi.fn()).send(recipient, message)).toMatchObject({ status: 'unavailable' });
+    expect(await createPushChannel(vapid, store([]).store, vi.fn()).send(recipient, message)).toEqual({ status: 'unavailable', detail: 'no device has push switched on' });
+  });
+
+  it('sends the title, text, page and subject to every device, signed and with a day to live', async () => {
+    const send = vi.fn(async () => ({ statusCode: 201 }));
+    const s = store([{ id: 'd1', endpoint: 'https://push.example/1' }, { id: 'd2', endpoint: 'https://push.example/2' }]);
+    expect(await createPushChannel(vapid, s.store, send).send(recipient, message)).toEqual({ status: 'sent' });
+    expect(send).toHaveBeenCalledTimes(2);
+    const [sub, payload, options] = send.mock.calls[0] as unknown as [{ endpoint: string }, string, { vapidDetails: unknown; TTL: number }];
+    expect(sub.endpoint).toBe('https://push.example/1');
+    expect(JSON.parse(payload)).toEqual({ title: message.title, body: message.body, path: message.path, tag: message.subjectKey });
+    expect(pushPayload(message)).toBe(payload);
+    expect(options).toMatchObject({ vapidDetails: vapid, TTL: 86_400 });
+    expect(s.calls).toEqual(['ok:d1', 'ok:d2']);
+  });
+
+  it('forgets a device the push service says is gone, and is then unavailable, not failed', async () => {
+    const send = vi.fn(async () => {
+      throw Object.assign(new Error('gone'), { statusCode: 410 });
+    });
+    const s = store([{ id: 'd1', endpoint: 'https://push.example/1' }]);
+    expect(await createPushChannel(vapid, s.store, send).send(recipient, message)).toMatchObject({ status: 'unavailable' });
+    expect(s.calls).toEqual(['remove:d1']);
+  });
+
+  it('counts a failure and reports it, and is sent when one device of two got it', async () => {
+    const send = vi.fn(async (sub: { endpoint: string }) => {
+      if (sub.endpoint.endsWith('/1')) throw Object.assign(new Error('boom'), { statusCode: 500 });
+      return { statusCode: 201 };
+    });
+    const s = store([{ id: 'd1', endpoint: 'https://push.example/1' }]);
+    expect(await createPushChannel(vapid, s.store, send).send(recipient, message)).toEqual({ status: 'failed', detail: 'push service answered 500' });
+    expect(s.calls).toEqual(['failed:d1']);
+    const two = store([{ id: 'd1', endpoint: 'https://push.example/1' }, { id: 'd2', endpoint: 'https://push.example/2' }]);
+    expect(await createPushChannel(vapid, two.store, send).send(recipient, message)).toEqual({ status: 'sent' });
+  });
+
+  it('keeps the delivery when the bookkeeping afterwards fails', async () => {
+    const send = vi.fn(async () => ({ statusCode: 201 }));
+    const s = store([{ id: 'd1', endpoint: 'https://push.example/1' }]);
+    s.store.succeeded = async () => {
+      throw new Error('database gone');
+    };
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await createPushChannel(vapid, s.store, send).send(recipient, message)).toEqual({ status: 'sent' });
+    err.mockRestore();
+  });
+
+  it('accepts only the addresses of the known push services', () => {
+    for (const ok of ['https://fcm.googleapis.com/fcm/send/abc', 'https://web.push.apple.com/QAbc', 'https://updates.push.services.mozilla.com/wpush/v2/x', 'https://db5p.notify.windows.com/w/?token=x']) expect(isPushServiceAddress(ok)).toBe(true);
+    for (const bad of ['http://fcm.googleapis.com/x', 'https://fcm.googleapis.com.evil.example/x', 'https://localhost/x', 'https://10.0.0.1/x', 'https://fcm.googleapis.com:8443/x', 'https://user:pw@fcm.googleapis.com/x', 'not a url', 'https://push.apple.com.evil.example/']) {
+      expect(isPushServiceAddress(bad)).toBe(false);
+    }
+  });
+
+  it('reads its keys from the server settings only when all three are there', () => {
+    expect(vapidConfigFromEnv({ VAPID_PUBLIC_KEY: 'a', VAPID_PRIVATE_KEY: 'b' })).toBeNull();
+    expect(vapidConfigFromEnv({ VAPID_PUBLIC_KEY: 'a', VAPID_PRIVATE_KEY: 'b', VAPID_SUBJECT: 'mailto:x@example.com' })).toEqual({ publicKey: 'a', privateKey: 'b', subject: 'mailto:x@example.com' });
   });
 });

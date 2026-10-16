@@ -6,7 +6,7 @@ import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '
 import { prisma } from '@/lib/prisma';
 import { LoopServiceError, answerNoReceipt, confirmCandidate, loadLoopOverview, withdrawNoReceipt, type LoopOverview } from '@/lib/spending/loop-service';
 import { runSpendingChecks, type ChecksRun } from '@/lib/spending/checks';
-import { NotifyServiceError, getNotifySettings, listUnreadNotifications, markNotificationRead, saveNotifySettings, type NotificationView, type NotifySettings, type NotifyContext } from '@/lib/spending/notify/service';
+import { NotifyServiceError, devicePushState, forgetDeviceEverywhere, validVapidConfig, getNotifySettings, pushDeviceCount, removePushSubscription, savePushSubscription, type PushContext, listUnreadNotifications, markNotificationRead, saveNotifySettings, type NotificationView, type NotifySettings, type NotifyContext } from '@/lib/spending/notify/service';
 import { berlinToday } from '@/lib/spending/period';
 import { serverMailbox } from '@/lib/spending/mailbox/gmail';
 import { MailCandidateError, dismissMailCandidate } from '@/lib/spending/mailbox/service';
@@ -33,6 +33,10 @@ export interface ChecksView {
   workspaceId: string;
   /** The expenses mailbox for this company: searched ('on'), not set up ('off'), or another company's ('other_company'). */
   mailbox: 'on' | 'off' | 'other_company';
+  /** The server's public push key, for a device to switch push on; null when push is not set up on the server. */
+  pushPublicKey: string | null;
+  /** How many devices of this company have push switched on. */
+  pushDevices: number;
   /** Set after "check now": what the run did. */
   lastRun: ChecksRun | null;
 }
@@ -65,7 +69,17 @@ async function view(workspaceId: string, canWrite: boolean, lastRun: ChecksView[
   ]);
   const status = serverMailbox(workspaceId).status();
   const mailbox = status.configured ? 'on' : status.reason === 'other_company' ? 'other_company' : 'off';
-  return { loop, notifications, settings, canWrite, lastRun, workspaceId, mailbox };
+  return {
+    loop,
+    notifications,
+    settings,
+    canWrite,
+    lastRun,
+    workspaceId,
+    mailbox,
+    pushPublicKey: validVapidConfig()?.publicKey ?? null,
+    pushDevices: canWrite ? await pushDeviceCount(prisma, workspaceId) : 0,
+  };
 }
 
 export async function getReceiptChecks(): Promise<ChecksResult<ChecksView>> {
@@ -163,6 +177,53 @@ export async function linkTakenOver(paymentId: unknown, rowId: unknown): Promise
     const ctx = await writeContext();
     await linkReceiptToPayment(prisma, ctx, String(paymentId ?? ''), String(rowId ?? ''));
     return { ok: true, value: await view(ctx.workspaceId, true) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+async function pushContext(): Promise<PushContext> {
+  const session = await auth.requireAction('receipts.row.write');
+  const workspaceId = sessionWorkspaceId(session);
+  return { workspaceId, tenantId: requireSessionTenantId(session, workspaceId), userId: session.userId };
+}
+
+/** This device switched push on (or is renewing it): remember its subscription for the active company and this person. */
+export async function enablePush(subscription: unknown): Promise<ChecksResult<ChecksView>> {
+  try {
+    const ctx = await pushContext();
+    await savePushSubscription(prisma, ctx, subscription);
+    return { ok: true, value: await view(ctx.workspaceId, true) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** This device switched push off. */
+export async function disablePush(endpoint: unknown): Promise<ChecksResult<ChecksView>> {
+  try {
+    const ctx = await writeContext();
+    await removePushSubscription(prisma, ctx, endpoint);
+    return { ok: true, value: await view(ctx.workspaceId, true) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** What the server holds for this device: on for the active company, and whether other companies of this person still use it. */
+export async function pushStateOfDevice(endpoint: unknown): Promise<ChecksResult<{ here: boolean; elsewhere: boolean }>> {
+  try {
+    return { ok: true, value: await devicePushState(prisma, await pushContext(), endpoint) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Signing out: this device gets nothing more from any company of this person. Needs only the session, not the write permission. */
+export async function forgetPushEverywhere(endpoint: unknown): Promise<ChecksResult<{ forgotten: number }>> {
+  try {
+    const session = await requireReceiptsSession();
+    return { ok: true, value: { forgotten: await forgetDeviceEverywhere(prisma, session.userId, endpoint) } };
   } catch (e) {
     return failure(e);
   }

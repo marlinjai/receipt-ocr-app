@@ -18,6 +18,10 @@ const listUnreadNotifications = vi.fn();
 const getNotifySettings = vi.fn();
 const saveNotifySettings = vi.fn();
 const markNotificationRead = vi.fn();
+const savePushSubscription = vi.fn();
+const removePushSubscription = vi.fn();
+const pushDeviceCount = vi.fn();
+const devicePushState = vi.fn();
 
 vi.mock('@/lib/auth', () => ({ auth: { requireAction: (...a: unknown[]) => requireAction(...a) } }));
 vi.mock('@/lib/auth-guards', () => {
@@ -58,6 +62,11 @@ vi.mock('@/lib/spending/notify/service', () => {
     getNotifySettings: (...a: unknown[]) => getNotifySettings(...a),
     saveNotifySettings: (...a: unknown[]) => saveNotifySettings(...a),
     markNotificationRead: (...a: unknown[]) => markNotificationRead(...a),
+    savePushSubscription: (...a: unknown[]) => savePushSubscription(...a),
+    removePushSubscription: (...a: unknown[]) => removePushSubscription(...a),
+    pushDeviceCount: (...a: unknown[]) => pushDeviceCount(...a),
+    devicePushState: (...a: unknown[]) => devicePushState(...a),
+    validVapidConfig: () => null,
   };
 });
 vi.mock('@/lib/tax/payments/service', () => {
@@ -75,14 +84,15 @@ vi.mock('@/lib/tax/payments/service', () => {
 import { ReceiptsAuthError } from '@/lib/auth-guards';
 import { LoopServiceError } from '@/lib/spending/loop-service';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
-import { checkNow, confirmReceipt, getReceiptChecks, readNotification, saveNotificationSettings, sayNoReceipt, takeBackNoReceipt } from './loop-actions';
+import { checkNow, confirmReceipt, disablePush, enablePush, pushStateOfDevice, getReceiptChecks, readNotification, saveNotificationSettings, sayNoReceipt, takeBackNoReceipt } from './loop-actions';
 
 const WS = { id: 'ws-a', slug: 'beispiel', role: 'member', tenantId: 't-a' };
-const SESSION = { memberships: [WS], activeWorkspace: WS };
+const SESSION = { memberships: [WS], activeWorkspace: WS, userId: 'user-a' };
 const CTX = { workspaceId: 'ws-a', tenantId: 't-a' };
 
 beforeEach(() => {
-  for (const f of [requireAction, requireReceiptsSession, loadLoopOverview, runReceiptLoop, runSpendingChecks, confirmCandidate, answerNoReceipt, withdrawNoReceipt, listUnreadNotifications, getNotifySettings, saveNotifySettings, markNotificationRead]) f.mockReset();
+  for (const f of [requireAction, requireReceiptsSession, loadLoopOverview, runReceiptLoop, runSpendingChecks, confirmCandidate, answerNoReceipt, withdrawNoReceipt, listUnreadNotifications, getNotifySettings, saveNotifySettings, markNotificationRead, savePushSubscription, removePushSubscription, pushDeviceCount]) f.mockReset();
+  pushDeviceCount.mockResolvedValue(0);
   loadLoopOverview.mockResolvedValue({ open: [], answered: [], counts: {} });
   listUnreadNotifications.mockResolvedValue([]);
   getNotifySettings.mockResolvedValue({ channel: 'push', notifyEmail: null });
@@ -147,5 +157,37 @@ describe('writes', () => {
     expect(await confirmReceipt('p1', 'r1')).toEqual({ ok: false, error: 'invalid_input', detail: 'receipt_already_paid:100:90' });
     answerNoReceipt.mockRejectedValueOnce(new LoopServiceError('payment_not_found'));
     expect(await sayNoReceipt('p9', 'x')).toEqual({ ok: false, error: 'not_found', detail: 'payment_not_found' });
+  });
+});
+
+describe('push actions', () => {
+  it('store and forget a device for the active company only, with the write permission', async () => {
+    requireAction.mockRejectedValue(new ReceiptsAuthError(403));
+    expect(await enablePush({ endpoint: 'https://push.example/1' })).toEqual({ ok: false, error: 'forbidden' });
+    expect(savePushSubscription).not.toHaveBeenCalled();
+    requireAction.mockResolvedValue(SESSION);
+    pushDeviceCount.mockResolvedValue(1);
+    expect(await enablePush({ endpoint: 'https://push.example/1' })).toMatchObject({ ok: true, value: { pushDevices: 1 } });
+    expect(savePushSubscription).toHaveBeenCalledWith({ marker: 'prisma' }, { ...CTX, userId: 'user-a' }, { endpoint: 'https://push.example/1' });
+    await disablePush('https://push.example/1');
+    expect(removePushSubscription).toHaveBeenCalledWith({ marker: 'prisma' }, CTX, 'https://push.example/1');
+  });
+
+  it('refuses switching off without the write permission, and asks about a device for this person', async () => {
+    requireAction.mockRejectedValue(new ReceiptsAuthError(403));
+    expect(await disablePush('https://push.example/1')).toEqual({ ok: false, error: 'forbidden' });
+    expect(removePushSubscription).not.toHaveBeenCalled();
+    requireAction.mockResolvedValue(SESSION);
+    devicePushState.mockResolvedValue({ here: true, elsewhere: false });
+    expect(await pushStateOfDevice('https://push.example/1')).toEqual({ ok: true, value: { here: true, elsewhere: false } });
+    expect(devicePushState).toHaveBeenCalledWith({ marker: 'prisma' }, { ...CTX, userId: 'user-a' }, 'https://push.example/1');
+  });
+
+  it('shows how many devices have push only to people who may write', async () => {
+    requireReceiptsSession.mockResolvedValue(SESSION);
+    requireAction.mockRejectedValue(new ReceiptsAuthError(403));
+    pushDeviceCount.mockResolvedValue(3);
+    expect(await getReceiptChecks()).toMatchObject({ ok: true, value: { pushDevices: 0 } });
+    expect(pushDeviceCount).not.toHaveBeenCalled();
   });
 });

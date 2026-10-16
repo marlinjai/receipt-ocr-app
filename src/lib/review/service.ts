@@ -289,8 +289,20 @@ export async function applyNewReading(
   // that still says euros would be a wrong amount. Whoever takes an amount
   // takes the currency it was read in with it.
   if (AMOUNT_FIELDS.some((f) => wanted.has(f))) wanted.add('currency');
+  const linesColumn = firstColumnIdByName(table.columns).get(MEAL_COLUMNS.taxLines);
+  const storedLines = linesColumn ? parseTaxLines(row.cells[linesColumn]) : null;
+  const rateOffer = reading.changes.find((c) => c.field === 'taxRate');
+  // Tax lines a person typed in the meal form are their answer: a rate the
+  // reading brings without lines of its own does not override them.
+  if (snapshot.isMeal && reading.taxLines.length === 0 && rateOffer && storedLines?.length && orderedRates(storedLines)[0] !== Number(rateOffer.to)) {
+    wanted.delete('taxRate');
+  }
   const take = reading.changes.filter((c) => wanted.has(c.field));
   if (take.length === 0) return [];
+  // A total or a net taken brings the printed tax lines with it (below), and
+  // those bring the rate read with them: a rate left behind would name
+  // another first rate than the lines do.
+  if (rateOffer && !wanted.has('taxRate') && reading.taxLines.length > 0 && take.some((c) => c.field === 'gross' || c.field === 'net')) take.push(rateOffer);
 
   const byName = firstColumnIdByName(table.columns);
   const columnId = (name: string): string => {
@@ -330,13 +342,11 @@ export async function applyNewReading(
   const rateTaken = rateChange ? Number(rateChange.to) : undefined;
   if (amountsTaken && reading.taxLines.length > 0) {
     cells[columnId(MEAL_COLUMNS.taxLines)] = serializeTaxLines(reading.taxLines);
-  } else if (rateTaken !== undefined) {
-    // A rate taken without lines of its own: stored lines that start with
-    // another rate contradict it and go, so the rates text and the number
-    // column name the same first rate (the rule of settleReading).
-    const linesId = firstColumnIdByName(table.columns).get(MEAL_COLUMNS.taxLines);
-    const storedLines = linesId ? parseTaxLines(row.cells[linesId]) : null;
-    if (linesId && storedLines?.length && orderedRates(storedLines)[0] !== rateTaken) cells[linesId] = serializeTaxLines(null);
+  } else if (rateTaken !== undefined && linesColumn && storedLines?.length && orderedRates(storedLines)[0] !== rateTaken) {
+    // A rate taken without lines of its own on a receipt that is no meal: the
+    // stored lines are the printed groups of an older reading and contradict
+    // it, so they go and the two rate columns name the same first rate.
+    cells[linesColumn] = serializeTaxLines(null);
   }
   // A vendor or a total taken from the proposal is said by the name too, unless the proposal names the receipt itself.
   const named = await withFollowingName(table.adapter, table.columns, cells, row.cells);

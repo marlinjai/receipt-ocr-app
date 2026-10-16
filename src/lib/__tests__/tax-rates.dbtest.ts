@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import * as F from '@/lib/extraction/__tests__/fixtures';
 import { contactStore, saveMealDetails } from '@/lib/meals/service';
 import { serializeTaxLines } from '@/lib/meals/rules';
@@ -207,5 +207,79 @@ describe('one order of rates, also for receipts stored before it', () => {
     await applyNewReading(db, ctx, rowId, ['net', 'taxRate']);
     expect(await valueOf(ws, rowId, 'Tax Rate')).toBe(19);
     expect(await ratesOf(ws, rowId)).toBe('19 %');
+  });
+});
+
+describe('the one order, after the third review', () => {
+  async function valueOf(ws: TestWorkspace, rowId: string, name: string): Promise<unknown> {
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    return (await ws.adapter.getRow(rowId))!.cells[columns.find((c) => c.name === name)!.id] ?? null;
+  }
+  const asOldTable = async (ws: TestWorkspace) => {
+    const ratesColumn = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.name === 'Tax Rates')!;
+    await ws.adapter.updateColumn(ratesColumn.id, { config: { taxRatesFilled: true } });
+    return ratesColumn;
+  };
+
+  it('the pass also sets the number where an old reading put the rate of the largest single line', async () => {
+    const ws = await createWorkspace();
+    // Two 7 percent lines (53.50 and 42.80, 96.30 in all) and one 19 percent line (95.20): the old reader took 19.
+    const lines = serializeTaxLines([{ rate: 7, net: 50, tax: 3.5 }, { rate: 7, net: 40, tax: 2.8 }, { rate: 19, net: 80, tax: 15.2 }]);
+    const rowId = await ws.addReceipt({ Name: 'Einkauf', Gross: 191.5, 'Tax Rate': 19, 'Tax Lines': lines, 'Tax Rates': '7 % + 19 %' });
+    // A rate a person typed that is neither the old pick nor the old text's first rate stays.
+    const typed = await ws.addReceipt({ Name: 'Einkauf', Gross: 191.5, 'Tax Rate': 0, 'Tax Lines': lines, 'Tax Rates': '7 % + 19 %' });
+    await asOldTable(ws);
+    await ensureReceiptsTable(ws.adapter, ws.workspaceId, { db, tenantId: ws.tenantId });
+    expect(await valueOf(ws, rowId, 'Tax Rate')).toBe(7);
+    expect(await ratesOf(ws, rowId)).toBe('7 % + 19 %');
+    expect(await valueOf(ws, typed, 'Tax Rate')).toBe(0);
+  });
+
+  it('an interrupted pass is taken up again and sets its marker only after a complete run', async () => {
+    const ws = await createWorkspace();
+    const lines = serializeTaxLines([{ rate: 7, net: 100, tax: 7 }, { rate: 19, net: 99, tax: 18.81 }]);
+    const first = await ws.addReceipt(plainMealReceipt({ 'Tax Rate': 7, 'Tax Lines': lines, 'Tax Rates': '7 % + 19 %' }));
+    const second = await ws.addReceipt(plainMealReceipt({ 'Tax Rate': 7, 'Tax Lines': lines, 'Tax Rates': '7 % + 19 %' }));
+    const ratesColumn = await asOldTable(ws);
+    // Every look at the clock is a minute later than the one before: the pass runs out of its budget before the first row.
+    const real = Date.now;
+    let calls = 0;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => real() + ++calls * 60_000);
+    try {
+      await ensureReceiptsTable(ws.adapter, ws.workspaceId, { db, tenantId: ws.tenantId });
+    } finally {
+      spy.mockRestore();
+    }
+    const config = (await ws.adapter.getColumns(ws.tableId)).find((c) => c.id === ratesColumn.id)!.config as Record<string, unknown>;
+    expect(config.taxRatesOrdered).toBeUndefined();
+    // The next page load finishes it.
+    await ensureReceiptsTable(ws.adapter, ws.workspaceId, { db, tenantId: ws.tenantId });
+    expect(await ratesOf(ws, first)).toBe('19 % + 7 %');
+    expect(await ratesOf(ws, second)).toBe('19 % + 7 %');
+    expect(await valueOf(ws, first, 'Tax Rate')).toBe(19);
+  });
+
+  it('taking the total in the review list takes the rate read with it, so the two columns agree', async () => {
+    const ws = await createWorkspace();
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    const rowId = await ws.addReceipt({ Name: 'Einkauf', Vendor: 'Fantastic Foodbar', 'OCR Text': F.FOODBAR_TWO_RATES, Date: '2025-03-21', Gross: 30, Net: 25.21, 'Tax Rate': 19, Category: 'Bürobedarf' });
+    const written = await applyNewReading(db, ctx, rowId, ['gross']);
+    expect(written).toEqual(expect.arrayContaining(['gross', 'taxRate']));
+    const rate = await valueOf(ws, rowId, 'Tax Rate');
+    expect(String(await ratesOf(ws, rowId)).startsWith(`${rate} %`)).toBe(true);
+  });
+
+  it('a meal\'s typed lines stay when the reading brings a rate without lines; the rate is then not written', async () => {
+    const ws = await createWorkspace();
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    // Net, tax and total stated next to their labels at a rate that is no German one: a rate, no printed groups.
+    const text = 'Musterladen\nNetto 100,00\nMwSt 8,00\nSumme 108,00';
+    const typedLines = serializeTaxLines([{ rate: 7, net: 100.93, tax: 7.07 }]);
+    const rowId = await ws.addReceipt(plainMealReceipt({ 'OCR Text': text, Gross: 108, Net: 100.93, 'Tax Rate': 7, 'Tax Lines': typedLines }));
+    await applyNewReading(db, ctx, rowId, ['net', 'taxRate']);
+    expect(await valueOf(ws, rowId, 'Tax Lines')).toBe(typedLines);
+    expect(await valueOf(ws, rowId, 'Tax Rate')).toBe(7);
+    // The net the reading proves is taken; the rate and the lines are the person's.
+    expect(await valueOf(ws, rowId, 'Net')).toBe(100);
   });
 });

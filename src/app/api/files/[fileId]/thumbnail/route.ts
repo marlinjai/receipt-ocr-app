@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { servedFileHeaders } from '@/lib/files/served-file-headers';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * GET /api/files/:fileId/thumbnail
@@ -12,6 +15,10 @@ export async function GET(
 ) {
   // Extract the fileId so we can embed it in the SVG's data attribute
   const { fileId } = await params;
+  // The id is written into the picture: only a real id, never text from the address that could break out of it.
+  if (!UUID_RE.test(fileId)) {
+    return NextResponse.json({ error: 'invalid file id' }, { status: 400 });
+  }
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="260" viewBox="0 0 200 260" data-file-id="${fileId}">
   <defs>
@@ -37,6 +44,8 @@ export async function GET(
     headers: {
       'Content-Type': 'image/svg+xml',
       'Cache-Control': 'public, max-age=86400',
+      // An SVG opened on its own could run script; this one has none, and the sandbox keeps it that way.
+      ...servedFileHeaders('image/svg+xml'),
     },
   });
 }

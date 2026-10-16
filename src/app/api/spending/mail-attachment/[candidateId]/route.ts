@@ -5,6 +5,7 @@ import { serverMailbox } from '@/lib/spending/mailbox/gmail';
 import { MailboxError } from '@/lib/spending/mailbox/port';
 import { findMailCandidate } from '@/lib/spending/mailbox/service';
 import { DOWNLOAD_STATUS, contentDisposition } from '@/lib/spending/mailbox/download';
+import { servedFileHeaders } from '@/lib/files/served-file-headers';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,8 +37,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ candida
       headers: {
         'Content-Type': file.mimeType,
         'Content-Disposition': contentDisposition(file.fileName),
-        'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'private, no-store',
+        // A mailed-in attachment is untrusted: never sniffed, and sandboxed unless it is a PDF or a picture.
+        ...servedFileHeaders(file.mimeType),
       },
     });
   } catch (e) {

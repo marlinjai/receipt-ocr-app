@@ -265,9 +265,15 @@ async function linkByReference(db: Prisma.TransactionClient, ctx: PaymentContext
   return proposals.length;
 }
 
-function invoiceOpenCents(invoice: { grossCents: number; payments: Array<{ cents: number }>; paymentLinks: Array<{ cents: number }> }): number {
+/**
+ * What an invoice still has open for a payment: its amount less what was typed
+ * in, what payments are linked, and a remainder booked out as never to be paid
+ * (a fee the client kept). A booked-out remainder is never offered or linked.
+ */
+function invoiceOpenCents(invoice: { grossCents: number; writtenOffCents: number; writtenOffOn: string | null; payments: Array<{ cents: number }>; paymentLinks: Array<{ cents: number }> }): number {
   const paid = invoice.payments.reduce((s, p) => s + p.cents, 0) + invoice.paymentLinks.reduce((s, l) => s + l.cents, 0);
-  return Math.max(0, invoice.grossCents - paid);
+  const writtenOff = invoice.writtenOffOn !== null ? invoice.writtenOffCents : 0;
+  return Math.max(0, invoice.grossCents - paid - writtenOff);
 }
 
 export function effectiveKind(payment: { sourceKind: string; kindOverride: string | null }): PaymentKind {

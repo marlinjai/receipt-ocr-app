@@ -1376,5 +1376,25 @@ describe('the tab asks less after a real import: money in, a private account, a 
     const desk = (await findPayments(db, ws.workspaceId, { year: 2026, text: 'Schreibtisch' })).payments[0];
     await setPaymentKind(db, ctx, desk.id, 'fee');
     expect((await findPayments(db, ws.workspaceId, { year: 2026, text: 'Schreibtisch' })).total).toBe(0);
+
+describe('an invoice whose remainder is booked out as never to be paid', () => {
+  it('forward: a transfer of the invoice less the fee the client kept links on its number; the booked-out rest is never offered', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    const base = { number: 'R-2026-090', issueDate: '2026-02-01', grossCents: 50_000, treatment: 'small_business', payments: [] };
+    const invoiceId = await saveInvoice(db, ctx, null, { ...base, writtenOffCents: 2_000, writtenOffOn: '2026-02-20' });
+    const result = await importPayments(db, ctx, accountId, file(line('2026-02-15', 'Kunde Beispiel', 'Rechnung R-2026-090', '480', 'Credit Transfer')));
+    expect(result.autoLinked).toBe(1);
+    const payment = (await db.taxPayment.findFirst({ where: { accountId } }))!;
+    // A second payment for the same invoice finds nothing open.
+    await importPayments(db, ctx, accountId, file(line('2026-02-25', 'Kunde Beispiel', 'Nachzahlung', '20', 'Credit Transfer')));
+    const second = (await db.taxPayment.findFirst({ where: { accountId, amountCents: 2_000 } }))!;
+    expect(await code(linkPayment(db, ctx, { paymentId: second.id, invoiceId }, rowCheck(ctx)))).toBe('target_fully_paid');
+    expect((await loadStatement(db, ws.workspaceId, 2026)).payments.invoiceTargets).toEqual([]);
+
+    // Change an earlier input: taking the write-off back opens the 20.00 again, and the late payment links.
+    await saveInvoice(db, ctx, invoiceId, { ...base, writtenOffCents: 0, writtenOffOn: null });
+    await linkPayment(db, ctx, { paymentId: second.id, invoiceId }, rowCheck(ctx));
+    expect(await db.taxPaymentLink.count({ where: { invoiceId } })).toBe(2);
+    expect(payment.amountCents).toBe(48_000);
   });
 });

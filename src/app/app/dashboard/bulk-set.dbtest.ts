@@ -21,6 +21,7 @@ vi.mock('@/lib/auth', () => ({
 import { getRow, setFieldOnRows } from './actions';
 import { createGroup } from '@/lib/groups/service';
 import { BULK_SET_PART } from './bulk-set';
+import { loadStatement, saveItemDecision } from '@/lib/tax/service';
 
 let ws: TestWorkspace;
 let assignmentId: string;
@@ -55,9 +56,18 @@ const stored = async (id: string) => (await getRow(id))?.cells[assignmentId] ?? 
 describe('"Set field" on a selection', () => {
   it('sets every row of a full part and reads each back', async () => {
     const ids = await receipts(BULK_SET_PART, 'full');
-    const outcome = await setFieldOnRows(ids, assignmentId, business);
-    expect(outcome.failed).toEqual([]);
-    expect(outcome.done.sort()).toEqual([...ids].sort());
+    // The assignment goes through the finance decision row by row, so a slow database may hand rows back in
+    // `left` when the time budget runs out; the bar sends them again, and so does this test, until none is left.
+    const done: string[] = [];
+    let pending = ids;
+    for (let round = 0; pending.length > 0 && round < BULK_SET_PART; round++) {
+      const outcome = await setFieldOnRows(pending, assignmentId, business);
+      expect(outcome.failed).toEqual([]);
+      done.push(...outcome.done);
+      pending = outcome.left ?? [];
+    }
+    expect(pending).toEqual([]);
+    expect(done.sort()).toEqual([...ids].sort());
     for (const id of ids) expect(await stored(id)).toBe(business);
     // The adapter finds a row by looking through every table of the database, which a long-used test database
     // has many of: a generous limit, so the time of that lookup does not fail the test.
@@ -139,6 +149,36 @@ describe('"Set field" on a selection', () => {
     }
     for (const id of ids.slice(1)) expect((await getRow(id))?.cells[currencyId]).toBe(eur);
     expect((await getRow(ids[0]))?.cells[currencyId]).toBe(usd);
+  });
+
+  it('on a receipt the finance area decided, the set assignment becomes its decision, so table and finance area agree', async () => {
+    const [decided, open] = await receipts(2, 'decided');
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    await saveItemDecision(db, ctx, decided, { allocations: [{ purpose: 'business', shareBp: 5000 }], formLineKey: 'euer.work_equipment' });
+    const outcome = await setFieldOnRows([decided, open], assignmentId, personal);
+    expect({ ...outcome, done: [...outcome.done].sort() }).toEqual({ done: [decided, open].sort(), failed: [], left: [] });
+    const items = (await loadStatement(db, ws.workspaceId, 2025)).items;
+    expect(items.find((i) => i.rowId === decided)).toMatchObject({ hasDecision: true, allocations: [{ purpose: 'private', shareBp: 10000 }] });
+    // Without a decision the cell is the source and is simply set.
+    expect(items.find((i) => i.rowId === open)).toMatchObject({ hasDecision: false, allocations: [{ purpose: 'private', shareBp: 10000 }] });
+  });
+
+  it('"Set field" on Category stays one statement and brings receipts that move under a vendor rule in step', async () => {
+    const [ruled, plain] = await receipts(2, 'category-rule');
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    const categoryId = columns.find((c) => c.name === 'Category')!.id;
+    const meals = (await ws.adapter.getSelectOptions(categoryId)).find((o) => o.name === 'Bewirtung')!.id;
+    const software = (await ws.adapter.getSelectOptions(categoryId)).find((o) => o.name === 'Software & Lizenzen')!.id;
+    // A decided receipt: the cells show its decision.
+    await saveItemDecision(db, ctx, ruled, { allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.work_equipment' });
+    expect(await stored(ruled)).toBe(business);
+    // As a meal the register judges it from its own cell again: the cell gets back what it held before the decision.
+    expect((await setFieldOnRows([ruled, plain], categoryId, meals)).failed).toEqual([]);
+    expect(await stored(ruled)).toBe(personal);
+    // And back: the decision applies again, and the cell shows it.
+    expect((await setFieldOnRows([ruled], categoryId, software)).failed).toEqual([]);
+    expect(await stored(ruled)).toBe(business);
   });
 
   it('clears the field', async () => {

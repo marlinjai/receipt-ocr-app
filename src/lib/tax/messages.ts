@@ -128,6 +128,8 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Für den Anteil Studium oder Anstellung bitte eine Zeile der Anlage N wählen.';
         case 'meal_row':
           return 'Bewirtungen werden im Bewirtungsverzeichnis erfasst, nicht hier.';
+        case 'assignment_columns_missing':
+          return 'In der Belegtabelle fehlt die Spalte „Zuordnung“ oder „Business Share %“, oder eine ihrer Auswahlen „Geschäftlich“, „Universität“, „Privat“ wurde umbenannt. Bitte dort wiederherstellen, dann speichern.';
         case 'asset_row':
           return 'Dieser Beleg gehört zu einer Anlage. Was abgezogen wird, bestimmt die Anlage.';
         case 'row_in_other_asset':

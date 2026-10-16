@@ -80,6 +80,7 @@ function item(overrides: Partial<StatementItem> & { rowId: string }): StatementI
     employmentLineKey: null,
     severalLowValueItems: false,
     hasDecision: false,
+    decisionNote: null,
     vendorRuleId: null,
     isMeal: false,
     assetId: null,

@@ -25,6 +25,8 @@ export interface ReceiptFacts {
   /** The "Business Share %" cell, null when empty. */
   businessSharePercent: number | null;
   decision: TreatmentInput | null;
+  /** The note stored with the decision, if any. Never part of a figure. */
+  decisionNote?: string | null;
   /**
    * What linked payments say the receipt cost and when: the day of the first
    * payment and the euro amount paid, refunds already taken off. Null while

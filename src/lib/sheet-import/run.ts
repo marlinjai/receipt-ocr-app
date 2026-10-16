@@ -1,6 +1,7 @@
 import 'server-only';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
+import { followTreatment } from '@/lib/tax/assignment-sync';
 import { getFxRate } from '@/lib/fx-rates';
 import { getAccessTokenForUser } from './google-credentials';
 import { parseSpreadsheetId, readSheetValues, gridToRows } from './sheets-client';
@@ -116,6 +117,7 @@ export async function runSheetImport(input: RunImportInput): Promise<RunImportRe
 
   let imported = 0;
   let updated = 0;
+  const touched: string[] = [];
   let skipped = 0;
   const seen = new Set<string>();
 
@@ -139,13 +141,18 @@ export async function runSheetImport(input: RunImportInput): Promise<RunImportRe
     const cells = withTaxRates(columns, built, stored) as typeof built;
     if (existingRowId) {
       await adapter.updateRow(existingRowId, cells);
+      touched.push(existingRowId);
       updated++;
     } else {
       const row = await adapter.createRow({ tableId: table.id, cells });
+      touched.push(row.id);
       await prisma.sheetImportRow.create({ data: { configId: config.id, dedupKey: key, dtRowId: row.id } });
       imported++;
     }
   }
 
+  // Imported rows may fall under a vendor rule of the finance area: their
+  // assignment cells show it (a failure is logged, the import stands).
+  if (touched.length > 0) await followTreatment(prisma, { workspaceId: input.authWorkspaceId, tenantId: input.authTenantId }, { rowIds: touched });
   return { imported, updated, skipped, total: rows.length };
 }

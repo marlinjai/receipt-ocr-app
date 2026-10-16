@@ -308,6 +308,13 @@ async function writeMealInput(
   if (merged.gross !== null && merged.gross !== stored.gross) cells[columnId('Gross')] = merged.gross;
 
   await ctx.adapter.updateRow(rowId, cells);
+  // A new date may move the receipt across a vendor rule's start, and "Keine
+  // Bewirtung" takes it out of the register, so a decision or rule applies:
+  // its assignment cells follow (loaded on demand, that module uses this one).
+  {
+    const { followTreatment } = await import('@/lib/tax/assignment-sync');
+    await followTreatment(db, mealCtx, { rowIds: [rowId] });
+  }
 
   const linkedBefore = current.guests.flatMap((g) => (g.contactId ? [g.contactId] : []));
   const guestsChanged = JSON.stringify(merged.guestContactIds) !== JSON.stringify(linkedBefore);

@@ -962,9 +962,10 @@ function buildPaymentsView(
   const outstanding = new Map(invoiceResults.map((i) => [i.invoiceId, i.outstandingCents]));
   const invoiceDocuments = invoices.map((i) => ({ id: i.id, number: i.number, day: i.issueDate, openCents: outstanding.get(i.id) ?? 0 }));
   const asMatch = (p: PaymentRow) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, reference: p.reference, counterparty: p.counterparty });
+  // A counterparty answered mixed is asked nothing in general, but a payment of its that pays an invoice still is.
   const incomeCandidates = inYear.filter((p) => {
     const treatment = loaded.treatments.get(p.counterpartyKey);
-    return p.kind === 'income' && free(p) > 0 && treatment !== 'private' && treatment !== 'own_account' && treatment !== 'mixed';
+    return p.kind === 'income' && free(p) > 0 && treatment !== 'private' && treatment !== 'own_account';
   });
   const incomeProposals = proposeMatches(incomeCandidates.map(asMatch), invoiceDocuments);
   const looksLikeInvoicePayment = new Set(incomeProposals.map((x) => x.paymentId));
@@ -978,7 +979,7 @@ function buildPaymentsView(
     // Money out to a business counterparty, and money out with no name at all
     // (there is nobody to ask about once, so each such payment is asked about).
     if (p.kind === 'spend') return treatment === 'business' || !p.counterpartyKey;
-    if (p.kind === 'income') return treatment !== 'private' && treatment !== 'own_account' && treatment !== 'mixed' && (treatment === 'business' || !p.counterpartyKey || looksLikeInvoicePayment.has(p.id));
+    if (p.kind === 'income') return treatment === 'business' || ((treatment === undefined || treatment === 'mixed') && (!p.counterpartyKey || looksLikeInvoicePayment.has(p.id)));
     // Money back from a business counterparty belongs on the receipt it refunds.
     // So does money a pay-later service pays back: its list holds no refunds, the bank line is the only record.
     if (p.kind === 'refund') return treatment === 'business' || !p.counterpartyKey || p.byRule;

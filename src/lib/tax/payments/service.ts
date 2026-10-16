@@ -39,7 +39,10 @@ export type PaymentServiceErrorCode =
   /** The receipt already carries payments, and this one would take it beyond its own amount: asked about, not refused. */
   | 'receipt_already_paid'
   /** The pair is no proposal any more (one side was linked in the meantime). */
-  | 'proposal_gone';
+  | 'proposal_gone'
+  /** A search for payments without a year, or a whole-account answer that is neither yes nor no. */
+  | 'invalid_query'
+  | 'invalid_private';
 
 export class PaymentServiceError extends Error {
   readonly code: PaymentServiceErrorCode;
@@ -276,7 +279,9 @@ export function effectiveKind(payment: { sourceKind: string; kindOverride: strin
  * money there is no spend, whatever the file calls it); a person re-labelled
  * this one payment; it only funds another imported payment account, or is
  * money back from one (see `funding.ts`); it is on an account the owner said
- * is private as a whole; otherwise what its file says.
+ * is private as a whole, unless its counterparty is answered business (a
+ * business expense paid privately is asked about like any other); otherwise
+ * what its file says.
  */
 function paymentKind(
   payment: { sourceKind: string; kindOverride: string | null },
@@ -286,7 +291,7 @@ function paymentKind(
 ): PaymentKind {
   if (treatment === 'own_account') return 'own_transfer';
   if (payment.kindOverride === null && funding) return funding.kind;
-  if (payment.kindOverride === null && accountPrivate) return 'private';
+  if (payment.kindOverride === null && accountPrivate && treatment !== 'business') return 'private';
   return effectiveKind(payment);
 }
 
@@ -298,7 +303,7 @@ function paymentKind(
  * `false` brings every question back exactly as before.
  */
 export async function setAccountPrivate(db: PrismaClient, ctx: PaymentContext, accountId: string, isPrivate: unknown): Promise<void> {
-  if (typeof isPrivate !== 'boolean') throw new PaymentServiceError('invalid_treatment');
+  if (typeof isPrivate !== 'boolean') throw new PaymentServiceError('invalid_private');
   const { count } = await db.taxAccount.updateMany({ where: { id: accountId, authWorkspaceId: ctx.workspaceId }, data: { isPrivate } });
   if (count === 0) throw new PaymentServiceError('account_not_found');
 }
@@ -564,7 +569,11 @@ export interface PaymentRow {
   funding: Funding | null;
   /** True when `kind` comes from the funding rule: nobody said it, and it can be overruled. */
   byRule: boolean;
-  /** True when `kind` is `private` only because the whole account was said to be private. */
+  /**
+   * True when `kind` is `private` only because the whole account was said to be
+   * private. Such a payment can be money in (a salary) as well as money out:
+   * whoever sums private spending reads the sign of `amountCents` or `sourceKind`.
+   */
   byPrivateAccount: boolean;
   links: Array<{ id: string; rowId: string | null; invoiceId: string | null; cents: number; method: string }>;
 }
@@ -652,8 +661,23 @@ export interface FoundPayment {
   reference: string;
   kind: PaymentKind;
   accountLabel: string;
-  /** Money received as income goes on an issued invoice; everything else on a receipt. */
+  /** Money received as income goes on an issued invoice; money out and money back on a receipt. */
   target: 'receipt' | 'invoice';
+}
+
+/**
+ * A search text read as an amount ("45,10", "45.10", "1.234,56", "1234.56",
+ * "12"), in cents; null when it is no amount.
+ */
+export function amountQuery(text: string): number | null {
+  const t = text.replace(/\s|€/g, '');
+  let euros: string;
+  if (/^\d{1,3}(\.\d{3})+(,\d{1,2})?$/.test(t)) euros = t.replace(/\./g, '').replace(',', '.');
+  else if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(t)) euros = t.replace(/,/g, '');
+  else if (/^\d+([.,]\d{1,2})?$/.test(t)) euros = t.replace(',', '.');
+  else return null;
+  const cents = Math.round(Number(euros) * 100);
+  return Number.isFinite(cents) && cents > 0 ? cents : null;
 }
 
 /** At most this many payments come back from one search: enough to pick from, small enough to draw. */
@@ -661,17 +685,22 @@ export const FIND_PAYMENTS_LIMIT = 100;
 
 /**
  * Payments of one year that still have something to link, found by their
- * counterparty or by a text, whatever the questions say about them: a payment
- * to a counterparty nobody answered yet, to one answered as mixed, or on an
- * account said to be private can be linked by hand without answering anything
- * for its other payments. Read only.
+ * counterparty or by a text (an amount is compared as an amount), whatever the
+ * questions say about them: a payment to a counterparty nobody answered yet,
+ * to one answered as mixed, or on an account said to be private can be linked
+ * by hand without answering anything for its other payments. Left out is what
+ * no document belongs to: fees, transfers a person or a counterparty answer
+ * made (a transfer the funding rule made stays findable, a link on it is how
+ * a person keeps a receipt on the bank side), and money in that is neither
+ * income nor money back. Read only.
  */
 export async function findPayments(db: PrismaClient, workspaceId: string, raw: unknown): Promise<{ payments: FoundPayment[]; total: number }> {
   const input = (raw ?? {}) as { year?: unknown; counterpartyKey?: unknown; text?: unknown };
   const year = typeof input.year === 'number' && Number.isInteger(input.year) ? input.year : null;
-  if (year === null) throw new PaymentServiceError('invalid_link');
-  const key = typeof input.counterpartyKey === 'string' ? input.counterpartyKey : null;
+  if (year === null) throw new PaymentServiceError('invalid_query');
+  const key = typeof input.counterpartyKey === 'string' && input.counterpartyKey !== '' ? input.counterpartyKey : null;
   const text = typeof input.text === 'string' ? input.text.trim().toLowerCase().slice(0, 80) : '';
+  const cents = amountQuery(text);
   if (key === null && text.length < 2) return { payments: [], total: 0 };
   const loaded = await loadPayments(db, workspaceId);
   const accountLabel = new Map(loaded.accounts.map((a) => [a.id, a.label]));
@@ -680,11 +709,13 @@ export async function findPayments(db: PrismaClient, workspaceId: string, raw: u
   for (const p of loaded.payments) {
     if (!p.bookingDay.startsWith(`${year}-`)) continue;
     if (key !== null && p.counterpartyKey !== key) continue;
-    if (text && !`${p.counterparty} ${p.reference} ${(Math.abs(p.amountCents) / 100).toFixed(2).replace('.', ',')}`.toLowerCase().includes(text)) continue;
+    if (text && !(cents !== null && Math.abs(p.amountCents) === cents) && !`${p.counterparty} ${p.reference}`.toLowerCase().includes(text)) continue;
     const freeCents = Math.abs(p.amountCents) - p.links.reduce((sum, l) => sum + l.cents, 0);
     if (freeCents <= 0) continue;
     // What the file (or a person) says, beneath the account's "private": decides invoice or receipt.
     const own = p.byPrivateAccount ? p.sourceKind : p.kind;
+    if (p.kind === 'fee' || (p.kind === 'own_transfer' && !p.byRule)) continue;
+    if (p.amountCents > 0 && own !== 'income' && own !== 'refund') continue;
     total += 1;
     if (found.length >= FIND_PAYMENTS_LIMIT) continue;
     found.push({

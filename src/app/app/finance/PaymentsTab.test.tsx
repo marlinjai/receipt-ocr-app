@@ -465,16 +465,19 @@ describe('PaymentsTab', () => {
     expect(p.onSearch).toHaveBeenCalledWith({ counterpartyKey: 'versand beispiel' });
     const list = await screen.findByRole('list', { name: 'Gefundene Zahlungen' });
     expect(within(list).getAllByRole('listitem').length).toBe(2);
-    await user.click(within(list).getAllByRole('button', { name: 'Zuordnen' })[0]);
+    // Each payment's button says which payment it is for.
+    await user.click(within(list).getByRole('button', { name: 'Beleg wählen für 03.02.2026 Versand Beispiel 49,99 €' }));
     await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r-1');
-    const form = screen.getByLabelText('Beleg von Hand wählen').closest('form') as HTMLElement;
-    await user.click(within(form).getByRole('button', { name: 'Zuordnen' }));
+    await user.click(within(list).getByRole('button', { name: 'Zuordnen' }));
     expect(p.onLink).toHaveBeenCalledWith({ paymentId: 'f-1', rowId: 'r-1' });
     expect(p.onTreat).not.toHaveBeenCalled();
 
     // The statement that comes back searches again: the linked payment is gone, the other one is still there.
     p.onSearch.mockResolvedValueOnce({ ok: true, value: { payments: [found({ id: 'f-2', bookingDay: '2026-03-03' })], total: 1 } });
     rerender(<PaymentsTab view={view({ unclassified: [{ ...unclassified[0], count: 1 }], receiptTargets })} {...p} />);
+    // While it searches again the last results stay on screen, the open picker included.
+    expect(screen.getByRole('status').textContent).toBe('Sucht …');
+    expect(screen.getByLabelText('Beleg von Hand wählen')).toBeTruthy();
     await vi.waitFor(() => expect(within(screen.getByRole('list', { name: 'Gefundene Zahlungen' })).getAllByRole('listitem').length).toBe(1));
     expect(p.onSearch).toHaveBeenCalledTimes(2);
   });
@@ -486,20 +489,29 @@ describe('PaymentsTab', () => {
     const box = screen.getByLabelText('Andere Zahlung suchen und von Hand zuordnen');
     await user.type(box, 'x');
     expect(screen.getByText('Bitte mindestens zwei Zeichen.')).toBeTruthy();
-    p.onSearch.mockResolvedValueOnce({ ok: true, value: { payments: [found({ kind: 'private' })], total: 140 } });
+    expect(box.getAttribute('aria-describedby')).toBeTruthy();
+    const many = Array.from({ length: 100 }, (_, i) => found({ id: `f-${i}`, kind: i === 0 ? 'private' : 'spend' }));
+    p.onSearch.mockResolvedValueOnce({ ok: true, value: { payments: many, total: 140 } });
     await user.type(box, 'y');
     await user.click(screen.getByRole('button', { name: 'Suchen' }));
     expect(p.onSearch).toHaveBeenCalledWith({ text: 'xy' });
-    expect(await screen.findByText(/140 gefunden, die ersten 1 werden gezeigt/)).toBeTruthy();
-    expect(screen.getByText(/· privat/)).toBeTruthy();
+    expect(await screen.findByText(/140 gefunden, die ersten 100 werden gezeigt/)).toBeTruthy();
+    // The notice is not one of the payments.
+    expect(within(screen.getByRole('list', { name: 'Gefundene Zahlungen' })).getAllByRole('listitem').length).toBe(100);
+    expect(screen.getAllByText(/· privat/).length).toBe(1);
     // No receipt to link to: it says so instead of an empty picker.
-    await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
+    await user.click(screen.getAllByRole('button', { name: /^Beleg wählen für/ })[0]);
     expect(screen.getByText('Kein Beleg aus diesem oder dem Vorjahr vorhanden.')).toBeTruthy();
 
+    // Pressing "Suchen" again with the same words searches again.
     p.onSearch.mockResolvedValueOnce({ ok: false, error: 'failed' });
-    await user.clear(box);
-    await user.type(box, 'zz');
     await user.click(screen.getByRole('button', { name: 'Suchen' }));
     expect((await screen.findByRole('alert')).textContent).toContain('konnten nicht geladen werden');
+    expect(p.onSearch).toHaveBeenCalledTimes(2);
+    // A failed search offers to try again, and trying again searches again.
+    p.onSearch.mockResolvedValueOnce({ ok: true, value: { payments: [], total: 0 } });
+    await user.click(screen.getByRole('button', { name: 'Erneut versuchen' }));
+    expect(await screen.findByText('Keine Zahlung aus 2026 mit offenem Betrag.')).toBeTruthy();
+    expect(p.onSearch).toHaveBeenCalledTimes(3);
   });
 });

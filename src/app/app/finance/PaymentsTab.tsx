@@ -291,12 +291,18 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                   {(Object.keys(TREATMENT_LABELS) as CounterpartyTreatment[]).map((t) => (
                     <button key={t} type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onTreat(c.label, t)}>{TREATMENT_LABELS[t]}</button>
                   ))}
-                  <button type="button" className="ui-btn ui-btn-sm" aria-expanded={browsing === c.key} onClick={() => setBrowsing(browsing === c.key ? null : c.key)}>
+                  <button
+                    type="button"
+                    className="ui-btn ui-btn-sm"
+                    aria-expanded={browsing === c.key}
+                    aria-controls={`${id}-browse`}
+                    onClick={() => setBrowsing(browsing === c.key ? null : c.key)}
+                  >
                     Zahlungen ansehen
                   </button>
                 </span>
                 {browsing === c.key && (
-                  <PaymentFinder query={{ counterpartyKey: c.key }} view={view} busy={busy} onSearch={onSearch} onLink={onLink} />
+                  <PaymentFinder id={`${id}-browse`} query={{ counterpartyKey: c.key }} view={view} busy={busy} onSearch={onSearch} onLink={onLink} />
                 )}
               </li>
             ))}
@@ -692,110 +698,169 @@ function ManualLink({
 function PaymentSearch({ view, busy, onSearch, onLink }: { view: StatementView; busy: boolean; onSearch: Props['onSearch']; onLink: Props['onLink'] }) {
   const id = useId();
   const [draft, setDraft] = useState('');
-  const [text, setText] = useState<string | null>(null);
+  // Each press on "Suchen" is a new search, also with the same words.
+  const [search, setSearch] = useState<{ text: string; round: number } | null>(null);
+  const tooShort = draft.trim().length === 1;
   return (
     <div className="mt-4">
       <form
         className="flex flex-wrap items-end gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          setText(draft.trim().length >= 2 ? draft.trim() : null);
+          const text = draft.trim();
+          setSearch(text.length >= 2 ? { text, round: (search?.round ?? 0) + 1 } : null);
         }}
       >
         <div>
           <label className="ui-label" htmlFor={`${id}-q`}>Andere Zahlung suchen und von Hand zuordnen</label>
-          <input id={`${id}-q`} className="ui-input" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Name, Verwendungszweck oder Betrag" maxLength={80} />
+          <input
+            id={`${id}-q`}
+            className="ui-input"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Name, Verwendungszweck oder Betrag"
+            maxLength={80}
+            aria-describedby={tooShort ? `${id}-hint` : undefined}
+          />
         </div>
         <button type="submit" className="ui-btn ui-btn-sm">Suchen</button>
       </form>
-      {draft.trim().length === 1 && <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>Bitte mindestens zwei Zeichen.</p>}
-      {text !== null && <PaymentFinder query={{ text }} view={view} busy={busy} onSearch={onSearch} onLink={onLink} />}
+      {tooShort && <p id={`${id}-hint`} className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>Bitte mindestens zwei Zeichen.</p>}
+      {search !== null && <PaymentFinder query={{ text: search.text }} round={search.round} view={view} busy={busy} onSearch={onSearch} onLink={onLink} />}
     </div>
   );
 }
 
-type FinderState = { status: 'loading' } | { status: 'error' } | { status: 'done'; payments: FoundPayment[]; total: number };
+type Found = { payments: FoundPayment[]; total: number };
 
 /**
  * The payments of a search, each with a picker for linking by hand. Searched
  * again whenever the statement changes, so a payment just linked in full drops
- * out and one partly linked shows what is left.
+ * out and one partly linked shows what is left. While a new search runs the
+ * last results stay on screen, so an open picker and the keyboard focus are
+ * not thrown away.
  */
-function PaymentFinder({ query, view, busy, onSearch, onLink }: { query: PaymentQuery; view: StatementView; busy: boolean; onSearch: Props['onSearch']; onLink: Props['onLink'] }) {
-  const [state, setState] = useState<FinderState>({ status: 'loading' });
+function PaymentFinder({
+  id,
+  query,
+  round = 0,
+  view,
+  busy,
+  onSearch,
+  onLink,
+}: {
+  id?: string;
+  query: PaymentQuery;
+  round?: number;
+  view: StatementView;
+  busy: boolean;
+  onSearch: Props['onSearch'];
+  onLink: Props['onLink'];
+}) {
+  const [found, setFound] = useState<Found | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
   const [open, setOpen] = useState<string | null>(null);
   const queryKey = 'counterpartyKey' in query ? `c:${query.counterpartyKey}` : `t:${query.text}`;
-  // What the search was last run for: a new query or a new statement searches again.
+  // What the search was last run for: a new query, a new press, a retry or a new statement searches again.
+  const runKey = `${queryKey}|${round}|${retry}`;
   const [searched, setSearched] = useState<{ key: string; view: StatementView } | null>(null);
-  if (searched === null || searched.key !== queryKey || searched.view !== view) {
-    setSearched({ key: queryKey, view });
-    setState({ status: 'loading' });
+  if (searched === null || searched.key !== runKey || searched.view !== view) {
+    // A different query starts from nothing; the same query keeps its last results while it reloads.
+    if (searched !== null && !searched.key.startsWith(`${queryKey}|`)) setFound(null);
+    setSearched({ key: runKey, view });
+    setLoading(true);
+    setFailed(false);
   }
   useEffect(() => {
     let current = true;
     onSearch(query).then(
       (result) => {
-        if (current) setState(result.ok ? { status: 'done', ...result.value } : { status: 'error' });
+        if (!current) return;
+        setLoading(false);
+        if (result.ok) setFound(result.value);
+        else setFailed(true);
       },
       () => {
-        if (current) setState({ status: 'error' });
+        if (!current) return;
+        setLoading(false);
+        setFailed(true);
       },
     );
     return () => {
       current = false;
     };
-    // `query` is described by `queryKey`; the statement is in the list on purpose: every change to it searches again.
+    // `query` is described by `runKey`; the statement is in the list on purpose: every change to it searches again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryKey, view]);
+  }, [runKey, view]);
   const p = view.payments;
-  if (state.status === 'loading') return <p className="mt-2 w-full text-xs" style={{ color: 'var(--muted)' }} role="status">Sucht …</p>;
-  if (state.status === 'error') return <p className="ui-note ui-note-danger mt-2 w-full" role="alert">Die Zahlungen konnten nicht geladen werden. Bitte die Seite neu laden.</p>;
-  if (state.payments.length === 0) return <p className="mt-2 w-full text-xs" style={{ color: 'var(--muted)' }}>Keine Zahlung {view.year}, die noch etwas zuzuordnen hat.</p>;
   return (
-    <ul className="mt-2 w-full space-y-1.5" aria-label="Gefundene Zahlungen">
-      {state.total > state.payments.length && (
-        <li className="text-xs" style={{ color: 'var(--muted)' }}>
-          {state.total} gefunden, die ersten {state.payments.length} werden gezeigt. Bitte die Suche genauer fassen.
-        </li>
+    <div id={id} className="mt-2 w-full">
+      {loading && <p className="text-xs" style={{ color: 'var(--muted)' }} role="status">Sucht …</p>}
+      {failed && (
+        <p className="ui-note ui-note-danger" role="alert">
+          Die Zahlungen konnten nicht geladen werden.{' '}
+          <button type="button" className="ui-btn ui-btn-sm" onClick={() => setRetry(retry + 1)}>Erneut versuchen</button>
+        </p>
       )}
-      {state.payments.map((payment) => {
-        const targets = payment.target === 'invoice' ? p.invoiceTargets.length : p.receiptTargets.length;
-        return (
-          <li key={payment.id} className="rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
-            <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm" style={{ color: 'var(--foreground)' }}>
-              <span>
-                {formatDay(payment.bookingDay)} {payment.counterparty || 'ohne Namen'}
-                <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                  {payment.accountLabel}
-                  {payment.reference ? ` · ${payment.reference.slice(0, 80)}` : ''}
-                  {payment.kind === 'private' ? ' · privat' : payment.kind === 'own_transfer' ? ' · Umbuchung' : ''}
-                </span>
-              </span>
-              <span className="tabular-nums">
-                {payment.amountCents < 0 ? 'bezahlt' : 'erhalten'} {euro(Math.abs(payment.amountCents))}
-                {payment.freeCents !== Math.abs(payment.amountCents) ? `, davon offen ${euro(payment.freeCents)}` : ''}
-                <button type="button" className="ui-btn ui-btn-sm ml-2" aria-expanded={open === payment.id} onClick={() => setOpen(open === payment.id ? null : payment.id)}>
-                  Zuordnen
-                </button>
-              </span>
-            </div>
-            {open === payment.id &&
-              (targets > 0 ? (
-                <ManualLink
-                  payment={payment}
-                  receipts={payment.target === 'invoice' ? [] : p.receiptTargets}
-                  invoices={payment.target === 'invoice' ? p.invoiceTargets : []}
-                  busy={busy}
-                  onLink={onLink}
-                />
-              ) : (
-                <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-                  {payment.target === 'invoice' ? 'Keine Rechnung mit offenem Betrag.' : 'Kein Beleg aus diesem oder dem Vorjahr vorhanden.'}
-                </p>
-              ))}
-          </li>
-        );
-      })}
-    </ul>
+      {found !== null && !failed && found.payments.length === 0 && !loading && (
+        <p className="text-xs" style={{ color: 'var(--muted)' }}>Keine Zahlung aus {view.year} mit offenem Betrag.</p>
+      )}
+      {found !== null && found.total > found.payments.length && (
+        <p className="text-xs" style={{ color: 'var(--muted)' }}>
+          {found.total} gefunden, die ersten {found.payments.length} werden gezeigt. Bitte die Suche genauer fassen.
+        </p>
+      )}
+      {found !== null && found.payments.length > 0 && (
+        <ul className="mt-1 space-y-1.5" aria-label="Gefundene Zahlungen">
+          {found.payments.map((payment) => {
+            const targets = payment.target === 'invoice' ? p.invoiceTargets.length : p.receiptTargets.length;
+            const what = `${formatDay(payment.bookingDay)} ${payment.counterparty || 'ohne Namen'} ${euro(Math.abs(payment.amountCents))}`;
+            return (
+              <li key={payment.id} className="rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm" style={{ color: 'var(--foreground)' }}>
+                  <span>
+                    {formatDay(payment.bookingDay)} {payment.counterparty || 'ohne Namen'}
+                    <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                      {payment.accountLabel}
+                      {payment.reference ? ` · ${payment.reference.slice(0, 80)}` : ''}
+                      {payment.kind === 'private' ? ' · privat' : payment.kind === 'own_transfer' ? ' · Umbuchung' : ''}
+                    </span>
+                  </span>
+                  <span className="tabular-nums">
+                    {payment.amountCents < 0 ? 'bezahlt' : 'erhalten'} {euro(Math.abs(payment.amountCents))}
+                    {payment.freeCents !== Math.abs(payment.amountCents) ? `, davon offen ${euro(payment.freeCents)}` : ''}
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm ml-2"
+                      aria-expanded={open === payment.id}
+                      aria-label={`${payment.target === 'invoice' ? 'Rechnung' : 'Beleg'} wählen für ${what}`}
+                      onClick={() => setOpen(open === payment.id ? null : payment.id)}
+                    >
+                      {payment.target === 'invoice' ? 'Rechnung wählen' : 'Beleg wählen'}
+                    </button>
+                  </span>
+                </div>
+                {open === payment.id &&
+                  (targets > 0 ? (
+                    <ManualLink
+                      payment={payment}
+                      receipts={payment.target === 'invoice' ? [] : p.receiptTargets}
+                      invoices={payment.target === 'invoice' ? p.invoiceTargets : []}
+                      busy={busy}
+                      onLink={onLink}
+                    />
+                  ) : (
+                    <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+                      {payment.target === 'invoice' ? 'Keine Rechnung mit offenem Betrag.' : 'Kein Beleg aus diesem oder dem Vorjahr vorhanden.'}
+                    </p>
+                  ))}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }

@@ -1217,33 +1217,41 @@ merged. Fixed in the same pull request:
 ## Reality: the payments tab asks less after a real import (2026-10-15)
 
 The import of 2026-10-11 (2,150 payments) left 586 open payments and 237 unanswered
-counterparties. Three of the causes are fixed here; continuing an account from a second source
-and limiting an import to a year follow in their own change. Decided without asking, say so if
-you disagree:
+counterparties. Three of the roadmap's five complaints are fixed here (a private account, money
+in always asked, linking only after an answer); continuing an account from a second source and
+limiting an import to a year follow in their own change. Decided without asking, say so if you
+disagree:
 
 - **A whole account can be private** ("Ganzes Konto ist privat", `setAccountPrivate`, migration
-  `0020_tax_account_private`, one column with a default). None of its payments is asked about,
+  `0025_tax_account_private`, one column with a default). None of its payments is asked about,
   money in included. The order of what a payment is becomes: counterparty answered "own
   account", a person's word on the single payment, the funding rule, the private account, the
   file. So a transfer stays a transfer, and one payment re-labelled by hand stands above the
-  account. Nothing on the payments is rewritten: "Wieder prüfen" brings every question back as
-  it was.
+  account. A counterparty answered business also stands above it: a business expense paid
+  from the private account is asked about and proposed like any other. Nothing on the payments
+  is rewritten: "Wieder prüfen" brings every question back as it was.
 - **Money in is asked about once, in the counterparty question**, not also payment by payment.
   It is listed on its own only when the counterparty is answered business, it has no name, or
   it already looks like the payment of an issued invoice (an invoice proposal exists). Before,
   every payment in from an unanswered counterparty was asked twice.
 - **A fourth answer, "Teils, teils" (`mixed`)**, for a counterparty that is partly business and
   partly private (a marketplace, a supermarket): none of its payments is asked about, and what a
-  person links to a receipt is the business part.
+  person links to a receipt is the business part. Money in from it that looks like the payment
+  of an issued invoice is still offered for that invoice.
 - **Linking without answering.** "Zahlungen ansehen" on an unanswered counterparty, and a search
   by name, text or amount under the open payments (`findPayments`, read only, at most 100 shown
-  with the total), reach every payment of the year that still has something to link: of an
-  unanswered or mixed counterparty, or on a private account (a business expense paid
-  privately). Linking one of them writes no counterparty answer, so its other payments do not
-  turn into questions. The list is searched again after every change of the statement.
+  with the total; an amount is compared as an amount however it is written), reach every
+  payment of the year that still has something to link, whatever was answered: also those of an
+  unanswered or mixed counterparty and those on a private account. Left out is what no document
+  belongs to: fees, transfers a person or a counterparty answer made, and money in that is
+  neither income nor money back. Linking one of them writes no counterparty answer, so its
+  other payments do not turn into questions. The list is searched again after every change of
+  the statement, with the last results kept on screen meanwhile.
 - **For the private-spending side** the read interface stays `loadPayments` in
   `src/lib/tax/payments/service.ts`; it now carries `isPrivate` per account and
-  `byPrivateAccount` per payment, and a counterparty answer can be `mixed`.
+  `byPrivateAccount` per payment, and a counterparty answer can be `mixed`. Kind `private` now
+  also covers money in on a private account (a salary), so private spending is read from the
+  sign of `amountCents`, not from the kind alone.
 
 ## Decisions (2026-10-07)
 

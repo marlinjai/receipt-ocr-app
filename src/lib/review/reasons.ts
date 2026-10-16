@@ -144,12 +144,6 @@ export interface StoredReview {
   readGrossCents?: number | null;
 }
 
-/**
- * True when the doubts about the total are settled without a person
- * confirming them: the stored total was corrected since the reading (it
- * differs from the total the reader recorded its doubt about), or payments
- * linked to the receipt bear it out.
- */
 /** How far a payment in euros may be from a total in another currency at its exchange rate: the card's conversion spread. */
 const FX_SPREAD = 0.03;
 
@@ -161,12 +155,18 @@ const FX_SPREAD = 0.03;
  */
 export function paymentsCoverTotal(paidCents: number, receipt: { gross: number | null; currency: string; fxRate: number | null }): boolean {
   if (receipt.gross === null || !(receipt.gross > 0) || !(paidCents > 0)) return false;
-  if (receipt.currency === 'EUR') return Math.abs(paidCents - Math.round(receipt.gross * 100)) <= 1;
+  if (receipt.currency === 'EUR') return paidCents === Math.round(receipt.gross * 100);
   if (receipt.fxRate === null || !(receipt.fxRate > 0)) return false;
   const expected = receipt.gross * receipt.fxRate * 100;
   return Math.abs(paidCents - expected) <= expected * FX_SPREAD;
 }
 
+/**
+ * True when the doubts about the total are settled without a person
+ * confirming them: the stored total was corrected since the reading (it
+ * differs from the total the reader recorded its doubt about), or payments
+ * linked to the receipt bear it out.
+ */
 export function totalSettled(snapshot: Pick<ReviewSnapshot, 'gross' | 'totalPaid'>, stored: StoredReview | undefined): boolean {
   if (snapshot.totalPaid) return true;
   const read = stored?.readGrossCents;

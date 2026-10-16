@@ -159,9 +159,13 @@ async function fileHashesByRow(db: PrismaClient, rowIds: string[]): Promise<Map<
  * `countedReceiptLinks`). A failure to load them is logged and settles no
  * doubt: the review list then shows the doubts as recorded.
  */
-async function paidByRow(db: PrismaClient, workspaceId: string): Promise<Map<string, number>> {
+async function paidByRow(db: PrismaClient, workspaceId: string, rowIds: readonly string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
+  if (rowIds.length === 0) return out;
   try {
+    // The payments are loaded only where a receipt in doubt has a link at all.
+    const linked = await db.taxPaymentLink.count({ where: { authWorkspaceId: workspaceId, rowId: { in: [...rowIds] } } });
+    if (linked === 0) return out;
     const loaded = await loadPayments(db, workspaceId);
     for (const { payment, link } of countedReceiptLinks(loaded.payments)) {
       out.set(link.rowId, (out.get(link.rowId) ?? 0) + (payment.amountCents < 0 ? link.cents : -link.cents));
@@ -180,11 +184,13 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
   const rows = await allReceiptRows(ctx.adapter, ctx.tableId, ctx.columns);
   if (rows.length === 0) return [];
   const rowIds = rows.map((r) => r.id);
-  const [hashes, stored, paid] = await Promise.all([
+  const [hashes, stored] = await Promise.all([
     fileHashesByRow(db, rowIds),
     db.receiptReview.findMany({ where: { authWorkspaceId: workspaceId, rowId: { in: rowIds } } }),
-    paidByRow(db, workspaceId),
   ]);
+  // Only a receipt with an open doubt about its total needs its payments.
+  const inDoubt = stored.filter((r) => !r.checkedAt && r.flags.some((f) => f === 'total_unconfirmed' || f === 'total_conflict')).map((r) => r.rowId);
+  const paid = await paidByRow(db, workspaceId, inDoubt);
   const storedByRow = new Map(stored.map((r) => [r.rowId, r]));
   const distinct = new Map(stored.map((r) => [r.rowId, new Set(r.distinctFrom)]));
   const read = rows.map((row) => snapshotOf(row, ctx.columns, ctx.selectOptions, hashes));

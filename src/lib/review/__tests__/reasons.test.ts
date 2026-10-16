@@ -144,6 +144,7 @@ describe('lookAlikes', () => {
 describe('when a doubt about the total ends by itself', () => {
   it('payments cover the total: to the cent in euros, within the card spread in another currency, never without a rate', () => {
     expect(paymentsCoverTotal(2499, { gross: 24.99, currency: 'EUR', fxRate: 1 })).toBe(true);
+    expect(paymentsCoverTotal(2498, { gross: 24.99, currency: 'EUR', fxRate: 1 })).toBe(false);
     expect(paymentsCoverTotal(2497, { gross: 24.99, currency: 'EUR', fxRate: 1 })).toBe(false);
     expect(paymentsCoverTotal(2000, { gross: 50, currency: 'EUR', fxRate: 1 })).toBe(false);
     // 20.06 dollars at 0.92 euros per dollar is 18.46 euros; the card charged 18.80 (1.9 percent more).

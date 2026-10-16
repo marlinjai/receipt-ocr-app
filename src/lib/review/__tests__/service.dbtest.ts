@@ -559,3 +559,52 @@ describe('a doubt about the total ends once the total is corrected or paid', () 
     expect(await entryFor(rowId)).toBeUndefined();
   });
 });
+
+describe('paid totals, more paths', () => {
+  const HEADER = '"Booking Date","Value Date","Partner Name","Partner Iban",Type,"Payment Reference","Account Name","Amount (EUR)","Original Amount","Original Currency","Exchange Rate"';
+
+  async function paymentsOf(workspace: TestWorkspace, ...amounts: string[]) {
+    const own = { workspaceId: workspace.workspaceId, tenantId: workspace.tenantId };
+    const accountId = await createAccount(db, own, { label: `Konto ${randomUUID().slice(0, 6)}`, kind: 'bank' });
+    const lines = amounts.map((a, i) => `2026-03-0${i + 2},2026-03-0${i + 2},"Musterladen ${i}",,Presentment,"Kauf ${i}",Hauptkonto,${a},,,`);
+    await importPayments(db, own, accountId, `${HEADER}\n${lines.join('\n')}\n`);
+    return (await loadPayments(db, workspace.workspaceId)).payments.filter((p) => p.accountId === accountId);
+  }
+  const link = (workspace: TestWorkspace, paymentId: string, rowId: string, cents: number) =>
+    db.taxPaymentLink.create({ data: { authWorkspaceId: workspace.workspaceId, authTenantId: workspace.tenantId, paymentId, rowId, cents, method: 'manual' } });
+
+  it('a total in dollars is borne out by its euro payment at the row\'s exchange rate', async () => {
+    const own = await createWorkspace();
+    const rowId = await own.addReceipt(clean({ Gross: 20.06, Currency: 'USD', 'FX Rate': 0.92 }));
+    await recordReadFlags(db, { workspaceId: own.workspaceId, tenantId: own.tenantId }, rowId, ['total_conflict'], 20.06);
+    const [payment] = await paymentsOf(own, '-18.80');
+    await link(own, payment.id, rowId, 1880);
+    expect((await loadReviewQueue(db, own.workspaceId)).find((e) => e.rowId === rowId)).toBeUndefined();
+  });
+
+  it('money back linked to the receipt counts against the payment: the doubt comes back', async () => {
+    const own = await createWorkspace();
+    const rowId = await own.addReceipt(clean({ Gross: 24.99 }));
+    await recordReadFlags(db, { workspaceId: own.workspaceId, tenantId: own.tenantId }, rowId, ['total_unconfirmed'], 24.99);
+    const [paid, back] = await paymentsOf(own, '-24.99', '5.00');
+    await link(own, paid.id, rowId, 2499);
+    expect((await loadReviewQueue(db, own.workspaceId)).find((e) => e.rowId === rowId)).toBeUndefined();
+    await link(own, back.id, rowId, 500);
+    expect((await loadReviewQueue(db, own.workspaceId)).find((e) => e.rowId === rowId)!.reasons).toEqual(['total_unconfirmed']);
+  });
+
+  it('a reading without doubts resets the total it was read with', async () => {
+    const rowId = await ws.addReceipt(clean({ Gross: 40 }));
+    await recordReadFlags(db, ctx, rowId, ['total_unconfirmed'], 40);
+    await recordReadFlags(db, ctx, rowId, [], 41);
+    expect((await db.receiptReview.findUnique({ where: { rowId } }))!).toMatchObject({ flags: [], readGrossCents: 4100 });
+  });
+
+  it('taking the new reading total from the review list ends the doubt like any correction', async () => {
+    const rowId = await ws.addReceipt(clean({ Vendor: 'Cafe Morgenrot', 'OCR Text': F.CAFE_WITH_RECEIPT_NUMBERS, Gross: 916752.88, Net: 916694.18, 'Tax Rate': 0.01 }));
+    await recordReadFlags(db, ctx, rowId, ['total_unconfirmed'], 916752.88);
+    expect((await entryFor(rowId))!.reasons).toContain('total_unconfirmed');
+    await applyNewReading(db, ctx, rowId, ['gross']);
+    expect((await entryFor(rowId))?.reasons ?? []).not.toContain('total_unconfirmed');
+  });
+});

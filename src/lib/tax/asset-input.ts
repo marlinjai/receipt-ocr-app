@@ -111,8 +111,11 @@ export function validateAssetInput(raw: unknown): AssetInput {
   if ((businessShareBp as number) + (annexShareBp as number) > WHOLE_BP) fail('invalid_annex_share');
   const annexLineKey = (annexShareBp as number) > 0 ? input.annexLineKey : null;
   if ((annexShareBp as number) > 0 && !(ANNEX_ASSET_LINES as readonly unknown[]).includes(annexLineKey)) fail('invalid_annex_share');
-  // The pool is an instrument of the business form; the employment annex knows none.
-  if ((annexShareBp as number) > 0 && method === 'pool') fail('invalid_annex_share');
+  // The pool is an instrument of the business form; the employment annex knows
+  // none. Declining depreciation is open only to business fixed assets (section 7
+  // paragraph 2 of the income tax act), work equipment of an employee or student
+  // is written off in equal amounts.
+  if ((annexShareBp as number) > 0 && (method === 'pool' || method === 'declining')) fail('invalid_annex_share');
   const reminderCents = input.reminderCents === undefined ? 0 : input.reminderCents;
   if (!isInt(reminderCents) || reminderCents < 0 || reminderCents > 100) fail('invalid_reminder');
 

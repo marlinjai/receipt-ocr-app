@@ -288,6 +288,8 @@ function AssetForm({
     if (shareNumber === null || shareNumber < minShare || shareNumber > 100) return setLocalError('Der betriebliche Anteil muss zwischen 1 und 100 % liegen (0 % nur, wenn ein Anteil für Studium oder Anstellung eingetragen ist).');
     if (Math.round(shareNumber * 100) + Math.round(annexNumber * 100) > 10000) return setLocalError('Betrieblicher Anteil und Anteil für Studium oder Anstellung ergeben zusammen mehr als 100 %.');
     if (annexNumber > 0 && method === 'pool' && !carried) return setLocalError('Der Sammelposten gilt nur für den Betrieb; für eine Anlage mit Anteil für Studium oder Anstellung bitte eine andere Methode wählen.');
+    if (annexNumber > 0 && method === 'declining' && !carried) return setLocalError('Arbeitsmittel werden linear abgeschrieben: für eine Anlage mit Anteil für Studium oder Anstellung ist die degressive Abschreibung nicht zulässig.');
+    if (annexNumber > 0 && annexLines.length === 0) return setLocalError('Für dieses Jahr gibt es keine Zeile der Anlage N, auf die der Anteil gehen kann.');
 
     let opening: AssetDraft['opening'] = null;
     let usefulLifeMonths: number | null = null;
@@ -466,7 +468,8 @@ function AssetForm({
               ))}
             </select>
             <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-              Die Abschreibung dieses Anteils steht in der Anlage N, nicht in der Einnahmenüberschussrechnung.
+              Die Abschreibung dieses Anteils steht in der Anlage N, nicht in der Einnahmenüberschussrechnung. Kosten
+              eines Erststudiums sind keine Werbungskosten, sondern Sonderausgaben; dafür ist diese Zeile nicht gedacht.
             </p>
           </div>
         )}

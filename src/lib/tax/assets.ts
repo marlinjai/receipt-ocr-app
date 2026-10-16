@@ -83,7 +83,9 @@ export type AssetCheckKind =
   | 'asset_opening_method'
   /** Carried in with a book value above the reminder value but no months left to write it off over. */
   | 'asset_opening_no_life'
-  | 'asset_disposal_before_acquisition';
+  | 'asset_disposal_before_acquisition'
+  /** A study or employment share whose employment annex line is missing or no longer known. */
+  | 'asset_annex_line_unknown';
 
 export interface AssetCheck {
   assetId: string;
@@ -133,6 +135,8 @@ export function assetChecks(asset: AssetFact, rules: AssetRules): AssetCheck[] {
   const add = (kind: AssetCheckKind) => checks.push({ assetId: asset.id, kind, blocking: true });
 
   if (asset.smallBusiness === null) add('asset_small_business_unanswered');
+  // A share for the employment annex needs a line there; without one it would silently count nowhere.
+  if ((asset.annexShareBp ?? 0) > 0 && !asset.annexLineKey) add('asset_annex_line_unknown');
   // Under regular taxation the cost is the net amount, which must be known.
   if (asset.smallBusiness === false && asset.opening === null && asset.costCents !== null && asset.netCostCents === null) {
     add('asset_net_unknown');
@@ -323,17 +327,28 @@ function depreciationLine(asset: AssetFact): FormLineKey {
  * written off from the net cost and the annex part from the gross cost (the tax
  * on a study or employment share is no input tax and stays in its cost).
  *
- * Only depreciation goes on the annex: a remaining book value and proceeds of
- * a disposal belong to the business form alone (whether the rest of a study
- * share can be written off when the asset leaves is for a tax advisor).
+ * When the asset leaves: a sale or a private withdrawal of work equipment is
+ * private, so the rest of the annex share is not deductible; an asset scrapped
+ * or destroyed writes off the rest of the annex share on the annex line
+ * (extraordinary depreciation, section 7 paragraph 1 sentence 7 with section 9
+ * paragraph 1 sentence 3 number 7 of the income tax act). Remaining book value
+ * and proceeds of the business share stay on the business form.
+ *
+ * When business and annex share together are the whole asset and come from the
+ * same row, the annex part is the depreciation minus the business part, so the
+ * two never add up to a cent more than the asset lost in value.
  */
 export function assetYearParts(asset: AssetFact, row: AssetYearRow, annexRow: AssetYearRow = row): AssetLinePart[] {
   const parts: AssetLinePart[] = [];
   const share = (cents: number) => shareOf(cents, asset.businessShareBp);
   const annexShare = asset.annexShareBp ?? 0;
   if (row.depreciationCents > 0 && asset.businessShareBp > 0) parts.push({ lineKey: depreciationLine(asset), cents: share(row.depreciationCents) });
-  if (annexShare > 0 && asset.annexLineKey && annexRow.depreciationCents > 0) {
-    parts.push({ lineKey: asset.annexLineKey, cents: shareOf(annexRow.depreciationCents, annexShare) });
+  const whole = annexRow === row && asset.businessShareBp + annexShare === 10_000;
+  const annexPart = (cents: number) => (whole ? cents - share(cents) : shareOf(cents, annexShare));
+  if (annexShare > 0 && asset.annexLineKey) {
+    const scrapped = asset.disposal?.kind === 'scrapped' ? annexRow.disposalBookValueCents : 0;
+    const cents = (annexRow.depreciationCents > 0 ? annexPart(annexRow.depreciationCents) : 0) + (scrapped > 0 ? annexPart(scrapped) : 0);
+    if (cents > 0) parts.push({ lineKey: asset.annexLineKey, cents });
   }
   if (row.disposalBookValueCents > 0) {
     parts.push({ lineKey: 'euer.remaining_book_value', cents: share(row.disposalBookValueCents) });

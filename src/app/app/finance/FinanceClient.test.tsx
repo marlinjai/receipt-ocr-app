@@ -597,8 +597,35 @@ describe('FinanceClient: assets', () => {
     await user.clear(business);
     await user.type(business, '60');
     expect((screen.getByLabelText('Zeile der Anlage N für diesen Anteil') as HTMLSelectElement).value).toBe('employment.study_costs');
+    // Declining depreciation is refused with an annex share: work equipment is written off in equal amounts.
+    await user.selectOptions(screen.getByLabelText('Abschreibung'), 'declining');
+    await user.click(screen.getByRole('button', { name: 'Anlage anlegen' }));
+    expect(screen.getByRole('alert').textContent).toContain('linear abgeschrieben');
+    expect(actions.saveAsset).not.toHaveBeenCalled();
+    await user.selectOptions(screen.getByLabelText('Abschreibung'), 'linear');
     await user.click(screen.getByRole('button', { name: 'Anlage anlegen' }));
     expect(actions.saveAsset.mock.calls[0][2]).toMatchObject({ businessShareBp: 6000, annexShareBp: 4000, annexLineKey: 'employment.study_costs' });
+
+  });
+
+  it('an asset kept only for its study share has a business share of 0', async () => {
+    const user = userEvent.setup();
+    actions.saveAsset = vi.fn().mockResolvedValue({ ok: true, value: view([]) });
+    render(<FinanceClient initial={view([decided('a')])} />);
+    await user.click(screen.getByRole('tab', { name: /Anlagen/ }));
+    await user.click(screen.getByRole('button', { name: 'Neue Anlage' }));
+    await user.type(screen.getByLabelText('Bezeichnung'), 'Laptop');
+    await user.type(screen.getByLabelText('Anschaffungsdatum (Lieferung)'), '2025-03-14');
+    await user.click(screen.getByRole('checkbox', { name: /Netzwerk Nord GmbH/ }));
+    await user.type(screen.getByLabelText('Nutzungsdauer in Jahren'), '3');
+    const business = screen.getByLabelText('Betrieblicher Anteil in %');
+    await user.clear(business);
+    await user.type(business, '0');
+    await user.click(screen.getByRole('button', { name: 'Anlage anlegen' }));
+    expect(screen.getByRole('alert').textContent).toContain('zwischen 1 und 100 %');
+    await user.type(screen.getByLabelText('Anteil Studium oder Anstellung in % (Anlage N)'), '100');
+    await user.click(screen.getByRole('button', { name: 'Anlage anlegen' }));
+    expect(actions.saveAsset.mock.calls[0][2]).toMatchObject({ businessShareBp: 0, annexShareBp: 10000, annexLineKey: 'employment.study_costs' });
   });
 
   it('an asset from earlier years is entered with its book value and no receipts', async () => {

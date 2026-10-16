@@ -56,6 +56,9 @@ describe('validateAssetInput', () => {
     expect(code(() => validateAssetInput({ ...base, businessShareBp: 6000, annexShareBp: 4000, annexLineKey: 'employment.commute' }))).toBe('invalid_annex_share');
     expect(code(() => validateAssetInput({ ...base, businessShareBp: 6000, annexShareBp: 4000, annexLineKey: 'euer.telecom' }))).toBe('invalid_annex_share');
     expect(code(() => validateAssetInput({ ...base, method: 'pool', businessShareBp: 6000, annexShareBp: 4000, annexLineKey: 'employment.study_costs' }))).toBe('invalid_annex_share');
+    // Work equipment is written off in equal amounts: no declining method with an annex share.
+    expect(code(() => validateAssetInput({ ...base, method: 'declining', decliningRateBp: 2000, businessShareBp: 6000, annexShareBp: 4000, annexLineKey: 'employment.study_costs' }))).toBe('invalid_annex_share');
+    expect(validateAssetInput({ ...base, method: 'declining', decliningRateBp: 2000 }).method).toBe('declining');
     expect(code(() => validateAssetInput({ ...base, annexShareBp: -1 }))).toBe('invalid_annex_share');
     expect(code(() => validateAssetInput({ ...base, businessShareBp: 0 }))).toBe('invalid_share');
   });

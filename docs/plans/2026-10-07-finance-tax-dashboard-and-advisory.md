@@ -1648,14 +1648,27 @@ like everything else; nothing derived is stored.
   year's depreciation is a cost of the employment annex (work equipment, training costs
   or further costs); the business share stays on the income-surplus statement. Business
   and annex share together are at most the whole; an asset can be held for its annex
-  share alone (business share 0). The pool takes no annex share: it is an instrument of
-  the business form only.
+  share alone (business share 0). The pool takes no annex share (an instrument of the
+  business form only), and neither does declining depreciation: it is open to business
+  fixed assets alone (section 7 paragraph 2 of the income tax act), work equipment of an
+  employee or student is written off in equal amounts. A stored annex line the code no
+  longer knows blocks the asset with a check instead of counting the share nowhere.
 - **Under regular taxation** the business part is written off from the net cost and its
   tax is input tax; the annex part is written off from the gross cost, because tax on a
-  study or employment share is no input tax.
+  study or employment share is no input tax. Input tax needs at least 10 percent business
+  use (section 15 paragraph 1 sentence 2 of the value-added tax act); below that none is
+  taken. When business and annex share make the whole asset, the annex part is the
+  depreciation minus the business part, so the two never exceed it by a rounding cent.
 - **A disposal** puts the remaining book value and the proceeds on the business form at
-  the business share only. Whether the rest of an annex share can be written off when the
-  asset leaves is a question for a tax advisor; nothing goes on the annex for it.
+  the business share. For the annex share it depends on how the asset leaves: a sale or a
+  private withdrawal of work equipment is private, the rest is not deductible; an asset
+  scrapped or destroyed writes off the rest of the annex share on the annex line
+  (extraordinary depreciation, section 7 paragraph 1 sentence 7 with section 9
+  paragraph 1 sentence 3 number 7 of the income tax act).
+- **A carried-in asset** has one opening book value for both shares; under regular
+  taxation enter it gross only if the asset has an annex share (the app does not split
+  it). Costs of a first degree are special expenses, not employment costs; the form says
+  so under the line choice.
 - **Entering the assets of 2021 and 2022 is a data step for the coordinator**, with the
   figures of the returns (the import plan): camera, stabiliser and tripod of 2021, the
   lens and the laptop of 2022, each built from its receipts in the asset tab.

@@ -1511,8 +1511,9 @@ function toAssetFact(
     usefulLifeMonths: stored.usefulLifeMonths,
     decliningRateBp: stored.decliningRateBp,
     businessShareBp: stored.businessShareBp,
-    // A stored line the code no longer knows gives no annex part, rather than a guessed one.
-    annexShareBp: stored.annexLineKey !== null && (ANNEX_ASSET_LINES as readonly string[]).includes(stored.annexLineKey) ? stored.annexShareBp : 0,
+    // A stored line the code no longer knows keeps the share and loses the line:
+    // the asset is then blocked with a check instead of counting the share nowhere.
+    annexShareBp: stored.annexShareBp,
     annexLineKey: stored.annexLineKey !== null && (ANNEX_ASSET_LINES as readonly string[]).includes(stored.annexLineKey) ? (stored.annexLineKey as FormLineKey) : null,
     reminderCents: stored.reminderCents,
     opening,

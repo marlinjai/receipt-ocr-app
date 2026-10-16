@@ -7,9 +7,12 @@ import { eurosToCents, formatCents } from '@/lib/tax/money';
 import { linkPayment, loadPayments, type PaymentRow } from '@/lib/tax/payments/service';
 import { receiptForLink } from '@/lib/tax/service';
 import { loadCategoryAnswers } from './service';
-import { loopState, missingReceiptSubject, notifiable, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate } from './loop';
+import { loopState, mailFoundSubject, missingReceiptSubject, notifiable, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate } from './loop';
 import { notify, retryFailedDeliveries, serverChannels, settleAllBut, settleNotifications, type NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
+import { serverMailbox } from './mailbox/gmail';
+import { mailWordsFor, type MailboxPort } from './mailbox/port';
+import { forgetGonePayments, loadMailCandidates, searchMailbox, type MailboxRun } from './mailbox/service';
 
 /**
  * The missing-receipt loop against the database: what it reads, the open
@@ -81,34 +84,39 @@ export interface LoopOverview {
   open: PaymentCheck[];
   /** Payments a person answered "no receipt exists" for, newest first: the answer can be taken back. */
   answered: PaymentCheck[];
-  counts: { hasReceipt: number; notNeeded: Record<NotNeededReason, number>; noReceipt: number; proposed: number; missing: number };
+  counts: { hasReceipt: number; notNeeded: Record<NotNeededReason, number>; noReceipt: number; proposed: number; in_mailbox: number; missing: number };
 }
 
 interface Loaded {
   payments: PaymentRow[];
   states: Map<string, LoopState>;
+  /** Vendor keys each counterparty stands for, learned from links: the names a mailbox search uses besides the counterparty's own. */
+  aliases: Map<string, Set<string>>;
 }
 
 async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loaded> {
-  const [loaded, answers, noReceipt] = await Promise.all([
+  const [loaded, answers, noReceipt, mailCandidates] = await Promise.all([
     loadPayments(db, workspaceId),
     loadCategoryAnswers(db, workspaceId),
     db.spendingReceiptAnswer.findMany({ where: { authWorkspaceId: workspaceId } }),
+    loadMailCandidates(db, workspaceId),
   ]);
   const linkedRows = new Set(loaded.payments.flatMap((p) => p.links.flatMap((l) => (l.rowId ? [l.rowId] : []))));
   const receipts = await loadLoopReceipts(db, workspaceId, linkedRows);
+  const aliases = vendorAliases(loaded.payments, receipts);
   const ctx: LoopContext = {
     treatments: loaded.treatments,
     categoryAnswers: new Map(answers.map((a) => [a.counterpartyKey, a.category])),
     noReceipt: new Map(noReceipt.map((a) => [a.paymentId, a.reason])),
     receipts,
-    vendorAliases: vendorAliases(loaded.payments, receipts),
+    vendorAliases: aliases,
+    mailCandidates,
   };
   const states = new Map<string, LoopState>();
   for (const p of loaded.payments) {
     states.set(p.id, loopState({ ...p, linkCount: p.links.length }, ctx));
   }
-  return { payments: loaded.payments, states };
+  return { payments: loaded.payments, states, aliases };
 }
 
 const check = (p: PaymentRow, state: LoopState): PaymentCheck => ({
@@ -127,6 +135,8 @@ export async function loadLoopOverview(db: PrismaClient, workspaceId: string): P
     notNeeded: { own_transfer: 0, income: 0, refund: 0, fee: 0, loan: 0, cash: 0, transfer: 0 },
     noReceipt: 0,
     proposed: 0,
+    // Named like the state it counts (`counts[state.state]`), hence not camel case.
+    in_mailbox: 0,
     missing: 0,
   };
   const open: PaymentCheck[] = [];
@@ -147,9 +157,16 @@ export async function loadLoopOverview(db: PrismaClient, workspaceId: string): P
   return { open: open.sort(newest), answered: answered.sort(newest), counts };
 }
 
-function missingMessage(p: PaymentRow): { title: string; body: string; path: string } {
+function missingMessage(p: PaymentRow, inMailbox: boolean): { title: string; body: string; path: string } {
   const who = p.counterparty || p.reference || 'eine Zahlung ohne Namen';
   const [y, m, d] = p.bookingDay.split('-');
+  if (inMailbox) {
+    return {
+      title: `Rechnung im Postfach: ${who}`,
+      body: `Für ${formatCents(-p.amountCents)} € an ${who} am ${d}.${m}.${y} liegt im Ausgaben-Postfach eine passende Rechnung. Mit einem Tipp wird sie als Beleg übernommen.`,
+      path: `/app/spending?pruefen=${encodeURIComponent(p.id)}`,
+    };
+  }
   return {
     title: `Beleg fehlt: ${who}`,
     body: `Für ${formatCents(-p.amountCents)} € an ${who} am ${d}.${m}.${y} gibt es noch keinen Beleg. Bitte fotografieren oder hochladen, oder sagen, dass es keinen gibt.`,
@@ -170,6 +187,8 @@ export interface RunResult {
   /** Failed deliveries that were tried again. */
   retried: number;
   open: number;
+  /** What the mailbox search (step 3) did in this run. */
+  mailbox: MailboxRun;
 }
 
 /**
@@ -181,51 +200,65 @@ export interface RunResult {
 export async function runReceiptLoop(
   db: PrismaClient,
   ctx: NotifyContext,
-  options: { today: string; channels?: readonly NotificationChannel[]; now?: Date },
+  options: { today: string; channels?: readonly NotificationChannel[]; now?: Date; mailbox?: MailboxPort },
 ): Promise<RunResult> {
   const channels = options.channels ?? serverChannels();
-  const { payments, states } = await computeStates(db, ctx.workspaceId);
-  const missing: PaymentRow[] = [];
+  await forgetGonePayments(db, ctx.workspaceId);
+  let { payments, states, aliases } = await computeStates(db, ctx.workspaceId);
+  // Step 3: look in the mailbox for the invoices of recent payments still missing one, by the
+  // counterparty's name and the vendors it is known to stand for, then read the states again.
+  const lookFor = payments
+    .filter((p) => states.get(p.id)?.state === 'missing' && notifiable(p, options.today))
+    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, vendorWords: p.counterpartyKey ? mailWordsFor(p.counterparty, p.counterpartyKey, aliases.get(p.counterpartyKey) ?? []) : [] }));
+  const mailbox = await searchMailbox(db, ctx, lookFor, options.mailbox ?? serverMailbox(ctx.workspaceId), options.now);
+  if (mailbox.status !== 'off' && mailbox.found > 0) ({ payments, states, aliases } = await computeStates(db, ctx.workspaceId));
+  const waiting: PaymentRow[] = [];
+  const inMailbox = new Set<string>();
   let open = 0;
   for (const p of payments) {
     const state = states.get(p.id) as LoopState;
-    if (state.state === 'missing' || state.state === 'proposed') open += 1;
-    // Only payments still missing their receipt keep their message; a proposal
-    // waiting for confirmation ends it too, the open checks show it.
-    if (state.state === 'missing') missing.push(p);
+    if (state.state === 'missing' || state.state === 'proposed' || state.state === 'in_mailbox') open += 1;
+    // A payment still waiting for its receipt keeps its messages: missing, or its invoice found in the
+    // mailbox and not taken over yet. A proposal waiting for confirmation ends them; the open checks show it.
+    if (state.state === 'missing' || state.state === 'in_mailbox') waiting.push(p);
+    if (state.state === 'in_mailbox') inMailbox.add(p.id);
   }
   // In this order: what is settled (or gone with an undone import) leaves the
   // queue and is never retried, earlier failed deliveries are tried again, and
   // only then are new ones sent, so a notification created in this run is not
   // tried twice in it.
-  const settled = await settleAllBut(db, ctx.workspaceId, 'missing_receipt', new Set(missing.map((p) => missingReceiptSubject(p.id))));
+  const stillOpen = new Set(waiting.flatMap((p) => [missingReceiptSubject(p.id), ...(inMailbox.has(p.id) ? [mailFoundSubject(p.id)] : [])]));
+  const settled = await settleAllBut(db, ctx.workspaceId, 'missing_receipt', stillOpen);
   const retried = await retryFailedDeliveries(db, ctx.workspaceId, channels, options.now);
   let notified = 0;
   let deferred = 0;
-  // Newest first, and at most a handful per run: a slow mail service must not
-  // hold the import or the button for minutes. The rest go on the next run.
-  const recent = missing.filter((p) => notifiable(p, options.today));
+  // One message per payment and kind: "receipt missing", and "invoice in the mailbox" once it is found
+  // (also when that happens on a later search, after the first message).
+  const subjectOf = (p: PaymentRow) => (inMailbox.has(p.id) ? mailFoundSubject(p.id) : missingReceiptSubject(p.id));
+  const recent = waiting.filter((p) => notifiable(p, options.today));
   // Payments notified about before are done for good: only the rest count towards the limit.
   const notifiedBefore = new Set(
     (
       await db.spendingNotification.findMany({
-        where: { authWorkspaceId: ctx.workspaceId, kind: 'missing_receipt', subjectKey: { in: recent.map((p) => missingReceiptSubject(p.id)) } },
+        where: { authWorkspaceId: ctx.workspaceId, kind: 'missing_receipt', subjectKey: { in: recent.map(subjectOf) } },
         select: { subjectKey: true },
       })
     ).map((n) => n.subjectKey),
   );
   const due = recent
-    .filter((p) => !notifiedBefore.has(missingReceiptSubject(p.id)))
+    .filter((p) => !notifiedBefore.has(subjectOf(p)))
     .sort((a, b) => (a.bookingDay < b.bookingDay ? 1 : a.bookingDay > b.bookingDay ? -1 : 0));
+  // Newest first, and at most a handful per run: a slow mail service must not
+  // hold the import or the button for minutes. The rest go on the next run.
   for (const p of due) {
     if (notified >= MAX_SENDS_PER_RUN) {
       deferred += 1;
       continue;
     }
-    const message = missingMessage(p);
-    if ((await notify(db, ctx, { subjectKey: missingReceiptSubject(p.id), kind: 'missing_receipt', ...message }, channels)) === 'sent') notified += 1;
+    const message = missingMessage(p, inMailbox.has(p.id));
+    if ((await notify(db, ctx, { subjectKey: subjectOf(p), kind: 'missing_receipt', ...message }, channels)) === 'sent') notified += 1;
   }
-  return { notified, deferred, settled, retried, open };
+  return { notified, deferred, settled, retried, open, mailbox };
 }
 
 async function requirePayment(db: PrismaClient, workspaceId: string, paymentId: string): Promise<void> {
@@ -272,4 +305,20 @@ export async function confirmCandidate(db: PrismaClient, ctx: NotifyContext, pay
   if (!candidates.some((c) => c.rowId === rowId)) throw new LoopServiceError('not_a_candidate');
   await linkPayment(db, ctx, { paymentId, rowId }, receiptForLink(db, ctx.workspaceId), 'manual');
   await settleNotifications(db, ctx.workspaceId, [missingReceiptSubject(paymentId)]);
+}
+
+/**
+ * Link a receipt to a payment the owner chose it for (a mail attachment taken
+ * over for this payment). The payments service checks that the receipt is
+ * this company's and not paid already; the payment must be one still waiting
+ * for its receipt.
+ */
+export async function linkReceiptToPayment(db: PrismaClient, ctx: NotifyContext, paymentId: string, rowId: string): Promise<void> {
+  const { states } = await computeStates(db, ctx.workspaceId);
+  const state = states.get(paymentId);
+  if (!state) throw new LoopServiceError('payment_not_found');
+  if (state.state === 'has_receipt') return;
+  if (state.state !== 'missing' && state.state !== 'in_mailbox' && state.state !== 'proposed') throw new LoopServiceError('not_a_candidate');
+  await linkPayment(db, ctx, { paymentId, rowId }, receiptForLink(db, ctx.workspaceId), 'manual');
+  await settleNotifications(db, ctx.workspaceId, [missingReceiptSubject(paymentId), mailFoundSubject(paymentId)]);
 }

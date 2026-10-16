@@ -921,3 +921,47 @@ model SpendingBudget {
   @@unique([authWorkspaceId, scope, key])
   @@map("spending_budgets")
 }
+
+// Step 3 of the missing-receipt loop: the mailbox was searched for the
+// invoice of one payment. `tries` counts the searches (an invoice mail can
+// arrive days after the payment, so a search that found nothing is repeated a
+// few times), `outcome` is 'found', 'none' or 'error'. `paymentId` has no
+// foreign key for the same reason as spending_receipt_answers.payment_id.
+model SpendingMailSearch {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  paymentId       String   @map("payment_id")
+  outcome         String
+  tries           Int      @default(0)
+  searchedAt      DateTime @map("searched_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([authWorkspaceId, paymentId])
+  @@map("spending_mail_searches")
+}
+
+// One attachment of one mail that may be a payment's invoice: where to find
+// it again in the mailbox (the message and the attachment's place and name),
+// never its content. The owner takes it into the normal upload path from the
+// spending page, or sets it aside as not the invoice.
+model SpendingMailCandidate {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  paymentId       String   @map("payment_id")
+  messageId       String   @map("message_id")
+  partIndex       Int      @map("part_index")
+  fileName        String   @map("file_name")
+  mimeType        String   @map("mime_type")
+  receivedDay     String   @map("received_day")
+  subject         String
+  sender          String
+  // Set when the owner said "not the invoice": never offered again, kept so a new search does not bring it back.
+  dismissedAt     DateTime? @map("dismissed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@unique([authWorkspaceId, paymentId, messageId, partIndex])
+  @@index([authWorkspaceId, paymentId])
+  @@map("spending_mail_candidates")
+}

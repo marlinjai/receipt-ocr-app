@@ -5,6 +5,9 @@ import Link from 'next/link';
 import { formatDay } from '@/lib/meals/messages';
 import { receiptHref } from '@/lib/receipt-link';
 import { formatCents } from '@/lib/tax/money';
+import { createBrowserDeps, type SaveReceipt } from '@/lib/upload/browser-deps';
+import { processReceipt } from '../actions';
+import { takeOverMail, takeOverMessage } from './take-over-mail';
 import type { PaymentCheck } from '@/lib/spending/loop-service';
 import type { ChecksRun } from '@/lib/spending/checks';
 import { useRouter } from 'next/navigation';
@@ -12,6 +15,9 @@ import type { ChannelSetting } from '@/lib/spending/notify/port';
 import {
   checkNow,
   confirmReceipt,
+  dismissMail,
+  getReceiptChecks,
+  linkTakenOver,
   readNotification,
   saveNotificationSettings,
   sayNoReceipt,
@@ -50,6 +56,13 @@ export function runSummary(checks: ChecksRun): string {
     ];
     if (run.deferred > 0) parts.push(`${plural(run.deferred, 'weitere folgt', 'weitere folgen')} beim nächsten Prüfen`);
     sentences.push(`${parts.join(', ')}.`);
+    if (run.mailbox.status === 'ok' && run.mailbox.found > 0) sentences.push(`Im Postfach ${plural(run.mailbox.found, 'Rechnung', 'Rechnungen')} gefunden.`);
+    if (run.mailbox.status === 'error')
+      sentences.push(
+        run.mailbox.code === 'auth_failed'
+          ? 'Der Zugang zum Ausgaben-Postfach ist abgelaufen und muss auf dem Server neu erteilt werden.'
+          : 'Das Ausgaben-Postfach hat gerade nicht geantwortet; beim nächsten Prüfen wird es wieder versucht.',
+      );
   } else {
     sentences.push('Die Belege konnten nicht geprüft werden; bitte gleich noch einmal versuchen.');
   }
@@ -73,6 +86,7 @@ export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok:
   if (result.detail?.startsWith('receipt_already_paid')) return 'Dieser Beleg ist schon durch andere Zahlungen bezahlt. Das bitte unter Finanzen, Zahlungen prüfen.';
   if (result.detail === 'invalid_email') return 'Diese E-Mail-Adresse sieht nicht gültig aus.';
   if (result.detail === 'invalid_channel') return 'Bitte einen der angebotenen Wege wählen.';
+  if (result.detail === 'candidate_not_found') return 'Diese Mail wird nicht mehr angeboten. Bitte die Seite neu laden.';
   if (result.error === 'not_found') return 'Das gibt es nicht mehr (die Zahlung wurde vielleicht mit ihrem Import zurückgenommen). Bitte die Seite neu laden.';
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
@@ -83,16 +97,25 @@ function OpenCheck({
   canWrite,
   pending,
   error,
+  notice,
   onConfirm,
   onNoReceipt,
+  onTakeOver,
+  onDismiss,
+  takingOver,
 }: {
   check: PaymentCheck;
   focused: boolean;
   canWrite: boolean;
   pending: boolean;
   error: string | null;
+  notice: string | null;
   onConfirm: (rowId: string) => void;
   onNoReceipt: (reason: string) => void;
+  onTakeOver: (mailId: string) => void;
+  onDismiss: (mailId: string) => void;
+  /** The mail being taken over right now, if any. */
+  takingOver: string | null;
 }) {
   const id = useId();
   const [asking, setAsking] = useState(false);
@@ -137,6 +160,34 @@ function OpenCheck({
                 <button type="button" className="ui-btn ui-btn-sm ui-btn-primary" disabled={pending} onClick={() => onConfirm(c.rowId)} aria-label={`${c.label} als Beleg für diese Zahlung bestätigen`}>
                   Das ist der Beleg
                 </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {check.state.state === 'in_mailbox' && (
+        <ul className="mt-2 space-y-1">
+          {check.state.mails.map((m) => (
+            <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span>
+                Im Postfach: {m.fileName}, „{m.subject || 'ohne Betreff'}“ von {m.sender || 'unbekannt'}, {formatDay(m.receivedDay)}
+              </span>
+              {canWrite && (
+                <span className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="ui-btn ui-btn-sm ui-btn-primary"
+                    disabled={pending}
+                    aria-busy={takingOver === m.id}
+                    onClick={() => onTakeOver(m.id)}
+                    aria-label={`${m.fileName} ${takingOver === m.id ? 'wird übernommen' : 'als Beleg übernehmen'}`}
+                  >
+                    {takingOver === m.id ? 'Wird übernommen …' : 'Als Beleg übernehmen'}
+                  </button>
+                  <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => onDismiss(m.id)} aria-label={`${m.fileName} ist nicht die Rechnung`}>
+                    Nicht die Rechnung
+                  </button>
+                </span>
               )}
             </li>
           ))}
@@ -196,6 +247,10 @@ function OpenCheck({
           )}
         </div>
       )}
+      {/* Always there, so a screen reader announces what is filled in later. */}
+      <p className={notice ? 'ui-note ui-note-ok mt-2' : 'sr-only'} role="status">
+        {notice ?? ''}
+      </p>
       {error && (
         <p className="ui-note ui-note-danger mt-2" role="alert">
           {error}
@@ -237,12 +292,49 @@ export default function ReceiptChecks({ initial, focusPaymentId }: { initial: Ch
   };
 
   const errorAt = (at: string) => (error?.at === at ? error.message : null);
+  const [notice, setNotice] = useState<{ at: string; message: string } | null>(null);
+  const [takingOver, setTakingOver] = useState<string | null>(null);
+  const [pageNotice, setPageNotice] = useState<string | null>(null);
+
+  /** A found mail attachment goes through the normal upload path, then the checks are read afresh. */
+  const takeOver = (paymentId: string, mailId: string) => {
+    setError(null);
+    setNotice(null);
+    setPageNotice(null);
+    setTakingOver(mailId);
+    startTransition(async () => {
+      try {
+        const save: SaveReceipt = (file, ocr, options) =>
+          processReceipt({ id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, options);
+        const outcome = await takeOverMail(mailId, { fetchImpl: fetch, pipeline: createBrowserDeps(save, view.workspaceId) });
+        if (outcome.kind === 'failed') {
+          setError({ at: `check:${paymentId}`, message: takeOverMessage(outcome) });
+          return;
+        }
+        // The owner chose this mail for this payment: the receipt is linked to it right away.
+        const linked = await linkTakenOver(paymentId, outcome.rowId);
+        if (linked.ok) {
+          setView(linked.value);
+          setPageNotice(takeOverMessage(outcome, true));
+          // The row is gone with its button: the focus goes to the list's heading.
+          document.getElementById(`${id}-title`)?.focus();
+        } else {
+          setError({ at: `check:${paymentId}`, message: `${takeOverMessage(outcome, false)} ${checksActionMessage(linked)}` });
+          const fresh = await getReceiptChecks();
+          if (fresh.ok) setView(fresh.value);
+        }
+        router.refresh();
+      } finally {
+        setTakingOver(null);
+      }
+    });
+  };
   const notNeeded = Object.values(loop.counts.notNeeded).reduce((s, n) => s + n, 0);
 
   return (
     <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-title`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id={`${id}-title`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+        <h2 id={`${id}-title`} tabIndex={-1} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
           Belege prüfen ({loop.open.length} offen)
         </h2>
         {view.canWrite && (
@@ -252,8 +344,19 @@ export default function ReceiptChecks({ initial, focusPaymentId }: { initial: Ch
         )}
       </div>
       <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-        {loop.counts.hasReceipt} mit Beleg, {notNeeded} brauchen keinen (Umbuchungen, Einnahmen, Erstattungen, Gebühren, Raten, Bargeld, Geld an Personen),{' '}
+        {loop.counts.hasReceipt} mit Beleg, {loop.counts.in_mailbox} mit Rechnung im Postfach, {notNeeded} brauchen keinen (Umbuchungen, Einnahmen, Erstattungen, Gebühren, Raten, Bargeld, Geld an Personen),{' '}
         {loop.counts.noReceipt} ohne Beleg beantwortet.
+      </p>
+      {view.mailbox !== 'other_company' && (
+        <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+          {view.mailbox === 'on'
+            ? 'Fehlende Rechnungen werden zuerst im Ausgaben-Postfach gesucht.'
+            : 'Das Ausgaben-Postfach ist noch nicht verbunden; fehlende Rechnungen werden dort noch nicht gesucht.'}
+        </p>
+      )}
+      {/* The outcome of a take-over: here, because a payment that got its receipt leaves the list below. */}
+      <p className={pageNotice ? 'ui-note ui-note-ok mt-2' : 'sr-only'} role="status">
+        {pageNotice ?? ''}
       </p>
       {focusSettled && (
         <p className="ui-note mt-2">Die Zahlung aus der Benachrichtigung ist inzwischen erledigt: sie hat einen Beleg, braucht keinen oder wurde beantwortet.</p>
@@ -314,8 +417,12 @@ export default function ReceiptChecks({ initial, focusPaymentId }: { initial: Ch
               canWrite={view.canWrite}
               pending={pending}
               error={errorAt(`check:${c.paymentId}`)}
+              notice={notice?.at === `check:${c.paymentId}` ? notice.message : null}
               onConfirm={(rowId) => run(`check:${c.paymentId}`, () => confirmReceipt(c.paymentId, rowId))}
               onNoReceipt={(reason) => run(`check:${c.paymentId}`, () => sayNoReceipt(c.paymentId, reason))}
+              onTakeOver={(mailId) => takeOver(c.paymentId, mailId)}
+              onDismiss={(mailId) => run(`check:${c.paymentId}`, () => dismissMail(mailId))}
+              takingOver={takingOver}
             />
           ))}
         </ul>

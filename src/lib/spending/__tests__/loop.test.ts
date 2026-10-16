@@ -100,6 +100,14 @@ describe('loopState', () => {
     expect(loopState(payment({ kind: 'own_transfer' }), answered)).toEqual({ state: 'not_needed', reason: 'own_transfer' });
   });
 
+  it('names a mail attachment found for the payment, after a fitting receipt and before "missing"', () => {
+    const mail = { id: 'mc1', fileName: 'Rechnung.pdf', receivedDay: '2026-05-09', subject: 'Rechnung', sender: 'billing@zyx.example' };
+    const mails = new Map([['p1', [mail]]]);
+    expect(loopState(payment(), ctx({ mailCandidates: mails }))).toEqual({ state: 'in_mailbox', mails: [mail] });
+    expect(loopState(payment(), ctx({ mailCandidates: mails, receipts: [receipt()] })).state).toBe('proposed');
+    expect(loopState(payment(), ctx({ mailCandidates: mails, noReceipt: new Map([['p1', 'x']]) })).state).toBe('no_receipt');
+  });
+
   it('proposes when a receipt fits, and reports the receipt missing otherwise', () => {
     expect(loopState(payment(), ctx({ receipts: [receipt()] })).state).toBe('proposed');
     expect(loopState(payment(), ctx())).toEqual({ state: 'missing' });

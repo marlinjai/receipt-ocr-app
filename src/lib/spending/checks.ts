@@ -4,6 +4,7 @@ import { runBudgetWarnings, type WarningRun } from './budget-service';
 import { runReceiptLoop, type RunResult } from './loop-service';
 import type { NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
+import type { MailboxPort } from './mailbox/port';
 
 export interface ChecksRun {
   /** The missing-receipt loop's result, or null when it failed. */
@@ -22,7 +23,7 @@ export interface ChecksRun {
 export async function runSpendingChecks(
   db: PrismaClient,
   ctx: NotifyContext,
-  options: { today: string; channels?: readonly NotificationChannel[]; now?: Date },
+  options: { today: string; channels?: readonly NotificationChannel[]; now?: Date; mailbox?: MailboxPort },
 ): Promise<ChecksRun> {
   let loop: RunResult | null = null;
   let budgets: WarningRun | null = null;

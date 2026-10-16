@@ -8,6 +8,9 @@ import { LoopServiceError, answerNoReceipt, confirmCandidate, loadLoopOverview, 
 import { runSpendingChecks, type ChecksRun } from '@/lib/spending/checks';
 import { NotifyServiceError, getNotifySettings, listUnreadNotifications, markNotificationRead, saveNotifySettings, type NotificationView, type NotifySettings, type NotifyContext } from '@/lib/spending/notify/service';
 import { berlinToday } from '@/lib/spending/period';
+import { serverMailbox } from '@/lib/spending/mailbox/gmail';
+import { MailCandidateError, dismissMailCandidate } from '@/lib/spending/mailbox/service';
+import { linkReceiptToPayment } from '@/lib/spending/loop-service';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
 
 /**
@@ -26,6 +29,10 @@ export interface ChecksView {
   notifications: NotificationView[];
   settings: NotifySettings;
   canWrite: boolean;
+  /** The active company: a mail attachment is uploaded into it. */
+  workspaceId: string;
+  /** The expenses mailbox for this company: searched ('on'), not set up ('off'), or another company's ('other_company'). */
+  mailbox: 'on' | 'off' | 'other_company';
   /** Set after "check now": what the run did. */
   lastRun: ChecksRun | null;
 }
@@ -38,6 +45,7 @@ function failure(e: unknown): { ok: false; error: ChecksActionError; detail?: st
   if (e instanceof MissingTenantError) return { ok: false, error: 'forbidden' };
   if (e instanceof LoopServiceError) return { ok: false, error: e.code === 'payment_not_found' ? 'not_found' : 'invalid_input', detail: e.code };
   if (e instanceof NotifyServiceError) return { ok: false, error: e.code === 'notification_not_found' ? 'not_found' : 'invalid_input', detail: e.code };
+  if (e instanceof MailCandidateError) return { ok: false, error: 'not_found', detail: e.code };
   if (e instanceof PaymentServiceError) return { ok: false, error: 'invalid_input', detail: e.detail === null ? e.code : `${e.code}:${e.detail}` };
   console.error('[spending] checks action failed', e);
   return { ok: false, error: 'failed' };
@@ -55,7 +63,9 @@ async function view(workspaceId: string, canWrite: boolean, lastRun: ChecksView[
     canWrite ? listUnreadNotifications(prisma, workspaceId) : Promise.resolve([]),
     getNotifySettings(prisma, workspaceId),
   ]);
-  return { loop, notifications, settings, canWrite, lastRun };
+  const status = serverMailbox(workspaceId).status();
+  const mailbox = status.configured ? 'on' : status.reason === 'other_company' ? 'other_company' : 'off';
+  return { loop, notifications, settings, canWrite, lastRun, workspaceId, mailbox };
 }
 
 export async function getReceiptChecks(): Promise<ChecksResult<ChecksView>> {
@@ -126,6 +136,32 @@ export async function saveNotificationSettings(input: unknown): Promise<ChecksRe
   try {
     const ctx = await writeContext();
     await saveNotifySettings(prisma, ctx, input);
+    return { ok: true, value: await view(ctx.workspaceId, true) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** "Not the invoice": set a found mail aside for good. */
+export async function dismissMail(candidateId: unknown): Promise<ChecksResult<ChecksView>> {
+  try {
+    const ctx = await writeContext();
+    await dismissMailCandidate(prisma, ctx, String(candidateId ?? ''));
+    return { ok: true, value: await view(ctx.workspaceId, true) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/**
+ * The receipt just taken over from the mailbox (or found to be there already)
+ * belongs to this payment: the owner chose the mail for it, so it is linked
+ * right away instead of waiting for the reading to match.
+ */
+export async function linkTakenOver(paymentId: unknown, rowId: unknown): Promise<ChecksResult<ChecksView>> {
+  try {
+    const ctx = await writeContext();
+    await linkReceiptToPayment(prisma, ctx, String(paymentId ?? ''), String(rowId ?? ''));
     return { ok: true, value: await view(ctx.workspaceId, true) };
   } catch (e) {
     return failure(e);

@@ -130,6 +130,11 @@ const neg = (cents: number) => (cents === 0 ? 0 : -cents);
 const MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
 const RULE_ORIGIN = 'rule' as const;
+const EXCESS_SOURCE: Source = {
+  citation: '§ 10 Abs. 4b Satz 3 Einkommensteuergesetz (Erstattungsüberhang)',
+  url: 'https://www.gesetze-im-internet.de/estg/__10.html',
+  checkedOn: '2026-10-15',
+};
 
 export function estimateIncomeTax(input: EstimateInput): IncomeTaxEstimate {
   const { rules, exact } = incomeTaxRulesForYear(input.year);
@@ -177,7 +182,7 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
           id: 'business.result',
           label: (input.businessProfitCents as number) < 0 ? 'Verlust laut Einnahmenüberschussrechnung' : 'Gewinn laut Einnahmenüberschussrechnung',
           cents: businessCents,
-          inputs: [{ label: 'Ergebnis der EÜR', cents: input.businessProfitCents, origin: 'statement' }],
+          inputs: [{ label: 'Ergebnis der Einnahmenüberschussrechnung (EÜR)', cents: input.businessProfitCents, origin: 'statement' }],
           note: 'In vollen Euro, zugunsten abgerundet.',
         },
       ],
@@ -194,7 +199,13 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
       text: 'Für dieses Jahr sind keine Lohndaten erfasst. Die Schätzung zeigt nur das Gewerbe; eine Lohnabrechnung reicht für den Anfang.',
     });
     const homeOffice = sumDays(items, 'employment.home_office_days');
-    if (input.employmentReceiptsCents > 0 || homeOffice > 0 || itemsOf(items, 'employment.commute').length > 0 || sumAmount(items, 'employment.other') > 0) {
+    if (
+      input.employmentReceiptsCents > 0 ||
+      homeOffice > 0 ||
+      itemsOf(items, 'employment.commute').length > 0 ||
+      sumAmount(items, 'employment.other') > 0 ||
+      sumAmount(items, 'employment.union_dues') > 0
+    ) {
       assumptions.push('Werbungskosten der Anlage N zählen erst mit Lohndaten und sind deshalb nicht enthalten.');
     }
   } else {
@@ -222,23 +233,40 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
     const homeOfficeCents = countedDays * rules.homeOfficeDay.value.centsPerDay;
     const commuteRate = rules.commute.value;
     const commuteInputs: FigureInput[] = [];
-    let commuteCents = 0;
+    // The 4,500 euro cap applies to every way of commuting except one's own
+    // car, so trips by car are added uncapped and the rest is capped.
+    let carCents = 0;
+    let otherWaysCents = 0;
     for (const c of itemsOf(items, 'employment.commute')) {
       const km = c.distanceKm ?? 0;
       const days = c.days ?? 0;
       const perDay = Math.min(km, 20) * commuteRate.firstKmCents + Math.max(km - 20, 0) * commuteRate.from21stKmCents;
-      commuteCents += days * perDay;
-      commuteInputs.push({ label: c.note || 'Weg', cents: days * perDay, text: `${days} Tage × ${km} km`, origin: 'return_item' });
+      if (c.ownCar) carCents += days * perDay;
+      else otherWaysCents += days * perDay;
+      commuteInputs.push({
+        label: `${c.note || 'Weg'}${c.ownCar ? ' (eigener Wagen)' : ''}`,
+        cents: days * perDay,
+        text: `${days} Tage × ${km} km`,
+        origin: 'return_item',
+      });
     }
-    commuteCents = ceilEuro(commuteCents);
-    if (commuteCents > commuteRate.capCents) {
-      notCovered.push('Die Entfernungspauschale liegt über 4.500 Euro; der Höchstbetrag gilt nicht für den eigenen Wagen. Die App kappt nicht.');
+    const cappedOtherWays = Math.min(ceilEuro(otherWaysCents), commuteRate.capCents);
+    if (cappedOtherWays < ceilEuro(otherWaysCents)) {
+      commuteInputs.push({ label: 'Höchstbetrag ohne eigenen Wagen', cents: commuteRate.capCents, origin: RULE_ORIGIN });
     }
+    const commuteCents = ceilEuro(carCents) + cappedOtherWays;
     const otherItems = itemsOf(items, 'employment.other');
     const otherCents = otherItems.reduce((s, i) => s + ceilEuro(i.amountCents ?? 0), 0);
-    const workCostsCents = receiptsCents + homeOfficeCents + commuteCents + otherCents;
+    // Union dues: work-related costs like any other until 2025; from 2026 they
+    // count in addition to the employee flat allowance (§ 9a Satz 3 EStG).
+    const unionItems = itemsOf(items, 'employment.union_dues');
+    const unionCents = unionItems.reduce((s, i) => s + ceilEuro(i.amountCents ?? 0), 0);
+    const unionBeside = rules.unionDuesBesideFlatAllowance.value;
+    const workCostsCents = receiptsCents + homeOfficeCents + commuteCents + otherCents + (unionBeside ? 0 : unionCents);
     const flat = rules.employeeFlatAllowanceCents.value;
-    const deductedCents = Math.max(workCostsCents, flat);
+    // The flat allowance never makes a loss: it is deducted only up to the wage (§ 9a Satz 2 EStG).
+    const flatUsed = Math.min(flat, Math.max(grossCents, 0));
+    const deductedCents = Math.max(workCostsCents, flatUsed) + (unionBeside ? unionCents : 0);
     employmentIncomeCents = grossCents - deductedCents;
     if ((input.employmentStructuredReceiptsCents ?? 0) > 0) {
       assumptions.push(
@@ -273,9 +301,9 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
         { id: 'employment.commute', label: 'Entfernungspauschale', cents: commuteCents, inputs: commuteInputs, source: rules.commute.source },
         {
           id: 'employment.receipts',
-          label: 'Belege der Anlage N (Fortbildung, Arbeitsmittel)',
+          label: 'Belege der Anlage N (Fortbildung, Arbeitsmittel, Sonstiges)',
           cents: receiptsCents,
-          inputs: [{ label: 'Summe der Anlage-N-Zeilen in der EÜR-Ansicht', cents: input.employmentReceiptsCents, origin: 'receipts' }],
+          inputs: [{ label: 'Betragszeilen der Anlage N aus den Belegen (Ansicht EÜR)', cents: input.employmentReceiptsCents, origin: 'receipts' }],
         },
         {
           id: 'employment.other',
@@ -284,12 +312,23 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
           inputs: otherItems.map((i) => ({ label: i.note || 'Eintrag', cents: i.amountCents, origin: 'return_item' as const })),
         },
         {
+          id: 'employment.union_dues',
+          label: unionBeside ? 'Gewerkschaftsbeiträge (neben dem Pauschbetrag)' : 'Gewerkschaftsbeiträge',
+          cents: unionCents,
+          inputs: unionItems.map((i) => ({ label: i.note || 'Eintrag', cents: i.amountCents, origin: 'return_item' as const })),
+          source: rules.unionDuesBesideFlatAllowance.source,
+        },
+        {
           id: 'employment.deducted',
-          label: workCostsCents >= flat ? 'Werbungskosten' : 'Arbeitnehmer-Pauschbetrag (höher als die Werbungskosten)',
-          cents: -deductedCents,
+          label:
+            workCostsCents >= flatUsed
+              ? `Werbungskosten${unionBeside && unionCents > 0 ? ' und Gewerkschaftsbeiträge' : ''}`
+              : `Arbeitnehmer-Pauschbetrag (höher als die Werbungskosten)${unionBeside && unionCents > 0 ? ' und Gewerkschaftsbeiträge' : ''}`,
+          cents: neg(deductedCents),
           inputs: [
             { label: 'Werbungskosten zusammen', cents: workCostsCents, origin: 'computed' },
             { label: 'Arbeitnehmer-Pauschbetrag', cents: flat, origin: RULE_ORIGIN },
+            ...(flatUsed < flat ? [{ label: 'höchstens bis zum Arbeitslohn', cents: flatUsed, origin: RULE_ORIGIN }] : []),
           ],
           source: rules.employeeFlatAllowanceCents.source,
         },
@@ -301,12 +340,28 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
   // ── Total amount of income ──────────────────────────────────────────────
   const sumOfIncomeCents = businessCents + employmentIncomeCents;
   const churchFromWagesCents = wages?.total.churchTaxCents ?? 0;
-  const churchPaidOtherCents = sumAmount(items, 'special.church_tax_paid');
+  // Church tax paid in the year besides the wage: on an assessment, and the advance payments.
+  const churchPaidOtherCents = sumAmount(items, 'special.church_tax_paid') + sumAmount(items, 'prepayment.church_tax');
   const churchRefundedCents = sumAmount(items, 'special.church_tax_refunded');
   const churchNetCents = ceilEuro(churchFromWagesCents + churchPaidOtherCents) - floorEuro(churchRefundedCents);
-  // A church tax refund above what was paid in the year is added to the income (§ 10 Abs. 4b Satz 3 EStG).
+  // A refund above what was paid in the year is added to the income (§ 10 Abs. 4b Satz 3 EStG):
+  // for church tax, and for health and care contributions.
   const churchExcessCents = churchNetCents < 0 ? -churchNetCents : 0;
-  const totalIncomeCents = sumOfIncomeCents + churchExcessCents;
+
+  const w = wages?.total;
+  const wageHealthCents = ceilEuro(w?.healthEmployeeCents ?? 0);
+  const selfSickPayRaw = sumAmount(items, 'insurance.health_self_paid_sick_pay');
+  const selfSickPayCents = ceilEuro(selfSickPayRaw);
+  const selfHealthCents = ceilEuro(sumAmount(items, 'insurance.health_self_paid'));
+  const healthCents = wageHealthCents + selfSickPayCents + selfHealthCents;
+  // The 4 percent come off the contributions as paid, rounded down in the taxpayer's favour.
+  const reductionCents = floorEuro(bp((wages?.healthWithSickPayCents ?? 0) + selfSickPayRaw, rules.sickPayReductionBp.value));
+  const careCents = ceilEuro(w?.careEmployeeCents ?? 0) + ceilEuro(sumAmount(items, 'insurance.care_self_paid'));
+  const refundedCents = floorEuro(sumAmount(items, 'insurance.refunded'));
+  const basicRawCents = healthCents - reductionCents + careCents - refundedCents;
+  const basicCents = Math.max(basicRawCents, 0);
+  const insuranceExcessCents = basicRawCents < 0 ? -basicRawCents : 0;
+  const totalIncomeCents = sumOfIncomeCents + churchExcessCents + insuranceExcessCents;
   sections.push({
     id: 'income',
     title: 'Summe der Einkünfte',
@@ -328,7 +383,18 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
               label: 'Hinzurechnung: Kirchensteuer-Erstattungsüberhang',
               cents: churchExcessCents,
               inputs: [{ label: 'erstattet minus gezahlt', cents: churchExcessCents, origin: 'computed' as const }],
-              source: { citation: '§ 10 Abs. 4b Satz 3 Einkommensteuergesetz', url: 'https://www.gesetze-im-internet.de/estg/__10.html', checkedOn: '2026-10-15' },
+              source: EXCESS_SOURCE,
+            },
+          ]
+        : []),
+      ...(insuranceExcessCents > 0
+        ? [
+            {
+              id: 'income.insurance_excess',
+              label: 'Hinzurechnung: Erstattungsüberhang Kranken- und Pflegeversicherung',
+              cents: insuranceExcessCents,
+              inputs: [{ label: 'erstattet minus gezahlt', cents: insuranceExcessCents, origin: 'computed' as const }],
+              source: EXCESS_SOURCE,
             },
           ]
         : []),
@@ -341,7 +407,8 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
   const trainingRaw = sumAmount(items, 'special.vocational_training');
   const trainingCents = Math.min(ceilEuro(trainingRaw), rules.vocationalTrainingCapCents.value);
   const donationsRaw = sumAmount(items, 'special.donations');
-  const donationsCap = Math.max(floorEuro(bp(totalIncomeCents, rules.donationsCapBp.value)), 0);
+  // Measured on the income before any refund excess is added.
+  const donationsCap = Math.max(floorEuro(bp(sumOfIncomeCents, rules.donationsCapBp.value)), 0);
   const donationsCents = Math.min(ceilEuro(donationsRaw), donationsCap);
   const specialActual = churchDeductionCents + trainingCents + donationsCents;
   const specialCents = Math.max(specialActual, rules.specialExpensesFlatCents.value);
@@ -355,7 +422,7 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
         cents: churchDeductionCents,
         inputs: [
           { label: 'vom Lohn einbehalten', cents: churchFromWagesCents, origin: wages ? wageOrigin(wages) : 'computed' },
-          { label: 'sonst gezahlt', cents: churchPaidOtherCents, origin: 'return_item' },
+          { label: 'sonst gezahlt (Bescheid, Vorauszahlungen)', cents: churchPaidOtherCents, origin: 'return_item' },
           { label: 'erstattet', cents: neg(churchRefundedCents), origin: 'return_item' },
         ],
       },
@@ -384,21 +451,11 @@ function compute(input: EstimateInput, rules: IncomeTaxRules): Computed {
   });
 
   // ── Insurance contributions ─────────────────────────────────────────────
-  const w = wages?.total;
   const pensionEmployerCents = floorEuro(w?.pensionEmployerCents ?? 0);
   const pensionAllCents = ceilEuro((w?.pensionEmployeeCents ?? 0) + (w?.pensionEmployerCents ?? 0) + sumAmount(items, 'insurance.pension_self_paid'));
   const pensionCapped = Math.min(pensionAllCents, rules.pension.value.capCents);
   const pensionCents = Math.max(bp(pensionCapped, rules.pension.value.deductibleBp) - pensionEmployerCents, 0);
 
-  const wageHealthCents = ceilEuro(w?.healthEmployeeCents ?? 0);
-  const wageHealthSickPayCents = wages && w && wages.healthWithSickPayCents === w.healthEmployeeCents ? wageHealthCents : ceilEuro(wages?.healthWithSickPayCents ?? 0);
-  const selfSickPayCents = ceilEuro(sumAmount(items, 'insurance.health_self_paid_sick_pay'));
-  const selfHealthCents = ceilEuro(sumAmount(items, 'insurance.health_self_paid'));
-  const healthCents = wageHealthCents + selfSickPayCents + selfHealthCents;
-  const reductionCents = floorEuro(bp(wageHealthSickPayCents + selfSickPayCents, rules.sickPayReductionBp.value));
-  const careCents = ceilEuro(w?.careEmployeeCents ?? 0) + ceilEuro(sumAmount(items, 'insurance.care_self_paid'));
-  const refundedCents = floorEuro(sumAmount(items, 'insurance.refunded'));
-  const basicCents = Math.max(healthCents - reductionCents + careCents - refundedCents, 0);
   const otherInsuranceCents = ceilEuro(w?.unemploymentEmployeeCents ?? 0) + ceilEuro(sumAmount(items, 'insurance.other'));
   const cap = hasWages ? rules.otherInsuranceCapCents.value.employee : rules.otherInsuranceCapCents.value.selfPaid;
   const limitedCents = Math.max(basicCents, Math.min(basicCents + otherInsuranceCents, cap));

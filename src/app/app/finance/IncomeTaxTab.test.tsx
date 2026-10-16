@@ -136,7 +136,23 @@ describe('IncomeTaxTab', () => {
     expect(p.onSaveItem).not.toHaveBeenCalled();
     await userEvent.type(within(form).getByLabelText('Entfernung in km'), '20');
     await userEvent.click(within(form).getByRole('button', { name: 'Speichern' }));
-    expect(p.onSaveItem).toHaveBeenCalledWith(null, { year: 2026, key: 'employment.commute', amountCents: null, days: 4, distanceKm: 20, note: null }, expect.any(Function));
+    expect(p.onSaveItem).toHaveBeenCalledWith(null, { year: 2026, key: 'employment.commute', amountCents: null, days: 4, distanceKm: 20, ownCar: false, note: null }, expect.any(Function));
+    await userEvent.click(within(form).getByLabelText('mit dem eigenen Wagen'));
+    await userEvent.click(within(form).getByRole('button', { name: 'Speichern' }));
+    expect(p.onSaveItem).toHaveBeenLastCalledWith(null, expect.objectContaining({ ownCar: true }), expect.any(Function));
+  });
+
+  it('shows the stored church months again after they were saved, cleared or read off a new pay slip', () => {
+    const p = props();
+    const stated = Array.from({ length: 12 }, (_, i) => i < 11);
+    const { rerender } = render(<IncomeTaxTab view={view(incomeTaxView({ churchMonths: stated }))} {...p} />);
+    expect((screen.getByLabelText('Dezember') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('November') as HTMLInputElement).checked).toBe(true);
+    // Cleared on the server: nothing stated, no pay slips.
+    rerender(<IncomeTaxTab view={view(incomeTaxView({ churchMonths: null }))} {...p} />);
+    expect((screen.getByLabelText('November') as HTMLInputElement).checked).toBe(false);
+    rerender(<IncomeTaxTab view={view(incomeTaxView({ churchMonths: Array(12).fill(true) }))} {...p} />);
+    expect((screen.getByLabelText('Dezember') as HTMLInputElement).checked).toBe(true);
   });
 
   it('saves the church tax months as twelve flags', async () => {

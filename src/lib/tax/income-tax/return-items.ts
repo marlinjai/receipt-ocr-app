@@ -22,6 +22,7 @@ export interface ReturnItemKind {
 export const RETURN_ITEM_KEYS = [
   'employment.home_office_days',
   'employment.commute',
+  'employment.union_dues',
   'employment.other',
   'special.vocational_training',
   'special.donations',
@@ -57,14 +58,21 @@ export const RETURN_ITEM_KINDS: Record<ReturnItemKey, ReturnItemKind> = {
     label: 'Wege zur ersten Tätigkeitsstätte oder Hochschule',
     group: 'employment',
     measure: 'commute',
-    hint: 'Tage und einfache Entfernung in vollen Kilometern, je Ort ein Eintrag.',
+    hint: 'Tage und einfache Entfernung in vollen Kilometern, je Ort und Verkehrsmittel ein Eintrag. Ohne eigenen Wagen gilt ein Höchstbetrag von 4.500 Euro.',
+  },
+  'employment.union_dues': {
+    key: 'employment.union_dues',
+    label: 'Gewerkschafts- und Berufsverbandsbeiträge',
+    group: 'employment',
+    measure: 'amount',
+    hint: 'Im Jahr gezahlt. Ab 2026 zählen sie zusätzlich zum Arbeitnehmer-Pauschbetrag.',
   },
   'employment.other': {
     key: 'employment.other',
     label: 'Weitere Werbungskosten ohne Beleg in der App',
     group: 'employment',
     measure: 'amount',
-    hint: 'Zum Beispiel Gewerkschaftsbeiträge. Was als Beleg in der App steht, zählt schon über die Anlage N.',
+    hint: 'Kosten ohne Beleg in der App. Was als Beleg auf einer Zeile der Anlage N steht (auch „Sonstiges“), zählt schon und gehört nicht hierher.',
   },
   'special.vocational_training': {
     key: 'special.vocational_training',
@@ -169,6 +177,8 @@ export interface ReturnItemFact {
   days: number | null;
   /** For `commute` items: the one-way distance in full kilometres. */
   distanceKm: number | null;
+  /** For `commute` items: travelled by one's own car (no 4,500 euro cap). */
+  ownCar: boolean;
   note: string | null;
 }
 

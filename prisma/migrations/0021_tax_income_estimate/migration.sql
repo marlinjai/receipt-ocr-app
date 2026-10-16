@@ -39,6 +39,7 @@ CREATE TABLE "tax_return_items" (
     "amount_cents" INTEGER,
     "days" INTEGER,
     "distance_km" INTEGER,
+    "own_car" BOOLEAN NOT NULL DEFAULT false,
     "note" TEXT,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,

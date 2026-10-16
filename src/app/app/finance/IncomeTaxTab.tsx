@@ -23,6 +23,7 @@ export interface ReturnItemDraft {
   amountCents: number | null;
   days: number | null;
   distanceKm: number | null;
+  ownCar: boolean;
   note: string | null;
 }
 
@@ -150,8 +151,18 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
   const [itemAmount, setItemAmount] = useState('');
   const [itemDays, setItemDays] = useState('');
   const [itemKm, setItemKm] = useState('');
+  const [itemOwnCar, setItemOwnCar] = useState(false);
   const [itemNote, setItemNote] = useState('');
-  const [months, setMonths] = useState<boolean[]>(() => tax.churchMonths ?? tax.churchMonthsFromPaySlips ?? Array.from({ length: 12 }, () => false));
+  // The checkboxes follow what is stored: after a save, a cleared statement or a
+  // new pay slip they show what the estimate now uses, not what was clicked before.
+  const storedMonths = tax.churchMonths ?? tax.churchMonthsFromPaySlips ?? Array.from({ length: 12 }, () => false);
+  const storedMonthsKey = storedMonths.map((m) => (m ? '1' : '0')).join('');
+  const [months, setMonths] = useState<boolean[]>(storedMonths);
+  const [seenMonthsKey, setSeenMonthsKey] = useState(storedMonthsKey);
+  if (storedMonthsKey !== seenMonthsKey) {
+    setSeenMonthsKey(storedMonthsKey);
+    setMonths(storedMonths);
+  }
   const [localError, setLocalError] = useState<string | null>(null);
   const shown = localError ?? error;
 
@@ -203,6 +214,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
     setItemAmount(item?.amountCents ? formatCents(item.amountCents) : '');
     setItemDays(item?.days ? String(item.days) : '');
     setItemKm(item?.distanceKm ? String(item.distanceKm) : '');
+    setItemOwnCar(item?.ownCar ?? false);
     setItemNote(item?.note ?? '');
   };
 
@@ -223,7 +235,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
       }
     }
     setLocalError(null);
-    onSaveItem(itemEditing === 'new' ? null : itemEditing, { year: view.year, key: itemKey, amountCents, days, distanceKm, note: itemNote.trim() || null }, () => setItemEditing(null));
+    onSaveItem(itemEditing === 'new' ? null : itemEditing, { year: view.year, key: itemKey, amountCents, days, distanceKm, ownCar: measure === 'commute' && itemOwnCar, note: itemNote.trim() || null }, () => setItemEditing(null));
   };
 
   const total = estimate.totalBalanceCents;
@@ -254,7 +266,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
         {estimate.scope === 'none' ? (
           <p className="ui-note mt-3">
             Für {view.year} gibt es weder Lohndaten noch ein Ergebnis des Gewerbes. Trag unten eine Lohnabrechnung oder
-            die Lohnsteuerbescheinigung ein; das Gewerbe kommt aus der EÜR, sobald Rechnungen erfasst sind.
+            die Lohnsteuerbescheinigung ein; das Gewerbe kommt aus der Einnahmenüberschussrechnung (EÜR), sobald Rechnungen erfasst sind.
           </p>
         ) : (
           <>
@@ -513,7 +525,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
           Weitere Angaben zur Steuererklärung {view.year}
         </h2>
         <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-          Belege mit Anteil Studium oder Anstellung zählen schon über die Anlage N der EÜR-Ansicht ({euro(view.employmentCostCents)}).
+          Belege mit Anteil Studium oder Anstellung zählen schon über die Anlage N (Einkünfte aus nichtselbständiger Arbeit) der Ansicht „EÜR“ ({euro(view.employmentCostCents)}).
         </p>
         {tax.returnItems.length > 0 && (
           <ul className="mt-3 space-y-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
@@ -523,7 +535,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
                   {RETURN_ITEM_KINDS[item.key].label}:{' '}
                   {item.amountCents !== null
                     ? euro(item.amountCents)
-                    : `${item.days} Tage${item.distanceKm !== null ? ` × ${item.distanceKm} km` : ''}`}
+                    : `${item.days} Tage${item.distanceKm !== null ? ` × ${item.distanceKm} km${item.ownCar ? ', eigener Wagen' : ''}` : ''}`}
                   {item.note ? ` (${item.note})` : ''}
                 </span>
                 <span className="inline-flex gap-1">
@@ -585,6 +597,12 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
                 </label>
                 <input id={`${id}-km`} className="ui-input tabular-nums" inputMode="numeric" value={itemKm} onChange={(e) => setItemKm(e.target.value)} />
               </div>
+            )}
+            {RETURN_ITEM_KINDS[itemKey].measure === 'commute' && (
+              <label className="inline-flex items-center gap-2 text-sm" style={{ color: 'var(--foreground)' }}>
+                <input type="checkbox" checked={itemOwnCar} onChange={(e) => setItemOwnCar(e.target.checked)} />
+                mit dem eigenen Wagen
+              </label>
             )}
             <div className="min-w-[12rem] flex-1">
               <label className="ui-label" htmlFor={`${id}-note`}>

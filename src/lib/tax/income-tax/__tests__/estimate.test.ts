@@ -10,6 +10,7 @@ const item = (key: ReturnItemKey, fields: Partial<ReturnItemFact>): ReturnItemFa
   amountCents: null,
   days: null,
   distanceKm: null,
+  ownCar: false,
   note: null,
   ...fields,
 });
@@ -289,5 +290,62 @@ describe('estimateIncomeTax: the rules one by one', () => {
     const e = estimateIncomeTax(plain({ businessProfitCents: -10_000_000 }));
     expect(e.taxableIncomeEuros).toBe(0);
     expect(e.notCovered.join(' ')).toMatch(/Verlustvortrag/);
+  });
+
+  it('deducts the flat allowance only up to the wage, so it never makes a loss (§ 9a Satz 2)', () => {
+    const small = aggregateWages([entry(1, { grossCents: 80_000 })], false);
+    const e = estimateIncomeTax(plain({ wages: small, businessProfitCents: 1_000_000 }));
+    expect(figure(e, 'employment.deducted').cents).toBe(-80_000);
+    expect(figure(e, 'employment.income').cents).toBe(0);
+    // Real work-related costs may still make a loss.
+    const costly = estimateIncomeTax(plain({ wages: small, employmentReceiptsCents: 150_000 }));
+    expect(figure(costly, 'employment.income').cents).toBe(-70_000);
+  });
+
+  it('counts union dues beside the flat allowance from 2026, inside it in 2025', () => {
+    const dues = [item('employment.union_dues', { amountCents: 24_500 }), item('employment.union_dues', { amountCents: 13_812 })];
+    const e26 = estimateIncomeTax(plain({ returnItems: dues }));
+    expect(figure(e26, 'employment.union_dues').cents).toBe(24_500 + 13_900);
+    expect(figure(e26, 'employment.deducted').cents).toBe(-(123_000 + 38_400));
+    const e25 = estimateIncomeTax(plain({ year: 2025, returnItems: dues }));
+    expect(figure(e25, 'employment.deducted').cents).toBe(-123_000);
+  });
+
+  it('caps the commute at 4,500 euros except for trips by own car', () => {
+    const far = (ownCar: boolean) => [item('employment.commute', { days: 220, distanceKm: 70, ownCar })];
+    expect(figure(estimateIncomeTax(plain({ returnItems: far(false) })), 'employment.commute').cents).toBe(450_000);
+    expect(figure(estimateIncomeTax(plain({ returnItems: far(true) })), 'employment.commute').cents).toBe(220 * 70 * 38);
+  });
+
+  it('deducts church tax advance payments as paid, and does not treat their payer as not liable', () => {
+    const e = estimateIncomeTax(
+      plain({
+        wages: null,
+        businessProfitCents: 6_000_000,
+        churchMonths: null,
+        churchMonthsBasis: null,
+        returnItems: [item('prepayment.church_tax', { amountCents: 50_000 })],
+      }),
+    );
+    expect(figure(e, 'special.church').cents).toBe(50_000);
+    expect(e.missing.map((m) => m.code)).toContain('church_months');
+    expect(e.churchTax.prepaidCents).toBe(50_000);
+  });
+
+  it('adds a refund of health and care contributions above what was paid to the income', () => {
+    const e = estimateIncomeTax(plain({ wages: null, businessProfitCents: 3_000_000, returnItems: [item('insurance.refunded', { amountCents: 20_000 })] }));
+    expect(figure(e, 'income.insurance_excess').cents).toBe(20_000);
+    expect(figure(e, 'insurance.basic').cents).toBe(0);
+  });
+
+  it('measures the donation cap without a refund excess', () => {
+    const e = estimateIncomeTax(
+      plain({
+        wages: aggregateWages([entry(0, { grossCents: 1_323_000 })], false),
+        returnItems: [item('special.donations', { amountCents: 500_000 }), item('special.church_tax_refunded', { amountCents: 100_000 })],
+      }),
+    );
+    expect(figure(e, 'income.church_excess').cents).toBe(100_000);
+    expect(figure(e, 'special.donations').cents).toBe(240_000);
   });
 });

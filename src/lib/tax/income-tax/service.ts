@@ -96,7 +96,7 @@ export async function loadIncomeTax(
   const wageEntries = wageRows.map(toWageEntry);
   // A key no longer known (a rule removed later) is ignored rather than miscounted.
   const returnItems: ReturnItemFact[] = itemRows.flatMap((r) =>
-    isReturnItemKey(r.key) ? [{ id: r.id, key: r.key, amountCents: r.amountCents, days: r.days, distanceKm: r.distanceKm, note: r.note }] : [],
+    isReturnItemKey(r.key) ? [{ id: r.id, key: r.key, amountCents: r.amountCents, days: r.days, distanceKm: r.distanceKm, ownCar: r.ownCar, note: r.note }] : [],
   );
   const statedMonths = decodeChurchMonths(yearRow?.churchMonths ?? null);
   const federalState = settings?.federalState && isFederalState(settings.federalState) ? settings.federalState : null;

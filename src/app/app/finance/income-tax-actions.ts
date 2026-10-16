@@ -5,6 +5,11 @@ import { ReceiptsAuthError } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
 import { IncomeTaxInputError } from '@/lib/tax/income-tax/input';
+
+/** A save for another year than the one on screen would answer with a view that does not show it: refused. */
+function sameYear(year: number, input: unknown): void {
+  if ((input as { year?: unknown } | null)?.year !== year) throw new IncomeTaxInputError('invalid_year');
+}
 import {
   IncomeTaxServiceError,
   deleteReturnItem,
@@ -64,7 +69,10 @@ async function write(year: number, run: (ctx: IncomeTaxContext) => Promise<unkno
 
 /** Record a wage statement or pay slip (`wageId` null) or change one; checked by `validateWageInput`. */
 export async function saveWage(year: number, wageId: string | null, input: unknown): Promise<Result<StatementView>> {
-  return write(year, (ctx) => saveWageEntry(prisma, ctx, wageId === null ? null : String(wageId), input));
+  return write(year, (ctx) => {
+    sameYear(year, input);
+    return saveWageEntry(prisma, ctx, wageId === null ? null : String(wageId), input);
+  });
 }
 
 export async function removeWage(year: number, wageId: string): Promise<Result<StatementView>> {
@@ -73,7 +81,10 @@ export async function removeWage(year: number, wageId: string): Promise<Result<S
 
 /** Record another item of the return (`itemId` null) or change one; checked by `validateReturnItemInput`. */
 export async function saveTaxReturnItem(year: number, itemId: string | null, input: unknown): Promise<Result<StatementView>> {
-  return write(year, (ctx) => saveReturnItem(prisma, ctx, itemId === null ? null : String(itemId), input));
+  return write(year, (ctx) => {
+    sameYear(year, input);
+    return saveReturnItem(prisma, ctx, itemId === null ? null : String(itemId), input);
+  });
 }
 
 export async function removeTaxReturnItem(year: number, itemId: string): Promise<Result<StatementView>> {

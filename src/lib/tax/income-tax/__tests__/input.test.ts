@@ -46,6 +46,7 @@ describe('validateWageInput', () => {
     [{ grossCents: -1 }, 'invalid_amount'],
     [{ grossCents: 1.5 }, 'invalid_amount'],
     [{ wageTaxCents: 500_000 }, 'wage_tax_above_gross'],
+    [{ grossCents: 0, wageTaxCents: 1 }, 'wage_tax_above_gross'],
     [{ year: 1999 }, 'invalid_year'],
     [{ churchLiable: 'ja' }, 'invalid_flag'],
     [{ healthWithSickPay: 1 }, 'invalid_flag'],
@@ -62,12 +63,17 @@ describe('validateReturnItemInput', () => {
       amountCents: 77_766,
       days: null,
       distanceKm: null,
+      ownCar: false,
       note: 'Zinsen',
     });
   });
 
   it('needs days and a distance for a commute', () => {
-    expect(validateReturnItemInput({ year: 2025, key: 'employment.commute', days: 4, distanceKm: 20 })).toMatchObject({ days: 4, distanceKm: 20, amountCents: null });
+    expect(validateReturnItemInput({ year: 2025, key: 'employment.commute', days: 4, distanceKm: 20 })).toMatchObject({ days: 4, distanceKm: 20, amountCents: null, ownCar: false });
+    expect(validateReturnItemInput({ year: 2025, key: 'employment.commute', days: 4, distanceKm: 20, ownCar: true }).ownCar).toBe(true);
+    expect(code(() => validateReturnItemInput({ year: 2025, key: 'employment.commute', days: 4, distanceKm: 20, ownCar: 'ja' }))).toBe('invalid_flag');
+    // Only a commute knows a car.
+    expect(validateReturnItemInput({ year: 2025, key: 'employment.home_office_days', days: 4, ownCar: true }).ownCar).toBe(false);
     expect(code(() => validateReturnItemInput({ year: 2025, key: 'employment.commute', days: 4 }))).toBe('invalid_distance');
     expect(code(() => validateReturnItemInput({ year: 2025, key: 'employment.home_office_days', days: 400 }))).toBe('invalid_days');
   });

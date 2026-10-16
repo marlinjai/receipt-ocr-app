@@ -34,6 +34,15 @@ const actions = vi.hoisted(() => ({
   disposeAsset: vi.fn(),
 }));
 vi.mock('./actions', () => actions);
+// The income tax tab's server actions: never the real ones (they reach the database).
+vi.mock('./income-tax-actions', () => ({
+  saveWage: vi.fn(),
+  removeWage: vi.fn(),
+  saveTaxReturnItem: vi.fn(),
+  removeTaxReturnItem: vi.fn(),
+  setChurchMonths: vi.fn(),
+  setFederalState: vi.fn(),
+}));
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
 

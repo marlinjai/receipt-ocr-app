@@ -613,6 +613,7 @@ model TaxReturnItem {
   amountCents     Int?     @map("amount_cents")
   days            Int?
   distanceKm      Int?     @map("distance_km")
+  ownCar          Boolean  @default(false) @map("own_car")
   note            String?
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")

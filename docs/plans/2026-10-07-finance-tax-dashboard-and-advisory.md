@@ -1264,7 +1264,7 @@ disagree:
   annual wage statement (`month` 0) or the pay slip of one month (1 to 12) per year
   and employer label, with gross wage, wage tax, solidarity surcharge, church tax
   and the employee shares of pension, health, care and unemployment insurance plus
-  the employer's pension share (migration `0020_tax_income_estimate`, additive).
+  the employer's pension share (migration `0021_tax_income_estimate`, additive).
   The annual statement of an employer wins over its pay slips; until it exists the
   slips are added up, and in the running year the last slip can be projected to
   December (the screen switches between "projected" and "months entered"). A month
@@ -1311,6 +1311,19 @@ disagree:
   without a state, leaves church tax open (the total is shown without it); a
   negative taxable income says that loss carry-back and carry-forward are not
   computed; a commute above 4,500 euros is not capped and says why.
+- **The headline tile of the running year shows the projected estimate** (wages
+  projected to December, business as recorded so far) and says "Lohn hochgerechnet";
+  the tab switches to the months entered.
+- **Reviewed before it merged** by a fresh agent with the statutes at hand. Fixed in
+  the same pull request: the employee flat allowance is deducted only up to the wage
+  (§ 9a Satz 2); union dues count beside the flat allowance from 2026 (§ 9a Satz 3,
+  own return item); church tax advance payments count as church tax paid; a refund of
+  health and care contributions above what was paid is added to the income like a
+  church tax refund (§ 10 Abs. 4b Satz 3); the donation cap is measured without those
+  additions; a commute is capped at 4,500 euros unless travelled by own car (a flag
+  per commute entry); the 4 percent reduction is taken from the unrounded
+  contributions; a save for another year than the one on screen is refused; the
+  church-month boxes follow what is stored.
 - **Not built:** reading a wage statement or pay slip from an uploaded file (entered
   by hand); the tax office's best-of comparison for insurance contributions; the
   trade tax credit; loss carry-forward; the track record against the assessment

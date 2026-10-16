@@ -37,6 +37,8 @@ export interface IncomeTaxRules {
   solidarity: Sourced<{ rateBp: number; exemptionLimitEuros: number; phaseInBp: number }>;
   /** Employee flat allowance: deducted instead of work-related costs when those are lower. */
   employeeFlatAllowanceCents: Sourced<number>;
+  /** From 2026 union dues count in addition to the employee flat allowance; before, they were ordinary work-related costs. */
+  unionDuesBesideFlatAllowance: Sourced<boolean>;
   /** Special expenses flat amount, when church tax, training costs and donations together are lower. */
   specialExpensesFlatCents: Sourced<number>;
   /** Commuting: cents per full kilometre, for the first 20 km and from the 21st, and the yearly cap (not for one's own car). */
@@ -165,6 +167,10 @@ export const INCOME_TAX_RULES_2025: IncomeTaxRules = {
     },
   },
   employeeFlatAllowanceCents: COMMON.employeeFlatAllowanceCents,
+  unionDuesBesideFlatAllowance: {
+    value: false,
+    source: estg('9a', '§ 9a Einkommensteuergesetz in der bis 2025 geltenden Fassung (Gewerkschaftsbeiträge sind Werbungskosten, mit dem Pauschbetrag abgegolten)', '2026-10-15'),
+  },
   specialExpensesFlatCents: COMMON.specialExpensesFlatCents,
   commute: {
     value: { firstKmCents: 30, from21stKmCents: 38, capCents: 450_000 },
@@ -212,6 +218,10 @@ export const INCOME_TAX_RULES_2026: IncomeTaxRules = {
     },
   },
   employeeFlatAllowanceCents: COMMON.employeeFlatAllowanceCents,
+  unionDuesBesideFlatAllowance: {
+    value: true,
+    source: estg('9a', '§ 9a Satz 3 Einkommensteuergesetz ab 2026 (Beiträge zu Berufsverbänden neben dem Arbeitnehmer-Pauschbetrag; § 52 Abs. 1)', '2026-10-15'),
+  },
   specialExpensesFlatCents: COMMON.specialExpensesFlatCents,
   commute: {
     value: { firstKmCents: 38, from21stKmCents: 38, capCents: 450_000 },

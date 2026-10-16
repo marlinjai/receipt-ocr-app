@@ -68,7 +68,7 @@ export function validateWageInput(raw: unknown): WageInput {
     if (!isInt(v) || v < 0 || v > MAX_CENTS) fail('invalid_amount');
     figures[field] = v as number;
   }
-  if (figures.wageTaxCents > figures.grossCents && figures.grossCents > 0) fail('wage_tax_above_gross');
+  if (figures.wageTaxCents > figures.grossCents) fail('wage_tax_above_gross');
   const healthWithSickPay = input.healthWithSickPay === undefined ? true : input.healthWithSickPay;
   if (typeof healthWithSickPay !== 'boolean') fail('invalid_flag');
   const church = input.churchLiable === undefined ? null : input.churchLiable;
@@ -90,6 +90,7 @@ export interface ReturnItemInput {
   amountCents: number | null;
   days: number | null;
   distanceKm: number | null;
+  ownCar: boolean;
   note: string | null;
 }
 
@@ -104,6 +105,7 @@ export function validateReturnItemInput(raw: unknown): ReturnItemInput {
   let amountCents: number | null = null;
   let days: number | null = null;
   let distanceKm: number | null = null;
+  let ownCar = false;
   if (measure === 'amount') {
     if (!isInt(input.amountCents) || input.amountCents <= 0 || input.amountCents > MAX_CENTS) fail('invalid_amount');
     amountCents = input.amountCents as number;
@@ -113,9 +115,11 @@ export function validateReturnItemInput(raw: unknown): ReturnItemInput {
     if (measure === 'commute') {
       if (!isInt(input.distanceKm) || input.distanceKm <= 0 || input.distanceKm > 1000) fail('invalid_distance');
       distanceKm = input.distanceKm as number;
+      if (input.ownCar !== undefined && typeof input.ownCar !== 'boolean') fail('invalid_flag');
+      ownCar = input.ownCar === true;
     }
   }
-  return { year, key, amountCents, days, distanceKm, note };
+  return { year, key, amountCents, days, distanceKm, ownCar, note };
 }
 
 export interface YearSettingsInput {

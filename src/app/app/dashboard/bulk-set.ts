@@ -12,8 +12,10 @@
  */
 
 /**
- * The most rows one server call writes; a larger selection goes in parts of this size. Each row is a few
- * reads and a write, so a part stays well inside a request's time, and the bar can say how far it got.
+ * The most rows one server call writes; a larger selection goes in parts of this size. The table adapter
+ * looks a row up across every table of the database, twice per write, so a part is kept small: it stays well
+ * inside a request's time (a part that runs out of it counts as unanswered and can be tried again), and the
+ * bar can say how far it got.
  */
 export const BULK_SET_PART = 25;
 

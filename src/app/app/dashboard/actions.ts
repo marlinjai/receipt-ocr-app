@@ -439,6 +439,7 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
   const tableByRow = await resolveRowTableIds(ids);
   const failed: BulkSetOutcome['failed'] = [];
   const written: string[] = [];
+  const uncertain: string[] = [];
   for (const rowId of ids) {
     if (tableByRow.get(rowId) !== tableId) {
       failed.push({ rowId, reason: 'not_found' });
@@ -452,22 +453,29 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
       // (The adapter says a row deleted between its two reads with a plain "Row not found".)
       const code = error instanceof GroupError ? error.code : null;
       const gone = code === 'row_not_found' || (error instanceof Error && error.message === 'Row not found');
-      failed.push({ rowId, reason: gone ? 'not_found' : code === 'not_writable' ? 'not_writable' : 'failed' });
+      if (gone || code === 'not_writable') failed.push({ rowId, reason: gone ? 'not_found' : 'not_writable' });
+      // Any other error may have come after the value was stored (the adapter reads the row again after its
+      // write): the read-back below decides.
+      else uncertain.push(rowId);
     }
   }
 
   // Read back what is stored now, all rows at once: a write that answered is not yet a value that landed.
   const done: string[] = [];
-  if (written.length > 0) {
+  if (written.length + uncertain.length > 0) {
     await ensureRealTable(prisma, tableId);
     const stored = await prisma.$queryRawUnsafe<Array<{ id: string; value: string | null }>>(
       `SELECT id, ${safeColumnName(columnId)} AS value FROM ${safeTableName(tableId)} WHERE id = ANY($1::text[])`,
-      written,
+      [...written, ...uncertain],
     );
     const byId = new Map(stored.map((r) => [r.id, r.value]));
     for (const rowId of written) {
       if (byId.has(rowId) && storedAs(byId.get(rowId), value)) done.push(rowId);
       else failed.push({ rowId, reason: byId.has(rowId) ? 'not_stored' : 'not_found' });
+    }
+    for (const rowId of uncertain) {
+      if (byId.has(rowId) && storedAs(byId.get(rowId), value)) done.push(rowId);
+      else failed.push({ rowId, reason: byId.has(rowId) ? 'failed' : 'not_found' });
     }
   }
   return { done, failed };

@@ -203,8 +203,12 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
     db.receiptReview.findMany({ where: { authWorkspaceId: workspaceId, rowId: { in: rowIds } } }),
   ]);
   // Only a receipt with an open doubt about its total (or one read from its image alone) needs its payments.
+  // A credit note whose invoice is not linked, or linked to a row that is no live receipt any more (archived).
+  const liveRows = new Set(rowIds);
   const unlinkedCreditNotes = new Set(
-    (await db.receiptReference.findMany({ where: { authWorkspaceId: workspaceId, referencedRowId: null }, select: { rowId: true } })).map((r) => r.rowId),
+    (await db.receiptReference.findMany({ where: { authWorkspaceId: workspaceId }, select: { rowId: true, referencedRowId: true } }))
+      .filter((r) => r.referencedRowId === null || !liveRows.has(r.referencedRowId))
+      .map((r) => r.rowId),
   );
   const inDoubt = stored.filter((r) => !r.checkedAt && r.flags.some((f) => f === 'total_unconfirmed' || f === 'total_conflict' || f === 'image_only')).map((r) => r.rowId);
   const paid = await paidByRow(db, workspaceId, inDoubt);

@@ -404,7 +404,7 @@ async function storeReviewFlags(workspaceId: string, tenantId: string | null, ro
   // its number. Where none does, the review list asks for it (derived on read, see reviewReasons).
   try {
     await linkCreditNote(prisma, adapter, tableId, { workspaceId, tenantId }, rowId, read.creditNote ? read.creditNote.referencedInvoiceNumber : undefined);
-    await relinkCreditNotes(prisma, adapter, tableId, { workspaceId, tenantId });
+    await relinkCreditNotes(prisma, adapter, tableId, { workspaceId, tenantId }, { rowId, text: read.fullText });
   } catch (err) {
     console.error('[processReceipt] the credit note references could not be brought up to date:', err instanceof Error ? err.name : 'error');
   }

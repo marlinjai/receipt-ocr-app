@@ -1,3 +1,4 @@
+import { relinkCreditNotes } from '@/lib/receipt-references';
 import 'server-only';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { CellValue, Column, Row } from '@marlinjai/data-table-core';
@@ -525,6 +526,15 @@ export async function deleteReceiptRows(
     } catch (e) {
       console.error('[meals] deleting a receipt failed', { rowId }, e);
       result.skipped.push({ rowId, reason: 'failed' });
+    }
+  }
+  // A deleted receipt can leave one carrier of a credit note's invoice number where there were two:
+  // the credit notes are linked again. A failure here leaves the links as they are; nothing is lost.
+  if (result.done.length > 0) {
+    try {
+      await relinkCreditNotes(db, ctx.adapter, ctx.tableId, mealCtx);
+    } catch (e) {
+      console.error('[meals] linking the credit notes again failed', e instanceof Error ? e.name : 'error');
     }
   }
   return result;

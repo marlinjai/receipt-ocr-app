@@ -433,6 +433,15 @@ describe('processReceipt: the model is shown the page, and the upload never depe
     expect(await db.receiptReference.findUnique({ where: { rowId: orphan.rowId } })).toMatchObject({ referencedRowId: null });
     expect(await reasonsOf(orphan.rowId)).toContain('credit_note');
 
+    // The reminder deleted: one carrier is left, and the credit note is linked again.
+    await deleteReceiptRows(db, { workspaceId: own.workspaceId, tenantId: own.tenantId }, [reminder.rowId], { deleteStoredFile: async () => {} });
+    expect(await db.receiptReference.findUnique({ where: { rowId: orphan.rowId } })).toMatchObject({ referencedRowId: late.rowId });
+    expect(await reasonsOf(orphan.rowId)).not.toContain('credit_note');
+
+    // Its invoice archived: no live receipt is linked, and the review list asks again.
+    await own.adapter.archiveRow(late.rowId);
+    expect(await reasonsOf(orphan.rowId)).toContain('credit_note');
+
     // The invoice deleted: the credit note it corrected asks again.
     await deleteReceiptRows(db, { workspaceId: own.workspaceId, tenantId: own.tenantId }, [invoice], { deleteStoredFile: async () => {} });
     expect(await db.receiptReference.findUnique({ where: { rowId: credit.rowId } })).toMatchObject({ referencedRowId: null });

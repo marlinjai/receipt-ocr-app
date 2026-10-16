@@ -17,3 +17,12 @@ CREATE TABLE "receipt_references" (
 
 CREATE INDEX "receipt_references_auth_workspace_id_idx" ON "receipt_references"("auth_workspace_id");
 CREATE INDEX "receipt_references_referenced_row_id_idx" ON "receipt_references"("referenced_row_id");
+
+-- Credit notes read before this table existed carry the review flag "credit_note"
+-- and no amount: they are recorded as credit notes naming no invoice, so they are
+-- never taken for an invoice and the review list keeps asking for them.
+INSERT INTO "receipt_references" ("row_id", "auth_workspace_id", "auth_tenant_id", "kind", "referenced_invoice_number", "referenced_row_id", "created_at", "updated_at")
+SELECT "row_id", "auth_workspace_id", "auth_tenant_id", 'credit_note', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+FROM "receipt_reviews"
+WHERE 'credit_note' = ANY("flags")
+ON CONFLICT ("row_id") DO NOTHING;

@@ -100,22 +100,38 @@ export async function linkCreditNote(
 }
 
 /**
- * Bring every credit note reference of the workspace up to date: each is
- * linked to the one stored receipt that now carries its number (never
- * another credit note or a negative row), or to none. Run after any receipt
- * is stored or read again, so an invoice arriving after its credit note, a
- * second carrier of the number, an invoice read again with other text, and a
- * credit note and its invoice uploaded together all end in the same state.
- * Credit notes are few: one lookup each.
+ * Bring the credit note links a stored receipt can change up to date: the
+ * references whose invoice number this receipt's text carries, and those
+ * already linked to it. Each is linked to the one receipt that now carries its
+ * number (never another credit note or a negative row), or to none. Run after
+ * any receipt is stored or read again, and after one is deleted, so an
+ * invoice arriving after its credit note, a second carrier of the number, an
+ * invoice read again with other text, and a credit note and its invoice
+ * uploaded together all end in the same state. Without `changed` every
+ * reference of the workspace is checked.
  */
-export async function relinkCreditNotes(db: PrismaClient, adapter: ReferenceAdapter, tableId: string, ctx: ReferenceContext): Promise<void> {
+export async function relinkCreditNotes(
+  db: PrismaClient,
+  adapter: ReferenceAdapter,
+  tableId: string,
+  ctx: ReferenceContext,
+  changed?: { rowId: string; text: string },
+): Promise<void> {
   const references = await db.receiptReference.findMany({ where: { authWorkspaceId: ctx.workspaceId } });
   if (references.length === 0) return;
   const creditNotes = new Set(references.map((r) => r.rowId));
-  for (const reference of references) {
+  const affected = changed
+    ? references.filter(
+        (r) =>
+          r.rowId !== changed.rowId &&
+          (r.referencedRowId === changed.rowId || (r.referencedInvoiceNumber !== null && carriesInvoiceNumber(changed.text, r.referencedInvoiceNumber))),
+      )
+    : references;
+  for (const reference of affected) {
     const found = reference.referencedInvoiceNumber ? await findInvoiceRow(adapter, tableId, reference.referencedInvoiceNumber, reference.rowId, creditNotes) : null;
     if (found !== reference.referencedRowId) {
-      await db.receiptReference.update({ where: { rowId: reference.rowId }, data: { referencedRowId: found } });
+      // updateMany: a reference deleted meanwhile is no reason to stop the others.
+      await db.receiptReference.updateMany({ where: { rowId: reference.rowId, authWorkspaceId: ctx.workspaceId }, data: { referencedRowId: found } });
     }
   }
 }

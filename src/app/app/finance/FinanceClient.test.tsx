@@ -4,6 +4,7 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { rulesForYear } from '@/lib/tax/rules';
 import type { StatementItem, StatementView } from '@/lib/tax/service';
+import { incomeTaxView } from '@/lib/tax/income-tax/__tests__/fixtures';
 
 const actions = vi.hoisted(() => ({
   acceptPaymentProposals: vi.fn(),
@@ -33,6 +34,15 @@ const actions = vi.hoisted(() => ({
   disposeAsset: vi.fn(),
 }));
 vi.mock('./actions', () => actions);
+// The income tax tab's server actions: never the real ones (they reach the database).
+vi.mock('./income-tax-actions', () => ({
+  saveWage: vi.fn(),
+  removeWage: vi.fn(),
+  saveTaxReturnItem: vi.fn(),
+  removeTaxReturnItem: vi.fn(),
+  setChurchMonths: vi.fn(),
+  setFederalState: vi.fn(),
+}));
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
 
@@ -157,6 +167,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     reverseChargeVendors: [],
     yearBoundary: [],
     initialized: true,
+    incomeTax: incomeTaxView({ year: 2025 }),
     ...overrides,
   };
 }
@@ -810,5 +821,21 @@ describe('FinanceClient: assets', () => {
     await user.click(screen.getByRole('button', { name: 'Kein Übertrag, eine eigene Zahlung' }));
     await vi.waitFor(() => expect(actions.markPaymentTransfer).toHaveBeenCalledWith(2025, 't-1', false));
     expect(await screen.findByText(/Als eigene Zahlung vermerkt/)).toBeTruthy();
+  });
+});
+
+describe('FinanceClient: the income tax estimate', () => {
+  it('shows the estimate as a headline tile and opens its tab', async () => {
+    render(<FinanceClient initial={view([], { incomeTax: incomeTaxView({ year: 2025, profitCents: 300_000 }) })} />);
+    const tile = screen.getByText('Einkommensteuer 2025 (Schätzung)').parentElement!;
+    expect(within(tile).getByText(/nur Gewerbe, ohne Lohn/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('tab', { name: 'Einkommensteuer' }));
+    expect(screen.getByRole('heading', { name: /Einkommensteuer 2025: Schätzung \(nur Gewerbe\)/ })).toBeTruthy();
+  });
+
+  it('says "offen" when there is nothing to estimate', () => {
+    render(<FinanceClient initial={view([])} />);
+    const tile = screen.getByText('Einkommensteuer 2025 (Schätzung)').parentElement!;
+    expect(within(tile).getByText('offen')).toBeTruthy();
   });
 });

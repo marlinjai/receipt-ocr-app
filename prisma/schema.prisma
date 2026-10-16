@@ -321,6 +321,9 @@ model WorkspaceTaxSettings {
   // What the owner expects to receive per month from now on, for the forecast
   // of the small-business limits. NULL: the forecast uses the run rate.
   expectedMonthlyRevenueCents Int?     @map("expected_monthly_revenue_cents")
+  // The federal state of residence, for the church tax rate of the income tax
+  // estimate ('BE', 'BY', ...). NULL: not stated.
+  federalState                String?  @map("federal_state")
   createdAt                   DateTime @default(now()) @map("created_at")
   updatedAt                   DateTime @updatedAt @map("updated_at")
 
@@ -561,6 +564,77 @@ model TaxYearBoundaryAnswer {
 
   @@unique([authWorkspaceId, subjectKind, subjectId])
   @@map("tax_year_boundary_answers")
+}
+
+// ── Income tax estimate ──────────────────────────────────────────────────────
+//
+// Facts of the person for the income tax estimate (finance plan, slice 6).
+// Stored are only what a wage statement, a pay slip or the owner states; the
+// estimate itself is computed on read (src/lib/tax/income-tax).
+
+// The figures of an annual wage statement (`month` 0) or of the pay slip of
+// one month (1 to 12), per year and employer. `employer` is a label the owner
+// chooses. Amounts in cents. `churchLiable` is set on pay slips only: church
+// tax due in that month (a church exit ends it within a year).
+model TaxWageStatement {
+  id                        String   @id @default(uuid())
+  authWorkspaceId           String   @map("auth_workspace_id")
+  authTenantId              String?  @map("auth_tenant_id")
+  year                      Int
+  employer                  String
+  month                     Int
+  grossCents                Int      @map("gross_cents")
+  wageTaxCents              Int      @map("wage_tax_cents")
+  solidarityCents           Int      @default(0) @map("solidarity_cents")
+  churchTaxCents            Int      @default(0) @map("church_tax_cents")
+  pensionEmployeeCents      Int      @default(0) @map("pension_employee_cents")
+  pensionEmployerCents      Int      @default(0) @map("pension_employer_cents")
+  healthEmployeeCents       Int      @default(0) @map("health_employee_cents")
+  careEmployeeCents         Int      @default(0) @map("care_employee_cents")
+  unemploymentEmployeeCents Int      @default(0) @map("unemployment_employee_cents")
+  healthWithSickPay         Boolean  @default(true) @map("health_with_sick_pay")
+  churchLiable              Boolean? @map("church_liable")
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, year, employer, month])
+  @@map("tax_wage_statements")
+}
+
+// Another item of the income tax return of a year, by rule key
+// (src/lib/tax/income-tax/return-items.ts): an amount, or days (and a
+// distance for a commute), with an optional note on the evidence.
+model TaxReturnItem {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  year            Int
+  key             String
+  amountCents     Int?     @map("amount_cents")
+  days            Int?
+  distanceKm      Int?     @map("distance_km")
+  ownCar          Boolean  @default(false) @map("own_car")
+  note            String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([authWorkspaceId, year])
+  @@map("tax_return_items")
+}
+
+// Per year: the months church tax was due, twelve characters '1' or '0'
+// starting with January. NULL: not stated.
+model TaxYearSettings {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  year            Int
+  churchMonths    String?  @map("church_months")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, year])
+  @@map("tax_year_settings")
 }
 
 // ── Payments ─────────────────────────────────────────────────────────────────

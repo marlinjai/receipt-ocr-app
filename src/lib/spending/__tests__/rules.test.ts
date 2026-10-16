@@ -87,6 +87,11 @@ describe('purposeOf', () => {
     expect(purposeOf({ kind: 'spend' }, 'business')).toBe('business');
     expect(purposeOf({ kind: 'spend' }, undefined)).toBe('unanswered');
   });
+  it('of a counterparty answered mixed, what is linked to a receipt is business and the rest private', () => {
+    expect(purposeOf({ kind: 'spend', linkCount: 1 }, 'mixed')).toBe('business');
+    expect(purposeOf({ kind: 'spend', linkCount: 0 }, 'mixed')).toBe('private');
+    expect(purposeOf({ kind: 'spend' }, 'mixed')).toBe('private');
+  });
 });
 
 describe('spendingCents', () => {

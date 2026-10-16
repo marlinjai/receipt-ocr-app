@@ -23,7 +23,8 @@ import type { SpendingCategory } from './categories';
  * 5. Otherwise "unclear", shown as such until a person answers.
  */
 
-export type CounterpartyTreatmentAnswer = 'business' | 'private' | 'own_account';
+/** The payments tab's answer on a counterparty (`CounterpartyTreatment`); `mixed`: partly business, partly private. */
+export type CounterpartyTreatmentAnswer = 'business' | 'private' | 'own_account' | 'mixed';
 
 export interface CategorisablePayment {
   kind: PaymentKind;
@@ -172,12 +173,15 @@ export type SpendingPurpose = 'private' | 'business' | 'unanswered';
 /**
  * Private or business, from what was said: a payment a person marked private,
  * or a counterparty answered as private, is private; a counterparty answered
- * as business is business. Nothing else decides it, in particular not the
- * company the payments were imported under: one bank account carries both.
+ * as business is business. Of a counterparty answered mixed, a payment linked
+ * to a receipt is business and the others are private. Nothing else decides
+ * it, in particular not the company the payments were imported under: one
+ * bank account carries both.
  */
-export function purposeOf(payment: { kind: PaymentKind }, treatment: CounterpartyTreatmentAnswer | undefined): SpendingPurpose {
+export function purposeOf(payment: { kind: PaymentKind; linkCount?: number }, treatment: CounterpartyTreatmentAnswer | undefined): SpendingPurpose {
   if (payment.kind === 'private' || treatment === 'private') return 'private';
   if (treatment === 'business') return 'business';
+  if (treatment === 'mixed') return (payment.linkCount ?? 0) > 0 ? 'business' : 'private';
   return 'unanswered';
 }
 

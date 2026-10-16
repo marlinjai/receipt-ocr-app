@@ -44,6 +44,8 @@ vi.mock('@/lib/spending/loop-service', () => {
     withdrawNoReceipt: (...a: unknown[]) => withdrawNoReceipt(...a),
   };
 });
+const runSpendingChecks = vi.fn();
+vi.mock('@/lib/spending/checks', () => ({ runSpendingChecks: (...a: unknown[]) => runSpendingChecks(...a) }));
 vi.mock('@/lib/spending/notify/service', () => {
   class NotifyServiceError extends Error {
     constructor(readonly code: string) {
@@ -80,7 +82,7 @@ const SESSION = { memberships: [WS], activeWorkspace: WS };
 const CTX = { workspaceId: 'ws-a', tenantId: 't-a' };
 
 beforeEach(() => {
-  for (const f of [requireAction, requireReceiptsSession, loadLoopOverview, runReceiptLoop, confirmCandidate, answerNoReceipt, withdrawNoReceipt, listUnreadNotifications, getNotifySettings, saveNotifySettings, markNotificationRead]) f.mockReset();
+  for (const f of [requireAction, requireReceiptsSession, loadLoopOverview, runReceiptLoop, runSpendingChecks, confirmCandidate, answerNoReceipt, withdrawNoReceipt, listUnreadNotifications, getNotifySettings, saveNotifySettings, markNotificationRead]) f.mockReset();
   loadLoopOverview.mockResolvedValue({ open: [], answered: [], counts: {} });
   listUnreadNotifications.mockResolvedValue([]);
   getNotifySettings.mockResolvedValue({ channel: 'push', notifyEmail: null });
@@ -116,15 +118,15 @@ describe('writes', () => {
     for (const result of [await checkNow(), await confirmReceipt('p', 'r'), await sayNoReceipt('p', 'x'), await takeBackNoReceipt('p'), await readNotification('n'), await saveNotificationSettings({})]) {
       expect(result).toEqual({ ok: false, error: 'forbidden' });
     }
-    for (const f of [runReceiptLoop, confirmCandidate, answerNoReceipt, withdrawNoReceipt, markNotificationRead, saveNotifySettings]) expect(f).not.toHaveBeenCalled();
+    for (const f of [runSpendingChecks, confirmCandidate, answerNoReceipt, withdrawNoReceipt, markNotificationRead, saveNotifySettings]) expect(f).not.toHaveBeenCalled();
   });
 
   it('act in the session\'s workspace and company, and report what the run did', async () => {
     requireAction.mockResolvedValue(SESSION);
-    runReceiptLoop.mockResolvedValue({ notified: 1, settled: 0, retried: 0, open: 2 });
-    expect(await checkNow()).toMatchObject({ ok: true, value: { canWrite: true, lastRun: { notified: 1, open: 2 } } });
-    expect(runReceiptLoop.mock.calls[0][1]).toEqual(CTX);
-    expect(runReceiptLoop.mock.calls[0][2].today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    runSpendingChecks.mockResolvedValue({ loop: { notified: 1, settled: 0, retried: 0, open: 2, deferred: 0 }, budgets: { sent: 1, deferred: 0, settled: 0 } });
+    expect(await checkNow()).toMatchObject({ ok: true, value: { canWrite: true, lastRun: { loop: { notified: 1, open: 2 }, budgets: { sent: 1 } } } });
+    expect(runSpendingChecks.mock.calls[0][1]).toEqual(CTX);
+    expect(runSpendingChecks.mock.calls[0][2].today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     await confirmReceipt('p1', 'r1');
     expect(confirmCandidate).toHaveBeenCalledWith({ marker: 'prisma' }, CTX, 'p1', 'r1');
     await sayNoReceipt('p1', 'Automat');

@@ -6,6 +6,8 @@ import { formatDay } from '@/lib/meals/messages';
 import { receiptHref } from '@/lib/receipt-link';
 import { formatCents } from '@/lib/tax/money';
 import type { PaymentCheck } from '@/lib/spending/loop-service';
+import type { ChecksRun } from '@/lib/spending/checks';
+import { useRouter } from 'next/navigation';
 import type { ChannelSetting } from '@/lib/spending/notify/port';
 import {
   checkNow,
@@ -38,13 +40,28 @@ const CHANNEL_LABELS: Record<ChannelSetting, string> = {
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** What a run did, in a sentence. */
-export function runSummary(run: { notified: number; deferred: number; open: number }): string {
-  const parts = [
-    `Geprüft: ${plural(run.notified, 'neue Benachrichtigung', 'neue Benachrichtigungen')}`,
-    `${plural(run.open, 'Zahlung wartet', 'Zahlungen warten')} auf einen Beleg`,
-  ];
-  if (run.deferred > 0) parts.push(`${plural(run.deferred, 'weitere folgt', 'weitere folgen')} beim nächsten Prüfen`);
-  return `${parts.join(', ')}.`;
+export function runSummary(checks: ChecksRun): string {
+  const sentences: string[] = [];
+  const run = checks.loop;
+  if (run) {
+    const parts = [
+      `Geprüft: ${plural(run.notified, 'neue Benachrichtigung', 'neue Benachrichtigungen')}`,
+      `${plural(run.open, 'Zahlung wartet', 'Zahlungen warten')} auf einen Beleg`,
+    ];
+    if (run.deferred > 0) parts.push(`${plural(run.deferred, 'weitere folgt', 'weitere folgen')} beim nächsten Prüfen`);
+    sentences.push(`${parts.join(', ')}.`);
+  } else {
+    sentences.push('Die Belege konnten nicht geprüft werden; bitte gleich noch einmal versuchen.');
+  }
+  if (checks.budgets) {
+    const parts: string[] = [];
+    if (checks.budgets.sent > 0) parts.push(plural(checks.budgets.sent, 'neue Budgetwarnung', 'neue Budgetwarnungen'));
+    if (checks.budgets.deferred > 0) parts.push(`${plural(checks.budgets.deferred, 'weitere folgt', 'weitere folgen')} beim nächsten Prüfen`);
+    if (parts.length > 0) sentences.push(`${parts.join(', ')}.`);
+  } else {
+    sentences.push('Die Budgets konnten nicht geprüft werden; bitte gleich noch einmal versuchen.');
+  }
+  return sentences.join(' ');
 }
 
 /** What went wrong, in words a person can act on. */
@@ -206,12 +223,16 @@ export default function ReceiptChecks({ initial, focusPaymentId }: { initial: Ch
   }, [focusPaymentId]);
   const focusSettled = focusPaymentId !== null && !loop.open.some((c) => c.paymentId === focusPaymentId);
 
+  const router = useRouter();
   const run = (at: string, action: () => Promise<ChecksResult<ChecksView>>) => {
     setError(null);
     startTransition(async () => {
       const result = await action();
-      if (result.ok) setView(result.value);
-      else setError({ at, message: checksActionMessage(result) });
+      if (result.ok) {
+        setView(result.value);
+        // A check can change the budgets and the overview too: the page reads them afresh.
+        if (at === 'run') router.refresh();
+      } else setError({ at, message: checksActionMessage(result) });
     });
   };
 

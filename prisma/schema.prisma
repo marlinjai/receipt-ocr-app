@@ -902,3 +902,22 @@ model SpendingNotification {
   @@index([authWorkspaceId, readAt])
   @@map("spending_notifications")
 }
+
+// A monthly budget the owner set himself (src/lib/spending/budgets.ts):
+// `scope` 'category' (key: a category key) or 'vendor' (key: a counterparty
+// key). `limitCents` NULL switches the budget off. No row for a category: its
+// limit is the average of the last twelve full months, computed on read.
+model SpendingBudget {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  scope           String
+  key             String
+  label           String
+  limitCents      Int?     @map("limit_cents")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, scope, key])
+  @@map("spending_budgets")
+}

@@ -120,7 +120,8 @@ warning goes through the same channel as the missing-receipt notification.
   The owner's choice.
 - **Which vendors may be fetched with a stored login.** Each one is a secret held by the system
   and a legal and safety decision of the owner. None until he names them.
-- **Budget limits.** The numbers are the owner's.
+- **Budget limits.** Decided by the coordinator on 2026-10-15: the default of a category is the
+  owner's own twelve-month average from the payments, and he edits every number in the app.
 - **The bank connection needs the owner's consent at each bank, repeated periodically.** Which
   accounts: the ledger holds four (Tomorrow, N26, Klarna, Advanzia) plus the payment service.
 
@@ -176,5 +177,28 @@ warning goes through the same channel as the missing-receipt notification.
   notifies about new missing receipts, at most ten per run (the rest on the next run). It runs
   after every payment file import (from the finance action, logged and never failing the import)
   and from "Jetzt prüfen" on the page; the live bank feed should call it the same way.
-- Step 3 (the mailbox) and budgets follow as their own changes.
+- Step 3 (the mailbox) follows as its own change.
+
+### Build order 4, budgets and warnings (2026-10-16)
+
+- A monthly budget per category and, where the owner adds one, per counterparty
+  (`src/lib/spending/budgets.ts`). Decided by the coordinator: a category's default limit is the
+  owner's own average over the last twelve full months, computed from the payments (over the months
+  the app has data for, not over twelve when it holds fewer); a number he sets replaces it, he can
+  switch a budget off or go back to the average. Only the private part of a payment counts (a
+  business counterparty not at all, the linked business part of a mixed one not).
+  Stored: only his own numbers (`spending_budgets`, migration 0027, additive).
+- A budget is "passed" when this month's spending is above it, and "on pace" when, from the seventh
+  day of the month on, the projection to the month's end lies more than ten percent above it. The
+  projection adds to what is spent so far what earlier months still spent after this day of the
+  month, so rent booked on the first does not make the rest of the month look expensive (without
+  history, the spending so far is carried forward evenly). The average counts only months with
+  payments, and the first month of data only when it starts in its first three days.
+- Each budget warns at most once per month, level and limit (a raised limit that is passed again
+  warns again), at most five warnings per run, through the same notification port as the
+  missing-receipt message; a warning that no longer holds leaves the in-app list. The loop and the
+  budget warnings run independently, and the page says when either could not be checked.
+- The warnings run together with the loop (`runSpendingChecks`): after every payment import and on
+  "Jetzt prüfen". The budgets section on `/app/spending` shows each budget, where its limit comes
+  from, and where the month is heading.
 

@@ -1,9 +1,9 @@
 import 'server-only';
 import type { PrismaClient } from '@prisma/client';
-import { counterpartyKey, loadPayments, setCounterpartyTreatment } from '@/lib/tax/payments/service';
+import { counterpartyKey, loadPayments, setCounterpartyTreatment, type PaymentRow } from '@/lib/tax/payments/service';
 import { isSpendingCategory, type SpendingCategory } from './categories';
 import { berlinYear } from './period';
-import { buildOverview, paymentYears, type SpendingOverview } from './overview';
+import { buildOverview, paymentYears, type OverviewPaymentInput, type SpendingOverview } from './overview';
 
 /**
  * Server-side reads and writes for the spending overview. Every function takes
@@ -57,23 +57,32 @@ export async function loadCategoryAnswers(db: PrismaClient, workspaceId: string)
   return rows.flatMap((r) => (isSpendingCategory(r.category) ? [{ counterpartyKey: r.counterpartyKey, label: r.label, category: r.category }] : []));
 }
 
+/**
+ * A payment of the payments service as the overview and the budgets read it.
+ * The one mapper for both, so the private and business parts are worked out
+ * from the same facts everywhere (links, a private account).
+ */
+export function toOverviewInput(p: PaymentRow): OverviewPaymentInput {
+  return {
+    id: p.id,
+    accountId: p.accountId,
+    bookingDay: p.bookingDay,
+    amountCents: p.amountCents,
+    counterparty: p.counterparty,
+    counterpartyKey: p.counterpartyKey,
+    reference: p.reference,
+    kind: p.kind,
+    linkCount: p.links.length,
+    linkedCents: p.links.reduce((sum, l) => sum + l.cents, 0),
+    byPrivateAccount: p.byPrivateAccount,
+  };
+}
+
 /** The overview of `year` (one month of it when `month` is 1 to 12). */
 export async function loadSpending(db: PrismaClient, workspaceId: string, year: number, month: number | null, today = new Date()): Promise<SpendingView> {
   const [loaded, answers] = await Promise.all([loadPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId)]);
   const overview = buildOverview(
-    loaded.payments.map((p) => ({
-      id: p.id,
-      accountId: p.accountId,
-      bookingDay: p.bookingDay,
-      amountCents: p.amountCents,
-      counterparty: p.counterparty,
-      counterpartyKey: p.counterpartyKey,
-      reference: p.reference,
-      kind: p.kind,
-      linkCount: p.links.length,
-      linkedCents: p.links.reduce((sum, l) => sum + l.cents, 0),
-      byPrivateAccount: p.byPrivateAccount,
-    })),
+    loaded.payments.map(toOverviewInput),
     { treatments: loaded.treatments, answers: new Map(answers.map((a) => [a.counterpartyKey, a.category])) },
     year,
     month,

@@ -12,6 +12,8 @@
  * leave it out, and `list()` reads a missing value as "not sent yet".
  */
 
+import { withUploadType } from '@/lib/upload/accepted-files';
+
 export const CAPTURE_DB_NAME = 'receipt-capture';
 export const CAPTURE_DB_VERSION = 1;
 export const CAPTURE_STORE_NAME = 'queue';
@@ -153,5 +155,6 @@ export function newQueuedCapture(
 }
 
 export function queuedFile(entry: QueuedCapture): File {
-  return new File([entry.blob], entry.name, { type: entry.type, lastModified: entry.addedAt });
+  // An e-invoice shared without a type is sent as XML (see accepted-files.ts).
+  return withUploadType(new File([entry.blob], entry.name, { type: entry.type, lastModified: entry.addedAt }));
 }

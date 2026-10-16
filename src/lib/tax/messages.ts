@@ -196,6 +196,8 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Der Nettobetrag einer Position muss größer als null und höchstens so groß wie ihr Betrag sein.';
         case 'line_cannot_hold_several_items':
           return 'Eine einzelne Position kann nicht „mehrere kleine Teile“ sein; dafür den Beleg weiter aufteilen.';
+        case 'credit_note_not_split':
+          return 'Eine Gutschrift wird nicht in Positionen aufgeteilt; ihre Behandlung gilt für den ganzen Beleg.';
         case 'receipt_without_total':
           return 'Der Beleg hat keinen Betrag; ohne ihn lässt er sich nicht aufteilen.';
         case 'account_label_required':

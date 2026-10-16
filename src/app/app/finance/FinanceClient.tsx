@@ -988,6 +988,8 @@ function dayText(item: StatementItem): string {
 /** The way into splitting a receipt, or into changing its split, under a treatment form. */
 function SplitOffer({ item, onSplit }: { item: StatementItem; onSplit: () => void }) {
   if (item.receiptGrossCents === null) return null;
+  // A credit note is treated as a whole: it is not split into positions.
+  if (item.receiptGrossCents < 0 && !item.lineId) return null;
   return (
     <p className="mt-3 text-xs" style={{ color: 'var(--muted)' }}>
       {item.lineId

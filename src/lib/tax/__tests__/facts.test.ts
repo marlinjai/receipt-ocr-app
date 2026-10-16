@@ -6,6 +6,7 @@ import type { TreatmentInput, VendorRule } from '../decisions';
 import { legacyAllocations } from '../defaults';
 import { resolveItem, type ReceiptFacts } from '../facts';
 import { rulesForYear } from '../rules';
+import { vatYear } from '../vat';
 
 /** An ordinary receipt (not a meal) as the meal module's mapper hands it over. */
 function receipt(overrides: Partial<MealRecord> = {}): MealRecord {
@@ -114,9 +115,73 @@ describe('resolveItem: amounts', () => {
     expect(noTotal.item).toMatchObject({ amountCents: null, missingAmount: 'no_amount' });
   });
 
+  it('reads the net amount of a credit note: negative like its total', () => {
+    const credit = resolveItem(facts(receipt({ gross: -119, net: -100 })), [], REGULAR_BUSINESS);
+    expect(credit.item).toMatchObject({ amountCents: -11_900, netCents: -10_000 });
+    const usd = resolveItem(facts(receipt({ currency: 'USD', gross: -119, net: -100, fxRate: 0.9 })), [], REGULAR_BUSINESS);
+    expect(usd.item).toMatchObject({ amountCents: -10_710, netCents: -9_000 });
+  });
+
+  it('a net amount that does not fit its total is no net amount, for an invoice and a credit note alike', () => {
+    const net = (gross: number, n: number) => resolveItem(facts(receipt({ gross, net: n })), [], REGULAR_BUSINESS).item.netCents;
+    expect(net(119, 100)).toBe(10_000);
+    expect(net(119, 120)).toBeNull();
+    expect(net(-119, -120)).toBeNull();
+    // Opposite signs, and a zero net beside a total.
+    expect(net(-119, 100)).toBeNull();
+    expect(net(119, -100)).toBeNull();
+    expect(net(119, 0)).toBeNull();
+    // A credit note without tax: net equals the total.
+    expect(net(-50, -50)).toBe(-5_000);
+  });
+
+  it('a refund linked to a credit note does not reduce it further', () => {
+    const credit = resolveItem(facts(receipt({ gross: -119, net: -100 }), { refundedCents: 11_900 }), [], REGULAR_BUSINESS);
+    expect(credit.item).toMatchObject({ amountCents: -11_900, netCents: -10_000 });
+  });
+
+  it('a credit note paid back: the net part of the payment keeps the proportion', () => {
+    const credit = resolveItem(facts(receipt({ gross: -119, net: -100, date: '2026-03-01' }), { paid: { day: '2026-03-05', cents: -11_900 } }), [], REGULAR_BUSINESS);
+    expect(credit.item).toMatchObject({ amountCents: -11_900, netCents: -10_000, amountBasis: 'payment' });
+  });
+
   it('carries the section 19 answer onto the item', () => {
     expect(resolveItem(facts(receipt()), [], UNANSWERED).item.smallBusiness).toBeNull();
     expect(resolveItem(facts(receipt()), [], REGULAR_BUSINESS).item.smallBusiness).toBe(false);
+  });
+});
+
+describe('a credit note in the statement, under both statuses', () => {
+  // A credit note of 119.00 (100.00 net, 19.00 tax) against a telecom invoice of 238.00 (200.00 net).
+  const year = (settings: typeof REGULAR_BUSINESS, share = 10000) => {
+    const decision: TreatmentInput = { allocations: [{ purpose: 'business', shareBp: share }], formLineKey: 'euer.telecom', employmentLineKey: null };
+    const invoice = resolveItem(facts(receipt({ rowId: 'inv', gross: 238, net: 200, date: '2025-03-10' }), { decision }), [], settings).item;
+    const credit = resolveItem(facts(receipt({ rowId: 'cn', gross: -119, net: -100, date: '2025-04-02' }), { decision }), [], settings).item;
+    return computeYear({ year: 2025, items: [invoice, credit] }, rulesForYear(2025));
+  };
+  const line = (result: ReturnType<typeof year>, key: string) => result.lines.find((l) => l.key === key)?.cents ?? 0;
+
+  it('regular taxation: the credit note reduces the expense by its net amount and the input tax by its tax', () => {
+    const result = year(REGULAR_BUSINESS);
+    expect(result.checks).toEqual([]);
+    expect(line(result, 'euer.telecom')).toBe(20_000 - 10_000);
+    expect(line(result, 'euer.input_vat')).toBe(3_800 - 1_900);
+    const periods = vatYear(2025, 'quarterly', 'issued', { inputVat: result.inputVatEvents, outputVatByIssue: [], outputVatByPayment: [] });
+    // The invoice in the first quarter, the credit note in the second.
+    expect(periods.periods.map((p) => p.inputVatCents)).toEqual([3_800, -1_900, 0, 0]);
+  });
+
+  it('regular taxation at a business share: both reductions at that share', () => {
+    const result = year(REGULAR_BUSINESS, 5000);
+    expect(line(result, 'euer.telecom')).toBe(10_000 - 5_000);
+    expect(line(result, 'euer.input_vat')).toBe(1_900 - 950);
+  });
+
+  it('small business: the credit note reduces the expense by its whole amount, and there is no input tax', () => {
+    const result = year(SMALL_BUSINESS);
+    expect(line(result, 'euer.telecom')).toBe(23_800 - 11_900);
+    expect(line(result, 'euer.input_vat')).toBe(0);
+    expect(result.inputVatEvents).toEqual([]);
   });
 });
 

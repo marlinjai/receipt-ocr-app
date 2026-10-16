@@ -63,13 +63,27 @@ export interface ResolvedItem {
   lineDescription: string | null;
 }
 
-/** The receipt's net amount in euro cents, when it states one that fits its total. */
+/**
+ * Does a stated net amount fit its total? Net and total carry the same sign
+ * (a credit note is negative in both) and the net is not larger in amount than
+ * the total. A net of zero beside a total is no net amount.
+ */
+function netFits(net: number | null, gross: number | null): net is number {
+  if (net === null || gross === null || !Number.isFinite(net) || !Number.isFinite(gross)) return false;
+  if (net === 0 || gross === 0 || Math.sign(net) !== Math.sign(gross)) return false;
+  return Math.abs(net) <= Math.abs(gross);
+}
+
+/**
+ * The receipt's net amount in euro cents, when it states one that fits its
+ * total. Negative for a credit note, so that under regular taxation it reduces
+ * the expense by its net amount and the input tax by the tax in it.
+ */
 function netOf(record: MealRecord): number | null {
-  if (record.net === null || !Number.isFinite(record.net) || record.net <= 0) return null;
-  if (record.gross === null || record.net > record.gross) return null;
-  if (record.currency === 'EUR') return toCents(record.net);
+  if (!netFits(record.net, record.gross)) return null;
+  if (record.currency === 'EUR') return toCents(record.net as number);
   if (record.fxRate === null || !(record.fxRate > 0)) return null;
-  return Math.round(toCents(record.net) * record.fxRate);
+  return Math.round(toCents(record.net as number) * record.fxRate);
 }
 
 function amountOf(record: MealRecord): Pick<LedgerItem, 'amountCents' | 'amountBasis' | 'missingAmount'> {
@@ -90,8 +104,9 @@ function amountOf(record: MealRecord): Pick<LedgerItem, 'amountCents' | 'amountB
  * applied to the paid euro amount. Null when the receipt states no net amount.
  */
 function netOfPaid(record: MealRecord, paidCents: number): number | null {
-  if (record.net === null || record.gross === null || !(record.gross > 0) || record.net <= 0 || record.net > record.gross) return null;
-  return Math.round((paidCents * toCents(record.net)) / toCents(record.gross));
+  if (!netFits(record.net, record.gross)) return null;
+  // The proportion of net to total is positive for an invoice and a credit note alike.
+  return Math.round((paidCents * toCents(record.net as number)) / toCents(record.gross as number));
 }
 
 function mealFact(record: MealRecord, settings: MealTaxSettings): MealFact | null {
@@ -126,8 +141,9 @@ export function resolveItem(
 ): ResolvedItem {
   const { record, decision } = facts;
   const paid = facts.paid ?? null;
-  const refunded = paid ? 0 : Math.max(0, facts.refundedCents ?? 0);
   const stated = amountOf(record);
+  // A refund reduces a purchase; a credit note is already the money coming back.
+  const refunded = paid || stated.amountCents === null || stated.amountCents < 0 ? 0 : Math.max(0, facts.refundedCents ?? 0);
   const document = refunded > 0 && stated.amountCents !== null ? { ...stated, amountCents: Math.max(0, stated.amountCents - refunded) } : stated;
   const key = vendorKey(record.vendor);
   const rule = ruleInForce(vendorRules, key, record.date);

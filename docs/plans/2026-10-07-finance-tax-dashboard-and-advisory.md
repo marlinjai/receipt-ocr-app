@@ -1964,3 +1964,21 @@ not computed.
   whole amount with no open check; tax read off a marked receipt is ignored.
   The migration is `0023_tax_reverse_charge` (main already has two migrations numbered
   0021 and one 0022).
+
+## Reality: credit notes under regular taxation (2026-10-16)
+
+- **What was wrong.** A credit note is a receipt with a negative total and net. Its
+  total counted as negative, but its net amount was read as missing (only a positive
+  net was accepted), so under regular taxation the credit note did not reduce the input
+  tax, and it waited in the queue for a net amount. Under the small-business status there
+  is no input tax, so no figure of 2025 or 2026 was affected.
+- **Now** a net amount fits its total when both carry the same sign and the net is not
+  larger in amount than the total (zero beside a total, or opposite signs, is no net
+  amount). A credit note of 119.00 with 100.00 net reduces the expense by 100.00 and the
+  input tax by 19.00 in the period of its date, at the business share; under the
+  small-business status it reduces the expense by 119.00.
+- **A refund linked to a credit note** does not reduce it again (a refund reduces a
+  purchase; a credit note already is the money coming back).
+- **A credit note is not split into positions**: the screen offers no split for it, and
+  the server refuses one with its own message.
+

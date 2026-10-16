@@ -38,6 +38,7 @@ export type LinesInputErrorCode =
   | 'invalid_line_net'
   | 'lines_do_not_sum'
   | 'receipt_without_total'
+  | 'credit_note_not_split'
   | 'duplicate_line'
   | 'line_cannot_hold_several_items';
 
@@ -60,7 +61,9 @@ export function validateLines(raw: unknown, receiptGrossCents: number | null): L
   const fail = (code: LinesInputErrorCode): never => {
     throw new LinesInputError(code);
   };
-  if (receiptGrossCents === null || receiptGrossCents <= 0) fail('receipt_without_total');
+  if (receiptGrossCents === null || receiptGrossCents === 0) fail('receipt_without_total');
+  // A credit note (negative total) is treated as a whole, never split into positions.
+  if ((receiptGrossCents as number) < 0) fail('credit_note_not_split');
   const list = Array.isArray(raw) ? raw : [];
   if (list.length < 2) fail('lines_required');
   if (list.length > 50) fail('too_many_lines');

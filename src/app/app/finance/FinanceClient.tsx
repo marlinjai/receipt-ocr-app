@@ -11,6 +11,7 @@ import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service'
 import type { OpenCheckKind } from '@/lib/tax/types';
 import {
   acceptPaymentProposals,
+  markAccountPrivate,
   markPaymentTransfer,
   addAccount,
   answerYearBoundary,
@@ -34,6 +35,7 @@ import {
   resetItem,
   saveAsset,
   saveIssuedInvoice,
+  searchPayments,
   setRevenueExpectation,
   setVatSettings,
   treatCounterparty,
@@ -734,6 +736,13 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                 setLastImport(null);
                 run(() => undoImport(view.year, batchId), 'Import rückgängig gemacht.');
               }}
+              onAccountPrivate={(account, isPrivate) =>
+                run(
+                  () => markAccountPrivate(view.year, account.id, isPrivate),
+                  isPrivate ? `${account.label}: als privat vermerkt; nach seinen Zahlungen wird nicht mehr gefragt.` : `${account.label}: wird wieder geprüft.`,
+                )
+              }
+              onSearch={(query) => searchPayments(view.year, query)}
               onTreat={(counterparty, treatment) => run(() => treatCounterparty(view.year, { counterparty, treatment }), `${counterparty}: ${treatment === null ? 'Antwort zurückgenommen' : 'gespeichert'}.`)}
               onLink={linkWithQuestion}
               onAcceptProposals={(pairs, onlyUnambiguous) => {

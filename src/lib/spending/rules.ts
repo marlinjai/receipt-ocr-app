@@ -23,7 +23,20 @@ import type { SpendingCategory } from './categories';
  * 5. Otherwise "unclear", shown as such until a person answers.
  */
 
-export type CounterpartyTreatmentAnswer = 'business' | 'private' | 'own_account';
+/** The payments tab's answer on a counterparty (`CounterpartyTreatment`); `mixed`: partly business, partly private. */
+export type CounterpartyTreatmentAnswer = 'business' | 'private' | 'own_account' | 'mixed';
+
+/**
+ * The business part of a payment's spending: all of it for a business payment,
+ * none for a private or unanswered one, and for a payment that is only partly
+ * business (a mixed counterparty, a private account) what is linked to
+ * receipts, never more than the payment counts.
+ */
+export function businessShare(spendingCents: number, purpose: SpendingPurpose, partial: boolean, linkedCents: number): number {
+  if (purpose !== 'business') return 0;
+  if (!partial || spendingCents <= 0) return spendingCents;
+  return Math.min(spendingCents, linkedCents);
+}
 
 export interface CategorisablePayment {
   kind: PaymentKind;
@@ -172,12 +185,16 @@ export type SpendingPurpose = 'private' | 'business' | 'unanswered';
 /**
  * Private or business, from what was said: a payment a person marked private,
  * or a counterparty answered as private, is private; a counterparty answered
- * as business is business. Nothing else decides it, in particular not the
- * company the payments were imported under: one bank account carries both.
+ * as business is business. Of a counterparty answered mixed, and on an account
+ * said to be private as a whole, what is linked to a receipt is the business
+ * part (see `businessShare`): such a payment is business when it is linked,
+ * private otherwise. Nothing else decides it, in particular not the company the
+ * payments were imported under: one bank account carries both.
  */
-export function purposeOf(payment: { kind: PaymentKind }, treatment: CounterpartyTreatmentAnswer | undefined): SpendingPurpose {
-  if (payment.kind === 'private' || treatment === 'private') return 'private';
+export function purposeOf(payment: { kind: PaymentKind; linkCount?: number; byPrivateAccount?: boolean }, treatment: CounterpartyTreatmentAnswer | undefined): SpendingPurpose {
+  if (treatment === 'private' || (payment.kind === 'private' && !payment.byPrivateAccount)) return 'private';
   if (treatment === 'business') return 'business';
+  if (treatment === 'mixed' || payment.byPrivateAccount) return (payment.linkCount ?? 0) > 0 ? 'business' : 'private';
   return 'unanswered';
 }
 

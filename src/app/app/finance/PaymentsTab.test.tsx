@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
+import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { FoundPayment } from '@/lib/tax/payments/service';
 import type { OpenPayment, PaymentsView, StatementView } from '@/lib/tax/service';
 import PaymentsTab from './PaymentsTab';
 
 afterEach(cleanup);
 
-const account = { id: 'acc-1', label: 'Geschäftskonto', kind: 'bank', paymentCount: 3, completeThrough: '2026-01-22', batches: [{ id: 'b-1', format: 'n26_csv', newCount: 3, paymentCount: 3, firstDay: '2026-01-05', lastDay: '2026-01-22', importedAt: '2026-02-01T08:00:00.000Z' }] };
+const account = { id: 'acc-1', label: 'Geschäftskonto', kind: 'bank', isPrivate: false, paymentCount: 3, completeThrough: '2026-01-22', batches: [{ id: 'b-1', format: 'n26_csv', newCount: 3, paymentCount: 3, firstDay: '2026-01-05', lastDay: '2026-01-22', importedAt: '2026-02-01T08:00:00.000Z' }] };
 const open = (o: Partial<OpenPayment> = {}): OpenPayment => ({
   id: 'p-1',
   bookingDay: '2026-01-05',
@@ -44,6 +46,21 @@ const props = () => ({
   onTransfer: vi.fn(),
   onNotIncome: vi.fn(),
   onKind: vi.fn(),
+  onAccountPrivate: vi.fn(),
+  onSearch: vi.fn<ComponentProps<typeof PaymentsTab>['onSearch']>(async () => ({ ok: true, value: { payments: [], total: 0 } })),
+});
+
+const found = (o: Partial<FoundPayment> = {}): FoundPayment => ({
+  id: 'f-1',
+  bookingDay: '2026-02-03',
+  amountCents: -4_999,
+  freeCents: 4_999,
+  counterparty: 'Versand Beispiel',
+  reference: 'Bestellung 1',
+  kind: 'spend',
+  accountLabel: 'Geschäftskonto',
+  target: 'receipt',
+  ...o,
 });
 
 describe('PaymentsTab', () => {
@@ -407,5 +424,94 @@ describe('PaymentsTab', () => {
   it('a refund asks for the receipt it belongs to', () => {
     render(<PaymentsTab view={view({ open: [open({ amountCents: 750, freeCents: 750, kind: 'refund', check: 'refund_without_receipt' })] })} {...props()} />);
     expect(screen.getByText(/Erstattung: dem Beleg zuordnen/)).toBeTruthy();
+  });
+
+  it('a whole account can be called private after a confirmation, and that can be taken back', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const confirm = vi.spyOn(window, 'confirm');
+    confirm.mockReturnValueOnce(false);
+    const { rerender } = render(<PaymentsTab view={view()} {...p} />);
+    await user.click(screen.getByRole('button', { name: 'Ganzes Konto ist privat' }));
+    expect(p.onAccountPrivate).not.toHaveBeenCalled();
+    confirm.mockReturnValueOnce(true);
+    await user.click(screen.getByRole('button', { name: 'Ganzes Konto ist privat' }));
+    expect(p.onAccountPrivate).toHaveBeenCalledWith(expect.objectContaining({ id: 'acc-1' }), true);
+    confirm.mockRestore();
+
+    rerender(<PaymentsTab view={view({ accounts: [{ ...account, isPrivate: true }] })} {...p} />);
+    expect(screen.getByText(/privat: nach seinen Zahlungen wird nicht gefragt/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Wieder prüfen' }));
+    expect(p.onAccountPrivate).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'acc-1' }), false);
+  });
+
+  it('a counterparty can be answered as mixed', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    render(<PaymentsTab view={view({ unclassified: [{ key: 'versand beispiel', label: 'Versand Beispiel', count: 4, outCents: 20_000, inCents: 0 }] })} {...p} />);
+    await user.click(screen.getByRole('button', { name: 'Teils, teils' }));
+    expect(p.onTreat).toHaveBeenCalledWith('Versand Beispiel', 'mixed');
+  });
+
+  it('one payment of an unanswered counterparty is linked by hand without answering for the others, and the list follows the statement', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const unclassified = [{ key: 'versand beispiel', label: 'Versand Beispiel', count: 2, outCents: 9_998, inCents: 0 }];
+    const receiptTargets = [{ id: 'r-1', label: 'Bürostuhl', day: '2026-02-01', amountCents: 4_999, linkedCents: 0 }];
+    p.onSearch.mockResolvedValueOnce({ ok: true, value: { payments: [found(), found({ id: 'f-2', bookingDay: '2026-03-03' })], total: 2 } });
+    const first = view({ unclassified, receiptTargets });
+    const { rerender } = render(<PaymentsTab view={first} {...p} />);
+    await user.click(screen.getByRole('button', { name: 'Zahlungen ansehen' }));
+    expect(p.onSearch).toHaveBeenCalledWith({ counterpartyKey: 'versand beispiel' });
+    const list = await screen.findByRole('list', { name: 'Gefundene Zahlungen' });
+    expect(within(list).getAllByRole('listitem').length).toBe(2);
+    // Each payment's button says which payment it is for.
+    await user.click(within(list).getByRole('button', { name: 'Beleg wählen für 03.02.2026 Versand Beispiel 49,99 €' }));
+    await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r-1');
+    await user.click(within(list).getByRole('button', { name: 'Zuordnen' }));
+    expect(p.onLink).toHaveBeenCalledWith({ paymentId: 'f-1', rowId: 'r-1' });
+    expect(p.onTreat).not.toHaveBeenCalled();
+
+    // The statement that comes back searches again: the linked payment is gone, the other one is still there.
+    p.onSearch.mockResolvedValueOnce({ ok: true, value: { payments: [found({ id: 'f-2', bookingDay: '2026-03-03' })], total: 1 } });
+    rerender(<PaymentsTab view={view({ unclassified: [{ ...unclassified[0], count: 1 }], receiptTargets })} {...p} />);
+    // While it searches again the last results stay on screen, the open picker included.
+    expect(screen.getByRole('status').textContent).toBe('Sucht …');
+    expect(screen.getByLabelText('Beleg von Hand wählen')).toBeTruthy();
+    await vi.waitFor(() => expect(within(screen.getByRole('list', { name: 'Gefundene Zahlungen' })).getAllByRole('listitem').length).toBe(1));
+    expect(p.onSearch).toHaveBeenCalledTimes(2);
+  });
+
+  it('searches any payment by text, says when more were found than shown, and says when the search failed', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    render(<PaymentsTab view={view({ receiptTargets: [] })} {...p} />);
+    const box = screen.getByLabelText('Andere Zahlung suchen und von Hand zuordnen');
+    await user.type(box, 'x');
+    expect(screen.getByText('Bitte mindestens zwei Zeichen.')).toBeTruthy();
+    expect(box.getAttribute('aria-describedby')).toBeTruthy();
+    const many = Array.from({ length: 100 }, (_, i) => found({ id: `f-${i}`, kind: i === 0 ? 'private' : 'spend' }));
+    p.onSearch.mockResolvedValueOnce({ ok: true, value: { payments: many, total: 140 } });
+    await user.type(box, 'y');
+    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    expect(p.onSearch).toHaveBeenCalledWith({ text: 'xy' });
+    expect(await screen.findByText(/140 gefunden, die ersten 100 werden gezeigt/)).toBeTruthy();
+    // The notice is not one of the payments.
+    expect(within(screen.getByRole('list', { name: 'Gefundene Zahlungen' })).getAllByRole('listitem').length).toBe(100);
+    expect(screen.getAllByText(/· privat/).length).toBe(1);
+    // No receipt to link to: it says so instead of an empty picker.
+    await user.click(screen.getAllByRole('button', { name: /^Beleg wählen für/ })[0]);
+    expect(screen.getByText('Kein Beleg aus diesem oder dem Vorjahr vorhanden.')).toBeTruthy();
+
+    // Pressing "Suchen" again with the same words searches again.
+    p.onSearch.mockResolvedValueOnce({ ok: false, error: 'failed' });
+    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('konnten nicht geladen werden');
+    expect(p.onSearch).toHaveBeenCalledTimes(2);
+    // A failed search offers to try again, and trying again searches again.
+    p.onSearch.mockResolvedValueOnce({ ok: true, value: { payments: [], total: 0 } });
+    await user.click(screen.getByRole('button', { name: 'Erneut versuchen' }));
+    expect(await screen.findByText('Keine Zahlung aus 2026 mit offenem Betrag.')).toBeTruthy();
+    expect(p.onSearch).toHaveBeenCalledTimes(3);
   });
 });

@@ -2,13 +2,17 @@
 
 import Link from 'next/link';
 import { receiptHref } from '@/lib/receipt-link';
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { formatDay } from '@/lib/meals/messages';
 import type { MatchStrength } from '@/lib/tax/payments/match';
-import type { AccountKind, CounterpartyTreatment, ImportResult } from '@/lib/tax/payments/service';
+import type { AccountKind, CounterpartyTreatment, FoundPayment, ImportResult } from '@/lib/tax/payments/service';
 import { PAYMENT_FORMAT_LABELS } from '@/lib/tax/payments/types';
 import type { OpenPayment, StatementView } from '@/lib/tax/service';
+import type { Result } from './actions';
 import { euro, parseEuro } from './amounts';
+
+/** A search for payments to link by hand: one counterparty's, or any whose name, text or amount contains the words. */
+export type PaymentQuery = { counterpartyKey: string } | { text: string };
 
 interface Props {
   view: StatementView;
@@ -32,10 +36,14 @@ interface Props {
   onNotIncome: (payment: OpenPayment) => void;
   /** Re-label one payment (private, refund), or with null put it back to what its file says. */
   onKind: (paymentId: string, kind: 'private' | 'refund' | null) => void;
+  /** Say that a whole account is private (true), or take that back (false). */
+  onAccountPrivate: (account: { id: string; label: string }, isPrivate: boolean) => void;
+  /** Find payments of the year that still have something to link, whatever was answered about them. Read only. */
+  onSearch: (query: PaymentQuery) => Promise<Result<{ payments: FoundPayment[]; total: number }>>;
 }
 
 const ACCOUNT_KIND_LABELS: Record<AccountKind, string> = { bank: 'Bankkonto', card: 'Kreditkarte', payment_service: 'Zahlungsdienst' };
-const TREATMENT_LABELS: Record<CounterpartyTreatment, string> = { business: 'Betrieblich', private: 'Privat', own_account: 'Eigenes Konto' };
+const TREATMENT_LABELS: Record<CounterpartyTreatment, string> = { business: 'Betrieblich', private: 'Privat', own_account: 'Eigenes Konto', mixed: 'Teils, teils' };
 const STRENGTH_LABELS: Record<MatchStrength, string> = {
   reference: 'Nummer im Verwendungszweck, Betrag passt',
   reference_amount_differs: 'Nummer im Verwendungszweck, Betrag weicht ab',
@@ -73,7 +81,7 @@ const LINK_METHOD_LABELS: Record<string, string> = {
  * a counterparty is treated, and linking payments to receipts and invoices.
  * A link is only made on a reference or by a person's confirmation.
  */
-export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind }: Props) {
+export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onSearch }: Props) {
   const id = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState('');
@@ -84,6 +92,8 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
   // picker lists every receipt, and one per open payment made the page draw
   // hundreds of thousands of entries on every action.
   const [manualFor, setManualFor] = useState<string | null>(null);
+  // The unanswered counterparty whose payments are shown for linking one by one.
+  const [browsing, setBrowsing] = useState<string | null>(null);
   const p = view.payments;
   // True from the press on "accept all" until the answer is in: the button says so and cannot be pressed again.
   const [accepting, setAccepting] = useState(false);
@@ -127,13 +137,33 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
           <ul className="mt-3 space-y-3">
             {p.accounts.map((account) => (
               <li key={account.id} className="rounded-lg border p-3" style={{ borderColor: 'var(--border)' }}>
-                <p className="text-sm font-medium" style={{ color: 'var(--foreground)' }}>
-                  {account.label}
-                  <span className="ml-2 text-xs font-normal" style={{ color: 'var(--muted)' }}>
-                    {ACCOUNT_KIND_LABELS[account.kind as AccountKind] ?? account.kind} · {account.paymentCount} Zahlungen ·{' '}
-                    {account.completeThrough ? `vollständig bis ${formatDay(account.completeThrough)}` : 'noch nichts eingelesen'}
-                  </span>
-                </p>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+                    {account.label}
+                    <span className="ml-2 text-xs font-normal" style={{ color: 'var(--muted)' }}>
+                      {ACCOUNT_KIND_LABELS[account.kind as AccountKind] ?? account.kind} · {account.paymentCount} Zahlungen ·{' '}
+                      {account.completeThrough ? `vollständig bis ${formatDay(account.completeThrough)}` : 'noch nichts eingelesen'}
+                      {account.isPrivate ? ' · privat: nach seinen Zahlungen wird nicht gefragt' : ''}
+                    </span>
+                  </p>
+                  {account.isPrivate ? (
+                    <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onAccountPrivate(account, false)}>
+                      Wieder prüfen
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm"
+                      disabled={busy}
+                      onClick={() => {
+                        if (!window.confirm(`Ist „${account.label}“ als Ganzes privat? Nach seinen Zahlungen wird dann nicht mehr gefragt, auch nicht nach Geldeingängen. Einzelne Zahlungen lassen sich weiter von Hand einem Beleg zuordnen, und „Wieder prüfen“ nimmt das zurück.`)) return;
+                        onAccountPrivate(account, true);
+                      }}
+                    >
+                      Ganzes Konto ist privat
+                    </button>
+                  )}
+                </div>
                 {account.batches.length > 0 && (
                   <ul className="mt-2 space-y-1 text-xs" style={{ color: 'var(--muted)' }}>
                     {account.batches.map((batch) => (
@@ -242,7 +272,9 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
           <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Wer ist das? Einmal je Gegenseite</h2>
           <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
             Betriebliche Zahlungen brauchen einen Beleg; private werden für den Betrieb nicht weiter beachtet; eigene
-            Konten sind nur Umbuchungen. Die Antwort gilt für alle Zahlungen dieser Gegenseite.
+            Konten sind nur Umbuchungen. „Teils, teils“ (ein Versandhändler, ein Supermarkt): nach keiner Zahlung wird
+            gefragt, betrieblich ist, was du von Hand einem Beleg zuordnest. Die Antwort gilt für alle Zahlungen dieser
+            Gegenseite. Eine einzelne Zahlung lässt sich auch ohne Antwort zuordnen: „Zahlungen ansehen“.
           </p>
           <ul className="mt-3 space-y-2">
             {p.unclassified.map((c) => (
@@ -255,11 +287,23 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                     {c.inCents > 0 ? ` · erhalten ${euro(c.inCents)}` : ''}
                   </span>
                 </span>
-                <span className="flex gap-1.5">
+                <span className="flex flex-wrap gap-1.5">
                   {(Object.keys(TREATMENT_LABELS) as CounterpartyTreatment[]).map((t) => (
                     <button key={t} type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onTreat(c.label, t)}>{TREATMENT_LABELS[t]}</button>
                   ))}
+                  <button
+                    type="button"
+                    className="ui-btn ui-btn-sm"
+                    aria-expanded={browsing === c.key}
+                    aria-controls={browsing === c.key ? `${id}-browse` : undefined}
+                    onClick={() => setBrowsing(browsing === c.key ? null : c.key)}
+                  >
+                    Zahlungen ansehen
+                  </button>
                 </span>
+                {browsing === c.key && (
+                  <PaymentFinder id={`${id}-browse`} query={{ counterpartyKey: c.key }} view={view} busy={busy} onSearch={onSearch} onLink={onLink} />
+                )}
               </li>
             ))}
           </ul>
@@ -420,6 +464,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
             ))}
           </ul>
         )}
+        {p.yearCount > 0 && <PaymentSearch view={view} busy={busy} onSearch={onSearch} onLink={onLink} />}
       </section>
 
       {(p.ruleTransfers.length > 0 || p.reconciliations.length > 0) && (
@@ -595,7 +640,7 @@ function ManualLink({
   busy,
   onLink,
 }: {
-  payment: OpenPayment;
+  payment: Pick<OpenPayment, 'id' | 'freeCents'>;
   receipts: StatementView['payments']['receiptTargets'];
   invoices: StatementView['payments']['invoiceTargets'];
   busy: boolean;
@@ -641,5 +686,187 @@ function ManualLink({
       <button type="submit" className="ui-btn ui-btn-sm" disabled={busy}>Zuordnen</button>
       {localError && <p className="ui-note ui-note-danger w-full" role="alert">{localError}</p>}
     </form>
+  );
+}
+
+/**
+ * Any payment of the year, found by name, text or amount, linked by hand.
+ * Reaches what no question lists: a payment of a counterparty nobody answered
+ * yet or answered as mixed, and one on an account said to be private (a
+ * business expense paid privately).
+ */
+function PaymentSearch({ view, busy, onSearch, onLink }: { view: StatementView; busy: boolean; onSearch: Props['onSearch']; onLink: Props['onLink'] }) {
+  const id = useId();
+  const [draft, setDraft] = useState('');
+  // Each press on "Suchen" is a new search, also with the same words.
+  const [search, setSearch] = useState<{ text: string; round: number } | null>(null);
+  const tooShort = draft.trim().length === 1;
+  return (
+    <div className="mt-4">
+      <form
+        className="flex flex-wrap items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const text = draft.trim();
+          setSearch(text.length >= 2 ? { text, round: (search?.round ?? 0) + 1 } : null);
+        }}
+      >
+        <div>
+          <label className="ui-label" htmlFor={`${id}-q`}>Andere Zahlung suchen und von Hand zuordnen</label>
+          <input
+            id={`${id}-q`}
+            className="ui-input"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Name, Verwendungszweck oder Betrag"
+            maxLength={80}
+            aria-describedby={tooShort ? `${id}-hint` : undefined}
+          />
+        </div>
+        <button type="submit" className="ui-btn ui-btn-sm">Suchen</button>
+      </form>
+      {tooShort && <p id={`${id}-hint`} className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>Bitte mindestens zwei Zeichen.</p>}
+      {search !== null && <PaymentFinder query={{ text: search.text }} round={search.round} view={view} busy={busy} onSearch={onSearch} onLink={onLink} />}
+    </div>
+  );
+}
+
+type Found = { payments: FoundPayment[]; total: number };
+
+/**
+ * The payments of a search, each with a picker for linking by hand. Searched
+ * again whenever the statement changes, so a payment just linked in full drops
+ * out and one partly linked shows what is left. While a new search runs the
+ * last results stay on screen, so an open picker and the keyboard focus are
+ * not thrown away.
+ */
+function PaymentFinder({
+  id,
+  query,
+  round = 0,
+  view,
+  busy,
+  onSearch,
+  onLink,
+}: {
+  id?: string;
+  query: PaymentQuery;
+  round?: number;
+  view: StatementView;
+  busy: boolean;
+  onSearch: Props['onSearch'];
+  onLink: Props['onLink'];
+}) {
+  const [found, setFound] = useState<Found | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
+  const [open, setOpen] = useState<string | null>(null);
+  const queryKey = 'counterpartyKey' in query ? `c:${query.counterpartyKey}` : `t:${query.text}`;
+  // What the search was last run for: a new query, a new press, a retry or a new statement searches again.
+  const runKey = `${queryKey}|${round}|${retry}`;
+  const [searched, setSearched] = useState<{ query: string; key: string; view: StatementView } | null>(null);
+  if (searched === null || searched.key !== runKey || searched.view !== view) {
+    // A different query starts from nothing; the same query keeps its last results and its open picker while it reloads.
+    if (searched !== null && searched.query !== queryKey) {
+      setFound(null);
+      setOpen(null);
+    }
+    setSearched({ query: queryKey, key: runKey, view });
+    setLoading(true);
+    setFailed(false);
+  }
+  useEffect(() => {
+    let current = true;
+    onSearch(query).then(
+      (result) => {
+        if (!current) return;
+        setLoading(false);
+        if (result.ok) setFound(result.value);
+        else setFailed(true);
+      },
+      () => {
+        if (!current) return;
+        setLoading(false);
+        setFailed(true);
+      },
+    );
+    return () => {
+      current = false;
+    };
+    // `query` is described by `runKey`; the statement is in the list on purpose: every change to it searches again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runKey, view]);
+  const p = view.payments;
+  return (
+    <div id={id} className="mt-2 w-full">
+      {/* One live region, always there, so a screen reader hears the search start and what it found. */}
+      <p className="text-xs" style={{ color: 'var(--muted)' }} role="status">
+        {loading ? 'Sucht …' : found !== null && !failed ? (found.total === 1 ? '1 Zahlung gefunden.' : `${found.total} Zahlungen gefunden.`) : ''}
+      </p>
+      {failed && (
+        <p className="ui-note ui-note-danger" role="alert">
+          Die Zahlungen konnten nicht geladen werden.{' '}
+          <button type="button" className="ui-btn ui-btn-sm" onClick={() => setRetry(retry + 1)}>Erneut versuchen</button>
+        </p>
+      )}
+      {found !== null && !failed && found.payments.length === 0 && !loading && (
+        <p className="text-xs" style={{ color: 'var(--muted)' }}>Keine Zahlung aus {view.year} mit offenem Betrag.</p>
+      )}
+      {found !== null && found.total > found.payments.length && (
+        <p className="text-xs" style={{ color: 'var(--muted)' }}>
+          {found.total} gefunden, die ersten {found.payments.length} werden gezeigt. Bitte die Suche genauer fassen.
+        </p>
+      )}
+      {found !== null && found.payments.length > 0 && (
+        <ul className="mt-1 space-y-1.5" aria-label="Gefundene Zahlungen">
+          {found.payments.map((payment) => {
+            const targets = payment.target === 'invoice' ? p.invoiceTargets.length : p.receiptTargets.length;
+            const what = `${formatDay(payment.bookingDay)} ${payment.counterparty || 'ohne Namen'} ${euro(Math.abs(payment.amountCents))}`;
+            return (
+              <li key={payment.id} className="rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm" style={{ color: 'var(--foreground)' }}>
+                  <span>
+                    {formatDay(payment.bookingDay)} {payment.counterparty || 'ohne Namen'}
+                    <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                      {payment.accountLabel}
+                      {payment.reference ? ` · ${payment.reference.slice(0, 80)}` : ''}
+                      {payment.kind === 'private' ? ' · privat' : payment.kind === 'own_transfer' ? ' · Umbuchung' : ''}
+                    </span>
+                  </span>
+                  <span className="tabular-nums">
+                    {payment.amountCents < 0 ? 'bezahlt' : 'erhalten'} {euro(Math.abs(payment.amountCents))}
+                    {payment.freeCents !== Math.abs(payment.amountCents) ? `, davon offen ${euro(payment.freeCents)}` : ''}
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm ml-2"
+                      aria-expanded={open === payment.id}
+                      aria-label={`${payment.target === 'invoice' ? 'Rechnung' : 'Beleg'} wählen für ${what}`}
+                      onClick={() => setOpen(open === payment.id ? null : payment.id)}
+                    >
+                      {payment.target === 'invoice' ? 'Rechnung wählen' : 'Beleg wählen'}
+                    </button>
+                  </span>
+                </div>
+                {open === payment.id &&
+                  (targets > 0 ? (
+                    <ManualLink
+                      payment={payment}
+                      receipts={payment.target === 'invoice' ? [] : p.receiptTargets}
+                      invoices={payment.target === 'invoice' ? p.invoiceTargets : []}
+                      busy={busy}
+                      onLink={onLink}
+                    />
+                  ) : (
+                    <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+                      {payment.target === 'invoice' ? 'Keine Rechnung mit offenem Betrag.' : 'Kein Beleg aus diesem oder dem Vorjahr vorhanden.'}
+                    </p>
+                  ))}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }

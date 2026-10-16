@@ -71,6 +71,8 @@ export async function loadSpending(db: PrismaClient, workspaceId: string, year: 
       reference: p.reference,
       kind: p.kind,
       linkCount: p.links.length,
+      linkedCents: p.links.reduce((sum, l) => sum + l.cents, 0),
+      byPrivateAccount: p.byPrivateAccount,
     })),
     { treatments: loaded.treatments, answers: new Map(answers.map((a) => [a.counterpartyKey, a.category])) },
     year,

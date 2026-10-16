@@ -1,6 +1,6 @@
 import type { PaymentKind } from '@/lib/tax/payments/types';
 import { SPENDING_CATEGORIES, type SpendingCategory } from './categories';
-import { categorise, purposeOf, spendingCents, type CategoryBasis, type CounterpartyTreatmentAnswer, type SpendingPurpose } from './rules';
+import { businessShare, categorise, purposeOf, spendingCents, type CategoryBasis, type CounterpartyTreatmentAnswer, type SpendingPurpose } from './rules';
 
 /**
  * The spending overview of one year (or one month of it), from the payments
@@ -19,6 +19,10 @@ export interface OverviewPaymentInput {
   kind: PaymentKind;
   /** Number of receipts or invoices the payment is linked to. */
   linkCount: number;
+  /** Cents of the payment linked to receipts or invoices; with a mixed answer or on a private account that is its business part. */
+  linkedCents?: number;
+  /** True when the payment is private only because its whole account was said to be private. */
+  byPrivateAccount?: boolean;
 }
 
 export interface OverviewPayment {
@@ -35,6 +39,8 @@ export interface OverviewPayment {
   purpose: SpendingPurpose;
   /** What the payment adds to its category: positive out, negative back. Null: not spending (income, own transfer). */
   spendingCents: number | null;
+  /** Of `spendingCents`, the business part; the rest is private (or unanswered, with purpose `unanswered`). */
+  businessCents: number;
   hasReceipt: boolean;
 }
 
@@ -85,6 +91,7 @@ export function classifyPayment(p: OverviewPaymentInput, ctx: OverviewContext): 
   // already turns such payments into own transfers; this is a deliberate second guard, so the overview
   // stays right should that read ever change.
   const cents = treatment === 'own_account' ? null : spendingCents(p);
+  const purpose = purposeOf(p, treatment);
   return {
     id: p.id,
     accountId: p.accountId,
@@ -96,8 +103,9 @@ export function classifyPayment(p: OverviewPaymentInput, ctx: OverviewContext): 
     kind: p.kind,
     category,
     basis,
-    purpose: purposeOf(p, treatment),
+    purpose,
     spendingCents: cents,
+    businessCents: cents === null ? 0 : businessShare(cents, purpose, treatment === 'mixed' || p.byPrivateAccount === true, p.linkedCents ?? 0),
     hasReceipt: p.linkCount > 0,
   };
 }
@@ -142,7 +150,9 @@ export function buildOverview(payments: readonly OverviewPaymentInput[], ctx: Ov
     totalCents += p.spendingCents;
     totals[p.category] += p.spendingCents;
     counts[p.category] += 1;
-    split[p.purpose] += p.spendingCents;
+    // A payment only partly business (a mixed counterparty, a private account) is split by what is linked.
+    split.business += p.businessCents;
+    split[p.purpose === 'business' ? 'private' : p.purpose] += p.spendingCents - p.businessCents;
     if (p.category === 'unclear') {
       // Nameless payments are kept apart, one entry each: there is nobody to answer for.
       const key = p.counterpartyKey || `payment:${p.id}`;

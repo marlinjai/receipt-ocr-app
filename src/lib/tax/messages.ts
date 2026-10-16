@@ -217,6 +217,10 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Der Betrag ist größer als das, was von dieser Zahlung noch nicht zugeordnet ist.';
         case 'invalid_link':
           return 'Diese Zuordnung ist nicht möglich. Bitte Zahlung, Beleg oder Rechnung und Betrag prüfen.';
+        case 'invalid_query':
+          return 'Die Suche braucht ein Jahr. Bitte die Seite neu laden.';
+        case 'invalid_private':
+          return 'Bitte nur „privat“ oder „wieder prüfen“ wählen.';
         case 'invalid_treatment':
           return 'Für diese Gegenseite lässt sich keine Regel anlegen (kein Name).';
         case 'invalid_disposal':

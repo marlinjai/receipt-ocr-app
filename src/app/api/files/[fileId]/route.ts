@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fileReferenceOpenToRequest, guardFileAccess } from '@/lib/file-access';
 import { prisma } from '@/lib/prisma';
 import { parseRotation } from '@/lib/meals/viewer-state';
+import { servedFileHeaders } from '@/lib/files/served-file-headers';
 import { RenditionError, canRotate, inlineDisposition, renditionName, rotatedRendition } from '@/lib/files/rotated-rendition';
 
 const STORAGE_BRAIN_URL =
@@ -66,6 +67,8 @@ export async function GET(
       'Content-Type': contentType,
       'Content-Disposition': 'inline',
       'Cache-Control': 'private, max-age=86400',
+      // An uploaded file must not run anything on this domain (an XML or SVG file can).
+      ...servedFileHeaders(contentType),
     },
   });
 }
@@ -162,6 +165,7 @@ function fileResponse(bytes: Uint8Array, contentType: string, name: string, cach
       'Content-Type': contentType,
       'Content-Disposition': inlineDisposition(name),
       ...caching,
+      ...servedFileHeaders(contentType),
     },
   });
 }

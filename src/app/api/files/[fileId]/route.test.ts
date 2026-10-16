@@ -34,6 +34,7 @@ vi.mock('@/lib/prisma', () => ({
 vi.mock('@/lib/auth-guards', () => ({ resolveRowTableIds: (...a: unknown[]) => resolveRowTableIds(...a) }));
 
 import { GET } from './route';
+import { SANDBOX_POLICY } from '@/lib/files/served-file-headers';
 
 const FILE = '11111111-1111-4111-8111-111111111111';
 const REF = '22222222-2222-4222-8222-222222222222';
@@ -136,6 +137,64 @@ describe('GET /api/files/:id: the stored file', () => {
   it('a file store error is passed on', async () => {
     fetchMock.mockResolvedValue(new Response('gone', { status: 404, statusText: 'Not Found' }));
     expect((await call()).status).toBe(404);
+  });
+
+  it('a PDF is never sniffed and is shown in the browser viewer, unsandboxed', async () => {
+    storedFile(await pdfFile([{ width: 300, height: 800 }]), 'application/pdf');
+    const res = await call();
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(res.headers.get('Content-Security-Policy')).toBeNull();
+  });
+
+  it('an XML file (an XRechnung) runs nothing on this domain: sandboxed, never sniffed', async () => {
+    const xhtml = '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><script>alert(1)</script></html>';
+    storedFile(new TextEncoder().encode(xhtml), 'application/xml');
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(res.headers.get('Content-Security-Policy')).toBe(SANDBOX_POLICY);
+  });
+
+  it('a raster image is never sniffed and is not sandboxed', async () => {
+    storedFile(jpegFile(30, 80), 'image/jpeg');
+    const res = await call();
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(res.headers.get('Content-Security-Policy')).toBeNull();
+  });
+
+  it('an SVG and a file of unknown type are sandboxed too', async () => {
+    for (const type of ['image/svg+xml', 'application/octet-stream']) {
+      storedFile(new Uint8Array([60, 115, 118, 103, 62]), type);
+      expect((await call()).headers.get('Content-Security-Policy')).toBe(SANDBOX_POLICY);
+    }
+  });
+});
+
+describe('GET /api/files/:id?ref=: nothing served runs on this domain', () => {
+  it('a turned copy is a PDF: never sniffed, unsandboxed', async () => {
+    reference(90);
+    storedFile(await pdfFile([{ width: 300, height: 800 }]), 'application/pdf');
+    const res = await call(`?ref=${REF}`);
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(res.headers.get('Content-Security-Policy')).toBeNull();
+  });
+
+  it('a type that cannot be turned, served by the store as a generic type, is sandboxed', async () => {
+    reference(null, { mimeType: 'application/xml', originalName: 'rechnung.xml' });
+    storedFile(new TextEncoder().encode('<Invoice/>'), 'application/octet-stream');
+    const res = await call(`?ref=${REF}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toBe('application/octet-stream');
+    expect(res.headers.get('Content-Security-Policy')).toBe(SANDBOX_POLICY);
+  });
+
+  it('an XML file served through its reference is sandboxed', async () => {
+    reference(null, { mimeType: 'application/xml', originalName: 'rechnung.xml' });
+    storedFile(new TextEncoder().encode('<Invoice/>'), 'application/xml');
+    const res = await call(`?ref=${REF}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(res.headers.get('Content-Security-Policy')).toBe(SANDBOX_POLICY);
   });
 });
 

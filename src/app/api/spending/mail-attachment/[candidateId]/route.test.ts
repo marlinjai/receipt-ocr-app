@@ -14,6 +14,7 @@ vi.mock('@/lib/spending/mailbox/gmail', () => ({ serverMailbox: (...a: unknown[]
 
 import { MailboxError } from '@/lib/spending/mailbox/port';
 import { GET } from './route';
+import { SANDBOX_POLICY } from '@/lib/files/served-file-headers';
 
 const WS = { id: 'ws-a', slug: 'beispiel', role: 'member', tenantId: 't-a' };
 const SESSION = { memberships: [WS], activeWorkspace: WS };
@@ -55,6 +56,16 @@ describe('GET /api/spending/mail-attachment/:id', () => {
     expect(res.headers.get('Cache-Control')).toBe('private, no-store');
     expect(res.headers.get('Content-Disposition')).toContain("filename*=UTF-8''Rechnung.pdf");
     expect(await res.text()).toBe('%PDF-1.4');
+    expect(res.headers.get('Content-Security-Policy')).toBeNull();
+  });
+
+  it('an attachment that is no PDF or picture is sandboxed, so nothing in it runs', async () => {
+    requireAction.mockResolvedValue(SESSION);
+    findMailCandidate.mockResolvedValue({ messageId: 'm1', partIndex: 0, fileName: 'rechnung.xml' });
+    fetchAttachment.mockResolvedValue({ bytes: new TextEncoder().encode('<Invoice/>'), mimeType: 'application/xml', fileName: 'rechnung.xml' });
+    const res = await call();
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(res.headers.get('Content-Security-Policy')).toBe(SANDBOX_POLICY);
   });
 
   it.each([

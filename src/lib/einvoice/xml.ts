@@ -17,7 +17,12 @@
 export interface XmlElement {
   /** The local name, without namespace prefix: "ID" for "cbc:ID". */
   name: string;
+  /** The namespace prefix as written ("cbc"), empty for none. */
+  prefix: string;
+  /** Attributes by local name; namespace declarations are not among them. */
   attributes: Record<string, string>;
+  /** The namespaces this element declares, by prefix ('' for the default namespace). */
+  namespaces: Record<string, string>;
   children: XmlElement[];
   /** The element's own text (CDATA included), entities decoded, not trimmed. */
   text: string;
@@ -51,9 +56,14 @@ function decode(text: string): string {
     if (semi === -1 || semi - amp > 12) throw new XmlError('bare ampersand');
     const ref = text.slice(amp + 1, semi);
     let value: string | undefined;
-    if (/^#x[0-9a-fA-F]{1,6}$/.test(ref)) value = String.fromCodePoint(Number.parseInt(ref.slice(2), 16));
-    else if (/^#\d{1,7}$/.test(ref)) value = String.fromCodePoint(Number.parseInt(ref.slice(1), 10));
-    else value = ENTITIES[ref];
+    let code: number | null = null;
+    if (/^#x[0-9a-fA-F]{1,6}$/.test(ref)) code = Number.parseInt(ref.slice(2), 16);
+    else if (/^#\d{1,7}$/.test(ref)) code = Number.parseInt(ref.slice(1), 10);
+    if (code !== null) {
+      // XML allows no character 0, no surrogate halves and nothing past the last code point.
+      if (code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) throw new XmlError(`invalid character reference &${ref};`);
+      value = String.fromCodePoint(code);
+    } else value = ENTITIES[ref];
     if (value === undefined) throw new XmlError(`unknown entity &${ref};`);
     out += value;
     pos = semi + 1;
@@ -118,13 +128,30 @@ export function parseXml(source: string): XmlElement {
     } else {
       const name = matchAt(NAME, text, lt + 1);
       if (!name) throw new XmlError('malformed tag');
-      const element: XmlElement = { name: localName(name[0]), attributes: {}, children: [], text: '' };
+      const colon = name[0].indexOf(':');
+      const element: XmlElement = {
+        name: localName(name[0]),
+        prefix: colon === -1 ? '' : name[0].slice(0, colon),
+        attributes: {},
+        namespaces: {},
+        children: [],
+        text: '',
+      };
       const seen = new Set<string>();
       let cursor = lt + 1 + name[0].length;
       for (let attribute = matchAt(ATTRIBUTE, text, cursor); attribute; attribute = matchAt(ATTRIBUTE, text, cursor)) {
-        if (seen.has(attribute[1])) throw new XmlError(`duplicate attribute ${attribute[1]}`);
-        seen.add(attribute[1]);
-        element.attributes[localName(attribute[1])] = decode(attribute[2] ?? attribute[3] ?? '');
+        const qualified = attribute[1];
+        const value = decode(attribute[2] ?? attribute[3] ?? '');
+        if (seen.has(qualified)) throw new XmlError(`duplicate attribute ${qualified}`);
+        seen.add(qualified);
+        if (qualified === 'xmlns') element.namespaces[''] = value;
+        else if (qualified.startsWith('xmlns:')) element.namespaces[qualified.slice(6)] = value;
+        else {
+          // Attributes are kept by local name, so two that share one ("a" and "x:a") are refused, not overwritten.
+          const key = localName(qualified);
+          if (key in element.attributes) throw new XmlError(`duplicate attribute ${key}`);
+          element.attributes[key] = value;
+        }
         cursor += attribute[0].length;
       }
       const end = matchAt(TAG_END, text, cursor);

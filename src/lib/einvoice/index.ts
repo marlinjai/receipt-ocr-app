@@ -61,7 +61,7 @@ const looksLikePdf = (bytes: Uint8Array) => bytes.length > 4 && String.fromCharC
 export async function readStructuredInvoice(bytes: Uint8Array): Promise<StructuredReading | null> {
   if (looksLikePdf(bytes)) {
     // Every embedded XML file in turn: an unrelated attachment may come before the invoice.
-    for (const embedded of await embeddedXmlFiles(bytes)) {
+    for await (const embedded of embeddedXmlFiles(bytes)) {
       const invoice = readInvoiceXml(embedded.xml);
       if (invoice) return { source: { kind: 'pdf_embedded', name: embedded.name }, invoice, xml: embedded.xml };
     }

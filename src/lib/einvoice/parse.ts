@@ -80,6 +80,10 @@ function dayOf(text: string | null): string | null {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day ? day : null;
 }
 
+export const UBL_INVOICE_NAMESPACE = 'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2';
+export const UBL_CREDIT_NOTE_NAMESPACE = 'urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2';
+export const CII_NAMESPACE = 'urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100';
+
 /** The credit note type codes of EN 16931 (UNTDID 1001 subset). */
 const CREDIT_NOTE_CODES = new Set(['81', '83', '261', '262', '296', '308', '381', '396', '420', '458', '532']);
 
@@ -207,12 +211,15 @@ export function readInvoiceXml(xml: string): StructuredInvoice | null {
   try {
     root = parseXml(xml);
   } catch (error) {
-    if (error instanceof XmlError || error instanceof RangeError) return null;
+    if (error instanceof XmlError) return null;
     throw error;
   }
+  // The root's namespace says which standard it is: a vendor's own "<Invoice>" export is no XRechnung.
+  const namespace = root.namespaces[root.prefix] ?? null;
   let invoice: StructuredInvoice;
-  if (root.name === 'Invoice' || root.name === 'CreditNote') invoice = readUbl(root);
-  else if (root.name === 'CrossIndustryInvoice') invoice = readCii(root);
+  if (root.name === 'Invoice' && namespace === UBL_INVOICE_NAMESPACE) invoice = readUbl(root);
+  else if (root.name === 'CreditNote' && namespace === UBL_CREDIT_NOTE_NAMESPACE) invoice = readUbl(root);
+  else if (root.name === 'CrossIndustryInvoice' && namespace === CII_NAMESPACE) invoice = readCii(root);
   else return null;
   invoice.problems = check(invoice);
   return invoice;

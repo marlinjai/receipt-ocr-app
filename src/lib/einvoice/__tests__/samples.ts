@@ -151,6 +151,8 @@ export interface EmbeddingLayout {
   files: Array<{ name: string; bytes: Uint8Array; compress?: boolean; declaredSize?: number }>;
   /** 'flat': Names array on the root of the tree; 'kids': one level of Kids; 'af': only the catalog's AF array; 'loop': a Kids array that points back at itself. */
   tree: 'flat' | 'kids' | 'af' | 'loop';
+  /** Every file entry points at the first file's stream (a fan-out of one bomb). */
+  shareStream?: boolean;
   /** Mark the document as encrypted (an /Encrypt entry in the trailer). */
   encrypted?: boolean;
 }
@@ -160,11 +162,13 @@ export async function pdfWithLayout(layout: EmbeddingLayout): Promise<Uint8Array
   const document = await PDFDocument.create();
   document.addPage([200, 200]);
   const { context } = document;
+  let shared: PDFRef | null = null;
   const specs: Array<{ name: string; ref: PDFRef }> = layout.files.map((file) => {
     const streamDict: Record<string, unknown> = { Type: 'EmbeddedFile', Subtype: 'text/xml' };
     if (file.declaredSize !== undefined) streamDict.Params = { Size: file.declaredSize };
-    const stream = file.compress === false ? context.stream(file.bytes, streamDict as never) : context.flateStream(file.bytes, streamDict as never);
-    const streamRef = context.register(stream);
+    const makeStream = () => (file.compress === false ? context.stream(file.bytes, streamDict as never) : context.flateStream(file.bytes, streamDict as never));
+    const streamRef = layout.shareStream && shared ? shared : context.register(makeStream());
+    shared ??= streamRef;
     const spec = context.obj({ Type: 'Filespec', F: PDFString.of(file.name), UF: PDFHexString.fromText(file.name), EF: { F: streamRef, UF: streamRef }, AFRelationship: 'Alternative' });
     return { name: file.name, ref: context.register(spec) };
   });

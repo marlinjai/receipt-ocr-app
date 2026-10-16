@@ -1264,7 +1264,7 @@ disagree:
   annual wage statement (`month` 0) or the pay slip of one month (1 to 12) per year
   and employer label, with gross wage, wage tax, solidarity surcharge, church tax
   and the employee shares of pension, health, care and unemployment insurance plus
-  the employer's pension share (migration `0023_tax_income_estimate`, additive).
+  the employer's pension share (migration `0024_tax_income_estimate`, additive).
   The annual statement of an employer wins over its pay slips; until it exists the
   slips are added up, and in the running year the last slip can be projected to
   December (the screen switches between "projected" and "months entered"). A month

@@ -15,7 +15,7 @@ import { createWorkspace, db } from '../../../../../test/db-helpers';
 
 /**
  * Wages, return items and church months against a real database (migration
- * 0023), with the four paths of an input flow: forward, backtrack and
+ * 0024), with the four paths of an input flow: forward, backtrack and
  * revise, resume from what is stored, and re-entry after the year is
  * complete. Run with `pnpm test:db`.
  */

@@ -38,7 +38,7 @@ export default function BulkEditBar({
   selectedRows: Set<string>;
   /** Sets the column to the value (null clears it) on at most `BULK_SET_PART` rows, and says what came of each. */
   setField: (rowIds: string[], columnId: string, value: string | null) => Promise<BulkSetOutcome>;
-  /** After a run: load the table again. */
+  /** After a run: load the table again. (The dashboard's reload shows its own failure in the table's banner; a rejection is said here.) */
   onDone: () => Promise<void> | void;
 }) {
   const selectColumns = useMemo(() => columns.filter((c) => c.type === 'select'), [columns]);

@@ -772,7 +772,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
                   : selectedRows
             }
             setField={setFieldOnRows}
-            onDone={refresh}
+            onDone={reload}
           />
           <GroupBar
             groups={groups}

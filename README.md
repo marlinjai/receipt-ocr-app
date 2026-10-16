@@ -111,6 +111,29 @@ The service worker (`public/sw.js`) never caches application code. To withdraw i
 
 The rules (what counts as complete, how the deductible amount is computed) live in one module, `src/lib/meals/rules.ts`, and the plan is `docs/plans/2026-10-06-meal-register-and-phone-capture.md`.
 
+### Ausgaben-Postfach (the expenses mailbox)
+
+The spending page looks for the invoice of a payment without a receipt in the expenses mailbox
+before it asks the owner (step 3 of the missing-receipt loop). It reads that mailbox read-only
+through the Gmail interface and is off until the server holds five settings (Infisical, receipts
+project; names in `.env.example`):
+
+- `SPENDING_MAILBOX_CLIENT_ID` and `SPENDING_MAILBOX_CLIENT_SECRET`: a Google Open Authorization
+  (OAuth) client of type "Web application" in the Google Cloud project of the workspace domain,
+  with the Gmail interface switched on.
+- `SPENDING_MAILBOX_REFRESH_TOKEN`: granted once by the owner of the mailbox the expenses address
+  delivers into, for the scope `https://www.googleapis.com/auth/gmail.readonly` only (for example
+  with Google's OAuth playground set to use that client). Set the client's consent screen to
+  "Internal" (only users of the workspace domain) or "In production" first: a token minted while it
+  is in "Testing" expires after seven days. When the page says the access has expired, the owner grants it again the same way and the new refresh token replaces the old one
+  in Infisical; nothing else changes.
+- `SPENDING_MAILBOX_ADDRESS`: the address invoices are sent to.
+- `SPENDING_MAILBOX_WORKSPACE_ID`: the one company (workspace) the mailbox belongs to. For every
+  other company the mailbox step stays off, so no other company ever sees its mail.
+
+A found attachment is never stored by the app: only where it is (mail and attachment). The owner
+takes it over with one tap; the browser then runs the normal upload.
+
 ## Documentation
 
 - [Architecture](./docs/public/architecture.md) - System design and integrations

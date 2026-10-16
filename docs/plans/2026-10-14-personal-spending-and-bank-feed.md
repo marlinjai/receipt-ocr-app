@@ -177,7 +177,36 @@ warning goes through the same channel as the missing-receipt notification.
   notifies about new missing receipts, at most ten per run (the rest on the next run). It runs
   after every payment file import (from the finance action, logged and never failing the import)
   and from "Jetzt prüfen" on the page; the live bank feed should call it the same way.
-- Step 3 (the mailbox) follows as its own change.
+- Step 3 (the mailbox): see below.
+
+### Build order 2, step 3: the expenses mailbox (2026-10-16)
+
+- A mailbox port (`src/lib/spending/mailbox/port.ts`) with a Gmail adapter (`gmail.ts`), read-only,
+  with plain `fetch`. The mailbox belongs to exactly one company (`SPENDING_MAILBOX_WORKSPACE_ID`);
+  for every other company the step is off, so no other company ever sees its mail.
+- A run searches the mailbox for each recent payment whose receipt is missing: mail delivered to
+  the expenses address, with an attachment, from 14 days before to 3 days after the payment,
+  naming the counterparty (its normalized name and the vendors earlier links paired it with) and
+  the amount ("29,99" or "29.99"). A payment without a name is not searched: an amount alone finds
+  any mail with that number. A search that found nothing is repeated a day later, at most three
+  times; a failed search uses up no try. At most ten searches and twenty seconds per run. A revoked
+  grant stops the run's searches and is reported on the page; a rate limit only pauses them.
+- Found attachments (PDF or image) are stored only as a pointer (message, place, name), never
+  their content (`spending_mail_searches`, `spending_mail_candidates`, migration 0028, additive);
+  finds of a payment whose import was undone go with it. The payment shows "Im Postfach" with
+  "Als Beleg übernehmen" and "Nicht die Rechnung" (set aside for good; the payment may be searched
+  again). Taking over: the browser fetches the attachment through
+  `/api/spending/mail-attachment/<id>` (write permission, the active company's only, at most 20
+  MB), runs the normal upload pipeline with it, and links the new receipt to the payment, because
+  the owner chose the mail for it.
+- Deviation from the plan, decided: a payment whose invoice was found gets one "Rechnung im
+  Postfach" message (also when the find comes on a later search, after its "Beleg fehlt"
+  message), because taking the attachment over is one tap by the owner. A server-side upload
+  without a tap would need a server-side version of the upload pipeline, which belongs to the
+  upload path, not to this lane.
+- Off until the server holds the five settings named in the README ("Ausgaben-Postfach"): a Google
+  Open Authorization (OAuth) client with the read-only mail scope, a refresh token granted once by
+  the owner of the mailbox the expenses address delivers into, the address, and the company.
 
 ### Build order 4, budgets and warnings (2026-10-16)
 

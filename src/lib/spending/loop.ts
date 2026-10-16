@@ -20,7 +20,8 @@ import { categorise, normalizeText, type CounterpartyTreatmentAnswer } from './r
  * - a person said no receipt exists, with the reason: settled, never asked again;
  * - step 2, unlinked receipts of this company fit it by vendor, amount and day:
  *   a person confirms one;
- * - step 3 (the mailbox) comes in with the mailbox port;
+ * - step 3, the expenses mailbox holds a mail with an attachment that may be
+ *   the invoice: the owner takes it into the normal upload path with one tap;
  * - step 5, otherwise the receipt is missing and the owner is asked.
  */
 
@@ -65,7 +66,17 @@ export type LoopState =
   | { state: 'not_needed'; reason: NotNeededReason }
   | { state: 'no_receipt'; reason: string }
   | { state: 'proposed'; candidates: ReceiptCandidate[] }
+  | { state: 'in_mailbox'; mails: MailCandidateView[] }
   | { state: 'missing' };
+
+/** A mail attachment found for a payment (see the mailbox port), as the open checks show it. */
+export interface MailCandidateView {
+  id: string;
+  fileName: string;
+  receivedDay: string;
+  subject: string;
+  sender: string;
+}
 
 export interface LoopContext {
   treatments: ReadonlyMap<string, CounterpartyTreatmentAnswer>;
@@ -75,6 +86,8 @@ export interface LoopContext {
   receipts: readonly LoopReceipt[];
   /** Vendor keys a counterparty is known to stand for, from the links that exist (see the payments service). */
   vendorAliases: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Mail attachments found for a payment, by payment id. Optional: no mailbox, no entries. */
+  mailCandidates?: ReadonlyMap<string, readonly MailCandidateView[]>;
 }
 
 /** Days a receipt may lie before the payment (an invoice paid later), and after it (a receipt dated after a card payment). */
@@ -141,6 +154,8 @@ export function loopState(payment: LoopPayment, ctx: LoopContext): LoopState {
   if (answered !== undefined) return { state: 'no_receipt', reason: answered };
   const candidates = receiptCandidates(payment, ctx);
   if (candidates.length > 0) return { state: 'proposed', candidates };
+  const mails = ctx.mailCandidates?.get(payment.id) ?? [];
+  if (mails.length > 0) return { state: 'in_mailbox', mails: [...mails] };
   return { state: 'missing' };
 }
 
@@ -155,3 +170,6 @@ export function notifiable(payment: Pick<LoopPayment, 'bookingDay'>, today: stri
 
 /** The key that makes a payment's missing-receipt notification happen at most once, ever. */
 export const missingReceiptSubject = (paymentId: string) => `missing_receipt:${paymentId}`;
+
+/** The key of the one "invoice found in the mailbox" message of a payment, apart from its "receipt missing" message. */
+export const mailFoundSubject = (paymentId: string) => `mail_found:${paymentId}`;

@@ -6,6 +6,7 @@ import type { TreatmentInput, VendorRule } from '../decisions';
 import { legacyAllocations } from '../defaults';
 import { resolveItem, type ReceiptFacts } from '../facts';
 import { rulesForYear } from '../rules';
+import { vatYear } from '../vat';
 
 /** An ordinary receipt (not a meal) as the meal module's mapper hands it over. */
 function receipt(overrides: Partial<MealRecord> = {}): MealRecord {
@@ -114,9 +115,169 @@ describe('resolveItem: amounts', () => {
     expect(noTotal.item).toMatchObject({ amountCents: null, missingAmount: 'no_amount' });
   });
 
+  it('reads the net amount of a credit note: negative like its total', () => {
+    const credit = resolveItem(facts(receipt({ gross: -119, net: -100 })), [], REGULAR_BUSINESS);
+    expect(credit.item).toMatchObject({ amountCents: -11_900, netCents: -10_000 });
+    const usd = resolveItem(facts(receipt({ currency: 'USD', gross: -119, net: -100, fxRate: 0.9 })), [], REGULAR_BUSINESS);
+    expect(usd.item).toMatchObject({ amountCents: -10_710, netCents: -9_000 });
+  });
+
+  it('a net amount that does not fit its total is no net amount, for an invoice and a credit note alike', () => {
+    const net = (gross: number, n: number) => resolveItem(facts(receipt({ gross, net: n })), [], REGULAR_BUSINESS).item.netCents;
+    expect(net(119, 100)).toBe(10_000);
+    expect(net(119, 120)).toBeNull();
+    expect(net(-119, -120)).toBeNull();
+    // Opposite signs, and a zero net beside a total.
+    expect(net(-119, 100)).toBeNull();
+    expect(net(119, -100)).toBeNull();
+    expect(net(119, 0)).toBeNull();
+    // A credit note without tax: net equals the total.
+    expect(net(-50, -50)).toBe(-5_000);
+  });
+
+  it('a refund linked to a credit note does not reduce it further', () => {
+    const credit = resolveItem(facts(receipt({ gross: -119, net: -100 }), { refundedCents: 11_900 }), [], REGULAR_BUSINESS);
+    expect(credit.item).toMatchObject({ amountCents: -11_900, netCents: -10_000 });
+  });
+
+  it('a credit note paid back counts on the day the money came back, with that amount', () => {
+    // As linked payments arrive for it: money back, no money out.
+    const credit = resolveItem(
+      facts(receipt({ gross: -119, net: -100, date: '2025-12-20' }), { paid: null, refundedCents: 11_900, moneyBack: { day: '2026-01-08', cents: 11_900 }, moneyOutCents: 0 }),
+      [],
+      REGULAR_BUSINESS,
+    );
+    expect(credit.item).toMatchObject({ date: '2026-01-08', dateBasis: 'payment', amountCents: -11_900, netCents: -10_000, amountBasis: 'payment' });
+  });
+
+  it('a credit note with money out linked to it is a question, never an expense', () => {
+    // As linked payments arrive for an offset: money out, so `paid` is positive.
+    const credit = resolveItem(
+      facts(receipt({ gross: -119, net: -100, date: '2026-03-01' }), { paid: { day: '2026-03-05', cents: 5_000 }, refundedCents: 0, moneyBack: null, moneyOutCents: 5_000 }),
+      [],
+      REGULAR_BUSINESS,
+    );
+    expect(credit.item).toMatchObject({ amountCents: -11_900, creditNotePaymentOut: true, dateBasis: 'document' });
+    const result = computeYear({ year: 2026, items: [{ ...credit.item, allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.telecom' }] }, rulesForYear(2026));
+    expect(result.checks.map((c) => c.kind)).toEqual(['credit_note_payment_out']);
+    expect(result.businessExpenseCents).toBe(0);
+  });
+
+  it('rounds a foreign-currency credit note exactly like its invoice, half away from zero', () => {
+    const invoice = resolveItem(facts(receipt({ currency: 'USD', gross: 45.25, net: 45.25, fxRate: 0.1 })), [], REGULAR_BUSINESS).item;
+    const credit = resolveItem(facts(receipt({ currency: 'USD', gross: -45.25, net: -45.25, fxRate: 0.1 })), [], REGULAR_BUSINESS).item;
+    // 4,525 cents times 0.1 is 452.5.
+    expect(invoice.amountCents).toBe(453);
+    expect(credit.amountCents).toBe(-453);
+    expect(credit.netCents).toBe(-453);
+  });
+
+  it('a credit note in another currency without a rate is still a credit note', () => {
+    const usd = (extra: Partial<ReceiptFacts>) =>
+      resolveItem(facts(receipt({ currency: 'USD', gross: -119, net: -100, fxRate: null, date: '2026-03-01' }), extra), [], REGULAR_BUSINESS).item;
+    // Settled by the euro money back: it counts with that amount and its net in proportion.
+    expect(usd({ moneyBack: { day: '2026-03-10', cents: 10_710 }, moneyOutCents: 0 })).toMatchObject({ amountCents: -10_710, netCents: -9_000, date: '2026-03-10' });
+    // Money out linked to it is a question, never an expense.
+    const out = usd({ paid: { day: '2026-03-05', cents: 10_710 }, moneyBack: null, moneyOutCents: 10_710 });
+    expect(out).toMatchObject({ amountCents: null, creditNotePaymentOut: true });
+    const result = computeYear({ year: 2026, items: [{ ...out, allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.telecom' }] }, rulesForYear(2026));
+    expect(result.checks.map((c) => c.kind)).toContain('credit_note_payment_out');
+    expect(result.businessExpenseCents).toBe(0);
+  });
+
+  it('a net amount of the other sign is reported as not fitting, not as missing', () => {
+    const r = resolveItem(facts(receipt({ gross: -119, net: 100, date: '2025-03-01' })), [], REGULAR_BUSINESS).item;
+    expect(r).toMatchObject({ netCents: null, netDoesNotFit: true });
+    const result = computeYear({ year: 2025, items: [{ ...r, allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.telecom' }] }, rulesForYear(2025));
+    expect(result.checks.map((c) => c.kind)).toContain('net_does_not_fit');
+    expect(result.checks.map((c) => c.kind)).not.toContain('net_amount_missing');
+  });
+
   it('carries the section 19 answer onto the item', () => {
     expect(resolveItem(facts(receipt()), [], UNANSWERED).item.smallBusiness).toBeNull();
     expect(resolveItem(facts(receipt()), [], REGULAR_BUSINESS).item.smallBusiness).toBe(false);
+  });
+});
+
+describe('a credit note in the statement, under both statuses', () => {
+  // A credit note of 119.00 (100.00 net, 19.00 tax) against a telecom invoice of 238.00 (200.00 net).
+  const year = (settings: typeof REGULAR_BUSINESS, share = 10000) => {
+    const decision: TreatmentInput = { allocations: [{ purpose: 'business', shareBp: share }], formLineKey: 'euer.telecom', employmentLineKey: null };
+    const invoice = resolveItem(facts(receipt({ rowId: 'inv', gross: 238, net: 200, date: '2025-03-10' }), { decision }), [], settings).item;
+    const credit = resolveItem(facts(receipt({ rowId: 'cn', gross: -119, net: -100, date: '2025-04-02' }), { decision }), [], settings).item;
+    return computeYear({ year: 2025, items: [invoice, credit] }, rulesForYear(2025));
+  };
+  const line = (result: ReturnType<typeof year>, key: string) => result.lines.find((l) => l.key === key)?.cents ?? 0;
+
+  it('regular taxation: the credit note reduces the expense by its net amount and the input tax by its tax', () => {
+    const result = year(REGULAR_BUSINESS);
+    expect(result.checks).toEqual([]);
+    expect(line(result, 'euer.telecom')).toBe(20_000 - 10_000);
+    expect(line(result, 'euer.input_vat')).toBe(3_800 - 1_900);
+    const periods = vatYear(2025, 'quarterly', 'issued', { inputVat: result.inputVatEvents, outputVatByIssue: [], outputVatByPayment: [] });
+    // The invoice in the first quarter, the credit note in the second.
+    expect(periods.periods.map((p) => p.inputVatCents)).toEqual([3_800, -1_900, 0, 0]);
+  });
+
+  it('regular taxation at a business share: both reductions at that share', () => {
+    const result = year(REGULAR_BUSINESS, 5000);
+    expect(line(result, 'euer.telecom')).toBe(10_000 - 5_000);
+    expect(line(result, 'euer.input_vat')).toBe(1_900 - 950);
+  });
+
+  it('the private share of a credit note is negative, so its parts add up to its amount', () => {
+    const result = year(SMALL_BUSINESS, 5000);
+    const credit = result.items.find((i) => i.itemId === 'cn');
+    expect(credit?.parts.map((p) => p.cents)).toEqual([-5_950]);
+    expect(credit?.privateCents).toBe(-5_950);
+  });
+
+  it('refunded in the next year: the expense and the input tax are reduced in the year and the period of the money back', () => {
+    const decision: TreatmentInput = { allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.telecom', employmentLineKey: null };
+    const credit = resolveItem(
+      facts(receipt({ rowId: 'cn', gross: -119, net: -100, date: '2025-12-20' }), { decision, moneyBack: { day: '2026-01-08', cents: 11_900 }, moneyOutCents: 0 }),
+      [],
+      REGULAR_BUSINESS,
+    ).item;
+    const in2025 = computeYear({ year: 2025, items: [credit] }, rulesForYear(2025));
+    const in2026 = computeYear({ year: 2026, items: [credit] }, rulesForYear(2026));
+    expect(in2025.businessExpenseCents).toBe(0);
+    expect(in2026.lines.find((l) => l.key === 'euer.telecom')?.cents).toBe(-10_000);
+    const periods = vatYear(2026, 'quarterly', 'issued', { inputVat: in2026.inputVatEvents, outputVatByIssue: [], outputVatByPayment: [] });
+    expect(periods.periods[0].inputVatCents).toBe(-1_900);
+  });
+
+  it('a credit note on the meal line is its own question; the meal register holds no credit notes', () => {
+    const decision: TreatmentInput = { allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.meals', employmentLineKey: null };
+    const credit = resolveItem(facts(meal({ rowId: 'cm', gross: -40, date: '2025-05-02' }), { decision }), [], SMALL_BUSINESS);
+    expect(credit.isMeal).toBe(false);
+    const result = computeYear({ year: 2025, items: [credit.item] }, rulesForYear(2025));
+    expect(result.checks.map((c) => c.kind)).toEqual(['credit_note_on_meal_line']);
+  });
+
+  it('a credit note in the year after a status change asks which status the purchase had', () => {
+    const changed = { ...REGULAR_BUSINESS, statusChanges: [{ effectiveFrom: '2025-07-01', smallBusiness: false }], smallBusiness: true };
+    const credit = resolveItem(facts(receipt({ rowId: 'cn', gross: -119, net: -100, date: '2025-09-01' }), { decision: { allocations: [{ purpose: 'business', shareBp: 10000 }], formLineKey: 'euer.telecom', employmentLineKey: null } }), [], changed).item;
+    expect(credit.creditNoteStatusChanged).toBe(true);
+    const result = computeYear({ year: 2025, items: [credit] }, rulesForYear(2025));
+    expect(result.checks).toEqual([{ itemId: 'cn', kind: 'credit_note_status_review', blocking: false }]);
+    expect(result.lines.find((l) => l.key === 'euer.input_vat')?.cents).toBe(-1_900);
+    // A change and a change back within the year are caught too.
+    const back = { ...REGULAR_BUSINESS, smallBusiness: true, statusChanges: [{ effectiveFrom: '2025-02-01', smallBusiness: false }, { effectiveFrom: '2025-06-01', smallBusiness: true }] };
+    expect(resolveItem(facts(receipt({ rowId: 'cn2', gross: -119, net: -100, date: '2025-09-01' })), [], back).item.creditNoteStatusChanged).toBe(true);
+    // A change more than a year back asks nothing.
+    const long = { ...REGULAR_BUSINESS, smallBusiness: true, statusChanges: [{ effectiveFrom: '2024-01-01', smallBusiness: false }] };
+    expect(resolveItem(facts(receipt({ rowId: 'cn3', gross: -119, net: -100, date: '2025-09-01' })), [], long).item.creditNoteStatusChanged).toBeUndefined();
+    // An invoice in the same situation asks nothing.
+    const invoice = resolveItem(facts(receipt({ rowId: 'inv', gross: 119, net: 100, date: '2025-09-01' })), [], changed).item;
+    expect(invoice.creditNoteStatusChanged).toBeUndefined();
+  });
+
+  it('small business: the credit note reduces the expense by its whole amount, and there is no input tax', () => {
+    const result = year(SMALL_BUSINESS);
+    expect(line(result, 'euer.telecom')).toBe(23_800 - 11_900);
+    expect(line(result, 'euer.input_vat')).toBe(0);
+    expect(result.inputVatEvents).toEqual([]);
   });
 });
 

@@ -29,6 +29,8 @@ export interface StructuredInvoice {
   /** The type code as stated (380 invoice, 381 credit note, 384 corrected invoice, ...). */
   typeCode: string | null;
   number: string | null;
+  /** The invoice this one refers to (BT-25, preceding invoice reference): the invoice a credit note corrects. */
+  referencedInvoiceNumber: string | null;
   /** ISO day. */
   issueDate: string | null;
   dueDate: string | null;
@@ -143,6 +145,7 @@ function readUbl(root: XmlElement): StructuredInvoice {
     kind: creditNote || (typeCode !== null && CREDIT_NOTE_CODES.has(typeCode)) ? 'credit_note' : 'invoice',
     typeCode,
     number: textAt(root, 'ID'),
+    referencedInvoiceNumber: textAt(root, 'BillingReference', 'InvoiceDocumentReference', 'ID'),
     issueDate: dayOf(textAt(root, 'IssueDate')),
     dueDate: dayOf(textAt(root, 'DueDate') ?? textAt(root, 'PaymentMeans', 'PaymentDueDate')),
     currency,
@@ -185,6 +188,7 @@ function readCii(root: XmlElement): StructuredInvoice {
     kind: typeCode !== null && CREDIT_NOTE_CODES.has(typeCode) ? 'credit_note' : 'invoice',
     typeCode,
     number: textAt(document, 'ID'),
+    referencedInvoiceNumber: textAt(settlement, 'InvoiceReferencedDocument', 'IssuerAssignedID'),
     issueDate: dayOf(textAt(document, 'IssueDateTime', 'DateTimeString')),
     dueDate: dayOf(textAt(settlement, 'SpecifiedTradePaymentTerms', 'DueDateDateTime', 'DateTimeString')),
     currency,

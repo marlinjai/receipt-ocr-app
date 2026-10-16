@@ -247,3 +247,11 @@ describe('the review list compares the rate in the one order', () => {
     expect(changes.find((c) => c.field === 'taxRate')).toBeUndefined();
   });
 });
+
+describe('a credit note stored with a negative amount', () => {
+  it('is offered no amount from its text, which prints positive figures', () => {
+    const text = ['Gutschrift (elektronisch)', 'Netto: 10.00 EUR', 'Steuer 19 % (S): netto 10.00 EUR, Steuer 1.90 EUR', 'Gesamt: 11.90 EUR'].join('\n');
+    const changes = proposeReading(stored(text, { name: 'Gutschrift', vendor: 'Muster Software', gross: -11.9, net: -10, taxRate: 19, category: 'Software & Lizenzen' }));
+    expect(changes.filter((c) => c.field === 'gross' || c.field === 'net' || c.field === 'taxRate')).toEqual([]);
+  });
+});

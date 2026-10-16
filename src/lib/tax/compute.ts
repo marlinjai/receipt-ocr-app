@@ -47,6 +47,8 @@ function computeItem(item: LedgerItem, assetRules: AssetRules): ItemResult {
   const note = (kind: OpenCheckKind) => checks.push({ itemId: item.id, kind, blocking: false });
 
   if (item.linesMismatch) block('lines_do_not_sum');
+  if (item.creditNotePaymentOut) block('credit_note_payment_out');
+  if (item.creditNoteStatusChanged) note('credit_note_status_review');
   if (item.amountCents === null) block(item.missingAmount === 'no_exchange_rate' ? 'no_exchange_rate' : 'no_amount');
   if (item.smallBusiness === null) block('small_business_unanswered');
   // Under regular taxation the cost is the net amount and the tax in the
@@ -72,8 +74,9 @@ function computeItem(item: LedgerItem, assetRules: AssetRules): ItemResult {
   if (businessBp > 0 && item.formLineKey === null) block('no_form_line');
   const net = item.netCents ?? null;
   if (regular && businessBp > 0 && item.amountCents !== null && net === null && item.formLineKey !== MEAL_LINE) {
-    block('net_amount_missing');
+    block(item.netDoesNotFit ? 'net_does_not_fit' : 'net_amount_missing');
   }
+  if (item.formLineKey === MEAL_LINE && businessBp > 0 && item.amountCents !== null && item.amountCents < 0) block('credit_note_on_meal_line');
   if (employmentBp > 0 && item.employmentLineKey === null) block('no_employment_line');
 
   // A receipt on the low-value asset line must be allowed to be one: the limit
@@ -89,7 +92,7 @@ function computeItem(item: LedgerItem, assetRules: AssetRules): ItemResult {
     }
   }
 
-  const isMeal = item.formLineKey === MEAL_LINE && businessBp > 0;
+  const isMeal = item.formLineKey === MEAL_LINE && businessBp > 0 && !(item.amountCents !== null && item.amountCents < 0);
   if (isMeal) {
     if (item.meal === null) block('meal_without_register_facts');
     else if (item.meal.status === 'incomplete') block('meal_incomplete');
@@ -155,7 +158,9 @@ function computeItem(item: LedgerItem, assetRules: AssetRules): ItemResult {
     }
   }
 
-  return { itemId: item.id, counted: true, parts, privateCents: Math.max(0, amount - deducted), checks };
+  // What nobody deducts; negative for a credit note (the private share of the correction).
+  const rest = amount - deducted;
+  return { itemId: item.id, counted: true, parts, privateCents: amount >= 0 ? Math.max(0, rest) : Math.min(0, rest), checks };
 }
 
 export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResult {

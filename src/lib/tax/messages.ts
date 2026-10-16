@@ -22,6 +22,13 @@ export const CHECK_LABELS: Record<OpenCheckKind, string> = {
   lines_do_not_sum: 'Die Positionen ergeben nicht mehr den Belegbetrag',
   needs_asset: 'Über der Grenze für geringwertige Wirtschaftsgüter: als Anlage führen',
   net_amount_needed: 'Nettobetrag fehlt: nahe an der Grenze für geringwertige Wirtschaftsgüter',
+  net_does_not_fit: 'Nettobetrag passt nicht zum Bruttobetrag (größer als dieser oder mit anderem Vorzeichen): bitte im Beleg korrigieren',
+  credit_note_payment_out:
+    'Rechnungskorrektur (Gutschrift) mit zugeordneter Ausgabe: bitte unter „Zahlungen“ prüfen und die Ausgabe der Rechnung zuordnen, mit der die Gutschrift verrechnet wurde',
+  credit_note_on_meal_line:
+    'Rechnungskorrektur (Gutschrift) auf der Zeile für Bewirtungen: das Bewirtungsverzeichnis führt keine Gutschriften. Bitte die Bewirtung im Verzeichnis berichtigen und hier eine andere Zeile wählen oder „Privat“',
+  credit_note_status_review:
+    'Rechnungskorrektur (Gutschrift) nach einem Wechsel bei der Kleinunternehmerregelung: gerechnet wird mit dem Status am Tag der Korrektur. Galt für den ursprünglichen Einkauf der andere Status, folgt die Korrektur diesem (§ 17 Umsatzsteuergesetz): dann in der Voranmeldung die Vorsteuer nicht berichtigen (Einkauf unter § 19) oder berichtigen (Einkauf unter Regelbesteuerung) und den Betrag in der Einnahmenüberschussrechnung entsprechend brutto oder netto ansetzen',
 };
 
 export const ASSET_CHECK_LABELS: Record<AssetCheckKind, string> = {
@@ -198,6 +205,8 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Der Nettobetrag einer Position muss größer als null und höchstens so groß wie ihr Betrag sein.';
         case 'line_cannot_hold_several_items':
           return 'Eine einzelne Position kann nicht „mehrere kleine Teile“ sein; dafür den Beleg weiter aufteilen.';
+        case 'credit_note_not_split':
+          return 'Eine Rechnungskorrektur (Gutschrift) wird nicht in Positionen aufgeteilt; ihre Behandlung gilt für den ganzen Beleg.';
         case 'receipt_without_total':
           return 'Der Beleg hat keinen Betrag; ohne ihn lässt er sich nicht aufteilen.';
         case 'account_label_required':

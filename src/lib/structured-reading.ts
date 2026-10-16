@@ -43,13 +43,25 @@ export function withStructuredInvoice(settled: SettledReading, fields: Structure
   const unknownCurrency = fields.currency !== null && !CURRENCY_OPTIONS.includes(fields.currency);
   if (unknownCurrency) flags.push('currency_unknown');
   const currency = fields.currency !== null && !unknownCurrency ? fields.currency : settled.currency;
-  if (fields.creditNote || unknownCurrency) {
-    // A credit note is money back. The row has no way to say that by itself
-    // (a total is a purchase wherever it is counted), so its amounts stay
-    // empty until a person books it; the figures are in its text.
-    if (fields.creditNote) flags.push('credit_note');
+  if (unknownCurrency) {
+    // Its amounts stay empty until a person enters them; the figures are in its text. A credit note
+    // is still recorded as one (its reference), and the review list says so.
     const amounts = { ...settled.amounts, gross: null, net: null, taxGroups: [], checks: [] };
     return { ...settled, vendor, date: fields.date ?? settled.date, currency, gross: null, net: null, amounts, meal: settled.meal ? { ...settled.meal, taxLines: null } : null, flags: [...new Set(flags)] };
+  }
+  if (fields.creditNote) {
+    // A credit note is money back: a receipt with a negative amount on the
+    // day of the credit note (under the cash basis the money counts when it
+    // comes back). Its tax groups are not kept as lines (a line is never
+    // negative); its rate is the rate of its largest group. Which invoice it
+    // corrects is linked by the caller (`linkCreditNote`).
+    const negative = (value: number | null) => (value === null ? null : -Math.abs(value));
+    const groupNet = fields.taxGroups.length > 0 ? Math.round(fields.taxGroups.reduce((sum, g) => sum + g.net, 0) * 100) / 100 : null;
+    const gross = negative(fields.gross ?? settled.gross);
+    const net = negative(fields.net ?? groupNet ?? (fields.gross === null ? settled.net : null));
+    const taxRate = fields.taxRate ?? settled.taxRate;
+    const amounts = { ...settled.amounts, gross, net, taxRate, taxGroups: [], taxPrinted: fields.taxGroups.length > 0, checks: [] };
+    return { ...settled, vendor, date: fields.date ?? settled.date, currency, gross, net, taxRate, amounts, meal: settled.meal ? { ...settled.meal, taxLines: null } : null, flags: [...new Set(flags)] };
   }
   const taxGroups = fields.taxGroups.length > 0 ? fields.taxGroups : settled.amounts.taxGroups;
   const meal = settled.meal && fields.taxGroups.length > 0 ? { ...settled.meal, taxLines: fields.taxGroups.map((g) => ({ rate: g.rate, net: g.net, tax: g.tax })) } : settled.meal;

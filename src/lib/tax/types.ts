@@ -87,6 +87,16 @@ export interface LedgerItem {
   severalLowValueItems?: boolean;
   /** The receipt was split into lines that no longer add up to its total: nothing of it is computed until they do. */
   linesMismatch?: boolean;
+  /** The receipt states a net amount that cannot be its net (larger than the total, or of the other sign). */
+  netDoesNotFit?: boolean;
+  /** A credit note with money out linked to it (offset against a payment?): a person has to look. */
+  creditNotePaymentOut?: boolean;
+  /**
+   * A credit note whose section 19 status differs from the status a year
+   * before: the purchase it corrects may have been under the other status, and
+   * the correction follows the purchase (section 17 of the value-added tax act).
+   */
+  creditNoteStatusChanged?: boolean;
   /**
    * Set when the buyer owes the tax on this purchase (section 13b of the
    * value-added tax act, see `reverse-charge.ts`): the rate, the day the tax
@@ -202,7 +212,15 @@ export type OpenCheckKind =
   /** The lines of a split receipt do not add up to its total any more. */
   | 'lines_do_not_sum'
   /** On the low-value asset line and possibly above the limit; the net amount would tell. */
-  | 'net_amount_needed';
+  | 'net_amount_needed'
+  /** The stated net amount is larger than the total or of the other sign. */
+  | 'net_does_not_fit'
+  /** A credit note with money out linked to it. */
+  | 'credit_note_payment_out'
+  /** A credit note on the meal line: the meal register holds no credit notes. */
+  | 'credit_note_on_meal_line'
+  /** A credit note in a year after a status change: check under which status the purchase was. */
+  | 'credit_note_status_review';
 
 export interface OpenCheck {
   itemId: string;

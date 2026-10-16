@@ -472,7 +472,8 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 {manualFor === payment.id && (
                   <ManualLink
                     payment={payment}
-                    receipts={p.receiptTargets}
+                    // Money in partly on an invoice already stays with invoices: a payment is on one kind of target only.
+                    receipts={payment.check === 'income_without_invoice' && payment.freeCents !== Math.abs(payment.amountCents) ? [] : p.receiptTargets}
                     invoices={payment.check === 'income_without_invoice' ? p.invoiceTargets : []}
                     busy={busy}
                     onLink={onLink}
@@ -850,7 +851,10 @@ function PaymentFinder({
       {found !== null && found.payments.length > 0 && (
         <ul className="mt-1 space-y-1.5" aria-label="Gefundene Zahlungen">
           {found.payments.map((payment) => {
-            const targets = payment.target === 'invoice' ? p.invoiceTargets.length : p.receiptTargets.length;
+            // Money in goes on an invoice, or on a receipt as money back, unless it is on one of them already.
+            const invoices = payment.target === 'invoice' && payment.linkedTo !== 'receipt' ? p.invoiceTargets : [];
+            const receipts = payment.target === 'receipt' || payment.linkedTo !== 'invoice' ? p.receiptTargets : [];
+            const targets = invoices.length + receipts.length;
             const what = `${formatDay(payment.bookingDay)} ${payment.counterparty || 'ohne Namen'} ${euro(Math.abs(payment.amountCents))}`;
             return (
               <li key={payment.id} className="rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
@@ -881,8 +885,8 @@ function PaymentFinder({
                   (targets > 0 ? (
                     <ManualLink
                       payment={payment}
-                      receipts={payment.target === 'invoice' ? [] : p.receiptTargets}
-                      invoices={payment.target === 'invoice' ? p.invoiceTargets : []}
+                      receipts={receipts}
+                      invoices={invoices}
                       busy={busy}
                       onLink={onLink}
                     />

@@ -1649,14 +1649,15 @@ describe('a refunded purchase: money back is proposed for the purchase’s recei
     await setPaymentKind(db, ctx, part.id, 'refund');
     await linkPayment(db, ctx, { paymentId: part.id, rowId }, rowCheck(ctx));
     expect((await loadStatement(db, ws.workspaceId, 2026)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 3_999 });
-    // The full refund no longer fits what is left: not proposed, and refused by hand with what is left, also when confirmed
-    // (confirming allows only the tolerance of exchange rates above it).
+    // The full refund no longer fits what is left: not proposed, and refused by hand with what is left.
     expect((await refundOpen(ws.workspaceId))[0].proposals).toEqual([]);
     expect(await code(linkPayment(db, ctx, { paymentId: back.id, rowId }, rowCheck(ctx)))).toBe('refund_exceeds_receipt');
-    expect(await code(linkPayment(db, ctx, { paymentId: back.id, rowId, confirmed: true }, rowCheck(ctx)))).toBe('refund_exceeds_receipt');
-    // A part of it that fits is fine.
-    await linkPayment(db, ctx, { paymentId: back.id, rowId, cents: 3_999 }, rowCheck(ctx));
+    // Confirmed, what is left is linked and the rest of the payment stays open.
+    await linkPayment(db, ctx, { paymentId: back.id, rowId, confirmed: true }, rowCheck(ctx));
     expect((await loadStatement(db, ws.workspaceId, 2026)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 0 });
+    expect((await refundOpen(ws.workspaceId)).find((o) => o.id === back.id)).toMatchObject({ freeCents: 1_000 });
+    // Nothing left: refused even confirmed.
+    expect(await code(linkPayment(db, ctx, { paymentId: back.id, rowId, confirmed: true }, rowCheck(ctx)))).toBe('refund_exceeds_receipt');
   });
 
   it('a counterparty answered mixed is asked about its money back when a purchase of its is on a receipt; one answered own account is not', async () => {
@@ -1669,14 +1670,16 @@ describe('a refunded purchase: money back is proposed for the purchase’s recei
     expect(await refundOpen(ws.workspaceId)).toEqual([]);
   });
 
-  it('a refund a few cents above what is left (exchange rates) is linked once confirmed', async () => {
+  it('a refund a few cents above what is left (exchange rates): confirmed, what is left is linked and the cents stay open', async () => {
     const { ws, ctx, accountId, rowId } = await refundedOrder();
     await importPayments(db, ctx, accountId, file(line('2026-03-27', 'Versand Beispiel', 'Erstattung Kurs', '50.10', 'Credit Transfer')));
     const above = (await db.taxPayment.findFirst({ where: { accountId, amountCents: 5_010 } }))!;
     await setPaymentKind(db, ctx, above.id, 'refund');
     expect(await code(linkPayment(db, ctx, { paymentId: above.id, rowId }, rowCheck(ctx)))).toBe('refund_exceeds_receipt');
     await linkPayment(db, ctx, { paymentId: above.id, rowId, confirmed: true }, rowCheck(ctx));
+    expect((await db.taxPaymentLink.findFirst({ where: { paymentId: above.id } }))?.cents).toBe(4_999);
     expect((await loadStatement(db, ws.workspaceId, 2026)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 0 });
+    expect((await refundOpen(ws.workspaceId)).find((o) => o.id === above.id)).toMatchObject({ freeCents: 11 });
   });
 
   it('a number every purchase of the counterparty carries, linked or not, proposes nothing as an order number', async () => {

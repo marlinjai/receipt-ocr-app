@@ -1168,9 +1168,12 @@ full and kept out by hand). Decided without asking, say so if you disagree:
   linked the existing rule takes it off the receipt, so a purchase refunded in full costs
   nothing. Never linked without a click (the rule of the payments area).
 - **Money back never takes a receipt below nothing**: a link beyond what the receipt still
-  costs is refused with what is left (`refund_exceeds_receipt`). Money in the file called
-  income that a person links to a receipt becomes money back (listed under the re-labelled
-  payments, where it can be put back).
+  costs is refused with what is left (`refund_exceeds_receipt`); confirmed, what is left is
+  linked and the rest of the payment stays open and is asked about (a few cents of an exchange
+  rate, or a refund that also covers something else). The other side of the same money (a
+  refund's funding twin) is counted once here as everywhere. Money in the file calls income
+  that is on a receipt is money back, derived from the link and not stored: taking the link
+  back makes it income again. A payment is on invoices or on receipts, never both.
 - Such money in is asked about payment by payment when a proposal exists, also from a
   counterparty nobody answered yet or one answered mixed (and then not counted in the
   counterparty question as well); never from one answered private or own account.

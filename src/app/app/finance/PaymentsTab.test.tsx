@@ -60,6 +60,7 @@ const found = (o: Partial<FoundPayment> = {}): FoundPayment => ({
   kind: 'spend',
   accountLabel: 'Geschäftskonto',
   target: 'receipt',
+  linkedTo: null,
   ...o,
 });
 
@@ -535,5 +536,24 @@ describe('PaymentsTab', () => {
     await user.click(screen.getByRole('button', { name: 'Erneut versuchen' }));
     expect(await screen.findByText('Keine Zahlung aus 2026 mit offenem Betrag.')).toBeTruthy();
     expect(p.onSearch).toHaveBeenCalledTimes(3);
+  });
+
+  it('money in found by the search goes on an invoice or, as money back, on a receipt; one already on an invoice stays with invoices', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const targets = { invoiceTargets: [{ id: 'i-1', label: 'Rechnung R-2026-050', openCents: 2_000 }], receiptTargets: [{ id: 'r-1', label: 'Kabel', day: '2026-02-01', amountCents: 2_000, linkedCents: 0 }] };
+    p.onSearch.mockResolvedValueOnce({
+      ok: true,
+      value: { payments: [found({ id: 'f-in', amountCents: 2_000, freeCents: 2_000, kind: 'income', target: 'invoice' }), found({ id: 'f-inv', amountCents: 3_000, freeCents: 1_000, kind: 'income', target: 'invoice', linkedTo: 'invoice' })], total: 2 },
+    });
+    render(<PaymentsTab view={view(targets)} {...p} />);
+    await user.type(screen.getByLabelText('Andere Zahlung suchen und von Hand zuordnen'), 'Versand');
+    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    const choosers = await screen.findAllByRole('button', { name: /^Rechnung wählen für/ });
+    await user.click(choosers[0]);
+    expect(screen.getByLabelText('Rechnung oder Beleg (Erstattung) von Hand wählen')).toBeTruthy();
+    await user.click(choosers[0]);
+    await user.click(choosers[1]);
+    expect(screen.getByLabelText('Rechnung von Hand wählen')).toBeTruthy();
   });
 });

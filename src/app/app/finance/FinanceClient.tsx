@@ -190,7 +190,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
           }
           // Money back a little above what the receipt still costs (exchange rates): asked once, then within the tolerance.
           if (code === 'refund_exceeds_receipt' && !confirmed && Number(paid) > 0) {
-            question = `Diese Erstattung ist größer als das, was der Beleg noch kostet (${euro(Number(paid))}). Trotzdem zuordnen? Bis 8 % darüber wird angenommen (Wechselkurse); was darüber liegt, bitte als Teilbetrag zuordnen.`;
+            question = `Diese Erstattung ist größer als das, was der Beleg noch kostet (${euro(Number(paid))}). Nur diese ${euro(Number(paid))} zuordnen? Der Rest der Zahlung bleibt offen (zum Beispiel ein Kursgewinn oder eine Erstattung für etwas anderes).`;
             return { ok: true, value: view };
           }
           return result;

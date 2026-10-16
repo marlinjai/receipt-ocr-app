@@ -20,7 +20,7 @@ describe('what came of a run', () => {
       { done: ['a'], failed: [] },
       { done: ['b'], failed: [{ rowId: 'c', reason: 'not_stored' }] },
     ]);
-    expect(joined).toEqual({ done: ['a', 'b'], failed: [{ rowId: 'c', reason: 'not_stored' }] });
+    expect(joined).toEqual({ done: ['a', 'b'], failed: [{ rowId: 'c', reason: 'not_stored' }], left: [] });
   });
 
   it('counts no row of a part without an answer as set', () => {
@@ -30,6 +30,7 @@ describe('what came of a run', () => {
         { rowId: 'a', reason: 'unconfirmed' },
         { rowId: 'b', reason: 'unconfirmed' },
       ],
+      left: [],
     });
   });
 

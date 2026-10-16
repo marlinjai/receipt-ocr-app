@@ -458,3 +458,27 @@ describe('what between the bill and the paid amount is no tip', () => {
     expect(readAmounts(slip, { date: '2026-03-01', modelGross: 20, modelSawPage: true })).toMatchObject({ gross: 18, tip: 2, checks: [] });
   });
 });
+
+describe('an unnamed tip after the recheck', () => {
+  it('the own tax lines of the bill between the bill and the paid amount are no fee', () => {
+    const taxAfter = ['Example Cafe', 'Summe 18,00', 'MwSt 19% 2,87', 'Netto 15,13', 'Kartenzahlung', 'Bezahlt 20,00'].join('\n');
+    expect(readAmounts(taxAfter, { date: '2026-03-01' })).toMatchObject({ gross: 18, tip: 2 });
+    const itemThenSum = ['Example Cafe', 'Kaffee 18,00', 'Summe 18,00', 'enth. MwSt 2,87', 'Grand total 20,00', 'Karte'].join('\n');
+    expect(readAmounts(itemThenSum, { date: '2026-03-01' })).toMatchObject({ gross: 18, tip: 2 });
+    expect(readAmounts(itemThenSum, { date: '2026-03-01', modelGross: 20, modelSawPage: true }).checks).not.toContain('total_conflict');
+  });
+
+  it('a terminal status line, a bar in the venue name: still a tip; cash next to an amount: none', () => {
+    const slip = (extra: string) => ['Sky Bar', 'Netto 15,13', 'MwSt 19% 2,87', 'Summe', '18,00', 'Grand total 20,00', extra].join('\n');
+    expect(readAmounts(slip('Status: Approved'), { date: '2026-03-01' }).tip).toBe(2);
+    expect(readAmounts(slip('Danke'), { date: '2026-03-01' }).tip).toBe(2);
+    expect(readAmounts(slip('Barzahlung 20,00'), { date: '2026-03-01' }).tip).toBeNull();
+  });
+
+  it('a paid amount in another currency, also one not kept by the app, is no tip; a word holding "eur" names none', () => {
+    const slip = (paid: string) => ['Example Cafe', 'Netto 15,13', 'MwSt 19% 2,87', 'Summe', '18,00', paid, 'Karte'].join('\n');
+    expect(readAmounts(slip('Grand total DKK 20,00'), { date: '2026-03-01' }).tip).toBeNull();
+    expect(readAmounts(slip('Grand total 20,00 kr'), { date: '2026-03-01' }).tip).toBeNull();
+    expect(readAmounts(slip('Grand total Friseur 20,00'), { date: '2026-03-01' }).tip).toBe(2);
+  });
+});

@@ -130,8 +130,10 @@ export async function syncBankNow(year: number, connectionId: string): Promise<R
     const today = berlinToday();
     // The person is present: say so to the bank, so this fetch does not use up the few unattended ones a day.
     const h = await headers();
-    const ipAddress = (h.get('x-forwarded-for') ?? '').split(',')[0].trim() || h.get('x-real-ip') || '';
-    const userAgent = h.get('user-agent') ?? '';
+    // The address the edge network saw first (it overwrites what a browser sends), then the proxy's.
+    const ipAddress = (h.get('cf-connecting-ip') ?? h.get('x-real-ip') ?? (h.get('x-forwarded-for') ?? '').split(',')[0]).trim();
+    // Header values must be plain text: anything else would make the request itself fail.
+    const userAgent = (h.get('user-agent') ?? '').replace(/[^\x20-\x7E]/g, '').trim();
     const psu = ipAddress && userAgent ? { ipAddress, userAgent } : undefined;
     const outcome = await syncConnection(prisma, ctx, deps, String(connectionId), { today, psu });
     if (outcome.added > 0) {

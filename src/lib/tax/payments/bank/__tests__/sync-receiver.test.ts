@@ -37,6 +37,17 @@ describe('receiveBankSync', () => {
     expect(sync).not.toHaveBeenCalled();
   });
 
+  it('runs a signed request once: the same or an older time is refused inside the window too', async () => {
+    let last: number | null = null;
+    const lastAccepted = { get: () => last, set: (ts: number) => (last = ts) };
+    const sync = vi.fn(async () => []);
+    expect((await receiveBankSync({ rawBody: BODY, signature: sign(BODY), secret: SECRET, enabled: true, sync, log: quiet, now, lastAccepted })).status).toBe(200);
+    expect((await receiveBankSync({ rawBody: BODY, signature: sign(BODY), secret: SECRET, enabled: true, sync, log: quiet, now, lastAccepted })).status).toBe(409);
+    const later = JSON.stringify({ ts: Math.floor(NOW.getTime() / 1000) + 1 });
+    expect((await receiveBankSync({ rawBody: later, signature: sign(later), secret: SECRET, enabled: true, sync, log: quiet, now, lastAccepted })).status).toBe(200);
+    expect(sync).toHaveBeenCalledTimes(2);
+  });
+
   it('answers 503 when the feed is switched off, even signed', async () => {
     const sync = vi.fn();
     expect((await receiveBankSync({ rawBody: BODY, signature: sign(BODY), secret: SECRET, enabled: false, sync, log: quiet, now })).status).toBe(503);

@@ -3,6 +3,7 @@ import { saveTaxSettings } from '@/lib/meals/service';
 import { createAccount, importPayments, loadPayments, type PaymentContext } from '../../service';
 import { BankApiError, type Aspsp, type BankApi, type PsuPresence, type SessionAccount, type StartInput } from '../client';
 import {
+  MAX_UNREADABLE,
   BankServiceError,
   chooseBankAccount,
   completeConsent,
@@ -49,6 +50,7 @@ class FakeBank implements BankApi {
   transactions = new Map<string, Tx[]>();
   failNext: BankApiError | null = null;
   failFor = new Map<string, BankApiError>();
+  lastPsu: PsuPresence | undefined;
   fetchCalls: Array<{ uid: string; from: string; to: string }> = [];
 
   async listAspsps() {
@@ -67,7 +69,8 @@ class FakeBank implements BankApi {
   async deleteSession(id: string) {
     this.deleted.push(id);
   }
-  async fetchTransactions(uid: string, from: string, to: string, _psu?: PsuPresence) {
+  async fetchTransactions(uid: string, from: string, to: string, psu?: PsuPresence) {
+    this.lastPsu = psu;
     this.fetchCalls.push({ uid, from, to });
     const always = this.failFor.get(uid);
     if (always) throw always;
@@ -230,6 +233,17 @@ describe('bank connection: an earlier input changes', () => {
     expect(await paymentCount(s.accountId)).toBe(2);
   });
 
+  it('two starts at the same moment leave one connection, and the consent stored last is the one that counts', async () => {
+    const s = await setup();
+    const results = await Promise.allSettled([startConsent(db, s.ctx, s.deps, s.accountId, BANK), startConsent(db, s.ctx, s.deps, s.accountId, BANK)]);
+    expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+    expect(await db.taxBankConnection.count({ where: { accountId: s.accountId } })).toBe(1);
+    const outcomes = [];
+    for (const state of s.bank.states) outcomes.push(await code(completeConsent(db, s.ctx.workspaceId, s.deps, { state, code: 'ok' })));
+    expect(outcomes.filter((o) => o === 'no error')).toHaveLength(1);
+    expect(outcomes.filter((o) => o === 'state_invalid')).toHaveLength(1);
+  });
+
   it('an abandoned renewal at another institution changes nothing that syncs', async () => {
     const s = await setup();
     s.bank.aspsps.push({ name: 'Zweitbank', country: 'DE', maximumConsentValiditySeconds: null, beta: false });
@@ -337,6 +351,22 @@ describe('bank connection: an earlier input changes', () => {
 });
 
 describe('bank connection: the fetch window', () => {
+  it('a booking dated after today waits for its day, so a later file import of those days keeps its movements', async () => {
+    const s = await setup();
+    s.bank.transactions.set('uid-a1', [tx('2026-10-10', -1000, 'Laden Beispiel', 'Kauf'), tx('2026-11-01', -2000, 'Karte', 'künftig gebucht')]);
+    s.bank.fetchTransactions = async (uid: string, from: string, to: string) => {
+      s.bank.fetchCalls.push({ uid, from, to });
+      return s.bank.transactions.get(uid) ?? [];
+    };
+    const id = await connect(s);
+    expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'synced', added: 1 });
+    const batch = await db.taxImportBatch.findFirstOrThrow({ where: { accountId: s.accountId } });
+    expect(batch.lastDay).toBe('2026-10-10');
+    // The consent lapses; an export of the following weeks is read: its October movements all stay.
+    await importPayments(db, s.ctx, s.accountId, n26(['2026-10-20', 'Händler Beispiel', 'Kauf 5', '-15.00'], ['2026-10-28', 'Händler Beispiel', 'Kauf 6', '-25.00'], ['2026-11-01', 'Karte', 'künftig gebucht', '-20.00']));
+    expect(await paymentCount(s.accountId)).toBe(4);
+  });
+
   it('a booking dated after today never moves the next start into the future', async () => {
     const s = await setup();
     s.bank.transactions.set('uid-a1', [tx('2026-10-10', -1000, 'A', 'a'), tx('2026-11-01', -2000, 'Karte', 'künftig gebucht')]);
@@ -472,13 +502,18 @@ describe('bank connection: re-entry after a failure', () => {
     s.bank.failNext = new BankApiError('bank_unavailable', 'ASPSP_ERROR', 500);
     expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'failed', added: 0, error: 'bank_unavailable' });
     expect((await loadBankConnections(db, s.ctx.workspaceId, NOW))[0]).toMatchObject({ status: 'active', lastError: 'bank_unavailable' });
-    // An unreadable movement rejects the whole fetch: nothing is stored, and it says so.
-    s.bank.transactions.set('uid-a1', [{ status: 'BOOK', booking_date: '2026-10-01', transaction_amount: { amount: 'zehn', currency: 'EUR' }, credit_debit_indicator: 'DBIT' }]);
-    expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'failed', added: 0, error: 'parse_unreadable_row' });
-    expect(await paymentCount(s.accountId)).toBe(0);
-    s.bank.transactions.set('uid-a1', [tx('2026-10-01', -1000, 'A', 'a')]);
+    // A movement the bank describes incompletely is left out and named; the rest arrives and the feed moves on.
+    const broken = { status: 'BOOK', booking_date: '2026-10-01', transaction_amount: { amount: 'zehn', currency: 'EUR' }, credit_debit_indicator: 'DBIT' };
+    s.bank.transactions.set('uid-a1', [broken, tx('2026-10-02', -1000, 'A', 'a'), { ...broken, booking_date: '2026-10-03' }]);
+    expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'synced', added: 1 });
+    expect(await connectionOf(s.accountId)).toMatchObject({ lastError: 'skipped_unreadable:2', lastBookedThrough: '2026-10-03', status: 'active' });
+    s.bank.transactions.set('uid-a1', [tx('2026-10-02', -1000, 'A', 'a'), tx('2026-10-05', -500, 'B', 'b')]);
     expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'synced', added: 1 });
     expect((await connectionOf(s.accountId)).lastError).toBeNull();
+    // Beyond the bound the fetch fails as a whole, and says so.
+    s.bank.transactions.set('uid-a1', Array.from({ length: MAX_UNREADABLE + 1 }, (_, i) => ({ ...broken, booking_date: `2026-10-${String(6 + (i % 9)).padStart(2, '0')}` })));
+    expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'failed', added: 0, error: 'parse_unreadable_row' });
+    expect(await paymentCount(s.accountId)).toBe(2);
   });
 
   it('a consent past its day is shown and treated as expired', async () => {

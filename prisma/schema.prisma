@@ -358,6 +358,29 @@ model TaxVendorRule {
   @@map("tax_vendor_rules")
 }
 
+// The owner's statement that the buyer owes the tax on a purchase (section 13b
+// of the value-added tax act): for one receipt row (`scope` 'row', `subject`
+// the row id) or for a vendor from a day on (`scope` 'vendor', `subject` the
+// vendor key). `rateBp` null states "not under section 13b", which lets one
+// receipt leave its vendor's entry. Resolved on read like a vendor rule; the
+// row delete paths remove a row entry in code (no foreign key, as for
+// tax_item_decisions).
+model TaxReverseCharge {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  scope           String
+  subject         String
+  label           String   @default("")
+  effectiveFrom   String   @default("") @map("effective_from")
+  rateBp          Int?     @map("rate_bp")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, scope, subject, effectiveFrom], map: "tax_reverse_charges_subject_key")
+  @@map("tax_reverse_charges")
+}
+
 // A decision for ONE receipt row that overrides the vendor rule. `rowId` has
 // no foreign key for the same reason as meal_guests.row_id; the row delete
 // paths remove the decision in code.

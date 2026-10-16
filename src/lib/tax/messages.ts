@@ -137,6 +137,10 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Bitte den Satz der degressiven Abschreibung in Prozent eingeben.';
         case 'invalid_annex_share':
           return 'Bitte den Anteil für Studium oder Anstellung prüfen: zusammen mit dem betrieblichen Anteil höchstens 100 %, mit einer Zeile der Anlage N, und weder beim Sammelposten noch bei degressiver Abschreibung (Arbeitsmittel werden linear abgeschrieben).';
+        case 'invalid_reverse_charge_rate':
+          return 'Bitte 19 % oder 7 % wählen, oder „kein § 13b“.';
+        case 'invalid_reverse_charge_date':
+          return 'Das Datum „gilt ab“ ist ungültig.';
         case 'invalid_share':
           return 'Der betriebliche Anteil muss zwischen 1 und 100 % liegen.';
         case 'receipts_required':

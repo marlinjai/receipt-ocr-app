@@ -87,6 +87,12 @@ export interface LedgerItem {
   severalLowValueItems?: boolean;
   /** The receipt was split into lines that no longer add up to its total: nothing of it is computed until they do. */
   linesMismatch?: boolean;
+  /**
+   * Set when the buyer owes the tax on this purchase (section 13b of the
+   * value-added tax act, see `reverse-charge.ts`): the rate, the day the tax
+   * arises, and the section 19 status on that day (null: unanswered).
+   */
+  reverseCharge?: { rateBp: number; taxDay: string | null; smallBusinessOnTaxDay: boolean | null } | null;
   /** The line of the income-surplus statement the business share goes to. */
   formLineKey: FormLineKey | null;
   /** The line of the employment annex the study and employment shares go to. */
@@ -331,6 +337,23 @@ export interface YearResult {
   /** Output tax by issue date and by payment date, so either taxation method can be computed. */
   outputVatByIssue: VatEvent[];
   outputVatByPayment: VatEvent[];
+  /**
+   * Tax the business owes as the buyer of services from abroad (section 13b),
+   * by the day it arose, and the part of it deductible as input tax (only
+   * under regular taxation, for the business share). Neither is money paid,
+   * so neither enters a line of the statement: what is paid to the tax office
+   * does, through the settlements.
+   */
+  reverseChargeEvents: VatEvent[];
+  reverseChargeInputEvents: VatEvent[];
+  /** Receipts of the year under section 13b whose tax is not in the figures yet: amount, share or status unknown. */
+  reverseChargePendingItems: number;
+  /**
+   * The part of the section 13b tax of the year that falls on shares outside
+   * the business (private, study, employment): owed in full (section 13b (5)
+   * sentence 7), never deductible, and no business expense when paid.
+   */
+  reverseChargeNonBusinessCents: number;
   /** Sum of the lines of the employment annex. */
   employmentCostCents: number;
   privateCents: number;

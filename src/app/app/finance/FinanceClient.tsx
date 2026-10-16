@@ -31,8 +31,11 @@ import {
   removePaymentLink,
   removeStatusChange,
   removeVatSettlement,
+  removeReverseChargeVendor,
   removeVendorRule,
   resetItem,
+  resetReverseCharge,
+  setReverseCharge,
   saveAsset,
   saveIssuedInvoice,
   searchPayments,
@@ -49,6 +52,7 @@ import type { ImportResult } from '@/lib/tax/payments/service';
 import RevenueTab from './RevenueTab';
 import OverdueInvoices from './OverdueInvoices';
 import VatTab from './VatTab';
+import ReverseChargeForm from './ReverseChargeForm';
 import AssetsTab, { type AssetDraft, type DisposalDraft } from './AssetsTab';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 
@@ -219,7 +223,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
     { key: 'vat', label: 'Umsatzsteuer' },
     // Only when the year has a payment in the ten-day window; the count is what is not answered yet.
     ...(view.yearBoundary.length > 0 ? [{ key: 'boundary' as const, label: 'Jahreswechsel', count: view.yearBoundary.filter((e) => e.answer === null && e.inactive === null).length }] : []),
-    { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length },
+    { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length + view.reverseChargeVendors.length },
   ];
 
   return (
@@ -644,6 +648,19 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                                                   onSubmit={(submit) => decide(item, submit)}
                                                 />
                                                 <SplitOffer item={item} onSplit={() => setSplittingId(id)} />
+                                                <ReverseChargeForm
+                                                  key={`${item.itemId}:${item.reverseCharge?.rateBp ?? 'none'}`}
+                                                  item={item}
+                                                  busy={pending}
+                                                  onSubmit={(submit) =>
+                                                    run(() => setReverseCharge(view.year, { rowId: item.rowId, ...submit }), `${item.vendor || item.label}: § 13b gespeichert.`)
+                                                  }
+                                                  onReset={
+                                                    item.reverseChargeOwn
+                                                      ? () => run(() => resetReverseCharge(view.year, item.rowId), `${item.vendor || item.label}: § 13b-Angabe entfernt.`)
+                                                      : null
+                                                  }
+                                                />
                                               </>
                                             )}
                                             {splittingId !== id && (item.lineId ? item.allocationOrigin === 'line' : item.hasDecision) && (
@@ -827,11 +844,39 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
             />
           )}
 
+          {tab === 'vendors' && view.reverseChargeVendors.length > 0 && (
+            <section className="glass-panel mb-4 rounded-xl p-4" aria-label="Lieferanten mit § 13b">
+              <h2 className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+                Steuerschuldnerschaft des Leistungsempfängers (§ 13b Umsatzsteuergesetz)
+              </h2>
+              <ul className="mt-2 space-y-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
+                {view.reverseChargeVendors.map((entry) => (
+                  <li key={entry.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span>
+                      {entry.label || entry.vendorKey}
+                      <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                        {entry.effectiveFrom ? `ab ${formatDay(entry.effectiveFrom)}` : 'von Anfang an'} ·{' '}
+                        {entry.rateBp === null ? 'kein § 13b' : `${entry.rateBp / 100} %`}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm ui-btn-danger"
+                      disabled={pending}
+                      onClick={() => run(() => removeReverseChargeVendor(view.year, entry.id), `§ 13b-Regel für ${entry.label || entry.vendorKey} gelöscht.`)}
+                    >
+                      Löschen
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           {tab === 'vendors' &&
             (view.vendorRules.length === 0 ? (
               <div className="glass-panel rounded-xl p-8 text-center text-sm" style={{ color: 'var(--muted)' }}>
-                Noch keine Regel für einen Lieferanten. Eine Regel entsteht, wenn bei einem Beleg „Für alle Belege von …
-                so behandeln“ angehakt wird.
+                Noch keine Zuordnungsregel für einen Lieferanten. Eine Regel entsteht, wenn bei einem Beleg „Für alle Belege
+                von … so behandeln“ angehakt wird.
               </div>
             ) : (
               <ul className="glass-panel divide-y rounded-xl" style={{ borderColor: 'var(--border)' }}>

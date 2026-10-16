@@ -618,10 +618,24 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     // A credit note, or an electronic invoice in a currency the app does not keep, is read without
     // amounts: what a person entered for it since stays, and only empty amount cells are filled.
     // Figures read from the image alone are unverified: they too fill empty cells only.
-    const amountsHeld = read.reviewFlags.includes('credit_note') || read.reviewFlags.includes('currency_unknown');
-    const heldColumns = read.fromImage ? REREAD_COLUMNS : amountsHeld ? ['Gross', 'Net', 'Tax Rate', 'Currency', 'FX Rate', MEAL_COLUMNS.taxLines] : [];
+    const amountsHeld = read.reviewFlags.includes('credit_note') || read.reviewFlags.includes('currency_unknown') || read.fromImage;
+    const amountColumns = ['Gross', 'Net', 'Tax Rate', 'Currency', 'FX Rate', MEAL_COLUMNS.taxLines];
+    // From the image alone, the amounts are one group: written together where the row holds no total
+    // (over the defaults an unreadable upload left), never one by one next to a total a person entered.
+    const grossId = columnId('Gross');
+    const totalEmpty = grossId === undefined || isBlank(row.cells[grossId]);
+    const heldColumns = read.fromImage
+      ? [...REREAD_COLUMNS.filter((name) => !amountColumns.includes(name)), ...(totalEmpty ? [] : amountColumns)]
+      : amountsHeld
+        ? amountColumns
+        : [];
     for (const name of heldColumns) fillOnly.add(name);
-    const always = new Set([...REREAD_COLUMNS.filter((name) => !heldColumns.includes(name)), ...(builtByReader ? ['Name'] : []), ...(waiting ? ['Status'] : [])]);
+    const always = new Set([
+      ...REREAD_COLUMNS.filter((name) => !heldColumns.includes(name)),
+      ...(read.fromImage && totalEmpty ? amountColumns.filter((name) => name !== MEAL_COLUMNS.taxLines) : []),
+      ...(builtByReader ? ['Name'] : []),
+      ...(waiting ? ['Status'] : []),
+    ]);
     const cells: Record<string, CellValue> = {};
     for (const column of columns) {
       if (!(column.id in read.cells)) continue;

@@ -33,7 +33,7 @@ vi.mock('@/lib/receipt-page-source', () => ({
 }));
 
 import { contactStore, loadMealRecord, saveMealDetails } from '@/lib/meals/service';
-import { mealStatus } from '@/lib/meals/rules';
+import { mealStatus, serializeTaxLines } from '@/lib/meals/rules';
 import { createGroup } from '@/lib/groups/service';
 import { saveRule } from '@/lib/classification-rules-store';
 import { processReceipt, recomputeFxRates, rereadReceipt, retakeReceipt } from './actions';
@@ -786,6 +786,19 @@ describe('a page without any recognized text is read by the model alone, unverif
     loadPage.mockResolvedValue({ skipped: 'missing' });
     expect(await rereadReceipt(rowId)).toEqual({ ok: false, error: 'no_text' });
     expect(await cellOf(ws, rowId, 'Gross')).toBe(6);
+  });
+
+  it('an unreadable upload\'s defaults are replaced as one group; stored tax lines stay', async () => {
+    classify.mockResolvedValue(FROM_IMAGE);
+    const lines = serializeTaxLines([{ rate: 19, net: 10, tax: 1.9 }]);
+    const rowId = await ws.addReceipt({ Name: 'scan.pdf', 'OCR Text': '', Currency: 'EUR', 'FX Rate': 1, 'Tax Rate': 19, 'Tax Lines': lines } as Parameters<TestWorkspace['addReceipt']>[0]);
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    await ws.adapter.addFileReference({ rowId, columnId: columns.find((c) => c.name === 'Receipt Image')!.id, fileId: file(107).id, fileUrl: `/api/files/${file(107).id}`, originalName: 'scan.pdf', mimeType: 'application/pdf', metadata: { source: 'ocr-upload' } });
+    expect((await rereadReceipt(rowId)).ok).toBe(true);
+    expect(await cellOf(ws, rowId, 'Gross')).toBe(5);
+    expect(await cellOf(ws, rowId, 'Currency')).toBe('USD');
+    expect(await cellOf(ws, rowId, 'Tax Rate')).toBe(0);
+    expect(await cellOf(ws, rowId, 'Tax Lines')).toBe(lines);
   });
 
   it('a retake whose text recognition fails is read from the page and offered again as a poor reading', async () => {

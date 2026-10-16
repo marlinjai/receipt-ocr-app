@@ -414,7 +414,7 @@ function AssetForm({
             {method === 'pool' && `Für Wirtschaftsgüter über ${euro(limits.poolMinExclusiveNetCents)} bis ${euro(limits.poolMaxNetCents)} netto. Aufgelöst über ${limits.poolYears} Jahre, auch wenn das Wirtschaftsgut vorher ausscheidet.`}
             {method === 'linear' && 'Gleiche Beträge über die Nutzungsdauer, im ersten Jahr ab dem Monat der Anschaffung. Die Nutzungsdauer steht in den amtlichen AfA-Tabellen.'}
             {method === 'computer_one_year' && 'Für Computerhardware und Software lässt die Finanzverwaltung eine Nutzungsdauer von einem Jahr zu; die Kosten werden im Jahr der Anschaffung voll abgezogen.'}
-            {method === 'declining' && `Nur für bewegliche Wirtschaftsgüter, angeschafft vom ${formatDay(limits.decliningFrom)} bis ${formatDay(limits.decliningTo)}. Höchstens ${limits.decliningMaxRateBp / 100} % und höchstens das ${limits.decliningMaxMultiple}-fache des linearen Satzes.`}
+            {method === 'declining' && `Nur für bewegliche Wirtschaftsgüter, angeschafft vom ${formatDay(limits.decliningFrom)} bis ${formatDay(limits.decliningTo)}. Höchstens ${limits.decliningMaxRateBp / 100} % und höchstens das ${limits.decliningMaxMultiple.toLocaleString('de-DE')}-fache des linearen Satzes.`}
           </p>
           {needsLife && (
             <div className="grid gap-3 sm:grid-cols-2">

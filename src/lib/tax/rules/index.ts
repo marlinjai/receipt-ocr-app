@@ -1,3 +1,7 @@
+import { RULES_2021 } from './2021';
+import { RULES_2022 } from './2022';
+import { RULES_2023 } from './2023';
+import { RULES_2024 } from './2024';
 import { RULES_2025 } from './2025';
 import { RULES_2026 } from './2026';
 import { RULES_2027 } from './2027';
@@ -5,7 +9,7 @@ import type { FormLine, FormLineKey, YearRules } from './types';
 
 export * from './types';
 
-const RULE_SETS: readonly YearRules[] = [RULES_2025, RULES_2026, RULES_2027];
+const RULE_SETS: readonly YearRules[] = [RULES_2021, RULES_2022, RULES_2023, RULES_2024, RULES_2025, RULES_2026, RULES_2027];
 
 export const RULE_YEARS: readonly number[] = RULE_SETS.map((r) => r.year);
 

@@ -14,8 +14,14 @@
 export interface LimitRules {
   /** Turnover of the previous calendar year must not have exceeded this. */
   previousYearLimitCents: number;
-  /** Turnover of the running year must not exceed this; crossing it ends the status at once. */
+  /** Turnover of the running year must not exceed this; from 2025 crossing it ends the status at once. */
   currentYearLimitCents: number;
+  /**
+   * The limit the year's turnover is measured against for the NEXT year: the
+   * previous-year limit of the next year's rules (2024 is judged by the 25,000
+   * of 2025, not by the 22,000 of 2024). Absent: `previousYearLimitCents`.
+   */
+  nextYearLimitCents?: number;
 }
 
 export interface ForecastInput {
@@ -151,7 +157,7 @@ export function forecastYear(input: ForecastInput, rules: LimitRules): Forecast 
     basisMonths: rateBasis === 'run_rate' ? completeMonths : 0,
     thinBasis: rateBasis === 'run_rate' && completeMonths < 3,
     currentYear: outlook(rules.currentYearLimitCents),
-    nextYear: outlook(rules.previousYearLimitCents),
+    nextYear: outlook(rules.nextYearLimitCents ?? rules.previousYearLimitCents),
     previousYearWithinLimit:
       input.previousYearReceivedCents === null ? null : input.previousYearReceivedCents <= rules.previousYearLimitCents,
   };

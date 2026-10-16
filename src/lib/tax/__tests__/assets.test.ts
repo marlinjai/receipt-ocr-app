@@ -116,7 +116,8 @@ describe('assetSchedule: declining', () => {
   it('caps the rate at three times the linear rate and at 30 percent', () => {
     expect(maxDecliningRateBp(60, rules)).toBe(3000);
     expect(maxDecliningRateBp(120, rules)).toBe(3000);
-    expect(maxDecliningRateBp(180, rules)).toBe(1998);
+    // Fifteen years: three times 6.67 percent is exactly 20 percent (rounded once, not 19.98).
+    expect(maxDecliningRateBp(180, rules)).toBe(2000);
   });
 });
 

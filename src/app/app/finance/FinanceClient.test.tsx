@@ -142,7 +142,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
       nextYear: { state: 'not_reached' },
       previousYearWithinLimit: null,
     },
-    limits: { previousYearLimitCents: 2_500_000, currentYearLimitCents: 10_000_000, source: rules.smallBusinessLimits.source },
+    limits: { previousYearLimitCents: 2_500_000, currentYearLimitCents: 10_000_000, currentYearLimit: 'at_once', nextYearLimitCents: 2_500_000, source: rules.smallBusinessLimits.source },
     expectedMonthlyRevenueCents: null,
     smallBusinessAtYearEnd: true,
     statusChanges: [],

@@ -50,6 +50,18 @@ describe('validateTreatment', () => {
     ).toBe('form_line_invalid');
   });
 
+  it('a share on both forms can be recorded for 2022 and 2023, which now have their own rule sets', () => {
+    for (const year of [2022, 2023]) {
+      expect(
+        validateTreatment(
+          { allocations: [{ purpose: 'business', shareBp: 5000 }, { purpose: 'study', shareBp: 5000 }], formLineKey: 'euer.it_running', employmentLineKey: 'employment.study_costs' },
+          rulesForYear(year).rules,
+        ),
+      ).toMatchObject({ formLineKey: 'euer.it_running', employmentLineKey: 'employment.study_costs' });
+      expect(rulesForYear(year).exact).toBe(true);
+    }
+  });
+
   it('drops a line that no share points at', () => {
     expect(
       validateTreatment(

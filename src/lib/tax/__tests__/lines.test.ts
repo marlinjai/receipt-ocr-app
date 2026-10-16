@@ -55,6 +55,8 @@ describe('validateLines', () => {
     ['a net amount above the line', [{ ...two[0], netCents: 90_001 }, two[1]], 110_000, 'invalid_line_net'],
     ['lines that do not add up', two, 110_001, 'lines_do_not_sum'],
     ['a receipt without a total', two, null, 'receipt_without_total'],
+    ['a receipt with a total of zero', two, 0, 'receipt_without_total'],
+    ['a credit note', [{ description: 'Gutschrift A', grossCents: -9_000 }, { description: 'Gutschrift B', grossCents: -2_000 }], -11_000, 'credit_note_not_split'],
     ['the same line twice', [{ id: 'l-1', ...two[0] }, { id: 'l-1', ...two[1] }], 110_000, 'duplicate_line'],
     ['more than fifty lines', Array.from({ length: 51 }, () => ({ description: 'x', grossCents: 1 })), 51, 'too_many_lines'],
   ])('rejects %s', (_name, raw, total, expected) => {

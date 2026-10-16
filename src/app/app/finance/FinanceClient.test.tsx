@@ -232,6 +232,35 @@ describe('FinanceClient: rules of a year whose forms are not published', () => {
   });
 });
 
+describe('FinanceClient: a credit note', () => {
+  it('offers no split into positions for a credit note', () => {
+    render(<FinanceClient initial={view([item({ rowId: 'cn', receiptGrossCents: -11_900 })])} />);
+    expect(screen.queryByRole('button', { name: 'In Positionen aufteilen' })).toBeNull();
+  });
+
+  it('a credit note with an old split that no longer fits offers only to remove the split', () => {
+    const stale = item({
+      rowId: 'cn',
+      receiptGrossCents: -11_900,
+      counted: false,
+      checks: [{ itemId: 'cn', kind: 'lines_do_not_sum', blocking: true }],
+      receiptLines: [
+        { id: 'l1', description: 'Teil A', grossCents: 9_000, netCents: null },
+        { id: 'l2', description: 'Teil B', grossCents: 2_900, netCents: null },
+      ],
+    });
+    render(<FinanceClient initial={view([stale])} />);
+    expect(screen.getByRole('button', { name: 'Aufteilung aufheben' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Positionen speichern' })).toBeNull();
+    expect(screen.getByText(/wird nicht in Positionen aufgeteilt/)).toBeTruthy();
+  });
+
+  it('control: an ordinary receipt offers it', () => {
+    render(<FinanceClient initial={view([item({ rowId: 'r', receiptGrossCents: 11_900 })])} />);
+    expect(screen.getByRole('button', { name: 'In Positionen aufteilen' })).toBeTruthy();
+  });
+});
+
 describe('FinanceClient: the queue', () => {
   it('forward: decide a receipt, the figure comes from the server and the next receipt is selected', async () => {
     const user = userEvent.setup();

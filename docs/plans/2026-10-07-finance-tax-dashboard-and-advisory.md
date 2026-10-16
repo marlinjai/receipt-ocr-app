@@ -1964,3 +1964,55 @@ not computed.
   whole amount with no open check; tax read off a marked receipt is ignored.
   The migration is `0023_tax_reverse_charge` (main already has two migrations numbered
   0021 and one 0022).
+
+## Reality: credit notes under regular taxation (2026-10-16)
+
+- **What was wrong.** A credit note is a receipt with a negative total and net. Its
+  total counted as negative, but its net amount was read as missing (only a positive
+  net was accepted), so under regular taxation the credit note did not reduce the input
+  tax, and it waited in the queue for a net amount. Under the small-business status there
+  is no input tax, so no figure of 2025 or 2026 was affected.
+- **Now** a net amount fits its total when both carry the same sign and the net is not
+  larger in amount than the total (zero beside a total, or opposite signs, is no net
+  amount). A credit note of 119.00 with 100.00 net reduces the expense by 100.00 and the
+  input tax by 19.00 in the period of its date, at the business share; under the
+  small-business status it reduces the expense by 119.00.
+- **A refund linked to a credit note** does not reduce it again (a refund reduces a
+  purchase; a credit note already is the money coming back).
+- **A credit note is not split into positions**: the screen offers no split for it (an
+  old split that no longer fits can only be removed), and the server refuses one with its
+  own message.
+- **A credit note's payment is money coming back.** Linked payments now keep money out and
+  money back apart. A credit note counts on the day of the first money back and with that
+  amount (cash basis, section 11 of the income tax act), so a credit note of December
+  refunded in January reduces the January figures; the input tax correction lands in that
+  period too (section 17 of the value-added tax act: the period the reduction happens).
+  Money out linked to a credit note (an offset against another invoice) blocks it with a
+  question instead of turning it into an expense.
+- **Further cases:** the private share of a credit note is negative, so its parts add up to
+  its amount; a credit note on the meal line is its own question (the meal register holds
+  no credit notes); a credit note in a year after a status change is noted, because the
+  correction follows the status of the purchase it corrects; a net amount larger than the
+  total or of the other sign is reported as "does not fit" instead of "missing" (for every
+  receipt, only the wording of that check changes); foreign-currency amounts round half
+  away from zero, so a credit note mirrors its invoice to the cent.
+- **A credit note refunded in two parts** counts the whole sum on the day of the first
+  money back, as a purchase paid in parts counts on its first payment day.
+- **Reviewed twice** by fresh agents before the pull request; the blocking findings (money
+  out turning a credit note into an expense, the credit note never counting on its refund
+  day, a credit note in another currency without a rate read as a purchase) and the
+  further findings are fixed with tests.
+- **Open, not built here (outside this fix's scope):**
+  - *The status of the purchase a credit note corrects.* After a change of the section 19
+    status the app computes a credit note under the status on its own day; when the
+    purchase was under the other status, the correction follows the purchase (section 17
+    of the value-added tax act). The credit note carries a note that says what to do by
+    hand. Proposed build: an answer per credit note ("Einkauf unter Kleinunternehmer-
+    regelung / Regelbesteuerung"), stored with the receipt's decision, and the
+    computation under that status. Needed only once the status changes; the owner is
+    under section 19 today.
+  - *Proposing the money back for a credit note.* Refund proposals in the payments module
+    consider receipts with a positive amount only, so the money back for a credit note is
+    linked by hand; until then the credit note counts on its own day. This belongs to the
+    payments module (proposals for money in that matches a credit note's amount in full).
+

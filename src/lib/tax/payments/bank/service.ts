@@ -288,6 +288,9 @@ export interface SyncOutcome {
   error?: string;
 }
 
+/** Movements of one fetch left out as unreadable at most; beyond that the fetch fails as a whole. */
+export const MAX_UNREADABLE = 20;
+
 /** Import results that mean "nothing new" for a fetch of overlapping days. */
 const NOTHING_NEW = new Set(['nothing_new', 'file_already_imported', 'nothing_uncovered']);
 
@@ -343,23 +346,37 @@ export async function syncConnection(
     return x.status === 'BOOK' && typeof x.booking_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(x.booking_date) ? [x.booking_date.slice(0, 10)] : [];
   });
   let added = 0;
-  if (transactions.length > 0) {
+  // A booking dated after today is left for a later fetch: imported now, it would make this import claim the
+  // days up to that date, and a file import of those days would then leave its movements out as covered.
+  let rows = transactions.filter((t) => {
+    const day = (t as { booking_date?: unknown })?.booking_date;
+    return !(typeof day === 'string' && day.slice(0, 10) > options.today);
+  });
+  // A movement the bank describes incompletely would reject the whole fetch on every run; it is left out and
+  // counted instead (at most MAX_UNREADABLE), and the connection says so, so its day can be checked in a file.
+  let unreadable = 0;
+  while (rows.length > 0) {
     try {
-      const result = await importPayments(db, ctx, connection.accountId, JSON.stringify({ transactions }), { refuseEmpty: true });
+      const result = await importPayments(db, ctx, connection.accountId, JSON.stringify({ transactions: rows }), { refuseEmpty: true });
       added = result.added;
+      break;
     } catch (e) {
-      const nothingNew = (e instanceof PaymentServiceError && NOTHING_NEW.has(e.code)) || (e instanceof PaymentParseError && e.code === 'empty');
-      if (!nothingNew) {
-        const code = e instanceof PaymentServiceError ? e.code : e instanceof PaymentParseError ? `parse_${e.code}` : 'import_failed';
-        if (code === 'import_failed') console.error('[bank] import of fetched movements failed', (e as Error)?.name ?? 'error');
-        await record({ lastError: code, lastErrorAt: now });
-        return { status: 'failed', added: 0, error: code };
+      if (e instanceof PaymentParseError && e.code === 'unreadable_row' && e.row !== null && unreadable < MAX_UNREADABLE) {
+        rows = rows.filter((_, index) => index !== e.row! - 1);
+        unreadable++;
+        continue;
       }
+      const nothingNew = (e instanceof PaymentServiceError && NOTHING_NEW.has(e.code)) || (e instanceof PaymentParseError && e.code === 'empty');
+      if (nothingNew) break;
+      const code = e instanceof PaymentServiceError ? e.code : e instanceof PaymentParseError ? `parse_${e.code}` : 'import_failed';
+      if (code === 'import_failed') console.error('[bank] import of fetched movements failed', (e as Error)?.name ?? 'error');
+      await record({ lastError: code, lastErrorAt: now });
+      return { status: 'failed', added: 0, error: code };
     }
   }
   // A booking dated after today (a card's future booking day) never moves the start of the next fetch past today.
   const latest = [connection.lastBookedThrough, ...bookedDays.filter((d) => d <= options.today)].filter((d): d is string => !!d).sort().pop() ?? null;
-  await record({ lastSyncedAt: now, lastBookedThrough: latest, lastError: null, lastErrorAt: null });
+  await record({ lastSyncedAt: now, lastBookedThrough: latest, lastError: unreadable > 0 ? `skipped_unreadable:${unreadable}` : null, lastErrorAt: unreadable > 0 ? now : null });
   return { status: added > 0 ? 'synced' : 'nothing_new', added };
 }
 

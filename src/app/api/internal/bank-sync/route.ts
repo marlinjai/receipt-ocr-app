@@ -14,6 +14,9 @@ import { receiveBankSync } from '@/lib/tax/payments/bank/sync-receiver';
  * HMAC over the raw body with BANK_SYNC_SECRET. See docs/operations/bank-sync.md.
  */
 export const dynamic = 'force-dynamic';
+
+// The app runs as one process: the time of the last accepted request, so a signed request is never run twice.
+let lastAcceptedTs: number | null = null;
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
@@ -25,6 +28,7 @@ export async function POST(req: NextRequest) {
     signature: req.headers.get(ERASURE_SIGNATURE_HEADER),
     secret: bankSyncSecret(),
     enabled: deps !== null,
+    lastAccepted: { get: () => lastAcceptedTs, set: (ts) => (lastAcceptedTs = ts) },
     sync: () => syncAllConnections(prisma, deps!, { today, afterNewPayments: (ctx) => runSpendingChecks(prisma, ctx, { today }) }),
   });
   return NextResponse.json(result.body, { status: result.status });

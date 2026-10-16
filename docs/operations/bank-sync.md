@@ -60,8 +60,8 @@ in `src/lib/tax/payments/bank/config.ts` lists the missing names (names only).
    with the header `x-lumitra-erasure-signature` (declared in `src/lib/erasure-signature.ts`).
    Never print the secret or the signature. Expect 200 and per-connection counts; a second
    call right after adds nothing. Check that a missing signature answers 401, and that the
-   same signed body sent again after five minutes answers 401 too (a signed request cannot
-   be replayed later).
+   same signed body sent again answers 409 (and 401 after five minutes): a signed request
+   runs once.
 6. **Scheduled task** (Coolify, on the receipts application, once a day, for example 06:30
    Europe/Berlin), run inside the container where `BANK_SYNC_SECRET` is in the environment:
 

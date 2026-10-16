@@ -30,6 +30,7 @@ const MESSAGES: Record<string, string> = {
   authorization_code: 'Die Antwort der Bank war abgelaufen oder ungültig. Bitte die Verbindung neu starten.',
   credentials: 'Die Bankschnittstelle nimmt den Schlüssel dieser Anwendung nicht an. Das muss auf dem Server eingerichtet werden.',
   network: 'Die Bankschnittstelle war nicht erreichbar.',
+  skipped_unreadable: 'Einige Buchungen beschreibt die Bank unvollständig; sie wurden ausgelassen, alles andere ist da. Bitte diese Tage mit einem Kontoauszug oder dem Datei-Import prüfen.',
   import_failed: 'Die abgeholten Zahlungen konnten nicht gespeichert werden. Der nächste Lauf versucht es wieder.',
   signed_out: 'Du warst bei der Rückkehr von der Bank nicht mehr angemeldet. Bitte anmelden und die Verbindung neu starten.',
   forbidden: 'Für diese Firma fehlt die Berechtigung, Verbindungen einzurichten.',

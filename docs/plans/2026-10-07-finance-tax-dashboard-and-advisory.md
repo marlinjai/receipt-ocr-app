@@ -2095,8 +2095,15 @@ Decided without asking, say so if you disagree:
   `Psu-User-Agent` with the browser's address and agent, sent to the interface, never stored),
   so it does not use up the few unattended fetches a bank allows per day; the daily run sends
   none.
-- **The daily route's signed body carries the time** (`{"ts": ...}`, at most five minutes off),
-  so a signed request seen once cannot be replayed later to use up those fetches.
+- **The daily route's signed body carries the time** (`{"ts": ...}`, at most five minutes off,
+  and later than the last request accepted), so a signed request seen once cannot be replayed
+  to use up those fetches.
+- **A booking dated after today waits for its day**: it is left out of the fetch, so the
+  import never claims days that have not happened (a file import of those days would
+  otherwise leave its movements out as covered); a later fetch brings it.
+- **A movement the bank describes incompletely is left out and named** (at most 20 per fetch;
+  more fail the fetch as a whole), so one bad row never stops the feed: the account says
+  "Einige Buchungen beschreibt die Bank unvollständig" until a fetch without one.
 - **A renewed session finds the same bank account by its masked number and name** (the
   interface gives every session new account uids). Exactly one match binds it and keeps its
   last booked day; otherwise the tab asks, also when the new session holds a single account
@@ -2118,6 +2125,10 @@ angeboten, das Konto bleibt beim Datei-Import". Advanzia has no file importer ei
 reader for its statement exists yet).
 
 Not built: the daily scheduled task itself (a production change, see the operations page).
+
+A second fresh review confirmed the fixes and found five more points (the future booking's
+claimed days, one unreadable row stopping the feed, a replay inside the five minutes, which
+address is sent as the person's, and a test for two simultaneous starts), fixed as above.
 
 Reviewed before opening by a fresh agent that saw only the diff: no isolation hole, no leak of
 a token, key, session id or account number. Its twelve findings are fixed in the same change

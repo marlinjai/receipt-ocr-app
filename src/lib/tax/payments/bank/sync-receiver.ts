@@ -27,6 +27,12 @@ export async function receiveBankSync(input: {
   sync: () => Promise<Array<{ connectionId: string; status: string; added: number }>>;
   log?: (line: string) => void;
   now?: () => Date;
+  /**
+   * The time of the last request accepted, and a way to store a new one. A
+   * request whose time is not later than it is a replay and is refused, also
+   * inside the five minutes.
+   */
+  lastAccepted?: { get: () => number | null; set: (ts: number) => void };
 }): Promise<SyncDelivery> {
   const log = input.log ?? ((line: string) => console.log(line));
   if (!input.secret) {
@@ -46,6 +52,11 @@ export async function receiveBankSync(input: {
   if (typeof ts !== 'number' || !Number.isFinite(ts) || Math.abs(nowSeconds - ts) > SYNC_SIGNATURE_WINDOW_SECONDS) {
     return { status: 401, body: { error: 'Stale or missing timestamp' } };
   }
+  const last = input.lastAccepted?.get() ?? null;
+  if (last !== null && ts <= last) {
+    return { status: 409, body: { error: 'Already run for this request' } };
+  }
+  input.lastAccepted?.set(ts);
   if (!input.enabled) {
     log('[bank] bank feed is switched off, nothing synced');
     return { status: 503, body: { error: 'Bank feed is off' } };

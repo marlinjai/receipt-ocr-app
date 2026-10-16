@@ -161,6 +161,8 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Bitte die Steuersätze prüfen: je Satz (19 % und 7 %) ein Nettobetrag und die Steuer darauf, zusammen genau der Rechnungsbetrag und die enthaltene Umsatzsteuer.';
         case 'invalid_payment':
           return 'Bitte Datum und Betrag jedes Zahlungseingangs prüfen.';
+        case 'invalid_write_off':
+          return 'Bitte den ausgebuchten Betrag prüfen: mit Datum, und nicht mehr als nach allen Zahlungseingängen noch offen ist.';
         case 'invalid_year':
           return 'Bitte das Jahr prüfen, in dem die Rechnung bereits erklärt wurde.';
         case 'year_boundary_changed':

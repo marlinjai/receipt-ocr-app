@@ -317,7 +317,10 @@ export function computeYear(facts: YearFacts, resolved: ResolvedRules): YearResu
 }
 
 /**
- * Revenue from issued invoices, by the day the money arrived.
+ * Revenue from issued invoices, by the day the money arrived. The exception
+ * is an invoice a return declared by invoice (`declaredInYear`, the 2024
+ * return): it counts in that year at its invoice amount and its payments are
+ * revenue in no year; they still count toward the small-business turnover.
  *
  * An invoice with tax splits every payment into its net and its tax part in
  * the proportion of the invoice. The split is taken as the difference of two
@@ -339,7 +342,7 @@ function computeRevenue(
   const yearEnd = `${facts.year}-12-31`;
 
   for (const invoice of facts.invoices ?? []) {
-    const result: InvoiceResult = { invoiceId: invoice.id, receivedCents: 0, excludedCents: 0, outstandingCents: 0, parts: [], checks: [] };
+    const result: InvoiceResult = { invoiceId: invoice.id, receivedCents: 0, excludedCents: 0, declaredCents: 0, outstandingCents: 0, parts: [], checks: [] };
     const groups = invoiceTaxGroups(invoice);
     const taxed = groups.length > 0;
     const vat = groups.reduce((s, g) => s + g.vatCents, 0);
@@ -385,17 +388,28 @@ function computeRevenue(
         if (part.vatCents === 0 && part.netCents === 0) continue;
         outputVatByPayment.push({ date: payment.date, cents: part.vatCents, source: 'invoice', id: invoice.id, ...rateOf(part.rateBp), netCents: part.netCents });
       }
-      if (invoice.declaredInYear !== null && invoice.declaredInYear !== facts.year) {
+      // An invoice declared by invoice counts at its invoice amount in the declared year (below), never by its payments.
+      if (invoice.declaredInYear !== null) {
         result.excludedCents += payment.cents;
         continue;
       }
       partsByLine.set(netLine, (partsByLine.get(netLine) ?? 0) + netPart);
       if (vatPart !== 0) partsByLine.set('euer.vat_received', (partsByLine.get('euer.vat_received') ?? 0) + vatPart);
     }
+    if (invoice.declaredInYear === facts.year) {
+      // The return of this year counted the invoice by invoice: its whole amount, whatever day the money came. Net and
+      // tax come from its tax groups (`vat` is their tax), so an invoice with several rates declares correctly too.
+      result.declaredCents = invoice.grossCents;
+      partsByLine.set(netLine, (partsByLine.get(netLine) ?? 0) + invoice.grossCents - vat);
+      if (vat !== 0) partsByLine.set('euer.vat_received', (partsByLine.get('euer.vat_received') ?? 0) + vat);
+    }
     if (paidBefore > invoice.grossCents) result.checks.push('invoice_overpaid');
-    // Outstanding at the end of this year; an invoice issued later is not this year's business.
+    // Outstanding at the end of this year; an invoice issued later is not this year's business. A part booked out
+    // as never to be paid (a fee the client deducted) is no claim any more from its day on.
+    const writtenOff = invoice.writtenOffCents ?? 0;
+    const writtenOffByYearEnd = writtenOff > 0 && invoice.writtenOffOn != null && invoice.writtenOffOn <= yearEnd ? writtenOff : 0;
     if (invoice.issueDate === null || invoice.issueDate <= yearEnd) {
-      result.outstandingCents = Math.max(0, invoice.grossCents - paidUntilYearEnd);
+      result.outstandingCents = Math.max(0, invoice.grossCents - paidUntilYearEnd - writtenOffByYearEnd);
     }
     for (const [lineKey, cents] of partsByLine) {
       if (cents === 0) continue;
@@ -408,7 +422,7 @@ function computeRevenue(
     outstandingTurnoverCents +=
       result.outstandingCents - (invoice.grossCents > 0 ? Math.round((vat * result.outstandingCents) / invoice.grossCents) : 0);
     // Only invoices that touch the year are listed.
-    if (result.receivedCents !== 0 || result.outstandingCents !== 0 || result.checks.length > 0 || (invoice.issueDate !== null && yearOf(invoice.issueDate) === facts.year)) {
+    if (result.receivedCents !== 0 || result.declaredCents !== 0 || result.outstandingCents !== 0 || result.checks.length > 0 || (invoice.issueDate !== null && yearOf(invoice.issueDate) === facts.year)) {
       invoices.push(result);
     }
   }

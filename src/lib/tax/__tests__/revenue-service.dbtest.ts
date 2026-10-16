@@ -8,6 +8,7 @@ import {
   deleteStatusChange,
   deleteVatSettlement,
   loadStatement,
+  receiptForLink,
   saveInvoice,
   saveRevenueExpectation,
   saveStatusChange,
@@ -15,6 +16,7 @@ import {
   saveVatSettlement,
   type TaxContext,
 } from '../service';
+import { createAccount, importPayments, linkPayment } from '../payments/service';
 import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
 
 /**
@@ -131,7 +133,7 @@ describe('revenue: forward, change, re-entry', () => {
 
   it('an invoice another return declared is no revenue again, and deleting an invoice takes its payments along', async () => {
     const { ws, ctx } = await workspace();
-    const id = await saveInvoice(db, ctx, null, invoice({ declaredInYear: 2025 }));
+    const id = await saveInvoice(db, ctx, null, invoice({ issueDate: '2025-12-01', declaredInYear: 2025 }));
     const view = await loadStatement(db, ws.workspaceId, 2026);
     expect(view.businessRevenueCents).toBe(0);
     expect(view.revenue.turnoverCents).toBe(100_000);
@@ -151,6 +153,55 @@ describe('revenue: forward, change, re-entry', () => {
     expect(await code(saveInvoice(db, ctx, null, invoice({ number: 'B', vatCents: 1900 })))).toBe('vat_without_treatment');
     expect(await code(saveInvoice(db, ctx, null, invoice({ number: 'B', payments: [{ date: '2026-02-30', cents: 1 }] })))).toBe('invalid_payment');
     expect(await db.taxIssuedInvoice.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(1);
+  });
+});
+
+describe('invoices declared by invoice, and a remainder booked out', () => {
+  const HEADER = '"Booking Date","Value Date","Partner Name","Partner Iban",Type,"Payment Reference","Account Name","Amount (EUR)","Original Amount","Original Currency","Exchange Rate"';
+
+  it('counts in the declared year at the invoice amount and never in the year of its payment', async () => {
+    const { ws, ctx } = await workspace();
+    // Issued late in 2024, declared in the 2024 return by invoice, paid in 2025 (minus a 10.00 fee).
+    await saveInvoice(db, ctx, null, invoice({ number: '39', issueDate: '2024-12-30', grossCents: 284_000, declaredInYear: 2024, payments: [{ date: '2025-02-11', cents: 283_000 }] }));
+    // Issued and paid in 2024, declared in 2024.
+    await saveInvoice(db, ctx, null, invoice({ number: '30', issueDate: '2024-04-01', grossCents: 50_000, declaredInYear: 2024, payments: [{ date: '2024-04-10', cents: 50_000 }] }));
+    // A 2025 invoice on cash basis, for contrast.
+    await saveInvoice(db, ctx, null, invoice({ number: '40', issueDate: '2025-03-01', grossCents: 20_000, payments: [{ date: '2025-03-05', cents: 20_000 }] }));
+
+    const y2024 = await loadStatement(db, ws.workspaceId, 2024);
+    expect(y2024.businessRevenueCents).toBe(334_000);
+    expect(y2024.revenue.invoices.find((i) => i.number === '39')).toMatchObject({ declaredCents: 284_000, receivedCents: 0 });
+    const y2025 = await loadStatement(db, ws.workspaceId, 2025);
+    expect(y2025.businessRevenueCents).toBe(20_000);
+    // The limits still see the money of 2025.
+    expect(y2025.revenue.turnoverCents).toBe(303_000);
+    expect(y2025.revenue.invoices.find((i) => i.number === '39')).toMatchObject({ declaredCents: 0, excludedCents: 283_000, outstandingCents: 1_000 });
+  });
+
+  it('books out the fee the client kept, bounded by what the linked bank payment leaves open', async () => {
+    const { ws, ctx } = await workspace();
+    const id = await saveInvoice(db, ctx, null, invoice({ number: '39', issueDate: '2026-01-10', grossCents: 284_000, payments: [] }));
+    const accountId = await createAccount(db, ctx, { label: 'Geschäftskonto', kind: 'bank' });
+    await importPayments(db, ctx, accountId, [HEADER, '2026-02-11,2026-02-11,"Kunde Beispiel",,Credit Transfer,"Rechnung 39 und andere",Hauptkonto,2830,,,'].join('\n') + '\n');
+    let view = await loadStatement(db, ws.workspaceId, 2026);
+    const paymentId = view.payments.open.find((p) => p.amountCents === 283_000)?.id;
+    if (paymentId) await linkPayment(db, ctx, { paymentId, invoiceId: id }, receiptForLink(db, ws.workspaceId));
+    view = await loadStatement(db, ws.workspaceId, 2026);
+    const card = view.revenue.invoices[0];
+    expect(card).toMatchObject({ outstandingCents: 1_000, enteredPayments: [], payments: [{ date: '2026-02-11', cents: 283_000 }] });
+
+    const edit = { number: '39', issueDate: '2026-01-10', grossCents: 284_000, vatCents: 0, treatment: 'small_business', declaredInYear: null, payments: [] };
+    // More than the bank payment leaves open is refused, and nothing is written.
+    await expect(saveInvoice(db, ctx, id, { ...edit, writtenOffCents: 1_001, writtenOffOn: '2026-10-15' })).rejects.toMatchObject({ code: 'invalid_write_off' });
+    expect((await db.taxIssuedInvoice.findUnique({ where: { id } }))?.writtenOffCents).toBe(0);
+
+    await saveInvoice(db, ctx, id, { ...edit, writtenOffCents: 1_000, writtenOffOn: '2026-10-15' });
+    view = await loadStatement(db, ws.workspaceId, 2026);
+    expect(view.revenue.invoices[0]).toMatchObject({ outstandingCents: 0, writtenOffCents: 1_000, writtenOffOn: '2026-10-15', receivedCents: 283_000 });
+    expect(view.revenue.outstandingCents).toBe(0);
+    expect(line(view, 'euer.revenue_small_business')).toBe(283_000);
+    // The linked bank payment is still the only payment: saving the invoice did not copy it into a typed one.
+    expect(await db.taxInvoicePayment.count({ where: { invoiceId: id } })).toBe(0);
   });
 });
 

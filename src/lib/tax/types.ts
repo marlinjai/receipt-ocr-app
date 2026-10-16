@@ -139,10 +139,20 @@ export interface InvoiceFact {
   /** Money received for it, each with its day. Revenue counts on these days (cash basis). */
   payments: Array<{ date: string; cents: number }>;
   /**
-   * Set when an earlier return already declared this invoice in another year
-   * (under a different method). Its payments are then no revenue again.
+   * Set when a return declared this invoice by invoice (not by payment day),
+   * as the 2024 return did. The invoice then counts in that year at its
+   * invoice amount, whatever day its money arrived, and its payments are no
+   * revenue in any year. For the small-business limits the money still counts
+   * when it arrives.
    */
   declaredInYear: number | null;
+  /**
+   * Booked out as never to be paid, on `writtenOffOn`: a transfer fee the
+   * client deducted, or a remainder a person settled as not collectable. It
+   * ends the open claim from that day on and is never revenue. Absent means 0.
+   */
+  writtenOffCents?: number;
+  writtenOffOn?: string | null;
   /** The section 19 status on the issue date; see `LedgerItem.smallBusiness`. */
   smallBusinessOnIssue: boolean | null;
 }
@@ -263,8 +273,10 @@ export interface InvoiceResult {
   invoiceId: string;
   /** Money received for the invoice in this year. */
   receivedCents: number;
-  /** Of that, left out of the statement because another year's return declared the invoice. */
+  /** Of that, left out of the statement because a return declared the invoice by invoice (see `declaredCents`). */
   excludedCents: number;
+  /** Counted in this year at the invoice amount, because this year's return declared the invoice by invoice. */
+  declaredCents: number;
   /** Still unpaid at the end of this year. */
   outstandingCents: number;
   parts: Array<{ lineKey: FormLineKey; cents: number }>;

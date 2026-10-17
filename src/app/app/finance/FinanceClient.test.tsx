@@ -163,7 +163,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     smallBusinessAtYearEnd: true,
     statusChanges: [],
     vat: { frequency: null, method: null, applies: false, year: null, undeductedInputVatCents: 0, reverseChargeYear: null, reverseChargePendingItems: 0, reverseChargeNonBusinessCents: 0, reverseChargeForeignCurrencyItems: 0, settlements: [] },
-    payments: { accounts: [], yearCount: 0, linkedCount: 0, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], payLaterDays: { moved: [], unknown: [], relabelled: [], withoutDetail: 0 }, overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [] },
+    payments: { accounts: [], yearCount: 0, linkedCount: 0, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [] },
     vendorRules: [],
     reverseChargeVendors: [],
     yearBoundary: [],

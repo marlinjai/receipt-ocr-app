@@ -28,7 +28,7 @@ const open = (o: Partial<OpenPayment> = {}): OpenPayment => ({
 function view(payments: Partial<PaymentsView> = {}): StatementView {
   return {
     year: 2026,
-    payments: { accounts: [account], yearCount: 3, linkedCount: 1, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], payLaterDays: { moved: [], unknown: [], relabelled: [], withoutDetail: 0 }, overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [], ...payments },
+    payments: { accounts: [account], yearCount: 3, linkedCount: 1, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [], ...payments },
   } as StatementView;
 }
 
@@ -46,7 +46,6 @@ const props = () => ({
   onTransfer: vi.fn(),
   onNotIncome: vi.fn(),
   onKind: vi.fn(),
-  onPayMethod: vi.fn(),
   onAccountPrivate: vi.fn(),
   onSearch: vi.fn<ComponentProps<typeof PaymentsTab>['onSearch']>(async () => ({ ok: true, value: { payments: [], total: 0 } })),
 });
@@ -109,7 +108,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'enable_banking_json', total: 4, added: 4, alreadyThere: 0, skipped: { other_year: 454, covered_by_other_source: 120 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], unknownMethods: [], detailFilled: 0, onlyYear: 2026, firstDay: '2026-07-01', lastDay: '2026-07-04' }}
+        lastImport={{ batchId: 'b', format: 'enable_banking_json', total: 4, added: 4, alreadyThere: 0, skipped: { other_year: 454, covered_by_other_source: 120 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], onlyYear: 2026, firstDay: '2026-07-01', lastDay: '2026-07-04' }}
       />,
     );
     const status = screen.getByRole('status').textContent;
@@ -122,7 +121,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 10, added: 7, alreadyThere: 3, skipped: { other_currency: 2, not_completed: 4 }, autoLinked: 1, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], unknownMethods: [], detailFilled: 0, onlyYear: null, firstDay: null, lastDay: null }}
+        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 10, added: 7, alreadyThere: 3, skipped: { other_currency: 2, not_completed: 4 }, autoLinked: 1, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], onlyYear: null, firstDay: null, lastDay: null }}
       />,
     );
     const status = screen.getByRole('status').textContent;
@@ -363,7 +362,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'klarna_csv', total: 5, added: 5, alreadyThere: 0, skipped: { cancelled: 2, duplicate_row: 1, zero_amount: 1 }, autoLinked: 0, cancelledEarlier: 2, releasedLinks: 1, adopted: 1, notices: { part_refunded: 1, unknown_status: 1 }, unknownStatuses: ['Angefochten'], unknownMethods: [], detailFilled: 0, onlyYear: null, firstDay: null, lastDay: null }}
+        lastImport={{ batchId: 'b', format: 'klarna_csv', total: 5, added: 5, alreadyThere: 0, skipped: { cancelled: 2, duplicate_row: 1, zero_amount: 1 }, autoLinked: 0, cancelledEarlier: 2, releasedLinks: 1, adopted: 1, notices: { part_refunded: 1, unknown_status: 1 }, unknownStatuses: ['Angefochten'], onlyYear: null, firstDay: null, lastDay: null }}
       />,
     );
     const status = screen.getByRole('status').textContent;
@@ -556,45 +555,5 @@ describe('PaymentsTab', () => {
     await user.click(choosers[0]);
     await user.click(choosers[1]);
     expect(screen.getByLabelText('Rechnung von Hand wählen')).toBeTruthy();
-  });
-
-  it('lists pay-later purchases whose year moves or whose collection is unknown, and a person says how one was paid or takes it back', async () => {
-    const user = userEvent.setup();
-    const p = props();
-    const entry = (o: Record<string, unknown>) => ({ id: 'k-1', bookingDay: '2025-12-10', taxDay: '2026-01-08', amountCents: -4_000, counterparty: 'Laden Beispiel', accountLabel: 'Später zahlen', method: 'checkout' as const, byPerson: false, dayUnknown: false, linkedTo: ['Lampe'], ...o });
-    render(
-      <PaymentsTab
-        view={view({
-          payLaterDays: {
-            moved: [entry({})],
-            unknown: [entry({ id: 'k-2', counterparty: 'Kiosk Beispiel', taxDay: '2025-12-10', linkedTo: [] })],
-            relabelled: [entry({ id: 'k-3', counterparty: 'Café Beispiel', method: 'card', byPerson: true, taxDay: '2025-12-12', bookingDay: '2025-12-12' })],
-            withoutDetail: 2,
-          },
-        })}
-        {...p}
-      />,
-    );
-    const section = screen.getByRole('region', { name: 'Tag der Zahlung bei Käufen über den Später-bezahlen-Dienst' });
-    expect(within(section).getByText(/zählt am 08\.01\.2026/)).toBeTruthy();
-    expect(within(section).getAllByText(/zugeordnet: Lampe/).length).toBe(2);
-    expect(within(section).getByText('Einzugstag unbekannt')).toBeTruthy();
-    expect(within(section).getByText(/2 Käufe wurden eingelesen, bevor die Zahlungsart/)).toBeTruthy();
-    // Each button names the purchase it changes.
-    await user.click(within(section).getByRole('button', { name: 'Mit der Karte bezahlt: Laden Beispiel, 10.12.2025, 40,00 €' }));
-    expect(p.onPayMethod).toHaveBeenLastCalledWith('k-1', 'card');
-    await user.click(within(section).getByRole('button', { name: /^Mit der Karte bezahlt: Kiosk Beispiel/ }));
-    expect(p.onPayMethod).toHaveBeenLastCalledWith('k-2', 'card');
-    expect(within(section).getAllByText(/Später zahlen ·/).length).toBe(3);
-    // A purchase a person said was paid by card can be said to be on invoice, or put back.
-    await user.click(within(section).getByRole('button', { name: /^Auf Rechnung bezahlt: Café Beispiel/ }));
-    expect(p.onPayMethod).toHaveBeenLastCalledWith('k-3', 'checkout');
-    await user.click(within(section).getByRole('button', { name: /^Zurücksetzen: Café Beispiel/ }));
-    expect(p.onPayMethod).toHaveBeenLastCalledWith('k-3', null);
-  });
-
-  it('shows no pay-later section when nothing needs a look', () => {
-    render(<PaymentsTab view={view()} {...props()} />);
-    expect(screen.queryByRole('region', { name: 'Tag der Zahlung bei Käufen über den Später-bezahlen-Dienst' })).toBeNull();
   });
 });

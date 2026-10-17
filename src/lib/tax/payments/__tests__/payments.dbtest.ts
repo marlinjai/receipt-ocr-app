@@ -696,6 +696,31 @@ describe('what the production run showed', () => {
   });
 });
 
+describe('the day a pay-later purchase counts on', () => {
+  it('is its purchase day, whatever the service collects later and however it was paid: the method the 2025 return was filed on', async () => {
+    const { ws, ctx, accountId, laterId } = await withLaterAccount();
+    await importPayments(
+      db,
+      ctx,
+      laterId,
+      laterFile(
+        later('2025-12-10', 'Laden Beispiel', '40.00', '6000000000001'),
+        // A later purchase, so the list covers the day of the collection and the bank debit is a transfer.
+        later('2026-02-03', 'Kiosk Beispiel', '3.00', '6000000000002'),
+      ),
+    );
+    // The service collects the December purchase on 8 January.
+    await importPayments(db, ctx, accountId, file(line('2026-01-08', 'Klarna Bank AB (publ)', 'Lastschrift', '-40', 'Direct Debit')));
+    const rowId = await ws.addReceipt({ Name: 'Lampe', Vendor: 'Laden Beispiel', Gross: 40, Date: '2025-12-10', Category: 'Software & Lizenzen', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    const purchase = await db.taxPayment.findFirstOrThrow({ where: { accountId: laterId, amountCents: -4_000 } });
+    await linkPayment(db, ctx, { paymentId: purchase.id, rowId }, rowCheck(ctx));
+    expect((await loadStatement(db, ws.workspaceId, 2025)).items.find((i) => i.rowId === rowId)).toMatchObject({ date: '2025-12-10', amountCents: 4_000 });
+    expect((await loadStatement(db, ws.workspaceId, 2026)).items.find((i) => i.rowId === rowId)).toBeUndefined();
+    // Nothing is stored about how it was paid any more.
+    expect(await db.taxPayment.findUniqueOrThrow({ where: { id: purchase.id } })).toMatchObject({ sourceDetail: null, payMethodOverride: null });
+  });
+});
+
 describe('a purchase cancelled or refunded after it was imported', () => {
   const CANCELLED = laterFile(
     later('2025-03-03', 'EDITOR BEISPIEL, AI TOOLS', '20.75', '4000000000001', 'Storniert'),
@@ -762,8 +787,6 @@ describe('a purchase first listed without the service’s number', () => {
     expect(await importPayments(db, ctx, laterId, MARCH)).toMatchObject({ total: 2, added: 0, alreadyThere: 2, adopted: 1 });
     const after = await db.taxPayment.findMany({ where: { accountId: laterId, amountCents: -2075 } });
     expect(after.map((p) => [p.id, p.entryReference])).toEqual([[before.id, '4000000000001']]);
-    // It takes the numbered row's payment details as well, its own number included.
-    expect(after[0].sourceDetail).toMatchObject({ method: 'Invoice', reference: '4000000000001' });
     expect((await loadStatement(db, ws.workspaceId, 2025)).items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 2075, amountBasis: 'payment' });
     // From now on it is known by its number: the file again changes nothing.
     expect(await importPayments(db, ctx, laterId, MARCH + '\n')).toMatchObject({ added: 0, adopted: 0 });

@@ -1,14 +1,13 @@
 import 'server-only';
 import { createHash } from 'node:crypto';
-import { Prisma, type PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { vendorKey } from '../decisions';
-import { heldService, resolveFunding, type Funding } from './funding';
+import { resolveFunding, type Funding } from './funding';
 import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from './match';
 import { batchCoverage, beyondStored, covers, coveredByOtherSources, mergeIntervals, orderBatches, overlaps } from './coverage';
 import { parsePaymentFile, referenceHash } from './parse';
 import { amountQuery } from './search';
-import { PAY_METHOD_OVERRIDES, resolvePayLaterDays, type PayLaterDay, type PayMethodOverride } from './tax-day';
-import { PAYMENT_KINDS, type NormalizedPayment, type PayLaterDetail, type PaymentFormat, type PaymentKind } from './types';
+import { PAYMENT_KINDS, type NormalizedPayment, type PaymentFormat, type PaymentKind } from './types';
 
 /**
  * Server-side reads and writes for payments. Like the other finance services,
@@ -130,10 +129,6 @@ export interface ImportResult {
   notices: Record<string, number>;
   /** Status wordings the reader did not know; those rows were read as purchases. */
   unknownStatuses: string[];
-  /** Payment method wordings the reader did not know; those purchases count on the day the service collects them. */
-  unknownMethods: string[];
-  /** Purchases stored by an earlier import without the list's payment details, which this file filled in. */
-  detailFilled: number;
   firstDay: string | null;
   lastDay: string | null;
 }
@@ -175,38 +170,12 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
   const account = await db.taxAccount.findFirst({ where: { id: accountId, authWorkspaceId: ctx.workspaceId } });
   if (!account) throw new PaymentServiceError('account_not_found');
   const contentHash = createHash('sha256').update(onlyYear === null ? text : `${text}\u0000only-year:${onlyYear}`).digest('hex');
-  const known = await db.taxImportBatch.findFirst({ where: { accountId, contentHash } });
-  if (known) {
-    // The same file again adds nothing. It can still bring the payment details of purchases stored before they
-    // were kept: then it fills them in and says so, and only then is it not refused.
-    const again = parsePaymentFile(text);
-    const detailFilled = again.payments.some((p) => p.detail) ? await db.$transaction((tx) => fillMissingDetail(tx, accountId, again.payments), { maxWait: 20_000, timeout: 120_000 }) : 0;
-    if (detailFilled === 0) throw new PaymentServiceError('file_already_imported');
-    return {
-      batchId: known.id,
-      format: again.format,
-      total: again.payments.length,
-      added: 0,
-      alreadyThere: again.payments.length,
-      skipped: again.skipped,
-      autoLinked: 0,
-      cancelledEarlier: 0,
-      releasedLinks: 0,
-      adopted: 0,
-      notices: again.notices,
-      unknownStatuses: again.unknownStatuses,
-      unknownMethods: again.unknownMethods,
-      detailFilled,
-      onlyYear,
-      firstDay: again.firstDay,
-      lastDay: again.lastDay,
-    };
-  }
+  if (await db.taxImportBatch.findFirst({ where: { accountId, contentHash } })) throw new PaymentServiceError('file_already_imported');
   const file = parsePaymentFile(text);
 
   // Everything from here on happens together or not at all, including the
   // automatic links: a failure leaves no batch behind that would refuse a retry.
-  const { batch, added, autoLinked, adopted, cancelledEarlier, releasedLinks, parsed, detailFilled } = await db.$transaction(async (tx) => {
+  const { batch, added, autoLinked, adopted, cancelledEarlier, releasedLinks, parsed } = await db.$transaction(async (tx) => {
     // One import per account at a time: what other sources hold is read and judged without another import slipping in.
     const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM tax_accounts WHERE id = ${accountId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
     if (locked.length === 0) throw new PaymentServiceError('account_not_found');
@@ -282,7 +251,6 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
           entryReference: p.entryReference,
           sourceKind: p.kind,
           sourceHash: p.sourceHash,
-          ...(p.detail ? { sourceDetail: p.detail as unknown as Prisma.InputJsonValue } : {}),
         })),
       });
       inserted = result.count;
@@ -297,13 +265,10 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
       releasedLinks = await tx.taxPaymentLink.count({ where: { payment: where } });
       cancelledEarlier = (await tx.taxPayment.updateMany({ where, data: { cancelledByBatchId: created.id } })).count;
     }
-    // Purchases stored before the list's payment details were kept get them from any file of the same list,
-    // whatever year it is limited to: nothing else of them changes.
-    const detailFilled = await fillMissingDetail(tx, accountId, file.payments);
-    // A year of a file that adds, recognizes, cancels and fills in nothing: its empty import would only stand in the
-    // way of undoing. Undone with the rest. (A whole file that brings nothing new is still recorded, as before.)
-    if (onlyYear !== null && inserted === 0 && adopted === 0 && cancelledEarlier === 0 && detailFilled === 0) throw new PaymentServiceError('nothing_new');
-    return { batch: created, added: inserted, autoLinked: await linkByReference(tx, ctx, created.id), adopted, cancelledEarlier, releasedLinks, parsed, detailFilled };
+    // A year of a file that adds, recognizes and cancels nothing: its empty import would only stand in the way of
+    // undoing. Undone with the rest. (A whole file that brings nothing new is still recorded, as before.)
+    if (onlyYear !== null && inserted === 0 && adopted === 0 && cancelledEarlier === 0) throw new PaymentServiceError('nothing_new');
+    return { batch: created, added: inserted, autoLinked: await linkByReference(tx, ctx, created.id), adopted, cancelledEarlier, releasedLinks, parsed };
     // A year of payments on a busy server takes longer than the five seconds a transaction gets by default.
   }, { maxWait: 20_000, timeout: 120_000 });
 
@@ -321,35 +286,9 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     adopted,
     notices: parsed.notices,
     unknownStatuses: parsed.unknownStatuses,
-    unknownMethods: parsed.unknownMethods,
-    detailFilled,
     firstDay: parsed.firstDay,
     lastDay: parsed.lastDay,
   };
-}
-
-/**
- * Purchases of the pay-later list imported before its payment details were
- * kept have none. When a later import of the same list meets such a purchase
- * (same identity), it fills the details in and changes nothing else. A row
- * that already has details keeps them, except that a card mark nobody knew
- * (read from the shorter list, which has no card column) is taken from a list
- * that has one. One statement per few thousand rows: row by row, a year of
- * purchases took seconds with the database a network away.
- */
-async function fillMissingDetail(db: Prisma.TransactionClient, accountId: string, payments: readonly NormalizedPayment[]): Promise<number> {
-  const withDetail = payments.filter((p): p is NormalizedPayment & { detail: PayLaterDetail } => p.detail !== undefined);
-  let filled = 0;
-  for (let i = 0; i < withDetail.length; i += 5000) {
-    const values = withDetail.slice(i, i + 5000).map((p) => Prisma.sql`(${p.sourceHash}, ${JSON.stringify(p.detail)})`);
-    filled += await db.$executeRaw`
-      UPDATE tax_payments AS t
-      SET source_detail = CASE WHEN t.source_detail IS NULL THEN v.detail::jsonb ELSE jsonb_set(t.source_detail, '{card}', v.detail::jsonb -> 'card') END
-      FROM (VALUES ${Prisma.join(values)}) AS v(hash, detail)
-      WHERE t.account_id = ${accountId} AND t.source_hash = v.hash
-        AND (t.source_detail IS NULL OR (t.source_detail -> 'card' = 'null'::jsonb AND v.detail::jsonb -> 'card' <> 'null'::jsonb))`;
-  }
-  return filled;
 }
 
 /**
@@ -382,12 +321,7 @@ async function adoptUnreferenced(db: Prisma.TransactionClient, accountId: string
   for (const [key, claimants] of claims) {
     const candidates = unnumbered.filter((p) => sameMovement(p) === key);
     if (claimants.length !== 1 || candidates.length !== 1) continue;
-    // The numbered row is the authority on how it was paid too: its own number is what a bank line settling it names.
-    // A card the stored row marked stays marked: one of the two rows saw it.
-    const storedCard = payLaterDetailOf(candidates[0].sourceDetail)?.card === true;
-    const claimed = claimants[0].detail;
-    const detail = claimed ? { sourceDetail: { ...claimed, card: storedCard ? true : claimed.card } as unknown as Prisma.InputJsonValue } : {};
-    await db.taxPayment.update({ where: { id: candidates[0].id }, data: { sourceHash: claimants[0].sourceHash, entryReference: claimants[0].entryReference, ...detail } });
+    await db.taxPayment.update({ where: { id: candidates[0].id }, data: { sourceHash: claimants[0].sourceHash, entryReference: claimants[0].entryReference } });
     adopted += 1;
   }
   return adopted;
@@ -782,14 +716,6 @@ export interface PaymentRow {
    * whoever sums private spending reads the sign of `amountCents` or `sourceKind`.
    */
   byPrivateAccount: boolean;
-  /**
-   * The day the payment counts on for tax: its booking day, except for a
-   * purchase of a pay-later list paid later at the checkout (the day of the
-   * collection that settles it) or by direct debit (the capture day). See `tax-day.ts`.
-   */
-  taxDay: string;
-  /** For a purchase of a pay-later list: how it was paid and which day that gives. Null for every other payment. */
-  payLater: PayLaterDay | null;
   links: Array<{ id: string; rowId: string | null; invoiceId: string | null; cents: number; method: string }>;
 }
 
@@ -843,12 +769,9 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
       funding: funds ?? null,
       byRule: funds !== undefined && treatment !== 'own_account' && p.kindOverride === null,
       byPrivateAccount: kind === 'private' && p.kindOverride === null && privateAccounts.has(p.accountId),
-      taxDay: p.bookingDay,
-      payLater: null,
       links: p.links.map((l) => ({ id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method })),
     };
   });
-  applyPayLaterDays(accounts, payments, rows);
   return {
     accounts: accounts.map((a) => {
       const own = rows.filter((r) => r.accountId === a.id);
@@ -869,89 +792,6 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
       .map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, rowIds: p.links.flatMap((l) => (l.rowId ? [l.rowId] : [])) })),
     treatments,
   };
-}
-
-/**
- * Give every purchase of a pay-later list the day it counts on for tax
- * (`resolvePayLaterDays`). The collections are the payments on the other
- * accounts that move money to the service and count as transfers: the ones
- * the funding rule recognizes, and the ones a person marked as a transfer
- * whose counterparty names the service (a collection after the last day the
- * list covers). A debit a person said is a payment of its own is no collection.
- */
-function applyPayLaterDays(
-  accounts: ReadonlyArray<{ id: string; kind: string; batches: ReadonlyArray<{ format: string }> }>,
-  stored: ReadonlyArray<{ id: string; valueDay: string | null; sourceDetail: Prisma.JsonValue | null; payMethodOverride: string | null }>,
-  rows: PaymentRow[],
-): void {
-  const storedById = new Map(stored.map((p) => [p.id, p]));
-  const holders = new Map<string, string>();
-  for (const account of accounts) {
-    const service = heldService({ id: account.id, kind: account.kind, formats: account.batches.map((b) => b.format) });
-    if (service?.kind === 'pay_later') holders.set(account.id, service.name);
-  }
-  for (const name of new Set(holders.values())) {
-    // Purchases, and money back the list books on a statement (it lowers what the service collects for it).
-    const listed = rows.filter((r) => holders.get(r.accountId) === name && ((r.amountCents < 0 && r.sourceKind === 'spend') || (r.amountCents > 0 && r.sourceKind === 'refund')));
-    const purchases = listed.filter((r) => r.amountCents < 0);
-    const collections = rows.filter(
-      (r) =>
-        holders.get(r.accountId) !== name &&
-        r.amountCents < 0 &&
-        r.kind === 'own_transfer' &&
-        (r.funding?.service === name || (r.kindOverridden && r.counterpartyKey.split(' ').includes(name))),
-    );
-    const days = resolvePayLaterDays(
-      listed.map((r) => {
-        const own = storedById.get(r.id);
-        const override = own?.payMethodOverride ?? null;
-        return {
-          id: r.id,
-          bookingDay: r.bookingDay,
-          valueDay: own?.valueDay ?? null,
-          amountCents: r.amountCents,
-          counterparty: r.counterparty,
-          detail: payLaterDetailOf(own?.sourceDetail ?? null),
-          override: (PAY_METHOD_OVERRIDES as readonly string[]).includes(override ?? '') ? (override as PayMethodOverride) : null,
-        };
-      }),
-      collections.map((r) => ({ id: r.id, bookingDay: r.bookingDay, amountCents: r.amountCents, text: `${r.counterparty} ${r.reference}`, twinId: r.funding?.twinId ?? null })),
-    );
-    for (const row of purchases) {
-      const day = days.get(row.id);
-      if (!day) continue;
-      row.payLater = day;
-      row.taxDay = day.taxDay;
-    }
-  }
-}
-
-/** The stored details of a pay-later purchase, or null when it has none (imported before they were kept) or they are not readable. */
-function payLaterDetailOf(value: Prisma.JsonValue | null): PayLaterDetail | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const v = value as Record<string, unknown>;
-  if (typeof v.method !== 'string' || (typeof v.card !== 'boolean' && v.card !== null)) return null;
-  return {
-    method: v.method,
-    card: v.card as boolean | null,
-    statement: typeof v.statement === 'string' && v.statement !== '' ? v.statement : null,
-    reference: typeof v.reference === 'string' && v.reference !== '' ? v.reference : null,
-  };
-}
-
-/**
- * Say how one purchase of a pay-later list was paid: 'card' (it counts on the
- * purchase day) or 'checkout' (paid later, it counts on the day the service
- * collects it); `null` returns to what the list says. Only for purchases of a
- * pay-later list.
- */
-export async function setPaymentMethod(db: PrismaClient, ctx: PaymentContext, paymentId: string, method: unknown): Promise<void> {
-  if (method !== null && (typeof method !== 'string' || !(PAY_METHOD_OVERRIDES as readonly string[]).includes(method))) throw new PaymentServiceError('invalid_kind');
-  const payment = await db.taxPayment.findFirst({ where: { id: paymentId, authWorkspaceId: ctx.workspaceId }, include: { batch: true } });
-  // A cancelled purchase counts nowhere: there is no day to correct.
-  if (!payment || payment.cancelledByBatchId !== null) throw new PaymentServiceError('payment_not_found');
-  if (payment.batch.format !== 'klarna_csv' || payment.amountCents >= 0 || payment.sourceKind !== 'spend') throw new PaymentServiceError('invalid_kind');
-  await db.taxPayment.update({ where: { id: payment.id }, data: { payMethodOverride: method as string | null } });
 }
 
 /** A payment found by `findPayments`, with what it can be linked to by hand. */

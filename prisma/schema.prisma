@@ -737,13 +737,11 @@ model TaxPayment {
   // counts nowhere. Undoing that import sets it back to NULL (the foreign key
   // does), so the payment and its links count again.
   cancelledByBatchId String? @map("cancelled_by_batch_id")
-  // What the pay-later list says about how a purchase was paid: payment method
-  // wording, whether a card is marked, the statement number (see
-  // `PayLaterDetail`). NULL for other sources and for rows imported before the
-  // column existed; a later import of the same list fills it in.
+  // Added by migration 0030 for a collection-day rule that was taken back on
+  // 2026-10-17 (every pay-later purchase counts on its purchase day, see
+  // docs/plans/2026-10-11-pay-later-payments.md). Nothing reads or writes them;
+  // they stay only so this schema matches the database until a migration drops them.
   sourceDetail       Json?   @map("source_detail")
-  // A person's correction of how one pay-later purchase was paid: 'card'
-  // (counts on the purchase day) or 'checkout' (counts on the collection day).
   payMethodOverride  String? @map("pay_method_override")
   createdAt       DateTime @default(now()) @map("created_at")
 

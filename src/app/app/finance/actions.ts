@@ -18,7 +18,6 @@ import {
   setCounterpartyTreatment,
   setPaymentKind,
   setPaymentTransfer,
-  setPaymentMethod,
   unlinkPayment,
   type FoundPayment,
   type ImportResult,
@@ -398,11 +397,6 @@ export async function confirmPaymentLink(year: number, input: unknown): Promise<
 /** Say that one payment is a transfer between own accounts (true) or a payment of its own (false). */
 export async function markPaymentTransfer(year: number, paymentId: string, isTransfer: unknown): Promise<Result<StatementView>> {
   return write(year, (ctx) => setPaymentTransfer(prisma, ctx, String(paymentId), isTransfer));
-}
-
-/** Say how one pay-later purchase was paid ('card' or 'checkout'); null returns to what the list says. */
-export async function markPaymentMethod(year: number, paymentId: string, method: unknown): Promise<Result<StatementView>> {
-  return write(year, (ctx) => setPaymentMethod(prisma, ctx, String(paymentId), method));
 }
 
 /**

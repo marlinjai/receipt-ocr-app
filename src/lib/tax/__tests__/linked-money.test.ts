@@ -18,8 +18,6 @@ function payment(id: string, bookingDay: string, amountCents: number, links: Arr
     funding: null,
     byRule: false,
     byPrivateAccount: false,
-    taxDay: bookingDay,
-    payLater: null,
     links: links.map((l, i) => ({ id: `${id}-${i}`, rowId: l.rowId, invoiceId: null, cents: l.cents, method: 'manual' })),
     ...extra,
   };
@@ -42,10 +40,5 @@ describe('linkedByRow: money out and money back per receipt', () => {
       funding: { service: 'paypal', serviceKind: 'wallet', kind: 'own_transfer', twinId: 'pp' } as unknown as PaymentRow['funding'],
     });
     expect(linkedByRow([purchase, debit]).get('r')).toMatchObject({ paid: { day: '2026-02-01', cents: 5_000 }, outCents: 5_000, back: null });
-  });
-
-  it('money out counts on its tax day: a pay-later purchase paid later at the checkout on the day it was collected', () => {
-    const linked = linkedByRow([payment('later', '2025-12-10', -4_000, [{ rowId: 'r', cents: 4_000 }], { taxDay: '2026-01-08' })]);
-    expect(linked.get('r')?.paid).toEqual({ day: '2026-01-08', cents: 4_000 });
   });
 });

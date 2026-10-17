@@ -13,7 +13,6 @@ import {
   acceptPaymentProposals,
   markAccountPrivate,
   markPaymentTransfer,
-  markPaymentMethod,
   addAccount,
   answerYearBoundary,
   declineYearBoundary,
@@ -821,16 +820,6 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
               onUnlink={(linkId) => run(() => removePaymentLink(view.year, linkId), 'Zuordnung gelöst.')}
               onNotIncome={(payment) => run(() => correctPaymentKind(view.year, payment.id, 'refund'), 'Als Erstattung oder Umbuchung vermerkt. Unter „Von dir umgewidmete Zahlungen“ lässt sich das zurücksetzen.')}
               onKind={(paymentId, kind) => run(() => correctPaymentKind(view.year, paymentId, kind), kind === null ? 'Zahlung zurückgesetzt.' : 'Zahlung umgewidmet.')}
-              onPayMethod={(paymentId, method) =>
-                run(
-                  () => markPaymentMethod(view.year, paymentId, method),
-                  method === null
-                    ? 'Zurückgesetzt: es gilt wieder, was die Liste sagt.'
-                    : method === 'card'
-                    ? 'Als Kartenzahlung vermerkt: der Kauf zählt an seinem Kauftag.'
-                    : 'Als Kauf auf Rechnung vermerkt: der Kauf zählt am Tag, an dem der Dienst ihn einzieht.',
-                )
-              }
             />
           )}
 

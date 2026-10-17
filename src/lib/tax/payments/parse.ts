@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { knownPayLaterMethod } from './tax-day';
-import { PaymentParseError, type NormalizedPayment, type ParsedFile, type PayLaterDetail, type PaymentFormat, type PaymentKind } from './types';
+import { PaymentParseError, type NormalizedPayment, type ParsedFile, type PaymentFormat, type PaymentKind } from './types';
 
 /**
  * Readers for the payment files the owner can export. Pure: text in, payments
@@ -94,7 +93,6 @@ interface Draft {
   kind: PaymentKind;
   /** The source's own unique number for the movement; when set it alone is the identity. */
   identity?: string;
-  detail?: PayLaterDetail;
 }
 
 /** Give every draft its identity; identical movements are numbered in order of appearance. */
@@ -113,7 +111,7 @@ function finish(
   format: PaymentFormat,
   drafts: Draft[],
   skipped: Record<string, number>,
-  extra: { cancelled: string[]; notices: Record<string, number>; unknownStatuses: string[]; unknownMethods: string[] } = { cancelled: [], notices: {}, unknownStatuses: [], unknownMethods: [] },
+  extra: { cancelled: string[]; notices: Record<string, number>; unknownStatuses: string[] } = { cancelled: [], notices: {}, unknownStatuses: [] },
 ): ParsedFile {
   if (drafts.length === 0 && Object.keys(skipped).length === 0) throw new PaymentParseError('empty');
   const days = drafts.map((d) => d.bookingDay).sort();
@@ -318,9 +316,6 @@ function parseKlarna(rows: string[][]): ParsedFile {
   const notices: Record<string, number> = {};
   const cancelled: string[] = [];
   const unknownStatuses: string[] = [];
-  const unknownMethods: string[] = [];
-  // The shorter variant of the list has no card column: there "no card" is not known, it is unknown.
-  const hasCard = rows[0].some((h) => h.trim() === 'card');
   const drafts: Draft[] = [];
   const seen = new Set<string>();
   for (const r of records(rows)) {
@@ -364,8 +359,6 @@ function parseKlarna(rows: string[][]): ParsedFile {
       seen.add(identity);
     }
     if (status === 'part_refunded') notices.part_refunded = (notices.part_refunded ?? 0) + 1;
-    // How it was paid decides the day it counts on (see `tax-day.ts`).
-    const method = clean(r.get('payment_method'));
     drafts.push({
       bookingDay,
       // The day the merchant captured the purchase, when the list has it.
@@ -377,7 +370,6 @@ function parseKlarna(rows: string[][]): ParsedFile {
       entryReference: reference || clean(r.get('statement_number')) || null,
       kind: amountCents < 0 ? 'refund' : 'spend',
       ...(identity ? { identity } : {}),
-      detail: { method, card: hasCard ? clean(r.get('card')) !== '' : null, statement: clean(r.get('statement_number')) || null, reference: reference || null },
     });
   }
   // A row without a reference that a referenced row repeats (the same purchase
@@ -394,20 +386,9 @@ function parseKlarna(rows: string[][]): ParsedFile {
   const kept = drafts.filter((d) => {
     if (d.identity || referenced.get(sameMovement(d)) !== 1 || unreferenced.get(sameMovement(d)) !== 1) return true;
     skip(skipped, 'duplicate_row');
-    // A card the dropped row marked (the web pages show it) stays with the purchase.
-    const twin = drafts.find((other) => other.identity && sameMovement(other) === sameMovement(d));
-    if (d.detail?.card === true && twin?.detail) twin.detail = { ...twin.detail, card: true };
     return false;
   });
-  // A wording the reader does not know is read as paid later at the checkout and named after the import, like an
-  // unknown status. Counted over the purchases kept, so a row left out as a double is not counted twice.
-  for (const d of kept) {
-    if (d.amountCents >= 0 || !d.detail || knownPayLaterMethod(d.detail.method) !== null) continue;
-    notices.unknown_method = (notices.unknown_method ?? 0) + 1;
-    const shown = d.detail.method.slice(0, 60) || '(leer)';
-    if (!unknownMethods.includes(shown) && unknownMethods.length < 5) unknownMethods.push(shown);
-  }
-  return finish('klarna_csv', kept, skipped, { cancelled, notices, unknownStatuses, unknownMethods });
+  return finish('klarna_csv', kept, skipped, { cancelled, notices, unknownStatuses });
 }
 
 function parseEnableBanking(data: unknown): ParsedFile {

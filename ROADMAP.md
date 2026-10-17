@@ -118,9 +118,8 @@
   shows 14,074.75 euros against a draft of 14,133.55 (Notion's 37.98 without an invoice left the
   draft the same day). The remaining 58.80: the meal allowance flat rate (56.00) and the meals
   (3.01), less rounding. The five Figma receipts are linked to their pay-later purchases (116 payments linked).
-  Waiting on Marlin: the meals in the register, and the tax adviser's answer on
-  whether a pay-later purchase counts on the purchase day (as built) or on the day the money
-  leaves the bank. The pay-later notice in the payments tab for 2025 (1,429.81 euros less collected from the bank
+  Waiting on Marlin: the meals in the register. A pay-later purchase counts on its purchase day
+  (decided 2026-10-17, decision 40 of the pay-later plan). The pay-later notice in the payments tab for 2025 (1,429.81 euros less collected from the bank
   than the list holds in purchases) is explained and is not missing data: the MacBook of 25
   November (2,849.00) ran as a financed purchase through PayPal, so the list holds it in full
   while the bank only sees instalments; against that, the monthly cycle collects December 2024
@@ -128,8 +127,8 @@
   instalments already paid and purchases settled ahead of the statement, which the files cannot
   split. Open from it: the reconciliation should treat financed purchases separately, or the
   notice returns every year one exists; and the draft's note for the MacBook says "paid via
-  PayPal" where the money came from a pay-later loan, which belongs to the purchase-day question
-  for the tax adviser. (2026-10-11)
+  PayPal" where the money came from a pay-later loan: it counts on its purchase day either way
+  (decision 40), only the note's wording needs correcting. (2026-10-17)
 - [ ] Flat rates have no place in the finance area: the meal allowance of a business trip, the
   home office flat rate, commuting days and semester fees paid by transfer. The employment annex
   therefore shows 667.75 where the 2025 draft claims 2,101.22 (1,422.14 of it without a purchase
@@ -413,9 +412,9 @@
   estimated euro amount get a proposed payment. The first version is deployed; the fixes of the
   review (the rule only on days the list covers, transfers visible and reversible, cancelled
   purchases, the same money once per receipt) are on `fix/pay-later-review-findings`. Open until
-  those are deployed, the proposals for the 51 receipts of 2025 are accepted on production, and
-  the owner has decided which day a pay-later purchase counts on (the plan's open question). Plan:
-  [docs/plans/2026-10-11-pay-later-payments.md](docs/plans/2026-10-11-pay-later-payments.md). (2026-10-11)
+  those are deployed and the proposals for the 51 receipts of 2025 are accepted on production.
+  Decided 2026-10-17: every pay-later purchase counts on its purchase day (decision 40). Plan:
+  [docs/plans/2026-10-11-pay-later-payments.md](docs/plans/2026-10-11-pay-later-payments.md). (2026-10-17)
 - [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: all six
   slices are built (register, contact list, export, duplicate checks, page split,
   phone capture, classifier, offline queue, service worker, share target). Left

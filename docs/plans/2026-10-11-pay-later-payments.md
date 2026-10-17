@@ -491,6 +491,32 @@ change or add to the list above.
     the corrections (in the year of the purchase and the year it counts in, each listed once),
     and the count of purchases without details. Private purchases and transfers are left out: they decide no year.
 
+### Taken back (2026-10-17): every pay-later purchase counts on its purchase day
+
+40. **Decided by the owner on 2026-10-17: every pay-later purchase counts on its purchase day,
+    however it was paid (replaces decisions 32 to 39 in their effect).** Reasons:
+    - The 2025 return was already filed on purchase days. Moving the December 2025 checkout
+      purchases to their collection day would count them a second time in 2026. One method
+      applied every year is what holds in an audit.
+    - The difference is small: it only moves checkout purchases of the last weeks of a year by
+      some weeks, and an audit moving them would shift an expense by one year, never lose it.
+    - The real files cannot say which purchases a consolidated monthly collection pays (the
+      list's `statement_number` is per purchase, no bank line names a statement), so the
+      collection-day rule would have reached few purchases anyway.
+    The research above still describes the strict reading of section 11 of the income tax act;
+    the purchase day is a simplification knowingly chosen and applied consistently since 2025.
+    Decision 2 (the booking day is the purchase day) stands again for every pay-later purchase;
+    this also replaces the decided block of 2026-10-15 in "Which day a pay-later purchase counts
+    on", which said the code must change for checkout purchases.
+41. **The code of decisions 32 to 39 is removed** (pull request "fix(finance): every pay-later
+    purchase counts on its purchase day"): the classification, the collection matching, the
+    correction buttons and the list in the payments tab, and the storing of the list's payment
+    details. Kept: `paymentDayOfRow` goes through `linkedByRow`, so the ten-day check counts the
+    same money once and leaves cancelled purchases out, as the statement does.
+42. **The two columns of migration 0030 are dropped** (migration
+    `0033_drop_tax_payment_pay_later_detail`, with the owner's yes of 2026-10-17). What was
+    written into them between the deploy of pull request #158 and this change is not needed.
+
 ## Tests
 
 Parser and matching as unit tests; the import flow against a real database on all four paths of
@@ -600,3 +626,10 @@ Where the time went, and what was done:
   as "Einzugstag unbekannt" until a person marks that PayPal payment "Übertrag zwischen eigenen
   Konten"; from then on it counts as the collection (the same path is tested
   with a bank debit after the last day the list covers).
+
+## Reality (2026-10-17)
+
+- Pull request #158 (the collection-day rule) merged on 2026-10-16 and was taken back the next
+  day by decision 40. The owner action named in "Reality (2026-10-16)" (import the list again)
+  is not needed: nothing reads the payment details any more.
+- The two columns of migration 0030 are dropped by migration 0033 (decision 42).

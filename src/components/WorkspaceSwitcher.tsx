@@ -16,15 +16,15 @@ import { resetWorkspace, switchWorkspace } from '@/app/app/workspace-actions';
  */
 export default function WorkspaceSwitcher({ session }: { session: AppSession }) {
   return (
-    <label className="inline-flex items-center gap-2 text-sm" style={{ color: 'var(--muted)' }}>
+    <label className="flex min-w-0 flex-wrap items-center gap-2 text-sm" style={{ color: 'var(--muted)' }}>
       <span className="uppercase text-xs tracking-wide">Company</span>
       <SharedSwitcher
         session={session}
         switchAction={switchWorkspace}
         resetAction={resetWorkspace}
-        className="inline-flex items-center gap-2"
-        selectClassName="glass-panel rounded-lg px-3 py-1.5 text-sm font-medium outline-none text-[color:var(--foreground)] bg-[color:var(--background)]"
-        hintClassName="inline-flex items-center gap-1.5 text-xs text-[color:var(--muted)]"
+        className="flex min-w-0 flex-wrap items-center gap-2"
+        selectClassName="glass-panel max-w-full rounded-lg px-3 py-1.5 text-sm font-medium outline-none text-[color:var(--foreground)] bg-[color:var(--background)]"
+        hintClassName="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-[color:var(--muted)]"
         resetClassName="underline hover:no-underline"
         errorClassName="text-xs text-red-600"
         labels={{

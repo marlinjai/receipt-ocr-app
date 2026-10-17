@@ -21,32 +21,41 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <>
+      {/*
+        On a phone the header wraps instead of pushing the page sideways: the
+        first row holds the title and the links, the company switcher takes a
+        row of its own below. The company chip is left out there, because the
+        switcher right below names the same company. From the small breakpoint
+        on, everything stands in one row as before.
+      */}
       <header
-        className="relative z-20 flex items-center justify-between gap-4 px-6 py-3 border-b"
+        className="relative z-20 flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 border-b sm:px-6"
         style={{ borderColor: 'var(--border, rgba(128,128,128,0.2))' }}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <span className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
             Receipts
           </span>
           {active && (
             <span
-              className="px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wide"
+              className="hidden max-w-[16rem] truncate px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wide sm:inline-block"
               style={{ background: 'var(--accent-muted)', color: 'var(--accent)' }}
             >
               {active.tenantName || workspaceLabel(active.slug)}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-4">
-          <Link href="/app/spending" className="text-xs transition-colors hover:underline" style={{ color: 'var(--muted)' }}>
-            Ausgaben
-          </Link>
+        <Link href="/app/spending" className="ml-auto whitespace-nowrap text-xs transition-colors hover:underline" style={{ color: 'var(--muted)' }}>
+          Ausgaben
+        </Link>
+        <div className="order-last w-full min-w-0 sm:order-none sm:w-auto">
           <WorkspaceSwitcher session={session} />
+        </div>
+        <span className="whitespace-nowrap">
           <SignOutLink href={auth.logoutUrl()} title={session.email}>
             Sign out
           </SignOutLink>
-        </div>
+        </span>
       </header>
       <BrowserRulesImport />
       <PushRenewal />

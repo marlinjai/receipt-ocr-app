@@ -505,6 +505,9 @@ change or add to the list above.
       collection-day rule would have reached few purchases anyway.
     The research above still describes the strict reading of section 11 of the income tax act;
     the purchase day is a simplification knowingly chosen and applied consistently since 2025.
+    Decision 2 (the booking day is the purchase day) stands again for every pay-later purchase;
+    this also replaces the decided block of 2026-10-15 in "Which day a pay-later purchase counts
+    on", which said the code must change for checkout purchases.
 41. **The code of decisions 32 to 39 is removed** (pull request "fix(finance): every pay-later
     purchase counts on its purchase day"): the classification, the collection matching, the
     correction buttons and the list in the payments tab, and the storing of the list's payment

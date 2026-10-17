@@ -101,7 +101,15 @@ async function handleShare(request) {
   try {
     const form = await request.formData();
     const files = form.getAll('files').filter((entry) => entry && typeof entry === 'object' && 'size' in entry);
-    const usable = files.filter((file) => /^image\//.test(file.type) || file.type === 'application/pdf');
+    // The same rule as src/lib/upload/accepted-files.ts (isAcceptedUpload); a test compares them.
+    const usable = files.filter(
+      (file) =>
+        /^image\//.test(file.type) ||
+        file.type === 'application/pdf' ||
+        file.type === 'application/xml' ||
+        file.type === 'text/xml' ||
+        (file.type === '' && /\.xml$/i.test(String(file.name || '').trim())),
+    );
     // Nothing usable (a text snippet, a video): say so in the app instead of dropping it silently.
     if (usable.length === 0) return backToApp('unsupported');
     await queueSharedFiles(usable);

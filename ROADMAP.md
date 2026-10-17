@@ -413,9 +413,7 @@
   review (the rule only on days the list covers, transfers visible and reversible, cancelled
   purchases, the same money once per receipt) are on `fix/pay-later-review-findings`. Open until
   those are deployed and the proposals for the 51 receipts of 2025 are accepted on production.
-  Decided 2026-10-17: every pay-later purchase counts on its purchase day (decision 40). Also
-  open: drop the unused columns `source_detail` and `pay_method_override` on the owner's yes
-  (decision 42). Plan:
+  Decided 2026-10-17: every pay-later purchase counts on its purchase day (decision 40). Plan:
   [docs/plans/2026-10-11-pay-later-payments.md](docs/plans/2026-10-11-pay-later-payments.md). (2026-10-17)
 - [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: all six
   slices are built (register, contact list, export, duplicate checks, page split,

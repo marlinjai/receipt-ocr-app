@@ -513,10 +513,9 @@ change or add to the list above.
     correction buttons and the list in the payments tab, and the storing of the list's payment
     details. Kept: `paymentDayOfRow` goes through `linkedByRow`, so the ten-day check counts the
     same money once and leaves cancelled purchases out, as the statement does.
-42. **The two columns of migration 0030 stay in the database, unused**, so schema and database
-    agree. Dropping them is a separate migration that removes data on production (whatever
-    was written between the deploy of pull request #158 and this change), so it waits for the
-    owner's yes.
+42. **The two columns of migration 0030 are dropped** (migration
+    `0033_drop_tax_payment_pay_later_detail`, with the owner's yes of 2026-10-17). What was
+    written into them between the deploy of pull request #158 and this change is not needed.
 
 ## Tests
 
@@ -633,4 +632,4 @@ Where the time went, and what was done:
 - Pull request #158 (the collection-day rule) merged on 2026-10-16 and was taken back the next
   day by decision 40. The owner action named in "Reality (2026-10-16)" (import the list again)
   is not needed: nothing reads the payment details any more.
-- Open: drop `source_detail` and `pay_method_override` (decision 42), on the owner's yes.
+- The two columns of migration 0030 are dropped by migration 0033 (decision 42).

@@ -716,8 +716,6 @@ describe('the day a pay-later purchase counts on', () => {
     await linkPayment(db, ctx, { paymentId: purchase.id, rowId }, rowCheck(ctx));
     expect((await loadStatement(db, ws.workspaceId, 2025)).items.find((i) => i.rowId === rowId)).toMatchObject({ date: '2025-12-10', amountCents: 4_000 });
     expect((await loadStatement(db, ws.workspaceId, 2026)).items.find((i) => i.rowId === rowId)).toBeUndefined();
-    // Nothing is stored about how it was paid any more.
-    expect(await db.taxPayment.findUniqueOrThrow({ where: { id: purchase.id } })).toMatchObject({ sourceDetail: null, payMethodOverride: null });
   });
 });
 

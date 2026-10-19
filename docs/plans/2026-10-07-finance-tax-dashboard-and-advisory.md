@@ -2169,3 +2169,13 @@ key frame built at run time).
   transaction day, else value day).
 - **The account holder's name is never kept**: an account of a session is labelled by its
   product ("Girokonto") and its masked number. Enable Banking's `name` field is the holder's name.
+- **Second review, same day:** a gap is measured from the last day a fetch reached
+  (`fetched_through`), never from the last booking, so a quiet account shows none; a booking
+  without any day is counted as a notice of its own; a reworded booking is matched only
+  against imports made since the bank account now read was bound (`bound_at`), so a switch to
+  another account of the session never rewrites the first account's payments, and against
+  every identity of the account (a file import's too); notices change under a row lock, so a
+  fetch and a clear never undo each other; a run stops fetching pages after 130 seconds and
+  starts no connection after 90; a switched-off return goes to the app's own address without
+  a login round trip; the guard's time is a 64-bit integer and a signed time must be whole
+  seconds; the day of a movement is read by the import's own reader (`toIsoDay`).

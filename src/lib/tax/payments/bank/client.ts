@@ -39,6 +39,8 @@ export type BankErrorKind =
   | 'credentials'
   /** No answer at all (network, time-out) or an answer that is no JSON. */
   | 'network'
+  /** The caller's time ran out between two pages: not a failure, the same days are fetched next time. */
+  | 'deadline'
   | 'unknown';
 
 export class BankApiError extends Error {
@@ -136,7 +138,7 @@ export interface BankApi {
   createSession(code: string): Promise<BankSession>;
   deleteSession(sessionId: string): Promise<void>;
   /** Every booked and pending transaction of the account between the two days (both included), all pages. Raw, as the interface gives them. */
-  fetchTransactions(accountUid: string, dateFrom: string, dateTo: string, psu?: PsuPresence): Promise<unknown[]>;
+  fetchTransactions(accountUid: string, dateFrom: string, dateTo: string, psu?: PsuPresence, options?: { deadline?: number }): Promise<unknown[]>;
 }
 
 /** "•••• 1234" from an account number; never more than its last four characters. */
@@ -237,11 +239,13 @@ export function createBankClient(credentials: BankCredentials, options: { fetch?
     async deleteSession(sessionId) {
       await call('DELETE', `/sessions/${encodeURIComponent(sessionId)}`);
     },
-    async fetchTransactions(accountUid, dateFrom, dateTo, psu) {
+    async fetchTransactions(accountUid, dateFrom, dateTo, psu, options) {
       const presence: Record<string, string> = psu ? { 'Psu-Ip-Address': psu.ipAddress.slice(0, 64), 'Psu-User-Agent': psu.userAgent.slice(0, 256) } : {};
       const out: unknown[] = [];
       let continuation: string | null = null;
       for (let page = 0; page < MAX_PAGES; page++) {
+        // A long run stops between two pages instead of being cut off by the scheduler in the middle of one.
+        if (options?.deadline !== undefined && Date.now() >= options.deadline) throw new BankApiError('deadline', 'RUN_TIME_EXHAUSTED');
         const query = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
         if (continuation) query.set('continuation_key', continuation);
         const data = (await call('GET', `/accounts/${encodeURIComponent(accountUid)}/transactions?${query}`, undefined, presence)) as { transactions?: unknown; continuation_key?: unknown };

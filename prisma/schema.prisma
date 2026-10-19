@@ -1085,6 +1085,12 @@ model TaxBankConnection {
   // with a movement the bank described too incompletely to import). See
   // `BankNotices` in src/lib/tax/payments/bank/service.ts.
   notices             Json?
+  // The last day a successful fetch reached, whatever was booked: a gap is
+  // only what lies between it and the 89 days the bank still gives.
+  fetchedThrough      String?   @map("fetched_through")
+  // When the bank account now read was bound: only imports from then on are
+  // this account's own when a reworded booking is matched.
+  boundAt             DateTime? @map("bound_at")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
@@ -1101,7 +1107,7 @@ model TaxBankConnection {
 // runs once also across a restart and with more than one app instance.
 model TaxBankSyncGuard {
   id     String @id
-  lastTs Int    @map("last_ts")
+  lastTs BigInt @map("last_ts")
 
   @@map("tax_bank_sync_guard")
 }

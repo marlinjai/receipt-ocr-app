@@ -8,6 +8,9 @@ import type { StatementView } from '@/lib/tax/service';
 import type { Result } from './actions';
 import type { BankView, Institution } from './bank-actions';
 
+/** One notice of a connection to clear. */
+export type BankNotice = { kind: 'gap'; from: string; to: string } | { kind: 'skipped'; day: string } | { kind: 'undated' };
+
 /** The server actions the bank controls use; injected so the screen can be tested without a server. */
 export interface BankActions {
   listBankInstitutions: () => Promise<Result<Institution[]>>;
@@ -15,7 +18,7 @@ export interface BankActions {
   chooseBankConnectionAccount: (connectionId: string, uid: string) => Promise<Result<BankView>>;
   syncBankNow: (year: number, connectionId: string) => Promise<Result<{ bank: BankView; view: StatementView; outcome: { status: string; added: number; error?: string } }>>;
   disconnectBank: (connectionId: string) => Promise<Result<{ bank: BankView; closedAtBank: boolean }>>;
-  clearBankConnectionNotice: (connectionId: string, notice: { kind: 'gap'; from: string; to: string } | { kind: 'skipped'; day: string }) => Promise<Result<BankView>>;
+  clearBankConnectionNotice: (connectionId: string, notice: BankNotice) => Promise<Result<BankView>>;
 }
 
 const dayOf = (iso: string | null) => (iso ? formatDay(iso.slice(0, 10)) : '');
@@ -72,7 +75,7 @@ export function useBankFeed(initial: BankView, year: number, actions: BankAction
         if (o.status === 'not_active') return 'Diese Verbindung ist nicht aktiv.';
         return null; // expired, revoked, rate limited, failed: the status line says it
       }),
-    clearNotice: (accountId: string, connectionId: string, notice: { kind: 'gap'; from: string; to: string } | { kind: 'skipped'; day: string }) =>
+    clearNotice: (accountId: string, connectionId: string, notice: BankNotice) =>
       act(accountId, () => actions.clearBankConnectionNotice(connectionId, notice), (v) => {
         setBank(v);
         return 'Hinweis erledigt.';
@@ -216,6 +219,23 @@ export function BankAccountStatus({
             ))}
           </ul>
         </div>
+      )}
+      {connection && connection.notices.undated > 0 && (
+        <p className="mt-1 flex flex-wrap items-baseline gap-2" style={{ color: TONE_COLOR.warn }}>
+          <span>
+            {connection.notices.undated === 1 ? 'Eine Buchung' : `${connection.notices.undated} Buchungen`} ohne lesbares Datum hat die Bank geliefert;
+            sie {connection.notices.undated === 1 ? 'wurde' : 'wurden'} ausgelassen. Bitte die letzten Tage mit dem Kontoauszug oder dem Datei-Import prüfen.
+          </span>
+          <button
+            type="button"
+            className="ui-btn ui-btn-sm"
+            disabled={busy}
+            aria-label="Erledigt: Buchungen ohne Datum"
+            onClick={() => feed.clearNotice(account.id, connection.id, { kind: 'undated' })}
+          >
+            Erledigt
+          </button>
+        </p>
       )}
       {connection?.status === 'active' && connection.renewSoon && connection.validUntil && (
         <p className="mt-1" style={{ color: TONE_COLOR.warn }}>

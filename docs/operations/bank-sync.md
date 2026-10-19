@@ -88,17 +88,25 @@ A booking the bank rewords between two fetches (another text, a fuller name) is 
 as the same payment when it is alone on its day with its amount: the stored one takes the
 new words and keeps its links. A booking dated after today (by its booking day, else its
 transaction day) waits for its day. A fetch that brings nothing new leaves no import behind.
-After about 200 seconds a run starts no further connection; those are reported as
-`deferred` and fetched by the next run.
+A run starts no further connection after 90 seconds and fetches no further page after
+130 seconds (an import already running takes at most two minutes), so it ends inside the
+scheduler's 280 seconds; what is left is reported as `deferred` and fetched by the next run.
 
 **Notices the person clears himself**, shown on the account in the payments tab, each with
 "Erledigt":
 
-- a **gap**: days no fetch can reach any more, because a renewal came later than the 89
-  days the bank looks back. Fill them with a file import.
+- a **gap**: days no fetch can reach any more, because the last successful fetch lies longer
+  back than the 89 days the bank gives (a consent renewed late). A quiet account whose last
+  booking is old has none: the gap is measured from the last day a fetch reached. Fill a gap
+  with a file import.
 - a **skipped day**: the bank described a booking too incompletely to import (at most 20 per
   fetch; more fail the fetch). The next fetches start before that day, so the booking arrives
   when the bank completes it; check the day against a statement and clear the notice.
+- **bookings without a day**: counted, because they cannot be kept as a day. Check the last
+  days against a statement and clear the count.
+
+A fetch and a person clearing a notice at the same moment never undo each other: both
+change the notices under a lock on the connection's row.
 
 After a fetch that added payments,
 the spending checks (missing receipts, budgets) run for that company; their failure is only

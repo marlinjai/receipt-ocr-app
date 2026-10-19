@@ -50,7 +50,7 @@ export async function receiveBankSync(input: {
     ts = undefined;
   }
   const nowSeconds = Math.floor((input.now ?? (() => new Date()))().getTime() / 1000);
-  if (typeof ts !== 'number' || !Number.isFinite(ts) || Math.abs(nowSeconds - ts) > SYNC_SIGNATURE_WINDOW_SECONDS) {
+  if (typeof ts !== 'number' || !Number.isInteger(ts) || Math.abs(nowSeconds - ts) > SYNC_SIGNATURE_WINDOW_SECONDS) {
     return { status: 401, body: { error: 'Stale or missing timestamp' } };
   }
   if (!(await input.claim(ts))) {

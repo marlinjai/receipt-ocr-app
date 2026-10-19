@@ -24,6 +24,8 @@ CREATE TABLE "tax_bank_connections" (
     "last_error" TEXT,
     "last_error_at" TIMESTAMP(3),
     "notices" JSONB,
+    "fetched_through" TEXT,
+    "bound_at" TIMESTAMP(3),
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
@@ -44,7 +46,7 @@ ALTER TABLE "tax_bank_connections" ADD CONSTRAINT "tax_bank_connections_account_
 -- after a restart or with several app instances.
 CREATE TABLE "tax_bank_sync_guard" (
     "id" TEXT NOT NULL,
-    "last_ts" INTEGER NOT NULL,
+    "last_ts" BIGINT NOT NULL,
 
     CONSTRAINT "tax_bank_sync_guard_pkey" PRIMARY KEY ("id")
 );

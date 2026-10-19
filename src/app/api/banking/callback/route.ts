@@ -20,14 +20,16 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(req: NextRequest) {
   const deps = serverBankDeps();
-  // Behind the proxy the request's own origin can be the container's; the configured return address is the public one.
-  const origin = deps ? new URL(deps.redirectUrl).origin : req.nextUrl.origin;
+  // Never the request's own origin: behind the proxy it is the container's, and its Host header is the caller's to set.
+  const origin = deps ? new URL(deps.redirectUrl).origin : auth.appUrl();
   const back = (bank: string) => {
     const url = new URL('/app/finance', origin);
     url.searchParams.set('reiter', 'zahlungen');
     url.searchParams.set('bank', bank);
     return NextResponse.redirect(url, 303);
   };
+  // Switched off: nothing to take, and no login round trip on an address the configuration does not name.
+  if (!deps) return back('fehler:feature_off');
   let workspaceId: string;
   try {
     const session = await auth.requireAction('receipts.row.write');
@@ -41,7 +43,6 @@ export async function GET(req: NextRequest) {
     }
     return back('fehler:forbidden');
   }
-  if (!deps) return back('fehler:feature_off');
   const params = req.nextUrl.searchParams;
   try {
     const { outcome } = await completeConsent(prisma, workspaceId, deps, { state: params.get('state'), code: params.get('code'), error: params.get('error') });

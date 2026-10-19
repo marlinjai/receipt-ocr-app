@@ -18,11 +18,13 @@ vi.mock('@/lib/auth', () => ({
   auth: {
     requireAction: (...a: unknown[]) => requireAction(...a),
     loginUrl: (returnTo: string) => `https://auth.example.test/login?return_to=${encodeURIComponent(returnTo)}`,
+    appUrl: () => 'https://receipts.example.test',
   },
 }));
 vi.mock('@/lib/auth-workspace', () => ({ sessionWorkspaceId: (s: { activeWorkspace: { id: string } }) => s.activeWorkspace.id }));
 vi.mock('@/lib/prisma', () => ({ prisma: { marker: 'prisma' } }));
-vi.mock('@/lib/tax/payments/bank/server', () => ({ serverBankDeps: () => ({ redirectUrl: 'https://receipts.example.test/api/banking/callback' }) }));
+let deps: { redirectUrl: string } | null = { redirectUrl: 'https://receipts.example.test/api/banking/callback' };
+vi.mock('@/lib/tax/payments/bank/server', () => ({ serverBankDeps: () => deps }));
 vi.mock('@/lib/tax/payments/bank/service', () => ({
   completeConsent: (...a: unknown[]) => completeConsent(...a),
   BankServiceError: class BankServiceError extends Error {
@@ -39,6 +41,7 @@ const request = (query: string) => {
 };
 
 beforeEach(() => {
+  deps = { redirectUrl: 'https://receipts.example.test/api/banking/callback' };
   requireAction.mockReset();
   completeConsent.mockReset();
 });
@@ -68,5 +71,13 @@ describe('GET /api/banking/callback', () => {
     const res = await GET(request('code=c-1&state=s-1'));
     expect(res.headers.get('location')).toContain('bank=fehler%3Aforbidden');
     expect(completeConsent).not.toHaveBeenCalled();
+  });
+
+  it('switched off: back to the payments tab on the app address, without a login round trip', async () => {
+    deps = null;
+    requireAction.mockRejectedValue(Object.assign(new Error('unauthorized'), { status: 401 }));
+    const res = await GET(request('code=c-1&state=s-1'));
+    expect(res.headers.get('location')).toBe('https://receipts.example.test/app/finance?reiter=zahlungen&bank=fehler%3Afeature_off');
+    expect(requireAction).not.toHaveBeenCalled();
   });
 });

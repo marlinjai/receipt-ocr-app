@@ -29,6 +29,8 @@ export interface ErasureCounts {
   sharedContacts: number;
   /** Why the printed copies were removed or held. A code, never a name. */
   exportCoverage: ExportCoverageReason;
+  /** Live bank connections ended (session closed at the bank where it could be, connection removed). */
+  bankConnections?: number;
 }
 
 /**
@@ -251,7 +253,7 @@ export async function receiveErasureDelivery(input: {
   try {
     const counts = await input.erase(tenantId, workspaceIds);
     log(
-      `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld} (export coverage: ${counts.exportCoverage}), ${counts.sharedContacts} contacts`,
+      `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld} (export coverage: ${counts.exportCoverage}), ${counts.sharedContacts} contacts, ended ${counts.bankConnections ?? 0} bank connections`,
     );
     return { status: 200, body: { ok: true, erased: counts } };
   } catch (e) {

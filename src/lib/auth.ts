@@ -1,4 +1,5 @@
 import { createAuthBrainNextjs } from '@marlinjai/auth-brain-nextjs';
+import { PUBLIC_PATHS } from './public-paths';
 
 /**
  * The single auth-brain integration config for the receipts app.
@@ -29,27 +30,8 @@ export const auth = createAuthBrainNextjs({
     'receipts.fx.recompute': 'workspace.member',
     'receipts.import': 'workspace.member',
   },
-  // Public: the liveness probe, and the static files a browser fetches WITHOUT
-  // the session cookie when it installs the app or its service worker (the
-  // manifest and its icons, the worker script, the offline page). They carry no
-  // data. Behind the login they answered with a redirect, which made the app
-  // impossible to install to the home screen.
-  // /api/internal/erasure is auth-brain's signed erasure webhook: a machine caller
-  // that authenticates by HMAC over the raw body (see src/lib/erasure.ts). The
-  // retention purge and the workspace move (src/lib/workspace-move.ts) are machine
-  // callers of the same kind, each with its own secret, each refusing without it,
-  // and so is the daily bank fetch (/api/internal/bank-sync, BANK_SYNC_SECRET).
-  publicPaths: [
-    '/api/health',
-    '/api/internal/erasure',
-    '/api/internal/retention/purge',
-    '/api/internal/bank-sync',
-    '/api/internal/workspace-move',
-    '/manifest.json',
-    '/icons/*',
-    '/sw.js',
-    '/offline.html',
-  ],
+  // What is public, and why each path is: src/lib/public-paths.ts.
+  publicPaths: [...PUBLIC_PATHS],
   publicUrl: 'https://receipts.lumitra.co',
 });
 

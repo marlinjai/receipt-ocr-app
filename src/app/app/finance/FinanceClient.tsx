@@ -48,7 +48,7 @@ import {
 import LinesForm, { type LineDraft } from './LinesForm';
 import PaymentsTab from './PaymentsTab';
 import { useBankFeed, type BankActions } from './BankConnection';
-import { chooseBankConnectionAccount, disconnectBank, listBankInstitutions, startBankConsent, syncBankNow, type BankView } from './bank-actions';
+import { chooseBankConnectionAccount, clearBankConnectionNotice, disconnectBank, listBankInstitutions, startBankConsent, syncBankNow, type BankView } from './bank-actions';
 import { returnMessage } from '@/lib/tax/payments/bank/messages';
 import YearBoundaryTab from './YearBoundaryTab';
 import type { ImportResult } from '@/lib/tax/payments/service';
@@ -102,7 +102,7 @@ export function openQueue(view: StatementView): StatementItem[] {
   return view.items.filter((i) => i.checks.some((c) => c.blocking && !WORKSPACE_CHECKS.includes(c.kind)));
 }
 
-const BANK_ACTIONS: BankActions = { listBankInstitutions, startBankConsent, chooseBankConnectionAccount, syncBankNow, disconnectBank };
+const BANK_ACTIONS: BankActions = { listBankInstitutions, startBankConsent, chooseBankConnectionAccount, syncBankNow, disconnectBank, clearBankConnectionNotice };
 const NO_BANK: BankView = { enabled: false, connections: [] };
 
 export default function FinanceClient({

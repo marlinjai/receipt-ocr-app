@@ -24,6 +24,7 @@ const connection = (o: Partial<BankConnectionView> = {}): BankConnectionView => 
   lastBookedThrough: '2026-10-15',
   lastError: null,
   lastErrorAt: null,
+  notices: { gaps: [], skipped: [] },
   candidates: [],
   accountUid: 'uid-1',
   boundMask: null,
@@ -38,6 +39,7 @@ function actions(o: Partial<BankActions> = {}): BankActions {
     chooseBankConnectionAccount: vi.fn(async () => ({ ok: true as const, value: { enabled: true, connections: [] } })),
     syncBankNow: vi.fn(async () => ({ ok: true as const, value: { bank: { enabled: true, connections: [connection()] }, view: { year: 2026 } as StatementView, outcome: { status: 'synced', added: 3 } } })),
     disconnectBank: vi.fn(async () => ({ ok: true as const, value: { bank: { enabled: true, connections: [] }, closedAtBank: true } })),
+    clearBankConnectionNotice: vi.fn(async () => ({ ok: true as const, value: { enabled: true, connections: [connection()] } })),
     ...o,
   };
 }
@@ -150,5 +152,30 @@ describe('BankAccountStatus', () => {
     render(<Harness bank={{ enabled: false, connections: [] }} acts={actions()} />);
     expect(screen.getByText('Datei-Import')).toBeTruthy();
     expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('shows a gap and skipped days until the person clears each of them', async () => {
+    // The server answers each clear with what is left.
+    const acts = actions({
+      clearBankConnectionNotice: vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true as const, value: { enabled: true, connections: [connection({ notices: { gaps: [], skipped: ['2026-10-01'] } })] } })
+        .mockResolvedValueOnce({ ok: true as const, value: { enabled: true, connections: [connection()] } }),
+    });
+    const withNotices = connection({ notices: { gaps: [{ from: '2026-05-02', to: '2026-07-18' }], skipped: ['2026-10-01'] } });
+    render(<Harness bank={{ enabled: true, connections: [withNotices] }} acts={acts} />);
+    expect(screen.getByText(/vom 02\.05\.2026 bis 18\.07\.2026 kann die Bank nicht mehr liefern/)).toBeTruthy();
+    expect(screen.getByText(/beschreibt die Bank eine Buchung zu unvollständig/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Erledigt: Lücke vom 02.05.2026 bis 18.07.2026' }));
+    expect(acts.clearBankConnectionNotice).toHaveBeenCalledWith('con-1', { kind: 'gap', from: '2026-05-02', to: '2026-07-18' });
+    await userEvent.click(await screen.findByRole('button', { name: 'Erledigt: ausgelassene Buchung vom 01.10.2026' }));
+    expect(acts.clearBankConnectionNotice).toHaveBeenLastCalledWith('con-1', { kind: 'skipped', day: '2026-10-01' });
+    expect(await screen.findByText('Hinweis erledigt.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Erledigt/ })).toBeNull();
+  });
+
+  it('shows no notice when there is none', () => {
+    render(<Harness bank={{ enabled: true, connections: [connection()] }} acts={actions()} />);
+    expect(screen.queryByRole('button', { name: /^Erledigt/ })).toBeNull();
   });
 });

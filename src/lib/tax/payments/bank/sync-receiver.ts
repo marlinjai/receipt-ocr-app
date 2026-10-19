@@ -28,11 +28,12 @@ export async function receiveBankSync(input: {
   log?: (line: string) => void;
   now?: () => Date;
   /**
-   * The time of the last request accepted, and a way to store a new one. A
-   * request whose time is not later than it is a replay and is refused, also
-   * inside the five minutes.
+   * Claims a request's time: true when it is later than every request accepted
+   * before, and from then on it is the last one. The claim is one atomic write
+   * in the database, so a replay is refused also inside the five minutes, after
+   * a restart and with several app instances.
    */
-  lastAccepted?: { get: () => number | null; set: (ts: number) => void };
+  claim: (ts: number) => Promise<boolean>;
 }): Promise<SyncDelivery> {
   const log = input.log ?? ((line: string) => console.log(line));
   if (!input.secret) {
@@ -52,11 +53,9 @@ export async function receiveBankSync(input: {
   if (typeof ts !== 'number' || !Number.isFinite(ts) || Math.abs(nowSeconds - ts) > SYNC_SIGNATURE_WINDOW_SECONDS) {
     return { status: 401, body: { error: 'Stale or missing timestamp' } };
   }
-  const last = input.lastAccepted?.get() ?? null;
-  if (last !== null && ts <= last) {
+  if (!(await input.claim(ts))) {
     return { status: 409, body: { error: 'Already run for this request' } };
   }
-  input.lastAccepted?.set(ts);
   if (!input.enabled) {
     log('[bank] bank feed is switched off, nothing synced');
     return { status: 503, body: { error: 'Bank feed is off' } };
@@ -65,8 +64,9 @@ export async function receiveBankSync(input: {
     const results = await input.sync();
     const added = results.reduce((sum, r) => sum + r.added, 0);
     const failed = results.filter((r) => r.status === 'failed').length;
-    log(`[bank] synced ${results.length} connections, ${added} new payments, ${failed} failed`);
-    return { status: 200, body: { ok: true, connections: results.length, added, failed, results } };
+    const deferred = results.filter((r) => r.status === 'deferred').length;
+    log(`[bank] synced ${results.length} connections, ${added} new payments, ${failed} failed, ${deferred} left for the next run`);
+    return { status: 200, body: { ok: true, connections: results.length, added, failed, deferred, results } };
   } catch (e) {
     log(`[bank] sync run failed (${(e as Error)?.name ?? 'error'})`);
     return { status: 502, body: { error: 'Sync failed; will retry' } };

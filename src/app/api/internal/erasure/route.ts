@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { eraseCompanyContacts, receiveErasureDelivery } from '@/lib/erasure';
 import { ERASURE_SIGNATURE_HEADER } from '@/lib/erasure-signature';
+import { serverBankDeps } from '@/lib/tax/payments/bank/server';
+import { endCompanyBankConnections } from '@/lib/tax/payments/bank/service';
 
 /**
  * Receiver for auth-brain's signed `tenant.erased` webhook. This is a machine
@@ -17,7 +19,11 @@ export async function POST(req: NextRequest) {
     rawBody,
     signature: req.headers.get(ERASURE_SIGNATURE_HEADER),
     secret: process.env.RECEIPTS_ERASURE_WEBHOOK_SECRET,
-    erase: (tenantId, workspaceIds) => eraseCompanyContacts(prisma, tenantId, workspaceIds),
+    // An erased company's bank feed ends with it: otherwise the daily run would keep reading its account until the consent runs out.
+    erase: async (tenantId, workspaceIds) => {
+      const counts = await eraseCompanyContacts(prisma, tenantId, workspaceIds);
+      return { ...counts, bankConnections: await endCompanyBankConnections(prisma, serverBankDeps(), tenantId, workspaceIds) };
+    },
   });
   return NextResponse.json(result.body, { status: result.status });
 }

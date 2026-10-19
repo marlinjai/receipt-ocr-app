@@ -13,6 +13,7 @@ import { serverBankDeps } from '@/lib/tax/payments/bank/server';
 import {
   BankServiceError,
   chooseBankAccount,
+  clearBankNotice,
   disconnect,
   listInstitutions,
   loadBankConnections,
@@ -148,6 +149,17 @@ export async function syncBankNow(year: number, connectionId: string): Promise<R
     }
     const safe = Number.isInteger(year) ? year : new Date().getFullYear();
     return { ok: true, value: { bank: await bankView(ctx.workspaceId), view: await loadStatement(prisma, ctx.workspaceId, safe), outcome } };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** The person has looked at a notice of a connection (a gap filled, a day checked): it goes. */
+export async function clearBankConnectionNotice(connectionId: string, notice: unknown): Promise<Result<BankView>> {
+  try {
+    const ctx = await writeContext();
+    await clearBankNotice(prisma, ctx, String(connectionId), notice);
+    return { ok: true, value: await bankView(ctx.workspaceId) };
   } catch (e) {
     return failure(e);
   }

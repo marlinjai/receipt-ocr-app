@@ -1,5 +1,5 @@
 -- The live bank connection of an account (finance plan, slice 3, Enable Banking).
--- Additive: one new table, nothing existing is touched. Movements still go into
+-- Additive: two new tables, nothing existing is touched. Movements still go into
 -- tax_payments through the normal import; this table holds only the connection.
 CREATE TABLE "tax_bank_connections" (
     "id" TEXT NOT NULL,
@@ -23,6 +23,7 @@ CREATE TABLE "tax_bank_connections" (
     "last_booked_through" TEXT,
     "last_error" TEXT,
     "last_error_at" TIMESTAMP(3),
+    "notices" JSONB,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
@@ -38,3 +39,12 @@ CREATE INDEX "tax_bank_connections_state_hash_idx" ON "tax_bank_connections"("st
 CREATE INDEX "tax_bank_connections_status_idx" ON "tax_bank_connections"("status");
 
 ALTER TABLE "tax_bank_connections" ADD CONSTRAINT "tax_bank_connections_account_id_fkey" FOREIGN KEY ("account_id") REFERENCES "tax_accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- The last accepted call of the daily fetch, so a signed call runs once even
+-- after a restart or with several app instances.
+CREATE TABLE "tax_bank_sync_guard" (
+    "id" TEXT NOT NULL,
+    "last_ts" INTEGER NOT NULL,
+
+    CONSTRAINT "tax_bank_sync_guard_pkey" PRIMARY KEY ("id")
+);

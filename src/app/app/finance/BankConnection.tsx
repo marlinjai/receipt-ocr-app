@@ -15,6 +15,7 @@ export interface BankActions {
   chooseBankConnectionAccount: (connectionId: string, uid: string) => Promise<Result<BankView>>;
   syncBankNow: (year: number, connectionId: string) => Promise<Result<{ bank: BankView; view: StatementView; outcome: { status: string; added: number; error?: string } }>>;
   disconnectBank: (connectionId: string) => Promise<Result<{ bank: BankView; closedAtBank: boolean }>>;
+  clearBankConnectionNotice: (connectionId: string, notice: { kind: 'gap'; from: string; to: string } | { kind: 'skipped'; day: string }) => Promise<Result<BankView>>;
 }
 
 const dayOf = (iso: string | null) => (iso ? formatDay(iso.slice(0, 10)) : '');
@@ -70,6 +71,11 @@ export function useBankFeed(initial: BankView, year: number, actions: BankAction
         if (o.status === 'nothing_new') return 'Abgeholt: nichts Neues.';
         if (o.status === 'not_active') return 'Diese Verbindung ist nicht aktiv.';
         return null; // expired, revoked, rate limited, failed: the status line says it
+      }),
+    clearNotice: (accountId: string, connectionId: string, notice: { kind: 'gap'; from: string; to: string } | { kind: 'skipped'; day: string }) =>
+      act(accountId, () => actions.clearBankConnectionNotice(connectionId, notice), (v) => {
+        setBank(v);
+        return 'Hinweis erledigt.';
       }),
     disconnect: (accountId: string, connectionId: string) =>
       act(accountId, () => actions.disconnectBank(connectionId), (v) => {
@@ -170,6 +176,47 @@ export function BankAccountStatus({
         {line.text}
         {connection?.status === 'active' && connection.lastError && ` · letzter Abruf: ${bankMessage(connection.lastError)}`}
       </p>
+      {connection && connection.notices.gaps.map((gap) => (
+        <p key={`gap-${gap.from}`} className="mt-1 flex flex-wrap items-baseline gap-2" style={{ color: TONE_COLOR.warn }}>
+          <span>
+            Die Tage vom {formatDay(gap.from)} bis {formatDay(gap.to)} kann die Bank nicht mehr liefern (die Freigabe kam später als 90 Tage).
+            Bitte mit dem Datei-Import nachholen.
+          </span>
+          <button
+            type="button"
+            className="ui-btn ui-btn-sm"
+            disabled={busy}
+            aria-label={`Erledigt: Lücke vom ${formatDay(gap.from)} bis ${formatDay(gap.to)}`}
+            onClick={() => feed.clearNotice(account.id, connection.id, { kind: 'gap', from: gap.from, to: gap.to })}
+          >
+            Erledigt
+          </button>
+        </p>
+      ))}
+      {connection && connection.notices.skipped.length > 0 && (
+        <div className="mt-1" style={{ color: TONE_COLOR.warn }}>
+          <p>
+            An diesen Tagen beschreibt die Bank eine Buchung zu unvollständig, sie wurde ausgelassen. Der nächste Abruf versucht es
+            erneut; sonst bitte mit dem Kontoauszug oder dem Datei-Import prüfen.
+          </p>
+          <ul className="mt-1 flex flex-wrap gap-2">
+            {connection.notices.skipped.map((day) => (
+              <li key={day} className="flex items-baseline gap-1">
+                {formatDay(day)}
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-sm"
+                  disabled={busy}
+                  aria-label={`Erledigt: ausgelassene Buchung vom ${formatDay(day)}`}
+                  onClick={() => feed.clearNotice(account.id, connection.id, { kind: 'skipped', day })}
+                >
+                  Erledigt
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {connection?.status === 'active' && connection.renewSoon && connection.validUntil && (
         <p className="mt-1" style={{ color: TONE_COLOR.warn }}>
           Die Freigabe läuft am {dayOf(connection.validUntil)} ab. Bitte rechtzeitig erneuern.

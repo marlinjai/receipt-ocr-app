@@ -61,7 +61,8 @@ in `src/lib/tax/payments/bank/config.ts` lists the missing names (names only).
    Never print the secret or the signature. Expect 200 and per-connection counts; a second
    call right after adds nothing. Check that a missing signature answers 401, and that the
    same signed body sent again answers 409 (and 401 after five minutes): a signed request
-   runs once.
+   runs once. The time of the last accepted call is kept in the database
+   (`tax_bank_sync_guard`), so this also holds after a restart and with several instances.
 6. **Scheduled task** (Coolify, on the receipts application, once a day, for example 06:30
    Europe/Berlin), run inside the container where `BANK_SYNC_SECRET` is in the environment:
 
@@ -79,11 +80,27 @@ the person's own "Jetzt abholen" stay well inside that.
 ## What a run does
 
 `syncAllConnections` in `src/lib/tax/payments/bank/service.ts`: every active connection of
-every company, one after the other. Per connection: the booked movements from five days
+every company, one after the other. Per connection: the booked movements from twelve days
 before the last booked day it saw (the first time: 89 days back) up to today, all pages,
 handed to the normal payment import as the bank interface's list. A day belongs to the
 source that brought it first, so an account also fed from files keeps every movement once.
-A fetch that brings nothing new leaves no import behind. After a fetch that added payments,
+A booking the bank rewords between two fetches (another text, a fuller name) is recognized
+as the same payment when it is alone on its day with its amount: the stored one takes the
+new words and keeps its links. A booking dated after today (by its booking day, else its
+transaction day) waits for its day. A fetch that brings nothing new leaves no import behind.
+After about 200 seconds a run starts no further connection; those are reported as
+`deferred` and fetched by the next run.
+
+**Notices the person clears himself**, shown on the account in the payments tab, each with
+"Erledigt":
+
+- a **gap**: days no fetch can reach any more, because a renewal came later than the 89
+  days the bank looks back. Fill them with a file import.
+- a **skipped day**: the bank described a booking too incompletely to import (at most 20 per
+  fetch; more fail the fetch). The next fetches start before that day, so the booking arrives
+  when the bank completes it; check the day against a statement and clear the notice.
+
+After a fetch that added payments,
 the spending checks (missing receipts, budgets) run for that company; their failure is only
 logged.
 

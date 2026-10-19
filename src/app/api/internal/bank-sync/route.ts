@@ -5,7 +5,7 @@ import { runSpendingChecks } from '@/lib/spending/checks';
 import { berlinToday } from '@/lib/spending/period';
 import { bankSyncSecret } from '@/lib/tax/payments/bank/config';
 import { serverBankDeps } from '@/lib/tax/payments/bank/server';
-import { syncAllConnections } from '@/lib/tax/payments/bank/service';
+import { claimDailySync, syncAllConnections } from '@/lib/tax/payments/bank/service';
 import { receiveBankSync } from '@/lib/tax/payments/bank/sync-receiver';
 
 /**
@@ -15,9 +15,8 @@ import { receiveBankSync } from '@/lib/tax/payments/bank/sync-receiver';
  */
 export const dynamic = 'force-dynamic';
 
-// The app runs as one process: the time of the last accepted request, so a signed request is never run twice.
-let lastAcceptedTs: number | null = null;
 export const maxDuration = 300;
+
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -28,7 +27,7 @@ export async function POST(req: NextRequest) {
     signature: req.headers.get(ERASURE_SIGNATURE_HEADER),
     secret: bankSyncSecret(),
     enabled: deps !== null,
-    lastAccepted: { get: () => lastAcceptedTs, set: (ts) => (lastAcceptedTs = ts) },
+    claim: (ts) => claimDailySync(prisma, ts),
     sync: () => syncAllConnections(prisma, deps!, { today, afterNewPayments: (ctx) => runSpendingChecks(prisma, ctx, { today }) }),
   });
   return NextResponse.json(result.body, { status: result.status });

@@ -102,7 +102,8 @@ describe('createBankClient', () => {
           session_id: 'sess-1',
           access: { valid_until: '2027-04-14T08:00:00Z' },
           accounts: [
-            { uid: 'u1', account_id: { iban: 'DE00 1234 5678 9012 3456 78' }, name: 'Girokonto', currency: 'EUR' },
+            // `name` is the account holder's name: never kept.
+            { uid: 'u1', account_id: { iban: 'DE00 1234 5678 9012 3456 78' }, name: 'Erika Beispiel', product: 'Girokonto', currency: 'EUR' },
             { uid: 'u2', account_id: { other: { identification: '99887766' } }, product: 'Karte' },
             { account_id: { iban: 'DE00999' } },
           ],
@@ -117,6 +118,7 @@ describe('createBankClient', () => {
       { uid: 'u2', mask: '•••• 7766', name: 'Karte', currency: null },
     ]);
     expect(JSON.stringify(session)).not.toContain('1234 5678 9012');
+    expect(JSON.stringify(session)).not.toContain('Erika');
   });
 
   it('lists institutions with their consent length in seconds', async () => {

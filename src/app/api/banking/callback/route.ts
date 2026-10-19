@@ -14,6 +14,9 @@ export const dynamic = 'force-dynamic';
  * with write permission is required; the state must belong to a consent of the
  * session's ACTIVE company and be unexpired (see `completeConsent`). The answer
  * is always a redirect to the payments tab with a short outcome, never data.
+ * The route is a public path (src/lib/auth.ts) because it checks the session
+ * itself: a person whose session ran out at the bank is sent to the login and
+ * from there back here with the same code and state, which are still unused.
  */
 export async function GET(req: NextRequest) {
   const deps = serverBankDeps();
@@ -31,8 +34,10 @@ export async function GET(req: NextRequest) {
     workspaceId = sessionWorkspaceId(session);
   } catch (e) {
     if ((e as { status?: number })?.status === 401) {
-      // Signed out on the way: the consent cannot be taken; the person starts it again after signing in.
-      return back('fehler:signed_out');
+      // Signed out on the way: sign in, then come back here with the bank's answer untouched.
+      const again = new URL('/api/banking/callback', origin);
+      again.search = req.nextUrl.search;
+      return NextResponse.redirect(auth.loginUrl(again.toString()), 303);
     }
     return back('fehler:forbidden');
   }

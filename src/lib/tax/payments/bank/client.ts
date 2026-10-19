@@ -101,6 +101,11 @@ export interface SessionAccount {
   uid: string;
   /** The last four characters of the account number, like "•••• 1234"; null when the bank names none. */
   mask: string | null;
+  /**
+   * What kind of account it is, as the bank calls it ("Girokonto", "Kreditkarte"),
+   * from its product or details. Never the interface's `name` field: that is the
+   * account holder's name, a personal name the app has no use for.
+   */
   name: string;
   currency: string | null;
 }
@@ -144,7 +149,7 @@ export function maskAccountNumber(value: unknown): string | null {
 function sessionAccount(raw: unknown): SessionAccount | null {
   const a = (raw ?? {}) as { uid?: unknown; account_id?: { iban?: unknown; other?: { identification?: unknown } }; name?: unknown; details?: unknown; product?: unknown; currency?: unknown };
   if (typeof a.uid !== 'string' || !a.uid) return null;
-  const name = [a.name, a.details, a.product].find((x) => typeof x === 'string' && x.trim()) as string | undefined;
+  const name = [a.product, a.details].find((x) => typeof x === 'string' && x.trim()) as string | undefined;
   return {
     uid: a.uid,
     mask: maskAccountNumber(a.account_id?.iban) ?? maskAccountNumber(a.account_id?.other?.identification),

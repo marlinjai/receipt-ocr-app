@@ -2136,3 +2136,36 @@ a token, key, session id or account number. Its twelve findings are fixed in the
 a fetch racing a renewal no longer overwrites the reset start day, the replay window and the
 presence headers, two simultaneous starts, a stale choice on screen, wording, and the test
 key frame built at run time).
+
+### The live bank connection: taken over and reviewed again (2026-10-19), decided, say so if you disagree
+
+- **The application id is read from `ENABLE_BANKING_APPLICATION_ID`**, the name it has had in
+  Infisical since 2026-10-11, instead of a second copy under another name.
+- **The return address is `/api/banking/callback`**, the one address registered on the
+  application "Lumitra Receipts" (checked through `GET /application`: active, production,
+  account information only). The route moved there instead of registering a second address.
+- **The migration is `0034_tax_bank_connections`**, after the `0033` main applied first. It now
+  also holds the connection's `notices` and the table `tax_bank_sync_guard`; still additive.
+- **A session that runs out at the bank no longer ends in a bare refusal**: the callback is a
+  public path that checks the session itself and sends a signed-out person to the login and
+  back with the bank's answer untouched.
+- **Days that need a person's eye stay until he clears them** ("Erledigt" on the account): a
+  gap after a renewal later than the 89 days the bank looks back, and days with a booking the
+  bank described too incompletely. A day with such a booking keeps the next fetches reaching
+  back to it, so the booking arrives once the bank completes it.
+- **A booking the bank rewords is the same payment**: alone on its day with its amount, the
+  stored one takes the new identity and words and keeps its links. Two or more of one day and
+  amount are not guessed at. Chosen over the bank's entry reference as identity, because that
+  reference is not unique at every bank and would change the identity of payments already
+  imported from the bank interface's files.
+- **Each later fetch starts twelve days back** (was five), for bookings a bank dates back.
+- **An erased company's bank feed ends with it**: its sessions are closed at the bank and its
+  connections removed (the payments stay its records).
+- **The daily run's replay guard lives in the database**, one atomic write, so a signed call
+  runs once also after a restart and with several instances.
+- **A run starts no further connection after about 200 seconds**; the rest is `deferred` and
+  fetched by the next run.
+- **A future booking is recognized by the same day the import reads** (booking day, else
+  transaction day, else value day).
+- **The account holder's name is never kept**: an account of a session is labelled by its
+  product ("Girokonto") and its masked number. Enable Banking's `name` field is the holder's name.

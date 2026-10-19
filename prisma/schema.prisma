@@ -1079,6 +1079,12 @@ model TaxBankConnection {
   // A code, never bank data.
   lastError           String?   @map("last_error")
   lastErrorAt         DateTime? @map("last_error_at")
+  // What a person has to look at and clears himself, so the next clean fetch
+  // never wipes it: `gaps` (days no fetch can reach any more, after a renewal
+  // that came later than the 89 days the bank looks back) and `skipped` (days
+  // with a movement the bank described too incompletely to import). See
+  // `BankNotices` in src/lib/tax/payments/bank/service.ts.
+  notices             Json?
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
@@ -1088,4 +1094,14 @@ model TaxBankConnection {
   @@index([stateHash])
   @@index([status])
   @@map("tax_bank_connections")
+}
+
+// The time of the last accepted call of the daily bank fetch
+// (/api/internal/bank-sync), one row. Stored in the database so a signed call
+// runs once also across a restart and with more than one app instance.
+model TaxBankSyncGuard {
+  id     String @id
+  lastTs Int    @map("last_ts")
+
+  @@map("tax_bank_sync_guard")
 }

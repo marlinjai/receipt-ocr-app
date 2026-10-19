@@ -93,7 +93,7 @@ async function setup(label = 'Girokonto Beispielbank', shared?: FakeBank) {
   const accountId = await createAccount(db, ctx, { label, kind: 'bank' });
   const bank = shared ?? new FakeBank();
   let clock = NOW;
-  const deps: BankDeps = { api: bank, redirectUrl: 'https://receipts.example.test/api/bank/callback', now: () => clock };
+  const deps: BankDeps = { api: bank, redirectUrl: 'https://receipts.example.test/api/banking/callback', now: () => clock };
   return { ws, ctx, accountId, bank, deps, setClock: (d: Date) => (clock = d) };
 }
 
@@ -134,7 +134,7 @@ describe('bank connection: forward', () => {
     const start = s.bank.starts[0];
     // The consent lasts what the institution allows (90 days here), never more than 180.
     expect(start.validUntil.toISOString()).toBe(new Date(NOW.getTime() + 90 * 86_400_000).toISOString());
-    expect(start.redirectUrl).toBe('https://receipts.example.test/api/bank/callback');
+    expect(start.redirectUrl).toBe('https://receipts.example.test/api/banking/callback');
     let c = await connectionOf(s.accountId);
     expect(c.status).toBe('pending');
     expect(c.stateHash).not.toBe(start.state);

@@ -2047,7 +2047,7 @@ What exists:
   from, the consent's end, when it last fetched, the last booked day it saw, and the last
   error as a code. No second copy of bank data: movements go into `tax_payments` through
   the normal import.
-- **Consent flow** (`bank/service.ts`, route `/api/bank/callback`): the institution is
+- **Consent flow** (`bank/service.ts`, route `/api/banking/callback`): the institution is
   picked from the live list for Germany (search box; the one named in the account's label
   is preselected), the consent asks for the institution's maximum or 180 days, whichever is
   shorter. The callback needs a signed-in session with write permission; the state must

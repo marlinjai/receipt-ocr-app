@@ -26,7 +26,7 @@ production change; the steps are below.
 | `BANK_FEED_ENABLED` | everything | The switch: the feature is on only when this is exactly `true`. |
 | `ENABLE_BANKING_APPLICATION_ID` | everything | The application id from the Enable Banking control panel. It is the key id (`kid`) of every signed JSON Web Token (JWT). |
 | `ENABLE_BANKING_PRIVATE_KEY` | everything | The application's private key (Rivest-Shamir-Adleman, RSA) as text in the Privacy-Enhanced Mail (PEM) format. Line breaks may be written as `\n`. Never leaves the server. |
-| `ENABLE_BANKING_REDIRECT_URL` | everything | `https://receipts.lumitra.co/api/bank/callback`. Must be registered on the application exactly like this. |
+| `ENABLE_BANKING_REDIRECT_URL` | everything | `https://receipts.lumitra.co/api/banking/callback`, the address registered on the application "Lumitra Receipts" (checked 2026-10-19 through `GET /application`). Must stay exactly like this. |
 | `BANK_SYNC_SECRET` | the daily route only | The shared secret of the Hash-based Message Authentication Code (HMAC) the scheduled task signs with. |
 
 When the switch is on but a setting is missing, the feature stays off; `bankConfig()`

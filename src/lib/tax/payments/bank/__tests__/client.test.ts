@@ -7,7 +7,7 @@ import { BankApiError, createBankClient, errorFromResponse, maskAccountNumber, M
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
 const APP_ID = `app-${Math.random().toString(36).slice(2)}`;
-const credentials = { appId: APP_ID, privateKey: pem, redirectUrl: 'https://receipts.example.test/api/bank/callback' };
+const credentials = { appId: APP_ID, privateKey: pem, redirectUrl: 'https://receipts.example.test/api/banking/callback' };
 const NOW = new Date('2026-10-16T08:00:00Z');
 
 interface Call {

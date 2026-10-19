@@ -8,7 +8,7 @@ import { BankServiceError, completeConsent } from '@/lib/tax/payments/bank/servi
 export const dynamic = 'force-dynamic';
 
 /**
- * GET /api/bank/callback?code&state (or ?error&state)
+ * GET /api/banking/callback?code&state (or ?error&state)
  *
  * Where the bank sends the person back after the consent. A signed-in session
  * with write permission is required; the state must belong to a consent of the

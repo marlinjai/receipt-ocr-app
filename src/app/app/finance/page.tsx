@@ -38,7 +38,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
     );
   }
 
-  // The return from the bank (`/api/bank/callback`) opens the payments tab with its outcome.
+  // The return from the bank (`/api/banking/callback`) opens the payments tab with its outcome.
   return (
     <FinanceClient
       initial={data.value}

@@ -10,7 +10,7 @@ const full = () => ({
   BANK_FEED_ENABLED: 'true',
   ENABLE_BANKING_APPLICATION_ID: fake(),
   ENABLE_BANKING_PRIVATE_KEY: `${frame('BEGIN')}\\nabc\\n${frame('END')}`,
-  ENABLE_BANKING_REDIRECT_URL: 'https://receipts.example.test/api/bank/callback',
+  ENABLE_BANKING_REDIRECT_URL: 'https://receipts.example.test/api/banking/callback',
 });
 
 describe('bankConfig', () => {

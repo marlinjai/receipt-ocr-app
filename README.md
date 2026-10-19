@@ -140,7 +140,7 @@ An account in the payments tab can be read live through Enable Banking instead o
 files: "Live mit der Bank verbinden" on the account, consent at the bank, then the booked
 movements arrive with "Jetzt abholen" and once a day. The file import stays for every account
 (an institution the interface does not offer stays on it). Off until the server holds
-`BANK_FEED_ENABLED=true`, `ENABLE_BANKING_APP_ID`, `ENABLE_BANKING_PRIVATE_KEY` and
+`BANK_FEED_ENABLED=true`, `ENABLE_BANKING_APPLICATION_ID`, `ENABLE_BANKING_PRIVATE_KEY` and
 `ENABLE_BANKING_REDIRECT_URL`; the daily run also needs `BANK_SYNC_SECRET`. Activation and the
 daily task: `docs/operations/bank-sync.md`.
 

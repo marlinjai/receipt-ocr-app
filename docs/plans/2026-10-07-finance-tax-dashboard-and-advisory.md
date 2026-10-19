@@ -364,7 +364,7 @@ The rules it implements, each in plain words:
 Kept from the roadmap item and the prototype:
 
 - **Interface.** Enable Banking, registered application "Lumitra Receipts" (id in
-  Infisical as `ENABLE_BANKING_APP_ID`, never written into this repository), restricted production: it returns data only
+  Infisical as `ENABLE_BANKING_APPLICATION_ID`, never written into this repository), restricted production: it returns data only
   for accounts linked to the application itself, so it serves the operator's own
   accounts. Key and session ids are in Infisical (project Receipt OCR,
   `ENABLE_BANKING_*`).
@@ -2038,9 +2038,9 @@ What exists:
   what the connection acts on. Nothing it logs or throws carries a token, a key, a session
   id or an account number; the accounts of a session leave it masked ("•••• 1234").
 - **Settings** `bank/config.ts`, read by name: `BANK_FEED_ENABLED` (exactly `true`),
-  `ENABLE_BANKING_APP_ID`, `ENABLE_BANKING_PRIVATE_KEY`, `ENABLE_BANKING_REDIRECT_URL`,
+  `ENABLE_BANKING_APPLICATION_ID`, `ENABLE_BANKING_PRIVATE_KEY`, `ENABLE_BANKING_REDIRECT_URL`,
   and for the daily route `BANK_SYNC_SECRET`.
-- **One table**, `tax_bank_connections` (migration `0032_tax_bank_connections`, additive),
+- **One table**, `tax_bank_connections` (migration `0034_tax_bank_connections`, additive),
   one connection per account: institution, status (`pending`, `choose_account`, `active`,
   `expired`, `revoked`, `error`), the hash of the consent's random state with its expiry,
   the session id, the bound account's uid, the masked accounts of the session to choose

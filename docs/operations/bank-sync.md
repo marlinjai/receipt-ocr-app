@@ -24,7 +24,7 @@ production change; the steps are below.
 | Name | Needed for | What it is |
 |---|---|---|
 | `BANK_FEED_ENABLED` | everything | The switch: the feature is on only when this is exactly `true`. |
-| `ENABLE_BANKING_APP_ID` | everything | The application id from the Enable Banking control panel. It is the key id (`kid`) of every signed JSON Web Token (JWT). |
+| `ENABLE_BANKING_APPLICATION_ID` | everything | The application id from the Enable Banking control panel. It is the key id (`kid`) of every signed JSON Web Token (JWT). |
 | `ENABLE_BANKING_PRIVATE_KEY` | everything | The application's private key (Rivest-Shamir-Adleman, RSA) as text in the Privacy-Enhanced Mail (PEM) format. Line breaks may be written as `\n`. Never leaves the server. |
 | `ENABLE_BANKING_REDIRECT_URL` | everything | `https://receipts.lumitra.co/api/bank/callback`. Must be registered on the application exactly like this. |
 | `BANK_SYNC_SECRET` | the daily route only | The shared secret of the Hash-based Message Authentication Code (HMAC) the scheduled task signs with. |
@@ -37,9 +37,9 @@ in `src/lib/tax/payments/bank/config.ts` lists the missing names (names only).
 1. **Application.** In the Enable Banking control panel, use the registered application
    ("Lumitra Receipts", restricted production) or register one. Its key pair: let the
    control panel generate it, or generate one locally and upload the public part. Put the
-   private key into `ENABLE_BANKING_PRIVATE_KEY` and the id into `ENABLE_BANKING_APP_ID`
-   (the finance plan says both already live in Infisical under `ENABLE_BANKING_*`; check
-   the names match the table, rename rather than copy). Add the redirect address above to
+   private key into `ENABLE_BANKING_PRIVATE_KEY` and the id into `ENABLE_BANKING_APPLICATION_ID`
+   (both live in Infisical under exactly these names since 2026-10-11; the app reads the
+   existing `ENABLE_BANKING_APPLICATION_ID` rather than a second copy of it). Add the redirect address above to
    the application's allowed redirect addresses.
 2. **Restricted production** serves only accounts linked to the application. If a consent
    ends with "the bank gives this account not out" (`ASPSP_ACCOUNT_NOT_ACCESSIBLE`) or with

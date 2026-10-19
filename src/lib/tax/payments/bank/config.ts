@@ -12,7 +12,7 @@
 
 export const BANK_ENV = {
   enabled: 'BANK_FEED_ENABLED',
-  appId: 'ENABLE_BANKING_APP_ID',
+  appId: 'ENABLE_BANKING_APPLICATION_ID',
   privateKey: 'ENABLE_BANKING_PRIVATE_KEY',
   redirectUrl: 'ENABLE_BANKING_REDIRECT_URL',
   syncSecret: 'BANK_SYNC_SECRET',

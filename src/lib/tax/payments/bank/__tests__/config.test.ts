@@ -8,7 +8,7 @@ const frame = (side: 'BEGIN' | 'END') => ['-----', side, ' PRIVATE', ' KEY-----'
 const fake = () => `v-${Math.random().toString(36).slice(2)}`;
 const full = () => ({
   BANK_FEED_ENABLED: 'true',
-  ENABLE_BANKING_APP_ID: fake(),
+  ENABLE_BANKING_APPLICATION_ID: fake(),
   ENABLE_BANKING_PRIVATE_KEY: `${frame('BEGIN')}\\nabc\\n${frame('END')}`,
   ENABLE_BANKING_REDIRECT_URL: 'https://receipts.example.test/api/bank/callback',
 });
@@ -29,10 +29,10 @@ describe('bankConfig', () => {
   });
 
   it('is off with a setting missing or blank and names only the missing names', () => {
-    const env = { ...full(), ENABLE_BANKING_APP_ID: '   ', ENABLE_BANKING_REDIRECT_URL: undefined };
+    const env = { ...full(), ENABLE_BANKING_APPLICATION_ID: '   ', ENABLE_BANKING_REDIRECT_URL: undefined };
     const config = bankConfig(env);
     expect(config.enabled).toBe(false);
-    expect(config.missing).toEqual(['ENABLE_BANKING_APP_ID', 'ENABLE_BANKING_REDIRECT_URL']);
+    expect(config.missing).toEqual(['ENABLE_BANKING_APPLICATION_ID', 'ENABLE_BANKING_REDIRECT_URL']);
     expect(JSON.stringify(config)).not.toContain(env.ENABLE_BANKING_PRIVATE_KEY);
   });
 

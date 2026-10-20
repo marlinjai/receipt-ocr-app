@@ -54,3 +54,4 @@ test-*.mjs
 .wrangler/
 wrangler.jsonc
 .infisical.json
+.infisical.yaml

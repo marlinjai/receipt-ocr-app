@@ -2190,3 +2190,10 @@ key frame built at run time).
   longest ago goes first; the import's day reader takes any value and never crashes on a
   number; only an account bound before can count as the same account, and the account
   choice uses the given clock.
+- **Fourth review, same day:** every fetch attempt is stamped (`last_attempted_at`) and the run
+  starts with the connection tried longest ago, so a bank failing every day goes to the back;
+  the spending checks run after the daily run has answered, so the scheduler only waits for
+  the fetches; binding another account clears the notices of the one read before; a cleared
+  skipped day no longer holds the next fetch back, and only a day that is shown is remembered
+  as cleared; two identical bookings without a day are two (numbered within a fetch, the
+  content read with sorted keys); the run deadline is real time, as the bank client compares.

@@ -1088,6 +1088,10 @@ model TaxBankConnection {
   // The last day a successful fetch reached, whatever was booked: a gap is
   // only what lies between it and the 89 days the bank still gives.
   fetchedThrough      String?   @map("fetched_through")
+  // When a fetch was last tried, whatever came of it: the daily run starts with
+  // the connection tried longest ago, so a bank failing every day never keeps
+  // the others waiting.
+  lastAttemptedAt     DateTime? @map("last_attempted_at")
   // When the bank account now read was bound: only imports from then on are
   // this account's own when a reworded booking is matched.
   boundAt             DateTime? @map("bound_at")

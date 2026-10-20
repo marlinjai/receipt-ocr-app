@@ -88,10 +88,11 @@ A booking the bank rewords between two fetches (another text, a fuller name) is 
 as the same payment when it is alone on its day with its amount: the stored one takes the
 new words and keeps its links. A booking dated after today (by its booking day, else its
 transaction day) waits for its day. A fetch that brings nothing new leaves no import behind.
-A run starts with the connections fetched longest ago. It starts no further connection after
-60 seconds, cuts every call to the bank at 100 seconds, lets an import already running finish
-(at most 140 seconds), and starts no spending check after 245 seconds, so it ends inside the
-scheduler's 280 seconds. What is left is reported as `deferred` and fetched by the next run.
+A run starts with the connection tried longest ago (every attempt counts, a failed one too, so
+a bank that fails every day goes to the back). It starts no further connection after 60
+seconds, cuts every call to the bank at 100 seconds and lets an import already running finish
+(at most 140 seconds), so it answers inside the scheduler's 280 seconds. What is left is
+reported as `deferred` and fetched by the next run.
 
 **Notices the person clears himself**, shown on the account in the payments tab, each with
 "Erledigt":
@@ -113,10 +114,10 @@ booking.
 A fetch and a person clearing a notice at the same moment never undo each other: both
 change the notices under a lock on the connection's row.
 
-After the fetches, the spending checks (missing receipts, budgets) run for every company with
-a live connection, those with new payments first. They are idempotent and bounded, so a
-company left out because the run's time is up is checked by the next run. Their failure is
-only logged.
+After the run has answered, the spending checks (missing receipts, budgets) run for every
+company with a live connection, those with new payments first, so the scheduler never waits
+for them. They are idempotent and bounded; a failure is only logged and stops none of the
+others.
 
 | What happens | The connection afterwards |
 |---|---|

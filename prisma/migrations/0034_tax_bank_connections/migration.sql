@@ -25,6 +25,7 @@ CREATE TABLE "tax_bank_connections" (
     "last_error_at" TIMESTAMP(3),
     "notices" JSONB,
     "fetched_through" TEXT,
+    "last_attempted_at" TIMESTAMP(3),
     "bound_at" TIMESTAMP(3),
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,

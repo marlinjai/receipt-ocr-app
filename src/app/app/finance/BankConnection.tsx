@@ -9,7 +9,7 @@ import type { Result } from './actions';
 import type { BankView, Institution } from './bank-actions';
 
 /** One notice of a connection to clear. */
-export type BankNotice = { kind: 'gap'; from: string; to: string } | { kind: 'skipped'; day: string } | { kind: 'undated' };
+export type BankNotice = { kind: 'gap'; from: string; to: string } | { kind: 'skipped'; day: string } | { kind: 'undated'; keys: string[] };
 
 /** The server actions the bank controls use; injected so the screen can be tested without a server. */
 export interface BankActions {
@@ -220,18 +220,18 @@ export function BankAccountStatus({
           </ul>
         </div>
       )}
-      {connection && connection.notices.undated > 0 && (
+      {connection && connection.notices.undated.length > 0 && (
         <p className="mt-1 flex flex-wrap items-baseline gap-2" style={{ color: TONE_COLOR.warn }}>
           <span>
-            {connection.notices.undated === 1 ? 'Eine Buchung' : `${connection.notices.undated} Buchungen`} ohne lesbares Datum hat die Bank geliefert;
-            sie {connection.notices.undated === 1 ? 'wurde' : 'wurden'} ausgelassen. Bitte die letzten Tage mit dem Kontoauszug oder dem Datei-Import prüfen.
+            {connection.notices.undated.length === 1 ? 'Eine Buchung' : `${connection.notices.undated.length} Buchungen`} ohne lesbares Datum hat die Bank geliefert;
+            sie {connection.notices.undated.length === 1 ? 'wurde' : 'wurden'} ausgelassen. Bitte die letzten Tage mit dem Kontoauszug oder dem Datei-Import prüfen.
           </span>
           <button
             type="button"
             className="ui-btn ui-btn-sm"
             disabled={busy}
             aria-label="Erledigt: Buchungen ohne Datum"
-            onClick={() => feed.clearNotice(account.id, connection.id, { kind: 'undated' })}
+            onClick={() => feed.clearNotice(account.id, connection.id, { kind: 'undated', keys: connection.notices.undated })}
           >
             Erledigt
           </button>

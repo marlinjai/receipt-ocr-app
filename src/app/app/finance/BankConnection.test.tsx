@@ -24,7 +24,7 @@ const connection = (o: Partial<BankConnectionView> = {}): BankConnectionView => 
   lastBookedThrough: '2026-10-15',
   lastError: null,
   lastErrorAt: null,
-  notices: { gaps: [], skipped: [], undated: 0 },
+  notices: { gaps: [], skipped: [], undated: [] },
   candidates: [],
   accountUid: 'uid-1',
   boundMask: null,
@@ -159,10 +159,10 @@ describe('BankAccountStatus', () => {
     const acts = actions({
       clearBankConnectionNotice: vi
         .fn()
-        .mockResolvedValueOnce({ ok: true as const, value: { enabled: true, connections: [connection({ notices: { gaps: [], skipped: ['2026-10-01'], undated: 0 } })] } })
+        .mockResolvedValueOnce({ ok: true as const, value: { enabled: true, connections: [connection({ notices: { gaps: [], skipped: ['2026-10-01'], undated: [] } })] } })
         .mockResolvedValueOnce({ ok: true as const, value: { enabled: true, connections: [connection()] } }),
     });
-    const withNotices = connection({ notices: { gaps: [{ from: '2026-05-02', to: '2026-07-18' }], skipped: ['2026-10-01'], undated: 0 } });
+    const withNotices = connection({ notices: { gaps: [{ from: '2026-05-02', to: '2026-07-18' }], skipped: ['2026-10-01'], undated: [] } });
     render(<Harness bank={{ enabled: true, connections: [withNotices] }} acts={acts} />);
     expect(screen.getByText(/vom 02\.05\.2026 bis 18\.07\.2026 kann die Bank nicht mehr liefern/)).toBeTruthy();
     expect(screen.getByText(/beschreibt die Bank eine Buchung zu unvollständig/)).toBeTruthy();
@@ -176,10 +176,10 @@ describe('BankAccountStatus', () => {
 
   it('counts bookings without a day until the person clears them', async () => {
     const acts = actions();
-    render(<Harness bank={{ enabled: true, connections: [connection({ notices: { gaps: [], skipped: [], undated: 2 } })] }} acts={acts} />);
+    render(<Harness bank={{ enabled: true, connections: [connection({ notices: { gaps: [], skipped: [], undated: ['a1b2c3d4e5f6a1b2c3d4e5f6', 'f6e5d4c3b2a1f6e5d4c3b2a1'] } })] }} acts={acts} />);
     expect(screen.getByText(/2 Buchungen ohne lesbares Datum/)).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Erledigt: Buchungen ohne Datum' }));
-    expect(acts.clearBankConnectionNotice).toHaveBeenCalledWith('con-1', { kind: 'undated' });
+    expect(acts.clearBankConnectionNotice).toHaveBeenCalledWith('con-1', { kind: 'undated', keys: ['a1b2c3d4e5f6a1b2c3d4e5f6', 'f6e5d4c3b2a1f6e5d4c3b2a1'] });
   });
 
   it('shows no notice when there is none', () => {

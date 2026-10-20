@@ -44,9 +44,11 @@ export function parseCsv(text: string): string[][] {
   return rows;
 }
 
-/** `YYYY-MM-DD` or `DD.MM.YYYY` to an ISO day; null when it is neither or no real day. */
-export function toIsoDay(value: string | null | undefined): string | null {
-  const text = (value ?? '').trim();
+/** `YYYY-MM-DD` or `DD.MM.YYYY` to an ISO day; null when it is neither, no real day, or not text at all. */
+export function toIsoDay(value: unknown): string | null {
+  // A source may send a number or an object where a day belongs: that is no day, never a crash.
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
   let iso: string | null = null;
   const direct = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
   const german = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(text);

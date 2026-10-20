@@ -94,6 +94,52 @@ describe('createBankClient', () => {
     expect(calls).toHaveLength(MAX_PAGES);
   });
 
+  it('asks the bank nothing once the run deadline has passed, and says so as a deadline', async () => {
+    const { fetch, calls } = fakeFetch([{ status: 200, body: { transactions: [] } }]);
+    const error = await createBankClient(credentials, { fetch }).fetchTransactions('uid', '2026-10-01', '2026-10-16', undefined, { deadline: Date.now() - 1 }).catch((e) => e);
+    expect(error).toBeInstanceOf(BankApiError);
+    expect(error.kind).toBe('deadline');
+    expect(calls).toEqual([]);
+  });
+
+  it('stops between two pages when the deadline passes after the first', async () => {
+    let clockNow = 1_000_000;
+    const realNow = Date.now;
+    Date.now = () => clockNow;
+    try {
+      const calls: Call[] = [];
+      const fetch: FetchLike = async (url, init) => {
+        calls.push({ url, method: init.method, headers: init.headers, body: init.body });
+        clockNow += 5_000; // the first page takes the time that was left
+        return { status: 200, ok: true, text: async () => JSON.stringify({ transactions: [{ n: 1 }], continuation_key: 'next' }) };
+      };
+      const error = await createBankClient(credentials, { fetch }).fetchTransactions('uid', '2026-10-01', '2026-10-16', undefined, { deadline: 1_004_000 }).catch((e) => e);
+      expect(error.kind).toBe('deadline');
+      expect(calls.length).toBe(1);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it('a call cut at the deadline is a deadline, not a network failure', async () => {
+    const realNow = Date.now;
+    let clockNow = 2_000_000;
+    Date.now = () => clockNow;
+    try {
+      const fetch: FetchLike = async () => {
+        clockNow += 10_000;
+        throw new Error('aborted');
+      };
+      const cut = await createBankClient(credentials, { fetch }).fetchTransactions('uid', '2026-10-01', '2026-10-16', undefined, { deadline: 2_005_000 }).catch((e) => e);
+      expect(cut.kind).toBe('deadline');
+      clockNow = 3_000_000;
+      const network = await createBankClient(credentials, { fetch }).fetchTransactions('uid', '2026-10-01', '2026-10-16').catch((e) => e);
+      expect(network.kind).toBe('network');
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   it('masks the accounts of a new session and keeps no account number', async () => {
     const { fetch } = fakeFetch([
       {

@@ -224,7 +224,8 @@ export async function completeConsent(
   // another one (another account, or another institution) is asked about, so it never flows into this account unseen.
   const pick = boundBefore ? sameAccount(accounts, previous) : accounts.length === 1 ? accounts[0] : null;
   // The same bank account as before keeps its last fetched day, so the next fetch continues; another starts afresh.
-  const same = pick !== null && pick.mask === previous.boundMask && pick.name === (previous.boundName ?? '');
+  // Only an account bound before can be the same one: a first binding always starts afresh and records when.
+  const same = boundBefore && pick !== null && pick.mask === previous.boundMask && pick.name === (previous.boundName ?? '');
   const candidates = accounts.map((a) => ({ uid: a.uid, mask: a.mask, name: a.name, currency: a.currency }));
   await db.taxBankConnection.update({
     where: { id: connection.id },
@@ -249,17 +250,18 @@ export async function completeConsent(
 }
 
 /** Bind one account of the session, or switch to another one of the same session. */
-export async function chooseBankAccount(db: PrismaClient, ctx: PaymentContext, connectionId: string, uid: unknown): Promise<void> {
+export async function chooseBankAccount(db: PrismaClient, ctx: PaymentContext, connectionId: string, uid: unknown, now: Date = new Date()): Promise<void> {
   const connection = await ownConnection(db, ctx.workspaceId, connectionId);
   const candidates = (Array.isArray(connection.candidates) ? connection.candidates : []) as Array<{ uid?: unknown; mask?: unknown; name?: unknown }>;
   const pick = candidates.find((c) => typeof uid === 'string' && c.uid === uid);
   if (!pick || !connection.sessionId) throw new BankServiceError('invalid_choice');
   const mask = typeof pick.mask === 'string' ? pick.mask : null;
   const name = typeof pick.name === 'string' ? pick.name : '';
-  const same = mask === connection.boundMask && name === (connection.boundName ?? '');
+  const boundBefore = connection.boundMask !== null || connection.boundName !== null;
+  const same = boundBefore && mask === connection.boundMask && name === (connection.boundName ?? '');
   await db.taxBankConnection.update({
     where: { id: connection.id },
-    data: { status: 'active', accountUid: pick.uid as string, boundMask: mask, boundName: name, lastError: null, lastErrorAt: null, ...(same ? {} : { lastBookedThrough: null, fetchedThrough: null, boundAt: new Date() }) },
+    data: { status: 'active', accountUid: pick.uid as string, boundMask: mask, boundName: name, lastError: null, lastErrorAt: null, ...(same ? {} : { lastBookedThrough: null, fetchedThrough: null, boundAt: now }) },
   });
 }
 
@@ -291,7 +293,7 @@ export async function disconnect(db: PrismaClient, ctx: PaymentContext, deps: Ba
  * deliveries at the same moment) can never both take the same call.
  */
 export async function claimDailySync(db: PrismaClient, ts: number): Promise<boolean> {
-  const rows = await db.$queryRaw<Array<{ last_ts: number }>>`
+  const rows = await db.$queryRaw<Array<{ last_ts: bigint }>>`
     INSERT INTO tax_bank_sync_guard (id, last_ts) VALUES ('daily', ${ts})
     ON CONFLICT (id) DO UPDATE SET last_ts = EXCLUDED.last_ts WHERE tax_bank_sync_guard.last_ts < EXCLUDED.last_ts
     RETURNING last_ts`;
@@ -333,13 +335,17 @@ export type SyncStatus =
   | 'deferred';
 
 /**
- * A daily run starts no new connection after this long, and stops fetching
- * pages after `RUN_DEADLINE_MS`; an import already running takes at most its
- * own two minutes. So a run ends inside the scheduler's 280 seconds and the
- * route's 300. What is left is `deferred` and fetched by the next run.
+ * The time a daily run may take, so it ends inside the scheduler's 280
+ * seconds and the route's 300. It starts no new connection after
+ * `RUN_BUDGET_MS`; no call to the bank runs past `RUN_DEADLINE_MS` (a call is
+ * cut at the deadline); an import already running takes at most its own 140
+ * seconds (20 waiting for the account, 120 working); the spending checks after
+ * it start only before `RUN_CHECKS_BY_MS`. 100 + 140 = 240, leaving 40 for the
+ * checks and the answer. What is left is `deferred` and fetched by the next run.
  */
-export const RUN_BUDGET_MS = 90_000;
-export const RUN_DEADLINE_MS = 130_000;
+export const RUN_BUDGET_MS = 60_000;
+export const RUN_DEADLINE_MS = 100_000;
+export const RUN_CHECKS_BY_MS = 245_000;
 
 export interface SyncOutcome {
   status: SyncStatus;
@@ -395,7 +401,7 @@ export async function syncConnection(
   const dateFrom = continued < earliest ? earliest : continued > options.today ? options.today : continued;
   // A gap is what lies between the last day a fetch reached and the oldest day the bank still gives: only
   // after a pause longer than that (a consent renewed late). A quiet account with old bookings has none.
-  const found: BankNotices = { gaps: [], skipped: [], undated: 0 };
+  const found: BankNotices = { gaps: [], skipped: [], undated: [], dismissed: { skipped: [], undated: [] } };
   if (connection.fetchedThrough && shiftDay(connection.fetchedThrough, 1) < earliest) {
     found.gaps.push({ from: shiftDay(connection.fetchedThrough, 1), to: shiftDay(earliest, -1) });
   }
@@ -440,7 +446,7 @@ export async function syncConnection(
         const day = movementDay(rows[e.row - 1]);
         // A movement without any readable day cannot be kept as a day; it is counted, so it is not lost in silence.
         if (day) skippedDays.add(day);
-        else found.undated += 1;
+        else found.undated.push(undatedKey(rows[e.row - 1]));
         rows = rows.filter((_, index) => index !== e.row! - 1);
         unreadable++;
         continue;
@@ -461,8 +467,24 @@ export async function syncConnection(
   let latest = [connection.lastBookedThrough, ...bookedDays.filter((d) => d <= options.today)].filter((d): d is string => !!d).sort().pop() ?? null;
   const firstSkipped = found.skipped[0];
   if (latest && firstSkipped && shiftDay(firstSkipped, OVERLAP_DAYS - 1) < latest) latest = shiftDay(firstSkipped, OVERLAP_DAYS - 1);
-  await record({ lastSyncedAt: now, lastBookedThrough: latest, fetchedThrough: options.today, lastError: null, lastErrorAt: null });
-  await changeNotices(db, connection.id, (current) => mergeNotices(current, found));
+  // One write under the row's lock, and only while the connection still reads the same session and account: a
+  // switch in the meantime has started that account afresh, and nothing of this fetch belongs to it.
+  await db.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<Array<{ notices: Prisma.JsonValue | null; session_id: string | null; account_uid: string | null }>>`
+      SELECT notices, session_id, account_uid FROM tax_bank_connections WHERE id = ${connection.id} FOR UPDATE`;
+    if (rows.length === 0 || rows[0].session_id !== connection.sessionId || rows[0].account_uid !== connection.accountUid) return;
+    await tx.taxBankConnection.update({
+      where: { id: connection.id },
+      data: {
+        lastSyncedAt: now,
+        lastBookedThrough: latest,
+        fetchedThrough: options.today,
+        lastError: null,
+        lastErrorAt: null,
+        notices: mergeNotices(bankNotices(rows[0].notices), found, earliest) as unknown as Prisma.InputJsonValue,
+      },
+    });
+  });
   return { status: added > 0 ? 'synced' : 'nothing_new', added };
 }
 
@@ -477,56 +499,101 @@ function movementDay(raw: unknown): string | null {
  * What a connection keeps for the person to look at until he clears it:
  * `gaps`, days no fetch can reach any more (after a pause longer than the 89
  * days the bank looks back; a file import fills them), `skipped`, days with a
- * movement the bank described too incompletely to import, and `undated`, how
- * many such movements had no readable day at all.
+ * movement the bank described too incompletely to import, and `undated`, one
+ * key per such movement that had no readable day at all (a booking listed on
+ * every fetch is still one booking). `dismissed` holds what the person
+ * cleared, so a fetch that sees the same broken booking again does not bring
+ * the notice back.
  */
 export interface BankNotices {
   gaps: Array<{ from: string; to: string }>;
   skipped: string[];
-  undated: number;
+  undated: string[];
+  dismissed: { skipped: string[]; undated: string[] };
+}
+
+/** At most this many cleared undated keys are remembered; older ones are long out of every fetch window. */
+const DISMISSED_UNDATED_LIMIT = 200;
+
+/** One stable key per undated booking: its own reference where the bank gives one, else its content. Never bank data itself. */
+function undatedKey(raw: unknown): string {
+  const ref = (raw as { entry_reference?: unknown })?.entry_reference;
+  const basis = typeof ref === 'string' && ref ? `ref:${ref}` : `row:${JSON.stringify(raw ?? null)}`;
+  return createHash('sha256').update(basis).digest('hex').slice(0, 24);
 }
 
 export function bankNotices(value: Prisma.JsonValue | null | undefined): BankNotices {
-  const v = (value ?? {}) as { gaps?: unknown; skipped?: unknown; undated?: unknown };
+  const v = (value ?? {}) as { gaps?: unknown; skipped?: unknown; undated?: unknown; dismissed?: { skipped?: unknown; undated?: unknown } };
   const isDay = (d: unknown): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
+  const isKey = (k: unknown): k is string => typeof k === 'string' && /^[0-9a-f]{24}$/.test(k);
+  const list = <T>(x: unknown, ok: (y: unknown) => y is T): T[] => (Array.isArray(x) ? x.filter(ok) : []);
   return {
-    gaps: Array.isArray(v.gaps) ? v.gaps.filter((g): g is { from: string; to: string } => isDay((g as { from?: unknown })?.from) && isDay((g as { to?: unknown })?.to)) : [],
-    skipped: Array.isArray(v.skipped) ? v.skipped.filter(isDay) : [],
-    undated: typeof v.undated === 'number' && Number.isInteger(v.undated) && v.undated > 0 ? v.undated : 0,
+    gaps: list(v.gaps, (g): g is { from: string; to: string } => isDay((g as { from?: unknown })?.from) && isDay((g as { to?: unknown })?.to)),
+    skipped: list(v.skipped, isDay),
+    undated: list(v.undated, isKey),
+    dismissed: { skipped: list(v.dismissed?.skipped, isDay), undated: list(v.dismissed?.undated, isKey) },
   };
 }
 
-/** What a fetch found, added to what the connection already holds; nothing it holds is dropped. */
-function mergeNotices(current: BankNotices, found: BankNotices): BankNotices {
+/**
+ * What a fetch found, added to what the connection holds: nothing held is
+ * dropped, and nothing the person cleared comes back. Cleared days older than
+ * the oldest day the bank still gives can never be fetched again and are forgotten.
+ */
+function mergeNotices(current: BankNotices, found: BankNotices, oldestDay: string): BankNotices {
   const gaps = [...current.gaps];
   for (const g of found.gaps) if (!gaps.some((x) => x.from === g.from && x.to === g.to)) gaps.push(g);
-  return { gaps, skipped: [...new Set([...current.skipped, ...found.skipped])].sort(), undated: current.undated + found.undated };
+  const dismissedSkipped = new Set(current.dismissed.skipped);
+  const dismissedUndated = new Set(current.dismissed.undated);
+  return {
+    gaps,
+    skipped: [...new Set([...current.skipped, ...found.skipped.filter((d) => !dismissedSkipped.has(d))])].sort(),
+    undated: [...new Set([...current.undated, ...found.undated.filter((k) => !dismissedUndated.has(k))])],
+    dismissed: { skipped: current.dismissed.skipped.filter((d) => d >= oldestDay), undated: current.dismissed.undated.slice(-DISMISSED_UNDATED_LIMIT) },
+  };
+}
+
+/** What the screen shows of a connection's notices. */
+export interface BankNoticesView {
+  gaps: Array<{ from: string; to: string }>;
+  skipped: string[];
+  /** The keys of the bookings without a day; the screen shows how many and sends them back to clear exactly those. */
+  undated: string[];
 }
 
 /**
  * Change a connection's notices under a row lock: a fetch adds and a person
  * clears at the same moment, and neither may undo the other.
  */
-async function changeNotices(db: PrismaClient, connectionId: string, change: (current: BankNotices) => BankNotices, workspaceId?: string): Promise<boolean> {
+async function changeNotices(db: PrismaClient, connectionId: string, change: (current: BankNotices) => BankNotices, workspaceId: string): Promise<boolean> {
   return db.$transaction(async (tx) => {
     const rows = await tx.$queryRaw<Array<{ notices: Prisma.JsonValue | null; auth_workspace_id: string }>>`
       SELECT notices, auth_workspace_id FROM tax_bank_connections WHERE id = ${connectionId} FOR UPDATE`;
-    if (rows.length === 0 || (workspaceId !== undefined && rows[0].auth_workspace_id !== workspaceId)) return false;
+    if (rows.length === 0 || rows[0].auth_workspace_id !== workspaceId) return false;
     const next = change(bankNotices(rows[0].notices));
     await tx.taxBankConnection.update({ where: { id: connectionId }, data: { notices: next as unknown as Prisma.InputJsonValue } });
     return true;
   });
 }
 
-/** The person has looked at a notice (filled the gap, checked the day): only that one goes. */
+/**
+ * The person has looked at a notice (filled the gap, checked the day, checked
+ * the bookings without a day): exactly what he saw goes, and a later fetch
+ * does not bring it back. A booking without a day added after he looked stays.
+ */
 export async function clearBankNotice(db: PrismaClient, ctx: PaymentContext, connectionId: string, raw: unknown): Promise<void> {
-  const input = (raw ?? {}) as { kind?: unknown; day?: unknown; from?: unknown; to?: unknown };
+  const input = (raw ?? {}) as { kind?: unknown; day?: unknown; from?: unknown; to?: unknown; keys?: unknown };
   const connection = await ownConnection(db, ctx.workspaceId, connectionId);
   let change: (current: BankNotices) => BankNotices;
-  if (input.kind === 'skipped' && typeof input.day === 'string') change = (c) => ({ ...c, skipped: c.skipped.filter((d) => d !== input.day) });
-  else if (input.kind === 'gap' && typeof input.from === 'string' && typeof input.to === 'string') change = (c) => ({ ...c, gaps: c.gaps.filter((g) => g.from !== input.from || g.to !== input.to) });
-  else if (input.kind === 'undated') change = (c) => ({ ...c, undated: 0 });
-  else throw new BankServiceError('invalid_notice');
+  if (input.kind === 'skipped' && typeof input.day === 'string') {
+    const day = input.day;
+    change = (c) => ({ ...c, skipped: c.skipped.filter((d) => d !== day), dismissed: { ...c.dismissed, skipped: [...new Set([...c.dismissed.skipped, day])] } });
+  } else if (input.kind === 'gap' && typeof input.from === 'string' && typeof input.to === 'string') {
+    change = (c) => ({ ...c, gaps: c.gaps.filter((g) => g.from !== input.from || g.to !== input.to) });
+  } else if (input.kind === 'undated' && Array.isArray(input.keys) && input.keys.every((k) => typeof k === 'string')) {
+    const seen = new Set(input.keys as string[]);
+    change = (c) => ({ ...c, undated: c.undated.filter((k) => !seen.has(k)), dismissed: { ...c.dismissed, undated: [...new Set([...c.dismissed.undated, ...c.undated.filter((k) => seen.has(k))])] } });
+  } else throw new BankServiceError('invalid_notice');
   if (!(await changeNotices(db, connection.id, change, ctx.workspaceId))) throw new BankServiceError('connection_not_found');
 }
 
@@ -590,22 +657,35 @@ export interface SyncRunEntry {
 /**
  * The daily run: every active connection of every workspace, one after the
  * other (each import locks its account, and banks limit calls), each on its
- * own so one failing bank never stops the others. After a fetch that added
- * payments `afterNewPayments` runs for that workspace (the spending checks);
- * its failure is logged only. Consents that ran out are marked expired.
+ * own so one failing bank never stops the others. Then `spendingChecks`
+ * (the spending checks) runs for every company with a live connection, those
+ * with new payments first; its failure is logged only. Consents that ran out
+ * are marked expired.
  * After `RUN_BUDGET_MS` no further connection is started; those are reported
  * as `deferred` and fetched by the next run.
  */
 export async function syncAllConnections(
   db: PrismaClient,
   deps: BankDeps,
-  options: { today: string; afterNewPayments?: (ctx: PaymentContext) => Promise<unknown>; budgetMs?: number; clock?: () => number },
+  options: {
+    today: string;
+    spendingChecks?: (ctx: PaymentContext) => Promise<unknown>;
+    budgetMs?: number;
+    /** The clock, in epoch milliseconds (also what the bank client's deadline is compared with). */
+    clock?: () => number;
+  },
 ): Promise<SyncRunEntry[]> {
   const clock = options.clock ?? (() => Date.now());
   const startedAt = clock();
   const budget = options.budgetMs ?? RUN_BUDGET_MS;
-  const deadline = Date.now() + RUN_DEADLINE_MS;
-  const connections = await db.taxBankConnection.findMany({ where: { status: 'active' }, select: { id: true, authWorkspaceId: true, authTenantId: true }, orderBy: { createdAt: 'asc' } });
+  const deadline = startedAt + RUN_DEADLINE_MS;
+  // The connection fetched longest ago first (never fetched before everything), so a connection late in the
+  // list is not the one that waits every day when time runs short.
+  const connections = await db.taxBankConnection.findMany({
+    where: { status: 'active' },
+    select: { id: true, authWorkspaceId: true, authTenantId: true },
+    orderBy: [{ lastSyncedAt: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }],
+  });
   const out: SyncRunEntry[] = [];
   const touched = new Map<string, PaymentContext>();
   for (const c of connections) {
@@ -624,13 +704,23 @@ export async function syncAllConnections(
       out.push({ connectionId: c.id, status: 'failed', added: 0 });
     }
   }
-  for (const ctx of touched.values()) {
+  // The spending checks run for every company with a live connection, those with new payments first. They are
+  // idempotent and bounded, so one left out for lack of time today simply runs with the next run.
+  const all = new Map(touched);
+  for (const c of connections) if (!all.has(c.authWorkspaceId)) all.set(c.authWorkspaceId, { workspaceId: c.authWorkspaceId, tenantId: c.authTenantId });
+  let skipped = 0;
+  for (const ctx of all.values()) {
+    if (clock() - startedAt >= RUN_CHECKS_BY_MS) {
+      skipped++;
+      continue;
+    }
     try {
-      await options.afterNewPayments?.(ctx);
+      await options.spendingChecks?.(ctx);
     } catch (e) {
       console.error('[bank] spending checks after the bank fetch failed', (e as Error)?.name ?? 'error');
     }
   }
+  if (skipped > 0) console.warn(`[bank] spending checks of ${skipped} companies left for the next run (time)`);
   return out;
 }
 
@@ -652,7 +742,7 @@ export interface BankConnectionView {
   lastError: string | null;
   lastErrorAt: string | null;
   /** What the person has to look at until he clears it (see `BankNotices`). */
-  notices: BankNotices;
+  notices: BankNoticesView;
   /** The masked accounts of the session to choose from (also after a choice, to switch). */
   candidates: Array<{ uid: string; mask: string | null; name: string; currency: string | null }>;
   /** The uid of the bound account of the session. */
@@ -679,7 +769,7 @@ export async function loadBankConnections(db: PrismaClient, workspaceId: string,
       lastBookedThrough: r.lastBookedThrough,
       lastError: r.lastError,
       lastErrorAt: r.lastErrorAt?.toISOString() ?? null,
-      notices: bankNotices(r.notices),
+      notices: (({ gaps, skipped, undated }) => ({ gaps, skipped, undated }))(bankNotices(r.notices)),
       candidates: candidates.flatMap((c) =>
         typeof c.uid === 'string' ? [{ uid: c.uid, mask: typeof c.mask === 'string' ? c.mask : null, name: typeof c.name === 'string' ? c.name : '', currency: typeof c.currency === 'string' ? c.currency : null }] : [],
       ),

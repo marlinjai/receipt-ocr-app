@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     secret: bankSyncSecret(),
     enabled: deps !== null,
     claim: (ts) => claimDailySync(prisma, ts),
-    sync: () => syncAllConnections(prisma, deps!, { today, afterNewPayments: (ctx) => runSpendingChecks(prisma, ctx, { today }) }),
+    sync: () => syncAllConnections(prisma, deps!, { today, spendingChecks: (ctx) => runSpendingChecks(prisma, ctx, { today }) }),
   });
   return NextResponse.json(result.body, { status: result.status });
 }

@@ -182,17 +182,21 @@ export function createBankClient(credentials: BankCredentials, options: { fetch?
     return key;
   };
 
-  async function call(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<unknown> {
+  async function call(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, extraHeaders: Record<string, string> = {}, deadline?: number): Promise<unknown> {
     const token = signToken(credentials, signingKey(), Math.floor(now().getTime() / 1000));
+    // A call never outlasts the caller's deadline: it is cut there and reported as such, not as a network failure.
+    const left = deadline === undefined ? REQUEST_TIMEOUT_MS : Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now());
+    if (left <= 0) throw new BankApiError('deadline', 'RUN_TIME_EXHAUSTED');
     let response: Awaited<ReturnType<FetchLike>>;
     try {
       response = await doFetch(`${baseUrl}${path}`, {
         method,
         headers: { ...extraHeaders, Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(left),
       });
     } catch {
+      if (deadline !== undefined && Date.now() >= deadline) throw new BankApiError('deadline', 'RUN_TIME_EXHAUSTED');
       throw new BankApiError('network');
     }
     const text = await response.text().catch(() => '');
@@ -244,11 +248,10 @@ export function createBankClient(credentials: BankCredentials, options: { fetch?
       const out: unknown[] = [];
       let continuation: string | null = null;
       for (let page = 0; page < MAX_PAGES; page++) {
-        // A long run stops between two pages instead of being cut off by the scheduler in the middle of one.
-        if (options?.deadline !== undefined && Date.now() >= options.deadline) throw new BankApiError('deadline', 'RUN_TIME_EXHAUSTED');
+        // A long run stops at its deadline, between two pages or by cutting the page's call there.
         const query = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
         if (continuation) query.set('continuation_key', continuation);
-        const data = (await call('GET', `/accounts/${encodeURIComponent(accountUid)}/transactions?${query}`, undefined, presence)) as { transactions?: unknown; continuation_key?: unknown };
+        const data = (await call('GET', `/accounts/${encodeURIComponent(accountUid)}/transactions?${query}`, undefined, presence, options?.deadline)) as { transactions?: unknown; continuation_key?: unknown };
         if (Array.isArray(data?.transactions)) out.push(...data.transactions);
         continuation = typeof data?.continuation_key === 'string' && data.continuation_key ? data.continuation_key : null;
         if (!continuation) return out;

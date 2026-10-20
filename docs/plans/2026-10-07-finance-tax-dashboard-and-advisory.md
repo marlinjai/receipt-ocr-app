@@ -2179,3 +2179,14 @@ key frame built at run time).
   starts no connection after 90; a switched-off return goes to the app's own address without
   a login round trip; the guard's time is a 64-bit integer and a signed time must be whole
   seconds; the day of a movement is read by the import's own reader (`toIsoDay`).
+- **Third review, same day:** a fetch writes its results and its notices in one write under
+  the connection's row lock, and only while it still reads the same session and account; a
+  booking without a day is counted once by a key (its reference or its content), and a
+  person clears exactly the ones he saw; a cleared skipped day or undated booking does not
+  come back while the bank keeps listing it broken; every call to the bank is cut at the run
+  deadline (100 seconds), no connection starts after 60 and no spending check after 245;
+  the spending checks run for every company with a live connection (those with new
+  payments first), so one left out for time runs the next day; the connection fetched
+  longest ago goes first; the import's day reader takes any value and never crashes on a
+  number; only an account bound before can count as the same account, and the account
+  choice uses the given clock.

@@ -15,6 +15,7 @@ import {
   startConsent,
   syncAllConnections,
   syncConnection,
+  bankNotices,
   type BankDeps,
 } from '../service';
 import { createWorkspace, db } from '../../../../../../test/db-helpers';
@@ -120,6 +121,11 @@ const code = async (p: Promise<unknown>) => {
 };
 
 const connectionOf = (accountId: string) => db.taxBankConnection.findUniqueOrThrow({ where: { accountId } });
+/** What the screen sees of a connection's notices (without what the person cleared before). */
+const visibleNotices = (c: { notices: unknown }) => {
+  const { gaps, skipped, undated } = bankNotices(c.notices as never);
+  return { gaps, skipped, undated };
+};
 const paymentCount = (accountId: string) => db.taxPayment.count({ where: { accountId } });
 const batchCount = (accountId: string) => db.taxImportBatch.count({ where: { accountId } });
 
@@ -197,15 +203,17 @@ describe('bank connection: forward', () => {
     const touched: string[] = [];
     const results = await syncAllConnections(db, a.deps, {
       today: TODAY,
-      afterNewPayments: async (ctx) => {
+      spendingChecks: async (ctx) => {
         touched.push(ctx.workspaceId);
         throw new Error('checks failing is only logged');
       },
     });
     expect(results.find((r) => r.connectionId === ca)).toMatchObject({ status: 'synced', added: 1 });
     expect(results.find((r) => r.connectionId === cb)).toMatchObject({ status: 'failed', added: 0 });
+    // Every company with a live connection is checked, the one with new payments first; a failing check stops none.
     expect(touched).toContain(a.ctx.workspaceId);
-    expect(touched).not.toContain(b.ctx.workspaceId);
+    expect(touched).toContain(b.ctx.workspaceId);
+    expect(touched.indexOf(a.ctx.workspaceId)).toBeLessThan(touched.indexOf(b.ctx.workspaceId));
     expect((await connectionOf(b.accountId)).lastError).toBe('bank_unavailable');
     // The answer carries counts only.
     expect(JSON.stringify(results)).not.toContain('Händler');
@@ -397,7 +405,7 @@ describe('bank connection: the fetch window', () => {
     await syncConnection(db, s.ctx, s.deps, id, { today: '2026-12-31' });
     expect(s.bank.fetchCalls.at(-1)).toMatchObject({ from: '2026-10-03', to: '2026-12-31' });
     // Every day up to 16 October was fetched: no gap, though the last booking is older than 89 days.
-    expect((await connectionOf(s.accountId)).notices).toEqual({ gaps: [], skipped: [], undated: 0 });
+    expect(visibleNotices(await connectionOf(s.accountId))).toEqual({ gaps: [], skipped: [], undated: [] });
   });
 
   it('a quiet account fetched every day never shows a gap', async () => {
@@ -405,7 +413,7 @@ describe('bank connection: the fetch window', () => {
     s.bank.transactions.set('uid-a1', [tx('2026-07-20', -1000, 'A', 'a')]);
     const id = await connect(s);
     for (const day of ['2026-10-16', '2026-10-17', '2026-10-18', '2026-10-19']) await syncConnection(db, s.ctx, s.deps, id, { today: day });
-    expect(await connectionOf(s.accountId)).toMatchObject({ lastBookedThrough: '2026-07-20', fetchedThrough: '2026-10-19', notices: { gaps: [], skipped: [], undated: 0 } });
+    expect(await connectionOf(s.accountId)).toMatchObject({ lastBookedThrough: '2026-07-20', fetchedThrough: '2026-10-19', notices: { gaps: [], skipped: [], undated: [] } });
   });
 
   it('presence of the person is passed to the bank only when given', async () => {
@@ -521,13 +529,13 @@ describe('bank connection: re-entry after a failure', () => {
     const broken = { status: 'BOOK', booking_date: '2026-10-01', transaction_amount: { amount: 'zehn', currency: 'EUR' }, credit_debit_indicator: 'DBIT' };
     s.bank.transactions.set('uid-a1', [broken, tx('2026-10-02', -1000, 'A', 'a'), { ...broken, booking_date: '2026-10-03' }]);
     expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'synced', added: 1 });
-    expect(await connectionOf(s.accountId)).toMatchObject({ lastError: null, lastBookedThrough: '2026-10-03', status: 'active', notices: { gaps: [], skipped: ['2026-10-01', '2026-10-03'], undated: 0 } });
+    expect(await connectionOf(s.accountId)).toMatchObject({ lastError: null, lastBookedThrough: '2026-10-03', status: 'active', notices: { gaps: [], skipped: ['2026-10-01', '2026-10-03'], undated: [] } });
     s.bank.transactions.set('uid-a1', [tx('2026-10-02', -1000, 'A', 'a'), tx('2026-10-05', -500, 'B', 'b')]);
     expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'synced', added: 1 });
     // A clean fetch clears the error, never the skipped days: only the person does, once he has checked them.
     expect(await connectionOf(s.accountId)).toMatchObject({ lastError: null, notices: { skipped: ['2026-10-01', '2026-10-03'] } });
     await clearBankNotice(db, s.ctx, id, { kind: 'skipped', day: '2026-10-01' });
-    expect((await loadBankConnections(db, s.ctx.workspaceId, NOW))[0].notices).toEqual({ gaps: [], skipped: ['2026-10-03'], undated: 0 });
+    expect((await loadBankConnections(db, s.ctx.workspaceId, NOW))[0].notices).toEqual({ gaps: [], skipped: ['2026-10-03'], undated: [] });
     expect(await code(clearBankNotice(db, s.ctx, id, { kind: 'other' }))).toBe('invalid_notice');
     // Beyond the bound the fetch fails as a whole, and says so.
     s.bank.transactions.set('uid-a1', Array.from({ length: MAX_UNREADABLE + 1 }, (_, i) => ({ ...broken, booking_date: `2026-10-${String(6 + (i % 9)).padStart(2, '0')}` })));
@@ -600,7 +608,7 @@ describe('bank connection: what the review of 2026-10-19 found', () => {
     expect(s.bank.fetchCalls[s.bank.fetchCalls.length - 1].from).toBe('2026-09-30');
     expect(await paymentCount(s.accountId)).toBe(2);
     // The day stays named until the person clears it.
-    expect((await connectionOf(s.accountId)).notices).toEqual({ gaps: [], skipped: ['2026-10-01'], undated: 0 });
+    expect(visibleNotices(await connectionOf(s.accountId))).toEqual({ gaps: [], skipped: ['2026-10-01'], undated: [] });
   });
 
   it('a renewal later than the bank looks back names the days no fetch can reach, until the person clears them', async () => {
@@ -612,12 +620,12 @@ describe('bank connection: what the review of 2026-10-19 found', () => {
     expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'synced', added: 1 });
     expect(s.bank.fetchCalls[s.bank.fetchCalls.length - 1].from).toBe('2026-07-19');
     const gap = { from: '2026-05-02', to: '2026-07-18' };
-    expect((await connectionOf(s.accountId)).notices).toEqual({ gaps: [gap], skipped: [], undated: 0 });
+    expect(visibleNotices(await connectionOf(s.accountId))).toEqual({ gaps: [gap], skipped: [], undated: [] });
     // The next clean fetch keeps it, and asks nothing twice.
     expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'nothing_new', added: 0 });
-    expect((await connectionOf(s.accountId)).notices).toEqual({ gaps: [gap], skipped: [], undated: 0 });
+    expect(visibleNotices(await connectionOf(s.accountId))).toEqual({ gaps: [gap], skipped: [], undated: [] });
     await clearBankNotice(db, s.ctx, id, { kind: 'gap', ...gap });
-    expect((await connectionOf(s.accountId)).notices).toEqual({ gaps: [], skipped: [], undated: 0 });
+    expect(visibleNotices(await connectionOf(s.accountId))).toEqual({ gaps: [], skipped: [], undated: [] });
     // Another company cannot clear it.
     const other = await setup();
     expect(await code(clearBankNotice(db, other.ctx, id, { kind: 'gap', ...gap }))).toBe('connection_not_found');
@@ -647,13 +655,12 @@ describe('bank connection: what the review of 2026-10-19 found', () => {
     ];
     await startConsent(db, s.ctx, s.deps, s.accountId, BANK);
     const { connectionId: id } = await completeConsent(db, s.ctx.workspaceId, s.deps, { state: s.bank.lastState, code: 'ok' });
-    await chooseBankAccount(db, s.ctx, id, 'uid-wrong');
+    await chooseBankAccount(db, s.ctx, id, 'uid-wrong', NOW);
     s.bank.transactions.set('uid-wrong', [tx('2026-10-02', -500, 'Bank Beispiel', 'Kontoführung Tagesgeld')]);
     await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
     const wrong = await db.taxPayment.findFirstOrThrow({ where: { accountId: s.accountId } });
-    // A later moment, so the new binding is newer than that import.
-    s.setClock(new Date(NOW.getTime() + 60_000));
-    await chooseBankAccount(db, s.ctx, id, 'uid-right');
+    // The import above was stored just now; the switch is bound a minute later, so that import lies before it.
+    await chooseBankAccount(db, s.ctx, id, 'uid-right', new Date(Date.now() + 60_000));
     s.bank.transactions.set('uid-right', [tx('2026-10-02', -500, 'Bank Beispiel', 'Kontoführung Girokonto')]);
     expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'synced', added: 1 });
     // The fee of the account read before keeps its words; the other account's fee is a payment of its own.
@@ -661,21 +668,74 @@ describe('bank connection: what the review of 2026-10-19 found', () => {
     expect(await paymentCount(s.accountId)).toBe(2);
   });
 
-  it('a booking without any readable day is counted, not lost in silence', async () => {
+  it('a booking without any readable day is counted once, however often the bank lists it, and a cleared one stays cleared', async () => {
     const s = await setup();
     const id = await connect(s);
-    const undated = { status: 'BOOK', transaction_amount: { amount: '5.00', currency: 'EUR' }, credit_debit_indicator: 'DBIT', booking_date: '2026-10-01' };
-    // The fake bank lists it for 1 October; the movement itself then carries no day.
+    // A day that is no text at all (a number), and none: neither can be kept as a day.
+    const numberDay = { status: 'BOOK', booking_date: 20261001, transaction_amount: { amount: '5.00', currency: 'EUR' }, credit_debit_indicator: 'DBIT', entry_reference: 'E-1' };
+    let rows: Tx[] = [numberDay, tx('2026-10-02', -1000, 'A', 'a')];
     s.bank.fetchTransactions = async (uid: string, from: string, to: string) => {
       s.bank.fetchCalls.push({ uid, from, to });
-      return [{ ...undated, booking_date: undefined }, tx('2026-10-02', -1000, 'A', 'a')];
+      return rows;
     };
     expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'synced', added: 1 });
-    expect((await connectionOf(s.accountId)).notices).toEqual({ gaps: [], skipped: [], undated: 1 });
+    const first = (await loadBankConnections(db, s.ctx.workspaceId, NOW))[0].notices.undated;
+    expect(first).toHaveLength(1);
+    // Listed again on the next fetch: still one booking.
     await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
-    expect((await connectionOf(s.accountId)).notices).toMatchObject({ undated: 2 });
-    await clearBankNotice(db, s.ctx, id, { kind: 'undated' });
-    expect((await connectionOf(s.accountId)).notices).toEqual({ gaps: [], skipped: [], undated: 0 });
+    expect((await loadBankConnections(db, s.ctx.workspaceId, NOW))[0].notices.undated).toEqual(first);
+    // The person clears what he saw; meanwhile the bank lists a second one, which stays.
+    rows = [numberDay, { ...numberDay, entry_reference: 'E-2' }, tx('2026-10-02', -1000, 'A', 'a')];
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
+    await clearBankNotice(db, s.ctx, id, { kind: 'undated', keys: first });
+    const left = (await loadBankConnections(db, s.ctx.workspaceId, NOW))[0].notices.undated;
+    expect(left).toHaveLength(1);
+    expect(left).not.toEqual(first);
+    // The cleared one does not come back with the next fetch.
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
+    expect((await loadBankConnections(db, s.ctx.workspaceId, NOW))[0].notices.undated).toEqual(left);
+    expect(await code(clearBankNotice(db, s.ctx, id, { kind: 'undated', keys: 'all' }))).toBe('invalid_notice');
+  });
+
+  it('a skipped day the person cleared does not come back while the bank still lists it broken', async () => {
+    const s = await setup();
+    const id = await connect(s);
+    const broken = { status: 'BOOK', booking_date: '2026-10-01', transaction_amount: { amount: 'zehn', currency: 'EUR' }, credit_debit_indicator: 'DBIT' };
+    s.bank.transactions.set('uid-a1', [broken, tx('2026-10-02', -1000, 'A', 'a')]);
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
+    await clearBankNotice(db, s.ctx, id, { kind: 'skipped', day: '2026-10-01' });
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
+    expect((await loadBankConnections(db, s.ctx.workspaceId, NOW))[0].notices.skipped).toEqual([]);
+  });
+
+  it('a switch to another account of the session starts it afresh: no gap from the account read before', async () => {
+    const s = await setup();
+    s.bank.nextAccounts = [
+      { uid: 'uid-old', mask: '•••• 1111', name: 'Tagesgeld', currency: 'EUR' },
+      { uid: 'uid-new', mask: '•••• 2222', name: 'Girokonto', currency: 'EUR' },
+    ];
+    await startConsent(db, s.ctx, s.deps, s.accountId, BANK);
+    const { connectionId: id } = await completeConsent(db, s.ctx.workspaceId, s.deps, { state: s.bank.lastState, code: 'ok' });
+    await chooseBankAccount(db, s.ctx, id, 'uid-old', NOW);
+    // The account read before was last fetched in May.
+    await db.taxBankConnection.update({ where: { id }, data: { lastBookedThrough: '2026-05-01', fetchedThrough: '2026-05-01' } });
+    await chooseBankAccount(db, s.ctx, id, 'uid-new', NOW);
+    expect(await connectionOf(s.accountId)).toMatchObject({ fetchedThrough: null, lastBookedThrough: null });
+    s.bank.transactions.set('uid-new', [tx('2026-10-02', -1000, 'A', 'a')]);
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
+    expect((await connectionOf(s.accountId)).notices).toMatchObject({ gaps: [] });
+  });
+
+  it('a renewal of the same account keeps the last fetched day, so the next fetch continues and names no gap', async () => {
+    const s = await setup();
+    const id = await connect(s);
+    s.bank.transactions.set('uid-a1', [tx('2026-10-02', -1000, 'A', 'a')]);
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
+    await startConsent(db, s.ctx, s.deps, s.accountId, BANK);
+    await completeConsent(db, s.ctx.workspaceId, s.deps, { state: s.bank.lastState, code: 'ok' });
+    expect(await connectionOf(s.accountId)).toMatchObject({ fetchedThrough: TODAY, lastBookedThrough: '2026-10-02', status: 'active' });
+    await syncConnection(db, s.ctx, s.deps, id, { today: '2026-10-20' });
+    expect(await connectionOf(s.accountId)).toMatchObject({ fetchedThrough: '2026-10-20', notices: { gaps: [] } });
   });
 
   it('a notice cleared while a fetch runs stays cleared, and what the fetch found is kept', async () => {
@@ -687,7 +747,7 @@ describe('bank connection: what the review of 2026-10-19 found', () => {
     // The next fetch finds another skipped day while the person clears the first.
     s.bank.transactions.set('uid-a1', [{ ...broken, booking_date: '2026-10-05' }, tx('2026-10-02', -1000, 'A', 'a')]);
     await Promise.all([syncConnection(db, s.ctx, s.deps, id, { today: TODAY }), clearBankNotice(db, s.ctx, id, { kind: 'skipped', day: '2026-10-01' })]);
-    expect((await connectionOf(s.accountId)).notices).toEqual({ gaps: [], skipped: ['2026-10-05'], undated: 0 });
+    expect(visibleNotices(await connectionOf(s.accountId))).toEqual({ gaps: [], skipped: ['2026-10-05'], undated: [] });
   });
 
   it('two bookings of one day and amount that both changed are not guessed at', async () => {
@@ -730,11 +790,17 @@ describe('bank connection: what the review of 2026-10-19 found', () => {
     const id = await connect(s);
     s.bank.transactions.set('uid-a1', [tx('2026-10-02', -1000, 'A', 'a')]);
     // No time at all: every active connection of the database waits, and none is fetched.
-    const result = await syncAllConnections(db, s.deps, { today: TODAY, budgetMs: 0 });
-    expect(result.find((r) => r.connectionId === id)).toEqual({ connectionId: id, status: 'deferred', added: 0 });
-    expect(result.every((r) => r.status === 'deferred')).toBe(true);
+    const none = await syncAllConnections(db, s.deps, { today: TODAY, budgetMs: 0 });
+    expect(none.find((r) => r.connectionId === id)).toEqual({ connectionId: id, status: 'deferred', added: 0 });
+    expect(none.every((r) => r.status === 'deferred')).toBe(true);
     expect(s.bank.fetchCalls).toEqual([]);
-    expect(await paymentCount(s.accountId)).toBe(0);
+    // Time for one: the connection fetched longest ago (never) goes first, every later one waits.
+    let now = 0;
+    const one = await syncAllConnections(db, s.deps, { today: TODAY, budgetMs: 1000, clock: () => (now += 600) });
+    const started = one.filter((r) => r.status !== 'deferred');
+    expect(started).toHaveLength(1);
+    expect(one.indexOf(started[0])).toBe(0);
+    expect(one.slice(1).every((r) => r.status === 'deferred')).toBe(true);
   });
 
   it('a fetch stopped by the run deadline between two pages is deferred and loses nothing', async () => {
@@ -750,13 +816,16 @@ describe('bank connection: what the review of 2026-10-19 found', () => {
   it('a signed daily call runs once, also across a restart and at the same moment twice', async () => {
     // The guard is one row for the whole database; start above anything another test may have left.
     const base = Math.floor(Date.now() / 1000) + 10_000 + Math.floor(Math.random() * 1000) * 10;
+    try {
     expect(await claimDailySync(db, base)).toBe(true);
     expect(await claimDailySync(db, base)).toBe(false);
     expect(await claimDailySync(db, base - 1)).toBe(false);
     const both = await Promise.all([claimDailySync(db, base + 1), claimDailySync(db, base + 1)]);
     expect(both.filter(Boolean)).toEqual([true]);
     expect(await claimDailySync(db, base + 2)).toBe(true);
-    // The guard row is shared by the whole test database: leave no time in the future behind.
-    await db.taxBankSyncGuard.deleteMany({ where: { id: 'daily' } });
+    } finally {
+      // The guard row is shared by the whole test database: leave no time in the future behind, also on a failure.
+      await db.taxBankSyncGuard.deleteMany({ where: { id: 'daily' } });
+    }
   });
 });

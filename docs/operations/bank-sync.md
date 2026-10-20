@@ -64,14 +64,21 @@ in `src/lib/tax/payments/bank/config.ts` lists the missing names (names only).
    runs once. The time of the last accepted call is kept in the database
    (`tax_bank_sync_guard`), so this also holds after a restart and with several instances.
 6. **Scheduled task** (Coolify, on the receipts application, once a day, for example 06:30
-   Europe/Berlin), run inside the container where `BANK_SYNC_SECRET` is in the environment:
+   Europe/Berlin), command:
 
    ```sh
-   node -e "const c=require('node:crypto');const b=JSON.stringify({ts:Math.floor(Date.now()/1000)});const s=c.createHmac('sha256',process.env.BANK_SYNC_SECRET).update(b).digest('hex');fetch('http://localhost:3000/api/internal/bank-sync',{method:'POST',headers:{'content-type':'application/json','x-lumitra-erasure-signature':'sha256='+s},body:b,signal:AbortSignal.timeout(280000)}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)}).catch(e=>{console.error(e.name);process.exit(1)})"
+   sh scripts/bank-sync.sh
    ```
 
-   The answer holds counts only (connections, added, failed, and per connection its id,
-   status and count), never bank data. Confirm the next run and the execution history.
+   A scheduled task is a command of its own inside the container and does not see the
+   secrets the server loaded at start. `scripts/bank-sync.sh` therefore loads them the same
+   way the start does (`entrypoint.sh`, with the machine identity's client id and secret
+   from the container's environment, the token passed in the environment, never as an
+   argument) and runs `scripts/bank-sync-call.mjs`, which signs one call and sends it to
+   the app in the same container. It prints the status and the answer, which holds
+   counts and connection ids only, never bank data, and exits non-zero on anything but
+   a success, so the task shows a failed run. Confirm the next run and the execution
+   history.
 
 **Once a day is the promise.** The payment services directive limits the fetches a third
 party may make without the person present to a few per day and account; the daily run and

@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useMemo, useState, useTransition } from 'react';
+import { useEffect, useId, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { receiptHref } from '@/lib/receipt-link';
 import { useRouter } from 'next/navigation';
@@ -47,6 +47,9 @@ import {
 } from './actions';
 import LinesForm, { type LineDraft } from './LinesForm';
 import PaymentsTab from './PaymentsTab';
+import { useBankFeed, type BankActions } from './BankConnection';
+import { chooseBankConnectionAccount, clearBankConnectionNotice, disconnectBank, listBankInstitutions, startBankConsent, syncBankNow, type BankView } from './bank-actions';
+import { returnMessage } from '@/lib/tax/payments/bank/messages';
 import YearBoundaryTab from './YearBoundaryTab';
 import type { ImportResult } from '@/lib/tax/payments/service';
 import RevenueTab from './RevenueTab';
@@ -59,7 +62,7 @@ import { removeTaxReturnItem, removeWage, saveTaxReturnItem, saveWage, setChurch
 import { incomeTaxActionMessage } from '@/lib/tax/income-tax/messages';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 
-type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'tax' | 'boundary' | 'vendors';
+export type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'tax' | 'boundary' | 'vendors';
 
 /** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
 const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
@@ -99,12 +102,39 @@ export function openQueue(view: StatementView): StatementItem[] {
   return view.items.filter((i) => i.checks.some((c) => c.blocking && !WORKSPACE_CHECKS.includes(c.kind)));
 }
 
-export default function FinanceClient({ initial }: { initial: StatementView }) {
+const BANK_ACTIONS: BankActions = { listBankInstitutions, startBankConsent, chooseBankConnectionAccount, syncBankNow, disconnectBank, clearBankConnectionNotice };
+const NO_BANK: BankView = { enabled: false, connections: [] };
+
+export default function FinanceClient({
+  initial,
+  initialTab,
+  bank: bankInitial = null,
+  bankReturn = null,
+  bankActions = BANK_ACTIONS,
+}: {
+  initial: StatementView;
+  initialTab?: TabKey;
+  /** The live bank connections; null when they could not be read (the payments tab then shows no bank controls). */
+  bank?: BankView | null;
+  /** The outcome of the return from the bank (`?bank=`). */
+  bankReturn?: string | null;
+  bankActions?: BankActions;
+}) {
   const tabsId = useId();
   const router = useRouter();
   const [view, setView] = useState(initial);
   // An overdue invoice is an open check too (decision D6 of the invoicing plan), so it opens the "Offen" tab as well.
-  const [tab, setTab] = useState<TabKey>(() => (openQueue(initial).length > 0 || initial.revenue.overdue.length > 0 ? 'open' : 'statement'));
+  const [tab, setTab] = useState<TabKey>(() => initialTab ?? (openQueue(initial).length > 0 || initial.revenue.overdue.length > 0 ? 'open' : 'statement'));
+  const bankFeed = useBankFeed(bankInitial ?? NO_BANK, view.year, bankActions, (next) => setView(next), (url) => window.location.assign(url));
+  const [bankNotice] = useState(() => returnMessage(bankReturn));
+  // The outcome is shown once: the address loses it, so a reload does not repeat it.
+  useEffect(() => {
+    if (!bankReturn) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('bank');
+    url.searchParams.delete('reiter');
+    window.history.replaceState(null, '', url.toString());
+  }, [bankReturn]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   // The item of the statement tab whose receipt is being split (its lines change the item ids, so both close together).
@@ -791,6 +821,7 @@ export default function FinanceClient({ initial }: { initial: StatementView }) {
                 )
               }
               onSearch={(query) => searchPayments(view.year, query)}
+              bank={bankInitial ? { feed: bankFeed, actions: bankActions, returnNotice: bankNotice } : null}
               onTreat={(counterparty, treatment) => run(() => treatCounterparty(view.year, { counterparty, treatment }), `${counterparty}: ${treatment === null ? 'Antwort zurückgenommen' : 'gespeichert'}.`)}
               onLink={linkWithQuestion}
               onAcceptProposals={(pairs, onlyUnambiguous) => {

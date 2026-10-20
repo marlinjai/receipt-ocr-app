@@ -288,15 +288,15 @@ model MealGuest {
 
 // One row per data export handed to a company (see src/lib/company-export.ts).
 model CompanyExport {
-  id           String   @id @default(uuid())
-  authTenantId String   @map("auth_tenant_id")
-  fileCount    Int      @map("file_count")
-  sha256       String
+  id             String   @id @default(uuid())
+  authTenantId   String   @map("auth_tenant_id")
+  fileCount      Int      @map("file_count")
+  sha256         String
   // SHA-256 over the register files of this export only (see registerHash in
   // src/lib/company-export.ts). Null on exports taken before the column existed;
   // such an export never justifies removing printed guest names.
-  registerSha256 String? @map("register_sha256")
-  createdAt    DateTime @default(now()) @map("created_at")
+  registerSha256 String?  @map("register_sha256")
+  createdAt      DateTime @default(now()) @map("created_at")
 
   @@index([authTenantId])
   @@map("company_exports")
@@ -682,8 +682,9 @@ model TaxAccount {
   isPrivate       Boolean  @default(false) @map("is_private")
   createdAt       DateTime @default(now()) @map("created_at")
 
-  batches  TaxImportBatch[]
-  payments TaxPayment[]
+  batches        TaxImportBatch[]
+  payments       TaxPayment[]
+  bankConnection TaxBankConnection?
 
   @@unique([authWorkspaceId, label])
   @@map("tax_accounts")
@@ -717,32 +718,32 @@ model TaxImportBatch {
 // `sourceKind` is what the file says it is; `kindOverride` what a person says.
 // `counterpartyKey` is the normalized name the counterparty rules match on.
 model TaxPayment {
-  id              String   @id @default(uuid())
-  authWorkspaceId String   @map("auth_workspace_id")
-  authTenantId    String?  @map("auth_tenant_id")
-  accountId       String   @map("account_id")
-  batchId         String   @map("batch_id")
-  bookingDay      String   @map("booking_day")
-  valueDay        String?  @map("value_day")
-  amountCents     Int      @map("amount_cents")
-  counterparty    String
-  counterpartyKey String   @map("counterparty_key")
-  reference       String
-  entryReference  String?  @map("entry_reference")
-  sourceKind      String   @map("source_kind")
-  kindOverride    String?  @map("kind_override")
-  sourceHash      String   @map("source_hash")
+  id                 String   @id @default(uuid())
+  authWorkspaceId    String   @map("auth_workspace_id")
+  authTenantId       String?  @map("auth_tenant_id")
+  accountId          String   @map("account_id")
+  batchId            String   @map("batch_id")
+  bookingDay         String   @map("booking_day")
+  valueDay           String?  @map("value_day")
+  amountCents        Int      @map("amount_cents")
+  counterparty       String
+  counterpartyKey    String   @map("counterparty_key")
+  reference          String
+  entryReference     String?  @map("entry_reference")
+  sourceKind         String   @map("source_kind")
+  kindOverride       String?  @map("kind_override")
+  sourceHash         String   @map("source_hash")
   // Set when a later import of the same source listed this purchase as
   // cancelled or refunded in full: the payment is kept for the record and
   // counts nowhere. Undoing that import sets it back to NULL (the foreign key
   // does), so the payment and its links count again.
-  cancelledByBatchId String? @map("cancelled_by_batch_id")
-  createdAt       DateTime @default(now()) @map("created_at")
+  cancelledByBatchId String?  @map("cancelled_by_batch_id")
+  createdAt          DateTime @default(now()) @map("created_at")
 
-  account     TaxAccount      @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  batch       TaxImportBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  cancelledBy TaxImportBatch? @relation("cancelledBy", fields: [cancelledByBatchId], references: [id], onDelete: SetNull)
-  links   TaxPaymentLink[]
+  account     TaxAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  batch       TaxImportBatch   @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  cancelledBy TaxImportBatch?  @relation("cancelledBy", fields: [cancelledByBatchId], references: [id], onDelete: SetNull)
+  links       TaxPaymentLink[]
 
   @@unique([accountId, sourceHash])
   @@index([authWorkspaceId, bookingDay])
@@ -974,15 +975,15 @@ model SpendingMailSearch {
 // never its content. The owner takes it into the normal upload path from the
 // spending page, or sets it aside as not the invoice.
 model SpendingMailCandidate {
-  id              String   @id @default(uuid())
-  authWorkspaceId String   @map("auth_workspace_id")
-  authTenantId    String?  @map("auth_tenant_id")
-  paymentId       String   @map("payment_id")
-  messageId       String   @map("message_id")
-  partIndex       Int      @map("part_index")
-  fileName        String   @map("file_name")
-  mimeType        String   @map("mime_type")
-  receivedDay     String   @map("received_day")
+  id              String    @id @default(uuid())
+  authWorkspaceId String    @map("auth_workspace_id")
+  authTenantId    String?   @map("auth_tenant_id")
+  paymentId       String    @map("payment_id")
+  messageId       String    @map("message_id")
+  partIndex       Int       @map("part_index")
+  fileName        String    @map("file_name")
+  mimeType        String    @map("mime_type")
+  receivedDay     String    @map("received_day")
   subject         String
   sender          String
   // Set when the owner said "not the invoice": never offered again, kept so a new search does not bring it back.
@@ -1040,4 +1041,77 @@ model ReceiptReference {
   @@index([authWorkspaceId])
   @@index([referencedRowId])
   @@map("receipt_references")
+}
+
+// The live bank connection of one account (Enable Banking, plan 2026-10-07,
+// "Reality: the live bank connection"). One per account. The movements it
+// fetches go into TaxPayment through the normal import; nothing of the bank's
+// data is kept here except the masked choices of a session (`candidates`).
+// `sessionId` is stored on purpose: without the application's private key,
+// which lives only in Infisical, it opens nothing.
+// `stateHash` is the SHA-256 of the random state of a consent in progress,
+// cleared when the bank's answer is taken, so the answer cannot be replayed.
+model TaxBankConnection {
+  id                  String    @id @default(uuid())
+  authWorkspaceId     String    @map("auth_workspace_id")
+  authTenantId        String?   @map("auth_tenant_id")
+  accountId           String    @unique @map("account_id")
+  aspspName           String    @map("aspsp_name")
+  aspspCountry        String    @map("aspsp_country")
+  // The institution a consent in progress asks (a renewal may change it); taken over when it succeeds.
+  pendingAspspName    String?   @map("pending_aspsp_name")
+  pendingAspspCountry String?   @map("pending_aspsp_country")
+  // 'pending' | 'choose_account' | 'active' | 'expired' | 'revoked' | 'error'
+  status              String
+  stateHash           String?   @map("state_hash")
+  stateExpiresAt      DateTime? @map("state_expires_at")
+  sessionId           String?   @map("session_id")
+  accountUid          String?   @map("account_uid")
+  // [{ uid, mask, name, currency }]: the accounts of the session, masked; kept after the choice for a renewal.
+  candidates          Json?
+  // The masked number and name of the bank account this connection reads, to find it again in a renewed session.
+  boundMask           String?   @map("bound_mask")
+  boundName           String?   @map("bound_name")
+  validUntil          DateTime? @map("valid_until")
+  lastSyncedAt        DateTime? @map("last_synced_at")
+  // The last booked day fetched; the next fetch starts five days before it.
+  lastBookedThrough   String?   @map("last_booked_through")
+  // A code, never bank data.
+  lastError           String?   @map("last_error")
+  lastErrorAt         DateTime? @map("last_error_at")
+  // What a person has to look at and clears himself, so the next clean fetch
+  // never wipes it: `gaps` (days no fetch can reach any more, after a renewal
+  // that came later than the 89 days the bank looks back) and `skipped` (days
+  // with a movement the bank described too incompletely to import). See
+  // `BankNotices` in src/lib/tax/payments/bank/service.ts.
+  notices             Json?
+  // The last day a successful fetch reached, whatever was booked: a gap is
+  // only what lies between it and the 89 days the bank still gives.
+  fetchedThrough      String?   @map("fetched_through")
+  // When a fetch was last tried, whatever came of it: the daily run starts with
+  // the connection tried longest ago, so a bank failing every day never keeps
+  // the others waiting.
+  lastAttemptedAt     DateTime? @map("last_attempted_at")
+  // When the bank account now read was bound: only imports from then on are
+  // this account's own when a reworded booking is matched.
+  boundAt             DateTime? @map("bound_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  account TaxAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([authWorkspaceId])
+  @@index([stateHash])
+  @@index([status])
+  @@map("tax_bank_connections")
+}
+
+// The time of the last accepted call of the daily bank fetch
+// (/api/internal/bank-sync), one row. Stored in the database so a signed call
+// runs once also across a restart and with more than one app instance.
+model TaxBankSyncGuard {
+  id     String @id
+  lastTs BigInt @map("last_ts")
+
+  @@map("tax_bank_sync_guard")
 }

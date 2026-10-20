@@ -364,7 +364,7 @@ The rules it implements, each in plain words:
 Kept from the roadmap item and the prototype:
 
 - **Interface.** Enable Banking, registered application "Lumitra Receipts" (id in
-  Infisical as `ENABLE_BANKING_APP_ID`, never written into this repository), restricted production: it returns data only
+  Infisical as `ENABLE_BANKING_APPLICATION_ID`, never written into this repository), restricted production: it returns data only
   for accounts linked to the application itself, so it serves the operator's own
   accounts. Key and session ids are in Infisical (project Receipt OCR,
   `ENABLE_BANKING_*`).
@@ -2016,3 +2016,184 @@ not computed.
     linked by hand; until then the credit note counts on its own day. This belongs to the
     payments module (proposals for money in that matches a credit note's amount in full).
 
+
+## Reality: the live bank connection (2026-10-16)
+
+The second half of slice 3: the live sync through Enable Banking, per account, next to the
+file importers. Off until the server holds its settings (`docs/operations/bank-sync.md`);
+the daily scheduled task is described there and not created.
+
+**The owner's decision (2026-10-16): all five accounts are tried live (Tomorrow, N26, PayPal,
+Klarna, Advanzia), each connected on its own, and the file importers stay as the fallback
+for every account.**
+
+What exists:
+
+- **Client** `src/lib/tax/payments/bank/client.ts`: the Enable Banking interface with
+  `node:crypto` only (no new dependency): a JSON Web Token (JWT) signed with RS256 (a
+  Rivest-Shamir-Adleman, RSA, signature over a Secure Hash Algorithm 256, SHA-256, digest)
+  with the application's private key per call, valid one hour. Institutions, consent, session,
+  closing a session, the transaction list with all its pages (at most 50). Errors are
+  mapped by the interface's machine code (field `error`; `code` is the HTTP status) into
+  what the connection acts on. Nothing it logs or throws carries a token, a key, a session
+  id or an account number; the accounts of a session leave it masked ("•••• 1234").
+- **Settings** `bank/config.ts`, read by name: `BANK_FEED_ENABLED` (exactly `true`),
+  `ENABLE_BANKING_APPLICATION_ID`, `ENABLE_BANKING_PRIVATE_KEY`, `ENABLE_BANKING_REDIRECT_URL`,
+  and for the daily route `BANK_SYNC_SECRET`.
+- **One table**, `tax_bank_connections` (migration `0034_tax_bank_connections`, additive),
+  one connection per account: institution, status (`pending`, `choose_account`, `active`,
+  `expired`, `revoked`, `error`), the hash of the consent's random state with its expiry,
+  the session id, the bound account's uid, the masked accounts of the session to choose
+  from, the consent's end, when it last fetched, the last booked day it saw, and the last
+  error as a code. No second copy of bank data: movements go into `tax_payments` through
+  the normal import.
+- **Consent flow** (`bank/service.ts`, route `/api/banking/callback`): the institution is
+  picked from the live list for Germany (search box; the one named in the account's label
+  is preselected), the consent asks for the institution's maximum or 180 days, whichever is
+  shorter. The callback needs a signed-in session with write permission; the state must
+  belong to a consent of the session's active company and be at most 30 minutes old, and it
+  is used up before the bank is asked, so a replayed answer is refused. One account in the
+  session binds itself; several ask which one. A renewal is the same start on the existing
+  connection: the account and its imports stay, the old session keeps reading until the new
+  one is taken and is then closed at the bank. Disconnect closes the session at the bank and
+  removes the connection; the payments stay.
+- **Sync**: the first fetch reaches back 89 days, later ones start five days before the last
+  booked day seen, up to today. The fetched list goes into `importPayments` as the bank
+  interface's format, so the bank is one more source of the account: a day belongs to the
+  source that brought it first (`coverage.ts`), every movement is kept once. A new import
+  option `refuseEmpty` refuses an import that adds, recognizes and cancels nothing, so the
+  daily overlapping fetch leaves no empty import behind; `nothing_new`,
+  `file_already_imported` and `nothing_uncovered` all count as "nothing new". "Jetzt
+  abholen" (person present) and the daily machine route `/api/internal/bank-sync` (HMAC
+  over the raw body with `BANK_SYNC_SECRET`, the header and verifier of the erasure
+  webhook, listed in `publicPaths`, 503 without the secret or with the feed off). After a
+  fetch that added payments the spending checks run; their failure is only logged.
+- **Payments tab**, per account: "Live über die Bankschnittstelle (Bank), zuletzt abgeholt
+  am ...", "Datei-Import", "Verbindung abgelaufen am ..., bitte erneuern. Vollständig bis
+  ...", "Fehler: ...", a warning 14 days before the consent ends, and the buttons "Live mit
+  der Bank verbinden", "Jetzt abholen", "Freigabe erneuern", "Trennen". The file import stays
+  for every account.
+
+Decided without asking, say so if you disagree:
+
+- **The session id is stored in the database.** It opens nothing without the application's
+  private key, which stays in Infisical.
+- **An account fed from a PayPal or Klarna list cannot be connected live** (refused before
+  the bank is asked, with the way out). The payment services' lists describe purchases in
+  other words than any bank source, so continuing them day by day would store purchases
+  twice (the existing `format_mismatch` rule). For PayPal and Klarna live, create an account
+  of its own and stop importing the list for the days after.
+- **The last booked day** is the latest booking day among the booked movements fetched, not
+  the end of the fetch window, so a movement the bank books late is still inside the next
+  five-day overlap. A booking dated after today (a card's future booking day) does not count
+  for it, so the next fetch never starts in the future and skips nothing.
+- **No fetch reaches back more than 89 days**, also when the last booked day is older (a quiet
+  account, or a consent that lapsed for months): banks refuse older days without a fresh
+  confirmation, and the run would fail every day. Days before that are filled by a file
+  import; the account's "vollständig bis" shows where the gap is.
+- **"Jetzt abholen" tells the bank the person is present** (the headers `Psu-Ip-Address` and
+  `Psu-User-Agent` with the browser's address and agent, sent to the interface, never stored),
+  so it does not use up the few unattended fetches a bank allows per day; the daily run sends
+  none.
+- **The daily route's signed body carries the time** (`{"ts": ...}`, at most five minutes off,
+  and later than the last request accepted), so a signed request seen once cannot be replayed
+  to use up those fetches.
+- **A booking dated after today waits for its day**: it is left out of the fetch, so the
+  import never claims days that have not happened (a file import of those days would
+  otherwise leave its movements out as covered); a later fetch brings it.
+- **A movement the bank describes incompletely is left out and named** (at most 20 per fetch;
+  more fail the fetch as a whole), so one bad row never stops the feed: the account says
+  "Einige Buchungen beschreibt die Bank unvollständig" until a fetch without one.
+- **A renewed session finds the same bank account by its masked number and name** (the
+  interface gives every session new account uids). Exactly one match binds it and keeps its
+  last booked day; otherwise the tab asks, also when the new session holds a single account
+  that is not the one read before (another account or another institution never flows into
+  this account unseen). Choosing another account than before asks for confirmation and
+  starts afresh (89 days). The interface's own `identification_hash` would match more reliably but is a hash
+  of the account number, which the payments area decided never to store.
+- **Disconnect when the bank cannot be reached** removes the connection here anyway and says
+  so; the consent then runs out on its own day.
+
+Which institutions Enable Banking offers for Germany (checked 2026-10-16): the documented
+markets page (https://enablebanking.com/docs/markets/de/) names none of the five. The list
+the Enable Banking website loads (https://enablebanking.com/api/aspsps, public, undocumented)
+has **Tomorrow, N26 and PayPal** for Germany (personal, redirect login, 180 days), **Klarna**
+for Germany as beta (personal, approval in the Klarna app), and **no Advanzia** in any country.
+The authenticated `GET /aspsps` of the application is the final word, which is why the tab
+reads it at run time; an institution missing there gets "wird über die Bankschnittstelle nicht
+angeboten, das Konto bleibt beim Datei-Import". Advanzia has no file importer either (no
+reader for its statement exists yet).
+
+Not built: the daily scheduled task itself (a production change, see the operations page).
+
+A second fresh review confirmed the fixes and found five more points (the future booking's
+claimed days, one unreadable row stopping the feed, a replay inside the five minutes, which
+address is sent as the person's, and a test for two simultaneous starts), fixed as above.
+
+Reviewed before opening by a fresh agent that saw only the diff: no isolation hole, no leak of
+a token, key, session id or account number. Its twelve findings are fixed in the same change
+(the future booking day and the 89-day bound above, a renewal to a different single account,
+a fetch racing a renewal no longer overwrites the reset start day, the replay window and the
+presence headers, two simultaneous starts, a stale choice on screen, wording, and the test
+key frame built at run time).
+
+### The live bank connection: taken over and reviewed again (2026-10-19), decided, say so if you disagree
+
+- **The application id is read from `ENABLE_BANKING_APPLICATION_ID`**, the name it has had in
+  Infisical since 2026-10-11, instead of a second copy under another name.
+- **The return address is `/api/banking/callback`**, the one address registered on the
+  application "Lumitra Receipts" (checked through `GET /application`: active, production,
+  account information only). The route moved there instead of registering a second address.
+- **The migration is `0034_tax_bank_connections`**, after the `0033` main applied first. It now
+  also holds the connection's `notices` and the table `tax_bank_sync_guard`; still additive.
+- **A session that runs out at the bank no longer ends in a bare refusal**: the callback is a
+  public path that checks the session itself and sends a signed-out person to the login and
+  back with the bank's answer untouched.
+- **Days that need a person's eye stay until he clears them** ("Erledigt" on the account): a
+  gap after a renewal later than the 89 days the bank looks back, and days with a booking the
+  bank described too incompletely. A day with such a booking keeps the next fetches reaching
+  back to it, so the booking arrives once the bank completes it.
+- **A booking the bank rewords is the same payment**: alone on its day with its amount, the
+  stored one takes the new identity and words and keeps its links. Two or more of one day and
+  amount are not guessed at. Chosen over the bank's entry reference as identity, because that
+  reference is not unique at every bank and would change the identity of payments already
+  imported from the bank interface's files.
+- **Each later fetch starts twelve days back** (was five), for bookings a bank dates back.
+- **An erased company's bank feed ends with it**: its sessions are closed at the bank and its
+  connections removed (the payments stay its records).
+- **The daily run's replay guard lives in the database**, one atomic write, so a signed call
+  runs once also after a restart and with several instances.
+- **A run starts no further connection after about 200 seconds**; the rest is `deferred` and
+  fetched by the next run.
+- **A future booking is recognized by the same day the import reads** (booking day, else
+  transaction day, else value day).
+- **The account holder's name is never kept**: an account of a session is labelled by its
+  product ("Girokonto") and its masked number. Enable Banking's `name` field is the holder's name.
+- **Second review, same day:** a gap is measured from the last day a fetch reached
+  (`fetched_through`), never from the last booking, so a quiet account shows none; a booking
+  without any day is counted as a notice of its own; a reworded booking is matched only
+  against imports made since the bank account now read was bound (`bound_at`), so a switch to
+  another account of the session never rewrites the first account's payments, and against
+  every identity of the account (a file import's too); notices change under a row lock, so a
+  fetch and a clear never undo each other; a run stops fetching pages after 130 seconds and
+  starts no connection after 90; a switched-off return goes to the app's own address without
+  a login round trip; the guard's time is a 64-bit integer and a signed time must be whole
+  seconds; the day of a movement is read by the import's own reader (`toIsoDay`).
+- **Third review, same day:** a fetch writes its results and its notices in one write under
+  the connection's row lock, and only while it still reads the same session and account; a
+  booking without a day is counted once by a key (its reference or its content), and a
+  person clears exactly the ones he saw; a cleared skipped day or undated booking does not
+  come back while the bank keeps listing it broken; every call to the bank is cut at the run
+  deadline (100 seconds), no connection starts after 60 and no spending check after 245;
+  the spending checks run for every company with a live connection (those with new
+  payments first), so one left out for time runs the next day; the connection fetched
+  longest ago goes first; the import's day reader takes any value and never crashes on a
+  number; only an account bound before can count as the same account, and the account
+  choice uses the given clock.
+- **Fourth review, same day:** every fetch attempt is stamped (`last_attempted_at`) and the run
+  starts with the connection tried longest ago, so a bank failing every day goes to the back;
+  the spending checks run after the daily run has answered, so the scheduler only waits for
+  the fetches; binding another account clears the notices of the one read before; a cleared
+  skipped day no longer holds the next fetch back, and only a day that is shown is remembered
+  as cleared; two identical bookings without a day are two (numbered within a fetch, the
+  content read with sorted keys); the run deadline is real time, as the bank client compares.

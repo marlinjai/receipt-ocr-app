@@ -134,6 +134,16 @@ project; names in `.env.example`):
 A found attachment is never stored by the app: only where it is (mail and attachment). The owner
 takes it over with one tap; the browser then runs the normal upload.
 
+### Bankverbindung (the live bank connection)
+
+An account in the payments tab can be read live through Enable Banking instead of from export
+files: "Live mit der Bank verbinden" on the account, consent at the bank, then the booked
+movements arrive with "Jetzt abholen" and once a day. The file import stays for every account
+(an institution the interface does not offer stays on it). Off until the server holds
+`BANK_FEED_ENABLED=true`, `ENABLE_BANKING_APPLICATION_ID`, `ENABLE_BANKING_PRIVATE_KEY` and
+`ENABLE_BANKING_REDIRECT_URL`; the daily run also needs `BANK_SYNC_SECRET`. Activation and the
+daily task: `docs/operations/bank-sync.md`.
+
 ## Documentation
 
 - [Architecture](./docs/public/architecture.md) - System design and integrations

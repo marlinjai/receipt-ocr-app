@@ -6,6 +6,7 @@ import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, membershipLabel, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
 import { runSpendingChecks } from '@/lib/spending/checks';
+import { settleAcrossShares } from '@/lib/spending/loop-service';
 import { berlinToday } from '@/lib/spending/period';
 import { ShareError, endShare, loadShares, shareAccount, type ShareView } from '@/lib/tax/payments/routing';
 import type { Result } from './actions';
@@ -18,7 +19,9 @@ import type { Result } from './actions';
  * permission in BOTH companies, and the target must be one of the person's own
  * memberships: a company the person is not a member of is refused as
  * forbidden, never looked up. Ending a share needs the write permission in
- * either company.
+ * either company. Either way, the message queues of both companies are
+ * settled after the answer, so a message about a payment that moved never
+ * stays in the company it left.
  */
 
 type Session = Awaited<ReturnType<typeof requireReceiptsSession>>;
@@ -103,7 +106,9 @@ export async function shareAccountWith(accountId: unknown, targetWorkspaceId: un
     const holder = { workspaceId, tenantId: requireSessionTenantId(session, workspaceId) };
     const receiver = { workspaceId: targetWorkspaceId, tenantId: requireSessionTenantId(session, targetWorkspaceId) };
     await shareAccount(prisma, holder, accountId, receiver, session.userId);
+    // After the answer: the payments that moved leave the holder's message queue, and the receiver's checks run once.
     after(async () => {
+      await settleAcrossShares(prisma, [workspaceId, receiver.workspaceId]);
       try {
         await runSpendingChecks(prisma, receiver, { today: berlinToday() });
       } catch (e) {
@@ -122,7 +127,9 @@ export async function endAccountShare(shareId: unknown): Promise<Result<SharingV
     const session = await auth.requireAction('receipts.row.write');
     const workspaceId = sessionWorkspaceId(session);
     if (typeof shareId !== 'string' || !shareId) return { ok: false, error: 'not_found', detail: 'share_not_found' };
-    await endShare(prisma, workspaceId, shareId);
+    const { holder, receiver } = await endShare(prisma, workspaceId, shareId);
+    // After the answer: messages about the payments that went back to the holder leave the receiver's queue at once.
+    after(() => settleAcrossShares(prisma, [holder.workspaceId, receiver.workspaceId]));
     return { ok: true, value: await sharingView(session, workspaceId, true) };
   } catch (e) {
     return failure(e);

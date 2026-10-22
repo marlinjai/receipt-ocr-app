@@ -31,7 +31,9 @@ export async function POST(req: NextRequest) {
       const results = await syncAllConnections(prisma, deps!, { today });
       // The spending checks run after the answer, so the scheduler only waits for the fetches.
       // Each company with a live connection, and the companies receiving private payments of its accounts.
-      after(() => runSpendingChecksForLiveCompanies(results, (ctx) => runSpendingChecksAfterNewPayments(prisma, ctx, { today })));
+      // Each company is checked once in the run, also when it holds an account and receives from another.
+      const done = new Set<string>();
+      after(() => runSpendingChecksForLiveCompanies(results, (ctx) => runSpendingChecksAfterNewPayments(prisma, ctx, { today }, done)));
       // The answer names connections and counts only, never a company.
       return results.map(({ connectionId, status, added }) => ({ connectionId, status, added }));
     },

@@ -47,14 +47,21 @@ export async function runSpendingChecks(
  * every company that receives the private payments of one of its accounts
  * (plan docs/plans/2026-10-22-payments-across-companies.md), because a new
  * payment answered private is asked about there. One after the other, each on
- * its own: a failure in one never stops the next. Returns the checks of `ctx`.
+ * its own: a failure in one never stops the next. Returns the checks of `ctx`
+ * (null when `done` says it was checked already in this pass).
  */
 export async function runSpendingChecksAfterNewPayments(
   db: PrismaClient,
   ctx: NotifyContext,
   options: { today: string; channels?: readonly NotificationChannel[]; now?: Date; mailbox?: MailboxPort },
-): Promise<ChecksRun> {
-  const own = await runSpendingChecks(db, ctx, options);
+  /** Companies already checked in this pass (the daily run checks many): each one is checked once. */
+  done: Set<string> = new Set(),
+): Promise<ChecksRun | null> {
+  let own: ChecksRun | null = null;
+  if (!done.has(ctx.workspaceId)) {
+    done.add(ctx.workspaceId);
+    own = await runSpendingChecks(db, ctx, options);
+  }
   let receivers: NotifyContext[] = [];
   try {
     receivers = await receiversOf(db, [ctx.workspaceId]);
@@ -63,6 +70,10 @@ export async function runSpendingChecksAfterNewPayments(
   }
   // A mailbox given is the caller's company's; a receiver looks its own up.
   const rest = { today: options.today, channels: options.channels, now: options.now };
-  for (const receiver of receivers) await runSpendingChecks(db, receiver, rest);
+  for (const receiver of receivers) {
+    if (done.has(receiver.workspaceId)) continue;
+    done.add(receiver.workspaceId);
+    await runSpendingChecks(db, receiver, rest);
+  }
   return own;
 }

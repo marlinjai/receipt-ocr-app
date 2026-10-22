@@ -2,7 +2,7 @@
 title: Payments across companies, each payment where its answer says
 summary: An account stays connected once, in the company that holds it (Whiz-Art Media). The owner links it to his private company (marlinjai), and from then on every payment the holder's answers call private shows in marlinjai's spending overview, budgets and missing-receipt loop, while business and unanswered ones stay with the holder. The split is worked out on read, nothing is copied or moved, and an answer changed later moves the payment back at once.
 type: plan
-status: decided
+status: in-progress
 tags: [finance, payments, spending, bank, privacy, workspaces]
 projects: [receipt-ocr-app]
 date: 2026-10-22
@@ -90,9 +90,10 @@ other's copy behind, and every changed answer would need a write in two companie
    private rest is shown in the holder's overview as before.
 5. **Answers are given in the holder only.** The receiver's own answers (a category for a
    counterparty, "own account" on its spending page) apply only in the receiver's view and never
-   route a payment. The holder's category answers apply in the receiver for routed payments, below
-   the receiver's own answer for the same counterparty: the owner categorized private counterparties
-   in Whiz-Art Media before the split, and that work is not lost. Data flows only from the holder to
+   route a payment. The holder's category answers for the counterparties of routed payments apply
+   in the receiver, below the receiver's own answer for the same counterparty (a category belongs to
+   a counterparty, so it applies to all its payments there): the owner categorized private
+   counterparties in Whiz-Art Media before the split, and that work is not lost. Data flows only from the holder to
    the receiver, and only for routed payments; nothing of the receiver flows back.
 6. **Authorization.** A share is started in the holder's payments tab, by a person who is a member
    of both companies and holds the write permission (`receipts.row.write`) in both. Never by
@@ -111,7 +112,12 @@ other's copy behind, and every changed answer would need a write in two companie
    leaves the receiver at once; its link there is dormant (counted nowhere, shown nowhere) and
    lives again when the payment is answered private again. Links are not deleted on a changed
    answer: one answer touches dozens of payments, and deleting would make taking an answer back
-   destructive.
+   destructive. While dormant, the receipt still counts as linked in the receiver: it is not
+   proposed for another payment, and it counts towards what the receipt is paid by.
+9a. **A receipt is not paid twice.** A link of the receiver is refused with the same question as the
+   holder's own ("receipt_already_paid") when the receipt's links, routed and own, would take it
+   beyond its amount plus the tolerance for fees and rates; the holder's own link counts the
+   receiver-held links of the same company too.
 10. **Unlinking.** The receiver takes its link back on its spending page ("Beleg lösen" in the
     payment list). Deleting the private receipt takes its links along, as for any receipt.
 11. **Undoing an import** in the holder takes its payments with every link on them, the receiver's
@@ -129,10 +135,13 @@ other's copy behind, and every changed answer would need a write in two companie
     shared account with the holder's name.
 14. **Missing-receipt loop and notifications.** The holder's loop never asks about a routed payment,
     the receiver's does. A payment is notified about at most once across both companies: before
-    sending, the receiver and the holder are both checked for a notification of that payment (only
-    whether one exists, nothing of its content). A routed payment leaves the holder's in-app queue
-    at once (the existing settling of payments that need no message any more). The 14-day window
-    stays, so splitting the history sends nothing.
+    sending, every company is checked for a notification of that payment by its subject, which
+    names the payment id (only whether one exists, nothing of its content), so also a share that
+    ended or went to another company cannot cause a second message. A payment that moved leaves the
+    in-app queue of the company it left at once: after a share is started or ended (both companies)
+    and after an answer, a link or an undone import in a holder that shares accounts (the holder and
+    its receivers), each queue is settled after the answer is sent. The 14-day window stays, so
+    splitting the history sends nothing.
 15. **"No receipt exists"** said in the holder before the split still holds in the receiver. Said
     in the receiver, it is not read by the holder: a payment answered back to business needs a
     business document, and the holder asks again.
@@ -168,9 +177,11 @@ other's copy behind, and every changed answer would need a write in two companie
 
 A company never sees another company's business or unanswered payments: the receiver's read is
 built only from payments that pass `routesToReceiver`, and every write the receiver can make on a
-payment (link, unlink, "no receipt exists", taking over a mail find) re-derives the routing inside
-its own transaction and refuses a payment that does not route to it, with the same answer as an
-unknown payment. The holder never sees the receiver's receipts, links, answers or finds. Tests
+payment (link, unlink, "no receipt exists", downloading or taking over a mail find) re-derives the
+routing first (link and unlink inside their transaction, under the payment's row lock) and refuses a
+payment that does not route to it, with the same answer as an unknown payment. "No receipt exists"
+is checked just before it is stored; should the holder change the answer in that moment, the
+receiver's answer is only stored, never shown or read by the holder. The holder never sees the receiver's receipts, links, answers or finds. Tests
 prove each of these (`routing.dbtest.ts`).
 
 ## Tests: the four paths
@@ -217,7 +228,7 @@ prove each of these (`routing.dbtest.ts`).
   abholen" and the daily bank run check the holder and then each receiver. Sharing an account runs
   the receiver's checks once, after the answer.
 - **Erasure** ends the company's shares and removes the links between the two companies' records;
-  the erasure log line counts them. **Workspace move** restamps the receiver's company on a share.
+  the erasure log line counts both. **Workspace move** restamps the receiver's company on a share.
 - **Screens**: payments tab, section "Private Zahlungen in einer anderen Firma" (per account a
   company to choose and "Private Zahlungen weitergeben" with a confirmation; "Weitergabe beenden";
   in the receiver "Aus anderen Firmen" with the holder's name). Spending page: the shared account
@@ -226,6 +237,16 @@ prove each of these (`routing.dbtest.ts`).
 - **Tests**: `routing.dbtest.ts` (20 tests through the four paths and the privacy promise, with the
   holder's tax statement compared before and after), `route.test.ts`, `sharing-actions.test.ts`,
   `AccountSharing.test.tsx`, and additions to the spending page, action, attachment and move tests.
+
+### First review (2026-10-23), fixed
+
+A fresh agent reviewed the diff: the privacy model held. Fixed: a payment could be announced a
+second time after a share ended (now looked up by subject in every company, with an index on the
+subject); messages about moved payments stayed in a queue until that company's next run (now
+settled after sharing, ending, and every answer or link in a holder that shares); a receiver's link
+was not held to the receipt's amount (now `receipt_already_paid` like the holder's); a mail find of
+a payment that moved away could still be downloaded; the daily run could check a company twice;
+the erasure count of links; wording.
 
 ### What the owner does after the deploy
 

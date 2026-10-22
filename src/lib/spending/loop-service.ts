@@ -5,7 +5,7 @@ import { rowToMealRecord } from '@/lib/meals/record';
 import { vendorKey } from '@/lib/tax/decisions';
 import { eurosToCents, formatCents } from '@/lib/tax/money';
 import { linkPayment, type PaymentRow } from '@/lib/tax/payments/service';
-import { linkRoutedPayment, loadRoutedPayments, paymentOnSpendingSide, type RoutedPaymentRow } from '@/lib/tax/payments/routing';
+import { linkRoutedPayment, loadRoutedPayments, paymentOnSpendingSide, receiversOf, type RoutedPaymentRow } from '@/lib/tax/payments/routing';
 import { receiptForLink } from '@/lib/tax/service';
 import { categoryAnswerMap } from './service';
 import { loopState, mailFoundSubject, missingReceiptSubject, notifiable, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate } from './loop';
@@ -96,8 +96,6 @@ interface Loaded {
   states: Map<string, LoopState>;
   /** Vendor keys each counterparty stands for, learned from links: the names a mailbox search uses besides the counterparty's own. */
   aliases: Map<string, Set<string>>;
-  /** The other companies of this company's shares (holders of what is routed here, receivers of what is routed away). */
-  related: string[];
 }
 
 async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loaded> {
@@ -113,7 +111,10 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
     routedIds.length === 0 ? [] : await db.spendingReceiptAnswer.findMany({ where: { authWorkspaceId: { in: loaded.holders }, paymentId: { in: routedIds } } });
   const reasons = new Map(inherited.map((a) => [a.paymentId, a.reason]));
   for (const a of noReceipt) reasons.set(a.paymentId, a.reason);
-  const linkedRows = new Set(loaded.payments.flatMap((p) => p.links.flatMap((l) => (l.rowId ? [l.rowId] : []))));
+  // A receipt of this company linked to any payment, also one that moved back to the company holding its
+  // account (that link counts nowhere now, but it is the receipt's payment): never proposed for another one.
+  const anyLinked = await db.taxPaymentLink.findMany({ where: { authWorkspaceId: workspaceId, rowId: { not: null } }, select: { rowId: true } });
+  const linkedRows = new Set([...loaded.payments.flatMap((p) => p.links.flatMap((l) => (l.rowId ? [l.rowId] : []))), ...anyLinked.map((l) => l.rowId as string)]);
   const receipts = await loadLoopReceipts(db, workspaceId, linkedRows);
   const aliases = vendorAliases(loaded.payments, receipts);
   const ctx: LoopContext = {
@@ -128,7 +129,64 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   for (const p of loaded.payments) {
     states.set(p.id, loopState({ ...p, linkCount: p.links.length }, ctx));
   }
-  return { payments: loaded.payments, states, aliases, related: [...new Set([...loaded.holders, ...loaded.sharedOut.map((s) => s.receiverWorkspaceId)])] };
+  return { payments: loaded.payments, states, aliases };
+}
+
+/** The subjects of the payments still waiting for their receipt: what keeps its messages in the in-app queue. */
+function openSubjects(payments: readonly PaymentRow[], states: ReadonlyMap<string, LoopState>): { waiting: PaymentRow[]; inMailbox: Set<string>; open: number; stillOpen: Set<string> } {
+  const waiting: PaymentRow[] = [];
+  const inMailbox = new Set<string>();
+  let open = 0;
+  for (const p of payments) {
+    const state = states.get(p.id) as LoopState;
+    if (state.state === 'missing' || state.state === 'proposed' || state.state === 'in_mailbox') open += 1;
+    // A payment still waiting for its receipt keeps its messages: missing, or its invoice found in the
+    // mailbox and not taken over yet. A proposal waiting for confirmation ends them; the open checks show it.
+    if (state.state === 'missing' || state.state === 'in_mailbox') waiting.push(p);
+    if (state.state === 'in_mailbox') inMailbox.add(p.id);
+  }
+  const stillOpen = new Set(waiting.flatMap((p) => [missingReceiptSubject(p.id), ...(inMailbox.has(p.id) ? [mailFoundSubject(p.id)] : [])]));
+  return { waiting, inMailbox, open, stillOpen };
+}
+
+/**
+ * Take out of the in-app queue every message about a payment that no longer
+ * waits here: it got its receipt, needs none, or moved to another company (an
+ * account shared or no longer shared, an answer changed in the company that
+ * holds it). Sends nothing. Returns how many messages went.
+ */
+export async function settleMovedPayments(db: PrismaClient, workspaceId: string): Promise<number> {
+  const { payments, states } = await computeStates(db, workspaceId);
+  return settleAllBut(db, workspaceId, 'missing_receipt', openSubjects(payments, states).stillOpen);
+}
+
+/**
+ * `settleMovedPayments` for a company that holds accounts and for every
+ * company receiving private payments of them: after a share started or ended
+ * and after an answer changed in the holder, a message about a payment that
+ * left a company leaves its queue at once. A failure is logged only: the next
+ * run of the loop settles the same messages.
+ */
+export async function settleAcrossShares(db: PrismaClient, workspaceIds: readonly string[], options: { onlyWithReceivers?: boolean } = {}): Promise<void> {
+  let receivers: Awaited<ReturnType<typeof receiversOf>> = [];
+  try {
+    receivers = await receiversOf(db, workspaceIds);
+  } catch (e) {
+    console.error('[spending] the companies receiving private payments could not be read', (e as Error)?.name ?? 'error');
+    if (options.onlyWithReceivers) return;
+  }
+  // After an answer in a company that shares no account, nothing can have moved between companies.
+  if (options.onlyWithReceivers && receivers.length === 0) return;
+  const all = new Set(workspaceIds);
+  for (const r of receivers) all.add(r.workspaceId);
+  for (const workspaceId of all) {
+    // Each company on its own: one failing never keeps the other's queue stale.
+    try {
+      await settleMovedPayments(db, workspaceId);
+    } catch (e) {
+      console.error('[spending] settling messages of moved payments failed', (e as Error)?.name ?? 'error');
+    }
+  }
 }
 
 const check = (p: PaymentRow, state: LoopState): PaymentCheck => ({
@@ -216,30 +274,18 @@ export async function runReceiptLoop(
 ): Promise<RunResult> {
   const channels = options.channels ?? serverChannels(db);
   await forgetGonePayments(db, ctx.workspaceId);
-  let { payments, states, aliases, related } = await computeStates(db, ctx.workspaceId);
+  let { payments, states, aliases } = await computeStates(db, ctx.workspaceId);
   // Step 3: look in the mailbox for the invoices of recent payments still missing one, by the
   // counterparty's name and the vendors it is known to stand for, then read the states again.
   const lookFor = payments
     .filter((p) => states.get(p.id)?.state === 'missing' && notifiable(p, options.today))
     .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, vendorWords: p.counterpartyKey ? mailWordsFor(p.counterparty, p.counterpartyKey, aliases.get(p.counterpartyKey) ?? []) : [] }));
   const mailbox = await searchMailbox(db, ctx, lookFor, options.mailbox ?? (await mailboxFor(db, ctx.workspaceId)), options.now);
-  if (mailbox.status !== 'off' && mailbox.found > 0) ({ payments, states, aliases, related } = await computeStates(db, ctx.workspaceId));
-  const waiting: PaymentRow[] = [];
-  const inMailbox = new Set<string>();
-  let open = 0;
-  for (const p of payments) {
-    const state = states.get(p.id) as LoopState;
-    if (state.state === 'missing' || state.state === 'proposed' || state.state === 'in_mailbox') open += 1;
-    // A payment still waiting for its receipt keeps its messages: missing, or its invoice found in the
-    // mailbox and not taken over yet. A proposal waiting for confirmation ends them; the open checks show it.
-    if (state.state === 'missing' || state.state === 'in_mailbox') waiting.push(p);
-    if (state.state === 'in_mailbox') inMailbox.add(p.id);
-  }
-  // In this order: what is settled (or gone with an undone import) leaves the
-  // queue and is never retried, earlier failed deliveries are tried again, and
-  // only then are new ones sent, so a notification created in this run is not
-  // tried twice in it.
-  const stillOpen = new Set(waiting.flatMap((p) => [missingReceiptSubject(p.id), ...(inMailbox.has(p.id) ? [mailFoundSubject(p.id)] : [])]));
+  if (mailbox.status !== 'off' && mailbox.found > 0) ({ payments, states, aliases } = await computeStates(db, ctx.workspaceId));
+  const { waiting, inMailbox, open, stillOpen } = openSubjects(payments, states);
+  // In this order: what is settled (or gone with an undone import, or moved to another company) leaves
+  // the queue and is never retried, earlier failed deliveries are tried again, and only then are new
+  // ones sent, so a notification created in this run is not tried twice in it.
   const settled = await settleAllBut(db, ctx.workspaceId, 'missing_receipt', stillOpen);
   const retried = await retryFailedDeliveries(db, ctx.workspaceId, channels, options.now);
   let notified = 0;
@@ -248,13 +294,14 @@ export async function runReceiptLoop(
   // (also when that happens on a later search, after the first message).
   const subjectOf = (p: PaymentRow) => (inMailbox.has(p.id) ? mailFoundSubject(p.id) : missingReceiptSubject(p.id));
   const recent = waiting.filter((p) => notifiable(p, options.today));
-  // Payments notified about before are done for good: only the rest count towards the limit. A payment of a
-  // shared account counts as notified when either company of the share was told (only whether, never what):
-  // an answer flipped from business to private moves it here, and it must not be announced a second time.
+  // Payments notified about before are done for good: only the rest count towards the limit. A subject
+  // names its payment, whose id is unique in the whole database, so it is looked up in every company
+  // (only whether a message exists, never what it says): a payment that moved here from another company
+  // (a changed answer, a share started or ended) is never announced a second time.
   const notifiedBefore = new Set(
     (
       await db.spendingNotification.findMany({
-        where: { authWorkspaceId: { in: [ctx.workspaceId, ...related] }, kind: 'missing_receipt', subjectKey: { in: recent.map(subjectOf) } },
+        where: { kind: 'missing_receipt', subjectKey: { in: recent.map(subjectOf) } },
         select: { subjectKey: true },
       })
     ).map((n) => n.subjectKey),

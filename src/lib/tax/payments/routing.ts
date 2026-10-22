@@ -1,6 +1,6 @@
 import 'server-only';
 import { Prisma, type PrismaClient } from '@prisma/client';
-import { loadPayments, PaymentServiceError, type CounterpartyTreatment, type PaymentContext, type PaymentRow, type ReceiptForLink } from './service';
+import { loadPayments, OVERPAID_TOLERANCE_PERCENT, PaymentServiceError, type CounterpartyTreatment, type PaymentContext, type PaymentRow, type ReceiptForLink } from './service';
 import { routesToReceiver } from './route';
 
 /**
@@ -58,7 +58,7 @@ export interface RoutedPayments {
   payments: RoutedPaymentRow[];
   /** This company's own counterparty answers (a routed payment is private whatever they say). */
   treatments: Map<string, CounterpartyTreatment>;
-  /** The holder's counterparty answers, by holder: what a routed payment's category falls back to. */
+  /** The workspaces of the companies whose accounts route payments here (their category and "no receipt" answers apply to those payments). */
   holders: string[];
   /** Accounts of this company whose private payments go to another company. */
   sharedOut: Array<{ shareId: string; accountId: string; accountLabel: string; receiverWorkspaceId: string }>;
@@ -154,11 +154,22 @@ export async function paymentOnSpendingSide(db: Db, workspaceId: string, payment
  * The receiver links its own receipt to a payment routed to it. The link is
  * the receiver's (its workspace and company stamp) and covers what of the
  * payment the receiver has not linked yet. Refused as `payment_not_found` for
- * any payment that does not route to the receiver right now.
+ * any payment that does not route to the receiver right now. Like the
+ * holder's own link, a receipt already paid by other payments is not taken
+ * beyond its amount (plus the tolerance for fees and rates) unless
+ * `confirmed`: `receipt_already_paid` with "<paid so far>:<receipt amount>".
  */
-export async function linkRoutedPayment(db: PrismaClient, ctx: PaymentContext, paymentId: string, rowId: string, receiptOf: ReceiptForLink): Promise<{ linkId: string }> {
+export async function linkRoutedPayment(
+  db: PrismaClient,
+  ctx: PaymentContext,
+  paymentId: string,
+  rowId: string,
+  receiptOf: ReceiptForLink,
+  options: { confirmed?: boolean } = {},
+): Promise<{ linkId: string }> {
   if (typeof paymentId !== 'string' || !paymentId || typeof rowId !== 'string' || !rowId) throw new PaymentServiceError('invalid_link');
-  if ((await receiptOf(rowId)) === null) throw new PaymentServiceError('target_not_found');
+  const receipt = await receiptOf(rowId);
+  if (receipt === null) throw new PaymentServiceError('target_not_found');
   return db.$transaction(async (tx) => {
     // The same lock order as the holder's own link: the payment first, then the receipt.
     await tx.$queryRaw`SELECT id FROM tax_payments WHERE id = ${paymentId} FOR UPDATE`;
@@ -172,6 +183,14 @@ export async function linkRoutedPayment(db: PrismaClient, ctx: PaymentContext, p
     if (same) return { linkId: same.id };
     const free = Math.abs(routed.row.amountCents) - mine.reduce((sum, l) => sum + l.cents, 0);
     if (free <= 0) throw new PaymentServiceError('link_exceeds_payment');
+    if (!options.confirmed && receipt.amountCents !== null) {
+      // Every link of this company on the receipt, its own payments' and routed ones' alike (one that moved
+      // back to the holder too: it is the receipt's payment until it is taken back).
+      const onReceipt = await tx.taxPaymentLink.findMany({ where: { authWorkspaceId: ctx.workspaceId, rowId }, select: { cents: true, payment: { select: { amountCents: true } } } });
+      const paid = Math.max(0, onReceipt.reduce((sum, l) => sum + (l.payment.amountCents < 0 ? l.cents : -l.cents), 0));
+      const limit = receipt.amountCents + Math.round((receipt.amountCents * OVERPAID_TOLERANCE_PERCENT) / 100);
+      if (paid > 0 && paid + free > limit) throw new PaymentServiceError('receipt_already_paid', `${paid}:${receipt.amountCents}`);
+    }
     const link = await tx.taxPaymentLink.create({
       data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, paymentId, rowId, cents: free, method: 'manual' },
     });
@@ -219,10 +238,20 @@ export async function shareAccount(db: PrismaClient, holder: PaymentContext, acc
   }
 }
 
-/** End a share, from either side. The payments are back with the holder at once; the receiver's links stay, counted nowhere. */
-export async function endShare(db: PrismaClient, workspaceId: string, shareId: string): Promise<void> {
-  const { count } = await db.taxAccountShare.deleteMany({ where: { id: shareId, OR: [{ authWorkspaceId: workspaceId }, { receiverWorkspaceId: workspaceId }] } });
-  if (count === 0) throw new ShareError('share_not_found');
+/**
+ * End a share, from either side. The payments are back with the holder at
+ * once; the receiver's links stay, counted nowhere. Returns the two companies
+ * of the share, so the caller can settle their message queues.
+ */
+export async function endShare(db: PrismaClient, workspaceId: string, shareId: string): Promise<{ holder: PaymentContext; receiver: PaymentContext }> {
+  const where = { id: shareId, OR: [{ authWorkspaceId: workspaceId }, { receiverWorkspaceId: workspaceId }] };
+  return db.$transaction(async (tx) => {
+    const share = await tx.taxAccountShare.findFirst({ where });
+    if (!share) throw new ShareError('share_not_found');
+    const { count } = await tx.taxAccountShare.deleteMany({ where });
+    if (count === 0) throw new ShareError('share_not_found');
+    return { holder: { workspaceId: share.authWorkspaceId, tenantId: share.authTenantId }, receiver: { workspaceId: share.receiverWorkspaceId, tenantId: share.receiverTenantId } };
+  });
 }
 
 export interface ShareView {
@@ -268,12 +297,12 @@ export async function receivesFrom(db: Db, workspaceId: string, holderWorkspaceI
  * another company's records: every share it is part of ends, and every link
  * one company holds on another company's payment where either is the erased
  * one goes. The payments stay the holder's records. Repeat-safe. Returns how
- * many shares ended.
+ * many shares ended and how many links went.
  */
-export async function endCompanyAccountShares(db: PrismaClient, tenantId: string, workspaceIds: readonly string[]): Promise<number> {
+export async function endCompanyAccountShares(db: PrismaClient, tenantId: string, workspaceIds: readonly string[]): Promise<{ shares: number; links: number }> {
   const ids = [...workspaceIds];
   return db.$transaction(async (tx) => {
-    await tx.$executeRaw`
+    const links = await tx.$executeRaw`
       DELETE FROM tax_payment_links l USING tax_payments p
       WHERE l.payment_id = p.id
         AND l.auth_workspace_id <> p.auth_workspace_id
@@ -287,6 +316,6 @@ export async function endCompanyAccountShares(db: PrismaClient, tenantId: string
         ],
       },
     });
-    return count;
+    return { shares: count, links };
   });
 }

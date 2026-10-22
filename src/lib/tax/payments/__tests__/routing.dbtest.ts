@@ -13,7 +13,7 @@ import {
   unlinkRoutedPayment,
 } from '../routing';
 import { receiptForLink, loadStatement } from '@/lib/tax/service';
-import { LoopServiceError, answerNoReceipt, confirmCandidate, loadLoopOverview, runReceiptLoop } from '@/lib/spending/loop-service';
+import { LoopServiceError, answerNoReceipt, confirmCandidate, linkReceiptToPayment, loadLoopOverview, runReceiptLoop, settleAcrossShares } from '@/lib/spending/loop-service';
 import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
 import { loadSpending, setCounterpartyCategory } from '@/lib/spending/service';
 import { loadBudgets } from '@/lib/spending/budget-service';
@@ -213,6 +213,23 @@ describe('privacy', () => {
     expect(await code(endShare(db, third.workspaceId, (await loadShares(db, w.hctx.workspaceId)).outgoing[0].id))).toBe('share_not_found');
   });
 
+  it('the receiver can take no receipt over for a payment that is not routed to it', async () => {
+    const w = await world();
+    const rowId = await w.receiver.addReceipt({ Name: 'Software', Vendor: 'Firma Software', Gross: 50, Date: '2026-05-11', Currency: 'EUR', 'FX Rate': 1 });
+    expect(await code(linkReceiptToPayment(db, w.rctx, w.ids.get('Firma Software') as string, rowId))).toBe('payment_not_found');
+    expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: w.rctx.workspaceId } })).toBe(0);
+  });
+
+  it('a receipt of the receiver is not paid twice by routed payments', async () => {
+    const w = await world();
+    const rowId = await w.receiver.addReceipt({ Name: 'Bon', Vendor: 'Privat Laden', Gross: 20, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });
+    await linkReceiptToPayment(db, w.rctx, w.ids.get('Privat Laden') as string, rowId);
+    expect(await code(linkReceiptToPayment(db, w.rctx, w.ids.get('Teils Markt') as string, rowId))).toBe('receipt_already_paid');
+    // Confirmed, as the payments tab does after asking, it goes through.
+    await linkRoutedPayment(db, w.rctx, w.ids.get('Teils Markt') as string, rowId, receiptForLink(db, w.rctx.workspaceId), { confirmed: true });
+    expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: w.rctx.workspaceId, rowId } })).toBe(2);
+  });
+
   it('the holder never reads the receiver\'s "no receipt" answer', async () => {
     const w = await world();
     const id = w.ids.get('Privat Laden') as string;
@@ -317,6 +334,47 @@ describe('resume', () => {
   });
 });
 
+describe('re-entry: messages', () => {
+  it('a payment told about in the receiver is not told about again in the holder after the share ended', async () => {
+    const w = await world();
+    const id = w.ids.get('Privat Laden') as string;
+    const inReceiver = recorder();
+    await runReceiptLoop(db, w.rctx, { today: TODAY, channels: [inReceiver.channel], mailbox: OFF_MAILBOX });
+    expect(inReceiver.sent.map((m) => m.subjectKey)).toContain(`missing_receipt:${id}`);
+    await endShare(db, w.hctx.workspaceId, (await loadShares(db, w.hctx.workspaceId)).outgoing[0].id);
+    const inHolder = recorder();
+    await runReceiptLoop(db, w.hctx, { today: TODAY, channels: [inHolder.channel], mailbox: OFF_MAILBOX });
+    expect(inHolder.sent.map((m) => m.subjectKey)).not.toContain(`missing_receipt:${id}`);
+  });
+
+  it('a message about a payment that moved leaves the queue of the company it left at once, both ways', async () => {
+    const w = await world(false);
+    const id = w.ids.get('Privat Laden') as string;
+    const unread = (workspaceId: string) => db.spendingNotification.count({ where: { authWorkspaceId: workspaceId, subjectKey: `missing_receipt:${id}`, readAt: null } });
+    await runReceiptLoop(db, w.hctx, { today: TODAY, channels: [], mailbox: OFF_MAILBOX });
+    expect(await unread(w.hctx.workspaceId)).toBe(1);
+    // Shared: the holder's message goes at once, as the sharing action does after its answer.
+    await shareAccount(db, w.hctx, w.accountId, w.rctx, 'user-owner');
+    await settleAcrossShares(db, [w.hctx.workspaceId, w.rctx.workspaceId]);
+    expect(await unread(w.hctx.workspaceId)).toBe(0);
+
+    // Answered business in the holder: the receiver's message goes at once.
+    await setCounterpartyTreatment(db, w.hctx, { counterparty: 'Unklar Laden', treatment: 'private' });
+    const other = w.ids.get('Unklar Laden') as string;
+    await db.spendingNotification.create({ data: { authWorkspaceId: w.rctx.workspaceId, subjectKey: `missing_receipt:${other}`, kind: 'missing_receipt', title: 'Beleg fehlt', body: 'Test', path: '/app/spending' } });
+    await setCounterpartyTreatment(db, w.hctx, { counterparty: 'Unklar Laden', treatment: 'business' });
+    await settleAcrossShares(db, [w.hctx.workspaceId], { onlyWithReceivers: true });
+    expect(await db.spendingNotification.count({ where: { authWorkspaceId: w.rctx.workspaceId, subjectKey: `missing_receipt:${other}`, readAt: null } })).toBe(0);
+
+    // Ended: what the receiver still had about the account's payments goes too.
+    await db.spendingNotification.create({ data: { authWorkspaceId: w.rctx.workspaceId, subjectKey: `missing_receipt:${id}`, kind: 'missing_receipt', title: 'Beleg fehlt', body: 'Test', path: '/app/spending' } });
+    const ended = await endShare(db, w.rctx.workspaceId, (await loadShares(db, w.rctx.workspaceId)).incoming[0].id);
+    expect(ended).toEqual({ holder: w.hctx, receiver: w.rctx });
+    await settleAcrossShares(db, [ended.holder.workspaceId, ended.receiver.workspaceId]);
+    expect(await unread(w.rctx.workspaceId)).toBe(0);
+  });
+});
+
 describe('re-entry', () => {
   it('ending the share brings every payment back; sharing again revives the private link', async () => {
     const w = await world();
@@ -357,10 +415,10 @@ describe('re-entry', () => {
     const id = w.ids.get('Privat Laden') as string;
     const rowId = await w.receiver.addReceipt({ Name: 'Privat Laden Bon', Vendor: 'Privat Laden', Gross: 20, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });
     await confirmCandidate(db, w.rctx, id, rowId);
-    expect(await endCompanyAccountShares(db, w.rctx.tenantId, [])).toBe(1);
+    expect(await endCompanyAccountShares(db, w.rctx.tenantId, [])).toEqual({ shares: 1, links: 1 });
     expect(await db.taxAccountShare.count({ where: { accountId: w.accountId } })).toBe(0);
     expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: w.rctx.workspaceId } })).toBe(0);
-    expect(await endCompanyAccountShares(db, w.rctx.tenantId, [])).toBe(0);
+    expect(await endCompanyAccountShares(db, w.rctx.tenantId, [])).toEqual({ shares: 0, links: 0 });
     // The holder's payments stay its records.
     expect((await loadPayments(db, w.hctx.workspaceId)).payments).toHaveLength(4);
 
@@ -368,7 +426,7 @@ describe('re-entry', () => {
     const vid = v.ids.get('Privat Laden') as string;
     const vrow = await v.receiver.addReceipt({ Name: 'Privat Laden Bon', Vendor: 'Privat Laden', Gross: 20, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });
     await confirmCandidate(db, v.rctx, vid, vrow);
-    expect(await endCompanyAccountShares(db, 'some-other-tenant', [v.hctx.workspaceId])).toBe(1);
+    expect(await endCompanyAccountShares(db, 'some-other-tenant', [v.hctx.workspaceId])).toEqual({ shares: 1, links: 1 });
     expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: v.rctx.workspaceId } })).toBe(0);
   });
 });

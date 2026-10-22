@@ -14,6 +14,7 @@ const shareAccount = vi.fn();
 const endShare = vi.fn();
 const loadShares = vi.fn();
 const runSpendingChecks = vi.fn();
+const settleAcrossShares = vi.fn();
 
 vi.mock('next/server', () => ({ after: (fn: () => unknown) => fn() }));
 vi.mock('@/lib/auth', () => ({ auth: { requireAction: (...a: unknown[]) => requireAction(...a) } }));
@@ -26,6 +27,7 @@ vi.mock('@/lib/auth-guards', () => {
   return { ReceiptsAuthError, requireReceiptsSession: (...a: unknown[]) => requireReceiptsSession(...a) };
 });
 vi.mock('@/lib/prisma', () => ({ prisma: { marker: 'prisma' } }));
+vi.mock('@/lib/spending/loop-service', () => ({ settleAcrossShares: (...a: unknown[]) => settleAcrossShares(...a) }));
 vi.mock('@/lib/spending/checks', () => ({ runSpendingChecks: (...a: unknown[]) => runSpendingChecks(...a) }));
 vi.mock('@/lib/tax/payments/routing', () => {
   class ShareError extends Error {
@@ -50,7 +52,9 @@ const B = { id: 'ws-b', slug: 'privat', role: 'member', tenantId: 't-b', tenantN
 const SESSION = { userId: 'user-1', memberships: [A, B, { ...B }], activeWorkspace: A };
 
 beforeEach(() => {
-  for (const f of [requireAction, requireReceiptsSession, shareAccount, endShare, loadShares, runSpendingChecks]) f.mockReset();
+  for (const f of [requireAction, requireReceiptsSession, shareAccount, endShare, loadShares, runSpendingChecks, settleAcrossShares]) f.mockReset();
+  endShare.mockResolvedValue({ holder: { workspaceId: 'ws-a', tenantId: 't-a' }, receiver: { workspaceId: 'ws-b', tenantId: 't-b' } });
+  settleAcrossShares.mockResolvedValue(undefined);
   loadShares.mockResolvedValue({ outgoing: [], incoming: [] });
   runSpendingChecks.mockResolvedValue({ loop: null, budgets: null });
 });
@@ -111,6 +115,8 @@ describe('shareAccountWith', () => {
     expect(result.ok).toBe(true);
     expect(shareAccount).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, 'acc', { workspaceId: 'ws-b', tenantId: 't-b' }, 'user-1');
     expect(runSpendingChecks).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-b', tenantId: 't-b' }, expect.objectContaining({ today: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }));
+    // The payments that moved leave the holder's message queue.
+    expect(settleAcrossShares).toHaveBeenCalledWith({ marker: 'prisma' }, ['ws-a', 'ws-b']);
   });
 
   it('passes a refusal of the service on with its code', async () => {
@@ -127,6 +133,8 @@ describe('endAccountShare', () => {
     requireAction.mockResolvedValue(SESSION);
     expect((await endAccountShare('s1')).ok).toBe(true);
     expect(endShare).toHaveBeenCalledWith({ marker: 'prisma' }, 'ws-a', 's1');
+    // Both companies of the ended share settle their queues: the receiver keeps nothing about the payments that went back.
+    expect(settleAcrossShares).toHaveBeenCalledWith({ marker: 'prisma' }, ['ws-a', 'ws-b']);
   });
 
   it('refuses without the write permission and for an unknown share', async () => {

@@ -31,8 +31,10 @@ export interface ErasureCounts {
   exportCoverage: ExportCoverageReason;
   /** Live bank connections ended (session closed at the bank where it could be, connection removed). */
   bankConnections?: number;
-  /** Accounts whose private payments went to another company (or came from one), ended with the links that tied the two. */
+  /** Accounts whose private payments went to another company (or came from one), ended. */
   accountShares?: number;
+  /** Links one company held on another company's payments, removed with those shares. */
+  crossCompanyLinks?: number;
 }
 
 /**
@@ -255,7 +257,7 @@ export async function receiveErasureDelivery(input: {
   try {
     const counts = await input.erase(tenantId, workspaceIds);
     log(
-      `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld} (export coverage: ${counts.exportCoverage}), ${counts.sharedContacts} contacts, ended ${counts.bankConnections ?? 0} bank connections and ${counts.accountShares ?? 0} account shares`,
+      `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld} (export coverage: ${counts.exportCoverage}), ${counts.sharedContacts} contacts, ended ${counts.bankConnections ?? 0} bank connections and ${counts.accountShares ?? 0} account shares (${counts.crossCompanyLinks ?? 0} links between companies removed)`,
     );
     return { status: 200, body: { ok: true, erased: counts } };
   } catch (e) {

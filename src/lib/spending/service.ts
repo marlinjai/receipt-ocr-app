@@ -90,7 +90,9 @@ export function toOverviewInput(p: PaymentRow | RoutedPaymentRow): OverviewPayme
  * The category answers that apply on this company's spending side: its own,
  * and for the counterparties of payments routed here, the answers the holding
  * company gave before (the owner categorized private counterparties there
- * before the split). The own answer wins. Nothing of this company flows back.
+ * before the split). A category belongs to a counterparty, so an inherited
+ * one applies to every payment of that counterparty here, as an own answer
+ * would. The own answer wins. Nothing of this company flows back.
  */
 export async function categoryAnswerMap(db: PrismaClient, workspaceId: string, routed: Pick<RoutedPayments, 'payments' | 'holders'>, own?: readonly CategoryAnswerView[]): Promise<Map<string, SpendingCategory>> {
   const mine = own ?? (await loadCategoryAnswers(db, workspaceId));

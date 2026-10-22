@@ -128,7 +128,7 @@ export default function AccountSharing({ initial, accounts, actions }: { initial
   const share = (account: { id: string; label: string }, targetWorkspaceId: string, targetLabel: string) => {
     if (
       !window.confirm(
-        `Private Zahlungen von „${account.label}“ an ${targetLabel} weitergeben? Das Konto bleibt hier, mit seiner Bankverbindung und allen Fragen. Was hier als privat beantwortet ist, erscheint dann in ${targetLabel} unter Ausgaben, mit Budgets und fehlenden Belegen, und zählt hier dort nicht mehr mit. Geschäftliche und noch nicht beantwortete Zahlungen bleiben hier. Beenden bringt alles zurück.`,
+        `Private Zahlungen von „${account.label}“ an ${targetLabel} weitergeben? Das Konto bleibt hier, mit seiner Bankverbindung und allen Fragen. Was hier als privat beantwortet ist, erscheint dann in ${targetLabel} unter Ausgaben, mit Budgets und fehlenden Belegen, und zählt hier unter Ausgaben nicht mehr mit. Geschäftliche und noch nicht beantwortete Zahlungen bleiben hier. Beenden bringt alles zurück.`,
       )
     )
       return;

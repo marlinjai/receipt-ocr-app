@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { mailboxFor } from '@/lib/spending/mailbox/server';
 import { MailboxError } from '@/lib/spending/mailbox/port';
 import { findMailCandidate } from '@/lib/spending/mailbox/service';
+import { paymentOnSpendingSide } from '@/lib/tax/payments/routing';
 import { DOWNLOAD_STATUS, contentDisposition } from '@/lib/spending/mailbox/download';
 import { servedFileHeaders } from '@/lib/files/served-file-headers';
 
@@ -32,6 +33,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ candida
   try {
     const candidate = await findMailCandidate(prisma, workspaceId, candidateId);
     if (!candidate) return Response.json({ error: 'not_found' }, { status: 404 });
+    // A find of a payment that has since moved to another company (an account shared, an answer changed) is not this company's to take.
+    if (!(await paymentOnSpendingSide(prisma, workspaceId, candidate.paymentId))) return Response.json({ error: 'not_found' }, { status: 404 });
     const file = await (await mailboxFor(prisma, workspaceId)).fetchAttachment(candidate.messageId, candidate.partIndex, candidate.fileName);
     return new Response(new Blob([new Uint8Array(file.bytes)], { type: file.mimeType }), {
       headers: {

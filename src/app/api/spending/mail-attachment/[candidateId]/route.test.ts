@@ -10,6 +10,8 @@ const mailboxFor = vi.fn(async () => ({ fetchAttachment: (...a: unknown[]) => fe
 vi.mock('@/lib/auth', () => ({ auth: { requireAction: (...a: unknown[]) => requireAction(...a) } }));
 vi.mock('@/lib/prisma', () => ({ prisma: { marker: 'prisma' } }));
 vi.mock('@/lib/spending/mailbox/service', () => ({ findMailCandidate: (...a: unknown[]) => findMailCandidate(...a) }));
+const paymentOnSpendingSide = vi.fn(async () => true);
+vi.mock('@/lib/tax/payments/routing', () => ({ paymentOnSpendingSide: (...a: unknown[]) => (paymentOnSpendingSide as (...x: unknown[]) => unknown)(...a) }));
 vi.mock('@/lib/spending/mailbox/server', () => ({ mailboxFor: (...a: unknown[]) => (mailboxFor as (...x: unknown[]) => unknown)(...a) }));
 
 import { MailboxError } from '@/lib/spending/mailbox/port';
@@ -25,6 +27,8 @@ beforeEach(() => {
   findMailCandidate.mockReset();
   fetchAttachment.mockReset();
   mailboxFor.mockClear();
+  paymentOnSpendingSide.mockClear();
+  paymentOnSpendingSide.mockResolvedValue(true);
 });
 
 describe('GET /api/spending/mail-attachment/:id', () => {
@@ -42,6 +46,15 @@ describe('GET /api/spending/mail-attachment/:id', () => {
     const res = await call('c-of-another-company');
     expect(res.status).toBe(404);
     expect(findMailCandidate).toHaveBeenCalledWith({ marker: 'prisma' }, 'ws-a', 'c-of-another-company');
+  });
+
+  it('answers 404 for a find whose payment has moved to another company, without asking the mailbox', async () => {
+    requireAction.mockResolvedValue(SESSION);
+    findMailCandidate.mockResolvedValue({ paymentId: 'p-moved', messageId: 'm1', partIndex: 0, fileName: 'Rechnung.pdf' });
+    paymentOnSpendingSide.mockResolvedValue(false);
+    expect((await call()).status).toBe(404);
+    expect(paymentOnSpendingSide).toHaveBeenCalledWith({ marker: 'prisma' }, 'ws-a', 'p-moved');
+    expect(mailboxFor).not.toHaveBeenCalled();
   });
 
   it("serves the attachment from that company's mailbox, never sniffed, never cached", async () => {

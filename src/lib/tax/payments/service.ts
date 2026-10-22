@@ -580,13 +580,20 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
           await tx.taxPaymentLink.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId, paymentId: { in: funders.map((p) => p.id) } } });
           movedFromPaymentId = funders[0].id;
         } else if (!input.confirmed && receipt && receipt.amountCents !== null) {
-          const paidSoFar = paidOnReceipt(loaded.payments, rowId);
+          let paidSoFar = paidOnReceipt(loaded.payments, rowId);
           const limit = receipt.amountCents + Math.round((receipt.amountCents * OVERPAID_TOLERANCE_PERCENT) / 100);
           // Counted once when the other end of the same money is on the receipt already: this
           // purchase's funding debit, or the purchase this debit funds.
           const twinId = loaded.payments.find((p) => p.id === payment.id)?.funding?.twinId ?? null;
           const twinOnReceipt = twinId !== null && loaded.payments.some((p) => p.id === twinId && onReceipt(p).length > 0);
           const adds = funders.length > 0 || twinOnReceipt ? 0 : cents;
+          // This company's links on payments of an account another company holds and shares with it (plan
+          // 2026-10-22, payments across companies) pay the receipt too; `loadPayments` does not hold them.
+          const elsewhere = await tx.taxPaymentLink.findMany({
+            where: { authWorkspaceId: ctx.workspaceId, rowId, payment: { authWorkspaceId: { not: ctx.workspaceId } } },
+            select: { cents: true, payment: { select: { amountCents: true } } },
+          });
+          paidSoFar = Math.max(0, paidSoFar + elsewhere.reduce((sum, l) => sum + (l.payment.amountCents < 0 ? l.cents : -l.cents), 0));
           if (adds > 0 && paidSoFar > 0 && paidSoFar + adds > limit) throw new PaymentServiceError('receipt_already_paid', `${paidSoFar}:${receipt.amountCents}`);
         }
       } else {

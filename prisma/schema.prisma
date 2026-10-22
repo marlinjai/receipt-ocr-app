@@ -930,6 +930,8 @@ model SpendingNotification {
 
   @@unique([authWorkspaceId, subjectKey])
   @@index([authWorkspaceId, readAt])
+  // A subject names its payment: whether a payment was announced is looked up across companies (payments across companies, 0035).
+  @@index([subjectKey])
   @@map("spending_notifications")
 }
 

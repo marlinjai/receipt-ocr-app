@@ -25,7 +25,8 @@ export async function POST(req: NextRequest) {
     erase: async (tenantId, workspaceIds) => {
       const counts = await eraseCompanyContacts(prisma, tenantId, workspaceIds);
       const bankConnections = await endCompanyBankConnections(prisma, serverBankDeps(), tenantId, workspaceIds);
-      return { ...counts, bankConnections, accountShares: await endCompanyAccountShares(prisma, tenantId, workspaceIds) };
+      const shares = await endCompanyAccountShares(prisma, tenantId, workspaceIds);
+      return { ...counts, bankConnections, accountShares: shares.shares, crossCompanyLinks: shares.links };
     },
   });
   return NextResponse.json(result.body, { status: result.status });

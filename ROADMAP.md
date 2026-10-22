@@ -201,9 +201,9 @@
   cancels the old invoice and a replacement invoice with a new number that carries
   `replacesDocumentId`. When the mirror pulls issued documents, it should record that link and
   move a payment already matched to the replaced invoice onto its replacement, instead of leaving
-  the payment on a cancelled invoice and the replacement unpaid. Background: framer-clone
-  `docs/plans/2026-10-21-books-visual-template-composer.md`, decision 9 and the phase 1 build
-  notes; this app's plan above, D6 (payments belong here). (2026-10-22)
+  the payment on a cancelled invoice and the replacement unpaid. Background: framer-clone's
+  composer plan of 2026-10-21 (decision 9 and the phase 1 build notes); this app's plan above,
+  D6 (payments belong here). (2026-10-22)
 - [ ] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
   (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax
   return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent

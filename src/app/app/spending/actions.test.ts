@@ -58,7 +58,7 @@ import { answerCategory, getSpending, markOwnAccount, unlinkRoutedReceipt, unmar
 
 const WS = { id: 'ws-a', slug: 'beispiel', role: 'member', tenantId: 't-a' };
 const SESSION = { memberships: [WS], activeWorkspace: WS };
-const VIEW = { overview: { year: 2026 }, accounts: [], sharedOut: [] };
+const VIEW = { overview: { year: 2026 }, accounts: [], sharedOut: [], dormantLinks: [] };
 
 beforeEach(() => {
   for (const f of [requireAction, requireReceiptsSession, loadSpending, setCounterpartyCategory, removeCounterpartyCategory, markCounterpartyOwnAccount, unmarkCounterpartyOwnAccount, unlinkRoutedPayment]) f.mockReset();

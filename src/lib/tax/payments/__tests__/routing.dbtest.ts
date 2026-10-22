@@ -13,7 +13,7 @@ import {
   unlinkRoutedPayment,
 } from '../routing';
 import { receiptForLink, loadStatement } from '@/lib/tax/service';
-import { LoopServiceError, answerNoReceipt, confirmCandidate, linkReceiptToPayment, loadLoopOverview, runReceiptLoop, settleAcrossShares } from '@/lib/spending/loop-service';
+import { LoopServiceError, answerNoReceipt, confirmCandidate, linkReceiptToPayment, loadLoopOverview, runReceiptLoop, settleAcrossShares, withdrawNoReceipt } from '@/lib/spending/loop-service';
 import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
 import { loadSpending, setCounterpartyCategory } from '@/lib/spending/service';
 import { loadBudgets } from '@/lib/spending/budget-service';
@@ -271,7 +271,8 @@ describe('backtrack and revise', () => {
     // The receiver's link counts nowhere in the holder: the payment asks for a business receipt there.
     expect(await stateOf(w.hctx.workspaceId, id)).toBe('missing');
     expect((await loadPayments(db, w.hctx.workspaceId)).payments.find((p) => p.id === id)?.links).toEqual([]);
-    expect(await code(unlinkRoutedPayment(db, w.rctx, id))).toBe('payment_not_found');
+    // The receiver sees only that its own receipt hangs on a payment that left: never the payment.
+    expect((await loadRoutedPayments(db, w.rctx.workspaceId)).dormantLinks).toEqual([expect.objectContaining({ paymentId: id, rowId, cents: 2000 })]);
 
     await setCounterpartyTreatment(db, w.hctx, { counterparty: 'Privat Laden', treatment: 'private' });
     expect(await names(w.rctx.workspaceId)).toEqual(['Privat Laden', 'Teils Markt']);
@@ -325,12 +326,63 @@ describe('resume', () => {
     expect(await names(w.rctx.workspaceId)).toEqual(['Privat Laden', 'Teils Markt', 'Unklar Laden']);
   });
 
-  it('"no receipt exists" said in the holder before the split still holds in the receiver', async () => {
+  it('"no receipt exists" said in the holder before the split still holds in the receiver, and is taken back only there', async () => {
     const w = await world(false);
     const id = w.ids.get('Privat Laden') as string;
     await answerNoReceipt(db, w.hctx, id, 'Automat ohne Beleg');
     await shareAccount(db, w.hctx, w.accountId, w.rctx, 'user-owner');
     expect(await stateOf(w.rctx.workspaceId, id)).toBe('no_receipt');
+    const answered = (await loadLoopOverview(db, w.rctx.workspaceId)).answered.find((c) => c.paymentId === id);
+    expect(answered?.state).toEqual({ state: 'no_receipt', reason: 'Automat ohne Beleg', fromHolder: true });
+    expect(await code(withdrawNoReceipt(db, w.rctx, id))).toBe('answered_by_holder');
+    // The receiver's own answer stands above it and is its own to take back.
+    await answerNoReceipt(db, w.rctx, id, 'Eigene Antwort');
+    expect((await loadLoopOverview(db, w.rctx.workspaceId)).answered.find((c) => c.paymentId === id)?.state).toEqual({ state: 'no_receipt', reason: 'Eigene Antwort' });
+    await withdrawNoReceipt(db, w.rctx, id);
+    expect(await stateOf(w.rctx.workspaceId, id)).toBe('no_receipt');
+  });
+});
+
+describe('links of the receiver', () => {
+  it('"Lösen" takes the receiver\'s link back, and the payment asks again', async () => {
+    const w = await world();
+    const id = w.ids.get('Privat Laden') as string;
+    const rowId = await w.receiver.addReceipt({ Name: 'Bon', Vendor: 'Privat Laden', Gross: 20, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });
+    await confirmCandidate(db, w.rctx, id, rowId);
+    expect(await unlinkRoutedPayment(db, w.rctx, id)).toBe(1);
+    expect(await stateOf(w.rctx.workspaceId, id)).toBe('proposed');
+    expect(await code(unlinkRoutedPayment(db, w.rctx, id))).toBe('payment_not_found');
+  });
+
+  it('a dormant link keeps its receipt from being proposed elsewhere, and can be taken back to free it', async () => {
+    const w = await world();
+    const id = w.ids.get('Privat Laden') as string;
+    const rowId = await w.receiver.addReceipt({ Name: 'Bon', Vendor: 'Privat Laden', Gross: 20, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });
+    await confirmCandidate(db, w.rctx, id, rowId);
+    // The shop is answered business now (the first payment and its link go dormant); a second payment of the
+    // same shop and amount is re-labelled private on its own, so it is routed here.
+    await importPayments(db, w.hctx, w.accountId, file(line('2026-05-15', 'Privat Laden', 'Einkauf zwei', '-20.00')));
+    await setCounterpartyTreatment(db, w.hctx, { counterparty: 'Privat Laden', treatment: 'business' });
+    const second = (await loadPayments(db, w.hctx.workspaceId)).payments.find((p) => p.reference === 'Einkauf zwei')?.id as string;
+    await setPaymentKind(db, w.hctx, second, 'private');
+    expect(await names(w.rctx.workspaceId)).toEqual(['Privat Laden', 'Teils Markt']);
+    expect(await stateOf(w.rctx.workspaceId, second)).toBe('missing');
+    expect(await unlinkRoutedPayment(db, w.rctx, id)).toBe(1);
+    expect(await stateOf(w.rctx.workspaceId, second)).toBe('proposed');
+  });
+
+  it('a company that holds and receives never pays one receipt twice, and its proposals leave a receipt linked elsewhere out', async () => {
+    const w = await world();
+    const own = await createAccount(db, w.rctx, { label: 'Eigenes Konto', kind: 'bank' });
+    await importPayments(db, w.rctx, own, file(line('2026-05-10', 'Privat Laden', 'Zweite Abbuchung', '-20.00')));
+    const ownPayment = (await loadPayments(db, w.rctx.workspaceId)).payments[0].id;
+    const rowId = await w.receiver.addReceipt({ Name: 'Bon', Vendor: 'Privat Laden', Gross: 20, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });
+    await confirmCandidate(db, w.rctx, w.ids.get('Privat Laden') as string, rowId);
+    expect(await code(linkPayment(db, w.rctx, { paymentId: ownPayment, rowId }, receiptForLink(db, w.rctx.workspaceId)))).toBe('receipt_already_paid');
+    expect(await code(linkPayment(db, w.rctx, { paymentId: ownPayment, rowId }, receiptForLink(db, w.rctx.workspaceId), 'estimate'))).toBe('proposal_gone');
+    const view = await loadStatement(db, w.rctx.workspaceId, 2026);
+    expect(view.payments.estimateProposals.some((p) => p.rowId === rowId)).toBe(false);
+    expect((await loadPayments(db, w.rctx.workspaceId)).linkedElsewhere.get(rowId)).toBe(2000);
   });
 });
 
@@ -415,10 +467,10 @@ describe('re-entry', () => {
     const id = w.ids.get('Privat Laden') as string;
     const rowId = await w.receiver.addReceipt({ Name: 'Privat Laden Bon', Vendor: 'Privat Laden', Gross: 20, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });
     await confirmCandidate(db, w.rctx, id, rowId);
-    expect(await endCompanyAccountShares(db, w.rctx.tenantId, [])).toEqual({ shares: 1, links: 1 });
+    expect(await endCompanyAccountShares(db, w.rctx.tenantId, [])).toMatchObject({ shares: 1, links: 1 });
     expect(await db.taxAccountShare.count({ where: { accountId: w.accountId } })).toBe(0);
     expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: w.rctx.workspaceId } })).toBe(0);
-    expect(await endCompanyAccountShares(db, w.rctx.tenantId, [])).toEqual({ shares: 0, links: 0 });
+    expect(await endCompanyAccountShares(db, w.rctx.tenantId, [])).toEqual({ shares: 0, links: 0, records: 0 });
     // The holder's payments stay its records.
     expect((await loadPayments(db, w.hctx.workspaceId)).payments).toHaveLength(4);
 
@@ -426,7 +478,23 @@ describe('re-entry', () => {
     const vid = v.ids.get('Privat Laden') as string;
     const vrow = await v.receiver.addReceipt({ Name: 'Privat Laden Bon', Vendor: 'Privat Laden', Gross: 20, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });
     await confirmCandidate(db, v.rctx, vid, vrow);
-    expect(await endCompanyAccountShares(db, 'some-other-tenant', [v.hctx.workspaceId])).toEqual({ shares: 1, links: 1 });
+    expect(await endCompanyAccountShares(db, 'some-other-tenant', [v.hctx.workspaceId])).toMatchObject({ shares: 1, links: 1 });
     expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: v.rctx.workspaceId } })).toBe(0);
+  });
+
+  it('erasure also removes what the receiver kept about the holder\'s payments, and nothing of the holder\'s own', async () => {
+    const w = await world();
+    const id = w.ids.get('Teils Markt') as string;
+    await answerNoReceipt(db, w.rctx, id, 'Kein Beleg');
+    await answerNoReceipt(db, w.hctx, w.ids.get('Unklar Laden') as string, 'Auch keiner');
+    await runReceiptLoop(db, w.rctx, { today: TODAY, channels: [], mailbox: OFF_MAILBOX });
+    await db.spendingMailSearch.create({ data: { authWorkspaceId: w.rctx.workspaceId, paymentId: id, outcome: 'none', tries: 1, searchedAt: new Date() } });
+    const result = await endCompanyAccountShares(db, w.rctx.tenantId, [w.rctx.workspaceId]);
+    expect(result.shares).toBe(1);
+    expect(result.records).toBeGreaterThanOrEqual(3);
+    expect(await db.spendingReceiptAnswer.count({ where: { authWorkspaceId: w.rctx.workspaceId } })).toBe(0);
+    expect(await db.spendingMailSearch.count({ where: { authWorkspaceId: w.rctx.workspaceId } })).toBe(0);
+    expect(await db.spendingNotification.count({ where: { authWorkspaceId: w.rctx.workspaceId } })).toBe(0);
+    expect(await db.spendingReceiptAnswer.count({ where: { authWorkspaceId: w.hctx.workspaceId } })).toBe(1);
   });
 });

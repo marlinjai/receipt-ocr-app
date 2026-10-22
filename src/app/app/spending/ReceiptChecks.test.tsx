@@ -78,6 +78,16 @@ describe('ReceiptChecks', () => {
     expect(sayNoReceipt).toHaveBeenCalledWith('p2', 'Parkautomat');
   });
 
+  it('an answer given in the company holding the account is shown without a take-back button', async () => {
+    const base = view();
+    const inherited = { ...base, loop: { ...base.loop, answered: [{ ...base.loop.answered[0], state: { state: 'no_receipt' as const, reason: 'Automat', fromHolder: true } }] } };
+    render(<ReceiptChecks initial={inherited} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByText(/Ohne Beleg beantwortet/));
+    expect(screen.getByText(/beantwortet in der Firma, die das Konto führt/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Antwort für Parkhaus zurücknehmen' })).toBeNull();
+    expect(checksActionMessage({ ok: false, error: 'invalid_input', detail: 'answered_by_holder' })).toMatch(/nur dort zurücknehmen/);
+  });
+
   it('takes a "no receipt" answer back, marks a notification read, and runs a check', async () => {
     render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
     const user = userEvent.setup();

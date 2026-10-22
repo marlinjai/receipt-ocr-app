@@ -14,6 +14,9 @@ import type { PaymentKind } from './types';
  *   private: its counterparty answered private, the payment re-labelled
  *   private, or (a counterparty answered "Teils, teils", an account said to be
  *   private as a whole) nothing of it linked;
+ * - whatever it is (a purchase, money back, income, a fee), except a
+ *   transfer between own accounts: that stays where the accounts are,
+ *   whoever answered its counterparty what;
  * - everything else stays with the holder: business, unanswered, own
  *   account, transfers, and whatever the holder linked.
  *
@@ -38,6 +41,8 @@ export function routesToReceiver(
   sharedAccountIds: ReadonlySet<string>,
 ): boolean {
   if (!sharedAccountIds.has(payment.accountId)) return false;
+  // Money moving between own accounts (an own-account answer, the funding rule, a person's word) is no spending of either company.
+  if (payment.kind === 'own_transfer') return false;
   // Something of it is on a business document of the holder: the whole payment stays there.
   if (payment.links.length > 0) return false;
   const treatment = payment.counterpartyKey ? holderTreatments.get(payment.counterpartyKey) : undefined;

@@ -236,15 +236,31 @@ async function deliver(db: PrismaClient, id: string, workspaceId: string, messag
  * whose subject was notified before (in this workspace) is not sent again:
  * 'duplicate'.
  */
-export async function notify(db: PrismaClient, ctx: NotifyContext, message: NotificationMessage, channels: readonly NotificationChannel[] = serverChannels(db)): Promise<'sent' | 'duplicate'> {
+export async function notify(
+  db: PrismaClient,
+  ctx: NotifyContext,
+  message: NotificationMessage,
+  channels: readonly NotificationChannel[] = serverChannels(db),
+  options: { acrossCompanies?: boolean } = {},
+): Promise<'sent' | 'duplicate'> {
   let id: string;
   try {
     // Created as "not delivered yet" (`failed`, no tries): should the run stop
     // before the delivery is recorded, a later run delivers it.
-    const row = await db.spendingNotification.create({
-      data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, subjectKey: message.subjectKey, kind: message.kind, title: message.title, body: message.body, path: message.path, failed: true },
-    });
-    id = row.id;
+    const data = { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, subjectKey: message.subjectKey, kind: message.kind, title: message.title, body: message.body, path: message.path, failed: true };
+    if (options.acrossCompanies) {
+      // A subject that names a payment exists once in the whole database: two companies of a shared account
+      // running at the same moment take this lock on the subject, and the second finds the first's message.
+      const created = await db.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`spending-subject:${message.subjectKey}`}))`;
+        if ((await tx.spendingNotification.count({ where: { subjectKey: message.subjectKey } })) > 0) return null;
+        return tx.spendingNotification.create({ data });
+      });
+      if (!created) return 'duplicate';
+      id = created.id;
+    } else {
+      id = (await db.spendingNotification.create({ data })).id;
+    }
   } catch (e) {
     // Another run created it a moment ago, or long ago: either way it exists once.
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') return 'duplicate';

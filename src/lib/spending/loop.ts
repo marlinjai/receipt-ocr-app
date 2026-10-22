@@ -64,7 +64,8 @@ export interface ReceiptCandidate {
 export type LoopState =
   | { state: 'has_receipt' }
   | { state: 'not_needed'; reason: NotNeededReason }
-  | { state: 'no_receipt'; reason: string }
+  /** `fromHolder`: said in the company that holds the payment's account, before it was routed here; taken back only there. */
+  | { state: 'no_receipt'; reason: string; fromHolder?: boolean }
   | { state: 'proposed'; candidates: ReceiptCandidate[] }
   | { state: 'in_mailbox'; mails: MailCandidateView[] }
   | { state: 'missing' };
@@ -83,6 +84,8 @@ export interface LoopContext {
   categoryAnswers: ReadonlyMap<string, SpendingCategory>;
   /** "No receipt exists" answers by payment id, with the reason. */
   noReceipt: ReadonlyMap<string, string>;
+  /** Of those, the ones said in the company that holds the account (a payment routed here). */
+  noReceiptFromHolder?: ReadonlySet<string>;
   receipts: readonly LoopReceipt[];
   /** Vendor keys a counterparty is known to stand for, from the links that exist (see the payments service). */
   vendorAliases: ReadonlyMap<string, ReadonlySet<string>>;
@@ -151,7 +154,7 @@ export function loopState(payment: LoopPayment, ctx: LoopContext): LoopState {
   const notNeeded = notNeededReason(payment, ctx);
   if (notNeeded) return { state: 'not_needed', reason: notNeeded };
   const answered = ctx.noReceipt.get(payment.id);
-  if (answered !== undefined) return { state: 'no_receipt', reason: answered };
+  if (answered !== undefined) return ctx.noReceiptFromHolder?.has(payment.id) ? { state: 'no_receipt', reason: answered, fromHolder: true } : { state: 'no_receipt', reason: answered };
   const candidates = receiptCandidates(payment, ctx);
   if (candidates.length > 0) return { state: 'proposed', candidates };
   const mails = ctx.mailCandidates?.get(payment.id) ?? [];

@@ -25,7 +25,12 @@ import { forgetGonePayments, loadMailCandidates, searchMailbox, type MailboxRun 
  * holds and shares with this one is asked about here, and never there.
  */
 
-export type LoopServiceErrorCode = 'payment_not_found' | 'reason_required' | 'not_a_candidate';
+export type LoopServiceErrorCode =
+  | 'payment_not_found'
+  | 'reason_required'
+  | 'not_a_candidate'
+  /** The "no receipt" answer was given in the company that holds the account; it is taken back there. */
+  | 'answered_by_holder';
 
 export class LoopServiceError extends Error {
   readonly code: LoopServiceErrorCode;
@@ -110,17 +115,21 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   const inherited =
     routedIds.length === 0 ? [] : await db.spendingReceiptAnswer.findMany({ where: { authWorkspaceId: { in: loaded.holders }, paymentId: { in: routedIds } } });
   const reasons = new Map(inherited.map((a) => [a.paymentId, a.reason]));
-  for (const a of noReceipt) reasons.set(a.paymentId, a.reason);
+  const fromHolder = new Set(inherited.map((a) => a.paymentId));
+  for (const a of noReceipt) {
+    reasons.set(a.paymentId, a.reason);
+    fromHolder.delete(a.paymentId);
+  }
   // A receipt of this company linked to any payment, also one that moved back to the company holding its
   // account (that link counts nowhere now, but it is the receipt's payment): never proposed for another one.
-  const anyLinked = await db.taxPaymentLink.findMany({ where: { authWorkspaceId: workspaceId, rowId: { not: null } }, select: { rowId: true } });
-  const linkedRows = new Set([...loaded.payments.flatMap((p) => p.links.flatMap((l) => (l.rowId ? [l.rowId] : []))), ...anyLinked.map((l) => l.rowId as string)]);
+  const linkedRows = new Set([...loaded.payments.flatMap((p) => p.links.flatMap((l) => (l.rowId ? [l.rowId] : []))), ...loaded.linkedElsewhere.keys()]);
   const receipts = await loadLoopReceipts(db, workspaceId, linkedRows);
   const aliases = vendorAliases(loaded.payments, receipts);
   const ctx: LoopContext = {
     treatments: loaded.treatments,
     categoryAnswers: await categoryAnswerMap(db, workspaceId, loaded),
     noReceipt: reasons,
+    noReceiptFromHolder: fromHolder,
     receipts,
     vendorAliases: aliases,
     mailCandidates,
@@ -167,6 +176,36 @@ export async function settleMovedPayments(db: PrismaClient, workspaceId: string)
  * left a company leaves its queue at once. A failure is logged only: the next
  * run of the loop settles the same messages.
  */
+/** Settling under way per set of companies, so a burst of answers settles once more at the end instead of once per click. */
+const settling = new Map<string, { again: boolean; done: Promise<void> }>();
+
+/**
+ * `settleAcrossShares`, coalesced within this server process: while a settling
+ * of the same companies runs, further calls only ask for one more run after
+ * it. A person answering ten counterparties in a row starts two runs, not ten.
+ */
+export function settleAcrossSharesCoalesced(db: PrismaClient, workspaceIds: readonly string[], options: { onlyWithReceivers?: boolean } = {}): Promise<void> {
+  const key = [...workspaceIds].sort().join('|');
+  const running = settling.get(key);
+  if (running) {
+    running.again = true;
+    return running.done;
+  }
+  const entry = { again: false, done: Promise.resolve() };
+  entry.done = (async () => {
+    try {
+      do {
+        entry.again = false;
+        await settleAcrossShares(db, workspaceIds, options);
+      } while (entry.again);
+    } finally {
+      settling.delete(key);
+    }
+  })();
+  settling.set(key, entry);
+  return entry.done;
+}
+
 export async function settleAcrossShares(db: PrismaClient, workspaceIds: readonly string[], options: { onlyWithReceivers?: boolean } = {}): Promise<void> {
   let receivers: Awaited<ReturnType<typeof receiversOf>> = [];
   try {
@@ -317,7 +356,8 @@ export async function runReceiptLoop(
       continue;
     }
     const message = missingMessage(p, inMailbox.has(p.id), ctx.workspaceId);
-    if ((await notify(db, ctx, { subjectKey: subjectOf(p), kind: 'missing_receipt', ...message }, channels)) === 'sent') notified += 1;
+    // At most once in the whole database: the subject names the payment, which may have moved between companies.
+    if ((await notify(db, ctx, { subjectKey: subjectOf(p), kind: 'missing_receipt', ...message }, channels, { acrossCompanies: true })) === 'sent') notified += 1;
   }
   return { notified, deferred, settled, retried, open, mailbox };
 }
@@ -356,7 +396,12 @@ export async function answerNoReceipt(db: PrismaClient, ctx: NotifyContext, paym
 
 /** Take the answer back: the payment is checked again (without a second notification). */
 export async function withdrawNoReceipt(db: PrismaClient, ctx: NotifyContext, paymentId: string): Promise<void> {
-  await db.spendingReceiptAnswer.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, paymentId } });
+  const { count } = await db.spendingReceiptAnswer.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, paymentId } });
+  if (count > 0) return;
+  // Nothing of this company's to take back: an answer of the holding company still shows here, and is changed there.
+  const { states } = await computeStates(db, ctx.workspaceId);
+  const state = states.get(paymentId);
+  if (state?.state === 'no_receipt' && state.fromHolder) throw new LoopServiceError('answered_by_holder');
 }
 
 /**

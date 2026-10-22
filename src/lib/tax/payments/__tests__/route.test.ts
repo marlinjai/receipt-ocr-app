@@ -35,6 +35,16 @@ describe('routesToReceiver', () => {
     expect(routesToReceiver(pay({ accountId: 'acc-other' }), answers('private'), SHARED)).toBe(false);
   });
 
+  it('sends income, money back and a fee the holder answered private or mixed, but never a transfer between own accounts', () => {
+    for (const kind of ['income', 'refund', 'fee'] as const) {
+      expect(routesToReceiver(pay({ kind }), answers('private'), SHARED)).toBe(true);
+      expect(routesToReceiver(pay({ kind }), answers('mixed'), SHARED)).toBe(true);
+      expect(routesToReceiver(pay({ kind }), answers(), SHARED)).toBe(false);
+    }
+    expect(routesToReceiver(pay({ kind: 'own_transfer' }), answers('private'), SHARED)).toBe(false);
+    expect(routesToReceiver(pay({ kind: 'own_transfer' }), answers('mixed'), SHARED)).toBe(false);
+  });
+
   it('keeps a payment without a name with the holder unless it was re-labelled private', () => {
     expect(routesToReceiver(pay({ counterpartyKey: '' }), answers('private'), SHARED)).toBe(false);
     expect(routesToReceiver(pay({ counterpartyKey: '', kind: 'private' }), answers(), SHARED)).toBe(true);

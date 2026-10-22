@@ -35,6 +35,8 @@ export interface ErasureCounts {
   accountShares?: number;
   /** Links one company held on another company's payments, removed with those shares. */
   crossCompanyLinks?: number;
+  /** Answers, mailbox searches and finds, and messages one company kept about another company's payments, removed. */
+  crossCompanyRecords?: number;
 }
 
 /**
@@ -257,7 +259,7 @@ export async function receiveErasureDelivery(input: {
   try {
     const counts = await input.erase(tenantId, workspaceIds);
     log(
-      `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld} (export coverage: ${counts.exportCoverage}), ${counts.sharedContacts} contacts, ended ${counts.bankConnections ?? 0} bank connections and ${counts.accountShares ?? 0} account shares (${counts.crossCompanyLinks ?? 0} links between companies removed)`,
+      `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld} (export coverage: ${counts.exportCoverage}), ${counts.sharedContacts} contacts, ended ${counts.bankConnections ?? 0} bank connections and ${counts.accountShares ?? 0} account shares (${counts.crossCompanyLinks ?? 0} links and ${counts.crossCompanyRecords ?? 0} other records between companies removed)`,
     );
     return { status: 200, body: { ok: true, erased: counts } };
   } catch (e) {

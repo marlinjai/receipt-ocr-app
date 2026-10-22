@@ -29,6 +29,7 @@ const view = (canWrite: boolean): SpendingPageView => ({
   years: [2026],
   accounts: [],
   sharedOut: [],
+  dormantLinks: [],
   companies: {},
   answers: [{ counterpartyKey: 'abc markt', label: 'ABC Markt', category: 'groceries_drugstore' }],
   ownAccounts: [{ counterpartyKey: 'tagesgeld beispiel', label: 'Tagesgeld Beispiel' }],
@@ -129,6 +130,16 @@ describe('SpendingClient with payments of another company', () => {
     unmount();
     render(<SpendingClient initial={shared(false)} />);
     expect(screen.queryByRole('button', { name: /lösen$/ })).toBeNull();
+  });
+
+  it('lists a receipt left on a payment that moved away, and frees it after a confirmation', async () => {
+    unlinkRoutedReceipt.mockResolvedValue({ ok: true, value: view(true) });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<SpendingClient initial={{ ...view(true), dormantLinks: [{ paymentId: 'p9', cents: 2000, linkedOn: '2026-05-10' }] }} />);
+    expect(screen.getByText(/Belege an Zahlungen, die nicht mehr hierher gehören \(1\)/)).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole('button', { name: /^Beleg, verknüpft am .* lösen$/ }));
+    expect(unlinkRoutedReceipt).toHaveBeenCalledWith(2026, null, 'p9');
+    confirm.mockRestore();
   });
 
   it('tells the holding company where the private payments of its account went', () => {

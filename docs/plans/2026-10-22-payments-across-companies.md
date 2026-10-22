@@ -77,9 +77,11 @@ other's copy behind, and every changed answer would need a write in two companie
 2. **The routing rule.** A payment of a shared account goes to the receiver when (a) the holder has
    no link on it to a receipt or an invoice and (b) the holder's answers make it private: its
    counterparty answered private, the payment re-labelled private, or (for a counterparty answered
-   "Teils, teils" and on an account said to be private as a whole) nothing of it linked. Everything
-   else stays with the holder: business, unanswered, own account, transfers, fees, income without a
-   private answer.
+   "Teils, teils" and on an account said to be private as a whole) nothing of it linked. That holds
+   whatever the payment is (a purchase, money back, income such as a friend paying back, a fee),
+   except a transfer between own accounts (an own-account answer, the funding rule, a person's
+   word): it stays where the accounts are. Everything else stays with the holder: business,
+   unanswered, own account, transfers.
 3. **"Teils, teils" (mixed) and the private account.** An unlinked payment of a mixed counterparty
    or on an account said to be private is private (that is what the spending overview already says
    about it), so it goes to the receiver. Once the holder links it to a business receipt it is
@@ -118,8 +120,10 @@ other's copy behind, and every changed answer would need a write in two companie
    holder's own ("receipt_already_paid") when the receipt's links, routed and own, would take it
    beyond its amount plus the tolerance for fees and rates; the holder's own link counts the
    receiver-held links of the same company too.
-10. **Unlinking.** The receiver takes its link back on its spending page ("Beleg lösen" in the
-    payment list). Deleting the private receipt takes its links along, as for any receipt.
+10. **Unlinking.** The receiver takes its link back on its spending page ("Lösen" in the payment
+    list). A dormant link is listed there too ("Belege an Zahlungen, die nicht mehr hierher gehören",
+    with the day it was linked and its amount, nothing of the payment) and can be taken back, so a
+    receipt is never stuck. Deleting the private receipt takes its links along, as for any receipt.
 11. **Undoing an import** in the holder takes its payments with every link on them, the receiver's
     included (the existing cascade). Answers and finds of the receiver about those payments stop
     applying, as answers of a vanished payment always did.
@@ -142,9 +146,11 @@ other's copy behind, and every changed answer would need a write in two companie
     and after an answer, a link or an undone import in a holder that shares accounts (the holder and
     its receivers), each queue is settled after the answer is sent. The 14-day window stays, so
     splitting the history sends nothing.
-15. **"No receipt exists"** said in the holder before the split still holds in the receiver. Said
-    in the receiver, it is not read by the holder: a payment answered back to business needs a
-    business document, and the holder asks again.
+15. **"No receipt exists"** said in the holder before the split still holds in the receiver, shown
+    as answered there ("beantwortet in der Firma, die das Konto führt") and taken back only in the
+    holder; the receiver's own answer stands above it. Said in the receiver, it is not read by the
+    holder: a payment answered back to business needs a business document, and the holder asks
+    again.
 16. **The expenses mailbox** serves the company in `SPENDING_MAILBOX_WORKSPACE_ID` and every company
     that receives private payments of one of its accounts through a share. No new setting: the
     share is the owner's statement that those payments are his. Searches and finds are stored per
@@ -153,7 +159,9 @@ other's copy behind, and every changed answer would need a write in two companie
     payments (the button, the daily run, a file import) the spending checks run for the holder and
     for every receiver of its shared accounts.
 18. **Erasure of either company** ends its shares and removes the receiver's links on the holder's
-    payments: an erased company keeps nothing tied to the other company's records. The payments
+    payments, and what one company keeps about the other's payments ("no receipt" answers, mailbox
+    searches and finds, messages): an erased company keeps nothing tied to the other company's
+    records. The payments
     themselves stay the holder's records.
 19. **Moving a workspace to another company** (`src/lib/workspace-move.ts`) keeps the share (the
     workspace ids do not change); the holder's stamp moves with the generic restamp, the receiver's
@@ -234,7 +242,7 @@ prove each of these (`routing.dbtest.ts`).
   in the receiver "Aus anderen Firmen" with the holder's name). Spending page: the shared account
   named with its holder, the holder's note where its accounts' private payments went, and "Lösen"
   on a routed payment with a private receipt.
-- **Tests**: `routing.dbtest.ts` (20 tests through the four paths and the privacy promise, with the
+- **Tests**: `routing.dbtest.ts` (28 tests through the four paths and the privacy promise, with the
   holder's tax statement compared before and after), `route.test.ts`, `sharing-actions.test.ts`,
   `AccountSharing.test.tsx`, and additions to the spending page, action, attachment and move tests.
 
@@ -247,6 +255,20 @@ settled after sharing, ending, and every answer or link in a holder that shares)
 was not held to the receipt's amount (now `receipt_already_paid` like the holder's); a mail find of
 a payment that moved away could still be downloaded; the daily run could check a company twice;
 the erasure count of links; wording.
+
+### Second review (2026-10-23), fixed
+
+The privacy model held again. Fixed: a receipt linked on a shared payment is linked for the
+company's own proposals and its accept-all too (`loadPayments` carries `linkedElsewhere`, one
+source for the proposals, the guards and the loop); an inherited "no receipt" answer is marked and
+refused with its own message instead of a take-back that did nothing; dormant links are listed and
+can be taken back; erasure removes the answers, finds and messages kept about the other company's
+payments; settling after a change runs only where a shared account is touched, and a burst of
+answers settles once more at the end instead of once per click; a transfer between own accounts
+never routes (the rule and Decided 2 now say exactly what moves); the guards leave cancelled
+purchases out and count a purchase and its funding debit once; one message per payment is atomic
+across companies (a lock on the subject); an account removed between check and write is
+`account_not_found`. Tests for each, and for the finance actions' settling and the erasure route.
 
 ### What the owner does after the deploy
 

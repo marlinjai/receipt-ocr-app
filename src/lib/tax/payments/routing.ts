@@ -1,6 +1,6 @@
 import 'server-only';
 import { Prisma, type PrismaClient } from '@prisma/client';
-import { loadPayments, OVERPAID_TOLERANCE_PERCENT, PaymentServiceError, type CounterpartyTreatment, type PaymentContext, type PaymentRow, type ReceiptForLink } from './service';
+import { counterpartyKey, loadPayments, OVERPAID_TOLERANCE_PERCENT, paidOnReceipt, PaymentServiceError, type CounterpartyTreatment, type PaymentContext, type PaymentRow, type ReceiptForLink } from './service';
 import { routesToReceiver } from './route';
 
 /**
@@ -60,6 +60,14 @@ export interface RoutedPayments {
   treatments: Map<string, CounterpartyTreatment>;
   /** The workspaces of the companies whose accounts route payments here (their category and "no receipt" answers apply to those payments). */
   holders: string[];
+  /** This company's receipts paid on other companies' payments (routed here or moved back), by receipt: see `loadPayments`. */
+  linkedElsewhere: Map<string, number>;
+  /**
+   * This company's links on payments that are not routed here any more (answered back to business,
+   * the share ended): counted nowhere and shown nowhere else, so they can be taken back. Nothing of
+   * the payment itself, only what this company linked.
+   */
+  dormantLinks: Array<{ paymentId: string; rowId: string | null; cents: number; linkedOn: string }>;
   /** Accounts of this company whose private payments go to another company. */
   sharedOut: Array<{ shareId: string; accountId: string; accountLabel: string; receiverWorkspaceId: string }>;
 }
@@ -94,10 +102,16 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
     }
     for (const p of loaded.payments) if (routesToReceiver(p, loaded.treatments, accountIds)) routedIn.push({ ...p, routedFrom: holder });
   }
-  // This company's own links on what is routed to it; the holder's are never shown here (there are none: a payment the holder linked stays there).
-  const links = routedIn.length === 0 ? [] : await db.taxPaymentLink.findMany({ where: { authWorkspaceId: workspaceId, paymentId: { in: routedIn.map((p) => p.id) } } });
+  // This company's own links on other companies' payments: live on what is routed here, dormant on the rest.
+  // The holder's links are never shown here (there are none: a payment the holder linked stays there).
+  const links = await db.taxPaymentLink.findMany({ where: { authWorkspaceId: workspaceId, payment: { authWorkspaceId: { not: workspaceId } } }, orderBy: { createdAt: 'asc' } });
+  const routedIds = new Set(routedIn.map((p) => p.id));
   const linksOf = new Map<string, PaymentRow['links']>();
-  for (const l of links) linksOf.set(l.paymentId, [...(linksOf.get(l.paymentId) ?? []), { id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method }]);
+  const dormantLinks: RoutedPayments['dormantLinks'] = [];
+  for (const l of links) {
+    if (routedIds.has(l.paymentId)) linksOf.set(l.paymentId, [...(linksOf.get(l.paymentId) ?? []), { id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method }]);
+    else dormantLinks.push({ paymentId: l.paymentId, rowId: l.rowId, cents: l.cents, linkedOn: l.createdAt.toISOString().slice(0, 10) });
+  }
   const incomingRows = routedIn.map((p) => ({
     ...p,
     links: linksOf.get(p.id) ?? [],
@@ -114,6 +128,8 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
     payments,
     treatments: own.treatments,
     holders: [...byHolder.keys()],
+    linkedElsewhere: own.linkedElsewhere,
+    dormantLinks,
     sharedOut: validOut.map((s) => ({ shareId: s.id, accountId: s.accountId, accountLabel: s.account.label, receiverWorkspaceId: s.receiverWorkspaceId })),
   };
 }
@@ -184,10 +200,11 @@ export async function linkRoutedPayment(
     const free = Math.abs(routed.row.amountCents) - mine.reduce((sum, l) => sum + l.cents, 0);
     if (free <= 0) throw new PaymentServiceError('link_exceeds_payment');
     if (!options.confirmed && receipt.amountCents !== null) {
-      // Every link of this company on the receipt, its own payments' and routed ones' alike (one that moved
-      // back to the holder too: it is the receipt's payment until it is taken back).
-      const onReceipt = await tx.taxPaymentLink.findMany({ where: { authWorkspaceId: ctx.workspaceId, rowId }, select: { cents: true, payment: { select: { amountCents: true } } } });
-      const paid = Math.max(0, onReceipt.reduce((sum, l) => sum + (l.payment.amountCents < 0 ? l.cents : -l.cents), 0));
+      // What pays the receipt already: this company's own payments (a purchase and the debit funding it
+      // counted once), and its links on other companies' shared payments (one that moved back to the
+      // holder too: it is the receipt's payment until it is taken back). Cancelled purchases count nowhere.
+      const own = await loadPayments(tx, ctx.workspaceId);
+      const paid = Math.max(0, paidOnReceipt(own.payments, rowId) + (own.linkedElsewhere.get(rowId) ?? 0));
       const limit = receipt.amountCents + Math.round((receipt.amountCents * OVERPAID_TOLERANCE_PERCENT) / 100);
       if (paid > 0 && paid + free > limit) throw new PaymentServiceError('receipt_already_paid', `${paid}:${receipt.amountCents}`);
     }
@@ -198,13 +215,19 @@ export async function linkRoutedPayment(
   });
 }
 
-/** The receiver takes its links on a routed payment back. Returns how many went. */
+/**
+ * The receiver takes its own links on another company's payment back: on a
+ * payment routed to it, and also on one that moved back to the holder (a
+ * dormant link), so a receipt is never stuck. Only this company's own rows are
+ * touched and nothing of the payment is read, so nothing is revealed; a
+ * payment of another company without a link of this one answers like an
+ * unknown payment. Returns how many links went.
+ */
 export async function unlinkRoutedPayment(db: PrismaClient, ctx: PaymentContext, paymentId: string): Promise<number> {
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM tax_payments WHERE id = ${paymentId} FOR UPDATE`;
-    if (!(await routedPaymentFor(tx, ctx.workspaceId, paymentId))) throw new PaymentServiceError('payment_not_found');
-    const { count } = await tx.taxPaymentLink.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, paymentId } });
-    if (count === 0) throw new PaymentServiceError('link_not_found');
+    const { count } = await tx.taxPaymentLink.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, paymentId, payment: { authWorkspaceId: { not: ctx.workspaceId } } } });
+    if (count === 0) throw new PaymentServiceError('payment_not_found');
     return count;
   });
 }
@@ -234,6 +257,8 @@ export async function shareAccount(db: PrismaClient, holder: PaymentContext, acc
     return share.id;
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new ShareError('already_shared');
+    // The account went in the moment between the check and the write.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') throw new ShareError('account_not_found');
     throw e;
   }
 }
@@ -286,6 +311,25 @@ export async function receiversOf(db: Db, holderWorkspaceIds: readonly string[])
   return [...out.values()];
 }
 
+/**
+ * Can a change in the company `workspaceId` have moved a payment between
+ * companies? Only when it touches an account that company shares: the one
+ * payment, the one account, the payments of one counterparty, or (without a
+ * hint) any shared account at all. One count, so the heavier settling of
+ * message queues runs only where something can have moved.
+ */
+export async function touchesSharedAccount(db: Db, workspaceId: string, hint: { paymentId?: string; accountId?: string; counterparty?: unknown } = {}): Promise<boolean> {
+  const shared = { share: { isNot: null } };
+  if (hint.paymentId) return (await db.taxPayment.count({ where: { id: hint.paymentId, authWorkspaceId: workspaceId, account: shared } })) > 0;
+  if (hint.accountId) return (await db.taxAccountShare.count({ where: { accountId: hint.accountId, authWorkspaceId: workspaceId } })) > 0;
+  if (hint.counterparty !== undefined) {
+    const key = typeof hint.counterparty === 'string' ? counterpartyKey(hint.counterparty.trim()) : '';
+    if (!key) return false;
+    return (await db.taxPayment.count({ where: { authWorkspaceId: workspaceId, counterpartyKey: key, account: shared } })) > 0;
+  }
+  return (await db.taxAccountShare.count({ where: { authWorkspaceId: workspaceId } })) > 0;
+}
+
 /** Is `workspaceId` the receiver of a share of an account that `holderWorkspaceId` holds? */
 export async function receivesFrom(db: Db, workspaceId: string, holderWorkspaceId: string): Promise<boolean> {
   if (workspaceId === holderWorkspaceId) return false;
@@ -296,10 +340,12 @@ export async function receivesFrom(db: Db, workspaceId: string, holderWorkspaceI
  * An erased company (auth-brain's `tenant.erased`) keeps nothing tied to
  * another company's records: every share it is part of ends, and every link
  * one company holds on another company's payment where either is the erased
- * one goes. The payments stay the holder's records. Repeat-safe. Returns how
- * many shares ended and how many links went.
+ * one goes, with what one company keeps about the other's payments ("no
+ * receipt" answers, mailbox searches and finds, messages). The payments stay
+ * the holder's records. Repeat-safe. Returns how many shares ended, links went
+ * and other records went.
  */
-export async function endCompanyAccountShares(db: PrismaClient, tenantId: string, workspaceIds: readonly string[]): Promise<{ shares: number; links: number }> {
+export async function endCompanyAccountShares(db: PrismaClient, tenantId: string, workspaceIds: readonly string[]): Promise<{ shares: number; links: number; records: number }> {
   const ids = [...workspaceIds];
   return db.$transaction(async (tx) => {
     const links = await tx.$executeRaw`
@@ -307,6 +353,24 @@ export async function endCompanyAccountShares(db: PrismaClient, tenantId: string
       WHERE l.payment_id = p.id
         AND l.auth_workspace_id <> p.auth_workspace_id
         AND (l.auth_tenant_id = ${tenantId} OR p.auth_tenant_id = ${tenantId} OR l.auth_workspace_id = ANY(${ids}::text[]) OR p.auth_workspace_id = ANY(${ids}::text[]))`;
+    // What one company keeps about another company's payments (its "no receipt" answers, mailbox
+    // searches and finds, messages) goes the same way: it names that company's counterparty and amount.
+    const answers = await tx.$executeRaw`
+      DELETE FROM spending_receipt_answers x USING tax_payments p
+      WHERE x.payment_id = p.id AND x.auth_workspace_id <> p.auth_workspace_id
+        AND (x.auth_tenant_id = ${tenantId} OR p.auth_tenant_id = ${tenantId} OR x.auth_workspace_id = ANY(${ids}::text[]) OR p.auth_workspace_id = ANY(${ids}::text[]))`;
+    const searches = await tx.$executeRaw`
+      DELETE FROM spending_mail_searches x USING tax_payments p
+      WHERE x.payment_id = p.id AND x.auth_workspace_id <> p.auth_workspace_id
+        AND (x.auth_tenant_id = ${tenantId} OR p.auth_tenant_id = ${tenantId} OR x.auth_workspace_id = ANY(${ids}::text[]) OR p.auth_workspace_id = ANY(${ids}::text[]))`;
+    const finds = await tx.$executeRaw`
+      DELETE FROM spending_mail_candidates x USING tax_payments p
+      WHERE x.payment_id = p.id AND x.auth_workspace_id <> p.auth_workspace_id
+        AND (x.auth_tenant_id = ${tenantId} OR p.auth_tenant_id = ${tenantId} OR x.auth_workspace_id = ANY(${ids}::text[]) OR p.auth_workspace_id = ANY(${ids}::text[]))`;
+    const messages = await tx.$executeRaw`
+      DELETE FROM spending_notifications x USING tax_payments p
+      WHERE x.subject_key IN ('missing_receipt:' || p.id, 'mail_found:' || p.id) AND x.auth_workspace_id <> p.auth_workspace_id
+        AND (x.auth_tenant_id = ${tenantId} OR p.auth_tenant_id = ${tenantId} OR x.auth_workspace_id = ANY(${ids}::text[]) OR p.auth_workspace_id = ANY(${ids}::text[]))`;
     const { count } = await tx.taxAccountShare.deleteMany({
       where: {
         OR: [
@@ -316,6 +380,6 @@ export async function endCompanyAccountShares(db: PrismaClient, tenantId: string
         ],
       },
     });
-    return { shares: count, links };
+    return { shares: count, links, records: answers + searches + finds + messages };
   });
 }

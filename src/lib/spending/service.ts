@@ -51,6 +51,8 @@ export interface SpendingView {
   accounts: Array<{ id: string; label: string; completeThrough: string | null; sharedFrom: string | null }>;
   /** Accounts of this company whose private payments show in another company (its workspace). */
   sharedOut: Array<{ accountLabel: string; receiverWorkspaceId: string }>;
+  /** Receipts of this company still linked to payments that moved back to the company holding their account: taken back here. */
+  dormantLinks: Array<{ paymentId: string; cents: number; linkedOn: string }>;
   answers: CategoryAnswerView[];
   /** Counterparties answered as an own account (here or in the payments tab), with a name to show. */
   ownAccounts: Array<{ counterpartyKey: string; label: string }>;
@@ -116,6 +118,7 @@ export async function loadSpending(db: PrismaClient, workspaceId: string, year: 
     years: [...new Set([year, ...paymentYears(loaded.payments, berlinYear(today))])].sort((a, b) => b - a),
     accounts: loaded.accounts.map((a) => ({ id: a.id, label: a.label, completeThrough: a.completeThrough, sharedFrom: a.sharedFrom })),
     sharedOut: loaded.sharedOut.map((s) => ({ accountLabel: s.accountLabel, receiverWorkspaceId: s.receiverWorkspaceId })),
+    dormantLinks: loaded.dormantLinks.map((l) => ({ paymentId: l.paymentId, cents: l.cents, linkedOn: l.linkedOn })),
     answers,
     ownAccounts: [...loaded.treatments]
       .filter(([, treatment]) => treatment === 'own_account')

@@ -445,6 +445,49 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
         </details>
       )}
 
+      {view.dormantLinks.length > 0 && (
+        <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
+          <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+            Belege an Zahlungen, die nicht mehr hierher gehören ({view.dormantLinks.length})
+          </summary>
+          <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
+            Die Firma, die das Konto führt, hat diese Zahlungen inzwischen anders beantwortet, oder die Weitergabe ist beendet. Der Beleg
+            zählt so lange nirgends und wird keiner anderen Zahlung vorgeschlagen. Kommt die Zahlung zurück, gilt die Verknüpfung wieder;
+            „Lösen“ gibt den Beleg frei.
+          </p>
+          <ul className="mt-2 divide-y">
+            {view.dormantLinks.map((l) => (
+              <li key={`${l.paymentId}-${l.linkedOn}-${l.cents}`} className="py-2 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    Beleg verknüpft am {formatDay(l.linkedOn)} über {euro(l.cents)}
+                  </span>
+                  {view.canWrite && (
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm"
+                      disabled={pending}
+                      aria-label={`Beleg, verknüpft am ${formatDay(l.linkedOn)} über ${euro(l.cents)}, lösen`}
+                      onClick={() => {
+                        if (!window.confirm('Den Beleg von dieser Zahlung lösen? Der Beleg bleibt erhalten und kann einer anderen Zahlung zugeordnet werden.')) return;
+                        run(`dormant:${l.paymentId}`, () => unlinkRoutedReceipt(overview.year, overview.month, l.paymentId));
+                      }}
+                    >
+                      Lösen
+                    </button>
+                  )}
+                </div>
+                {error?.at === `dormant:${l.paymentId}` && (
+                  <p className="ui-note ui-note-danger mt-2" role="alert">
+                    {error.message}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
       <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
         <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
           Zahlungen {period} ({overview.payments.length})

@@ -250,7 +250,9 @@ export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok:
   if (result.error === 'forbidden') return 'Für diesen Arbeitsbereich fehlt die Berechtigung zum Ändern.';
   if (result.detail === 'reason_required') return 'Bitte kurz sagen, warum es keinen Beleg gibt.';
   if (result.detail === 'not_a_candidate') return 'Dieser Beleg passt nicht mehr zu der Zahlung (er wurde inzwischen verknüpft oder geändert). Bitte die Seite neu laden.';
-  if (result.detail?.startsWith('receipt_already_paid')) return 'Dieser Beleg ist schon durch andere Zahlungen bezahlt. Das bitte unter Finanzen, Zahlungen prüfen.';
+  if (result.detail?.startsWith('receipt_already_paid'))
+    return 'Dieser Beleg ist schon durch andere Zahlungen bezahlt. Bitte prüfen, ob es der richtige Beleg ist; eine falsche Verknüpfung lässt sich unter Ausgaben (Zahlungen) oder unter Finanzen, Zahlungen lösen.';
+  if (result.detail === 'answered_by_holder') return 'Diese Antwort wurde in der Firma gegeben, die das Konto führt, und lässt sich nur dort zurücknehmen.';
   if (result.detail === 'invalid_email') return 'Diese E-Mail-Adresse sieht nicht gültig aus.';
   if (result.detail === 'invalid_channel') return 'Bitte einen der angebotenen Wege wählen.';
   if (result.detail === 'candidate_not_found') return 'Diese Mail wird nicht mehr angeboten. Bitte die Seite neu laden.';
@@ -660,10 +662,16 @@ export default function ReceiptChecks({
                       </span>
                     )}
                   </span>
-                  {view.canWrite && (
-                    <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => run(`answered:${c.paymentId}`, () => takeBackNoReceipt(c.paymentId))} aria-label={`Antwort für ${c.counterparty || 'diese Zahlung'} zurücknehmen`}>
-                      Zurücknehmen
-                    </button>
+                  {c.state.state === 'no_receipt' && c.state.fromHolder ? (
+                    <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                      beantwortet in der Firma, die das Konto führt; dort zurücknehmen
+                    </span>
+                  ) : (
+                    view.canWrite && (
+                      <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => run(`answered:${c.paymentId}`, () => takeBackNoReceipt(c.paymentId))} aria-label={`Antwort für ${c.counterparty || 'diese Zahlung'} zurücknehmen`}>
+                        Zurücknehmen
+                      </button>
+                    )
                   )}
                 </div>
                 {errorAt(`answered:${c.paymentId}`) && (

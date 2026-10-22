@@ -4,13 +4,14 @@ import { allReceiptRows, tableContext } from '@/lib/meals/service';
 import { rowToMealRecord } from '@/lib/meals/record';
 import { vendorKey } from '@/lib/tax/decisions';
 import { eurosToCents, formatCents } from '@/lib/tax/money';
-import { linkPayment, loadPayments, type PaymentRow } from '@/lib/tax/payments/service';
+import { linkPayment, type PaymentRow } from '@/lib/tax/payments/service';
+import { linkRoutedPayment, loadRoutedPayments, paymentOnSpendingSide, type RoutedPaymentRow } from '@/lib/tax/payments/routing';
 import { receiptForLink } from '@/lib/tax/service';
-import { loadCategoryAnswers } from './service';
+import { categoryAnswerMap } from './service';
 import { loopState, mailFoundSubject, missingReceiptSubject, notifiable, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate } from './loop';
 import { notify, retryFailedDeliveries, serverChannels, settleAllBut, settleNotifications, type NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
-import { serverMailbox } from './mailbox/gmail';
+import { mailboxFor } from './mailbox/server';
 import { mailWordsFor, type MailboxPort } from './mailbox/port';
 import { spendingPath } from './paths';
 import { forgetGonePayments, loadMailCandidates, searchMailbox, type MailboxRun } from './mailbox/service';
@@ -19,7 +20,9 @@ import { forgetGonePayments, loadMailCandidates, searchMailbox, type MailboxRun 
  * The missing-receipt loop against the database: what it reads, the open
  * checks it shows, the answers a person gives, and the run that notifies.
  * Every function takes the workspace explicitly; receipts and payments are
- * only ever matched within one company.
+ * only ever matched within one company. The payments are the spending side's
+ * (`loadRoutedPayments`): a private payment of an account another company
+ * holds and shares with this one is asked about here, and never there.
  */
 
 export type LoopServiceErrorCode = 'payment_not_found' | 'reason_required' | 'not_a_candidate';
@@ -89,26 +92,34 @@ export interface LoopOverview {
 }
 
 interface Loaded {
-  payments: PaymentRow[];
+  payments: RoutedPaymentRow[];
   states: Map<string, LoopState>;
   /** Vendor keys each counterparty stands for, learned from links: the names a mailbox search uses besides the counterparty's own. */
   aliases: Map<string, Set<string>>;
+  /** The other companies of this company's shares (holders of what is routed here, receivers of what is routed away). */
+  related: string[];
 }
 
 async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loaded> {
-  const [loaded, answers, noReceipt, mailCandidates] = await Promise.all([
-    loadPayments(db, workspaceId),
-    loadCategoryAnswers(db, workspaceId),
+  const [loaded, noReceipt, mailCandidates] = await Promise.all([
+    loadRoutedPayments(db, workspaceId),
     db.spendingReceiptAnswer.findMany({ where: { authWorkspaceId: workspaceId } }),
     loadMailCandidates(db, workspaceId),
   ]);
+  // "No receipt exists", said in the holding company before the payment was routed here, still holds.
+  // Never the other way: what this company says stays here.
+  const routedIds = loaded.payments.filter((p) => p.routedFrom !== null).map((p) => p.id);
+  const inherited =
+    routedIds.length === 0 ? [] : await db.spendingReceiptAnswer.findMany({ where: { authWorkspaceId: { in: loaded.holders }, paymentId: { in: routedIds } } });
+  const reasons = new Map(inherited.map((a) => [a.paymentId, a.reason]));
+  for (const a of noReceipt) reasons.set(a.paymentId, a.reason);
   const linkedRows = new Set(loaded.payments.flatMap((p) => p.links.flatMap((l) => (l.rowId ? [l.rowId] : []))));
   const receipts = await loadLoopReceipts(db, workspaceId, linkedRows);
   const aliases = vendorAliases(loaded.payments, receipts);
   const ctx: LoopContext = {
     treatments: loaded.treatments,
-    categoryAnswers: new Map(answers.map((a) => [a.counterpartyKey, a.category])),
-    noReceipt: new Map(noReceipt.map((a) => [a.paymentId, a.reason])),
+    categoryAnswers: await categoryAnswerMap(db, workspaceId, loaded),
+    noReceipt: reasons,
     receipts,
     vendorAliases: aliases,
     mailCandidates,
@@ -117,7 +128,7 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   for (const p of loaded.payments) {
     states.set(p.id, loopState({ ...p, linkCount: p.links.length }, ctx));
   }
-  return { payments: loaded.payments, states, aliases };
+  return { payments: loaded.payments, states, aliases, related: [...new Set([...loaded.holders, ...loaded.sharedOut.map((s) => s.receiverWorkspaceId)])] };
 }
 
 const check = (p: PaymentRow, state: LoopState): PaymentCheck => ({
@@ -205,14 +216,14 @@ export async function runReceiptLoop(
 ): Promise<RunResult> {
   const channels = options.channels ?? serverChannels(db);
   await forgetGonePayments(db, ctx.workspaceId);
-  let { payments, states, aliases } = await computeStates(db, ctx.workspaceId);
+  let { payments, states, aliases, related } = await computeStates(db, ctx.workspaceId);
   // Step 3: look in the mailbox for the invoices of recent payments still missing one, by the
   // counterparty's name and the vendors it is known to stand for, then read the states again.
   const lookFor = payments
     .filter((p) => states.get(p.id)?.state === 'missing' && notifiable(p, options.today))
     .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, vendorWords: p.counterpartyKey ? mailWordsFor(p.counterparty, p.counterpartyKey, aliases.get(p.counterpartyKey) ?? []) : [] }));
-  const mailbox = await searchMailbox(db, ctx, lookFor, options.mailbox ?? serverMailbox(ctx.workspaceId), options.now);
-  if (mailbox.status !== 'off' && mailbox.found > 0) ({ payments, states, aliases } = await computeStates(db, ctx.workspaceId));
+  const mailbox = await searchMailbox(db, ctx, lookFor, options.mailbox ?? (await mailboxFor(db, ctx.workspaceId)), options.now);
+  if (mailbox.status !== 'off' && mailbox.found > 0) ({ payments, states, aliases, related } = await computeStates(db, ctx.workspaceId));
   const waiting: PaymentRow[] = [];
   const inMailbox = new Set<string>();
   let open = 0;
@@ -237,11 +248,13 @@ export async function runReceiptLoop(
   // (also when that happens on a later search, after the first message).
   const subjectOf = (p: PaymentRow) => (inMailbox.has(p.id) ? mailFoundSubject(p.id) : missingReceiptSubject(p.id));
   const recent = waiting.filter((p) => notifiable(p, options.today));
-  // Payments notified about before are done for good: only the rest count towards the limit.
+  // Payments notified about before are done for good: only the rest count towards the limit. A payment of a
+  // shared account counts as notified when either company of the share was told (only whether, never what):
+  // an answer flipped from business to private moves it here, and it must not be announced a second time.
   const notifiedBefore = new Set(
     (
       await db.spendingNotification.findMany({
-        where: { authWorkspaceId: ctx.workspaceId, kind: 'missing_receipt', subjectKey: { in: recent.map(subjectOf) } },
+        where: { authWorkspaceId: { in: [ctx.workspaceId, ...related] }, kind: 'missing_receipt', subjectKey: { in: recent.map(subjectOf) } },
         select: { subjectKey: true },
       })
     ).map((n) => n.subjectKey),
@@ -262,9 +275,15 @@ export async function runReceiptLoop(
   return { notified, deferred, settled, retried, open, mailbox };
 }
 
+/** The payment must be on this company's spending side: its own and not routed away, or routed here. */
 async function requirePayment(db: PrismaClient, workspaceId: string, paymentId: string): Promise<void> {
-  const found = await db.taxPayment.findFirst({ where: { id: paymentId, authWorkspaceId: workspaceId }, select: { id: true } });
-  if (!found) throw new LoopServiceError('payment_not_found');
+  if (typeof paymentId !== 'string' || !paymentId || !(await paymentOnSpendingSide(db, workspaceId, paymentId))) throw new LoopServiceError('payment_not_found');
+}
+
+/** Link a receipt of this company to a payment of its spending side: through the payments service for its own, as a receiver's link for a routed one. */
+async function linkOnSpendingSide(db: PrismaClient, ctx: NotifyContext, payment: RoutedPaymentRow, rowId: string): Promise<void> {
+  if (payment.routedFrom !== null) await linkRoutedPayment(db, ctx, payment.id, rowId, receiptForLink(db, ctx.workspaceId));
+  else await linkPayment(db, ctx, { paymentId: payment.id, rowId }, receiptForLink(db, ctx.workspaceId), 'manual');
 }
 
 /** "No receipt exists for this payment", with the reason. Answered once, never asked again. */
@@ -299,12 +318,13 @@ export async function withdrawNoReceipt(db: PrismaClient, ctx: NotifyContext, pa
  * Only a receipt the loop proposes right now can be confirmed here.
  */
 export async function confirmCandidate(db: PrismaClient, ctx: NotifyContext, paymentId: string, rowId: string): Promise<void> {
-  const { states } = await computeStates(db, ctx.workspaceId);
+  const { states, payments } = await computeStates(db, ctx.workspaceId);
   const state = states.get(paymentId);
-  if (!state) throw new LoopServiceError('payment_not_found');
+  const payment = payments.find((p) => p.id === paymentId);
+  if (!state || !payment) throw new LoopServiceError('payment_not_found');
   const candidates: ReceiptCandidate[] = state.state === 'proposed' ? state.candidates : [];
   if (!candidates.some((c) => c.rowId === rowId)) throw new LoopServiceError('not_a_candidate');
-  await linkPayment(db, ctx, { paymentId, rowId }, receiptForLink(db, ctx.workspaceId), 'manual');
+  await linkOnSpendingSide(db, ctx, payment, rowId);
   await settleNotifications(db, ctx.workspaceId, [missingReceiptSubject(paymentId)]);
 }
 
@@ -315,11 +335,12 @@ export async function confirmCandidate(db: PrismaClient, ctx: NotifyContext, pay
  * for its receipt.
  */
 export async function linkReceiptToPayment(db: PrismaClient, ctx: NotifyContext, paymentId: string, rowId: string): Promise<void> {
-  const { states } = await computeStates(db, ctx.workspaceId);
+  const { states, payments } = await computeStates(db, ctx.workspaceId);
   const state = states.get(paymentId);
-  if (!state) throw new LoopServiceError('payment_not_found');
+  const payment = payments.find((p) => p.id === paymentId);
+  if (!state || !payment) throw new LoopServiceError('payment_not_found');
   if (state.state === 'has_receipt') return;
   if (state.state !== 'missing' && state.state !== 'in_mailbox' && state.state !== 'proposed') throw new LoopServiceError('not_a_candidate');
-  await linkPayment(db, ctx, { paymentId, rowId }, receiptForLink(db, ctx.workspaceId), 'manual');
+  await linkOnSpendingSide(db, ctx, payment, rowId);
   await settleNotifications(db, ctx.workspaceId, [missingReceiptSubject(paymentId), mailFoundSubject(paymentId)]);
 }

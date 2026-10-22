@@ -23,6 +23,8 @@ export interface OverviewPaymentInput {
   linkedCents?: number;
   /** True when the payment is private only because its whole account was said to be private. */
   byPrivateAccount?: boolean;
+  /** True when the payment is here because the company holding its account calls it private (src/lib/tax/payments/route.ts). */
+  routed?: boolean;
 }
 
 export interface OverviewPayment {
@@ -42,6 +44,8 @@ export interface OverviewPayment {
   /** Of `spendingCents`, the business part; the rest is private (or unanswered, with purpose `unanswered`). */
   businessCents: number;
   hasReceipt: boolean;
+  /** Here from the company that holds its account: a receipt linked here can be taken back on this page. */
+  routed: boolean;
 }
 
 export interface CategoryTotal {
@@ -107,6 +111,7 @@ export function classifyPayment(p: OverviewPaymentInput, ctx: OverviewContext): 
     spendingCents: cents,
     businessCents: cents === null ? 0 : businessShare(cents, purpose, treatment === 'mixed' || p.byPrivateAccount === true, p.linkedCents ?? 0),
     hasReceipt: p.linkCount > 0,
+    routed: p.routed === true,
   };
 }
 

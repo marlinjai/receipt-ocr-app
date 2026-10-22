@@ -459,6 +459,7 @@ export async function moveWorkspace(
   const tables: Record<string, TableCounts> = {};
   let restamped = 0;
   let repointed = 0;
+  let receiverStamps = 0;
   try {
     await db.$transaction(
       async (tx) => {
@@ -476,6 +477,14 @@ export async function moveWorkspace(
           tables[model.table] = { ...plan.report.rows.tables[model.table], restamp: count };
           restamped += count;
         }
+        // A share of an account names the RECEIVING company too (plan 2026-10-22, payments across
+        // companies). The generic restamp above covers the holder's stamp; the receiver's follows here.
+        receiverStamps = (
+          await tx.taxAccountShare.updateMany({
+            where: { receiverWorkspaceId: req.workspaceId, OR: [{ receiverTenantId: req.fromTenantId }, { receiverTenantId: null }] },
+            data: { receiverTenantId: req.toTenantId },
+          })
+        ).count;
       },
       { maxWait: 10_000, timeout: 60_000 },
     );
@@ -498,7 +507,7 @@ export async function moveWorkspace(
   }
   return {
     ...report,
-    written: contactsMoved > 0 || restamped > 0 || repointed > 0,
+    written: contactsMoved > 0 || restamped > 0 || repointed > 0 || receiverStamps > 0,
     rows: { ...report.rows, restamp: restamped, tables },
     contacts: {
       ...report.contacts,

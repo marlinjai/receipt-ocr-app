@@ -49,6 +49,8 @@ import LinesForm, { type LineDraft } from './LinesForm';
 import PaymentsTab from './PaymentsTab';
 import { useBankFeed, type BankActions } from './BankConnection';
 import { chooseBankConnectionAccount, clearBankConnectionNotice, disconnectBank, listBankInstitutions, startBankConsent, syncBankNow, type BankView } from './bank-actions';
+import AccountSharing, { type SharingActions } from './AccountSharing';
+import { endAccountShare, shareAccountWith, type SharingView } from './sharing-actions';
 import { returnMessage } from '@/lib/tax/payments/bank/messages';
 import YearBoundaryTab from './YearBoundaryTab';
 import type { ImportResult } from '@/lib/tax/payments/service';
@@ -104,6 +106,7 @@ export function openQueue(view: StatementView): StatementItem[] {
 
 const BANK_ACTIONS: BankActions = { listBankInstitutions, startBankConsent, chooseBankConnectionAccount, syncBankNow, disconnectBank, clearBankConnectionNotice };
 const NO_BANK: BankView = { enabled: false, connections: [] };
+const SHARING_ACTIONS: SharingActions = { shareAccountWith, endAccountShare };
 
 export default function FinanceClient({
   initial,
@@ -111,6 +114,8 @@ export default function FinanceClient({
   bank: bankInitial = null,
   bankReturn = null,
   bankActions = BANK_ACTIONS,
+  sharing = null,
+  sharingActions = SHARING_ACTIONS,
 }: {
   initial: StatementView;
   initialTab?: TabKey;
@@ -119,6 +124,9 @@ export default function FinanceClient({
   /** The outcome of the return from the bank (`?bank=`). */
   bankReturn?: string | null;
   bankActions?: BankActions;
+  /** Sharing an account's private payments with another company; null when it could not be read (the section is then left out). */
+  sharing?: SharingView | null;
+  sharingActions?: SharingActions;
 }) {
   const tabsId = useId();
   const router = useRouter();
@@ -822,6 +830,7 @@ export default function FinanceClient({
               }
               onSearch={(query) => searchPayments(view.year, query)}
               bank={bankInitial ? { feed: bankFeed, actions: bankActions, returnNotice: bankNotice } : null}
+              sharing={sharing ? <AccountSharing initial={sharing} accounts={view.payments.accounts} actions={sharingActions} /> : null}
               onTreat={(counterparty, treatment) => run(() => treatCounterparty(view.year, { counterparty, treatment }), `${counterparty}: ${treatment === null ? 'Antwort zurückgenommen' : 'gespeichert'}.`)}
               onLink={linkWithQuestion}
               onAcceptProposals={(pairs, onlyUnambiguous) => {

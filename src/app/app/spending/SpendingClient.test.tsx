@@ -26,6 +26,8 @@ const view = (canWrite: boolean): SpendingPageView => ({
   overview: buildOverview([pay], { treatments: new Map(), answers: new Map() }, 2026, null),
   years: [2026],
   accounts: [],
+  sharedOut: [],
+  companies: {},
   answers: [{ counterpartyKey: 'abc markt', label: 'ABC Markt', category: 'groceries_drugstore' }],
   ownAccounts: [{ counterpartyKey: 'tagesgeld beispiel', label: 'Tagesgeld Beispiel' }],
   noPayments: false,

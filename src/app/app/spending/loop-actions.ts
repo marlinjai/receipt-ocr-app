@@ -8,7 +8,7 @@ import { LoopServiceError, answerNoReceipt, confirmCandidate, loadLoopOverview, 
 import { runSpendingChecks, type ChecksRun } from '@/lib/spending/checks';
 import { NotifyServiceError, devicePushState, forgetDeviceEverywhere, validVapidConfig, getNotifySettings, pushDeviceCount, removePushSubscription, savePushSubscription, type PushContext, listUnreadNotifications, markNotificationRead, saveNotifySettings, type NotificationView, type NotifySettings, type NotifyContext } from '@/lib/spending/notify/service';
 import { berlinToday } from '@/lib/spending/period';
-import { serverMailbox } from '@/lib/spending/mailbox/gmail';
+import { mailboxFor } from '@/lib/spending/mailbox/server';
 import { MailCandidateError, dismissMailCandidate } from '@/lib/spending/mailbox/service';
 import { linkReceiptToPayment } from '@/lib/spending/loop-service';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
@@ -67,7 +67,7 @@ async function view(workspaceId: string, canWrite: boolean, lastRun: ChecksView[
     canWrite ? listUnreadNotifications(prisma, workspaceId) : Promise.resolve([]),
     getNotifySettings(prisma, workspaceId),
   ]);
-  const status = serverMailbox(workspaceId).status();
+  const status = (await mailboxFor(prisma, workspaceId)).status();
   const mailbox = status.configured ? 'on' : status.reason === 'other_company' ? 'other_company' : 'off';
   return {
     loop,

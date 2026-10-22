@@ -5,12 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const requireAction = vi.fn();
 const findMailCandidate = vi.fn();
 const fetchAttachment = vi.fn();
-const serverMailbox = vi.fn(() => ({ fetchAttachment: (...a: unknown[]) => fetchAttachment(...a) }));
+const mailboxFor = vi.fn(async () => ({ fetchAttachment: (...a: unknown[]) => fetchAttachment(...a) }));
 
 vi.mock('@/lib/auth', () => ({ auth: { requireAction: (...a: unknown[]) => requireAction(...a) } }));
 vi.mock('@/lib/prisma', () => ({ prisma: { marker: 'prisma' } }));
 vi.mock('@/lib/spending/mailbox/service', () => ({ findMailCandidate: (...a: unknown[]) => findMailCandidate(...a) }));
-vi.mock('@/lib/spending/mailbox/gmail', () => ({ serverMailbox: (...a: unknown[]) => (serverMailbox as (...x: unknown[]) => unknown)(...a) }));
+vi.mock('@/lib/spending/mailbox/server', () => ({ mailboxFor: (...a: unknown[]) => (mailboxFor as (...x: unknown[]) => unknown)(...a) }));
 
 import { MailboxError } from '@/lib/spending/mailbox/port';
 import { GET } from './route';
@@ -24,7 +24,7 @@ beforeEach(() => {
   requireAction.mockReset();
   findMailCandidate.mockReset();
   fetchAttachment.mockReset();
-  serverMailbox.mockClear();
+  mailboxFor.mockClear();
 });
 
 describe('GET /api/spending/mail-attachment/:id', () => {
@@ -50,7 +50,7 @@ describe('GET /api/spending/mail-attachment/:id', () => {
     fetchAttachment.mockResolvedValue({ bytes: new TextEncoder().encode('%PDF-1.4'), mimeType: 'application/pdf', fileName: 'Rechnung.pdf' });
     const res = await call();
     expect(res.status).toBe(200);
-    expect(serverMailbox).toHaveBeenCalledWith('ws-a');
+    expect(mailboxFor).toHaveBeenCalledWith({ marker: 'prisma' }, 'ws-a');
     expect(fetchAttachment).toHaveBeenCalledWith('m1', 0, 'Rechnung.pdf');
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
     expect(res.headers.get('Cache-Control')).toBe('private, no-store');

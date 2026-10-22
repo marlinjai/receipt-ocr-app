@@ -269,7 +269,8 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     let releasedLinks = 0;
     if (parsed.cancelled.length > 0) {
       const where = { accountId, sourceHash: { in: parsed.cancelled }, cancelledByBatchId: null };
-      releasedLinks = await tx.taxPaymentLink.count({ where: { payment: where } });
+      // This company's links only: a link another company holds on a shared account's payment is not this import's to report.
+      releasedLinks = await tx.taxPaymentLink.count({ where: { authWorkspaceId: ctx.workspaceId, payment: where } });
       cancelledEarlier = (await tx.taxPayment.updateMany({ where, data: { cancelledByBatchId: created.id } })).count;
     }
     // A year of a file that adds, recognizes and cancels nothing: its empty import would only stand in the way of
@@ -343,7 +344,7 @@ async function linkByReference(db: Prisma.TransactionClient, ctx: PaymentContext
   // Whether a link is unambiguous is judged against every unlinked incoming
   // payment of the workspace, not only this file's: an earlier payment naming
   // the same invoice makes the new one ambiguous too.
-  const payments = await db.taxPayment.findMany({ where: { authWorkspaceId: ctx.workspaceId, amountCents: { gt: 0 }, cancelledByBatchId: null }, include: { links: true } });
+  const payments = await db.taxPayment.findMany({ where: { authWorkspaceId: ctx.workspaceId, amountCents: { gt: 0 }, cancelledByBatchId: null }, include: { links: { where: { authWorkspaceId: ctx.workspaceId } } } });
   const invoices = await db.taxIssuedInvoice.findMany({ where: { authWorkspaceId: ctx.workspaceId }, include: { payments: true, paymentLinks: { where: { payment: { cancelledByBatchId: null } } } } });
   const proposals = unambiguousReferenceMatches(
     proposeMatches(
@@ -535,7 +536,8 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
   return db.$transaction(async (tx) => {
     // Lock the payment so two confirmations at the same moment cannot both use its free amount.
     await tx.$queryRaw`SELECT id FROM tax_payments WHERE id = ${input.paymentId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
-    const payment = await tx.taxPayment.findFirst({ where: { id: input.paymentId, authWorkspaceId: ctx.workspaceId }, include: { links: true } });
+    // This company's links only: a link the receiving company of a shared account holds is not this company's money.
+    const payment = await tx.taxPayment.findFirst({ where: { id: input.paymentId, authWorkspaceId: ctx.workspaceId }, include: { links: { where: { authWorkspaceId: ctx.workspaceId } } } });
     if (!payment) throw new PaymentServiceError('payment_not_found');
     // A cancelled purchase counts nowhere, so nothing is linked to it.
     if (payment.cancelledByBatchId !== null) throw new PaymentServiceError('invalid_link');
@@ -738,11 +740,18 @@ export interface LoadedPayments {
   treatments: Map<string, CounterpartyTreatment>;
 }
 
-/** Every payment of the workspace with its links, and what was said about the counterparties. */
+/**
+ * Every payment of the workspace with its links, and what was said about the
+ * counterparties. Only the workspace's OWN links are read: when an account's
+ * private payments go to another company (plan 2026-10-22, payments across
+ * companies), that company's links on them are its own and never count here,
+ * so neither the tax figures nor the questions of this company can change
+ * through them.
+ */
 export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, workspaceId: string): Promise<LoadedPayments> {
   const [accounts, stored, rules] = await Promise.all([
     db.taxAccount.findMany({ where: { authWorkspaceId: workspaceId }, include: { batches: { orderBy: { createdAt: 'desc' } } }, orderBy: { label: 'asc' } }),
-    db.taxPayment.findMany({ where: { authWorkspaceId: workspaceId }, include: { links: true }, orderBy: [{ bookingDay: 'asc' }, { createdAt: 'asc' }] }),
+    db.taxPayment.findMany({ where: { authWorkspaceId: workspaceId }, include: { links: { where: { authWorkspaceId: workspaceId } } }, orderBy: [{ bookingDay: 'asc' }, { createdAt: 'asc' }] }),
     db.taxCounterpartyRule.findMany({ where: { authWorkspaceId: workspaceId } }),
   ]);
   const treatments = new Map<string, CounterpartyTreatment>();

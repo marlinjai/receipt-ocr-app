@@ -19,6 +19,7 @@ const pay = (bookingDay: string, cents: number, category: OverviewPayment['categ
   spendingCents: cents,
   businessCents: 0,
   hasReceipt: false,
+  routed: false,
   ...extra,
 });
 

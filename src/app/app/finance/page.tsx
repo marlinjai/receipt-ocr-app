@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { auth } from '@/lib/auth';
 import { getStatement } from './actions';
 import { getBankView } from './bank-actions';
+import { getSharingView } from './sharing-actions';
 import FinanceClient from './FinanceClient';
 
 export const dynamic = 'force-dynamic';
@@ -11,7 +12,7 @@ export const metadata = { title: 'Finanzen' };
 export default async function FinancePage({ searchParams }: { searchParams: Promise<{ jahr?: string; reiter?: string; bank?: string }> }) {
   await auth.requireSession('/app/finance');
   const { jahr, reiter, bank } = await searchParams;
-  const [data, bankView] = await Promise.all([getStatement(jahr ? Number(jahr) : new Date().getFullYear()), getBankView()]);
+  const [data, bankView, sharing] = await Promise.all([getStatement(jahr ? Number(jahr) : new Date().getFullYear()), getBankView(), getSharingView()]);
 
   if (!data.ok) {
     return (
@@ -45,6 +46,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
       initialTab={reiter === 'zahlungen' ? 'payments' : undefined}
       bank={bankView.ok ? bankView.value : null}
       bankReturn={typeof bank === 'string' ? bank.slice(0, 80) : null}
+      sharing={sharing.ok ? sharing.value : null}
     />
   );
 }

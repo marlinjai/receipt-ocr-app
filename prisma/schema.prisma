@@ -685,6 +685,7 @@ model TaxAccount {
   batches        TaxImportBatch[]
   payments       TaxPayment[]
   bankConnection TaxBankConnection?
+  share          TaxAccountShare?
 
   @@unique([authWorkspaceId, label])
   @@map("tax_accounts")
@@ -1104,6 +1105,32 @@ model TaxBankConnection {
   @@index([stateHash])
   @@index([status])
   @@map("tax_bank_connections")
+}
+
+// The private payments of one account go to another company of the same
+// person (plan docs/plans/2026-10-22-payments-across-companies.md). The row is
+// the holder's (`authWorkspaceId`, `authTenantId`: the company the account
+// belongs to); `receiverWorkspaceId` and `receiverTenantId` name the company
+// that gets the payments the holder's answers call private. Nothing is copied:
+// which payment goes where is worked out on read (src/lib/tax/payments/route.ts).
+// One receiver per account. Deleting the row ends the share; the payments are
+// back with the holder at once.
+model TaxAccountShare {
+  id                  String   @id @default(uuid())
+  authWorkspaceId     String   @map("auth_workspace_id")
+  authTenantId        String?  @map("auth_tenant_id")
+  accountId           String   @unique @map("account_id")
+  receiverWorkspaceId String   @map("receiver_workspace_id")
+  receiverTenantId    String?  @map("receiver_tenant_id")
+  // The person who linked the two companies (an auth-brain user id), for the record.
+  createdByUserId     String   @map("created_by_user_id")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  account TaxAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([authWorkspaceId])
+  @@index([receiverWorkspaceId])
+  @@map("tax_account_shares")
 }
 
 // The time of the last accepted call of the daily bank fetch

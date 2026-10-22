@@ -5,7 +5,7 @@ import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { after } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { runSpendingChecks } from '@/lib/spending/checks';
+import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
 import { berlinToday } from '@/lib/spending/period';
 import {
   PaymentServiceError,
@@ -335,7 +335,7 @@ export async function importPaymentFile(year: number, accountId: string, text: s
     // and must never hold or fail the import. A failure is logged.
     after(async () => {
       try {
-        await runSpendingChecks(prisma, ctx, { today: berlinToday() });
+        await runSpendingChecksAfterNewPayments(prisma, ctx, { today: berlinToday() });
       } catch (e) {
         console.error('[finance] spending checks after import failed', e);
       }

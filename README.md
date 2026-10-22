@@ -128,8 +128,11 @@ project; names in `.env.example`):
   is in "Testing" expires after seven days. When the page says the access has expired, the owner grants it again the same way and the new refresh token replaces the old one
   in Infisical; nothing else changes.
 - `SPENDING_MAILBOX_ADDRESS`: the address invoices are sent to.
-- `SPENDING_MAILBOX_WORKSPACE_ID`: the one company (workspace) the mailbox belongs to. For every
-  other company the mailbox step stays off, so no other company ever sees its mail.
+- `SPENDING_MAILBOX_WORKSPACE_ID`: the company (workspace) the mailbox belongs to. It also serves
+  every company that receives the private payments of one of that company's accounts ("Private
+  Zahlungen weitergeben" in the payments tab), because those payments were searched for there
+  before. For every other company the mailbox step stays off, so no other company ever sees its
+  mail. Finds are stored per company: each one sees only the finds of its own payments.
 
 A found attachment is never stored by the app: only where it is (mail and attachment). The owner
 takes it over with one tap; the browser then runs the normal upload.

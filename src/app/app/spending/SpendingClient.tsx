@@ -8,7 +8,7 @@ import { formatCents } from '@/lib/tax/money';
 import { ANSWERABLE_CATEGORIES, SPENDING_CATEGORY_LABELS, isSpendingCategory, type SpendingCategory } from '@/lib/spending/categories';
 import type { CategoryBasis, SpendingPurpose } from '@/lib/spending/rules';
 import type { UnclearCounterparty } from '@/lib/spending/overview';
-import { answerCategory, markOwnAccount, unmarkOwnAccount, withdrawCategory, type Result, type SpendingPageView } from './actions';
+import { answerCategory, markOwnAccount, unlinkRoutedReceipt, unmarkOwnAccount, withdrawCategory, type Result, type SpendingPageView } from './actions';
 
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
@@ -41,6 +41,9 @@ export function spendingActionMessage(result: Extract<Result<unknown>, { ok: fal
     return 'Diese Gegenseite ist unter Finanzen, Zahlungen schon als geschäftlich oder privat beantwortet. Das bitte dort ändern, damit die steuerliche Zuordnung nicht unbemerkt verloren geht.';
   if (result.detail === 'invalid_treatment') return 'Diese Gegenseite lässt sich nicht als eigenes Konto merken, weil die Zahlung keinen Namen nennt.';
   if (result.detail === 'not_own_account') return 'Diese Gegenseite ist nicht mehr als eigenes Konto beantwortet. Bitte die Seite neu laden.';
+  if (result.detail === 'payment_not_found')
+    return 'Diese Zahlung gehört nicht mehr hierher: die Firma, die das Konto führt, hat sie inzwischen anders beantwortet. Bitte die Seite neu laden.';
+  if (result.detail === 'link_not_found') return 'An dieser Zahlung hängt hier kein Beleg mehr. Bitte die Seite neu laden.';
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
 
@@ -213,9 +216,23 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
             {view.accounts.map((a, i) => (
               <span key={a.id}>
                 {i > 0 && ', '}
-                {a.label} bis {formatDay(a.completeThrough)}
+                {a.label}
+                {a.sharedFrom && ` (private Zahlungen, geführt von ${view.companies[a.sharedFrom] ?? 'einer anderen Firma'})`} bis {formatDay(a.completeThrough)}
               </span>
             ))}
+          </p>
+        )}
+        {view.sharedOut.length > 0 && (
+          <p className="ui-note">
+            Private Zahlungen von{' '}
+            {view.sharedOut.map((s, i) => (
+              <span key={`${s.accountLabel}-${s.receiverWorkspaceId}`}>
+                {i > 0 && ', '}
+                {s.accountLabel} (an {view.companies[s.receiverWorkspaceId] ?? 'eine andere Firma'})
+              </span>
+            ))}{' '}
+            stehen in der Firma, an die sie weitergegeben werden, mit Budgets und fehlenden Belegen. Hier zählen von diesen Konten nur
+            die geschäftlichen und die noch nicht beantworteten Zahlungen.
           </p>
         )}
       </div>
@@ -464,7 +481,28 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
                     </span>
                   </td>
                   <td className="py-1 pr-3">{p.spendingCents === null ? 'Umbuchung' : PURPOSE_LABELS[p.purpose]}</td>
-                  <td className="py-1 pr-3">{p.spendingCents === null ? 'nicht nötig' : p.hasReceipt ? 'verknüpft' : 'keiner'}</td>
+                  <td className="py-1 pr-3">
+                    {p.spendingCents === null ? 'nicht nötig' : p.hasReceipt ? 'verknüpft' : 'keiner'}
+                    {p.routed && p.hasReceipt && view.canWrite && (
+                      <button
+                        type="button"
+                        className="ui-btn ui-btn-sm ml-2"
+                        disabled={pending}
+                        aria-label={`Beleg von ${p.counterparty || 'dieser Zahlung'} am ${formatDay(p.bookingDay)} lösen`}
+                        onClick={() => {
+                          if (!window.confirm('Den Beleg von dieser Zahlung lösen? Der Beleg bleibt erhalten, die Zahlung fragt dann wieder nach einem Beleg.')) return;
+                          run(`routed:${p.id}`, () => unlinkRoutedReceipt(overview.year, overview.month, p.id));
+                        }}
+                      >
+                        Lösen
+                      </button>
+                    )}
+                    {error?.at === `routed:${p.id}` && (
+                      <span className="ui-note ui-note-danger mt-1 block" role="alert">
+                        {error.message}
+                      </span>
+                    )}
+                  </td>
                   <td className="py-1 text-right tabular-nums">{euro(-p.amountCents)}</td>
                 </tr>
               ))}

@@ -1,7 +1,7 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { ERASURE_SIGNATURE_HEADER } from '@/lib/erasure-signature';
-import { runSpendingChecks } from '@/lib/spending/checks';
+import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
 import { berlinToday } from '@/lib/spending/period';
 import { bankSyncSecret } from '@/lib/tax/payments/bank/config';
 import { serverBankDeps } from '@/lib/tax/payments/bank/server';
@@ -30,7 +30,8 @@ export async function POST(req: NextRequest) {
     sync: async () => {
       const results = await syncAllConnections(prisma, deps!, { today });
       // The spending checks run after the answer, so the scheduler only waits for the fetches.
-      after(() => runSpendingChecksForLiveCompanies(results, (ctx) => runSpendingChecks(prisma, ctx, { today })));
+      // Each company with a live connection, and the companies receiving private payments of its accounts.
+      after(() => runSpendingChecksForLiveCompanies(results, (ctx) => runSpendingChecksAfterNewPayments(prisma, ctx, { today })));
       // The answer names connections and counts only, never a company.
       return results.map(({ connectionId, status, added }) => ({ connectionId, status, added }));
     },

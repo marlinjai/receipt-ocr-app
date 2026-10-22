@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { receiptHref } from '@/lib/receipt-link';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { formatDay } from '@/lib/meals/messages';
 import type { MatchStrength } from '@/lib/tax/payments/match';
 import type { AccountKind, CounterpartyTreatment, FoundPayment, ImportResult } from '@/lib/tax/payments/service';
@@ -45,6 +45,8 @@ interface Props {
   onSearch: (query: PaymentQuery) => Promise<Result<{ payments: FoundPayment[]; total: number }>>;
   /** The live bank connection per account; absent where the screen is shown without it. */
   bank?: { feed: BankFeed; actions: BankActions; returnNotice: { text: string; ok: boolean } | null } | null;
+  /** The section for sharing an account's private payments with another company, shown below the accounts. */
+  sharing?: ReactNode;
 }
 
 const ACCOUNT_KIND_LABELS: Record<AccountKind, string> = { bank: 'Bankkonto', card: 'Kreditkarte', payment_service: 'Zahlungsdienst' };
@@ -92,7 +94,7 @@ const LINK_METHOD_LABELS: Record<string, string> = {
  * a counterparty is treated, and linking payments to receipts and invoices.
  * A link is only made on a reference or by a person's confirmation.
  */
-export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onSearch, bank }: Props) {
+export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onSearch, bank, sharing }: Props) {
   const id = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState('');
@@ -239,6 +241,8 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
           <button type="submit" className="ui-btn" disabled={busy}>Konto anlegen</button>
         </form>
       </section>
+
+      {sharing}
 
       {p.accounts.length > 0 && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Import">

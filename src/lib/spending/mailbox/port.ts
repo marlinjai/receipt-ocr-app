@@ -2,9 +2,10 @@
  * The mailbox port: step 3 of the missing-receipt loop ("is the invoice in the
  * mailbox?"). Invoices are sent to an expenses address (the one in
  * `SPENDING_MAILBOX_ADDRESS`) that delivers into a Google Workspace mailbox;
- * an adapter reads it. The mailbox belongs to exactly one company (the
- * workspace in `SPENDING_MAILBOX_WORKSPACE_ID`): for every other company it is
- * off. The app never sends or changes mail, it only searches and downloads
+ * an adapter reads it. The mailbox belongs to one company (the workspace in
+ * `SPENDING_MAILBOX_WORKSPACE_ID`) and also serves each company that receives
+ * the private payments of one of its accounts (`mailboxFor` in `server.ts`);
+ * for every other company it is off. The app never sends or changes mail, it only searches and downloads
  * attachments. Until the server holds the mailbox settings, the adapter is off
  * and says so; the loop then goes straight on to asking the owner.
  */

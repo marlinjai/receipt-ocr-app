@@ -301,8 +301,10 @@ describe('moveWorkspace (the write order, with the contacts package and the data
     expect(writes.map((w) => w.model)).toContain('dtTable');
     for (const write of writes) {
       expect(write.method).toBe('updateMany');
-      expect(write.data).toEqual({ authTenantId: 'tnt_b' });
+      // A share of an account also names the receiving company: that stamp follows the move too, and nothing else.
+      expect(write.data).toEqual(write.model === 'taxAccountShare' && 'receiverTenantId' in (write.data as object) ? { receiverTenantId: 'tnt_b' } : { authTenantId: 'tnt_b' });
     }
+    expect(writes).toContainEqual({ model: 'taxAccountShare', method: 'updateMany', data: { receiverTenantId: 'tnt_b' } });
     // No statement outside the models: the rows of the receipts table are never addressed.
     expect(raw).not.toHaveBeenCalled();
   });

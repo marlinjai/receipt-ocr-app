@@ -1,11 +1,12 @@
 import 'server-only';
 import type { PrismaClient } from '@prisma/client';
-import { counterpartyKey, loadPayments } from '@/lib/tax/payments/service';
+import { counterpartyKey } from '@/lib/tax/payments/service';
+import { loadRoutedPayments } from '@/lib/tax/payments/routing';
 import { formatCents } from '@/lib/tax/money';
 import { SPENDING_CATEGORIES, SPENDING_CATEGORY_LABELS, isSpendingCategory } from './categories';
 import { MAX_LIMIT_CENTS, budgetSubject, computeBudgets, type BudgetLine, type BudgetScope, type StoredLimit } from './budgets';
 import { classifyPayment } from './overview';
-import { loadCategoryAnswers, toOverviewInput } from './service';
+import { categoryAnswerMap, loadCategoryAnswers, toOverviewInput } from './service';
 import { spendingPath } from './paths';
 import { notify, serverChannels, settleAllBut, type NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
@@ -39,8 +40,9 @@ export async function loadStoredLimits(db: PrismaClient, workspaceId: string): P
 
 /** The budgets of the month `today` falls in, and (when asked) the counterparties to pick from, from one read of the payments. */
 export async function loadBudgetsView(db: PrismaClient, workspaceId: string, today: string, withCounterparties = false): Promise<{ lines: BudgetLine[]; counterparties: string[] }> {
-  const [loaded, answers, limits] = await Promise.all([loadPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId), loadStoredLimits(db, workspaceId)]);
-  const ctx = { treatments: loaded.treatments, answers: new Map(answers.map((a) => [a.counterpartyKey, a.category])) };
+  // The spending side's read: private payments of a shared account count in the company they are routed to, never twice.
+  const [loaded, answers, limits] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId), loadStoredLimits(db, workspaceId)]);
+  const ctx = { treatments: loaded.treatments, answers: await categoryAnswerMap(db, workspaceId, loaded, answers) };
   const payments = loaded.payments.map((p) => classifyPayment(toOverviewInput(p), ctx));
   const lines = computeBudgets({ payments, limits, categories: SPENDING_CATEGORIES.filter((c) => c !== 'transfers'), categoryLabels: SPENDING_CATEGORY_LABELS, today });
   return { lines, counterparties: withCounterparties ? counterpartiesOf(payments) : [] };

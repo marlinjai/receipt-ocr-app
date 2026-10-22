@@ -1,6 +1,7 @@
 import 'server-only';
 import type { PrismaClient } from '@prisma/client';
 import { counterpartyKey, loadPayments, setCounterpartyTreatment, type PaymentRow } from '@/lib/tax/payments/service';
+import { loadRoutedPayments, type RoutedPaymentRow, type RoutedPayments } from '@/lib/tax/payments/routing';
 import { isSpendingCategory, type SpendingCategory } from './categories';
 import { berlinYear } from './period';
 import { buildOverview, paymentYears, type OverviewPaymentInput, type SpendingOverview } from './overview';
@@ -9,7 +10,10 @@ import { buildOverview, paymentYears, type OverviewPaymentInput, type SpendingOv
  * Server-side reads and writes for the spending overview. Every function takes
  * the workspace explicitly and touches rows only inside it: the overview of one
  * company never sees another company's payments or answers. Payments are read
- * through the payments service's own read (`loadPayments`), never queried here.
+ * through the payments area's reads, never queried here: `loadRoutedPayments`
+ * gives the company's own payments less those whose account shares its private
+ * payments with another company, plus the private payments other companies
+ * share with it (plan docs/plans/2026-10-22-payments-across-companies.md).
  */
 
 export interface SpendingContext {
@@ -43,7 +47,10 @@ export interface CategoryAnswerView {
 export interface SpendingView {
   overview: SpendingOverview;
   years: number[];
-  accounts: Array<{ id: string; label: string; completeThrough: string | null }>;
+  /** `sharedFrom`: the workspace of the company that holds the account, when only its private payments are here. */
+  accounts: Array<{ id: string; label: string; completeThrough: string | null; sharedFrom: string | null }>;
+  /** Accounts of this company whose private payments show in another company (its workspace). */
+  sharedOut: Array<{ accountLabel: string; receiverWorkspaceId: string }>;
   answers: CategoryAnswerView[];
   /** Counterparties answered as an own account (here or in the payments tab), with a name to show. */
   ownAccounts: Array<{ counterpartyKey: string; label: string }>;
@@ -62,7 +69,7 @@ export async function loadCategoryAnswers(db: PrismaClient, workspaceId: string)
  * The one mapper for both, so the private and business parts are worked out
  * from the same facts everywhere (links, a private account).
  */
-export function toOverviewInput(p: PaymentRow): OverviewPaymentInput {
+export function toOverviewInput(p: PaymentRow | RoutedPaymentRow): OverviewPaymentInput {
   return {
     id: p.id,
     accountId: p.accountId,
@@ -75,23 +82,38 @@ export function toOverviewInput(p: PaymentRow): OverviewPaymentInput {
     linkCount: p.links.length,
     linkedCents: p.links.reduce((sum, l) => sum + l.cents, 0),
     byPrivateAccount: p.byPrivateAccount,
+    routed: 'routedFrom' in p && p.routedFrom !== null,
   };
+}
+
+/**
+ * The category answers that apply on this company's spending side: its own,
+ * and for the counterparties of payments routed here, the answers the holding
+ * company gave before (the owner categorized private counterparties there
+ * before the split). The own answer wins. Nothing of this company flows back.
+ */
+export async function categoryAnswerMap(db: PrismaClient, workspaceId: string, routed: Pick<RoutedPayments, 'payments' | 'holders'>, own?: readonly CategoryAnswerView[]): Promise<Map<string, SpendingCategory>> {
+  const mine = own ?? (await loadCategoryAnswers(db, workspaceId));
+  const out = new Map<string, SpendingCategory>();
+  const keys = [...new Set(routed.payments.filter((p) => p.routedFrom !== null && p.counterpartyKey).map((p) => p.counterpartyKey))];
+  if (keys.length > 0 && routed.holders.length > 0) {
+    const inherited = await db.spendingCategoryAnswer.findMany({ where: { authWorkspaceId: { in: routed.holders }, counterpartyKey: { in: keys } } });
+    for (const a of inherited) if (isSpendingCategory(a.category)) out.set(a.counterpartyKey, a.category);
+  }
+  for (const a of mine) out.set(a.counterpartyKey, a.category);
+  return out;
 }
 
 /** The overview of `year` (one month of it when `month` is 1 to 12). */
 export async function loadSpending(db: PrismaClient, workspaceId: string, year: number, month: number | null, today = new Date()): Promise<SpendingView> {
-  const [loaded, answers] = await Promise.all([loadPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId)]);
-  const overview = buildOverview(
-    loaded.payments.map(toOverviewInput),
-    { treatments: loaded.treatments, answers: new Map(answers.map((a) => [a.counterpartyKey, a.category])) },
-    year,
-    month,
-  );
+  const [loaded, answers] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId)]);
+  const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments: loaded.treatments, answers: await categoryAnswerMap(db, workspaceId, loaded, answers) }, year, month);
   return {
     overview,
     // The year asked for is always offered, so the year picker shows what the page shows even for a year without payments.
     years: [...new Set([year, ...paymentYears(loaded.payments, berlinYear(today))])].sort((a, b) => b - a),
-    accounts: loaded.accounts.map((a) => ({ id: a.id, label: a.label, completeThrough: a.completeThrough })),
+    accounts: loaded.accounts.map((a) => ({ id: a.id, label: a.label, completeThrough: a.completeThrough, sharedFrom: a.sharedFrom })),
+    sharedOut: loaded.sharedOut.map((s) => ({ accountLabel: s.accountLabel, receiverWorkspaceId: s.receiverWorkspaceId })),
     answers,
     ownAccounts: [...loaded.treatments]
       .filter(([, treatment]) => treatment === 'own_account')
@@ -148,7 +170,7 @@ export async function markCounterpartyOwnAccount(db: PrismaClient, ctx: Spending
 /** Take an own-account answer back (by key); any other answer is left alone. */
 export async function unmarkCounterpartyOwnAccount(db: PrismaClient, ctx: SpendingContext, rawKey: unknown): Promise<void> {
   if (typeof rawKey !== 'string' || !rawKey) throw new SpendingServiceError('counterparty_required');
-  const loaded = await loadPayments(db, ctx.workspaceId);
+  const loaded = await loadRoutedPayments(db, ctx.workspaceId);
   if (loaded.treatments.get(rawKey) !== 'own_account') throw new SpendingServiceError('not_own_account');
   const label = loaded.payments.find((p) => p.counterpartyKey === rawKey)?.counterparty ?? rawKey;
   await setCounterpartyTreatment(db, ctx, { counterparty: label, treatment: null });

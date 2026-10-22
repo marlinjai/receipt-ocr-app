@@ -1,7 +1,7 @@
 import { auth } from '@/lib/auth';
 import { sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
-import { serverMailbox } from '@/lib/spending/mailbox/gmail';
+import { mailboxFor } from '@/lib/spending/mailbox/server';
 import { MailboxError } from '@/lib/spending/mailbox/port';
 import { findMailCandidate } from '@/lib/spending/mailbox/service';
 import { DOWNLOAD_STATUS, contentDisposition } from '@/lib/spending/mailbox/download';
@@ -15,8 +15,8 @@ export const dynamic = 'force-dynamic';
  * The bytes of a mail attachment the missing-receipt loop found for a payment
  * of the session's ACTIVE company, fetched from the mailbox right now (nothing
  * is kept on the server). Taking it over is a write, so the fail-closed write
- * check applies, and only the company the mailbox belongs to has candidates
- * at all. The browser hands the bytes to the normal upload path. A candidate
+ * check applies, and only the companies the mailbox serves (its own, and those
+ * receiving private payments of its accounts) have candidates at all. The browser hands the bytes to the normal upload path. A candidate
  * of another company answers 404, like one that does not exist.
  */
 export async function GET(_req: Request, { params }: { params: Promise<{ candidateId: string }> }) {
@@ -32,7 +32,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ candida
   try {
     const candidate = await findMailCandidate(prisma, workspaceId, candidateId);
     if (!candidate) return Response.json({ error: 'not_found' }, { status: 404 });
-    const file = await serverMailbox(workspaceId).fetchAttachment(candidate.messageId, candidate.partIndex, candidate.fileName);
+    const file = await (await mailboxFor(prisma, workspaceId)).fetchAttachment(candidate.messageId, candidate.partIndex, candidate.fileName);
     return new Response(new Blob([new Uint8Array(file.bytes)], { type: file.mimeType }), {
       headers: {
         'Content-Type': file.mimeType,

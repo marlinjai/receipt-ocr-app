@@ -154,7 +154,9 @@ warning goes through the same channel as the missing-receipt notification.
   in the payments tab), and it can be taken back on the page.
 - Open question for the coordinator: payments are imported per company. If the bank files are
   imported under Whiz-Art Media, the overview under "marlinjai" stays empty; the overview itself
-  works under whichever company holds them.
+  works under whichever company holds them. Answered by the owner on 2026-10-22 (option 1): an
+  account stays in the company that holds it and shares its private payments with "marlinjai",
+  worked out on read (docs/plans/2026-10-22-payments-across-companies.md).
 
 ### Build order 2, the loop's steps 1, 2 and 5 (2026-10-16)
 

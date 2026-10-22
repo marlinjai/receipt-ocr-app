@@ -149,8 +149,8 @@ other's copy behind, and every changed answer would need a write in two companie
 19. **Moving a workspace to another company** (`src/lib/workspace-move.ts`) keeps the share (the
     workspace ids do not change); the holder's stamp moves with the generic restamp, the receiver's
     company stamp on the share is restamped by the same move.
-20. **What the receiver sees of the account**: its label and the holder's name, nothing else (no
-    other payment, no import, no connection).
+20. **What the receiver sees of the account**: its label, the holder's name and up to which day it is
+    read, nothing else (no other payment, no import, no connection).
 
 ## What each company sees and can write
 
@@ -192,4 +192,43 @@ prove each of these (`routing.dbtest.ts`).
 
 ## Reality
 
-(Filled in as it is built.)
+### Built (2026-10-23)
+
+- **Table** `tax_account_shares`, migration `0035_tax_account_shares` (additive; the next free number
+  on `origin/main` and every open branch and worktree on 2026-10-22).
+- **The rule** `routesToReceiver` (`src/lib/tax/payments/route.ts`, pure) on top of the spending
+  side's `purposeOf`, which learned one flag: a payment `routed` here is private.
+- **The reads** (`src/lib/tax/payments/routing.ts`): `loadRoutedPayments` for the spending side,
+  `routedPaymentFor` and `paymentOnSpendingSide` for every write a company makes on a payment there,
+  `linkRoutedPayment` and `unlinkRoutedPayment` for the receiver's own links, `shareAccount`,
+  `endShare`, `loadShares`, `receiversOf`, `receivesFrom`, and `endCompanyAccountShares` for erasure.
+- **`loadPayments` reads only the reader's own links**, as do the automatic invoice links of an
+  import, the free amount of a manual link and the count of released links. No link of another
+  company existed before this change, so nothing that exists reads differently.
+- **Spending side**: the overview, the budgets, the missing-receipt loop (states, notifications,
+  "no receipt exists", confirming a proposed receipt, taking a mail find over) read
+  `loadRoutedPayments`. The holder's category answers apply to routed payments below the
+  receiver's own; the holder's "no receipt exists" answers too. A payment is announced at most once
+  across both companies of a share.
+- **Mailbox**: `mailboxFor` (`src/lib/spending/mailbox/server.ts`) answers the mailbox for its
+  company and for every receiver of private payments of that company's accounts; the loop, the
+  page's mailbox state and the attachment download go through it.
+- **Checks after new payments** (`runSpendingChecksAfterNewPayments`): a file import, "Jetzt
+  abholen" and the daily bank run check the holder and then each receiver. Sharing an account runs
+  the receiver's checks once, after the answer.
+- **Erasure** ends the company's shares and removes the links between the two companies' records;
+  the erasure log line counts them. **Workspace move** restamps the receiver's company on a share.
+- **Screens**: payments tab, section "Private Zahlungen in einer anderen Firma" (per account a
+  company to choose and "Private Zahlungen weitergeben" with a confirmation; "Weitergabe beenden";
+  in the receiver "Aus anderen Firmen" with the holder's name). Spending page: the shared account
+  named with its holder, the holder's note where its accounts' private payments went, and "Lösen"
+  on a routed payment with a private receipt.
+- **Tests**: `routing.dbtest.ts` (20 tests through the four paths and the privacy promise, with the
+  holder's tax statement compared before and after), `route.test.ts`, `sharing-actions.test.ts`,
+  `AccountSharing.test.tsx`, and additions to the spending page, action, attachment and move tests.
+
+### What the owner does after the deploy
+
+In Whiz-Art Media, Finanzen, Zahlungen, section "Private Zahlungen in einer anderen Firma": for
+each of the four accounts choose "marlinjai" and press "Private Zahlungen weitergeben". The
+answers already given apply at once. Nothing else: no setting, no import, no second bank consent.

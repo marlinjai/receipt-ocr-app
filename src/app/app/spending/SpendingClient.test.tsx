@@ -8,12 +8,14 @@ const answerCategory = vi.fn();
 const markOwnAccount = vi.fn();
 const withdrawCategory = vi.fn();
 const unmarkOwnAccount = vi.fn();
+const unlinkRoutedReceipt = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('./actions', () => ({
   answerCategory: (...a: unknown[]) => answerCategory(...a),
   markOwnAccount: (...a: unknown[]) => markOwnAccount(...a),
   withdrawCategory: (...a: unknown[]) => withdrawCategory(...a),
   unmarkOwnAccount: (...a: unknown[]) => unmarkOwnAccount(...a),
+  unlinkRoutedReceipt: (...a: unknown[]) => unlinkRoutedReceipt(...a),
 }));
 
 import SpendingClient, { spendingActionMessage } from './SpendingClient';
@@ -91,6 +93,47 @@ describe('SpendingClient', () => {
     render(<SpendingClient initial={view(false)} />);
     expect(screen.queryByLabelText('Kategorie für Zyx Handel')).toBeNull();
     expect(screen.queryByRole('button', { name: /zurücknehmen/ })).toBeNull();
+  });
+});
+
+describe('SpendingClient with payments of another company', () => {
+  const routed = { ...pay, id: 'p2', counterparty: 'Privat Laden', counterpartyKey: 'privat laden', linkCount: 1, routed: true };
+  const shared = (canWrite: boolean): SpendingPageView => ({
+    ...view(canWrite),
+    overview: buildOverview([pay, routed], { treatments: new Map(), answers: new Map() }, 2026, null),
+    accounts: [{ id: 'acc', label: 'Girokonto', completeThrough: '2026-04-30', sharedFrom: 'ws-firma' }],
+    companies: { 'ws-firma': 'Beispiel Firma' },
+  });
+
+  it('names the account with the company that holds it, and takes a private receipt back after a confirmation', async () => {
+    unlinkRoutedReceipt.mockResolvedValue({ ok: true, value: shared(true) });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<SpendingClient initial={shared(true)} />);
+    expect(screen.getByText(/Girokonto \(private Zahlungen, geführt von Beispiel Firma\)/)).toBeTruthy();
+    // Only the routed payment with a receipt offers it; the own payment without one does not.
+    const buttons = screen.getAllByRole('button', { name: /lösen$/ });
+    expect(buttons).toHaveLength(1);
+    await userEvent.setup().click(buttons[0]);
+    expect(confirm).toHaveBeenCalled();
+    expect(unlinkRoutedReceipt).toHaveBeenCalledWith(2026, null, 'p2');
+    confirm.mockRestore();
+  });
+
+  it('shows a refusal next to the payment, and offers nothing without the write permission', async () => {
+    unlinkRoutedReceipt.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'payment_not_found' });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { unmount } = render(<SpendingClient initial={shared(true)} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: /lösen$/ }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/gehört nicht mehr hierher/);
+    confirm.mockRestore();
+    unmount();
+    render(<SpendingClient initial={shared(false)} />);
+    expect(screen.queryByRole('button', { name: /lösen$/ })).toBeNull();
+  });
+
+  it('tells the holding company where the private payments of its account went', () => {
+    render(<SpendingClient initial={{ ...view(true), sharedOut: [{ accountLabel: 'Girokonto', receiverWorkspaceId: 'ws-privat' }], companies: { 'ws-privat': 'Privat' } }} />);
+    expect(screen.getByText(/Girokonto \(an Privat\)/)).toBeTruthy();
   });
 });
 

@@ -332,6 +332,8 @@ function OpenCheck({
     setSeenCheck(check);
     setFound(null);
     setChosen('');
+    // The list is asked afresh unfiltered: the search field says so by being empty.
+    setSearch('');
     setSearchError(null);
     setSearching(false);
   }
@@ -358,6 +360,7 @@ function OpenCheck({
     setPicking(false);
     setFound(null);
     setChosen('');
+    setSearch('');
     setSearchError(null);
     setSearching(false);
   };
@@ -620,6 +623,12 @@ export default function ReceiptChecks({
 }) {
   const id = useId();
   const [view, setView] = useState(initial);
+  // The page reads the checks afresh after a change elsewhere on it (a receipt taken back in the payment list): take that over.
+  const [shownInitial, setShownInitial] = useState(initial);
+  if (shownInitial !== initial) {
+    setShownInitial(initial);
+    setView(initial);
+  }
   const [error, setError] = useState<{ at: string; message: string } | null>(null);
   const [pending, startTransition] = useTransition();
   const [channel, setChannel] = useState<ChannelSetting>(initial.settings.channel);
@@ -645,8 +654,8 @@ export default function ReceiptChecks({
       const result = await action();
       if (result.ok) {
         setView(result.value);
-        // A check can change the budgets and the overview too: the page reads them afresh.
-        if (at === 'run') router.refresh();
+        // A link, an answer or a check changes the payment list, the overview and the budgets too: the page reads them afresh.
+        router.refresh();
         if (success) {
           // The payment left the list with its buttons: say what happened, and give the focus to the list's heading.
           setPageNotice(success);

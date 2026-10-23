@@ -123,6 +123,12 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
   const id = useId();
   const router = useRouter();
   const [view, setView] = useState(initial);
+  // The page reads the overview afresh after a change in the checks below (a receipt linked by hand): take that over.
+  const [shownInitial, setShownInitial] = useState(initial);
+  if (shownInitial !== initial) {
+    setShownInitial(initial);
+    setView(initial);
+  }
   // An error belongs to the place it happened: a row of the unclear list, an answer, or the page.
   const [error, setError] = useState<{ at: string; message: string } | null>(null);
   const [pending, startTransition] = useTransition();
@@ -139,8 +145,11 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
     setError(null);
     startTransition(async () => {
       const result = await action();
-      if (result.ok) setView(result.value);
-      else setError({ at, message: spendingActionMessage(result) });
+      if (result.ok) {
+        setView(result.value);
+        // The open checks and the budgets below read the same payments: the page reads them afresh.
+        router.refresh();
+      } else setError({ at, message: spendingActionMessage(result) });
     });
   };
 

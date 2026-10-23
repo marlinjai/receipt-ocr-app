@@ -15,7 +15,8 @@ const getReceiptChecks = vi.fn();
 const linkChosenReceipt = vi.fn();
 const findReceiptChoices = vi.fn();
 const takeOverMail = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+const refresh = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh, push: vi.fn() }) }));
 vi.mock('./loop-actions', () => ({
   checkNow: (...a: unknown[]) => checkNow(...a),
   confirmReceipt: (...a: unknown[]) => confirmReceipt(...a),
@@ -99,6 +100,16 @@ describe('ReceiptChecks', () => {
     await user.click(link);
     expect(linkChosenReceipt).toHaveBeenCalledWith('p2', 'r9');
     expect(await screen.findByText('Beleg zugeordnet: Abc Laden.')).toBeTruthy();
+    // The payment list and the budgets read the same payments: the page reads them afresh.
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it('takes over fresh data the page read after a change elsewhere on it', () => {
+    const base = view();
+    const { rerender } = render(<ReceiptChecks initial={base} focusPaymentId={null} />);
+    expect(screen.getByText('Belege prüfen (2 offen)')).toBeTruthy();
+    rerender(<ReceiptChecks initial={{ ...base, loop: { ...base.loop, open: base.loop.open.slice(0, 1) } }} focusPaymentId={null} />);
+    expect(screen.getByText('Belege prüfen (1 offen)')).toBeTruthy();
   });
 
   it('closes the picker with "Abbrechen" and gives the focus back to its opener', async () => {

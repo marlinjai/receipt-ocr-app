@@ -366,6 +366,17 @@ that set it; the tolerance is read from its one home, and the paid-by sum is bui
 hand choice needs it; tests for the tolerance filter, own money back with a link elsewhere, and a
 slow answer.
 
+### Tenth review (2026-10-23), fixed
+
+No blocker; the holder's own link guard was checked to behave exactly as before for a company that
+shares nothing. Fixed: the open checks and the payment list of the spending page take over each
+other's changes (every successful action reads the page afresh, and both take the fresh data over);
+the picker empties its search field whenever it asks afresh unfiltered.
+
+Accepted: the picker hides a receipt whose only link sits on the bank debit funding the purchase
+(the payments tab's own move of that link stays the way to do it); the receiver never meets this,
+because a routed payment has no funding twin.
+
 ### What the owner does after the deploy
 
 In Whiz-Art Media, Finanzen, Zahlungen, section "Private Zahlungen in einer anderen Firma": for

@@ -9,7 +9,8 @@ const markOwnAccount = vi.fn();
 const withdrawCategory = vi.fn();
 const unmarkOwnAccount = vi.fn();
 const unlinkRoutedReceipt = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+const refresh = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh }) }));
 vi.mock('./actions', () => ({
   answerCategory: (...a: unknown[]) => answerCategory(...a),
   markOwnAccount: (...a: unknown[]) => markOwnAccount(...a),
@@ -117,6 +118,8 @@ describe('SpendingClient with payments of another company', () => {
     await userEvent.setup().click(buttons[0]);
     expect(confirm).toHaveBeenCalled();
     expect(unlinkRoutedReceipt).toHaveBeenCalledWith(2026, null, 'p2');
+    // The open checks below read the same payments: the page reads them afresh.
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
     confirm.mockRestore();
   });
 

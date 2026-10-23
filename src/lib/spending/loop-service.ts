@@ -11,7 +11,7 @@ import { categoryAnswerMap } from './service';
 import { loopState, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
 import { notify, retryFailedDeliveries, serverChannels, settleAllBut, settleNotifications, type NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
-import { mailboxFor } from './mailbox/server';
+import { mailboxWithOwner } from './mailbox/server';
 import { mailWordsFor, type MailboxPort } from './mailbox/port';
 import { spendingPath } from './paths';
 import { forgetGonePayments, loadMailCandidates, searchMailbox, type MailboxRun } from './mailbox/service';
@@ -332,10 +332,14 @@ export async function runReceiptLoop(
   let { payments, states, aliases } = await computeStates(db, ctx.workspaceId);
   // Step 3: look in the mailbox for the invoices of recent payments still missing one, by the
   // counterparty's name and the vendors it is known to stand for, then read the states again.
+  // A borrowed mailbox (the owner's, for the payments routed here from the owner) is searched only for those
+  // payments: the company's own payments, and ones routed from another holder, are not the owner's to look up.
+  const selected = options.mailbox ? { port: options.mailbox, ownerWorkspaceId: ctx.workspaceId } : await mailboxWithOwner(db, ctx.workspaceId);
+  const borrowedFrom = selected.ownerWorkspaceId === ctx.workspaceId ? null : selected.ownerWorkspaceId;
   const lookFor = payments
-    .filter((p) => states.get(p.id)?.state === 'missing' && notifiable(p, options.today))
+    .filter((p) => (borrowedFrom === null || p.routedFrom === borrowedFrom) && states.get(p.id)?.state === 'missing' && notifiable(p, options.today))
     .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, vendorWords: p.counterpartyKey ? mailWordsFor(p.counterparty, p.counterpartyKey, aliases.get(p.counterpartyKey) ?? []) : [] }));
-  const mailbox = await searchMailbox(db, ctx, lookFor, options.mailbox ?? (await mailboxFor(db, ctx.workspaceId)), options.now);
+  const mailbox = await searchMailbox(db, ctx, lookFor, selected.port, options.now);
   if (mailbox.status !== 'off' && mailbox.found > 0) ({ payments, states, aliases } = await computeStates(db, ctx.workspaceId));
   const { waiting, inMailbox, open, stillOpen } = openSubjects(payments, states);
   // In this order: what is settled (or gone with an undone import, or moved to another company) leaves

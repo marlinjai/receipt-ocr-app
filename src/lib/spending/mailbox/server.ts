@@ -12,9 +12,21 @@ import type { MailboxPort } from './port';
  * payments were searched for there, and the share is the owner's statement
  * that they are his. For every other company it is off. Searches and finds are
  * stored per company, so each one sees only the finds of its own payments.
+ * A company that borrows the owner's mailbox may search it only for the
+ * payments routed to it from the owner, never for its own: `ownerWorkspaceId`
+ * tells the caller whose mailbox it got.
  */
-export async function mailboxFor(db: PrismaClient, workspaceId: string, env: Record<string, string | undefined> = process.env): Promise<MailboxPort> {
+export async function mailboxWithOwner(
+  db: PrismaClient,
+  workspaceId: string,
+  env: Record<string, string | undefined> = process.env,
+): Promise<{ port: MailboxPort; ownerWorkspaceId: string }> {
   const owner = env.SPENDING_MAILBOX_WORKSPACE_ID?.trim();
-  if (owner && owner !== workspaceId && (await receivesFrom(db, workspaceId, owner))) return serverMailbox(owner, env);
-  return serverMailbox(workspaceId, env);
+  if (owner && owner !== workspaceId && (await receivesFrom(db, workspaceId, owner))) return { port: serverMailbox(owner, env), ownerWorkspaceId: owner };
+  return { port: serverMailbox(workspaceId, env), ownerWorkspaceId: workspaceId };
+}
+
+/** The same mailbox without its owner, for callers that only read its status. */
+export async function mailboxFor(db: PrismaClient, workspaceId: string, env: Record<string, string | undefined> = process.env): Promise<MailboxPort> {
+  return (await mailboxWithOwner(db, workspaceId, env)).port;
 }

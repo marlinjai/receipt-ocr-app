@@ -249,7 +249,9 @@ prove each of these (`routing.dbtest.ts`).
   across both companies of a share.
 - **Mailbox**: `mailboxFor` (`src/lib/spending/mailbox/server.ts`) answers the mailbox for its
   company and for every receiver of private payments of that company's accounts; the loop, the
-  page's mailbox state and the attachment download go through it.
+  page's mailbox state and the attachment download go through it. A receiver borrowing the
+  owner's mailbox (`mailboxWithOwner` names the owner) searches and downloads only for payments
+  routed to it from that owner, never for its own or another holder's.
 - **Checks after new payments** (`runSpendingChecksAfterNewPayments`): a file import, "Jetzt
   abholen" and the daily bank run check the holder and then each receiver. Sharing an account runs
   the receiver's checks once, after the answer.

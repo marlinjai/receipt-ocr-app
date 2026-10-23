@@ -1,10 +1,10 @@
 import { auth } from '@/lib/auth';
 import { sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
-import { mailboxFor } from '@/lib/spending/mailbox/server';
+import { mailboxWithOwner } from '@/lib/spending/mailbox/server';
 import { MailboxError } from '@/lib/spending/mailbox/port';
 import { findMailCandidate } from '@/lib/spending/mailbox/service';
-import { paymentOnSpendingSide } from '@/lib/tax/payments/routing';
+import { paymentOnSpendingSide, routedPaymentFor } from '@/lib/tax/payments/routing';
 import { DOWNLOAD_STATUS, contentDisposition } from '@/lib/spending/mailbox/download';
 import { servedFileHeaders } from '@/lib/files/served-file-headers';
 
@@ -35,7 +35,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ candida
     if (!candidate) return Response.json({ error: 'not_found' }, { status: 404 });
     // A find of a payment that has since moved to another company (an account shared, an answer changed) is not this company's to take.
     if (!(await paymentOnSpendingSide(prisma, workspaceId, candidate.paymentId))) return Response.json({ error: 'not_found' }, { status: 404 });
-    const file = await (await mailboxFor(prisma, workspaceId)).fetchAttachment(candidate.messageId, candidate.partIndex, candidate.fileName);
+    const { port, ownerWorkspaceId } = await mailboxWithOwner(prisma, workspaceId);
+    // A borrowed mailbox is the owner's: only payments routed here from the owner may be fetched from it, never the company's own.
+    if (ownerWorkspaceId !== workspaceId && (await routedPaymentFor(prisma, workspaceId, candidate.paymentId))?.holderWorkspaceId !== ownerWorkspaceId) {
+      return Response.json({ error: 'not_found' }, { status: 404 });
+    }
+    const file = await port.fetchAttachment(candidate.messageId, candidate.partIndex, candidate.fileName);
     return new Response(new Blob([new Uint8Array(file.bytes)], { type: file.mimeType }), {
       headers: {
         'Content-Type': file.mimeType,

@@ -281,7 +281,7 @@ describe('backtrack and revise', () => {
     expect(await stateOf(w.hctx.workspaceId, id)).toBe('missing');
     expect((await loadPayments(db, w.hctx.workspaceId)).payments.find((p) => p.id === id)?.links).toEqual([]);
     // The receiver sees only that its own receipt hangs on a payment that left: never the payment.
-    expect((await loadRoutedPayments(db, w.rctx.workspaceId)).dormantLinks).toEqual([expect.objectContaining({ paymentId: id, rowId, cents: 2000 })]);
+    expect((await loadRoutedPayments(db, w.rctx.workspaceId)).dormantLinks).toEqual([expect.objectContaining({ paymentId: id, receipts: 1, cents: 2000 })]);
 
     await setCounterpartyTreatment(db, w.hctx, { counterparty: 'Privat Laden', treatment: 'private' });
     expect(await names(w.rctx.workspaceId)).toEqual(['Privat Laden', 'Teils Markt']);
@@ -393,13 +393,17 @@ describe('links of the receiver', () => {
     expect((await loadPayments(db, w.hctx.workspaceId)).payments.find((p) => p.id === id)?.links).toEqual([]);
     // A second choice from another tab is told, not lost.
     expect(await code(linkReceiptToPayment(db, w.rctx, id, own, { byHand: true }))).toBe('already_has_receipt');
+    // A mail taken over again for the same receipt is nothing to do; a new receipt from a mail is told, not left unlinked.
+    await linkReceiptToPayment(db, w.rctx, id, own);
+    const another = await w.receiver.addReceipt({ Name: 'Aus dem Postfach', Vendor: 'Teils Markt', Gross: 30, Date: '2026-05-13', Currency: 'EUR', 'FX Rate': 1 });
+    expect(await code(linkReceiptToPayment(db, w.rctx, id, another))).toBe('already_has_receipt');
     // Partly paid (31.50 receipt, 30.00 paid): 20.00 more would take it beyond its amount and the tolerance, so it is
     // not offered for that payment (what is offered is what can be linked).
-    expect(await choicesOf(other)).toEqual([]);
+    expect(await choicesOf(other)).not.toContain(own);
 
     // Backtrack: "Lösen" frees the whole amount again, and it can go on another payment.
     await unlinkRoutedPayment(db, w.rctx, id);
-    expect(await choicesOf(id)).toEqual([own]);
+    expect(await choicesOf(id)).toContain(own);
     await answerNoReceipt(db, w.rctx, id, 'Markt ohne Bon');
     expect(await code(linkReceiptToPayment(db, w.rctx, id, own, { byHand: true }))).toBe('payment_not_open');
     await linkReceiptToPayment(db, w.rctx, other, own, { byHand: true });

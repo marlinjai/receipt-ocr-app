@@ -259,6 +259,18 @@ export function choiceLabel(r: ReceiptChoice): string {
   return parts.join(', ');
 }
 
+/**
+ * Is the row an error belongs to still listed in this view? An error about a payment, an answer or a
+ * notification goes with its row; one about the page as a whole (a check run, the settings, push) stays.
+ */
+export function errorRowListed(at: string, view: ChecksView): boolean {
+  const [kind, key] = [at.slice(0, at.indexOf(':')), at.slice(at.indexOf(':') + 1)];
+  if (kind === 'check') return view.loop.open.some((c) => c.paymentId === key);
+  if (kind === 'answered') return view.loop.answered.some((c) => c.paymentId === key);
+  if (kind === 'note') return view.notifications.some((n) => n.id === key);
+  return true;
+}
+
 /** What went wrong, in words a person can act on. */
 export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok: false }>): string {
   if (result.error === 'unauthorized') return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und neu anmelden.';
@@ -630,7 +642,7 @@ export default function ReceiptChecks({
   if (shownInitial !== initial) {
     setShownInitial(initial);
     setView((current) => ({ ...initial, lastRun: current.lastRun }));
-    setError((current) => (current && current.at.startsWith('check:') && !initial.loop.open.some((c) => `check:${c.paymentId}` === current.at) ? null : current));
+    setError((current) => (current && !errorRowListed(current.at, initial) ? null : current));
     setDataVersion((n) => n + 1);
   }
   const [pending, startTransition] = useTransition();
@@ -715,9 +727,13 @@ export default function ReceiptChecks({
           // The row is gone with its button: the focus goes to the list's heading.
           document.getElementById(`${id}-title`)?.focus();
         } else {
-          setError({ at: `check:${paymentId}`, message: `${takeOverMessage(outcome, false)} ${checksActionMessage(linked)}` });
+          const message = `${takeOverMessage(outcome, false)} ${checksActionMessage(linked)}`;
           const fresh = await getReceiptChecks();
           if (fresh.ok) setView(fresh.value);
+          // The payment may have left the list (answered, moved, its import undone): then the message is said at the page,
+          // as it is the only word that a receipt was made and is not linked.
+          const stillOpen = !fresh.ok || fresh.value.loop.open.some((c) => c.paymentId === paymentId);
+          setError({ at: stillOpen ? `check:${paymentId}` : 'run', message });
           // No link was made: nothing else on the page changed, and a fresh read would only hide this message.
           return;
         }
@@ -743,7 +759,7 @@ export default function ReceiptChecks({
       </div>
       <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
         {loop.counts.hasReceipt} mit Beleg, {loop.counts.in_mailbox} mit Rechnung im Postfach, {notNeeded} brauchen keinen (Umbuchungen, Einnahmen, Erstattungen, Gebühren, Raten, Bargeld, Geld an Personen),{' '}
-        {loop.counts.noReceipt} ohne Beleg beantwortet.
+        {loop.answered.length} ohne Beleg beantwortet.
       </p>
       {view.mailbox !== 'other_company' && (
         <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>

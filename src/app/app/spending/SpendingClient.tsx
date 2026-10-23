@@ -466,19 +466,20 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
           </p>
           <ul className="mt-2 divide-y">
             {view.dormantLinks.map((l) => (
-              <li key={`${l.paymentId}-${l.linkedOn}-${l.cents}`} className="py-2 text-sm">
+              <li key={l.paymentId} className="py-2 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>
-                    Beleg verknüpft am {formatDay(l.linkedOn)} über {euro(l.cents)}
+                    {l.receipts === 1 ? 'Beleg' : `${l.receipts} Belege`} verknüpft am {formatDay(l.linkedOn)} über {euro(l.cents)}
                   </span>
                   {view.canWrite && (
                     <button
                       type="button"
                       className="ui-btn ui-btn-sm"
                       disabled={pending}
-                      aria-label={`Lösen: Beleg, verknüpft am ${formatDay(l.linkedOn)} über ${euro(l.cents)}`}
+                      aria-label={`Lösen: ${l.receipts === 1 ? 'Beleg' : `${l.receipts} Belege`}, verknüpft am ${formatDay(l.linkedOn)} über ${euro(l.cents)}`}
                       onClick={() => {
-                        if (!window.confirm('Den Beleg von dieser Zahlung lösen? Der Beleg bleibt erhalten und kann einer anderen Zahlung zugeordnet werden.')) return;
+                        const what = l.receipts === 1 ? 'Den Beleg' : `Die ${l.receipts} Belege`;
+                        if (!window.confirm(`${what} von dieser Zahlung lösen? ${l.receipts === 1 ? 'Der Beleg bleibt' : 'Die Belege bleiben'} erhalten und ${l.receipts === 1 ? 'kann' : 'können'} einer anderen Zahlung zugeordnet werden.`)) return;
                         run(`dormant:${l.paymentId}`, () => unlinkRoutedReceipt(overview.year, overview.month, l.paymentId));
                       }}
                     >

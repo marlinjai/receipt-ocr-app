@@ -138,7 +138,7 @@ describe('SpendingClient with payments of another company', () => {
   it('lists a receipt left on a payment that moved away, and frees it after a confirmation', async () => {
     unlinkRoutedReceipt.mockResolvedValue({ ok: true, value: view(true) });
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    render(<SpendingClient initial={{ ...view(true), dormantLinks: [{ paymentId: 'p9', cents: 2000, linkedOn: '2026-05-10' }] }} />);
+    render(<SpendingClient initial={{ ...view(true), dormantLinks: [{ paymentId: 'p9', receipts: 1, cents: 2000, linkedOn: '2026-05-10' }] }} />);
     expect(screen.getByText(/Belege an Zahlungen, die nicht mehr hierher gehören \(1\)/)).toBeTruthy();
     await userEvent.setup().click(screen.getByRole('button', { name: /^Lösen: Beleg, verknüpft am / }));
     expect(unlinkRoutedReceipt).toHaveBeenCalledWith(2026, null, 'p9');

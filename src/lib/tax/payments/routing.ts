@@ -69,7 +69,7 @@ export interface RoutedPayments {
    * the share ended): counted nowhere and shown nowhere else, so they can be taken back. Nothing of
    * the payment itself, only what this company linked.
    */
-  dormantLinks: Array<{ paymentId: string; rowId: string | null; cents: number; linkedOn: string }>;
+  dormantLinks: Array<{ paymentId: string; receipts: number; cents: number; linkedOn: string }>;
   /** This company's own payments routed to another company right now: not on its spending side, but its own answers about them can still be taken back here. */
   routedAway: PaymentRow[];
   /** Accounts of this company whose private payments go to another company. */
@@ -116,11 +116,17 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
   const links = await db.taxPaymentLink.findMany({ where: { authWorkspaceId: workspaceId, payment: { authWorkspaceId: { not: workspaceId } } }, orderBy: { createdAt: 'asc' } });
   const routedIds = new Set(routedIn.map((p) => p.id));
   const linksOf = new Map<string, PaymentRow['links']>();
-  const dormantLinks: RoutedPayments['dormantLinks'] = [];
+  const dormant = new Map<string, RoutedPayments['dormantLinks'][number]>();
   for (const l of links) {
     if (routedIds.has(l.paymentId)) linksOf.set(l.paymentId, [...(linksOf.get(l.paymentId) ?? []), { id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method }]);
-    else dormantLinks.push({ paymentId: l.paymentId, rowId: l.rowId, cents: l.cents, linkedOn: l.createdAt.toISOString().slice(0, 10) });
+    else {
+      // One entry per payment: "Lösen" takes all of this company's links on it back together.
+      const day = l.createdAt.toISOString().slice(0, 10);
+      const entry = dormant.get(l.paymentId) ?? { paymentId: l.paymentId, receipts: 0, cents: 0, linkedOn: day };
+      dormant.set(l.paymentId, { ...entry, receipts: entry.receipts + 1, cents: entry.cents + l.cents, linkedOn: day > entry.linkedOn ? day : entry.linkedOn });
+    }
   }
+  const dormantLinks = [...dormant.values()];
   const incomingRows = routedIn.map((p) => ({
     ...p,
     links: linksOf.get(p.id) ?? [],

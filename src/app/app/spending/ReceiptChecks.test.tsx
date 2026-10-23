@@ -62,6 +62,7 @@ const view = (canWrite = true): ChecksView => ({
 
 beforeEach(() => {
   refresh.mockReset();
+  takeOverMail.mockClear();
   for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings, dismissMail, linkTakenOver, linkChosenReceipt, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
   findReceiptChoices.mockReset();
   Element.prototype.scrollIntoView = vi.fn();
@@ -143,6 +144,44 @@ describe('ReceiptChecks', () => {
     expect(screen.getByRole('alert').textContent).toMatch(/inzwischen schon ein Beleg/);
     rerender(<ReceiptChecks initial={{ ...base, loop: { ...base.loop, open: base.loop.open.slice(0, 1) } }} focusPaymentId={null} />);
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a mail whose link failed keeps its message at the row while the payment is open, and at the page when it left', async () => {
+    const base = view();
+    const withMail = { ...base, loop: { ...base.loop, open: [{ ...base.loop.open[1], state: { state: 'in_mailbox' as const, mails: [{ id: 'm1', fileName: 'Rechnung.pdf', receivedDay: '2026-05-12', subject: 'Rechnung', sender: 'laden@example.com' }] } }] } };
+    takeOverMail.mockResolvedValue({ kind: 'done', rowId: 'r-new' });
+    linkTakenOver.mockResolvedValue({ ok: false, error: 'not_found', detail: 'payment_not_found' });
+    getReceiptChecks.mockResolvedValue({ ok: true, value: withMail });
+    const { unmount } = render(<ReceiptChecks initial={withMail} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Rechnung.pdf als Beleg übernehmen' }));
+    const atRow = await screen.findByRole('alert');
+    expect(atRow.textContent).toMatch(/noch nicht mit der Zahlung verknüpft/);
+    expect(atRow.closest('li')).not.toBeNull();
+    expect(refresh).not.toHaveBeenCalled();
+    unmount();
+
+    getReceiptChecks.mockResolvedValue({ ok: true, value: { ...withMail, loop: { ...withMail.loop, open: [] } } });
+    render(<ReceiptChecks initial={withMail} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Rechnung.pdf als Beleg übernehmen' }));
+    const atPage = await screen.findByRole('alert');
+    expect(atPage.textContent).toMatch(/noch nicht mit der Zahlung verknüpft/);
+    expect(atPage.closest('li')).toBeNull();
+  });
+
+  it('asks an open list again quietly after a fresh read: no searching message, the status stays', async () => {
+    let answerSecond: (v: unknown) => void = () => {};
+    findReceiptChoices
+      .mockResolvedValueOnce({ ok: true, value: [{ rowId: 'r9', label: 'Kassenbon', vendor: null, day: null, amountCents: 1250, estimated: false, openCents: 1250 }] })
+      .mockImplementationOnce(() => new Promise((resolve) => (answerSecond = resolve)));
+    const base = view();
+    const { rerender } = render(<ReceiptChecks initial={base} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    expect(await screen.findByText('1 Beleg zur Auswahl.')).toBeTruthy();
+    rerender(<ReceiptChecks initial={{ ...base }} focusPaymentId={null} />);
+    await waitFor(() => expect(findReceiptChoices).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('Belege werden gesucht …')).toBeNull();
+    expect(screen.getByText('1 Beleg zur Auswahl.')).toBeTruthy();
+    answerSecond({ ok: true, value: [] });
   });
 
   it('marking a notification read reads nothing else afresh', async () => {

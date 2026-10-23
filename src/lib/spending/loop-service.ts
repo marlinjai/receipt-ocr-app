@@ -464,10 +464,11 @@ export async function linkReceiptToPayment(db: PrismaClient, ctx: NotifyContext,
   const state = states.get(paymentId);
   const payment = payments.find((p) => p.id === paymentId);
   if (!state || !payment) throw new LoopServiceError('payment_not_found');
-  // A mail taken over again for a payment that has its receipt is nothing to do; a hand choice is told, so it is not lost unseen.
+  // The same receipt again (a mail taken over twice) is nothing to do; any other receipt for a payment that got one
+  // in the meantime is told, so a receipt is never left unlinked under a message of success.
   if (state.state === 'has_receipt') {
-    if (options.byHand) throw new LoopServiceError('already_has_receipt');
-    return;
+    if (!options.byHand && payment.links.some((l) => l.rowId === rowId)) return;
+    throw new LoopServiceError('already_has_receipt');
   }
   if (state.state !== 'missing' && state.state !== 'in_mailbox' && state.state !== 'proposed') throw new LoopServiceError(options.byHand ? 'payment_not_open' : 'not_a_candidate');
   await linkOnSpendingSide(db, ctx, payment, rowId);

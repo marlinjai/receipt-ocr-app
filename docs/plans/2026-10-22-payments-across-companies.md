@@ -398,6 +398,15 @@ other company stays (a summary, a notice, the settings form); an open list asks 
 a fresh read, without announcing an unchanged list. The summary of "Jetzt prüfen" ends with the
 next action of the panel, as a notice belongs to the action that set it (said in the code).
 
+### Thirteenth review (2026-10-23), fixed
+
+No blocker; fixed: a mail whose link failed says so at the page when its payment left the list; a
+mail taken over for a payment that got another receipt in the meantime is refused with its own
+message instead of a success with the new receipt unlinked (the same receipt again stays a no-op);
+an error about an answer or a notification goes with its row too; one count of answered payments
+in both places; dormant links are one entry per payment, as "Lösen" takes all of them back; tests
+for the failed mail link, the quiet re-ask and the mail refusal.
+
 ### What the owner does after the deploy
 
 In Whiz-Art Media, Finanzen, Zahlungen, section "Private Zahlungen in einer anderen Firma": for

@@ -355,6 +355,17 @@ search; a link made from the open checks is announced at the page and the focus 
 heading; tests for the search's privacy, a hand choice on the holder's own payment with its guard,
 and `paidByReceipt`.
 
+### Ninth review (2026-10-23), fixed
+
+No blocker; fixed: the company's own link guard reads `paidByReceipt` too, so all three (the
+holder's link, the receiver's link, the picker) agree on what pays a receipt; the picker drops an
+answer that a newer request overtook, asks again after a fresh view or when reopened, and allows a
+new search while one runs; the two "Abbrechen" buttons of an open check have names of their own;
+a single receipt is announced without the ranking phrase; a page notice belongs only to the action
+that set it; the tolerance is read from its one home, and the paid-by sum is built only where the
+hand choice needs it; tests for the tolerance filter, own money back with a link elsewhere, and a
+slow answer.
+
 ### What the owner does after the deploy
 
 In Whiz-Art Media, Finanzen, Zahlungen, section "Private Zahlungen in einer anderen Firma": for

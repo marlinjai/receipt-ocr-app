@@ -92,7 +92,7 @@ describe('ReceiptChecks', () => {
     await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
     expect(findReceiptChoices).toHaveBeenCalledWith('p2', '');
     expect(document.activeElement).toBe(screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)'));
-    expect(await screen.findByText('1 Beleg zur Auswahl, die nächstliegenden zuerst.')).toBeTruthy();
+    expect(await screen.findByText('1 Beleg zur Auswahl.')).toBeTruthy();
     const link = screen.getByRole('button', { name: 'Zuordnen: gewählten Beleg zu Abc Laden' });
     expect((link as HTMLButtonElement).disabled).toBe(true);
     await user.selectOptions(screen.getByLabelText('Vorhandenen Beleg für Abc Laden wählen'), 'r9');
@@ -106,8 +106,27 @@ describe('ReceiptChecks', () => {
     render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
     const user = userEvent.setup();
     await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
-    await user.click(screen.getByRole('button', { name: 'Abbrechen' }));
+    await user.click(screen.getByRole('button', { name: 'Abbrechen: Beleg zuordnen' }));
     expect(document.activeElement).toBe(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    // Reopened, it asks the server afresh.
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    expect(findReceiptChoices).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops a slow answer that a newer request overtook', async () => {
+    let answerFirst: (v: unknown) => void = () => {};
+    findReceiptChoices
+      .mockImplementationOnce(() => new Promise((resolve) => (answerFirst = resolve)))
+      .mockResolvedValueOnce({ ok: true, value: [{ rowId: 'new', label: 'Neuer Beleg', vendor: null, day: null, amountCents: 1250, estimated: false, openCents: 1250 }] });
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    await user.type(screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)'), 'Neu');
+    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    expect(await screen.findByRole('option', { name: 'Neuer Beleg, 12,50 €' })).toBeTruthy();
+    answerFirst({ ok: true, value: [{ rowId: 'old', label: 'Alter Beleg', vendor: null, day: null, amountCents: 1250, estimated: false, openCents: 1250 }] });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole('option', { name: 'Alter Beleg, 12,50 €' })).toBeNull();
   });
 
   it('searches the receipts for a payment and says when nothing fits', async () => {
@@ -181,7 +200,7 @@ describe('ReceiptChecks', () => {
     const opener = screen.getAllByRole('button', { name: 'Es gibt keinen Beleg' })[1];
     await user.click(opener);
     expect(document.activeElement).toBe(screen.getByLabelText('Warum es keinen Beleg gibt'));
-    await user.click(screen.getByRole('button', { name: 'Abbrechen' }));
+    await user.click(screen.getByRole('button', { name: 'Abbrechen: kein Beleg' }));
     expect(document.activeElement?.textContent).toBe('Es gibt keinen Beleg');
   });
 

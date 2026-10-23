@@ -507,7 +507,6 @@ export interface LinkResult {
 /** How a receipt answers for a link: null when it is not this workspace's, otherwise its own euro amount (null: none). */
 export type ReceiptForLink = (rowId: string) => Promise<{ amountCents: number | null } | null>;
 
-export { OVERPAID_TOLERANCE_PERCENT };
 
 /**
  * Link a payment (or part of it) to a receipt or an issued invoice, by a
@@ -579,16 +578,15 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
           await tx.taxPaymentLink.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId, paymentId: { in: funders.map((p) => p.id) } } });
           movedFromPaymentId = funders[0].id;
         } else if (!input.confirmed && receipt && receipt.amountCents !== null) {
-          let paidSoFar = paidOnReceipt(loaded.payments, rowId);
+          // The one paid-by sum the picker and the routed link read: this company's payments (a purchase and
+          // its funding debit once) and its links on other companies' shared payments, never below nothing.
+          const paidSoFar = paidByReceipt(loaded.payments, loaded.linkedElsewhere).get(rowId) ?? 0;
           const limit = receipt.amountCents + Math.round((receipt.amountCents * OVERPAID_TOLERANCE_PERCENT) / 100);
           // Counted once when the other end of the same money is on the receipt already: this
           // purchase's funding debit, or the purchase this debit funds.
           const twinId = loaded.payments.find((p) => p.id === payment.id)?.funding?.twinId ?? null;
           const twinOnReceipt = twinId !== null && loaded.payments.some((p) => p.id === twinId && onReceipt(p).length > 0);
           const adds = funders.length > 0 || twinOnReceipt ? 0 : cents;
-          // This company's links on payments of an account another company holds and shares with it (plan
-          // 2026-10-22, payments across companies) pay the receipt too.
-          paidSoFar = Math.max(0, paidSoFar + (loaded.linkedElsewhere.get(rowId) ?? 0));
           if (adds > 0 && paidSoFar > 0 && paidSoFar + adds > limit) throw new PaymentServiceError('receipt_already_paid', `${paidSoFar}:${receipt.amountCents}`);
         }
       } else {
@@ -688,7 +686,7 @@ export function countedReceiptLinks(payments: readonly PaymentRow[]): Array<{ pa
 
 /**
  * What pays each receipt of a company, by receipt: its own payments counted as
- * `paidOnReceipt` counts them (a purchase and the debit funding it once), plus
+ * `countedReceiptLinks` counts them (a purchase and the debit funding it once), plus
  * its links on other companies' shared payments (`linkedElsewhere`), never
  * below nothing. The one sum the guards and the hand choice of a receipt read.
  */
@@ -696,13 +694,6 @@ export function paidByReceipt(ownPayments: readonly PaymentRow[], linkedElsewher
   const raw = new Map(linkedElsewhere);
   for (const { payment, link } of countedReceiptLinks(ownPayments)) raw.set(link.rowId, (raw.get(link.rowId) ?? 0) + (payment.amountCents < 0 ? link.cents : -link.cents));
   return new Map([...raw].map(([rowId, cents]) => [rowId, Math.max(0, cents)]));
-}
-
-/** What the linked payments of a receipt add up to: money out less money back, never below nothing. */
-export function paidOnReceipt(payments: readonly PaymentRow[], rowId: string): number {
-  let cents = 0;
-  for (const { payment, link } of countedReceiptLinks(payments)) if (link.rowId === rowId) cents += payment.amountCents < 0 ? link.cents : -link.cents;
-  return Math.max(0, cents);
 }
 
 export async function unlinkPayment(db: PrismaClient, ctx: PaymentContext, linkId: string): Promise<void> {

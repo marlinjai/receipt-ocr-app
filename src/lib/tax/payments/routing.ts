@@ -1,6 +1,7 @@
 import 'server-only';
 import { Prisma, type PrismaClient } from '@prisma/client';
-import { counterpartyKey, loadPayments, OVERPAID_TOLERANCE_PERCENT, paidByReceipt, PaymentServiceError, type CounterpartyTreatment, type PaymentContext, type PaymentRow, type ReceiptForLink } from './service';
+import { counterpartyKey, loadPayments, paidByReceipt, PaymentServiceError, type CounterpartyTreatment, type PaymentContext, type PaymentRow, type ReceiptForLink } from './service';
+import { OVERPAID_TOLERANCE_PERCENT } from './types';
 import { routesToReceiver } from './route';
 
 /**

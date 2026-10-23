@@ -323,38 +323,55 @@ function OpenCheck({
   const pickOpener = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const pickReopened = useRef(false);
+  // Every request gets a number; an answer that is not the newest one's is dropped, so a slow answer never
+  // overwrites a list asked for later (after a fresh view, or a second search).
+  const request = useRef(0);
   // A fresh view of the checks (a receipt linked elsewhere, say) makes an earlier list stale: it is asked again.
   const [seenCheck, setSeenCheck] = useState(check);
   if (seenCheck !== check) {
     setSeenCheck(check);
     setFound(null);
     setChosen('');
+    setSearchError(null);
+    setSearching(false);
   }
   const loadChoices = async (text: string) => {
+    const mine = ++request.current;
     setSearching(true);
     setSearchError(null);
     try {
       const result = await onSearchReceipts(text);
+      if (mine !== request.current) return;
       if (result.ok) {
         setFound({ choices: result.value, searched: text.trim() !== '' });
         setChosen('');
       } else setSearchError(checksActionMessage(result));
     } catch {
-      setSearchError(checksActionMessage({ ok: false, error: 'failed' }));
+      if (mine === request.current) setSearchError(checksActionMessage({ ok: false, error: 'failed' }));
     } finally {
-      setSearching(false);
+      if (mine === request.current) setSearching(false);
     }
+  };
+  const closePicker = () => {
+    // Whatever is still on its way is dropped; reopening asks afresh.
+    request.current += 1;
+    setPicking(false);
+    setFound(null);
+    setChosen('');
+    setSearchError(null);
+    setSearching(false);
   };
   // Opened: the closest receipts are loaded, and the focus goes to the search field; closed: back to the opener.
   useEffect(() => {
     if (picking) searchInput.current?.focus();
     else if (pickReopened.current) pickOpener.current?.focus();
   }, [picking]);
+  // Opening the picker, or a fresh view while it is open, asks once (the request number drops a duplicate's answer).
+  const wanted = picking && found === null && searchError === null;
   useEffect(() => {
-    if (picking && found === null && !searching && searchError === null) void loadChoices('');
-    // Only opening the picker (or a fresh view while open) asks again.
+    if (wanted) void loadChoices('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [picking, found]);
+  }, [wanted, seenCheck]);
   const choices = found?.choices ?? [];
   const pickStatus = searching
     ? 'Belege werden gesucht …'
@@ -364,7 +381,11 @@ function OpenCheck({
         ? found.searched
           ? 'Kein offener Beleg passt zu dieser Suche.'
           : 'Kein offener Beleg in dieser Firma, der zu dieser Zahlung passen kann. Bitte zuerst einen Beleg hochladen.'
-        : `${found.choices.length} ${found.choices.length === 1 ? 'Beleg' : 'Belege'} ${found.searched ? 'gefunden' : 'zur Auswahl, die nächstliegenden zuerst'}.`;
+        : found.searched
+          ? `${found.choices.length} ${found.choices.length === 1 ? 'Beleg' : 'Belege'} gefunden.`
+          : found.choices.length === 1
+            ? '1 Beleg zur Auswahl.'
+            : `${found.choices.length} Belege zur Auswahl, die nächstliegenden zuerst.`;
   const [asking, setAsking] = useState(false);
   const [reason, setReason] = useState('');
   const opener = useRef<HTMLButtonElement>(null);
@@ -483,10 +504,11 @@ function OpenCheck({
               maxLength={80}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <button type="submit" className="ui-btn ui-btn-sm" disabled={searching} aria-busy={searching}>
+            {/* A new search may start while one runs: only the newest answer is kept. */}
+            <button type="submit" className="ui-btn ui-btn-sm" aria-busy={searching}>
               Suchen
             </button>
-            <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" onClick={() => setPicking(false)}>
+            <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" aria-label="Abbrechen: Beleg zuordnen" onClick={closePicker}>
               Abbrechen
             </button>
           </form>
@@ -566,7 +588,7 @@ function OpenCheck({
               <button type="submit" className="ui-btn ui-btn-sm" disabled={pending || !reason.trim()} aria-label={`Antwort ohne Beleg für ${check.counterparty || 'diese Zahlung'} speichern`}>
                 Speichern
               </button>
-              <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" onClick={() => setAsking(false)}>
+              <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" aria-label="Abbrechen: kein Beleg" onClick={() => setAsking(false)}>
                 Abbrechen
               </button>
             </form>
@@ -617,7 +639,8 @@ export default function ReceiptChecks({
   const router = useRouter();
   const run = (at: string, action: () => Promise<ChecksResult<ChecksView>>, success?: string) => {
     setError(null);
-    if (success) setPageNotice(null);
+    // A notice belongs to the action that set it: the next one starts without it.
+    setPageNotice(null);
     startTransition(async () => {
       const result = await action();
       if (result.ok) {

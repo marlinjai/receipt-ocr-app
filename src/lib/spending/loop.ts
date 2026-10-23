@@ -1,9 +1,8 @@
 import { vendorNamed } from '@/lib/tax/payments/match';
-import type { PaymentKind } from '@/lib/tax/payments/types';
+import { OVERPAID_TOLERANCE_PERCENT, type PaymentKind } from '@/lib/tax/payments/types';
 import type { SpendingCategory } from './categories';
 import { categorise, normalizeText, type CounterpartyTreatmentAnswer } from './rules';
 import { amountQuery } from '@/lib/tax/payments/search';
-import { OVERPAID_TOLERANCE_PERCENT } from '@/lib/tax/payments/types';
 
 /**
  * The missing-receipt loop, as a pure function of what is stored (plan

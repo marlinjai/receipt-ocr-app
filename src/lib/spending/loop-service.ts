@@ -106,8 +106,9 @@ interface Loaded {
   routedAwayAnswered: Array<{ payment: PaymentRow; reason: string }>;
   /** This company's receipts as the loop sees them. */
   receipts: LoopReceipt[];
-  /** What payments cover of each receipt (money out less money back), links on other companies' shared payments included. */
-  paidByRow: Map<string, number>;
+  /** This company's own payments (not those routed here) and its links on other companies' payments: what `paidByReceipt` reads. */
+  ownPayments: PaymentRow[];
+  linkedElsewhere: Map<string, number>;
   states: Map<string, LoopState>;
   /** Vendor keys each counterparty stands for, learned from links: the names a mailbox search uses besides the counterparty's own. */
   aliases: Map<string, Set<string>>;
@@ -150,10 +151,7 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   }
   const ownReasons = new Map(noReceipt.map((a) => [a.paymentId, a.reason]));
   const routedAwayAnswered = loaded.routedAway.flatMap((p) => (ownReasons.has(p.id) ? [{ payment: p, reason: ownReasons.get(p.id) as string }] : []));
-  // The guards' own sum: links on other companies' payments are all in `linkedElsewhere` (routed ones too), so only
-  // this company's own payments add to it, a purchase and its funding debit once, never below nothing.
-  const paidByRow = paidByReceipt(loaded.payments.filter((p) => p.routedFrom === null), loaded.linkedElsewhere);
-  return { payments: loaded.payments, states, aliases, routedAwayAnswered, receipts, paidByRow };
+  return { payments: loaded.payments, states, aliases, routedAwayAnswered, receipts, ownPayments: loaded.payments.filter((p) => p.routedFrom === null), linkedElsewhere: loaded.linkedElsewhere };
 }
 
 /** The subjects of the payments still waiting for their receipt: what keeps its messages in the in-app queue. */
@@ -444,7 +442,10 @@ export async function confirmCandidate(db: PrismaClient, ctx: NotifyContext, pay
  * closest first. Only receipts of this company.
  */
 export async function searchReceiptChoices(db: PrismaClient, workspaceId: string, paymentId: string, text: unknown): Promise<ReceiptChoice[]> {
-  const { states, payments, receipts, paidByRow } = await computeStates(db, workspaceId);
+  const { states, payments, receipts, ownPayments, linkedElsewhere } = await computeStates(db, workspaceId);
+  // The guards' own sum: links on other companies' payments are all in `linkedElsewhere` (routed ones too), so only
+  // this company's own payments add to it, a purchase and its funding debit once, never below nothing.
+  const paidByRow = paidByReceipt(ownPayments, linkedElsewhere);
   const state = states.get(paymentId);
   const payment = payments.find((p) => p.id === paymentId);
   if (!state || !payment) throw new LoopServiceError('payment_not_found');

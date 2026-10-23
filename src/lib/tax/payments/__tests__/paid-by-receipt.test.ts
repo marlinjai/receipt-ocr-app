@@ -31,5 +31,7 @@ describe('paidByReceipt', () => {
     expect(paidByReceipt([row('back', 2000, [{ rowId: 'r', cents: 2000 }])], new Map()).get('r')).toBe(0);
     expect(paidByReceipt([row('out', -3000, [{ rowId: 'r', cents: 3000 }]), row('back', 1000, [{ rowId: 'r', cents: 1000 }])], new Map([['r', 500]])).get('r')).toBe(2500);
     expect(paidByReceipt([], new Map([['s', 700]])).get('s')).toBe(700);
+    // Own money back larger than own purchases, with a link elsewhere: only the final sum stops at nothing.
+    expect(paidByReceipt([row('back', 3000, [{ rowId: 't', cents: 3000 }])], new Map([['t', 10000]])).get('t')).toBe(7000);
   });
 });

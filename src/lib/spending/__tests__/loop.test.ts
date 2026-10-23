@@ -140,6 +140,14 @@ describe('receiptChoices', () => {
     expect(receiptChoices(pay, receipts, new Map(), '45,50').map((c) => c.rowId)).toEqual(['b']);
   });
 
+  it('offers only what the guard would let be linked: nothing beyond the amount and the tolerance once something is paid', () => {
+    const receipt = r('x', { amountCents: 3150, linked: true });
+    expect(receiptChoices({ bookingDay: '2026-05-10', amountCents: -2000 }, [receipt], new Map([['x', 3000]]))).toEqual([]);
+    expect(receiptChoices({ bookingDay: '2026-05-10', amountCents: -1000 }, [r('y', { amountCents: 3000, linked: true })], new Map([['y', 2000]])).map((c) => c.rowId)).toEqual(['y']);
+    // Nothing paid yet: the guard asks nothing, so a payment above the amount may still take it.
+    expect(receiptChoices({ bookingDay: '2026-05-10', amountCents: -9000 }, [r('z', { amountCents: 3000 })], new Map()).map((c) => c.rowId)).toEqual(['z']);
+  });
+
   it('offers at most the limit', () => {
     const receipts = Array.from({ length: 40 }, (_, i) => r(`r${String(i).padStart(2, '0')}`));
     expect(receiptChoices(pay, receipts, new Map())).toHaveLength(CHOICES_SHOWN);

@@ -556,4 +556,50 @@ describe('PaymentsTab', () => {
     await user.click(choosers[1]);
     expect(screen.getByLabelText('Rechnung von Hand wählen')).toBeTruthy();
   });
+  it('an account without payments, imports and connection can be removed after a confirmation; others offer no such button', async () => {
+    const user = userEvent.setup();
+    const p = { ...props(), onRemoveAccount: vi.fn() };
+    const empty = { ...account, id: 'acc-empty', label: 'Altes Konto', paymentCount: 0, completeThrough: null, batches: [] };
+    const linked = { ...account, id: 'acc-live', label: 'PayPal', paymentCount: 0, completeThrough: null, batches: [] };
+    const feed = { bank: { enabled: true, connections: [{ id: 'c-1', accountId: 'acc-live', status: 'pending', aspspName: 'PayPal', pendingAspspName: null, validUntil: null, renewSoon: false, lastSyncedAt: null, lastBookedThrough: null, lastError: null, lastErrorAt: null, notices: { gaps: [], skipped: [], undated: [], unrated: [] }, candidates: [], accountUid: null, boundMask: null, boundName: null }] }, pending: false, message: null };
+    const bank = { feed, actions: { listBankInstitutions: vi.fn() }, returnNotice: null } as unknown as ComponentProps<typeof PaymentsTab>['bank'];
+    render(<PaymentsTab view={view({ accounts: [account, empty, linked] })} {...p} bank={bank} />);
+    const buttons = screen.getAllByRole('button', { name: 'Konto entfernen' });
+    // Only the empty account: the one with imports and the one with a connection (pending) offer none.
+    expect(buttons).toHaveLength(1);
+    const confirm = vi.spyOn(window, 'confirm');
+    confirm.mockReturnValueOnce(false);
+    await user.click(buttons[0]);
+    expect(p.onRemoveAccount).not.toHaveBeenCalled();
+    confirm.mockReturnValueOnce(true);
+    await user.click(buttons[0]);
+    expect(p.onRemoveAccount).toHaveBeenCalledWith(expect.objectContaining({ id: 'acc-empty' }));
+    confirm.mockRestore();
+  });
+
+  it('a payment in another currency shows its own amount, and says when the euro amount is an estimate', () => {
+    render(
+      <PaymentsTab
+        view={view({ open: [open({ id: 'usd', amountCents: -912, freeCents: 912, foreign: { currency: 'USD', cents: 1000, estimated: true } }), open({ id: 'real', amountCents: -948, freeCents: 948, foreign: { currency: 'USD', cents: 1000, estimated: false } })] })}
+        {...props()}
+      />,
+    );
+    expect(screen.getByText(/geschätzt: 10,00 USD zum Referenzkurs/)).toBeTruthy();
+    expect(screen.getByText(/9,48 €\s*\(10,00 USD\)/)).toBeTruthy();
+  });
+
+  it('reports the rows of the live PayPal feed it left out or recognized, and real euro amounts taken over', () => {
+    render(
+      <PaymentsTab
+        view={view()}
+        {...props()}
+        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 3, added: 1, alreadyThere: 2, skipped: { known_from_other_source: 4, rejected: 1, no_exchange_rate: 1 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, settled: 2, notices: {}, unknownStatuses: [], onlyYear: null, firstDay: null, lastDay: null }}
+      />,
+    );
+    const status = screen.getByRole('status').textContent ?? '';
+    expect(status).toContain('bei 2 geschätzten Zahlungen in anderer Währung den tatsächlichen Eurobetrag übernommen');
+    expect(status).toContain('4 schon aus der anderen Quelle dieses Kontos bekannt');
+    expect(status).toContain('1 abgelehnt');
+    expect(status).toContain('1 in anderer Währung ohne Referenzkurs');
+  });
 });

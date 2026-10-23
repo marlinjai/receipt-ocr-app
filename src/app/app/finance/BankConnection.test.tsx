@@ -182,6 +182,14 @@ describe('BankAccountStatus', () => {
     expect(acts.clearBankConnectionNotice).toHaveBeenCalledWith('con-1', { kind: 'undated', keys: ['a1b2c3d4e5f6a1b2c3d4e5f6', 'f6e5d4c3b2a1f6e5d4c3b2a1'] });
   });
 
+  it('names the days whose movement in another currency waits for its rate, each clearable', async () => {
+    const acts = actions();
+    render(<Harness bank={{ enabled: true, connections: [connection({ aspspName: 'PayPal', notices: { gaps: [], skipped: [], undated: [], unrated: ['2026-10-02'] } })] }} acts={acts} />);
+    expect(screen.getByText(/fehlt für eine Zahlung in anderer Währung der Referenzkurs/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Erledigt: fehlender Kurs am 02.10.2026' }));
+    expect(acts.clearBankConnectionNotice).toHaveBeenCalledWith('con-1', { kind: 'unrated', day: '2026-10-02' });
+  });
+
   it('shows no notice when there is none', () => {
     render(<Harness bank={{ enabled: true, connections: [connection()] }} acts={actions()} />);
     expect(screen.queryByRole('button', { name: /^Erledigt/ })).toBeNull();

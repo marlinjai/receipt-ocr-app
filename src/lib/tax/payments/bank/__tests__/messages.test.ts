@@ -9,6 +9,15 @@ describe('bank messages', () => {
     expect(bankMessage('weird<code>')).toBe('Unbekannter Fehler (weirdcode).');
   });
 
+  it('a list-fed account: PayPal can be connected, Klarna cannot; a mismatched institution says what fits', () => {
+    const klarna = bankMessage('account_source_unsupported');
+    expect(klarna).toContain('Klarna');
+    expect(klarna).toContain('nicht die Käufe auf Rechnung oder in Raten');
+    expect(klarna).toContain('PayPal-Konto lässt sich dagegen live verbinden');
+    expect(bankMessage('institution_mismatch')).toContain('nur mit PayPal');
+    expect(bankMessage('import_failed:format_mismatch')).toContain('PayPal-Liste und der Live-Verbindung zu PayPal');
+  });
+
   it('reads the return from the bank', () => {
     expect(returnMessage('verbunden')?.ok).toBe(true);
     expect(returnMessage('konto_waehlen')?.ok).toBe(true);

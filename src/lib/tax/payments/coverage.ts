@@ -174,3 +174,28 @@ export function mergeIntervals(intervals: readonly Interval[]): Interval[] {
   }
   return out;
 }
+
+/** The bank sources: one bank account may be continued from one of them by another. */
+const BANK_FORMATS: readonly string[] = ['enable_banking_json', 'n26_csv', 'tomorrow_csv'];
+
+/** One source of an account: the format of its imports and, for the bank interface, the service it reads. */
+export interface PaymentSource {
+  format: string;
+  service: string | null;
+}
+
+/** A source holding a PayPal wallet's movements: its CSV list, or the bank interface reading PayPal. */
+export const isPaypalSource = (s: PaymentSource) => s.format === 'paypal_csv' || (s.format === 'enable_banking_json' && s.service === 'paypal');
+
+/**
+ * Whether two sources may feed one account. The same source always; two bank
+ * sources (a bank file continued from the bank interface, plan 2026-10-15);
+ * PayPal's list and the bank interface reading PayPal (plan 2026-10-23). A
+ * service's list never shares an account with a bank: they hold different
+ * movements (its purchases, not the bank's debits).
+ */
+export function sourcesMayShare(a: PaymentSource, b: PaymentSource): boolean {
+  if (a.format === b.format) return (a.service ?? null) === (b.service ?? null);
+  const bank = (s: PaymentSource) => BANK_FORMATS.includes(s.format) && !s.service;
+  return (bank(a) && bank(b)) || (isPaypalSource(a) && isPaypalSource(b));
+}

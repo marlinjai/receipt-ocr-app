@@ -62,7 +62,7 @@ import VatTab from './VatTab';
 import ReverseChargeForm from './ReverseChargeForm';
 import AssetsTab, { type AssetDraft, type DisposalDraft } from './AssetsTab';
 import IncomeTaxTab, { balanceText } from './IncomeTaxTab';
-import { removeTaxReturnItem, removeWage, saveTaxReturnItem, saveWage, setChurchMonths, setFederalState } from './income-tax-actions';
+import { removeTaxReturnItem, removeWage, saveTaxReturnItem, saveWage, setChurchMonths, setFederalState, setFiledOn } from './income-tax-actions';
 import { incomeTaxActionMessage } from '@/lib/tax/income-tax/messages';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 import { useTabInView } from '@/lib/use-tab-in-view';
@@ -928,6 +928,14 @@ export default function FinanceClient({
                 run(() => setChurchMonths(view.year, months), months ? 'Monate der Kirchensteuerpflicht gespeichert.' : 'Angabe entfernt.', undefined, incomeTaxActionMessage)
               }
               onFederalState={(state) => run(() => setFederalState(view.year, state), 'Bundesland gespeichert.', undefined, incomeTaxActionMessage)}
+              onFiledOn={(filedOn) =>
+                run(
+                  () => setFiledOn(view.year, filedOn),
+                  filedOn ? `Erklärung ${view.year} als abgegeben eingetragen.` : `Abgabedatum ${view.year} entfernt: das Jahr ist wieder offen.`,
+                  undefined,
+                  incomeTaxActionMessage,
+                )
+              }
             />
           )}
 

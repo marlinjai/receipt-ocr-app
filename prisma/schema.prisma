@@ -648,13 +648,16 @@ model TaxReturnItem {
 }
 
 // Per year: the months church tax was due, twelve characters '1' or '0'
-// starting with January. NULL: not stated.
+// starting with January (NULL: not stated), and the day the return was filed.
 model TaxYearSettings {
   id              String   @id @default(uuid())
   authWorkspaceId String   @map("auth_workspace_id")
   authTenantId    String?  @map("auth_tenant_id")
   year            Int
   churchMonths    String?  @map("church_months")
+  // The day the income tax return of the year was filed ("2026-10-17"); null while open. A filed
+  // year fixes its payments at the turn of the year the way they were filed (src/lib/tax/year-boundary.ts).
+  filedOn         String?  @map("filed_on")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 

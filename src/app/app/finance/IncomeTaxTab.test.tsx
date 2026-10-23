@@ -33,6 +33,7 @@ const props = () => ({
   onRemoveItem: vi.fn(),
   onChurchMonths: vi.fn(),
   onFederalState: vi.fn(),
+  onFiledOn: vi.fn(),
 });
 
 describe('balanceText', () => {
@@ -161,6 +162,33 @@ describe('IncomeTaxTab', () => {
     await userEvent.click(screen.getByLabelText('Januar'));
     await userEvent.click(screen.getByRole('button', { name: 'Monate speichern' }));
     expect(p.onChurchMonths).toHaveBeenCalledWith([true, false, false, false, false, false, false, false, false, false, false, false]);
+  });
+
+  it('records the day the return was filed, follows what is stored, and can open the year again', async () => {
+    const p = props();
+    const { rerender } = render(<IncomeTaxTab view={view(incomeTaxView({ year: 2025 }))} {...p} />);
+    expect(screen.getByText('Noch nicht als abgegeben eingetragen.')).toBeTruthy();
+    const input = screen.getByLabelText('Erklärung 2025 abgegeben am') as HTMLInputElement;
+    expect(input.min).toBe('2026-01-01');
+    // Nothing typed yet: nothing to save, and nothing to clear.
+    expect((screen.getByRole('button', { name: 'Abgabedatum speichern' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Abgabedatum entfernen' })).toBeNull();
+    await userEvent.type(input, '2026-05-14');
+    await userEvent.click(screen.getByRole('button', { name: 'Abgabedatum speichern' }));
+    expect(p.onFiledOn).toHaveBeenLastCalledWith('2026-05-14');
+
+    // Saved on the server: the stored day is shown, saving the same day again is not offered.
+    rerender(<IncomeTaxTab view={view(incomeTaxView({ year: 2025, filedOn: '2026-05-14' }))} {...p} />);
+    expect(screen.getByText('Abgegeben am 14.05.2026.')).toBeTruthy();
+    expect((screen.getByLabelText('Erklärung 2025 abgegeben am') as HTMLInputElement).value).toBe('2026-05-14');
+    expect((screen.getByRole('button', { name: 'Abgabedatum speichern' }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Abgabedatum entfernen' }));
+    expect(p.onFiledOn).toHaveBeenLastCalledWith(null);
+
+    // Cleared on the server: the field empties again.
+    rerender(<IncomeTaxTab view={view(incomeTaxView({ year: 2025, filedOn: null }))} {...p} />);
+    expect((screen.getByLabelText('Erklärung 2025 abgegeben am') as HTMLInputElement).value).toBe('');
+    expect(screen.queryByRole('button', { name: 'Abgabedatum entfernen' })).toBeNull();
   });
 
   it('shows a failure from the server', () => {

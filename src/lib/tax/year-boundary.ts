@@ -16,6 +16,11 @@
 
 export const YEAR_BOUNDARY_DAYS = 10;
 
+/** The ISO day of a moment in the business's time zone (Europe/Berlin); by default today. */
+export function berlinDay(at: Date = new Date()): string {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(at);
+}
+
 export type BoundarySubjectKind = 'receipt' | 'vat_settlement';
 export const BOUNDARY_SUBJECT_KINDS: readonly BoundarySubjectKind[] = ['receipt', 'vat_settlement'];
 

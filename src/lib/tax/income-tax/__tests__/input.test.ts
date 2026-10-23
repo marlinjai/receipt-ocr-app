@@ -4,6 +4,7 @@ import {
   decodeChurchMonths,
   encodeChurchMonths,
   validateFederalState,
+  validateFiledOn,
   validateReturnItemInput,
   validateWageInput,
   validateYearSettings,
@@ -104,5 +105,27 @@ describe('church months and federal state', () => {
     expect(validateFederalState('BE')).toBe('BE');
     expect(validateFederalState('')).toBeNull();
     expect(code(() => validateFederalState('XX'))).toBe('invalid_federal_state');
+  });
+});
+
+describe('the day the return was filed', () => {
+  const today = '2026-10-23';
+
+  it('takes a real day after the year ended and not after today, or null to open the year again', () => {
+    expect(validateFiledOn({ year: 2025, filedOn: '2026-05-14' }, today)).toEqual({ year: 2025, filedOn: '2026-05-14' });
+    expect(validateFiledOn({ year: 2025, filedOn: today }, today)).toEqual({ year: 2025, filedOn: today });
+    expect(validateFiledOn({ year: 2025, filedOn: '2026-01-01' }, today)).toEqual({ year: 2025, filedOn: '2026-01-01' });
+    expect(validateFiledOn({ year: 2025, filedOn: null }, today)).toEqual({ year: 2025, filedOn: null });
+    expect(validateFiledOn({ year: 2025 }, today)).toEqual({ year: 2025, filedOn: null });
+  });
+
+  it('refuses what is not a day, a day in the future and a day before the year ended', () => {
+    expect(code(() => validateFiledOn({ year: 2025, filedOn: '2026-02-30' }, today))).toBe('invalid_filed_on');
+    expect(code(() => validateFiledOn({ year: 2025, filedOn: '14.05.2026' }, today))).toBe('invalid_filed_on');
+    expect(code(() => validateFiledOn({ year: 2025, filedOn: 20260514 }, today))).toBe('invalid_filed_on');
+    expect(code(() => validateFiledOn({ year: 2025, filedOn: '' }, today))).toBe('invalid_filed_on');
+    expect(code(() => validateFiledOn({ year: 2025, filedOn: '2026-10-24' }, today))).toBe('filed_on_in_future');
+    expect(code(() => validateFiledOn({ year: 2025, filedOn: '2025-12-31' }, today))).toBe('filed_on_before_year_end');
+    expect(code(() => validateFiledOn({ year: '2025', filedOn: '2026-05-14' }, today))).toBe('invalid_year');
   });
 });

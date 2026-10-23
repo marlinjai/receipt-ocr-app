@@ -21,7 +21,10 @@ export type IncomeTaxInputErrorCode =
   | 'invalid_distance'
   | 'note_too_long'
   | 'invalid_church_months'
-  | 'invalid_federal_state';
+  | 'invalid_federal_state'
+  | 'invalid_filed_on'
+  | 'filed_on_in_future'
+  | 'filed_on_before_year_end';
 
 export class IncomeTaxInputError extends Error {
   readonly code: IncomeTaxInputErrorCode;
@@ -152,4 +155,38 @@ export function encodeChurchMonths(months: boolean[]): string {
 export function decodeChurchMonths(text: string | null): boolean[] | null {
   if (text === null || !/^[01]{12}$/.test(text)) return null;
   return [...text].map((c) => c === '1');
+}
+
+export interface FiledOnInput {
+  year: number;
+  /** The ISO day the return of `year` was filed; null: the year is open again. */
+  filedOn: string | null;
+}
+
+const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Whether `day` is a real calendar day written as YYYY-MM-DD (no 2026-02-30). */
+function isRealDay(day: string): boolean {
+  const m = ISO_DAY.exec(day);
+  if (!m) return false;
+  const date = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return date.toISOString().slice(0, 10) === day;
+}
+
+/**
+ * The day the income tax return of a year was filed. A real day, not after
+ * `today` (the business's day, Europe/Berlin), and not before the year ended:
+ * a return is filed for a finished year (section 25 (1) of the income tax act,
+ * Einkommensteuergesetz: the tax is assessed after the end of the calendar year).
+ */
+export function validateFiledOn(raw: unknown, today: string): FiledOnInput {
+  const input = (raw ?? {}) as Record<string, unknown>;
+  const year = validateYear(input.year);
+  const filedOn = input.filedOn ?? null;
+  if (filedOn === null) return { year, filedOn: null };
+  if (typeof filedOn !== 'string' || !isRealDay(filedOn)) fail('invalid_filed_on');
+  const day = filedOn as string;
+  if (day > today) fail('filed_on_in_future');
+  if (day < `${year + 1}-01-01`) fail('filed_on_before_year_end');
+  return { year, filedOn: day };
 }

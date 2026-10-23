@@ -53,9 +53,16 @@ Two facts settle most of it:
    and is shown with "Weicht von der abgegebenen Erklärung {Jahr} ab", so it is visible and can be
    taken back instead of silently changing a filed year.
 3. **Rules for open years**, derived on read, overridable by a person's answer:
-   - Value-added tax payments and refunds to or from the tax office paid 1 to 10 January belong
-     to the year before (the advance return for December or the fourth quarter is due on
-     10 January); paid 22 to 31 December they stay (they pay an earlier period of that year).
+   - Value-added tax payments and refunds to or from the tax office: only where the company was
+     regularly taxed on that day (`WorkspaceTaxSettings.smallBusiness` false and a
+     `vatFrequency` set, so advance returns recur), one paid 1 to 10 January belongs to the year
+     before (the advance return for December or the fourth quarter is due on 10 January), and one
+     paid 22 to 31 December stays (it pays an earlier period of that year). Under section 19 of
+     the value-added tax act (small business, Kleinunternehmer) there are no recurring advance
+     payments: a payment to the tax office, such as reverse-charge tax under section 13b declared
+     only for the period it arose in, is not regularly recurring and stays in the year it was
+     paid. Reason shown: "Kleinunternehmer: keine regelmäßige Vorauszahlung". Narrowed on
+     2026-10-23 after the owner pointed out that Whiz-Art Media is a small business.
    - A receipt of a counterparty that recurs (at least three months with a payment in the last
      twelve) stays in the year it was paid: it is billed at the start of the period it pays for.
      Reason shown: "Abo, Zeitraum beginnt am Zahltag".

@@ -11,6 +11,7 @@ import {
   deleteWageEntry,
   saveChurchMonths,
   saveFederalState,
+  saveFiledOn,
   saveReturnItem,
   saveWageEntry,
   type IncomeTaxContext,
@@ -20,8 +21,8 @@ import { loadStatement, type StatementView } from '@/lib/tax/service';
 import type { FinanceActionError, Result } from './actions';
 
 /**
- * Server actions for wages, return items and the church tax months (the
- * income tax estimate). Same contract as the other finance actions: the
+ * Server actions for wages, return items, the church tax months and the day
+ * the return was filed (the income tax estimate). Same contract as the other finance actions: the
  * workspace is the session's active one, never taken from the browser;
  * writes pass `receipts.row.write`; failures come back as a stable code; every
  * write answers with the freshly computed statement, estimate included.
@@ -98,4 +99,9 @@ export async function setChurchMonths(year: number, churchMonths: unknown): Prom
 
 export async function setFederalState(year: number, federalState: unknown): Promise<Result<StatementView>> {
   return write(year, (ctx) => saveFederalState(prisma, ctx, federalState));
+}
+
+/** The day the return of the year on screen was filed (ISO), or null: the year is open again. */
+export async function setFiledOn(year: number, filedOn: unknown): Promise<Result<StatementView>> {
+  return write(year, (ctx) => saveFiledOn(prisma, ctx, { year, filedOn }));
 }

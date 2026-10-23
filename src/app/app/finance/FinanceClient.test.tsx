@@ -896,8 +896,8 @@ describe('FinanceClient: sharing private payments with another company', () => {
     expect(screen.getByRole('alert').textContent).toContain('Die Weitergabe privater Zahlungen konnte nicht geladen werden');
   });
 
-  it('shows nothing of it when there is nothing to share and nothing failed', () => {
-    render(<FinanceClient initial={view([])} initialTab="payments" />);
+  it('shows nothing of it when the person has no other company and nothing is shared', () => {
+    render(<FinanceClient initial={view([])} initialTab="payments" sharing={{ outgoing: [], incoming: [], targets: [], canWrite: true }} />);
     expect(screen.queryByText('Private Zahlungen in einer anderen Firma')).toBeNull();
   });
 });

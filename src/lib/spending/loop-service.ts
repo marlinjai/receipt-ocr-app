@@ -8,7 +8,7 @@ import { linkPayment, type PaymentRow } from '@/lib/tax/payments/service';
 import { linkRoutedPayment, loadRoutedPayments, paymentOnSpendingSide, receiversOf, type RoutedPaymentRow } from '@/lib/tax/payments/routing';
 import { receiptForLink } from '@/lib/tax/service';
 import { categoryAnswerMap } from './service';
-import { loopState, mailFoundSubject, missingReceiptSubject, notifiable, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate } from './loop';
+import { loopState, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
 import { notify, retryFailedDeliveries, serverChannels, settleAllBut, settleNotifications, type NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
 import { mailboxFor } from './mailbox/server';
@@ -27,6 +27,10 @@ import { forgetGonePayments, loadMailCandidates, searchMailbox, type MailboxRun 
 
 export type LoopServiceErrorCode =
   | 'payment_not_found'
+  /** A receipt chosen by hand for a payment that got one in the meantime (another tab). */
+  | 'already_has_receipt'
+  /** A receipt chosen by hand for a payment that waits for none any more (answered, needs none). */
+  | 'payment_not_open'
   | 'reason_required'
   | 'not_a_candidate'
   /** The "no receipt" answer was given in the company that holds the account; it is taken back there. */
@@ -86,6 +90,8 @@ export interface PaymentCheck {
   counterparty: string;
   reference: string;
   state: LoopState;
+  /** For a payment still waiting: this company's receipts a person may link to it by hand, the closest first. */
+  choices?: ReceiptChoice[];
 }
 
 export interface LoopOverview {
@@ -94,15 +100,7 @@ export interface LoopOverview {
   /** Payments a person answered "no receipt exists" for, newest first: the answer can be taken back. */
   answered: PaymentCheck[];
   counts: { hasReceipt: number; notNeeded: Record<NotNeededReason, number>; noReceipt: number; proposed: number; in_mailbox: number; missing: number };
-  /**
-   * This company's receipts linked to no payment, newest first (at most `FREE_RECEIPTS_SHOWN`): what a
-   * person can link to an open payment by hand when no proposal fits. Only receipts of this company.
-   */
-  freeReceipts: Array<{ rowId: string; label: string; day: string | null; amountCents: number | null }>;
 }
-
-/** Receipts offered for linking by hand at most: enough to pick from, small enough to send with every view. */
-export const FREE_RECEIPTS_SHOWN = 200;
 
 interface Loaded {
   payments: RoutedPaymentRow[];
@@ -110,6 +108,8 @@ interface Loaded {
   routedAwayAnswered: Array<{ payment: PaymentRow; reason: string }>;
   /** This company's receipts as the loop sees them. */
   receipts: LoopReceipt[];
+  /** What payments cover of each receipt (money out less money back), links on other companies' shared payments included. */
+  paidByRow: Map<string, number>;
   states: Map<string, LoopState>;
   /** Vendor keys each counterparty stands for, learned from links: the names a mailbox search uses besides the counterparty's own. */
   aliases: Map<string, Set<string>>;
@@ -152,7 +152,10 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   }
   const ownReasons = new Map(noReceipt.map((a) => [a.paymentId, a.reason]));
   const routedAwayAnswered = loaded.routedAway.flatMap((p) => (ownReasons.has(p.id) ? [{ payment: p, reason: ownReasons.get(p.id) as string }] : []));
-  return { payments: loaded.payments, states, aliases, routedAwayAnswered, receipts };
+  // Links on other companies' payments are all in `linkedElsewhere` already (routed ones too): only this company's own payments add to it.
+  const paidByRow = new Map(loaded.linkedElsewhere);
+  for (const p of loaded.payments) if (p.routedFrom === null) for (const l of p.links) if (l.rowId) paidByRow.set(l.rowId, (paidByRow.get(l.rowId) ?? 0) + (p.amountCents < 0 ? l.cents : -l.cents));
+  return { payments: loaded.payments, states, aliases, routedAwayAnswered, receipts, paidByRow };
 }
 
 /** The subjects of the payments still waiting for their receipt: what keeps its messages in the in-app queue. */
@@ -252,7 +255,7 @@ const check = (p: PaymentRow, state: LoopState): PaymentCheck => ({
 });
 
 export async function loadLoopOverview(db: PrismaClient, workspaceId: string): Promise<LoopOverview> {
-  const { payments, states, routedAwayAnswered, receipts } = await computeStates(db, workspaceId);
+  const { payments, states, routedAwayAnswered, receipts, paidByRow } = await computeStates(db, workspaceId);
   const counts: LoopOverview['counts'] = {
     hasReceipt: 0,
     notNeeded: { own_transfer: 0, income: 0, refund: 0, fee: 0, loan: 0, cash: 0, transfer: 0 },
@@ -273,19 +276,14 @@ export async function loadLoopOverview(db: PrismaClient, workspaceId: string): P
       answered.push(check(p, state));
     } else {
       counts[state.state] += 1;
-      open.push(check(p, state));
+      open.push({ ...check(p, state), choices: receiptChoices(p, receipts, paidByRow) });
     }
   }
   // A "no receipt" answer given here about a payment now routed to another company stays visible here, so
   // it can be taken back where it was given (the other company shows it as answered here).
   for (const { payment, reason } of routedAwayAnswered) answered.push(check(payment, { state: 'no_receipt', reason, movedAway: true }));
   const newest = (a: PaymentCheck, b: PaymentCheck) => (a.bookingDay < b.bookingDay ? 1 : a.bookingDay > b.bookingDay ? -1 : 0);
-  const freeReceipts = receipts
-    .filter((r) => !r.linked)
-    .sort((a, b) => ((a.day ?? '') < (b.day ?? '') ? 1 : (a.day ?? '') > (b.day ?? '') ? -1 : 0))
-    .slice(0, FREE_RECEIPTS_SHOWN)
-    .map((r) => ({ rowId: r.rowId, label: r.label, day: r.day, amountCents: r.amountCents }));
-  return { open: open.sort(newest), answered: answered.sort(newest), counts, freeReceipts };
+  return { open: open.sort(newest), answered: answered.sort(newest), counts };
 }
 
 function missingMessage(p: PaymentRow, inMailbox: boolean, workspaceId: string): { title: string; body: string; path: string } {
@@ -443,18 +441,36 @@ export async function confirmCandidate(db: PrismaClient, ctx: NotifyContext, pay
 }
 
 /**
+ * The receipts a person may link by hand to a payment still waiting here,
+ * found by a text (a name, a vendor, an amount): at most `CHOICES_SHOWN`, the
+ * closest first. Only receipts of this company.
+ */
+export async function searchReceiptChoices(db: PrismaClient, workspaceId: string, paymentId: string, text: unknown): Promise<ReceiptChoice[]> {
+  const { states, payments, receipts, paidByRow } = await computeStates(db, workspaceId);
+  const state = states.get(paymentId);
+  const payment = payments.find((p) => p.id === paymentId);
+  if (!state || !payment) throw new LoopServiceError('payment_not_found');
+  if (state.state !== 'missing' && state.state !== 'in_mailbox' && state.state !== 'proposed') throw new LoopServiceError('payment_not_open');
+  return receiptChoices(payment, receipts, paidByRow, typeof text === 'string' ? text : '');
+}
+
+/**
  * Link a receipt to a payment the owner chose it for (a mail attachment taken
  * over for this payment). The payments service checks that the receipt is
  * this company's and not paid already; the payment must be one still waiting
  * for its receipt.
  */
-export async function linkReceiptToPayment(db: PrismaClient, ctx: NotifyContext, paymentId: string, rowId: string): Promise<void> {
+export async function linkReceiptToPayment(db: PrismaClient, ctx: NotifyContext, paymentId: string, rowId: string, options: { byHand?: boolean } = {}): Promise<void> {
   const { states, payments } = await computeStates(db, ctx.workspaceId);
   const state = states.get(paymentId);
   const payment = payments.find((p) => p.id === paymentId);
   if (!state || !payment) throw new LoopServiceError('payment_not_found');
-  if (state.state === 'has_receipt') return;
-  if (state.state !== 'missing' && state.state !== 'in_mailbox' && state.state !== 'proposed') throw new LoopServiceError('not_a_candidate');
+  // A mail taken over again for a payment that has its receipt is nothing to do; a hand choice is told, so it is not lost unseen.
+  if (state.state === 'has_receipt') {
+    if (options.byHand) throw new LoopServiceError('already_has_receipt');
+    return;
+  }
+  if (state.state !== 'missing' && state.state !== 'in_mailbox' && state.state !== 'proposed') throw new LoopServiceError(options.byHand ? 'payment_not_open' : 'not_a_candidate');
   await linkOnSpendingSide(db, ctx, payment, rowId);
   await settleNotifications(db, ctx.workspaceId, [missingReceiptSubject(paymentId), mailFoundSubject(paymentId)]);
 }

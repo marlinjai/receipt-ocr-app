@@ -21,6 +21,7 @@ import {
   disablePush,
   enablePush,
   pushStateOfDevice,
+  findReceiptChoices,
   getReceiptChecks,
   linkChosenReceipt,
   linkTakenOver,
@@ -31,6 +32,7 @@ import {
   type ChecksResult,
   type ChecksView,
 } from './loop-actions';
+import type { ReceiptChoice } from '@/lib/spending/loop';
 
 /**
  * The missing-receipt loop on the spending page: payments waiting for a
@@ -245,11 +247,26 @@ export function PushSwitch({
   );
 }
 
+/** One receipt in the list for linking by hand: name, vendor where it says more, day, and what is still open. */
+export function choiceLabel(r: ReceiptChoice): string {
+  const parts = [r.label];
+  if (r.vendor && !r.label.toLowerCase().includes(r.vendor.toLowerCase())) parts.push(r.vendor);
+  if (r.day) parts.push(formatDay(r.day));
+  if (r.amountCents !== null) {
+    const amount = `${r.estimated ? 'ca. ' : ''}${euro(r.amountCents)}`;
+    parts.push(r.openCents !== null && r.openCents !== r.amountCents ? `${amount}, noch offen ${r.estimated ? 'ca. ' : ''}${euro(r.openCents)}` : amount);
+  }
+  return parts.join(', ');
+}
+
 /** What went wrong, in words a person can act on. */
 export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok: false }>): string {
   if (result.error === 'unauthorized') return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und neu anmelden.';
   if (result.error === 'forbidden') return 'Für diesen Arbeitsbereich fehlt die Berechtigung zum Ändern.';
   if (result.detail === 'reason_required') return 'Bitte kurz sagen, warum es keinen Beleg gibt.';
+  if (result.detail === 'already_has_receipt') return 'An dieser Zahlung hängt inzwischen schon ein Beleg. Bitte die Seite neu laden.';
+  if (result.detail === 'payment_not_open') return 'Diese Zahlung wartet auf keinen Beleg mehr (sie wurde inzwischen beantwortet). Bitte die Seite neu laden.';
+  if (result.detail === 'target_not_found') return 'Dieser Beleg ist nicht mehr da oder gehört nicht zu dieser Firma. Bitte die Seite neu laden.';
   if (result.detail === 'not_a_candidate') return 'Dieser Beleg passt nicht mehr zu der Zahlung (er wurde inzwischen verknüpft oder geändert). Bitte die Seite neu laden.';
   if (result.detail?.startsWith('receipt_already_paid'))
     return 'Dieser Beleg ist schon durch andere Zahlungen bezahlt. Bitte prüfen, ob es der richtige Beleg ist; eine falsche Verknüpfung lässt sich unter Ausgaben (Zahlungen) oder unter Finanzen, Zahlungen lösen.';
@@ -276,8 +293,8 @@ function OpenCheck({
   onTakeOver,
   onDismiss,
   takingOver,
-  freeReceipts,
   onLinkByHand,
+  onSearchReceipts,
 }: {
   check: PaymentCheck;
   focused: boolean;
@@ -291,12 +308,34 @@ function OpenCheck({
   onDismiss: (mailId: string) => void;
   /** The mail being taken over right now, if any. */
   takingOver: string | null;
-  /** This company's receipts not linked to any payment, to pick one by hand when no proposal fits. */
-  freeReceipts: ChecksView['loop']['freeReceipts'];
   onLinkByHand: (rowId: string) => void;
+  /** Search this company's receipts for this payment by name, vendor or amount. */
+  onSearchReceipts: (text: string) => Promise<ChecksResult<ReceiptChoice[]>>;
 }) {
   const id = useId();
+  // Linking by hand opens on request: the list is drawn only for the payment a person works on.
+  const [picking, setPicking] = useState(false);
   const [chosen, setChosen] = useState('');
+  const [search, setSearch] = useState('');
+  const [found, setFound] = useState<ReceiptChoice[] | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+  const choices = found ?? check.choices ?? [];
+  const runSearch = async () => {
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const result = await onSearchReceipts(search);
+      if (result.ok) {
+        setFound(result.value);
+        setChosen('');
+      } else setSearchError(checksActionMessage(result));
+    } catch {
+      setSearchError(checksActionMessage({ ok: false, error: 'failed' }));
+    } finally {
+      setSearching(false);
+    }
+  };
   const [asking, setAsking] = useState(false);
   const [reason, setReason] = useState('');
   const opener = useRef<HTMLButtonElement>(null);
@@ -377,30 +416,71 @@ function OpenCheck({
           Kein Beleg gefunden.
         </p>
       )}
-      {canWrite && freeReceipts.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <label className="sr-only" htmlFor={`${id}-receipt`}>
-            Vorhandenen Beleg für {check.counterparty || 'diese Zahlung'} wählen
-          </label>
-          <select id={`${id}-receipt`} className="ui-input" style={{ width: 'auto', maxWidth: '100%' }} value={chosen} disabled={pending} onChange={(e) => setChosen(e.target.value)}>
-            <option value="">Vorhandenen Beleg wählen</option>
-            {freeReceipts.map((r) => (
-              <option key={r.rowId} value={r.rowId}>
-                {r.label}
-                {r.day ? `, ${formatDay(r.day)}` : ''}
-                {r.amountCents !== null ? `, ${euro(r.amountCents)}` : ''}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="ui-btn ui-btn-sm"
-            disabled={pending || !chosen}
-            aria-label={`Zuordnen: gewählten Beleg zu ${check.counterparty || 'dieser Zahlung'}`}
-            onClick={() => onLinkByHand(chosen)}
-          >
-            Zuordnen
+      {canWrite && !picking && (
+        <div className="mt-2">
+          <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => setPicking(true)}>
+            Vorhandenen Beleg zuordnen
           </button>
+        </div>
+      )}
+      {canWrite && picking && (
+        <div className="mt-2 space-y-2">
+          <form
+            className="flex flex-wrap items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void runSearch();
+            }}
+          >
+            <label className="sr-only" htmlFor={`${id}-search`}>
+              Belege durchsuchen (Name, Lieferant oder Betrag)
+            </label>
+            <input
+              id={`${id}-search`}
+              className="ui-input"
+              style={{ width: 'auto', minWidth: 200 }}
+              placeholder="Name, Lieferant oder Betrag"
+              value={search}
+              maxLength={80}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <button type="submit" className="ui-btn ui-btn-sm" disabled={searching} aria-busy={searching}>
+              Suchen
+            </button>
+          </form>
+          {searchError && (
+            <p className="ui-note ui-note-danger" role="alert">
+              {searchError}
+            </p>
+          )}
+          {choices.length === 0 ? (
+            <p className="text-xs" style={{ color: 'var(--muted)' }} role="status">
+              {found ? 'Kein offener Beleg passt zu dieser Suche.' : 'Kein offener Beleg in dieser Firma. Bitte zuerst einen Beleg hochladen.'}
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="sr-only" htmlFor={`${id}-receipt`}>
+                Vorhandenen Beleg für {check.counterparty || 'diese Zahlung'} wählen
+              </label>
+              <select id={`${id}-receipt`} className="ui-input" style={{ width: 'auto', maxWidth: '100%' }} value={chosen} disabled={pending} onChange={(e) => setChosen(e.target.value)}>
+                <option value="">Beleg wählen ({choices.length} {found ? 'gefunden' : 'nächstliegende'})</option>
+                {choices.map((r) => (
+                  <option key={r.rowId} value={r.rowId}>
+                    {choiceLabel(r)}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="ui-btn ui-btn-sm"
+                disabled={pending || !chosen}
+                aria-label={`Zuordnen: gewählten Beleg zu ${check.counterparty || 'dieser Zahlung'}`}
+                onClick={() => onLinkByHand(chosen)}
+              >
+                Zuordnen
+              </button>
+            </div>
+          )}
         </div>
       )}
       {canWrite && (
@@ -677,8 +757,8 @@ export default function ReceiptChecks({
               onTakeOver={(mailId) => takeOver(c.paymentId, mailId)}
               onDismiss={(mailId) => run(`check:${c.paymentId}`, () => dismissMail(mailId))}
               takingOver={takingOver}
-              freeReceipts={loop.freeReceipts}
               onLinkByHand={(rowId) => run(`check:${c.paymentId}`, () => linkChosenReceipt(c.paymentId, rowId))}
+              onSearchReceipts={(text) => findReceiptChoices(c.paymentId, text)}
             />
           ))}
         </ul>

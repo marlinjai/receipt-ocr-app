@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loopState, notNeededReason, notifiable, receiptCandidates, type LoopContext, type LoopPayment, type LoopReceipt } from '../loop';
+import { CHOICES_SHOWN, loopState, notNeededReason, notifiable, receiptCandidates, receiptChoices, type LoopContext, type LoopPayment, type LoopReceipt } from '../loop';
 
 /** Every name here is a brand or invented. */
 const payment = (o: Partial<LoopPayment> = {}): LoopPayment => ({
@@ -119,5 +119,29 @@ describe('notifiable', () => {
     expect(notifiable({ bookingDay: '2026-05-10' }, '2026-05-24')).toBe(true);
     expect(notifiable({ bookingDay: '2026-05-10' }, '2026-05-25')).toBe(false);
     expect(notifiable({ bookingDay: '2026-05-10' }, '2026-05-09')).toBe(false);
+  });
+});
+
+describe('receiptChoices', () => {
+  const r = (rowId: string, o: Partial<LoopReceipt> = {}): LoopReceipt => ({ rowId, label: rowId, vendor: null, vendorKey: null, day: '2026-05-10', amountCents: 1000, estimated: false, linked: false, ...o });
+  const pay = { bookingDay: '2026-05-10', amountCents: -1000 };
+
+  it('offers receipts with something left to pay, the exact amount first, then the nearest amount and day, unknown amounts last', () => {
+    const receipts = [r('far', { amountCents: 5000 }), r('none', { amountCents: null }), r('later', { day: '2026-06-30' }), r('exact'), r('paid', { linked: true }), r('part', { amountCents: 3000, linked: true })];
+    const paid = new Map([['paid', 1000], ['part', 2000]]);
+    expect(receiptChoices(pay, receipts, paid).map((c) => c.rowId)).toEqual(['exact', 'part', 'later', 'far', 'none']);
+    expect(receiptChoices(pay, receipts, paid).find((c) => c.rowId === 'part')?.openCents).toBe(1000);
+  });
+
+  it('a linked receipt without an amount is never offered; a search finds by name, vendor or amount', () => {
+    const receipts = [r('a', { amountCents: null, linked: true }), r('Bon Bäcker', { vendor: 'Bäckerei Beispiel' }), r('b', { amountCents: 4550 })];
+    expect(receiptChoices(pay, receipts, new Map()).map((c) => c.rowId)).toEqual(['Bon Bäcker', 'b']);
+    expect(receiptChoices(pay, receipts, new Map(), 'bäckerei').map((c) => c.rowId)).toEqual(['Bon Bäcker']);
+    expect(receiptChoices(pay, receipts, new Map(), '45,50').map((c) => c.rowId)).toEqual(['b']);
+  });
+
+  it('offers at most the limit', () => {
+    const receipts = Array.from({ length: 40 }, (_, i) => r(`r${String(i).padStart(2, '0')}`));
+    expect(receiptChoices(pay, receipts, new Map())).toHaveLength(CHOICES_SHOWN);
   });
 });

@@ -378,19 +378,31 @@ describe('links of the receiver', () => {
     expect(await code(unlinkRoutedPayment(db, w.rctx, id))).toBe('link_not_found');
   });
 
-  it('the receiver links a receipt of its own by hand when no proposal fits, never one of the holder', async () => {
+  it('the receiver links a receipt of its own by hand when no proposal fits, never one of the holder; taken back, it is offered again', async () => {
     const w = await world();
     const id = w.ids.get('Teils Markt') as string;
+    const other = w.ids.get('Privat Laden') as string;
     const own = await w.receiver.addReceipt({ Name: 'Wochenmarkt Zettel', Vendor: 'Ganz anderer Name', Gross: 31.5, Date: '2026-05-01', Currency: 'EUR', 'FX Rate': 1 });
     const holders = await w.holder.addReceipt({ Name: 'Firmenbeleg', Vendor: 'Teils Markt', Gross: 30, Date: '2026-05-13', Currency: 'EUR', 'FX Rate': 1 });
+    const choicesOf = async (paymentId: string) => (await loadLoopOverview(db, w.rctx.workspaceId)).open.find((c) => c.paymentId === paymentId)?.choices?.map((r) => r.rowId) ?? [];
     expect(await stateOf(w.rctx.workspaceId, id)).toBe('missing');
-    const overview = await loadLoopOverview(db, w.rctx.workspaceId);
-    expect(overview.freeReceipts.map((r) => r.rowId)).toEqual([own]);
-    expect(await code(linkReceiptToPayment(db, w.rctx, id, holders))).toBe('target_not_found');
-    await linkReceiptToPayment(db, w.rctx, id, own);
+    expect(await choicesOf(id)).toEqual([own]);
+    expect(await code(linkReceiptToPayment(db, w.rctx, id, holders, { byHand: true }))).toBe('target_not_found');
+    await linkReceiptToPayment(db, w.rctx, id, own, { byHand: true });
     expect(await stateOf(w.rctx.workspaceId, id)).toBe('settled_or_not_needed');
-    expect((await loadLoopOverview(db, w.rctx.workspaceId)).freeReceipts).toEqual([]);
     expect((await loadPayments(db, w.hctx.workspaceId)).payments.find((p) => p.id === id)?.links).toEqual([]);
+    // A second choice from another tab is told, not lost.
+    expect(await code(linkReceiptToPayment(db, w.rctx, id, own, { byHand: true }))).toBe('already_has_receipt');
+    // Partly paid (31.50 receipt, 30.00 paid): still offered for the rest.
+    expect(await choicesOf(other)).toEqual([own]);
+
+    // Backtrack: "Lösen" frees the whole amount again, and it can go on another payment.
+    await unlinkRoutedPayment(db, w.rctx, id);
+    expect(await choicesOf(id)).toEqual([own]);
+    await answerNoReceipt(db, w.rctx, id, 'Markt ohne Bon');
+    expect(await code(linkReceiptToPayment(db, w.rctx, id, own, { byHand: true }))).toBe('payment_not_open');
+    await linkReceiptToPayment(db, w.rctx, other, own, { byHand: true });
+    expect(await stateOf(w.rctx.workspaceId, other)).toBe('settled_or_not_needed');
   });
 
   it('a dormant link keeps its receipt from being proposed elsewhere, and can be taken back to free it', async () => {

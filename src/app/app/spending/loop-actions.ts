@@ -10,7 +10,8 @@ import { NotifyServiceError, devicePushState, forgetDeviceEverywhere, validVapid
 import { berlinToday } from '@/lib/spending/period';
 import { mailboxFor } from '@/lib/spending/mailbox/server';
 import { MailCandidateError, dismissMailCandidate } from '@/lib/spending/mailbox/service';
-import { linkReceiptToPayment } from '@/lib/spending/loop-service';
+import { linkReceiptToPayment, searchReceiptChoices } from '@/lib/spending/loop-service';
+import type { ReceiptChoice } from '@/lib/spending/loop';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
 
 /**
@@ -187,13 +188,24 @@ export async function linkTakenOver(paymentId: unknown, rowId: unknown): Promise
  * fits (another wording, another amount): the person chose it. For a payment
  * routed here from the company holding its account, this is the receiver's
  * own link (plan 2026-10-22, payments across companies); the receipt must be
- * this company's, the payment one still waiting here.
+ * this company's, the payment one still waiting here. A payment that got its
+ * receipt in the meantime is refused with `already_has_receipt`.
  */
 export async function linkChosenReceipt(paymentId: unknown, rowId: unknown): Promise<ChecksResult<ChecksView>> {
   try {
     const ctx = await writeContext();
-    await linkReceiptToPayment(prisma, ctx, String(paymentId ?? ''), String(rowId ?? ''));
+    await linkReceiptToPayment(prisma, ctx, String(paymentId ?? ''), String(rowId ?? ''), { byHand: true });
     return { ok: true, value: await view(ctx.workspaceId, true) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Search this company's receipts for one to link to an open payment by hand (name, vendor or amount). Read only. */
+export async function findReceiptChoices(paymentId: unknown, text: unknown): Promise<ChecksResult<ReceiptChoice[]>> {
+  try {
+    const session = await requireReceiptsSession();
+    return { ok: true, value: await searchReceiptChoices(prisma, sessionWorkspaceId(session), String(paymentId ?? ''), text) };
   } catch (e) {
     return failure(e);
   }

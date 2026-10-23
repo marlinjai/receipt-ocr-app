@@ -110,8 +110,9 @@ other's copy behind, and every changed answer would need a write in two companie
    same company again revives them.
 8. **Links of private receipts.** The receiver links its own receipt to a routed payment from its
    spending page: confirming a proposed receipt, taking an invoice over from the mailbox, or picking
-   one of its receipts not linked yet by hand when no proposal fits ("Vorhandenen Beleg wählen",
-   offered on every open check, in every company). The
+   one of its receipts by hand when no proposal fits ("Vorhandenen Beleg zuordnen" on every open
+   check, in every company: the 30 receipts with something left to pay that lie closest in amount
+   and day, partly paid ones included, and a search by name, vendor or amount for the others). The
    link belongs to the receiver (its workspace and company stamp), never to the holder.
 9. **A link counts only while its payment routes to its company.** The holder never reads the
    receiver's links (`loadPayments` reads only the reader's links), so its tax figures, its loop and
@@ -329,6 +330,16 @@ answer first, so the result never depends on row order; the comment on money bac
 
 Accepted: money back that is routed to the receiver stays without a link (the loop asks for no
 receipt for it; linking it in the holder would make it business and take it back there).
+
+### Seventh review (2026-10-23), fixed
+
+No blocker; fixed: a hand choice for a payment that got its receipt in the meantime is refused
+with its own message instead of an answer that looked like success; the hand choice offers the 30
+closest receipts per payment (amount still open, then day), partly paid receipts included, with a
+search for the rest, drawn only for the payment a person opens it on; the refusals of a hand
+choice have their own words; the list names the vendor and marks estimated amounts; the hand
+choice is tested back and forth (taken back, offered again, linked to another payment, refused for
+a payment answered meanwhile).
 
 ### What the owner does after the deploy
 

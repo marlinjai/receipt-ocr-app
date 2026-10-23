@@ -2,6 +2,7 @@ import { vendorNamed } from '@/lib/tax/payments/match';
 import type { PaymentKind } from '@/lib/tax/payments/types';
 import type { SpendingCategory } from './categories';
 import { categorise, normalizeText, type CounterpartyTreatmentAnswer } from './rules';
+import { amountQuery } from '@/lib/tax/payments/search';
 
 /**
  * The missing-receipt loop, as a pure function of what is stored (plan
@@ -180,3 +181,58 @@ export const missingReceiptSubject = (paymentId: string) => `missing_receipt:${p
 
 /** The key of the one "invoice found in the mailbox" message of a payment, apart from its "receipt missing" message. */
 export const mailFoundSubject = (paymentId: string) => `mail_found:${paymentId}`;
+
+/** A receipt of this company a person may link to an open payment by hand. */
+export interface ReceiptChoice {
+  rowId: string;
+  label: string;
+  vendor: string | null;
+  day: string | null;
+  /** Euro cents (an estimate for a foreign-currency receipt); null when the receipt names no amount. */
+  amountCents: number | null;
+  estimated: boolean;
+  /** What of the receipt no payment covers yet (cents); null when its amount is unknown. */
+  openCents: number | null;
+}
+
+/** Receipts offered for one payment at most; a search finds the others. */
+export const CHOICES_SHOWN = 30;
+
+/**
+ * The receipts a person may link to a payment by hand, when no proposal fits:
+ * every receipt with something left to pay (also one partly paid, an
+ * instalment), the closest first: the amount still open nearest to what was
+ * paid, then the day nearest to the payment, receipts without an amount or a
+ * day last. With `text`, only receipts whose name or vendor contains it, or
+ * whose amount (or what is open of it) is that amount. Pure.
+ */
+export function receiptChoices(
+  payment: { bookingDay: string; amountCents: number },
+  receipts: readonly LoopReceipt[],
+  paidByRow: ReadonlyMap<string, number>,
+  text = '',
+  limit = CHOICES_SHOWN,
+): ReceiptChoice[] {
+  const paid = Math.abs(payment.amountCents);
+  const booked = dayNumber(payment.bookingDay);
+  const query = text.trim().toLowerCase().slice(0, 80);
+  const cents = query ? amountQuery(query) : null;
+  const ranked: Array<{ choice: ReceiptChoice; rank: [number, number, number] }> = [];
+  for (const r of receipts) {
+    const covered = paidByRow.get(r.rowId) ?? 0;
+    const openCents = r.amountCents === null ? null : r.amountCents - covered;
+    if (openCents !== null ? openCents <= 0 : r.linked) continue;
+    if (query) {
+      const named = `${r.label} ${r.vendor ?? ''}`.toLowerCase().includes(query);
+      const amount = cents !== null && (r.amountCents === cents || openCents === cents);
+      if (!named && !amount) continue;
+    }
+    const gap = r.day === null ? NaN : Math.abs(booked - dayNumber(r.day));
+    ranked.push({
+      choice: { rowId: r.rowId, label: r.label, vendor: r.vendor, day: r.day, amountCents: r.amountCents, estimated: r.estimated, openCents },
+      rank: [openCents === null ? 2 : openCents === paid ? 0 : 1, openCents === null ? Infinity : Math.abs(openCents - paid), Number.isFinite(gap) ? gap : Infinity],
+    });
+  }
+  ranked.sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.rank[2] - b.rank[2] || (a.choice.rowId < b.choice.rowId ? -1 : 1));
+  return ranked.slice(0, limit).map((r) => r.choice);
+}

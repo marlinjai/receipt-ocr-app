@@ -13,6 +13,7 @@ const dismissMail = vi.fn();
 const linkTakenOver = vi.fn();
 const getReceiptChecks = vi.fn();
 const linkChosenReceipt = vi.fn();
+const findReceiptChoices = vi.fn();
 const takeOverMail = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 vi.mock('./loop-actions', () => ({
@@ -25,6 +26,7 @@ vi.mock('./loop-actions', () => ({
   dismissMail: (...a: unknown[]) => dismissMail(...a),
   linkTakenOver: (...a: unknown[]) => linkTakenOver(...a),
   linkChosenReceipt: (...a: unknown[]) => linkChosenReceipt(...a),
+  findReceiptChoices: (...a: unknown[]) => findReceiptChoices(...a),
   getReceiptChecks: (...a: unknown[]) => getReceiptChecks(...a),
 }));
 vi.mock('../actions', () => ({ processReceipt: vi.fn() }));
@@ -42,11 +44,10 @@ const view = (canWrite = true): ChecksView => ({
   loop: {
     open: [
       { paymentId: 'p1', bookingDay: '2026-05-10', cents: 2999, counterparty: 'Zyx Handel', reference: '', state: { state: 'proposed', candidates: [{ rowId: 'r1', label: 'Zyx Rechnung', day: '2026-05-09', amountCents: 2999, estimated: false }] } },
-      { paymentId: 'p2', bookingDay: '2026-05-12', cents: 1250, counterparty: 'Abc Laden', reference: '', state: { state: 'missing' } },
+      { paymentId: 'p2', bookingDay: '2026-05-12', cents: 1250, counterparty: 'Abc Laden', reference: '', state: { state: 'missing' }, choices: [{ rowId: 'r9', label: 'Kassenbon', vendor: 'Abc Laden', day: '2026-05-11', amountCents: 1250, estimated: false, openCents: 1250 }] },
     ],
     answered: [{ paymentId: 'p3', bookingDay: '2026-05-01', cents: 300, counterparty: 'Parkhaus', reference: '', state: { state: 'no_receipt', reason: 'Automat' } }],
     counts: { hasReceipt: 4, notNeeded: { own_transfer: 1, income: 0, refund: 0, fee: 0, loan: 1, cash: 0, transfer: 0 }, noReceipt: 1, proposed: 1, in_mailbox: 0, missing: 1 },
-    freeReceipts: [{ rowId: 'r9', label: 'Kassenbon', day: '2026-05-11', amountCents: 1250 }],
   },
   notifications: [{ id: 'n1', subjectKey: 'missing_receipt:p2', kind: 'missing_receipt', title: 'Beleg fehlt: Abc Laden', body: '', path: '/app/spending?pruefen=p2', channel: null, failed: false, createdAt: '2026-05-12T10:00:00Z' }],
   settings: { channel: 'push', notifyEmail: null },
@@ -60,6 +61,7 @@ const view = (canWrite = true): ChecksView => ({
 
 beforeEach(() => {
   for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings, dismissMail, linkTakenOver, linkChosenReceipt, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
+  findReceiptChoices.mockReset();
   Element.prototype.scrollIntoView = vi.fn();
 });
 
@@ -84,11 +86,34 @@ describe('ReceiptChecks', () => {
   it('links a receipt chosen by hand when no proposal fits, only after one is chosen', async () => {
     render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
     const user = userEvent.setup();
+    // Drawn only on request, for the payment a person works on.
+    expect(screen.queryByLabelText('Vorhandenen Beleg für Abc Laden wählen')).toBeNull();
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
     const link = screen.getByRole('button', { name: 'Zuordnen: gewählten Beleg zu Abc Laden' });
     expect((link as HTMLButtonElement).disabled).toBe(true);
     await user.selectOptions(screen.getByLabelText('Vorhandenen Beleg für Abc Laden wählen'), 'r9');
     await user.click(link);
     expect(linkChosenReceipt).toHaveBeenCalledWith('p2', 'r9');
+  });
+
+  it('searches the receipts for a payment and says when nothing fits', async () => {
+    findReceiptChoices.mockResolvedValueOnce({ ok: true, value: [{ rowId: 'r7', label: 'Altbeleg', vendor: null, day: null, amountCents: 3000, estimated: true, openCents: 1250 }] });
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    await user.type(screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)'), 'Alt');
+    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    expect(findReceiptChoices).toHaveBeenCalledWith('p2', 'Alt');
+    expect(screen.getByRole('option', { name: 'Altbeleg, ca. 30,00 €, noch offen ca. 12,50 €' })).toBeTruthy();
+    findReceiptChoices.mockResolvedValueOnce({ ok: true, value: [] });
+    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    expect(await screen.findByText('Kein offener Beleg passt zu dieser Suche.')).toBeTruthy();
+  });
+
+  it('words the refusals of a hand choice', () => {
+    expect(checksActionMessage({ ok: false, error: 'invalid_input', detail: 'already_has_receipt' })).toMatch(/inzwischen schon ein Beleg/);
+    expect(checksActionMessage({ ok: false, error: 'invalid_input', detail: 'payment_not_open' })).toMatch(/wartet auf keinen Beleg mehr/);
+    expect(checksActionMessage({ ok: false, error: 'invalid_input', detail: 'target_not_found' })).toMatch(/nicht mehr da/);
   });
 
   it('an answer given in the company holding the account is shown without a take-back button', async () => {

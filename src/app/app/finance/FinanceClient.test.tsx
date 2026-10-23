@@ -590,7 +590,7 @@ describe('FinanceClient: notices and statement', () => {
     const { unmount } = render(<FinanceClient initial={view([])} />);
     expect(screen.queryByRole('tab', { name: /Jahreswechsel/ })).toBeNull();
     unmount();
-    const base = { kind: 'receipt' as const, dayBasis: 'payment' as const, cents: 65_000, otherYear: 2026, storedAnswer: null, filedYear: null, departsFromFiled: null, inactive: null };
+    const base = { kind: 'receipt' as const, dayBasis: 'payment' as const, cents: 65_000, otherYear: 2026, storedAnswer: null, filedYear: null, filedWith: null, departsFromFiled: null, inactive: null };
     const entry = { ...base, subjectId: 'a', label: 'Vermieter Beispiel', cashDay: '2025-12-29', answer: null, source: null, reason: 'Ohne Lieferant lässt sich nicht erkennen, ob die Zahlung regelmäßig wiederkehrt' };
     // Answered by a rule and by a filed year: not counted as open.
     const byRule = { ...base, subjectId: 'b', label: 'Abo Beispiel', cashDay: '2025-12-27', answer: false, source: 'rule' as const, reason: 'Abo, Zeitraum beginnt am Zahltag' };

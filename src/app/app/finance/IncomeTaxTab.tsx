@@ -168,6 +168,8 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
     setSeenMonthsKey(storedMonthsKey);
     setMonths(storedMonths);
   }
+  // Fixed for the life of the form, so a render around midnight cannot disagree with the first one.
+  const [today] = useState(() => berlinDay());
   // The filing day follows what is stored, like the months above.
   const [filedOn, setFiledOn] = useState(tax.filedOn ?? '');
   const [seenFiledOn, setSeenFiledOn] = useState(tax.filedOn);
@@ -566,7 +568,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
               style={{ width: 'auto' }}
               value={filedOn}
               min={`${view.year + 1}-01-01`}
-              max={berlinDay()}
+              max={today}
               disabled={busy}
               onChange={(e) => setFiledOn(e.target.value)}
             />

@@ -25,8 +25,10 @@ import {
   boundaryDay,
   decideBoundary,
   otherYearOf,
+  filedWithOf,
   recursMonthly,
   touchesYear,
+  vatStatusDay,
   vatStatusOn,
   BOUNDARY_REASONS,
   BOUNDARY_SUBJECT_KINDS,
@@ -347,6 +349,8 @@ export interface YearBoundaryEntry {
   storedAnswer: boolean | null;
   /** The filed year that fixes this payment; null while both years are open. Nothing on it can be answered then. */
   filedYear: number | null;
+  /** The filed return the person's answer went into; such an answer is part of it and cannot be taken back. */
+  filedWith: number | null;
   /** Set when the person's answer would move the payment across this filed year: it is shown, not applied. */
   departsFromFiled: number | null;
   /**
@@ -585,7 +589,9 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   );
   const filedOn = new Map(filedYears.map((y) => [y.year, y.filedOn as string]));
   // The ten-day rule for the settlements with the tax office: worked out once, used by the totals and the list alike.
-  // Judged by the status on the payment day (the small-business rule can change during a year).
+  // Judged by the status of the period the payment can pay (the small-business rule can change from
+  // one year to the next): a January payment pays the December or fourth-quarter return of the year
+  // before, so the status on its 31 December counts; a December payment pays a period of its own year.
   const advanceReturnsFiled = settingsRow?.vatFrequency === 'monthly' || settingsRow?.vatFrequency === 'quarterly';
   const settlementBoundary = new Map(
     storedSettlements.flatMap((s): Array<[string, BoundaryDecision]> =>
@@ -600,7 +606,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
                 stored: boundaryAnswers.get(`vat_settlement:${s.id}`),
                 filedOn,
                 recurring: null,
-                vatStatus: vatStatusOn(smallBusinessOn(settings, s.settledOn), advanceReturnsFiled),
+                vatStatus: vatStatusOn(smallBusinessOn(settings, vatStatusDay(s.settledOn)), advanceReturnsFiled),
               }),
             ],
           ],
@@ -682,7 +688,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     const storedAnswer = stored && stored.cashDay === cashDay ? stored.belongsToOtherYear : null;
     receiptBoundary.set(f.record.rowId, {
       inactive,
-      decision: { answer: storedAnswer, source: storedAnswer === null ? null : 'person', reason: BOUNDARY_REASONS.person, storedAnswer, filedYear: null, departsFromFiled: null },
+      decision: { answer: storedAnswer, source: storedAnswer === null ? null : 'person', reason: BOUNDARY_REASONS.person, storedAnswer, filedYear: null, filedWith: null, departsFromFiled: null },
     });
   });
   // A receipt the ten-day rule places in the other year counts on that year's
@@ -1737,54 +1743,53 @@ function validateBoundaryInput(raw: unknown): YearBoundaryInput {
 export async function saveYearBoundaryAnswer(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<void> {
   const input = validateBoundaryInput(raw);
   const key = { authWorkspaceId: ctx.workspaceId, subjectKind: input.kind, subjectId: input.subjectId };
-  const stored = await db.taxYearBoundaryAnswer.findUnique({ where: { authWorkspaceId_subjectKind_subjectId: key } });
-  if (input.belongsToOtherYear === null) {
-    if (!stored) return;
-    // An answer that went into a filed return stays part of it, as long as it still applies. Without
-    // that, taking it back clears also an answer that has no effect any more (another payment day,
-    // a meal, an asset).
-    if ((await answerFiledWith(db, ctx, stored)) !== null) {
-      const current = await boundaryCashDay(db, ctx, input.kind, input.subjectId).catch((e: unknown) => {
-        if (e instanceof TaxServiceError) return null;
-        throw e;
-      });
-      if (current === stored.cashDay) throw new TaxServiceError('year_boundary_filed');
+  // The payment day as it is now; null when the subject cannot be asked about any more (only taking back needs that case).
+  const cashDay =
+    input.belongsToOtherYear === null
+      ? await boundaryCashDay(db, ctx, input.kind, input.subjectId).catch((e: unknown) => {
+          if (e instanceof TaxServiceError) return null;
+          throw e;
+        })
+      : await boundaryCashDay(db, ctx, input.kind, input.subjectId);
+  if (input.belongsToOtherYear !== null && cashDay !== input.cashDay) throw new TaxServiceError('year_boundary_changed');
+  // The checks against filed years and the write in one transaction, so a filing day saved meanwhile cannot slip between them.
+  await db.$transaction(async (tx) => {
+    const stored = await tx.taxYearBoundaryAnswer.findUnique({ where: { authWorkspaceId_subjectKind_subjectId: key } });
+    // An answer that went into a filed return stays part of it, as long as it still applies to the current
+    // payment day. Any other answer may go, also one that has no effect any more (another day, a meal, an asset).
+    const filedWith = stored && stored.cashDay === cashDay ? await answerFiledWith(tx, ctx, stored) : null;
+    if (input.belongsToOtherYear === null) {
+      if (!stored) return;
+      if (filedWith !== null) throw new TaxServiceError('year_boundary_filed');
+      await tx.taxYearBoundaryAnswer.deleteMany({ where: key });
+      return;
     }
-    await db.taxYearBoundaryAnswer.deleteMany({ where: key });
-    return;
-  }
-  const cashDay = await boundaryCashDay(db, ctx, input.kind, input.subjectId);
-  if (cashDay !== input.cashDay) throw new TaxServiceError('year_boundary_changed');
-  const same = stored !== null && stored.cashDay === cashDay;
-  // Saving the answer that is already stored changes nothing (and keeps the day it was given).
-  if (same && stored.belongsToOtherYear === input.belongsToOtherYear) return;
-  if (same && (await answerFiledWith(db, ctx, stored)) !== null) throw new TaxServiceError('year_boundary_filed');
-  if (input.belongsToOtherYear) {
-    const years = [Number(cashDay.slice(0, 4)), otherYearOf(cashDay) as number];
-    const filed = await db.taxYearSettings.count({ where: { authWorkspaceId: ctx.workspaceId, year: { in: years }, filedOn: { not: null } } });
-    if (filed > 0) throw new TaxServiceError('year_boundary_filed');
-  }
-  await db.taxYearBoundaryAnswer.upsert({
-    where: { authWorkspaceId_subjectKind_subjectId: key },
-    create: { ...key, authTenantId: ctx.tenantId, cashDay, belongsToOtherYear: input.belongsToOtherYear },
-    update: { cashDay, belongsToOtherYear: input.belongsToOtherYear },
+    const day = cashDay as string;
+    // Saving the answer that is already stored changes nothing (and keeps the day it was given).
+    if (stored && stored.cashDay === day && stored.belongsToOtherYear === input.belongsToOtherYear) return;
+    if (filedWith !== null) throw new TaxServiceError('year_boundary_filed');
+    if (input.belongsToOtherYear) {
+      const years = [Number(day.slice(0, 4)), otherYearOf(day) as number];
+      const filed = await tx.taxYearSettings.count({ where: { authWorkspaceId: ctx.workspaceId, year: { in: years }, filedOn: { not: null } } });
+      if (filed > 0) throw new TaxServiceError('year_boundary_filed');
+    }
+    await tx.taxYearBoundaryAnswer.upsert({
+      where: { authWorkspaceId_subjectKind_subjectId: key },
+      create: { ...key, authTenantId: ctx.tenantId, cashDay: day, belongsToOtherYear: input.belongsToOtherYear },
+      update: { cashDay: day, belongsToOtherYear: input.belongsToOtherYear },
+    });
   });
 }
 
-/**
- * The filed year a stored answer went into: one of the two years of its
- * payment day is filed and the answer was saved up to every such filing day
- * (the same test as `decideBoundary`). Null when both years are open or the
- * answer was given after a filing day (then it is not applied and may go).
- */
-async function answerFiledWith(db: PrismaClient, ctx: TaxContext, stored: { cashDay: string; updatedAt: Date }): Promise<number | null> {
+/** The filed return a stored answer went into (`filedWithOf`, the same test the read uses), or null. */
+async function answerFiledWith(db: PrismaClient | Prisma.TransactionClient, ctx: TaxContext, stored: { cashDay: string; updatedAt: Date }): Promise<number | null> {
   const other = otherYearOf(stored.cashDay);
   if (other === null) return null;
-  const paid = Number(stored.cashDay.slice(0, 4));
-  const filed = await db.taxYearSettings.findMany({ where: { authWorkspaceId: ctx.workspaceId, year: { in: [paid, other] }, filedOn: { not: null } }, select: { year: true, filedOn: true } });
-  const savedOn = berlinDay(stored.updatedAt);
-  if (filed.length === 0 || filed.some((f) => savedOn > (f.filedOn as string))) return null;
-  return filed.some((f) => f.year === paid) ? paid : other;
+  const filed = await db.taxYearSettings.findMany({
+    where: { authWorkspaceId: ctx.workspaceId, year: { in: [Number(stored.cashDay.slice(0, 4)), other] }, filedOn: { not: null } },
+    select: { year: true, filedOn: true },
+  });
+  return filedWithOf(stored.cashDay, berlinDay(stored.updatedAt), new Map(filed.map((f) => [f.year, f.filedOn as string])));
 }
 
 /**

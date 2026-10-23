@@ -107,8 +107,10 @@ export interface BoundaryFacts {
   /** Receipts: whether the counterparty recurs (`recursMonthly`); null when it cannot be told. Ignored for settlements. */
   recurring: boolean | null;
   /**
-   * Settlements: the company's value-added tax status on the payment day.
-   * 'regular' needs regular taxation on that day and an advance return period;
+   * Settlements: the company's value-added tax status for the period the
+   * payment can pay: on 31 December of the year before for a January payment
+   * (it pays the December or fourth-quarter return), on the payment day for a
+   * December one. 'regular' needs regular taxation then and an advance return period;
    * 'small' is the small-business rule; the other two say which answer is missing.
    * Ignored for receipts.
    */
@@ -116,6 +118,11 @@ export interface BoundaryFacts {
 }
 
 export type VatStatusOnDay = 'regular' | 'small' | 'status_unanswered' | 'frequency_unanswered';
+
+/** The day whose status decides a settlement: 31 December of the year before for a January payment, else the payment day. */
+export function vatStatusDay(cashDay: string): string {
+  return cashDay.slice(5, 7) === '01' ? `${Number(cashDay.slice(0, 4)) - 1}-12-31` : cashDay;
+}
 
 /** The status a settlement is judged by: the small-business answer on its day, and whether advance returns are filed. */
 export function vatStatusOn(smallBusiness: boolean | null, frequencySet: boolean): VatStatusOnDay {
@@ -134,8 +141,29 @@ export interface BoundaryDecision {
   storedAnswer: boolean | null;
   /** The filed year that fixes this payment (the paid year first); null while both years are open. */
   filedYear: number | null;
+  /** The filed return the person's answer went into (saved up to its filing day); it is part of that return then. */
+  filedWith: number | null;
   /** Set when the person's answer would move the payment across this filed year and is therefore not applied. */
   departsFromFiled: number | null;
+}
+
+/** The filed years among the two years of a payment day, the paid year first. */
+function filedYearsOf(cashDay: string, filedOn: ReadonlyMap<number, string>): number[] {
+  const other = otherYearOf(cashDay);
+  return [Number(cashDay.slice(0, 4)), ...(other === null ? [] : [other])].filter((y) => filedOn.has(y));
+}
+
+/**
+ * The filed return a person's answer went into: one of the two years of its
+ * payment day is filed and the answer was saved up to every such filing day.
+ * Null when both years are open or the answer was saved after a filing day
+ * (then it is not part of a return and may be taken back). One test, used by
+ * the read (`decideBoundary`) and by the write that protects filed answers.
+ */
+export function filedWithOf(cashDay: string, savedOn: string, filedOn: ReadonlyMap<number, string>): number | null {
+  const filed = filedYearsOf(cashDay, filedOn);
+  if (filed.length === 0 || filed.some((y) => savedOn > (filedOn.get(y) as string))) return null;
+  return filed[0];
 }
 
 /** At least this many months with a payment or receipt of a counterparty in the twelve before make it recurring. */
@@ -184,23 +212,23 @@ export const departsReason = (year: number) => `Weicht von der abgegebenen ErklÃ
  */
 export function decideBoundary(facts: BoundaryFacts): BoundaryDecision {
   const { kind, cashDay, stored, filedOn } = facts;
-  const paidYear = Number(cashDay.slice(0, 4));
-  const otherYear = otherYearOf(cashDay);
   const storedAnswer = answerFor(stored, cashDay);
-  const filed = [paidYear, ...(otherYear === null ? [] : [otherYear])].filter((y) => filedOn.has(y));
+  const filed = filedYearsOf(cashDay, filedOn);
+  const filedWith = storedAnswer !== null ? filedWithOf(cashDay, (stored as StoredBoundaryAnswer).savedOn, filedOn) : null;
   const decision = (answer: boolean | null, source: BoundarySource | null, reason: string, departsFromFiled: number | null = null): BoundaryDecision => ({
     answer,
     source,
     reason,
     storedAnswer,
     filedYear: filed[0] ?? null,
+    filedWith,
     departsFromFiled,
   });
 
   if (filed.length > 0) {
     if (storedAnswer === null) return decision(false, 'filed', filedReason(filed[0]));
-    const savedAfter = filed.find((y) => (stored as StoredBoundaryAnswer).savedOn > (filedOn.get(y) as string));
-    if (savedAfter === undefined) return decision(storedAnswer, 'person', filedBeforeReason(filed[0]));
+    if (filedWith !== null) return decision(storedAnswer, 'person', filedBeforeReason(filedWith));
+    const savedAfter = filed.find((y) => (stored as StoredBoundaryAnswer).savedOn > (filedOn.get(y) as string)) as number;
     // Staying is what the filed return says anyway.
     if (!storedAnswer) return decision(false, 'person', BOUNDARY_REASONS.person);
     return decision(false, 'filed', departsReason(savedAfter), savedAfter);

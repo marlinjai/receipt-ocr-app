@@ -73,6 +73,12 @@ const regular = async (ctx: TaxContext) => {
   await saveVatSettings(db, ctx, { frequency: 'quarterly', method: 'issued' });
 };
 
+const regularWorkspace = async () => {
+  const made = await workspace();
+  await regular(made.ctx);
+  return made;
+};
+
 const expense = async (ws: TestWorkspace, year: number) => (await loadStatement(db, ws.workspaceId, year)).businessExpenseCents;
 const entryOf = async (ws: TestWorkspace, year: number, subjectId: string) => (await loadStatement(db, ws.workspaceId, year)).yearBoundary.find((e) => e.subjectId === subjectId);
 
@@ -169,7 +175,7 @@ describe('the ten-day rule: value-added tax by the status on the payment day', (
     expect(await entryOf(ws, 2026, id)).toMatchObject({ answer: false, source: 'person' });
   });
 
-  it('a change of the small-business status during the year is read on the payment day', async () => {
+  it('a January payment is judged by the status of the year before: regularly taxed from 2026 on, it has no 2025 return to pay and stays', async () => {
     const { ws, ctx } = await workspace();
     await saveVatSettings(db, ctx, { frequency: 'quarterly', method: 'issued' });
     // A small business until the end of 2025, regularly taxed from 2026 on.
@@ -177,8 +183,23 @@ describe('the ten-day rule: value-added tax by the status on the payment day', (
     const december = await saveVatSettlement(db, ctx, { date: '2025-12-23', cents: 1_300, direction: 'paid' });
     const january = await saveVatSettlement(db, ctx, { date: '2026-01-09', cents: 5_100, direction: 'paid' });
     expect(await entryOf(ws, 2025, december)).toMatchObject({ answer: false, source: 'rule', reason: 'Kleinunternehmer: keine regelmäßige Vorauszahlung' });
-    expect(await entryOf(ws, 2025, january)).toMatchObject({ answer: true, source: 'rule' });
-    expect([await paid(ws, 2025), await paid(ws, 2026)]).toEqual([6_400, 0]);
+    expect(await entryOf(ws, 2026, january)).toMatchObject({ answer: false, source: 'rule', reason: 'Kleinunternehmer: keine regelmäßige Vorauszahlung' });
+    expect([await paid(ws, 2025), await paid(ws, 2026)]).toEqual([1_300, 5_100]);
+  });
+
+  it('regularly taxed through 2025 and a small business from 2026 on: the January payment pays the 2025 return and belongs to 2025', async () => {
+    const { ws, ctx } = await regularWorkspace();
+    await saveStatusChange(db, ctx, { effectiveFrom: '2026-01-01', smallBusiness: true });
+    const january = await saveVatSettlement(db, ctx, { date: '2026-01-09', cents: 5_100, direction: 'paid' });
+    // A refund for the fourth quarter arriving in January belongs to the year before as well.
+    const refund = await saveVatSettlement(db, ctx, { date: '2026-01-06', cents: 900, direction: 'refunded' });
+    expect(await entryOf(ws, 2026, january)).toMatchObject({ answer: true, source: 'rule', reason: 'Umsatzsteuer für Dezember oder das vierte Quartal: die Voranmeldung ist am 10. Januar fällig' });
+    expect(await entryOf(ws, 2026, refund)).toMatchObject({ answer: true, source: 'rule', label: 'Umsatzsteuer: Erstattung vom Finanzamt' });
+    expect([await paid(ws, 2025), await paid(ws, 2026)]).toEqual([5_100, 0]);
+    expect((await loadStatement(db, ws.workspaceId, 2025)).vat.settlements.map((v) => [v.id, v.countsOn])).toEqual([
+      [refund, '2025-12-31'],
+      [january, '2025-12-31'],
+    ]);
   });
 });
 

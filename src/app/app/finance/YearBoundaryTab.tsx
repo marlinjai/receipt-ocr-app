@@ -68,8 +68,9 @@ export default function YearBoundaryTab({ view, busy, error, onAnswer, onDecline
             {entries.map((entry) => {
               const paidYear = Number(entry.cashDay.slice(0, 4));
               const answerable = entry.inactive === null && entry.filedYear === null;
-              // A person's answer on a filed year is part of the return; only one that departs from it can be taken back.
-              const takeBack = entry.storedAnswer !== null && (entry.filedYear === null || entry.departsFromFiled !== null || entry.inactive !== null);
+              // An answer that went into a filed return is part of it; any other answer can be taken back.
+              const takeBack = entry.storedAnswer !== null && (entry.filedWith === null || entry.inactive !== null);
+              const fixed = entry.inactive === null && entry.filedYear !== null;
               return (
                 <li key={`${entry.kind}:${entry.subjectId}`} className="rounded-lg border p-3" style={{ borderColor: 'var(--border)' }}>
                   <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -88,6 +89,11 @@ export default function YearBoundaryTab({ view, busy, error, onAnswer, onDecline
                         ? `Bleibt in ${paidYear}. ${entry.reason}: die Antwort „zählt für ${entry.otherYear}“ wurde nach der Abgabe gegeben und wird nicht angewendet. Wer sie nicht mehr braucht, nimmt sie zurück.`
                         : `${entry.answer === true ? `Zählt für ${entry.otherYear}.` : entry.answer === false ? `Bleibt in ${paidYear}.` : `Noch offen: zählt bis dahin für ${paidYear}.`} ${entry.source === 'person' ? entry.reason : entry.source === null ? entry.reason : `Grund: ${entry.reason}`}.`}
                   </p>
+                  {fixed && (
+                    <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+                      Zum Ändern zuerst das Abgabedatum der Erklärung {entry.filedYear} im Tab „Einkommensteuer“ entfernen.
+                    </p>
+                  )}
                   <div className="mt-2 flex flex-wrap gap-2">
                     {answerable && (
                       <>

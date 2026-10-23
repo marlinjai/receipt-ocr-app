@@ -96,8 +96,10 @@ Two facts settle most of it:
   payment's month. The payment's own month does not count.
 - **Service period:** receipts carry none yet, so the one moving rule for receipts is absent and every
   receipt of an open year with a vendor stays by rule. Only a receipt without a vendor stays open.
-- **Value-added tax settlements** are judged by the small-business status on the payment day
-  (status changes included) and by whether an advance return period is chosen. While either answer
+- **Value-added tax settlements** are judged by the small-business status of the period they can
+  pay (status changes included): for a January payment the status on 31 December of the year before
+  (it pays the December or fourth-quarter return), for a December payment the status on its day; and
+  by whether an advance return period is chosen. While either answer
   is missing the settlement stays an open question instead of being guessed.
   The return period is the company's current setting (it is not kept per day).
 - **An answer that went into a filed return** (saved up to the filing day, for the payment day

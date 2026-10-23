@@ -184,16 +184,21 @@ export interface LoadedReceipts {
  * linked to the same receipt is taken off, and the day is that of the first
  * payment out.
  */
-export function paidByRow(payments: readonly PaymentRow[]): Map<string, { day: string; cents: number }> {
-  const out = new Map<string, { day: string; cents: number }>();
+export function paidByRow(payments: readonly PaymentRow[]): Map<string, { day: string; cents: number; estimated?: true }> {
+  const out = new Map<string, { day: string; cents: number; estimated?: true }>();
   for (const [rowId, money] of linkedByRow(payments)) if (money.paid) out.set(rowId, money.paid);
   return out;
 }
 
 /** What linked payments say about one receipt. */
 export interface LinkedMoney {
-  /** Day of the first payment out and what was paid, refunds taken off; null while no payment out is linked. */
-  paid: { day: string; cents: number } | null;
+  /**
+   * Day of the first payment out and what was paid, refunds taken off; null
+   * while no payment out is linked. `estimated` when a payment out counted in
+   * it is another currency at the reference rate: then the sum is no amount
+   * charged (see `resolveItem`).
+   */
+  paid: { day: string; cents: number; estimated?: true } | null;
   /** Refunds linked while no payment out is: taken off the document's own amount. */
   refundedCents: number;
   /**
@@ -215,12 +220,13 @@ export function linkedByRow(payments: readonly PaymentRow[]): Map<string, Linked
   // Note for the ten-day rule (year-boundary days): it looks at money out only,
   // so a credit note refunded between 22 December and 10 January is not listed
   // there. Credit notes are not regularly recurring payments, so none is missed.
-  const sums = new Map<string, { day: string | null; backDay: string | null; outCents: number; backCents: number }>();
+  const sums = new Map<string, { day: string | null; backDay: string | null; outCents: number; backCents: number; estimated: boolean }>();
   // A payment and the debit that funds it are the same money and count once (`countedReceiptLinks`).
   for (const { payment, link } of countedReceiptLinks(payments)) {
-    const current = sums.get(link.rowId) ?? { day: null, backDay: null, outCents: 0, backCents: 0 };
+    const current = sums.get(link.rowId) ?? { day: null, backDay: null, outCents: 0, backCents: 0, estimated: false };
     if (payment.amountCents < 0) {
       current.outCents += link.cents;
+      if (payment.estimated) current.estimated = true;
       if (current.day === null || payment.bookingDay < current.day) current.day = payment.bookingDay;
     } else {
       current.backCents += link.cents;
@@ -234,7 +240,7 @@ export function linkedByRow(payments: readonly PaymentRow[]): Map<string, Linked
     out.set(
       rowId,
       s.day !== null
-        ? { paid: { day: s.day, cents: Math.max(0, s.outCents - s.backCents) }, refundedCents: 0, back, outCents: s.outCents }
+        ? { paid: { day: s.day, cents: Math.max(0, s.outCents - s.backCents), ...(s.estimated ? { estimated: true as const } : {}) }, refundedCents: 0, back, outCents: s.outCents }
         : { paid: null, refundedCents: s.backCents, back, outCents: 0 },
     );
   }
@@ -1092,7 +1098,7 @@ function buildPaymentsView(
     purchasesByRow.set(link.rowId, list);
   }
   // A payment service or a payment provider stands for many shops: from it only a shared number proposes a receipt.
-  const heldNames = new Set(loaded.accounts.flatMap((a) => heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) })?.name ?? []));
+  const heldNames = new Set(loaded.accounts.flatMap((a) => heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format), services: a.batches.map((b) => b.service) })?.name ?? []));
   const namesService = (p: PaymentRow) => p.counterpartyKey.split(' ').some((word) => heldNames.has(word));
   const intermediary = (p: PaymentRow) => namesService(p) || p.counterpartyKey.split(' ').some((word) => PAYMENT_INTERMEDIARIES.has(word));
   const refundTargets: RefundTarget[] = resolved
@@ -1242,7 +1248,7 @@ function buildPaymentsView(
     .sort((a, b) => (a.bookingDay < b.bookingDay ? 1 : -1));
   const holderOf = new Map<string, { name: string; kind: ServiceKind }>();
   for (const a of loaded.accounts) {
-    const service = heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) });
+    const service = heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format), services: a.batches.map((b) => b.service) });
     if (service) holderOf.set(a.id, service);
   }
   const reconciliations: Reconciliation[] = [];

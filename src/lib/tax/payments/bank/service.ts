@@ -2,7 +2,8 @@ import 'server-only';
 import { createHash, randomBytes } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { counterpartyKey, importPayments, PaymentServiceError, type PaymentContext } from '../service';
-import { parsePaymentFile, toIsoDay } from '../parse';
+import { serviceOfInstitution } from '../funding';
+import { parsePaymentFile, rateKey, toIsoDay, walletRateNeeds } from '../parse';
 import { PaymentParseError, type NormalizedPayment } from '../types';
 import { BankApiError, type BankApi, type BankErrorKind, type PsuPresence, type SessionAccount } from './client';
 
@@ -29,8 +30,13 @@ export type BankServiceErrorCode =
   | 'invalid_aspsp'
   /** The interface does not offer this institution: the account stays on its file importer. */
   | 'aspsp_not_offered'
-  /** The account is fed from a payment service's or pay-later list, which the bank interface cannot continue. */
+  /** The account is fed from the pay-later list (Klarna), whose purchases the bank interface does not offer. */
   | 'account_source_unsupported'
+  /**
+   * The institution does not fit what the account holds: a bank for an account
+   * fed from PayPal, or PayPal for an account fed from a bank.
+   */
+  | 'institution_mismatch'
   /** The answer from the bank belongs to no consent in progress of this company (unknown, used, or another company's). */
   | 'state_invalid'
   | 'state_expired'
@@ -56,6 +62,13 @@ export interface BankDeps {
   api: BankApi;
   redirectUrl: string;
   now?: () => Date;
+  /**
+   * The reference rate (euro per unit) of a currency on a day, or null when it
+   * cannot be had: for a wallet's movements in another currency. The server
+   * uses the receipts' rate cache (`getFxRate`); without it such a movement
+   * waits like one without a rate.
+   */
+  fxRate?: (currency: string, day: string) => Promise<number | null>;
 }
 
 /** How long the person has to come back from the bank. */
@@ -73,8 +86,15 @@ export const OVERLAP_DAYS = 12;
 /** A warning is shown this many days before a consent runs out. */
 export const RENEW_WARNING_DAYS = 14;
 
-/** Formats of a payment service's or pay-later list: a bank source cannot continue them (see `BANK_FORMATS` in the payments service). */
-const LIST_FORMATS = ['paypal_csv', 'klarna_csv'];
+/** The pay-later list: its purchases are not offered by the interface (Klarna gives only its current account). */
+const PAY_LATER_FORMATS = ['klarna_csv'];
+
+/** The service an account's imports say it holds: 'paypal', 'klarna', 'bank' (a bank's file or live list), or null when it holds nothing. */
+function accountSource(batches: ReadonlyArray<{ format: string; service: string | null }>): 'paypal' | 'klarna' | 'bank' | null {
+  if (batches.some((b) => PAY_LATER_FORMATS.includes(b.format))) return 'klarna';
+  if (batches.some((b) => b.format === 'paypal_csv' || b.service === 'paypal')) return 'paypal';
+  return batches.length > 0 ? 'bank' : null;
+}
 
 const DAY_MS = 86_400_000;
 const shiftDay = (day: string, by: number) => new Date(Date.parse(`${day}T00:00:00Z`) + by * DAY_MS).toISOString().slice(0, 10);
@@ -115,9 +135,14 @@ export async function startConsent(db: PrismaClient, ctx: PaymentContext, deps: 
   const name = typeof input.name === 'string' ? input.name.trim() : '';
   const country = typeof input.country === 'string' ? input.country.trim().toUpperCase() : '';
   if (!name || name.length > 120 || !/^[A-Z]{2}$/.test(country)) throw new BankServiceError('invalid_aspsp');
-  const account = await db.taxAccount.findFirst({ where: { id: accountId, authWorkspaceId: ctx.workspaceId }, include: { batches: { select: { format: true } } } });
+  const account = await db.taxAccount.findFirst({ where: { id: accountId, authWorkspaceId: ctx.workspaceId }, include: { batches: { select: { format: true, service: true } } } });
   if (!account) throw new BankServiceError('account_not_found');
-  if (account.batches.some((b) => LIST_FORMATS.includes(b.format))) throw new BankServiceError('account_source_unsupported');
+  // What the account holds decides which institution may continue it: PayPal's list only PayPal, a bank's
+  // movements only a bank, the pay-later list nothing (plan 2026-10-23). An empty account takes any.
+  const holds = accountSource(account.batches);
+  if (holds === 'klarna') throw new BankServiceError('account_source_unsupported');
+  const paypal = serviceOfInstitution(name) === 'paypal';
+  if ((holds === 'paypal' && !paypal) || (holds === 'bank' && paypal)) throw new BankServiceError('institution_mismatch');
 
   const now = (deps.now ?? (() => new Date()))();
   let institutions;
@@ -403,7 +428,7 @@ export async function syncConnection(
   const dateFrom = continued < earliest ? earliest : continued > options.today ? options.today : continued;
   // A gap is what lies between the last day a fetch reached and the oldest day the bank still gives: only
   // after a pause longer than that (a consent renewed late). A quiet account with old bookings has none.
-  const found: BankNotices = { gaps: [], skipped: [], undated: [], dismissed: { skipped: [], undated: [] } };
+  const found: BankNotices = { gaps: [], skipped: [], undated: [], unrated: [], dismissed: { skipped: [], undated: [] } };
   if (connection.fetchedThrough && shiftDay(connection.fetchedThrough, 1) < earliest) {
     found.gaps.push({ from: shiftDay(connection.fetchedThrough, 1), to: shiftDay(earliest, -1) });
   }
@@ -425,6 +450,27 @@ export async function syncConnection(
     return kind === 'rate_limited' ? { status: 'rate_limited', added: 0 } : { status: 'failed', added: 0, error: kind };
   }
 
+  // A payment service's wallet read through the interface (PayPal, plan 2026-10-23): its movements in another
+  // currency are imported at the reference rate of their day, so the rates are looked up first and the reader
+  // stays pure. A movement whose rate cannot be had waits: its day is kept as a notice, and the next fetch
+  // starts before it.
+  const service = serviceOfInstitution(connection.aspspName);
+  const rates = new Map<string, number>();
+  const unrated = new Set<string>();
+  if (service !== null) {
+    for (const need of walletRateNeeds(transactions.filter((t) => !((movementDay(t) ?? '') > options.today)))) {
+      let rate: number | null = null;
+      try {
+        rate = deps.fxRate ? await deps.fxRate(need.currency, need.day) : null;
+      } catch {
+        rate = null;
+      }
+      if (rate !== null && Number.isFinite(rate) && rate > 0) rates.set(rateKey(need.currency, need.day), rate);
+      else unrated.add(need.day);
+    }
+  }
+  const parseOptions = service !== null ? { wallet: { rates } } : undefined;
+
   const bookedDays = transactions.flatMap((t) => ((t as { status?: unknown })?.status === 'BOOK' && movementDay(t) ? [movementDay(t) as string] : []));
   let added = 0;
   // A booking dated after today is left for a later fetch: imported now, it would make this import claim the
@@ -439,9 +485,9 @@ export async function syncConnection(
   let unreadable = 0;
   while (rows.length > 0) {
     try {
-      const parsed = parsePaymentFile(JSON.stringify({ transactions: rows }));
-      await adoptReworded(db, connection.accountId, parsed.payments, { from: dateFrom, to: options.today, except: skippedDays, since: connection.boundAt });
-      const result = await importPayments(db, ctx, connection.accountId, JSON.stringify({ transactions: rows }), { refuseEmpty: true });
+      const parsed = parsePaymentFile(JSON.stringify({ transactions: rows }), parseOptions);
+      await adoptReworded(db, connection.accountId, parsed.payments, { from: dateFrom, to: options.today, except: new Set([...skippedDays, ...unrated]), since: connection.boundAt });
+      const result = await importPayments(db, ctx, connection.accountId, JSON.stringify({ transactions: rows }), { refuseEmpty: true, parse: parseOptions, service });
       added = result.added;
       break;
     } catch (e) {
@@ -465,12 +511,14 @@ export async function syncConnection(
   // A skipped day stays until the person clears it (after checking it against a statement or a file import),
   // also when a later fetch brings that movement complete: only he knows whether the day is now in order.
   found.skipped = [...skippedDays].sort();
+  found.unrated = [...unrated].sort();
   // A booking dated after today (a card's future booking day) never moves the start of the next fetch past today,
   // and a day with a skipped movement keeps the next fetch reaching back to it.
   let latest = [connection.lastBookedThrough, ...bookedDays.filter((d) => d <= options.today)].filter((d): d is string => !!d).sort().pop() ?? null;
   // A day the person cleared no longer holds the next fetch back, even while the bank keeps listing it broken.
   const cleared = new Set(bankNotices(connection.notices).dismissed.skipped);
-  const firstSkipped = found.skipped.find((d) => !cleared.has(d));
+  // A day with a movement still waiting for its rate holds the next fetch back the same way.
+  const firstSkipped = [found.skipped.find((d) => !cleared.has(d)), found.unrated[0]].filter((d): d is string => !!d).sort()[0];
   if (latest && firstSkipped && shiftDay(firstSkipped, OVERLAP_DAYS - 1) < latest) latest = shiftDay(firstSkipped, OVERLAP_DAYS - 1);
   // One write under the row's lock, and only while the connection still reads the same session and account: a
   // switch in the meantime has started that account afresh, and nothing of this fetch belongs to it.
@@ -486,7 +534,7 @@ export async function syncConnection(
         fetchedThrough: options.today,
         lastError: null,
         lastErrorAt: null,
-        notices: mergeNotices(bankNotices(rows[0].notices), found, earliest) as unknown as Prisma.InputJsonValue,
+        notices: mergeNotices(bankNotices(rows[0].notices), found, earliest, dateFrom) as unknown as Prisma.InputJsonValue,
       },
     });
   }, { maxWait: 10_000, timeout: 20_000 });
@@ -508,12 +556,16 @@ function movementDay(raw: unknown): string | null {
  * key per such movement that had no readable day at all (a booking listed on
  * every fetch is still one booking). `dismissed` holds what the person
  * cleared, so a fetch that sees the same broken booking again does not bring
- * the notice back.
+ * the notice back. `unrated`: days with a movement in another currency whose
+ * reference rate could not be had; unlike the others it is what the last
+ * fetch found (a day goes by itself once its movement arrived), and a day
+ * older than the window a fetch still reaches stays until the person clears it.
  */
 export interface BankNotices {
   gaps: Array<{ from: string; to: string }>;
   skipped: string[];
   undated: string[];
+  unrated: string[];
   dismissed: { skipped: string[]; undated: string[] };
 }
 
@@ -543,7 +595,7 @@ function undatedKey(raw: unknown, seen: Map<string, number>): string {
 }
 
 export function bankNotices(value: Prisma.JsonValue | null | undefined): BankNotices {
-  const v = (value ?? {}) as { gaps?: unknown; skipped?: unknown; undated?: unknown; dismissed?: { skipped?: unknown; undated?: unknown } };
+  const v = (value ?? {}) as { gaps?: unknown; skipped?: unknown; undated?: unknown; unrated?: unknown; dismissed?: { skipped?: unknown; undated?: unknown } };
   const isDay = (d: unknown): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
   const isKey = (k: unknown): k is string => typeof k === 'string' && /^[0-9a-f]{24}$/.test(k);
   const list = <T>(x: unknown, ok: (y: unknown) => y is T): T[] => (Array.isArray(x) ? x.filter(ok) : []);
@@ -551,6 +603,7 @@ export function bankNotices(value: Prisma.JsonValue | null | undefined): BankNot
     gaps: list(v.gaps, (g): g is { from: string; to: string } => isDay((g as { from?: unknown })?.from) && isDay((g as { to?: unknown })?.to)),
     skipped: list(v.skipped, isDay),
     undated: list(v.undated, isKey),
+    unrated: list(v.unrated, isDay),
     dismissed: { skipped: list(v.dismissed?.skipped, isDay), undated: list(v.dismissed?.undated, isKey) },
   };
 }
@@ -560,7 +613,7 @@ export function bankNotices(value: Prisma.JsonValue | null | undefined): BankNot
  * dropped, and nothing the person cleared comes back. Cleared days older than
  * the oldest day the bank still gives can never be fetched again and are forgotten.
  */
-function mergeNotices(current: BankNotices, found: BankNotices, oldestDay: string): BankNotices {
+function mergeNotices(current: BankNotices, found: BankNotices, oldestDay: string, fetchedFrom: string): BankNotices {
   const gaps = [...current.gaps];
   for (const g of found.gaps) if (!gaps.some((x) => x.from === g.from && x.to === g.to)) gaps.push(g);
   const dismissedSkipped = new Set(current.dismissed.skipped);
@@ -569,6 +622,8 @@ function mergeNotices(current: BankNotices, found: BankNotices, oldestDay: strin
     gaps,
     skipped: [...new Set([...current.skipped, ...found.skipped.filter((d) => !dismissedSkipped.has(d))])].sort(),
     undated: [...new Set([...current.undated, ...found.undated.filter((k) => !dismissedUndated.has(k))])],
+    // What this fetch saw replaces what it covered; a day before its window is out of reach and stays.
+    unrated: [...new Set([...current.unrated.filter((d) => d < fetchedFrom), ...found.unrated])].sort(),
     dismissed: { skipped: current.dismissed.skipped.filter((d) => d >= oldestDay), undated: current.dismissed.undated.slice(-DISMISSED_UNDATED_LIMIT) },
   };
 }
@@ -577,6 +632,8 @@ function mergeNotices(current: BankNotices, found: BankNotices, oldestDay: strin
 export interface BankNoticesView {
   gaps: Array<{ from: string; to: string }>;
   skipped: string[];
+  /** Days with a movement in another currency still waiting for its reference rate. */
+  unrated: string[];
   /** The keys of the bookings without a day; the screen shows how many and sends them back to clear exactly those. */
   undated: string[];
 }
@@ -609,6 +666,9 @@ export async function clearBankNotice(db: PrismaClient, ctx: PaymentContext, con
     const day = input.day;
     // Only a day that is shown is remembered as cleared: a day sent by mistake never hides a later notice.
     change = (c) => (c.skipped.includes(day) ? { ...c, skipped: c.skipped.filter((d) => d !== day), dismissed: { ...c.dismissed, skipped: [...new Set([...c.dismissed.skipped, day])] } } : c);
+  } else if (input.kind === 'unrated' && typeof input.day === 'string') {
+    const day = input.day;
+    change = (c) => ({ ...c, unrated: c.unrated.filter((d) => d !== day) });
   } else if (input.kind === 'gap' && typeof input.from === 'string' && typeof input.to === 'string') {
     change = (c) => ({ ...c, gaps: c.gaps.filter((g) => g.from !== input.from || g.to !== input.to) });
   } else if (input.kind === 'undated' && Array.isArray(input.keys) && input.keys.every((k) => typeof k === 'string')) {
@@ -662,7 +722,16 @@ async function adoptReworded(
     const p = news[0];
     await db.taxPayment.update({
       where: { id: olds[0].id },
-      data: { sourceHash: p.sourceHash, counterparty: p.counterparty, counterpartyKey: counterpartyKey(p.counterparty), reference: p.reference, entryReference: p.entryReference },
+      data: {
+        sourceHash: p.sourceHash,
+        counterparty: p.counterparty,
+        counterpartyKey: counterpartyKey(p.counterparty),
+        reference: p.reference,
+        entryReference: p.entryReference,
+        originalAmountCents: p.original?.amountCents ?? null,
+        originalCurrency: p.original?.currency ?? null,
+        amountEstimated: p.estimated === true,
+      },
     });
     adopted++;
   }
@@ -793,7 +862,7 @@ export async function loadBankConnections(db: PrismaClient, workspaceId: string,
       lastBookedThrough: r.lastBookedThrough,
       lastError: r.lastError,
       lastErrorAt: r.lastErrorAt?.toISOString() ?? null,
-      notices: (({ gaps, skipped, undated }) => ({ gaps, skipped, undated }))(bankNotices(r.notices)),
+      notices: (({ gaps, skipped, undated, unrated }) => ({ gaps, skipped, undated, unrated }))(bankNotices(r.notices)),
       candidates: candidates.flatMap((c) =>
         typeof c.uid === 'string' ? [{ uid: c.uid, mask: typeof c.mask === 'string' ? c.mask : null, name: typeof c.name === 'string' ? c.name : '', currency: typeof c.currency === 'string' ? c.currency : null }] : [],
       ),

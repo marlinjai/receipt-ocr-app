@@ -104,6 +104,64 @@ export function beyondStored<T extends { bookingDay: string; amountCents: number
   return { beyond, same };
 }
 
+/** A movement another source of the account stored, as `matchStored` compares it. */
+export interface StoredMovement {
+  id: string;
+  bookingDay: string;
+  amountCents: number;
+  counterpartyKey: string;
+  /** True when its euro amount is an estimate at the reference rate. */
+  estimated: boolean;
+}
+
+/**
+ * Like `beyondStored`, for sources where one side may hold an estimate (a
+ * wallet's purchase in another currency at the reference rate, the other
+ * source its real euro amount). First, per day and amount, rows and stored
+ * movements that are both exact pair up in file order. Then a row and a
+ * stored movement of which at least one is an estimate pair up per day and
+ * counterparty (a named one only): their amounts differ by the conversion.
+ * An exact row paired with an estimated stored movement `settles` it: the real
+ * euro amount wins.
+ */
+export function matchStored<T extends { bookingDay: string; amountCents: number; counterpartyKey: string; estimated?: boolean }>(
+  rows: readonly T[],
+  stored: readonly StoredMovement[],
+): { beyond: T[]; same: T[]; settles: Array<{ row: T; storedId: string }> } {
+  const used = new Set<string>();
+  const exact = new Map<string, StoredMovement[]>();
+  for (const s of stored) if (!s.estimated) exact.set(`${s.bookingDay}|${s.amountCents}`, [...(exact.get(`${s.bookingDay}|${s.amountCents}`) ?? []), s]);
+  const same: T[] = [];
+  const settles: Array<{ row: T; storedId: string }> = [];
+  const rest: T[] = [];
+  for (const row of rows) {
+    const hit = row.estimated ? undefined : exact.get(`${row.bookingDay}|${row.amountCents}`)?.find((s) => !used.has(s.id));
+    if (hit) {
+      used.add(hit.id);
+      same.push(row);
+    } else rest.push(row);
+  }
+  const byParty = new Map<string, StoredMovement[]>();
+  for (const s of stored) {
+    if (!s.counterpartyKey) continue;
+    const key = `${s.bookingDay}|${s.counterpartyKey}`;
+    byParty.set(key, [...(byParty.get(key) ?? []), s]);
+  }
+  const beyond: T[] = [];
+  for (const row of rest) {
+    const candidates = row.counterpartyKey ? byParty.get(`${row.bookingDay}|${row.counterpartyKey}`) ?? [] : [];
+    const hit = candidates.find((s) => !used.has(s.id) && (row.estimated || s.estimated) && Math.sign(s.amountCents) === Math.sign(row.amountCents));
+    if (!hit) {
+      beyond.push(row);
+      continue;
+    }
+    used.add(hit.id);
+    same.push(row);
+    if (!row.estimated && hit.estimated) settles.push({ row, storedId: hit.id });
+  }
+  return { beyond, same, settles };
+}
+
 /** Intervals joined where they overlap or touch: the ranges a source holds as a whole. */
 export function mergeIntervals(intervals: readonly Interval[]): Interval[] {
   const sorted = [...intervals].sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));

@@ -32,7 +32,7 @@ export interface ReceiptFacts {
    * payment and the euro amount paid, refunds already taken off. Null while
    * no payment is linked.
    */
-  paid?: { day: string; cents: number } | null;
+  paid?: { day: string; cents: number; estimated?: true } | null;
   /**
    * Refunds linked to this receipt while no payment out is linked (the
    * purchase was paid in cash, or its payment is not imported): they are
@@ -177,8 +177,13 @@ export function resolveItem(
   // out linked to it is a question for a person (see `creditNotePaymentOut`).
   const creditNoteBack = creditNote && (facts.moneyOutCents ?? 0) === 0 && facts.moneyBack ? facts.moneyBack : null;
   const paid = creditNote ? (creditNoteBack ? { day: creditNoteBack.day, cents: -creditNoteBack.cents } : null) : (facts.paid ?? null);
-  // A refund reduces a purchase; a credit note is already the money coming back.
-  const refunded = paid || stated.amountCents === null || creditNote ? 0 : Math.max(0, facts.refundedCents ?? 0);
+  // A payment whose euro amount is an estimate (another currency at the reference rate, plan 2026-10-23) is
+  // no amount charged: the receipt keeps its own amount (and its own estimate), only the day is the payment's.
+  // Without an amount of its own, the payment's estimate is the best one there is, and stays an estimate.
+  const paidAmount = paid && !(paid.estimated && stated.amountCents !== null) ? paid : null;
+  // A refund reduces a purchase; a credit note is already the money coming back. With a payment's estimate set
+  // aside, the money back linked to the receipt comes off its own amount.
+  const refunded = paidAmount || stated.amountCents === null || creditNote ? 0 : paid ? Math.max(0, facts.moneyBack?.cents ?? 0) : Math.max(0, facts.refundedCents ?? 0);
   const document = refunded > 0 && stated.amountCents !== null ? { ...stated, amountCents: Math.max(0, stated.amountCents - refunded) } : stated;
   const key = vendorKey(record.vendor);
   const rule = ruleInForce(vendorRules, key, record.date);
@@ -194,12 +199,13 @@ export function resolveItem(
     vendor: record.vendor,
     // Cash basis: with a linked payment the receipt counts on the payment's day
     // and with the euro amount the bank charged (which settles a foreign-currency
-    // receipt for good); until then on its own day and amount.
+    // receipt for good); until then on its own day and amount. A payment that is
+    // itself an estimate gives the day only (see `paidAmount`).
     date: countsOn ?? cashDay,
     dateBasis: countsOn ? ('year_boundary' as const) : paid ? ('payment' as const) : ('document' as const),
     ...(countsOn ? { vatDate: cashDay } : {}),
-    ...(paid ? { amountCents: paid.cents, amountBasis: 'payment' as const } : document),
-    netCents: paid ? netOfPaid(record, paid.cents) : refunded > 0 && document.amountCents !== null ? netOfPaid(record, document.amountCents) : netOf(record),
+    ...(paidAmount ? { amountCents: paidAmount.cents, amountBasis: paidAmount.estimated ? ('reference_rate' as const) : ('payment' as const) } : document),
+    netCents: paidAmount ? netOfPaid(record, paidAmount.cents) : refunded > 0 && document.amountCents !== null ? netOfPaid(record, document.amountCents) : netOf(record),
     // A net amount the receipt states but that cannot be its net (larger than the total, or the other sign).
     ...(record.gross !== null && record.gross !== 0 && record.net !== null && record.net !== 0 && !netFits(record.net, record.gross) ? { netDoesNotFit: true } : {}),
     ...(creditNote && (facts.moneyOutCents ?? 0) > 0 ? { creditNotePaymentOut: true } : {}),

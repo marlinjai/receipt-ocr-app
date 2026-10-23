@@ -9,7 +9,7 @@ import PaymentsTab from './PaymentsTab';
 
 afterEach(cleanup);
 
-const account = { id: 'acc-1', label: 'Geschäftskonto', kind: 'bank', isPrivate: false, paymentCount: 3, completeThrough: '2026-01-22', batches: [{ id: 'b-1', format: 'n26_csv', newCount: 3, paymentCount: 3, firstDay: '2026-01-05', lastDay: '2026-01-22', importedAt: '2026-02-01T08:00:00.000Z' }] };
+const account = { id: 'acc-1', label: 'Geschäftskonto', kind: 'bank', isPrivate: false, paymentCount: 3, completeThrough: '2026-01-22', batches: [{ id: 'b-1', format: 'n26_csv', service: null, newCount: 3, paymentCount: 3, firstDay: '2026-01-05', lastDay: '2026-01-22', importedAt: '2026-02-01T08:00:00.000Z' }] };
 const open = (o: Partial<OpenPayment> = {}): OpenPayment => ({
   id: 'p-1',
   bookingDay: '2026-01-05',
@@ -108,7 +108,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'enable_banking_json', total: 4, added: 4, alreadyThere: 0, skipped: { other_year: 454, covered_by_other_source: 120 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], onlyYear: 2026, firstDay: '2026-07-01', lastDay: '2026-07-04' }}
+        lastImport={{ batchId: 'b', format: 'enable_banking_json', total: 4, added: 4, alreadyThere: 0, skipped: { other_year: 454, covered_by_other_source: 120 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, settled: 0, notices: {}, unknownStatuses: [], onlyYear: 2026, firstDay: '2026-07-01', lastDay: '2026-07-04' }}
       />,
     );
     const status = screen.getByRole('status').textContent;
@@ -121,7 +121,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 10, added: 7, alreadyThere: 3, skipped: { other_currency: 2, not_completed: 4 }, autoLinked: 1, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], onlyYear: null, firstDay: null, lastDay: null }}
+        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 10, added: 7, alreadyThere: 3, skipped: { other_currency: 2, not_completed: 4 }, autoLinked: 1, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, settled: 0, notices: {}, unknownStatuses: [], onlyYear: null, firstDay: null, lastDay: null }}
       />,
     );
     const status = screen.getByRole('status').textContent;
@@ -362,7 +362,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'klarna_csv', total: 5, added: 5, alreadyThere: 0, skipped: { cancelled: 2, duplicate_row: 1, zero_amount: 1 }, autoLinked: 0, cancelledEarlier: 2, releasedLinks: 1, adopted: 1, notices: { part_refunded: 1, unknown_status: 1 }, unknownStatuses: ['Angefochten'], onlyYear: null, firstDay: null, lastDay: null }}
+        lastImport={{ batchId: 'b', format: 'klarna_csv', total: 5, added: 5, alreadyThere: 0, skipped: { cancelled: 2, duplicate_row: 1, zero_amount: 1 }, autoLinked: 0, cancelledEarlier: 2, releasedLinks: 1, adopted: 1, settled: 0, notices: { part_refunded: 1, unknown_status: 1 }, unknownStatuses: ['Angefochten'], onlyYear: null, firstDay: null, lastDay: null }}
       />,
     );
     const status = screen.getByRole('status').textContent;

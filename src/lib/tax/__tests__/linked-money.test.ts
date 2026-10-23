@@ -16,6 +16,8 @@ function payment(id: string, bookingDay: string, amountCents: number, links: Arr
     kindOverridden: false,
     sourceKind: amountCents < 0 ? 'spend' : 'refund',
     funding: null,
+    estimated: false,
+    original: null,
     byRule: false,
     byPrivateAccount: false,
     links: links.map((l, i) => ({ id: `${id}-${i}`, rowId: l.rowId, invoiceId: null, cents: l.cents, method: 'manual' })),

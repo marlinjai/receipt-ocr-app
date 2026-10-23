@@ -9,9 +9,11 @@ import type { PaymentFormat } from './types';
  * The second one buys nothing. It is the same money on its way, so it is a
  * transfer between the owner's own accounts: never an expense, never asked about.
  *
- * Which service an account holds is known from the format of its imports, not
- * from its label, which is free text. The rule is deliberately narrow, because
- * a transfer is hidden from every question:
+ * Which service an account holds is known from its imports, not from its
+ * label, which is free text: the format of a service's own list, or, for an
+ * import of the bank interface, the service the connection's institution is
+ * (stored on the import, so it holds after the connection ends). The rule is
+ * deliberately narrow, because a transfer is hidden from every question:
  *
  * - It only applies on days the service's own list covers (first to last
  *   booked day of the holding account). Outside them the line on the other
@@ -32,6 +34,13 @@ import type { PaymentFormat } from './types';
  * - A bank debit WITHOUT a counterparty whose text names the merchant of
  *   exactly one purchase in a wallet's list, booked close to it and no larger
  *   than it, is the part of that purchase the wallet drew from the bank.
+ * - Money coming INTO a wallet without a counterparty (a top-up; the live feed
+ *   gives no type) is a transfer when another account shows a debit naming the
+ *   service of exactly that amount close to it; that debit is then a transfer
+ *   too. Without one it is asked about.
+ * - A purchase whose euro amount is an estimate (another currency at the
+ *   reference rate) is the twin of a funding row within `ESTIMATE_TOLERANCE_PERCENT`;
+ *   every other twin has exactly the same amount.
  */
 
 export type ServiceKind =
@@ -45,6 +54,26 @@ const SERVICE_OF_FORMAT: Partial<Record<PaymentFormat, { name: string; kind: Ser
   klarna_csv: { name: 'klarna', kind: 'pay_later' },
 };
 
+/**
+ * Services an import of the bank interface can hold, by the name stored on the
+ * import. Only PayPal: Klarna's pay-later purchases are not offered by the interface.
+ */
+const SERVICE_OF_NAME: Record<string, { name: string; kind: ServiceKind }> = {
+  paypal: { name: 'paypal', kind: 'wallet' },
+};
+
+/** The service a connection's institution is, from its name ("PayPal", "PayPal Europe"); null for a bank. */
+export function serviceOfInstitution(name: string | null | undefined): string | null {
+  return typeof name === 'string' && /paypal/i.test(name) ? 'paypal' : null;
+}
+
+/**
+ * How far the euro amount charged may lie from a purchase's estimate (another
+ * currency at the reference rate): PayPal converts with a margin of about 3 to
+ * 4.5 percent over that rate, and the rate of the next day may apply.
+ */
+export const ESTIMATE_TOLERANCE_PERCENT = 6;
+
 /** The funding row is booked from 3 days before to 10 days after the purchase it pays, like a proposal. */
 export const TWIN_DAYS_BEFORE = 3;
 export const TWIN_DAYS_AFTER = 10;
@@ -55,6 +84,8 @@ export interface FundingAccount {
   kind: string;
   /** The formats of the files imported into the account. */
   formats: readonly string[];
+  /** The services its imports of the bank interface hold (see `TaxImportBatch.service`). */
+  services?: readonly (string | null)[];
 }
 
 export interface FundingPayment {
@@ -69,6 +100,8 @@ export interface FundingPayment {
   referenceKey: string;
   /** What the file says the movement is. */
   sourceKind: string;
+  /** True when the euro amount is an estimate at the reference rate. */
+  estimated?: boolean;
 }
 
 export interface Funding {
@@ -96,7 +129,18 @@ export function heldService(account: FundingAccount): { name: string; kind: Serv
     const service = SERVICE_OF_FORMAT[format as PaymentFormat];
     if (service) return service;
   }
+  for (const name of account.services ?? []) {
+    const service = name ? SERVICE_OF_NAME[name] : undefined;
+    if (service) return service;
+  }
   return null;
+}
+
+/** Whether `amountCents` (signed) is what `purchase` cost: exactly, or within the tolerance of an estimate. */
+function sameAmount(purchase: FundingPayment, amountCents: number): boolean {
+  if (!purchase.estimated) return purchase.amountCents === amountCents;
+  if (Math.sign(purchase.amountCents) !== Math.sign(amountCents)) return false;
+  return Math.abs(amountCents - purchase.amountCents) * 100 <= Math.abs(purchase.amountCents) * ESTIMATE_TOLERANCE_PERCENT;
 }
 
 /**
@@ -143,9 +187,33 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
   }
   const hasWords = (text: string, words: string) => ` ${text} `.includes(` ${words} `);
   const taken = new Set<string>();
+  const namesService = (payment: FundingPayment, service: string) => payment.counterpartyKey.split(' ').includes(service);
+  // Money into a wallet without a counterparty (a top-up): a transfer when exactly the same amount leaves
+  // another account towards the service close to it, which is then a transfer too.
+  for (const credit of [...payments].sort((a, b) => (a.bookingDay === b.bookingDay ? (a.id < b.id ? -1 : 1) : a.bookingDay < b.bookingDay ? -1 : 1))) {
+    const service = held.get(credit.accountId);
+    if (service?.kind !== 'wallet' || credit.amountCents <= 0 || credit.counterpartyKey !== '' || credit.sourceKind === 'own_transfer') continue;
+    const day = dayNumber(credit.bookingDay);
+    let best: FundingPayment | null = null;
+    let bestGap = Infinity;
+    for (const debit of payments) {
+      if (out.has(debit.id) || debit.amountCents !== -credit.amountCents || held.get(debit.accountId)?.name === service.name || !namesService(debit, service.name)) continue;
+      const gap = dayNumber(debit.bookingDay) - day;
+      if (gap < -TWIN_DAYS_BEFORE || gap > TWIN_DAYS_AFTER) continue;
+      if (Math.abs(gap) < bestGap) {
+        best = debit;
+        bestGap = Math.abs(gap);
+      }
+    }
+    if (!best) continue;
+    out.set(credit.id, { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: null });
+    out.set(best.id, { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: null });
+  }
   // In booking order, so the same data always pairs the same way.
   const ordered = [...payments].sort((a, b) => (a.bookingDay === b.bookingDay ? (a.id < b.id ? -1 : 1) : a.bookingDay < b.bookingDay ? -1 : 1));
   for (const payment of ordered) {
+    // Already the other end of a top-up.
+    if (out.has(payment.id)) continue;
     const own = held.get(payment.accountId)?.name ?? null;
     if (!payment.counterpartyKey) {
       // A bank debit without a counterparty: the part of a wallet purchase drawn from the bank, when its
@@ -196,7 +264,7 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
     let twin: FundingPayment | null = null;
     let twinGap = Infinity;
     for (const purchase of purchases.get(service.name) ?? []) {
-      if (taken.has(purchase.id) || purchase.amountCents !== payment.amountCents) continue;
+      if (taken.has(purchase.id) || !sameAmount(purchase, payment.amountCents)) continue;
       const gap = day - dayNumber(purchase.bookingDay);
       if (gap < -TWIN_DAYS_BEFORE || gap > TWIN_DAYS_AFTER) continue;
       if (Math.abs(gap) < twinGap) {

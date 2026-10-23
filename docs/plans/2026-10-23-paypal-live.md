@@ -61,12 +61,14 @@ interface, not the pay-later purchases, so Klarna stays on its list import.
    stored movements is added. Verified by a database test on a wallet account.
 
 4. **Identity of a PayPal movement: PayPal's own transaction code**, read from
-   `entry_reference`, when every booked row of the fetch has one and no code occurs twice
-   (then `sourceHash = referenceHash(code)`, the same scheme the pay-later list uses). When a
-   fetch has a row without a code, or a code twice, that fetch falls back to the content hash
-   (day, amount or original amount and currency, counterparty, text, code). Decided, say so if
-   you disagree: per fetch, not per row, so a movement never switches identity between two
-   fetches only because another row of the window changed.
+   `entry_reference`, for every row that has one and whose code no other row of the same fetch
+   repeats (then `sourceHash = referenceHash(code)`, the same scheme the pay-later list uses). A
+   row without a code, or with a code twice, keeps the content hash (day, amount or original
+   amount and currency, counterparty, text, code). Decided, say so if you disagree: per row, so a
+   movement keeps its identity across fetches whatever the other rows of the window look like.
+   The adoption of a numbered row onto a stored unnumbered one (`adoptUnreferenced`, built for the
+   pay-later list) now only looks at stored rows of the same format, so a live row can never take
+   over a CSV row's identity.
 
 5. **A movement seen by both sources is recognized as one by the code.** The CSV stores the
    "Transaktionscode" in `entryReference`. Before the day rule runs, an import of either source

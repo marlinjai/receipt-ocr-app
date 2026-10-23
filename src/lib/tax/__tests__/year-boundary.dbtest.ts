@@ -11,6 +11,8 @@ import {
   deleteVatSettlement,
   receiptForLink,
   loadStatement,
+  saveStatusChange,
+  saveVatSettings,
   saveVatSettlement,
   saveYearBoundaryAnswer,
   type TaxContext,
@@ -65,6 +67,12 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
+/** Regular taxation with quarterly advance returns, so payments to the tax office recur. */
+const regular = async (ctx: TaxContext) => {
+  await saveTaxSettings(db, ctx, { smallBusiness: false });
+  await saveVatSettings(db, ctx, { frequency: 'quarterly', method: 'issued' });
+};
+
 const expense = async (ws: TestWorkspace, year: number) => (await loadStatement(db, ws.workspaceId, year)).businessExpenseCents;
 const entryOf = async (ws: TestWorkspace, year: number, subjectId: string) => (await loadStatement(db, ws.workspaceId, year)).yearBoundary.find((e) => e.subjectId === subjectId);
 
@@ -98,9 +106,9 @@ describe('the ten-day rule: forward', () => {
     expect((await entryOf(ws, 2026, rowId))?.answer).toBe(true);
   });
 
-  it('an advance payment of value-added tax paid in January counts in the old year by rule; a person can override it and take that back', async () => {
+  it('regular taxation: an advance payment of value-added tax paid in January counts in the old year by rule; a person can override it and take that back', async () => {
     const { ws, ctx } = await workspace();
-    await saveTaxSettings(db, ctx, { smallBusiness: false });
+    await regular(ctx);
     const id = await saveVatSettlement(db, ctx, { date: '2026-01-08', cents: 19_000, direction: 'paid' });
     const december = await saveVatSettlement(db, ctx, { date: '2025-12-23', cents: 7_700, direction: 'paid' });
     const paid = async (year: number) => (await loadStatement(db, ws.workspaceId, year)).lines.find((l) => l.key === 'euer.vat_paid')?.cents ?? 0;
@@ -130,6 +138,47 @@ describe('the ten-day rule: forward', () => {
     await saveYearBoundaryAnswer(db, ctx, { kind: 'vat_settlement', subjectId: id, cashDay: '2026-01-08', belongsToOtherYear: true });
     await deleteVatSettlement(db, ctx, id);
     expect(await db.taxYearBoundaryAnswer.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
+  });
+});
+
+describe('the ten-day rule: value-added tax by the status on the payment day', () => {
+  const paid = async (ws: TestWorkspace, year: number) => (await loadStatement(db, ws.workspaceId, year)).lines.find((l) => l.key === 'euer.vat_paid')?.cents ?? 0;
+
+  it('a small business has no recurring advance payments: a payment to the tax office in January stays in the year it was paid', async () => {
+    const { ws, ctx } = await workspace();
+    const id = await saveVatSettlement(db, ctx, { date: '2026-01-08', cents: 4_200, direction: 'paid' });
+    expect(await entryOf(ws, 2026, id)).toMatchObject({ answer: false, source: 'rule', reason: 'Kleinunternehmer: keine regelmäßige Vorauszahlung' });
+    expect([await paid(ws, 2025), await paid(ws, 2026)]).toEqual([0, 4_200]);
+    expect((await loadStatement(db, ws.workspaceId, 2026)).yearBoundary.filter((e) => e.source === null)).toEqual([]);
+  });
+
+  it('unanswered status or advance return period: the settlement stays open as a question and is not moved', async () => {
+    // The small-business question was never answered.
+    const ws = await createWorkspace();
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    const id = await saveVatSettlement(db, ctx, { date: '2026-01-08', cents: 4_200, direction: 'paid' });
+    expect(await entryOf(ws, 2026, id)).toMatchObject({ answer: null, source: null, reason: 'Ob an diesem Tag die Kleinunternehmerregelung galt, ist noch nicht beantwortet' });
+    await saveTaxSettings(db, ctx, { smallBusiness: false });
+    expect(await entryOf(ws, 2026, id)).toMatchObject({ answer: null, source: null, reason: 'Der Abgabezeitraum der Umsatzsteuer-Voranmeldung ist noch nicht gewählt' });
+    expect([await paid(ws, 2025), await paid(ws, 2026)]).toEqual([0, 4_200]);
+    // "None of these" answers it: it stays, by the person's answer.
+    expect(await declineOpenYearBoundary(db, ctx, 2026, [{ kind: 'vat_settlement', subjectId: id, cashDay: '2026-01-08' }])).toBe(1);
+    expect(await entryOf(ws, 2026, id)).toMatchObject({ answer: false, source: 'person' });
+    // Backtrack: the period is chosen later; the person's answer still overrides the rule.
+    await saveVatSettings(db, ctx, { frequency: 'monthly', method: 'issued' });
+    expect(await entryOf(ws, 2026, id)).toMatchObject({ answer: false, source: 'person' });
+  });
+
+  it('a change of the small-business status during the year is read on the payment day', async () => {
+    const { ws, ctx } = await workspace();
+    await saveVatSettings(db, ctx, { frequency: 'quarterly', method: 'issued' });
+    // A small business until the end of 2025, regularly taxed from 2026 on.
+    await saveStatusChange(db, ctx, { effectiveFrom: '2026-01-01', smallBusiness: false });
+    const december = await saveVatSettlement(db, ctx, { date: '2025-12-23', cents: 1_300, direction: 'paid' });
+    const january = await saveVatSettlement(db, ctx, { date: '2026-01-09', cents: 5_100, direction: 'paid' });
+    expect(await entryOf(ws, 2025, december)).toMatchObject({ answer: false, source: 'rule', reason: 'Kleinunternehmer: keine regelmäßige Vorauszahlung' });
+    expect(await entryOf(ws, 2025, january)).toMatchObject({ answer: true, source: 'rule' });
+    expect([await paid(ws, 2025), await paid(ws, 2026)]).toEqual([6_400, 0]);
   });
 });
 
@@ -301,7 +350,7 @@ describe('the ten-day rule: filed years', () => {
 
   it('a filed year fixes its turn; an answer after the filing day is refused or reported, never applied, and the filed totals do not change', async () => {
     const { ws, ctx } = await workspace();
-    await saveTaxSettings(db, ctx, { smallBusiness: false });
+    await regular(ctx);
     // Under regular taxation the expense is the net amount; the rent carries no value-added tax.
     const rowId = await ws.addReceipt(rent({ Net: 650 }));
     const settlement = await saveVatSettlement(db, ctx, { date: '2026-01-08', cents: 19_000, direction: 'paid' });
@@ -356,7 +405,7 @@ describe('the ten-day rule: filed years', () => {
 
   it('backtrack: clearing the filing day unlocks the turn, so rules and answers apply again; resume reads the same', async () => {
     const { ws, ctx } = await workspace();
-    await saveTaxSettings(db, ctx, { smallBusiness: false });
+    await regular(ctx);
     // Under regular taxation the expense is the net amount; the rent carries no value-added tax.
     const rowId = await ws.addReceipt(rent({ Net: 650 }));
     const settlement = await saveVatSettlement(db, ctx, { date: '2026-01-08', cents: 19_000, direction: 'paid' });

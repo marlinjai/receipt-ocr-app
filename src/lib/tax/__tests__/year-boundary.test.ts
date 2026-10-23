@@ -4,7 +4,7 @@ import type { MealRecord } from '@/lib/meals/types';
 import { computeYear } from '../compute';
 import { resolveItem, resolveItems, type ReceiptFacts } from '../facts';
 import { rulesForYear } from '../rules';
-import { answerFor, berlinDay, boundaryDay, decideBoundary, otherYearOf, recursMonthly, touchesYear, type BoundaryFacts } from '../year-boundary';
+import { answerFor, berlinDay, boundaryDay, decideBoundary, otherYearOf, recursMonthly, touchesYear, vatStatusOn, type BoundaryFacts } from '../year-boundary';
 
 /** Invented: a monthly rent of 650.00. */
 function rent(overrides: Partial<MealRecord> = {}): MealRecord {
@@ -131,10 +131,28 @@ describe('the answer that applies to a payment at the turn of the year', () => {
     expect(decide({ recurring: null })).toMatchObject({ answer: null, source: null, storedAnswer: null });
   });
 
-  it('open years: value-added tax paid in January belongs to the year before, paid in December it stays', () => {
-    expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-10', recurring: null })).toMatchObject({ answer: true, source: 'rule' });
-    expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-01', recurring: null })).toMatchObject({ answer: true, source: 'rule' });
-    expect(decide({ kind: 'vat_settlement', cashDay: '2025-12-22', recurring: null })).toMatchObject({ answer: false, source: 'rule' });
+  it('open years, regular taxation with advance returns: value-added tax paid in January belongs to the year before, paid in December it stays', () => {
+    const vat = { kind: 'vat_settlement' as const, recurring: null, vatStatus: 'regular' as const };
+    expect(decide({ ...vat, cashDay: '2026-01-10' })).toMatchObject({ answer: true, source: 'rule' });
+    expect(decide({ ...vat, cashDay: '2026-01-01' })).toMatchObject({ answer: true, source: 'rule' });
+    expect(decide({ ...vat, cashDay: '2025-12-22' })).toMatchObject({ answer: false, source: 'rule' });
+  });
+
+  it('open years, small business: a payment to the tax office is not recurring and stays; an unanswered status is asked', () => {
+    expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-08', vatStatus: 'small' })).toMatchObject({ answer: false, source: 'rule', reason: 'Kleinunternehmer: keine regelmäßige Vorauszahlung' });
+    expect(decide({ kind: 'vat_settlement', cashDay: '2025-12-23', vatStatus: 'small' })).toMatchObject({ answer: false, source: 'rule' });
+    expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-08', vatStatus: 'status_unanswered' })).toMatchObject({ answer: null, source: null });
+    expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-08', vatStatus: 'frequency_unanswered' })).toMatchObject({ answer: null, source: null });
+    // A person can still answer it.
+    expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-08', vatStatus: 'small', stored: stored(true, '2026-01-09', '2026-01-08') })).toMatchObject({ answer: true, source: 'person' });
+  });
+
+  it('the status a settlement is judged by', () => {
+    expect(vatStatusOn(false, true)).toBe('regular');
+    expect(vatStatusOn(false, false)).toBe('frequency_unanswered');
+    expect(vatStatusOn(true, true)).toBe('small');
+    expect(vatStatusOn(true, false)).toBe('small');
+    expect(vatStatusOn(null, true)).toBe('status_unanswered');
   });
 
   it("a person's answer overrides every rule, and only for the day it was given for", () => {

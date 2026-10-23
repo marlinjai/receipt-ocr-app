@@ -96,6 +96,9 @@ Two facts settle most of it:
   payment's month. The payment's own month does not count.
 - **Service period:** receipts carry none yet, so the one moving rule for receipts is absent and every
   receipt of an open year with a vendor stays by rule. Only a receipt without a vendor stays open.
+- **Value-added tax settlements** are judged by the small-business status on the payment day
+  (status changes included) and by whether an advance return period is chosen. While either answer
+  is missing the settlement stays an open question instead of being guessed.
 - **The filing day** must be a real day, not in the future and not before the year ended.
 - Meals and assets keep their behaviour: no rule or filed year applies to them, only an earlier
   person's answer is shown so it can be taken back.

@@ -40,8 +40,9 @@ export default function YearBoundaryTab({ view, busy, error, onAnswer, onDecline
         </p>
         <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
           Die meisten Zahlungen beantworten sich selbst. Ist die Erklärung eines der beiden Jahre abgegeben, bleibt die
-          Zahlung so, wie sie erklärt wurde. Sonst gilt: eine Umsatzsteuer-Zahlung vom 1. bis 10. Januar gehört zum Jahr
-          davor, eine vom 22. bis 31. Dezember bleibt; ein Abo wird zu Beginn des Zeitraums berechnet, den es bezahlt, und
+          Zahlung so, wie sie erklärt wurde. Sonst gilt: bei Regelbesteuerung mit Voranmeldungen gehört eine
+          Umsatzsteuer-Zahlung vom 1. bis 10. Januar zum Jahr davor, eine vom 22. bis 31. Dezember bleibt; als
+          Kleinunternehmer gibt es keine regelmäßigen Vorauszahlungen, die Zahlung bleibt; ein Abo wird zu Beginn des Zeitraums berechnet, den es bezahlt, und
           bleibt; ein einmaliger Kauf bleibt in dem Jahr, in dem er bezahlt wurde. Eine eigene Antwort geht jeder Regel vor.
           Gefragt wird nur, was keine Regel klärt.
         </p>

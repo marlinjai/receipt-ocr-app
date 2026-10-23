@@ -27,6 +27,7 @@ import {
   otherYearOf,
   recursMonthly,
   touchesYear,
+  vatStatusOn,
   BOUNDARY_REASONS,
   BOUNDARY_SUBJECT_KINDS,
   type BoundaryDecision,
@@ -584,11 +585,25 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   );
   const filedOn = new Map(filedYears.map((y) => [y.year, y.filedOn as string]));
   // The ten-day rule for the settlements with the tax office: worked out once, used by the totals and the list alike.
+  // Judged by the status on the payment day (the small-business rule can change during a year).
+  const advanceReturnsFiled = settingsRow?.vatFrequency === 'monthly' || settingsRow?.vatFrequency === 'quarterly';
   const settlementBoundary = new Map(
     storedSettlements.flatMap((s): Array<[string, BoundaryDecision]> =>
       otherYearOf(s.settledOn) === null
         ? []
-        : [[s.id, decideBoundary({ kind: 'vat_settlement', cashDay: s.settledOn, stored: boundaryAnswers.get(`vat_settlement:${s.id}`), filedOn, recurring: null })]],
+        : [
+            [
+              s.id,
+              decideBoundary({
+                kind: 'vat_settlement',
+                cashDay: s.settledOn,
+                stored: boundaryAnswers.get(`vat_settlement:${s.id}`),
+                filedOn,
+                recurring: null,
+                vatStatus: vatStatusOn(smallBusinessOn(settings, s.settledOn), advanceReturnsFiled),
+              }),
+            ],
+          ],
     ),
   );
   const invoiceFacts: InvoiceFact[] = storedInvoices.map((i) => ({

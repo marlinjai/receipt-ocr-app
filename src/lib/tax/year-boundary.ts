@@ -19,17 +19,22 @@
  *    year, is reported and never applied, so a filed year never changes.
  * 2. A person's answer for the payment day.
  * 3. A rule worked out from the payment data, on every read, never stored:
- *    an advance payment or refund of value-added tax paid 1 to 10 January
- *    belongs to the year before (the advance return for December or the
- *    fourth quarter is due on 10 January, section 18 (1) of the value-added
- *    tax act, Umsatzsteuergesetz), one paid 22 to 31 December pays an earlier
- *    period and stays; a receipt of a counterparty that recurs is billed at
+ *    where the company was regularly taxed on the payment day and files
+ *    advance returns, an advance payment or refund of value-added tax paid 1
+ *    to 10 January belongs to the year before (the advance return for December
+ *    or the fourth quarter is due on 10 January, section 18 (1) of the
+ *    value-added tax act, Umsatzsteuergesetz), one paid 22 to 31 December pays
+ *    an earlier period and stays; under the small-business rule (section 19)
+ *    there are no recurring advance payments, so a payment to the tax office
+ *    (such as section 13b tax, declared only for the period it arose in) is
+ *    not regularly recurring and stays; a receipt of a counterparty that recurs is billed at
  *    the start of the period it pays for and stays; a receipt that does not
  *    recur is no regularly recurring payment and stays. A service period on
  *    the receipt (rent for January paid on 28 December) would be the one case
  *    that moves, but receipts do not carry one yet, so no rule moves a receipt.
- * 4. Anything else (a receipt without a vendor, whose recurrence cannot be
- *    told) is asked.
+ * 4. Anything else is asked: a receipt without a vendor, whose recurrence
+ *    cannot be told, and a settlement while the small-business question or the
+ *    advance return period is unanswered.
  */
 
 export const YEAR_BOUNDARY_DAYS = 10;
@@ -101,6 +106,22 @@ export interface BoundaryFacts {
   filedOn: ReadonlyMap<number, string>;
   /** Receipts: whether the counterparty recurs (`recursMonthly`); null when it cannot be told. Ignored for settlements. */
   recurring: boolean | null;
+  /**
+   * Settlements: the company's value-added tax status on the payment day.
+   * 'regular' needs regular taxation on that day and an advance return period;
+   * 'small' is the small-business rule; the other two say which answer is missing.
+   * Ignored for receipts.
+   */
+  vatStatus?: VatStatusOnDay;
+}
+
+export type VatStatusOnDay = 'regular' | 'small' | 'status_unanswered' | 'frequency_unanswered';
+
+/** The status a settlement is judged by: the small-business answer on its day, and whether advance returns are filed. */
+export function vatStatusOn(smallBusiness: boolean | null, frequencySet: boolean): VatStatusOnDay {
+  if (smallBusiness === null) return 'status_unanswered';
+  if (smallBusiness) return 'small';
+  return frequencySet ? 'regular' : 'frequency_unanswered';
 }
 
 export interface BoundaryDecision {
@@ -143,6 +164,9 @@ export const BOUNDARY_REASONS = {
   person: 'Antwort von Hand',
   vatJanuary: 'Umsatzsteuer für Dezember oder das vierte Quartal: die Voranmeldung ist am 10. Januar fällig',
   vatDecember: 'Umsatzsteuer für einen früheren Zeitraum desselben Jahres',
+  vatSmallBusiness: 'Kleinunternehmer: keine regelmäßige Vorauszahlung',
+  vatStatusUnanswered: 'Ob an diesem Tag die Kleinunternehmerregelung galt, ist noch nicht beantwortet',
+  vatFrequencyUnanswered: 'Der Abgabezeitraum der Umsatzsteuer-Voranmeldung ist noch nicht gewählt',
   recurring: 'Abo, Zeitraum beginnt am Zahltag',
   once: 'einmalige Zahlung',
   noVendor: 'Ohne Lieferant lässt sich nicht erkennen, ob die Zahlung regelmäßig wiederkehrt',
@@ -183,7 +207,16 @@ export function decideBoundary(facts: BoundaryFacts): BoundaryDecision {
   }
   if (storedAnswer !== null) return decision(storedAnswer, 'person', BOUNDARY_REASONS.person);
   if (kind === 'vat_settlement') {
-    return cashDay.slice(5, 7) === '01' ? decision(true, 'rule', BOUNDARY_REASONS.vatJanuary) : decision(false, 'rule', BOUNDARY_REASONS.vatDecember);
+    switch (facts.vatStatus ?? 'status_unanswered') {
+      case 'small':
+        return decision(false, 'rule', BOUNDARY_REASONS.vatSmallBusiness);
+      case 'status_unanswered':
+        return decision(null, null, BOUNDARY_REASONS.vatStatusUnanswered);
+      case 'frequency_unanswered':
+        return decision(null, null, BOUNDARY_REASONS.vatFrequencyUnanswered);
+      case 'regular':
+        return cashDay.slice(5, 7) === '01' ? decision(true, 'rule', BOUNDARY_REASONS.vatJanuary) : decision(false, 'rule', BOUNDARY_REASONS.vatDecember);
+    }
   }
   if (facts.recurring === null) return decision(null, null, BOUNDARY_REASONS.noVendor);
   return decision(false, 'rule', facts.recurring ? BOUNDARY_REASONS.recurring : BOUNDARY_REASONS.once);

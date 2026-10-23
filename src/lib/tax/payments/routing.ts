@@ -1,6 +1,6 @@
 import 'server-only';
 import { Prisma, type PrismaClient } from '@prisma/client';
-import { counterpartyKey, loadPayments, OVERPAID_TOLERANCE_PERCENT, paidOnReceipt, PaymentServiceError, type CounterpartyTreatment, type PaymentContext, type PaymentRow, type ReceiptForLink } from './service';
+import { counterpartyKey, loadPayments, OVERPAID_TOLERANCE_PERCENT, paidByReceipt, PaymentServiceError, type CounterpartyTreatment, type PaymentContext, type PaymentRow, type ReceiptForLink } from './service';
 import { routesToReceiver } from './route';
 
 /**
@@ -216,7 +216,7 @@ export async function linkRoutedPayment(
       // counted once), and its links on other companies' shared payments (one that moved back to the
       // holder too: it is the receipt's payment until it is taken back). Cancelled purchases count nowhere.
       const own = await loadPayments(tx, ctx.workspaceId);
-      const paid = Math.max(0, paidOnReceipt(own.payments, rowId) + (own.linkedElsewhere.get(rowId) ?? 0));
+      const paid = paidByReceipt(own.payments, own.linkedElsewhere).get(rowId) ?? 0;
       const limit = receipt.amountCents + Math.round((receipt.amountCents * OVERPAID_TOLERANCE_PERCENT) / 100);
       if (paid > 0 && paid + free > limit) throw new PaymentServiceError('receipt_already_paid', `${paid}:${receipt.amountCents}`);
     }

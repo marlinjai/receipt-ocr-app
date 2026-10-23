@@ -313,21 +313,30 @@ function OpenCheck({
   onSearchReceipts: (text: string) => Promise<ChecksResult<ReceiptChoice[]>>;
 }) {
   const id = useId();
-  // Linking by hand opens on request: the list is drawn only for the payment a person works on.
+  // Linking by hand opens on request: the receipts are asked from the server only for the payment a person works on.
   const [picking, setPicking] = useState(false);
   const [chosen, setChosen] = useState('');
   const [search, setSearch] = useState('');
-  const [found, setFound] = useState<ReceiptChoice[] | null>(null);
+  const [found, setFound] = useState<{ choices: ReceiptChoice[]; searched: boolean } | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
-  const choices = found ?? check.choices ?? [];
-  const runSearch = async () => {
+  const pickOpener = useRef<HTMLButtonElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const pickReopened = useRef(false);
+  // A fresh view of the checks (a receipt linked elsewhere, say) makes an earlier list stale: it is asked again.
+  const [seenCheck, setSeenCheck] = useState(check);
+  if (seenCheck !== check) {
+    setSeenCheck(check);
+    setFound(null);
+    setChosen('');
+  }
+  const loadChoices = async (text: string) => {
     setSearching(true);
     setSearchError(null);
     try {
-      const result = await onSearchReceipts(search);
+      const result = await onSearchReceipts(text);
       if (result.ok) {
-        setFound(result.value);
+        setFound({ choices: result.value, searched: text.trim() !== '' });
         setChosen('');
       } else setSearchError(checksActionMessage(result));
     } catch {
@@ -336,6 +345,26 @@ function OpenCheck({
       setSearching(false);
     }
   };
+  // Opened: the closest receipts are loaded, and the focus goes to the search field; closed: back to the opener.
+  useEffect(() => {
+    if (picking) searchInput.current?.focus();
+    else if (pickReopened.current) pickOpener.current?.focus();
+  }, [picking]);
+  useEffect(() => {
+    if (picking && found === null && !searching && searchError === null) void loadChoices('');
+    // Only opening the picker (or a fresh view while open) asks again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picking, found]);
+  const choices = found?.choices ?? [];
+  const pickStatus = searching
+    ? 'Belege werden gesucht …'
+    : found === null
+      ? ''
+      : found.choices.length === 0
+        ? found.searched
+          ? 'Kein offener Beleg passt zu dieser Suche.'
+          : 'Kein offener Beleg in dieser Firma, der zu dieser Zahlung passen kann. Bitte zuerst einen Beleg hochladen.'
+        : `${found.choices.length} ${found.choices.length === 1 ? 'Beleg' : 'Belege'} ${found.searched ? 'gefunden' : 'zur Auswahl, die nächstliegenden zuerst'}.`;
   const [asking, setAsking] = useState(false);
   const [reason, setReason] = useState('');
   const opener = useRef<HTMLButtonElement>(null);
@@ -418,7 +447,16 @@ function OpenCheck({
       )}
       {canWrite && !picking && (
         <div className="mt-2">
-          <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => setPicking(true)}>
+          <button
+            ref={pickOpener}
+            type="button"
+            className="ui-btn ui-btn-sm ui-btn-ghost"
+            disabled={pending}
+            onClick={() => {
+              pickReopened.current = true;
+              setPicking(true);
+            }}
+          >
             Vorhandenen Beleg zuordnen
           </button>
         </div>
@@ -429,13 +467,14 @@ function OpenCheck({
             className="flex flex-wrap items-center gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              void runSearch();
+              void loadChoices(search);
             }}
           >
             <label className="sr-only" htmlFor={`${id}-search`}>
               Belege durchsuchen (Name, Lieferant oder Betrag)
             </label>
             <input
+              ref={searchInput}
               id={`${id}-search`}
               className="ui-input"
               style={{ width: 'auto', minWidth: 200 }}
@@ -447,23 +486,25 @@ function OpenCheck({
             <button type="submit" className="ui-btn ui-btn-sm" disabled={searching} aria-busy={searching}>
               Suchen
             </button>
+            <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" onClick={() => setPicking(false)}>
+              Abbrechen
+            </button>
           </form>
+          <p className="text-xs" style={{ color: 'var(--muted)' }} role="status" aria-live="polite">
+            {pickStatus}
+          </p>
           {searchError && (
             <p className="ui-note ui-note-danger" role="alert">
               {searchError}
             </p>
           )}
-          {choices.length === 0 ? (
-            <p className="text-xs" style={{ color: 'var(--muted)' }} role="status">
-              {found ? 'Kein offener Beleg passt zu dieser Suche.' : 'Kein offener Beleg in dieser Firma. Bitte zuerst einen Beleg hochladen.'}
-            </p>
-          ) : (
+          {choices.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <label className="sr-only" htmlFor={`${id}-receipt`}>
                 Vorhandenen Beleg für {check.counterparty || 'diese Zahlung'} wählen
               </label>
               <select id={`${id}-receipt`} className="ui-input" style={{ width: 'auto', maxWidth: '100%' }} value={chosen} disabled={pending} onChange={(e) => setChosen(e.target.value)}>
-                <option value="">Beleg wählen ({choices.length} {found ? 'gefunden' : 'nächstliegende'})</option>
+                <option value="">Beleg wählen</option>
                 {choices.map((r) => (
                   <option key={r.rowId} value={r.rowId}>
                     {choiceLabel(r)}
@@ -574,14 +615,20 @@ export default function ReceiptChecks({
   const focusSettled = !otherCompany && focusPaymentId !== null && !loop.open.some((c) => c.paymentId === focusPaymentId);
 
   const router = useRouter();
-  const run = (at: string, action: () => Promise<ChecksResult<ChecksView>>) => {
+  const run = (at: string, action: () => Promise<ChecksResult<ChecksView>>, success?: string) => {
     setError(null);
+    if (success) setPageNotice(null);
     startTransition(async () => {
       const result = await action();
       if (result.ok) {
         setView(result.value);
         // A check can change the budgets and the overview too: the page reads them afresh.
         if (at === 'run') router.refresh();
+        if (success) {
+          // The payment left the list with its buttons: say what happened, and give the focus to the list's heading.
+          setPageNotice(success);
+          document.getElementById(`${id}-title`)?.focus();
+        }
       } else setError({ at, message: checksActionMessage(result) });
     });
   };
@@ -752,12 +799,12 @@ export default function ReceiptChecks({
               pending={pending}
               error={errorAt(`check:${c.paymentId}`)}
               notice={notice?.at === `check:${c.paymentId}` ? notice.message : null}
-              onConfirm={(rowId) => run(`check:${c.paymentId}`, () => confirmReceipt(c.paymentId, rowId))}
+              onConfirm={(rowId) => run(`check:${c.paymentId}`, () => confirmReceipt(c.paymentId, rowId), `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.`)}
               onNoReceipt={(reason) => run(`check:${c.paymentId}`, () => sayNoReceipt(c.paymentId, reason))}
               onTakeOver={(mailId) => takeOver(c.paymentId, mailId)}
               onDismiss={(mailId) => run(`check:${c.paymentId}`, () => dismissMail(mailId))}
               takingOver={takingOver}
-              onLinkByHand={(rowId) => run(`check:${c.paymentId}`, () => linkChosenReceipt(c.paymentId, rowId))}
+              onLinkByHand={(rowId) => run(`check:${c.paymentId}`, () => linkChosenReceipt(c.paymentId, rowId), `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.`)}
               onSearchReceipts={(text) => findReceiptChoices(c.paymentId, text)}
             />
           ))}

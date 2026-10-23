@@ -3,6 +3,9 @@
  * owner's accounts, whatever file or interface it came from.
  */
 
+/** How far the payments of a receipt may go beyond its own amount before a person is asked: fees and exchange rates. */
+export const OVERPAID_TOLERANCE_PERCENT = 8;
+
 export type PaymentFormat =
   /** The transaction list of the bank interface (Enable Banking), as JSON. */
   | 'enable_banking_json'

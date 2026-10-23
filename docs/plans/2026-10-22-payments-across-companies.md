@@ -111,8 +111,10 @@ other's copy behind, and every changed answer would need a write in two companie
 8. **Links of private receipts.** The receiver links its own receipt to a routed payment from its
    spending page: confirming a proposed receipt, taking an invoice over from the mailbox, or picking
    one of its receipts by hand when no proposal fits ("Vorhandenen Beleg zuordnen" on every open
-   check, in every company: the 30 receipts with something left to pay that lie closest in amount
-   and day, partly paid ones included, and a search by name, vendor or amount for the others). The
+   check, in every company: asked from the server when opened, the 30 receipts this payment can go
+   on that lie closest in amount and day, partly paid ones included, and a search by name, vendor or
+   amount for the others). What is offered is what can be linked: the same paid-by sum
+   (`paidByReceipt`, a purchase and its funding debit once) and the same tolerance as the guards. The
    link belongs to the receiver (its workspace and company stamp), never to the holder.
 9. **A link counts only while its payment routes to its company.** The holder never reads the
    receiver's links (`loadPayments` reads only the reader's links), so its tax figures, its loop and
@@ -258,7 +260,7 @@ prove each of these (`routing.dbtest.ts`).
   in the receiver "Aus anderen Firmen" with the holder's name). Spending page: the shared account
   named with its holder, the holder's note where its accounts' private payments went, and "Lösen"
   on a routed payment with a private receipt.
-- **Tests**: `routing.dbtest.ts` (33 tests through the four paths and the privacy promise, with the
+- **Tests**: `routing.dbtest.ts` (35 tests through the four paths and the privacy promise, with the
   holder's tax statement compared before and after), `route.test.ts`, `sharing-actions.test.ts`,
   `AccountSharing.test.tsx`, and additions to the spending page, action, attachment and move tests.
 
@@ -340,6 +342,18 @@ search for the rest, drawn only for the payment a person opens it on; the refusa
 choice have their own words; the list names the vendor and marks estimated amounts; the hand
 choice is tested back and forth (taken back, offered again, linked to another payment, refused for
 a payment answered meanwhile).
+
+### Eighth review (2026-10-23), fixed
+
+No blocker; fixed: one paid-by sum per receipt for the guards and the hand choice
+(`paidByReceipt`: a purchase and the debit funding it once, money back taken off, never below
+nothing), so the amount still open is right; a receipt is offered only where the guard would let it
+be linked; the choices are asked from the server when the picker opens, not sent with every view;
+the picker takes the focus, can be closed with "Abbrechen" (focus back to its opener), announces
+its results in one live region, asks again after a fresh view, and says "gefunden" only for a
+search; a link made from the open checks is announced at the page and the focus goes to the list
+heading; tests for the search's privacy, a hand choice on the holder's own payment with its guard,
+and `paidByReceipt`.
 
 ### What the owner does after the deploy
 

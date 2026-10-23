@@ -44,7 +44,7 @@ const view = (canWrite = true): ChecksView => ({
   loop: {
     open: [
       { paymentId: 'p1', bookingDay: '2026-05-10', cents: 2999, counterparty: 'Zyx Handel', reference: '', state: { state: 'proposed', candidates: [{ rowId: 'r1', label: 'Zyx Rechnung', day: '2026-05-09', amountCents: 2999, estimated: false }] } },
-      { paymentId: 'p2', bookingDay: '2026-05-12', cents: 1250, counterparty: 'Abc Laden', reference: '', state: { state: 'missing' }, choices: [{ rowId: 'r9', label: 'Kassenbon', vendor: 'Abc Laden', day: '2026-05-11', amountCents: 1250, estimated: false, openCents: 1250 }] },
+      { paymentId: 'p2', bookingDay: '2026-05-12', cents: 1250, counterparty: 'Abc Laden', reference: '', state: { state: 'missing' } },
     ],
     answered: [{ paymentId: 'p3', bookingDay: '2026-05-01', cents: 300, counterparty: 'Parkhaus', reference: '', state: { state: 'no_receipt', reason: 'Automat' } }],
     counts: { hasReceipt: 4, notNeeded: { own_transfer: 1, income: 0, refund: 0, fee: 0, loan: 1, cash: 0, transfer: 0 }, noReceipt: 1, proposed: 1, in_mailbox: 0, missing: 1 },
@@ -83,28 +83,45 @@ describe('ReceiptChecks', () => {
     expect(sayNoReceipt).toHaveBeenCalledWith('p2', 'Parkautomat');
   });
 
-  it('links a receipt chosen by hand when no proposal fits, only after one is chosen', async () => {
+  it('links a receipt chosen by hand when no proposal fits, only after one is chosen, and says so at the page', async () => {
+    findReceiptChoices.mockResolvedValue({ ok: true, value: [{ rowId: 'r9', label: 'Kassenbon', vendor: 'Abc Laden', day: '2026-05-11', amountCents: 1250, estimated: false, openCents: 1250 }] });
     render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
     const user = userEvent.setup();
-    // Drawn only on request, for the payment a person works on.
-    expect(screen.queryByLabelText('Vorhandenen Beleg für Abc Laden wählen')).toBeNull();
+    // Asked from the server only on request, for the payment a person works on; the focus goes to the search.
+    expect(findReceiptChoices).not.toHaveBeenCalled();
     await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    expect(findReceiptChoices).toHaveBeenCalledWith('p2', '');
+    expect(document.activeElement).toBe(screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)'));
+    expect(await screen.findByText('1 Beleg zur Auswahl, die nächstliegenden zuerst.')).toBeTruthy();
     const link = screen.getByRole('button', { name: 'Zuordnen: gewählten Beleg zu Abc Laden' });
     expect((link as HTMLButtonElement).disabled).toBe(true);
     await user.selectOptions(screen.getByLabelText('Vorhandenen Beleg für Abc Laden wählen'), 'r9');
     await user.click(link);
     expect(linkChosenReceipt).toHaveBeenCalledWith('p2', 'r9');
+    expect(await screen.findByText('Beleg zugeordnet: Abc Laden.')).toBeTruthy();
+  });
+
+  it('closes the picker with "Abbrechen" and gives the focus back to its opener', async () => {
+    findReceiptChoices.mockResolvedValue({ ok: true, value: [] });
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    await user.click(screen.getByRole('button', { name: 'Abbrechen' }));
+    expect(document.activeElement).toBe(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
   });
 
   it('searches the receipts for a payment and says when nothing fits', async () => {
+    findReceiptChoices.mockResolvedValueOnce({ ok: true, value: [] });
     findReceiptChoices.mockResolvedValueOnce({ ok: true, value: [{ rowId: 'r7', label: 'Altbeleg', vendor: null, day: null, amountCents: 3000, estimated: true, openCents: 1250 }] });
     render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
     const user = userEvent.setup();
     await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    expect(await screen.findByText(/Kein offener Beleg in dieser Firma/)).toBeTruthy();
     await user.type(screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)'), 'Alt');
     await user.click(screen.getByRole('button', { name: 'Suchen' }));
     expect(findReceiptChoices).toHaveBeenCalledWith('p2', 'Alt');
-    expect(screen.getByRole('option', { name: 'Altbeleg, ca. 30,00 €, noch offen ca. 12,50 €' })).toBeTruthy();
+    expect(await screen.findByRole('option', { name: 'Altbeleg, ca. 30,00 €, noch offen ca. 12,50 €' })).toBeTruthy();
+    expect(screen.getByText('1 Beleg gefunden.')).toBeTruthy();
     findReceiptChoices.mockResolvedValueOnce({ ok: true, value: [] });
     await user.click(screen.getByRole('button', { name: 'Suchen' }));
     expect(await screen.findByText('Kein offener Beleg passt zu dieser Suche.')).toBeTruthy();

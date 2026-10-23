@@ -7,7 +7,7 @@ import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from 
 import { batchCoverage, beyondStored, covers, coveredByOtherSources, mergeIntervals, orderBatches, overlaps } from './coverage';
 import { parsePaymentFile, referenceHash } from './parse';
 import { amountQuery } from './search';
-import { PAYMENT_KINDS, type NormalizedPayment, type PaymentFormat, type PaymentKind } from './types';
+import { OVERPAID_TOLERANCE_PERCENT, PAYMENT_KINDS, type NormalizedPayment, type PaymentFormat, type PaymentKind } from './types';
 
 /**
  * Server-side reads and writes for payments. Like the other finance services,
@@ -507,8 +507,7 @@ export interface LinkResult {
 /** How a receipt answers for a link: null when it is not this workspace's, otherwise its own euro amount (null: none). */
 export type ReceiptForLink = (rowId: string) => Promise<{ amountCents: number | null } | null>;
 
-/** How far the payments of a receipt may go beyond its own amount before a person is asked: fees and exchange rates. */
-export const OVERPAID_TOLERANCE_PERCENT = 8;
+export { OVERPAID_TOLERANCE_PERCENT };
 
 /**
  * Link a payment (or part of it) to a receipt or an issued invoice, by a
@@ -685,6 +684,18 @@ export function countedReceiptLinks(payments: readonly PaymentRow[]): Array<{ pa
     }
   }
   return out;
+}
+
+/**
+ * What pays each receipt of a company, by receipt: its own payments counted as
+ * `paidOnReceipt` counts them (a purchase and the debit funding it once), plus
+ * its links on other companies' shared payments (`linkedElsewhere`), never
+ * below nothing. The one sum the guards and the hand choice of a receipt read.
+ */
+export function paidByReceipt(ownPayments: readonly PaymentRow[], linkedElsewhere: ReadonlyMap<string, number>): Map<string, number> {
+  const raw = new Map(linkedElsewhere);
+  for (const { payment, link } of countedReceiptLinks(ownPayments)) raw.set(link.rowId, (raw.get(link.rowId) ?? 0) + (payment.amountCents < 0 ? link.cents : -link.cents));
+  return new Map([...raw].map(([rowId, cents]) => [rowId, Math.max(0, cents)]));
 }
 
 /** What the linked payments of a receipt add up to: money out less money back, never below nothing. */

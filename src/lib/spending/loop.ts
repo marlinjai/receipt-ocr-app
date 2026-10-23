@@ -3,6 +3,7 @@ import type { PaymentKind } from '@/lib/tax/payments/types';
 import type { SpendingCategory } from './categories';
 import { categorise, normalizeText, type CounterpartyTreatmentAnswer } from './rules';
 import { amountQuery } from '@/lib/tax/payments/search';
+import { OVERPAID_TOLERANCE_PERCENT } from '@/lib/tax/payments/types';
 
 /**
  * The missing-receipt loop, as a pure function of what is stored (plan
@@ -201,7 +202,9 @@ export const CHOICES_SHOWN = 30;
 /**
  * The receipts a person may link to a payment by hand, when no proposal fits:
  * every receipt with something left to pay (also one partly paid, an
- * instalment), the closest first: the amount still open nearest to what was
+ * instalment) that this payment can go on without taking the receipt beyond
+ * its amount and the tolerance for fees and rates (the guard's own rule, so
+ * what is offered is what can be linked), the closest first: the amount still open nearest to what was
  * paid, then the day nearest to the payment, receipts without an amount or a
  * day last. With `text`, only receipts whose name or vendor contains it, or
  * whose amount (or what is open of it) is that amount. Pure.
@@ -222,6 +225,7 @@ export function receiptChoices(
     const covered = paidByRow.get(r.rowId) ?? 0;
     const openCents = r.amountCents === null ? null : r.amountCents - covered;
     if (openCents !== null ? openCents <= 0 : r.linked) continue;
+    if (r.amountCents !== null && covered > 0 && covered + paid > r.amountCents + Math.round((r.amountCents * OVERPAID_TOLERANCE_PERCENT) / 100)) continue;
     if (query) {
       const named = `${r.label} ${r.vendor ?? ''}`.toLowerCase().includes(query);
       const amount = cents !== null && (r.amountCents === cents || openCents === cents);

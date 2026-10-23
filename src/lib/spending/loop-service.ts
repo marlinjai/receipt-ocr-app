@@ -4,7 +4,7 @@ import { allReceiptRows, tableContext } from '@/lib/meals/service';
 import { rowToMealRecord } from '@/lib/meals/record';
 import { vendorKey } from '@/lib/tax/decisions';
 import { eurosToCents, formatCents } from '@/lib/tax/money';
-import { linkPayment, type PaymentRow } from '@/lib/tax/payments/service';
+import { linkPayment, paidByReceipt, type PaymentRow } from '@/lib/tax/payments/service';
 import { linkRoutedPayment, loadRoutedPayments, paymentOnSpendingSide, receiversOf, type RoutedPaymentRow } from '@/lib/tax/payments/routing';
 import { receiptForLink } from '@/lib/tax/service';
 import { categoryAnswerMap } from './service';
@@ -90,8 +90,6 @@ export interface PaymentCheck {
   counterparty: string;
   reference: string;
   state: LoopState;
-  /** For a payment still waiting: this company's receipts a person may link to it by hand, the closest first. */
-  choices?: ReceiptChoice[];
 }
 
 export interface LoopOverview {
@@ -152,9 +150,9 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   }
   const ownReasons = new Map(noReceipt.map((a) => [a.paymentId, a.reason]));
   const routedAwayAnswered = loaded.routedAway.flatMap((p) => (ownReasons.has(p.id) ? [{ payment: p, reason: ownReasons.get(p.id) as string }] : []));
-  // Links on other companies' payments are all in `linkedElsewhere` already (routed ones too): only this company's own payments add to it.
-  const paidByRow = new Map(loaded.linkedElsewhere);
-  for (const p of loaded.payments) if (p.routedFrom === null) for (const l of p.links) if (l.rowId) paidByRow.set(l.rowId, (paidByRow.get(l.rowId) ?? 0) + (p.amountCents < 0 ? l.cents : -l.cents));
+  // The guards' own sum: links on other companies' payments are all in `linkedElsewhere` (routed ones too), so only
+  // this company's own payments add to it, a purchase and its funding debit once, never below nothing.
+  const paidByRow = paidByReceipt(loaded.payments.filter((p) => p.routedFrom === null), loaded.linkedElsewhere);
   return { payments: loaded.payments, states, aliases, routedAwayAnswered, receipts, paidByRow };
 }
 
@@ -255,7 +253,7 @@ const check = (p: PaymentRow, state: LoopState): PaymentCheck => ({
 });
 
 export async function loadLoopOverview(db: PrismaClient, workspaceId: string): Promise<LoopOverview> {
-  const { payments, states, routedAwayAnswered, receipts, paidByRow } = await computeStates(db, workspaceId);
+  const { payments, states, routedAwayAnswered } = await computeStates(db, workspaceId);
   const counts: LoopOverview['counts'] = {
     hasReceipt: 0,
     notNeeded: { own_transfer: 0, income: 0, refund: 0, fee: 0, loan: 0, cash: 0, transfer: 0 },
@@ -276,7 +274,7 @@ export async function loadLoopOverview(db: PrismaClient, workspaceId: string): P
       answered.push(check(p, state));
     } else {
       counts[state.state] += 1;
-      open.push({ ...check(p, state), choices: receiptChoices(p, receipts, paidByRow) });
+      open.push(check(p, state));
     }
   }
   // A "no receipt" answer given here about a payment now routed to another company stays visible here, so

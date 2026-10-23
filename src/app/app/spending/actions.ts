@@ -7,11 +7,13 @@ import { prisma } from '@/lib/prisma';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
 import { unlinkRoutedPayment } from '@/lib/tax/payments/routing';
 import { settleMovedPaymentsLater } from '@/lib/spending/settle-later';
+import { settleMovedPayments } from '@/lib/spending/loop-service';
 import {
   SpendingServiceError,
   loadSpending,
   markCounterpartyOwnAccount,
   removeCounterpartyCategory,
+  saveOwnNames as saveOwnNamesOf,
   unmarkCounterpartyOwnAccount,
   setCounterpartyCategory,
   type SpendingContext,
@@ -140,6 +142,28 @@ export async function unmarkOwnAccount(year: unknown, month: unknown, counterpar
     const ctx = await writeContext();
     await unmarkCounterpartyOwnAccount(prisma, ctx, counterpartyKey);
     settleMovedLater(ctx, counterpartyKey);
+    return { ok: true, value: await view(ctx.session, ctx.workspaceId, year, month, true) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/**
+ * Keep the owner's own names (the whole list). Payments to them stop counting
+ * as spending at once, and their "receipt missing" messages leave the queue
+ * now rather than on the next run of the loop; a name taken out brings its
+ * payments back as they were, without a second message.
+ */
+export async function saveOwnNames(year: unknown, month: unknown, names: unknown): Promise<Result<SpendingPageView>> {
+  try {
+    const ctx = await writeContext();
+    await saveOwnNamesOf(prisma, ctx, names);
+    try {
+      await settleMovedPayments(prisma, ctx.workspaceId);
+    } catch (e) {
+      // The names are kept; the next run of the loop settles the same messages.
+      console.error('[spending] settling messages after the own names changed failed', (e as Error)?.name ?? 'error');
+    }
     return { ok: true, value: await view(ctx.session, ctx.workspaceId, year, month, true) };
   } catch (e) {
     return failure(e);

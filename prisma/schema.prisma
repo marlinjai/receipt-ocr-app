@@ -922,6 +922,8 @@ model SpendingSettings {
   authTenantId    String?  @map("auth_tenant_id")
   channel         String   @default("push")
   notifyEmail     String?  @map("notify_email")
+  // The owner's own names (src/lib/spending/own-names.ts): a counterparty carrying one is an own account.
+  ownNames        String[] @default([]) @map("own_names")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 

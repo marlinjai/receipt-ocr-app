@@ -6,7 +6,7 @@ import { formatCents } from '@/lib/tax/money';
 import { SPENDING_CATEGORIES, SPENDING_CATEGORY_LABELS, isSpendingCategory } from './categories';
 import { MAX_LIMIT_CENTS, budgetSubject, computeBudgets, type BudgetLine, type BudgetScope, type StoredLimit } from './budgets';
 import { classifyPayment } from './overview';
-import { categoryAnswerMap, loadCategoryAnswers, toOverviewInput } from './service';
+import { categoryAnswerMap, loadCategoryAnswers, spendingTreatments, toOverviewInput } from './service';
 import { spendingPath } from './paths';
 import { notify, serverChannels, settleAllBut, type NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
@@ -42,7 +42,7 @@ export async function loadStoredLimits(db: PrismaClient, workspaceId: string): P
 export async function loadBudgetsView(db: PrismaClient, workspaceId: string, today: string, withCounterparties = false): Promise<{ lines: BudgetLine[]; counterparties: string[] }> {
   // The spending side's read: private payments of a shared account count in the company they are routed to, never twice.
   const [loaded, answers, limits] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId), loadStoredLimits(db, workspaceId)]);
-  const ctx = { treatments: loaded.treatments, answers: await categoryAnswerMap(db, workspaceId, loaded, answers) };
+  const ctx = { treatments: (await spendingTreatments(db, workspaceId, loaded)).treatments, answers: await categoryAnswerMap(db, workspaceId, loaded, answers) };
   const payments = loaded.payments.map((p) => classifyPayment(toOverviewInput(p), ctx));
   const lines = computeBudgets({ payments, limits, categories: SPENDING_CATEGORIES.filter((c) => c !== 'transfers'), categoryLabels: SPENDING_CATEGORY_LABELS, today });
   return { lines, counterparties: withCounterparties ? counterpartiesOf(payments) : [] };

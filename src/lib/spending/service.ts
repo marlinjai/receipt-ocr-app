@@ -5,6 +5,8 @@ import { loadRoutedPayments, type RoutedPaymentRow, type RoutedPayments } from '
 import { isSpendingCategory, type SpendingCategory } from './categories';
 import { berlinYear } from './period';
 import { buildOverview, paymentYears, type OverviewPaymentInput, type SpendingOverview } from './overview';
+import { cleanOwnNames, treatmentsWithOwnNames } from './own-names';
+import type { CounterpartyTreatmentAnswer } from './rules';
 
 /**
  * Server-side reads and writes for the spending overview. Every function takes
@@ -27,7 +29,11 @@ export type SpendingServiceErrorCode =
   /** The payments tab already answered the counterparty as business or private; that answer is changed there, not overwritten here. */
   | 'treatment_exists'
   /** Taking back an own-account answer that is not one. */
-  | 'not_own_account';
+  | 'not_own_account'
+  /** Own names that are no list of names, or a name with nothing to match on. */
+  | 'invalid_names'
+  | 'name_too_long'
+  | 'too_many_names';
 
 export class SpendingServiceError extends Error {
   readonly code: SpendingServiceErrorCode;
@@ -54,8 +60,13 @@ export interface SpendingView {
   /** Receipts of this company still linked to payments that moved back to the company holding their account: taken back here. */
   dormantLinks: Array<{ paymentId: string; receipts: number; cents: number; linkedOn: string }>;
   answers: CategoryAnswerView[];
-  /** Counterparties answered as an own account (here or in the payments tab), with a name to show. */
-  ownAccounts: Array<{ counterpartyKey: string; label: string }>;
+  /**
+   * Counterparties counted as an own account, with a name to show: answered so (here or in the payments
+   * tab), or `byName` because they carry one of the own names (changed with the names, not taken back here).
+   */
+  ownAccounts: Array<{ counterpartyKey: string; label: string; byName: boolean }>;
+  /** The owner's own names, as typed. */
+  ownNames: string[];
   /** True when the workspace holds no payment at all: the page explains where they come from. */
   noPayments: boolean;
 }
@@ -117,10 +128,45 @@ export async function categoryAnswerMap(db: PrismaClient, workspaceId: string, r
   return out;
 }
 
+/** The owner's own names of this company, as typed; none before he set any. */
+export async function loadOwnNames(db: PrismaClient, workspaceId: string): Promise<string[]> {
+  const row = await db.spendingSettings.findUnique({ where: { authWorkspaceId: workspaceId }, select: { ownNames: true } });
+  return row?.ownNames ?? [];
+}
+
+/**
+ * The counterparty answers the spending side reads: the payments tab's, and
+ * own accounts by the owner's own names where no answer was given (see
+ * `treatmentsWithOwnNames`). The one place the names apply, for the overview,
+ * the budgets and the missing-receipt loop alike.
+ */
+export async function spendingTreatments(
+  db: PrismaClient,
+  workspaceId: string,
+  loaded: Pick<RoutedPayments, 'payments' | 'treatments'>,
+  names?: readonly string[],
+): Promise<{ treatments: ReadonlyMap<string, CounterpartyTreatmentAnswer>; byName: ReadonlySet<string> }> {
+  const ownNames = names ?? (await loadOwnNames(db, workspaceId));
+  return treatmentsWithOwnNames(loaded.treatments, loaded.payments.map((p) => p.counterpartyKey), ownNames);
+}
+
+/** Keep the owner's own names (the whole list, as shown on the page). */
+export async function saveOwnNames(db: PrismaClient, ctx: SpendingContext, raw: unknown): Promise<string[]> {
+  const cleaned = cleanOwnNames(raw);
+  if (!cleaned.ok) throw new SpendingServiceError(cleaned.error);
+  await db.spendingSettings.upsert({
+    where: { authWorkspaceId: ctx.workspaceId },
+    create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, ownNames: cleaned.names },
+    update: { ownNames: cleaned.names },
+  });
+  return cleaned.names;
+}
+
 /** The overview of `year` (one month of it when `month` is 1 to 12). */
 export async function loadSpending(db: PrismaClient, workspaceId: string, year: number, month: number | null, today = new Date()): Promise<SpendingView> {
-  const [loaded, answers] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId)]);
-  const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments: loaded.treatments, answers: await categoryAnswerMap(db, workspaceId, loaded, answers) }, year, month);
+  const [loaded, answers, ownNames] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId), loadOwnNames(db, workspaceId)]);
+  const { treatments, byName } = await spendingTreatments(db, workspaceId, loaded, ownNames);
+  const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments, byName, answers: await categoryAnswerMap(db, workspaceId, loaded, answers) }, year, month);
   return {
     overview,
     // The year asked for is always offered, so the year picker shows what the page shows even for a year without payments.
@@ -129,10 +175,11 @@ export async function loadSpending(db: PrismaClient, workspaceId: string, year: 
     sharedOut: loaded.sharedOut.map((s) => ({ accountLabel: s.accountLabel, receiverWorkspaceId: s.receiverWorkspaceId })),
     dormantLinks: loaded.dormantLinks.map((l) => ({ paymentId: l.paymentId, receipts: l.receipts, cents: l.cents, linkedOn: l.linkedOn })),
     answers,
-    ownAccounts: [...loaded.treatments]
+    ownAccounts: [...treatments]
       .filter(([, treatment]) => treatment === 'own_account')
-      .map(([key]) => ({ counterpartyKey: key, label: loaded.payments.find((p) => p.counterpartyKey === key)?.counterparty ?? key }))
+      .map(([key]) => ({ counterpartyKey: key, label: loaded.payments.find((p) => p.counterpartyKey === key)?.counterparty ?? key, byName: byName.has(key) }))
       .sort((a, b) => a.label.localeCompare(b.label, 'de')),
+    ownNames,
     noPayments: loaded.payments.length === 0,
   };
 }

@@ -74,8 +74,11 @@ export interface SpendingOverview {
   /** Twelve entries, January first: the year month by month, independent of `month`. */
   byMonth: Array<{ month: number; cents: number; byCategory: Record<SpendingCategory, number> }>;
   split: Record<SpendingPurpose, number>;
-  /** Money that left an account for another own account in the period: shown, never counted as spending. */
-  ownTransfers: { cents: number; count: number };
+  /**
+   * Money that left an account for another own account in the period: shown, never counted as spending.
+   * `byName`: of it, what went to a counterparty that is an own account only by the owner's own names.
+   */
+  ownTransfers: { cents: number; count: number; byName: { cents: number; count: number } };
   /** Counterparties whose spending in the period is in "unclear", largest first. */
   unclear: UnclearCounterparty[];
   /** The payments of the period that count as spending or are own transfers, newest first. */
@@ -85,6 +88,8 @@ export interface SpendingOverview {
 export interface OverviewContext {
   treatments: ReadonlyMap<string, CounterpartyTreatmentAnswer>;
   answers: ReadonlyMap<string, SpendingCategory>;
+  /** Counterparties that are own accounts only by the owner's own names (see `own-names.ts`): named apart in the totals. */
+  byName?: ReadonlySet<string>;
 }
 
 export function classifyPayment(p: OverviewPaymentInput, ctx: OverviewContext): OverviewPayment {
@@ -135,7 +140,7 @@ export function buildOverview(payments: readonly OverviewPaymentInput[], ctx: Ov
   const totals = zeroCategories();
   const counts = zeroCategories();
   const split: Record<SpendingPurpose, number> = { private: 0, business: 0, unanswered: 0 };
-  const ownTransfers = { cents: 0, count: 0 };
+  const ownTransfers = { cents: 0, count: 0, byName: { cents: 0, count: 0 } };
   const unclear = new Map<string, UnclearCounterparty>();
   const listed: OverviewPayment[] = [];
   let totalCents = 0;
@@ -147,6 +152,10 @@ export function buildOverview(payments: readonly OverviewPaymentInput[], ctx: Ov
         if (p.amountCents < 0) {
           ownTransfers.cents += -p.amountCents;
           ownTransfers.count += 1;
+          if (p.counterpartyKey && ctx.byName?.has(p.counterpartyKey)) {
+            ownTransfers.byName.cents += -p.amountCents;
+            ownTransfers.byName.count += 1;
+          }
         }
       }
       continue;

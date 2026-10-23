@@ -95,7 +95,7 @@ describe('spending overview', () => {
     await setCounterpartyTreatment(db, ctx, { counterparty: 'REWE Markt', treatment: 'private' });
     const view = await loadSpending(db, ctx.workspaceId, 2026, null);
     expect(view.overview.totalCents).toBe(1000);
-    expect(view.overview.ownTransfers).toEqual({ cents: 100_000, count: 1 });
+    expect(view.overview.ownTransfers).toEqual({ cents: 100_000, count: 1, byName: { cents: 0, count: 0 } });
     expect(view.overview.split).toEqual({ private: 1000, business: 0, unanswered: 0 });
   });
 
@@ -104,7 +104,7 @@ describe('spending overview', () => {
     await markCounterpartyOwnAccount(db, ctx, 'Karte Beispiel');
     let view = await loadSpending(db, ctx.workspaceId, 2026, null);
     expect(view.overview.totalCents).toBe(5000);
-    expect(view.ownAccounts).toEqual([{ counterpartyKey: 'karte beispiel', label: 'Karte Beispiel' }]);
+    expect(view.ownAccounts).toEqual([{ counterpartyKey: 'karte beispiel', label: 'Karte Beispiel', byName: false }]);
     // Saying it twice changes nothing.
     await markCounterpartyOwnAccount(db, ctx, 'Karte Beispiel');
 

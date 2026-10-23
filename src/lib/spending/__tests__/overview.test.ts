@@ -38,7 +38,7 @@ describe('buildOverview', () => {
     expect(o.byMonth[0].cents).toBe(4000);
     expect(o.byMonth[1].cents).toBe(12_400);
     expect(o.byMonth[1].byCategory.leisure_sport).toBe(2000);
-    expect(o.ownTransfers).toEqual({ cents: 50_000, count: 1 });
+    expect(o.ownTransfers).toEqual({ cents: 50_000, count: 1, byName: { cents: 0, count: 0 } });
     expect(o.payments.some((p) => p.kind === 'income')).toBe(false);
   });
 
@@ -99,7 +99,7 @@ describe('buildOverview', () => {
       2026,
       null,
     );
-    expect(o.ownTransfers).toEqual({ cents: 10_000, count: 1 });
+    expect(o.ownTransfers).toEqual({ cents: 10_000, count: 1, byName: { cents: 0, count: 0 } });
     expect(o.totalCents).toBe(0);
   });
 

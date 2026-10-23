@@ -330,11 +330,12 @@ function OpenCheck({
   // The search the shown list answers; a fresh view asks it again, so what was typed and chosen stays.
   const lastQuery = useRef('');
   const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
-  const loadChoices = async (text: string) => {
+  /** `quiet`: asked again only because the page read afresh; the list and its status stay as they are meanwhile. */
+  const loadChoices = async (text: string, quiet = false) => {
     const mine = ++request.current;
     const version = dataVersion;
     lastQuery.current = text;
-    setSearching(true);
+    if (!quiet) setSearching(true);
     setSearchError(null);
     try {
       const result = await onSearchReceipts(text);
@@ -371,7 +372,7 @@ function OpenCheck({
   // Opening, or a fresh view of the payments while open, asks once with the last search; the list on screen
   // stays until the answer is in, so nothing a person is working with disappears under the focus.
   useEffect(() => {
-    if (picking && loadedVersion !== dataVersion) void loadChoices(lastQuery.current);
+    if (picking && loadedVersion !== dataVersion) void loadChoices(lastQuery.current, found !== null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [picking, dataVersion]);
   const choices = found?.choices ?? [];
@@ -622,13 +623,14 @@ export default function ReceiptChecks({
   // Counts the fresh views of the payments, so an open list for linking by hand is asked again once.
   const [dataVersion, setDataVersion] = useState(0);
   // The page reads the checks afresh after a change elsewhere on it (a receipt taken back in the payment list): take
-  // that over, keeping the summary of the last "Jetzt prüfen" (the page's own read carries none) and dropping errors
-  // that told the person to reload.
+  // that over, keeping the summary of the last "Jetzt prüfen" (the page's own read carries none; the next action of
+  // this panel ends it, as a notice belongs to the action that set it). An error stays while its payment is still
+  // open here; one about a payment that left the list goes with it. (Another company remounts the panel: page.tsx.)
   const [shownInitial, setShownInitial] = useState(initial);
   if (shownInitial !== initial) {
     setShownInitial(initial);
     setView((current) => ({ ...initial, lastRun: current.lastRun }));
-    setError(null);
+    setError((current) => (current && current.at.startsWith('check:') && !initial.loop.open.some((c) => `check:${c.paymentId}` === current.at) ? null : current));
     setDataVersion((n) => n + 1);
   }
   const [pending, startTransition] = useTransition();
@@ -716,6 +718,8 @@ export default function ReceiptChecks({
           setError({ at: `check:${paymentId}`, message: `${takeOverMessage(outcome, false)} ${checksActionMessage(linked)}` });
           const fresh = await getReceiptChecks();
           if (fresh.ok) setView(fresh.value);
+          // No link was made: nothing else on the page changed, and a fresh read would only hide this message.
+          return;
         }
         router.refresh();
       } finally {

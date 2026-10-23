@@ -129,6 +129,22 @@ describe('ReceiptChecks', () => {
     expect((screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)') as HTMLInputElement).value).toBe('Kas');
   });
 
+  it('keeps an error about a payment still open when the page reads afresh, and drops one about a payment that left', async () => {
+    findReceiptChoices.mockResolvedValue({ ok: true, value: [{ rowId: 'r9', label: 'Kassenbon', vendor: null, day: null, amountCents: 1250, estimated: false, openCents: 1250 }] });
+    linkChosenReceipt.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'already_has_receipt' });
+    const base = view();
+    const { rerender } = render(<ReceiptChecks initial={base} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    await user.selectOptions(await screen.findByLabelText('Vorhandenen Beleg für Abc Laden wählen'), 'r9');
+    await user.click(screen.getByRole('button', { name: 'Zuordnen: gewählten Beleg zu Abc Laden' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/inzwischen schon ein Beleg/);
+    rerender(<ReceiptChecks initial={{ ...base }} focusPaymentId={null} />);
+    expect(screen.getByRole('alert').textContent).toMatch(/inzwischen schon ein Beleg/);
+    rerender(<ReceiptChecks initial={{ ...base, loop: { ...base.loop, open: base.loop.open.slice(0, 1) } }} focusPaymentId={null} />);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('marking a notification read reads nothing else afresh', async () => {
     render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
     await userEvent.setup().click(screen.getByRole('button', { name: 'Beleg fehlt: Abc Laden als gelesen markieren' }));

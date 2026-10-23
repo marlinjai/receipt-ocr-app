@@ -389,6 +389,15 @@ ever set is gone.
 Accepted: should the page's own read fail during that fresh read, the page shows its existing
 error card with "Neu laden", as it does on any load; the action itself succeeded and is kept.
 
+### Twelfth review (2026-10-23), fixed
+
+No blocker; fixed: a mail taken over whose link failed keeps its message (no fresh read after a
+link that was not made); an error stays while its payment is still open and goes only with a
+payment that left the list; the checks panel is keyed by company, so after a switch nothing of the
+other company stays (a summary, a notice, the settings form); an open list asks again quietly after
+a fresh read, without announcing an unchanged list. The summary of "Jetzt prüfen" ends with the
+next action of the panel, as a notice belongs to the action that set it (said in the code).
+
 ### What the owner does after the deploy
 
 In Whiz-Art Media, Finanzen, Zahlungen, section "Private Zahlungen in einer anderen Firma": for

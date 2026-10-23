@@ -378,13 +378,13 @@
 
 ## In Progress
 
+<!-- Currently being implemented -->
+
 - [ ] The year-change list answers itself (asked by the owner on 2026-10-23): filed years
   (2021 to 2025) fix their turn the way they were filed, and for open years a rule decides
   (subscriptions stay in the year paid, a January value-added tax payment belongs to the year
   before); a person's answer still overrides. Plan:
   [docs/plans/2026-10-23-year-boundary-by-rule.md](docs/plans/2026-10-23-year-boundary-by-rule.md). (2026-10-23)
-<!-- Currently being implemented -->
-
 - [ ] A visual budget overview that shows real spending (asked by the owner on 2026-10-23): the
   spending page opens with months by category, budget against spent and the biggest
   counterparties, the receipt checks move to their own tab, transfers to the owner's own name

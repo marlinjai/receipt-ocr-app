@@ -2,7 +2,7 @@
 title: The year-change list answers itself
 summary: Payments between 22 December and 10 January no longer wait for a person. A year whose return is filed fixes them the way it was filed, and for open years a rule decides from the payment data (a subscription billed on its own period start stays in the year it was paid, an advance payment of value-added tax in early January belongs to the year before). A person's answer still overrides, and only what no rule settles is asked.
 type: plan
-status: decided
+status: in-progress
 tags: [receipts, tax, year-boundary, payments]
 projects: [receipt-ocr-app]
 date: 2026-10-23
@@ -79,6 +79,26 @@ Two facts settle most of it:
 5. **The tab shows the reason for every entry** and counts as open only what has neither a
    person's answer nor a rule. The "Jahreswechsel" tab count in the finance page shows that open
    number, expected to be zero for 2025/2026.
+
+## Implementation notes (decided while building, 2026-10-23, say so if you disagree)
+
+- **"Saved after the filing day"** compares the day (Europe/Berlin) a person's answer was last
+  saved (`updatedAt`) with `filed_on`. An answer saved on the filing day itself counts as filed with
+  the return: on that day the two cannot be told apart, and changing a filed year is the worse mistake.
+- **Both years filed:** the reason names the paid year; a departing answer names the return it was
+  saved after.
+- **A move across a filed year is refused when saved** (`year_boundary_filed`), so a departing answer
+  can only arise when the filing day is recorded or moved after the answer was given. Such an answer is
+  shown and can be taken back; an answer given before the filing day is part of the return and is shown
+  without buttons (to change it, clear the filing day first). "Stays" on a filed year is accepted.
+- **Recurring** means at least three distinct months with a receipt of the same vendor (by its payment
+  day, else its receipt day) or a payment out naming it, among the twelve calendar months before the
+  payment's month. The payment's own month does not count.
+- **Service period:** receipts carry none yet, so the one moving rule for receipts is absent and every
+  receipt of an open year with a vendor stays by rule. Only a receipt without a vendor stays open.
+- **The filing day** must be a real day, not in the future and not before the year ended.
+- Meals and assets keep their behaviour: no rule or filed year applies to them, only an earlier
+  person's answer is shown so it can be taken back.
 
 ## Tests (four paths, standard `stateful-flow-testing.md`)
 

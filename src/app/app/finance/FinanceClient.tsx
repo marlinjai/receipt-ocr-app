@@ -299,7 +299,7 @@ export default function FinanceClient({
     { key: 'vat', label: 'Umsatzsteuer' },
     { key: 'tax', label: 'Einkommensteuer' },
     // Only when the year has a payment in the ten-day window; the count is what is not answered yet.
-    ...(view.yearBoundary.length > 0 ? [{ key: 'boundary' as const, label: 'Jahreswechsel', count: view.yearBoundary.filter((e) => e.answer === null && e.inactive === null).length }] : []),
+    ...(view.yearBoundary.length > 0 ? [{ key: 'boundary' as const, label: 'Jahreswechsel', count: view.yearBoundary.filter((e) => e.source === null && e.inactive === null).length }] : []),
     { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length + view.reverseChargeVendors.length },
   ];
 
@@ -955,7 +955,7 @@ export default function FinanceClient({
                   () =>
                     declineYearBoundary(
                       view.year,
-                      view.yearBoundary.filter((e) => e.answer === null && e.inactive === null).map((e) => ({ kind: e.kind, subjectId: e.subjectId, cashDay: e.cashDay })),
+                      view.yearBoundary.filter((e) => e.source === null && e.inactive === null).map((e) => ({ kind: e.kind, subjectId: e.subjectId, cashDay: e.cashDay })),
                     ),
                   'Alle offenen Zahlungen bleiben in dem Jahr, in dem sie gezahlt wurden.',
                 )

@@ -16,12 +16,13 @@ interface Props {
 
 /**
  * The ten-day rule at the turn of the year: payments between 22 December and
- * 10 January, each with the question whether it is a regularly recurring one
- * that belongs to the other year. Nothing is moved without an answer.
+ * 10 January, each with the answer that applies and why (a filed year, a rule
+ * worked out from the payment data, or a person's answer; `year-boundary.ts`).
+ * Only what nothing answers is open and asked; a person can override a rule.
  */
 export default function YearBoundaryTab({ view, busy, error, onAnswer, onDeclineOpen }: Props) {
   const entries = view.yearBoundary;
-  const open = entries.filter((e) => e.answer === null && e.inactive === null);
+  const open = entries.filter((e) => e.source === null && e.inactive === null);
   return (
     <div className="space-y-4">
       <section className="glass-panel rounded-xl p-4 sm:p-5">
@@ -34,9 +35,15 @@ export default function YearBoundaryTab({ view, busy, error, onAnswer, onDecline
         </p>
         <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
           Grundlage: § 11 Absatz 1 Satz 2 und Absatz 2 Satz 2 Einkommensteuergesetz; „kurze Zeit“ sind nach ständiger
-          Rechtsprechung zehn Tage. Ein einmaliger Kauf in dieser Zeit bleibt in dem Jahr, in dem er bezahlt wurde.
-          Ohne Antwort wird nichts verschoben. Für die Umsatzsteuer-Voranmeldung ändert sich nichts: die Vorsteuer
-          bleibt in dem Zeitraum, in dem gezahlt wurde.
+          Rechtsprechung zehn Tage. Für die Umsatzsteuer-Voranmeldung ändert sich nichts: die Vorsteuer bleibt in dem
+          Zeitraum, in dem gezahlt wurde.
+        </p>
+        <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+          Die meisten Zahlungen beantworten sich selbst. Ist die Erklärung eines der beiden Jahre abgegeben, bleibt die
+          Zahlung so, wie sie erklärt wurde. Sonst gilt: eine Umsatzsteuer-Zahlung vom 1. bis 10. Januar gehört zum Jahr
+          davor, eine vom 22. bis 31. Dezember bleibt; ein Abo wird zu Beginn des Zeitraums berechnet, den es bezahlt, und
+          bleibt; ein einmaliger Kauf bleibt in dem Jahr, in dem er bezahlt wurde. Eine eigene Antwort geht jeder Regel vor.
+          Gefragt wird nur, was keine Regel klärt.
         </p>
       </section>
 
@@ -59,6 +66,9 @@ export default function YearBoundaryTab({ view, busy, error, onAnswer, onDecline
           <ul className="space-y-3">
             {entries.map((entry) => {
               const paidYear = Number(entry.cashDay.slice(0, 4));
+              const answerable = entry.inactive === null && entry.filedYear === null;
+              // A person's answer on a filed year is part of the return; only one that departs from it can be taken back.
+              const takeBack = entry.storedAnswer !== null && (entry.filedYear === null || entry.departsFromFiled !== null || entry.inactive !== null);
               return (
                 <li key={`${entry.kind}:${entry.subjectId}`} className="rounded-lg border p-3" style={{ borderColor: 'var(--border)' }}>
                   <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -72,25 +82,23 @@ export default function YearBoundaryTab({ view, busy, error, onAnswer, onDecline
                   </div>
                   <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }} role="status">
                     {entry.inactive
-                      ? `Die frühere Antwort (${entry.answer ? `zählt für ${entry.otherYear}` : `bleibt in ${paidYear}`}) wird nicht angewendet: ${entry.inactive === 'meal' ? 'der Beleg ist inzwischen eine Bewirtung und zählt nach dem Bewirtungsverzeichnis' : 'der Beleg gehört inzwischen zu einer Anlage und wird abgeschrieben'}. Sie gilt wieder, sobald das nicht mehr so ist; wer das nicht möchte, nimmt sie zurück.`
-                      : entry.answer === true
-                      ? `Zählt für ${entry.otherYear} (regelmäßig wiederkehrend).`
-                      : entry.answer === false
-                        ? `Bleibt in ${paidYear}.`
-                        : `Noch nicht beantwortet: zählt bis dahin für ${paidYear}.`}
+                      ? `Die frühere Antwort (${entry.storedAnswer ? `zählt für ${entry.otherYear}` : `bleibt in ${paidYear}`}) wird nicht angewendet: ${entry.inactive === 'meal' ? 'der Beleg ist inzwischen eine Bewirtung und zählt nach dem Bewirtungsverzeichnis' : 'der Beleg gehört inzwischen zu einer Anlage und wird abgeschrieben'}. Sie gilt wieder, sobald das nicht mehr so ist; wer das nicht möchte, nimmt sie zurück.`
+                      : entry.departsFromFiled !== null
+                        ? `Bleibt in ${paidYear}. ${entry.reason}: die Antwort „zählt für ${entry.otherYear}“ wurde nach der Abgabe gegeben und wird nicht angewendet. Wer sie nicht mehr braucht, nimmt sie zurück.`
+                        : `${entry.answer === true ? `Zählt für ${entry.otherYear}.` : entry.answer === false ? `Bleibt in ${paidYear}.` : `Noch offen: zählt bis dahin für ${paidYear}.`} ${entry.source === 'person' ? entry.reason : entry.source === null ? entry.reason : `Grund: ${entry.reason}`}.`}
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {entry.inactive === null && (
+                    {answerable && (
                       <>
-                        <button type="button" className="ui-btn ui-btn-sm" aria-pressed={entry.answer === true} disabled={busy} onClick={() => onAnswer(entry, true)}>
+                        <button type="button" className="ui-btn ui-btn-sm" aria-pressed={entry.storedAnswer === true} disabled={busy} onClick={() => onAnswer(entry, true)}>
                           Regelmäßig wiederkehrend, gehört zu {entry.otherYear}
                         </button>
-                        <button type="button" className="ui-btn ui-btn-sm" aria-pressed={entry.answer === false} disabled={busy} onClick={() => onAnswer(entry, false)}>
+                        <button type="button" className="ui-btn ui-btn-sm" aria-pressed={entry.storedAnswer === false} disabled={busy} onClick={() => onAnswer(entry, false)}>
                           Bleibt in {paidYear}
                         </button>
                       </>
                     )}
-                    {entry.answer !== null && (
+                    {takeBack && (
                       <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onAnswer(entry, null)}>
                         Antwort zurücknehmen
                       </button>

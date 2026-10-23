@@ -20,18 +20,31 @@ import {
   type VendorRule,
 } from './decisions';
 import { resolveItem, resolveItems, type ReceiptFacts, type ResolvedItem, type TreatmentOrigin } from './facts';
-import { answerFor, boundaryDay, otherYearOf, touchesYear, BOUNDARY_SUBJECT_KINDS, type BoundarySubjectKind } from './year-boundary';
+import {
+  berlinDay,
+  boundaryDay,
+  decideBoundary,
+  otherYearOf,
+  recursMonthly,
+  touchesYear,
+  BOUNDARY_REASONS,
+  BOUNDARY_SUBJECT_KINDS,
+  type BoundaryDecision,
+  type BoundarySource,
+  type BoundarySubjectKind,
+} from './year-boundary';
 import { LinesInputError, itemIdOf, splitItemId, storedLineTreatment, validateLines, type ReceiptLine } from './lines';
 import { forecastYear, type Forecast } from './forecast';
 import { overdueInvoices, type OverdueInvoice } from './overdue';
 import { loadIncomeTax, type IncomeTaxView } from './income-tax/service';
-import { proposeEstimateMatches, proposeMatches, type MatchStrength } from './payments/match';
+import { proposeEstimateMatches, proposeMatches, vendorNamed, type MatchStrength } from './payments/match';
 import { heldService, type ServiceKind } from './payments/funding';
 import { countOrderNumbers, proposeRefunds, type RefundStrength, type RefundTarget } from './payments/refunds';
 import {
   PaymentServiceError,
   countedReceiptLinks,
   deletePaymentLinksForRows,
+  counterpartyKey,
   foreignAmount,
   linkProposals,
   loadPayments,
@@ -104,6 +117,7 @@ export type TaxServiceErrorCode =
   | 'boundary_subject_not_found'
   | 'not_in_year_boundary'
   | 'year_boundary_changed'
+  | 'year_boundary_filed'
   | 'assignment_columns_missing';
 
 export class TaxServiceError extends Error {
@@ -318,8 +332,22 @@ export interface YearBoundaryEntry {
   cents: number | null;
   /** The year it would count in instead of the year of `cashDay`. */
   otherYear: number;
-  /** True: counts in `otherYear`. False: stays. Null: not answered for this payment day. */
+  /**
+   * The answer that applies: true counts in `otherYear`, false stays. Null:
+   * open, neither a person nor a rule answered (only these are asked). For an
+   * inactive entry, the person's answer that is not applied.
+   */
   answer: boolean | null;
+  /** Where `answer` comes from: a person, a filed year, or a rule worked out on read (see `year-boundary.ts`). */
+  source: BoundarySource | null;
+  /** Why, in German, as the list shows it. */
+  reason: string;
+  /** The person's stored answer for this payment day, applied or not; null when nobody answered. */
+  storedAnswer: boolean | null;
+  /** The filed year that fixes this payment; null while both years are open. Nothing on it can be answered then. */
+  filedYear: number | null;
+  /** Set when the person's answer would move the payment across this filed year: it is shown, not applied. */
+  departsFromFiled: number | null;
   /**
    * Set when an answer exists but has no effect right now: the receipt has
    * since become a business meal or part of an asset. It is listed so the
@@ -539,16 +567,30 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     getTaxSettings(db, workspaceId),
     db.taxAsset.findMany({ where: { authWorkspaceId: workspaceId }, include: { parts: true }, orderBy: [{ acquisitionDate: 'asc' }, { createdAt: 'asc' }] }),
   ]);
-  const [storedInvoices, storedSettlements, storedChanges, settingsRow, storedBoundaryAnswers, storedReverseCharges] = await Promise.all([
+  const [storedInvoices, storedSettlements, storedChanges, settingsRow, storedBoundaryAnswers, storedReverseCharges, filedYears] = await Promise.all([
     db.taxIssuedInvoice.findMany({ where: { authWorkspaceId: workspaceId }, include: { payments: true }, orderBy: [{ issueDate: 'asc' }, { number: 'asc' }] }),
     db.taxVatSettlement.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: { settledOn: 'asc' } }),
     db.taxStatusChange.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: { effectiveFrom: 'asc' } }),
     db.workspaceTaxSettings.findUnique({ where: { authWorkspaceId: workspaceId } }),
     db.taxYearBoundaryAnswer.findMany({ where: { authWorkspaceId: workspaceId } }),
     db.taxReverseCharge.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: [{ subject: 'asc' }, { effectiveFrom: 'asc' }] }),
+    db.taxYearSettings.findMany({ where: { authWorkspaceId: workspaceId, filedOn: { not: null } }, select: { year: true, filedOn: true } }),
   ]);
   const reverseChargeEntries = storedReverseCharges.map(toReverseChargeEntry);
-  const boundaryAnswers = new Map(storedBoundaryAnswers.map((a) => [`${a.subjectKind}:${a.subjectId}`, a]));
+  // A person's answers, with the day each was last saved: an answer saved after
+  // a year's filing day may not change that filed year (see `year-boundary.ts`).
+  const boundaryAnswers = new Map(
+    storedBoundaryAnswers.map((a) => [`${a.subjectKind}:${a.subjectId}`, { cashDay: a.cashDay, belongsToOtherYear: a.belongsToOtherYear, savedOn: berlinDay(a.updatedAt) }]),
+  );
+  const filedOn = new Map(filedYears.map((y) => [y.year, y.filedOn as string]));
+  // The ten-day rule for the settlements with the tax office: worked out once, used by the totals and the list alike.
+  const settlementBoundary = new Map(
+    storedSettlements.flatMap((s): Array<[string, BoundaryDecision]> =>
+      otherYearOf(s.settledOn) === null
+        ? []
+        : [[s.id, decideBoundary({ kind: 'vat_settlement', cashDay: s.settledOn, stored: boundaryAnswers.get(`vat_settlement:${s.id}`), filedOn, recurring: null })]],
+    ),
+  );
   const invoiceFacts: InvoiceFact[] = storedInvoices.map((i) => ({
     id: i.id,
     number: i.number,
@@ -569,8 +611,8 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   }));
   const settlementFacts: VatSettlementFact[] = storedSettlements.map((s) => ({
     id: s.id,
-    // A confirmed advance payment at the turn of the year counts in the year it belongs to.
-    date: answerFor(boundaryAnswers.get(`vat_settlement:${s.id}`), s.settledOn) === true ? (boundaryDay(s.settledOn) ?? s.settledOn) : s.settledOn,
+    // An advance payment at the turn of the year counts in the year it belongs to (by a person's answer or the rule).
+    date: settlementBoundary.get(s.id)?.answer === true ? (boundaryDay(s.settledOn) ?? s.settledOn) : s.settledOn,
     cents: s.cents,
     direction: s.direction === 'refunded' ? 'refunded' : 'paid',
   }));
@@ -585,14 +627,55 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
       rowsInAssets.add(part.rowId);
     }
   }
-  // The ten-day rule: a receipt a person confirmed counts on the boundary day
-  // of the year it belongs to. An asset is depreciated from its acquisition,
-  // so a receipt that is (partly) an asset is never moved.
   const cashDayOf = (f: ReceiptFacts) => f.paid?.day ?? f.record.date;
-  const facts = (loaded?.facts ?? []).map((f): ReceiptFacts => {
+  const loadedFacts = loaded?.facts ?? [];
+  // Whole receipts, for matching payments: a payment pays a receipt, not a line of it.
+  // On their real day: a payment is matched to a receipt by when it was paid, whatever year it counts in.
+  const wholeReceipts = loadedFacts.map((f) => resolveItem({ ...f, countsOnDay: null }, vendorRules, settings));
+  // Evidence that a vendor recurs: the days of its receipts (paid, else dated)
+  // and of the payments out whose counterparty or text names it.
+  const daysByVendor = new Map<string, string[]>();
+  wholeReceipts.forEach((r, index) => {
+    const day = cashDayOf(loadedFacts[index]);
+    if (r.vendorKey && day) daysByVendor.set(r.vendorKey, [...(daysByVendor.get(r.vendorKey) ?? []), day]);
+  });
+  const paymentsOut = loadedPayments.payments
+    .filter((p) => p.amountCents < 0)
+    .map((p) => ({ day: p.bookingDay, counterpartyKey: p.counterpartyKey, referenceKey: counterpartyKey(p.reference) }));
+  const recurringAt = (vendor: string | null, cashDay: string): boolean | null =>
+    vendor === null
+      ? null
+      : recursMonthly(cashDay, [
+          ...(daysByVendor.get(vendor) ?? []),
+          ...paymentsOut.filter((p) => vendorNamed(vendor, p.counterpartyKey, p.referenceKey)).map((p) => p.day),
+        ]);
+  // The ten-day rule per receipt in the window, worked out once. Meals are
+  // listed by the meal register on their own day and assets are depreciated
+  // from their acquisition: neither is decided by a filed year or a rule, only
+  // a person's earlier answer is kept (and shown, so it can be taken back).
+  const receiptBoundary = new Map<string, { decision: BoundaryDecision; inactive: 'meal' | 'asset' | null }>();
+  loadedFacts.forEach((f, index) => {
     const cashDay = cashDayOf(f);
-    if (rowsInAssets.has(f.record.rowId) || answerFor(boundaryAnswers.get(`receipt:${f.record.rowId}`), cashDay) !== true) return f;
-    return { ...f, countsOnDay: boundaryDay(cashDay) };
+    if (cashDay === null || otherYearOf(cashDay) === null) return;
+    const r = wholeReceipts[index];
+    const stored = boundaryAnswers.get(`receipt:${f.record.rowId}`);
+    const inactive = r.isMeal ? 'meal' : rowsInAssets.has(f.record.rowId) ? 'asset' : null;
+    if (inactive === null) {
+      receiptBoundary.set(f.record.rowId, { inactive, decision: decideBoundary({ kind: 'receipt', cashDay, stored, filedOn, recurring: recurringAt(r.vendorKey, cashDay) }) });
+      return;
+    }
+    const storedAnswer = stored && stored.cashDay === cashDay ? stored.belongsToOtherYear : null;
+    receiptBoundary.set(f.record.rowId, {
+      inactive,
+      decision: { answer: storedAnswer, source: storedAnswer === null ? null : 'person', reason: BOUNDARY_REASONS.person, storedAnswer, filedYear: null, departsFromFiled: null },
+    });
+  });
+  // A receipt the ten-day rule places in the other year counts on that year's
+  // boundary day. A receipt that is (partly) an asset is never moved.
+  const facts = loadedFacts.map((f): ReceiptFacts => {
+    const boundary = receiptBoundary.get(f.record.rowId);
+    if (!boundary || boundary.inactive === 'asset' || boundary.decision.answer !== true) return f;
+    return { ...f, countsOnDay: boundaryDay(cashDayOf(f)) };
   });
   const factsOfItem: ReceiptFacts[] = [];
   const foreignCurrencyReverseCharge = new Set<string>();
@@ -630,9 +713,6 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   for (const r of resolved) itemsByRow.set(r.rowId, [...(itemsByRow.get(r.rowId) ?? []), r]);
   const itemById = new Map(resolved.map((r) => [r.item.id, r.item]));
   const assetFacts = storedAssets.map((a) => toAssetFact(a, itemById, itemsByRow, smallBusinessOn(settings, a.acquisitionDate)));
-  // Whole receipts, for matching payments: a payment pays a receipt, not a line of it.
-  // On their real day: a payment is matched to a receipt by when it was paid, whatever year it counts in.
-  const wholeReceipts = facts.map((f) => resolveItem({ ...f, countsOnDay: null }, vendorRules, settings));
   const ledgerItems = resolved.map((r) => r.item);
   // No invoice in the workspace at all means revenue was never recorded, which
   // is different from a year without revenue.
@@ -866,14 +946,11 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
       ...wholeReceipts.flatMap((r, index): YearBoundaryEntry[] => {
         const f = facts[index];
         const cashDay = cashDayOf(f);
+        const boundary = receiptBoundary.get(f.record.rowId);
         const otherYear = otherYearOf(cashDay);
-        if (cashDay === null || otherYear === null || !touchesYear(cashDay, year)) return [];
-        const answer = answerFor(boundaryAnswers.get(`receipt:${f.record.rowId}`), cashDay);
-        // Meals are listed by the meal register on their own day; assets are
-        // depreciated from their acquisition. Neither is asked about, but an
-        // answer given before stays visible so it can be taken back.
-        const inactive = r.isMeal ? 'meal' : rowsInAssets.has(f.record.rowId) ? 'asset' : null;
-        if (inactive !== null && answer === null) return [];
+        if (!boundary || cashDay === null || otherYear === null || !touchesYear(cashDay, year)) return [];
+        // A meal or an asset without an earlier answer is not asked about.
+        if (boundary.inactive !== null && boundary.decision.storedAnswer === null) return [];
         return [
           {
             kind: 'receipt',
@@ -883,14 +960,15 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
             dayBasis: f.paid ? 'payment' : 'document',
             cents: r.item.amountCents,
             otherYear,
-            answer,
-            inactive,
+            ...boundary.decision,
+            inactive: boundary.inactive,
           },
         ];
       }),
       ...storedSettlements.flatMap((s): YearBoundaryEntry[] => {
         const otherYear = otherYearOf(s.settledOn);
-        if (otherYear === null || !touchesYear(s.settledOn, year)) return [];
+        const decision = settlementBoundary.get(s.id);
+        if (otherYear === null || !decision || !touchesYear(s.settledOn, year)) return [];
         return [
           {
             kind: 'vat_settlement',
@@ -900,7 +978,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
             dayBasis: 'payment',
             cents: s.cents,
             otherYear,
-            answer: answerFor(boundaryAnswers.get(`vat_settlement:${s.id}`), s.settledOn),
+            ...decision,
             inactive: null,
           },
         ];
@@ -1635,7 +1713,9 @@ function validateBoundaryInput(raw: unknown): YearBoundaryInput {
  * is stored with the payment day it was given for: when the receipt is linked
  * to another payment, or the settlement's day changes, the question comes
  * back. An answer given on a screen that showed another payment day than the
- * current one is refused, so nobody answers for a day they did not see.
+ * current one is refused, so nobody answers for a day they did not see. An
+ * answer that would move a payment across a year whose return is filed is
+ * refused as well: the filed year fixes its turn (`year-boundary.ts`).
  */
 export async function saveYearBoundaryAnswer(db: PrismaClient, ctx: TaxContext, raw: unknown): Promise<void> {
   const input = validateBoundaryInput(raw);
@@ -1647,6 +1727,11 @@ export async function saveYearBoundaryAnswer(db: PrismaClient, ctx: TaxContext, 
   }
   const cashDay = await boundaryCashDay(db, ctx, input.kind, input.subjectId);
   if (cashDay !== input.cashDay) throw new TaxServiceError('year_boundary_changed');
+  if (input.belongsToOtherYear) {
+    const years = [Number(cashDay.slice(0, 4)), otherYearOf(cashDay) as number];
+    const filed = await db.taxYearSettings.count({ where: { authWorkspaceId: ctx.workspaceId, year: { in: years }, filedOn: { not: null } } });
+    if (filed > 0) throw new TaxServiceError('year_boundary_filed');
+  }
   await db.taxYearBoundaryAnswer.upsert({
     where: { authWorkspaceId_subjectKind_subjectId: key },
     create: { ...key, authTenantId: ctx.tenantId, cashDay, belongsToOtherYear: input.belongsToOtherYear },
@@ -1656,8 +1741,9 @@ export async function saveYearBoundaryAnswer(db: PrismaClient, ctx: TaxContext, 
 
 /**
  * "None of these recurs": the payments the person saw without an answer stay
- * in the year they were paid. Only entries that are still open, on the day the
- * person saw, are answered; all of them together or none.
+ * in the year they were paid. Only entries that are still open (neither a
+ * person nor a filed year nor a rule answered), on the day the person saw, are
+ * answered; all of them together or none.
  */
 export async function declineOpenYearBoundary(db: PrismaClient, ctx: TaxContext, year: number, raw: unknown): Promise<number> {
   if (!Array.isArray(raw) || raw.length > 500) throw new TaxServiceError('boundary_subject_not_found');
@@ -1668,7 +1754,7 @@ export async function declineOpenYearBoundary(db: PrismaClient, ctx: TaxContext,
     }),
   );
   const view = await loadStatement(db, ctx.workspaceId, year);
-  const open = view.yearBoundary.filter((e) => e.answer === null && e.inactive === null && seen.has(`${e.kind}:${e.subjectId}:${e.cashDay}`));
+  const open = view.yearBoundary.filter((e) => e.source === null && e.inactive === null && seen.has(`${e.kind}:${e.subjectId}:${e.cashDay}`));
   // What was on the screen and is not open on that day any more was changed elsewhere: say so instead of answering half.
   if (open.length !== seen.size) throw new TaxServiceError('year_boundary_changed');
   await db.$transaction(

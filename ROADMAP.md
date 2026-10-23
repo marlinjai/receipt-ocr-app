@@ -378,6 +378,11 @@
 
 ## In Progress
 
+- [ ] A visual budget overview that shows real spending (asked by the owner on 2026-10-23): the
+  spending page opens with months by category, budget against spent and the biggest
+  counterparties, the receipt checks move to their own tab, transfers to the owner's own name
+  count as own transfers, and a Klarna collective debit beyond its list waits for the list. Plan:
+  [docs/plans/2026-10-23-budget-overview.md](docs/plans/2026-10-23-budget-overview.md). (2026-10-23)
 <!-- Currently being implemented -->
 
 - [x] Shared contact list, wave 2: the business-meal guests moved to the suite's shared

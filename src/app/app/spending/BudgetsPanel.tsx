@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useId, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { formatCents } from '@/lib/tax/money';
 import { MAX_LIMIT_CENTS, parseEuroInput, type BudgetLine, type BudgetLevel, type LimitBasis } from '@/lib/spending/budgets';
 import { setBudget, type BudgetResult, type BudgetsView } from './budget-actions';
@@ -194,11 +195,11 @@ function BudgetRow({
 
 export default function BudgetsPanel({ initial }: { initial: BudgetsView }) {
   const id = useId();
+  const router = useRouter();
   const [view, setView] = useState(initial);
   // The page reads the budgets afresh after a check or an import: take that over.
   useEffect(() => {
     // Synchronizing with a new server view is the point of this effect.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setView(initial);
   }, [initial]);
   const [error, setError] = useState<{ at: string; message: string } | null>(null);
@@ -213,8 +214,11 @@ export default function BudgetsPanel({ initial }: { initial: BudgetsView }) {
       setError(null);
       startTransition(async () => {
         const result = await setBudget(input);
-        if (result.ok) setView(result.value);
-        else setError({ at, message: budgetActionMessage(result) });
+        if (result.ok) {
+          setView(result.value);
+          // The charts above compare against the same limits: the page reads them afresh.
+          router.refresh();
+        } else setError({ at, message: budgetActionMessage(result) });
         resolve(result.ok);
       });
     });

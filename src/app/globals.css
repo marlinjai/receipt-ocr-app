@@ -1004,4 +1004,34 @@ textarea.ui-input {
     background: var(--surface-solid);
     box-shadow: inset -1px 0 0 var(--border-subtle);
   }
+
+/*
+ * Charts of the spending overview (src/app/app/spending/OverviewCharts.tsx). Seven category
+ * colours from the dataviz reference palette, its dark steps, validated as a set against the
+ * panel surface (#16161a): lightness band, chroma, colour-blind separation of neighbours and
+ * contrast all pass. "Weitere" and "Unklar" are greys on purpose: they carry no category. The
+ * app is dark only (see `color-scheme` above), so the charts are too.
+ */
+:root {
+  --chart-c1: #3987e5;
+  --chart-c2: #d95926;
+  --chart-c3: #199e70;
+  --chart-c4: #c98500;
+  --chart-c5: #d55181;
+  --chart-c6: #008300;
+  --chart-c7: #9085e9;
+  --chart-other: #c3c2b7;
+  --chart-unclear: #898781;
+  --chart-grid: rgba(255, 255, 255, 0.08);
+  --chart-axis: rgba(255, 255, 255, 0.22);
+  /* Status: over budget is --danger; on pace to pass it is this warning step. */
+  --warning: #fab219;
+}
+/* A chart wider than a phone scrolls inside its panel, never the page. */
+.ui-chart-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.ui-chart-hatch {
+  background-image: repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.35) 0 2px, transparent 2px 5px);
 }

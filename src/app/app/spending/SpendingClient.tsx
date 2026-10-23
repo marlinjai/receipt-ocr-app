@@ -8,10 +8,24 @@ import { formatCents } from '@/lib/tax/money';
 import { ANSWERABLE_CATEGORIES, SPENDING_CATEGORY_LABELS, isSpendingCategory, type SpendingCategory } from '@/lib/spending/categories';
 import type { CategoryBasis, SpendingPurpose } from '@/lib/spending/rules';
 import type { UnclearCounterparty } from '@/lib/spending/overview';
-import { answerCategory, markOwnAccount, unlinkRoutedReceipt, unmarkOwnAccount, withdrawCategory, type Result, type SpendingPageView } from './actions';
+import type { BudgetLine } from '@/lib/spending/budgets';
+import { budgetBars, monthStacks, monthlyBudgetSum, topCounterparties } from '@/lib/spending/charts';
+import { MAX_OWN_NAMES, MAX_OWN_NAME_LENGTH } from '@/lib/spending/own-names';
+import { answerCategory, markOwnAccount, saveOwnNames, unlinkRoutedReceipt, unmarkOwnAccount, withdrawCategory, type Result, type SpendingPageView } from './actions';
+import { BudgetChart, MonthsChart, TopCounterpartiesChart } from './OverviewCharts';
 
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
-const MONTHS_SHORT = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+
+/** The two tabs of the page; the name is what the address says (`ansicht`). */
+export type SpendingTab = 'ueberblick' | 'belege';
+
+/** The address of the page for a period and a tab: the overview is the default and is not named. */
+export function spendingHref(year: number, month: number | null, tab: SpendingTab): string {
+  const params = new URLSearchParams({ jahr: String(year) });
+  if (month !== null) params.set('monat', String(month));
+  if (tab === 'belege') params.set('ansicht', 'belege');
+  return `/app/spending?${params.toString()}`;
+}
 
 const PURPOSE_LABELS: Record<SpendingPurpose, string> = {
   private: 'Privat',
@@ -42,6 +56,9 @@ export function spendingActionMessage(result: Extract<Result<unknown>, { ok: fal
   if (result.detail === 'invalid_treatment') return 'Diese Gegenseite lässt sich nicht als eigenes Konto merken, weil die Zahlung keinen Namen nennt.';
   if (result.detail === 'not_own_account') return 'Diese Gegenseite ist nicht mehr als eigenes Konto beantwortet. Bitte die Seite neu laden.';
   if (result.detail === 'link_not_found') return 'An dieser Zahlung hängt hier kein Beleg mehr. Bitte die Seite neu laden.';
+  if (result.detail === 'invalid_names') return 'Ein Name braucht mindestens zwei Buchstaben oder Ziffern, zum Beispiel Vor- und Nachname.';
+  if (result.detail === 'name_too_long') return `Ein Name darf höchstens ${MAX_OWN_NAME_LENGTH} Zeichen lang sein.`;
+  if (result.detail === 'too_many_names') return `Es lassen sich höchstens ${MAX_OWN_NAMES} eigene Namen merken.`;
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
 
@@ -119,7 +136,135 @@ function UnclearRow({
   );
 }
 
-export default function SpendingClient({ initial, children }: { initial: SpendingPageView; children?: ReactNode }) {
+/**
+ * The owner's own names: money to or from a counterparty carrying one of them
+ * is an own transfer. While the list is empty it asks for a name up front
+ * (the sign-in tells the app no name to start from); afterwards it is a quiet
+ * list to change.
+ */
+function OwnNames({
+  names,
+  canWrite,
+  pending,
+  error,
+  onSave,
+}: {
+  names: readonly string[];
+  canWrite: boolean;
+  pending: boolean;
+  error: string | null;
+  onSave: (names: string[]) => void;
+}) {
+  const id = useId();
+  const [draft, setDraft] = useState('');
+  // A saved name leaves the field; a refused one stays there to be corrected.
+  const [shownNames, setShownNames] = useState(names);
+  if (shownNames !== names) {
+    setShownNames(names);
+    setDraft('');
+  }
+  const explanation = (
+    <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+      Zahlungen an oder von diesen Namen sind Umbuchungen zwischen eigenen Konten: keine Ausgabe, kein Beleg nötig, keine Benachrichtigung. Groß- und
+      Kleinschreibung, Akzente, Satzzeichen und die Reihenfolge der Wörter zählen nicht. Eine Antwort unter Finanzen, Zahlungen geht vor.
+    </p>
+  );
+  const editor = canWrite && (
+    <>
+      {names.length > 0 && (
+        <ul className="mt-2 flex flex-wrap gap-2">
+          {names.map((n) => (
+            <li key={n} className="inline-flex items-center gap-1 rounded-full border py-0.5 pr-0.5 pl-2.5 text-sm" style={{ borderColor: 'var(--border)' }}>
+              {n}
+              <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} aria-label={`${n} aus den eigenen Namen entfernen`} onClick={() => onSave(names.filter((x) => x !== n))}>
+                Entfernen
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form
+        className="mt-2 flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (draft.trim()) onSave([...names, draft.trim()]);
+        }}
+      >
+        <label className="sr-only" htmlFor={`${id}-name`}>
+          Eigener Name, wie die Bank ihn schreibt
+        </label>
+        <input
+          id={`${id}-name`}
+          className="ui-input"
+          style={{ width: 'auto', minWidth: '12rem', flex: '1 1 14rem' }}
+          placeholder="Vor- und Nachname, wie auf dem Kontoauszug"
+          value={draft}
+          maxLength={MAX_OWN_NAME_LENGTH}
+          disabled={pending}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${id}-error` : undefined}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <button type="submit" className="ui-btn ui-btn-primary ui-btn-sm" disabled={pending || !draft.trim()} aria-label="Eigenen Namen hinzufügen">
+          Hinzufügen
+        </button>
+      </form>
+      {error && (
+        <p id={`${id}-error`} className="ui-note ui-note-danger mt-2" role="alert">
+          {error}
+        </p>
+      )}
+    </>
+  );
+  if (names.length === 0) {
+    return (
+      <section className="ui-note ui-note-warn mt-4" aria-labelledby={`${id}-title`}>
+        <h2 id={`${id}-title`} className="text-sm font-semibold">
+          Eigene Namen
+        </h2>
+        <p className="mt-1 text-sm">
+          Noch kein eigener Name hinterlegt. Überweisungen an dich selbst (eigene Spaces, Tagesgeld, ein anderes eigenes Konto) zählen deshalb als Ausgabe und
+          fragen nach einem Beleg.{canWrite && ' Trag deinen Namen so ein, wie die Bank ihn schreibt; mehrere Schreibweisen sind möglich.'}
+        </p>
+        {explanation}
+        {editor}
+      </section>
+    );
+  }
+  return (
+    <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4" open={error !== null || undefined}>
+      <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+        Eigene Namen ({names.length})
+      </summary>
+      {explanation}
+      {canWrite ? editor : <p className="mt-2 text-sm">{names.join(', ')}</p>}
+    </details>
+  );
+}
+
+export default function SpendingClient({
+  initial,
+  tab = 'ueberblick',
+  openChecks = null,
+  checks,
+  budgets,
+  budgetLines = null,
+  today,
+}: {
+  initial: SpendingPageView;
+  tab?: SpendingTab;
+  /** Payments waiting for a receipt, for the count on the tab; null when the checks could not be read. */
+  openChecks?: number | null;
+  /** The receipt checks and the notifications: the "Belege" tab. */
+  checks?: ReactNode;
+  /** The budgets of this month with their limits to change, under the charts. */
+  budgets?: ReactNode;
+  /** The budget lines of this month, for the charts; null when the budgets could not be read. */
+  budgetLines?: readonly BudgetLine[] | null;
+  /** Today in the owner's time zone, "YYYY-MM-DD". */
+  today: string;
+}) {
+
   const id = useId();
   const router = useRouter();
   const [view, setView] = useState(initial);
@@ -136,12 +281,19 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
   const [pending, startTransition] = useTransition();
   const { overview } = view;
   const period = overview.month === null ? `${overview.year}` : `${MONTHS[overview.month - 1]} ${overview.year}`;
-  const largest = Math.max(1, ...overview.byCategory.map((c) => c.cents));
-  const largestMonth = Math.max(1, ...overview.byMonth.map((m) => m.cents));
+  const currentMonth = overview.month !== null && `${overview.year}-${String(overview.month).padStart(2, '0')}` === today.slice(0, 7);
 
+  // The period and the tab live in the address, so a reload or a shared link shows the same.
   const go = (year: number, month: number | null) => {
-    router.push(month === null ? `/app/spending?jahr=${year}` : `/app/spending?jahr=${year}&monat=${month}`);
+    router.push(spendingHref(year, month, 'ueberblick'), { scroll: false });
   };
+  const showTab = (next: SpendingTab) => {
+    if (next !== tab) router.push(spendingHref(overview.year, overview.month, next), { scroll: false });
+  };
+  const tabs: Array<{ key: SpendingTab; label: string; count: number | null }> = [
+    { key: 'ueberblick', label: 'Überblick', count: null },
+    { key: 'belege', label: 'Belege', count: openChecks },
+  ];
 
   const run = (at: string, action: () => Promise<Result<SpendingPageView>>) => {
     setError(null);
@@ -246,323 +398,317 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
         )}
       </div>
 
-      <section className="mt-4 grid gap-3 sm:grid-cols-4" aria-label={`Summen ${period}`}>
-        <div className="glass-panel rounded-xl p-4">
-          <p className="text-xs" style={{ color: 'var(--muted)' }}>
-            Ausgaben {period}
-          </p>
-          <p className="mt-1 text-xl font-semibold tabular-nums" style={{ color: 'var(--foreground)' }}>
-            {euro(overview.totalCents)}
-          </p>
-        </div>
-        {(['private', 'business', 'unanswered'] as const).map((purpose) => (
-          <div key={purpose} className="glass-panel rounded-xl p-4">
-            <p className="text-xs" style={{ color: 'var(--muted)' }}>
-              {PURPOSE_LABELS[purpose]}
-            </p>
-            <p className="mt-1 text-lg font-semibold tabular-nums" style={{ color: 'var(--foreground)' }}>
-              {euro(overview.split[purpose])}
-            </p>
-          </div>
+      <div role="tablist" aria-label="Bereiche der Ausgaben" className="ui-scroll-bare mt-4 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style={{ borderColor: 'var(--border)' }}>
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            type="button"
+            id={`${id}-tab-${t.key}`}
+            aria-selected={tab === t.key}
+            aria-controls={`${id}-panel-${t.key}`}
+            onClick={() => showTab(t.key)}
+            className="ui-tab -mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium"
+            style={{ borderColor: tab === t.key ? 'var(--accent)' : 'transparent', color: tab === t.key ? 'var(--accent)' : 'var(--muted)' }}
+          >
+            {t.label}
+            {t.count !== null && (
+              <span className="ml-2 rounded-full px-1.5 py-0.5 text-xs tabular-nums" style={{ background: 'rgba(255,255,255,0.07)', color: 'var(--foreground)' }}>
+                {t.count}
+                <span className="sr-only"> offen</span>
+              </span>
+            )}
+          </button>
         ))}
-      </section>
-      {overview.split.unanswered !== 0 && (
-        <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
-          „Nicht zugeordnet“ heißt: für die Gegenseite ist noch nicht gesagt, ob sie privat oder geschäftlich ist. Das wird unter Finanzen,
-          Zahlungen einmal pro Gegenseite beantwortet.
-        </p>
-      )}
-      {overview.ownTransfers.count > 0 && (
-        <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-          Nicht mitgezählt: {overview.ownTransfers.count} Umbuchungen zwischen eigenen Konten über {euro(overview.ownTransfers.cents)}.
-        </p>
-      )}
+      </div>
 
-      {children}
-
-      <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-months`}>
-        <h2 id={`${id}-months`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-          Monate {overview.year}
-        </h2>
-        <ol className="mt-3 grid grid-cols-12 items-end gap-1" style={{ height: 120 }}>
-          {overview.byMonth.map((m) => {
-            const selected = overview.month === m.month;
-            return (
-              <li key={m.month} className="flex h-full flex-col justify-end">
-                <button
-                  type="button"
-                  className="flex h-full w-full flex-col items-center justify-end gap-1 rounded"
-                  aria-pressed={selected}
-                  aria-label={`${MONTHS[m.month - 1]}: ${euro(m.cents)}`}
-                  title={`${MONTHS[m.month - 1]}: ${euro(m.cents)}`}
-                  onClick={() => go(overview.year, selected ? null : m.month)}
-                >
-                  <span
-                    className="w-full rounded-sm"
-                    style={{
-                      height: `${Math.max(2, Math.round((Math.max(0, m.cents) / largestMonth) * 90))}%`,
-                      background: selected ? 'var(--accent)' : 'var(--accent-muted)',
-                    }}
-                  />
-                  <span className="text-[10px]" style={{ color: selected ? 'var(--accent)' : 'var(--muted)' }}>
-                    {MONTHS_SHORT[m.month - 1]}
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ol>
-      </section>
-
-      <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-categories`}>
-        <h2 id={`${id}-categories`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-          Kategorien {period}
-        </h2>
-        <ul className="mt-3 space-y-2">
-          {[...overview.byCategory]
-            .sort((a, b) => b.cents - a.cents)
-            .map((c) => (
-              <li key={c.category}>
-                <div className="flex items-baseline justify-between gap-3 text-sm">
-                  <span style={{ color: c.category === 'unclear' && c.cents !== 0 ? 'var(--danger, var(--foreground))' : 'var(--foreground)' }}>
-                    {SPENDING_CATEGORY_LABELS[c.category]}
-                    <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                      {c.count} {c.count === 1 ? 'Zahlung' : 'Zahlungen'}
-                    </span>
-                  </span>
-                  <span className="tabular-nums" style={{ color: 'var(--foreground)' }}>
-                    {euro(c.cents)}
-                  </span>
-                </div>
-                <div className="mt-1 h-1.5 w-full rounded-full" style={{ background: 'var(--border, rgba(128,128,128,0.2))' }}>
-                  <div
-                    className="h-1.5 rounded-full"
-                    style={{ width: `${Math.round((Math.max(0, c.cents) / largest) * 100)}%`, background: c.category === 'unclear' ? 'var(--muted)' : 'var(--accent)' }}
-                  />
-                </div>
-              </li>
-            ))}
-        </ul>
-      </section>
-
-      <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-unclear`}>
-        <h2 id={`${id}-unclear`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-          Unklar {period}
-        </h2>
-        {overview.unclear.length === 0 ? (
-          <p className="mt-2 text-sm" style={{ color: 'var(--muted)' }}>
-            Alle Ausgaben dieses Zeitraums haben eine Kategorie.
-          </p>
-        ) : (
-          <>
-            <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-              Eine Kategorie gilt für alle Zahlungen der Gegenseite, auch für künftige.
-              {!view.canWrite && ' Zum Zuordnen fehlt in diesem Arbeitsbereich die Berechtigung.'}
-            </p>
-            <ul className="mt-3 divide-y" style={{ borderColor: 'var(--border, rgba(128,128,128,0.2))' }}>
-              {overview.unclear.map((u) => (
-                <UnclearRow
-                  key={u.counterpartyKey || `${u.counterparty}-${u.lastDay}`}
-                  entry={u}
-                  canWrite={view.canWrite}
-                  pending={pending}
-                  error={error?.at === `unclear:${u.counterpartyKey}` ? error.message : null}
-                  onAssign={(choice) => assign(u, choice)}
-                />
-              ))}
-            </ul>
-            <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
-              Eine Abbuchung, die nur eine eigene Kreditkarte oder ein eigenes Konto ausgleicht, ist keine Ausgabe: dafür „Eigenes Konto“
-              wählen. Das gilt dann auch unter{' '}
-              <Link href="/app/finance" className="underline">
-                Finanzen, Zahlungen
-              </Link>
-              .
-            </p>
-          </>
-        )}
-      </section>
-
-      {view.ownAccounts.length > 0 && (
-        <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
-          <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-            Eigene Konten ({view.ownAccounts.length})
-          </summary>
-          <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
-            Zahlungen an diese Gegenseiten zählen nicht als Ausgabe. Dieselbe Antwort steht unter Finanzen, Zahlungen.
-          </p>
-          <ul className="mt-2 divide-y">
-            {view.ownAccounts.map((o) => (
-              <li key={o.counterpartyKey} className="py-2 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>{o.label}</span>
-                  {view.canWrite && (
-                    <button
-                      type="button"
-                      className="ui-btn ui-btn-sm"
-                      disabled={pending}
-                      aria-label={`${o.label} nicht mehr als eigenes Konto führen`}
-                      onClick={() => run(`own:${o.counterpartyKey}`, () => unmarkOwnAccount(overview.year, overview.month, o.counterpartyKey))}
-                    >
-                      Zurücknehmen
-                    </button>
-                  )}
-                </div>
-                {error?.at === `own:${o.counterpartyKey}` && (
-                  <p className="ui-note ui-note-danger mt-2" role="alert">
-                    {error.message}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-
-      {view.answers.length > 0 && (
-        <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
-          <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-            Deine Zuordnungen ({view.answers.length})
-          </summary>
-          <ul className="mt-3 divide-y">
-            {view.answers.map((a) => (
-              <li key={a.counterpartyKey} className="py-2 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>
-                    {a.label}: {SPENDING_CATEGORY_LABELS[a.category]}
-                  </span>
-                  {view.canWrite && (
-                    <button
-                      type="button"
-                      className="ui-btn ui-btn-sm"
-                      disabled={pending}
-                      aria-label={`Zuordnung für ${a.label} zurücknehmen`}
-                      onClick={() => run(`answer:${a.counterpartyKey}`, () => withdrawCategory(overview.year, overview.month, a.counterpartyKey))}
-                    >
-                      Zurücknehmen
-                    </button>
-                  )}
-                </div>
-                {error?.at === `answer:${a.counterpartyKey}` && (
-                  <p className="ui-note ui-note-danger mt-2" role="alert">
-                    {error.message}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-
-      {view.dormantLinks.length > 0 && (
-        <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
-          <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-            Belege an Zahlungen, die nicht mehr hierher gehören ({view.dormantLinks.length})
-          </summary>
-          <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
-            Die Firma, die das Konto führt, hat diese Zahlungen inzwischen anders beantwortet, die Weitergabe ist beendet, oder ein
-            späterer Import hat die Zahlung storniert. Der Beleg zählt so lange nirgends; einer anderen Zahlung wird er nur bei einer
-            stornierten Zahlung vorgeschlagen. Kommt die Zahlung zurück, gilt die Verknüpfung wieder; „Lösen“ gibt den Beleg frei.
-          </p>
-          <ul className="mt-2 divide-y">
-            {view.dormantLinks.map((l) => (
-              <li key={l.paymentId} className="py-2 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>
-                    {l.receipts === 1 ? 'Beleg' : `${l.receipts} Belege`} verknüpft am {formatDay(l.linkedOn)} über {euro(l.cents)}
-                  </span>
-                  {view.canWrite && (
-                    <button
-                      type="button"
-                      className="ui-btn ui-btn-sm"
-                      disabled={pending}
-                      aria-label={`Lösen: ${l.receipts === 1 ? 'Beleg' : `${l.receipts} Belege`}, verknüpft am ${formatDay(l.linkedOn)} über ${euro(l.cents)}`}
-                      onClick={() => {
-                        const what = l.receipts === 1 ? 'Den Beleg' : `Die ${l.receipts} Belege`;
-                        if (!window.confirm(`${what} von dieser Zahlung lösen? ${l.receipts === 1 ? 'Der Beleg bleibt' : 'Die Belege bleiben'} erhalten und ${l.receipts === 1 ? 'kann' : 'können'} einer anderen Zahlung zugeordnet werden.`)) return;
-                        run(`dormant:${l.paymentId}`, () => unlinkRoutedReceipt(overview.year, overview.month, l.paymentId));
-                      }}
-                    >
-                      Lösen
-                    </button>
-                  )}
-                </div>
-                {error?.at === `dormant:${l.paymentId}` && (
-                  <p className="ui-note ui-note-danger mt-2" role="alert">
-                    {error.message}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-
-      <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
-        <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-          Zahlungen {period} ({overview.payments.length})
-        </summary>
-        <div className="ui-scroll mt-3 overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <caption className="sr-only">Zahlungen {period} mit Kategorie, Zweck und Beleg</caption>
-            <thead>
-              <tr className="text-xs" style={{ color: 'var(--muted)' }}>
-                <th scope="col" className="py-1 pr-3 font-normal">Tag</th>
-                <th scope="col" className="py-1 pr-3 font-normal">Gegenseite</th>
-                <th scope="col" className="py-1 pr-3 font-normal">Kategorie</th>
-                <th scope="col" className="py-1 pr-3 font-normal">Zweck</th>
-                <th scope="col" className="py-1 pr-3 font-normal">Beleg</th>
-                <th scope="col" className="py-1 text-right font-normal">Betrag</th>
-              </tr>
-            </thead>
-            <tbody>
-              {overview.payments.map((p) => (
-                <tr key={p.id} className="align-top">
-                  <td className="py-1 pr-3 whitespace-nowrap">{formatDay(p.bookingDay)}</td>
-                  <td className="py-1 pr-3">
-                    {p.counterparty || 'ohne Namen'}
-                    {p.reference && (
-                      <span className="block text-xs" style={{ color: 'var(--muted)' }}>
-                        {p.reference}
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-1 pr-3">
-                    {SPENDING_CATEGORY_LABELS[p.category]}
-                    <span className="block text-xs" style={{ color: 'var(--muted)' }}>
-                      {BASIS_LABELS[p.basis]}
-                    </span>
-                  </td>
-                  <td className="py-1 pr-3">{p.spendingCents === null ? 'Umbuchung' : PURPOSE_LABELS[p.purpose]}</td>
-                  <td className="py-1 pr-3">
-                    {p.spendingCents === null ? 'nicht nötig' : p.hasReceipt ? 'verknüpft' : 'keiner'}
-                    {p.routed && p.hasReceipt && view.canWrite && (
-                      <button
-                        type="button"
-                        className="ui-btn ui-btn-sm ml-2"
-                        disabled={pending}
-                        aria-label={`Lösen: Beleg von ${p.counterparty || 'dieser Zahlung'} am ${formatDay(p.bookingDay)}`}
-                        onClick={() => {
-                          if (!window.confirm('Den Beleg von dieser Zahlung lösen? Der Beleg bleibt erhalten, die Zahlung fragt dann wieder nach einem Beleg.')) return;
-                          run(`routed:${p.id}`, () => unlinkRoutedReceipt(overview.year, overview.month, p.id));
-                        }}
-                      >
-                        Lösen
-                      </button>
-                    )}
-                    {error?.at === `routed:${p.id}` && (
-                      <span className="ui-note ui-note-danger mt-1 block" role="alert">
-                        {error.message}
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-1 text-right tabular-nums">{euro(-p.amountCents)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {tab === 'belege' ? (
+        <div role="tabpanel" id={`${id}-panel-belege`} aria-labelledby={`${id}-tab-belege`}>
+          {checks}
         </div>
-      </details>
+      ) : (
+        <div role="tabpanel" id={`${id}-panel-ueberblick`} aria-labelledby={`${id}-tab-ueberblick`}>
+          <section className="mt-4 grid gap-3 sm:grid-cols-4" aria-label={`Summen ${period}`}>
+            <div className="glass-panel rounded-xl p-4">
+              <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                Ausgaben {period}
+              </p>
+              <p className="mt-1 text-xl font-semibold tabular-nums" style={{ color: 'var(--foreground)' }}>
+                {euro(overview.totalCents)}
+              </p>
+            </div>
+            {(['private', 'business', 'unanswered'] as const).map((purpose) => (
+              <div key={purpose} className="glass-panel rounded-xl p-4">
+                <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                  {PURPOSE_LABELS[purpose]}
+                </p>
+                <p className="mt-1 text-lg font-semibold tabular-nums" style={{ color: 'var(--foreground)' }}>
+                  {euro(overview.split[purpose])}
+                </p>
+              </div>
+            ))}
+          </section>
+          {overview.split.unanswered !== 0 && (
+            <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
+              „Nicht zugeordnet“ heißt: für die Gegenseite ist noch nicht gesagt, ob sie privat oder geschäftlich ist. Das wird unter Finanzen,
+              Zahlungen einmal pro Gegenseite beantwortet.
+            </p>
+          )}
+          {overview.ownTransfers.count > 0 && (
+            <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+              Nicht mitgezählt: {overview.ownTransfers.count} Umbuchungen zwischen eigenen Konten über {euro(overview.ownTransfers.cents)}
+              {overview.ownTransfers.byName.count > 0 && `, davon ${overview.ownTransfers.byName.count} an eigene Namen über ${euro(overview.ownTransfers.byName.cents)}`}.
+            </p>
+          )}
+
+          <OwnNames
+            names={view.ownNames}
+            canWrite={view.canWrite}
+            pending={pending}
+            error={error?.at === 'names' ? error.message : null}
+            onSave={(names) => run('names', () => saveOwnNames(overview.year, overview.month, names))}
+          />
+
+          <MonthsChart
+            year={overview.year}
+            stacks={monthStacks(overview)}
+            budgetSum={budgetLines ? monthlyBudgetSum(budgetLines) : null}
+            selectedMonth={overview.month}
+            onSelect={(month) => go(overview.year, month)}
+          />
+          {budgetLines && <BudgetChart bars={budgetBars(overview, budgetLines, today, SPENDING_CATEGORY_LABELS)} period={period} currentMonth={currentMonth} />}
+          <TopCounterpartiesChart items={topCounterparties(overview.payments, overview.totalCents)} period={period} />
+
+          {budgets}
+
+          <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-unclear`}>
+            <h2 id={`${id}-unclear`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+              Unklar {period}
+            </h2>
+            {overview.unclear.length === 0 ? (
+              <p className="mt-2 text-sm" style={{ color: 'var(--muted)' }}>
+                Alle Ausgaben dieses Zeitraums haben eine Kategorie.
+              </p>
+            ) : (
+              <>
+                <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+                  Eine Kategorie gilt für alle Zahlungen der Gegenseite, auch für künftige.
+                  {!view.canWrite && ' Zum Zuordnen fehlt in diesem Arbeitsbereich die Berechtigung.'}
+                </p>
+                <ul className="mt-3 divide-y" style={{ borderColor: 'var(--border, rgba(128,128,128,0.2))' }}>
+                  {overview.unclear.map((u) => (
+                    <UnclearRow
+                      key={u.counterpartyKey || `${u.counterparty}-${u.lastDay}`}
+                      entry={u}
+                      canWrite={view.canWrite}
+                      pending={pending}
+                      error={error?.at === `unclear:${u.counterpartyKey}` ? error.message : null}
+                      onAssign={(choice) => assign(u, choice)}
+                    />
+                  ))}
+                </ul>
+                <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
+                  Eine Abbuchung, die nur eine eigene Kreditkarte oder ein eigenes Konto ausgleicht, ist keine Ausgabe: dafür „Eigenes Konto“
+                  wählen. Das gilt dann auch unter{' '}
+                  <Link href="/app/finance" className="underline">
+                    Finanzen, Zahlungen
+                  </Link>
+                  .
+                </p>
+              </>
+            )}
+          </section>
+
+          {view.ownAccounts.length > 0 && (
+            <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
+              <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+                Eigene Konten ({view.ownAccounts.length})
+              </summary>
+              <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
+                Zahlungen an diese Gegenseiten zählen nicht als Ausgabe. Dieselbe Antwort steht unter Finanzen, Zahlungen; was über die eigenen Namen
+                dazukommt, ändert sich mit den Namen.
+              </p>
+              <ul className="mt-2 divide-y">
+                {view.ownAccounts.map((o) => (
+                  <li key={o.counterpartyKey} className="py-2 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        {o.label}
+                        {o.byName && (
+                          <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                            über Eigene Namen
+                          </span>
+                        )}
+                      </span>
+                      {view.canWrite && !o.byName && (
+                        <button
+                          type="button"
+                          className="ui-btn ui-btn-sm"
+                          disabled={pending}
+                          aria-label={`${o.label} nicht mehr als eigenes Konto führen`}
+                          onClick={() => run(`own:${o.counterpartyKey}`, () => unmarkOwnAccount(overview.year, overview.month, o.counterpartyKey))}
+                        >
+                          Zurücknehmen
+                        </button>
+                      )}
+                    </div>
+                    {error?.at === `own:${o.counterpartyKey}` && (
+                      <p className="ui-note ui-note-danger mt-2" role="alert">
+                        {error.message}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
+          {view.answers.length > 0 && (
+            <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
+              <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+                Deine Zuordnungen ({view.answers.length})
+              </summary>
+              <ul className="mt-3 divide-y">
+                {view.answers.map((a) => (
+                  <li key={a.counterpartyKey} className="py-2 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        {a.label}: {SPENDING_CATEGORY_LABELS[a.category]}
+                      </span>
+                      {view.canWrite && (
+                        <button
+                          type="button"
+                          className="ui-btn ui-btn-sm"
+                          disabled={pending}
+                          aria-label={`Zuordnung für ${a.label} zurücknehmen`}
+                          onClick={() => run(`answer:${a.counterpartyKey}`, () => withdrawCategory(overview.year, overview.month, a.counterpartyKey))}
+                        >
+                          Zurücknehmen
+                        </button>
+                      )}
+                    </div>
+                    {error?.at === `answer:${a.counterpartyKey}` && (
+                      <p className="ui-note ui-note-danger mt-2" role="alert">
+                        {error.message}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
+          {view.dormantLinks.length > 0 && (
+            <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
+              <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+                Belege an Zahlungen, die nicht mehr hierher gehören ({view.dormantLinks.length})
+              </summary>
+              <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
+                Die Firma, die das Konto führt, hat diese Zahlungen inzwischen anders beantwortet, die Weitergabe ist beendet, oder ein
+                späterer Import hat die Zahlung storniert. Der Beleg zählt so lange nirgends; einer anderen Zahlung wird er nur bei einer
+                stornierten Zahlung vorgeschlagen. Kommt die Zahlung zurück, gilt die Verknüpfung wieder; „Lösen“ gibt den Beleg frei.
+              </p>
+              <ul className="mt-2 divide-y">
+                {view.dormantLinks.map((l) => (
+                  <li key={l.paymentId} className="py-2 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        {l.receipts === 1 ? 'Beleg' : `${l.receipts} Belege`} verknüpft am {formatDay(l.linkedOn)} über {euro(l.cents)}
+                      </span>
+                      {view.canWrite && (
+                        <button
+                          type="button"
+                          className="ui-btn ui-btn-sm"
+                          disabled={pending}
+                          aria-label={`Lösen: ${l.receipts === 1 ? 'Beleg' : `${l.receipts} Belege`}, verknüpft am ${formatDay(l.linkedOn)} über ${euro(l.cents)}`}
+                          onClick={() => {
+                            const what = l.receipts === 1 ? 'Den Beleg' : `Die ${l.receipts} Belege`;
+                            if (!window.confirm(`${what} von dieser Zahlung lösen? ${l.receipts === 1 ? 'Der Beleg bleibt' : 'Die Belege bleiben'} erhalten und ${l.receipts === 1 ? 'kann' : 'können'} einer anderen Zahlung zugeordnet werden.`)) return;
+                            run(`dormant:${l.paymentId}`, () => unlinkRoutedReceipt(overview.year, overview.month, l.paymentId));
+                          }}
+                        >
+                          Lösen
+                        </button>
+                      )}
+                    </div>
+                    {error?.at === `dormant:${l.paymentId}` && (
+                      <p className="ui-note ui-note-danger mt-2" role="alert">
+                        {error.message}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
+          <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
+            <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+              Zahlungen {period} ({overview.payments.length})
+            </summary>
+            <div className="ui-scroll mt-3 overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <caption className="sr-only">Zahlungen {period} mit Kategorie, Zweck und Beleg</caption>
+                <thead>
+                  <tr className="text-xs" style={{ color: 'var(--muted)' }}>
+                    <th scope="col" className="py-1 pr-3 font-normal">Tag</th>
+                    <th scope="col" className="py-1 pr-3 font-normal">Gegenseite</th>
+                    <th scope="col" className="py-1 pr-3 font-normal">Kategorie</th>
+                    <th scope="col" className="py-1 pr-3 font-normal">Zweck</th>
+                    <th scope="col" className="py-1 pr-3 font-normal">Beleg</th>
+                    <th scope="col" className="py-1 text-right font-normal">Betrag</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overview.payments.map((p) => (
+                    <tr key={p.id} className="align-top">
+                      <td className="py-1 pr-3 whitespace-nowrap">{formatDay(p.bookingDay)}</td>
+                      <td className="py-1 pr-3">
+                        {p.counterparty || 'ohne Namen'}
+                        {p.reference && (
+                          <span className="block text-xs" style={{ color: 'var(--muted)' }}>
+                            {p.reference}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-1 pr-3">
+                        {SPENDING_CATEGORY_LABELS[p.category]}
+                        <span className="block text-xs" style={{ color: 'var(--muted)' }}>
+                          {BASIS_LABELS[p.basis]}
+                        </span>
+                      </td>
+                      <td className="py-1 pr-3">{p.spendingCents === null ? 'Umbuchung' : PURPOSE_LABELS[p.purpose]}</td>
+                      <td className="py-1 pr-3">
+                        {p.spendingCents === null ? 'nicht nötig' : p.hasReceipt ? 'verknüpft' : 'keiner'}
+                        {p.routed && p.hasReceipt && view.canWrite && (
+                          <button
+                            type="button"
+                            className="ui-btn ui-btn-sm ml-2"
+                            disabled={pending}
+                            aria-label={`Lösen: Beleg von ${p.counterparty || 'dieser Zahlung'} am ${formatDay(p.bookingDay)}`}
+                            onClick={() => {
+                              if (!window.confirm('Den Beleg von dieser Zahlung lösen? Der Beleg bleibt erhalten, die Zahlung fragt dann wieder nach einem Beleg.')) return;
+                              run(`routed:${p.id}`, () => unlinkRoutedReceipt(overview.year, overview.month, p.id));
+                            }}
+                          >
+                            Lösen
+                          </button>
+                        )}
+                        {error?.at === `routed:${p.id}` && (
+                          <span className="ui-note ui-note-danger mt-1 block" role="alert">
+                            {error.message}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-1 text-right tabular-nums">{euro(-p.amountCents)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      )}
     </main>
   );
 }

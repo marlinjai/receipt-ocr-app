@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const setBudget = vi.fn();
 vi.mock('./budget-actions', () => ({ setBudget: (...a: unknown[]) => setBudget(...a) }));
+const refresh = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
 
 import BudgetsPanel, { basisLabel, budgetActionMessage } from './BudgetsPanel';
 import type { BudgetsView } from './budget-actions';
@@ -44,6 +46,8 @@ describe('BudgetsPanel', () => {
     await user.type(input, '300,50');
     await user.click(screen.getByRole('button', { name: 'Budget für Lebensmittel und Drogerie speichern' }));
     expect(setBudget).toHaveBeenCalledWith({ scope: 'category', key: 'groceries_drugstore', label: 'Lebensmittel und Drogerie', limitCents: 30_050 });
+    // The charts above compare against the same limits: a saved limit makes the page read them afresh.
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
   it('refuses an amount that is none, without calling the server', async () => {

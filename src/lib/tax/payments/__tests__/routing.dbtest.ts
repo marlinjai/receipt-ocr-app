@@ -99,8 +99,14 @@ const stateOf = async (workspaceId: string, paymentId: string) => {
   const o = await loadLoopOverview(db, workspaceId);
   return [...o.open, ...o.answered].find((c) => c.paymentId === paymentId)?.state.state ?? 'settled_or_not_needed';
 };
-/** The tax statement of a year, as a string, to compare before and after. */
-const statement = async (workspaceId: string) => JSON.stringify(await loadStatement(db, workspaceId, 2026));
+/**
+ * The tax statement of a year, as a string, to compare before and after. The list of counterparty answers is
+ * read in the database's order, which an updated answer may change: it is compared by key.
+ */
+const statement = async (workspaceId: string) => {
+  const view = await loadStatement(db, workspaceId, 2026);
+  return JSON.stringify({ ...view, payments: { ...view.payments, treatments: [...view.payments.treatments].sort((x, y) => x.key.localeCompare(y.key)) } });
+};
 
 afterAll(async () => {
   await db.$disconnect();

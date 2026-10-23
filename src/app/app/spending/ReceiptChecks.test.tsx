@@ -12,6 +12,7 @@ const saveNotificationSettings = vi.fn();
 const dismissMail = vi.fn();
 const linkTakenOver = vi.fn();
 const getReceiptChecks = vi.fn();
+const linkChosenReceipt = vi.fn();
 const takeOverMail = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 vi.mock('./loop-actions', () => ({
@@ -23,6 +24,7 @@ vi.mock('./loop-actions', () => ({
   saveNotificationSettings: (...a: unknown[]) => saveNotificationSettings(...a),
   dismissMail: (...a: unknown[]) => dismissMail(...a),
   linkTakenOver: (...a: unknown[]) => linkTakenOver(...a),
+  linkChosenReceipt: (...a: unknown[]) => linkChosenReceipt(...a),
   getReceiptChecks: (...a: unknown[]) => getReceiptChecks(...a),
 }));
 vi.mock('../actions', () => ({ processReceipt: vi.fn() }));
@@ -44,6 +46,7 @@ const view = (canWrite = true): ChecksView => ({
     ],
     answered: [{ paymentId: 'p3', bookingDay: '2026-05-01', cents: 300, counterparty: 'Parkhaus', reference: '', state: { state: 'no_receipt', reason: 'Automat' } }],
     counts: { hasReceipt: 4, notNeeded: { own_transfer: 1, income: 0, refund: 0, fee: 0, loan: 1, cash: 0, transfer: 0 }, noReceipt: 1, proposed: 1, in_mailbox: 0, missing: 1 },
+    freeReceipts: [{ rowId: 'r9', label: 'Kassenbon', day: '2026-05-11', amountCents: 1250 }],
   },
   notifications: [{ id: 'n1', subjectKey: 'missing_receipt:p2', kind: 'missing_receipt', title: 'Beleg fehlt: Abc Laden', body: '', path: '/app/spending?pruefen=p2', channel: null, failed: false, createdAt: '2026-05-12T10:00:00Z' }],
   settings: { channel: 'push', notifyEmail: null },
@@ -56,7 +59,7 @@ const view = (canWrite = true): ChecksView => ({
 });
 
 beforeEach(() => {
-  for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings, dismissMail, linkTakenOver, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
+  for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings, dismissMail, linkTakenOver, linkChosenReceipt, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
   Element.prototype.scrollIntoView = vi.fn();
 });
 
@@ -76,6 +79,16 @@ describe('ReceiptChecks', () => {
     await user.type(screen.getByLabelText('Warum es keinen Beleg gibt'), 'Parkautomat');
     await user.click(save);
     expect(sayNoReceipt).toHaveBeenCalledWith('p2', 'Parkautomat');
+  });
+
+  it('links a receipt chosen by hand when no proposal fits, only after one is chosen', async () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    const link = screen.getByRole('button', { name: 'Zuordnen: gewählten Beleg zu Abc Laden' });
+    expect((link as HTMLButtonElement).disabled).toBe(true);
+    await user.selectOptions(screen.getByLabelText('Vorhandenen Beleg für Abc Laden wählen'), 'r9');
+    await user.click(link);
+    expect(linkChosenReceipt).toHaveBeenCalledWith('p2', 'r9');
   });
 
   it('an answer given in the company holding the account is shown without a take-back button', async () => {

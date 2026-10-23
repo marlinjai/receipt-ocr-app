@@ -112,7 +112,7 @@ describe('SpendingClient with payments of another company', () => {
     render(<SpendingClient initial={shared(true)} />);
     expect(screen.getByText(/Girokonto \(private Zahlungen, geführt von Beispiel Firma\)/)).toBeTruthy();
     // Only the routed payment with a receipt offers it; the own payment without one does not.
-    const buttons = screen.getAllByRole('button', { name: /lösen$/ });
+    const buttons = screen.getAllByRole('button', { name: /^Lösen: / });
     expect(buttons).toHaveLength(1);
     await userEvent.setup().click(buttons[0]);
     expect(confirm).toHaveBeenCalled();
@@ -121,15 +121,15 @@ describe('SpendingClient with payments of another company', () => {
   });
 
   it('shows a refusal next to the payment, and offers nothing without the write permission', async () => {
-    unlinkRoutedReceipt.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'payment_not_found' });
+    unlinkRoutedReceipt.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'link_not_found' });
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const { unmount } = render(<SpendingClient initial={shared(true)} />);
-    await userEvent.setup().click(screen.getByRole('button', { name: /lösen$/ }));
-    expect((await screen.findByRole('alert')).textContent).toMatch(/gehört nicht mehr hierher/);
+    await userEvent.setup().click(screen.getByRole('button', { name: /^Lösen: / }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/kein Beleg mehr/);
     confirm.mockRestore();
     unmount();
     render(<SpendingClient initial={shared(false)} />);
-    expect(screen.queryByRole('button', { name: /lösen$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Lösen: / })).toBeNull();
   });
 
   it('lists a receipt left on a payment that moved away, and frees it after a confirmation', async () => {
@@ -137,7 +137,7 @@ describe('SpendingClient with payments of another company', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<SpendingClient initial={{ ...view(true), dormantLinks: [{ paymentId: 'p9', cents: 2000, linkedOn: '2026-05-10' }] }} />);
     expect(screen.getByText(/Belege an Zahlungen, die nicht mehr hierher gehören \(1\)/)).toBeTruthy();
-    await userEvent.setup().click(screen.getByRole('button', { name: /^Beleg, verknüpft am .* lösen$/ }));
+    await userEvent.setup().click(screen.getByRole('button', { name: /^Lösen: Beleg, verknüpft am / }));
     expect(unlinkRoutedReceipt).toHaveBeenCalledWith(2026, null, 'p9');
     confirm.mockRestore();
   });

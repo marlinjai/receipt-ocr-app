@@ -109,7 +109,9 @@ other's copy behind, and every changed answer would need a write in two companie
    them. The receiver's links stay stored but dormant (see 9); sharing the same account with the
    same company again revives them.
 8. **Links of private receipts.** The receiver links its own receipt to a routed payment from its
-   spending page (confirming a proposed receipt, or taking an invoice over from the mailbox). The
+   spending page: confirming a proposed receipt, taking an invoice over from the mailbox, or picking
+   one of its receipts not linked yet by hand when no proposal fits ("Vorhandenen Beleg wählen",
+   offered on every open check, in every company). The
    link belongs to the receiver (its workspace and company stamp), never to the holder.
 9. **A link counts only while its payment routes to its company.** The holder never reads the
    receiver's links (`loadPayments` reads only the reader's links), so its tax figures, its loop and
@@ -255,7 +257,7 @@ prove each of these (`routing.dbtest.ts`).
   in the receiver "Aus anderen Firmen" with the holder's name). Spending page: the shared account
   named with its holder, the holder's note where its accounts' private payments went, and "Lösen"
   on a routed payment with a private receipt.
-- **Tests**: `routing.dbtest.ts` (32 tests through the four paths and the privacy promise, with the
+- **Tests**: `routing.dbtest.ts` (33 tests through the four paths and the privacy promise, with the
   holder's tax statement compared before and after), `route.test.ts`, `sharing-actions.test.ts`,
   `AccountSharing.test.tsx`, and additions to the spending page, action, attachment and move tests.
 
@@ -314,6 +316,19 @@ finds included; the lock sentence above and the accepted points in Decided 6 and
 Accepted cost: linking a private receipt reads the holder's payments in full two or three times
 (about 3,900 rows each), once inside the transaction. A narrower query would need a second copy of
 the private-or-business rule; for one owner's accounts the reads are fast enough.
+
+### Sixth review (2026-10-23), fixed
+
+No blocker; fixed: a receipt can be linked by hand to an open payment from the open checks (the
+receiver had no way to link a private receipt whose wording or amount does not fit a proposal);
+the sharing texts name the "Teils, teils" payments and what stays; the payments tab says so when
+the sharing section cannot be read; the holder's note on its spending page names what stays; the
+"Lösen" buttons' accessible names start with their visible text; one wording for a payment that is
+gone, whether its import was undone or it moved; inherited categories per holder and the latest
+answer first, so the result never depends on row order; the comment on money back.
+
+Accepted: money back that is routed to the receiver stays without a link (the loop asks for no
+receipt for it; linking it in the holder would make it business and take it back there).
 
 ### What the owner does after the deploy
 

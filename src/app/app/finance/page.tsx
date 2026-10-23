@@ -47,6 +47,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
       bank={bankView.ok ? bankView.value : null}
       bankReturn={typeof bank === 'string' ? bank.slice(0, 80) : null}
       sharing={sharing.ok ? sharing.value : null}
+      sharingFailed={!sharing.ok}
     />
   );
 }

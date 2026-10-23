@@ -41,8 +41,6 @@ export function spendingActionMessage(result: Extract<Result<unknown>, { ok: fal
     return 'Diese Gegenseite ist unter Finanzen, Zahlungen schon als geschäftlich oder privat beantwortet. Das bitte dort ändern, damit die steuerliche Zuordnung nicht unbemerkt verloren geht.';
   if (result.detail === 'invalid_treatment') return 'Diese Gegenseite lässt sich nicht als eigenes Konto merken, weil die Zahlung keinen Namen nennt.';
   if (result.detail === 'not_own_account') return 'Diese Gegenseite ist nicht mehr als eigenes Konto beantwortet. Bitte die Seite neu laden.';
-  if (result.detail === 'payment_not_found')
-    return 'Diese Zahlung gehört nicht mehr hierher: die Firma, die das Konto führt, hat sie inzwischen anders beantwortet. Bitte die Seite neu laden.';
   if (result.detail === 'link_not_found') return 'An dieser Zahlung hängt hier kein Beleg mehr. Bitte die Seite neu laden.';
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
@@ -231,8 +229,8 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
                 {s.accountLabel} (an {view.companies[s.receiverWorkspaceId] ?? 'eine andere Firma'})
               </span>
             ))}{' '}
-            stehen in der Firma, an die sie weitergegeben werden, mit Budgets und fehlenden Belegen. Hier zählen von diesen Konten nur
-            die geschäftlichen und die noch nicht beantworteten Zahlungen.
+            stehen in der Firma, an die sie weitergegeben werden, mit Budgets und fehlenden Belegen. Hier bleiben von diesen Konten die
+            geschäftlichen, die noch nicht beantworteten und die hier verknüpften Zahlungen und die Umbuchungen.
           </p>
         )}
       </div>
@@ -467,7 +465,7 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
                       type="button"
                       className="ui-btn ui-btn-sm"
                       disabled={pending}
-                      aria-label={`Beleg, verknüpft am ${formatDay(l.linkedOn)} über ${euro(l.cents)}, lösen`}
+                      aria-label={`Lösen: Beleg, verknüpft am ${formatDay(l.linkedOn)} über ${euro(l.cents)}`}
                       onClick={() => {
                         if (!window.confirm('Den Beleg von dieser Zahlung lösen? Der Beleg bleibt erhalten und kann einer anderen Zahlung zugeordnet werden.')) return;
                         run(`dormant:${l.paymentId}`, () => unlinkRoutedReceipt(overview.year, overview.month, l.paymentId));
@@ -531,7 +529,7 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
                         type="button"
                         className="ui-btn ui-btn-sm ml-2"
                         disabled={pending}
-                        aria-label={`Beleg von ${p.counterparty || 'dieser Zahlung'} am ${formatDay(p.bookingDay)} lösen`}
+                        aria-label={`Lösen: Beleg von ${p.counterparty || 'dieser Zahlung'} am ${formatDay(p.bookingDay)}`}
                         onClick={() => {
                           if (!window.confirm('Den Beleg von dieser Zahlung lösen? Der Beleg bleibt erhalten, die Zahlung fragt dann wieder nach einem Beleg.')) return;
                           run(`routed:${p.id}`, () => unlinkRoutedReceipt(overview.year, overview.month, p.id));

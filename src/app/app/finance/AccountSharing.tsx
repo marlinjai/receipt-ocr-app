@@ -134,7 +134,7 @@ export default function AccountSharing({ initial, accounts, actions }: { initial
   const share = (account: { id: string; label: string }, targetWorkspaceId: string, targetLabel: string) => {
     if (
       !window.confirm(
-        `Private Zahlungen von „${account.label}“ an ${targetLabel} weitergeben? Das Konto bleibt hier, mit seiner Bankverbindung und allen Fragen. Was hier als privat beantwortet ist, erscheint dann in ${targetLabel} unter Ausgaben, mit Budgets und fehlenden Belegen, und zählt hier unter Ausgaben nicht mehr mit. Geschäftliche und noch nicht beantwortete Zahlungen bleiben hier. Beenden bringt alles zurück.`,
+        `Private Zahlungen von „${account.label}“ an ${targetLabel} weitergeben? Das Konto bleibt hier, mit seiner Bankverbindung und allen Fragen. Was hier als privat beantwortet ist (auch Zahlungen einer Gegenseite „Teils, teils“ und eines ganz privaten Kontos, solange hier kein Beleg daran hängt), erscheint dann in ${targetLabel} unter Ausgaben, mit Budgets und fehlenden Belegen, und zählt hier unter Ausgaben nicht mehr mit. Geschäftliche und noch nicht beantwortete Zahlungen, Umbuchungen und hier verknüpfte Zahlungen bleiben hier. Beenden bringt alles zurück.`,
       )
     )
       return;
@@ -151,12 +151,14 @@ export default function AccountSharing({ initial, accounts, actions }: { initial
         Private Zahlungen in einer anderen Firma
       </h2>
       <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-        Ein Konto wird nur einmal eingelesen und verbunden. Was hier als privat beantwortet ist (Gegenseite privat, Zahlung privat, oder
-        ein ganz privates Konto), erscheint in der gewählten Firma unter{' '}
+        Ein Konto wird nur einmal eingelesen und verbunden. Was hier als privat beantwortet ist (Gegenseite privat, Zahlung privat, ein
+        ganz privates Konto, und Zahlungen einer Gegenseite „Teils, teils“, solange hier kein Beleg daran hängt), erscheint in der
+        gewählten Firma unter{' '}
         <Link href="/app/spending" className="underline">
           Ausgaben
         </Link>
-        . Geschäftliche und noch nicht beantwortete Zahlungen bleiben hier; eine geänderte Antwort gilt sofort.
+        . Geschäftliche und noch nicht beantwortete Zahlungen, Umbuchungen und hier verknüpfte Zahlungen bleiben hier; eine geänderte
+        Antwort gilt sofort.
       </p>
       {offerable && (
         <ul className="mt-2 divide-y">

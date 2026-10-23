@@ -182,6 +182,23 @@ export async function linkTakenOver(paymentId: unknown, rowId: unknown): Promise
   }
 }
 
+/**
+ * Link a receipt of this company to an open payment by hand, when no proposal
+ * fits (another wording, another amount): the person chose it. For a payment
+ * routed here from the company holding its account, this is the receiver's
+ * own link (plan 2026-10-22, payments across companies); the receipt must be
+ * this company's, the payment one still waiting here.
+ */
+export async function linkChosenReceipt(paymentId: unknown, rowId: unknown): Promise<ChecksResult<ChecksView>> {
+  try {
+    const ctx = await writeContext();
+    await linkReceiptToPayment(prisma, ctx, String(paymentId ?? ''), String(rowId ?? ''));
+    return { ok: true, value: await view(ctx.workspaceId, true) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
 async function pushContext(): Promise<PushContext> {
   const session = await auth.requireAction('receipts.row.write');
   const workspaceId = sessionWorkspaceId(session);

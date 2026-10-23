@@ -94,12 +94,22 @@ export interface LoopOverview {
   /** Payments a person answered "no receipt exists" for, newest first: the answer can be taken back. */
   answered: PaymentCheck[];
   counts: { hasReceipt: number; notNeeded: Record<NotNeededReason, number>; noReceipt: number; proposed: number; in_mailbox: number; missing: number };
+  /**
+   * This company's receipts linked to no payment, newest first (at most `FREE_RECEIPTS_SHOWN`): what a
+   * person can link to an open payment by hand when no proposal fits. Only receipts of this company.
+   */
+  freeReceipts: Array<{ rowId: string; label: string; day: string | null; amountCents: number | null }>;
 }
+
+/** Receipts offered for linking by hand at most: enough to pick from, small enough to send with every view. */
+export const FREE_RECEIPTS_SHOWN = 200;
 
 interface Loaded {
   payments: RoutedPaymentRow[];
   /** This company's own payments routed to another company, with the "no receipt" answer it gave before, if any. */
   routedAwayAnswered: Array<{ payment: PaymentRow; reason: string }>;
+  /** This company's receipts as the loop sees them. */
+  receipts: LoopReceipt[];
   states: Map<string, LoopState>;
   /** Vendor keys each counterparty stands for, learned from links: the names a mailbox search uses besides the counterparty's own. */
   aliases: Map<string, Set<string>>;
@@ -142,7 +152,7 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   }
   const ownReasons = new Map(noReceipt.map((a) => [a.paymentId, a.reason]));
   const routedAwayAnswered = loaded.routedAway.flatMap((p) => (ownReasons.has(p.id) ? [{ payment: p, reason: ownReasons.get(p.id) as string }] : []));
-  return { payments: loaded.payments, states, aliases, routedAwayAnswered };
+  return { payments: loaded.payments, states, aliases, routedAwayAnswered, receipts };
 }
 
 /** The subjects of the payments still waiting for their receipt: what keeps its messages in the in-app queue. */
@@ -242,7 +252,7 @@ const check = (p: PaymentRow, state: LoopState): PaymentCheck => ({
 });
 
 export async function loadLoopOverview(db: PrismaClient, workspaceId: string): Promise<LoopOverview> {
-  const { payments, states, routedAwayAnswered } = await computeStates(db, workspaceId);
+  const { payments, states, routedAwayAnswered, receipts } = await computeStates(db, workspaceId);
   const counts: LoopOverview['counts'] = {
     hasReceipt: 0,
     notNeeded: { own_transfer: 0, income: 0, refund: 0, fee: 0, loan: 0, cash: 0, transfer: 0 },
@@ -270,7 +280,12 @@ export async function loadLoopOverview(db: PrismaClient, workspaceId: string): P
   // it can be taken back where it was given (the other company shows it as answered here).
   for (const { payment, reason } of routedAwayAnswered) answered.push(check(payment, { state: 'no_receipt', reason, movedAway: true }));
   const newest = (a: PaymentCheck, b: PaymentCheck) => (a.bookingDay < b.bookingDay ? 1 : a.bookingDay > b.bookingDay ? -1 : 0);
-  return { open: open.sort(newest), answered: answered.sort(newest), counts };
+  const freeReceipts = receipts
+    .filter((r) => !r.linked)
+    .sort((a, b) => ((a.day ?? '') < (b.day ?? '') ? 1 : (a.day ?? '') > (b.day ?? '') ? -1 : 0))
+    .slice(0, FREE_RECEIPTS_SHOWN)
+    .map((r) => ({ rowId: r.rowId, label: r.label, day: r.day, amountCents: r.amountCents }));
+  return { open: open.sort(newest), answered: answered.sort(newest), counts, freeReceipts };
 }
 
 function missingMessage(p: PaymentRow, inMailbox: boolean, workspaceId: string): { title: string; body: string; path: string } {

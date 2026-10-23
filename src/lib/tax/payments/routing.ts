@@ -202,7 +202,8 @@ export async function linkRoutedPayment(
     await tx.$queryRaw`SELECT id FROM tax_payments WHERE id = ${paymentId} AND account_id IN (SELECT account_id FROM tax_account_shares WHERE receiver_workspace_id = ${ctx.workspaceId}) FOR UPDATE`;
     const routed = await routedPaymentFor(tx, ctx.workspaceId, paymentId);
     if (!routed) throw new PaymentServiceError('payment_not_found');
-    // Only money out asks for a receipt; money back goes on its purchase in the company that holds it.
+    // Only money out asks for a receipt here. Money back that is routed here stays without a link: the loop asks
+    // for no receipt for it, and linking it in the holder would make it business and take it back there.
     if (routed.row.amountCents >= 0) throw new PaymentServiceError('invalid_link');
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`tax-receipt:${rowId}`}))`;
     const mine = await tx.taxPaymentLink.findMany({ where: { authWorkspaceId: ctx.workspaceId, paymentId } });

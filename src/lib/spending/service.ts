@@ -99,9 +99,18 @@ export function toOverviewInput(p: PaymentRow | RoutedPaymentRow): OverviewPayme
 export async function categoryAnswerMap(db: PrismaClient, workspaceId: string, routed: Pick<RoutedPayments, 'payments' | 'holders'>, own?: readonly CategoryAnswerView[]): Promise<Map<string, SpendingCategory>> {
   const mine = own ?? (await loadCategoryAnswers(db, workspaceId));
   const out = new Map<string, SpendingCategory>();
-  const keys = [...new Set(routed.payments.filter((p) => p.routedFrom !== null && p.counterpartyKey).map((p) => p.counterpartyKey))];
-  if (keys.length > 0 && routed.holders.length > 0) {
-    const inherited = await db.spendingCategoryAnswer.findMany({ where: { authWorkspaceId: { in: routed.holders }, counterpartyKey: { in: keys } } });
+  // Per holder only the counterparties of ITS routed payments; with two holders answering one counterparty
+  // differently, the answer given last wins, so the result never depends on the database's row order.
+  const keysByHolder = new Map<string, Set<string>>();
+  for (const p of routed.payments) {
+    if (p.routedFrom === null || !p.counterpartyKey) continue;
+    keysByHolder.set(p.routedFrom, (keysByHolder.get(p.routedFrom) ?? new Set()).add(p.counterpartyKey));
+  }
+  if (keysByHolder.size > 0) {
+    const inherited = await db.spendingCategoryAnswer.findMany({
+      where: { OR: [...keysByHolder].map(([holder, keys]) => ({ authWorkspaceId: holder, counterpartyKey: { in: [...keys] } })) },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+    });
     for (const a of inherited) if (isSpendingCategory(a.category)) out.set(a.counterpartyKey, a.category);
   }
   for (const a of mine) out.set(a.counterpartyKey, a.category);

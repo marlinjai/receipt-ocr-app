@@ -22,6 +22,7 @@ import {
   enablePush,
   pushStateOfDevice,
   getReceiptChecks,
+  linkChosenReceipt,
   linkTakenOver,
   readNotification,
   saveNotificationSettings,
@@ -258,7 +259,7 @@ export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok:
   if (result.detail === 'candidate_not_found') return 'Diese Mail wird nicht mehr angeboten. Bitte die Seite neu laden.';
   if (result.detail === 'invalid_subscription') return 'Das Gerät hat keine gültige Push-Anmeldung geliefert. Bitte Push noch einmal einschalten.';
   if (result.detail === 'payment_not_found')
-    return 'Diese Zahlung gehört nicht mehr hierher: die Firma, die das Konto führt, hat sie inzwischen anders beantwortet, oder ihr Import wurde zurückgenommen. Bitte die Seite neu laden.';
+    return 'Diese Zahlung gibt es hier nicht mehr: ihr Import wurde vielleicht zurückgenommen, oder sie steht inzwischen in einer anderen Firma. Bitte die Seite neu laden.';
   if (result.error === 'not_found') return 'Das gibt es nicht mehr (die Zahlung wurde vielleicht mit ihrem Import zurückgenommen). Bitte die Seite neu laden.';
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
@@ -275,6 +276,8 @@ function OpenCheck({
   onTakeOver,
   onDismiss,
   takingOver,
+  freeReceipts,
+  onLinkByHand,
 }: {
   check: PaymentCheck;
   focused: boolean;
@@ -288,8 +291,12 @@ function OpenCheck({
   onDismiss: (mailId: string) => void;
   /** The mail being taken over right now, if any. */
   takingOver: string | null;
+  /** This company's receipts not linked to any payment, to pick one by hand when no proposal fits. */
+  freeReceipts: ChecksView['loop']['freeReceipts'];
+  onLinkByHand: (rowId: string) => void;
 }) {
   const id = useId();
+  const [chosen, setChosen] = useState('');
   const [asking, setAsking] = useState(false);
   const [reason, setReason] = useState('');
   const opener = useRef<HTMLButtonElement>(null);
@@ -369,6 +376,32 @@ function OpenCheck({
         <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
           Kein Beleg gefunden.
         </p>
+      )}
+      {canWrite && freeReceipts.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="sr-only" htmlFor={`${id}-receipt`}>
+            Vorhandenen Beleg für {check.counterparty || 'diese Zahlung'} wählen
+          </label>
+          <select id={`${id}-receipt`} className="ui-input" style={{ width: 'auto', maxWidth: '100%' }} value={chosen} disabled={pending} onChange={(e) => setChosen(e.target.value)}>
+            <option value="">Vorhandenen Beleg wählen</option>
+            {freeReceipts.map((r) => (
+              <option key={r.rowId} value={r.rowId}>
+                {r.label}
+                {r.day ? `, ${formatDay(r.day)}` : ''}
+                {r.amountCents !== null ? `, ${euro(r.amountCents)}` : ''}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="ui-btn ui-btn-sm"
+            disabled={pending || !chosen}
+            aria-label={`Zuordnen: gewählten Beleg zu ${check.counterparty || 'dieser Zahlung'}`}
+            onClick={() => onLinkByHand(chosen)}
+          >
+            Zuordnen
+          </button>
+        </div>
       )}
       {canWrite && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -644,6 +677,8 @@ export default function ReceiptChecks({
               onTakeOver={(mailId) => takeOver(c.paymentId, mailId)}
               onDismiss={(mailId) => run(`check:${c.paymentId}`, () => dismissMail(mailId))}
               takingOver={takingOver}
+              freeReceipts={loop.freeReceipts}
+              onLinkByHand={(rowId) => run(`check:${c.paymentId}`, () => linkChosenReceipt(c.paymentId, rowId))}
             />
           ))}
         </ul>

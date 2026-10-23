@@ -115,6 +115,7 @@ export default function FinanceClient({
   bankReturn = null,
   bankActions = BANK_ACTIONS,
   sharing = null,
+  sharingFailed = false,
   sharingActions = SHARING_ACTIONS,
 }: {
   initial: StatementView;
@@ -126,6 +127,8 @@ export default function FinanceClient({
   bankActions?: BankActions;
   /** Sharing an account's private payments with another company; null when it could not be read (the section is then left out). */
   sharing?: SharingView | null;
+  /** True when the sharing section could not be read: it says so instead of disappearing. */
+  sharingFailed?: boolean;
   sharingActions?: SharingActions;
 }) {
   const tabsId = useId();
@@ -830,7 +833,20 @@ export default function FinanceClient({
               }
               onSearch={(query) => searchPayments(view.year, query)}
               bank={bankInitial ? { feed: bankFeed, actions: bankActions, returnNotice: bankNotice } : null}
-              sharing={sharing ? <AccountSharing initial={sharing} accounts={view.payments.accounts} actions={sharingActions} /> : null}
+              sharing={
+                sharing ? (
+                  <AccountSharing initial={sharing} accounts={view.payments.accounts} actions={sharingActions} />
+                ) : sharingFailed ? (
+                  <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Private Zahlungen in einer anderen Firma">
+                    <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>
+                      Private Zahlungen in einer anderen Firma
+                    </h2>
+                    <p className="ui-note ui-note-danger mt-2" role="alert">
+                      Die Weitergabe privater Zahlungen konnte nicht geladen werden. Bitte die Seite neu laden.
+                    </p>
+                  </section>
+                ) : null
+              }
               onTreat={(counterparty, treatment) => run(() => treatCounterparty(view.year, { counterparty, treatment }), `${counterparty}: ${treatment === null ? 'Antwort zurückgenommen' : 'gespeichert'}.`)}
               onLink={linkWithQuestion}
               onAcceptProposals={(pairs, onlyUnambiguous) => {

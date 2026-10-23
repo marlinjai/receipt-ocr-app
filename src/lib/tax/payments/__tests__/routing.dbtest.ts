@@ -378,6 +378,21 @@ describe('links of the receiver', () => {
     expect(await code(unlinkRoutedPayment(db, w.rctx, id))).toBe('link_not_found');
   });
 
+  it('the receiver links a receipt of its own by hand when no proposal fits, never one of the holder', async () => {
+    const w = await world();
+    const id = w.ids.get('Teils Markt') as string;
+    const own = await w.receiver.addReceipt({ Name: 'Wochenmarkt Zettel', Vendor: 'Ganz anderer Name', Gross: 31.5, Date: '2026-05-01', Currency: 'EUR', 'FX Rate': 1 });
+    const holders = await w.holder.addReceipt({ Name: 'Firmenbeleg', Vendor: 'Teils Markt', Gross: 30, Date: '2026-05-13', Currency: 'EUR', 'FX Rate': 1 });
+    expect(await stateOf(w.rctx.workspaceId, id)).toBe('missing');
+    const overview = await loadLoopOverview(db, w.rctx.workspaceId);
+    expect(overview.freeReceipts.map((r) => r.rowId)).toEqual([own]);
+    expect(await code(linkReceiptToPayment(db, w.rctx, id, holders))).toBe('target_not_found');
+    await linkReceiptToPayment(db, w.rctx, id, own);
+    expect(await stateOf(w.rctx.workspaceId, id)).toBe('settled_or_not_needed');
+    expect((await loadLoopOverview(db, w.rctx.workspaceId)).freeReceipts).toEqual([]);
+    expect((await loadPayments(db, w.hctx.workspaceId)).payments.find((p) => p.id === id)?.links).toEqual([]);
+  });
+
   it('a dormant link keeps its receipt from being proposed elsewhere, and can be taken back to free it', async () => {
     const w = await world();
     const id = w.ids.get('Privat Laden') as string;

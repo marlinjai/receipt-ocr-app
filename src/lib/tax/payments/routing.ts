@@ -169,7 +169,7 @@ export async function paymentOnSpendingSide(db: Db, workspaceId: string, payment
   if (!payment) return false;
   if (payment.authWorkspaceId !== workspaceId) return (await routedPaymentFor(db, workspaceId, paymentId)) !== null;
   const share = payment.account.share;
-  if (!share || share.receiverWorkspaceId === workspaceId) return true;
+  if (!share || share.authWorkspaceId !== workspaceId || share.receiverWorkspaceId === workspaceId) return true;
   const loaded = await loadPayments(db, workspaceId);
   const row = loaded.payments.find((p) => p.id === paymentId);
   return row !== undefined && !routesToReceiver(row, loaded.treatments, new Set([payment.accountId]));
@@ -198,7 +198,8 @@ export async function linkRoutedPayment(
   if (receipt === null) throw new PaymentServiceError('target_not_found');
   return db.$transaction(async (tx) => {
     // The same lock order as the holder's own link: the payment first, then the receipt.
-    await tx.$queryRaw`SELECT id FROM tax_payments WHERE id = ${paymentId} FOR UPDATE`;
+    // Locked only when the payment's account is shared with this company: no other company's payment is ever held.
+    await tx.$queryRaw`SELECT id FROM tax_payments WHERE id = ${paymentId} AND account_id IN (SELECT account_id FROM tax_account_shares WHERE receiver_workspace_id = ${ctx.workspaceId}) FOR UPDATE`;
     const routed = await routedPaymentFor(tx, ctx.workspaceId, paymentId);
     if (!routed) throw new PaymentServiceError('payment_not_found');
     // Only money out asks for a receipt; money back goes on its purchase in the company that holds it.
@@ -229,15 +230,16 @@ export async function linkRoutedPayment(
  * The receiver takes its own links on another company's payment back: on a
  * payment routed to it, and also on one that moved back to the holder (a
  * dormant link), so a receipt is never stuck. Only this company's own rows are
- * touched and nothing of the payment is read, so nothing is revealed; a
- * payment of another company without a link of this one answers like an
- * unknown payment. Returns how many links went.
+ * touched and nothing of the payment is read, so nothing is revealed: no
+ * link of this company on the payment, whether the payment exists or not,
+ * answers `link_not_found`. Returns how many links went.
  */
 export async function unlinkRoutedPayment(db: PrismaClient, ctx: PaymentContext, paymentId: string): Promise<number> {
   return db.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM tax_payments WHERE id = ${paymentId} FOR UPDATE`;
+    // Locked only when this company holds a link on it: no other company's payment is ever held.
+    await tx.$queryRaw`SELECT id FROM tax_payments WHERE id = ${paymentId} AND EXISTS (SELECT 1 FROM tax_payment_links WHERE payment_id = ${paymentId} AND auth_workspace_id = ${ctx.workspaceId}) FOR UPDATE`;
     const { count } = await tx.taxPaymentLink.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, paymentId, payment: { authWorkspaceId: { not: ctx.workspaceId } } } });
-    if (count === 0) throw new PaymentServiceError('payment_not_found');
+    if (count === 0) throw new PaymentServiceError('link_not_found');
     return count;
   });
 }

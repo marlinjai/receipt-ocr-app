@@ -164,7 +164,7 @@ export async function unmarkOwnAccount(year: unknown, month: unknown, counterpar
 export async function unlinkRoutedReceipt(year: unknown, month: unknown, paymentId: unknown): Promise<Result<SpendingPageView>> {
   try {
     const ctx = await writeContext();
-    if (typeof paymentId !== 'string' || !paymentId) return { ok: false, error: 'invalid_input', detail: 'payment_not_found' };
+    if (typeof paymentId !== 'string' || !paymentId) return { ok: false, error: 'invalid_input', detail: 'link_not_found' };
     await unlinkRoutedPayment(prisma, ctx, paymentId);
     return { ok: true, value: await view(ctx.session, ctx.workspaceId, year, month, true) };
   } catch (e) {

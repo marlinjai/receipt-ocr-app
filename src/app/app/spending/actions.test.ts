@@ -167,10 +167,10 @@ describe('writes', () => {
     requireAction.mockRejectedValue(new ReceiptsAuthError(403));
     expect(await unlinkRoutedReceipt(2026, null, 'pay-1')).toEqual({ ok: false, error: 'forbidden' });
     requireAction.mockResolvedValue(SESSION);
-    expect(await unlinkRoutedReceipt(2026, null, '')).toEqual({ ok: false, error: 'invalid_input', detail: 'payment_not_found' });
+    expect(await unlinkRoutedReceipt(2026, null, '')).toEqual({ ok: false, error: 'invalid_input', detail: 'link_not_found' });
     expect(unlinkRoutedPayment).not.toHaveBeenCalled();
-    unlinkRoutedPayment.mockRejectedValue(new PaymentServiceError('payment_not_found'));
-    expect(await unlinkRoutedReceipt(2026, null, 'pay-2')).toEqual({ ok: false, error: 'invalid_input', detail: 'payment_not_found' });
+    unlinkRoutedPayment.mockRejectedValue(new PaymentServiceError('link_not_found'));
+    expect(await unlinkRoutedReceipt(2026, null, 'pay-2')).toEqual({ ok: false, error: 'invalid_input', detail: 'link_not_found' });
   });
 
   it('report anything unexpected as failed', async () => {

@@ -193,7 +193,9 @@ built only from payments that pass `routesToReceiver`, and every write the recei
 payment (link, "no receipt exists", downloading or taking over a mail find) re-derives the routing
 first (a link inside its transaction, under the payment's row lock) and refuses a payment that does
 not route to it, with the same answer as an unknown payment. Unlinking touches only the company's
-own links, dormant ones too, and reads nothing of the payment. "No receipt exists"
+own links, dormant ones too, and reads nothing of the payment: without a link of the company it
+answers "no link" whether the payment exists or not. A row lock is taken only on a payment the
+company may act on. "No receipt exists"
 is checked just before it is stored; should the holder change the answer in that moment, the
 receiver's answer is only stored, never shown or read by the holder. The holder never sees the receiver's receipts, links, answers or finds. Tests
 prove each of these (`routing.dbtest.ts`).
@@ -249,7 +251,7 @@ prove each of these (`routing.dbtest.ts`).
   in the receiver "Aus anderen Firmen" with the holder's name). Spending page: the shared account
   named with its holder, the holder's note where its accounts' private payments went, and "Lösen"
   on a routed payment with a private receipt.
-- **Tests**: `routing.dbtest.ts` (29 tests through the four paths and the privacy promise, with the
+- **Tests**: `routing.dbtest.ts` (31 tests through the four paths and the privacy promise, with the
   holder's tax statement compared before and after), `route.test.ts`, `sharing-actions.test.ts`,
   `AccountSharing.test.tsx`, and additions to the spending page, action, attachment and move tests.
 
@@ -285,6 +287,15 @@ back where they were given; the move's dry run counts the receiving company's st
 index on `tax_payment_links.auth_workspace_id` (every read of a company's payments filters on it);
 the receiver's link has no unused confirmation path; comments and this plan say exactly what
 unlinking checks; the erasure exception above is written down.
+
+### Fourth review (2026-10-23), fixed
+
+No blocker; fixed: tests for the lock on the subject (three announcements at once store one
+message), for `touchesSharedAccount` against the database (payment, account, counterparty by name
+and by key, unshared accounts) and for the coalescing of settling runs; "Lösen" answers "no link"
+when nothing of the company's is left on a payment, so a second press is not mistaken for a moved
+payment; row locks are taken only on payments the company may act on; the check whether a payment
+is on a company's spending side reads a share exactly as the spending read does.
 
 ### What the owner does after the deploy
 

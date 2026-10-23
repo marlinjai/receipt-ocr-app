@@ -10,8 +10,10 @@ import {
   receiversOf,
   routedPaymentFor,
   shareAccount,
+  touchesSharedAccount,
   unlinkRoutedPayment,
 } from '../routing';
+import { notify } from '@/lib/spending/notify/service';
 import { receiptForLink, loadStatement } from '@/lib/tax/service';
 import { LoopServiceError, answerNoReceipt, confirmCandidate, linkReceiptToPayment, loadLoopOverview, runReceiptLoop, settleAcrossShares, withdrawNoReceipt } from '@/lib/spending/loop-service';
 import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
@@ -201,7 +203,9 @@ describe('privacy', () => {
       const id = w.ids.get(name) as string;
       expect(await routedPaymentFor(db, w.rctx.workspaceId, id)).toBeNull();
       expect(await code(linkRoutedPayment(db, w.rctx, id, rowId, receiptForLink(db, w.rctx.workspaceId)))).toBe('payment_not_found');
-      expect(await code(unlinkRoutedPayment(db, w.rctx, id))).toBe('payment_not_found');
+      // No link of the receiver on it: the same answer as for a payment that does not exist.
+      expect(await code(unlinkRoutedPayment(db, w.rctx, id))).toBe('link_not_found');
+      expect(await code(unlinkRoutedPayment(db, w.rctx, 'no-such-payment'))).toBe('link_not_found');
       expect(await code(answerNoReceipt(db, w.rctx, id, 'Test'))).toBe('payment_not_found');
       expect(await code(confirmCandidate(db, w.rctx, id, rowId))).toBe('payment_not_found');
     }
@@ -370,7 +374,8 @@ describe('links of the receiver', () => {
     await confirmCandidate(db, w.rctx, id, rowId);
     expect(await unlinkRoutedPayment(db, w.rctx, id)).toBe(1);
     expect(await stateOf(w.rctx.workspaceId, id)).toBe('proposed');
-    expect(await code(unlinkRoutedPayment(db, w.rctx, id))).toBe('payment_not_found');
+    // A second press (another tab) finds nothing of this company's left on it.
+    expect(await code(unlinkRoutedPayment(db, w.rctx, id))).toBe('link_not_found');
   });
 
   it('a dormant link keeps its receipt from being proposed elsewhere, and can be taken back to free it', async () => {
@@ -402,6 +407,37 @@ describe('links of the receiver', () => {
     const view = await loadStatement(db, w.rctx.workspaceId, 2026);
     expect(view.payments.estimateProposals.some((p) => p.rowId === rowId)).toBe(false);
     expect((await loadPayments(db, w.rctx.workspaceId)).linkedElsewhere.get(rowId)).toBe(2000);
+  });
+});
+
+describe('one message per payment, and where settling is needed', () => {
+  it('two companies announcing the same payment at the same moment store one message', async () => {
+    const w = await world();
+    const subjectKey = `missing_receipt:${w.ids.get('Privat Laden')}`;
+    const message = { subjectKey, kind: 'missing_receipt' as const, title: 'Beleg fehlt', body: 'Test', path: '/app/spending' };
+    const results = await Promise.all([
+      notify(db, w.hctx, message, [], { acrossCompanies: true }),
+      notify(db, w.rctx, message, [], { acrossCompanies: true }),
+      notify(db, w.rctx, message, [], { acrossCompanies: true }),
+    ]);
+    expect(results.filter((r) => r === 'sent')).toHaveLength(1);
+    expect(await db.spendingNotification.count({ where: { subjectKey } })).toBe(1);
+  });
+
+  it('says a change touches a shared account for its payment, its account and its counterparty (name or key), and nothing else', async () => {
+    const w = await world();
+    const other = await world(false);
+    expect(await touchesSharedAccount(db, w.hctx.workspaceId, { paymentId: w.ids.get('Firma Software') })).toBe(true);
+    expect(await touchesSharedAccount(db, w.hctx.workspaceId, { accountId: w.accountId })).toBe(true);
+    expect(await touchesSharedAccount(db, w.hctx.workspaceId, { counterparty: 'Privat Laden' })).toBe(true);
+    expect(await touchesSharedAccount(db, w.hctx.workspaceId, { counterparty: 'privat laden' })).toBe(true);
+    expect(await touchesSharedAccount(db, w.hctx.workspaceId, {})).toBe(true);
+    expect(await touchesSharedAccount(db, w.hctx.workspaceId, { counterparty: 'Niemand Bekanntes' })).toBe(false);
+    // The receiver holds no account; another company's payment is never this company's.
+    expect(await touchesSharedAccount(db, w.rctx.workspaceId, { paymentId: w.ids.get('Privat Laden') })).toBe(false);
+    expect(await touchesSharedAccount(db, other.hctx.workspaceId, { paymentId: other.ids.get('Privat Laden') })).toBe(false);
+    expect(await touchesSharedAccount(db, other.hctx.workspaceId, { accountId: other.accountId })).toBe(false);
+    expect(await touchesSharedAccount(db, other.hctx.workspaceId, {})).toBe(false);
   });
 });
 

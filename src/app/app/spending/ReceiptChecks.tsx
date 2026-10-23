@@ -659,6 +659,7 @@ export default function ReceiptChecks({
                     {c.state.state === 'no_receipt' && (
                       <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
                         {c.state.reason}
+                        {c.state.movedAway && ' (die Zahlung steht jetzt in der Firma, an die die privaten Zahlungen dieses Kontos gehen)'}
                       </span>
                     )}
                   </span>

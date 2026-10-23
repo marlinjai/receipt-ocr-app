@@ -231,9 +231,8 @@ describe('privacy', () => {
     const rowId = await w.receiver.addReceipt({ Name: 'Bon', Vendor: 'Privat Laden', Gross: 20, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });
     await linkReceiptToPayment(db, w.rctx, w.ids.get('Privat Laden') as string, rowId);
     expect(await code(linkReceiptToPayment(db, w.rctx, w.ids.get('Teils Markt') as string, rowId))).toBe('receipt_already_paid');
-    // Confirmed, as the payments tab does after asking, it goes through.
-    await linkRoutedPayment(db, w.rctx, w.ids.get('Teils Markt') as string, rowId, receiptForLink(db, w.rctx.workspaceId), { confirmed: true });
-    expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: w.rctx.workspaceId, rowId } })).toBe(2);
+    expect(await code(linkRoutedPayment(db, w.rctx, w.ids.get('Teils Markt') as string, rowId, receiptForLink(db, w.rctx.workspaceId)))).toBe('receipt_already_paid');
+    expect(await db.taxPaymentLink.count({ where: { authWorkspaceId: w.rctx.workspaceId, rowId } })).toBe(1);
   });
 
   it('the holder never reads the receiver\'s "no receipt" answer', async () => {
@@ -346,6 +345,20 @@ describe('resume', () => {
     expect((await loadLoopOverview(db, w.rctx.workspaceId)).answered.find((c) => c.paymentId === id)?.state).toEqual({ state: 'no_receipt', reason: 'Eigene Antwort' });
     await withdrawNoReceipt(db, w.rctx, id);
     expect(await stateOf(w.rctx.workspaceId, id)).toBe('no_receipt');
+  });
+});
+
+describe('answers about payments that moved', () => {
+  it('a "no receipt" answer the holder gave stays listed there after the payment moved, and taking it back there reopens it in the receiver', async () => {
+    const w = await world(false);
+    const id = w.ids.get('Privat Laden') as string;
+    await answerNoReceipt(db, w.hctx, id, 'Automat ohne Beleg');
+    await shareAccount(db, w.hctx, w.accountId, w.rctx, 'user-owner');
+    const listed = (await loadLoopOverview(db, w.hctx.workspaceId)).answered.find((c) => c.paymentId === id);
+    expect(listed?.state).toEqual({ state: 'no_receipt', reason: 'Automat ohne Beleg', movedAway: true });
+    await withdrawNoReceipt(db, w.hctx, id);
+    expect((await loadLoopOverview(db, w.hctx.workspaceId)).answered.find((c) => c.paymentId === id)).toBeUndefined();
+    expect(await stateOf(w.rctx.workspaceId, id)).toBe('missing');
   });
 });
 

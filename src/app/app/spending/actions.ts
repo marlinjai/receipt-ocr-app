@@ -5,7 +5,9 @@ import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, membershipLabel, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
-import { unlinkRoutedPayment } from '@/lib/tax/payments/routing';
+import { touchesSharedAccount, unlinkRoutedPayment } from '@/lib/tax/payments/routing';
+import { settleAcrossSharesCoalesced } from '@/lib/spending/loop-service';
+import { after } from 'next/server';
 import {
   SpendingServiceError,
   loadSpending,
@@ -112,11 +114,29 @@ export async function withdrawCategory(year: unknown, month: unknown, counterpar
   }
 }
 
+/**
+ * An own-account answer makes a counterparty's payments transfers, which never
+ * go to the company receiving an account's private payments: a payment can
+ * move between companies, so the message queues of both are settled after the
+ * answer (only where a shared account is touched). A failure is logged only.
+ */
+function settleMovedLater(ctx: { workspaceId: string }, counterparty: unknown): void {
+  after(async () => {
+    try {
+      if (!(await touchesSharedAccount(prisma, ctx.workspaceId, { counterparty }))) return;
+      await settleAcrossSharesCoalesced(prisma, [ctx.workspaceId], { onlyWithReceivers: true });
+    } catch (e) {
+      console.error('[spending] settling messages of moved payments failed', (e as Error)?.name ?? 'error');
+    }
+  });
+}
+
 /** The counterparty is one of the owner's own accounts (see `markCounterpartyOwnAccount`). */
 export async function markOwnAccount(year: unknown, month: unknown, counterparty: unknown): Promise<Result<SpendingPageView>> {
   try {
     const ctx = await writeContext();
     await markCounterpartyOwnAccount(prisma, ctx, counterparty);
+    settleMovedLater(ctx, counterparty);
     return { ok: true, value: await view(ctx.session, ctx.workspaceId, year, month, true) };
   } catch (e) {
     return failure(e);
@@ -128,6 +148,7 @@ export async function unmarkOwnAccount(year: unknown, month: unknown, counterpar
   try {
     const ctx = await writeContext();
     await unmarkCounterpartyOwnAccount(prisma, ctx, counterpartyKey);
+    settleMovedLater(ctx, counterpartyKey);
     return { ok: true, value: await view(ctx.session, ctx.workspaceId, year, month, true) };
   } catch (e) {
     return failure(e);

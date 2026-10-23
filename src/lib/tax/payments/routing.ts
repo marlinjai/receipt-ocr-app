@@ -14,10 +14,11 @@ import { routesToReceiver } from './route';
  * `loadPayments` stays the read of the payments area and of the tax figures,
  * and reads only the company's own links. `loadRoutedPayments` is the read of
  * the spending side: the company's own payments less the ones it routes away,
- * plus the ones routed to it, with its own links on them. Every write a
- * receiver can make on a payment re-derives the routing inside its own
- * transaction and refuses a payment that does not route to it, with the same
- * answer as an unknown payment.
+ * plus the ones routed to it, with its own links on them. A receiver's link,
+ * "no receipt exists" and taking over or downloading a mail find re-derive the
+ * routing and refuse a payment that does not route to it, with the same
+ * answer as an unknown payment. Unlinking touches only the company's own
+ * links, also dormant ones, and reads nothing of the payment.
  */
 
 export type ShareErrorCode =
@@ -68,6 +69,8 @@ export interface RoutedPayments {
    * the payment itself, only what this company linked.
    */
   dormantLinks: Array<{ paymentId: string; rowId: string | null; cents: number; linkedOn: string }>;
+  /** This company's own payments routed to another company right now: not on its spending side, but its own answers about them can still be taken back here. */
+  routedAway: PaymentRow[];
   /** Accounts of this company whose private payments go to another company. */
   sharedOut: Array<{ shareId: string; accountId: string; accountLabel: string; receiverWorkspaceId: string }>;
 }
@@ -86,7 +89,12 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
   // A share whose account is not the holder's any more (it cannot move, but nothing is trusted) routes nothing.
   const validOut = outgoing.filter((s) => s.account.authWorkspaceId === workspaceId && s.receiverWorkspaceId !== workspaceId);
   const sharedOut = new Set(validOut.map((s) => s.accountId));
-  const kept: RoutedPaymentRow[] = own.payments.filter((p) => !routesToReceiver(p, own.treatments, sharedOut)).map((p) => ({ ...p, routedFrom: null }));
+  const kept: RoutedPaymentRow[] = [];
+  const routedAway: PaymentRow[] = [];
+  for (const p of own.payments) {
+    if (routesToReceiver(p, own.treatments, sharedOut)) routedAway.push(p);
+    else kept.push({ ...p, routedFrom: null });
+  }
   const accounts: RoutedAccount[] = own.accounts.map((a) => ({ id: a.id, label: a.label, completeThrough: a.completeThrough, sharedFrom: null }));
 
   const byHolder = new Map<string, Set<string>>();
@@ -130,6 +138,7 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
     holders: [...byHolder.keys()],
     linkedElsewhere: own.linkedElsewhere,
     dormantLinks,
+    routedAway,
     sharedOut: validOut.map((s) => ({ shareId: s.id, accountId: s.accountId, accountLabel: s.account.label, receiverWorkspaceId: s.receiverWorkspaceId })),
   };
 }
@@ -172,8 +181,10 @@ export async function paymentOnSpendingSide(db: Db, workspaceId: string, payment
  * payment the receiver has not linked yet. Refused as `payment_not_found` for
  * any payment that does not route to the receiver right now. Like the
  * holder's own link, a receipt already paid by other payments is not taken
- * beyond its amount (plus the tolerance for fees and rates) unless
- * `confirmed`: `receipt_already_paid` with "<paid so far>:<receipt amount>".
+ * beyond its amount (plus the tolerance for fees and rates):
+ * `receipt_already_paid` with "<paid so far>:<receipt amount>". The receiver's
+ * screens offer no confirmation for that; the receipt is the wrong one or a
+ * link is taken back first.
  */
 export async function linkRoutedPayment(
   db: PrismaClient,
@@ -181,7 +192,6 @@ export async function linkRoutedPayment(
   paymentId: string,
   rowId: string,
   receiptOf: ReceiptForLink,
-  options: { confirmed?: boolean } = {},
 ): Promise<{ linkId: string }> {
   if (typeof paymentId !== 'string' || !paymentId || typeof rowId !== 'string' || !rowId) throw new PaymentServiceError('invalid_link');
   const receipt = await receiptOf(rowId);
@@ -199,7 +209,7 @@ export async function linkRoutedPayment(
     if (same) return { linkId: same.id };
     const free = Math.abs(routed.row.amountCents) - mine.reduce((sum, l) => sum + l.cents, 0);
     if (free <= 0) throw new PaymentServiceError('link_exceeds_payment');
-    if (!options.confirmed && receipt.amountCents !== null) {
+    if (receipt.amountCents !== null) {
       // What pays the receipt already: this company's own payments (a purchase and the debit funding it
       // counted once), and its links on other companies' shared payments (one that moved back to the
       // holder too: it is the receipt's payment until it is taken back). Cancelled purchases count nowhere.

@@ -144,11 +144,16 @@ other's copy behind, and every changed answer would need a write in two companie
     ended or went to another company cannot cause a second message. A payment that moved leaves the
     in-app queue of the company it left at once: after a share is started or ended (both companies)
     and after an answer, a link or an undone import in a holder that shares accounts (the holder and
-    its receivers), each queue is settled after the answer is sent. The 14-day window stays, so
-    splitting the history sends nothing.
+    its receivers; also the own-account answer on the spending page), each queue is settled after
+    the answer is sent. The 14-day window stays, so splitting the history sends nothing. One
+    exception, accepted: erasing a company removes its messages about the other company's payments
+    (they name that company's counterparty and amount), and with them the record that such a
+    payment was announced; a payment of the last 14 days that is back with the holder can then be
+    announced there once more.
 15. **"No receipt exists"** said in the holder before the split still holds in the receiver, shown
     as answered there ("beantwortet in der Firma, die das Konto führt") and taken back only in the
-    holder; the receiver's own answer stands above it. Said in the receiver, it is not read by the
+    holder, where it stays listed with the note that the payment now stands in the other company;
+    the receiver's own answer stands above it. Said in the receiver, it is not read by the
     holder: a payment answered back to business needs a business document, and the holder asks
     again.
 16. **The expenses mailbox** serves the company in `SPENDING_MAILBOX_WORKSPACE_ID` and every company
@@ -185,9 +190,10 @@ other's copy behind, and every changed answer would need a write in two companie
 
 A company never sees another company's business or unanswered payments: the receiver's read is
 built only from payments that pass `routesToReceiver`, and every write the receiver can make on a
-payment (link, unlink, "no receipt exists", downloading or taking over a mail find) re-derives the
-routing first (link and unlink inside their transaction, under the payment's row lock) and refuses a
-payment that does not route to it, with the same answer as an unknown payment. "No receipt exists"
+payment (link, "no receipt exists", downloading or taking over a mail find) re-derives the routing
+first (a link inside its transaction, under the payment's row lock) and refuses a payment that does
+not route to it, with the same answer as an unknown payment. Unlinking touches only the company's
+own links, dormant ones too, and reads nothing of the payment. "No receipt exists"
 is checked just before it is stored; should the holder change the answer in that moment, the
 receiver's answer is only stored, never shown or read by the holder. The holder never sees the receiver's receipts, links, answers or finds. Tests
 prove each of these (`routing.dbtest.ts`).
@@ -213,8 +219,9 @@ prove each of these (`routing.dbtest.ts`).
 
 ### Built (2026-10-23)
 
-- **Table** `tax_account_shares`, migration `0035_tax_account_shares` (additive; the next free number
-  on `origin/main` and every open branch and worktree on 2026-10-22).
+- **Table** `tax_account_shares`, migration `0035_tax_account_shares` (additive: the table and two
+  indexes, on `spending_notifications.subject_key` and `tax_payment_links.auth_workspace_id`; the
+  next free number on `origin/main` and every open branch and worktree on 2026-10-22).
 - **The rule** `routesToReceiver` (`src/lib/tax/payments/route.ts`, pure) on top of the spending
   side's `purposeOf`, which learned one flag: a payment `routed` here is private.
 - **The reads** (`src/lib/tax/payments/routing.ts`): `loadRoutedPayments` for the spending side,
@@ -242,7 +249,7 @@ prove each of these (`routing.dbtest.ts`).
   in the receiver "Aus anderen Firmen" with the holder's name). Spending page: the shared account
   named with its holder, the holder's note where its accounts' private payments went, and "Lösen"
   on a routed payment with a private receipt.
-- **Tests**: `routing.dbtest.ts` (28 tests through the four paths and the privacy promise, with the
+- **Tests**: `routing.dbtest.ts` (29 tests through the four paths and the privacy promise, with the
   holder's tax statement compared before and after), `route.test.ts`, `sharing-actions.test.ts`,
   `AccountSharing.test.tsx`, and additions to the spending page, action, attachment and move tests.
 
@@ -269,6 +276,15 @@ never routes (the rule and Decided 2 now say exactly what moves); the guards lea
 purchases out and count a purchase and its funding debit once; one message per payment is atomic
 across companies (a lock on the subject); an account removed between check and write is
 `account_not_found`. Tests for each, and for the finance actions' settling and the erasure route.
+
+### Third review (2026-10-23), fixed
+
+No blocker; fixed: the own-account answer on the spending page settles the queues too; the
+holder keeps its own "no receipt" answers about payments routed away listed, so they can be taken
+back where they were given; the move's dry run counts the receiving company's stamp on shares; an
+index on `tax_payment_links.auth_workspace_id` (every read of a company's payments filters on it);
+the receiver's link has no unused confirmation path; comments and this plan say exactly what
+unlinking checks; the erasure exception above is written down.
 
 ### What the owner does after the deploy
 

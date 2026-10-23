@@ -64,8 +64,12 @@ export interface ReceiptCandidate {
 export type LoopState =
   | { state: 'has_receipt' }
   | { state: 'not_needed'; reason: NotNeededReason }
-  /** `fromHolder`: said in the company that holds the payment's account, before it was routed here; taken back only there. */
-  | { state: 'no_receipt'; reason: string; fromHolder?: boolean }
+  /**
+   * `fromHolder`: said in the company that holds the payment's account, before it was routed here; taken
+   * back only there. `movedAway`: said here about an own payment that is now routed to another company;
+   * listed here so it can be taken back, counted nowhere.
+   */
+  | { state: 'no_receipt'; reason: string; fromHolder?: boolean; movedAway?: boolean }
   | { state: 'proposed'; candidates: ReceiptCandidate[] }
   | { state: 'in_mailbox'; mails: MailCandidateView[] }
   | { state: 'missing' };

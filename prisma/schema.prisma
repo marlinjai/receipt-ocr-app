@@ -791,6 +791,8 @@ model TaxPaymentLink {
   @@index([paymentId])
   @@index([rowId])
   @@index([invoiceId])
+  // Every read of a company's payments reads its own links by this column (payments across companies, 0035).
+  @@index([authWorkspaceId])
   @@map("tax_payment_links")
 }
 

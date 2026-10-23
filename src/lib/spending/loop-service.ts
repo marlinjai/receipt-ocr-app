@@ -98,6 +98,8 @@ export interface LoopOverview {
 
 interface Loaded {
   payments: RoutedPaymentRow[];
+  /** This company's own payments routed to another company, with the "no receipt" answer it gave before, if any. */
+  routedAwayAnswered: Array<{ payment: PaymentRow; reason: string }>;
   states: Map<string, LoopState>;
   /** Vendor keys each counterparty stands for, learned from links: the names a mailbox search uses besides the counterparty's own. */
   aliases: Map<string, Set<string>>;
@@ -138,7 +140,9 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   for (const p of loaded.payments) {
     states.set(p.id, loopState({ ...p, linkCount: p.links.length }, ctx));
   }
-  return { payments: loaded.payments, states, aliases };
+  const ownReasons = new Map(noReceipt.map((a) => [a.paymentId, a.reason]));
+  const routedAwayAnswered = loaded.routedAway.flatMap((p) => (ownReasons.has(p.id) ? [{ payment: p, reason: ownReasons.get(p.id) as string }] : []));
+  return { payments: loaded.payments, states, aliases, routedAwayAnswered };
 }
 
 /** The subjects of the payments still waiting for their receipt: what keeps its messages in the in-app queue. */
@@ -169,13 +173,6 @@ export async function settleMovedPayments(db: PrismaClient, workspaceId: string)
   return settleAllBut(db, workspaceId, 'missing_receipt', openSubjects(payments, states).stillOpen);
 }
 
-/**
- * `settleMovedPayments` for a company that holds accounts and for every
- * company receiving private payments of them: after a share started or ended
- * and after an answer changed in the holder, a message about a payment that
- * left a company leaves its queue at once. A failure is logged only: the next
- * run of the loop settles the same messages.
- */
 /** Settling under way per set of companies, so a burst of answers settles once more at the end instead of once per click. */
 const settling = new Map<string, { again: boolean; done: Promise<void> }>();
 
@@ -206,6 +203,13 @@ export function settleAcrossSharesCoalesced(db: PrismaClient, workspaceIds: read
   return entry.done;
 }
 
+/**
+ * `settleMovedPayments` for a company that holds accounts and for every
+ * company receiving private payments of them: after a share started or ended
+ * and after an answer changed in the holder, a message about a payment that
+ * left a company leaves its queue at once. A failure is logged only: the next
+ * run of the loop settles the same messages.
+ */
 export async function settleAcrossShares(db: PrismaClient, workspaceIds: readonly string[], options: { onlyWithReceivers?: boolean } = {}): Promise<void> {
   let receivers: Awaited<ReturnType<typeof receiversOf>> = [];
   try {
@@ -238,7 +242,7 @@ const check = (p: PaymentRow, state: LoopState): PaymentCheck => ({
 });
 
 export async function loadLoopOverview(db: PrismaClient, workspaceId: string): Promise<LoopOverview> {
-  const { payments, states } = await computeStates(db, workspaceId);
+  const { payments, states, routedAwayAnswered } = await computeStates(db, workspaceId);
   const counts: LoopOverview['counts'] = {
     hasReceipt: 0,
     notNeeded: { own_transfer: 0, income: 0, refund: 0, fee: 0, loan: 0, cash: 0, transfer: 0 },
@@ -262,6 +266,9 @@ export async function loadLoopOverview(db: PrismaClient, workspaceId: string): P
       open.push(check(p, state));
     }
   }
+  // A "no receipt" answer given here about a payment now routed to another company stays visible here, so
+  // it can be taken back where it was given (the other company shows it as answered here).
+  for (const { payment, reason } of routedAwayAnswered) answered.push(check(payment, { state: 'no_receipt', reason, movedAway: true }));
   const newest = (a: PaymentCheck, b: PaymentCheck) => (a.bookingDay < b.bookingDay ? 1 : a.bookingDay > b.bookingDay ? -1 : 0);
   return { open: open.sort(newest), answered: answered.sort(newest), counts };
 }

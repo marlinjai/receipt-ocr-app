@@ -41,7 +41,14 @@ vi.mock('@/lib/spending/service', () => {
   };
 });
 const unlinkRoutedPayment = vi.fn();
-vi.mock('@/lib/tax/payments/routing', () => ({ unlinkRoutedPayment: (...a: unknown[]) => unlinkRoutedPayment(...a) }));
+const touchesSharedAccount = vi.fn();
+const settleAcrossSharesCoalesced = vi.fn();
+vi.mock('next/server', () => ({ after: async (fn: () => unknown) => fn() }));
+vi.mock('@/lib/tax/payments/routing', () => ({
+  unlinkRoutedPayment: (...a: unknown[]) => unlinkRoutedPayment(...a),
+  touchesSharedAccount: (...a: unknown[]) => touchesSharedAccount(...a),
+}));
+vi.mock('@/lib/spending/loop-service', () => ({ settleAcrossSharesCoalesced: (...a: unknown[]) => settleAcrossSharesCoalesced(...a) }));
 vi.mock('@/lib/tax/payments/service', () => {
   class PaymentServiceError extends Error {
     constructor(readonly code: string) {
@@ -61,7 +68,7 @@ const SESSION = { memberships: [WS], activeWorkspace: WS };
 const VIEW = { overview: { year: 2026 }, accounts: [], sharedOut: [], dormantLinks: [] };
 
 beforeEach(() => {
-  for (const f of [requireAction, requireReceiptsSession, loadSpending, setCounterpartyCategory, removeCounterpartyCategory, markCounterpartyOwnAccount, unmarkCounterpartyOwnAccount, unlinkRoutedPayment]) f.mockReset();
+  for (const f of [requireAction, requireReceiptsSession, loadSpending, setCounterpartyCategory, removeCounterpartyCategory, markCounterpartyOwnAccount, unmarkCounterpartyOwnAccount, unlinkRoutedPayment, touchesSharedAccount, settleAcrossSharesCoalesced]) f.mockReset();
   loadSpending.mockResolvedValue(VIEW);
 });
 
@@ -140,6 +147,20 @@ describe('writes', () => {
     const result = await getSpending(2026, null);
     expect(result).toMatchObject({ ok: true, value: { companies: { 'ws-b': 'marlinjai' } } });
     expect(result.ok && 'ws-unknown' in result.value.companies).toBe(false);
+  });
+
+  it('settles both companies\' queues after an own-account answer that touches a shared account, and only then', async () => {
+    requireAction.mockResolvedValue(SESSION);
+    touchesSharedAccount.mockResolvedValue(true);
+    await markOwnAccount(2026, null, 'Kreditkarte');
+    expect(touchesSharedAccount).toHaveBeenLastCalledWith({ marker: 'prisma' }, 'ws-a', { counterparty: 'Kreditkarte' });
+    await unmarkOwnAccount(2026, null, 'kreditkarte');
+    expect(touchesSharedAccount).toHaveBeenLastCalledWith({ marker: 'prisma' }, 'ws-a', { counterparty: 'kreditkarte' });
+    expect(settleAcrossSharesCoalesced).toHaveBeenCalledTimes(2);
+    expect(settleAcrossSharesCoalesced).toHaveBeenLastCalledWith({ marker: 'prisma' }, ['ws-a'], { onlyWithReceivers: true });
+    touchesSharedAccount.mockResolvedValue(false);
+    await markOwnAccount(2026, null, 'Sparkonto');
+    expect(settleAcrossSharesCoalesced).toHaveBeenCalledTimes(2);
   });
 
   it('unlinking a routed receipt refuses without the write permission, a missing id, and a payment not routed here', async () => {

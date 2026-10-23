@@ -309,6 +309,22 @@ describe('moveWorkspace (the write order, with the contacts package and the data
     expect(raw).not.toHaveBeenCalled();
   });
 
+  it('a dry run counts the receiving company\'s stamp on account shares, so it says what a move will change', async () => {
+    // The holder's own stamp on the share is grouped by the generic count (none here); the receiver's by its own.
+    const shares = {
+      groupBy: vi.fn(async (args: { by: string[] }) => (args.by[0] === 'receiverTenantId' ? [{ receiverTenantId: 'tnt_a', _count: { _all: 2 } }, { receiverTenantId: 'tnt_other', _count: { _all: 1 } }] : [])),
+      updateMany: vi.fn(),
+    };
+    const empty = { groupBy: vi.fn(async () => []), findMany: vi.fn(async () => []), count: vi.fn(async () => 0), updateMany: vi.fn() };
+    const db: unknown = new Proxy({}, { get: (_t, prop) => (prop === 'taxAccountShare' ? shares : empty) });
+    fakeContacts(async () => ({ written: false, moved: 0, refused: 0, held: 0, items: [] }), async () => []);
+    const report = await moveWorkspace(db as PrismaClient, REQ, { apply: false });
+    expect(report.rows.tables['tax_account_shares (receiving company)']).toEqual({ rows: 3, restamp: 2, unstamped: 0, alreadyAtTarget: 0, otherCompany: 1 });
+    // A third company on the receiving side blocks nothing: only the source company's stamp is rewritten.
+    expect(report.blocked).toEqual([]);
+    expect(shares.groupBy).toHaveBeenLastCalledWith({ by: ['receiverTenantId'], where: { receiverWorkspaceId: 'ws_1' }, _count: { _all: true } });
+  });
+
   it('a dry run asks the package only for a preview and opens no transaction', async () => {
     const { db, transaction, updateMany } = fakeDb();
     const { transferTo } = fakeContacts(async () => {

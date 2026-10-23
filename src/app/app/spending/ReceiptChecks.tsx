@@ -287,7 +287,6 @@ function OpenCheck({
   canWrite,
   pending,
   error,
-  notice,
   onConfirm,
   onNoReceipt,
   onTakeOver,
@@ -295,13 +294,13 @@ function OpenCheck({
   takingOver,
   onLinkByHand,
   onSearchReceipts,
+  dataVersion,
 }: {
   check: PaymentCheck;
   focused: boolean;
   canWrite: boolean;
   pending: boolean;
   error: string | null;
-  notice: string | null;
   onConfirm: (rowId: string) => void;
   onNoReceipt: (reason: string) => void;
   onTakeOver: (mailId: string) => void;
@@ -311,6 +310,8 @@ function OpenCheck({
   onLinkByHand: (rowId: string) => void;
   /** Search this company's receipts for this payment by name, vendor or amount. */
   onSearchReceipts: (text: string) => Promise<ChecksResult<ReceiptChoice[]>>;
+  /** Counts the fresh views of the page's payments: an open list is asked again when it changes. */
+  dataVersion: number;
 }) {
   const id = useId();
   // Linking by hand opens on request: the receipts are asked from the server only for the payment a person works on.
@@ -326,19 +327,13 @@ function OpenCheck({
   // Every request gets a number; an answer that is not the newest one's is dropped, so a slow answer never
   // overwrites a list asked for later (after a fresh view, or a second search).
   const request = useRef(0);
-  // A fresh view of the checks (a receipt linked elsewhere, say) makes an earlier list stale: it is asked again.
-  const [seenCheck, setSeenCheck] = useState(check);
-  if (seenCheck !== check) {
-    setSeenCheck(check);
-    setFound(null);
-    setChosen('');
-    // The list is asked afresh unfiltered: the search field says so by being empty.
-    setSearch('');
-    setSearchError(null);
-    setSearching(false);
-  }
+  // The search the shown list answers; a fresh view asks it again, so what was typed and chosen stays.
+  const lastQuery = useRef('');
+  const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
   const loadChoices = async (text: string) => {
     const mine = ++request.current;
+    const version = dataVersion;
+    lastQuery.current = text;
     setSearching(true);
     setSearchError(null);
     try {
@@ -346,7 +341,9 @@ function OpenCheck({
       if (mine !== request.current) return;
       if (result.ok) {
         setFound({ choices: result.value, searched: text.trim() !== '' });
-        setChosen('');
+        setLoadedVersion(version);
+        // A choice that is no longer offered (linked meanwhile) is let go; one still offered stays chosen.
+        setChosen((current) => (result.value.some((c) => c.rowId === current) ? current : ''));
       } else setSearchError(checksActionMessage(result));
     } catch {
       if (mine === request.current) setSearchError(checksActionMessage({ ok: false, error: 'failed' }));
@@ -355,10 +352,12 @@ function OpenCheck({
     }
   };
   const closePicker = () => {
-    // Whatever is still on its way is dropped; reopening asks afresh.
+    // Whatever is still on its way is dropped; reopening asks afresh, unfiltered.
     request.current += 1;
+    lastQuery.current = '';
     setPicking(false);
     setFound(null);
+    setLoadedVersion(null);
     setChosen('');
     setSearch('');
     setSearchError(null);
@@ -369,12 +368,12 @@ function OpenCheck({
     if (picking) searchInput.current?.focus();
     else if (pickReopened.current) pickOpener.current?.focus();
   }, [picking]);
-  // Opening the picker, or a fresh view while it is open, asks once (the request number drops a duplicate's answer).
-  const wanted = picking && found === null && searchError === null;
+  // Opening, or a fresh view of the payments while open, asks once with the last search; the list on screen
+  // stays until the answer is in, so nothing a person is working with disappears under the focus.
   useEffect(() => {
-    if (wanted) void loadChoices('');
+    if (picking && loadedVersion !== dataVersion) void loadChoices(lastQuery.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wanted, seenCheck]);
+  }, [picking, dataVersion]);
   const choices = found?.choices ?? [];
   const pickStatus = searching
     ? 'Belege werden gesucht …'
@@ -598,10 +597,6 @@ function OpenCheck({
           )}
         </div>
       )}
-      {/* Always there, so a screen reader announces what is filled in later. */}
-      <p className={notice ? 'ui-note ui-note-ok mt-2' : 'sr-only'} role="status">
-        {notice ?? ''}
-      </p>
       {error && (
         <p className="ui-note ui-note-danger mt-2" role="alert">
           {error}
@@ -623,13 +618,19 @@ export default function ReceiptChecks({
 }) {
   const id = useId();
   const [view, setView] = useState(initial);
-  // The page reads the checks afresh after a change elsewhere on it (a receipt taken back in the payment list): take that over.
+  const [error, setError] = useState<{ at: string; message: string } | null>(null);
+  // Counts the fresh views of the payments, so an open list for linking by hand is asked again once.
+  const [dataVersion, setDataVersion] = useState(0);
+  // The page reads the checks afresh after a change elsewhere on it (a receipt taken back in the payment list): take
+  // that over, keeping the summary of the last "Jetzt prüfen" (the page's own read carries none) and dropping errors
+  // that told the person to reload.
   const [shownInitial, setShownInitial] = useState(initial);
   if (shownInitial !== initial) {
     setShownInitial(initial);
-    setView(initial);
+    setView((current) => ({ ...initial, lastRun: current.lastRun }));
+    setError(null);
+    setDataVersion((n) => n + 1);
   }
-  const [error, setError] = useState<{ at: string; message: string } | null>(null);
   const [pending, startTransition] = useTransition();
   const [channel, setChannel] = useState<ChannelSetting>(initial.settings.channel);
   const [email, setEmail] = useState(initial.settings.notifyEmail ?? '');
@@ -646,7 +647,8 @@ export default function ReceiptChecks({
   const focusSettled = !otherCompany && focusPaymentId !== null && !loop.open.some((c) => c.paymentId === focusPaymentId);
 
   const router = useRouter();
-  const run = (at: string, action: () => Promise<ChecksResult<ChecksView>>, success?: string) => {
+  /** `refresh`: the action changed payments or links, so the rest of the page reads them afresh. */
+  const run = (at: string, action: () => Promise<ChecksResult<ChecksView>>, success?: string, refresh = true) => {
     setError(null);
     // A notice belongs to the action that set it: the next one starts without it.
     setPageNotice(null);
@@ -655,7 +657,7 @@ export default function ReceiptChecks({
       if (result.ok) {
         setView(result.value);
         // A link, an answer or a check changes the payment list, the overview and the budgets too: the page reads them afresh.
-        router.refresh();
+        if (refresh) router.refresh();
         if (success) {
           // The payment left the list with its buttons: say what happened, and give the focus to the list's heading.
           setPageNotice(success);
@@ -686,14 +688,12 @@ export default function ReceiptChecks({
       return result.ok ? result.value : null;
     },
   };
-  const [notice, setNotice] = useState<{ at: string; message: string } | null>(null);
   const [takingOver, setTakingOver] = useState<string | null>(null);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
 
   /** A found mail attachment goes through the normal upload path, then the checks are read afresh. */
   const takeOver = (paymentId: string, mailId: string) => {
     setError(null);
-    setNotice(null);
     setPageNotice(null);
     setTakingOver(mailId);
     startTransition(async () => {
@@ -801,7 +801,7 @@ export default function ReceiptChecks({
                   </span>
                 </span>
                 {view.canWrite && (
-                  <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => run(`note:${n.id}`, () => readNotification(n.id))} aria-label={`${n.title} als gelesen markieren`}>
+                  <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => run(`note:${n.id}`, () => readNotification(n.id), undefined, false)} aria-label={`${n.title} als gelesen markieren`}>
                     Gelesen
                   </button>
                 )}
@@ -830,7 +830,7 @@ export default function ReceiptChecks({
               canWrite={view.canWrite}
               pending={pending}
               error={errorAt(`check:${c.paymentId}`)}
-              notice={notice?.at === `check:${c.paymentId}` ? notice.message : null}
+              dataVersion={dataVersion}
               onConfirm={(rowId) => run(`check:${c.paymentId}`, () => confirmReceipt(c.paymentId, rowId), `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.`)}
               onNoReceipt={(reason) => run(`check:${c.paymentId}`, () => sayNoReceipt(c.paymentId, reason))}
               onTakeOver={(mailId) => takeOver(c.paymentId, mailId)}
@@ -889,7 +889,7 @@ export default function ReceiptChecks({
             className="mt-2 space-y-2 text-sm"
             onSubmit={(e) => {
               e.preventDefault();
-              run('settings', () => saveNotificationSettings({ channel, notifyEmail: email }));
+              run('settings', () => saveNotificationSettings({ channel, notifyEmail: email }), undefined, false);
             }}
           >
             <fieldset>

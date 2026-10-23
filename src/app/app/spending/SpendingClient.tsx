@@ -123,14 +123,16 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
   const id = useId();
   const router = useRouter();
   const [view, setView] = useState(initial);
-  // The page reads the overview afresh after a change in the checks below (a receipt linked by hand): take that over.
+  // An error belongs to the place it happened: a row of the unclear list, an answer, or the page.
+  const [error, setError] = useState<{ at: string; message: string } | null>(null);
+  // The page reads the overview afresh after a change in the checks below (a receipt linked by hand): take that
+  // over, and drop errors that told the person to reload.
   const [shownInitial, setShownInitial] = useState(initial);
   if (shownInitial !== initial) {
     setShownInitial(initial);
     setView(initial);
+    setError(null);
   }
-  // An error belongs to the place it happened: a row of the unclear list, an answer, or the page.
-  const [error, setError] = useState<{ at: string; message: string } | null>(null);
   const [pending, startTransition] = useTransition();
   const { overview } = view;
   const period = overview.month === null ? `${overview.year}` : `${MONTHS[overview.month - 1]} ${overview.year}`;

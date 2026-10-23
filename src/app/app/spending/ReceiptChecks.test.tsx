@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const checkNow = vi.fn();
@@ -61,6 +61,7 @@ const view = (canWrite = true): ChecksView => ({
 });
 
 beforeEach(() => {
+  refresh.mockReset();
   for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings, dismissMail, linkTakenOver, linkChosenReceipt, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
   findReceiptChoices.mockReset();
   Element.prototype.scrollIntoView = vi.fn();
@@ -102,6 +103,37 @@ describe('ReceiptChecks', () => {
     expect(await screen.findByText('Beleg zugeordnet: Abc Laden.')).toBeTruthy();
     // The payment list and the budgets read the same payments: the page reads them afresh.
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it('keeps the summary of "Jetzt prüfen" when the page reads the checks afresh', async () => {
+    const base = view();
+    checkNow.mockResolvedValue({ ok: true, value: { ...base, lastRun: { loop: { notified: 1, settled: 0, retried: 0, open: 2, deferred: 0, mailbox: { status: 'off', missing: [] } }, budgets: null } } });
+    const { rerender } = render(<ReceiptChecks initial={base} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Jetzt prüfen' }));
+    const summary = (await screen.findByText(/Geprüft/)).textContent;
+    rerender(<ReceiptChecks initial={{ ...base }} focusPaymentId={null} />);
+    expect(screen.getByText(/Geprüft/).textContent).toBe(summary);
+  });
+
+  it('keeps what was typed and chosen in an open list when the page reads afresh, and asks once more', async () => {
+    findReceiptChoices.mockResolvedValue({ ok: true, value: [{ rowId: 'r9', label: 'Kassenbon', vendor: null, day: null, amountCents: 1250, estimated: false, openCents: 1250 }] });
+    const base = view();
+    const { rerender } = render(<ReceiptChecks initial={base} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    await user.selectOptions(await screen.findByLabelText('Vorhandenen Beleg für Abc Laden wählen'), 'r9');
+    await user.type(screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)'), 'Kas');
+    rerender(<ReceiptChecks initial={{ ...base }} focusPaymentId={null} />);
+    await waitFor(() => expect(findReceiptChoices).toHaveBeenCalledTimes(2));
+    expect((screen.getByLabelText('Vorhandenen Beleg für Abc Laden wählen') as HTMLSelectElement).value).toBe('r9');
+    expect((screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)') as HTMLInputElement).value).toBe('Kas');
+  });
+
+  it('marking a notification read reads nothing else afresh', async () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Beleg fehlt: Abc Laden als gelesen markieren' }));
+    await waitFor(() => expect(readNotification).toHaveBeenCalled());
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it('takes over fresh data the page read after a change elsewhere on it', () => {

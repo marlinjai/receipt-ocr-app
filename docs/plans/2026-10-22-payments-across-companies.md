@@ -377,6 +377,18 @@ Accepted: the picker hides a receipt whose only link sits on the bank debit fund
 (the payments tab's own move of that link stays the way to do it); the receiver never meets this,
 because a routed payment has no funding twin.
 
+### Eleventh review (2026-10-23), fixed
+
+No blocker; fixed: the summary of "Jetzt prüfen" stays when the page reads the checks afresh; an
+open list for linking by hand keeps what was typed and chosen across a fresh view, keeps the list
+on screen while it asks once more with the last search, and lets go of a choice only when it is no
+longer offered; marking a notification read and saving the notification settings read nothing else
+afresh; errors that asked for a reload go when fresh data arrives; the per-row notice that nothing
+ever set is gone.
+
+Accepted: should the page's own read fail during that fresh read, the page shows its existing
+error card with "Neu laden", as it does on any load; the action itself succeeded and is kept.
+
 ### What the owner does after the deploy
 
 In Whiz-Art Media, Finanzen, Zahlungen, section "Private Zahlungen in einer anderen Firma": for

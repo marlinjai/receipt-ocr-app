@@ -84,9 +84,10 @@ describe('YearBoundaryTab', () => {
     const p = props();
     const fixed = entry({ answer: false, source: 'filed', filedYear: 2025, reason: 'Festgelegt durch die abgegebene Erklärung 2025' });
     const departs = entry({ subjectId: 'r-2', answer: false, source: 'filed', filedYear: 2025, storedAnswer: true, departsFromFiled: 2025, reason: 'Weicht von der abgegebenen Erklärung 2025 ab' });
+    const staysAfter = entry({ subjectId: 'r-4', cashDay: '2025-12-30', answer: false, source: 'person', filedYear: 2025, storedAnswer: false, reason: 'Antwort von Hand' });
     const filedWithIt = entry({ subjectId: 'r-3', answer: true, source: 'person', filedYear: 2025, storedAnswer: true, reason: 'Antwort von Hand, vor der Abgabe der Erklärung 2025 gegeben und so erklärt' });
-    render(<YearBoundaryTab view={view([fixed, departs, filedWithIt])} {...p} />);
-    const [first, second, third] = screen.getAllByRole('listitem');
+    render(<YearBoundaryTab view={view([fixed, departs, filedWithIt, staysAfter])} {...p} />);
+    const [first, second, third, fourth] = screen.getAllByRole('listitem');
     expect(within(first).getByRole('status').textContent).toBe('Bleibt in 2025. Grund: Festgelegt durch die abgegebene Erklärung 2025.');
     expect(within(first).queryAllByRole('button')).toEqual([]);
     expect(within(second).getByRole('status').textContent).toContain('Weicht von der abgegebenen Erklärung 2025 ab');
@@ -97,6 +98,9 @@ describe('YearBoundaryTab', () => {
     // An answer that went into the return is part of it: it stays, and cannot be taken back here.
     expect(within(third).getByRole('status').textContent).toBe('Zählt für 2026. Antwort von Hand, vor der Abgabe der Erklärung 2025 gegeben und so erklärt.');
     expect(within(third).queryAllByRole('button')).toEqual([]);
+    // "Stays" given after the filing day agrees with the return: shown as a person's answer, nothing to press.
+    expect(within(fourth).getByRole('status').textContent).toBe('Bleibt in 2025. Antwort von Hand.');
+    expect(within(fourth).queryByRole('button', { name: /Regelmäßig wiederkehrend/ })).toBeNull();
   });
 
   it('"none of these" is offered only when more than one payment is open, and a receipt without a payment says so', async () => {

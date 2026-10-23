@@ -103,5 +103,9 @@ export async function setFederalState(year: number, federalState: unknown): Prom
 
 /** The day the return of the year on screen was filed (ISO), or null: the year is open again. */
 export async function setFiledOn(year: number, filedOn: unknown): Promise<Result<StatementView>> {
-  return write(year, (ctx) => saveFiledOn(prisma, ctx, { year, filedOn }));
+  return write(year, (ctx) => {
+    const input = { year, filedOn };
+    sameYear(year, input);
+    return saveFiledOn(prisma, ctx, input);
+  });
 }

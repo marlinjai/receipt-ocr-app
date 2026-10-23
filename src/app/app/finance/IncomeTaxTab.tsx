@@ -7,6 +7,7 @@ import { FEDERAL_STATES, FEDERAL_STATE_LABELS, type FederalState } from '@/lib/t
 import type { WageEntry, WageFigures } from '@/lib/tax/income-tax/wages';
 import { formatDay } from '@/lib/meals/messages';
 import { formatCents } from '@/lib/tax/money';
+import { berlinDay } from '@/lib/tax/year-boundary';
 import type { StatementView } from '@/lib/tax/service';
 import { MONTHS, euro, parseEuro } from './amounts';
 import ScrollBox from '@/components/ui/ScrollBox';
@@ -565,6 +566,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
               style={{ width: 'auto' }}
               value={filedOn}
               min={`${view.year + 1}-01-01`}
+              max={berlinDay()}
               disabled={busy}
               onChange={(e) => setFiledOn(e.target.value)}
             />

@@ -447,6 +447,96 @@ describe('the ten-day rule: filed years', () => {
     expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([65_000, 0]);
   });
 
+  it('an answer that went into the return can neither be changed nor taken back while the year is filed; saving it again changes nothing', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await ws.addReceipt(rent());
+    await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: rowId, cashDay: '2025-12-29', belongsToOtherYear: true });
+    await backdate(ws, rowId, '2026-10-01');
+    await saveFiledOn(db, ctx, { year: 2025, filedOn: '2026-10-17' });
+    expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([0, 65_000]);
+    expect(await code(saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: rowId, cashDay: '', belongsToOtherYear: null }))).toBe('year_boundary_filed');
+    expect(await code(saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: rowId, cashDay: '2025-12-29', belongsToOtherYear: false }))).toBe('year_boundary_filed');
+    // Re-entry: the same answer again is a no-op and keeps the day it was given.
+    await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: rowId, cashDay: '2025-12-29', belongsToOtherYear: true });
+    expect(await entryOf(ws, 2026, rowId)).toMatchObject({ answer: true, source: 'person', filedYear: 2025, departsFromFiled: null });
+    expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([0, 65_000]);
+    // Opening the year again lets it be changed.
+    await saveFiledOn(db, ctx, { year: 2025, filedOn: null });
+    await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: rowId, cashDay: '', belongsToOtherYear: null });
+    expect(await entryOf(ws, 2026, rowId)).toMatchObject({ source: 'rule', storedAnswer: null });
+  });
+
+  it('a "stays" answer given after the filing day agrees with the return: kept as a person\'s answer after a reload', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await ws.addReceipt(rent());
+    await saveFiledOn(db, ctx, { year: 2025, filedOn: '2026-10-17' });
+    await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: rowId, cashDay: '2025-12-29', belongsToOtherYear: false });
+    const first = await entryOf(ws, 2025, rowId);
+    expect(first).toMatchObject({ answer: false, source: 'person', storedAnswer: false, filedYear: 2025, departsFromFiled: null });
+    expect(await entryOf(ws, 2025, rowId)).toEqual(first);
+    // Given after the filing day, it is not part of the return and may go again.
+    await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: rowId, cashDay: '', belongsToOtherYear: null });
+    expect(await entryOf(ws, 2025, rowId)).toMatchObject({ source: 'filed', storedAnswer: null });
+  });
+
+  it('a receipt relinked to another payment day in a filed year is fixed by the filed year, and its old answer may go', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await ws.addReceipt(rent({ Date: '2025-12-15' }));
+    const accountId = await createAccount(db, ctx, { label: 'Geschäftskonto', kind: 'bank' });
+    await importPayments(db, ctx, accountId, bankFile(['2025-12-30', '-650'], ['2026-01-03', '-650']));
+    const [first, second] = await db.taxPayment.findMany({ where: { accountId }, orderBy: { bookingDay: 'asc' } });
+    const check = receiptForLink(db, ctx.workspaceId);
+    const { linkId } = await linkPayment(db, ctx, { paymentId: first.id, rowId }, check);
+    await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: rowId, cashDay: '2025-12-30', belongsToOtherYear: true });
+    await backdate(ws, rowId, '2026-10-01');
+    await saveFiledOn(db, ctx, { year: 2025, filedOn: '2026-10-17' });
+    await unlinkPayment(db, ctx, linkId);
+    await linkPayment(db, ctx, { paymentId: second.id, rowId }, check);
+    expect(await entryOf(ws, 2026, rowId)).toMatchObject({ cashDay: '2026-01-03', answer: false, source: 'filed', storedAnswer: null });
+    expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([0, 65_000]);
+    // The old answer was for another day: it has no effect, so it may be taken back.
+    await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: rowId, cashDay: '', belongsToOtherYear: null });
+    expect(await db.taxYearBoundaryAnswer.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
+  });
+
+  it('both years filed: the payment stays; an answer saved between the two filing days departs from the earlier return', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await ws.addReceipt(rent({ Date: '2025-01-04' }));
+    await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: rowId, cashDay: '2025-01-04', belongsToOtherYear: true });
+    await backdate(ws, rowId, '2026-10-14');
+    await saveFiledOn(db, ctx, { year: 2024, filedOn: '2026-10-11' });
+    await saveFiledOn(db, ctx, { year: 2025, filedOn: '2026-10-17' });
+    expect(await entryOf(ws, 2025, rowId)).toMatchObject({ answer: false, source: 'filed', filedYear: 2025, departsFromFiled: 2024, reason: 'Weicht von der abgegebenen Erklärung 2024 ab' });
+    expect([await expense(ws, 2024), await expense(ws, 2025)]).toEqual([0, 65_000]);
+    // Saved before both filing days, it went into both returns and applies.
+    await backdate(ws, rowId, '2026-10-01');
+    expect(await entryOf(ws, 2025, rowId)).toMatchObject({ answer: true, source: 'person', filedYear: 2025, departsFromFiled: null });
+    expect([await expense(ws, 2024), await expense(ws, 2025)]).toEqual([65_000, 0]);
+  });
+
+  it('a meal or an asset in a filed year keeps its earlier answer shown, not applied, and it can still be taken back', async () => {
+    const { ws, ctx } = await workspace();
+    const camera = await ws.addReceipt(rent({ Name: 'Kamera', Vendor: 'Foto Beispiel', Gross: 1500, Category: 'Hardware & IT' }));
+    await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: camera, cashDay: '2025-12-29', belongsToOtherYear: true });
+    await backdate(ws, camera, '2026-10-01');
+    await createAsset(db, ctx, { label: 'Kamera', kind: 'movable', acquisitionDate: '2025-12-29', method: 'linear', usefulLifeMonths: 84, itemIds: [camera] });
+    await saveFiledOn(db, ctx, { year: 2025, filedOn: '2026-10-17' });
+    expect(await entryOf(ws, 2025, camera)).toMatchObject({ answer: true, inactive: 'asset', filedYear: null });
+    expect((await loadStatement(db, ws.workspaceId, 2025)).assets[0]).toMatchObject({ counted: true, costCents: 150_000 });
+    await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: camera, cashDay: '', belongsToOtherYear: null });
+    expect(await db.taxYearBoundaryAnswer.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
+  });
+
+  it("another company's filing day does not fix this company's turn", async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await ws.addReceipt(rent());
+    await saveFiledOn(db, otherCtx, { year: 2025, filedOn: '2026-10-17' });
+    expect(await entryOf(ws, 2025, rowId)).toMatchObject({ source: 'rule', filedYear: null });
+    await saveYearBoundaryAnswer(db, ctx, { kind: 'receipt', subjectId: rowId, cashDay: '2025-12-29', belongsToOtherYear: true });
+    expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([0, 65_000]);
+    await saveFiledOn(db, otherCtx, { year: 2025, filedOn: null });
+  });
+
   it('the filing day is a real day after the year ended and not in the future, and leaves the church months alone', async () => {
     const { ws, ctx } = await workspace();
     expect(await code(saveFiledOn(db, ctx, { year: 2025, filedOn: '2025-12-31' }))).toBe('filed_on_before_year_end');

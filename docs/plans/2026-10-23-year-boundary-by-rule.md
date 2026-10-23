@@ -99,6 +99,14 @@ Two facts settle most of it:
 - **Value-added tax settlements** are judged by the small-business status on the payment day
   (status changes included) and by whether an advance return period is chosen. While either answer
   is missing the settlement stays an open question instead of being guessed.
+  The return period is the company's current setting (it is not kept per day).
+- **An answer that went into a filed return** (saved up to the filing day, for the payment day
+  that still applies) is refused when changed or taken back; one given after the filing day can be
+  taken back. Saving the answer that is already stored is a no-op and keeps its day.
+- **Both years filed, answer saved between the two filing days:** the payment was declared in
+  neither return (the earlier one was filed before the answer, the later one with it). The answer
+  is reported as departing from the earlier return and the payment counts in the year it was paid,
+  the cash-basis default, so the list shows the mismatch instead of moving money into a closed year.
 - **The filing day** must be a real day, not in the future and not before the year ended.
 - Meals and assets keep their behaviour: no rule or filed year applies to them, only an earlier
   person's answer is shown so it can be taken back.

@@ -182,7 +182,7 @@ export function financeActionMessage(error: string, detail?: string): string {
         case 'year_boundary_changed':
           return 'Diese Zahlung wurde inzwischen geändert (anderer Zahlungstag oder bereits beantwortet). Die Ansicht wurde neu geladen; bitte noch einmal ansehen und dann antworten.';
         case 'year_boundary_filed':
-          return 'Die Erklärung für eines der beiden Jahre ist abgegeben: dort ist die Zahlung in dem Jahr erklärt, in dem sie bezahlt wurde, und bleibt dort. Wer sie verschieben will, entfernt zuerst das Abgabedatum im Tab „Einkommensteuer“.';
+          return 'Die Erklärung für eines der beiden Jahre ist abgegeben: dort ist die Zahlung in dem Jahr erklärt, in dem sie bezahlt wurde, und bleibt dort. Eine Antwort, die so erklärt wurde, bleibt ebenfalls. Wer etwas ändern will, entfernt zuerst das Abgabedatum im Tab „Einkommensteuer“. Bitte die Ansicht neu laden, falls das Abgabedatum in einem anderen Fenster eingetragen wurde.';
         case 'not_in_year_boundary':
           return 'Diese Zahlung liegt nicht (mehr) zwischen dem 22. Dezember und dem 10. Januar; die Ausnahme zum Jahreswechsel gilt für sie nicht. Bitte die Ansicht neu laden.';
         case 'status_unanswered':

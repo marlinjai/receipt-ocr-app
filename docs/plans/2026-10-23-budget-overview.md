@@ -2,7 +2,7 @@
 title: A visual budget overview that shows real spending
 summary: The spending page becomes a picture first (months by category, budget against spent, the biggest counterparties) and a work list second, and the numbers under it are cleaned so the picture is true. Transfers to the owner's own name count as own transfers without a question, and a Klarna collective debit whose purchases are not imported yet waits for its list instead of counting as one big unknown expense.
 type: plan
-status: decided
+status: in-progress
 tags: [receipts, spending, budgets, overview, payments]
 projects: [receipt-ocr-app]
 date: 2026-10-23
@@ -83,3 +83,36 @@ So the picture is wrong before it is ugly. Both are fixed here.
 2. Tabs and the three charts.
 3. Waiting collective debit (after the PayPal live pull request is merged).
 4. Fresh-agent review, pull request, land-pr.
+
+## Reality (2026-10-23, branch `feat/budget-overview`)
+
+Built so far, with what the build decided on the way (say so if you disagree):
+
+- **Own names (step 1).** Column `spending_settings.own_names` (migration `0037_spending_own_names`,
+  additive, empty default). The rule lives in `src/lib/spending/own-names.ts` (words of the name
+  normalized like a counterparty, then sorted, so case, accents, punctuation and word order do not
+  matter; whole names only, "Erika" never matches "Erika Shop") and is applied in one place,
+  `spendingTreatments` in `src/lib/spending/service.ts`, which the overview, the budgets and the
+  missing-receipt loop all read. Only an answer of the payments tab overrides it; a category answer
+  does not. *Decided:* the sign-in (auth-brain) gives the app no person's name, only the e-mail
+  address, so the list starts empty and the page asks for the name up front in a highlighted card,
+  rather than guessing a name from the e-mail address. Saving the names settles open "Beleg fehlt"
+  messages at once (not only on the next loop run); a loop run that settles such messages says
+  "erledigt: eigenes Konto". Counterparties made own accounts by a name show under "Eigene Konten"
+  with "über Eigene Namen" and no take-back button (they change with the names).
+- **Tabs and charts (step 2).** `?ansicht=belege` opens "Belege" (a notification link with
+  `pruefen` opens it too); the default is "Überblick". Charts in plain HTML and CSS
+  (`src/app/app/spending/OverviewCharts.tsx`, data in `src/lib/spending/charts.ts`). Colours: seven
+  categories take the seven slots of the dataviz reference palette in its dark steps, validated as a
+  set against the panel surface; the four smallest categories share "Weitere", "Unklar" is a hatched
+  grey. *Decided:* the app is dark only (`globals.css` sets `color-scheme: dark`), so the charts carry
+  dark values only. *Decided:* "budget against spent" compares the private part (as the budgets do)
+  with the monthly limit once for a month, twelve times for a past year and once per month begun for
+  the current year; the projection shows only for the current month. The budget line over the months
+  is the sum of the monthly category limits, labelled as counting only the private part.
+- **Waiting collective debit (step 3):** waits for the PayPal live pull request (`feat/paypal-live`),
+  which changes `funding.ts` too.
+
+Verified in a local browser on invented data: overview and phone width (no sideways scroll of the
+page), adding a name moves its payments out of the totals and the open receipt count (120 to 100),
+the name and the tab survive a reload.

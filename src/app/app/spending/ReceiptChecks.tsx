@@ -264,7 +264,10 @@ export function choiceLabel(r: ReceiptChoice): string {
  * notification goes with its row; one about the page as a whole (a check run, the settings, push) stays.
  */
 export function errorRowListed(at: string, view: ChecksView): boolean {
-  const [kind, key] = [at.slice(0, at.indexOf(':')), at.slice(at.indexOf(':') + 1)];
+  const colon = at.indexOf(':');
+  // A key without a row (`run`, `push`, `settings`) belongs to the page as a whole.
+  if (colon < 0) return true;
+  const [kind, key] = [at.slice(0, colon), at.slice(colon + 1)];
   if (kind === 'check') return view.loop.open.some((c) => c.paymentId === key);
   if (kind === 'answered') return view.loop.answered.some((c) => c.paymentId === key);
   if (kind === 'note') return view.notifications.some((n) => n.id === key);

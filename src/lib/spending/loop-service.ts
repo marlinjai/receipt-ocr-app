@@ -470,7 +470,7 @@ export async function linkReceiptToPayment(db: PrismaClient, ctx: NotifyContext,
     if (!options.byHand && payment.links.some((l) => l.rowId === rowId)) return;
     throw new LoopServiceError('already_has_receipt');
   }
-  if (state.state !== 'missing' && state.state !== 'in_mailbox' && state.state !== 'proposed') throw new LoopServiceError(options.byHand ? 'payment_not_open' : 'not_a_candidate');
+  if (state.state !== 'missing' && state.state !== 'in_mailbox' && state.state !== 'proposed') throw new LoopServiceError('payment_not_open');
   await linkOnSpendingSide(db, ctx, payment, rowId);
   await settleNotifications(db, ctx.workspaceId, [missingReceiptSubject(paymentId), mailFoundSubject(paymentId)]);
 }

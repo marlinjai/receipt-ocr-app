@@ -407,6 +407,12 @@ an error about an answer or a notification goes with its row too; one count of a
 in both places; dormant links are one entry per payment, as "Lösen" takes all of them back; tests
 for the failed mail link, the quiet re-ask and the mail refusal.
 
+### Fourteenth review (2026-10-23)
+
+Approved as is; its one point, fixed: a mail taken over for a payment answered in the meantime
+names that cause (`payment_not_open`), and the check whether an error's row is still listed says
+explicitly that a key without a row belongs to the page.
+
 ### What the owner does after the deploy
 
 In Whiz-Art Media, Finanzen, Zahlungen, section "Private Zahlungen in einer anderen Firma": for

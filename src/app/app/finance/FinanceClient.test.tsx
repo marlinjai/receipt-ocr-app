@@ -889,3 +889,15 @@ describe('FinanceClient: the income tax estimate', () => {
     expect(within(tile).getByText('offen')).toBeTruthy();
   });
 });
+
+describe('FinanceClient: sharing private payments with another company', () => {
+  it('says so when the sharing section could not be read, instead of leaving it out', () => {
+    render(<FinanceClient initial={view([])} initialTab="payments" sharingFailed />);
+    expect(screen.getByRole('alert').textContent).toContain('Die Weitergabe privater Zahlungen konnte nicht geladen werden');
+  });
+
+  it('shows nothing of it when the person has no other company and nothing is shared', () => {
+    render(<FinanceClient initial={view([])} initialTab="payments" sharing={{ outgoing: [], incoming: [], targets: [], canWrite: true }} />);
+    expect(screen.queryByText('Private Zahlungen in einer anderen Firma')).toBeNull();
+  });
+});

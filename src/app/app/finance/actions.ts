@@ -5,7 +5,8 @@ import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { after } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { runSpendingChecks } from '@/lib/spending/checks';
+import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
+import { settleMovedPaymentsLater } from '@/lib/spending/settle-later';
 import { berlinToday } from '@/lib/spending/period';
 import {
   PaymentServiceError,
@@ -335,7 +336,7 @@ export async function importPaymentFile(year: number, accountId: string, text: s
     // and must never hold or fail the import. A failure is logged.
     after(async () => {
       try {
-        await runSpendingChecks(prisma, ctx, { today: berlinToday() });
+        await runSpendingChecksAfterNewPayments(prisma, ctx, { today: berlinToday() });
       } catch (e) {
         console.error('[finance] spending checks after import failed', e);
       }
@@ -347,12 +348,18 @@ export async function importPaymentFile(year: number, accountId: string, text: s
 }
 
 export async function undoImport(year: number, batchId: string): Promise<Result<StatementView>> {
-  return write(year, (ctx) => deleteImportBatch(prisma, ctx, String(batchId)));
+  return write(year, async (ctx) => {
+    await deleteImportBatch(prisma, ctx, String(batchId));
+    settleMovedLater(ctx);
+  });
 }
 
 /** Say that a whole account is private (true), so its payments are not asked about, or take that back (false). */
 export async function markAccountPrivate(year: number, accountId: string, isPrivate: unknown): Promise<Result<StatementView>> {
-  return write(year, (ctx) => setAccountPrivate(prisma, ctx, String(accountId), isPrivate));
+  return write(year, async (ctx) => {
+    await setAccountPrivate(prisma, ctx, String(accountId), isPrivate);
+    settleMovedLater(ctx, { accountId: String(accountId) });
+  });
 }
 
 /**
@@ -370,12 +377,23 @@ export async function searchPayments(year: number, query: unknown): Promise<Resu
   }
 }
 
+/** See `settleMovedPaymentsLater`: a payment of a shared account may have moved between companies. */
+function settleMovedLater(ctx: { workspaceId: string }, hint: Parameters<typeof settleMovedPaymentsLater>[2] = {}): void {
+  settleMovedPaymentsLater(prisma, ctx.workspaceId, hint);
+}
+
 export async function treatCounterparty(year: number, input: unknown): Promise<Result<StatementView>> {
-  return write(year, (ctx) => setCounterpartyTreatment(prisma, ctx, input));
+  return write(year, async (ctx) => {
+    await setCounterpartyTreatment(prisma, ctx, input);
+    settleMovedLater(ctx, { counterparty: ((input ?? {}) as { counterparty?: unknown }).counterparty });
+  });
 }
 
 export async function correctPaymentKind(year: number, paymentId: string, kind: unknown): Promise<Result<StatementView>> {
-  return write(year, (ctx) => setPaymentKind(prisma, ctx, String(paymentId), kind));
+  return write(year, async (ctx) => {
+    await setPaymentKind(prisma, ctx, String(paymentId), kind);
+    settleMovedLater(ctx, { paymentId: String(paymentId) });
+  });
 }
 
 /**
@@ -388,6 +406,8 @@ export async function confirmPaymentLink(year: number, input: unknown): Promise<
   try {
     const ctx = await writeContext();
     const result = await linkPayment(prisma, ctx, input, receiptForLink(prisma, ctx.workspaceId));
+    const linkedPayment = ((input ?? {}) as { paymentId?: unknown }).paymentId;
+    settleMovedLater(ctx, typeof linkedPayment === 'string' ? { paymentId: linkedPayment } : {});
     return { ok: true, value: { view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)), moved: result.movedFromPaymentId !== null } };
   } catch (e) {
     return failure(e);
@@ -396,7 +416,10 @@ export async function confirmPaymentLink(year: number, input: unknown): Promise<
 
 /** Say that one payment is a transfer between own accounts (true) or a payment of its own (false). */
 export async function markPaymentTransfer(year: number, paymentId: string, isTransfer: unknown): Promise<Result<StatementView>> {
-  return write(year, (ctx) => setPaymentTransfer(prisma, ctx, String(paymentId), isTransfer));
+  return write(year, async (ctx) => {
+    await setPaymentTransfer(prisma, ctx, String(paymentId), isTransfer);
+    settleMovedLater(ctx, { paymentId: String(paymentId) });
+  });
 }
 
 /**
@@ -409,6 +432,7 @@ export async function acceptPaymentProposals(year: number, pairs: unknown, onlyU
   try {
     const ctx = await writeContext();
     const accepted = await acceptEstimateProposals(prisma, ctx, safeYear(year), pairs, onlyUnambiguous === true);
+    settleMovedLater(ctx);
     return { ok: true, value: { view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)), linked: accepted.linked.length, skipped: accepted.skipped } };
   } catch (e) {
     return failure(e);
@@ -416,7 +440,10 @@ export async function acceptPaymentProposals(year: number, pairs: unknown, onlyU
 }
 
 export async function removePaymentLink(year: number, linkId: string): Promise<Result<StatementView>> {
-  return write(year, (ctx) => unlinkPayment(prisma, ctx, String(linkId)));
+  return write(year, async (ctx) => {
+    await unlinkPayment(prisma, ctx, String(linkId));
+    settleMovedLater(ctx);
+  });
 }
 
 /** Split a receipt into lines, or change its split; checked by `validateLines` against the receipt's total. */

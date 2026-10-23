@@ -6,7 +6,7 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
-import { runSpendingChecks } from '@/lib/spending/checks';
+import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
 import { berlinToday } from '@/lib/spending/period';
 import { bankConfig } from '@/lib/tax/payments/bank/config';
 import { serverBankDeps } from '@/lib/tax/payments/bank/server';
@@ -141,7 +141,7 @@ export async function syncBankNow(year: number, connectionId: string): Promise<R
       // The missing-receipt loop and the budget warnings run on what arrived, after the answer is sent.
       after(async () => {
         try {
-          await runSpendingChecks(prisma, ctx, { today });
+          await runSpendingChecksAfterNewPayments(prisma, ctx, { today });
         } catch (e) {
           console.error('[bank] spending checks after the bank fetch failed', (e as Error)?.name ?? 'error');
         }

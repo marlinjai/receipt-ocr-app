@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const checkNow = vi.fn();
@@ -12,8 +12,11 @@ const saveNotificationSettings = vi.fn();
 const dismissMail = vi.fn();
 const linkTakenOver = vi.fn();
 const getReceiptChecks = vi.fn();
+const linkChosenReceipt = vi.fn();
+const findReceiptChoices = vi.fn();
 const takeOverMail = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+const refresh = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh, push: vi.fn() }) }));
 vi.mock('./loop-actions', () => ({
   checkNow: (...a: unknown[]) => checkNow(...a),
   confirmReceipt: (...a: unknown[]) => confirmReceipt(...a),
@@ -23,6 +26,8 @@ vi.mock('./loop-actions', () => ({
   saveNotificationSettings: (...a: unknown[]) => saveNotificationSettings(...a),
   dismissMail: (...a: unknown[]) => dismissMail(...a),
   linkTakenOver: (...a: unknown[]) => linkTakenOver(...a),
+  linkChosenReceipt: (...a: unknown[]) => linkChosenReceipt(...a),
+  findReceiptChoices: (...a: unknown[]) => findReceiptChoices(...a),
   getReceiptChecks: (...a: unknown[]) => getReceiptChecks(...a),
 }));
 vi.mock('../actions', () => ({ processReceipt: vi.fn() }));
@@ -56,7 +61,10 @@ const view = (canWrite = true): ChecksView => ({
 });
 
 beforeEach(() => {
-  for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings, dismissMail, linkTakenOver, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
+  refresh.mockReset();
+  takeOverMail.mockClear();
+  for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings, dismissMail, linkTakenOver, linkChosenReceipt, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
+  findReceiptChoices.mockReset();
   Element.prototype.scrollIntoView = vi.fn();
 });
 
@@ -76,6 +84,180 @@ describe('ReceiptChecks', () => {
     await user.type(screen.getByLabelText('Warum es keinen Beleg gibt'), 'Parkautomat');
     await user.click(save);
     expect(sayNoReceipt).toHaveBeenCalledWith('p2', 'Parkautomat');
+  });
+
+  it('links a receipt chosen by hand when no proposal fits, only after one is chosen, and says so at the page', async () => {
+    findReceiptChoices.mockResolvedValue({ ok: true, value: [{ rowId: 'r9', label: 'Kassenbon', vendor: 'Abc Laden', day: '2026-05-11', amountCents: 1250, estimated: false, openCents: 1250 }] });
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    // Asked from the server only on request, for the payment a person works on; the focus goes to the search.
+    expect(findReceiptChoices).not.toHaveBeenCalled();
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    expect(findReceiptChoices).toHaveBeenCalledWith('p2', '');
+    expect(document.activeElement).toBe(screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)'));
+    expect(await screen.findByText('1 Beleg zur Auswahl.')).toBeTruthy();
+    const link = screen.getByRole('button', { name: 'Zuordnen: gewählten Beleg zu Abc Laden' });
+    expect((link as HTMLButtonElement).disabled).toBe(true);
+    await user.selectOptions(screen.getByLabelText('Vorhandenen Beleg für Abc Laden wählen'), 'r9');
+    await user.click(link);
+    expect(linkChosenReceipt).toHaveBeenCalledWith('p2', 'r9');
+    expect(await screen.findByText('Beleg zugeordnet: Abc Laden.')).toBeTruthy();
+    // The payment list and the budgets read the same payments: the page reads them afresh.
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it('keeps the summary of "Jetzt prüfen" when the page reads the checks afresh', async () => {
+    const base = view();
+    checkNow.mockResolvedValue({ ok: true, value: { ...base, lastRun: { loop: { notified: 1, settled: 0, retried: 0, open: 2, deferred: 0, mailbox: { status: 'off', missing: [] } }, budgets: null } } });
+    const { rerender } = render(<ReceiptChecks initial={base} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Jetzt prüfen' }));
+    const summary = (await screen.findByText(/Geprüft/)).textContent;
+    rerender(<ReceiptChecks initial={{ ...base }} focusPaymentId={null} />);
+    expect(screen.getByText(/Geprüft/).textContent).toBe(summary);
+  });
+
+  it('keeps what was typed and chosen in an open list when the page reads afresh, and asks once more', async () => {
+    findReceiptChoices.mockResolvedValue({ ok: true, value: [{ rowId: 'r9', label: 'Kassenbon', vendor: null, day: null, amountCents: 1250, estimated: false, openCents: 1250 }] });
+    const base = view();
+    const { rerender } = render(<ReceiptChecks initial={base} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    await user.selectOptions(await screen.findByLabelText('Vorhandenen Beleg für Abc Laden wählen'), 'r9');
+    await user.type(screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)'), 'Kas');
+    rerender(<ReceiptChecks initial={{ ...base }} focusPaymentId={null} />);
+    await waitFor(() => expect(findReceiptChoices).toHaveBeenCalledTimes(2));
+    expect((screen.getByLabelText('Vorhandenen Beleg für Abc Laden wählen') as HTMLSelectElement).value).toBe('r9');
+    expect((screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)') as HTMLInputElement).value).toBe('Kas');
+  });
+
+  it('keeps an error about a payment still open when the page reads afresh, and drops one about a payment that left', async () => {
+    findReceiptChoices.mockResolvedValue({ ok: true, value: [{ rowId: 'r9', label: 'Kassenbon', vendor: null, day: null, amountCents: 1250, estimated: false, openCents: 1250 }] });
+    linkChosenReceipt.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'already_has_receipt' });
+    const base = view();
+    const { rerender } = render(<ReceiptChecks initial={base} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    await user.selectOptions(await screen.findByLabelText('Vorhandenen Beleg für Abc Laden wählen'), 'r9');
+    await user.click(screen.getByRole('button', { name: 'Zuordnen: gewählten Beleg zu Abc Laden' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/inzwischen schon ein Beleg/);
+    rerender(<ReceiptChecks initial={{ ...base }} focusPaymentId={null} />);
+    expect(screen.getByRole('alert').textContent).toMatch(/inzwischen schon ein Beleg/);
+    rerender(<ReceiptChecks initial={{ ...base, loop: { ...base.loop, open: base.loop.open.slice(0, 1) } }} focusPaymentId={null} />);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a mail whose link failed keeps its message at the row while the payment is open, and at the page when it left', async () => {
+    const base = view();
+    const withMail = { ...base, loop: { ...base.loop, open: [{ ...base.loop.open[1], state: { state: 'in_mailbox' as const, mails: [{ id: 'm1', fileName: 'Rechnung.pdf', receivedDay: '2026-05-12', subject: 'Rechnung', sender: 'laden@example.com' }] } }] } };
+    takeOverMail.mockResolvedValue({ kind: 'done', rowId: 'r-new' });
+    linkTakenOver.mockResolvedValue({ ok: false, error: 'not_found', detail: 'payment_not_found' });
+    getReceiptChecks.mockResolvedValue({ ok: true, value: withMail });
+    const { unmount } = render(<ReceiptChecks initial={withMail} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Rechnung.pdf als Beleg übernehmen' }));
+    const atRow = await screen.findByRole('alert');
+    expect(atRow.textContent).toMatch(/noch nicht mit der Zahlung verknüpft/);
+    expect(atRow.closest('li')).not.toBeNull();
+    expect(refresh).not.toHaveBeenCalled();
+    unmount();
+
+    getReceiptChecks.mockResolvedValue({ ok: true, value: { ...withMail, loop: { ...withMail.loop, open: [] } } });
+    render(<ReceiptChecks initial={withMail} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Rechnung.pdf als Beleg übernehmen' }));
+    const atPage = await screen.findByRole('alert');
+    expect(atPage.textContent).toMatch(/noch nicht mit der Zahlung verknüpft/);
+    expect(atPage.closest('li')).toBeNull();
+  });
+
+  it('asks an open list again quietly after a fresh read: no searching message, the status stays', async () => {
+    let answerSecond: (v: unknown) => void = () => {};
+    findReceiptChoices
+      .mockResolvedValueOnce({ ok: true, value: [{ rowId: 'r9', label: 'Kassenbon', vendor: null, day: null, amountCents: 1250, estimated: false, openCents: 1250 }] })
+      .mockImplementationOnce(() => new Promise((resolve) => (answerSecond = resolve)));
+    const base = view();
+    const { rerender } = render(<ReceiptChecks initial={base} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    expect(await screen.findByText('1 Beleg zur Auswahl.')).toBeTruthy();
+    rerender(<ReceiptChecks initial={{ ...base }} focusPaymentId={null} />);
+    await waitFor(() => expect(findReceiptChoices).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('Belege werden gesucht …')).toBeNull();
+    expect(screen.getByText('1 Beleg zur Auswahl.')).toBeTruthy();
+    answerSecond({ ok: true, value: [] });
+  });
+
+  it('marking a notification read reads nothing else afresh', async () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Beleg fehlt: Abc Laden als gelesen markieren' }));
+    await waitFor(() => expect(readNotification).toHaveBeenCalled());
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('takes over fresh data the page read after a change elsewhere on it', () => {
+    const base = view();
+    const { rerender } = render(<ReceiptChecks initial={base} focusPaymentId={null} />);
+    expect(screen.getByText('Belege prüfen (2 offen)')).toBeTruthy();
+    rerender(<ReceiptChecks initial={{ ...base, loop: { ...base.loop, open: base.loop.open.slice(0, 1) } }} focusPaymentId={null} />);
+    expect(screen.getByText('Belege prüfen (1 offen)')).toBeTruthy();
+  });
+
+  it('closes the picker with "Abbrechen" and gives the focus back to its opener', async () => {
+    findReceiptChoices.mockResolvedValue({ ok: true, value: [] });
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    await user.click(screen.getByRole('button', { name: 'Abbrechen: Beleg zuordnen' }));
+    expect(document.activeElement).toBe(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    // Reopened, it asks the server afresh.
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    expect(findReceiptChoices).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops a slow answer that a newer request overtook', async () => {
+    let answerFirst: (v: unknown) => void = () => {};
+    findReceiptChoices
+      .mockImplementationOnce(() => new Promise((resolve) => (answerFirst = resolve)))
+      .mockResolvedValueOnce({ ok: true, value: [{ rowId: 'new', label: 'Neuer Beleg', vendor: null, day: null, amountCents: 1250, estimated: false, openCents: 1250 }] });
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    await user.type(screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)'), 'Neu');
+    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    expect(await screen.findByRole('option', { name: 'Neuer Beleg, 12,50 €' })).toBeTruthy();
+    answerFirst({ ok: true, value: [{ rowId: 'old', label: 'Alter Beleg', vendor: null, day: null, amountCents: 1250, estimated: false, openCents: 1250 }] });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole('option', { name: 'Alter Beleg, 12,50 €' })).toBeNull();
+  });
+
+  it('searches the receipts for a payment and says when nothing fits', async () => {
+    findReceiptChoices.mockResolvedValueOnce({ ok: true, value: [] });
+    findReceiptChoices.mockResolvedValueOnce({ ok: true, value: [{ rowId: 'r7', label: 'Altbeleg', vendor: null, day: null, amountCents: 3000, estimated: true, openCents: 1250 }] });
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Vorhandenen Beleg zuordnen' })[1]);
+    expect(await screen.findByText(/Kein offener Beleg in dieser Firma/)).toBeTruthy();
+    await user.type(screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)'), 'Alt');
+    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    expect(findReceiptChoices).toHaveBeenCalledWith('p2', 'Alt');
+    expect(await screen.findByRole('option', { name: 'Altbeleg, ca. 30,00 €, noch offen ca. 12,50 €' })).toBeTruthy();
+    expect(screen.getByText('1 Beleg gefunden.')).toBeTruthy();
+    findReceiptChoices.mockResolvedValueOnce({ ok: true, value: [] });
+    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    expect(await screen.findByText('Kein offener Beleg passt zu dieser Suche.')).toBeTruthy();
+  });
+
+  it('words the refusals of a hand choice', () => {
+    expect(checksActionMessage({ ok: false, error: 'invalid_input', detail: 'already_has_receipt' })).toMatch(/inzwischen schon ein Beleg/);
+    expect(checksActionMessage({ ok: false, error: 'invalid_input', detail: 'payment_not_open' })).toMatch(/wartet auf keinen Beleg mehr/);
+    expect(checksActionMessage({ ok: false, error: 'invalid_input', detail: 'target_not_found' })).toMatch(/nicht mehr da/);
+  });
+
+  it('an answer given in the company holding the account is shown without a take-back button', async () => {
+    const base = view();
+    const inherited = { ...base, loop: { ...base.loop, answered: [{ ...base.loop.answered[0], state: { state: 'no_receipt' as const, reason: 'Automat', fromHolder: true } }] } };
+    render(<ReceiptChecks initial={inherited} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByText(/Ohne Beleg beantwortet/));
+    expect(screen.getByText(/beantwortet in der Firma, die das Konto führt/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Antwort für Parkhaus zurücknehmen' })).toBeNull();
+    expect(checksActionMessage({ ok: false, error: 'invalid_input', detail: 'answered_by_holder' })).toMatch(/nur dort zurücknehmen/);
   });
 
   it('takes a "no receipt" answer back, marks a notification read, and runs a check', async () => {
@@ -116,7 +298,7 @@ describe('ReceiptChecks', () => {
     const opener = screen.getAllByRole('button', { name: 'Es gibt keinen Beleg' })[1];
     await user.click(opener);
     expect(document.activeElement).toBe(screen.getByLabelText('Warum es keinen Beleg gibt'));
-    await user.click(screen.getByRole('button', { name: 'Abbrechen' }));
+    await user.click(screen.getByRole('button', { name: 'Abbrechen: kein Beleg' }));
     expect(document.activeElement?.textContent).toBe('Es gibt keinen Beleg');
   });
 

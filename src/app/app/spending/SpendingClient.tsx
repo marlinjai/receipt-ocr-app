@@ -8,7 +8,7 @@ import { formatCents } from '@/lib/tax/money';
 import { ANSWERABLE_CATEGORIES, SPENDING_CATEGORY_LABELS, isSpendingCategory, type SpendingCategory } from '@/lib/spending/categories';
 import type { CategoryBasis, SpendingPurpose } from '@/lib/spending/rules';
 import type { UnclearCounterparty } from '@/lib/spending/overview';
-import { answerCategory, markOwnAccount, unmarkOwnAccount, withdrawCategory, type Result, type SpendingPageView } from './actions';
+import { answerCategory, markOwnAccount, unlinkRoutedReceipt, unmarkOwnAccount, withdrawCategory, type Result, type SpendingPageView } from './actions';
 
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
@@ -41,6 +41,7 @@ export function spendingActionMessage(result: Extract<Result<unknown>, { ok: fal
     return 'Diese Gegenseite ist unter Finanzen, Zahlungen schon als geschäftlich oder privat beantwortet. Das bitte dort ändern, damit die steuerliche Zuordnung nicht unbemerkt verloren geht.';
   if (result.detail === 'invalid_treatment') return 'Diese Gegenseite lässt sich nicht als eigenes Konto merken, weil die Zahlung keinen Namen nennt.';
   if (result.detail === 'not_own_account') return 'Diese Gegenseite ist nicht mehr als eigenes Konto beantwortet. Bitte die Seite neu laden.';
+  if (result.detail === 'link_not_found') return 'An dieser Zahlung hängt hier kein Beleg mehr. Bitte die Seite neu laden.';
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
 
@@ -124,6 +125,14 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
   const [view, setView] = useState(initial);
   // An error belongs to the place it happened: a row of the unclear list, an answer, or the page.
   const [error, setError] = useState<{ at: string; message: string } | null>(null);
+  // The page reads the overview afresh after a change in the checks below (a receipt linked by hand): take that
+  // over, and drop errors that told the person to reload.
+  const [shownInitial, setShownInitial] = useState(initial);
+  if (shownInitial !== initial) {
+    setShownInitial(initial);
+    setView(initial);
+    setError(null);
+  }
   const [pending, startTransition] = useTransition();
   const { overview } = view;
   const period = overview.month === null ? `${overview.year}` : `${MONTHS[overview.month - 1]} ${overview.year}`;
@@ -138,8 +147,11 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
     setError(null);
     startTransition(async () => {
       const result = await action();
-      if (result.ok) setView(result.value);
-      else setError({ at, message: spendingActionMessage(result) });
+      if (result.ok) {
+        setView(result.value);
+        // The open checks and the budgets below read the same payments: the page reads them afresh.
+        router.refresh();
+      } else setError({ at, message: spendingActionMessage(result) });
     });
   };
 
@@ -213,9 +225,23 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
             {view.accounts.map((a, i) => (
               <span key={a.id}>
                 {i > 0 && ', '}
-                {a.label} bis {formatDay(a.completeThrough)}
+                {a.label}
+                {a.sharedFrom && ` (private Zahlungen, geführt von ${view.companies[a.sharedFrom] ?? 'einer anderen Firma'})`} bis {formatDay(a.completeThrough)}
               </span>
             ))}
+          </p>
+        )}
+        {view.sharedOut.length > 0 && (
+          <p className="ui-note">
+            Private Zahlungen von{' '}
+            {view.sharedOut.map((s, i) => (
+              <span key={`${s.accountLabel}-${s.receiverWorkspaceId}`}>
+                {i > 0 && ', '}
+                {s.accountLabel} (an {view.companies[s.receiverWorkspaceId] ?? 'eine andere Firma'})
+              </span>
+            ))}{' '}
+            stehen in der Firma, an die sie weitergegeben werden, mit Budgets und fehlenden Belegen. Hier bleiben von diesen Konten die
+            geschäftlichen, die noch nicht beantworteten und die hier verknüpften Zahlungen und die Umbuchungen.
           </p>
         )}
       </div>
@@ -428,6 +454,50 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
         </details>
       )}
 
+      {view.dormantLinks.length > 0 && (
+        <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
+          <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+            Belege an Zahlungen, die nicht mehr hierher gehören ({view.dormantLinks.length})
+          </summary>
+          <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
+            Die Firma, die das Konto führt, hat diese Zahlungen inzwischen anders beantwortet, die Weitergabe ist beendet, oder ein
+            späterer Import hat die Zahlung storniert. Der Beleg zählt so lange nirgends; einer anderen Zahlung wird er nur bei einer
+            stornierten Zahlung vorgeschlagen. Kommt die Zahlung zurück, gilt die Verknüpfung wieder; „Lösen“ gibt den Beleg frei.
+          </p>
+          <ul className="mt-2 divide-y">
+            {view.dormantLinks.map((l) => (
+              <li key={l.paymentId} className="py-2 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {l.receipts === 1 ? 'Beleg' : `${l.receipts} Belege`} verknüpft am {formatDay(l.linkedOn)} über {euro(l.cents)}
+                  </span>
+                  {view.canWrite && (
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm"
+                      disabled={pending}
+                      aria-label={`Lösen: ${l.receipts === 1 ? 'Beleg' : `${l.receipts} Belege`}, verknüpft am ${formatDay(l.linkedOn)} über ${euro(l.cents)}`}
+                      onClick={() => {
+                        const what = l.receipts === 1 ? 'Den Beleg' : `Die ${l.receipts} Belege`;
+                        if (!window.confirm(`${what} von dieser Zahlung lösen? ${l.receipts === 1 ? 'Der Beleg bleibt' : 'Die Belege bleiben'} erhalten und ${l.receipts === 1 ? 'kann' : 'können'} einer anderen Zahlung zugeordnet werden.`)) return;
+                        run(`dormant:${l.paymentId}`, () => unlinkRoutedReceipt(overview.year, overview.month, l.paymentId));
+                      }}
+                    >
+                      Lösen
+                    </button>
+                  )}
+                </div>
+                {error?.at === `dormant:${l.paymentId}` && (
+                  <p className="ui-note ui-note-danger mt-2" role="alert">
+                    {error.message}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
       <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
         <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
           Zahlungen {period} ({overview.payments.length})
@@ -464,7 +534,28 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
                     </span>
                   </td>
                   <td className="py-1 pr-3">{p.spendingCents === null ? 'Umbuchung' : PURPOSE_LABELS[p.purpose]}</td>
-                  <td className="py-1 pr-3">{p.spendingCents === null ? 'nicht nötig' : p.hasReceipt ? 'verknüpft' : 'keiner'}</td>
+                  <td className="py-1 pr-3">
+                    {p.spendingCents === null ? 'nicht nötig' : p.hasReceipt ? 'verknüpft' : 'keiner'}
+                    {p.routed && p.hasReceipt && view.canWrite && (
+                      <button
+                        type="button"
+                        className="ui-btn ui-btn-sm ml-2"
+                        disabled={pending}
+                        aria-label={`Lösen: Beleg von ${p.counterparty || 'dieser Zahlung'} am ${formatDay(p.bookingDay)}`}
+                        onClick={() => {
+                          if (!window.confirm('Den Beleg von dieser Zahlung lösen? Der Beleg bleibt erhalten, die Zahlung fragt dann wieder nach einem Beleg.')) return;
+                          run(`routed:${p.id}`, () => unlinkRoutedReceipt(overview.year, overview.month, p.id));
+                        }}
+                      >
+                        Lösen
+                      </button>
+                    )}
+                    {error?.at === `routed:${p.id}` && (
+                      <span className="ui-note ui-note-danger mt-1 block" role="alert">
+                        {error.message}
+                      </span>
+                    )}
+                  </td>
                   <td className="py-1 text-right tabular-nums">{euro(-p.amountCents)}</td>
                 </tr>
               ))}

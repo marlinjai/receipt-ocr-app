@@ -266,6 +266,9 @@ interface Plan {
   repoints: { fromId: string; toId: string }[];
 }
 
+/** The report's name for the receiving company's stamp on account shares (`tax_account_shares.receiver_tenant_id`). */
+const RECEIVER_STAMP_TABLE = 'tax_account_shares (receiving company)';
+
 async function planMove(db: PrismaClient, req: WorkspaceMoveRequest): Promise<Plan> {
   const blocked = new Set<MoveBlocker>();
 
@@ -282,6 +285,27 @@ async function planMove(db: PrismaClient, req: WorkspaceMoveRequest): Promise<Pl
     totals.otherCompany += counts.otherCompany;
   }
   if (totals.otherCompany > 0) blocked.add('rows_of_another_company');
+  // A share of an account names the RECEIVING company too (payments across companies): that stamp moves
+  // with the workspace that receives. Counted like a table of its own; a third company there blocks nothing,
+  // because the move rewrites only the source company's stamp and an empty one.
+  const receiver: TableCounts = { rows: 0, restamp: 0, unstamped: 0, alreadyAtTarget: 0, otherCompany: 0 };
+  for (const group of await db.taxAccountShare.groupBy({ by: ['receiverTenantId'], where: { receiverWorkspaceId: req.workspaceId }, _count: { _all: true } })) {
+    const n = group._count._all;
+    receiver.rows += n;
+    if (group.receiverTenantId === null) {
+      receiver.restamp += n;
+      receiver.unstamped += n;
+    } else if (group.receiverTenantId === req.fromTenantId) receiver.restamp += n;
+    else if (group.receiverTenantId === req.toTenantId) receiver.alreadyAtTarget += n;
+    else receiver.otherCompany += n;
+  }
+  if (receiver.rows > 0) {
+    tables[RECEIVER_STAMP_TABLE] = receiver;
+    totals.rows += receiver.rows;
+    totals.restamp += receiver.restamp;
+    totals.unstamped += receiver.unstamped;
+    totals.alreadyAtTarget += receiver.alreadyAtTarget;
+  }
 
   // 2. The contacts the workspace names, and where each of them lives now.
   const guestIds = (
@@ -475,6 +499,18 @@ export async function moveWorkspace(
           });
           tables[model.table] = { ...plan.report.rows.tables[model.table], restamp: count };
           restamped += count;
+        }
+        // A share of an account names the RECEIVING company too (plan 2026-10-22, payments across
+        // companies). The generic restamp above covers the holder's stamp; the receiver's follows here.
+        const receiverStamps = (
+          await tx.taxAccountShare.updateMany({
+            where: { receiverWorkspaceId: req.workspaceId, OR: [{ receiverTenantId: req.fromTenantId }, { receiverTenantId: null }] },
+            data: { receiverTenantId: req.toTenantId },
+          })
+        ).count;
+        if (receiverStamps > 0 || plan.report.rows.tables[RECEIVER_STAMP_TABLE]) {
+          tables[RECEIVER_STAMP_TABLE] = { ...(plan.report.rows.tables[RECEIVER_STAMP_TABLE] ?? { rows: receiverStamps, unstamped: 0, alreadyAtTarget: 0, otherCompany: 0 }), restamp: receiverStamps };
+          restamped += receiverStamps;
         }
       },
       { maxWait: 10_000, timeout: 60_000 },

@@ -1148,7 +1148,9 @@ function buildPaymentsView(
   // What each receipt already carries, so the picker for linking by hand can say so.
   const linkedCentsByRow = new Map<string, number>();
   for (const { payment, link } of counted) linkedCentsByRow.set(link.rowId, (linkedCentsByRow.get(link.rowId) ?? 0) + (payment.amountCents < 0 ? link.cents : -link.cents));
-  const linkedRows = new Set(loaded.payments.flatMap((p) => p.links.map((l) => l.rowId).filter((id): id is string => id !== null)));
+  // A receipt also paid on a payment another company shares with this one (plan 2026-10-22): linked, never proposed again.
+  for (const [rowId, cents] of loaded.linkedElsewhere) linkedCentsByRow.set(rowId, (linkedCentsByRow.get(rowId) ?? 0) + cents);
+  const linkedRows = new Set([...loaded.payments.flatMap((p) => p.links.map((l) => l.rowId).filter((id): id is string => id !== null)), ...loaded.linkedElsewhere.keys()]);
   const receiptDocuments = resolved
     .filter((r) => !r.isMeal && !linkedRows.has(r.item.id) && r.item.amountCents !== null && r.item.date !== null && r.item.date.startsWith(`${year}-`))
     .map((r) => ({ id: r.item.id, number: null, day: r.item.date, openCents: r.item.amountCents as number, vendorKey: r.vendorKey }));

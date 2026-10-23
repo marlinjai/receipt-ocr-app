@@ -212,9 +212,11 @@ export function createGmailMailbox(config: GmailConfig, fetchImpl: typeof fetch 
 }
 
 /**
- * The mailbox of a workspace: the Gmail adapter for the one company the
- * mailbox belongs to, off for every other company, and off with the missing
- * settings named when it is not set up.
+ * The mailbox of a workspace: the Gmail adapter for the company the mailbox
+ * belongs to, off for every other company, and off with the missing settings
+ * named when it is not set up. Callers go through `mailboxFor` (`server.ts`),
+ * which also lets a company receiving private payments of the mailbox's
+ * company use it.
  */
 export function serverMailbox(workspaceId: string, env: Record<string, string | undefined> = process.env): MailboxPort {
   const config = gmailConfigFromEnv(env);

@@ -1,7 +1,8 @@
 import { vendorNamed } from '@/lib/tax/payments/match';
-import type { PaymentKind } from '@/lib/tax/payments/types';
+import { OVERPAID_TOLERANCE_PERCENT, type PaymentKind } from '@/lib/tax/payments/types';
 import type { SpendingCategory } from './categories';
 import { categorise, normalizeText, type CounterpartyTreatmentAnswer } from './rules';
+import { amountQuery } from '@/lib/tax/payments/search';
 
 /**
  * The missing-receipt loop, as a pure function of what is stored (plan
@@ -64,7 +65,12 @@ export interface ReceiptCandidate {
 export type LoopState =
   | { state: 'has_receipt' }
   | { state: 'not_needed'; reason: NotNeededReason }
-  | { state: 'no_receipt'; reason: string }
+  /**
+   * `fromHolder`: said in the company that holds the payment's account, before it was routed here; taken
+   * back only there. `movedAway`: said here about an own payment that is now routed to another company;
+   * listed here so it can be taken back, counted nowhere.
+   */
+  | { state: 'no_receipt'; reason: string; fromHolder?: boolean; movedAway?: boolean }
   | { state: 'proposed'; candidates: ReceiptCandidate[] }
   | { state: 'in_mailbox'; mails: MailCandidateView[] }
   | { state: 'missing' };
@@ -83,6 +89,8 @@ export interface LoopContext {
   categoryAnswers: ReadonlyMap<string, SpendingCategory>;
   /** "No receipt exists" answers by payment id, with the reason. */
   noReceipt: ReadonlyMap<string, string>;
+  /** Of those, the ones said in the company that holds the account (a payment routed here). */
+  noReceiptFromHolder?: ReadonlySet<string>;
   receipts: readonly LoopReceipt[];
   /** Vendor keys a counterparty is known to stand for, from the links that exist (see the payments service). */
   vendorAliases: ReadonlyMap<string, ReadonlySet<string>>;
@@ -151,7 +159,7 @@ export function loopState(payment: LoopPayment, ctx: LoopContext): LoopState {
   const notNeeded = notNeededReason(payment, ctx);
   if (notNeeded) return { state: 'not_needed', reason: notNeeded };
   const answered = ctx.noReceipt.get(payment.id);
-  if (answered !== undefined) return { state: 'no_receipt', reason: answered };
+  if (answered !== undefined) return ctx.noReceiptFromHolder?.has(payment.id) ? { state: 'no_receipt', reason: answered, fromHolder: true } : { state: 'no_receipt', reason: answered };
   const candidates = receiptCandidates(payment, ctx);
   if (candidates.length > 0) return { state: 'proposed', candidates };
   const mails = ctx.mailCandidates?.get(payment.id) ?? [];
@@ -173,3 +181,61 @@ export const missingReceiptSubject = (paymentId: string) => `missing_receipt:${p
 
 /** The key of the one "invoice found in the mailbox" message of a payment, apart from its "receipt missing" message. */
 export const mailFoundSubject = (paymentId: string) => `mail_found:${paymentId}`;
+
+/** A receipt of this company a person may link to an open payment by hand. */
+export interface ReceiptChoice {
+  rowId: string;
+  label: string;
+  vendor: string | null;
+  day: string | null;
+  /** Euro cents (an estimate for a foreign-currency receipt); null when the receipt names no amount. */
+  amountCents: number | null;
+  estimated: boolean;
+  /** What of the receipt no payment covers yet (cents); null when its amount is unknown. */
+  openCents: number | null;
+}
+
+/** Receipts offered for one payment at most; a search finds the others. */
+export const CHOICES_SHOWN = 30;
+
+/**
+ * The receipts a person may link to a payment by hand, when no proposal fits:
+ * every receipt with something left to pay (also one partly paid, an
+ * instalment) that this payment can go on without taking the receipt beyond
+ * its amount and the tolerance for fees and rates (the guard's own rule, so
+ * what is offered is what can be linked), the closest first: the amount still open nearest to what was
+ * paid, then the day nearest to the payment, receipts without an amount or a
+ * day last. With `text`, only receipts whose name or vendor contains it, or
+ * whose amount (or what is open of it) is that amount. Pure.
+ */
+export function receiptChoices(
+  payment: { bookingDay: string; amountCents: number },
+  receipts: readonly LoopReceipt[],
+  paidByRow: ReadonlyMap<string, number>,
+  text = '',
+  limit = CHOICES_SHOWN,
+): ReceiptChoice[] {
+  const paid = Math.abs(payment.amountCents);
+  const booked = dayNumber(payment.bookingDay);
+  const query = text.trim().toLowerCase().slice(0, 80);
+  const cents = query ? amountQuery(query) : null;
+  const ranked: Array<{ choice: ReceiptChoice; rank: [number, number, number] }> = [];
+  for (const r of receipts) {
+    const covered = paidByRow.get(r.rowId) ?? 0;
+    const openCents = r.amountCents === null ? null : r.amountCents - covered;
+    if (openCents !== null ? openCents <= 0 : r.linked) continue;
+    if (r.amountCents !== null && covered > 0 && covered + paid > r.amountCents + Math.round((r.amountCents * OVERPAID_TOLERANCE_PERCENT) / 100)) continue;
+    if (query) {
+      const named = `${r.label} ${r.vendor ?? ''}`.toLowerCase().includes(query);
+      const amount = cents !== null && (r.amountCents === cents || openCents === cents);
+      if (!named && !amount) continue;
+    }
+    const gap = r.day === null ? NaN : Math.abs(booked - dayNumber(r.day));
+    ranked.push({
+      choice: { rowId: r.rowId, label: r.label, vendor: r.vendor, day: r.day, amountCents: r.amountCents, estimated: r.estimated, openCents },
+      rank: [openCents === null ? 2 : openCents === paid ? 0 : 1, openCents === null ? Infinity : Math.abs(openCents - paid), Number.isFinite(gap) ? gap : Infinity],
+    });
+  }
+  ranked.sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.rank[2] - b.rank[2] || (a.choice.rowId < b.choice.rowId ? -1 : 1));
+  return ranked.slice(0, limit).map((r) => r.choice);
+}

@@ -190,8 +190,14 @@ export type SpendingPurpose = 'private' | 'business' | 'unanswered';
  * part (see `businessShare`): such a payment is business when it is linked,
  * private otherwise. Nothing else decides it, in particular not the company the
  * payments were imported under: one bank account carries both.
+ *
+ * A payment `routed` here from the company that holds its account is private
+ * by definition: it is here only because that company's answers call it
+ * private (src/lib/tax/payments/route.ts), and this company's own answers
+ * never change that.
  */
-export function purposeOf(payment: { kind: PaymentKind; linkCount?: number; byPrivateAccount?: boolean }, treatment: CounterpartyTreatmentAnswer | undefined): SpendingPurpose {
+export function purposeOf(payment: { kind: PaymentKind; linkCount?: number; byPrivateAccount?: boolean; routed?: boolean }, treatment: CounterpartyTreatmentAnswer | undefined): SpendingPurpose {
+  if (payment.routed) return 'private';
   if (treatment === 'private' || (payment.kind === 'private' && !payment.byPrivateAccount)) return 'private';
   if (treatment === 'business') return 'business';
   if (treatment === 'mixed' || payment.byPrivateAccount) return (payment.linkCount ?? 0) > 0 ? 'business' : 'private';

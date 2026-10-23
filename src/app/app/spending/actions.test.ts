@@ -40,6 +40,15 @@ vi.mock('@/lib/spending/service', () => {
     unmarkCounterpartyOwnAccount: (...a: unknown[]) => unmarkCounterpartyOwnAccount(...a),
   };
 });
+const unlinkRoutedPayment = vi.fn();
+const touchesSharedAccount = vi.fn();
+const settleAcrossSharesCoalesced = vi.fn();
+vi.mock('next/server', () => ({ after: async (fn: () => unknown) => fn() }));
+vi.mock('@/lib/tax/payments/routing', () => ({
+  unlinkRoutedPayment: (...a: unknown[]) => unlinkRoutedPayment(...a),
+  touchesSharedAccount: (...a: unknown[]) => touchesSharedAccount(...a),
+}));
+vi.mock('@/lib/spending/loop-service', () => ({ settleAcrossSharesCoalesced: (...a: unknown[]) => settleAcrossSharesCoalesced(...a) }));
 vi.mock('@/lib/tax/payments/service', () => {
   class PaymentServiceError extends Error {
     constructor(readonly code: string) {
@@ -51,14 +60,15 @@ vi.mock('@/lib/tax/payments/service', () => {
 
 import { ReceiptsAuthError } from '@/lib/auth-guards';
 import { SpendingServiceError } from '@/lib/spending/service';
-import { answerCategory, getSpending, markOwnAccount, unmarkOwnAccount, withdrawCategory } from './actions';
+import { PaymentServiceError } from '@/lib/tax/payments/service';
+import { answerCategory, getSpending, markOwnAccount, unlinkRoutedReceipt, unmarkOwnAccount, withdrawCategory } from './actions';
 
 const WS = { id: 'ws-a', slug: 'beispiel', role: 'member', tenantId: 't-a' };
 const SESSION = { memberships: [WS], activeWorkspace: WS };
-const VIEW = { overview: { year: 2026 } };
+const VIEW = { overview: { year: 2026 }, accounts: [], sharedOut: [], dormantLinks: [] };
 
 beforeEach(() => {
-  for (const f of [requireAction, requireReceiptsSession, loadSpending, setCounterpartyCategory, removeCounterpartyCategory, markCounterpartyOwnAccount, unmarkCounterpartyOwnAccount]) f.mockReset();
+  for (const f of [requireAction, requireReceiptsSession, loadSpending, setCounterpartyCategory, removeCounterpartyCategory, markCounterpartyOwnAccount, unmarkCounterpartyOwnAccount, unlinkRoutedPayment, touchesSharedAccount, settleAcrossSharesCoalesced]) f.mockReset();
   loadSpending.mockResolvedValue(VIEW);
 });
 
@@ -66,7 +76,7 @@ describe('getSpending', () => {
   it('reads the active workspace of the session and says whether it may write', async () => {
     requireReceiptsSession.mockResolvedValue(SESSION);
     requireAction.mockResolvedValue(SESSION);
-    expect(await getSpending('2025', '3')).toEqual({ ok: true, value: { ...VIEW, canWrite: true } });
+    expect(await getSpending('2025', '3')).toEqual({ ok: true, value: { ...VIEW, canWrite: true, companies: {} } });
     expect(loadSpending).toHaveBeenCalledWith({ marker: 'prisma' }, 'ws-a', 2025, 3);
   });
 
@@ -99,18 +109,21 @@ describe('writes', () => {
   it('write into the session\'s active workspace with its company, never one from the browser', async () => {
     requireAction.mockResolvedValue(SESSION);
     await answerCategory(2026, 4, 'Zyx', 'cash');
-    expect(setCounterpartyCategory).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, { counterparty: 'Zyx', category: 'cash' });
+    const ctx = expect.objectContaining({ workspaceId: 'ws-a', tenantId: 't-a' });
+    expect(setCounterpartyCategory).toHaveBeenCalledWith({ marker: 'prisma' }, ctx, { counterparty: 'Zyx', category: 'cash' });
     await withdrawCategory(2026, 4, 'zyx');
-    expect(removeCounterpartyCategory).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, 'zyx');
+    expect(removeCounterpartyCategory).toHaveBeenCalledWith({ marker: 'prisma' }, ctx, 'zyx');
     await markOwnAccount(2026, 4, 'Zyx');
-    expect(markCounterpartyOwnAccount).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, 'Zyx');
+    expect(markCounterpartyOwnAccount).toHaveBeenCalledWith({ marker: 'prisma' }, ctx, 'Zyx');
     await unmarkOwnAccount(2026, 4, 'zyx');
-    expect(unmarkCounterpartyOwnAccount).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, 'zyx');
+    expect(unmarkCounterpartyOwnAccount).toHaveBeenCalledWith({ marker: 'prisma' }, ctx, 'zyx');
+    await unlinkRoutedReceipt(2026, 4, 'pay-1');
+    expect(unlinkRoutedPayment).toHaveBeenCalledWith({ marker: 'prisma' }, ctx, 'pay-1');
   });
 
   it('return the fresh view after a write', async () => {
     requireAction.mockResolvedValue(SESSION);
-    expect(await answerCategory(2026, 4, 'Zyx', 'cash')).toEqual({ ok: true, value: { ...VIEW, canWrite: true } });
+    expect(await answerCategory(2026, 4, 'Zyx', 'cash')).toEqual({ ok: true, value: { ...VIEW, canWrite: true, companies: {} } });
     expect(loadSpending).toHaveBeenLastCalledWith({ marker: 'prisma' }, 'ws-a', 2026, 4);
   });
 
@@ -124,6 +137,40 @@ describe('writes', () => {
     requireAction.mockResolvedValue(SESSION);
     markCounterpartyOwnAccount.mockRejectedValue(new SpendingServiceError('treatment_exists'));
     expect(await markOwnAccount(2026, null, 'Zyx')).toEqual({ ok: false, error: 'invalid_input', detail: 'treatment_exists' });
+  });
+
+  it('names the other companies of shared accounts by the person\'s own memberships, and no company the person is not in', async () => {
+    const other = { id: 'ws-b', slug: 'marlinjai', role: 'member', tenantId: 't-b', tenantName: 'marlinjai' };
+    requireReceiptsSession.mockResolvedValue({ ...SESSION, memberships: [WS, other] });
+    requireAction.mockResolvedValue(SESSION);
+    loadSpending.mockResolvedValue({ ...VIEW, accounts: [{ id: 'acc', label: 'N26', completeThrough: null, sharedFrom: null }], sharedOut: [{ accountLabel: 'N26', receiverWorkspaceId: 'ws-b' }, { accountLabel: 'Alt', receiverWorkspaceId: 'ws-unknown' }] });
+    const result = await getSpending(2026, null);
+    expect(result).toMatchObject({ ok: true, value: { companies: { 'ws-b': 'marlinjai' } } });
+    expect(result.ok && 'ws-unknown' in result.value.companies).toBe(false);
+  });
+
+  it('settles both companies\' queues after an own-account answer that touches a shared account, and only then', async () => {
+    requireAction.mockResolvedValue(SESSION);
+    touchesSharedAccount.mockResolvedValue(true);
+    await markOwnAccount(2026, null, 'Kreditkarte');
+    expect(touchesSharedAccount).toHaveBeenLastCalledWith({ marker: 'prisma' }, 'ws-a', { counterparty: 'Kreditkarte' });
+    await unmarkOwnAccount(2026, null, 'kreditkarte');
+    expect(touchesSharedAccount).toHaveBeenLastCalledWith({ marker: 'prisma' }, 'ws-a', { counterparty: 'kreditkarte' });
+    expect(settleAcrossSharesCoalesced).toHaveBeenCalledTimes(2);
+    expect(settleAcrossSharesCoalesced).toHaveBeenLastCalledWith({ marker: 'prisma' }, ['ws-a'], { onlyWithReceivers: true });
+    touchesSharedAccount.mockResolvedValue(false);
+    await markOwnAccount(2026, null, 'Sparkonto');
+    expect(settleAcrossSharesCoalesced).toHaveBeenCalledTimes(2);
+  });
+
+  it('unlinking a routed receipt refuses without the write permission, a missing id, and a payment not routed here', async () => {
+    requireAction.mockRejectedValue(new ReceiptsAuthError(403));
+    expect(await unlinkRoutedReceipt(2026, null, 'pay-1')).toEqual({ ok: false, error: 'forbidden' });
+    requireAction.mockResolvedValue(SESSION);
+    expect(await unlinkRoutedReceipt(2026, null, '')).toEqual({ ok: false, error: 'invalid_input', detail: 'link_not_found' });
+    expect(unlinkRoutedPayment).not.toHaveBeenCalled();
+    unlinkRoutedPayment.mockRejectedValue(new PaymentServiceError('link_not_found'));
+    expect(await unlinkRoutedReceipt(2026, null, 'pay-2')).toEqual({ ok: false, error: 'invalid_input', detail: 'link_not_found' });
   });
 
   it('report anything unexpected as failed', async () => {

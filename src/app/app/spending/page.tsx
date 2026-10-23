@@ -51,7 +51,8 @@ export default async function SpendingPage({ searchParams }: { searchParams: Pro
   return (
     <SpendingClient key={`${data.value.overview.year}-${data.value.overview.month ?? 'all'}`} initial={data.value}>
       {checks.ok ? (
-        <ReceiptChecks initial={checks.value} focusPaymentId={pruefen ?? null} forCompany={firma ?? null} />
+        // Keyed by company: after a switch nothing of the other company (a summary, a notice, the settings form) stays.
+        <ReceiptChecks key={checks.value.workspaceId} initial={checks.value} focusPaymentId={pruefen ?? null} forCompany={firma ?? null} />
       ) : (
         <p className="ui-note ui-note-danger mt-4">Die offenen Belege konnten nicht geladen werden. Bitte die Seite neu laden.</p>
       )}

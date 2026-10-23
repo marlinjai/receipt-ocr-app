@@ -7,6 +7,7 @@ import { safeColumnName, safeTableName, serializeCell } from '@marlinjai/data-ta
 import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
 import { deleteReceiptRows } from '@/lib/meals/service';
+import { settleMovedPaymentsLater } from '@/lib/spending/settle-later';
 import { deleteStoredFile } from '@/lib/stored-files';
 import { tenantIdForWorkspace } from '@/lib/auth-workspace';
 import { stampTableOwner } from '@/lib/receipts-table';
@@ -664,6 +665,8 @@ async function removeReceipts(rowIds: string[]): Promise<DeleteReceiptsOutcome> 
     const result = await deleteReceiptRows(prisma, { workspaceId, tenantId: null }, rows, { deleteStoredFile });
     outcome.deleted.push(...result.done);
     outcome.kept.push(...result.skipped);
+    // A deleted receipt takes its payment links along: a payment of a shared account may now move between companies.
+    if (result.done.length > 0) settleMovedPaymentsLater(prisma, workspaceId);
   }
   return outcome;
 }

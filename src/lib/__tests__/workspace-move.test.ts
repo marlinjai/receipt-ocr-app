@@ -301,10 +301,28 @@ describe('moveWorkspace (the write order, with the contacts package and the data
     expect(writes.map((w) => w.model)).toContain('dtTable');
     for (const write of writes) {
       expect(write.method).toBe('updateMany');
-      expect(write.data).toEqual({ authTenantId: 'tnt_b' });
+      // A share of an account also names the receiving company: that stamp follows the move too, and nothing else.
+      expect(write.data).toEqual(write.model === 'taxAccountShare' && 'receiverTenantId' in (write.data as object) ? { receiverTenantId: 'tnt_b' } : { authTenantId: 'tnt_b' });
     }
+    expect(writes).toContainEqual({ model: 'taxAccountShare', method: 'updateMany', data: { receiverTenantId: 'tnt_b' } });
     // No statement outside the models: the rows of the receipts table are never addressed.
     expect(raw).not.toHaveBeenCalled();
+  });
+
+  it('a dry run counts the receiving company\'s stamp on account shares, so it says what a move will change', async () => {
+    // The holder's own stamp on the share is grouped by the generic count (none here); the receiver's by its own.
+    const shares = {
+      groupBy: vi.fn(async (args: { by: string[] }) => (args.by[0] === 'receiverTenantId' ? [{ receiverTenantId: 'tnt_a', _count: { _all: 2 } }, { receiverTenantId: 'tnt_other', _count: { _all: 1 } }] : [])),
+      updateMany: vi.fn(),
+    };
+    const empty = { groupBy: vi.fn(async () => []), findMany: vi.fn(async () => []), count: vi.fn(async () => 0), updateMany: vi.fn() };
+    const db: unknown = new Proxy({}, { get: (_t, prop) => (prop === 'taxAccountShare' ? shares : empty) });
+    fakeContacts(async () => ({ written: false, moved: 0, refused: 0, held: 0, items: [] }), async () => []);
+    const report = await moveWorkspace(db as PrismaClient, REQ, { apply: false });
+    expect(report.rows.tables['tax_account_shares (receiving company)']).toEqual({ rows: 3, restamp: 2, unstamped: 0, alreadyAtTarget: 0, otherCompany: 1 });
+    // A third company on the receiving side blocks nothing: only the source company's stamp is rewritten.
+    expect(report.blocked).toEqual([]);
+    expect(shares.groupBy).toHaveBeenLastCalledWith({ by: ['receiverTenantId'], where: { receiverWorkspaceId: 'ws_1' }, _count: { _all: true } });
   });
 
   it('a dry run asks the package only for a preview and opens no transaction', async () => {

@@ -7,7 +7,7 @@ import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from 
 import { batchCoverage, beyondStored, covers, coveredByOtherSources, mergeIntervals, orderBatches, overlaps } from './coverage';
 import { parsePaymentFile, referenceHash } from './parse';
 import { amountQuery } from './search';
-import { PAYMENT_KINDS, type NormalizedPayment, type PaymentFormat, type PaymentKind } from './types';
+import { OVERPAID_TOLERANCE_PERCENT, PAYMENT_KINDS, type NormalizedPayment, type PaymentFormat, type PaymentKind } from './types';
 
 /**
  * Server-side reads and writes for payments. Like the other finance services,
@@ -269,7 +269,8 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     let releasedLinks = 0;
     if (parsed.cancelled.length > 0) {
       const where = { accountId, sourceHash: { in: parsed.cancelled }, cancelledByBatchId: null };
-      releasedLinks = await tx.taxPaymentLink.count({ where: { payment: where } });
+      // This company's links only: a link another company holds on a shared account's payment is not this import's to report.
+      releasedLinks = await tx.taxPaymentLink.count({ where: { authWorkspaceId: ctx.workspaceId, payment: where } });
       cancelledEarlier = (await tx.taxPayment.updateMany({ where, data: { cancelledByBatchId: created.id } })).count;
     }
     // A year of a file that adds, recognizes and cancels nothing: its empty import would only stand in the way of
@@ -343,7 +344,7 @@ async function linkByReference(db: Prisma.TransactionClient, ctx: PaymentContext
   // Whether a link is unambiguous is judged against every unlinked incoming
   // payment of the workspace, not only this file's: an earlier payment naming
   // the same invoice makes the new one ambiguous too.
-  const payments = await db.taxPayment.findMany({ where: { authWorkspaceId: ctx.workspaceId, amountCents: { gt: 0 }, cancelledByBatchId: null }, include: { links: true } });
+  const payments = await db.taxPayment.findMany({ where: { authWorkspaceId: ctx.workspaceId, amountCents: { gt: 0 }, cancelledByBatchId: null }, include: { links: { where: { authWorkspaceId: ctx.workspaceId } } } });
   const invoices = await db.taxIssuedInvoice.findMany({ where: { authWorkspaceId: ctx.workspaceId }, include: { payments: true, paymentLinks: { where: { payment: { cancelledByBatchId: null } } } } });
   const proposals = unambiguousReferenceMatches(
     proposeMatches(
@@ -506,8 +507,6 @@ export interface LinkResult {
 /** How a receipt answers for a link: null when it is not this workspace's, otherwise its own euro amount (null: none). */
 export type ReceiptForLink = (rowId: string) => Promise<{ amountCents: number | null } | null>;
 
-/** How far the payments of a receipt may go beyond its own amount before a person is asked: fees and exchange rates. */
-export const OVERPAID_TOLERANCE_PERCENT = 8;
 
 /**
  * Link a payment (or part of it) to a receipt or an issued invoice, by a
@@ -535,7 +534,8 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
   return db.$transaction(async (tx) => {
     // Lock the payment so two confirmations at the same moment cannot both use its free amount.
     await tx.$queryRaw`SELECT id FROM tax_payments WHERE id = ${input.paymentId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
-    const payment = await tx.taxPayment.findFirst({ where: { id: input.paymentId, authWorkspaceId: ctx.workspaceId }, include: { links: true } });
+    // This company's links only: a link the receiving company of a shared account holds is not this company's money.
+    const payment = await tx.taxPayment.findFirst({ where: { id: input.paymentId, authWorkspaceId: ctx.workspaceId }, include: { links: { where: { authWorkspaceId: ctx.workspaceId } } } });
     if (!payment) throw new PaymentServiceError('payment_not_found');
     // A cancelled purchase counts nowhere, so nothing is linked to it.
     if (payment.cancelledByBatchId !== null) throw new PaymentServiceError('invalid_link');
@@ -569,7 +569,7 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
       const onReceipt = (p: PaymentRow) => p.links.filter((l) => l.rowId === rowId);
       // An accepted proposal is for a payment and a receipt that are both free;
       // in a second tab one of them may have been linked a moment ago.
-      if (method === 'estimate' && (payment.links.length > 0 || loaded.payments.some((p) => onReceipt(p).length > 0))) throw new PaymentServiceError('proposal_gone');
+      if (method === 'estimate' && (payment.links.length > 0 || loaded.linkedElsewhere.has(rowId) || loaded.payments.some((p) => onReceipt(p).length > 0))) throw new PaymentServiceError('proposal_gone');
       if (payment.amountCents < 0) {
         const funders = loaded.payments.filter((p) => p.funding?.twinId === payment.id && onReceipt(p).length > 0);
         const others = loaded.payments.filter((p) => p.id !== payment.id && !funders.includes(p) && onReceipt(p).length > 0);
@@ -578,7 +578,9 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
           await tx.taxPaymentLink.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId, paymentId: { in: funders.map((p) => p.id) } } });
           movedFromPaymentId = funders[0].id;
         } else if (!input.confirmed && receipt && receipt.amountCents !== null) {
-          const paidSoFar = paidOnReceipt(loaded.payments, rowId);
+          // The one paid-by sum the picker and the routed link read: this company's payments (a purchase and
+          // its funding debit once) and its links on other companies' shared payments, never below nothing.
+          const paidSoFar = paidByReceipt(loaded.payments, loaded.linkedElsewhere).get(rowId) ?? 0;
           const limit = receipt.amountCents + Math.round((receipt.amountCents * OVERPAID_TOLERANCE_PERCENT) / 100);
           // Counted once when the other end of the same money is on the receipt already: this
           // purchase's funding debit, or the purchase this debit funds.
@@ -643,7 +645,8 @@ export async function linkProposals(db: PrismaClient, ctx: PaymentContext, pairs
     await tx.$queryRaw`SELECT count(*)::int AS locked FROM (SELECT pg_advisory_xact_lock(hashtext(k)) FROM unnest(${rowKeys}::text[]) AS k ORDER BY k) AS locks`;
     const loaded = await loadPayments(tx, ctx.workspaceId);
     const free = new Map(loaded.payments.filter((p) => p.links.length === 0 && p.amountCents < 0).map((p) => [p.id, p]));
-    const linkedRows = new Set(loaded.payments.flatMap((p) => p.links.flatMap((l) => (l.rowId ? [l.rowId] : []))));
+    // A receipt linked on another company's shared payment is linked too: never proposed a second time.
+    const linkedRows = new Set([...loaded.payments.flatMap((p) => p.links.flatMap((l) => (l.rowId ? [l.rowId] : []))), ...loaded.linkedElsewhere.keys()]);
     const linked: Array<{ paymentId: string; rowId: string }> = [];
     for (const pair of pairs) {
       const payment = free.get(pair.paymentId);
@@ -681,11 +684,16 @@ export function countedReceiptLinks(payments: readonly PaymentRow[]): Array<{ pa
   return out;
 }
 
-/** What the linked payments of a receipt add up to: money out less money back, never below nothing. */
-function paidOnReceipt(payments: readonly PaymentRow[], rowId: string): number {
-  let cents = 0;
-  for (const { payment, link } of countedReceiptLinks(payments)) if (link.rowId === rowId) cents += payment.amountCents < 0 ? link.cents : -link.cents;
-  return Math.max(0, cents);
+/**
+ * What pays each receipt of a company, by receipt: its own payments counted as
+ * `countedReceiptLinks` counts them (a purchase and the debit funding it once), plus
+ * its links on other companies' shared payments (`linkedElsewhere`), never
+ * below nothing. The one sum the guards and the hand choice of a receipt read.
+ */
+export function paidByReceipt(ownPayments: readonly PaymentRow[], linkedElsewhere: ReadonlyMap<string, number>): Map<string, number> {
+  const raw = new Map(linkedElsewhere);
+  for (const { payment, link } of countedReceiptLinks(ownPayments)) raw.set(link.rowId, (raw.get(link.rowId) ?? 0) + (payment.amountCents < 0 ? link.cents : -link.cents));
+  return new Map([...raw].map(([rowId, cents]) => [rowId, Math.max(0, cents)]));
 }
 
 export async function unlinkPayment(db: PrismaClient, ctx: PaymentContext, linkId: string): Promise<void> {
@@ -736,15 +744,36 @@ export interface LoadedPayments {
    */
   cancelled: Array<{ id: string; accountId: string; bookingDay: string; amountCents: number; counterparty: string; rowIds: string[] }>;
   treatments: Map<string, CounterpartyTreatment>;
+  /**
+   * What this company's receipts are paid by on payments of ANOTHER company
+   * (an account whose private payments are shared with this one, plan
+   * 2026-10-22): by receipt, money out less money back, cancelled purchases
+   * left out. Such a link never counts in this company's figures, but its
+   * receipt is linked: it is not proposed again and not paid twice.
+   */
+  linkedElsewhere: Map<string, number>;
 }
 
-/** Every payment of the workspace with its links, and what was said about the counterparties. */
+/**
+ * Every payment of the workspace with its links, and what was said about the
+ * counterparties. Only the workspace's OWN links are read: when an account's
+ * private payments go to another company (plan 2026-10-22, payments across
+ * companies), that company's links on them are its own and never count here,
+ * so neither the tax figures nor the questions of this company can change
+ * through them.
+ */
 export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, workspaceId: string): Promise<LoadedPayments> {
-  const [accounts, stored, rules] = await Promise.all([
+  const [accounts, stored, rules, elsewhere] = await Promise.all([
     db.taxAccount.findMany({ where: { authWorkspaceId: workspaceId }, include: { batches: { orderBy: { createdAt: 'desc' } } }, orderBy: { label: 'asc' } }),
-    db.taxPayment.findMany({ where: { authWorkspaceId: workspaceId }, include: { links: true }, orderBy: [{ bookingDay: 'asc' }, { createdAt: 'asc' }] }),
+    db.taxPayment.findMany({ where: { authWorkspaceId: workspaceId }, include: { links: { where: { authWorkspaceId: workspaceId } } }, orderBy: [{ bookingDay: 'asc' }, { createdAt: 'asc' }] }),
     db.taxCounterpartyRule.findMany({ where: { authWorkspaceId: workspaceId } }),
+    db.taxPaymentLink.findMany({
+      where: { authWorkspaceId: workspaceId, rowId: { not: null }, payment: { authWorkspaceId: { not: workspaceId }, cancelledByBatchId: null } },
+      select: { rowId: true, cents: true, payment: { select: { amountCents: true } } },
+    }),
   ]);
+  const linkedElsewhere = new Map<string, number>();
+  for (const l of elsewhere) linkedElsewhere.set(l.rowId as string, (linkedElsewhere.get(l.rowId as string) ?? 0) + (l.payment.amountCents < 0 ? l.cents : -l.cents));
   const treatments = new Map<string, CounterpartyTreatment>();
   for (const rule of rules) {
     if ((COUNTERPARTY_TREATMENTS as readonly string[]).includes(rule.treatment)) treatments.set(rule.counterpartyKey, rule.treatment as CounterpartyTreatment);
@@ -798,6 +827,7 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
       .filter((p) => p.cancelledByBatchId !== null)
       .map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, rowIds: p.links.flatMap((l) => (l.rowId ? [l.rowId] : [])) })),
     treatments,
+    linkedElsewhere,
   };
 }
 

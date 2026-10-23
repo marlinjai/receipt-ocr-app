@@ -29,6 +29,7 @@ import {
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { parseRotation } from '@/lib/meals/viewer-state';
 import { prisma } from '@/lib/prisma';
+import { settleMovedPaymentsLater } from '@/lib/spending/settle-later';
 import { deleteStoredFile } from '@/lib/stored-files';
 
 /**
@@ -204,7 +205,12 @@ export async function restoreMeals(rowIds: string[]): Promise<Result<MealBatchRe
 
 /** Delete receipts for good: stored file, row and meal guests. Cannot be undone. */
 export async function deleteMealReceipts(rowIds: string[]): Promise<Result<MealBatchResult>> {
-  return runBatch(rowIds, (ctx, ids) => deleteReceiptRows(prisma, ctx, ids, { deleteStoredFile }));
+  return runBatch(rowIds, async (ctx, ids) => {
+    const result = await deleteReceiptRows(prisma, ctx, ids, { deleteStoredFile });
+    // A deleted receipt takes its payment links along: a payment of a shared account may now move between companies.
+    if (result.done.length > 0) settleMovedPaymentsLater(prisma, ctx.workspaceId);
+    return result;
+  });
 }
 
 /**

@@ -14,6 +14,8 @@ const deleteReceiptRows = vi.fn();
 const deleteFile = vi.fn();
 const setReceiptFileRotation = vi.fn();
 const saveMealDetails = vi.fn();
+const settleMovedPaymentsLater = vi.fn();
+vi.mock('@/lib/spending/settle-later', () => ({ settleMovedPaymentsLater: (...a: unknown[]) => settleMovedPaymentsLater(...a) }));
 
 vi.mock('@/lib/auth', () => ({ auth: { requireAction: (...a: unknown[]) => requireAction(...a) } }));
 vi.mock('@/lib/auth-guards', () => {
@@ -56,6 +58,7 @@ beforeEach(() => {
   requireAction.mockReset();
   setMealTypeForRows.mockReset();
   deleteReceiptRows.mockReset();
+  settleMovedPaymentsLater.mockReset();
   deleteFile.mockReset();
   setReceiptFileRotation.mockReset();
   saveMealDetails.mockReset();
@@ -115,6 +118,14 @@ describe('batch actions: permission and failures', () => {
     const partial = { done: ['a'], records: [], skipped: [{ rowId: 'b', reason: 'not_found' }] };
     deleteReceiptRows.mockResolvedValue(partial);
     expect(await deleteMealReceipts(['a', 'b'])).toEqual({ ok: true, value: partial });
+    // A deleted receipt took its payment links along: the queues of a shared account are settled after the answer.
+    expect(settleMovedPaymentsLater).toHaveBeenCalledWith({ marker: 'prisma' }, 'ws-a');
+  });
+
+  it('settles nothing when nothing was deleted', async () => {
+    deleteReceiptRows.mockResolvedValue({ done: [], records: [], skipped: [{ rowId: 'b', reason: 'not_found' }] });
+    await deleteMealReceipts(['b']);
+    expect(settleMovedPaymentsLater).not.toHaveBeenCalled();
   });
 });
 

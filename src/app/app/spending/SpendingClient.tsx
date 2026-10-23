@@ -451,9 +451,9 @@ export default function SpendingClient({ initial, children }: { initial: Spendin
             Belege an Zahlungen, die nicht mehr hierher gehören ({view.dormantLinks.length})
           </summary>
           <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
-            Die Firma, die das Konto führt, hat diese Zahlungen inzwischen anders beantwortet, oder die Weitergabe ist beendet. Der Beleg
-            zählt so lange nirgends und wird keiner anderen Zahlung vorgeschlagen. Kommt die Zahlung zurück, gilt die Verknüpfung wieder;
-            „Lösen“ gibt den Beleg frei.
+            Die Firma, die das Konto führt, hat diese Zahlungen inzwischen anders beantwortet, die Weitergabe ist beendet, oder ein
+            späterer Import hat die Zahlung storniert. Der Beleg zählt so lange nirgends; einer anderen Zahlung wird er nur bei einer
+            stornierten Zahlung vorgeschlagen. Kommt die Zahlung zurück, gilt die Verknüpfung wieder; „Lösen“ gibt den Beleg frei.
           </p>
           <ul className="mt-2 divide-y">
             {view.dormantLinks.map((l) => (

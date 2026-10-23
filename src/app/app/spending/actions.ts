@@ -5,9 +5,8 @@ import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, membershipLabel, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
-import { touchesSharedAccount, unlinkRoutedPayment } from '@/lib/tax/payments/routing';
-import { settleAcrossSharesCoalesced } from '@/lib/spending/loop-service';
-import { after } from 'next/server';
+import { unlinkRoutedPayment } from '@/lib/tax/payments/routing';
+import { settleMovedPaymentsLater } from '@/lib/spending/settle-later';
 import {
   SpendingServiceError,
   loadSpending,
@@ -117,18 +116,10 @@ export async function withdrawCategory(year: unknown, month: unknown, counterpar
 /**
  * An own-account answer makes a counterparty's payments transfers, which never
  * go to the company receiving an account's private payments: a payment can
- * move between companies, so the message queues of both are settled after the
- * answer (only where a shared account is touched). A failure is logged only.
+ * move between companies, so the message queues are settled after the answer.
  */
 function settleMovedLater(ctx: { workspaceId: string }, counterparty: unknown): void {
-  after(async () => {
-    try {
-      if (!(await touchesSharedAccount(prisma, ctx.workspaceId, { counterparty }))) return;
-      await settleAcrossSharesCoalesced(prisma, [ctx.workspaceId], { onlyWithReceivers: true });
-    } catch (e) {
-      console.error('[spending] settling messages of moved payments failed', (e as Error)?.name ?? 'error');
-    }
-  });
+  settleMovedPaymentsLater(prisma, ctx.workspaceId, { counterparty });
 }
 
 /** The counterparty is one of the owner's own accounts (see `markCounterpartyOwnAccount`). */

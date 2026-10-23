@@ -6,8 +6,7 @@ import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '
 import { after } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
-import { settleAcrossSharesCoalesced } from '@/lib/spending/loop-service';
-import { touchesSharedAccount } from '@/lib/tax/payments/routing';
+import { settleMovedPaymentsLater } from '@/lib/spending/settle-later';
 import { berlinToday } from '@/lib/spending/period';
 import {
   PaymentServiceError,
@@ -378,22 +377,9 @@ export async function searchPayments(year: number, query: unknown): Promise<Resu
   }
 }
 
-/**
- * After an answer or a link changed in this company, a payment of a shared
- * account may have moved to or from the company receiving its private
- * payments (plan 2026-10-22, payments across companies): its messages leave
- * the in-app queue of the company it left, after the answer is sent.
- */
-function settleMovedLater(ctx: { workspaceId: string }, hint: Parameters<typeof touchesSharedAccount>[2] = {}): void {
-  after(async () => {
-    try {
-      // Only where the change touches a shared account can a payment have moved; bursts settle once more at the end.
-      if (!(await touchesSharedAccount(prisma, ctx.workspaceId, hint))) return;
-      await settleAcrossSharesCoalesced(prisma, [ctx.workspaceId], { onlyWithReceivers: true });
-    } catch (e) {
-      console.error('[finance] settling messages of moved payments failed', (e as Error)?.name ?? 'error');
-    }
-  });
+/** See `settleMovedPaymentsLater`: a payment of a shared account may have moved between companies. */
+function settleMovedLater(ctx: { workspaceId: string }, hint: Parameters<typeof settleMovedPaymentsLater>[2] = {}): void {
+  settleMovedPaymentsLater(prisma, ctx.workspaceId, hint);
 }
 
 export async function treatCounterparty(year: number, input: unknown): Promise<Result<StatementView>> {

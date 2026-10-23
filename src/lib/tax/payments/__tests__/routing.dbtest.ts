@@ -552,4 +552,27 @@ describe('re-entry', () => {
     expect(await db.spendingNotification.count({ where: { authWorkspaceId: w.rctx.workspaceId } })).toBe(0);
     expect(await db.spendingReceiptAnswer.count({ where: { authWorkspaceId: w.hctx.workspaceId } })).toBe(1);
   });
+
+  it('erasing the holder also removes what the receiver kept about its payments, mail finds included', async () => {
+    const w = await world();
+    const id = w.ids.get('Teils Markt') as string;
+    await answerNoReceipt(db, w.rctx, id, 'Kein Beleg');
+    await runReceiptLoop(db, w.rctx, { today: TODAY, channels: [], mailbox: OFF_MAILBOX });
+    await db.spendingMailSearch.create({ data: { authWorkspaceId: w.rctx.workspaceId, paymentId: id, outcome: 'found', tries: 1, searchedAt: new Date() } });
+    await db.spendingMailCandidate.create({
+      data: { authWorkspaceId: w.rctx.workspaceId, paymentId: id, messageId: 'm-test', partIndex: 0, fileName: 'Rechnung.pdf', mimeType: 'application/pdf', receivedDay: '2026-05-13', subject: 'Rechnung', sender: 'laden@example.com' },
+    });
+    // The receiver's own records about its own matters stay: a message about nothing of the holder's.
+    await db.spendingNotification.create({ data: { authWorkspaceId: w.rctx.workspaceId, subjectKey: 'budget:test', kind: 'budget', title: 'Budget', body: 'Test', path: '/app/spending' } });
+    const result = await endCompanyAccountShares(db, w.hctx.tenantId, [w.hctx.workspaceId]);
+    expect(result).toMatchObject({ shares: 1 });
+    expect(result.records).toBeGreaterThanOrEqual(4);
+    for (const count of [
+      db.spendingReceiptAnswer.count({ where: { authWorkspaceId: w.rctx.workspaceId } }),
+      db.spendingMailSearch.count({ where: { authWorkspaceId: w.rctx.workspaceId } }),
+      db.spendingMailCandidate.count({ where: { authWorkspaceId: w.rctx.workspaceId } }),
+      db.spendingNotification.count({ where: { authWorkspaceId: w.rctx.workspaceId, kind: 'missing_receipt' } }),
+    ]) expect(await count).toBe(0);
+    expect(await db.spendingNotification.count({ where: { authWorkspaceId: w.rctx.workspaceId, subjectKey: 'budget:test' } })).toBe(1);
+  });
 });

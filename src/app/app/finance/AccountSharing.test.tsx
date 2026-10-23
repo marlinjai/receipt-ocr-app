@@ -34,7 +34,7 @@ describe('AccountSharing', () => {
     const acts = actions();
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<AccountSharing initial={view()} accounts={accounts} actions={acts} />);
-    const button = screen.getByRole('button', { name: 'Private Zahlungen von Girokonto weitergeben' });
+    const button = screen.getByRole('button', { name: 'Private Zahlungen weitergeben: Girokonto' });
     expect((button as HTMLButtonElement).disabled).toBe(true);
     await userEvent.selectOptions(screen.getByLabelText('Firma für die privaten Zahlungen von Girokonto'), 'ws-b');
     await userEvent.click(button);
@@ -52,9 +52,16 @@ describe('AccountSharing', () => {
     const acts = actions({ endAccountShare: vi.fn(async () => ({ ok: false as const, error: 'not_found' as const, detail: 'share_not_found' })) });
     render(<AccountSharing initial={view({ incoming: [share({ id: 'sh-2', accountLabel: 'Kreditkarte', otherName: 'Firma' })] })} accounts={[]} actions={acts} />);
     expect(screen.getByText(/Kreditkarte, geführt von Firma/)).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Weitergabe von Kreditkarte beenden' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Weitergabe beenden: Kreditkarte' }));
     expect(acts.endAccountShare).toHaveBeenCalledWith('sh-2');
     expect((await screen.findByRole('alert')).textContent).toContain('Diese Weitergabe ist schon beendet');
+  });
+
+  it('takes over fresh data from the server', () => {
+    const { rerender } = render(<AccountSharing initial={view()} accounts={accounts} actions={actions()} />);
+    expect(screen.queryByText(/private Zahlungen gehen an Privat/)).toBeNull();
+    rerender(<AccountSharing initial={view({ outgoing: [share()] })} accounts={accounts} actions={actions()} />);
+    expect(screen.getByText(/private Zahlungen gehen an Privat/)).toBeTruthy();
   });
 
   it('is read-only without the write permission', () => {

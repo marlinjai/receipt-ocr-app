@@ -101,6 +101,9 @@ other's copy behind, and every changed answer would need a write in two companie
    of both companies and holds the write permission (`receipts.row.write`) in both. Never by
    default, never by a member of only one side. A target outside the person's memberships is
    refused as forbidden, the same company and an account already shared are refused with a reason.
+   Accepted: membership and permissions are checked when the share starts. Should the person later
+   lose either, the share stays until a writer of either company ends it; the server cannot see
+   other people's memberships to end it by itself.
 7. **Undo.** A writer of either company ends the share ("Weitergabe beenden"). The payments are then
    back with the holder at once, its spending side shows them again, and the receiver sees none of
    them. The receiver's links stay stored but dormant (see 9); sharing the same account with the
@@ -143,8 +146,9 @@ other's copy behind, and every changed answer would need a write in two companie
     names the payment id (only whether one exists, nothing of its content), so also a share that
     ended or went to another company cannot cause a second message. A payment that moved leaves the
     in-app queue of the company it left at once: after a share is started or ended (both companies)
-    and after an answer, a link or an undone import in a holder that shares accounts (the holder and
-    its receivers; also the own-account answer on the spending page), each queue is settled after
+    and after an answer, a link, an undone import or a deleted receipt in a holder that shares
+    accounts (the holder and its receivers; also the own-account answer on the spending page, and a
+    receipt deleted on the dashboard or the meals page), each queue is settled after
     the answer is sent. The 14-day window stays, so splitting the history sends nothing. One
     exception, accepted: erasing a company removes its messages about the other company's payments
     (they name that company's counterparty and amount), and with them the record that such a
@@ -194,8 +198,8 @@ payment (link, "no receipt exists", downloading or taking over a mail find) re-d
 first (a link inside its transaction, under the payment's row lock) and refuses a payment that does
 not route to it, with the same answer as an unknown payment. Unlinking touches only the company's
 own links, dormant ones too, and reads nothing of the payment: without a link of the company it
-answers "no link" whether the payment exists or not. A row lock is taken only on a payment the
-company may act on. "No receipt exists"
+answers "no link" whether the payment exists or not. A row lock is taken only on a payment of an
+account shared with the company (a link) or one carrying a link of the company (an unlink). "No receipt exists"
 is checked just before it is stored; should the holder change the answer in that moment, the
 receiver's answer is only stored, never shown or read by the holder. The holder never sees the receiver's receipts, links, answers or finds. Tests
 prove each of these (`routing.dbtest.ts`).
@@ -251,7 +255,7 @@ prove each of these (`routing.dbtest.ts`).
   in the receiver "Aus anderen Firmen" with the holder's name). Spending page: the shared account
   named with its holder, the holder's note where its accounts' private payments went, and "Lösen"
   on a routed payment with a private receipt.
-- **Tests**: `routing.dbtest.ts` (31 tests through the four paths and the privacy promise, with the
+- **Tests**: `routing.dbtest.ts` (32 tests through the four paths and the privacy promise, with the
   holder's tax statement compared before and after), `route.test.ts`, `sharing-actions.test.ts`,
   `AccountSharing.test.tsx`, and additions to the spending page, action, attachment and move tests.
 
@@ -294,8 +298,22 @@ No blocker; fixed: tests for the lock on the subject (three announcements at onc
 message), for `touchesSharedAccount` against the database (payment, account, counterparty by name
 and by key, unshared accounts) and for the coalescing of settling runs; "Lösen" answers "no link"
 when nothing of the company's is left on a payment, so a second press is not mistaken for a moved
-payment; row locks are taken only on payments the company may act on; the check whether a payment
+payment; row locks are taken only on payments of an account shared with the company or carrying
+its link; the check whether a payment
 is on a company's spending side reads a share exactly as the spending read does.
+
+### Fifth review (2026-10-23), fixed
+
+No blocker; fixed: a receipt deleted on the dashboard or the meals page settles the queues too
+(one shared helper, `settleMovedPaymentsLater`, for every place); the dormant-link note names a
+cancelled payment as well; a payment that moved away shows its own message in the open checks;
+the accessible names of the sharing buttons start with their visible text; the sharing section
+takes over fresh server data; the holder's erasure is tested for every kind of kept record, mail
+finds included; the lock sentence above and the accepted points in Decided 6 and below.
+
+Accepted cost: linking a private receipt reads the holder's payments in full two or three times
+(about 3,900 rows each), once inside the transaction. A narrower query would need a second copy of
+the private-or-business rule; for one owner's accounts the reads are fast enough.
 
 ### What the owner does after the deploy
 

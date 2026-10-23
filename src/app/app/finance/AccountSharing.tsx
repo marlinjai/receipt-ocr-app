@@ -53,7 +53,7 @@ function AccountRow({
           </span>
         </span>
         {view.canWrite && (
-          <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => onEnd(share)} aria-label={`Weitergabe von ${account.label} an ${other(share)} beenden`}>
+          <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => onEnd(share)} aria-label={`Weitergabe beenden: ${account.label} an ${other(share)}`}>
             Weitergabe beenden
           </button>
         )}
@@ -81,7 +81,7 @@ function AccountRow({
           type="button"
           className="ui-btn ui-btn-sm"
           disabled={pending || !chosen}
-          aria-label={`Private Zahlungen von ${account.label} weitergeben`}
+          aria-label={`Private Zahlungen weitergeben: ${account.label}`}
           onClick={() => chosen && onShare(chosen.workspaceId, chosen.label)}
         >
           Private Zahlungen weitergeben
@@ -101,6 +101,12 @@ function AccountRow({
 export default function AccountSharing({ initial, accounts, actions }: { initial: SharingView; accounts: ReadonlyArray<{ id: string; label: string }>; actions: SharingActions }) {
   const headingId = useId();
   const [view, setView] = useState(initial);
+  // Fresh data from the server (a reload of the page's data) replaces what this section holds.
+  const [shown, setShown] = useState(initial);
+  if (shown !== initial) {
+    setShown(initial);
+    setView(initial);
+  }
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -179,7 +185,7 @@ export default function AccountSharing({ initial, accounts, actions }: { initial
                   {s.accountLabel}, geführt von {other(s)}: die privaten Zahlungen erscheinen hier unter Ausgaben.
                 </span>
                 {view.canWrite && (
-                  <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => end(s, s.accountLabel)} aria-label={`Weitergabe von ${s.accountLabel} beenden`}>
+                  <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => end(s, s.accountLabel)} aria-label={`Weitergabe beenden: ${s.accountLabel}`}>
                     Weitergabe beenden
                   </button>
                 )}

@@ -10,3 +10,13 @@
  */
 export class NextRequest {}
 export class NextResponse {}
+
+/**
+ * `after` runs work once the response is sent (settling message queues after
+ * an answer, say). The tests that call an action directly assert what the
+ * action itself did; the deferred work is tested on its own, so here it is
+ * dropped rather than left running against a database the test closes.
+ */
+export function after(task: unknown): void {
+  void task;
+}

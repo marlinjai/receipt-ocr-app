@@ -257,6 +257,8 @@ export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok:
   if (result.detail === 'invalid_channel') return 'Bitte einen der angebotenen Wege wählen.';
   if (result.detail === 'candidate_not_found') return 'Diese Mail wird nicht mehr angeboten. Bitte die Seite neu laden.';
   if (result.detail === 'invalid_subscription') return 'Das Gerät hat keine gültige Push-Anmeldung geliefert. Bitte Push noch einmal einschalten.';
+  if (result.detail === 'payment_not_found')
+    return 'Diese Zahlung gehört nicht mehr hierher: die Firma, die das Konto führt, hat sie inzwischen anders beantwortet, oder ihr Import wurde zurückgenommen. Bitte die Seite neu laden.';
   if (result.error === 'not_found') return 'Das gibt es nicht mehr (die Zahlung wurde vielleicht mit ihrem Import zurückgenommen). Bitte die Seite neu laden.';
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }

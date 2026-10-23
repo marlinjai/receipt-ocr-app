@@ -185,7 +185,10 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
   const onlyYear = validImportYear(options.onlyYear);
   const account = await db.taxAccount.findFirst({ where: { id: accountId, authWorkspaceId: ctx.workspaceId } });
   if (!account) throw new PaymentServiceError('account_not_found');
-  const contentHash = createHash('sha256').update(onlyYear === null ? text : `${text}\u0000only-year:${onlyYear}`).digest('hex');
+  // The rates a wallet's list is read at are part of what is imported: the same list read again once a missing
+  // rate exists is another import (it brings the movement that waited), not the same file twice.
+  const rates = options.parse?.wallet ? [...options.parse.wallet.rates].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]) => `${k}=${v}`).join(';') : null;
+  const contentHash = createHash('sha256').update(`${onlyYear === null ? text : `${text}\u0000only-year:${onlyYear}`}${rates === null ? '' : `\u0000rates:${rates}`}`).digest('hex');
   if (await db.taxImportBatch.findFirst({ where: { accountId, contentHash } })) throw new PaymentServiceError('file_already_imported');
   const file = parsePaymentFile(text, options.parse);
   const source: PaymentSource = { format: file.format, service: file.format === 'enable_banking_json' ? options.service ?? null : null };

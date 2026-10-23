@@ -31,9 +31,11 @@ import {
   PaymentServiceError,
   countedReceiptLinks,
   deletePaymentLinksForRows,
+  foreignAmount,
   linkProposals,
   loadPayments,
   type CounterpartyTreatment,
+  type ForeignAmount,
   type LoadedPayments,
   type PaymentContext,
   type PaymentRow,
@@ -952,6 +954,8 @@ export interface OpenPayment {
    * covers, no matching purchase, or a person said so): a person can say it is one.
    */
   namesService: boolean;
+  /** For a payment in another currency: its own amount, and whether the euro amount is an estimate. */
+  foreign?: ForeignAmount | null;
 }
 
 /** A payment the funding rule made a transfer between own accounts. Listed so a person can say it is a purchase after all. */
@@ -966,6 +970,7 @@ export interface RuleTransfer {
   hasTwin: boolean;
   /** The receipts this payment is linked to: a link on a transfer keeps counting for its receipt unless the purchase it funds is linked there too. */
   linkedTo: string[];
+  foreign?: ForeignAmount | null;
 }
 
 /**
@@ -1229,6 +1234,7 @@ function buildPaymentsView(
     accountLabel: accountLabel.get(p.accountId) ?? '',
     check: p.kind === 'income' ? 'income_without_invoice' : p.kind === 'refund' ? 'refund_without_receipt' : 'payment_without_document',
     namesService: p.kind !== 'refund' && namesService(p),
+    foreign: foreignAmount(p),
     proposals:
       p.kind === 'refund'
         ? refundsFor(p)
@@ -1244,7 +1250,7 @@ function buildPaymentsView(
   // What the funding rule hides, so it can be seen and taken back.
   const ruled = inYear.filter((p) => p.byRule && p.kind === 'own_transfer');
   const ruleTransfers: RuleTransfer[] = ruled
-    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, reference: p.reference, accountLabel: accountLabel.get(p.accountId) ?? '', hasTwin: p.funding?.twinId != null, linkedTo: p.links.flatMap((l) => (l.rowId ? [itemById.get(l.rowId)?.label ?? 'Beleg (nicht mehr vorhanden)'] : [])) }))
+    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, reference: p.reference, accountLabel: accountLabel.get(p.accountId) ?? '', hasTwin: p.funding?.twinId != null, foreign: foreignAmount(p), linkedTo: p.links.flatMap((l) => (l.rowId ? [itemById.get(l.rowId)?.label ?? 'Beleg (nicht mehr vorhanden)'] : [])) }))
     .sort((a, b) => (a.bookingDay < b.bookingDay ? 1 : -1));
   const holderOf = new Map<string, { name: string; kind: ServiceKind }>();
   for (const a of loaded.accounts) {

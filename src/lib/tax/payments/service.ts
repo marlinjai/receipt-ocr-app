@@ -815,6 +815,20 @@ export async function deletePaymentLinksForRows(db: PrismaClient, rowIds: string
 
 // ── Reading ──────────────────────────────────────────────────────────────────
 
+/** A payment in another currency as the screens show it: the source's amount and whether the euro amount is an estimate. */
+export interface ForeignAmount {
+  currency: string;
+  /** Positive cents of that currency. */
+  cents: number;
+  /** True when the euro amount is this amount at the reference rate (not what was charged). */
+  estimated: boolean;
+}
+
+/** The foreign amount of a payment row, or null for a payment in euro. */
+export function foreignAmount(p: Pick<PaymentRow, 'original' | 'estimated'>): ForeignAmount | null {
+  return p.original ? { currency: p.original.currency, cents: Math.abs(p.original.amountCents), estimated: p.estimated } : null;
+}
+
 export interface PaymentRow {
   id: string;
   accountId: string;
@@ -958,6 +972,7 @@ export interface FoundPayment {
   target: 'receipt' | 'invoice';
   /** What the payment is already on: a payment is on invoices or on receipts, never both. */
   linkedTo: 'invoice' | 'receipt' | null;
+  foreign?: ForeignAmount | null;
 }
 
 /** At most this many payments come back from one search: enough to pick from, small enough to draw. */
@@ -1009,6 +1024,7 @@ export async function findPayments(db: PrismaClient, workspaceId: string, raw: u
       accountLabel: accountLabel.get(p.accountId) ?? '',
       target: p.amountCents > 0 && own === 'income' ? 'invoice' : 'receipt',
       linkedTo: p.links.some((l) => l.invoiceId !== null) ? 'invoice' : p.links.some((l) => l.rowId !== null) ? 'receipt' : null,
+      foreign: foreignAmount(p),
     });
   }
   return { payments: found, total };

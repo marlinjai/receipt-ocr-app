@@ -11,6 +11,7 @@ import { berlinToday } from '@/lib/spending/period';
 import {
   PaymentServiceError,
   createAccount,
+  deleteAccount,
   deleteImportBatch,
   findPayments,
   importPayments,
@@ -320,6 +321,11 @@ export async function removeVatSettlement(year: number, settlementId: string): P
 
 export async function addAccount(year: number, input: unknown): Promise<Result<StatementView>> {
   return write(year, (ctx) => createAccount(prisma, ctx, input));
+}
+
+/** "Konto entfernen": only an account without payments, imports and a live connection (the service checks under its lock). */
+export async function removeAccount(year: number, accountId: string): Promise<Result<StatementView>> {
+  return write(year, (ctx) => deleteAccount(prisma, ctx, String(accountId)));
 }
 
 /**

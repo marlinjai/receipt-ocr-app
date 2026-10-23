@@ -13,6 +13,7 @@ import {
   acceptPaymentProposals,
   markAccountPrivate,
   markPaymentTransfer,
+  removeAccount,
   addAccount,
   answerYearBoundary,
   declineYearBoundary,
@@ -836,6 +837,7 @@ export default function FinanceClient({
                   isPrivate ? `${account.label}: als privat vermerkt; nach seinen Zahlungen wird nicht mehr gefragt.` : `${account.label}: wird wieder geprüft.`,
                 )
               }
+              onRemoveAccount={(account) => run(() => removeAccount(view.year, account.id), `${account.label}: entfernt.`)}
               onSearch={(query) => searchPayments(view.year, query)}
               bank={bankInitial ? { feed: bankFeed, actions: bankActions, returnNotice: bankNotice } : null}
               sharing={

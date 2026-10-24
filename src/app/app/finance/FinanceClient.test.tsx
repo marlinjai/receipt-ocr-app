@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
 import { rulesForYear } from '@/lib/tax/rules';
 import type { StatementItem, StatementView } from '@/lib/tax/service';
 import { incomeTaxView } from '@/lib/tax/income-tax/__tests__/fixtures';
@@ -50,7 +50,33 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
 
 import FinanceClient, { openQueue } from './FinanceClient';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // A `window.confirm` stub of a failed test must not answer the questions of the next one.
+  vi.restoreAllMocks();
+});
+
+/**
+ * A user without the per-action pauses (each one a timer that stretches under a loaded machine) and without
+ * the pointer-events check (it reads the computed style of the element and every ancestor on each click,
+ * and jsdom loads no stylesheet, so the check can only pass). What the tests assert is unchanged.
+ */
+const setupUser = () => userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
+
+/**
+ * Clicks a button once it takes clicks again. An action's notice shows as soon as its answer arrives, a
+ * moment before the transition ends and the buttons are enabled; a person never meets that moment, a test
+ * that clicks right after the notice can. Waiting for the button (not for a fixed time) is what a person does.
+ */
+async function clickWhenEnabled(user: ReturnType<typeof setupUser>, find: () => HTMLElement) {
+  // Looked up on every try: while busy a button may carry another label, or be drawn anew.
+  const button = await vi.waitFor(() => {
+    const found = find() as HTMLButtonElement;
+    expect(found.disabled).toBe(false);
+    return found;
+  });
+  await user.click(button);
+}
 beforeEach(() => {
   for (const fn of Object.values(actions)) fn.mockReset();
   push.mockReset();
@@ -266,7 +292,7 @@ describe('FinanceClient: a credit note', () => {
 
 describe('FinanceClient: the queue', () => {
   it('forward: decide a receipt, the figure comes from the server and the next receipt is selected', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.decideItem.mockResolvedValue({ ok: true, value: view([decided('a'), item({ rowId: 'b' })]) });
     render(<FinanceClient initial={view([item({ rowId: 'a' }), item({ rowId: 'b' })])} />);
 
@@ -285,7 +311,7 @@ describe('FinanceClient: the queue', () => {
   });
 
   it('refuses shares above the whole before anything is sent', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<FinanceClient initial={view([item({ rowId: 'a' })])} />);
     await user.type(screen.getByLabelText('Betrieb in %'), '70');
     await user.type(screen.getByLabelText('Studium in %'), '40');
@@ -295,7 +321,7 @@ describe('FinanceClient: the queue', () => {
   });
 
   it('asks for the annex line when a study share is entered', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<FinanceClient initial={view([item({ rowId: 'a' })])} />);
     await user.click(screen.getByRole('button', { name: '50 % Betrieb, 30 % Studium' }));
     await user.click(screen.getByRole('button', { name: 'Speichern und weiter' }));
@@ -312,7 +338,7 @@ describe('FinanceClient: the queue', () => {
   });
 
   it('offers the further employment costs as an annex line of their own', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<FinanceClient initial={view([item({ rowId: 'a' })])} />);
     await user.click(screen.getByRole('button', { name: '100 % Studium' }));
     const select = screen.getByLabelText('Zeile der Anlage N für Studium oder Anstellung') as HTMLSelectElement;
@@ -322,7 +348,7 @@ describe('FinanceClient: the queue', () => {
   });
 
   it('"Privat" is a decision: sent as a fully private item without a line', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.decideItem.mockResolvedValue({ ok: true, value: view([]) });
     render(<FinanceClient initial={view([item({ rowId: 'a' })])} />);
     await user.click(screen.getByRole('button', { name: 'Privat' }));
@@ -337,7 +363,7 @@ describe('FinanceClient: the queue', () => {
   });
 
   it('applies a decision to the whole vendor with an optional start date', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.decideItem.mockResolvedValue({ ok: true, value: view([decided('a')]) });
     render(<FinanceClient initial={view([item({ rowId: 'a' })])} />);
     await user.click(screen.getByRole('button', { name: '100 % Betrieb' }));
@@ -348,7 +374,7 @@ describe('FinanceClient: the queue', () => {
   });
 
   it('a failed save says so and keeps the receipt and the entries', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.decideItem.mockResolvedValue({ ok: false, error: 'forbidden' });
     render(<FinanceClient initial={view([item({ rowId: 'a' })])} />);
     await user.click(screen.getByRole('button', { name: '50 % Betrieb' }));
@@ -359,7 +385,7 @@ describe('FinanceClient: the queue', () => {
   });
 
   it('a request that never reaches the server is reported, not swallowed', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.decideItem.mockRejectedValue(new Error('network'));
     render(<FinanceClient initial={view([item({ rowId: 'a' })])} />);
     await user.click(screen.getByRole('button', { name: '100 % Betrieb' }));
@@ -414,7 +440,7 @@ describe('FinanceClient: overdue invoices in the open checks (decision D6)', () 
   });
 
   it('shows the reminder instead of "nothing open" when no receipt waits, and leads to the invoices', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<FinanceClient initial={overdueView([decided('a')])} />);
     expect(screen.queryByText(/Keine offenen Prüfungen/)).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Zu den Einnahmen' }));
@@ -422,7 +448,7 @@ describe('FinanceClient: overdue invoices in the open checks (decision D6)', () 
   });
 
   it('shows no reminder when nothing is overdue', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<FinanceClient initial={view([decided('a')])} />);
     await user.click(screen.getByRole('tab', { name: /Offen/ }));
     expect(screen.queryByRole('region', { name: /überfällig/ })).toBeNull();
@@ -442,7 +468,7 @@ describe('FinanceClient: notices and statement', () => {
   });
 
   it('shows the statement lines, opens the receipts behind one and lets a decision be removed', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.resetItem.mockResolvedValue({ ok: true, value: view([item({ rowId: 'a' })]) });
     render(<FinanceClient initial={view([decided('a')])} />);
     const lineButton = screen.getByRole('button', { name: /Zeile 43/ });
@@ -458,7 +484,7 @@ describe('FinanceClient: notices and statement', () => {
   });
 
   it('marks a receipt for section 13b, for itself or for its vendor from a day on, and takes its own statement back', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const marked = { ...decided('a'), reverseCharge: { rateBp: 1900, origin: 'item' as const }, reverseChargeOwn: { rateBp: 1900 } };
     actions.setReverseCharge.mockResolvedValue({ ok: true, value: view([marked]) });
     actions.resetReverseCharge.mockResolvedValue({ ok: true, value: view([decided('a')]) });
@@ -474,18 +500,19 @@ describe('FinanceClient: notices and statement', () => {
 
     row = screen.getByRole('button', { name: '§ 13b speichern' }).closest('li') as HTMLElement;
     expect(within(row).getByText(/Derzeit: 19 % \(an diesem Beleg\)/)).toBeTruthy();
-    await user.click(within(row).getByRole('button', { name: '7 %' }));
+    await clickWhenEnabled(user, () => within(row).getByRole('button', { name: '7 %' }));
     await user.click(within(row).getByLabelText(/Angabe für alle Belege von Netzwerk Nord GmbH/));
     await user.type(within(row).getByLabelText(/gilt ab/), '2025-01-01');
     await user.click(within(row).getByRole('button', { name: '§ 13b speichern' }));
     expect(actions.setReverseCharge).toHaveBeenLastCalledWith(2025, { rowId: 'a', rateBp: 700, applyToVendor: { vendor: 'Netzwerk Nord GmbH', effectiveFrom: '2025-01-01' } });
 
-    await user.click(within(row).getByRole('button', { name: 'Angabe am Beleg entfernen' }));
+    await clickWhenEnabled(user, () => within(row).getByRole('button', { name: 'Angabe am Beleg entfernen' }));
     expect(actions.resetReverseCharge).toHaveBeenCalledWith(2025, 'a');
+    expect(await screen.findByText('Netzwerk Nord GmbH: § 13b-Angabe entfernt.')).toBeTruthy();
   });
 
   it('the section 13b form says which services it is for, and warns about another currency', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<FinanceClient initial={view([{ ...decided('a'), currency: 'USD', gross: 42 }])} />);
     await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
     const row = screen.getByText('Netzwerk Nord GmbH').closest('li') as HTMLElement;
@@ -495,7 +522,7 @@ describe('FinanceClient: notices and statement', () => {
   });
 
   it('a failed section 13b save says why and keeps the view', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.setReverseCharge.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'invalid_reverse_charge_date' });
     render(<FinanceClient initial={view([decided('a')])} />);
     await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
@@ -513,7 +540,7 @@ describe('FinanceClient: notices and statement', () => {
   });
 
   it('a decided receipt can be split from the statement, and a split can be changed or undone there', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.saveLines.mockResolvedValue({ ok: true, value: view([decided('a')]) });
     render(<FinanceClient initial={view([{ ...decided('a'), receiptGrossCents: 3999 }])} />);
     await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
@@ -532,7 +559,7 @@ describe('FinanceClient: notices and statement', () => {
   });
 
   it('re-entry: a split that no longer adds up opens with its stored lines and their ids, and cannot be skipped', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.saveLines.mockResolvedValue({ ok: true, value: view([decided('a')]) });
     const broken = item({
       rowId: 'a',
@@ -557,7 +584,7 @@ describe('FinanceClient: notices and statement', () => {
   });
 
   it('an item the ten-day rule moved shows the day it was really paid and the year it counts in', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<FinanceClient initial={view([{ ...decided('a'), date: '2025-01-01', paidOn: '2024-12-29' }])} />);
     await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
     const row = screen.getByText('Netzwerk Nord GmbH').closest('li') as HTMLElement;
@@ -565,7 +592,7 @@ describe('FinanceClient: notices and statement', () => {
   });
 
   it('the turn-of-the-year tab exists only when the year has a payment in the window, counts what is unanswered, and saves an answer', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const { unmount } = render(<FinanceClient initial={view([])} />);
     expect(screen.queryByRole('tab', { name: /Jahreswechsel/ })).toBeNull();
     unmount();
@@ -582,7 +609,7 @@ describe('FinanceClient: notices and statement', () => {
   });
 
   it('changing the year navigates, so the server computes the other year', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<FinanceClient initial={view([])} />);
     await user.selectOptions(screen.getByLabelText('Jahr'), '2026');
     expect(push).toHaveBeenCalledWith('/app/finance?jahr=2026');
@@ -629,7 +656,7 @@ describe('FinanceClient: assets', () => {
   };
 
   it('forward: a receipt above the limit leads into a new asset with the receipt already chosen', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.saveAsset = vi.fn().mockResolvedValue({
       ok: true,
       value: view([item({ ...overLimit(), counted: true, checks: [], assetId: 'asset-1' })], { assets: [cameraAsset] }),
@@ -665,7 +692,7 @@ describe('FinanceClient: assets', () => {
   });
 
   it('refuses a new asset without a receipt or with a life of a year before anything is sent', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.saveAsset = vi.fn();
     render(<FinanceClient initial={view([decided('a')])} />);
     await user.click(screen.getByRole('tab', { name: /Anlagen/ }));
@@ -682,7 +709,7 @@ describe('FinanceClient: assets', () => {
   });
 
   it('an asset with a study share asks for its employment annex line and sends both shares', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.saveAsset = vi.fn().mockResolvedValue({ ok: true, value: view([]) });
     render(<FinanceClient initial={view([decided('a')])} />);
     await user.click(screen.getByRole('tab', { name: /Anlagen/ }));
@@ -713,7 +740,7 @@ describe('FinanceClient: assets', () => {
   });
 
   it('an asset kept only for its study share has a business share of 0', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.saveAsset = vi.fn().mockResolvedValue({ ok: true, value: view([]) });
     render(<FinanceClient initial={view([decided('a')])} />);
     await user.click(screen.getByRole('tab', { name: /Anlagen/ }));
@@ -733,7 +760,7 @@ describe('FinanceClient: assets', () => {
   });
 
   it('an asset from earlier years is entered with its book value and no receipts', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.saveAsset = vi.fn().mockResolvedValue({ ok: true, value: view([]) });
     render(<FinanceClient initial={view([])} />);
     await user.click(screen.getByRole('tab', { name: /Anlagen/ }));
@@ -754,7 +781,7 @@ describe('FinanceClient: assets', () => {
   });
 
   it('shows the register row, the reason an asset is not computed, and records a sale', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.disposeAsset = vi.fn().mockResolvedValue({ ok: true, value: view([], { assets: [cameraAsset] }) });
     const blocked = { ...cameraAsset, id: 'asset-2', label: 'Objektiv', counted: false, row: null, parts: [], schedule: [], checks: [{ assetId: 'asset-2', kind: 'asset_low_value_over_limit' as const, blocking: true as const }] };
     render(<FinanceClient initial={view([], { assets: [cameraAsset, blocked] })} />);
@@ -772,7 +799,7 @@ describe('FinanceClient: assets', () => {
   });
 
   it('several small items on one receipt can stay on the low-value line by an explicit statement', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     actions.decideItem.mockResolvedValue({ ok: true, value: view([]) });
     render(<FinanceClient initial={view([overLimit()])} />);
     await user.click(screen.getByRole('checkbox', { name: /mehrere Wirtschaftsgüter, jedes für sich unter der Grenze/ }));
@@ -785,7 +812,7 @@ describe('FinanceClient: assets', () => {
     });
   });
   it('accepting the proposals sends the pairs the dialog counted, says exactly what was linked and what was left out, and shows a failure', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2025-03-02', estimateCents: 2_000, bookingDay: '2025-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false };
     const second = { ...proposal, paymentId: 'p-2', rowId: 'r-2', receiptLabel: 'Hosting Beispiel' };
@@ -800,7 +827,7 @@ describe('FinanceClient: assets', () => {
     await user.click(screen.getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Das hat nicht geklappt');
     // The proposals are still there to try again.
-    await user.click(screen.getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
+    await clickWhenEnabled(user, () => screen.getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
     expect(await screen.findByText('1 Zahlung dem Beleg zugeordnet; 1 Vorschlag galt nicht mehr und blieb unberührt. Die Liste zeigt den aktuellen Stand.')).toBeTruthy();
     expect(actions.acceptPaymentProposals).toHaveBeenLastCalledWith(2025, [{ paymentId: 'p-1', rowId: 'r-1' }, { paymentId: 'p-2', rowId: 'r-2' }], true);
     expect(screen.queryByRole('region', { name: 'Vorschläge für geschätzte Belege' })).toBeNull();
@@ -808,7 +835,7 @@ describe('FinanceClient: assets', () => {
   });
 
   it('"Konto entfernen" refused because the account is no longer empty shows why and what the account holds now', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const payments = view([]).payments;
     const empty = { id: 'acc-empty', label: 'Altes Konto', kind: 'bank' as const, isPrivate: false, paymentCount: 0, completeThrough: null, batches: [] };
@@ -826,7 +853,7 @@ describe('FinanceClient: assets', () => {
   });
 
   it('a receipt that already carries a payment is not linked a second time without a question; a no links nothing, a yes sends it confirmed', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const payments = view([]).payments;
     const openPayment = { id: 'p-1', bookingDay: '2025-03-15', amountCents: -4_000, freeCents: 4_000, counterparty: 'Werkzeug Beispiel GmbH', reference: '', kind: 'spend' as const, accountLabel: 'Geschäftskonto', check: 'payment_without_document' as const, proposals: [], namesService: false };
     const receiptTargets = [{ id: 'r-1', label: 'Einkauf Laden', day: '2025-03-11', amountCents: 1_999, linkedCents: 1_999 }];
@@ -848,7 +875,7 @@ describe('FinanceClient: assets', () => {
     expect(await screen.findByText('Nichts zugeordnet: der Beleg hat schon eine Zahlung.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Zuordnen' })).toBeTruthy();
 
-    await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
+    await clickWhenEnabled(user, () => screen.getByRole('button', { name: 'Zuordnen' }));
     await vi.waitFor(() => expect(actions.confirmPaymentLink).toHaveBeenCalledTimes(3));
     expect(actions.confirmPaymentLink.mock.calls[2][1]).toEqual({ paymentId: 'p-1', rowId: 'r-1', confirmed: true });
     expect(await screen.findByText('Zahlung zugeordnet.')).toBeTruthy();
@@ -856,7 +883,7 @@ describe('FinanceClient: assets', () => {
   });
 
   it('money back a little above what the receipt still costs is asked about once and sent confirmed on a yes', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const payments = view([]).payments;
     const refund = { id: 'p-2', bookingDay: '2025-03-20', amountCents: 2_050, freeCents: 2_050, counterparty: 'Laden Beispiel', reference: '', kind: 'refund' as const, accountLabel: 'Geschäftskonto', check: 'refund_without_receipt' as const, proposals: [], namesService: false };
     const receiptTargets = [{ id: 'r-1', label: 'Einkauf Laden', day: '2025-03-11', amountCents: 1_999, linkedCents: 1_999 }];
@@ -876,7 +903,7 @@ describe('FinanceClient: assets', () => {
   });
 
   it('says so when a link was taken over from the bank-side debit of the same money, and re-labels a transfer through its action', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const payments = view([]).payments;
     const openPayment = { id: 'p-1', bookingDay: '2025-03-11', amountCents: -1_999, freeCents: 1_999, counterparty: 'Laden Beispiel', reference: '', kind: 'spend' as const, accountLabel: 'Geldbörse', check: 'payment_without_document' as const, proposals: [{ target: 'receipt' as const, targetId: 'r-1', label: 'Einkauf Laden', strength: 'amount_and_date' as const }], namesService: false };
     const ruleTransfers = [{ id: 't-1', bookingDay: '2025-03-12', amountCents: -1_999, counterparty: 'Geldbörse Beispiel', reference: '', accountLabel: 'Geschäftskonto', hasTwin: true, linkedTo: [] }];
@@ -888,7 +915,7 @@ describe('FinanceClient: assets', () => {
     await user.click(screen.getByRole('button', { name: /Zuordnen: Einkauf Laden/ }));
     expect(await screen.findByText(/wurde hierher verschoben: es ist dasselbe Geld/)).toBeTruthy();
 
-    await user.click(screen.getByRole('button', { name: 'Kein Übertrag, eine eigene Zahlung' }));
+    await clickWhenEnabled(user, () => screen.getByRole('button', { name: 'Kein Übertrag, eine eigene Zahlung' }));
     await vi.waitFor(() => expect(actions.markPaymentTransfer).toHaveBeenCalledWith(2025, 't-1', false));
     expect(await screen.findByText(/Als eigene Zahlung vermerkt/)).toBeTruthy();
   });

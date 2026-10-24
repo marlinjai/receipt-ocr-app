@@ -777,6 +777,8 @@ function PaymentSearch({ view, busy, onSearch, onLink }: { view: StatementView; 
   return (
     <div className="mt-4">
       <form
+        role="search"
+        aria-label="Zahlungen suchen"
         className="flex flex-wrap items-end gap-2"
         onSubmit={(e) => {
           e.preventDefault();

@@ -2,12 +2,17 @@
 import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { setupUser } from '../../../../test/user';
 import type { FoundPayment } from '@/lib/tax/payments/service';
 import type { OpenPayment, PaymentsView, StatementView } from '@/lib/tax/service';
 import PaymentsTab from './PaymentsTab';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // A `window.confirm` stub of a failed test must not answer the questions of the next one.
+  vi.restoreAllMocks();
+});
+
 
 const account = { id: 'acc-1', label: 'Geschäftskonto', kind: 'bank', isPrivate: false, paymentCount: 3, completeThrough: '2026-01-22', batches: [{ id: 'b-1', format: 'n26_csv', service: null, newCount: 3, paymentCount: 3, firstDay: '2026-01-05', lastDay: '2026-01-22', importedAt: '2026-02-01T08:00:00.000Z' }] };
 const open = (o: Partial<OpenPayment> = {}): OpenPayment => ({
@@ -66,7 +71,7 @@ const found = (o: Partial<FoundPayment> = {}): FoundPayment => ({
 
 describe('PaymentsTab', () => {
   it('without an account it explains what payments are for and offers to create one', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     render(<PaymentsTab view={view({ accounts: [], yearCount: 0, linkedCount: 0 })} {...p} />);
     expect(screen.getByText(/Noch kein Konto angelegt/)).toBeTruthy();
@@ -86,7 +91,7 @@ describe('PaymentsTab', () => {
   });
 
   it('reads the chosen file and hands its text to the import; no file, no import', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     render(<PaymentsTab view={view()} {...p} />);
     await user.click(screen.getByRole('button', { name: 'Einlesen' }));
@@ -130,7 +135,7 @@ describe('PaymentsTab', () => {
   });
 
   it('asks once per counterparty', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     render(<PaymentsTab view={view({ unclassified: [{ key: 'vermieter beispiel', label: 'Vermieter Beispiel', count: 2, outCents: 130_000, inCents: 0 }] })} {...p} />);
     const row = screen.getByText('Vermieter Beispiel').closest('li') as HTMLElement;
@@ -140,7 +145,7 @@ describe('PaymentsTab', () => {
   });
 
   it('offers proposals with how sure they are, and links only when a person clicks', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     render(
       <PaymentsTab
@@ -162,7 +167,7 @@ describe('PaymentsTab', () => {
   });
 
   it('lists links and answers so each can be taken back', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     render(
       <PaymentsTab
@@ -181,7 +186,7 @@ describe('PaymentsTab', () => {
   });
 
   it('links by hand: a chosen receipt, optionally with a part of the amount, checked before anything is sent', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     const receiptTargets = [{ id: 'r-9', label: 'Bestellung 4711', day: '2025-12-28', amountCents: 10_000, linkedCents: 0 }];
     render(<PaymentsTab view={view({ open: [open()], receiptTargets })} {...p} />);
@@ -202,7 +207,7 @@ describe('PaymentsTab', () => {
   });
 
   it('money received is linked by hand to an invoice with something open; without an amount all that is open', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     const income = open({ amountCents: 50_000, freeCents: 50_000, kind: 'income', check: 'income_without_invoice' });
     render(<PaymentsTab view={view({ open: [income], invoiceTargets: [{ id: 'i-1', label: 'Rechnung R-2026-050', openCents: 20_000 }], receiptTargets: [{ id: 'r-9', label: 'x', day: null, amountCents: null, linkedCents: 0 }] })} {...p} />);
@@ -218,7 +223,7 @@ describe('PaymentsTab', () => {
   });
 
   it('a payment without a name can be marked private, and what was re-labelled can be put back', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     const overridden = [{ id: 'p-7', bookingDay: '2026-01-09', amountCents: -1_230, counterparty: '', kind: 'private' as const }];
     render(<PaymentsTab view={view({ open: [open({ counterparty: '' })], overridden })} {...p} />);
@@ -232,7 +237,7 @@ describe('PaymentsTab', () => {
   });
 
   it('with many open payments the list of receipts is drawn once, for the payment whose picker is open', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const many = Array.from({ length: 40 }, (_, i) => open({ id: `p-${i}`, counterparty: `Firma Beispiel ${i}` }));
     const receiptTargets = Array.from({ length: 30 }, (_, i) => ({ id: `r-${i}`, label: `Beleg ${i}`, day: '2026-01-02', amountCents: 1_000, linkedCents: i === 0 ? 400 : 0 }));
     const { container } = render(<PaymentsTab view={view({ open: many, receiptTargets })} {...props()} />);
@@ -256,7 +261,7 @@ describe('PaymentsTab', () => {
   });
 
   it('offers a payment for a receipt on an estimated amount; one click takes one, one click takes all unambiguous ones', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel März', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false };
     const estimateProposals = [proposal, { ...proposal, paymentId: 'p-2', rowId: 'r-2', receiptLabel: 'Editor Beispiel April', receiptDay: '2026-04-02', bookingDay: '2026-04-03' }, { ...proposal, paymentId: 'p-3', rowId: 'r-3', receiptLabel: 'Hosting Beispiel', unambiguous: false }];
@@ -282,11 +287,10 @@ describe('PaymentsTab', () => {
     // What is sent is the list the dialog counted: the two unambiguous pairs, not the ambiguous third.
     expect(p.onAcceptProposals).toHaveBeenCalledWith([{ paymentId: 'p-1', rowId: 'r-1' }, { paymentId: 'p-2', rowId: 'r-2' }], true);
     expect(confirm.mock.calls[0][0]).toContain('2 eindeutige Vorschläge übernehmen?');
-    confirm.mockRestore();
   });
 
   it('while the bulk accept runs the button says so and cannot be pressed again; it comes back when the answer is in', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: '', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false };
     const shown = view({ estimateProposals: [proposal, { ...proposal, paymentId: 'p-2', rowId: 'r-2' }] });
@@ -304,7 +308,6 @@ describe('PaymentsTab', () => {
     // The answer is in (here: a failure, the proposals are still shown): the button is usable again.
     rerender(<PaymentsTab view={shown} {...p} busy={false} />);
     expect((screen.getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }) as HTMLButtonElement).disabled).toBe(false);
-    confirm.mockRestore();
   });
 
   it('one payment for two receipts is shown for both as needing a hand: no accept button, not in the bulk count', () => {
@@ -376,7 +379,7 @@ describe('PaymentsTab', () => {
   });
 
   it('lists what the funding rule treats as a transfer, with count and sum, and each can be made a payment of its own', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     const ruleTransfers = [
       { id: 't-1', bookingDay: '2026-03-28', amountCents: -3_615, counterparty: 'Später Beispiel Bank', reference: 'Sammelabrechnung', accountLabel: 'Geschäftskonto', hasTwin: false, linkedTo: [] },
@@ -394,7 +397,7 @@ describe('PaymentsTab', () => {
   });
 
   it('an open payment that names a held service can be called a transfer; any other open payment cannot', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     render(<PaymentsTab view={view({ open: [open({ id: 'p-5', counterparty: 'Später Beispiel Bank', namesService: true }), open({ id: 'p-6', counterparty: 'Werkzeug Beispiel GmbH' })] })} {...p} />);
     const buttons = screen.getAllByRole('button', { name: 'Übertrag zwischen eigenen Konten' });
@@ -430,7 +433,7 @@ describe('PaymentsTab', () => {
   });
 
   it('the picker says which receipt already carries a payment, and re-labelled transfers read in plain words', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const receiptTargets = [{ id: 'r-1', label: 'Einkauf Laden', day: '2026-03-11', amountCents: 1_999, linkedCents: 1_999 }];
     const overridden = [
       { id: 'p-8', bookingDay: '2026-03-28', amountCents: -3_615, counterparty: 'Später Beispiel Bank', kind: 'spend' as const },
@@ -450,7 +453,7 @@ describe('PaymentsTab', () => {
   });
 
   it('a whole account can be called private after a confirmation, and that can be taken back', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     const confirm = vi.spyOn(window, 'confirm');
     confirm.mockReturnValueOnce(false);
@@ -460,7 +463,6 @@ describe('PaymentsTab', () => {
     confirm.mockReturnValueOnce(true);
     await user.click(screen.getByRole('button', { name: 'Ganzes Konto ist privat' }));
     expect(p.onAccountPrivate).toHaveBeenCalledWith(expect.objectContaining({ id: 'acc-1' }), true);
-    confirm.mockRestore();
 
     rerender(<PaymentsTab view={view({ accounts: [{ ...account, isPrivate: true }] })} {...p} />);
     expect(screen.getByText(/privat: nach seinen Zahlungen wird nicht gefragt/)).toBeTruthy();
@@ -469,7 +471,7 @@ describe('PaymentsTab', () => {
   });
 
   it('a counterparty can be answered as mixed', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     render(<PaymentsTab view={view({ unclassified: [{ key: 'versand beispiel', label: 'Versand Beispiel', count: 4, outCents: 20_000, inCents: 0 }] })} {...p} />);
     await user.click(screen.getByRole('button', { name: 'Teils, teils' }));
@@ -477,7 +479,7 @@ describe('PaymentsTab', () => {
   });
 
   it('one payment of an unanswered counterparty is linked by hand without answering for the others, and the list follows the statement', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     const unclassified = [{ key: 'versand beispiel', label: 'Versand Beispiel', count: 2, outCents: 9_998, inCents: 0 }];
     const receiptTargets = [{ id: 'r-1', label: 'Bürostuhl', day: '2026-02-01', amountCents: 4_999, linkedCents: 0 }];
@@ -506,40 +508,45 @@ describe('PaymentsTab', () => {
   });
 
   it('searches any payment by text, says when more were found than shown, and says when the search failed', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     render(<PaymentsTab view={view({ receiptTargets: [] })} {...p} />);
-    const box = screen.getByLabelText('Andere Zahlung suchen und von Hand zuordnen');
+    // With 100 payments drawn, a button query over the whole page names every button on it: the buttons and
+    // the found payments are looked for where they live (the search form, the found list, the alert).
+    const form = within(screen.getByRole('search', { name: 'Zahlungen suchen' }));
+    const box = form.getByLabelText('Andere Zahlung suchen und von Hand zuordnen');
     await user.type(box, 'x');
     expect(screen.getByText('Bitte mindestens zwei Zeichen.')).toBeTruthy();
     expect(box.getAttribute('aria-describedby')).toBeTruthy();
     const many = Array.from({ length: 100 }, (_, i) => found({ id: `f-${i}`, kind: i === 0 ? 'private' : 'spend' }));
     p.onSearch.mockResolvedValueOnce({ ok: true, value: { payments: many, total: 140 } });
     await user.type(box, 'y');
-    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    await user.click(form.getByRole('button', { name: 'Suchen' }));
     expect(p.onSearch).toHaveBeenCalledWith({ text: 'xy' });
     expect(await screen.findByText(/140 gefunden, die ersten 100 werden gezeigt/)).toBeTruthy();
     // The notice is not one of the payments.
-    expect(within(screen.getByRole('list', { name: 'Gefundene Zahlungen' })).getAllByRole('listitem').length).toBe(100);
-    expect(screen.getAllByText(/· privat/).length).toBe(1);
+    const list = within(screen.getByRole('list', { name: 'Gefundene Zahlungen' }));
+    expect(list.getAllByRole('listitem').length).toBe(100);
+    expect(list.getAllByText(/· privat/).length).toBe(1);
     // No receipt to link to: it says so instead of an empty picker.
-    await user.click(screen.getAllByRole('button', { name: /^Beleg wählen für/ })[0]);
+    await user.click(list.getAllByRole('button', { name: /^Beleg wählen für/ })[0]);
     expect(screen.getByText('Kein Beleg aus diesem oder dem Vorjahr vorhanden.')).toBeTruthy();
 
     // Pressing "Suchen" again with the same words searches again.
     p.onSearch.mockResolvedValueOnce({ ok: false, error: 'failed' });
-    await user.click(screen.getByRole('button', { name: 'Suchen' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('konnten nicht geladen werden');
+    await user.click(form.getByRole('button', { name: 'Suchen' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('konnten nicht geladen werden');
     expect(p.onSearch).toHaveBeenCalledTimes(2);
     // A failed search offers to try again, and trying again searches again.
     p.onSearch.mockResolvedValueOnce({ ok: true, value: { payments: [], total: 0 } });
-    await user.click(screen.getByRole('button', { name: 'Erneut versuchen' }));
+    await user.click(within(alert).getByRole('button', { name: 'Erneut versuchen' }));
     expect(await screen.findByText('Keine Zahlung aus 2026 mit offenem Betrag.')).toBeTruthy();
     expect(p.onSearch).toHaveBeenCalledTimes(3);
   });
 
   it('money in found by the search goes on an invoice or, as money back, on a receipt; one already on an invoice stays with invoices', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = props();
     const targets = { invoiceTargets: [{ id: 'i-1', label: 'Rechnung R-2026-050', openCents: 2_000 }], receiptTargets: [{ id: 'r-1', label: 'Kabel', day: '2026-02-01', amountCents: 2_000, linkedCents: 0 }] };
     p.onSearch.mockResolvedValueOnce({
@@ -557,7 +564,7 @@ describe('PaymentsTab', () => {
     expect(screen.getByLabelText('Rechnung von Hand wählen')).toBeTruthy();
   });
   it('an account without payments, imports and connection can be removed after a confirmation; others offer no such button', async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const p = { ...props(), onRemoveAccount: vi.fn() };
     const empty = { ...account, id: 'acc-empty', label: 'Altes Konto', paymentCount: 0, completeThrough: null, batches: [] };
     const linked = { ...account, id: 'acc-live', label: 'PayPal', paymentCount: 0, completeThrough: null, batches: [] };
@@ -574,7 +581,6 @@ describe('PaymentsTab', () => {
     confirm.mockReturnValueOnce(true);
     await user.click(buttons[0]);
     expect(p.onRemoveAccount).toHaveBeenCalledWith(expect.objectContaining({ id: 'acc-empty' }));
-    confirm.mockRestore();
   });
 
   it('a payment in another currency shows its own amount, and says when the euro amount is an estimate', () => {

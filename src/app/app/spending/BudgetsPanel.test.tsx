@@ -37,6 +37,13 @@ describe('BudgetsPanel', () => {
     expect(screen.getByRole('meter', { name: /Lebensmittel und Drogerie: 250,00 € von 200,00 €/ })).toBeTruthy();
   });
 
+  it('takes over the budgets the page read afresh', () => {
+    const { rerender } = render(<BudgetsPanel initial={view()} />);
+    expect(screen.getByText('2 Warnungen')).toBeTruthy();
+    rerender(<BudgetsPanel initial={{ ...view(), lines: view().lines.map((l) => ({ ...l, level: 'ok' as const })) }} />);
+    expect(screen.queryByText('2 Warnungen')).toBeNull();
+  });
+
   it('saves a limit typed in euros', async () => {
     render(<BudgetsPanel initial={view()} />);
     const user = userEvent.setup();

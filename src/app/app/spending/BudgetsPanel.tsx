@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useState, useTransition } from 'react';
+import { useId, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatCents } from '@/lib/tax/money';
 import { MAX_LIMIT_CENTS, parseEuroInput, type BudgetLine, type BudgetLevel, type LimitBasis } from '@/lib/spending/budgets';
@@ -197,11 +197,12 @@ export default function BudgetsPanel({ initial }: { initial: BudgetsView }) {
   const id = useId();
   const router = useRouter();
   const [view, setView] = useState(initial);
-  // The page reads the budgets afresh after a check or an import: take that over.
-  useEffect(() => {
-    // Synchronizing with a new server view is the point of this effect.
+  // The page reads the budgets afresh after a check or an import: take that over (while rendering, not in an effect).
+  const [shownInitial, setShownInitial] = useState(initial);
+  if (shownInitial !== initial) {
+    setShownInitial(initial);
     setView(initial);
-  }, [initial]);
+  }
   const [error, setError] = useState<{ at: string; message: string } | null>(null);
   const [pending, startTransition] = useTransition();
   const [vendor, setVendor] = useState('');

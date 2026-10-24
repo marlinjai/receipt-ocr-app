@@ -73,7 +73,8 @@ describe('push devices', () => {
       {},
       { endpoint: 'https://internal.example/hook', keys: good.keys },
       { endpoint: 'http://fcm.googleapis.com/fcm/send/x', keys: good.keys },
-      { endpoint: good.endpoint, keys: { p256dh: randomBytes(65).toString('base64url'), auth: good.keys.auth } },
+      // 65 bytes but no point: an uncompressed point starts with 0x04, so a random first byte would be one in 256 runs.
+      { endpoint: good.endpoint, keys: { p256dh: Buffer.concat([Buffer.from([0x05]), randomBytes(64)]).toString('base64url'), auth: good.keys.auth } },
       { endpoint: good.endpoint, keys: { p256dh: good.keys.p256dh, auth: randomBytes(8).toString('base64url') } },
       { endpoint: good.endpoint, keys: { p256dh: 'has spaces', auth: good.keys.auth } },
       { endpoint: good.endpoint },

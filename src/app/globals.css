@@ -252,6 +252,10 @@ body::after {
   min-width: 2rem;
   padding: 0;
 }
+/* A button whose icon and label line up at its start, in a column of such buttons (the phone menu). */
+.ui-btn-start {
+  justify-content: flex-start;
+}
 .ui-btn-sm {
   min-height: 2rem;
   padding: 0.25rem 0.625rem;
@@ -878,5 +882,87 @@ textarea.ui-input {
 @media (prefers-reduced-motion: reduce) {
   .ui-sheet {
     animation: none;
+  }
+}
+
+/* ==================== Phone layout ==================== */
+/* Plan: docs/plans/2026-10-24-phone-layout.md. The card classes are only used
+   by the phone list; the rules inside the media query apply below Tailwind's
+   `sm` breakpoint only, so the wide layout is untouched. */
+
+/* One receipt on the phone list: the whole card is the tap target. */
+.ui-phone-card-button {
+  display: block;
+  width: 100%;
+  min-height: 3.5rem;
+  padding: 0.75rem 0.875rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.03);
+  text-align: left;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+.ui-phone-card-button:active {
+  background: var(--accent-muted);
+  border-color: rgba(226, 163, 72, 0.35);
+}
+.ui-phone-card-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ui-phone-chip {
+  border-radius: 9999px;
+  padding: 0.125rem 0.5rem;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--foreground);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-phone-card-button {
+    transition: none;
+  }
+}
+
+@media (max-width: 639px) {
+  /* Every shared button, field and segmented choice reaches a 44px touch target on a phone. */
+  .ui-btn,
+  .ui-btn-sm,
+  .ui-input,
+  .ui-seg button {
+    min-height: 2.75rem;
+  }
+  .ui-btn-icon {
+    width: 2.75rem;
+    min-width: 2.75rem;
+  }
+  /* The data-table package's filter controls in the dashboard's search row (no class of their own to size).
+     The filter bar edits in place with native pickers and draws no popover, so only its own buttons are hit. */
+  .dashboard-filter-row button {
+    min-height: 2.75rem;
+  }
+  /* Pages full of small text controls (overview, rules, import) opt in with `ui-touch` on their root:
+     every button, picker and field there becomes a 44px touch target, and so does a label around a
+     checkbox (kept inline, so labels that stood side by side still do). None of these pages puts a
+     button inside running text. */
+  .ui-touch :is(button, select, input:not([type='checkbox']):not([type='radio'])),
+  .ui-touch label:has(> input[type='checkbox'], > input[type='radio']) {
+    min-height: 2.75rem;
+  }
+  .ui-touch label:has(> input[type='checkbox'], > input[type='radio']) {
+    display: inline-flex;
+    align-items: center;
+  }
+  /* A tab row that scrolls sideways shows no scroll bar on a phone (the cut-off tab says there is more);
+     wider screens keep the bar. */
+  .ui-scroll-bare-phone {
+    scrollbar-width: none;
+  }
+  .ui-scroll-bare-phone::-webkit-scrollbar {
+    display: none;
+  }
+  /* Text fields at 16px: below that, Safari on the iPhone zooms the page in on focus and leaves it zoomed. */
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

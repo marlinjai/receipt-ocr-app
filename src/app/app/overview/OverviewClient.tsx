@@ -302,7 +302,7 @@ export default function OverviewClient({
   );
 
   return (
-    <main className="mx-auto max-w-5xl p-6">
+    <main className="ui-touch mx-auto max-w-5xl p-4 sm:p-6">
       <div className="flex items-baseline justify-between mb-4">
         <div>
           <h1 className="text-2xl font-semibold" style={{ color: 'var(--foreground)' }}>Spend overview</h1>
@@ -311,7 +311,7 @@ export default function OverviewClient({
             {totals.firstDate ? ` · ${totals.firstDate} → ${totals.lastDate}` : ''}
           </p>
         </div>
-        <Link href="/app/dashboard" className="text-sm underline" style={{ color: 'var(--accent)' }}>← Ledger</Link>
+        <Link href="/app/dashboard" className="text-sm underline max-sm:inline-flex max-sm:min-h-11 max-sm:items-center" style={{ color: 'var(--accent)' }}>← Ledger</Link>
       </div>
 
       {/* Controls: time frame, saved selections, filters, picker */}
@@ -436,7 +436,11 @@ export default function OverviewClient({
       {monthlyByCurrency.length > 0 && (
         <Section title="Monthly spend by vendor" subtitle="Currencies on separate scales; attributed share">
           <Legend vendors={data.vendors} colorOf={colorOf} />
-          <div className="grid gap-6" style={{ gridTemplateColumns: `repeat(${Math.min(monthlyByCurrency.length, 2)}, minmax(0,1fr))` }}>
+          {/* One chart per row on a phone; side by side from the small breakpoint on. */}
+          <div
+            className="grid gap-6 sm:[grid-template-columns:var(--overview-cols)]"
+            style={{ '--overview-cols': `repeat(${Math.min(monthlyByCurrency.length, 2)}, minmax(0,1fr))` } as React.CSSProperties}
+          >
             {monthlyByCurrency.map((s) => (
               <div key={s.currency}>
                 <div className="text-xs mb-2" style={{ color: 'var(--dt-text-secondary)' }}>{s.currency}</div>

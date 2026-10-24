@@ -26,7 +26,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         first row holds the title and the links, the company switcher takes a
         row of its own below. The company chip is left out there, because the
         switcher right below names the same company. From the small breakpoint
-        on, everything stands in one row as before.
+        on, everything stands in one row as before. The two links are 44px tall
+        on a phone, so a thumb finds them.
       */}
       <header
         className="relative z-20 flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 border-b sm:px-6"
@@ -45,13 +46,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </span>
           )}
         </div>
-        <Link href="/app/spending" className="ml-auto whitespace-nowrap text-xs transition-colors hover:underline" style={{ color: 'var(--muted)' }}>
+        <Link
+          href="/app/spending"
+          className="ml-auto whitespace-nowrap text-xs transition-colors hover:underline max-sm:inline-flex max-sm:min-h-11 max-sm:items-center max-sm:px-1"
+          style={{ color: 'var(--muted)' }}
+        >
           Ausgaben
         </Link>
         <div className="order-last w-full min-w-0 sm:order-none sm:w-auto">
           <WorkspaceSwitcher session={session} />
         </div>
-        <span className="whitespace-nowrap">
+        {/* On a phone both header links are 44px touch targets (the link itself lives with the push session code). */}
+        <span className="whitespace-nowrap max-sm:[&>a]:inline-flex max-sm:[&>a]:min-h-11 max-sm:[&>a]:items-center max-sm:[&>a]:px-1">
           <SignOutLink href={auth.logoutUrl()} title={session.email}>
             Sign out
           </SignOutLink>

@@ -5,7 +5,8 @@ import { NO_YEARS, hasYearFilter, selectYearRange, toggleUndated, toggleYear, ty
 
 const receiptsWord = (n: number) => (n === 1 ? '1 Beleg' : `${n} Belege`);
 
-const chipClass = 'px-2.5 py-1 text-xs font-medium rounded-md transition-colors duration-150 tabular-nums';
+// On a phone each chip is a 44px touch target; the wide layout keeps the compact chips.
+const chipClass = 'px-2.5 py-1 text-xs font-medium rounded-md transition-colors duration-150 tabular-nums max-sm:min-h-11 max-sm:px-3.5';
 
 function chipStyle(pressed: boolean) {
   return pressed

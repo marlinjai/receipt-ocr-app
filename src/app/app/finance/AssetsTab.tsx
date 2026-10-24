@@ -181,31 +181,33 @@ export default function AssetsTab({ view, busy, error, startFromRowId, onStartHa
                 </div>
 
                 {open && (
-                  <table className="mt-3 w-full text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
-                    <caption className="sr-only">Abschreibungsverlauf {asset.label}</caption>
-                    <thead>
-                      <tr className="text-left text-xs" style={{ color: 'var(--muted)' }}>
-                        <th scope="col" className="py-1 font-medium">Jahr</th>
-                        <th scope="col" className="py-1 text-right font-medium">Buchwert 01.01.</th>
-                        <th scope="col" className="py-1 text-right font-medium">Zugang</th>
-                        <th scope="col" className="py-1 text-right font-medium">Abschreibung</th>
-                        <th scope="col" className="py-1 text-right font-medium">Abgang</th>
-                        <th scope="col" className="py-1 text-right font-medium">Buchwert 31.12.</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {asset.schedule.map((row) => (
-                        <tr key={row.year} className="border-t" style={{ borderColor: 'var(--border)' }}>
-                          <th scope="row" className="py-1 text-left font-normal">{row.year}</th>
-                          <td className="py-1 text-right">{euro(row.bookValueStartCents)}</td>
-                          <td className="py-1 text-right">{euro(row.additionCents)}</td>
-                          <td className="py-1 text-right">{euro(row.depreciationCents)}</td>
-                          <td className="py-1 text-right">{euro(row.disposalBookValueCents)}</td>
-                          <td className="py-1 text-right">{euro(row.bookValueEndCents)}</td>
+                  <div className="overflow-x-auto">
+                    <table className="mt-3 w-full text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
+                      <caption className="sr-only">Abschreibungsverlauf {asset.label}</caption>
+                      <thead>
+                        <tr className="text-left text-xs" style={{ color: 'var(--muted)' }}>
+                          <th scope="col" className="py-1 font-medium">Jahr</th>
+                          <th scope="col" className="py-1 text-right font-medium">Buchwert 01.01.</th>
+                          <th scope="col" className="py-1 text-right font-medium">Zugang</th>
+                          <th scope="col" className="py-1 text-right font-medium">Abschreibung</th>
+                          <th scope="col" className="py-1 text-right font-medium">Abgang</th>
+                          <th scope="col" className="py-1 text-right font-medium">Buchwert 31.12.</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {asset.schedule.map((row) => (
+                          <tr key={row.year} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                            <th scope="row" className="py-1 text-left font-normal">{row.year}</th>
+                            <td className="py-1 text-right">{euro(row.bookValueStartCents)}</td>
+                            <td className="py-1 text-right">{euro(row.additionCents)}</td>
+                            <td className="py-1 text-right">{euro(row.depreciationCents)}</td>
+                            <td className="py-1 text-right">{euro(row.disposalBookValueCents)}</td>
+                            <td className="py-1 text-right">{euro(row.bookValueEndCents)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
 
                 {editing === asset.id && (

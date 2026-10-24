@@ -530,28 +530,30 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
               {r.months.length > 0 && (
               <details className="mt-2">
                 <summary className="cursor-pointer text-sm" style={{ color: 'var(--foreground)' }}>Abgleich je Monat</summary>
-                <table className="mt-2 w-full text-left text-xs tabular-nums" style={{ color: 'var(--foreground)' }}>
-                  <thead>
-                    <tr style={{ color: 'var(--muted)' }}>
-                      <th scope="col" className="py-1 pr-3 font-normal">Monat</th>
-                      <th scope="col" className="py-1 pr-3 font-normal">Eingezogen</th>
-                      <th scope="col" className="py-1 pr-3 font-normal">Käufe laut Liste</th>
-                      <th scope="col" className="py-1 pr-3 font-normal">Differenz</th>
-                      <th scope="col" className="py-1 font-normal">Laufend</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {r.months.map((m) => (
-                      <tr key={m.month}>
-                        <td className="py-0.5 pr-3">{monthLabel(m.month)}</td>
-                        <td className="py-0.5 pr-3">{euro(m.collectedCents)}</td>
-                        <td className="py-0.5 pr-3">{euro(m.listedCents)}</td>
-                        <td className="py-0.5 pr-3">{m.differenceCents < 0 ? '-' : ''}{euro(Math.abs(m.differenceCents))}</td>
-                        <td className="py-0.5">{m.runningCents < 0 ? '-' : ''}{euro(Math.abs(m.runningCents))}</td>
+                <div className="overflow-x-auto">
+                  <table className="mt-2 w-full text-left text-xs tabular-nums" style={{ color: 'var(--foreground)' }}>
+                    <thead>
+                      <tr style={{ color: 'var(--muted)' }}>
+                        <th scope="col" className="py-1 pr-3 font-normal">Monat</th>
+                        <th scope="col" className="py-1 pr-3 font-normal">Eingezogen</th>
+                        <th scope="col" className="py-1 pr-3 font-normal">Käufe laut Liste</th>
+                        <th scope="col" className="py-1 pr-3 font-normal">Differenz</th>
+                        <th scope="col" className="py-1 font-normal">Laufend</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {r.months.map((m) => (
+                        <tr key={m.month}>
+                          <td className="py-0.5 pr-3">{monthLabel(m.month)}</td>
+                          <td className="py-0.5 pr-3">{euro(m.collectedCents)}</td>
+                          <td className="py-0.5 pr-3">{euro(m.listedCents)}</td>
+                          <td className="py-0.5 pr-3">{m.differenceCents < 0 ? '-' : ''}{euro(Math.abs(m.differenceCents))}</td>
+                          <td className="py-0.5">{m.runningCents < 0 ? '-' : ''}{euro(Math.abs(m.runningCents))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </details>
               )}
             </div>

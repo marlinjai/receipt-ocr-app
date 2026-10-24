@@ -711,9 +711,10 @@ export default function AiChatSidebar({
 
   return (
     <div
-      className="fixed top-0 right-0 h-screen flex flex-col"
+      className="fixed top-0 right-0 h-screen supports-[height:100dvh]:h-dvh flex flex-col"
       style={{
-        width: '420px',
+        // The full width of a phone, 420px beside the table on anything wider.
+        width: 'min(420px, 100vw)',
         zIndex: 50,
         background: 'rgba(10, 10, 15, 0.95)',
         borderLeft: '1px solid var(--border)',
@@ -747,11 +748,12 @@ export default function AiChatSidebar({
           {messages.length > 0 && (
             <button
               onClick={clearChat}
-              className="p-1.5 rounded-md text-xs transition-colors"
+              className="p-1.5 rounded-md text-xs transition-colors max-sm:min-h-11 max-sm:min-w-11 max-sm:inline-flex max-sm:items-center max-sm:justify-center"
               style={{ color: 'var(--muted)' }}
               onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--foreground)')}
               onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--muted)')}
               title="Clear chat"
+              aria-label="Clear chat"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="2 4 14 4" />
@@ -762,7 +764,8 @@ export default function AiChatSidebar({
           )}
           <button
             onClick={onClose}
-            className="p-1.5 rounded-md transition-colors"
+            aria-label="Close AI assistant"
+            className="p-1.5 rounded-md transition-colors max-sm:min-h-11 max-sm:min-w-11 max-sm:inline-flex max-sm:items-center max-sm:justify-center"
             style={{ color: 'var(--muted)' }}
             onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--foreground)')}
             onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--muted)')}
@@ -1046,7 +1049,8 @@ export default function AiChatSidebar({
           <button
             onClick={sendMessage}
             disabled={!input.trim() || isStreaming}
-            className="p-1.5 rounded-md transition-colors shrink-0"
+            aria-label="Send message"
+            className="p-1.5 rounded-md transition-colors shrink-0 max-sm:min-h-11 max-sm:min-w-11 max-sm:inline-flex max-sm:items-center max-sm:justify-center"
             style={{
               color: input.trim() && !isStreaming ? 'var(--accent)' : 'var(--muted)',
               opacity: input.trim() && !isStreaming ? 1 : 0.5,

@@ -364,6 +364,11 @@
   now. Removing them is a delete on production: it needs Marlin's one-line yes, with the dump
   `receipts-before-workspace-move-20261010T122443Z.dmp` on the server as the way back.
   (2026-10-10)
+- [ ] The app on a phone: no page scrolls sideways at 360 or 390 pixels, the receipts show as a
+  card list that opens the detail panel, the dashboard's actions fold into "Mehr", tab rows
+  scroll inside themselves, every control is a 44 pixel touch target, the wide layout unchanged.
+  Built on `feat/mobile-rework`; last step: a look at the finance tabs with real payments on
+  the owner's phone. Plan: [docs/plans/2026-10-24-phone-layout.md](docs/plans/2026-10-24-phone-layout.md). (2026-10-24)
 
 ## In Progress
 

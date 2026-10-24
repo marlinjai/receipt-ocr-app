@@ -44,7 +44,7 @@ export default function ReceiptSearch({
 
   return (
     <div
-      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg"
+      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg max-sm:w-full max-sm:py-0"
       style={{ background: 'var(--surface)', border: '1px solid var(--border)', minWidth: '16rem' }}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden style={{ color: 'var(--dt-text-secondary)' }}>
@@ -60,7 +60,7 @@ export default function ReceiptSearch({
         }}
         placeholder="Search..."
         aria-label="Belege durchsuchen"
-        className="flex-1 bg-transparent outline-none text-sm"
+        className="flex-1 bg-transparent outline-none text-sm max-sm:min-h-11 max-sm:min-w-0"
         style={{ color: 'var(--foreground)' }}
       />
       {count !== null && (
@@ -72,7 +72,7 @@ export default function ReceiptSearch({
         </span>
       )}
       {term && (
-        <button type="button" onClick={() => onTermChange('')} aria-label="Suche leeren" className="text-sm" style={{ color: 'var(--dt-text-secondary)' }}>
+        <button type="button" onClick={() => onTermChange('')} aria-label="Suche leeren" className="text-sm max-sm:-mr-3 max-sm:min-h-11 max-sm:min-w-11" style={{ color: 'var(--dt-text-secondary)' }}>
           ×
         </button>
       )}

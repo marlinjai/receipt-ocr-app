@@ -35,7 +35,7 @@ export default function FxRecomputePanel() {
     <div className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
+        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 max-sm:min-h-11 max-sm:w-full max-sm:justify-start"
         style={{
           background: open ? 'var(--accent-muted)' : 'var(--surface)',
           color: open ? 'var(--accent)' : 'var(--foreground)',
@@ -51,7 +51,7 @@ export default function FxRecomputePanel() {
 
       {open && (
         <div
-          className="absolute right-0 top-full mt-2 z-20 w-72 rounded-lg p-4 shadow-xl"
+          className="absolute right-0 top-full mt-2 z-20 w-72 max-w-[calc(100vw-2rem)] rounded-lg p-4 shadow-xl"
           style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
         >
           <p className="text-xs mb-3" style={{ color: 'var(--dt-text-secondary)' }}>

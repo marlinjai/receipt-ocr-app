@@ -133,7 +133,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
                 aria-selected={tab === t.key}
                 aria-controls={`${tabsId}-panel-${t.key}`}
                 onClick={() => openTab(t.key)}
-                className="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150"
+                className="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11"
                 style={{
                   borderColor: tab === t.key ? 'var(--accent)' : 'transparent',
                   color: tab === t.key ? 'var(--accent)' : 'var(--muted)',
@@ -155,7 +155,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
           <Link
             href="/app/contacts"
             onClick={leaveTo('/app/contacts')}
-            className="-mb-px ml-auto shrink-0 border-b-2 border-transparent px-3 py-2.5 text-sm font-medium transition-colors duration-150 hover:underline"
+            className="-mb-px ml-auto shrink-0 border-b-2 border-transparent px-3 py-2.5 text-sm font-medium transition-colors duration-150 hover:underline max-sm:inline-flex max-sm:min-h-11 max-sm:items-center"
             style={{ color: 'var(--muted)' }}
           >
             Kontakte

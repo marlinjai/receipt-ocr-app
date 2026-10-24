@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useMemo, useState, useTransition } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { receiptHref } from '@/lib/receipt-link';
 import { useRouter } from 'next/navigation';
@@ -63,6 +63,7 @@ import IncomeTaxTab, { balanceText } from './IncomeTaxTab';
 import { removeTaxReturnItem, removeWage, saveTaxReturnItem, saveWage, setChurchMonths, setFederalState } from './income-tax-actions';
 import { incomeTaxActionMessage } from '@/lib/tax/income-tax/messages';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
+import { useTabInView } from '@/lib/use-tab-in-view';
 
 export type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'tax' | 'boundary' | 'vendors';
 
@@ -136,6 +137,9 @@ export default function FinanceClient({
   const [view, setView] = useState(initial);
   // An overdue invoice is an open check too (decision D6 of the invoicing plan), so it opens the "Offen" tab as well.
   const [tab, setTab] = useState<TabKey>(() => initialTab ?? (openQueue(initial).length > 0 || initial.revenue.overdue.length > 0 ? 'open' : 'statement'));
+  // On a phone the tab row scrolls sideways; the open tab is kept in view.
+  const tabRow = useRef<HTMLDivElement>(null);
+  useTabInView(tabRow, tab);
   const bankFeed = useBankFeed(bankInitial ?? NO_BANK, view.year, bankActions, (next) => setView(next), (url) => window.location.assign(url));
   const [bankNotice] = useState(() => returnMessage(bankReturn));
   // The outcome is shown once: the address loses it, so a reload does not repeat it.
@@ -396,7 +400,8 @@ export default function FinanceClient({
           )}
         </div>
 
-        <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {/* Two tiles to a row on a phone (the result across both), so the five figures fit about one screen. */}
+        <dl className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
           {[
             {
               label: view.profitCents === null ? `Ergebnis ${view.year}` : view.profitCents < 0 ? `Verlust ${view.year}` : `Gewinn ${view.year}`,
@@ -421,10 +426,10 @@ export default function FinanceClient({
                   .filter(Boolean)
                   .join(', ') || 'Belege, die eine Entscheidung brauchen',
             },
-          ].map((tile) => (
-            <div key={tile.label} className="glass-panel rounded-xl p-4">
+          ].map((tile, index) => (
+            <div key={tile.label} className={`glass-panel min-w-0 rounded-xl p-3 sm:p-4 ${index === 0 ? 'col-span-2 lg:col-span-1' : ''}`}>
               <dt className="ui-label">{tile.label}</dt>
-              <dd className="text-2xl font-semibold tabular-nums" style={{ color: 'var(--foreground)' }}>
+              <dd className="text-lg font-semibold tabular-nums sm:text-2xl" style={{ color: 'var(--foreground)' }}>
                 {tile.value}
               </dd>
               <dd className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
@@ -434,7 +439,7 @@ export default function FinanceClient({
           ))}
         </dl>
 
-        <div role="tablist" aria-label="Bereiche der Finanzübersicht" className="mt-6 flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
+        <div ref={tabRow} role="tablist" aria-label="Bereiche der Finanzübersicht" className="ui-scroll-bare mt-6 flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
           {tabs.map((t) => (
             <button
               key={t.key}
@@ -444,7 +449,7 @@ export default function FinanceClient({
               aria-selected={tab === t.key}
               aria-controls={`${tabsId}-panel-${t.key}`}
               onClick={() => setTab(t.key)}
-              className="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150"
+              className="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11"
               style={{
                 borderColor: tab === t.key ? 'var(--accent)' : 'transparent',
                 color: tab === t.key ? 'var(--accent)' : 'var(--muted)',
@@ -488,7 +493,7 @@ export default function FinanceClient({
               </div>
               )
             ) : (
-              <div className="grid gap-6 lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
                 <nav aria-label="Offene Belege">
                   <p className="mb-2 text-xs" style={{ color: 'var(--muted)' }}>
                     {queue.length === 1 ? 'Noch 1 Beleg offen.' : `Noch ${queue.length} Belege offen.`}

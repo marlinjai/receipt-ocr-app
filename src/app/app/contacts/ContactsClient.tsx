@@ -518,7 +518,7 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
                 setTab(t.key);
                 clearMessages();
               }}
-              className="ui-tab -mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium"
+              className="ui-tab -mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium max-sm:min-h-11"
               style={{ borderColor: tab === t.key ? 'var(--accent)' : 'transparent', color: tab === t.key ? 'var(--accent)' : 'var(--muted)' }}
             >
               {t.label}

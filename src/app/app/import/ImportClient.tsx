@@ -291,12 +291,12 @@ export default function ImportClient() {
   const headers = preview?.headers ?? [];
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--background)' }}>
-      <div className="max-w-5xl mx-auto px-6 py-8">
+    <div className="ui-touch min-h-screen" style={{ background: 'var(--background)' }}>
+      <div className="max-w-5xl mx-auto px-4 py-8 sm:px-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <Link href="/app/dashboard" className="text-xs hover:underline" style={{ color: 'var(--dt-text-secondary)' }}>
+            <Link href="/app/dashboard" className="text-xs hover:underline max-sm:inline-flex max-sm:min-h-11 max-sm:items-center" style={{ color: 'var(--dt-text-secondary)' }}>
               ← Receipts
             </Link>
             <h1 className="text-2xl font-bold mt-1" style={{ color: 'var(--foreground)' }}>
@@ -323,7 +323,7 @@ export default function ImportClient() {
               Connect your Google account so the app can read your Sheets and Drive (both read-only). You&rsquo;ll be sent to
               Google&rsquo;s consent screen and returned here.
             </p>
-            <a href="/api/google/oauth/start" className="inline-block px-4 py-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700">
+            <a href="/api/google/oauth/start" className="inline-block px-4 py-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 max-sm:inline-flex max-sm:min-h-11 max-sm:items-center">
               Connect Google
             </a>
           </div>

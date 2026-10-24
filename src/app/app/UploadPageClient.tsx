@@ -163,7 +163,7 @@ function UploadPageContent({ targets, initialWorkspaceId }: UploadPageProps) {
         <div className="text-center mt-8">
           <Link
             href="/app/dashboard"
-            className="glass-panel inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 hover:border-[var(--accent)] hover:text-[var(--accent)]"
+            className="glass-panel inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 hover:border-[var(--accent)] hover:text-[var(--accent)] max-sm:min-h-11"
             style={{
               color: 'var(--foreground)',
             }}

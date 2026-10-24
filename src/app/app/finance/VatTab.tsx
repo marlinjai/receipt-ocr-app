@@ -258,64 +258,66 @@ export default function VatTab({ view, busy, error, onStatusChange, onRemoveStat
             {year === null ? (
               <p className="ui-note ui-note-warn mt-3">Bitte Abgabezeitraum und Besteuerungsart festlegen; vorher gibt es hier keine Zahlen.</p>
             ) : (
-              <table className="mt-3 w-full text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
-                <caption className="sr-only">Voranmeldungszeiträume {view.year}</caption>
-                <thead>
-                  <tr className="text-left text-xs" style={{ color: 'var(--muted)' }}>
-                    <th scope="col" className="py-1 font-medium">Zeitraum</th>
-                    <th scope="col" className="py-1 text-right font-medium">Umsatzsteuer</th>
-                    <th scope="col" className="py-1 text-right font-medium">Vorsteuer</th>
-                    {withReverseCharge && <th scope="col" className="py-1 text-right font-medium">§ 13b geschuldet</th>}
-                    {withReverseCharge && <th scope="col" className="py-1 text-right font-medium">§ 13b abziehbar</th>}
-                    <th scope="col" className="py-1 text-right font-medium">Zahllast</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {year.periods.map((period) => (
-                    <Fragment key={period.index}>
-                    <tr className="border-t" style={{ borderColor: 'var(--border)' }}>
-                      <th scope="row" className="py-1 text-left font-normal">
-                        {year.periods.length === 12 ? MONTHS[period.index - 1] : `${period.index}. Quartal`}
-                        <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                          {period.output.length + period.input.length + period.reverseCharge.length > 0
-                            ? countText(new Set(period.output.map((e) => e.id)).size, new Set([...period.input, ...period.reverseCharge].map((e) => e.id)).size)
-                            : ''}
-                        </span>
-                      </th>
-                      <td className="py-1 text-right">{euro(period.outputVatCents)}</td>
-                      <td className="py-1 text-right">{euro(period.inputVatCents)}</td>
-                      {withReverseCharge && <td className="py-1 text-right">{euro(period.reverseChargeVatCents)}</td>}
-                      {withReverseCharge && <td className="py-1 text-right">{euro(period.reverseChargeInputVatCents)}</td>}
-                      <td className="py-1 text-right">{period.dueCents < 0 ? `Erstattung ${euro(-period.dueCents)}` : euro(period.dueCents)}</td>
+              <div className="overflow-x-auto">
+                <table className="mt-3 w-full text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
+                  <caption className="sr-only">Voranmeldungszeiträume {view.year}</caption>
+                  <thead>
+                    <tr className="text-left text-xs" style={{ color: 'var(--muted)' }}>
+                      <th scope="col" className="py-1 font-medium">Zeitraum</th>
+                      <th scope="col" className="py-1 text-right font-medium">Umsatzsteuer</th>
+                      <th scope="col" className="py-1 text-right font-medium">Vorsteuer</th>
+                      {withReverseCharge && <th scope="col" className="py-1 text-right font-medium">§ 13b geschuldet</th>}
+                      {withReverseCharge && <th scope="col" className="py-1 text-right font-medium">§ 13b abziehbar</th>}
+                      <th scope="col" className="py-1 text-right font-medium">Zahllast</th>
                     </tr>
-                    {period.outputByRate.length > 0 && (
+                  </thead>
+                  <tbody>
+                    {year.periods.map((period) => (
+                      <Fragment key={period.index}>
+                      <tr className="border-t" style={{ borderColor: 'var(--border)' }}>
+                        <th scope="row" className="py-1 text-left font-normal">
+                          {year.periods.length === 12 ? MONTHS[period.index - 1] : `${period.index}. Quartal`}
+                          <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                            {period.output.length + period.input.length + period.reverseCharge.length > 0
+                              ? countText(new Set(period.output.map((e) => e.id)).size, new Set([...period.input, ...period.reverseCharge].map((e) => e.id)).size)
+                              : ''}
+                          </span>
+                        </th>
+                        <td className="py-1 text-right">{euro(period.outputVatCents)}</td>
+                        <td className="py-1 text-right">{euro(period.inputVatCents)}</td>
+                        {withReverseCharge && <td className="py-1 text-right">{euro(period.reverseChargeVatCents)}</td>}
+                        {withReverseCharge && <td className="py-1 text-right">{euro(period.reverseChargeInputVatCents)}</td>}
+                        <td className="py-1 text-right">{period.dueCents < 0 ? `Erstattung ${euro(-period.dueCents)}` : euro(period.dueCents)}</td>
+                      </tr>
+                      {period.outputByRate.length > 0 && (
+                        <tr>
+                          <td colSpan={4} className="pb-1 text-xs" style={{ color: 'var(--muted)' }}>
+                            {rateLine(period.outputByRate)}
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t font-semibold" style={{ borderColor: 'var(--border)' }}>
+                      <th scope="row" className="py-1 text-left">Jahr</th>
+                      <td className="py-1 text-right">{euro(year.outputVatCents)}</td>
+                      <td className="py-1 text-right">{euro(year.inputVatCents)}</td>
+                      {withReverseCharge && <td className="py-1 text-right">{euro(year.reverseChargeVatCents)}</td>}
+                      {withReverseCharge && <td className="py-1 text-right">{euro(year.reverseChargeInputVatCents)}</td>}
+                      <td className="py-1 text-right">{year.dueCents < 0 ? `Erstattung ${euro(-year.dueCents)}` : euro(year.dueCents)}</td>
+                    </tr>
+                    {year.outputByRate.length > 0 && (
                       <tr>
-                        <td colSpan={4} className="pb-1 text-xs" style={{ color: 'var(--muted)' }}>
-                          {rateLine(period.outputByRate)}
+                        <td colSpan={4} className="pb-1 text-xs font-normal" style={{ color: 'var(--muted)' }}>
+                          {rateLine(year.outputByRate)}
                         </td>
                       </tr>
                     )}
-                    </Fragment>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t font-semibold" style={{ borderColor: 'var(--border)' }}>
-                    <th scope="row" className="py-1 text-left">Jahr</th>
-                    <td className="py-1 text-right">{euro(year.outputVatCents)}</td>
-                    <td className="py-1 text-right">{euro(year.inputVatCents)}</td>
-                    {withReverseCharge && <td className="py-1 text-right">{euro(year.reverseChargeVatCents)}</td>}
-                    {withReverseCharge && <td className="py-1 text-right">{euro(year.reverseChargeInputVatCents)}</td>}
-                    <td className="py-1 text-right">{year.dueCents < 0 ? `Erstattung ${euro(-year.dueCents)}` : euro(year.dueCents)}</td>
-                  </tr>
-                  {year.outputByRate.length > 0 && (
-                    <tr>
-                      <td colSpan={4} className="pb-1 text-xs font-normal" style={{ color: 'var(--muted)' }}>
-                        {rateLine(year.outputByRate)}
-                      </td>
-                    </tr>
-                  )}
-                </tfoot>
-              </table>
+                  </tfoot>
+                </table>
+              </div>
             )}
             <p className="mt-3 text-xs" style={{ color: 'var(--muted)' }}>
               Enthalten ist auch die Steuer, die der Betrieb als Leistungsempfänger für Leistungen aus dem Ausland schuldet

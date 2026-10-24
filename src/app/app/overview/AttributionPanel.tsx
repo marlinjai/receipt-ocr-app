@@ -65,7 +65,7 @@ export default function AttributionPanel({
               value={r.vendor}
               onChange={(e) => setRule(i, { vendor: e.target.value })}
               placeholder="Vendor keyword"
-              className="flex-1 px-2 py-1 text-xs rounded-md"
+              className="min-w-0 flex-1 px-2 py-1 text-xs rounded-md"
               style={inputStyle}
             />
             <input
@@ -80,7 +80,7 @@ export default function AttributionPanel({
             <span className="text-xs" style={{ color: 'var(--dt-text-secondary)' }}>%</span>
             <button
               onClick={() => setRules((rs) => rs.filter((_, idx) => idx !== i))}
-              className="text-xs px-1.5"
+              className="text-xs px-1.5 max-sm:min-w-11"
               style={{ color: '#f87171' }}
               aria-label="Remove"
             >

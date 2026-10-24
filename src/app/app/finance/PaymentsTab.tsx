@@ -528,7 +528,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                     }`}
               </p>
               {r.months.length > 0 && (
-              <details className="mt-2">
+              <details className="mt-2 overflow-x-auto">
                 <summary className="cursor-pointer text-sm" style={{ color: 'var(--foreground)' }}>Abgleich je Monat</summary>
                 <table className="mt-2 w-full text-left text-xs tabular-nums" style={{ color: 'var(--foreground)' }}>
                   <thead>

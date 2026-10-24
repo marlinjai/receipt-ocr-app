@@ -55,9 +55,24 @@ export default function ScrollBox({
             if (measure() && pinEnd && atEnd.current) toEnd();
           });
     observer?.observe(el);
+    // The content can change width while the box does not (new figures, another number of columns).
+    const observeChildren = () => {
+      for (const child of Array.from(el.children)) observer?.observe(child);
+    };
+    observeChildren();
+    // Children that React replaces are new elements: observe them too (observing twice is a no-op).
+    const mutations =
+      typeof MutationObserver === 'undefined'
+        ? null
+        : new MutationObserver(() => {
+            observeChildren();
+            if (measure() && pinEnd && atEnd.current) toEnd();
+          });
+    mutations?.observe(el, { childList: true });
     return () => {
       el.removeEventListener('scroll', onScroll);
       observer?.disconnect();
+      mutations?.disconnect();
     };
   }, [pinEnd, resetKey]);
 

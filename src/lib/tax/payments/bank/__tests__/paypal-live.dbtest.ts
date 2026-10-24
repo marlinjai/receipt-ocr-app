@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { saveTaxSettings } from '@/lib/meals/service';
 import { loadStatement } from '@/lib/tax/service';
 import { createAccount, deleteAccount, deleteImportBatch, importPayments, loadPayments, PaymentServiceError, type PaymentContext } from '../../service';
-import { type Aspsp, type BankApi, type PsuPresence, type SessionAccount, type StartInput } from '../client';
+import { type Aspsp, type BankApi, type SessionAccount, type StartInput } from '../client';
 import { BankServiceError, bankNotices, completeConsent, disconnect, startConsent, syncConnection, type BankDeps } from '../service';
 import { createWorkspace, db } from '../../../../../../test/db-helpers';
 
@@ -53,7 +53,7 @@ class FakePaypal implements BankApi {
     return { sessionId: `pp-sess-${this.sessions}`, accounts: this.nextAccounts, validUntil: new Date('2027-04-20T08:00:00Z') };
   }
   async deleteSession() {}
-  async fetchTransactions(_uid: string, from: string, to: string, _psu?: PsuPresence) {
+  async fetchTransactions(_uid: string, from: string, to: string) {
     return this.rows.filter((t) => (t.transaction_date as string) >= from && (t.transaction_date as string) <= to);
   }
 }

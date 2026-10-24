@@ -285,6 +285,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
                   : `${euro(estimate.businessEffectCents)} mehr`}
               </p>
             )}
+            <div className="ui-table-scroll">
             <table className="mt-3 w-full text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
               <caption className="sr-only">Steuern {view.year}</caption>
               <thead>
@@ -301,6 +302,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
                 <TaxRow label="Kirchensteuer" balance={estimate.churchTax} />
               </tbody>
             </table>
+            </div>
           </>
         )}
         <div className="mt-3 space-y-2">
@@ -354,6 +356,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
           laufenden Jahr kann die letzte bis Dezember hochgerechnet werden.
         </p>
         {tax.wageEntries.length > 0 && (
+          <div className="ui-table-scroll">
           <table className="mt-3 w-full text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
             <caption className="sr-only">Lohnangaben {view.year}</caption>
             <thead>
@@ -390,6 +393,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
               ))}
             </tbody>
           </table>
+          </div>
         )}
         {wageEditing === null ? (
           <button type="button" className="ui-btn ui-btn-primary mt-3" onClick={() => startWage(null)}>

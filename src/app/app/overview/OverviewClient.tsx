@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { aggregateOverview, type OverviewData } from '@/lib/overview/aggregate';
 import {
@@ -91,6 +91,9 @@ function HBars({ items, format }: { items: { label: string; value: number; color
   );
 }
 
+/** The narrowest a month's column gets in the monthly chart (20px bar plus the 8px gap): below that the chart scrolls. */
+export const MONTH_COLUMN_PX = 28;
+
 function StackedMonthly({
   series,
   colorOf,
@@ -101,30 +104,46 @@ function StackedMonthly({
   const H = 160;
   const monthTotal = (m: (typeof series.months)[number]) => Object.values(m.byVendor).reduce((a, b) => a + b, 0);
   const max = Math.max(1, ...series.months.map(monthTotal));
+  // Two years of months do not fit a phone (or half a wide screen): every month keeps a readable column and the
+  // chart scrolls sideways in its own panel, never the page. It opens on the newest months.
+  const panel = useRef<HTMLDivElement>(null);
+  const monthCount = series.months.length;
+  useEffect(() => {
+    const el = panel.current;
+    if (el && el.scrollWidth > el.clientWidth) el.scrollTo({ left: el.scrollWidth });
+  }, [monthCount]);
   return (
-    <div>
-      <div className="flex items-end gap-2" style={{ height: H }}>
-        {series.months.map((m) => {
-          const total = monthTotal(m);
-          return (
-            <div key={m.month} className="flex-1 flex flex-col items-center justify-end" title={`${m.month}: ${money(series.currency, total)}`}>
-              <div className="w-full flex flex-col-reverse rounded-t overflow-hidden" style={{ height: `${(total / max) * H}px` }}>
-                {series.vendors
-                  .filter((v) => m.byVendor[v])
-                  .map((v) => (
-                    <div key={v} style={{ height: `${(m.byVendor[v]! / Math.max(total, 1)) * 100}%`, background: colorOf(v) }} />
-                  ))}
+    <div
+      ref={panel}
+      role="region"
+      aria-label={`${series.currency} je Monat`}
+      tabIndex={0}
+      className="overflow-x-auto overscroll-x-contain pb-1 outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent)]"
+    >
+      <div style={{ minWidth: monthCount * MONTH_COLUMN_PX }}>
+        <div className="flex items-end gap-2" style={{ height: H }}>
+          {series.months.map((m) => {
+            const total = monthTotal(m);
+            return (
+              <div key={m.month} className="min-w-0 flex-1 flex flex-col items-center justify-end" title={`${m.month}: ${money(series.currency, total)}`}>
+                <div className="w-full flex flex-col-reverse rounded-t overflow-hidden" style={{ height: `${(total / max) * H}px` }}>
+                  {series.vendors
+                    .filter((v) => m.byVendor[v])
+                    .map((v) => (
+                      <div key={v} style={{ height: `${(m.byVendor[v]! / Math.max(total, 1)) * 100}%`, background: colorOf(v) }} />
+                    ))}
+                </div>
               </div>
+            );
+          })}
+        </div>
+        <div className="flex gap-2 mt-1">
+          {series.months.map((m) => (
+            <div key={m.month} className="min-w-0 flex-1 text-center text-[10px]" style={{ color: 'var(--dt-text-secondary)' }}>
+              {m.month.slice(5)}
             </div>
-          );
-        })}
-      </div>
-      <div className="flex gap-2 mt-1">
-        {series.months.map((m) => (
-          <div key={m.month} className="flex-1 text-center text-[10px]" style={{ color: 'var(--dt-text-secondary)' }}>
-            {m.month.slice(5)}
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -436,9 +455,10 @@ export default function OverviewClient({
       {monthlyByCurrency.length > 0 && (
         <Section title="Monthly spend by vendor" subtitle="Currencies on separate scales; attributed share">
           <Legend vendors={data.vendors} colorOf={colorOf} />
-          {/* One chart per row on a phone; side by side from the small breakpoint on. */}
+          {/* One chart per row on a phone; side by side from the small breakpoint on. The columns are bounded
+              (minmax 0), so a long chart scrolls in its own panel instead of widening the page. */}
           <div
-            className="grid gap-6 sm:[grid-template-columns:var(--overview-cols)]"
+            className="grid grid-cols-1 gap-6 sm:[grid-template-columns:var(--overview-cols)]"
             style={{ '--overview-cols': `repeat(${Math.min(monthlyByCurrency.length, 2)}, minmax(0,1fr))` } as React.CSSProperties}
           >
             {monthlyByCurrency.map((s) => (

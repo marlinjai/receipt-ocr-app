@@ -966,3 +966,25 @@ textarea.ui-input {
     font-size: 16px;
   }
 }
+
+/* A table too wide for a phone scrolls sideways in its own box, never the page. On a phone its first
+   column (what the row is about) stays put while the figures scroll under it, each on one line. The solid colour matches
+   the glass panel the tables sit in (--surface over the page background). */
+.ui-table-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+@media (max-width: 639px) {
+  /* An amount stays on one line ("11.292,00 €", not the euro sign below it); the box scrolls instead. */
+  .ui-table-scroll td {
+    white-space: nowrap;
+  }
+  .ui-table-scroll :is(th, td):first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    padding-right: 0.75rem;
+    background: #111116;
+    box-shadow: inset -1px 0 0 var(--border-subtle);
+  }
+}

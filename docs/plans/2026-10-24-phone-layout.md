@@ -148,6 +148,24 @@ keeping its table and tab row. The year test hands the years over as the page do
 narrowed, loading and failed states, formatting), `DashboardPhoneActions.test.tsx` the menu,
 and `src/lib/__tests__/phone-layout-hooks.test.tsx` the two hooks.
 
+## Follow-up after the first deployment (2026-10-24)
+
+The coordinating session measured production with real data at 360 and 390 after the deploy
+(5639f77). Everything fit except two places the local data of the first round could not show:
+
+| Page | Production at 390 | Cause | Fix |
+|---|---|---|---|
+| Übersicht (`/app/overview`) | 1403 | The monthly chart per currency (two years of months in EUR, USD and GBP) sat in a grid column sized to its content, every month a column, 1366 pixels wide. | Each currency's chart scrolls sideways in its own panel (a labelled, keyboard-focusable region), every month keeps a 28 pixel column, and the panel opens on the newest months. The chart grid has bounded columns (`grid-cols-1`, `minmax(0, 1fr)`). This also fixes the wide layout, where two years of months had been squeezed past the edge of their half of the screen. |
+| Finanzen, tab Einkommensteuer | 445 | The tables "Steuern" (367 pixels) and "Lohnangaben" (412 pixels) had no sideways scroll of their own. | Both sit in a `ui-table-scroll` box; on a phone the first column stays put while the figures scroll, and an amount stays on one line. The change in `IncomeTaxTab.tsx` is the two wrapper lines per table only, not reindented, because `feat/year-boundary-auto` changes the same file. |
+
+Verified locally with production-like data: 143 receipts in EUR, USD and GBP from January 2024
+to October 2026 and nine wage statements with a long employer name. Before the fix the overview
+measured 699 and the income tax tab 466 at 390; after it, both fit at 360 and 390, and at 1280
+nothing widens the page. Tests: `OverviewClient.test.tsx` (many months in three currencies, each
+in its own scroll panel as wide as its months need, bounded grid columns, few months) and
+`IncomeTaxTab.scroll.test.tsx` (both tables in their scroll box; a file of its own so the tab's
+main test file, which the other branch changes, is not touched).
+
 ## Left open
 
 - The finance tabs were measured with receipts but without payments, invoices, assets or VAT

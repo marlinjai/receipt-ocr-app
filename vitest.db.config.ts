@@ -7,8 +7,11 @@ import path from 'path';
  * applied, and they REQUIRE `TEST_DATABASE_URL`: the setup file throws when it
  * is missing, so this suite can never "pass" by silently skipping.
  *
- * Point it at a throwaway database only. Each test works in freshly generated
- * workspace ids, so runs do not collide, but nothing is cleaned up afterwards.
+ * Point it at throwaway databases only: local, with names ending in `_test`
+ * (test/db-guard.ts refuses anything else). Each test works in freshly generated
+ * workspace ids and cleans nothing up; instead the global setup empties both
+ * databases before every run (test/db-reset.ts), so a run never inherits the
+ * rows of the runs before it.
  */
 export default defineConfig({
   resolve: {
@@ -21,6 +24,7 @@ export default defineConfig({
   test: {
     include: ['src/**/*.dbtest.ts'],
     server: { deps: { inline: ['@marlinjai/auth-brain-nextjs'] } },
+    globalSetup: ['test/db-reset.ts'],
     setupFiles: ['test/db-setup.ts'],
     fileParallelism: false,
     testTimeout: 30_000,

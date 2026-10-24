@@ -8,8 +8,8 @@ import { SharedContactStore, reconcileGuestCopies } from '../shared-store';
 /**
  * The shared contact store against a real contacts database and the real meal
  * guest table. Every test works in freshly generated company and workspace ids,
- * so runs do not collide, and nothing is cleaned up afterwards (the database is
- * throwaway, see test/db-setup.ts).
+ * so tests do not collide; nothing is cleaned up afterwards, and the next run
+ * starts on an emptied database (test/db-reset.ts).
  */
 
 const company = () => `test-tnt-${randomUUID()}`;

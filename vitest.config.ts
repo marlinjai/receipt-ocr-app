@@ -15,7 +15,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.ts', 'test/**/*.test.ts'],
     // Inline the wrapper so vite transforms it and the `next/server` alias above
     // applies inside its barrel (node's ESM loader would otherwise externalize
     // it and resolve `next/server` itself, ignoring the alias).

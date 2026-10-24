@@ -55,3 +55,6 @@ test-*.mjs
 wrangler.jsonc
 .infisical.json
 .infisical.yaml
+
+# Written by `next dev` (Next 16.4) into the repo root on every start; generated, not source.
+AGENTS.md

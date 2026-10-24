@@ -18,10 +18,10 @@ export default function NotesPanel({ initial }: { initial: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ body }),
       });
-      setMsg(res.ok ? 'Saved.' : 'Save failed');
+      setMsg(res.ok ? 'Gespeichert.' : 'Speichern fehlgeschlagen. Bitte noch einmal versuchen.');
       if (res.ok) setEditing(false);
     } catch {
-      setMsg('Save failed');
+      setMsg('Speichern fehlgeschlagen. Bitte noch einmal versuchen.');
     } finally {
       setBusy(false);
     }
@@ -33,10 +33,10 @@ export default function NotesPanel({ initial }: { initial: string }) {
         {body.trim() ? (
           <p className="text-xs whitespace-pre-wrap" style={{ color: 'var(--dt-text-secondary)' }}>{body}</p>
         ) : (
-          <p className="text-xs italic" style={{ color: 'var(--dt-text-secondary)' }}>No notes yet.</p>
+          <p className="text-xs italic" style={{ color: 'var(--dt-text-secondary)' }}>Noch keine Notizen.</p>
         )}
         <button onClick={() => setEditing(true)} className="text-xs mt-2" style={{ color: 'var(--accent)' }}>
-          Edit notes
+          Notizen bearbeiten
         </button>
       </div>
     );
@@ -50,13 +50,14 @@ export default function NotesPanel({ initial }: { initial: string }) {
         rows={6}
         className="w-full px-2 py-1.5 text-xs rounded-md"
         style={{ background: 'var(--background)', border: '1px solid var(--border)', color: 'var(--foreground)' }}
-        placeholder="Reconciliation notes, attribution methodology, caveats…"
+        placeholder="Abgleich, wie die Anteile zustande kommen, Vorbehalte …"
+        aria-label="Notizen"
       />
       <div className="flex gap-2 mt-2 items-center">
         <button onClick={save} disabled={busy} className="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
-          {busy ? 'Saving…' : 'Save'}
+          {busy ? 'Wird gespeichert …' : 'Notizen speichern'}
         </button>
-        <button onClick={() => setEditing(false)} className="text-xs" style={{ color: 'var(--dt-text-secondary)' }}>Cancel</button>
+        <button onClick={() => setEditing(false)} className="text-xs" style={{ color: 'var(--dt-text-secondary)' }}>Abbrechen</button>
         {msg && <span className="text-xs" style={{ color: 'var(--dt-text-secondary)' }}>{msg}</span>}
       </div>
     </div>

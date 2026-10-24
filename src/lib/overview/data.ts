@@ -3,7 +3,7 @@ import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { Row, Column } from '@marlinjai/data-table-core';
 import { prisma } from '@/lib/prisma';
 import { receiptsOnly } from '@/lib/receipts-kind';
-import type { LedgerInvoice } from './selection';
+import { UNKNOWN_VENDOR, ledgerDay, type LedgerInvoice } from './selection';
 
 const TABLE_NAME = 'Receipts';
 
@@ -63,12 +63,13 @@ export async function loadInvoices(workspaceId: string): Promise<LedgerInvoice[]
     return {
       id: r.id,
       name: nameCol ? str(cells[nameCol.id]) : null,
-      vendor: (vendorCol ? str(cells[vendorCol.id]) : null) ?? 'Unknown',
+      vendor: (vendorCol ? str(cells[vendorCol.id]) : null) ?? UNKNOWN_VENDOR,
       currency,
       amountNative: grossCol ? num(cells[grossCol.id]) : 0,
       fxRate: fxCol ? num(cells[fxCol.id]) || 1 : 1,
       businessShare: shareCol && cells[shareCol.id] != null ? num(cells[shareCol.id]) : 100,
-      date: dateCol ? str(cells[dateCol.id]) : null,
+      // The day only: the time frame compares days, and a stored timestamp would fall outside the last day.
+      date: dateCol ? ledgerDay(str(cells[dateCol.id])) : null,
     };
   });
 }

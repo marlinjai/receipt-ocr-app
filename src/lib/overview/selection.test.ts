@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applySelection, presetFrom, sanitizeSelectionDef, type LedgerInvoice } from './selection';
+import { UNKNOWN_VENDOR, applySelection, ledgerDay, presetFrom, sanitizeSelectionDef, type LedgerInvoice } from './selection';
 
 const NOW = new Date('2026-07-22T12:00:00Z');
 
@@ -86,5 +86,45 @@ describe('sanitizeSelectionDef', () => {
   });
   it('rejects unknown presets', () => {
     expect(sanitizeSelectionDef({ preset: '2w' })).toEqual({});
+  });
+});
+
+describe('vendors and currencies left out', () => {
+  const base = { vendor: 'A', currency: 'EUR', amountNative: 1, fxRate: 1, businessShare: 100, name: null } as const;
+  const ledger = [
+    { ...base, id: '1', vendor: 'A', date: '2026-10-11' },
+    { ...base, id: '2', vendor: 'B', currency: 'USD', date: '2026-10-10' },
+    { ...base, id: '3', vendor: 'C', date: null },
+  ];
+
+  it('leaves out exactly the vendors and currencies named, and keeps everything else, also new vendors', () => {
+    expect(applySelection(ledger, { excludeVendors: ['A'] }).map((i) => i.id)).toEqual(['2', '3']);
+    expect(applySelection(ledger, { excludeCurrencies: ['USD'] }).map((i) => i.id)).toEqual(['1', '3']);
+  });
+
+  it('leaves out everything when every vendor is left out (unlike an empty list of vendors kept)', () => {
+    expect(applySelection(ledger, { excludeVendors: ['A', 'B', 'C'] })).toEqual([]);
+    expect(applySelection(ledger, { vendors: [] })).toHaveLength(3);
+  });
+
+  it('keeps the receipts of the last day of a custom range', () => {
+    expect(applySelection(ledger, { preset: 'custom', from: '2026-10-11', to: '2026-10-11' }).map((i) => i.id)).toEqual(['1']);
+  });
+
+  it('accepts the lists left out from stored or sent definitions and drops what is not a list of names', () => {
+    expect(sanitizeSelectionDef({ excludeVendors: ['A', 3, ''], excludeCurrencies: 'USD' })).toEqual({ excludeVendors: ['A'] });
+  });
+});
+
+describe('ledgerDay', () => {
+  it('reads the day a stored date names, also from a full timestamp, and nothing from no date', () => {
+    expect(ledgerDay('2021-01-14T00:00:00.000Z')).toBe('2021-01-14');
+    expect(ledgerDay('2021-01-14')).toBe('2021-01-14');
+    expect(ledgerDay('14.01.2021')).toBeNull();
+    expect(ledgerDay(null)).toBeNull();
+  });
+
+  it('names a receipt without a vendor in German', () => {
+    expect(UNKNOWN_VENDOR).toBe('Ohne Händler');
   });
 });

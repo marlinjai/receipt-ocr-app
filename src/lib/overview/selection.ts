@@ -7,14 +7,29 @@ import type { InvoiceRecord } from './aggregate';
  *
  * A SelectionDef combines:
  *  - a time frame: preset (1w/1m/3m/6m/ytd/1y/all) or a custom from→to range
- *  - living filters: vendors / currencies (empty = all; new imports that match
- *    join automatically)
+ *  - living filters: vendors / currencies left out (excludeVendors /
+ *    excludeCurrencies; everything else counts, so new imports join
+ *    automatically). The older include lists (vendors / currencies, empty =
+ *    all) still load from selections saved before.
  *  - frozen sets: includeIds (only these invoices) / excludeIds (all but these)
  * All parts AND together, so "all Anthropic in H1 minus these two refunds" is
  * one definition.
  */
 
 /** An invoice as shipped to the overview client: aggregate fields + identity. */
+/** The vendor shown for a receipt that names none. */
+export const UNKNOWN_VENDOR = 'Ohne Händler';
+
+/**
+ * A stored date as the day it names ("2021-01-14" from "2021-01-14T00:00:00.000Z"), the way the rest of the
+ * app reads receipt dates (by their leading YYYY-MM-DD). Null when the value holds no day.
+ */
+export function ledgerDay(value: string | null): string | null {
+  if (!value) return null;
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(value);
+  return match ? match[1] : null;
+}
+
 export interface LedgerInvoice extends InvoiceRecord {
   id: string;
   name: string | null;
@@ -27,8 +42,14 @@ export interface SelectionDef {
   preset?: TimePreset; // default 'all'
   from?: string; // ISO YYYY-MM-DD, used when preset === 'custom'
   to?: string;
+  /** Older saved selections: only these vendors (empty = all). New selections use `excludeVendors`. */
   vendors?: string[];
+  /** Older saved selections: only these currencies (empty = all). New selections use `excludeCurrencies`. */
   currencies?: string[];
+  /** Vendors left out; every other vendor counts, including ones imported later. */
+  excludeVendors?: string[];
+  /** Currencies left out. */
+  excludeCurrencies?: string[];
   includeIds?: string[];
   excludeIds?: string[];
 }
@@ -79,6 +100,8 @@ export function applySelection(
 
   const vendors = def.vendors?.length ? new Set(def.vendors) : null;
   const currencies = def.currencies?.length ? new Set(def.currencies) : null;
+  const vendorsOut = def.excludeVendors?.length ? new Set(def.excludeVendors) : null;
+  const currenciesOut = def.excludeCurrencies?.length ? new Set(def.excludeCurrencies) : null;
   const include = def.includeIds?.length ? new Set(def.includeIds) : null;
   const exclude = def.excludeIds?.length ? new Set(def.excludeIds) : null;
 
@@ -90,6 +113,8 @@ export function applySelection(
     if (to && inv.date! > to) return false;
     if (vendors && !vendors.has(inv.vendor)) return false;
     if (currencies && !currencies.has(inv.currency)) return false;
+    if (vendorsOut && vendorsOut.has(inv.vendor)) return false;
+    if (currenciesOut && currenciesOut.has(inv.currency)) return false;
     return true;
   });
 }
@@ -117,6 +142,8 @@ export function sanitizeSelectionDef(raw: unknown): SelectionDef {
     ...(isoOrUndef(r.to) ? { to: isoOrUndef(r.to) } : {}),
     ...(strArray(r.vendors) ? { vendors: strArray(r.vendors) } : {}),
     ...(strArray(r.currencies) ? { currencies: strArray(r.currencies) } : {}),
+    ...(strArray(r.excludeVendors) ? { excludeVendors: strArray(r.excludeVendors) } : {}),
+    ...(strArray(r.excludeCurrencies) ? { excludeCurrencies: strArray(r.excludeCurrencies) } : {}),
     ...(strArray(r.includeIds) ? { includeIds: strArray(r.includeIds) } : {}),
     ...(strArray(r.excludeIds) ? { excludeIds: strArray(r.excludeIds) } : {}),
   };

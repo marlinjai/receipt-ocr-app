@@ -37,7 +37,7 @@ describe('the monthly chart', () => {
   it('gives every currency its own sideways scroll panel as wide as its months need', () => {
     overview([...monthly('EUR', 'Beispiel Hosting', '2024-07', 28), ...monthly('USD', 'Example Cloud', '2024-09', 25), ...monthly('GBP', 'Sample Books', '2025-01', 20)]);
     for (const [currency, months] of [['EUR', 28], ['USD', 25], ['GBP', 20]] as const) {
-      const panel = screen.getByRole('region', { name: `${currency} by month` });
+      const panel = screen.getByRole('region', { name: `${currency} je Monat` });
       expect(panel.className).toContain('overflow-x-auto');
       const inner = panel.firstElementChild as HTMLElement;
       expect(inner.style.minWidth).toBe(`${months * MONTH_COLUMN_PX}px`);
@@ -46,7 +46,7 @@ describe('the monthly chart', () => {
 
   it('sits in grid columns that may shrink below their content (minmax 0), one per row on a phone and two side by side above', () => {
     overview([...monthly('EUR', 'Beispiel Hosting', '2024-01', 30), ...monthly('USD', 'Example Cloud', '2024-01', 30)]);
-    const grid = screen.getByRole('region', { name: 'EUR by month' }).parentElement?.parentElement as HTMLElement;
+    const grid = screen.getByRole('region', { name: 'EUR je Monat' }).parentElement?.parentElement as HTMLElement;
     expect(grid.className).toContain('grid-cols-1');
     expect(grid.className).toContain('sm:[grid-template-columns:var(--overview-cols)]');
     expect(grid.style.getPropertyValue('--overview-cols')).toBe('repeat(2, minmax(0,1fr))');
@@ -54,13 +54,13 @@ describe('the monthly chart', () => {
 
   it('labels the months with their year under the first month and every January', () => {
     overview(monthly('EUR', 'Beispiel Hosting', '2024-11', 4));
-    const labels = screen.getByRole('region', { name: 'EUR by month' }).querySelectorAll('.tabular-nums');
+    const labels = screen.getByRole('region', { name: 'EUR je Monat' }).querySelectorAll('.tabular-nums');
     expect([...labels].map((l) => l.textContent)).toEqual(['1124', '12', '0125', '02']);
   });
 
   it('asks for little width when there are only a few months', () => {
     overview(monthly('EUR', 'Beispiel Hosting', '2026-08', 3));
-    const inner = screen.getByRole('region', { name: 'EUR by month' }).firstElementChild as HTMLElement;
+    const inner = screen.getByRole('region', { name: 'EUR je Monat' }).firstElementChild as HTMLElement;
     expect(inner.style.minWidth).toBe(`${3 * MONTH_COLUMN_PX}px`);
   });
 });

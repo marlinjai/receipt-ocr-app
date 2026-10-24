@@ -35,18 +35,18 @@ export default function AttributionPanel({
         body: JSON.stringify({ rules: rules.filter((r) => r.vendor.trim()), defaultShare, apply }),
       });
       if (!res.ok) {
-        setMsg('Save failed');
+        setMsg('Speichern fehlgeschlagen. Bitte noch einmal versuchen.');
         return;
       }
       const data = await res.json();
       if (apply) {
-        setMsg(`Applied to ${data.applied} rows — refreshing…`);
+        setMsg(`Auf ${data.applied === 1 ? '1 Beleg' : `${data.applied} Belege`} übertragen, die Seite wird neu geladen …`);
         window.location.reload();
       } else {
-        setMsg('Saved.');
+        setMsg('Gespeichert.');
       }
     } catch {
-      setMsg('Save failed');
+      setMsg('Speichern fehlgeschlagen. Bitte noch einmal versuchen.');
     } finally {
       setBusy(false);
     }
@@ -55,8 +55,9 @@ export default function AttributionPanel({
   return (
     <div>
       <p className="text-xs mb-2" style={{ color: 'var(--dt-text-secondary)' }}>
-        Per-vendor attribution %. A vendor name matches any invoice vendor containing it (e.g. “Anthropic”
-        covers “Anthropic (Claude)”). Apply writes these onto the ledger’s Business Share %.
+        Geschäftlicher Anteil in Prozent je Händler. Ein Name passt auf jeden Händler, der ihn enthält („Anthropic“
+        erfasst auch „Anthropic (Claude)“). „Speichern und auf Belege übertragen“ trägt die Anteile als geschäftlichen
+        Anteil in die Belege ein.
       </p>
       <div className="flex flex-col gap-1.5 mb-2">
         {rules.map((r, i) => (
@@ -64,7 +65,8 @@ export default function AttributionPanel({
             <input
               value={r.vendor}
               onChange={(e) => setRule(i, { vendor: e.target.value })}
-              placeholder="Vendor keyword"
+              placeholder="Händlername oder Teil davon"
+              aria-label={`Händler ${i + 1}`}
               className="min-w-0 flex-1 px-2 py-1 text-xs rounded-md"
               style={inputStyle}
             />
@@ -76,13 +78,14 @@ export default function AttributionPanel({
               onChange={(e) => setRule(i, { share: Number(e.target.value) })}
               className="w-16 px-2 py-1 text-xs rounded-md"
               style={inputStyle}
+              aria-label={`Geschäftlicher Anteil von Händler ${i + 1} in Prozent`}
             />
             <span className="text-xs" style={{ color: 'var(--dt-text-secondary)' }}>%</span>
             <button
               onClick={() => setRules((rs) => rs.filter((_, idx) => idx !== i))}
               className="text-xs px-1.5 max-sm:min-w-11"
               style={{ color: '#f87171' }}
-              aria-label="Remove"
+              aria-label={`Händler ${i + 1} entfernen`}
             >
               ✕
             </button>
@@ -94,11 +97,11 @@ export default function AttributionPanel({
         className="text-xs mb-3"
         style={{ color: 'var(--accent)' }}
       >
-        + Add vendor
+        + Händler hinzufügen
       </button>
 
       <div className="flex items-center gap-2 mb-3">
-        <span className="text-xs" style={{ color: 'var(--foreground)' }}>Default (unlisted vendors)</span>
+        <span className="text-xs" style={{ color: 'var(--foreground)' }}>Alle übrigen Händler</span>
         <input
           type="number"
           min={0}
@@ -107,6 +110,7 @@ export default function AttributionPanel({
           onChange={(e) => setDefaultShare(Number(e.target.value))}
           className="w-16 px-2 py-1 text-xs rounded-md"
           style={inputStyle}
+          aria-label="Geschäftlicher Anteil aller übrigen Händler in Prozent"
         />
         <span className="text-xs" style={{ color: 'var(--dt-text-secondary)' }}>%</span>
       </div>
@@ -118,14 +122,14 @@ export default function AttributionPanel({
           className="px-3 py-1.5 text-sm rounded-md hover:opacity-90 disabled:opacity-50"
           style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--foreground)' }}
         >
-          Save
+          Anteile speichern
         </button>
         <button
           onClick={() => save(true)}
           disabled={busy}
           className="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {busy ? 'Applying…' : 'Save & apply to ledger'}
+          {busy ? 'Wird übertragen …' : 'Speichern und auf Belege übertragen'}
         </button>
       </div>
       {msg && <p className="text-xs mt-2" style={{ color: 'var(--dt-text-secondary)' }}>{msg}</p>}

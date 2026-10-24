@@ -969,6 +969,8 @@ export interface RuleTransfer {
   accountLabel: string;
   /** True when the service's list holds the purchase this payment pays. */
   hasTwin: boolean;
+  /** A collection after the end of the service's list, waiting for the next list (see `funding.ts`). */
+  awaitingList: boolean;
   /** The receipts this payment is linked to: a link on a transfer keeps counting for its receipt unless the purchase it funds is linked there too. */
   linkedTo: string[];
   foreign?: ForeignAmount | null;
@@ -1263,7 +1265,7 @@ function buildPaymentsView(
   // What the funding rule hides, so it can be seen and taken back.
   const ruled = inYear.filter((p) => p.byRule && p.kind === 'own_transfer');
   const ruleTransfers: RuleTransfer[] = ruled
-    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, reference: p.reference, accountLabel: accountLabel.get(p.accountId) ?? '', hasTwin: p.funding?.twinId != null, foreign: foreignAmount(p), linkedTo: p.links.flatMap((l) => (l.rowId ? [itemById.get(l.rowId)?.label ?? 'Beleg (nicht mehr vorhanden)'] : [])) }))
+    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, reference: p.reference, accountLabel: accountLabel.get(p.accountId) ?? '', hasTwin: p.funding?.twinId != null, awaitingList: p.funding?.awaitingList === true, foreign: foreignAmount(p), linkedTo: p.links.flatMap((l) => (l.rowId ? [itemById.get(l.rowId)?.label ?? 'Beleg (nicht mehr vorhanden)'] : [])) }))
     .sort((a, b) => (a.bookingDay < b.bookingDay ? 1 : -1));
   const holderOf = new Map<string, { name: string; kind: ServiceKind }>();
   for (const a of loaded.accounts) {

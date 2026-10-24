@@ -599,6 +599,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                         {transfer.accountLabel}
                         {transfer.reference ? ` · ${transfer.reference.slice(0, 60)}` : ''}
                         {transfer.hasTwin ? ' · der Kauf dazu steht in der Liste des Dienstes' : ''}
+                        {transfer.awaitingList ? ' · Sammelzahlung nach dem Ende der Liste, die nächste Liste folgt' : ''}
                         {transfer.linkedTo.length > 0 ? ` · zugeordnet zu: ${transfer.linkedTo.join(', ')}` : ''}
                       </span>
                     </span>

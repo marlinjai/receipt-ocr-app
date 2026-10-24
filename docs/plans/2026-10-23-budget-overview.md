@@ -115,8 +115,16 @@ Built so far, with what the build decided on the way (say so if you disagree):
   with the monthly limit once for a month, twelve times for a past year and once per month begun for
   the current year; the projection shows only for the current month. The budget line over the months
   is the sum of the monthly category limits, labelled as counting only the private part.
-- **Waiting collective debit (step 3):** waits for the PayPal live pull request (`feat/paypal-live`),
-  which changes `funding.ts` too.
+- **Waiting collective debit (step 3), built on main after the PayPal live pull request (#170):** a
+  bank debit naming a held service after the last day of its list is a transfer marked
+  `awaitingList` (`src/lib/tax/payments/funding.ts`): not spending, no receipt asked, named under the
+  totals ("1 Klarna-Sammelzahlung über ... wartet auf die nächste Klarna-Liste") and in the payments
+  tab's list of transfers. The next list covers its day and the usual rule pairs it; a person who says
+  what the debit is overrules it. *Decided:* it waits at most 60 days after the list's last day (the
+  longest pay-later term, `PAY_LATER_TERM_DAYS`), then it is a question again. That is also how
+  "Klarna ends" closes without a new setting: after the last export, a later Klarna debit asks. A
+  wallet waits only while no live connection continues its list (PayPal through the bank interface
+  is never late).
 - **Decided after the first review:** own names are matched word for word without dropping legal
   forms, so "Erika Beispiel UG" (another legal person) is never the owner; and because answers are kept
   per counterparty key (which drops legal forms), a key counts only when every payment under it names

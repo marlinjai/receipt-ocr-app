@@ -17,6 +17,17 @@ const pay = (bookingDay: string, amountCents: number, counterpartyKey: string, e
 
 const none = { treatments: new Map(), answers: new Map() };
 
+describe('collections waiting for their list', () => {
+  it('names them apart: not spending, not an own transfer, per service', () => {
+    const waiting = pay('2026-10-23', -126_169, 'klarna bank ab publ', { kind: 'own_transfer', awaitingList: 'klarna' });
+    const o = buildOverview([waiting, pay('2026-10-24', -5000, 'tagesgeld', { kind: 'own_transfer' }), pay('2026-10-20', -3000, 'rewe')], none, 2026, 10);
+    expect(o.totalCents).toBe(3000);
+    expect(o.waitingDebits).toEqual([{ service: 'klarna', cents: 126_169, count: 1 }]);
+    expect(o.ownTransfers).toMatchObject({ cents: 5000, count: 1 });
+    expect(o.payments.find((p) => p.id === waiting.id)?.awaitingList).toBe('klarna');
+  });
+});
+
 describe('buildOverview', () => {
   const payments = [
     pay('2026-01-05', -5000, 'rewe'),

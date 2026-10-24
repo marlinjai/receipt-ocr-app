@@ -379,8 +379,8 @@ describe('PaymentsTab', () => {
     const user = userEvent.setup();
     const p = props();
     const ruleTransfers = [
-      { id: 't-1', bookingDay: '2026-03-28', amountCents: -3_615, counterparty: 'Später Beispiel Bank', reference: 'Sammelabrechnung', accountLabel: 'Geschäftskonto', hasTwin: false, linkedTo: [] },
-      { id: 't-2', bookingDay: '2026-03-12', amountCents: -1_999, counterparty: 'Geldbörse Beispiel', reference: '', accountLabel: 'Geschäftskonto', hasTwin: true, linkedTo: ['Einkauf Laden'] },
+      { id: 't-1', bookingDay: '2026-03-28', amountCents: -3_615, counterparty: 'Später Beispiel Bank', reference: 'Sammelabrechnung', accountLabel: 'Geschäftskonto', hasTwin: false, awaitingList: true, linkedTo: [] },
+      { id: 't-2', bookingDay: '2026-03-12', amountCents: -1_999, counterparty: 'Geldbörse Beispiel', reference: '', accountLabel: 'Geschäftskonto', hasTwin: true, awaitingList: false, linkedTo: ['Einkauf Laden'] },
     ];
     render(<PaymentsTab view={view({ ruleTransfers, ruleTransferCents: 5_614 })} {...p} />);
     const section = screen.getByRole('region', { name: 'Umbuchungen zwischen eigenen Konten' });
@@ -389,6 +389,8 @@ describe('PaymentsTab', () => {
     // A transfer that is linked says to which receipt: a linked payment appears in no other list.
     expect((within(section).getByText(/Geldbörse Beispiel/).closest('li') as HTMLElement).textContent).toContain('der Kauf dazu steht in der Liste des Dienstes · zugeordnet zu: Einkauf Laden');
     const row = within(section).getByText(/Später Beispiel Bank/).closest('li') as HTMLElement;
+    // A collection after the end of the list says that the list follows.
+    expect(row.textContent).toContain('Sammelzahlung nach dem Ende der Liste, die nächste Liste folgt');
     await user.click(within(row).getByRole('button', { name: 'Kein Übertrag, eine eigene Zahlung' }));
     expect(p.onTransfer).toHaveBeenCalledWith('t-1', false);
   });

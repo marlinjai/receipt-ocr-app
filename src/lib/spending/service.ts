@@ -98,6 +98,8 @@ export function toOverviewInput(p: PaymentRow | RoutedPaymentRow): OverviewPayme
     linkedCents: p.links.reduce((sum, l) => sum + l.cents, 0),
     byPrivateAccount: p.byPrivateAccount,
     routed: 'routedFrom' in p && p.routedFrom !== null,
+    // Only while the funding rule decides it: a person who said what the debit is has answered it.
+    awaitingList: p.byRule && p.funding?.awaitingList ? p.funding.service : null,
   };
 }
 

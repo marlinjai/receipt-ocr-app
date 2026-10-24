@@ -39,9 +39,34 @@ describe('money that only funds another payment account', () => {
     expect(collected).toEqual({ service: 'klarna', serviceKind: 'pay_later', kind: 'own_transfer', twinId: null });
   });
 
-  it('only on days the service’s list covers: before its first and after its last day the bank line is the only record', () => {
-    const on = (bookingDay: string) => fundingOf(payment({ accountId: 'bank', bookingDay, counterpartyKey: 'paypal europe' }), walletList()) !== null;
-    expect([on('2025-02-28'), on('2025-03-01'), on('2025-03-31'), on('2025-04-01'), on('2024-11-12'), on('2026-03-12')]).toEqual([false, true, true, false, false, false]);
+  it('pairs only on days the service’s list covers: before its first day the bank line is the only record, after its last day it waits for the next list', () => {
+    const on = (bookingDay: string) => fundingOf(payment({ accountId: 'bank', bookingDay, counterpartyKey: 'paypal europe' }), walletList());
+    expect([on('2025-02-28'), on('2024-11-12')]).toEqual([null, null]);
+    expect(on('2025-03-31')).toMatchObject({ kind: 'own_transfer' });
+    expect(on('2025-03-31')?.awaitingList).toBeUndefined();
+    expect(on('2025-04-01')).toEqual({ service: 'paypal', serviceKind: 'wallet', kind: 'own_transfer', twinId: null, awaitingList: true });
+    // More than the longest term after the list's last day: no list can still come for it, so it asks again.
+    expect(on('2026-03-12')).toBeNull();
+  });
+
+  it('a collective debit after the end of the pay-later list waits for the list, at most 60 days, and pairs as usual once the list covers its day', () => {
+    const debit = (bookingDay: string, id = `d-${bookingDay}`) => payment({ id, accountId: 'bank', bookingDay, amountCents: -126_169, counterpartyKey: 'klarna bank ab publ' });
+    expect(fundingOf(debit('2025-04-23'), laterList())).toEqual({ service: 'klarna', serviceKind: 'pay_later', kind: 'own_transfer', twinId: null, awaitingList: true });
+    expect(fundingOf(debit('2025-05-30'), laterList())?.awaitingList).toBe(true);
+    expect(fundingOf(debit('2025-05-31'), laterList())).toBeNull();
+    // Money back after the end of the list is no collection: it stays a question (a refund needs its list too).
+    expect(fundingOf(payment({ accountId: 'bank', bookingDay: '2025-04-05', amountCents: 500, counterpartyKey: 'klarna bank ab publ' }), laterList())).toBeNull();
+    // On a card it is no collective debit either.
+    expect(fundingOf(payment({ accountId: 'card', bookingDay: '2025-04-05', amountCents: -500, counterpartyKey: 'klarna bank ab publ' }), laterList())).toBeNull();
+    // The next list arrives and covers the day: the usual rule, no longer waiting.
+    const longer = [...laterList(), payment({ id: 'l-april', accountId: 'later', bookingDay: '2025-04-25', amountCents: -300, counterpartyKey: 'kiosk beispiel' })];
+    expect(fundingOf(debit('2025-04-23'), longer)).toEqual({ service: 'klarna', serviceKind: 'pay_later', kind: 'own_transfer', twinId: null });
+  });
+
+  it('a wallet whose list a live connection continues never waits: a debit its live list does not show is asked about', () => {
+    const live = [...accounts.filter((a) => a.id !== 'wallet'), { id: 'wallet', kind: 'payment_service', formats: [], services: ['paypal'] }];
+    const debit = payment({ accountId: 'bank', bookingDay: '2025-04-05', counterpartyKey: 'paypal europe' });
+    expect(resolveFunding(live, [...walletList(), debit]).get(debit.id)).toBeUndefined();
   });
 
   it('money coming in: a wallet pays balance out (a transfer), a pay-later service pays money back (a refund)', () => {

@@ -25,6 +25,8 @@ export interface OverviewPaymentInput {
   byPrivateAccount?: boolean;
   /** True when the payment is here because the company holding its account calls it private (src/lib/tax/payments/route.ts). */
   routed?: boolean;
+  /** The service whose next list this debit waits for (a collection after the end of its list, `funding.ts`); null otherwise. */
+  awaitingList?: string | null;
 }
 
 export interface OverviewPayment {
@@ -46,6 +48,8 @@ export interface OverviewPayment {
   hasReceipt: boolean;
   /** Here from the company that holds its account: a receipt linked here can be taken back on this page. */
   routed: boolean;
+  /** The service whose next list this collection waits for, or null. */
+  awaitingList: string | null;
 }
 
 export interface CategoryTotal {
@@ -79,6 +83,8 @@ export interface SpendingOverview {
    * `byName`: of it, what went to a counterparty that is an own account only by the owner's own names.
    */
   ownTransfers: { cents: number; count: number; byName: { cents: number; count: number } };
+  /** Collections of a service after the end of its imported list, per service: not spending, they wait for the next list. */
+  waitingDebits: Array<{ service: string; cents: number; count: number }>;
   /** Counterparties whose spending in the period is in "unclear", largest first. */
   unclear: UnclearCounterparty[];
   /** The payments of the period that count as spending or are own transfers, newest first. */
@@ -117,6 +123,7 @@ export function classifyPayment(p: OverviewPaymentInput, ctx: OverviewContext): 
     businessCents: cents === null ? 0 : businessShare(cents, purpose, treatment === 'mixed' || p.byPrivateAccount === true, p.linkedCents ?? 0),
     hasReceipt: p.linkCount > 0,
     routed: p.routed === true,
+    awaitingList: p.awaitingList ?? null,
   };
 }
 
@@ -141,12 +148,20 @@ export function buildOverview(payments: readonly OverviewPaymentInput[], ctx: Ov
   const counts = zeroCategories();
   const split: Record<SpendingPurpose, number> = { private: 0, business: 0, unanswered: 0 };
   const ownTransfers = { cents: 0, count: 0, byName: { cents: 0, count: 0 } };
+  const waiting = new Map<string, { service: string; cents: number; count: number }>();
   const unclear = new Map<string, UnclearCounterparty>();
   const listed: OverviewPayment[] = [];
   let totalCents = 0;
   for (const p of inPeriod) {
     if (p.spendingCents === null) {
-      if (p.category === 'transfers' && p.basis === 'own_account') {
+      if (p.category === 'transfers' && p.basis === 'own_account' && p.awaitingList !== null) {
+        listed.push(p);
+        // Named apart: these are purchases whose list is not imported yet, not money between own accounts.
+        const entry = waiting.get(p.awaitingList) ?? { service: p.awaitingList, cents: 0, count: 0 };
+        entry.cents += -p.amountCents;
+        entry.count += 1;
+        waiting.set(p.awaitingList, entry);
+      } else if (p.category === 'transfers' && p.basis === 'own_account') {
         listed.push(p);
         // Only the side leaving an account: with both accounts imported, the money arriving is the same money.
         if (p.amountCents < 0) {
@@ -186,6 +201,7 @@ export function buildOverview(payments: readonly OverviewPaymentInput[], ctx: Ov
     byMonth,
     split,
     ownTransfers,
+    waitingDebits: [...waiting.values()].sort((a, b) => (a.service < b.service ? -1 : 1)),
     unclear: [...unclear.values()].sort((a, b) => b.cents - a.cents),
     payments: listed,
   };

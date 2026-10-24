@@ -254,6 +254,14 @@ describe('SpendingClient charts', () => {
   });
 });
 
+describe('SpendingClient waiting collections', () => {
+  it('names a collective debit that waits for the next list under the totals', () => {
+    const waiting = { ...pay, id: 'p-k', counterparty: 'Klarna Bank AB', counterpartyKey: 'klarna bank ab', amountCents: -126_169, kind: 'own_transfer' as const, awaitingList: 'klarna' };
+    render(<SpendingClient today="2026-10-24" initial={{ ...view(true), overview: buildOverview([pay, waiting], { treatments: new Map(), answers: new Map() }, 2026, null) }} />);
+    expect(screen.getByText(/Nicht mitgezählt: 1 Klarna-Sammelzahlung über 1\.261,69 € wartet auf die nächste Klarna-Liste\./)).toBeTruthy();
+  });
+});
+
 describe('SpendingClient own names', () => {
   it('asks for a name up front while there is none, adds it, and says which messages it settled', async () => {
     saveOwnNames.mockResolvedValue({ ok: true, value: { ...view(true), ownNames: ['Erika Beispiel'], settledOwnName: 2 } });

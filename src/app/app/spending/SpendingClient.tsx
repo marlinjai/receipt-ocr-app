@@ -17,6 +17,9 @@ import { BudgetChart, MonthsChart, TopCounterpartiesChart } from './OverviewChar
 
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
+/** The payment services whose collections can wait for their next list. */
+const SERVICE_LABELS: Record<string, string> = { klarna: 'Klarna', paypal: 'PayPal' };
+
 const PURPOSE_LABELS: Record<SpendingPurpose, string> = {
   private: 'Privat',
   business: 'Geschäftlich',
@@ -495,6 +498,15 @@ export default function SpendingClient({
               {overview.ownTransfers.byName.count > 0 && `, davon ${overview.ownTransfers.byName.count} an eigene Namen über ${euro(overview.ownTransfers.byName.cents)}`}.
             </p>
           )}
+          {overview.waitingDebits.map((w) => {
+            const name = SERVICE_LABELS[w.service] ?? w.service;
+            return (
+              <p key={w.service} className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+                Nicht mitgezählt: {w.count === 1 ? `1 ${name}-Sammelzahlung` : `${w.count} ${name}-Sammelzahlungen`} über {euro(w.cents)}{' '}
+                {w.count === 1 ? 'wartet' : 'warten'} auf die nächste {name}-Liste. Mit der Liste zählen die Käufe darin.
+              </p>
+            );
+          })}
 
           <OwnNames
             names={view.ownNames}

@@ -1,5 +1,6 @@
 import { ESTIMATE_TOLERANCE_PERCENT, withinEstimate } from './estimate';
 import type { PaymentFormat } from './types';
+import { PAY_LATER_TERM_DAYS } from './pay-later';
 
 /**
  * Money that only funds another payment account. Pure.
@@ -40,6 +41,13 @@ import type { PaymentFormat } from './types';
  *   names the service with that amount, closest to it; that debit is then a
  *   transfer too, still the twin of a purchase the wallet shows. Without one,
  *   or with two equally close, it is asked about.
+ * - A bank debit naming the service AFTER the last day of its list, at most
+ *   `PAY_LATER_TERM_DAYS` later, is a collection whose list is not imported
+ *   yet ("Sammelzahlung, Liste folgt", `awaitingList`): a transfer that waits
+ *   for the next list, which then pairs it as above. Later than that it is
+ *   asked about again (the service is no longer used, or something else). For
+ *   a wallet only while no live connection continues its list: a live list
+ *   that does not show it is no list that is late.
  * - A purchase whose euro amount is an estimate (another currency at the
  *   reference rate) is the twin of a funding row within `ESTIMATE_TOLERANCE_PERCENT`;
  *   every other twin has exactly the same amount.
@@ -109,6 +117,8 @@ export interface Funding {
   kind: 'own_transfer' | 'refund';
   /** The purchase in the service's own list that this payment pays, when exactly one fits. */
   twinId: string | null;
+  /** A collection after the end of the service's list: it waits for the next list (see the rules above). */
+  awaitingList?: true;
 }
 
 interface Service {
@@ -181,6 +191,14 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
       movements.set(service.name, [...(movements.get(service.name) ?? []), payment]);
     }
   }
+  // A wallet whose list a live connection continues is never late (see the rules above).
+  const live = new Set(accounts.flatMap((a) => (held.has(a.id) && (a.services ?? []).includes(held.get(a.id)?.name ?? null) ? [held.get(a.id)?.name as string] : [])));
+  const awaitsList = (service: Service, day: string): boolean => {
+    if (service.kind === 'wallet' && live.has(service.name)) return false;
+    const end = [...service.holders.values()].reduce((max, span) => (span.last > max ? span.last : max), '');
+    if (!end || day <= end) return false;
+    return dayNumber(day) - dayNumber(end) <= PAY_LATER_TERM_DAYS;
+  };
   const hasWords = (text: string, words: string) => ` ${text} `.includes(` ${words} `);
   const taken = new Set<string>();
   const namesService = (payment: FundingPayment, service: string) => payment.counterpartyKey.split(' ').includes(service);
@@ -241,7 +259,12 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
       .find((s): s is Service => s !== undefined && s.name !== own);
     if (!service) continue;
     const covered = [...service.holders.values()].some((span) => payment.bookingDay >= span.first && payment.bookingDay <= span.last);
-    if (!covered) continue;
+    if (!covered) {
+      if (payment.amountCents < 0 && accountKind.get(payment.accountId) === 'bank' && own === null && awaitsList(service, payment.bookingDay)) {
+        out.set(payment.id, { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: null, awaitingList: true });
+      }
+      continue;
+    }
 
     const day = dayNumber(payment.bookingDay);
     if (payment.amountCents > 0) {

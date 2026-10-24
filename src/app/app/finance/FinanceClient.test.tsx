@@ -32,6 +32,8 @@ const actions = vi.hoisted(() => ({
   saveAsset: vi.fn(),
   removeAsset: vi.fn(),
   disposeAsset: vi.fn(),
+  removeAccount: vi.fn(),
+  getStatement: vi.fn(),
 }));
 vi.mock('./actions', () => actions);
 // The income tax tab's server actions: never the real ones (they reach the database).
@@ -802,6 +804,24 @@ describe('FinanceClient: assets', () => {
     expect(await screen.findByText('1 Zahlung dem Beleg zugeordnet; 1 Vorschlag galt nicht mehr und blieb unberührt. Die Liste zeigt den aktuellen Stand.')).toBeTruthy();
     expect(actions.acceptPaymentProposals).toHaveBeenLastCalledWith(2025, [{ paymentId: 'p-1', rowId: 'r-1' }, { paymentId: 'p-2', rowId: 'r-2' }], true);
     expect(screen.queryByRole('region', { name: 'Vorschläge für geschätzte Belege' })).toBeNull();
+    confirm.mockRestore();
+  });
+
+  it('"Konto entfernen" refused because the account is no longer empty shows why and what the account holds now', async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const payments = view([]).payments;
+    const empty = { id: 'acc-empty', label: 'Altes Konto', kind: 'bank' as const, isPrivate: false, paymentCount: 0, completeThrough: null, batches: [] };
+    const filled = { ...empty, paymentCount: 1, completeThrough: '2025-03-02', batches: [{ id: 'b-1', format: 'n26_csv' as const, service: null, newCount: 1, paymentCount: 1, firstDay: '2025-03-02', lastDay: '2025-03-02', importedAt: '2025-03-03T08:00:00.000Z' }] };
+    actions.removeAccount.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'account_not_empty' });
+    actions.getStatement.mockResolvedValue({ ok: true, value: view([], { payments: { ...payments, accounts: [filled] } }) });
+    render(<FinanceClient initial={view([], { payments: { ...payments, accounts: [empty] } })} />);
+    await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
+    await user.click(screen.getByRole('button', { name: 'Konto entfernen' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('lässt sich nicht entfernen');
+    expect(actions.getStatement).toHaveBeenCalledWith(2025);
+    // The account now holds an import: the button is gone.
+    await vi.waitFor(() => expect(screen.queryByRole('button', { name: 'Konto entfernen' })).toBeNull());
     confirm.mockRestore();
   });
 

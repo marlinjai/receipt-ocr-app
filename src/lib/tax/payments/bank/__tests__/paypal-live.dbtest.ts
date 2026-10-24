@@ -289,6 +289,8 @@ describe('PayPal live: an earlier input changed', () => {
     const result = await importPayments(db, s.ctx, s.walletId, csv(...csvDollarPurchase({ day: '2026-10-06', name: 'Server Beispiel', usd: '5,00', eur: '4,71', code: 'B2' }), csvRow({ day: '2026-10-09', name: 'Kiosk Beispiel', gross: '-1,00', code: 'B5' })));
     expect(result.settled).toBe(1);
     expect(result.added).toBe(0);
+    // The dollar purchase counts once, as settled; only the kiosk row is counted as covered.
+    expect(result.skipped.covered_by_other_source).toBe(1);
     const stored = await walletPayments(s.walletId);
     expect(stored.map((p) => [p.bookingDay, p.amountCents, p.amountEstimated])).toEqual([
       ['2026-10-06', -471, false],
@@ -393,6 +395,20 @@ describe('PayPal live: resume', () => {
     const server = await db.taxPayment.findMany({ where: { accountId: s.walletId, counterparty: 'Server Beispiel' } });
     expect(server.map((p) => [p.bookingDay, p.amountCents, p.amountEstimated])).toEqual([['2026-10-06', -471, false]]);
     expect(await db.taxPayment.count({ where: { accountId: s.walletId } })).toBe(3);
+  });
+
+  it('a movement without a readable currency is a skipped day and a day the import holds in part, never lost in silence', async () => {
+    const s = await setup();
+    s.api.rows = [
+      tx({ day: '2026-10-05', cents: -299, party: 'Musik Beispiel', code: 'B1' }),
+      { ...tx({ day: '2026-10-06', cents: -500, party: 'Server Beispiel', code: 'B2' }), transaction_amount: { amount: '5.00', currency: 'usd' } },
+      tx({ day: '2026-10-07', cents: -100, party: 'Kiosk Beispiel', code: 'B3' }),
+    ];
+    const connectionId = await connectPaypal(s);
+    expect(await syncConnection(db, s.ctx, s.deps, connectionId, { today: TODAY })).toEqual({ status: 'synced', added: 2 });
+    const c = await db.taxBankConnection.findUniqueOrThrow({ where: { id: connectionId } });
+    expect(bankNotices(c.notices).skipped).toEqual(['2026-10-06']);
+    expect((await db.taxImportBatch.findFirstOrThrow({ where: { accountId: s.walletId } })).partialDays).toEqual(['2026-10-06']);
   });
 
   it('a rate service that fails is a missing rate for that fetch, never a failed fetch', async () => {

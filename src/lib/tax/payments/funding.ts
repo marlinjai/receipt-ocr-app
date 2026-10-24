@@ -261,17 +261,23 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
       out.set(movement.id, { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: null });
       continue;
     }
-    let twin: FundingPayment | null = null;
+    // The closest by day, then by amount (an estimate fits within the tolerance, so two may); still two equally
+    // close, which one it funds is not known and the debit gets no twin.
+    let twins: FundingPayment[] = [];
     let twinGap = Infinity;
+    let twinOff = Infinity;
     for (const purchase of purchases.get(service.name) ?? []) {
       if (taken.has(purchase.id) || !sameAmount(purchase, payment.amountCents)) continue;
       const gap = day - dayNumber(purchase.bookingDay);
       if (gap < -TWIN_DAYS_BEFORE || gap > TWIN_DAYS_AFTER) continue;
-      if (Math.abs(gap) < twinGap) {
-        twin = purchase;
+      const off = Math.abs(purchase.amountCents - payment.amountCents);
+      if (Math.abs(gap) < twinGap || (Math.abs(gap) === twinGap && off < twinOff)) {
+        twins = [purchase];
         twinGap = Math.abs(gap);
-      }
+        twinOff = off;
+      } else if (Math.abs(gap) === twinGap && off === twinOff) twins.push(purchase);
     }
+    const twin = twins.length === 1 ? twins[0] : null;
     const onBank = accountKind.get(payment.accountId) === 'bank' && own === null;
     if (!onBank && twin === null) continue;
     if (twin) taken.add(twin.id);

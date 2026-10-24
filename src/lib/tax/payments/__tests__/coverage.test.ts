@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { batchCoverage, beyondStored, covers, coveredByOtherSources, mergeIntervals, orderBatches, overlaps, subtract } from '../coverage';
+import { batchCoverage, covers, coveredByOtherSources, matchStored, mergeIntervals, orderBatches, overlaps, subtract } from '../coverage';
 
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 15, 12, minute));
 const batch = (id: string, format: string, firstDay: string | null, lastDay: string | null, minute: number) => ({ id, format, firstDay, lastDay, createdAt: at(minute) });
@@ -58,11 +58,11 @@ describe('edges', () => {
 
   it('on a day another source holds, as many rows per amount as it stored are the same, the rest are new', () => {
     const rows = [
-      { bookingDay: '2025-06-30', amountCents: -2_000, n: 1 },
-      { bookingDay: '2025-06-30', amountCents: -2_000, n: 2 },
-      { bookingDay: '2025-06-30', amountCents: -700, n: 3 },
+      { bookingDay: '2025-06-30', amountCents: -2_000, counterpartyKey: 'laden', n: 1 },
+      { bookingDay: '2025-06-30', amountCents: -2_000, counterpartyKey: 'laden', n: 2 },
+      { bookingDay: '2025-06-30', amountCents: -700, counterpartyKey: 'kiosk', n: 3 },
     ];
-    const { beyond, same } = beyondStored(rows, [{ bookingDay: '2025-06-30', amountCents: -2_000 }]);
+    const { beyond, same } = matchStored(rows, [{ id: 's', bookingDay: '2025-06-30', amountCents: -2_000, counterpartyKey: 'laden', estimated: false }]);
     expect(same.map((r) => r.n)).toEqual([1]);
     expect(beyond.map((r) => r.n)).toEqual([2, 3]);
   });

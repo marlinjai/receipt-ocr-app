@@ -13,6 +13,7 @@ import {
   acceptPaymentProposals,
   markAccountPrivate,
   markPaymentTransfer,
+  getStatement,
   removeAccount,
   addAccount,
   answerYearBoundary,
@@ -837,7 +838,18 @@ export default function FinanceClient({
                   isPrivate ? `${account.label}: als privat vermerkt; nach seinen Zahlungen wird nicht mehr gefragt.` : `${account.label}: wird wieder geprüft.`,
                 )
               }
-              onRemoveAccount={(account) => run(() => removeAccount(view.year, account.id), `${account.label}: entfernt.`)}
+              onRemoveAccount={(account) =>
+                run(async () => {
+                  const result = await removeAccount(view.year, account.id);
+                  // Refused because the account changed meanwhile (a payment, an import or a connection arrived, or it is
+                  // gone): the screen shows what it holds now, so the button does not stay where it no longer applies.
+                  if (!result.ok && (result.detail === 'account_not_empty' || result.detail === 'account_not_found')) {
+                    const fresh = await getStatement(view.year).catch(() => null);
+                    if (fresh?.ok) setView(fresh.value);
+                  }
+                  return result;
+                }, `${account.label}: entfernt.`)
+              }
               onSearch={(query) => searchPayments(view.year, query)}
               bank={bankInitial ? { feed: bankFeed, actions: bankActions, returnNotice: bankNotice } : null}
               sharing={

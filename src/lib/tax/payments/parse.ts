@@ -452,10 +452,13 @@ function parseEnableBanking(data: unknown, options: ParseOptions = {}): ParsedFi
     // A bank's movement in another currency is left out (the bank books the euro side itself);
     // a wallet's is read at the reference rate, because it is the only record of that purchase.
     const foreign = amount.currency !== 'EUR';
-    if (foreign && (wallet === null || !isCurrency(amount.currency))) {
+    if (foreign && wallet === null) {
       skip(skipped, 'other_currency');
       return;
     }
+    // A wallet's movement without a readable currency is not left out in silence: it is unreadable, so the live
+    // fetch keeps its day as a notice and as a day it holds in part, and the list can still bring it.
+    if (foreign && !isCurrency(amount.currency)) throw new PaymentParseError('unreadable_row', index + 1);
     const bookingDay = interfaceDay(t);
     const magnitude = toCents(typeof amount.amount === 'string' ? amount.amount : String(amount.amount ?? ''));
     const indicator = t.credit_debit_indicator;

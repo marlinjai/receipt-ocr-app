@@ -10,7 +10,7 @@ import { withinEstimate } from './estimate';
  * of OTHER formats already held. Imports of the same format share their days:
  * they are told apart by identity. On the first and the last day another
  * source holds, a later source adds the movements beyond what is stored there
- * (see `beyondStored`), so a day the first source exported only in part is
+ * (see `matchStored`), so a day the first source exported only in part is
  * filled.
  */
 
@@ -83,28 +83,6 @@ export function coveredByOtherSources(batches: readonly BatchSpan[], format: str
   return batches.filter((b) => b.format !== format).flatMap((b) => coverage.get(b.id) ?? []);
 }
 
-/**
- * Of a file's rows on days another source holds, the ones beyond what that
- * source stored: per day and amount, as many rows as are stored are taken to
- * be the same movements (in file order), the rest are new. `stored` is what
- * the other sources hold on those days.
- */
-export function beyondStored<T extends { bookingDay: string; amountCents: number }>(rows: readonly T[], stored: ReadonlyArray<{ bookingDay: string; amountCents: number }>): { beyond: T[]; same: T[] } {
-  const left = new Map<string, number>();
-  for (const s of stored) left.set(`${s.bookingDay}|${s.amountCents}`, (left.get(`${s.bookingDay}|${s.amountCents}`) ?? 0) + 1);
-  const beyond: T[] = [];
-  const same: T[] = [];
-  for (const row of rows) {
-    const key = `${row.bookingDay}|${row.amountCents}`;
-    const n = left.get(key) ?? 0;
-    if (n > 0) {
-      left.set(key, n - 1);
-      same.push(row);
-    } else beyond.push(row);
-  }
-  return { beyond, same };
-}
-
 /** A movement another source of the account stored, as `matchStored` compares it. */
 export interface StoredMovement {
   id: string;
@@ -116,9 +94,10 @@ export interface StoredMovement {
 }
 
 /**
- * Like `beyondStored`, for sources where one side may hold an estimate (a
- * wallet's purchase in another currency at the reference rate, the other
- * source its real euro amount). First, per day and amount, rows and stored
+ * Of a file's rows on days another source holds, the ones beyond what that
+ * source stored (`beyond`) and the ones it already holds (`same`). One side
+ * may hold an estimate (a wallet's purchase in another currency at the
+ * reference rate, the other source its real euro amount). First, per day and amount, rows and stored
  * movements that are both exact pair up in file order. Then a row and a
  * stored movement of which at least one is an estimate pair up per day and
  * counterparty (a named one only) when the amounts lie within the conversion's

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { matchStored, sourcesMayShare } from '../coverage';
+import { scaleLinks } from '../estimate';
 import { ESTIMATE_TOLERANCE_PERCENT, heldService, resolveFunding, serviceOfInstitution, type FundingPayment } from '../funding';
 import { parsePaymentFile, rateKey, referenceHash, walletRateNeeds } from '../parse';
 
@@ -35,6 +36,11 @@ describe('the bank interface list of a PayPal wallet', () => {
     const file = parsePaymentFile(list(tx({ day: '2026-10-02', cents: -1000, currency: 'XYZ', party: 'Laden Beispiel', code: 'PP-2' }), tx({ day: '2026-10-03', cents: -500, party: 'Kiosk Beispiel', code: 'PP-3' })), rates({}));
     expect(file.payments.map((p) => p.entryReference)).toEqual(['PP-3']);
     expect(file.skipped).toEqual({ no_exchange_rate: 1 });
+  });
+
+  it('a wallet movement without a readable currency is an unreadable row, never left out in silence', () => {
+    const odd = { ...tx({ day: '2026-10-02', cents: -1000, party: 'Laden Beispiel', code: 'PP-2' }), transaction_amount: { amount: '10.00', currency: 'usd' } };
+    expect(() => parsePaymentFile(list(odd), rates({}))).toThrow(expect.objectContaining({ code: 'unreadable_row', row: 1 }));
   });
 
   it('a bank list (no wallet) still leaves every other currency out, as before', () => {
@@ -179,6 +185,16 @@ describe('the funding rule with a live-fed PayPal wallet', () => {
     expect(resolveFunding(accounts, [...span(), { ...alone }, other]).get('alone')).toBeUndefined();
   });
 
+  it('of two estimates within the tolerance the closer amount is the twin; two equally close give none', () => {
+    const a = payment({ id: 'a', accountId: 'wallet', bookingDay: '2026-10-10', amountCents: -2000, counterpartyKey: 'laden beispiel', estimated: true });
+    const b = payment({ id: 'b', accountId: 'wallet', bookingDay: '2026-10-10', amountCents: -2050, counterpartyKey: 'markt beispiel', estimated: true });
+    const debit = payment({ id: 'debit', accountId: 'bank', bookingDay: '2026-10-11', amountCents: -2055, counterpartyKey: 'paypal europe' });
+    expect(resolveFunding(accounts, [...span(), a, b, debit]).get('debit')?.twinId).toBe('b');
+    const c = payment({ id: 'c', accountId: 'wallet', bookingDay: '2026-10-10', amountCents: -2060, counterpartyKey: 'kiosk beispiel', estimated: true });
+    // 20.50 and 20.60 are both 5 cents from 20.55: the debit is still the bank's transfer to PayPal, without a twin.
+    expect(resolveFunding(accounts, [...span(), b, c, debit]).get('debit')).toEqual({ service: 'paypal', serviceKind: 'wallet', kind: 'own_transfer', twinId: null });
+  });
+
   it('a top-up never takes the bank debit from the purchase it funds, and two equally close debits leave it asked about', () => {
     // PayPal draws a purchase from the bank and shows the money arriving first: the debit stays the purchase's twin.
     const purchase = payment({ id: 'buy', accountId: 'wallet', bookingDay: '2026-10-10', amountCents: -2000, counterpartyKey: 'laden beispiel' });
@@ -240,5 +256,32 @@ describe('edge days where one source holds an estimate', () => {
     const twice = matchStored([row(-500, 'a'), row(-912, 'a', true)], [stored('x', -500, 'a', false)]);
     expect(twice.same).toHaveLength(1);
     expect(twice.beyond).toHaveLength(1);
+  });
+});
+
+describe('links of an estimate scaled to its real amount', () => {
+  const links = (...cents: number[]) => cents.map((c, i) => ({ id: `l${i}`, cents: c }));
+  const sum = (xs: Array<{ cents: number }>) => xs.reduce((s, x) => s + x.cents, 0);
+
+  it('links that covered the whole payment cover the whole real amount, shares kept', () => {
+    expect(scaleLinks(links(450), 450, 471)).toEqual([{ id: 'l0', cents: 471 }]);
+    expect(scaleLinks(links(500, 400), 900, 943)).toEqual([{ id: 'l0', cents: 524 }, { id: 'l1', cents: 419 }]);
+    // Three equal thirds of 100 to 101: the cent left goes to the first.
+    expect(scaleLinks(links(33, 33, 34), 100, 101).map((l) => l.cents)).toEqual([33, 33, 35]);
+  });
+
+  it('a part of the payment stays a part, and many small links never go below nothing', () => {
+    const part = scaleLinks(links(200), 450, 471);
+    expect(part).toEqual([{ id: 'l0', cents: 209 }]);
+    const many = scaleLinks(links(1, 1, 1, 1, 1, 1, 1, 1, 1, 1), 10, 7);
+    expect(sum(many)).toBe(7);
+    expect(many.every((l) => l.cents >= 0)).toBe(true);
+    expect(many.filter((l) => l.cents === 0)).toHaveLength(3);
+  });
+
+  it('links that said more than the payment come down to the real amount', () => {
+    const over = scaleLinks(links(300, 300), 500, 480);
+    expect(sum(over)).toBe(480);
+    expect(over.every((l) => l.cents >= 0)).toBe(true);
   });
 });

@@ -5,6 +5,7 @@ import { vendorKey } from '../decisions';
 import { resolveFunding, type Funding } from './funding';
 import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from './match';
 import { batchCoverage, covers, coveredByOtherSources, isPaypalSource, matchStored, mergeIntervals, orderBatches, overlaps, sourcesMayShare, type PaymentSource } from './coverage';
+import { scaleLinks } from './estimate';
 import { parsePaymentFile, referenceHash } from './parse';
 import { amountQuery } from './search';
 import { OVERPAID_TOLERANCE_PERCENT, PAYMENT_KINDS, type NormalizedPayment, type ParseOptions, type PaymentFormat, type PaymentKind } from './types';
@@ -270,7 +271,10 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     }
     const sameRows = new Set(same.map((p) => compared.find((c) => c.sourceHash === p.sourceHash) as NormalizedPayment));
     const leftOut = new Set([...onCovered.filter((p) => !edges.has(p.bookingDay)), ...sameRows]);
-    if (leftOut.size > 0) skipped.covered_by_other_source = leftOut.size;
+    // A row that gave a stored estimate its real amount is counted as that (`settled`), not again as covered.
+    const settling = new Set(settles.map(({ row }) => compared.find((c) => c.sourceHash === row.sourceHash)));
+    const coveredCount = [...leftOut].filter((p) => !settling.has(p)).length;
+    if (coveredCount > 0) skipped.covered_by_other_source = coveredCount;
     const kept = inYear.filter((p) => !leftOut.has(p));
     // A file that keeps nothing still counts when it cancels purchases (those apply to any year and any day) or
     // gives another source's estimates their real euro amount.
@@ -385,13 +389,9 @@ async function settleEstimate(db: Prisma.TransactionClient, paymentId: string, e
   if (from === 0 || from === to) return;
   const links = await db.taxPaymentLink.findMany({ where: { paymentId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { id: true, cents: true } });
   if (links.length === 0) return;
-  const total = links.reduce((sum, l) => sum + l.cents, 0);
-  const target = total >= from ? to : Math.min(to, Math.round((total * to) / from));
-  const scaled = links.map((l) => Math.round((l.cents * to) / from));
-  scaled[scaled.length - 1] += target - scaled.reduce((sum, c) => sum + c, 0);
-  for (const [i, link] of links.entries()) {
-    const cents = Math.max(0, scaled[i]);
-    if (cents !== link.cents) await db.taxPaymentLink.update({ where: { id: link.id }, data: { cents } });
+  for (const { id, cents } of scaleLinks(links, from, to)) {
+    if (cents === 0) await db.taxPaymentLink.delete({ where: { id } });
+    else if (cents !== links.find((l) => l.id === id)?.cents) await db.taxPaymentLink.update({ where: { id }, data: { cents } });
   }
 }
 

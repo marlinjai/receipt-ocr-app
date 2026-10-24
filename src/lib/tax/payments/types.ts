@@ -74,7 +74,8 @@ export interface NormalizedPayment {
   /**
    * Further numbers of the source that name the same movement (the purchase a
    * currency conversion of the PayPal list belongs to). Only used to recognize
-   * a movement another source brought; never stored, never part of the identity.
+   * a movement another source brought; the first is stored as the payment's
+   * `relatedReference`, never part of the identity.
    */
   relatedReferences?: string[];
 }

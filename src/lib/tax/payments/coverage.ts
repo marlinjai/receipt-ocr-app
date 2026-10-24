@@ -1,3 +1,4 @@
+import { withinEstimate } from './estimate';
 /**
  * Which days of an account each import brought as its own. Pure.
  *
@@ -120,7 +121,8 @@ export interface StoredMovement {
  * source its real euro amount). First, per day and amount, rows and stored
  * movements that are both exact pair up in file order. Then a row and a
  * stored movement of which at least one is an estimate pair up per day and
- * counterparty (a named one only): their amounts differ by the conversion.
+ * counterparty (a named one only) when the amounts lie within the conversion's
+ * tolerance (`ESTIMATE_TOLERANCE_PERCENT`): their amounts differ by the conversion.
  * An exact row paired with an estimated stored movement `settles` it: the real
  * euro amount wins.
  */
@@ -150,7 +152,10 @@ export function matchStored<T extends { bookingDay: string; amountCents: number;
   const beyond: T[] = [];
   for (const row of rest) {
     const candidates = row.counterpartyKey ? byParty.get(`${row.bookingDay}|${row.counterpartyKey}`) ?? [] : [];
-    const hit = candidates.find((s) => !used.has(s.id) && (row.estimated || s.estimated) && Math.sign(s.amountCents) === Math.sign(row.amountCents));
+    // The estimate's amount still has to fit the other within the conversion's tolerance: another purchase of the
+    // same merchant that day is not it.
+    const fits = (s: StoredMovement) => (s.estimated ? withinEstimate(s.amountCents, row.amountCents) : withinEstimate(row.amountCents, s.amountCents));
+    const hit = candidates.find((s) => !used.has(s.id) && (row.estimated || s.estimated) && fits(s));
     if (!hit) {
       beyond.push(row);
       continue;

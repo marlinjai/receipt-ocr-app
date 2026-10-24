@@ -179,6 +179,24 @@ describe('the funding rule with a live-fed PayPal wallet', () => {
     expect(resolveFunding(accounts, [...span(), { ...alone }, other]).get('alone')).toBeUndefined();
   });
 
+  it('a top-up never takes the bank debit from the purchase it funds, and two equally close debits leave it asked about', () => {
+    // PayPal draws a purchase from the bank and shows the money arriving first: the debit stays the purchase's twin.
+    const purchase = payment({ id: 'buy', accountId: 'wallet', bookingDay: '2026-10-10', amountCents: -2000, counterpartyKey: 'laden beispiel' });
+    const arrival = payment({ id: 'top', accountId: 'wallet', bookingDay: '2026-10-10', amountCents: 2000, sourceKind: 'income' });
+    const debit = payment({ id: 'debit', accountId: 'bank', bookingDay: '2026-10-11', amountCents: -2000, counterpartyKey: 'paypal europe' });
+    const result = resolveFunding(accounts, [...span(), purchase, arrival, debit]);
+    expect(result.get('debit')).toEqual({ service: 'paypal', serviceKind: 'wallet', kind: 'own_transfer', twinId: 'buy' });
+    expect(result.get('top')?.kind).toBe('own_transfer');
+    // Two debits the same distance away: which one funded the top-up is not known.
+    const alone = payment({ id: 'alone', accountId: 'wallet', bookingDay: '2026-10-10', amountCents: 5000, sourceKind: 'income' });
+    const before = payment({ id: 'd1', accountId: 'card', bookingDay: '2026-10-09', amountCents: -5000, counterpartyKey: 'paypal' });
+    const after = payment({ id: 'd2', accountId: 'card', bookingDay: '2026-10-11', amountCents: -5000, counterpartyKey: 'paypal' });
+    const tie = resolveFunding(accounts, [...span(), alone, before, after]);
+    expect(tie.get('alone')).toBeUndefined();
+    expect(tie.get('d1')).toBeUndefined();
+    expect(tie.get('d2')).toBeUndefined();
+  });
+
   it('a payout without a name pairs with the bank credit from PayPal, as with the list', () => {
     const payout = payment({ id: 'out', accountId: 'wallet', bookingDay: '2026-10-14', amountCents: -2500 });
     const credit = payment({ id: 'in', accountId: 'bank', bookingDay: '2026-10-15', amountCents: 2500, counterpartyKey: 'paypal europe', sourceKind: 'income' });
@@ -203,6 +221,17 @@ describe('edge days where one source holds an estimate', () => {
     const csv = matchStored([row(-948, 'hosting beispiel')], [stored('live', -912, 'hosting beispiel', true)]);
     expect(csv.same).toHaveLength(1);
     expect(csv.settles).toEqual([{ row: row(-948, 'hosting beispiel'), storedId: 'live' }]);
+  });
+
+  it('an estimate pairs by counterparty only within the conversion tolerance: another purchase of the merchant that day is not it', () => {
+    // A 100 dollar estimate and a 5 euro purchase of the same merchant: two movements, and the estimate keeps its amount.
+    const csv = matchStored([row(-500, 'hosting beispiel')], [stored('live', -9000, 'hosting beispiel', true)]);
+    expect(csv).toMatchObject({ same: [], settles: [], beyond: [row(-500, 'hosting beispiel')] });
+    const live = matchStored([row(-9000, 'hosting beispiel', true)], [stored('csv', -500, 'hosting beispiel', false)]);
+    expect(live).toMatchObject({ same: [], beyond: [row(-9000, 'hosting beispiel', true)] });
+    // Just inside the tolerance it is the same purchase, just outside it is not.
+    expect(matchStored([row(-1060, 'a')], [stored('e', -1000, 'a', true)]).settles).toHaveLength(1);
+    expect(matchStored([row(-1061, 'a')], [stored('e', -1000, 'a', true)]).settles).toHaveLength(0);
   });
 
   it('never pairs by counterparty without a name, across money in and out, or a stored movement twice', () => {

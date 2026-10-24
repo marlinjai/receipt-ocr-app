@@ -1,3 +1,4 @@
+import { ESTIMATE_TOLERANCE_PERCENT, withinEstimate } from './estimate';
 import type { PaymentFormat } from './types';
 
 /**
@@ -35,9 +36,10 @@ import type { PaymentFormat } from './types';
  *   exactly one purchase in a wallet's list, booked close to it and no larger
  *   than it, is the part of that purchase the wallet drew from the bank.
  * - Money coming INTO a wallet without a counterparty (a top-up; the live feed
- *   gives no type) is a transfer when another account shows a debit naming the
- *   service of exactly that amount close to it; that debit is then a transfer
- *   too. Without one it is asked about.
+ *   gives no type) is a transfer when exactly one debit on another account
+ *   names the service with that amount, closest to it; that debit is then a
+ *   transfer too, still the twin of a purchase the wallet shows. Without one,
+ *   or with two equally close, it is asked about.
  * - A purchase whose euro amount is an estimate (another currency at the
  *   reference rate) is the twin of a funding row within `ESTIMATE_TOLERANCE_PERCENT`;
  *   every other twin has exactly the same amount.
@@ -67,12 +69,7 @@ export function serviceOfInstitution(name: string | null | undefined): string | 
   return typeof name === 'string' && /paypal/i.test(name) ? 'paypal' : null;
 }
 
-/**
- * How far the euro amount charged may lie from a purchase's estimate (another
- * currency at the reference rate): PayPal converts with a margin of about 3 to
- * 4.5 percent over that rate, and the rate of the next day may apply.
- */
-export const ESTIMATE_TOLERANCE_PERCENT = 6;
+export { ESTIMATE_TOLERANCE_PERCENT };
 
 /** The funding row is booked from 3 days before to 10 days after the purchase it pays, like a proposal. */
 export const TWIN_DAYS_BEFORE = 3;
@@ -139,8 +136,7 @@ export function heldService(account: FundingAccount): { name: string; kind: Serv
 /** Whether `amountCents` (signed) is what `purchase` cost: exactly, or within the tolerance of an estimate. */
 function sameAmount(purchase: FundingPayment, amountCents: number): boolean {
   if (!purchase.estimated) return purchase.amountCents === amountCents;
-  if (Math.sign(purchase.amountCents) !== Math.sign(amountCents)) return false;
-  return Math.abs(amountCents - purchase.amountCents) * 100 <= Math.abs(purchase.amountCents) * ESTIMATE_TOLERANCE_PERCENT;
+  return withinEstimate(purchase.amountCents, amountCents);
 }
 
 /**
@@ -188,31 +184,35 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
   const hasWords = (text: string, words: string) => ` ${text} `.includes(` ${words} `);
   const taken = new Set<string>();
   const namesService = (payment: FundingPayment, service: string) => payment.counterpartyKey.split(' ').includes(service);
-  // Money into a wallet without a counterparty (a top-up): a transfer when exactly the same amount leaves
-  // another account towards the service close to it, which is then a transfer too.
+  // Money into a wallet without a counterparty (a top-up): a transfer when exactly one debit of the same amount
+  // leaves another account towards the service close to it. Only the credit is decided here: the debit is still
+  // paired below like any debit naming the service (its purchase twin, when the wallet shows one), and when
+  // nothing else makes it a transfer, the top-up does (after the loop). One debit funds one top-up.
+  const toppedUp = new Map<string, { name: string; kind: ServiceKind }>();
   for (const credit of [...payments].sort((a, b) => (a.bookingDay === b.bookingDay ? (a.id < b.id ? -1 : 1) : a.bookingDay < b.bookingDay ? -1 : 1))) {
     const service = held.get(credit.accountId);
     if (service?.kind !== 'wallet' || credit.amountCents <= 0 || credit.counterpartyKey !== '' || credit.sourceKind === 'own_transfer') continue;
     const day = dayNumber(credit.bookingDay);
-    let best: FundingPayment | null = null;
+    let best: FundingPayment[] = [];
     let bestGap = Infinity;
     for (const debit of payments) {
-      if (out.has(debit.id) || debit.amountCents !== -credit.amountCents || held.get(debit.accountId)?.name === service.name || !namesService(debit, service.name)) continue;
+      if (toppedUp.has(debit.id) || debit.amountCents !== -credit.amountCents || held.get(debit.accountId)?.name === service.name || !namesService(debit, service.name)) continue;
       const gap = dayNumber(debit.bookingDay) - day;
       if (gap < -TWIN_DAYS_BEFORE || gap > TWIN_DAYS_AFTER) continue;
       if (Math.abs(gap) < bestGap) {
-        best = debit;
+        best = [debit];
         bestGap = Math.abs(gap);
-      }
+      } else if (Math.abs(gap) === bestGap) best.push(debit);
     }
-    if (!best) continue;
+    // Two debits equally close: which one funded it is not known, so it is asked about.
+    if (best.length !== 1) continue;
+    toppedUp.set(best[0].id, service);
     out.set(credit.id, { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: null });
-    out.set(best.id, { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: null });
   }
   // In booking order, so the same data always pairs the same way.
   const ordered = [...payments].sort((a, b) => (a.bookingDay === b.bookingDay ? (a.id < b.id ? -1 : 1) : a.bookingDay < b.bookingDay ? -1 : 1));
   for (const payment of ordered) {
-    // Already the other end of a top-up.
+    // A top-up credit decided above.
     if (out.has(payment.id)) continue;
     const own = held.get(payment.accountId)?.name ?? null;
     if (!payment.counterpartyKey) {
@@ -276,6 +276,10 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
     if (!onBank && twin === null) continue;
     if (twin) taken.add(twin.id);
     out.set(payment.id, { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: twin?.id ?? null });
+  }
+  // The other end of a top-up that nothing above made a transfer (a card debit without a purchase twin).
+  for (const [debitId, service] of toppedUp) {
+    if (!out.has(debitId)) out.set(debitId, { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: null });
   }
   return out;
 }

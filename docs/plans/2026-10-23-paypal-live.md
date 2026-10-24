@@ -2,7 +2,7 @@
 title: PayPal live through the bank interface, foreign currency, and removing an empty account
 summary: The PayPal account, fed from PayPal's CSV export so far, can now be continued live through Enable Banking. The list keeps the days it covers, the live feed continues after them, a movement seen by both sources is recognized as one by PayPal's transaction code, the account stays "the PayPal wallet" for the funding rule after the switch, dollar purchases are imported at the reference exchange rate and marked as an estimate until a file supplies the real euro amount, and an account without payments, imports or connection can be removed.
 type: plan
-status: decided
+status: in-progress
 tags: [finance, payments, bank, paypal, enable-banking, currency]
 projects: [receipt-ocr-app]
 date: 2026-10-23
@@ -179,4 +179,50 @@ point 5.
 
 ## Accepted on purpose
 
-(Filled in after the review rounds.)
+- **"Konto entfernen" racing an import is not tested as a real race.** Vitest runs one test at a
+  time against the database, so two transactions cannot be made to meet reliably. The guard is the
+  account row lock that `deleteAccount`, `importPayments` and now `startConsent` all take; the
+  sequential cases (`account_not_empty` with payments, imports or a connection; empty again after
+  every import was undone) are tested.
+- **The 559 PayPal payments already stored carry no related code** (`relatedReference` is new).
+  For them a live dollar purchase is matched by the day rule and, on the list's last day, by day
+  and counterparty within the tolerance. A live row dated after the list's last day would be stored
+  beside its list row; the live test of 2026-10-23 did not compare dates. Only a foreign purchase
+  around the list's last day (29.09.2026) can be affected. If it happens, undoing that live import
+  and importing a fresh list export (which stores the related code) settles it.
+- **A real amount stays when the list that wrote it is undone** (decided above), and so do the
+  links scaled to it.
+
+## Reality (2026-10-24)
+
+What was built differs from the decisions above in these points, all found in the review rounds:
+
+- **Links follow the real amount.** When a list gives an estimate its real euro amount, every link
+  of that payment (of every company, for a shared payment) is scaled to the new amount, the rounding
+  difference on the last link, so a receipt paid in full stays paid in full and nothing is left
+  open (`settleEstimate` in `src/lib/tax/payments/service.ts`).
+- **The related code is stored.** Migration 0036 also adds `tax_payments.related_reference`: the
+  list's euro row of a foreign purchase keeps the purchase's own code there, so the code match of
+  point 5 works in both directions (the plan had it "not stored").
+- **Days a fetch holds in part.** Migration 0036 also adds `tax_import_batches.partial_days`: the
+  days a fetch left a movement out of (no rate, or unreadable). An import of the other source
+  compares its rows on those days like on an edge day, so a movement in a currency without a rate
+  is not lost to the day rule and arrives from the list with its real amount. "Erledigt" on a
+  missing rate now sticks like it does for an unreadable day and stops holding the fetch back.
+- **The estimate pairing on edge days checks the amount** within the 6 percent tolerance of point
+  6, not only day and counterparty, so a second purchase of the same merchant is never taken for it.
+- **A top-up never takes the bank debit from its purchase.** The top-up rule of point 7 decides
+  only the credit; the debit is still paired with its purchase like any debit naming PayPal, and
+  becomes a transfer by the top-up only when nothing else makes it one. Two equally close debits
+  leave the top-up asked about.
+- **`startConsent` writes the connection under the account lock** and checks the gate of point 8
+  again there.
+- **The reconciliation leaves every wallet row without a name out of "listed"**, also a payout no
+  bank credit pairs with (point 7).
+- Rates are looked up in parallel; a rate service that fails is a missing rate, never a failed fetch.
+
+Tests live in `src/lib/tax/payments/bank/__tests__/paypal-live.dbtest.ts` (database, the four
+paths plus gates, removal, links, partial days) and `src/lib/tax/payments/__tests__/paypal-live.test.ts`
+(reader, funding rule, edge days), not in `payments.dbtest.ts`. Two tests in `bank.dbtest.ts`
+follow the changed expectations (the new `unrated` notice; `institution_mismatch` for a bank on the
+PayPal list account).

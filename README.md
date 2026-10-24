@@ -175,8 +175,8 @@ CONTACTS_TEST_DATABASE_URL=postgresql://user:pass@127.0.0.1:5433/contacts_test p
 
 Every `pnpm test:db` run empties both databases first (`test/db-reset.ts`), so runs do not inherit the rows
 of the runs before them and a local test database stays small. It only ever touches a database on
-`localhost` or `127.0.0.1` whose name ends in `_test`, and checks the server's own answer before deleting
-anything (`test/db-guard.ts`); any other URL is refused with the reason.
+`localhost` or `127.0.0.1` whose name ends in `_test`, and asks the server which database it is connected to
+before deleting anything (`test/db-guard.ts`, `test/db-reset.ts`); any other URL is refused with the reason.
 
 ## License
 

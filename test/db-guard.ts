@@ -5,7 +5,7 @@
  *
  * Allowed: host `localhost` or `127.0.0.1`, a database name ending in `_test`, and nothing in the query that
  * could send the connection elsewhere (`host`, `hostaddr`, `service`). Anything else is refused with the
- * reason and the fix.
+ * reason and the fix. Before emptying anything the reset also asks the server for `current_database()`.
  */
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);

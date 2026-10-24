@@ -13,7 +13,8 @@ import { ensureContactsLayout } from './contacts-db';
  * second; in continuous integration the databases start empty, so it finds nothing to do.
  *
  * It only ever touches a database that passes `assertThrowawayUrl` (local host, name ending in `_test`), and
- * then asks the server itself which database and address it is on before it deletes anything.
+ * then asks the server itself which database it is connected to before it deletes anything. (The server's
+ * own address says nothing here: behind Docker's port mapping, locally and in CI, it is the container's.)
  */
 
 /** Tables that record which migrations ran: emptying them would make the next migration run start over. */
@@ -22,15 +23,9 @@ const BOOKKEEPING = new Set(['_prisma_migrations', '_migrations']);
 const WORKSPACE_TABLE = /^tbl_[0-9a-f]{32}$/;
 
 async function confirmServer(sql: postgres.Sql, target: ThrowawayDatabase, variable: string): Promise<void> {
-  const [row] = await sql<{ database: string; address: string | null }[]>`
-    select current_database() as database, host(inet_server_addr()) as address`;
-  // A unix socket reports no address; a TCP connection must be the loopback interface.
-  const local = row.address === null || row.address === '127.0.0.1' || row.address === '::1';
-  if (row.database !== target.database || !row.database.endsWith('_test') || !local) {
-    throw new Error(
-      `${variable}: the server reports database "${row.database}" at ${row.address ?? 'a local socket'}; ` +
-        `refusing to empty anything but the local "${target.database}".`,
-    );
+  const [row] = await sql<{ database: string }[]>`select current_database() as database`;
+  if (row.database !== target.database || !row.database.endsWith('_test')) {
+    throw new Error(`${variable}: the server reports database "${row.database}"; refusing to empty anything but "${target.database}".`);
   }
 }
 

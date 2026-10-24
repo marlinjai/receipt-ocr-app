@@ -8,10 +8,15 @@ import { assertThrowawayUrl } from './db-guard';
  * Two throwaway databases are needed: the receipts app's own (TEST_DATABASE_URL)
  * and the suite's contacts database (CONTACTS_TEST_DATABASE_URL, same guard).
  */
-process.env.DATABASE_URL = assertThrowawayUrl('TEST_DATABASE_URL', process.env.TEST_DATABASE_URL).url;
+// Every client of the run connects with the URL the guard rebuilt, never with the one that was passed in.
+const receipts = assertThrowawayUrl('TEST_DATABASE_URL', process.env.TEST_DATABASE_URL);
+process.env.TEST_DATABASE_URL = receipts.url;
+process.env.DATABASE_URL = receipts.url;
 
 // The shared contacts client reads this when a test first opens it.
-process.env.CONTACTS_DATABASE_URL = assertThrowawayUrl('CONTACTS_TEST_DATABASE_URL', process.env.CONTACTS_TEST_DATABASE_URL).url;
+const contacts = assertThrowawayUrl('CONTACTS_TEST_DATABASE_URL', process.env.CONTACTS_TEST_DATABASE_URL);
+process.env.CONTACTS_TEST_DATABASE_URL = contacts.url;
+process.env.CONTACTS_DATABASE_URL = contacts.url;
 
 // The shared contacts database is the app's only contact store, so every database
 // test that touches a guest needs its layout. Applying it is idempotent under a lock.

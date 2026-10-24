@@ -9,8 +9,9 @@ import { ensureContactsLayout } from './contacts-db';
  *
  * Before the first test it empties both throwaway databases, receipts and contacts: every table except the
  * migration bookkeeping is truncated, and the receipts tables the data-table package creates per workspace
- * (`tbl_*`) are dropped. The layout stays, so no migration runs again and the reset takes well under a
- * second; in continuous integration the databases start empty, so it finds nothing to do.
+ * (`tbl_*`) are dropped, in batches (one transaction for thousands of tables would run out of locks on a
+ * database that grew for weeks). The layout stays, so no migration runs again: a reset after a normal run
+ * takes about a second, and in continuous integration it truncates tables that are already empty.
  *
  * It only ever touches a database that passes `assertThrowawayUrl` (local host, name ending in `_test`), and
  * then asks the server itself which database it is connected to before it deletes anything. (The server's
@@ -21,6 +22,8 @@ import { ensureContactsLayout } from './contacts-db';
 const BOOKKEEPING = new Set(['_prisma_migrations', '_migrations']);
 /** The per-workspace tables of the data-table package, named after their table id. */
 const WORKSPACE_TABLE = /^tbl_[0-9a-f]{32}$/;
+/** Tables dropped per transaction: each drop takes a handful of locks, and a transaction may hold only so many. */
+const DROP_BATCH = 200;
 
 async function confirmServer(sql: postgres.Sql, target: ThrowawayDatabase, variable: string): Promise<void> {
   const [row] = await sql<{ database: string }[]>`select current_database() as database`;
@@ -50,10 +53,14 @@ async function emptyDatabase(target: ThrowawayDatabase, variable: string, option
     }
     const workspaceTables = options.dropWorkspaceTables ? tables.filter((t) => WORKSPACE_TABLE.test(t)) : [];
     const rest = tables.filter((t) => !BOOKKEEPING.has(t) && !workspaceTables.includes(t));
-    await sql.begin(async (tx) => {
-      for (const table of workspaceTables) await tx.unsafe(`drop table if exists "public"."${table}" cascade`);
-      if (rest.length > 0) await tx.unsafe(`truncate ${rest.map((t) => `"public"."${t}"`).join(', ')} restart identity cascade`);
-    });
+    // Dropping is idempotent, so the batches need not be one transaction: a run that stops halfway finishes next time.
+    for (let i = 0; i < workspaceTables.length; i += DROP_BATCH) {
+      const batch = workspaceTables.slice(i, i + DROP_BATCH);
+      await sql.begin(async (tx) => {
+        for (const table of batch) await tx.unsafe(`drop table if exists "public"."${table}" cascade`);
+      });
+    }
+    if (rest.length > 0) await sql.unsafe(`truncate ${rest.map((t) => `"public"."${t}"`).join(', ')} restart identity cascade`);
     return { dropped: workspaceTables.length, emptied: rest.length };
   } finally {
     await sql.end({ timeout: 5 });
@@ -63,6 +70,9 @@ async function emptyDatabase(target: ThrowawayDatabase, variable: string, option
 export default async function resetTestDatabases(): Promise<void> {
   const receipts = assertThrowawayUrl('TEST_DATABASE_URL', process.env.TEST_DATABASE_URL);
   const contacts = assertThrowawayUrl('CONTACTS_TEST_DATABASE_URL', process.env.CONTACTS_TEST_DATABASE_URL);
+  // Everything after this point connects with the URLs the guard rebuilt, including the contacts layout.
+  process.env.TEST_DATABASE_URL = receipts.url;
+  process.env.CONTACTS_TEST_DATABASE_URL = contacts.url;
   const started = Date.now();
   const r = await emptyDatabase(receipts, 'TEST_DATABASE_URL', { dropWorkspaceTables: true, requireMigrations: '_prisma_migrations' });
   // The contacts layout is the package's own and applied idempotently, so a brand-new database works too.

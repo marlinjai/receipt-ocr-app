@@ -139,7 +139,8 @@ describe('own names', () => {
     const company = await loadSpending(db, companyCtx.workspaceId, 2026, null);
     // "Erika Beispiel UG" shares the key of "Erika Beispiel", so neither counts by the name; "BEISPIEL ERIKA" still does.
     expect(company.ownAccounts.map((o) => o.label)).toEqual(['BEISPIEL ERIKA']);
-    expect(company.overview.unclear.map((u) => u.counterparty).sort()).toEqual(['Erika Beispiel', 'Erika Beispiel Laden', 'Zyx Handel']);
+    // By key: the name shown for a key is whichever of its payments comes first ("Erika Beispiel" or "... UG").
+    expect(company.overview.unclear.map((u) => u.counterpartyKey).sort()).toEqual(['erika beispiel', 'erika beispiel laden', 'zyx handel']);
     // Taking out a name another page took out already is said, not claimed.
     await saveOwnNames(db, companyCtx, { remove: 'Erika Beispiel' });
     await expect(saveOwnNames(db, companyCtx, { remove: 'Erika Beispiel' })).rejects.toMatchObject({ code: 'name_not_listed' });

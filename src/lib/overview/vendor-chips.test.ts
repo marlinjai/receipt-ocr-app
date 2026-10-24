@@ -11,14 +11,18 @@ describe('rankVendors', () => {
 });
 
 describe('vendorChips', () => {
-  it('shows every vendor and offers no folding when they fit the limit', () => {
-    expect(vendorChips({ ...base, ranked: ranked.slice(0, 8) })).toEqual({ shown: ranked.slice(0, 8), folded: 0, foldable: false });
+  it('shows every vendor and folds nothing away when they fit the limit', () => {
+    expect(vendorChips({ ...base, ranked: ranked.slice(0, 8) })).toEqual({ shown: ranked.slice(0, 8), folded: 0, matches: 8 });
   });
 
   it('folds to the top vendors and counts what it leaves out', () => {
     const chips = vendorChips(base);
     expect(chips.shown).toEqual(ranked.slice(0, 8));
-    expect(chips).toMatchObject({ folded: 4, foldable: true });
+    expect(chips.folded).toBe(4);
+  });
+
+  it('folds nothing away when the only vendors beyond the limit are switched off (nothing left to unfold)', () => {
+    expect(vendorChips({ ...base, ranked: ranked.slice(0, 9), off: new Set(['Händler 09']) }).folded).toBe(0);
   });
 
   it('never folds away a vendor that is switched off, so the selection stays visible', () => {
@@ -31,6 +35,12 @@ describe('vendorChips', () => {
     expect(vendorChips({ ...base, expanded: true }).shown).toEqual(ranked);
     const searched = vendorChips({ ...base, expanded: true, query: ' 1', off: new Set(['Händler 03']) });
     expect(searched.shown).toEqual(['Händler 01', 'Händler 03', 'Händler 10', 'Händler 11', 'Händler 12']);
+    expect(searched.matches).toBe(4);
+  });
+
+  it('counts no match when only switched-off vendors are left in a search', () => {
+    const searched = vendorChips({ ...base, expanded: true, query: 'xyz', off: new Set(['Händler 03']) });
+    expect(searched).toMatchObject({ shown: ['Händler 03'], matches: 0 });
   });
 
   it('ignores case in the search', () => {

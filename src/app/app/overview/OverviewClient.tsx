@@ -4,11 +4,11 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import ScrollBox from '@/components/ui/ScrollBox';
 import { formatDay } from '@/lib/meals/messages';
-import { usePhone } from '@/lib/use-phone';
 import { rankVendors, vendorChips } from '@/lib/overview/vendor-chips';
 import { aggregateOverview, type OverviewData } from '@/lib/overview/aggregate';
 import {
   applySelection,
+  ledgerDay,
   type LedgerInvoice,
   type SelectionDef,
   type TimePreset,
@@ -19,8 +19,8 @@ import NotesPanel from './NotesPanel';
 const PALETTE = ['#4f8ef7', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#14b8a6', '#eab308', '#ec4899', '#64748b', '#f97316'];
 
 const PRESETS: { key: TimePreset; label: string }[] = [
-  { key: '1w', label: 'Woche' },
-  { key: '1m', label: 'Monat' },
+  { key: '1w', label: '1 Woche' },
+  { key: '1m', label: '1 Monat' },
   { key: '3m', label: '3 Monate' },
   { key: '6m', label: '6 Monate' },
   { key: 'ytd', label: 'Dieses Jahr' },
@@ -28,7 +28,8 @@ const PRESETS: { key: TimePreset; label: string }[] = [
   { key: 'all', label: 'Alle' },
 ];
 
-/** How many vendor chips show before the list folds: fewer on a phone, where each chip takes a row's width. */
+/** How many vendor chips show before the list folds: fewer on a phone, where a few chips fill a row. Both
+ *  folds are drawn at once and switched by CSS, so the first paint is already right for the screen. */
 export const VENDOR_CHIPS_PHONE = 8;
 export const VENDOR_CHIPS_WIDE = 16;
 
@@ -36,13 +37,15 @@ const money = (currency: string, n: number) =>
   new Intl.NumberFormat('de-DE', { style: 'currency', currency, maximumFractionDigits: 2 }).format(n);
 const eur = (n: number) => money('EUR', n);
 const plain = (n: number) => new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+const count = (n: number) => new Intl.NumberFormat('de-DE').format(n);
+const percent = (n: number) => `${new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2 }).format(n)} %`;
 
-/** A date of the ledger as a German day. The ledger may hold a full timestamp ("2021-01-14T00:00:00.000Z"). */
+/** A date of the ledger as a German day, also when it is a full timestamp ("2021-01-14T00:00:00.000Z"). */
 export function overviewDay(value: string | null): string {
-  return formatDay(value ? value.slice(0, 10) : null);
+  return formatDay(ledgerDay(value));
 }
 
-const receiptCount = (n: number) => (n === 1 ? '1 Beleg' : `${n} Belege`);
+const receiptCount = (n: number) => (n === 1 ? '1 Beleg' : `${count(n)} Belege`);
 
 const inputStyle = { background: 'var(--background)', border: '1px solid var(--border)', color: 'var(--foreground)' } as const;
 
@@ -74,13 +77,13 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
   );
 }
 
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function Chip({ active, onClick, className = '', children }: { active: boolean; onClick: () => void; className?: string; children: React.ReactNode }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className="px-2.5 py-1 text-xs rounded-full transition-colors"
+      className={`px-2.5 py-1 text-xs rounded-full transition-colors ${className}`}
       style={{
         background: active ? 'var(--accent-muted)' : 'var(--background)',
         color: active ? 'var(--accent)' : 'var(--dt-text-secondary)',
@@ -198,7 +201,6 @@ export default function OverviewClient({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [vendorsExpanded, setVendorsExpanded] = useState(false);
   const [vendorQuery, setVendorQuery] = useState('');
-  const isPhone = usePhone();
 
   // ----- saved selections -----
   const [saved, setSaved] = useState<SavedSelection[]>(initialSelections);
@@ -218,13 +220,11 @@ export default function OverviewClient({
     () => rankVendors(full.byVendorEur.map((v) => ({ vendor: v.vendor, amount: v.rawEur })), allVendors),
     [full.byVendorEur, allVendors],
   );
-  const chips = vendorChips({
-    ranked: rankedVendors,
-    off: vendorsOff,
-    limit: isPhone === false ? VENDOR_CHIPS_WIDE : VENDOR_CHIPS_PHONE,
-    expanded: vendorsExpanded,
-    query: vendorQuery,
-  });
+  const chipInput = { ranked: rankedVendors, off: vendorsOff, expanded: vendorsExpanded, query: vendorQuery };
+  const wideChips = vendorChips({ ...chipInput, limit: VENDOR_CHIPS_WIDE });
+  const phoneChips = vendorChips({ ...chipInput, limit: VENDOR_CHIPS_PHONE });
+  // The wide fold draws every chip the phone fold does and more: those extra chips hide on a phone.
+  const onPhone = new Set(phoneChips.shown);
 
   // Current definition from the controls.
   const def = useMemo<SelectionDef>(() => {
@@ -233,8 +233,10 @@ export default function OverviewClient({
       if (from) d.from = from;
       if (to) d.to = to;
     }
-    if (vendorsOff.size) d.vendors = allVendors.filter((v) => !vendorsOff.has(v));
-    if (currenciesOff.size) d.currencies = allCurrencies.filter((c) => !currenciesOff.has(c));
+    // Saved as what is left out, so a vendor or currency imported later counts, and leaving out all of them
+    // leaves out all of them (an empty "only these" list would mean every one).
+    if (vendorsOff.size) d.excludeVendors = [...vendorsOff];
+    if (currenciesOff.size) d.excludeCurrencies = [...currenciesOff];
     if (pickMode === 'include') {
       if (checked.size < invoices.length) d.includeIds = [...checked];
     } else {
@@ -242,7 +244,7 @@ export default function OverviewClient({
       if (excluded.length) d.excludeIds = excluded;
     }
     return d;
-  }, [preset, from, to, vendorsOff, currenciesOff, pickMode, checked, invoices, allVendors, allCurrencies]);
+  }, [preset, from, to, vendorsOff, currenciesOff, pickMode, checked, invoices]);
 
   const filtered = useMemo(() => applySelection(invoices, def), [invoices, def]);
   const data = useMemo(() => aggregateOverview(filtered), [filtered]);
@@ -266,8 +268,9 @@ export default function OverviewClient({
     setPreset(d.preset ?? 'all');
     setFrom(d.from ?? '');
     setTo(d.to ?? '');
-    setVendorsOff(new Set(d.vendors?.length ? allVendors.filter((v) => !d.vendors!.includes(v)) : []));
-    setCurrenciesOff(new Set(d.currencies?.length ? allCurrencies.filter((c) => !d.currencies!.includes(c)) : []));
+    // Selections saved before name the vendors and currencies kept; newer ones the ones left out.
+    setVendorsOff(new Set(d.excludeVendors ?? (d.vendors?.length ? allVendors.filter((v) => !d.vendors!.includes(v)) : [])));
+    setCurrenciesOff(new Set(d.excludeCurrencies ?? (d.currencies?.length ? allCurrencies.filter((c) => !d.currencies!.includes(c)) : [])));
     if (d.includeIds?.length) {
       setPickMode('include');
       setChecked(new Set(d.includeIds));
@@ -361,7 +364,7 @@ export default function OverviewClient({
         <div>
           <h1 className="text-2xl font-semibold" style={{ color: 'var(--foreground)' }}>Ausgabenübersicht</h1>
           <p className="text-xs mt-1" style={{ color: 'var(--dt-text-secondary)' }}>
-            {filtered.length} von {invoices.length === 1 ? '1 Beleg' : `${invoices.length} Belegen`} in der Auswahl
+            {count(filtered.length)} von {invoices.length === 1 ? '1 Beleg' : `${count(invoices.length)} Belegen`} in der Auswahl
             {totals.firstDate ? ` · ${overviewDay(totals.firstDate)} bis ${overviewDay(totals.lastDate)}` : ''}
           </p>
         </div>
@@ -374,7 +377,7 @@ export default function OverviewClient({
           {PRESETS.map((p) => (
             <Chip key={p.key} active={preset === p.key} onClick={() => setPreset(p.key)}>{p.label}</Chip>
           ))}
-          <Chip active={preset === 'custom'} onClick={() => setPreset('custom')}>Zeitraum</Chip>
+          <Chip active={preset === 'custom'} onClick={() => setPreset('custom')}>Eigener Zeitraum</Chip>
           {preset === 'custom' && (
             <span className="inline-flex items-center gap-1">
               <input type="date" aria-label="Von" value={from} onChange={(e) => setFrom(e.target.value)} className="px-2 py-1 text-xs rounded-md" style={inputStyle} />
@@ -424,7 +427,7 @@ export default function OverviewClient({
 
         <div className="flex flex-wrap items-center gap-1.5 mb-2" role="group" aria-label="Händler">
           <span className="text-[11px] mr-1" style={{ color: 'var(--dt-text-secondary)' }}>Händler:</span>
-          {vendorsExpanded && chips.foldable && (
+          {vendorsExpanded && (
             <input
               type="search"
               value={vendorQuery}
@@ -435,13 +438,15 @@ export default function OverviewClient({
               style={inputStyle}
             />
           )}
-          {chips.shown.map((v) => (
-            <Chip key={v} active={!vendorsOff.has(v)} onClick={() => toggleIn(vendorsOff, v, setVendorsOff)}>{v}</Chip>
+          {wideChips.shown.map((v) => (
+            <Chip key={v} active={!vendorsOff.has(v)} onClick={() => toggleIn(vendorsOff, v, setVendorsOff)} className={onPhone.has(v) ? '' : 'max-sm:hidden'}>
+              {v}
+            </Chip>
           ))}
-          {vendorsExpanded && chips.foldable && vendorQuery.trim() && chips.shown.length === 0 && (
+          {vendorsExpanded && vendorQuery.trim() && wideChips.matches === 0 && (
             <span className="text-xs" style={{ color: 'var(--dt-text-secondary)' }}>Kein Händler passt zur Suche.</span>
           )}
-          {chips.foldable && (
+          {(vendorsExpanded || phoneChips.folded > 0) && (
             <button
               type="button"
               onClick={() => {
@@ -449,7 +454,8 @@ export default function OverviewClient({
                 setVendorQuery('');
               }}
               aria-expanded={vendorsExpanded}
-              className="text-xs underline"
+              // Folded, the button is offered where something is folded away: on a phone only, when the wide fold shows all.
+              className={`text-xs underline ${!vendorsExpanded && wideChips.folded === 0 ? 'sm:hidden' : ''}`}
               style={{ color: 'var(--accent)' }}
             >
               {vendorsExpanded ? 'Weniger anzeigen' : `Alle Händler anzeigen (${rankedVendors.length})`}
@@ -468,7 +474,7 @@ export default function OverviewClient({
           ))}
           <span className="flex-1" />
           <button onClick={() => setPickerOpen((v) => !v)} className="text-xs underline" style={{ color: 'var(--accent)' }}>
-            {pickerOpen ? 'Belegauswahl ausblenden' : `Belege auswählen (${checked.size} von ${invoices.length})`}
+            {pickerOpen ? 'Belegauswahl ausblenden' : `Belege auswählen (${count(checked.size)} von ${count(invoices.length)})`}
           </button>
           <button type="button" onClick={resetAll} className="text-xs underline" style={{ color: 'var(--dt-text-secondary)' }}>Zurücksetzen</button>
         </div>
@@ -513,14 +519,14 @@ export default function OverviewClient({
         <div className="text-[11px] uppercase tracking-wide mb-1" style={{ color: 'var(--dt-text-secondary)' }}>Geschäftlicher Anteil (Auswahl)</div>
         <div className="text-4xl font-semibold mb-1 tabular-nums" style={{ color: 'var(--foreground)' }}>{eur(totals.attributedEur)}</div>
         <div className="text-xs" style={{ color: 'var(--dt-text-secondary)' }}>
-          {totals.blendedAttributionPct} % von {eur(totals.rawEur)} insgesamt berechnet (mit dem Anteil je Händler)
+          {percent(totals.blendedAttributionPct)} von {eur(totals.rawEur)} in Rechnung gestellt (mit dem Anteil je Händler)
         </div>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
         <Tile label="In EUR" value={eurCur ? eur(eurCur.amountNative) : 'keine'} sub={eurCur ? receiptCount(eurCur.invoiceCount) : undefined} />
-        <Tile label={usdCur ? `In ${usdCur.currency}` : 'Andere Währung'} value={usdCur ? money(usdCur.currency, usdCur.amountNative) : 'keine'} sub={usdCur ? `${receiptCount(usdCur.invoiceCount)} · ${usdCur.vendorCount} Händler` : undefined} />
-        <Tile label="Belege in der Auswahl" value={String(totals.invoiceCount)} sub={totals.firstDate ? `${overviewDay(totals.firstDate)} bis ${overviewDay(totals.lastDate)}` : undefined} />
-        <Tile label="Insgesamt berechnet (100 %)" value={eur(totals.rawEur)} sub="vor dem geschäftlichen Anteil" />
+        <Tile label={usdCur ? `In ${usdCur.currency}` : 'Andere Währung'} value={usdCur ? money(usdCur.currency, usdCur.amountNative) : 'keine'} sub={usdCur ? `${receiptCount(usdCur.invoiceCount)} · ${count(usdCur.vendorCount)} Händler` : undefined} />
+        <Tile label="Belege in der Auswahl" value={count(totals.invoiceCount)} sub={totals.firstDate ? `${overviewDay(totals.firstDate)} bis ${overviewDay(totals.lastDate)}` : undefined} />
+        <Tile label="In Rechnung gestellt (100 %)" value={eur(totals.rawEur)} sub="vor dem geschäftlichen Anteil" />
       </div>
 
       {monthlyByCurrency.length > 0 && (

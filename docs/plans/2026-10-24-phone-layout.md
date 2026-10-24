@@ -176,18 +176,26 @@ The production screenshot of the overview at 390 showed English labels in a Germ
 ("2021-01-14T00:00:00.000Z → 2026-10-11T00:00:00.000Z") and dozens of vendor chips before the first chart.
 
 - Every visible string of the overview, its share panel and its notes is German, in the app's words:
-  receipts are "Belege", vendors "Händler" (as on the spending page), the business share "geschäftlicher
-  Anteil" (not "Zuordnung", which is the private or business column). Amounts are formatted for Germany.
-- Days are German ("14.01.2021 bis 11.10.2026") through the app's `formatDay`, after cutting a stored
-  timestamp to its day.
+  receipts are "Belege", vendors "Händler" (as in the dashboard search and the receipt panel), the
+  business share "geschäftlicher Anteil" (not "Zuordnung", which is the private or business column), a
+  receipt without a vendor "Ohne Händler". Amounts, counts and percentages are formatted for Germany.
+- Days are German ("14.01.2021 bis 11.10.2026") through the app's `formatDay`. The ledger is cut to the
+  day when it is loaded (`ledgerDay`, the leading YYYY-MM-DD the rest of the app reads), so a custom
+  range ending on a day also keeps the receipts of that day.
+- A saved selection now stores the vendors and currencies left out (`excludeVendors`,
+  `excludeCurrencies`) instead of the ones kept: a vendor imported later counts, and leaving out every
+  vendor leaves out every vendor (an empty "only these" list used to mean all). Selections saved before
+  still load.
 - The vendor chips fold to the vendors with the largest amounts (8 on a phone, 16 on a wide screen) with
-  "Alle Händler anzeigen (n)", which unfolds them with a search. A vendor that is switched off is always
-  shown, so the selection is never hidden; folding changes only what is drawn, so selecting, saved
+  "Alle Händler anzeigen (n)", which unfolds them with a search (it says when nothing matches). A vendor
+  that is switched off is always shown, so the selection is never hidden; folding changes only what is drawn, so selecting, saved
   selections and resetting work exactly as before. The selection does not live in the address (a saved
   selection is how it comes back), so "resume" is loading a saved selection.
 
-Decided by the coordinating session, say so if you disagree: "Händler" over "Lieferanten" (the
-spending page's word, and these include shops, not only suppliers); the fold limits 8 and 16.
+Decided by the coordinating session, say so if you disagree: "Händler" over "Lieferant" (the finance
+and spending pages say "Lieferant"; the overview lists shops and services as much as suppliers, and the
+dashboard search and the receipt panel already say "Händler"); the fold limits 8 and 16, both drawn at
+once and switched by CSS, so the first paint is right on every screen.
 
 Tests: `vendor-chips.test.ts` (ranking, folding, a switched-off vendor never folded away, the search) and
 `OverviewClient.german.test.tsx` (German labels and no English left, German days, folding on a phone and a

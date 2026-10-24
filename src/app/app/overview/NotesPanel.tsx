@@ -55,7 +55,7 @@ export default function NotesPanel({ initial }: { initial: string }) {
       />
       <div className="flex gap-2 mt-2 items-center">
         <button onClick={save} disabled={busy} className="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
-          {busy ? 'Wird gespeichert …' : 'Speichern'}
+          {busy ? 'Wird gespeichert …' : 'Notizen speichern'}
         </button>
         <button onClick={() => setEditing(false)} className="text-xs" style={{ color: 'var(--dt-text-secondary)' }}>Abbrechen</button>
         {msg && <span className="text-xs" style={{ color: 'var(--dt-text-secondary)' }}>{msg}</span>}

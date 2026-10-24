@@ -40,7 +40,7 @@ export default function AttributionPanel({
       }
       const data = await res.json();
       if (apply) {
-        setMsg(`Auf ${data.applied} Belege übertragen, die Seite wird neu geladen …`);
+        setMsg(`Auf ${data.applied === 1 ? '1 Beleg' : `${data.applied} Belege`} übertragen, die Seite wird neu geladen …`);
         window.location.reload();
       } else {
         setMsg('Gespeichert.');
@@ -56,7 +56,8 @@ export default function AttributionPanel({
     <div>
       <p className="text-xs mb-2" style={{ color: 'var(--dt-text-secondary)' }}>
         Geschäftlicher Anteil in Prozent je Händler. Ein Name passt auf jeden Händler, der ihn enthält („Anthropic“
-        erfasst auch „Anthropic (Claude)“). „Übertragen“ schreibt die Anteile in die Spalte Business Share % der Belege.
+        erfasst auch „Anthropic (Claude)“). „Speichern und auf Belege übertragen“ trägt die Anteile als geschäftlichen
+        Anteil in die Belege ein.
       </p>
       <div className="flex flex-col gap-1.5 mb-2">
         {rules.map((r, i) => (
@@ -65,7 +66,7 @@ export default function AttributionPanel({
               value={r.vendor}
               onChange={(e) => setRule(i, { vendor: e.target.value })}
               placeholder="Händlername oder Teil davon"
-              aria-label="Händler"
+              aria-label={`Händler ${i + 1}`}
               className="min-w-0 flex-1 px-2 py-1 text-xs rounded-md"
               style={inputStyle}
             />
@@ -77,14 +78,14 @@ export default function AttributionPanel({
               onChange={(e) => setRule(i, { share: Number(e.target.value) })}
               className="w-16 px-2 py-1 text-xs rounded-md"
               style={inputStyle}
-              aria-label="Geschäftlicher Anteil in Prozent"
+              aria-label={`Geschäftlicher Anteil von Händler ${i + 1} in Prozent`}
             />
             <span className="text-xs" style={{ color: 'var(--dt-text-secondary)' }}>%</span>
             <button
               onClick={() => setRules((rs) => rs.filter((_, idx) => idx !== i))}
               className="text-xs px-1.5 max-sm:min-w-11"
               style={{ color: '#f87171' }}
-              aria-label="Händler entfernen"
+              aria-label={`Händler ${i + 1} entfernen`}
             >
               ✕
             </button>
@@ -121,7 +122,7 @@ export default function AttributionPanel({
           className="px-3 py-1.5 text-sm rounded-md hover:opacity-90 disabled:opacity-50"
           style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--foreground)' }}
         >
-          Speichern
+          Anteile speichern
         </button>
         <button
           onClick={() => save(true)}

@@ -24,10 +24,11 @@ export interface VendorChipsInput {
 export interface VendorChips {
   /** The chips to draw, in ranked order. */
   shown: string[];
-  /** How many vendors the folded list leaves out (0 when nothing is folded away). */
+  /** How many vendors the folded list leaves out (0 when nothing is folded away, or while unfolded). */
   folded: number;
-  /** True when there are more vendors than the folded list shows, so folding is offered at all. */
-  foldable: boolean;
+  /** How many vendors match the search (every vendor without a search). Switched-off vendors that do not match
+   *  are still shown, but are not matches, so "nothing matches" can be said. */
+  matches: number;
 }
 
 /** Vendors ordered by their amount, largest first; equal amounts by name, so the order is stable. */
@@ -37,15 +38,14 @@ export function rankVendors(totals: ReadonlyArray<{ vendor: string; amount: numb
 }
 
 export function vendorChips({ ranked, off, limit, expanded, query }: VendorChipsInput): VendorChips {
-  const foldable = ranked.length > limit;
-  if (!foldable) return { shown: [...ranked], folded: 0, foldable };
   if (expanded) {
     const q = query.trim().toLocaleLowerCase('de');
+    if (!q) return { shown: [...ranked], folded: 0, matches: ranked.length };
     // The search narrows the unfolded list; a switched-off vendor stays in it, so it can be switched back on.
-    const shown = q ? ranked.filter((v) => off.has(v) || v.toLocaleLowerCase('de').includes(q)) : [...ranked];
-    return { shown, folded: 0, foldable };
+    const hit = (v: string) => v.toLocaleLowerCase('de').includes(q);
+    return { shown: ranked.filter((v) => off.has(v) || hit(v)), folded: 0, matches: ranked.filter(hit).length };
   }
   const top = new Set(ranked.slice(0, limit));
   const shown = ranked.filter((v) => top.has(v) || off.has(v));
-  return { shown, folded: ranked.length - shown.length, foldable };
+  return { shown, folded: ranked.length - shown.length, matches: ranked.length };
 }

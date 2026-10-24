@@ -109,52 +109,55 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
     [store, refreshWaiting],
   );
 
-  const drain = useMemo(
-    () =>
-      singleFlight(async (): Promise<DrainResult | null> => {
-        if (!store) return null;
-        setDraining(true);
-        try {
-          const save: SaveReceipt = (file, ocr, options) => callbacks.current.onSave(file, ocr, options);
-          // A photo goes to the company it was taken for. Only entries that do not
-          // know one (shared into the app, or taken on the offline page) go to the
-          // company this page shows now.
-          const result = await drainQueue(
-            store,
-            (file, entry) => runUploadPipeline(file, createBrowserDeps(save, entry.workspaceId ?? callbacks.current.workspaceId)),
-            { isOnline: () => navigator.onLine },
-          );
-          const saved = result.sent.filter((s) => s.outcome.kind === 'done').length;
-          const known = result.sent.length - saved;
-          const meals = result.sent.filter((s) => s.outcome.kind === 'done' && s.outcome.isMeal).length;
-          const elsewhere = [...new Set(result.sent.flatMap((s) => (s.outcome.kind === 'done' ? s.outcome.elsewhere : [])))];
-          const parts: string[] = [];
-          if (saved > 0) parts.push(saved === 1 ? '1 wartendes Foto wurde gesendet.' : `${saved} wartende Fotos wurden gesendet.`);
-          if (known > 0) parts.push(known === 1 ? '1 Foto war bereits vorhanden.' : `${known} Fotos waren bereits vorhanden.`);
-          if (elsewhere.length > 0) parts.push(`Mindestens ein gesendetes Foto liegt genau so schon in deiner Firma ${elsewhere.join(', ')}: bitte im Dashboard prüfen.`);
-          if (meals > 0) parts.push(meals === 1 ? '1 Bewirtung wartet auf Teilnehmer und Anlass.' : `${meals} Bewirtungen warten auf Teilnehmer und Anlass.`);
-          if (result.stopped === 'auth') parts.push('Die Anmeldung ist abgelaufen: bitte neu anmelden, die Fotos bleiben gespeichert.');
-          if (result.stopped === 'offline' && result.remaining > 0) parts.push('Keine Verbindung: der Rest wird später gesendet.');
-          if (result.failed > 0) parts.push(result.failed === 1 ? '1 Foto konnte nicht verarbeitet werden.' : `${result.failed} Fotos konnten nicht verarbeitet werden.`);
-          if (result.stuck > 0) {
-            parts.push(
-              result.stuck === 1
-                ? '1 gesendetes Foto konnte nicht aus der Warteschlange entfernt werden. Es wird nicht erneut gesendet.'
-                : `${result.stuck} gesendete Fotos konnten nicht aus der Warteschlange entfernt werden. Sie werden nicht erneut gesendet.`,
-            );
-          }
-          setQueueNote(parts.length > 0 ? parts.join(' ') : null);
-          return result;
-        } catch {
-          setQueueBroken(true);
-          return null;
-        } finally {
-          setDraining(false);
-          await refreshWaiting();
-        }
-      }),
-    [store, refreshWaiting],
-  );
+  const drainOnce = useCallback(async (): Promise<DrainResult | null> => {
+    if (!store) return null;
+    setDraining(true);
+    try {
+      const save: SaveReceipt = (file, ocr, options) => callbacks.current.onSave(file, ocr, options);
+      // A photo goes to the company it was taken for. Only entries that do not
+      // know one (shared into the app, or taken on the offline page) go to the
+      // company this page shows now.
+      const result = await drainQueue(
+        store,
+        (file, entry) => runUploadPipeline(file, createBrowserDeps(save, entry.workspaceId ?? callbacks.current.workspaceId)),
+        { isOnline: () => navigator.onLine },
+      );
+      const saved = result.sent.filter((s) => s.outcome.kind === 'done').length;
+      const known = result.sent.length - saved;
+      const meals = result.sent.filter((s) => s.outcome.kind === 'done' && s.outcome.isMeal).length;
+      const elsewhere = [...new Set(result.sent.flatMap((s) => (s.outcome.kind === 'done' ? s.outcome.elsewhere : [])))];
+      const parts: string[] = [];
+      if (saved > 0) parts.push(saved === 1 ? '1 wartendes Foto wurde gesendet.' : `${saved} wartende Fotos wurden gesendet.`);
+      if (known > 0) parts.push(known === 1 ? '1 Foto war bereits vorhanden.' : `${known} Fotos waren bereits vorhanden.`);
+      if (elsewhere.length > 0) parts.push(`Mindestens ein gesendetes Foto liegt genau so schon in deiner Firma ${elsewhere.join(', ')}: bitte im Dashboard prüfen.`);
+      if (meals > 0) parts.push(meals === 1 ? '1 Bewirtung wartet auf Teilnehmer und Anlass.' : `${meals} Bewirtungen warten auf Teilnehmer und Anlass.`);
+      if (result.stopped === 'auth') parts.push('Die Anmeldung ist abgelaufen: bitte neu anmelden, die Fotos bleiben gespeichert.');
+      if (result.stopped === 'offline' && result.remaining > 0) parts.push('Keine Verbindung: der Rest wird später gesendet.');
+      if (result.failed > 0) parts.push(result.failed === 1 ? '1 Foto konnte nicht verarbeitet werden.' : `${result.failed} Fotos konnten nicht verarbeitet werden.`);
+      if (result.stuck > 0) {
+        parts.push(
+          result.stuck === 1
+            ? '1 gesendetes Foto konnte nicht aus der Warteschlange entfernt werden. Es wird nicht erneut gesendet.'
+            : `${result.stuck} gesendete Fotos konnten nicht aus der Warteschlange entfernt werden. Sie werden nicht erneut gesendet.`,
+        );
+      }
+      setQueueNote(parts.length > 0 ? parts.join(' ') : null);
+      return result;
+    } catch {
+      setQueueBroken(true);
+      return null;
+    } finally {
+      setDraining(false);
+      await refreshWaiting();
+    }
+  }, [store, refreshWaiting]);
+  // One drain at a time: a second call while one runs joins it instead of sending twice. The single-flight
+  // wrapper is made on the first call, never while rendering, and anew when the drain itself changes.
+  const drainFlight = useRef<{ work: typeof drainOnce; run: () => Promise<DrainResult | null> } | null>(null);
+  const drain = useCallback(() => {
+    if (drainFlight.current?.work !== drainOnce) drainFlight.current = { work: drainOnce, run: singleFlight(drainOnce) };
+    return drainFlight.current.run();
+  }, [drainOnce]);
 
   // Send what is waiting when the page opens and whenever the connection returns.
   useEffect(() => {

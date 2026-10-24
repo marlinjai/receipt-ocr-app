@@ -61,7 +61,7 @@
     "@types/web-push": "3.6.4",
     "clsx": "^2.1.1",
     "eslint": "^9.39.3",
-    "eslint-config-next": "16.1.1",
+    "eslint-config-next": "16.4.3",
     "fake-indexeddb": "^6.2.5",
     "flexsearch": "^0.8.212",
     "husky": "^9.1.7",

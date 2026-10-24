@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- eslint-config-next 16.4.3, matching Next.js 16.4.3. Its React hooks rules found eight effects that set state right away; each now adjusts while rendering or sets state only when an answer arrives (receipts table search, selection and linked receipt, receipt text in the detail panel, phone capture queue, Drive browser, sheet import). The Google consent outcome is read by the import page on the server and shown from the first paint, and a slow Drive folder answer no longer replaces the folder opened after it
+
 ### Security
 
 - Next.js 16.4.3, sharp 0.35.5 and React 19.2.9 for the Next.js security release of 2026-10-14: two critical remote code execution bugs (`use cache` returning typed arrays, GHSA-673q-mjm6-r5xr; SVG through the Image Optimization API and sharp's librsvg, CVE-2026-96889) and a Server Actions denial of service (GHSA-p3m5-59mp-jv5r). sharp is pinned through an override so no older copy can stay in the lockfile

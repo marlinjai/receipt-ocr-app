@@ -20,7 +20,7 @@ import {
 import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../../../../test/db-helpers';
 
 /**
- * The ten-day rule against a real database (migrations 0016 and 0036, the
+ * The ten-day rule against a real database (migrations 0016 and 0037, the
  * filing day). Run with `pnpm test:db`. Every name and amount is invented.
  */
 

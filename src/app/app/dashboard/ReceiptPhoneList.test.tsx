@@ -30,9 +30,11 @@ const conference: Row = {
 function list(overrides: Partial<Parameters<typeof ReceiptPhoneList>[0]> = {}) {
   const props = {
     rows: allRows,
+    loadedRows: allRows,
     columns,
     selectOptions: options,
     loading: false,
+    failed: false,
     narrowed: false,
     onOpenReceipt: vi.fn(),
     onOpenGroup: vi.fn(),
@@ -135,6 +137,21 @@ describe('the receipts list on a phone', () => {
     expect(screen.queryByText('Noch keine Belege.')).toBeNull();
   });
 
+  it('says nothing when loading failed: the banner above says so, and "no receipts" would contradict it', () => {
+    list({ rows: [], failed: true });
+    expect(screen.queryByText('Noch keine Belege.')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Beleg hochladen' })).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('says how many of its receipts a group card covers when the choice above shows only some of them', () => {
+    // A search found the dinner only: the group shows with it, its sum is of the dinner, like the wide table.
+    list({ rows: [group, dinner], loadedRows: allRows, narrowed: true });
+    const messe = screen.getByRole('button', { name: 'Gruppe Messe öffnen' });
+    expect(messe.textContent).toContain('1 von 2 Belegen');
+    expect(messe.textContent).toMatch(/40,00\s€/);
+  });
+
   it('keeps the receipts that are already there while more load', () => {
     list({ rows: [licence], loading: true });
     expect(cards()).toHaveLength(1);
@@ -155,6 +172,7 @@ describe('the phone list formats', () => {
     expect(phoneAmount('1234.5', 'USD')).toMatch(/1\.234,50\s\$/);
     expect(phoneAmount(7, '')).toBe('7,00');
     expect(phoneAmount(null, 'EUR')).toBe('');
+    expect(phoneAmount('  ', 'EUR')).toBe('');
     expect(phoneAmount('abc', 'EUR')).toBe('');
   });
 

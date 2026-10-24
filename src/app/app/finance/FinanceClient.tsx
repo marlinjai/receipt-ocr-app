@@ -439,7 +439,7 @@ export default function FinanceClient({
           ))}
         </dl>
 
-        <div ref={tabRow} role="tablist" aria-label="Bereiche der Finanzübersicht" className="ui-scroll-bare mt-6 flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
+        <div ref={tabRow} role="tablist" aria-label="Bereiche der Finanzübersicht" className="ui-scroll-bare-phone mt-6 flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
           {tabs.map((t) => (
             <button
               key={t.key}

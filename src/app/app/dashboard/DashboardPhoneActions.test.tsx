@@ -9,7 +9,7 @@ vi.mock('../actions', () => ({ recomputeFxRates: vi.fn() }));
 afterEach(cleanup);
 
 function actions(openMealCount = 3) {
-  const props = { title: 'Receipts', openMealCount, aiOpen: false, onExport: vi.fn(), onToggleAi: vi.fn() };
+  const props = { title: 'Receipts', openMealCount, onExport: vi.fn(), onToggleAi: vi.fn() };
   render(<DashboardPhoneActions {...props} />);
   return props;
 }

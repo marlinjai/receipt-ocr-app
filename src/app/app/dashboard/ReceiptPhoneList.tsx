@@ -34,7 +34,7 @@ export function phoneDay(value: unknown): string {
 
 /** An amount in its currency; without a known currency code the bare number, never a guessed euro sign. */
 export function phoneAmount(value: unknown, currency: string): string {
-  if (value === null || value === undefined || value === '') return '';
+  if (value === null || value === undefined || String(value).trim() === '') return '';
   const n = Number(value);
   if (!Number.isFinite(n)) return '';
   if (/^[A-Z]{3}$/.test(currency)) {
@@ -58,17 +58,21 @@ function sortKey(row: Row, dateId: string): string {
 export interface ReceiptPhoneListProps {
   /** The rows the page shows (years, search and filters already applied), groups and receipts alike. */
   rows: Row[];
+  /** Every loaded row, so a group card can say when the choice above shows only some of its receipts. */
+  loadedRows: Row[];
   columns: Column[];
   selectOptions: Map<string, SelectOption[]>;
-  /** True while the first rows are still on their way. */
+  /** True while rows are still on their way (the first page, or a reload after a change of years). */
   loading: boolean;
+  /** True when loading failed: the page says so in its banner, and the list must not call itself empty. */
+  failed: boolean;
   /** True when a search, a filter or a year choice narrows the list, so an empty list says why. */
   narrowed: boolean;
   onOpenReceipt: (row: Row) => void;
   onOpenGroup: (row: Row) => void;
 }
 
-export default function ReceiptPhoneList({ rows, columns, selectOptions, loading, narrowed, onOpenReceipt, onOpenGroup }: ReceiptPhoneListProps) {
+export default function ReceiptPhoneList({ rows, loadedRows, columns, selectOptions, loading, failed, narrowed, onOpenReceipt, onOpenGroup }: ReceiptPhoneListProps) {
   const id = (name: string) => columns.find((c) => c.name === name)?.id ?? '';
   const nameId = id('Name');
   const vendorId = id('Vendor');
@@ -99,6 +103,8 @@ export default function ReceiptPhoneList({ rows, columns, selectOptions, loading
   }, [rows, columns, dateId]);
 
   if (items.length === 0) {
+    // The banner above says the receipts could not be loaded; an empty list here would contradict it.
+    if (failed) return null;
     if (loading) {
       return (
         <p role="status" className="px-1 py-10 text-center text-sm" style={{ color: 'var(--muted)' }}>
@@ -127,7 +133,9 @@ export default function ReceiptPhoneList({ rows, columns, selectOptions, loading
     <ul className="flex flex-col gap-2" aria-label="Belege">
       {items.map((row) => {
         if (isGroupRow(row, columns)) {
+          // The sum and count are of the receipts shown, like the wide table; the group panel lists all of them.
           const children = receiptsInGroup(row.id, rows, columns);
+          const all = receiptsInGroup(row.id, loadedRows, columns).length;
           const euroColumn = columns.find((c) => c.id === euroId);
           const sum = euroColumn ? groupCellValue(row, children, euroColumn, columns) : null;
           const name = text(row.cells[nameId]) || 'Gruppe ohne Namen';
@@ -143,7 +151,7 @@ export default function ReceiptPhoneList({ rows, columns, selectOptions, loading
                   </span>
                 </span>
                 <span className="mt-1 block text-xs" style={{ color: 'var(--muted)' }}>
-                  Gruppe · {children.length === 1 ? '1 Beleg' : `${children.length} Belege`}
+                  Gruppe · {all > children.length ? `${children.length} von ${all} Belegen` : children.length === 1 ? '1 Beleg' : `${children.length} Belege`}
                 </span>
               </button>
             </li>

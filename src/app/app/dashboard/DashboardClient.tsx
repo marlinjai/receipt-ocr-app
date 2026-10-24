@@ -555,13 +555,17 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           />
         );
       default:
+        // The width is not known until the page runs in the browser: neither the list nor the table until then.
+        if (isPhone === null) return null;
         if (isPhone) {
           return (
             <ReceiptPhoneList
               rows={displayRows}
+              loadedRows={rows}
               columns={columns}
               selectOptions={selectOptions}
-              loading={isRowsLoading}
+              loading={!settled}
+              failed={Boolean(rowsError)}
               narrowed={Boolean(trimmedTerm) || filters.length > 0 || hasYearFilter(yearSelection)}
               onOpenReceipt={setDetailRow}
               onOpenGroup={(row) => setGroupPanelId(row.id)}
@@ -639,7 +643,6 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         <DashboardPhoneActions
           title={table.name}
           openMealCount={openMealCount}
-          aiOpen={aiSidebarOpen}
           onExport={() => exportCSV({ columns, rows: displayRows })}
           onToggleAi={() => setAiSidebarOpen((v) => !v)}
         />
@@ -870,7 +873,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
 
       {/* View Switcher. On a phone the package's tab row (with its rename and add menus) is wider than the screen,
           so a plain picker switches the views there; creating and renaming views stays on the wide layout. */}
-      {isPhone ? (
+      {isPhone === null ? null : isPhone ? (
         <div className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: '1px solid var(--dt-border-color)', background: 'var(--dt-bg-secondary)' }}>
           <label htmlFor="phone-view-picker" className="text-sm" style={{ color: 'var(--dt-text-secondary)' }}>
             Ansicht

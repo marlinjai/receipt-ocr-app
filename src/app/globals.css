@@ -882,8 +882,9 @@ textarea.ui-input {
 }
 
 /* ==================== Phone layout ==================== */
-/* Plan: docs/plans/2026-10-24-phone-layout.md. Everything here applies below
-   Tailwind's `sm` breakpoint only, so the wide layout is untouched. */
+/* Plan: docs/plans/2026-10-24-phone-layout.md. The card classes are only used
+   by the phone list; the rules inside the media query apply below Tailwind's
+   `sm` breakpoint only, so the wide layout is untouched. */
 
 /* One receipt on the phone list: the whole card is the tap target. */
 .ui-phone-card {
@@ -937,15 +938,25 @@ textarea.ui-input {
   .dashboard-filter-row button {
     min-height: 2.75rem;
   }
-  /* Pages full of small text controls (overview, rules, upload, import) opt in with `ui-touch` on their root:
-     every button, picker and field there becomes a 44px touch target, and so does a row with a checkbox. */
+  /* Pages full of small text controls (overview, rules, import) opt in with `ui-touch` on their root:
+     every button, picker and field there becomes a 44px touch target, and so does a label around a
+     checkbox (kept inline, so labels that stood side by side still do). None of these pages puts a
+     button inside running text. */
   .ui-touch :is(button, select, input:not([type='checkbox']):not([type='radio'])),
   .ui-touch label:has(> input[type='checkbox'], > input[type='radio']) {
     min-height: 2.75rem;
   }
   .ui-touch label:has(> input[type='checkbox'], > input[type='radio']) {
-    display: flex;
+    display: inline-flex;
     align-items: center;
+  }
+  /* A tab row that scrolls sideways shows no scroll bar on a phone (the cut-off tab says there is more);
+     wider screens keep the bar. */
+  .ui-scroll-bare-phone {
+    scrollbar-width: none;
+  }
+  .ui-scroll-bare-phone::-webkit-scrollbar {
+    display: none;
   }
   /* Text fields at 16px: below that, Safari on the iPhone zooms the page in on focus and leaves it zoomed. */
   input:not([type='checkbox']):not([type='radio']):not([type='range']),

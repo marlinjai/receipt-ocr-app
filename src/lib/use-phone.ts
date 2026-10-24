@@ -22,10 +22,12 @@ function snapshot(): boolean {
 }
 
 /**
- * True while the window is phone-narrow, and it follows the window as it turns
- * or is resized. The server renders the wide layout (it cannot know the width);
- * the phone layout takes over on the first render in the browser.
+ * True while the window is phone-narrow, false while it is wider, and it
+ * follows the window as it turns or is resized. Null on the server and during
+ * hydration, when the width is not known yet: a component that draws one
+ * layout or the other draws neither until then, so a phone never mounts the
+ * wide layout only to swap it out one render later.
  */
-export function usePhone(): boolean {
-  return useSyncExternalStore(subscribe, snapshot, () => false);
+export function usePhone(): boolean | null {
+  return useSyncExternalStore<boolean | null>(subscribe, snapshot, () => null);
 }

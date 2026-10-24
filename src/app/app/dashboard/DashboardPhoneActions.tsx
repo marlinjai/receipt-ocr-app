@@ -10,21 +10,21 @@ import { AiIcon, ContactsIcon, ExportIcon, FinanceIcon, ImportIcon, MealsIcon, O
  * one row; on a phone that row was three screens wide and pushed the whole page
  * sideways. Here upload stays in reach and everything else opens below the
  * title as a two-column menu, in the page's flow (no popover to clip or to
- * position). The wide title row is hidden on a phone; this one takes its place. Same destinations, same labels as the wide row.
+ * position). The wide title row is hidden on a phone; this one takes its place.
+ * Same destinations as the wide row; "Import from Sheets" is shortened to
+ * "Import" so it fits half the width of a phone.
  *
  * Plan: docs/plans/2026-10-24-phone-layout.md.
  */
 export default function DashboardPhoneActions({
   title,
   openMealCount,
-  aiOpen,
   onExport,
   onToggleAi,
 }: {
   /** The table's name, the page heading. */
   title: string;
   openMealCount: number;
-  aiOpen: boolean;
   onExport: () => void;
   onToggleAi: () => void;
 }) {
@@ -52,7 +52,7 @@ export default function DashboardPhoneActions({
             strokeLinecap="round"
             strokeLinejoin="round"
             aria-hidden
-            className="transition-transform duration-150 ease-out"
+            className="transition-transform duration-150 ease-out motion-reduce:transition-none"
             style={{ transform: open ? 'rotate(180deg)' : undefined }}
           >
             <polyline points="4 6 8 10 12 6" />
@@ -105,7 +105,6 @@ export default function DashboardPhoneActions({
             <button
               type="button"
               className="ui-btn justify-start"
-              aria-pressed={aiOpen}
               onClick={() => {
                 onToggleAi();
                 setOpen(false);

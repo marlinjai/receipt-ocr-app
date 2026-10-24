@@ -48,7 +48,12 @@ All decided by the coordinating session on 2026-10-24, say so if you disagree.
    keyboard navigation, checkbox selection), and a card list is a different component, not a
    narrower table. The switch happens in JavaScript (`usePhone`, a `matchMedia` subscription
    on the same 640 pixel boundary) because only one of the two may be mounted: the table keeps
-   keyboard focus and selection state.
+   keyboard focus and selection state. Until the width is known (on the server and during
+   hydration) neither is drawn, so a phone never mounts the table only to swap it out; the rows
+   load in the browser anyway. While a reload is still running the list says the receipts are
+   loading, and when loading failed it draws nothing under the page's error banner, never "no
+   receipts". A group card counts and sums the receipts the choice above shows, like the wide
+   table, and says "1 von 2 Belegen" when the choice hides some of them.
 2. **Selecting, bulk editing and making groups stay on the wide layout.** The card list has
    no selection, so "Set field", "Neue Gruppe" and the delete-selected button are hidden on a
    phone rather than shown doing nothing. A receipt is still edited, re-read or deleted from its
@@ -67,24 +72,29 @@ All decided by the coordinating session on 2026-10-24, say so if you disagree.
    to one shared file so they cannot drift apart.
 5. **Every page follows the same phone rules**, at 360 and 390 pixels:
    - no sideways page scroll (`scrollWidth` equals the window width minus the scroll bar);
-   - a tab row scrolls inside itself, its scroll bar hidden like the contacts page already
-     did, and the open tab is brought into view (`useTabInView`, which only ever scrolls the row
-     sideways, never the page);
+   - a tab row scrolls inside itself. The finance row (up to nine tabs, the only one wider than a
+     phone) hides its scroll bar on a phone and brings the open tab into view (`useTabInView`,
+     which only ever scrolls the row sideways, never the page). The meals and contacts rows have
+     two and three tabs, fit at 360, and need neither;
    - every button, link that stands alone, field, picker and segmented choice is at least 44
      pixels tall. Shared classes (`ui-btn`, `ui-input`, `ui-seg`) get this from one rule in
      `globals.css`; pages full of small text controls (overview, rules, import) opt in with the
-     `ui-touch` class; single elements use `max-sm:min-h-11`. Links inside running text are
+     `ui-touch` class (a label around a checkbox stays inline); single elements use
+     `max-sm:min-h-11`. Links inside running text are
      left as they are (they are exempt, and a 44 pixel line height would tear the paragraph);
    - text fields use 16 pixel type on a phone, because Safari on the iPhone zooms the page in on
      focus below that and leaves it zoomed;
    - amounts are right-aligned with tabular figures, forms are one column (they already were);
    - the five total cards of the finance page stand two to a row with the result across both.
-6. **The wide layout stays as it was at 1280 pixels.** Every phone change is behind
-   `max-sm:` or the 639 pixel media query, or replaces a value only below `sm`. Measured: the
-   dashboard at 1280 differs from before only by sub-pixel text rendering and the development
-   build's "Rendering" badge.
+6. **The wide layout stays as it was at 1280 pixels.** Phone changes are behind `max-sm:`, the
+   639 pixel media query or `usePhone`, with three deliberate exceptions that change nothing at
+   1280: the finance total cards stand two to a row with the result across both up to 1023
+   pixels (tablets gain the same arrangement), and `min-w-0` on an overview attribution field and
+   a `max-w-[calc(100vw-2rem)]` cap on the Recompute FX panel apply at every width (both only
+   take effect on a narrow screen). Measured: the dashboard at 1280 differs from before only by
+   sub-pixel text rendering and the development build's "Rendering" badge.
 7. **Motion**: the menu opens with the existing 180 millisecond ease-out panel entrance, the
-   menu arrow turns in 150 milliseconds; nothing eases in, everything respects reduced motion.
+   menu arrow turns in 150 milliseconds; nothing eases in, both stop under reduced motion.
 
 ## Boundaries kept
 
@@ -94,8 +104,8 @@ phone requirement; it already fits at 360 and gains the shared 44 pixel fields a
 `globals.css`), `src/lib/spending/*`, `src/lib/tax/service.ts`, `YearBoundaryTab.tsx`,
 `IncomeTaxTab.tsx` (its two tables have two columns and fit) and `src/lib/tax/payments/*`. The
 changes in the other finance tabs are layout only: a sideways scroll box around the VAT periods
-table and the depreciation schedule, and `overflow-x-auto` on the monthly reconciliation of a
-card account.
+table, the depreciation schedule and the monthly reconciliation of a card account (only the
+table scrolls, not its summary line).
 
 ## Built
 
@@ -109,10 +119,11 @@ card account.
 - `globals.css`: the phone card, the 44 pixel rules, 16 pixel fields, `ui-touch`.
 - Finance: two-to-a-row total cards, the open receipts list in a `grid-cols-1` column so its
   long lines truncate instead of widening the page, tabs at 44 pixels kept in view, three tables
-  in sideways scroll boxes.
+  in sideways scroll boxes (the summary of the monthly reconciliation stays put).
 - Overview: charts one per row on a phone, attribution rows that shrink, `ui-touch`.
 - The AI assistant panel is `min(420px, 100vw)` wide, so it no longer runs off a phone's left
-  edge.
+  edge, and as tall as the visible screen (`100dvh`), so the iPhone toolbar does not cover its
+  input.
 - Header, meals, contacts, rules, upload and import: 44 pixel links, tabs and controls.
 
 ## Verified
@@ -123,9 +134,13 @@ meals, contacts, overview, rules, spending and all eight finance tabs; screensho
 after are kept under the dev-browser temporary folder (`mobile-rework/before` and
 `mobile-rework/after`). On the phone dashboard the menu, the detail panel, the Board and
 Calendar views, a search with hits and one without, and the AI panel were opened, each with no
-sideways page scroll. Tests: `ReceiptPhoneList.test.tsx` (forward, a filter change, resuming
-from the year in the address, the empty, narrowed and loading states, formatting),
-`DashboardPhoneActions.test.tsx` and `src/lib/__tests__/phone-layout-hooks.test.tsx`.
+sideways page scroll. Tests: `DashboardClient.phone.test.tsx` runs the whole dashboard at phone width
+with the real table package and a fake data source: cards and the view picker in place of the
+table, a card opening the detail panel, resuming from `?jahre=2025`, the search narrowing the
+cards down to none and back, a failed load not shown as an empty list, and the wide layout
+keeping its table. `ReceiptPhoneList.test.tsx` covers the list itself (order, groups, the empty,
+narrowed, loading and failed states, formatting), `DashboardPhoneActions.test.tsx` the menu,
+and `src/lib/__tests__/phone-layout-hooks.test.tsx` the two hooks.
 
 ## Left open
 

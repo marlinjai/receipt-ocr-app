@@ -385,6 +385,10 @@
   counterparties, the receipt checks move to their own tab, transfers to the owner's own name
   count as own transfers, and a Klarna collective debit beyond its list waits for the list. Plan:
   [docs/plans/2026-10-23-budget-overview.md](docs/plans/2026-10-23-budget-overview.md). (2026-10-23)
+- [ ] Last Klarna export once every open Klarna payment is collected (expected late November
+  2026): run scripts/klarna/klarna-web-export.js and klarna-to-csv.py (see
+  [docs/operations/klarna-export.md](docs/operations/klarna-export.md)), import the file under
+  Finanzen, Zahlungen, Klarna, then set the Klarna account to ended. (2026-10-23)
 - [x] Shared contact list, wave 2: the business-meal guests moved to the suite's shared
   contacts database (company-scoped, behind the `CONTACTS_STORE=shared` switch, default
   off), with a merge-aware data move that Marlin reviews before anything is dropped. Done

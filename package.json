@@ -19,7 +19,8 @@
   "pnpm": {
     "overrides": {
       "@marlinjai/data-table-core": "^0.3.1",
-      "@marlinjai/data-table-adapter-shared": "^0.2.0"
+      "@marlinjai/data-table-adapter-shared": "^0.2.0",
+      "sharp": "^0.35.5"
     }
   },
   "dependencies": {
@@ -33,13 +34,13 @@
     "@marlinjai/storage-brain-sdk": "^0.9.0",
     "@prisma/client": "^6.19.2",
     "fflate": "^0.8.2",
-    "next": "^16.1.6",
+    "next": "^16.4.3",
     "openai": "^6.25.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "6.3.289",
     "postgres": "^3.4.5",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
     "server-only": "^0.0.1",
     "web-push": "3.6.7"
   },

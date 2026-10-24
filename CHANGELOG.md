@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- Next.js 16.4.3, sharp 0.35.5 and React 19.2.9 for the Next.js security release of 2026-10-14: two critical remote code execution bugs (`use cache` returning typed arrays, GHSA-673q-mjm6-r5xr; SVG through the Image Optimization API and sharp's librsvg, CVE-2026-96889) and a Server Actions denial of service (GHSA-p3m5-59mp-jv5r). sharp is pinned through an override so no older copy can stay in the lockfile
+
 ### Added
 
 - The table opens on the newest year that has receipts and loads only the years it shows: the year chips count on the server, choosing years fetches those years (one year is about 270 receipts instead of 780), and a text search says how many more it found in other years. `?jahr=alle` shows everything

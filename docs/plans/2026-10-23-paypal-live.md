@@ -220,6 +220,14 @@ What was built differs from the decisions above in these points, all found in th
 - **The reconciliation leaves every wallet row without a name out of "listed"**, also a payout no
   bank credit pairs with (point 7).
 - Rates are looked up in parallel; a rate service that fails is a missing rate, never a failed fetch.
+- **Ties are refused.** Of two estimated purchases within the tolerance the one closer in amount is
+  the twin of a funding debit; two equally close give none (the debit stays a transfer).
+- **A wallet movement without a readable currency** is an unreadable row (a skipped day and a day
+  the import holds in part), never left out in silence.
+- **A refused "Konto entfernen" reloads the screen**, so the button goes once the account holds
+  something.
+- Links are scaled by largest remainder; a link that comes to nothing is removed. A row that settles
+  an estimate is counted as settled, not again as covered.
 
 Tests live in `src/lib/tax/payments/bank/__tests__/paypal-live.dbtest.ts` (database, the four
 paths plus gates, removal, links, partial days) and `src/lib/tax/payments/__tests__/paypal-live.test.ts`

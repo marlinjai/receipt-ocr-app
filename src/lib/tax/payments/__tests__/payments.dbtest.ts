@@ -940,6 +940,39 @@ describe('money that only funds another payment account', () => {
     expect((await loadStatement(db, ws.workspaceId, 2025)).payments.reconciliations.find((r) => r.service === 'klarna')).toMatchObject({ differenceCents: 0, reconciles: true });
   });
 
+  it('a pay-later collection in January that pays December purchases is carried over, not reported as a gap', async () => {
+    const { ws, ctx, accountId } = await workspace();
+    const laterId = await createAccount(db, ctx, { label: 'Später zahlen', kind: 'payment_service' });
+    await importPayments(db, ctx, laterId, laterFile(
+      later('2025-11-20', 'Kiosk Beispiel', '10.00', '5000000000001'),
+      later('2025-12-18', 'Schreibwaren Beispiel', '30.00', '5000000000002'),
+      later('2025-12-28', 'Werkstatt Beispiel', '70.00', '5000000000003'),
+      later('2026-01-05', 'Kiosk Beispiel', '20.00', '5000000000004'),
+      later('2026-01-30', 'Kiosk Beispiel', '5.00', '5000000000005'),
+    ));
+    await importPayments(db, ctx, accountId, file(
+      line('2025-11-25', 'Klarna Bank AB (publ)', 'Sammelzahlung', '-10', 'Direct Debit'),
+      // December's purchases are collected in January, together with January's own.
+      line('2026-01-10', 'Klarna Bank AB (publ)', 'Sammelzahlung', '-120', 'Direct Debit'),
+      line('2026-01-30', 'Klarna Bank AB (publ)', 'Sammelzahlung', '-5', 'Direct Debit'),
+    ));
+    const year2026 = (await loadStatement(db, ws.workspaceId, 2026)).payments.reconciliations.find((r) => r.service === 'klarna')!;
+    expect(year2026).toMatchObject({ collectedCents: 12_500, listedCents: 2500, carriedCents: 10_000, differenceCents: 0, reconciles: true });
+    expect(year2026.months).toEqual([{ month: '2026-01', collectedCents: 12_500, listedCents: 2500, differenceCents: 10_000, runningCents: 0 }]);
+    // The year before still shows what it left open: listed, collected only in the next year.
+    expect((await loadStatement(db, ws.workspaceId, 2025)).payments.reconciliations.find((r) => r.service === 'klarna')).toMatchObject({ collectedCents: 1000, listedCents: 11_000, carriedCents: 0, notDueCents: 0, differenceCents: -10_000, reconciles: false });
+    // The newest purchases of the list are not due yet: collected less by up to them is no gap.
+    await importPayments(db, ctx, laterId, laterFile(later('2026-02-10', 'Werkstatt Beispiel', '40.00', '5000000000006')));
+    expect((await loadStatement(db, ws.workspaceId, 2026)).payments.reconciliations.find((r) => r.service === 'klarna')).toMatchObject({ listedCents: 6500, notDueCents: 16_500, differenceCents: -4000, reconciles: true });
+
+    // A fee within the covered days counts as collected ...
+    await importPayments(db, ctx, accountId, file(line('2026-01-20', 'Klarna Bank AB (publ)', 'Mahngebühr', '-25', 'Direct Debit')));
+    expect((await loadStatement(db, ws.workspaceId, 2026)).payments.reconciliations.find((r) => r.service === 'klarna')).toMatchObject({ carriedCents: 10_000, differenceCents: -1500, reconciles: true });
+    // ... but more collected than the earlier years and the list explain is still called out.
+    await importPayments(db, ctx, accountId, file(line('2026-01-21', 'Klarna Bank AB (publ)', 'Mahngebühr', '-80', 'Direct Debit')));
+    expect((await loadStatement(db, ws.workspaceId, 2026)).payments.reconciliations.find((r) => r.service === 'klarna')).toMatchObject({ carriedCents: 10_000, differenceCents: 6500, reconciles: false });
+  });
+
   it('a wallet purchase on the pay-later card is a transfer only when the wallet’s list holds that purchase', async () => {
     const { ws, ctx } = await workspace();
     const laterId = await createAccount(db, ctx, { label: 'Später zahlen', kind: 'payment_service' });

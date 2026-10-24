@@ -1,5 +1,6 @@
 import 'server-only';
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { PAY_LATER_TERM_DAYS } from './payments/pay-later';
 import { rowToMealRecord } from '@/lib/meals/record';
 import { smallBusinessOn } from '@/lib/meals/rules';
 import { allReceiptRows, getTaxSettings, guestsByRow, tableContext } from '@/lib/meals/service';
@@ -986,7 +987,19 @@ export interface Reconciliation {
   months: Array<{ month: string; collectedCents: number; listedCents: number; differenceCents: number; runningCents: number }>;
   collectedCents: number;
   listedCents: number;
-  /** Collected less listed over the year. */
+  /**
+   * Of a pay-later service, what earlier years listed and the bank had not collected by their end
+   * (instalments, a purchase of late December): collected in this year, so it is no gap here. Counted
+   * from the first month a collection shows, because before it the bank's own lines are not imported.
+   */
+  carriedCents: number;
+  /**
+   * Of a pay-later service, what its list holds from the last `PAY_LATER_TERM_DAYS` days before the
+   * list ends, when it ends in this year: purchases not due yet, so collected less by up to this much is
+   * no gap.
+   */
+  notDueCents: number;
+  /** Collected less listed over the year, less what earlier years carried over. */
   differenceCents: number;
   /** The difference of the year stays within the tolerance (for a wallet: no more collected than listed plus the tolerance). */
   reconciles: boolean;
@@ -1258,18 +1271,45 @@ function buildPaymentsView(
     if (service) holderOf.set(a.id, service);
   }
   const reconciliations: Reconciliation[] = [];
+  // All years: what an earlier year listed may be collected in this one (see `Reconciliation.carriedCents`).
+  const ruledAll = loaded.payments.filter((p) => p.byRule && p.kind === 'own_transfer');
+  const yearStart = `${year}-01`;
+  const add = (map: Map<string, number>, month: string, cents: number) => map.set(month, (map.get(month) ?? 0) + cents);
   for (const service of new Map([...holderOf.values()].map((v) => [v.name, v])).values()) {
     const collected = new Map<string, number>();
     const listed = new Map<string, number>();
     // What the OTHER accounts show leaving for the service; the wallet's own payout rows are not collections.
-    for (const p of ruled) if (p.funding?.service === service.name && p.amountCents < 0 && holderOf.get(p.accountId)?.name !== service.name) collected.set(p.bookingDay.slice(0, 7), (collected.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
-    if (collected.size === 0) continue;
+    for (const p of ruledAll) if (p.funding?.service === service.name && p.amountCents < 0 && holderOf.get(p.accountId)?.name !== service.name) add(collected, p.bookingDay.slice(0, 7), -p.amountCents);
     // The wallet's own payout rows are no purchases, paired by the rule or not: a row without a name is a payout
     // (plan 2026-10-23-paypal-live, point 7). A row the rule pairs with ANOTHER service (a PayPal purchase on the
     // pay-later card) is still a purchase this service collects from the bank.
-    for (const p of inYear) if (holderOf.get(p.accountId)?.name === service.name && p.amountCents < 0 && p.sourceKind === 'spend' && p.counterparty.trim() !== '' && !(p.byRule && p.funding?.service === service.name)) listed.set(p.bookingDay.slice(0, 7), (listed.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
-    let running = 0;
-    const months = [...new Set([...collected.keys(), ...listed.keys()])].sort().map((month) => {
+    const isPurchase = (p: (typeof loaded.payments)[number]) =>
+      holderOf.get(p.accountId)?.name === service.name && p.amountCents < 0 && p.sourceKind === 'spend' && p.counterparty.trim() !== '' && !(p.byRule && p.funding?.service === service.name);
+    for (const p of loaded.payments) if (isPurchase(p)) add(listed, p.bookingDay.slice(0, 7), -p.amountCents);
+    const ofYear = (m: string) => m.startsWith(`${year}-`);
+    if (![...collected.keys()].some(ofYear)) continue;
+    // A pay-later service collects every listed purchase, some only in a later year (instalments, a
+    // purchase of late December): what earlier years listed beyond what they collected is collected now.
+    // A wallet also pays from its balance or a card, so nothing it listed is owed to the bank.
+    const firstCollected = [...collected.keys()].sort()[0];
+    let carriedCents = 0;
+    let notDueCents = 0;
+    if (service.kind === 'pay_later') {
+      for (const month of new Set([...collected.keys(), ...listed.keys()])) {
+        if (month >= firstCollected && month < yearStart) carriedCents += (listed.get(month) ?? 0) - (collected.get(month) ?? 0);
+      }
+      // Collected beyond the lists of earlier years is no credit for this one: that stays a question there.
+      carriedCents = Math.max(0, carriedCents);
+      // The newest purchases of the list are not due yet: the bank collects them later.
+      const purchases = loaded.payments.filter(isPurchase);
+      const listEnd = purchases.reduce((max, p) => (p.bookingDay > max ? p.bookingDay : max), '');
+      if (listEnd.startsWith(`${year}-`)) {
+        const from = new Date(Date.parse(`${listEnd}T00:00:00Z`) - PAY_LATER_TERM_DAYS * 86_400_000).toISOString().slice(0, 10);
+        notDueCents = purchases.filter((p) => p.bookingDay > from).reduce((sum, p) => sum - p.amountCents, 0);
+      }
+    }
+    let running = -carriedCents;
+    const months = [...new Set([...collected.keys(), ...listed.keys()])].filter(ofYear).sort().map((month) => {
       const collectedCents = collected.get(month) ?? 0;
       const listedCents = listed.get(month) ?? 0;
       running += collectedCents - listedCents;
@@ -1277,7 +1317,8 @@ function buildPaymentsView(
     });
     const collectedCents = months.reduce((sum, m) => sum + m.collectedCents, 0);
     const listedCents = months.reduce((sum, m) => sum + m.listedCents, 0);
-    const toleranceCents = reconciliationTolerance(listedCents);
+    const differenceCents = collectedCents - listedCents - carriedCents;
+    const toleranceCents = reconciliationTolerance(listedCents + carriedCents);
     reconciliations.push({
       service: service.name,
       serviceKind: service.kind,
@@ -1285,11 +1326,13 @@ function buildPaymentsView(
       months,
       collectedCents,
       listedCents,
-      differenceCents: collectedCents - listedCents,
+      carriedCents,
+      notDueCents,
+      differenceCents,
       // A wallet also pays from its balance or a card, so less collected than listed is its normal case;
       // what must not pass unseen is more collected than the list explains. A pay-later service collects
-      // every listed purchase from the bank, so there both directions are called out.
-      reconciles: service.kind === 'wallet' ? collectedCents - listedCents <= toleranceCents : Math.abs(collectedCents - listedCents) <= toleranceCents,
+      // every listed purchase from the bank, so there both directions are called out, less what is not due yet.
+      reconciles: service.kind === 'wallet' ? differenceCents <= toleranceCents : differenceCents <= toleranceCents && differenceCents >= -(toleranceCents + notDueCents),
       toleranceCents,
     });
   }

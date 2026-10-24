@@ -8,6 +8,7 @@ import type { WageEntry, WageFigures } from '@/lib/tax/income-tax/wages';
 import { formatCents } from '@/lib/tax/money';
 import type { StatementView } from '@/lib/tax/service';
 import { MONTHS, euro, parseEuro } from './amounts';
+import ScrollBox from '@/components/ui/ScrollBox';
 
 export type WageDraft = WageFigures & {
   year: number;
@@ -285,7 +286,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
                   : `${euro(estimate.businessEffectCents)} mehr`}
               </p>
             )}
-            <div className="ui-table-scroll" role="region" aria-label={`Steuern ${view.year}`} tabIndex={0}>
+            <ScrollBox className="ui-table-scroll" label={`Steuern ${view.year}`}>
             <table className="mt-3 w-full text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
               <caption className="sr-only">Steuern {view.year}</caption>
               <thead>
@@ -302,7 +303,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
                 <TaxRow label="Kirchensteuer" balance={estimate.churchTax} />
               </tbody>
             </table>
-            </div>
+            </ScrollBox>
           </>
         )}
         <div className="mt-3 space-y-2">
@@ -356,7 +357,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
           laufenden Jahr kann die letzte bis Dezember hochgerechnet werden.
         </p>
         {tax.wageEntries.length > 0 && (
-          <div className="ui-table-scroll" role="region" aria-label={`Lohnangaben ${view.year}`} tabIndex={0}>
+          <ScrollBox className="ui-table-scroll" label={`Lohnangaben ${view.year}`}>
           <table className="mt-3 w-full text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
             <caption className="sr-only">Lohnangaben {view.year}</caption>
             <thead>
@@ -393,7 +394,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
               ))}
             </tbody>
           </table>
-          </div>
+          </ScrollBox>
         )}
         {wageEditing === null ? (
           <button type="button" className="ui-btn ui-btn-primary mt-3" onClick={() => startWage(null)}>

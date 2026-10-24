@@ -1,7 +1,8 @@
 'use client';
 
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import ScrollBox from '@/components/ui/ScrollBox';
 import { aggregateOverview, type OverviewData } from '@/lib/overview/aggregate';
 import {
   applySelection,
@@ -105,32 +106,13 @@ function StackedMonthly({
   const monthTotal = (m: (typeof series.months)[number]) => Object.values(m.byVendor).reduce((a, b) => a + b, 0);
   const max = Math.max(1, ...series.months.map(monthTotal));
   // Two years of months do not fit a phone (or half a wide screen): every month keeps a readable column and the
-  // chart scrolls sideways in its own panel, never the page. It opens on the newest months, before the first
-  // paint, and again when the panel narrows (a phone turned) while nobody has scrolled it away from its start.
-  // Only a panel that scrolls is a tab stop.
-  const panel = useRef<HTMLDivElement>(null);
+  // chart scrolls sideways in its own box, never the page, opening on the newest months.
   const monthCount = series.months.length;
-  const [scrolls, setScrolls] = useState(false);
-  useLayoutEffect(() => {
-    const el = panel.current;
-    if (!el) return;
-    const fit = (first: boolean) => {
-      const overflows = el.scrollWidth > el.clientWidth;
-      setScrolls(overflows);
-      if (overflows && (first || el.scrollLeft === 0)) el.scrollTo({ left: el.scrollWidth });
-    };
-    fit(true);
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => fit(false));
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [monthCount]);
   return (
-    <div
-      ref={panel}
-      role="region"
-      aria-label={`${series.currency} by month`}
-      tabIndex={scrolls ? 0 : undefined}
+    <ScrollBox
+      label={`${series.currency} by month`}
+      pinEnd
+      resetKey={monthCount}
       className="overflow-x-auto overscroll-x-contain pb-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--accent)]"
     >
       <div style={{ minWidth: monthCount * MONTH_COLUMN_PX }}>
@@ -151,14 +133,16 @@ function StackedMonthly({
           })}
         </div>
         <div className="flex gap-2 mt-1">
-          {series.months.map((m) => (
-            <div key={m.month} className="min-w-0 flex-1 text-center text-[10px]" style={{ color: 'var(--dt-text-secondary)' }}>
+          {series.months.map((m, i) => (
+            <div key={m.month} className="min-w-0 flex-1 text-center text-[10px] leading-tight tabular-nums" style={{ color: 'var(--dt-text-secondary)' }}>
               {m.month.slice(5)}
+              {/* The year under the first month and under every January, so months of two years tell apart. */}
+              {(i === 0 || m.month.endsWith('-01')) && <span className="block opacity-70">{m.month.slice(2, 4)}</span>}
             </div>
           ))}
         </div>
       </div>
-    </div>
+    </ScrollBox>
   );
 }
 

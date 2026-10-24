@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import OverviewClient, { MONTH_COLUMN_PX } from './OverviewClient';
 import type { LedgerInvoice } from '@/lib/overview/selection';
@@ -9,11 +9,15 @@ import type { LedgerInvoice } from '@/lib/overview/selection';
  * (2026-10-24) two years of months in three currencies made the page 1403px wide at a 390 window.
  */
 
-const originalScrollTo = HTMLElement.prototype.scrollTo;
+// jsdom lays nothing out: every chart box reports content wider than itself, as on a phone, so it is a region.
+// How the box scrolls is tested with the box itself (ScrollBox.test.tsx).
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(952);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(305);
+});
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  HTMLElement.prototype.scrollTo = originalScrollTo;
 });
 
 /** One invoice per month from the first month on, for `count` months. Vendors and amounts are invented. */
@@ -48,23 +52,10 @@ describe('the monthly chart', () => {
     expect(grid.style.getPropertyValue('--overview-cols')).toBe('repeat(2, minmax(0,1fr))');
   });
 
-  it('opens a chart that scrolls on its newest months and makes it a tab stop', () => {
-    // jsdom has no layout: the panel reports a chart wider than itself, and records where it was scrolled to.
-    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(952);
-    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(305);
-    const scrollTo = vi.fn();
-    HTMLElement.prototype.scrollTo = scrollTo as typeof HTMLElement.prototype.scrollTo;
-    overview(monthly('EUR', 'Beispiel Hosting', '2024-01', 34));
-    expect(scrollTo).toHaveBeenCalledWith({ left: 952 });
-    expect(screen.getByRole('region', { name: 'EUR by month' }).tabIndex).toBe(0);
-  });
-
-  it('leaves a chart that fits where it is and out of the tab order', () => {
-    const scrollTo = vi.fn();
-    HTMLElement.prototype.scrollTo = scrollTo as typeof HTMLElement.prototype.scrollTo;
-    overview(monthly('EUR', 'Beispiel Hosting', '2026-08', 3));
-    expect(scrollTo).not.toHaveBeenCalled();
-    expect(screen.getByRole('region', { name: 'EUR by month' }).hasAttribute('tabindex')).toBe(false);
+  it('labels the months with their year under the first month and every January', () => {
+    overview(monthly('EUR', 'Beispiel Hosting', '2024-11', 4));
+    const labels = screen.getByRole('region', { name: 'EUR by month' }).querySelectorAll('.tabular-nums');
+    expect([...labels].map((l) => l.textContent)).toEqual(['1124', '12', '0125', '02']);
   });
 
   it('asks for little width when there are only a few months', () => {

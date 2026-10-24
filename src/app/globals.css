@@ -975,10 +975,11 @@ textarea.ui-input {
 .ui-table-scroll {
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  /* Room for the focus ring of a button at the box's edge (a scrolling box clips what lies outside it),
-     taken back by the margin so nothing moves. */
-  padding: 4px;
-  margin: -4px;
+  /* Room for the focus ring of a button at the box's right edge (a scrolling box clips what lies outside
+     it), taken back by the margin so nothing moves. None on the left, where the sticky first column holds
+     text: a left padding would let figures show through beside it while scrolling. */
+  padding: 4px 4px 4px 0;
+  margin: -4px -4px -4px 0;
   border-radius: 0.375rem;
 }
 .ui-table-scroll:focus-visible {
@@ -994,8 +995,10 @@ textarea.ui-input {
     position: sticky;
     left: 0;
     z-index: 1;
-    /* A long first cell (an employer's name) wraps instead of leaving the figures a sliver. */
-    max-width: 9rem;
+    /* A long first cell (an employer's name) wraps at 9rem instead of leaving the figures a sliver. A cell
+       ignores max-width in some browsers, so the width is set; a single longer word still widens it. */
+    width: 9rem;
+    min-width: 0;
     white-space: normal;
     padding-right: 0.75rem;
     background: var(--surface-solid);

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { incomeTaxView } from '@/lib/tax/income-tax/__tests__/fixtures';
 import type { StatementView } from '@/lib/tax/service';
@@ -12,7 +12,15 @@ import IncomeTaxTab from './IncomeTaxTab';
  * so this check does not touch the tab's main test file another branch is changing.
  */
 
-afterEach(cleanup);
+// jsdom lays nothing out: the boxes report a table wider than themselves, as on a phone.
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(433);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(313);
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const slip = (month: number): WageEntry => ({
   id: `w-${month}`,

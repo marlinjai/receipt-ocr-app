@@ -4,7 +4,7 @@ import type { MealRecord } from '@/lib/meals/types';
 import { computeYear } from '../compute';
 import { resolveItem, resolveItems, type ReceiptFacts } from '../facts';
 import { rulesForYear } from '../rules';
-import { answerFor, boundaryDay, otherYearOf, touchesYear } from '../year-boundary';
+import { answerFor, berlinDay, boundaryDay, decideBoundary, filedWithOf, otherYearOf, recursMonthly, touchesYear, vatStatusDay, vatStatusOn, type BoundaryFacts } from '../year-boundary';
 
 /** Invented: a monthly rent of 650.00. */
 function rent(overrides: Partial<MealRecord> = {}): MealRecord {
@@ -93,5 +93,107 @@ describe('a confirmed recurring payment counts in the year it belongs to', () =>
   it('a meal is never moved: the meal register lists it by its own day', () => {
     const dinner = facts(meal({ date: '2025-12-29' }), { countsOnDay: '2026-01-01' });
     expect(resolveItem(dinner, [], SMALL_BUSINESS).item).toMatchObject({ date: '2025-12-29', dateBasis: 'document' });
+  });
+});
+
+describe('recurring counterparties', () => {
+  it('needs three distinct months among the twelve before the payment month', () => {
+    expect(recursMonthly('2025-12-26', ['2025-09-26', '2025-10-26', '2025-11-26'])).toBe(true);
+    expect(recursMonthly('2025-12-26', ['2025-10-26', '2025-11-26'])).toBe(false);
+    // Twelve months back is the earliest that counts; thirteen is too long ago.
+    expect(recursMonthly('2026-01-04', ['2025-01-04', '2025-06-04', '2025-12-04'])).toBe(true);
+    expect(recursMonthly('2026-01-04', ['2024-12-04', '2025-06-04', '2025-12-04'])).toBe(false);
+  });
+
+  it('does not let the payment month, a later day or a second receipt of one month vouch for it', () => {
+    expect(recursMonthly('2025-12-26', ['2025-12-01', '2025-12-26', '2025-11-02', '2025-11-20'])).toBe(false);
+    expect(recursMonthly('2025-12-26', ['2026-01-26', '2026-02-26', '2025-11-26'])).toBe(false);
+    expect(recursMonthly('2025-12-26', ['', 'kein Datum', '2025-11-26', '2025-10-26', '2025-09-26'])).toBe(true);
+  });
+});
+
+describe('berlinDay', () => {
+  it('is the day in Berlin, also late in the evening UTC', () => {
+    expect(berlinDay(new Date('2026-10-17T21:30:00Z'))).toBe('2026-10-17');
+    expect(berlinDay(new Date('2026-10-17T22:30:00Z'))).toBe('2026-10-18');
+  });
+});
+
+describe('the answer that applies to a payment at the turn of the year', () => {
+  const none = new Map<number, string>();
+  const filed2025 = new Map([[2025, '2026-10-17']]);
+  const decide = (o: Partial<BoundaryFacts>) => decideBoundary({ kind: 'receipt', cashDay: '2025-12-26', stored: undefined, filedOn: none, recurring: false, ...o });
+  const stored = (belongsToOtherYear: boolean, savedOn: string, cashDay = '2025-12-26') => ({ cashDay, belongsToOtherYear, savedOn });
+
+  it('open years: a recurring receipt and a one-off stay by rule, one without a vendor is asked', () => {
+    expect(decide({ recurring: true })).toEqual({ answer: false, source: 'rule', reason: 'Abo, Zeitraum beginnt am Zahltag', storedAnswer: null, filedYear: null, filedWith: null, departsFromFiled: null });
+    expect(decide({ recurring: false })).toMatchObject({ answer: false, source: 'rule', reason: 'einmalige Zahlung' });
+    expect(decide({ recurring: null })).toMatchObject({ answer: null, source: null, storedAnswer: null });
+  });
+
+  it('open years, regular taxation with advance returns: value-added tax paid in January belongs to the year before, paid in December it stays', () => {
+    const vat = { kind: 'vat_settlement' as const, recurring: null, vatStatus: 'regular' as const };
+    expect(decide({ ...vat, cashDay: '2026-01-10' })).toMatchObject({ answer: true, source: 'rule' });
+    expect(decide({ ...vat, cashDay: '2026-01-01' })).toMatchObject({ answer: true, source: 'rule' });
+    expect(decide({ ...vat, cashDay: '2025-12-22' })).toMatchObject({ answer: false, source: 'rule' });
+  });
+
+  it('open years, small business: a payment to the tax office is not recurring and stays; an unanswered status is asked', () => {
+    expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-08', vatStatus: 'small' })).toMatchObject({ answer: false, source: 'rule', reason: 'Kleinunternehmer: keine regelmäßige Vorauszahlung' });
+    expect(decide({ kind: 'vat_settlement', cashDay: '2025-12-23', vatStatus: 'small' })).toMatchObject({ answer: false, source: 'rule' });
+    expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-08', vatStatus: 'status_unanswered' })).toMatchObject({ answer: null, source: null });
+    expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-08', vatStatus: 'frequency_unanswered' })).toMatchObject({ answer: null, source: null });
+    // A person can still answer it.
+    expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-08', vatStatus: 'small', stored: stored(true, '2026-01-09', '2026-01-08') })).toMatchObject({ answer: true, source: 'person' });
+  });
+
+  it('the day whose status decides a settlement: the year before for January, the payment day for December', () => {
+    expect(vatStatusDay('2026-01-08')).toBe('2025-12-31');
+    expect(vatStatusDay('2025-12-23')).toBe('2025-12-23');
+  });
+
+  it('the filed return an answer went into', () => {
+    const both = new Map([[2024, '2026-10-11'], [2025, '2026-10-17']]);
+    expect(filedWithOf('2025-12-29', '2026-10-01', new Map())).toBeNull();
+    expect(filedWithOf('2025-12-29', '2026-10-17', both)).toBe(2025);
+    expect(filedWithOf('2025-12-29', '2026-10-18', both)).toBeNull();
+    // A January 2025 payment touches 2024 and 2025: saved between the two filing days it went into neither.
+    expect(filedWithOf('2025-01-04', '2026-10-14', both)).toBeNull();
+    expect(filedWithOf('2025-01-04', '2026-10-10', both)).toBe(2025);
+  });
+
+  it('the status a settlement is judged by', () => {
+    expect(vatStatusOn(false, true)).toBe('regular');
+    expect(vatStatusOn(false, false)).toBe('frequency_unanswered');
+    expect(vatStatusOn(true, true)).toBe('small');
+    expect(vatStatusOn(true, false)).toBe('small');
+    expect(vatStatusOn(null, true)).toBe('status_unanswered');
+  });
+
+  it("a person's answer overrides every rule, and only for the day it was given for", () => {
+    expect(decide({ recurring: true, stored: stored(true, '2026-01-05') })).toMatchObject({ answer: true, source: 'person', reason: 'Antwort von Hand', storedAnswer: true });
+    expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-08', stored: stored(false, '2026-01-09', '2026-01-08') })).toMatchObject({ answer: false, source: 'person' });
+    // Another payment day: the answer does not apply, the rule does.
+    expect(decide({ recurring: true, stored: stored(true, '2026-01-05', '2025-12-27') })).toMatchObject({ answer: false, source: 'rule', storedAnswer: null });
+  });
+
+  it('a filed year fixes its turn, whichever of the two years is filed, before any rule', () => {
+    expect(decide({ filedOn: filed2025 })).toEqual({ answer: false, source: 'filed', reason: 'Festgelegt durch die abgegebene Erklärung 2025', storedAnswer: null, filedYear: 2025, filedWith: null, departsFromFiled: null });
+    // Paid in January 2026, other year 2025 filed: the January rule for value-added tax does not apply.
+    expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-08', filedOn: filed2025 })).toMatchObject({ answer: false, source: 'filed', filedYear: 2025 });
+    expect(decide({ recurring: null, filedOn: filed2025 })).toMatchObject({ answer: false, source: 'filed' });
+    // Both years filed: the paid year is named.
+    expect(decide({ cashDay: '2026-01-03', filedOn: new Map([[2025, '2026-10-17'], [2026, '2027-05-02']]) })).toMatchObject({ reason: 'Festgelegt durch die abgegebene Erklärung 2026', filedYear: 2026 });
+  });
+
+  it('an answer saved up to the filing day was filed that way and applies; one saved later that would move the payment is reported, never applied', () => {
+    expect(decide({ filedOn: filed2025, stored: stored(true, '2026-10-16') })).toMatchObject({ answer: true, source: 'person', storedAnswer: true, filedWith: 2025, departsFromFiled: null, reason: 'Antwort von Hand, vor der Abgabe der Erklärung 2025 gegeben und so erklärt' });
+    expect(decide({ filedOn: filed2025, stored: stored(true, '2026-10-17') })).toMatchObject({ answer: true, source: 'person' });
+    expect(decide({ filedOn: filed2025, stored: stored(true, '2026-10-18') })).toEqual({ answer: false, source: 'filed', reason: 'Weicht von der abgegebenen Erklärung 2025 ab', storedAnswer: true, filedYear: 2025, filedWith: null, departsFromFiled: 2025 });
+    // "Stays" after the filing day agrees with the return.
+    expect(decide({ filedOn: filed2025, stored: stored(false, '2026-10-18') })).toMatchObject({ answer: false, source: 'person', filedWith: null, departsFromFiled: null });
+    // Both years filed, saved between the two filing days: it departs from the return it was saved after.
+    const both = new Map([[2025, '2026-10-17'], [2026, '2027-05-02']]);
+    expect(decide({ cashDay: '2026-01-03', filedOn: both, stored: stored(true, '2026-11-01', '2026-01-03') })).toMatchObject({ answer: false, departsFromFiled: 2025 });
   });
 });

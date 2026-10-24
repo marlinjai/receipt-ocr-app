@@ -6,6 +6,7 @@ import {
   decodeChurchMonths,
   encodeChurchMonths,
   validateFederalState,
+  validateFiledOn,
   validateReturnItemInput,
   validateYearSettings,
   validateWageInput,
@@ -13,6 +14,7 @@ import {
 import { isReturnItemKey, type ReturnItemFact } from './return-items';
 import { isFederalState, type FederalState } from './rules';
 import { aggregateWages, churchMonthsFromPaySlips, type WageEntry } from './wages';
+import { berlinDay } from '../year-boundary';
 
 /**
  * Reads and writes for the income tax estimate.
@@ -49,6 +51,8 @@ export interface IncomeTaxView {
   /** What the pay slips say, offered when nothing is stated. */
   churchMonthsFromPaySlips: boolean[] | null;
   federalState: FederalState | null;
+  /** The day the return of the year was filed (ISO); null while the year is open. */
+  filedOn: string | null;
   /** The estimate with the wages as recorded. */
   estimate: IncomeTaxEstimate;
   /** The running year with pay slips projected to December; null when there is nothing to project. */
@@ -132,6 +136,7 @@ export async function loadIncomeTax(
     churchMonths: statedMonths,
     churchMonthsFromPaySlips: churchMonthsFromPaySlips(wageEntries, false),
     federalState,
+    filedOn: yearRow?.filedOn ?? null,
     estimate,
     projected: projectable ? run(true) : null,
   };
@@ -185,6 +190,22 @@ export async function saveChurchMonths(db: PrismaClient, ctx: IncomeTaxContext, 
     where: { authWorkspaceId_year: { authWorkspaceId: ctx.workspaceId, year: input.year } },
     create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, year: input.year, churchMonths },
     update: { churchMonths },
+  });
+}
+
+/**
+ * The day the return of a year was filed, or null to open the year again. A
+ * filed year fixes the payments at its turn the way they were filed (the
+ * year-change list, `year-boundary.ts`); nothing else is written, so clearing
+ * the day returns every entry to its rule at once. Saving the same day again
+ * changes nothing.
+ */
+export async function saveFiledOn(db: PrismaClient, ctx: IncomeTaxContext, raw: unknown, today: string = berlinDay()): Promise<void> {
+  const input = validateFiledOn(raw, today);
+  await db.taxYearSettings.upsert({
+    where: { authWorkspaceId_year: { authWorkspaceId: ctx.workspaceId, year: input.year } },
+    create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, year: input.year, filedOn: input.filedOn },
+    update: { filedOn: input.filedOn },
   });
 }
 

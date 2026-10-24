@@ -31,6 +31,12 @@ export function incomeTaxActionMessage(error: string, detail?: string): string {
         return 'Die Monate der Kirchensteuerpflicht konnten nicht gelesen werden. Bitte neu laden.';
       case 'invalid_federal_state':
         return 'Bitte ein Bundesland aus der Liste wählen.';
+      case 'invalid_filed_on':
+        return 'Bitte das Abgabedatum als gültiges Datum eingeben.';
+      case 'filed_on_in_future':
+        return 'Das Abgabedatum liegt in der Zukunft. Bitte den Tag eintragen, an dem die Erklärung abgegeben wurde.';
+      case 'filed_on_before_year_end':
+        return 'Eine Erklärung wird erst nach dem Ende des Jahres abgegeben. Bitte das Abgabedatum prüfen.';
       case 'invalid_year':
         return 'Dieses Jahr kann hier nicht bearbeitet werden.';
       case 'invalid_key':

@@ -5,7 +5,9 @@ import type { Figure, IncomeTaxEstimate, TaxBalance } from '@/lib/tax/income-tax
 import { RETURN_ITEM_KEYS, RETURN_ITEM_KINDS, type ReturnItemFact, type ReturnItemKey } from '@/lib/tax/income-tax/return-items';
 import { FEDERAL_STATES, FEDERAL_STATE_LABELS, type FederalState } from '@/lib/tax/income-tax/rules';
 import type { WageEntry, WageFigures } from '@/lib/tax/income-tax/wages';
+import { formatDay } from '@/lib/meals/messages';
 import { formatCents } from '@/lib/tax/money';
+import { berlinDay } from '@/lib/tax/year-boundary';
 import type { StatementView } from '@/lib/tax/service';
 import { MONTHS, euro, parseEuro } from './amounts';
 import ScrollBox from '@/components/ui/ScrollBox';
@@ -38,6 +40,8 @@ interface Props {
   onRemoveItem: (item: ReturnItemFact) => void;
   onChurchMonths: (months: boolean[] | null) => void;
   onFederalState: (state: FederalState | null) => void;
+  /** The day the return of the year was filed (ISO), or null: the year is open again. */
+  onFiledOn: (filedOn: string | null) => void;
 }
 
 /** "Erstattung 4.249,76 €" or "Nachzahlung 120,00 €": a sign is easy to misread on a tax figure. */
@@ -138,7 +142,7 @@ function emptyWage(employer: string, month: number): Record<keyof WageFigures, s
  * statement or monthly pay slips), church tax months and federal state, and
  * the other items of the return. Every figure opens to its inputs and source.
  */
-export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWage, onSaveItem, onRemoveItem, onChurchMonths, onFederalState }: Props) {
+export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWage, onSaveItem, onRemoveItem, onChurchMonths, onFederalState, onFiledOn }: Props) {
   const id = useId();
   const tax = view.incomeTax;
   const [showProjected, setShowProjected] = useState(true);
@@ -164,8 +168,23 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
     setSeenMonthsKey(storedMonthsKey);
     setMonths(storedMonths);
   }
+  // Fixed for the life of the form, so a render around midnight cannot disagree with the first one.
+  const [today] = useState(() => berlinDay());
+  // The filing day follows what is stored, like the months above.
+  const [filedOn, setFiledOn] = useState(tax.filedOn ?? '');
+  const [seenFiledOn, setSeenFiledOn] = useState(tax.filedOn);
+  if (tax.filedOn !== seenFiledOn) {
+    setSeenFiledOn(tax.filedOn);
+    setFiledOn(tax.filedOn ?? '');
+  }
   const [localError, setLocalError] = useState<string | null>(null);
   const shown = localError ?? error;
+
+  const submitFiledOn = () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(filedOn)) return setLocalError('Bitte das Abgabedatum als gültiges Datum eingeben.');
+    setLocalError(null);
+    onFiledOn(filedOn);
+  };
 
   const startWage = (entry: WageEntry | null) => {
     setLocalError(null);
@@ -520,6 +539,46 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
           {tax.churchMonths && (
             <button type="button" className="ui-btn" disabled={busy} onClick={() => onChurchMonths(null)}>
               Angabe entfernen
+            </button>
+          )}
+        </div>
+      </section>
+
+      <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Abgabe der Erklärung">
+        <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>
+          Abgabe der Erklärung {view.year}
+        </h2>
+        <p className="mt-2 text-sm" style={{ color: 'var(--foreground)' }}>
+          {tax.filedOn ? `Abgegeben am ${formatDay(tax.filedOn)}.` : 'Noch nicht als abgegeben eingetragen.'}
+        </p>
+        <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+          Ein abgegebenes Jahr legt die Zahlungen um seinen Jahreswechsel so fest, wie sie erklärt wurden: jede bleibt in dem
+          Jahr, in dem sie bezahlt wurde. Eine später gegebene Antwort, die eine Zahlung über das abgegebene Jahr verschieben
+          würde, wird nicht angewendet, sondern im Tab „Jahreswechsel“ angezeigt.
+        </p>
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <div>
+            <label className="ui-label" htmlFor={`${id}-filed`}>
+              Erklärung {view.year} abgegeben am
+            </label>
+            <input
+              id={`${id}-filed`}
+              type="date"
+              className="ui-input"
+              style={{ width: 'auto' }}
+              value={filedOn}
+              min={`${view.year + 1}-01-01`}
+              max={today}
+              disabled={busy}
+              onChange={(e) => setFiledOn(e.target.value)}
+            />
+          </div>
+          <button type="button" className="ui-btn" disabled={busy || filedOn === '' || filedOn === tax.filedOn} onClick={submitFiledOn}>
+            Abgabedatum speichern
+          </button>
+          {tax.filedOn && (
+            <button type="button" className="ui-btn" disabled={busy} onClick={() => onFiledOn(null)}>
+              Abgabedatum entfernen
             </button>
           )}
         </div>

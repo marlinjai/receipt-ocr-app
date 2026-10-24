@@ -16,6 +16,7 @@ export function incomeTaxView(
     returnItems?: ReturnItemFact[];
     churchMonths?: boolean[] | null;
     federalState?: IncomeTaxView['federalState'];
+    filedOn?: string | null;
     profitCents?: number | null;
     project?: boolean;
   } = {},
@@ -42,6 +43,7 @@ export function incomeTaxView(
     churchMonths,
     churchMonthsFromPaySlips: null,
     federalState: options.federalState ?? null,
+    filedOn: options.filedOn ?? null,
     estimate: estimateIncomeTax(input(false)),
     projected: options.project ? estimateIncomeTax(input(true)) : null,
   };

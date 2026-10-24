@@ -62,7 +62,7 @@ import VatTab from './VatTab';
 import ReverseChargeForm from './ReverseChargeForm';
 import AssetsTab, { type AssetDraft, type DisposalDraft } from './AssetsTab';
 import IncomeTaxTab, { balanceText } from './IncomeTaxTab';
-import { removeTaxReturnItem, removeWage, saveTaxReturnItem, saveWage, setChurchMonths, setFederalState } from './income-tax-actions';
+import { removeTaxReturnItem, removeWage, saveTaxReturnItem, saveWage, setChurchMonths, setFederalState, setFiledOn } from './income-tax-actions';
 import { incomeTaxActionMessage } from '@/lib/tax/income-tax/messages';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 import { useTabInView } from '@/lib/use-tab-in-view';
@@ -299,7 +299,7 @@ export default function FinanceClient({
     { key: 'vat', label: 'Umsatzsteuer' },
     { key: 'tax', label: 'Einkommensteuer' },
     // Only when the year has a payment in the ten-day window; the count is what is not answered yet.
-    ...(view.yearBoundary.length > 0 ? [{ key: 'boundary' as const, label: 'Jahreswechsel', count: view.yearBoundary.filter((e) => e.answer === null && e.inactive === null).length }] : []),
+    ...(view.yearBoundary.length > 0 ? [{ key: 'boundary' as const, label: 'Jahreswechsel', count: view.yearBoundary.filter((e) => e.source === null && e.inactive === null).length }] : []),
     { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length + view.reverseChargeVendors.length },
   ];
 
@@ -928,6 +928,14 @@ export default function FinanceClient({
                 run(() => setChurchMonths(view.year, months), months ? 'Monate der Kirchensteuerpflicht gespeichert.' : 'Angabe entfernt.', undefined, incomeTaxActionMessage)
               }
               onFederalState={(state) => run(() => setFederalState(view.year, state), 'Bundesland gespeichert.', undefined, incomeTaxActionMessage)}
+              onFiledOn={(filedOn) =>
+                run(
+                  () => setFiledOn(view.year, filedOn),
+                  filedOn ? `Erklärung ${view.year} als abgegeben eingetragen.` : `Abgabedatum ${view.year} entfernt: das Jahr ist wieder offen.`,
+                  undefined,
+                  incomeTaxActionMessage,
+                )
+              }
             />
           )}
 
@@ -947,7 +955,7 @@ export default function FinanceClient({
                   () =>
                     declineYearBoundary(
                       view.year,
-                      view.yearBoundary.filter((e) => e.answer === null && e.inactive === null).map((e) => ({ kind: e.kind, subjectId: e.subjectId, cashDay: e.cashDay })),
+                      view.yearBoundary.filter((e) => e.source === null && e.inactive === null).map((e) => ({ kind: e.kind, subjectId: e.subjectId, cashDay: e.cashDay })),
                     ),
                   'Alle offenen Zahlungen bleiben in dem Jahr, in dem sie gezahlt wurden.',
                 )

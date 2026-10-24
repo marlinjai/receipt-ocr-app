@@ -34,7 +34,7 @@ const slip = (month: number): WageEntry => ({
 });
 
 const view = (incomeTax = incomeTaxView()): StatementView => ({ year: incomeTax.year, employmentCostCents: 0, incomeTax }) as StatementView;
-const props = { busy: false, error: null, onSaveWage: vi.fn(), onRemoveWage: vi.fn(), onSaveItem: vi.fn(), onRemoveItem: vi.fn(), onChurchMonths: vi.fn(), onFederalState: vi.fn() };
+const props = { busy: false, error: null, onSaveWage: vi.fn(), onRemoveWage: vi.fn(), onSaveItem: vi.fn(), onRemoveItem: vi.fn(), onChurchMonths: vi.fn(), onFederalState: vi.fn(), onFiledOn: vi.fn() };
 
 describe('the income tax tables', () => {
   // jsdom applies no CSS: this checks the boxes are there and reachable; the sticky column and the one-line

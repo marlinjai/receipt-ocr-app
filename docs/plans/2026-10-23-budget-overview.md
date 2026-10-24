@@ -66,6 +66,11 @@ So the picture is wrong before it is ugly. Both are fixed here.
    palette method, so the bundle does not grow and the charts match the app's tokens.
 5. **Where it is checked.** In Whiz-Art Media now, and in marlinjai once the owner has shared the
    four accounts (plan 2026-10-22, payments across companies). Nothing here depends on the share.
+6. **Klarna ends (owner, 2026-10-23):** no new purchases after 23.10.2026; one last export once every
+   open Klarna payment is collected closes the list, after which a Klarna debit without purchases in
+   the list is a question again. Decision 2 stays needed until then: 802.42 EUR are open (due in about
+   19 to 23 days) and 6 purchases reserved on 23.10 will still be collected. How to export:
+   `docs/operations/klarna-export.md`.
 
 ## Tests (four paths, standard `stateful-flow-testing.md`)
 
@@ -112,6 +117,22 @@ Built so far, with what the build decided on the way (say so if you disagree):
   is the sum of the monthly category limits, labelled as counting only the private part.
 - **Waiting collective debit (step 3):** waits for the PayPal live pull request (`feat/paypal-live`),
   which changes `funding.ts` too.
+- **Decided after the first review:** own names are matched word for word without dropping legal
+  forms, so "Erika Beispiel UG" (another legal person) is never the owner; and because answers are kept
+  per counterparty key (which drops legal forms), a key counts only when every payment under it names
+  the owner exactly. The names apply to spending only (the overview, the budgets and the receipt loop),
+  not to Finanzen, Zahlungen: from a business account a transfer to the owner is a private withdrawal
+  for tax, which keeps its own answer there. Names are added and taken out one at a time on the stored
+  list (row locked), so two open pages never undo each other. A limit that is the average of earlier
+  months says "(Durchschnitt)" in the budget chart.
+- **Klarna reconciliation (asked by the coordinator on 2026-10-23):** the payments tab compared each
+  year's collections with the same year's purchases, so instalments and late-December purchases
+  collected in January looked like money collected without a purchase (977.08 EUR for 2026 on
+  production). It now carries what earlier years left open into the year and allows a pay-later
+  service to be behind by the purchases of the last 60 days of its list. Checked read-only against
+  production: 2,721.83 EUR carried in, the running balance closes to 15 cents at the end of August 2026.
+  The scripts that export Klarna's list and the run of 2026-10-23 are in
+  `docs/operations/klarna-export.md`.
 
 Verified in a local browser on invented data: overview and phone width (no sideways scroll of the
 page), adding a name moves its payments out of the totals and the open receipt count (120 to 100),

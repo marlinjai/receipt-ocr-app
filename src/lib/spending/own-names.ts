@@ -1,4 +1,3 @@
-import { vendorKey } from '@/lib/tax/decisions';
 import type { CounterpartyTreatmentAnswer } from './rules';
 
 /**
@@ -10,18 +9,36 @@ import type { CounterpartyTreatmentAnswer } from './rules';
  * A name matches when its words are the same as the counterparty's, whatever
  * their case, accents, punctuation and order: "Pohl, Marlin Jai" is
  * "MARLIN JAI POHL". Never a part of a name: "Marlin" alone does not make
- * "Marlin Shop" an own account.
+ * "Marlin Shop" an own account, and a legal form is a word of its own, so
+ * "Marlin Jai Pohl UG" (another legal person) is not "Marlin Jai Pohl".
+ *
+ * This is about spending only: under Finanzen, Zahlungen the same transfer
+ * keeps its own answer (from a business account it is a private withdrawal,
+ * which is a tax matter, not a move between own accounts).
  */
 
 /** Names kept per company at most, and the longest name accepted. */
 export const MAX_OWN_NAMES = 20;
 export const MAX_OWN_NAME_LENGTH = 120;
 
-/** The words of a name, normalized like a counterparty and sorted; empty when nothing is left. */
+/**
+ * The words of a name in lower case, umlauts written out, accents and
+ * punctuation gone, each word once and sorted; empty when fewer than two
+ * letters or digits are left. Unlike a counterparty key, legal forms stay.
+ */
 export function ownNameKey(name: string): string {
-  const key = vendorKey(name);
-  if (!key) return '';
-  return [...new Set(key.split(' '))].sort().join(' ');
+  const words = name
+    .toLowerCase()
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  const key = [...new Set(words)].sort().join(' ');
+  return key.replace(/ /g, '').length >= 2 ? key : '';
 }
 
 export type OwnNamesError = 'invalid_names' | 'name_too_long' | 'too_many_names';
@@ -55,20 +72,28 @@ export function cleanOwnNames(raw: unknown): { ok: true; names: string[] } | { o
  * The counterparty answers with the own names applied: a counterparty that
  * carries one of the names and has no answer of its own counts as an own
  * account. An answer given in the payments tab always wins, so a person can
- * say "this one is private after all" for one spelling. `byName` lists the
- * counterparties the names made own accounts.
+ * say "this one is private after all" for one spelling. Answers are kept per
+ * counterparty key, which leaves legal forms out, so a key counts only when
+ * every payment under it names the owner exactly: one "... UG" among them and
+ * none of them does. `byName` lists the counterparties the names made own
+ * accounts.
  */
 export function treatmentsWithOwnNames(
   treatments: ReadonlyMap<string, CounterpartyTreatmentAnswer>,
-  counterpartyKeys: Iterable<string>,
+  payments: Iterable<{ counterpartyKey: string; counterparty: string }>,
   ownNames: readonly string[],
 ): { treatments: ReadonlyMap<string, CounterpartyTreatmentAnswer>; byName: ReadonlySet<string> } {
   const wanted = new Set(ownNames.map(ownNameKey).filter(Boolean));
   const byName = new Set<string>();
   if (wanted.size === 0) return { treatments, byName };
-  for (const key of counterpartyKeys) {
-    if (!key || byName.has(key) || treatments.has(key)) continue;
-    if (wanted.has(ownNameKey(key))) byName.add(key);
+  const refused = new Set<string>();
+  for (const { counterpartyKey: key, counterparty } of payments) {
+    if (!key || refused.has(key) || treatments.has(key)) continue;
+    if (wanted.has(ownNameKey(counterparty))) byName.add(key);
+    else {
+      refused.add(key);
+      byName.delete(key);
+    }
   }
   if (byName.size === 0) return { treatments, byName };
   const out = new Map(treatments);

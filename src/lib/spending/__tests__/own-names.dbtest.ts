@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { createAccount, importPayments, loadPayments, setCounterpartyTreatment } from '@/lib/tax/payments/service';
-import { loadLoopOverview, runReceiptLoop, settleMovedPayments } from '../loop-service';
+import { loadLoopOverview, runReceiptLoop, settleAfterOwnNames } from '../loop-service';
 import { listUnreadNotifications } from '../notify/service';
 import type { NotificationChannel, NotificationMessage } from '../notify/port';
 import { SpendingServiceError, loadOwnNames, loadSpending, saveOwnNames } from '../service';
@@ -60,7 +60,7 @@ describe('own names', () => {
     expect(push.sent.map((m) => m.title).sort()).toEqual(['Beleg fehlt: BEISPIEL ERIKA', 'Beleg fehlt: Erika Beispiel', 'Beleg fehlt: Zyx Handel']);
     expect((await loadSpending(db, ctx.workspaceId, 2026, null)).overview.totalCents).toBe(78_000);
 
-    expect(await saveOwnNames(db, ctx, ['Erika Beispiel'])).toEqual(['Erika Beispiel']);
+    expect(await saveOwnNames(db, ctx, { add: 'Erika Beispiel' })).toEqual(['Erika Beispiel']);
     const view = await loadSpending(db, ctx.workspaceId, 2026, null);
     expect(view.overview.totalCents).toBe(3000);
     expect(view.overview.unclear.map((u) => u.counterparty)).toEqual(['Zyx Handel']);
@@ -78,53 +78,78 @@ describe('own names', () => {
     expect(push.sent).toHaveLength(3);
   });
 
+  it('forward, as the page does it: saving a name settles its messages at once and counts them', async () => {
+    const { ctx } = await setup();
+    const push = recorder();
+    await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] });
+    await saveOwnNames(db, ctx, { add: 'Beispiel, Erika' });
+    expect(await settleAfterOwnNames(db, ctx.workspaceId)).toBe(2);
+    expect((await listUnreadNotifications(db, ctx.workspaceId)).map((n) => n.title)).toEqual(['Beleg fehlt: Zyx Handel']);
+    // Nothing left for the loop to settle, and nothing sent.
+    expect(await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] })).toMatchObject({ notified: 0, settled: 0, settledOwnName: 0 });
+    expect(push.sent).toHaveLength(3);
+  });
+
   it('backtrack: a name taken out brings its payments back, asked about again without a second message; an answer of the payments tab wins', async () => {
     const { ctx } = await setup();
     const push = recorder();
     await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] });
-    await saveOwnNames(db, ctx, ['Erika Beispiel']);
-    await settleMovedPayments(db, ctx.workspaceId);
+    await saveOwnNames(db, ctx, { add: 'Erika Beispiel' });
+    await settleAfterOwnNames(db, ctx.workspaceId);
     expect(await openIds(ctx.workspaceId)).toEqual(['Zyx Handel']);
 
-    await saveOwnNames(db, ctx, []);
+    await saveOwnNames(db, ctx, { remove: 'Erika Beispiel' });
     expect((await loadSpending(db, ctx.workspaceId, 2026, null)).overview.totalCents).toBe(78_000);
     expect(await openIds(ctx.workspaceId)).toEqual(['BEISPIEL ERIKA', 'Erika Beispiel', 'Zyx Handel']);
     await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] });
     expect(push.sent).toHaveLength(3);
 
     // An explicit answer overrides the names both ways: "private" keeps one spelling as spending ...
-    await saveOwnNames(db, ctx, ['Erika Beispiel']);
+    await saveOwnNames(db, ctx, { add: 'Erika Beispiel' });
     await setCounterpartyTreatment(db, ctx, { counterparty: 'BEISPIEL ERIKA', treatment: 'private' });
     const view = await loadSpending(db, ctx.workspaceId, 2026, null);
     expect(view.overview.totalCents).toBe(28_000);
     expect(view.ownAccounts.map((o) => o.label)).toEqual(['Erika Beispiel']);
     // ... and an own-account answer stays one without the name, then with a take-back button.
     await setCounterpartyTreatment(db, ctx, { counterparty: 'Erika Beispiel', treatment: 'own_account' });
-    await saveOwnNames(db, ctx, []);
+    await saveOwnNames(db, ctx, { remove: 'Erika Beispiel' });
     expect((await loadSpending(db, ctx.workspaceId, 2026, null)).ownAccounts).toEqual([{ counterpartyKey: 'erika beispiel', label: 'Erika Beispiel', byName: false }]);
   });
 
   it('resume: the names are kept per company and read back after a restart', async () => {
     const { ctx } = await setup();
     const other = await setup();
-    await saveOwnNames(db, ctx, ['  Erika Beispiel ', 'Beispiel, Erika', 'Erika M. Beispiel']);
+    await saveOwnNames(db, ctx, { add: '  Erika Beispiel ' });
+    // A second spelling of a listed name is refused, so the page can say so.
+    await expect(saveOwnNames(db, ctx, { add: 'Beispiel, Erika' })).rejects.toMatchObject({ code: 'name_listed' });
+    await saveOwnNames(db, ctx, { add: 'Erika M. Beispiel' });
     expect(await loadOwnNames(db, ctx.workspaceId)).toEqual(['Erika Beispiel', 'Erika M. Beispiel']);
     expect((await loadSpending(db, ctx.workspaceId, 2026, null)).ownNames).toEqual(['Erika Beispiel', 'Erika M. Beispiel']);
     // Never in another company.
     expect(await loadOwnNames(db, other.ctx.workspaceId)).toEqual([]);
     expect((await loadSpending(db, other.ctx.workspaceId, 2026, null)).overview.totalCents).toBe(78_000);
+    // A company in the owner's name is another legal person, never an own account.
+    expect((await loadSpending(db, ctx.workspaceId, 2026, null)).overview.ownTransfers.byName.count).toBe(2);
     // A name with nothing to match on is refused and changes nothing.
-    await expect(saveOwnNames(db, ctx, ['-'])).rejects.toBeInstanceOf(SpendingServiceError);
+    await expect(saveOwnNames(db, ctx, { add: '-' })).rejects.toBeInstanceOf(SpendingServiceError);
+    await expect(saveOwnNames(db, ctx, ['Erika'])).rejects.toMatchObject({ code: 'invalid_names' });
+    // Two pages changing the list never undo each other: each change applies to the list as stored.
+    await Promise.all([saveOwnNames(db, other.ctx, { add: 'Erika Beispiel' }), saveOwnNames(db, other.ctx, { add: 'Max Beispiel' }), saveOwnNames(db, other.ctx, { add: 'Eva Beispiel' })]);
+    expect((await loadOwnNames(db, other.ctx.workspaceId)).sort()).toEqual(['Erika Beispiel', 'Eva Beispiel', 'Max Beispiel']);
+    await Promise.all([saveOwnNames(db, other.ctx, { remove: 'Eva Beispiel' }), saveOwnNames(db, other.ctx, { remove: 'Max Beispiel' })]);
+    expect(await loadOwnNames(db, other.ctx.workspaceId)).toEqual(['Erika Beispiel']);
     expect(await loadOwnNames(db, ctx.workspaceId)).toEqual(['Erika Beispiel', 'Erika M. Beispiel']);
   });
 
   it('re-entry: saving the same names again, or a second run, changes nothing and sends nothing', async () => {
     const { ctx, accountId } = await setup();
     const push = recorder();
-    await saveOwnNames(db, ctx, ['Erika Beispiel']);
+    await saveOwnNames(db, ctx, { add: 'Erika Beispiel' });
     await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] });
     expect(push.sent.map((m) => m.title)).toEqual(['Beleg fehlt: Zyx Handel']);
-    await saveOwnNames(db, ctx, ['Erika Beispiel']);
+    // The same name a second time changes nothing.
+    await expect(saveOwnNames(db, ctx, { add: 'Erika Beispiel' })).rejects.toMatchObject({ code: 'name_listed' });
+    expect(await loadOwnNames(db, ctx.workspaceId)).toEqual(['Erika Beispiel']);
     const again = await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] });
     expect(again).toMatchObject({ notified: 0, settled: 0, settledOwnName: 0 });
     // The same file imported a second time is refused: no payment and no message more.

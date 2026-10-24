@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { auth } from '@/lib/auth';
 import { getSpending } from './actions';
-import SpendingClient, { type SpendingTab } from './SpendingClient';
+import SpendingClient from './SpendingClient';
+import { spendingTabOf } from '@/lib/spending/paths';
 import ReceiptChecks from './ReceiptChecks';
 import { getReceiptChecks } from './loop-actions';
 import BudgetsPanel from './BudgetsPanel';
@@ -15,8 +16,7 @@ export const metadata = { title: 'Ausgaben' };
 export default async function SpendingPage({ searchParams }: { searchParams: Promise<{ jahr?: string; monat?: string; pruefen?: string; firma?: string; ansicht?: string }> }) {
   await auth.requireSession('/app/spending');
   const { jahr, monat, pruefen, firma, ansicht } = await searchParams;
-  // A notification about a payment ("pruefen") opens the receipt checks; everything else opens the overview.
-  const tab: SpendingTab = ansicht === 'belege' || pruefen ? 'belege' : 'ueberblick';
+  const tab = spendingTabOf(ansicht, pruefen);
   const [data, checks, budgets] = await Promise.all([getSpending(jahr ?? null, monat ?? null), getReceiptChecks(), getBudgets()]);
 
   // "Reload" keeps the period that was asked for.

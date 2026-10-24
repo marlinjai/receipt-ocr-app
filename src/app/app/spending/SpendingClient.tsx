@@ -11,21 +11,11 @@ import type { UnclearCounterparty } from '@/lib/spending/overview';
 import type { BudgetLine } from '@/lib/spending/budgets';
 import { budgetBars, monthStacks, monthlyBudgetSum, topCounterparties } from '@/lib/spending/charts';
 import { MAX_OWN_NAMES, MAX_OWN_NAME_LENGTH } from '@/lib/spending/own-names';
+import { spendingHref, type SpendingTab } from '@/lib/spending/paths';
 import { answerCategory, markOwnAccount, saveOwnNames, unlinkRoutedReceipt, unmarkOwnAccount, withdrawCategory, type Result, type SpendingPageView } from './actions';
 import { BudgetChart, MonthsChart, TopCounterpartiesChart } from './OverviewCharts';
 
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
-
-/** The two tabs of the page; the name is what the address says (`ansicht`). */
-export type SpendingTab = 'ueberblick' | 'belege';
-
-/** The address of the page for a period and a tab: the overview is the default and is not named. */
-export function spendingHref(year: number, month: number | null, tab: SpendingTab): string {
-  const params = new URLSearchParams({ jahr: String(year) });
-  if (month !== null) params.set('monat', String(month));
-  if (tab === 'belege') params.set('ansicht', 'belege');
-  return `/app/spending?${params.toString()}`;
-}
 
 const PURPOSE_LABELS: Record<SpendingPurpose, string> = {
   private: 'Privat',
@@ -59,6 +49,7 @@ export function spendingActionMessage(result: Extract<Result<unknown>, { ok: fal
   if (result.detail === 'invalid_names') return 'Ein Name braucht mindestens zwei Buchstaben oder Ziffern, zum Beispiel Vor- und Nachname.';
   if (result.detail === 'name_too_long') return `Ein Name darf höchstens ${MAX_OWN_NAME_LENGTH} Zeichen lang sein.`;
   if (result.detail === 'too_many_names') return `Es lassen sich höchstens ${MAX_OWN_NAMES} eigene Namen merken.`;
+  if (result.detail === 'name_listed') return 'Dieser Name steht schon in der Liste, vielleicht in einer anderen Schreibweise.';
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
 
@@ -147,22 +138,20 @@ function OwnNames({
   canWrite,
   pending,
   error,
-  onSave,
+  notice,
+  onChange,
 }: {
   names: readonly string[];
   canWrite: boolean;
   pending: boolean;
   error: string | null;
-  onSave: (names: string[]) => void;
+  /** What the last change did, for the status line. */
+  notice: string | null;
+  /** Add or take out one name; resolves true when the server took it. */
+  onChange: (change: { add: string } | { remove: string }) => Promise<boolean>;
 }) {
   const id = useId();
   const [draft, setDraft] = useState('');
-  // A saved name leaves the field; a refused one stays there to be corrected.
-  const [shownNames, setShownNames] = useState(names);
-  if (shownNames !== names) {
-    setShownNames(names);
-    setDraft('');
-  }
   const explanation = (
     <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
       Zahlungen an oder von diesen Namen sind Umbuchungen zwischen eigenen Konten: keine Ausgabe, kein Beleg nötig, keine Benachrichtigung. Groß- und
@@ -176,7 +165,7 @@ function OwnNames({
           {names.map((n) => (
             <li key={n} className="inline-flex items-center gap-1 rounded-full border py-0.5 pr-0.5 pl-2.5 text-sm" style={{ borderColor: 'var(--border)' }}>
               {n}
-              <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} aria-label={`${n} aus den eigenen Namen entfernen`} onClick={() => onSave(names.filter((x) => x !== n))}>
+              <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} aria-label={`${n} aus den eigenen Namen entfernen`} onClick={() => void onChange({ remove: n })}>
                 Entfernen
               </button>
             </li>
@@ -187,7 +176,9 @@ function OwnNames({
         className="mt-2 flex flex-wrap items-center gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          if (draft.trim()) onSave([...names, draft.trim()]);
+          const name = draft.trim();
+          // A saved name leaves the field; a refused one stays there to be corrected.
+          if (name) void onChange({ add: name }).then((saved) => saved && setDraft(''));
         }}
       >
         <label className="sr-only" htmlFor={`${id}-name`}>
@@ -216,6 +207,12 @@ function OwnNames({
       )}
     </>
   );
+  // Always rendered, so a screen reader announces what a change did.
+  const status = (
+    <p className={notice ? 'ui-note ui-note-ok mt-2' : 'sr-only'} role="status">
+      {notice ?? ''}
+    </p>
+  );
   if (names.length === 0) {
     return (
       <section className="ui-note ui-note-warn mt-4" aria-labelledby={`${id}-title`}>
@@ -223,21 +220,26 @@ function OwnNames({
           Eigene Namen
         </h2>
         <p className="mt-1 text-sm">
-          Noch kein eigener Name hinterlegt. Überweisungen an dich selbst (eigene Spaces, Tagesgeld, ein anderes eigenes Konto) zählen deshalb als Ausgabe und
-          fragen nach einem Beleg.{canWrite && ' Trag deinen Namen so ein, wie die Bank ihn schreibt; mehrere Schreibweisen sind möglich.'}
+          Noch kein eigener Name hinterlegt. Überweisungen an sich selbst (eigene Spaces, Tagesgeld, ein anderes eigenes Konto) zählen deshalb als Ausgabe und
+          fragen nach einem Beleg.
+          {canWrite
+            ? ' Trag deinen Namen so ein, wie die Bank ihn schreibt; mehrere Schreibweisen sind möglich.'
+            : ' Eintragen kann ihn, wer in diesem Arbeitsbereich ändern darf.'}
         </p>
         {explanation}
         {editor}
+        {status}
       </section>
     );
   }
   return (
-    <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4" open={error !== null || undefined}>
+    <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
       <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
         Eigene Namen ({names.length})
       </summary>
       {explanation}
       {canWrite ? editor : <p className="mt-2 text-sm">{names.join(', ')}</p>}
+      {status}
     </details>
   );
 }
@@ -285,7 +287,7 @@ export default function SpendingClient({
 
   // The period and the tab live in the address, so a reload or a shared link shows the same.
   const go = (year: number, month: number | null) => {
-    router.push(spendingHref(year, month, 'ueberblick'), { scroll: false });
+    router.push(spendingHref(year, month, tab), { scroll: false });
   };
   const showTab = (next: SpendingTab) => {
     if (next !== tab) router.push(spendingHref(overview.year, overview.month, next), { scroll: false });
@@ -306,6 +308,28 @@ export default function SpendingClient({
       } else setError({ at, message: spendingActionMessage(result) });
     });
   };
+
+  const [namesNotice, setNamesNotice] = useState<string | null>(null);
+  const changeOwnNames = (change: { add: string } | { remove: string }) =>
+    new Promise<boolean>((resolve) => {
+      setError(null);
+      setNamesNotice(null);
+      startTransition(async () => {
+        const result = await saveOwnNames(overview.year, overview.month, change);
+        if (result.ok) {
+          setView(result.value);
+          const { settledOwnName } = result.value;
+          setNamesNotice(
+            'add' in change
+              ? `${change.add} gespeichert.${settledOwnName > 0 ? ` ${settledOwnName} ${settledOwnName === 1 ? 'Benachrichtigung' : 'Benachrichtigungen'} erledigt: eigenes Konto.` : ''}`
+              : `${change.remove} entfernt. Zahlungen an diesen Namen zählen wieder als Ausgabe.`,
+          );
+          // The open checks and the budgets read the same payments: the page reads them afresh.
+          router.refresh();
+        } else setError({ at: 'names', message: spendingActionMessage(result) });
+        resolve(result.ok);
+      });
+    });
 
   const assign = (entry: UnclearCounterparty, choice: string) => {
     const at = `unclear:${entry.counterpartyKey}`;
@@ -406,8 +430,19 @@ export default function SpendingClient({
             type="button"
             id={`${id}-tab-${t.key}`}
             aria-selected={tab === t.key}
-            aria-controls={`${id}-panel-${t.key}`}
+            // Only the open tab's panel is on the page.
+            aria-controls={tab === t.key ? `${id}-panel-${t.key}` : undefined}
+            tabIndex={tab === t.key ? 0 : -1}
             onClick={() => showTab(t.key)}
+            onKeyDown={(e) => {
+              // The tabs pattern: arrow keys, Home and End move between the tabs.
+              const at = tabs.findIndex((x) => x.key === t.key);
+              const next = e.key === 'ArrowRight' ? (at + 1) % tabs.length : e.key === 'ArrowLeft' ? (at - 1 + tabs.length) % tabs.length : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
+              if (next < 0) return;
+              e.preventDefault();
+              document.getElementById(`${id}-tab-${tabs[next].key}`)?.focus();
+              showTab(tabs[next].key);
+            }}
             className="ui-tab -mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium"
             style={{ borderColor: tab === t.key ? 'var(--accent)' : 'transparent', color: tab === t.key ? 'var(--accent)' : 'var(--muted)' }}
           >
@@ -466,7 +501,8 @@ export default function SpendingClient({
             canWrite={view.canWrite}
             pending={pending}
             error={error?.at === 'names' ? error.message : null}
-            onSave={(names) => run('names', () => saveOwnNames(overview.year, overview.month, names))}
+            notice={namesNotice}
+            onChange={changeOwnNames}
           />
 
           <MonthsChart

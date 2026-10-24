@@ -28,7 +28,7 @@ function euroShort(cents: number): string {
 const groupColor = (group: ChartGroup) => `var(--chart-${group})`;
 
 function Swatch({ group }: { group: ChartGroup }) {
-  return <span aria-hidden="true" className={`inline-block h-2.5 w-2.5 shrink-0 rounded-sm ${group === 'unclear' ? 'ui-chart-hatch' : ''}`} style={{ background: groupColor(group) }} />;
+  return <span aria-hidden="true" className={`inline-block h-2.5 w-2.5 shrink-0 rounded-sm ${group === 'unclear' ? 'ui-chart-hatch' : ''}`} style={{ backgroundColor: groupColor(group) }} />;
 }
 
 const label = (group: ChartGroup) => groupLabel(group, SPENDING_CATEGORY_LABELS);
@@ -69,8 +69,8 @@ export function MonthsChart({
       <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
         Ein Monat antippen zeigt darunter nur diesen Monat; noch einmal tippen zeigt wieder das ganze Jahr.
       </p>
-      {/* The month under the pointer or the focus, in words: the chart's tooltip. */}
-      <p className="mt-2 min-h-[2.5rem] text-xs" style={{ color: 'var(--foreground)' }} aria-live="polite">
+      {/* The month under the pointer or the focus, in words: the chart's tooltip. Not announced: each month's button says its total. */}
+      <p className="mt-2 min-h-[2.5rem] text-xs" style={{ color: 'var(--foreground)' }} aria-hidden="true">
         {readout ? (
           <>
             <span className="font-semibold">
@@ -91,7 +91,8 @@ export function MonthsChart({
           <span style={{ color: 'var(--muted)' }}>Zeiger oder Fokus auf einen Monat zeigt seine Zahlen.</span>
         )}
       </p>
-      <div className="ui-chart-scroll ui-scroll mt-1">
+      {/* Room above the plot, so the top value of the axis is not cut off by the scrolling box. */}
+      <div className="ui-chart-scroll ui-scroll mt-1 pt-2">
         <div className="relative" style={{ minWidth: 480, height: PLOT_HEIGHT + 24, paddingLeft: 56 }}>
           {/* Grid and axis: recessive hairlines, the value at their left. */}
           {ticks.map((t) => (
@@ -133,7 +134,7 @@ export function MonthsChart({
                           <span
                             key={g}
                             className={`block w-full first:rounded-b-sm last:rounded-t ${g === 'unclear' ? 'ui-chart-hatch' : ''}`}
-                            style={{ height: h, background: groupColor(g), borderTop: '2px solid var(--background)' }}
+                            style={{ height: h, backgroundColor: groupColor(g), borderTop: '2px solid var(--background)' }}
                           />
                         );
                       })}
@@ -218,7 +219,8 @@ export function BudgetChart({ bars, period, currentMonth }: { bars: readonly Bud
         Budget und Ausgaben {period}
       </h2>
       <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-        Gezählt wird der private Teil, wie bei den Budgets. Der Strich ist das Budget für diesen Zeitraum
+        Gezählt wird der private Teil, wie bei den Budgets. Der Strich ist das Budget für diesen Zeitraum (ein Monatsbudget mal die Monate; ohne
+        eigenes Budget der Durchschnitt der letzten Monate)
         {currentMonth ? ', der blasse Teil zeigt, wo der Monat bei gleichem Tempo endet' : ''}.
       </p>
       {bars.length === 0 ? (
@@ -240,14 +242,14 @@ export function BudgetChart({ bars, period, currentMonth }: { bars: readonly Bud
                   </span>
                   <span className="tabular-nums" style={{ color: 'var(--foreground)' }}>
                     {euro(b.spentCents)}
-                    <span style={{ color: 'var(--muted)' }}>{b.limitCents !== null ? ` von ${euro(b.limitCents)}` : ', kein Budget'}</span>
+                    <span style={{ color: 'var(--muted)' }}>{b.limitCents !== null ? ` von ${euro(b.limitCents)}${b.average ? ' (Durchschnitt)' : ''}` : ', kein Budget'}</span>
                   </span>
                 </div>
                 <div
                   className="relative mt-1 h-2 w-full rounded-full"
                   style={{ background: 'var(--chart-grid)' }}
                   role="img"
-                  aria-label={`${b.label}: ${euro(b.spentCents)} ausgegeben${b.limitCents !== null ? `, Budget ${euro(b.limitCents)}` : ', kein Budget'}${b.projectedCents !== null ? `, bei gleichem Tempo etwa ${euro(b.projectedCents)}` : ''}${status ? `, ${status}` : ''}`}
+                  aria-label={`${b.label}: ${euro(b.spentCents)} ausgegeben${b.limitCents !== null ? `, Budget ${euro(b.limitCents)}${b.average ? ' (Durchschnitt der letzten Monate)' : ''}` : ', kein Budget'}${b.projectedCents !== null ? `, bei gleichem Tempo etwa ${euro(b.projectedCents)}` : ''}${status ? `, ${status}` : ''}`}
                 >
                   {b.projectedCents !== null && b.projectedCents > b.spentCents && (
                     <span aria-hidden="true" className="absolute inset-y-0 left-0 rounded-full" style={{ width: pct(b.projectedCents), background: fill, opacity: 0.3 }} />
@@ -310,7 +312,7 @@ export function TopCounterpartiesChart({ items, period }: { items: readonly TopC
                 <span className="shrink-0 tabular-nums">{item.share.toLocaleString('de-DE')} %</span>
               </div>
               <div aria-hidden="true" className="mt-1 h-1.5 w-full rounded-full" style={{ background: 'var(--chart-grid)' }}>
-                <div className={`h-1.5 rounded-full ${CATEGORY_GROUP[item.category] === 'unclear' ? 'ui-chart-hatch' : ''}`} style={{ width: `${(item.cents / largest) * 100}%`, background: groupColor(CATEGORY_GROUP[item.category]) }} />
+                <div className={`h-1.5 rounded-full ${CATEGORY_GROUP[item.category] === 'unclear' ? 'ui-chart-hatch' : ''}`} style={{ width: `${(item.cents / largest) * 100}%`, backgroundColor: groupColor(CATEGORY_GROUP[item.category]) }} />
               </div>
             </li>
           ))}

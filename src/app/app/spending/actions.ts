@@ -7,7 +7,7 @@ import { prisma } from '@/lib/prisma';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
 import { unlinkRoutedPayment } from '@/lib/tax/payments/routing';
 import { settleMovedPaymentsLater } from '@/lib/spending/settle-later';
-import { settleMovedPayments } from '@/lib/spending/loop-service';
+import { settleAfterOwnNames } from '@/lib/spending/loop-service';
 import {
   SpendingServiceError,
   loadSpending,
@@ -149,22 +149,24 @@ export async function unmarkOwnAccount(year: unknown, month: unknown, counterpar
 }
 
 /**
- * Keep the owner's own names (the whole list). Payments to them stop counting
- * as spending at once, and their "receipt missing" messages leave the queue
- * now rather than on the next run of the loop; a name taken out brings its
- * payments back as they were, without a second message.
+ * Add an own name or take one out (`{ add }` or `{ remove }`). Payments to the
+ * names stop counting as spending at once, and their receipt messages leave
+ * the queue now rather than on the next run of the loop (`settledOwnName` says
+ * how many); a name taken out brings its payments back as they were, without
+ * a second message.
  */
-export async function saveOwnNames(year: unknown, month: unknown, names: unknown): Promise<Result<SpendingPageView>> {
+export async function saveOwnNames(year: unknown, month: unknown, change: unknown): Promise<Result<SpendingPageView & { settledOwnName: number }>> {
   try {
     const ctx = await writeContext();
-    await saveOwnNamesOf(prisma, ctx, names);
+    await saveOwnNamesOf(prisma, ctx, change);
+    let settledOwnName = 0;
     try {
-      await settleMovedPayments(prisma, ctx.workspaceId);
+      settledOwnName = await settleAfterOwnNames(prisma, ctx.workspaceId);
     } catch (e) {
       // The names are kept; the next run of the loop settles the same messages.
       console.error('[spending] settling messages after the own names changed failed', (e as Error)?.name ?? 'error');
     }
-    return { ok: true, value: await view(ctx.session, ctx.workspaceId, year, month, true) };
+    return { ok: true, value: { ...(await view(ctx.session, ctx.workspaceId, year, month, true)), settledOwnName } };
   } catch (e) {
     return failure(e);
   }

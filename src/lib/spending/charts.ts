@@ -12,8 +12,9 @@ import type { OverviewPayment, SpendingOverview } from './overview';
  * The colour of each category in the charts, by the category and never by its
  * rank, so a filter or another month never repaints one. Seven categories
  * take the seven slots of the validated palette (dataviz method, checked
- * against the app's dark surface); the four smallest share "Weitere"; "Unklar"
- * is neutral grey, because it is the absence of a category.
+ * against the app's dark surface); the four that need no receipt (loans,
+ * fees, money to persons, cash) share "Weitere"; "Unklar" is a hatched grey,
+ * because it is the absence of a category.
  */
 export type ChartGroup = 'c1' | 'c2' | 'c3' | 'c4' | 'c5' | 'c6' | 'c7' | 'other' | 'unclear';
 
@@ -70,6 +71,8 @@ export interface BudgetBar {
   spentCents: number;
   /** The limit for the period: the monthly limit times the months of the period; null without a budget. */
   limitCents: number | null;
+  /** True when the limit is the average of earlier months (no budget of the owner's own). */
+  average: boolean;
   /** Where the month is heading; only when the period is the current month. */
   projectedCents: number | null;
   level: BudgetLevel;
@@ -108,7 +111,7 @@ export function budgetBars(
     if (spentCents <= 0 && limitCents === null) continue;
     const projectedCents = isCurrentMonth && line ? line.projectedCents : null;
     const level: BudgetLevel = limitCents === null ? 'ok' : spentCents > limitCents ? 'passed' : isCurrentMonth && line ? line.level : 'ok';
-    bars.push({ category, label: categoryLabels[category], spentCents, limitCents, projectedCents, level });
+    bars.push({ category, label: categoryLabels[category], spentCents, limitCents, average: limitCents !== null && line?.basis === 'average', projectedCents, level });
   }
   return bars.sort((a, b) => b.spentCents - a.spentCents);
 }
@@ -121,7 +124,7 @@ export interface TopCounterparty {
   count: number;
   /** The category most of its money went to. */
   category: SpendingCategory;
-  /** Of all spending in the period, in percent (one decimal). */
+  /** Of all spending in the period, in percent (one decimal); at most 100 when refunds of others made the total smaller. */
   share: number;
 }
 
@@ -147,7 +150,7 @@ export function topCounterparties(payments: readonly OverviewPayment[], totalCen
       cents: e.cents,
       count: e.count,
       category: [...e.byCategory.entries()].sort((a, b) => b[1] - a[1])[0][0],
-      share: totalCents > 0 ? Math.round((e.cents / totalCents) * 1000) / 10 : 0,
+      share: totalCents > 0 ? Math.min(100, Math.round((e.cents / totalCents) * 1000) / 10) : 0,
     }));
 }
 

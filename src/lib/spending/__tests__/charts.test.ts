@@ -72,7 +72,7 @@ describe('budgetBars', () => {
   it('compares a month against the monthly limit, with the projection only in the current month', () => {
     const october = buildOverview(payments, { treatments: business, answers: new Map() }, 2026, 10);
     const bars = budgetBars(october, [line('groceries_drugstore', 30_000, { projectedCents: 55_000, level: 'passed' }), line('transport', 8000)], '2026-10-23', SPENDING_CATEGORY_LABELS);
-    expect(bars.find((b) => b.category === 'groceries_drugstore')).toMatchObject({ spentCents: 40_000, limitCents: 30_000, projectedCents: 55_000, level: 'passed' });
+    expect(bars.find((b) => b.category === 'groceries_drugstore')).toMatchObject({ spentCents: 40_000, limitCents: 30_000, average: false, projectedCents: 55_000, level: 'passed' });
     // A budget without spending still shows; the business payment counts nowhere in the budgets.
     expect(bars.find((b) => b.category === 'transport')).toMatchObject({ spentCents: 0, limitCents: 8000, level: 'ok' });
     expect(bars.find((b) => b.category === 'software_ai_hosting')).toBeUndefined();
@@ -84,6 +84,11 @@ describe('budgetBars', () => {
       projectedCents: null,
       level: 'ok',
     });
+  });
+
+  it('says when a limit is the average of earlier months rather than a budget the owner set', () => {
+    const october = buildOverview(payments, none, 2026, 10);
+    expect(budgetBars(october, [line('groceries_drugstore', 30_000, { basis: 'average' })], '2026-10-23', SPENDING_CATEGORY_LABELS)[0]).toMatchObject({ limitCents: 30_000, average: true });
   });
 
   it('compares a year against the limit once per month: twelve for a past year, the months begun for this one', () => {
@@ -116,6 +121,8 @@ describe('topCounterparties', () => {
     ]);
     expect(top[0]).toMatchObject({ category: 'groceries_drugstore', share: 52.6 });
     expect(topCounterparties(o.payments, o.totalCents, 2)).toHaveLength(2);
+    // Refunds from others can make the total smaller than one counterparty's spending: the share stops at 100.
+    expect(topCounterparties(o.payments, 4000)[0].share).toBe(100);
   });
 });
 

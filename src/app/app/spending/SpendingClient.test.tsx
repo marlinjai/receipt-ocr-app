@@ -22,7 +22,8 @@ vi.mock('./actions', () => ({
   saveOwnNames: (...a: unknown[]) => saveOwnNames(...a),
 }));
 
-import SpendingClient, { spendingActionMessage, spendingHref } from './SpendingClient';
+import SpendingClient, { spendingActionMessage } from './SpendingClient';
+import { spendingHref, spendingTabOf } from '@/lib/spending/paths';
 import type { BudgetLine } from '@/lib/spending/budgets';
 import type { SpendingPageView } from './actions';
 
@@ -192,9 +193,27 @@ describe('SpendingClient tabs', () => {
     expect(push).toHaveBeenLastCalledWith('/app/spending?jahr=2026', { scroll: false });
   });
 
-  it('builds the address of a period and a tab', () => {
+  it('builds the address of a period and a tab, and reads the tab back from it after a reload', () => {
     expect(spendingHref(2026, null, 'ueberblick')).toBe('/app/spending?jahr=2026');
     expect(spendingHref(2025, 12, 'belege')).toBe('/app/spending?jahr=2025&monat=12&ansicht=belege');
+    expect(spendingTabOf('belege', undefined)).toBe('belege');
+    expect(spendingTabOf(undefined, undefined)).toBe('ueberblick');
+    expect(spendingTabOf('irgendwas', undefined)).toBe('ueberblick');
+    // A notification about a payment opens the receipt checks, whatever else the address says.
+    expect(spendingTabOf(undefined, 'pay-1')).toBe('belege');
+  });
+
+  it('keeps the receipt checks open when the period changes there, and moves between tabs with the arrow keys', async () => {
+    const user = userEvent.setup();
+    render(<SpendingClient today="2026-04-15" tab="belege" initial={view(true)} openChecks={2} checks={<p>Belegliste</p>} />);
+    await user.selectOptions(screen.getByLabelText('Monat'), '3');
+    expect(push).toHaveBeenLastCalledWith('/app/spending?jahr=2026&monat=3&ansicht=belege', { scroll: false });
+    const checks = screen.getByRole('tab', { name: /Belege/ });
+    expect(checks.getAttribute('tabindex')).toBe('0');
+    expect(screen.getByRole('tab', { name: 'Überblick' }).getAttribute('aria-controls')).toBeNull();
+    checks.focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(push).toHaveBeenLastCalledWith('/app/spending?jahr=2026', { scroll: false });
   });
 });
 
@@ -236,15 +255,17 @@ describe('SpendingClient charts', () => {
 });
 
 describe('SpendingClient own names', () => {
-  it('asks for a name up front while there is none, and saves the whole list', async () => {
-    saveOwnNames.mockResolvedValue({ ok: true, value: { ...view(true), ownNames: ['Erika Beispiel'] } });
+  it('asks for a name up front while there is none, adds it, and says which messages it settled', async () => {
+    saveOwnNames.mockResolvedValue({ ok: true, value: { ...view(true), ownNames: ['Erika Beispiel'], settledOwnName: 2 } });
     render(<SpendingClient today="2026-04-15" initial={view(true)} />);
     expect(screen.getByText(/Noch kein eigener Name hinterlegt/)).toBeTruthy();
     const user = userEvent.setup();
     await user.type(screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt'), 'Erika Beispiel');
     await user.click(screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
-    expect(saveOwnNames).toHaveBeenCalledWith(2026, null, ['Erika Beispiel']);
+    expect(saveOwnNames).toHaveBeenCalledWith(2026, null, { add: 'Erika Beispiel' });
     await waitFor(() => expect(screen.getByText('Eigene Namen (1)')).toBeTruthy());
+    expect(screen.getByText(/Erika Beispiel gespeichert\. 2 Benachrichtigungen erledigt: eigenes Konto\./)).toBeTruthy();
+    expect(refresh).toHaveBeenCalled();
   });
 
   it('removes a name, keeps a refused name in the field with the reason, and shows name-made own accounts without a take-back', async () => {
@@ -253,19 +274,37 @@ describe('SpendingClient own names', () => {
       ownNames: ['Erika Beispiel', 'Beispiel, Erika M.'],
       ownAccounts: [{ counterpartyKey: 'erika beispiel', label: 'ERIKA BEISPIEL', byName: true }],
     };
-    saveOwnNames.mockResolvedValueOnce({ ok: true, value: { ...named, ownNames: ['Erika Beispiel'] } });
+    saveOwnNames.mockResolvedValueOnce({ ok: true, value: { ...named, ownNames: ['Erika Beispiel'], settledOwnName: 0 } });
     render(<SpendingClient today="2026-04-15" initial={named} />);
     const user = userEvent.setup();
     expect(screen.getByText('über Eigene Namen')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'ERIKA BEISPIEL nicht mehr als eigenes Konto führen' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Beispiel, Erika M. aus den eigenen Namen entfernen' }));
-    expect(saveOwnNames).toHaveBeenCalledWith(2026, null, ['Erika Beispiel']);
+    expect(saveOwnNames).toHaveBeenCalledWith(2026, null, { remove: 'Beispiel, Erika M.' });
+    expect(await screen.findByText(/Beispiel, Erika M\. entfernt\. Zahlungen an diesen Namen zählen wieder als Ausgabe\./)).toBeTruthy();
     saveOwnNames.mockResolvedValueOnce({ ok: false, error: 'invalid_input', detail: 'invalid_names' });
     const input = screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt');
     await user.type(input, '-');
     await user.click(screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/zwei Buchstaben/);
     expect((input as HTMLInputElement).value).toBe('-');
+  });
+
+  it('keeps a half-typed name when something else on the page changes', async () => {
+    withdrawCategory.mockResolvedValue({ ok: true, value: { ...view(true), ownNames: ['Erika Beispiel'] } });
+    render(<SpendingClient today="2026-04-15" initial={{ ...view(true), ownNames: ['Erika Beispiel'] }} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Eigene Namen (1)'));
+    const input = screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt') as HTMLInputElement;
+    await user.type(input, 'Erika M');
+    await user.click(screen.getByRole('button', { name: 'Zuordnung für ABC Markt zurücknehmen' }));
+    await waitFor(() => expect(withdrawCategory).toHaveBeenCalled());
+    expect(input.value).toBe('Erika M');
+  });
+
+  it('tells a person who may not change the names who can', () => {
+    render(<SpendingClient today="2026-04-15" initial={view(false)} />);
+    expect(screen.getByText(/Eintragen kann ihn, wer in diesem Arbeitsbereich ändern darf/)).toBeTruthy();
   });
 
   it('shows the names without controls to a person who may not change them', () => {
@@ -287,5 +326,6 @@ describe('spendingActionMessage', () => {
     expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'invalid_names' })).toMatch(/zwei Buchstaben/);
     expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'name_too_long' })).toMatch(/höchstens 120 Zeichen/);
     expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'too_many_names' })).toMatch(/höchstens 20/);
+    expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'name_listed' })).toMatch(/schon in der Liste/);
   });
 });

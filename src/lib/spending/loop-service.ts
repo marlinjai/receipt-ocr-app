@@ -176,6 +176,28 @@ function openSubjects(payments: readonly PaymentRow[], states: ReadonlyMap<strin
 }
 
 /**
+ * The messages about payments to one of the owner's own names that no longer
+ * wait (`stillOpen`): settled apart, so a run can say why they went.
+ */
+function ownNameSubjects(payments: readonly PaymentRow[], byName: ReadonlySet<string>, stillOpen: ReadonlySet<string>): string[] {
+  return payments.filter((p) => byName.has(p.counterpartyKey) && !stillOpen.has(missingReceiptSubject(p.id))).flatMap((p) => [missingReceiptSubject(p.id), mailFoundSubject(p.id)]);
+}
+
+/**
+ * After the own names changed: take the messages about payments to them out of
+ * the in-app queue at once (and every other message that no longer waits, as
+ * `settleMovedPayments` does). Sends nothing. Returns how many messages went
+ * because of the names.
+ */
+export async function settleAfterOwnNames(db: PrismaClient, workspaceId: string): Promise<number> {
+  const { payments, states, byName } = await computeStates(db, workspaceId);
+  const { stillOpen } = openSubjects(payments, states);
+  const settled = await settleNotifications(db, workspaceId, ownNameSubjects(payments, byName, stillOpen));
+  await settleAllBut(db, workspaceId, 'missing_receipt', stillOpen);
+  return settled;
+}
+
+/**
  * Take out of the in-app queue every message about a payment that no longer
  * waits here: it got its receipt, needs none, or moved to another company (an
  * account shared or no longer shared, an answer changed in the company that
@@ -352,8 +374,7 @@ export async function runReceiptLoop(
   // the queue and is never retried, earlier failed deliveries are tried again, and only then are new
   // ones sent, so a notification created in this run is not tried twice in it. Messages about money to
   // the owner's own name go first, so the run can say why they went.
-  const ownName = payments.filter((p) => byName.has(p.counterpartyKey) && !stillOpen.has(missingReceiptSubject(p.id))).flatMap((p) => [missingReceiptSubject(p.id), mailFoundSubject(p.id)]);
-  const settledOwnName = await settleNotifications(db, ctx.workspaceId, ownName);
+  const settledOwnName = await settleNotifications(db, ctx.workspaceId, ownNameSubjects(payments, byName, stillOpen));
   const settled = settledOwnName + (await settleAllBut(db, ctx.workspaceId, 'missing_receipt', stillOpen));
   const retried = await retryFailedDeliveries(db, ctx.workspaceId, channels, options.now);
   let notified = 0;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 
 /**
  * Minimal Google Drive browser for the import page. Navigates the folder
@@ -69,23 +69,31 @@ export default function DriveBrowser({ pick, selected, onSelect, onAuthError }: 
   const [folders, setFolders] = useState<DriveEntry[]>([]);
   const [sharedDrives, setSharedDrives] = useState<DriveEntry[]>([]);
   const [files, setFiles] = useState<DriveEntry[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const current = path[path.length - 1];
+  // Opening another folder shows it as loading right away: adjusted while rendering, the effect only fetches.
+  const [shownFolder, setShownFolder] = useState(current.id);
+  if (current.id !== shownFolder) {
+    setShownFolder(current.id);
+    setLoading(true);
+    setError(null);
+  }
 
-  const load = useCallback(
-    async (parent: string) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`/api/google/drive/browse?parent=${encodeURIComponent(parent)}`);
+  // State is set only when the answer arrives, and only for the folder still open: a slow answer for a
+  // folder the person already left never replaces the one they are looking at.
+  useEffect(() => {
+    let active = true;
+    fetch(`/api/google/drive/browse?parent=${encodeURIComponent(current.id)}`)
+      .then(async (res) => {
         const data = (await res.json().catch(() => ({}))) as {
           folders?: DriveEntry[];
           sharedDrives?: DriveEntry[];
           files?: DriveEntry[];
           error?: string;
         };
+        if (!active) return;
         if (!res.ok) {
           if (data.error === 'not_connected' || data.error === 'drive_scope_missing') {
             onAuthError?.(data.error);
@@ -99,18 +107,17 @@ export default function DriveBrowser({ pick, selected, onSelect, onAuthError }: 
         setFolders(data.folders ?? []);
         setSharedDrives(data.sharedDrives ?? []);
         setFiles(data.files ?? []);
-      } catch {
-        setError('network_error');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [onAuthError],
-  );
-
-  useEffect(() => {
-    void load(current.id);
-  }, [current.id, load]);
+      })
+      .catch(() => {
+        if (active) setError('network_error');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [current.id, onAuthError]);
 
   const visibleFiles = pick === 'spreadsheet' ? files.filter((f) => f.mimeType === SPREADSHEET_MIME) : files.filter((f) => f.mimeType !== SPREADSHEET_MIME);
 

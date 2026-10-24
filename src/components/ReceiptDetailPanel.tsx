@@ -98,17 +98,18 @@ export default function ReceiptDetailPanel({
   loadText,
 }: ReceiptDetailPanelProps) {
   const [ocrExpanded, setOcrExpanded] = useState(false);
-  const [loadedText, setLoadedText] = useState<string | null>(null);
-  const [textFailed, setTextFailed] = useState(false);
   const textKey = `${row.id}:${String(row.updatedAt)}`;
+  // The loaded text is kept with the receipt version it belongs to: another receipt, or a newer version of
+  // this one, starts without text and without the failure note, and no effect has to reset them.
+  const [textAnswer, setTextAnswer] = useState<{ key: string; text: string | null; failed: boolean } | null>(null);
+  const loadedText = textAnswer?.key === textKey ? textAnswer.text : null;
+  const textFailed = textAnswer?.key === textKey && textAnswer.failed;
   useEffect(() => {
     if (!loadText) return;
     let current = true;
-    setTextFailed(false);
-    setLoadedText(null);
     loadText(row.id)
-      .then((text) => current && setLoadedText(text))
-      .catch(() => current && setTextFailed(true));
+      .then((text) => current && setTextAnswer({ key: textKey, text, failed: false }))
+      .catch(() => current && setTextAnswer({ key: textKey, text: null, failed: true }));
     return () => {
       current = false;
     };

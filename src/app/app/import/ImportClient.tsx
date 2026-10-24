@@ -115,14 +115,26 @@ function SectionTitle({ step, children }: { step: number; children: React.ReactN
   );
 }
 
-export default function ImportClient() {
+/** What the Google consent screen sent back, read from the address by the page. */
+export interface GoogleReturn {
+  google: string;
+  reason: string | null;
+}
+
+function googleReturnError(googleReturn: GoogleReturn | null | undefined): string | null {
+  if (!googleReturn || googleReturn.google === 'connected') return null;
+  const { reason } = googleReturn;
+  return reason === 'access_denied' ? 'Google connection was cancelled.' : `Google connection failed${reason ? ` (${reason})` : ''}.`;
+}
+
+export default function ImportClient({ googleReturn = null }: { googleReturn?: GoogleReturn | null }) {
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [spreadsheet, setSpreadsheet] = useState('');
   const [selectedSheet, setSelectedSheet] = useState<{ id: string; name: string } | null>(null);
   const [mapping, setMapping] = useState<ColumnMapping>({});
   const [dedup, setDedup] = useState<ImportableField[]>(DEFAULT_DEDUP);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() => googleReturnError(googleReturn));
   const [result, setResult] = useState<{ imported: number; updated: number; skipped: number; total: number } | null>(null);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
@@ -139,17 +151,21 @@ export default function ImportClient() {
     noSourceFile: number;
   } | null>(null);
 
-  const refreshStatus = useCallback(async () => {
-    try {
-      const res = await fetch('/api/google/oauth/status');
-      if (!res.ok) return;
-      const s = (await res.json()) as { connected: boolean; googleEmail: string | null };
-      setConnected(s.connected);
-      setGoogleEmail(s.googleEmail);
-    } catch {
-      /* advisory; load() still handles the not-connected case */
-    }
-  }, []);
+  // State is set only in the promise callbacks, so the status can be fetched from an effect.
+  const refreshStatus = useCallback(
+    () =>
+      fetch('/api/google/oauth/status')
+        .then(async (res) => {
+          if (!res.ok) return;
+          const s = (await res.json()) as { connected: boolean; googleEmail: string | null };
+          setConnected(s.connected);
+          setGoogleEmail(s.googleEmail);
+        })
+        .catch(() => {
+          /* advisory; load() still handles the not-connected case */
+        }),
+    [],
+  );
 
   const load = useCallback(
     async (tab?: string, sheetValue?: string, presetMapping?: ColumnMapping) => {
@@ -210,17 +226,11 @@ export default function ImportClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only
   }, []);
 
-  // Returning from the Google consent screen (?google=connected|error).
+  // Returning from the Google consent screen (?google=connected|error): the page passed the outcome in, and
+  // the message is the initial error. Here the status is fetched again and the parameters leave the address.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const google = params.get('google');
-    if (!google) return;
-    if (google === 'connected') {
-      setError(null);
-    } else {
-      const reason = params.get('reason');
-      setError(reason === 'access_denied' ? 'Google connection was cancelled.' : `Google connection failed${reason ? ` (${reason})` : ''}.`);
-    }
+    if (!params.get('google')) return;
     void refreshStatus();
     params.delete('google');
     params.delete('reason');

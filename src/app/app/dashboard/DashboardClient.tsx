@@ -148,13 +148,14 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   // not in the list and is searched on the server. A receipt is found when either finds it.
   const { searchTerm, setSearchTerm, filteredRows: listHits } = useTableSearch(rows, tableColumns);
   const [textHits, setTextHits] = useState<{ ids: Set<string>; truncated: boolean } | null>(null);
-  const [textSearchFailed, setTextSearchFailed] = useState(false);
+  // The term whose text search failed: a new term starts without the failure note, without an effect resetting it.
+  const [failedTerm, setFailedTerm] = useState<string | null>(null);
   const trimmedTerm = searchTerm.trim();
   const textSearched = trimmedTerm.length >= MIN_TEXT_SEARCH_LENGTH;
+  const textSearchFailed = failedTerm === trimmedTerm;
   useEffect(() => {
     if (!textSearched) return;
     let current = true;
-    setTextSearchFailed(false);
     const timer = setTimeout(() => {
       searchReceiptText(tableId, trimmedTerm)
         .then((result) => current && setTextHits({ ids: new Set(result.ids), truncated: result.truncated }))
@@ -163,7 +164,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         .catch(() => {
           if (!current) return;
           setTextHits(null);
-          setTextSearchFailed(true);
+          setFailedTerm(trimmedTerm);
         });
     }, 350);
     return () => {
@@ -229,14 +230,18 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   const selection = useMemo(() => selectionKinds(selectedRows, rows, columns), [selectedRows, rows, columns]);
   const isCountedRow = useCallback((row: Row) => !isGroupRow(row, columns), [columns]);
   // A row the years hide is no longer selected: a bulk edit or a delete must only reach what the page shows.
-  useEffect(() => {
-    if (!hasYearFilter(yearSelection)) return;
-    const shown = new Set(displayRows.map((r) => r.id));
-    setSelectedRows((current) => {
-      const kept = [...current].filter((id) => shown.has(id));
-      return kept.length === current.size ? current : new Set(kept);
-    });
-  }, [displayRows, yearSelection]);
+  // Adjusted while rendering, whenever the rows shown or the years change (both are memoized, so this settles).
+  const [prunedFor, setPrunedFor] = useState({ displayRows, yearSelection });
+  if (prunedFor.displayRows !== displayRows || prunedFor.yearSelection !== yearSelection) {
+    setPrunedFor({ displayRows, yearSelection });
+    if (hasYearFilter(yearSelection)) {
+      const shown = new Set(displayRows.map((r) => r.id));
+      setSelectedRows((current) => {
+        const kept = [...current].filter((id) => shown.has(id));
+        return kept.length === current.size ? current : new Set(kept);
+      });
+    }
+  }
   const groupSummary = useCallback(
     (row: Row, children: Row[], column: Column) => groupCellValue(row, children, column, columns),
     [columns],
@@ -472,31 +477,38 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   // not among the loaded rows it may lie in a year that is not loaded: its year is looked up and added to
   // the choice, and only when it is still missing after that is it said to be gone.
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(openRowId);
-  const widenedFor = useRef<string | null>(null);
-  useEffect(() => {
-    if (!pendingOpenId) return;
+  // The receipt whose year was already added to the choice: still missing after that, it is gone.
+  const [widenedFor, setWidenedFor] = useState<string | null>(null);
+  // Asked for once per receipt: the effect below may run again before the year comes back.
+  const yearAskedFor = useRef<string | null>(null);
+  const gone = useCallback(() => {
+    setPendingOpenId(null);
+    setNotice({ tone: 'warn', text: 'Der verlinkte Beleg ist in dieser Tabelle nicht vorhanden. Er wurde gelöscht oder gehört zu einem anderen Unternehmen.' });
+  }, []);
+  // Only a list that is all there can say that a receipt is not in it. A list that failed to load says so in
+  // its banner, and the link waits for the next reload instead of calling the receipt deleted.
+  const listComplete = settled && !rowsError && columns.length > 0;
+  // Opening the row, or saying it is gone, happens while rendering; only the year lookup is an effect.
+  if (pendingOpenId) {
     const row = rows.find((r) => r.id === pendingOpenId);
     if (row) {
       setPendingOpenId(null);
       if (isGroupRow(row, columns)) setGroupPanelId(row.id);
       else setDetailRow(row);
-      return;
-    }
-    // Only a list that is all there can say that a receipt is not in it. A list that failed to load says so in
-    // its banner, and the link waits for the next reload instead of calling the receipt deleted.
-    if (!settled || rowsError || columns.length === 0) return;
-    const gone = () => {
-      setPendingOpenId(null);
-      setNotice({ tone: 'warn', text: 'Der verlinkte Beleg ist in dieser Tabelle nicht vorhanden. Er wurde gelöscht oder gehört zu einem anderen Unternehmen.' });
-    };
-    if (widenedFor.current === pendingOpenId) {
+    } else if (listComplete && widenedFor === pendingOpenId) {
       gone();
-      return;
     }
-    widenedFor.current = pendingOpenId;
+  }
+  useEffect(() => {
+    if (!pendingOpenId || !listComplete || widenedFor === pendingOpenId) return;
+    if (rows.some((r) => r.id === pendingOpenId)) return;
+    if (yearAskedFor.current === pendingOpenId) return;
+    yearAskedFor.current = pendingOpenId;
     const wanted = pendingOpenId;
     void getReceiptYear(wanted)
       .then((year) => {
+        // From here on a list without this receipt says it is gone, also when the same link is opened again.
+        setWidenedFor(wanted);
         const shown = yearSelection.years.size === 0 && !yearSelection.undated;
         if (year === null || shown || yearSelection.years.has(year)) {
           // Already in the years shown, or without a date: undated receipts come with "ohne Datum".
@@ -506,8 +518,11 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         }
         changeYears({ years: new Set([...yearSelection.years, year]), undated: yearSelection.undated });
       })
-      .catch(() => gone());
-  }, [pendingOpenId, rows, columns, settled, rowsError, yearSelection, changeYears]);
+      .catch(() => {
+        setWidenedFor(wanted);
+        gone();
+      });
+  }, [pendingOpenId, rows, listComplete, widenedFor, yearSelection, changeYears, gone]);
 
   // Load select options for all select columns
   useEffect(() => {

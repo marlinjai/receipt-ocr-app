@@ -713,7 +713,8 @@ export default function AiChatSidebar({
     <div
       className="fixed top-0 right-0 h-screen flex flex-col"
       style={{
-        width: '420px',
+        // The full width of a phone, 420px beside the table on anything wider.
+        width: 'min(420px, 100vw)',
         zIndex: 50,
         background: 'rgba(10, 10, 15, 0.95)',
         borderLeft: '1px solid var(--border)',

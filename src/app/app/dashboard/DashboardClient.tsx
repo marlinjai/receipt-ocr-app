@@ -22,6 +22,10 @@ import type { YearCounts } from '@/lib/receipt-year-counts';
 import { MIN_TEXT_SEARCH_LENGTH, listColumns } from '@/lib/receipt-text';
 import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
 import FxRecomputePanel from './FxRecomputePanel';
+import DashboardPhoneActions from './DashboardPhoneActions';
+import ReceiptPhoneList from './ReceiptPhoneList';
+import { AiIcon, ContactsIcon, ExportIcon, FinanceIcon, ImportIcon, MealsIcon, OverviewIcon } from './dashboard-icons';
+import { usePhone } from '@/lib/use-phone';
 import BulkEditBar from './BulkEditBar';
 import GroupBar from './GroupBar';
 import GroupPanel from './GroupPanel';
@@ -131,6 +135,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   // (delete) intentionally still require an explicit selection.
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const [aiSidebarOpen, setAiSidebarOpen] = useState(false);
+  // Below the `sm` width the receipts show as a card list instead of the wide table (plan 2026-10-24-phone-layout).
+  const isPhone = usePhone();
   const [detailRow, setDetailRow] = useState<Row | null>(null);
   const [groupPanelId, setGroupPanelId] = useState<string | null>(null);
   // A group is a row that holds receipts and is never one itself (see
@@ -549,6 +555,19 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           />
         );
       default:
+        if (isPhone) {
+          return (
+            <ReceiptPhoneList
+              rows={displayRows}
+              columns={columns}
+              selectOptions={selectOptions}
+              loading={isRowsLoading}
+              narrowed={Boolean(trimmedTerm) || filters.length > 0 || hasYearFilter(yearSelection)}
+              onOpenReceipt={setDetailRow}
+              onOpenGroup={(row) => setGroupPanelId(row.id)}
+            />
+          );
+        }
         return (
           <TableView
             columns={tableColumns}
@@ -603,7 +622,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
 
   return (
     <div
-      className="h-screen flex flex-col"
+      className="flex min-h-screen flex-col sm:h-screen"
       data-theme="dark"
       onClick={(e) => {
         // Clicking dead space (background, header, toolbar) refocuses the table for keyboard nav
@@ -615,8 +634,16 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       }}
     >
       {/* Header */}
-      <div className="px-6 pt-6 pb-2" style={{ background: 'rgba(10, 10, 15, 0.4)' }}>
-        <div className="flex items-center justify-between mb-1">
+      <div className="px-4 pt-4 pb-2 sm:px-6 sm:pt-6" style={{ background: 'rgba(10, 10, 15, 0.4)' }}>
+        {/* On a phone the nine actions below would push the page sideways: the phone row takes this row's place. */}
+        <DashboardPhoneActions
+          title={table.name}
+          openMealCount={openMealCount}
+          aiOpen={aiSidebarOpen}
+          onExport={() => exportCSV({ columns, rows: displayRows })}
+          onToggleAi={() => setAiSidebarOpen((v) => !v)}
+        />
+        <div className="mb-1 hidden items-center justify-between sm:flex">
           <h1 className="text-2xl font-bold" style={{ color: 'var(--dt-text-primary)' }}>
             {table.name}
           </h1>
@@ -626,12 +653,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
               style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 3v18h18" />
-                <rect x="7" y="10" width="3" height="8" />
-                <rect x="12" y="6" width="3" height="12" />
-                <rect x="17" y="13" width="3" height="5" />
-              </svg>
+              <OverviewIcon />
               Overview
             </Link>
             <Link
@@ -640,10 +662,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
               style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
               title="Einnahmenüberschussrechnung und offene Prüfungen"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M4 4h16v16H4z" />
-                <path d="M8 9h8M8 13h8M8 17h5" />
-              </svg>
+              <FinanceIcon />
               Finanzen
             </Link>
             <Link
@@ -656,10 +675,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
                   : 'Bewirtungsverzeichnis'
               }
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M7 3v8a2 2 0 0 0 2 2v8M5 3v5M9 3v5" />
-                <path d="M17 3c-1.7 1.5-2.5 3.5-2.5 6s.8 4 2.5 4v8" />
-              </svg>
+              <MealsIcon />
               Bewirtung
               {openMealCount > 0 && (
                 <span
@@ -677,11 +693,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
               style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
               title="Personen und Organisationen mit Kundennummern"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <circle cx="9" cy="8" r="3.5" />
-                <path d="M2.5 20c.6-3.4 3.2-5.5 6.5-5.5s5.9 2.1 6.5 5.5" />
-                <path d="M16 4.8a3.5 3.5 0 0 1 0 6.4M18.5 14.9c1.6.9 2.7 2.6 3 5.1" />
-              </svg>
+              <ContactsIcon />
               Kontakte
             </Link>
             <button
@@ -701,11 +713,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
                 e.currentTarget.style.color = 'var(--foreground)';
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
+              <ExportIcon />
               Export CSV
             </button>
             <FxRecomputePanel />
@@ -714,11 +722,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
               style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 3v4a1 1 0 0 0 1 1h4" />
-                <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
-                <path d="M9 13h6M9 17h6" />
-              </svg>
+              <ImportIcon />
               Import from Sheets
             </Link>
             <button
@@ -740,10 +744,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
                 }
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 3l1.5 3.7 3.8.5-2.8 2.6.7 3.9L12 12l-3.2 1.7.7-3.9-2.8-2.6 3.8-.5z" />
-                <path d="M12 3v0M18.4 5.6v0M21 12v0M18.4 18.4v0M12 21v0M5.6 18.4v0M3 12v0M5.6 5.6v0" />
-              </svg>
+              <AiIcon />
               AI
             </button>
             <Link
@@ -757,58 +758,61 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         </div>
         <div className="flex items-center gap-3">
           <p className="text-sm" style={{ color: 'var(--dt-text-secondary)' }}>
-            {receiptRows.length < totalReceipts ? `${receiptRows.length} von ${totalReceipts}` : receiptRows.length} items · {tableColumns.length} properties
+            {receiptRows.length < totalReceipts ? `${receiptRows.length} von ${totalReceipts}` : receiptRows.length} items<span className="max-sm:hidden"> · {tableColumns.length} properties</span>
           </p>
-          {/* Bulk edits set fields of receipts; a group in the selection is left alone. */}
-          <BulkEditBar
-            columns={tableColumns}
-            selectOptions={selectOptions}
-            loadSelectOptions={loadSelectOptions}
-            selectedRows={
-              selectedRows.size > 0
-                ? new Set(selection.receiptIds)
-                : activeRowId && receiptRows.some((r) => r.id === activeRowId)
-                  ? new Set([activeRowId])
-                  : selectedRows
-            }
-            setField={setFieldOnRows}
-            onDone={reload}
-          />
-          <GroupBar
-            groups={groups}
-            receiptCount={selection.receiptIds.length}
-            inGroupCount={selection.inGroupIds.length}
-            busy={working}
-            onCreate={createGroup}
-            onMoveInto={(groupId) => void moveIntoGroup(groupId, selection.receiptIds)}
-            onTakeOut={() => void takeOutOfGroup(selection.inGroupIds)}
-          />
-          {selectedRows.size > 0 && (
-            <button
-              onClick={handleDeleteSelected}
-              className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-all duration-150"
-              style={{
-                background: 'rgba(239, 68, 68, 0.12)',
-                color: '#f87171',
-                border: '1px solid rgba(239, 68, 68, 0.2)',
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)';
-                e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.35)';
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)';
-                e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.2)';
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="2 4 14 4" />
-                <path d="M5.5 4V2.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V4" />
-                <path d="M3.5 4l.7 9.1a1 1 0 0 0 1 .9h5.6a1 1 0 0 0 1-.9L12.5 4" />
-              </svg>
-              {selectedRows.size} selected
-            </button>
-          )}
+          {/* Selecting, bulk edits and groups work on the wide table; the phone list has no selection, so they stay off there. */}
+          <div className="hidden items-center gap-3 sm:flex">
+            {/* Bulk edits set fields of receipts; a group in the selection is left alone. */}
+            <BulkEditBar
+              columns={tableColumns}
+              selectOptions={selectOptions}
+              loadSelectOptions={loadSelectOptions}
+              selectedRows={
+                selectedRows.size > 0
+                  ? new Set(selection.receiptIds)
+                  : activeRowId && receiptRows.some((r) => r.id === activeRowId)
+                    ? new Set([activeRowId])
+                    : selectedRows
+              }
+              setField={setFieldOnRows}
+              onDone={reload}
+            />
+            <GroupBar
+              groups={groups}
+              receiptCount={selection.receiptIds.length}
+              inGroupCount={selection.inGroupIds.length}
+              busy={working}
+              onCreate={createGroup}
+              onMoveInto={(groupId) => void moveIntoGroup(groupId, selection.receiptIds)}
+              onTakeOut={() => void takeOutOfGroup(selection.inGroupIds)}
+            />
+            {selectedRows.size > 0 && (
+              <button
+                onClick={handleDeleteSelected}
+                className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-all duration-150"
+                style={{
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  color: '#f87171',
+                  border: '1px solid rgba(239, 68, 68, 0.2)',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)';
+                  e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.35)';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)';
+                  e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.2)';
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="2 4 14 4" />
+                  <path d="M5.5 4V2.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V4" />
+                  <path d="M3.5 4l.7 9.1a1 1 0 0 0 1 .9h5.6a1 1 0 0 0 1-.9L12.5 4" />
+                </svg>
+                {selectedRows.size} selected
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -864,18 +868,39 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         {pendingWording.body}
       </ConfirmDialog>
 
-      {/* View Switcher */}
-      <ViewSwitcher
-        views={views}
-        currentViewId={currentView?.id ?? null}
-        onViewChange={(viewId) => setCurrentView(viewId)}
-        onCreateView={(type) => createView({ name: type, type })}
-        onDeleteView={deleteView}
-        onRenameView={(viewId, name) => updateView(viewId, { name })}
-      />
+      {/* View Switcher. On a phone the package's tab row (with its rename and add menus) is wider than the screen,
+          so a plain picker switches the views there; creating and renaming views stays on the wide layout. */}
+      {isPhone ? (
+        <div className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: '1px solid var(--dt-border-color)', background: 'var(--dt-bg-secondary)' }}>
+          <label htmlFor="phone-view-picker" className="text-sm" style={{ color: 'var(--dt-text-secondary)' }}>
+            Ansicht
+          </label>
+          <select
+            id="phone-view-picker"
+            className="ui-input min-h-11 min-w-0 flex-1"
+            value={currentView?.id ?? ''}
+            onChange={(e) => setCurrentView(e.target.value)}
+          >
+            {views.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : (
+        <ViewSwitcher
+          views={views}
+          currentViewId={currentView?.id ?? null}
+          onViewChange={(viewId) => setCurrentView(viewId)}
+          onCreateView={(type) => createView({ name: type, type })}
+          onDeleteView={deleteView}
+          onRenameView={(viewId, name) => updateView(viewId, { name })}
+        />
+      )}
 
       {/* Search & Filter */}
-      <div className="px-4 py-2 flex flex-wrap gap-2 items-center" style={{ borderBottom: '1px solid var(--dt-border-color)', background: 'rgba(10, 10, 15, 0.3)' }}>
+      <div className="dashboard-filter-row px-4 py-2 flex flex-wrap gap-2 items-center" style={{ borderBottom: '1px solid var(--dt-border-color)', background: 'rgba(10, 10, 15, 0.3)' }}>
         <ReceiptSearch
           term={searchTerm}
           onTermChange={setSearchTerm}
@@ -902,7 +927,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       </div>
 
       {/* Table/Board/Calendar */}
-      <div className="flex-1 overflow-auto p-4">
+      {/* On a phone the page itself scrolls down the list; the board and the calendar scroll sideways in here, never the page. */}
+      <div className="p-4 max-sm:overflow-x-auto sm:flex-1 sm:overflow-auto">
         {renderView()}
       </div>
 

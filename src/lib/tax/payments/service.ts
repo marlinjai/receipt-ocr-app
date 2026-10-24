@@ -155,6 +155,13 @@ export interface ImportOptions {
   parse?: ParseOptions;
   /** The service the bank interface reads for this import (`paypal`), stored on the import; null for a bank. */
   service?: string | null;
+  /**
+   * Days on which the fetch knowingly left a movement out (no reference rate,
+   * or described too incompletely), stored on the import: an import of another
+   * source compares its rows on those days like on an edge day, so the
+   * movement is not lost to the day rule.
+   */
+  partialDays?: readonly string[];
 }
 
 /** The years an import can be limited to: the same range the finance area offers. */
@@ -200,7 +207,7 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM tax_accounts WHERE id = ${accountId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
     if (locked.length === 0) throw new PaymentServiceError('account_not_found');
     if (await tx.taxImportBatch.findFirst({ where: { accountId, contentHash } })) throw new PaymentServiceError('file_already_imported');
-    const batches = await tx.taxImportBatch.findMany({ where: { accountId }, select: { id: true, format: true, service: true, firstDay: true, lastDay: true, createdAt: true } });
+    const batches = await tx.taxImportBatch.findMany({ where: { accountId }, select: { id: true, format: true, service: true, firstDay: true, lastDay: true, partialDays: true, createdAt: true } });
     // A bank account may be continued from another bank source, PayPal's list from the bank interface reading
     // PayPal; a payment service's list holds other movements than a bank, so the two never share an account.
     if (batches.some((b) => !sourcesMayShare(b, source))) throw new PaymentServiceError('format_mismatch');
@@ -217,21 +224,20 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     const claimed = new Set<string>();
     if (isPaypalSource(source)) {
       const codes = [...new Set(inFileYear.flatMap((p) => [p.entryReference, ...(p.relatedReferences ?? [])].filter((c): c is string => !!c)))];
+      // The list stores a foreign purchase's own code as the related one of its euro row: found either way.
       const others = codes.length === 0 ? [] : await tx.taxPayment.findMany({
-        where: { accountId, entryReference: { in: codes }, batch: { format: { not: file.format } } },
-        select: { id: true, entryReference: true, amountEstimated: true, originalAmountCents: true },
+        where: { accountId, OR: [{ entryReference: { in: codes } }, { relatedReference: { in: codes } }], batch: { format: { not: file.format } } },
+        select: { id: true, entryReference: true, relatedReference: true, amountCents: true, amountEstimated: true, originalAmountCents: true },
       });
-      const byCode = new Map(others.map((o) => [o.entryReference as string, o]));
+      const byCode = new Map<string, (typeof others)[number]>();
+      for (const o of others) for (const c of [o.entryReference, o.relatedReference]) if (c && !byCode.has(c)) byCode.set(c, o);
       for (const p of inFileYear) {
         const hit = [p.entryReference, ...(p.relatedReferences ?? [])].map((c) => (c ? byCode.get(c) : undefined)).find((o) => o !== undefined && !claimed.has(o.id));
         if (!hit) continue;
         claimed.add(hit.id);
         known.add(p);
         if (hit.amountEstimated && !p.estimated) {
-          await tx.taxPayment.update({
-            where: { id: hit.id },
-            data: { amountCents: p.amountCents, amountEstimated: false, ...(hit.originalAmountCents === null && p.original ? { originalAmountCents: p.original.amountCents, originalCurrency: p.original.currency } : {}) },
-          });
+          await settleEstimate(tx, hit.id, hit.amountCents, p.amountCents, hit.originalAmountCents === null && p.original ? { originalAmountCents: p.original.amountCents, originalCurrency: p.original.currency } : {});
           settled += 1;
         }
       }
@@ -244,22 +250,22 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     // so a fuller export of a day that another source completed stores nothing twice. The identity of a row does
     // not change by leaving others out: identical movements are numbered over the whole file.
     const onCovered = inYear.filter((p) => covers(otherSources, p.bookingDay));
-    const edges = new Set(mergeIntervals(otherSources).flatMap((i) => [i.from, i.to]));
+    // A day another source's fetch knowingly holds in part (a movement left out without a rate) is compared like an edge day.
+    const partial = batches.filter((b) => b.format !== file.format).flatMap((b) => b.partialDays);
+    const edges = new Set([...mergeIntervals(otherSources).flatMap((i) => [i.from, i.to]), ...partial]);
     const compared = inYear.filter((p) => !covers(otherSources, p.bookingDay) || edges.has(p.bookingDay));
     const stored = compared.length === 0 ? [] : await tx.taxPayment.findMany({
       where: { accountId, bookingDay: { in: [...new Set(compared.map((p) => p.bookingDay))] }, batch: { format: { not: file.format } } },
       select: { id: true, bookingDay: true, amountCents: true, counterpartyKey: true, amountEstimated: true },
     });
+    const storedCents = new Map(stored.map((p) => [p.id, p.amountCents]));
     // An estimate on either side (a purchase in another currency) is compared by day and counterparty, not amount.
     const { same, settles } = matchStored(
       compared.map((p) => ({ ...p, counterpartyKey: counterpartyKey(p.counterparty) })),
       stored.filter((p) => !claimed.has(p.id)).map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, estimated: p.amountEstimated })),
     );
     for (const { row, storedId } of settles) {
-      await tx.taxPayment.update({
-        where: { id: storedId },
-        data: { amountCents: row.amountCents, amountEstimated: false },
-      });
+      await settleEstimate(tx, storedId, storedCents.get(storedId) as number, row.amountCents, {});
       settled += 1;
     }
     const sameRows = new Set(same.map((p) => compared.find((c) => c.sourceHash === p.sourceHash) as NormalizedPayment));
@@ -293,6 +299,7 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
         firstDay: parsed.firstDay,
         lastDay: parsed.lastDay,
         service: source.service,
+        partialDays: [...new Set(options.partialDays ?? [])].sort(),
       },
     });
     let inserted = 0;
@@ -318,6 +325,7 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
           originalAmountCents: p.original?.amountCents ?? null,
           originalCurrency: p.original?.currency ?? null,
           amountEstimated: p.estimated === true,
+          relatedReference: p.relatedReferences?.[0] ?? null,
         })),
       });
       inserted = result.count;
@@ -358,6 +366,33 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     firstDay: parsed.firstDay,
     lastDay: parsed.lastDay,
   };
+}
+
+/**
+ * Give a payment whose euro amount was an estimate the real amount another
+ * source states. Its links say how much of it pays each receipt or invoice, in
+ * cents of the estimate: each is scaled to the real amount, so a receipt the
+ * payment paid in full is paid in full at the real amount and no remainder is
+ * left open (the rounding difference goes to the last link). Links of every
+ * company (a shared payment) are scaled, under the payment's row lock, the one
+ * a link takes.
+ */
+async function settleEstimate(db: Prisma.TransactionClient, paymentId: string, estimateCents: number, realCents: number, extra: Prisma.TaxPaymentUpdateInput): Promise<void> {
+  await db.$queryRaw`SELECT id FROM tax_payments WHERE id = ${paymentId} FOR UPDATE`;
+  await db.taxPayment.update({ where: { id: paymentId }, data: { amountCents: realCents, amountEstimated: false, ...extra } });
+  const from = Math.abs(estimateCents);
+  const to = Math.abs(realCents);
+  if (from === 0 || from === to) return;
+  const links = await db.taxPaymentLink.findMany({ where: { paymentId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { id: true, cents: true } });
+  if (links.length === 0) return;
+  const total = links.reduce((sum, l) => sum + l.cents, 0);
+  const target = total >= from ? to : Math.min(to, Math.round((total * to) / from));
+  const scaled = links.map((l) => Math.round((l.cents * to) / from));
+  scaled[scaled.length - 1] += target - scaled.reduce((sum, c) => sum + c, 0);
+  for (const [i, link] of links.entries()) {
+    const cents = Math.max(0, scaled[i]);
+    if (cents !== link.cents) await db.taxPaymentLink.update({ where: { id: link.id }, data: { cents } });
+  }
 }
 
 /**

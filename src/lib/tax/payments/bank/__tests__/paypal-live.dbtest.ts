@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { saveTaxSettings } from '@/lib/meals/service';
 import { loadStatement } from '@/lib/tax/service';
-import { createAccount, deleteAccount, deleteImportBatch, importPayments, loadPayments, PaymentServiceError, type PaymentContext } from '../../service';
+import { createAccount, deleteAccount, deleteImportBatch, importPayments, linkPayment, loadPayments, PaymentServiceError, type PaymentContext } from '../../service';
 import { type Aspsp, type BankApi, type SessionAccount, type StartInput } from '../client';
-import { BankServiceError, bankNotices, completeConsent, disconnect, startConsent, syncConnection, type BankDeps } from '../service';
+import { BankServiceError, bankNotices, clearBankNotice, completeConsent, disconnect, startConsent, syncConnection, type BankDeps } from '../service';
 import { createWorkspace, db } from '../../../../../../test/db-helpers';
 
 /**
@@ -77,14 +77,14 @@ const csv = (...rows: string[]) => [HEADER, ...rows].join('\n');
 const N26_HEADER = '"Booking Date","Value Date","Partner Name","Partner Iban",Type,"Payment Reference","Account Name","Amount (EUR)","Original Amount","Original Currency","Exchange Rate"';
 const n26 = (...rows: Array<[string, string, string]>) => [N26_HEADER, ...rows.map(([day, partner, amount]) => `${day},${day},"${partner}",,Presentment,"",Hauptkonto,${amount},,,`)].join('\n') + '\n';
 
-async function setup(options: { usdRate?: number | null } = {}) {
+async function setup(options: { usdRate?: number | null | 'throws' } = {}) {
   const ws = await createWorkspace();
   const ctx: PaymentContext = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
   await saveTaxSettings(db, ctx, { smallBusiness: true });
   const walletId = await createAccount(db, ctx, { label: 'PayPal', kind: 'payment_service' });
   const bankId = await createAccount(db, ctx, { label: 'Girokonto', kind: 'bank' });
   const api = new FakePaypal();
-  const rates = { usd: options.usdRate === undefined ? 0.9 : options.usdRate };
+  const rates: { usd: number | null | 'throws' } = { usd: options.usdRate === undefined ? 0.9 : options.usdRate };
   const fxCalls: string[] = [];
   const deps: BankDeps = {
     api,
@@ -92,7 +92,8 @@ async function setup(options: { usdRate?: number | null } = {}) {
     now: () => NOW,
     fxRate: async (currency, day) => {
       fxCalls.push(`${currency}|${day}`);
-      return currency === 'USD' ? rates.usd : null;
+      if (currency === 'USD' && rates.usd === 'throws') throw new Error('rate service down');
+      return currency === 'USD' ? (rates.usd as number | null) : null;
     },
   };
   return { ws, ctx, walletId, bankId, api, deps, rates, fxCalls };
@@ -296,6 +297,55 @@ describe('PayPal live: an earlier input changed', () => {
   });
 });
 
+describe('PayPal live: an estimate that gets its real amount', () => {
+  const anyReceipt = async () => ({ amountCents: null });
+
+  it('its links follow the real amount: one receipt paid in full stays paid in full, two parts keep their shares', async () => {
+    const s = await setup();
+    s.api.rows = [
+      tx({ day: '2026-10-06', cents: -500, currency: 'USD', party: 'Server Beispiel', code: 'B2' }),
+      tx({ day: '2026-10-07', cents: -1000, currency: 'USD', party: 'Hosting Beispiel', code: 'B3' }),
+    ];
+    const connectionId = await connectPaypal(s);
+    await syncConnection(db, s.ctx, s.deps, connectionId, { today: TODAY });
+    const server = await db.taxPayment.findFirstOrThrow({ where: { accountId: s.walletId, entryReference: 'B2' } });
+    const hosting = await db.taxPayment.findFirstOrThrow({ where: { accountId: s.walletId, entryReference: 'B3' } });
+    expect([server.amountCents, hosting.amountCents]).toEqual([-450, -900]);
+    await linkPayment(db, s.ctx, { paymentId: server.id, rowId: 'receipt-server' }, anyReceipt);
+    await linkPayment(db, s.ctx, { paymentId: hosting.id, rowId: 'receipt-hosting-a', cents: 500 }, anyReceipt);
+    await linkPayment(db, s.ctx, { paymentId: hosting.id, rowId: 'receipt-hosting-b', cents: 400 }, anyReceipt);
+
+    const result = await importPayments(db, s.ctx, s.walletId, csv(
+      ...csvDollarPurchase({ day: '2026-10-06', name: 'Server Beispiel', usd: '5,00', eur: '4,71', code: 'B2' }),
+      ...csvDollarPurchase({ day: '2026-10-07', name: 'Hosting Beispiel', usd: '10,00', eur: '9,43', code: 'B3' }),
+    ));
+    expect(result.settled).toBe(2);
+    const links = await db.taxPaymentLink.findMany({ where: { paymentId: { in: [server.id, hosting.id] } }, orderBy: { rowId: 'asc' } });
+    expect(links.map((l) => [l.rowId, l.cents])).toEqual([
+      ['receipt-hosting-a', 524],
+      ['receipt-hosting-b', 419],
+      ['receipt-server', 471],
+    ]);
+    // Nothing of either payment is left open, and neither is an estimate any more.
+    const loaded = await loadPayments(db, s.ctx.workspaceId);
+    for (const p of loaded.payments.filter((x) => x.id === server.id || x.id === hosting.id)) {
+      expect(p.estimated).toBe(false);
+      expect(p.links.reduce((sum, l) => sum + l.cents, 0)).toBe(-p.amountCents);
+    }
+  });
+
+  it('a live dollar purchase after the list is recognized by its code, also on a day after the list ends', async () => {
+    const s = await setup();
+    await importPayments(db, s.ctx, s.walletId, LIST);
+    // PayPal dates the purchase a day later than the list does: the day rule alone would store it twice.
+    s.api.rows = [tx({ day: '2026-09-30', cents: -1000, currency: 'USD', party: 'Hosting Beispiel', code: 'PUR1' }), tx({ day: '2026-10-05', cents: -299, party: 'Musik Beispiel', code: 'B1' })];
+    const connectionId = await connectPaypal(s);
+    expect(await syncConnection(db, s.ctx, s.deps, connectionId, { today: TODAY })).toEqual({ status: 'synced', added: 1 });
+    const hosting = (await walletPayments(s.walletId)).filter((p) => p.counterparty === 'Hosting Beispiel');
+    expect(hosting.map((p) => [p.bookingDay, p.amountCents, p.amountEstimated, p.relatedReference])).toEqual([['2026-09-29', -941, false, 'PUR1']]);
+  });
+});
+
 describe('PayPal live: resume', () => {
   it('a movement without a rate waits as a notice; the next fetch with the rate imports it and the notice goes', async () => {
     const s = await setup({ usdRate: null });
@@ -313,6 +363,46 @@ describe('PayPal live: resume', () => {
     expect(bankNotices(c.notices).unrated).toEqual([]);
     expect(c.lastBookedThrough).toBe('2026-10-20');
     expect((await db.taxPayment.findFirstOrThrow({ where: { accountId: s.walletId, entryReference: 'B2' } })).amountCents).toBe(-450);
+  });
+
+  it('a currency without a rate: "Erledigt" sticks, the fetch moves on, and the list brings the movement at its real amount', async () => {
+    const s = await setup({ usdRate: null });
+    s.api.rows = [
+      tx({ day: '2026-10-05', cents: -299, party: 'Musik Beispiel', code: 'B1' }),
+      tx({ day: '2026-10-06', cents: -500, currency: 'USD', party: 'Server Beispiel', code: 'B2' }),
+      tx({ day: '2026-10-20', cents: -100, party: 'Kiosk Beispiel', code: 'B6' }),
+    ];
+    const connectionId = await connectPaypal(s);
+    expect(await syncConnection(db, s.ctx, s.deps, connectionId, { today: TODAY })).toEqual({ status: 'synced', added: 2 });
+    const batch = await db.taxImportBatch.findFirstOrThrow({ where: { accountId: s.walletId } });
+    expect(batch).toMatchObject({ firstDay: '2026-10-05', lastDay: '2026-10-20', partialDays: ['2026-10-06'] });
+
+    await clearBankNotice(db, s.ctx, connectionId, { kind: 'unrated', day: '2026-10-06' });
+    expect(await syncConnection(db, s.ctx, s.deps, connectionId, { today: TODAY })).toEqual({ status: 'nothing_new', added: 0 });
+    const c = await db.taxBankConnection.findUniqueOrThrow({ where: { id: connectionId } });
+    expect(bankNotices(c.notices).unrated).toEqual([]);
+    // A cleared day no longer holds the next fetch back.
+    expect(c.lastBookedThrough).toBe('2026-10-20');
+
+    // The day lies inside the live import's range, but it holds that day in part: the list's purchase is new.
+    const result = await importPayments(db, s.ctx, s.walletId, csv(
+      csvRow({ day: '2026-10-05', name: 'Musik Beispiel', gross: '-2,99', code: 'B1' }),
+      ...csvDollarPurchase({ day: '2026-10-06', name: 'Server Beispiel', usd: '5,00', eur: '4,71', code: 'B2' }),
+    ));
+    expect(result.added).toBe(1);
+    const server = await db.taxPayment.findMany({ where: { accountId: s.walletId, counterparty: 'Server Beispiel' } });
+    expect(server.map((p) => [p.bookingDay, p.amountCents, p.amountEstimated])).toEqual([['2026-10-06', -471, false]]);
+    expect(await db.taxPayment.count({ where: { accountId: s.walletId } })).toBe(3);
+  });
+
+  it('a rate service that fails is a missing rate for that fetch, never a failed fetch', async () => {
+    const s = await setup({ usdRate: 'throws' });
+    s.api.rows = [tx({ day: '2026-10-05', cents: -299, party: 'Musik Beispiel', code: 'B1' }), tx({ day: '2026-10-06', cents: -500, currency: 'USD', party: 'Server Beispiel', code: 'B2' })];
+    const connectionId = await connectPaypal(s);
+    expect(await syncConnection(db, s.ctx, s.deps, connectionId, { today: TODAY })).toEqual({ status: 'synced', added: 1 });
+    const c = await db.taxBankConnection.findUniqueOrThrow({ where: { id: connectionId } });
+    expect(c.lastError).toBeNull();
+    expect(bankNotices(c.notices).unrated).toEqual(['2026-10-06']);
   });
 
   it('a renewed consent continues where the last fetch stopped and stays PayPal-only', async () => {

@@ -709,6 +709,11 @@ model TaxImportBatch {
   // the import, so the account stays recognized as that service after the
   // connection ends (see `heldService` in src/lib/tax/payments/funding.ts).
   service         String?
+  // Days of its range on which this import knowingly lacks a movement (a fetch
+  // that left one out: no reference rate, or described too incompletely). An
+  // import of another source compares them like its edge days, so the movement
+  // can still arrive from a file (see `importPayments`).
+  partialDays     String[] @default([]) @map("partial_days")
   createdAt       DateTime @default(now()) @map("created_at")
 
   account   TaxAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
@@ -746,6 +751,10 @@ model TaxPayment {
   originalAmountCents Int?     @map("original_amount_cents")
   originalCurrency    String?  @map("original_currency")
   amountEstimated     Boolean  @default(false) @map("amount_estimated")
+  // PayPal's list: the code of the purchase a currency conversion row belongs
+  // to ("Zugehöriger Transaktionscode"), so the live feed's row of that
+  // purchase is recognized by its code. Not part of the identity.
+  relatedReference    String?  @map("related_reference")
   // Set when a later import of the same source listed this purchase as
   // cancelled or refunded in full: the payment is kept for the record and
   // counts nowhere. Undoing that import sets it back to NULL (the foreign key

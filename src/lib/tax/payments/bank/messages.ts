@@ -7,7 +7,7 @@ const SOURCE_UNSUPPORTED =
   'Dieses Konto wird aus der Kaufliste von Klarna gefüllt. Klarna bietet über die Bankschnittstelle nur sein Girokonto an, nicht die Käufe auf Rechnung oder in Raten; dieses Konto bleibt deshalb beim Datei-Import. Ein PayPal-Konto lässt sich dagegen live verbinden.';
 
 const INSTITUTION_MISMATCH =
-  'Diese Bank passt nicht zu dem, was dieses Konto schon enthält. Ein Konto aus der PayPal-Liste lässt sich nur mit PayPal live verbinden, ein Bankkonto nur mit seiner Bank. Für die andere Quelle bitte ein eigenes Konto anlegen.';
+  'Diese Auswahl passt nicht zu dem, was dieses Konto schon enthält. Ein Konto aus der PayPal-Liste lässt sich nur mit PayPal live verbinden, ein Bankkonto nur mit seiner Bank. Für die andere Quelle bitte ein eigenes Konto anlegen.';
 
 const FORMAT_MISMATCH =
   'Die Liste eines Zahlungsdienstes und die Zahlungen einer Bank gehören nicht in dasselbe Konto. Ein PayPal-Konto lässt sich nur aus der PayPal-Liste und der Live-Verbindung zu PayPal füllen, ein Bankkonto aus seinen Bankquellen.';

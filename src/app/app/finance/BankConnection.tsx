@@ -224,7 +224,8 @@ export function BankAccountStatus({
         <div className="mt-1" style={{ color: TONE_COLOR.warn }}>
           <p>
             An diesen Tagen fehlt für eine Zahlung in anderer Währung der Referenzkurs; sie wurde noch nicht übernommen. Jeder
-            Abruf versucht es erneut, der Hinweis verschwindet dann von selbst.
+            Abruf versucht es erneut und übernimmt sie, sobald es den Kurs gibt. Gibt es für die Währung keinen Kurs, bringt der
+            Import der PayPal-Liste die Zahlung mit dem tatsächlichen Eurobetrag; danach diesen Tag als erledigt markieren.
           </p>
           <ul className="mt-1 flex flex-wrap gap-2">
             {connection.notices.unrated.map((day) => (

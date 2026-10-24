@@ -602,4 +602,15 @@ describe('PaymentsTab', () => {
     expect(status).toContain('1 abgelehnt');
     expect(status).toContain('1 in anderer Währung ohne Referenzkurs');
   });
+
+  it('says one estimate in the singular', () => {
+    render(
+      <PaymentsTab
+        view={view()}
+        {...props()}
+        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 1, added: 0, alreadyThere: 1, skipped: {}, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, settled: 1, notices: {}, unknownStatuses: [], onlyYear: null, firstDay: null, lastDay: null }}
+      />,
+    );
+    expect(screen.getByRole('status').textContent).toContain('bei einer geschätzten Zahlung in anderer Währung den tatsächlichen Eurobetrag übernommen');
+  });
 });

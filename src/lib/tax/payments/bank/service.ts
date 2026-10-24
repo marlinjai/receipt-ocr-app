@@ -139,10 +139,14 @@ export async function startConsent(db: PrismaClient, ctx: PaymentContext, deps: 
   if (!account) throw new BankServiceError('account_not_found');
   // What the account holds decides which institution may continue it: PayPal's list only PayPal, a bank's
   // movements only a bank, the pay-later list nothing (plan 2026-10-23). An empty account takes any.
-  const holds = accountSource(account.batches);
-  if (holds === 'klarna') throw new BankServiceError('account_source_unsupported');
   const paypal = serviceOfInstitution(name) === 'paypal';
-  if ((holds === 'paypal' && !paypal) || (holds === 'bank' && paypal)) throw new BankServiceError('institution_mismatch');
+  const gate = (batches: ReadonlyArray<{ format: string; service: string | null }>) => {
+    const holds = accountSource(batches);
+    if (holds === 'klarna') throw new BankServiceError('account_source_unsupported');
+    if ((holds === 'paypal' && !paypal) || (holds === 'bank' && paypal)) throw new BankServiceError('institution_mismatch');
+  };
+  // Before the bank is asked, and again under the account's lock when the connection is written.
+  gate(account.batches);
 
   const now = (deps.now ?? (() => new Date()))();
   let institutions;
@@ -165,25 +169,27 @@ export async function startConsent(db: PrismaClient, ctx: PaymentContext, deps: 
   }
 
   const consent = { stateHash: hashState(state), stateExpiresAt: new Date(now.getTime() + STATE_LIFETIME_MS), pendingAspspName: name, pendingAspspCountry: country };
-  const existing = await db.taxBankConnection.findFirst({ where: { accountId, authWorkspaceId: ctx.workspaceId } });
-  if (existing) {
-    // A connection without a session yet takes the institution at once; one with a session keeps reading
-    // through it until the new consent is taken (an abandoned renewal changes nothing).
-    await db.taxBankConnection.update({
-      where: { id: existing.id },
-      data: existing.sessionId ? consent : { ...consent, aspspName: name, aspspCountry: country, status: 'pending', lastError: null, lastErrorAt: null },
-    });
-  } else {
-    try {
-      await db.taxBankConnection.create({
+  // Under the same lock an import and "Konto entfernen" take: an account removed or filled from another source
+  // in the meantime is refused here, never written around. Two starts at the same moment queue on the lock, so
+  // the second one finds the first one's connection and its consent is the one that counts.
+  await db.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM tax_accounts WHERE id = ${accountId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
+    if (locked.length === 0) throw new BankServiceError('account_not_found');
+    gate(await tx.taxImportBatch.findMany({ where: { accountId }, select: { format: true, service: true } }));
+    const existing = await tx.taxBankConnection.findFirst({ where: { accountId, authWorkspaceId: ctx.workspaceId } });
+    if (existing) {
+      // A connection without a session yet takes the institution at once; one with a session keeps reading
+      // through it until the new consent is taken (an abandoned renewal changes nothing).
+      await tx.taxBankConnection.update({
+        where: { id: existing.id },
+        data: existing.sessionId ? consent : { ...consent, aspspName: name, aspspCountry: country, status: 'pending', lastError: null, lastErrorAt: null },
+      });
+    } else {
+      await tx.taxBankConnection.create({
         data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, accountId, aspspName: name, aspspCountry: country, status: 'pending', ...consent },
       });
-    } catch (e) {
-      // Two starts at the same moment: the other one created the connection; this consent is the one that counts now.
-      if ((e as { code?: string })?.code !== 'P2002') throw e;
-      await db.taxBankConnection.updateMany({ where: { accountId, authWorkspaceId: ctx.workspaceId }, data: consent });
     }
-  }
+  }, { maxWait: 20_000, timeout: 30_000 });
   return { url };
 }
 
@@ -428,7 +434,7 @@ export async function syncConnection(
   const dateFrom = continued < earliest ? earliest : continued > options.today ? options.today : continued;
   // A gap is what lies between the last day a fetch reached and the oldest day the bank still gives: only
   // after a pause longer than that (a consent renewed late). A quiet account with old bookings has none.
-  const found: BankNotices = { gaps: [], skipped: [], undated: [], unrated: [], dismissed: { skipped: [], undated: [] } };
+  const found: BankNotices = { gaps: [], skipped: [], undated: [], unrated: [], dismissed: { skipped: [], undated: [], unrated: [] } };
   if (connection.fetchedThrough && shiftDay(connection.fetchedThrough, 1) < earliest) {
     found.gaps.push({ from: shiftDay(connection.fetchedThrough, 1), to: shiftDay(earliest, -1) });
   }
@@ -458,13 +464,19 @@ export async function syncConnection(
   const rates = new Map<string, number>();
   const unrated = new Set<string>();
   if (service !== null) {
-    for (const need of walletRateNeeds(transactions.filter((t) => !((movementDay(t) ?? '') > options.today)))) {
-      let rate: number | null = null;
-      try {
-        rate = deps.fxRate ? await deps.fxRate(need.currency, need.day) : null;
-      } catch {
-        rate = null;
-      }
+    // All at once: each lookup may wait for the rate service, and a fetch never waits for them one by one.
+    const needs = walletRateNeeds(transactions.filter((t) => !((movementDay(t) ?? '') > options.today)));
+    const looked = await Promise.all(
+      needs.map(async (need) => {
+        try {
+          return deps.fxRate ? await deps.fxRate(need.currency, need.day) : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (const [i, need] of needs.entries()) {
+      const rate = looked[i];
       if (rate !== null && Number.isFinite(rate) && rate > 0) rates.set(rateKey(need.currency, need.day), rate);
       else unrated.add(need.day);
     }
@@ -487,7 +499,8 @@ export async function syncConnection(
     try {
       const parsed = parsePaymentFile(JSON.stringify({ transactions: rows }), parseOptions);
       await adoptReworded(db, connection.accountId, parsed.payments, { from: dateFrom, to: options.today, except: new Set([...skippedDays, ...unrated]), since: connection.boundAt });
-      const result = await importPayments(db, ctx, connection.accountId, JSON.stringify({ transactions: rows }), { refuseEmpty: true, parse: parseOptions, service });
+      // The days this fetch leaves a movement out of go on the import, so a file can still bring that movement.
+      const result = await importPayments(db, ctx, connection.accountId, JSON.stringify({ transactions: rows }), { refuseEmpty: true, parse: parseOptions, service, partialDays: [...skippedDays, ...unrated] });
       added = result.added;
       break;
     } catch (e) {
@@ -516,9 +529,11 @@ export async function syncConnection(
   // and a day with a skipped movement keeps the next fetch reaching back to it.
   let latest = [connection.lastBookedThrough, ...bookedDays.filter((d) => d <= options.today)].filter((d): d is string => !!d).sort().pop() ?? null;
   // A day the person cleared no longer holds the next fetch back, even while the bank keeps listing it broken.
-  const cleared = new Set(bankNotices(connection.notices).dismissed.skipped);
-  // A day with a movement still waiting for its rate holds the next fetch back the same way.
-  const firstSkipped = [found.skipped.find((d) => !cleared.has(d)), found.unrated[0]].filter((d): d is string => !!d).sort()[0];
+  const held = bankNotices(connection.notices).dismissed;
+  const cleared = new Set(held.skipped);
+  const clearedUnrated = new Set(held.unrated);
+  // A day with a movement still waiting for its rate holds the next fetch back the same way, until he clears it.
+  const firstSkipped = [found.skipped.find((d) => !cleared.has(d)), found.unrated.find((d) => !clearedUnrated.has(d))].filter((d): d is string => !!d).sort()[0];
   if (latest && firstSkipped && shiftDay(firstSkipped, OVERLAP_DAYS - 1) < latest) latest = shiftDay(firstSkipped, OVERLAP_DAYS - 1);
   // One write under the row's lock, and only while the connection still reads the same session and account: a
   // switch in the meantime has started that account afresh, and nothing of this fetch belongs to it.
@@ -560,13 +575,16 @@ function movementDay(raw: unknown): string | null {
  * reference rate could not be had; unlike the others it is what the last
  * fetch found (a day goes by itself once its movement arrived), and a day
  * older than the window a fetch still reaches stays until the person clears it.
+ * A cleared one stays cleared (a currency the rate service never knows): the
+ * PayPal list brings that movement with its real euro amount, because the
+ * import kept the day as one it holds in part (`partialDays`).
  */
 export interface BankNotices {
   gaps: Array<{ from: string; to: string }>;
   skipped: string[];
   undated: string[];
   unrated: string[];
-  dismissed: { skipped: string[]; undated: string[] };
+  dismissed: { skipped: string[]; undated: string[]; unrated: string[] };
 }
 
 /** At most this many cleared undated keys are remembered; older ones are long out of every fetch window. */
@@ -595,7 +613,7 @@ function undatedKey(raw: unknown, seen: Map<string, number>): string {
 }
 
 export function bankNotices(value: Prisma.JsonValue | null | undefined): BankNotices {
-  const v = (value ?? {}) as { gaps?: unknown; skipped?: unknown; undated?: unknown; unrated?: unknown; dismissed?: { skipped?: unknown; undated?: unknown } };
+  const v = (value ?? {}) as { gaps?: unknown; skipped?: unknown; undated?: unknown; unrated?: unknown; dismissed?: { skipped?: unknown; undated?: unknown; unrated?: unknown } };
   const isDay = (d: unknown): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
   const isKey = (k: unknown): k is string => typeof k === 'string' && /^[0-9a-f]{24}$/.test(k);
   const list = <T>(x: unknown, ok: (y: unknown) => y is T): T[] => (Array.isArray(x) ? x.filter(ok) : []);
@@ -604,7 +622,7 @@ export function bankNotices(value: Prisma.JsonValue | null | undefined): BankNot
     skipped: list(v.skipped, isDay),
     undated: list(v.undated, isKey),
     unrated: list(v.unrated, isDay),
-    dismissed: { skipped: list(v.dismissed?.skipped, isDay), undated: list(v.dismissed?.undated, isKey) },
+    dismissed: { skipped: list(v.dismissed?.skipped, isDay), undated: list(v.dismissed?.undated, isKey), unrated: list(v.dismissed?.unrated, isDay) },
   };
 }
 
@@ -618,13 +636,18 @@ function mergeNotices(current: BankNotices, found: BankNotices, oldestDay: strin
   for (const g of found.gaps) if (!gaps.some((x) => x.from === g.from && x.to === g.to)) gaps.push(g);
   const dismissedSkipped = new Set(current.dismissed.skipped);
   const dismissedUndated = new Set(current.dismissed.undated);
+  const dismissedUnrated = new Set(current.dismissed.unrated);
   return {
     gaps,
     skipped: [...new Set([...current.skipped, ...found.skipped.filter((d) => !dismissedSkipped.has(d))])].sort(),
     undated: [...new Set([...current.undated, ...found.undated.filter((k) => !dismissedUndated.has(k))])],
     // What this fetch saw replaces what it covered; a day before its window is out of reach and stays.
-    unrated: [...new Set([...current.unrated.filter((d) => d < fetchedFrom), ...found.unrated])].sort(),
-    dismissed: { skipped: current.dismissed.skipped.filter((d) => d >= oldestDay), undated: current.dismissed.undated.slice(-DISMISSED_UNDATED_LIMIT) },
+    unrated: [...new Set([...current.unrated.filter((d) => d < fetchedFrom), ...found.unrated.filter((d) => !dismissedUnrated.has(d))])].sort(),
+    dismissed: {
+      skipped: current.dismissed.skipped.filter((d) => d >= oldestDay),
+      undated: current.dismissed.undated.slice(-DISMISSED_UNDATED_LIMIT),
+      unrated: current.dismissed.unrated.filter((d) => d >= oldestDay),
+    },
   };
 }
 
@@ -668,7 +691,8 @@ export async function clearBankNotice(db: PrismaClient, ctx: PaymentContext, con
     change = (c) => (c.skipped.includes(day) ? { ...c, skipped: c.skipped.filter((d) => d !== day), dismissed: { ...c.dismissed, skipped: [...new Set([...c.dismissed.skipped, day])] } } : c);
   } else if (input.kind === 'unrated' && typeof input.day === 'string') {
     const day = input.day;
-    change = (c) => ({ ...c, unrated: c.unrated.filter((d) => d !== day) });
+    // Like a skipped day: only a day that is shown is remembered as cleared.
+    change = (c) => (c.unrated.includes(day) ? { ...c, unrated: c.unrated.filter((d) => d !== day), dismissed: { ...c.dismissed, unrated: [...new Set([...c.dismissed.unrated, day])] } } : c);
   } else if (input.kind === 'gap' && typeof input.from === 'string' && typeof input.to === 'string') {
     change = (c) => ({ ...c, gaps: c.gaps.filter((g) => g.from !== input.from || g.to !== input.to) });
   } else if (input.kind === 'undated' && Array.isArray(input.keys) && input.keys.every((k) => typeof k === 'string')) {

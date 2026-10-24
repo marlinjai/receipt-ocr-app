@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { PaymentParseError, type NormalizedPayment, type ParsedFile, type PaymentFormat, type PaymentKind } from './types';
+import { PaymentParseError, type NormalizedPayment, type ParseOptions, type ParsedFile, type PaymentFormat, type PaymentKind } from './types';
 
 /**
  * Readers for the payment files the owner can export. Pure: text in, payments
@@ -95,6 +95,9 @@ interface Draft {
   kind: PaymentKind;
   /** The source's own unique number for the movement; when set it alone is the identity. */
   identity?: string;
+  original?: { currency: string; amountCents: number } | null;
+  estimated?: boolean;
+  relatedReferences?: string[];
 }
 
 /** Give every draft its identity; identical movements are numbered in order of appearance. */
@@ -102,7 +105,10 @@ function withHashes(drafts: Draft[]): NormalizedPayment[] {
   const seen = new Map<string, number>();
   return drafts.map(({ identity, ...d }) => {
     if (identity) return { ...d, sourceHash: referenceHash(identity), byReference: true };
-    const base = [d.bookingDay, d.amountCents, d.counterparty.toLowerCase(), d.reference.toLowerCase(), d.entryReference ?? ''].join('|');
+    // A movement read at a reference rate is identified by what the source states, never by the euro amount:
+    // a rate looked up on a later fetch must not change who the movement is.
+    const amount = d.estimated && d.original ? `${d.original.currency}:${d.original.amountCents}` : d.amountCents;
+    const base = [d.bookingDay, amount, d.counterparty.toLowerCase(), d.reference.toLowerCase(), d.entryReference ?? ''].join('|');
     const occurrence = (seen.get(base) ?? 0) + 1;
     seen.set(base, occurrence);
     return { ...d, sourceHash: createHash('sha256').update(`${base}|${occurrence}`).digest('hex') };
@@ -214,6 +220,8 @@ function parsePaypal(rows: string[][]): ParsedFile {
     if (/Währungsumrechnung/i.test(type)) {
       const purchase = byCode.get(clean(r.get('Zugehöriger Transaktionscode')));
       const foreign = purchase !== undefined && clean(purchase.get('Währung')) !== 'EUR' && !/Währungsumrechnung/i.test(clean(purchase.get('Typ')));
+      const purchaseCode = foreign ? clean(purchase.get('Transaktionscode')) : '';
+      const purchaseCents = foreign ? toCents(purchase.get('Brutto')) : null;
       drafts.push({
         bookingDay,
         valueDay: null,
@@ -221,6 +229,10 @@ function parsePaypal(rows: string[][]): ParsedFile {
         counterparty: foreign ? clean(purchase.get('Name')) : '',
         reference: foreign ? describe(purchase) : 'Währungsumrechnung',
         entryReference: clean(r.get('Transaktionscode')) || null,
+        // The live feed names the purchase by its own code: kept so that source recognizes this row (see `importPayments`).
+        ...(purchaseCode ? { relatedReferences: [purchaseCode] } : {}),
+        // What the purchase cost in its own currency, shown next to the euro amount; the euro amount here is real.
+        ...(foreign && purchaseCents !== null ? { original: { currency: clean(purchase.get('Währung')).toUpperCase(), amountCents: purchaseCents } } : {}),
         // The euro side of a foreign movement is that movement: a spend, money
         // back on a purchase, or income from someone who paid in another
         // currency. A conversion that belongs to nothing only moves money.
@@ -393,30 +405,80 @@ function parseKlarna(rows: string[][]): ParsedFile {
   return finish('klarna_csv', kept, skipped, { cancelled, notices, unknownStatuses });
 }
 
-function parseEnableBanking(data: unknown): ParsedFile {
+/** The key of a reference rate: currency and day, like "USD|2026-10-01". The rate is euro per unit of the currency. */
+export function rateKey(currency: string, day: string): string {
+  return `${currency}|${day}`;
+}
+
+const isCurrency = (value: unknown): value is string => typeof value === 'string' && /^[A-Z]{3}$/.test(value);
+
+/** The day of a movement of the bank interface's list: booking day, else transaction day, else value day. */
+function interfaceDay(t: Record<string, unknown>): string | null {
+  return toIsoDay((t.booking_date as string) ?? (t.transaction_date as string) ?? (t.value_date as string));
+}
+
+/**
+ * The reference rates a wallet's list needs: one per currency other than euro
+ * and booked day. The live fetch looks them up before the list is read, so the
+ * reader stays pure.
+ */
+export function walletRateNeeds(list: readonly unknown[]): Array<{ currency: string; day: string }> {
+  const out = new Map<string, { currency: string; day: string }>();
+  for (const entry of list) {
+    const t = (entry ?? {}) as Record<string, unknown>;
+    if (t.status !== 'BOOK') continue;
+    const currency = ((t.transaction_amount ?? {}) as { currency?: unknown }).currency;
+    const day = interfaceDay(t);
+    if (!isCurrency(currency) || currency === 'EUR' || !day) continue;
+    out.set(rateKey(currency, day), { currency, day });
+  }
+  return [...out.values()];
+}
+
+function parseEnableBanking(data: unknown, options: ParseOptions = {}): ParsedFile {
   const list = Array.isArray(data) ? data : Array.isArray((data as { transactions?: unknown })?.transactions) ? (data as { transactions: unknown[] }).transactions : null;
   if (list === null) throw new PaymentParseError('unknown_layout');
+  const wallet = options.wallet ?? null;
   const skipped: Record<string, number> = {};
   const drafts: Draft[] = [];
   list.forEach((entry, index) => {
     const t = (entry ?? {}) as Record<string, unknown>;
-    // Only booked movements: a pending one can still change or vanish.
+    // Only booked movements: a pending one can still change or vanish, a rejected one never happened.
     if (t.status !== 'BOOK') {
-      skip(skipped, 'not_booked');
+      skip(skipped, t.status === 'RJCT' ? 'rejected' : 'not_booked');
       return;
     }
     const amount = (t.transaction_amount ?? {}) as { amount?: unknown; currency?: unknown };
-    if (amount.currency !== 'EUR') {
+    // A bank's movement in another currency is left out (the bank books the euro side itself);
+    // a wallet's is read at the reference rate, because it is the only record of that purchase.
+    const foreign = amount.currency !== 'EUR';
+    if (foreign && wallet === null) {
       skip(skipped, 'other_currency');
       return;
     }
-    const bookingDay = toIsoDay((t.booking_date as string) ?? (t.transaction_date as string) ?? (t.value_date as string));
+    // A wallet's movement without a readable currency is not left out in silence: it is unreadable, so the live
+    // fetch keeps its day as a notice and as a day it holds in part, and the list can still bring it.
+    if (foreign && !isCurrency(amount.currency)) throw new PaymentParseError('unreadable_row', index + 1);
+    const bookingDay = interfaceDay(t);
     const magnitude = toCents(typeof amount.amount === 'string' ? amount.amount : String(amount.amount ?? ''));
     const indicator = t.credit_debit_indicator;
     if (!bookingDay || magnitude === null || magnitude < 0 || (indicator !== 'DBIT' && indicator !== 'CRDT')) {
       throw new PaymentParseError('unreadable_row', index + 1);
     }
-    const amountCents = indicator === 'DBIT' ? -magnitude : magnitude;
+    const sign = indicator === 'DBIT' ? -1 : 1;
+    let amountCents = sign * magnitude;
+    let original: Draft['original'] = null;
+    if (foreign) {
+      const currency = amount.currency as string;
+      const rate = wallet?.rates.get(rateKey(currency, bookingDay));
+      // Never a guessed rate: without one the row waits for a later fetch (the live fetch keeps its day as a notice).
+      if (rate === undefined || !Number.isFinite(rate) || rate <= 0) {
+        skip(skipped, 'no_exchange_rate');
+        return;
+      }
+      original = { currency, amountCents: sign * magnitude };
+      amountCents = sign * Math.round(magnitude * rate);
+    }
     const party = ((indicator === 'DBIT' ? t.creditor : t.debtor) ?? {}) as { name?: unknown };
     const remittance = Array.isArray(t.remittance_information) ? t.remittance_information.filter((x) => typeof x === 'string').join(' ') : '';
     drafts.push({
@@ -427,13 +489,22 @@ function parseEnableBanking(data: unknown): ParsedFile {
       reference: clean(remittance),
       entryReference: clean(t.entry_reference) || null,
       kind: defaultKind(amountCents),
+      ...(original ? { original, estimated: true } : {}),
     });
   });
+  // A wallet numbers its movements itself (PayPal's transaction code): a row with a code that no other row of
+  // the list repeats is identified by that code alone, so it is the same movement whatever else the source
+  // says about it on a later fetch. A row without a code, or with a code twice, keeps the content identity.
+  if (wallet !== null) {
+    const count = new Map<string, number>();
+    for (const d of drafts) if (d.entryReference) count.set(d.entryReference, (count.get(d.entryReference) ?? 0) + 1);
+    for (const d of drafts) if (d.entryReference && count.get(d.entryReference) === 1) d.identity = d.entryReference;
+  }
   return finish('enable_banking_json', drafts, skipped);
 }
 
 /** Recognize the layout from the content itself and read it. */
-export function parsePaymentFile(text: string): ParsedFile {
+export function parsePaymentFile(text: string, options: ParseOptions = {}): ParsedFile {
   if (text.length > MAX_BYTES) throw new PaymentParseError('too_large');
   const trimmed = text.trimStart();
   if (!trimmed) throw new PaymentParseError('empty');
@@ -444,7 +515,7 @@ export function parsePaymentFile(text: string): ParsedFile {
     } catch {
       throw new PaymentParseError('unknown_layout');
     }
-    return parseEnableBanking(data);
+    return parseEnableBanking(data, options);
   }
   const rows = parseCsv(text);
   if (rows.length === 0) throw new PaymentParseError('empty');

@@ -15,6 +15,8 @@ const row = (id: string, amountCents: number, links: Array<{ rowId: string; cent
   kindOverridden: false,
   sourceKind: amountCents < 0 ? 'spend' : 'refund',
   funding: twinId ? ({ twinId } as PaymentRow['funding']) : null,
+  estimated: false,
+  original: null,
   byRule: false,
   byPrivateAccount: false,
   links: links.map((l, i) => ({ id: `${id}-${i}`, rowId: l.rowId, invoiceId: null, cents: l.cents, method: 'manual' })),

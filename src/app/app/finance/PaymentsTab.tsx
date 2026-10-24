@@ -10,7 +10,7 @@ import type { RefundStrength } from '@/lib/tax/payments/refunds';
 import { PAYMENT_FORMAT_LABELS } from '@/lib/tax/payments/types';
 import type { OpenPayment, StatementView } from '@/lib/tax/service';
 import type { Result } from './actions';
-import { euro, parseEuro } from './amounts';
+import { euro, foreignNote, parseEuro } from './amounts';
 import { BankAccountStatus, type BankActions, type BankFeed } from './BankConnection';
 
 /** A search for payments to link by hand: one counterparty's, or any whose name, text or amount contains the words. */
@@ -41,6 +41,8 @@ interface Props {
   onKind: (paymentId: string, kind: 'private' | 'refund' | null) => void;
   /** Say that a whole account is private (true), or take that back (false). */
   onAccountPrivate: (account: { id: string; label: string }, isPrivate: boolean) => void;
+  /** Remove an account that holds nothing (no payments, imports or live connection). */
+  onRemoveAccount?: (account: { id: string; label: string }) => void;
   /** Find payments of the year that still have something to link, whatever was answered about them. Read only. */
   onSearch: (query: PaymentQuery) => Promise<Result<{ payments: FoundPayment[]; total: number }>>;
   /** The live bank connection per account; absent where the screen is shown without it. */
@@ -64,6 +66,9 @@ const SKIP_LABELS: Record<string, string> = {
   not_booked: 'noch nicht gebucht',
   not_completed: 'nicht abgeschlossen',
   other_currency: 'andere Währung',
+  rejected: 'abgelehnt',
+  no_exchange_rate: 'in anderer Währung ohne Referenzkurs (der nächste Abruf versucht es wieder)',
+  known_from_other_source: 'schon aus der anderen Quelle dieses Kontos bekannt (gleiche Transaktionsnummer)',
   memo_line: 'Hinweiszeilen',
   cancelled: 'storniert oder vollständig erstattet',
   zero_amount: 'ohne Betrag',
@@ -94,7 +99,7 @@ const LINK_METHOD_LABELS: Record<string, string> = {
  * a counterparty is treated, and linking payments to receipts and invoices.
  * A link is only made on a reference or by a person's confirmation.
  */
-export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onSearch, bank, sharing }: Props) {
+export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onRemoveAccount, onSearch, bank, sharing }: Props) {
   const id = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState('');
@@ -170,6 +175,20 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                       {account.isPrivate ? ' · privat: nach seinen Zahlungen wird nicht gefragt' : ''}
                     </span>
                   </p>
+                  <span className="flex flex-wrap gap-2">
+                  {onRemoveAccount && account.paymentCount === 0 && account.batches.length === 0 && !bank?.feed.bank.connections.some((c) => c.accountId === account.id) && (
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm ui-btn-danger"
+                      disabled={busy}
+                      onClick={() => {
+                        if (!window.confirm(`„${account.label}“ entfernen? Das Konto hat keine Zahlungen, keine Importe und keine Live-Verbindung; es verschwindet aus der Liste.`)) return;
+                        onRemoveAccount(account);
+                      }}
+                    >
+                      Konto entfernen
+                    </button>
+                  )}
                   {account.isPrivate ? (
                     <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onAccountPrivate(account, false)}>
                       Wieder prüfen
@@ -187,6 +206,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                       Ganzes Konto ist privat
                     </button>
                   )}
+                  </span>
                 </div>
                 {bank && <BankAccountStatus account={account} feed={bank.feed} actions={bank.actions} enabled={bank.feed.bank.enabled} />}
                 {account.batches.length > 0 && (
@@ -271,8 +291,9 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
             Bankschnittstelle. Eine Datei wird ganz oder gar nicht eingelesen; überlappende Zeiträume legen nichts doppelt
             an. Was ein Zahlungsdienst später vom Bankkonto einzieht, gilt als Umbuchung zwischen eigenen Konten, sobald
             die Liste des Dienstes eingelesen ist. Ein Konto lässt sich aus einer zweiten Quelle fortsetzen (ein
-            Bankexport, der mitten im Jahr endet, weiter mit der Umsatzliste der Bankschnittstelle): ein Tag gehört der
-            Quelle, die ihn zuerst gebracht hat, die andere Datei liest nur die übrigen Tage. Mit „Nur Zahlungen aus{' '}
+            Bankexport, der mitten im Jahr endet, weiter mit der Umsatzliste der Bankschnittstelle; die PayPal-Liste weiter
+            mit der Live-Verbindung zu PayPal): ein Tag gehört der Quelle, die ihn zuerst gebracht hat, die andere Datei
+            liest nur die übrigen Tage. Mit „Nur Zahlungen aus{' '}
             {view.year}“ bleibt der Rest der Datei draußen; er lässt sich später noch einlesen.
           </p>
           {lastImport && (
@@ -280,7 +301,8 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
               Eingelesen{lastImport.onlyYear !== null ? ` (nur ${lastImport.onlyYear})` : ''}: {lastImport.added} neue Zahlungen
               {lastImport.alreadyThere > 0 ? `, ${lastImport.alreadyThere} waren schon vorhanden` : ''}
               {lastImport.autoLinked > 0 ? `, ${lastImport.autoLinked} über die Rechnungsnummer einer Rechnung zugeordnet` : ''}
-              {lastImport.adopted > 0 ? `, ${lastImport.adopted} schon vorhandene an ihrer neuen Nummer wiedererkannt` : ''}.
+              {lastImport.adopted > 0 ? `, ${lastImport.adopted} schon vorhandene an ihrer neuen Nummer wiedererkannt` : ''}
+              {lastImport.settled > 0 ? `, bei ${lastImport.settled === 1 ? 'einer geschätzten Zahlung' : `${lastImport.settled} geschätzten Zahlungen`} in anderer Währung den tatsächlichen Eurobetrag übernommen` : ''}.
               {lastImport.cancelledEarlier > 0 &&
                 ` ${lastImport.cancelledEarlier} früher eingelesene ${lastImport.cancelledEarlier === 1 ? 'Kauf ist' : 'Käufe sind'} laut dieser Datei storniert oder vollständig erstattet und ${lastImport.cancelledEarlier === 1 ? 'zählt' : 'zählen'} nicht mehr${
                   lastImport.releasedLinks > 0 ? `; ${lastImport.releasedLinks} ${lastImport.releasedLinks === 1 ? 'Zuordnung wurde' : 'Zuordnungen wurden'} gelöst, siehe „Stornierte Käufe“` : ''
@@ -433,6 +455,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                   </span>
                   <span className="text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
                     {payment.amountCents < 0 ? 'bezahlt' : 'erhalten'} {euro(Math.abs(payment.amountCents))}
+                    {foreignNote(payment.foreign)}
                     {payment.freeCents !== Math.abs(payment.amountCents) ? `, davon offen ${euro(payment.freeCents)}` : ''}
                   </span>
                 </div>
@@ -567,7 +590,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 {p.ruleTransfers.map((transfer) => (
                   <li key={transfer.id} className="flex flex-wrap items-baseline justify-between gap-2">
                     <span>
-                      {formatDay(transfer.bookingDay)} {transfer.counterparty || 'ohne Namen'} {transfer.amountCents < 0 ? 'bezahlt' : 'erhalten'} {euro(Math.abs(transfer.amountCents))}
+                      {formatDay(transfer.bookingDay)} {transfer.counterparty || 'ohne Namen'} {transfer.amountCents < 0 ? 'bezahlt' : 'erhalten'} {euro(Math.abs(transfer.amountCents))}{foreignNote(transfer.foreign)}
                       <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
                         {transfer.accountLabel}
                         {transfer.reference ? ` · ${transfer.reference.slice(0, 60)}` : ''}
@@ -889,6 +912,7 @@ function PaymentFinder({
                   </span>
                   <span className="tabular-nums">
                     {payment.amountCents < 0 ? 'bezahlt' : 'erhalten'} {euro(Math.abs(payment.amountCents))}
+                    {foreignNote(payment.foreign)}
                     {payment.freeCents !== Math.abs(payment.amountCents) ? `, davon offen ${euro(payment.freeCents)}` : ''}
                     <button
                       type="button"

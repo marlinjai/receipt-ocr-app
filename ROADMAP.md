@@ -115,6 +115,12 @@
   missing-receipt loop, business and unanswered ones stay with Whiz-Art Media. Worked out on
   read, nothing copied. Plan:
   [docs/plans/2026-10-22-payments-across-companies.md](docs/plans/2026-10-22-payments-across-companies.md). (2026-10-23)
+- [ ] PayPal live through the bank interface (decided by the owner on 2026-10-23): the PayPal
+  account continues live after the last day its CSV list covers, a movement seen by both sources
+  is recognized as one, the funding rule keeps it as the PayPal wallet, dollar purchases arrive at
+  the reference rate marked as an estimate, and an empty account can be removed. After the
+  deploy the owner connects the PayPal account once. Plan:
+  [docs/plans/2026-10-23-paypal-live.md](docs/plans/2026-10-23-paypal-live.md). (2026-10-23)
 - [ ] Bring the app up to the tax session's draft for 2025. Marlin's 17 answers of 2026-10-11
   (recorded in `Entscheidungen-2025.md` in the tax folder) are carried out, the bank, PayPal and
   pay-later lists are imported, and 112 payments are linked: business expenses in the app went

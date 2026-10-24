@@ -64,6 +64,31 @@ export interface NormalizedPayment {
   sourceHash: string;
   /** True when `sourceHash` is built from the source's own number alone (see `referenceHash`). */
   byReference?: boolean;
+  /**
+   * A movement in another currency: what the source states (signed cents of
+   * that currency) and the currency. Null or absent for a movement in euro.
+   */
+  original?: { currency: string; amountCents: number } | null;
+  /** True when `amountCents` is the original amount at the reference rate, not what was charged in euro. */
+  estimated?: boolean;
+  /**
+   * Further numbers of the source that name the same movement (the purchase a
+   * currency conversion of the PayPal list belongs to). Only used to recognize
+   * a movement another source brought; the first is stored as the payment's
+   * `relatedReference`, never part of the identity.
+   */
+  relatedReferences?: string[];
+}
+
+/** How a list is read where the content alone cannot say it. */
+export interface ParseOptions {
+  /**
+   * The bank interface's list of a payment service's wallet (PayPal): rows in
+   * another currency are read at these reference rates (see `rateKey`) instead
+   * of being skipped, and PayPal's transaction code is the identity of every
+   * row whose code no other row of the list repeats.
+   */
+  wallet?: { rates: ReadonlyMap<string, number> };
 }
 
 export type ParseErrorCode =

@@ -31,9 +31,11 @@ import {
   PaymentServiceError,
   countedReceiptLinks,
   deletePaymentLinksForRows,
+  foreignAmount,
   linkProposals,
   loadPayments,
   type CounterpartyTreatment,
+  type ForeignAmount,
   type LoadedPayments,
   type PaymentContext,
   type PaymentRow,
@@ -184,16 +186,21 @@ export interface LoadedReceipts {
  * linked to the same receipt is taken off, and the day is that of the first
  * payment out.
  */
-export function paidByRow(payments: readonly PaymentRow[]): Map<string, { day: string; cents: number }> {
-  const out = new Map<string, { day: string; cents: number }>();
+export function paidByRow(payments: readonly PaymentRow[]): Map<string, { day: string; cents: number; estimated?: true }> {
+  const out = new Map<string, { day: string; cents: number; estimated?: true }>();
   for (const [rowId, money] of linkedByRow(payments)) if (money.paid) out.set(rowId, money.paid);
   return out;
 }
 
 /** What linked payments say about one receipt. */
 export interface LinkedMoney {
-  /** Day of the first payment out and what was paid, refunds taken off; null while no payment out is linked. */
-  paid: { day: string; cents: number } | null;
+  /**
+   * Day of the first payment out and what was paid, refunds taken off; null
+   * while no payment out is linked. `estimated` when a payment out counted in
+   * it is another currency at the reference rate: then the sum is no amount
+   * charged (see `resolveItem`).
+   */
+  paid: { day: string; cents: number; estimated?: true } | null;
   /** Refunds linked while no payment out is: taken off the document's own amount. */
   refundedCents: number;
   /**
@@ -215,12 +222,13 @@ export function linkedByRow(payments: readonly PaymentRow[]): Map<string, Linked
   // Note for the ten-day rule (year-boundary days): it looks at money out only,
   // so a credit note refunded between 22 December and 10 January is not listed
   // there. Credit notes are not regularly recurring payments, so none is missed.
-  const sums = new Map<string, { day: string | null; backDay: string | null; outCents: number; backCents: number }>();
+  const sums = new Map<string, { day: string | null; backDay: string | null; outCents: number; backCents: number; estimated: boolean }>();
   // A payment and the debit that funds it are the same money and count once (`countedReceiptLinks`).
   for (const { payment, link } of countedReceiptLinks(payments)) {
-    const current = sums.get(link.rowId) ?? { day: null, backDay: null, outCents: 0, backCents: 0 };
+    const current = sums.get(link.rowId) ?? { day: null, backDay: null, outCents: 0, backCents: 0, estimated: false };
     if (payment.amountCents < 0) {
       current.outCents += link.cents;
+      if (payment.estimated) current.estimated = true;
       if (current.day === null || payment.bookingDay < current.day) current.day = payment.bookingDay;
     } else {
       current.backCents += link.cents;
@@ -234,7 +242,7 @@ export function linkedByRow(payments: readonly PaymentRow[]): Map<string, Linked
     out.set(
       rowId,
       s.day !== null
-        ? { paid: { day: s.day, cents: Math.max(0, s.outCents - s.backCents) }, refundedCents: 0, back, outCents: s.outCents }
+        ? { paid: { day: s.day, cents: Math.max(0, s.outCents - s.backCents), ...(s.estimated ? { estimated: true as const } : {}) }, refundedCents: 0, back, outCents: s.outCents }
         : { paid: null, refundedCents: s.backCents, back, outCents: 0 },
     );
   }
@@ -946,6 +954,8 @@ export interface OpenPayment {
    * covers, no matching purchase, or a person said so): a person can say it is one.
    */
   namesService: boolean;
+  /** For a payment in another currency: its own amount, and whether the euro amount is an estimate. */
+  foreign?: ForeignAmount | null;
 }
 
 /** A payment the funding rule made a transfer between own accounts. Listed so a person can say it is a purchase after all. */
@@ -960,6 +970,7 @@ export interface RuleTransfer {
   hasTwin: boolean;
   /** The receipts this payment is linked to: a link on a transfer keeps counting for its receipt unless the purchase it funds is linked there too. */
   linkedTo: string[];
+  foreign?: ForeignAmount | null;
 }
 
 /**
@@ -1092,7 +1103,7 @@ function buildPaymentsView(
     purchasesByRow.set(link.rowId, list);
   }
   // A payment service or a payment provider stands for many shops: from it only a shared number proposes a receipt.
-  const heldNames = new Set(loaded.accounts.flatMap((a) => heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) })?.name ?? []));
+  const heldNames = new Set(loaded.accounts.flatMap((a) => heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format), services: a.batches.map((b) => b.service) })?.name ?? []));
   const namesService = (p: PaymentRow) => p.counterpartyKey.split(' ').some((word) => heldNames.has(word));
   const intermediary = (p: PaymentRow) => namesService(p) || p.counterpartyKey.split(' ').some((word) => PAYMENT_INTERMEDIARIES.has(word));
   const refundTargets: RefundTarget[] = resolved
@@ -1223,6 +1234,7 @@ function buildPaymentsView(
     accountLabel: accountLabel.get(p.accountId) ?? '',
     check: p.kind === 'income' ? 'income_without_invoice' : p.kind === 'refund' ? 'refund_without_receipt' : 'payment_without_document',
     namesService: p.kind !== 'refund' && namesService(p),
+    foreign: foreignAmount(p),
     proposals:
       p.kind === 'refund'
         ? refundsFor(p)
@@ -1238,11 +1250,11 @@ function buildPaymentsView(
   // What the funding rule hides, so it can be seen and taken back.
   const ruled = inYear.filter((p) => p.byRule && p.kind === 'own_transfer');
   const ruleTransfers: RuleTransfer[] = ruled
-    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, reference: p.reference, accountLabel: accountLabel.get(p.accountId) ?? '', hasTwin: p.funding?.twinId != null, linkedTo: p.links.flatMap((l) => (l.rowId ? [itemById.get(l.rowId)?.label ?? 'Beleg (nicht mehr vorhanden)'] : [])) }))
+    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, reference: p.reference, accountLabel: accountLabel.get(p.accountId) ?? '', hasTwin: p.funding?.twinId != null, foreign: foreignAmount(p), linkedTo: p.links.flatMap((l) => (l.rowId ? [itemById.get(l.rowId)?.label ?? 'Beleg (nicht mehr vorhanden)'] : [])) }))
     .sort((a, b) => (a.bookingDay < b.bookingDay ? 1 : -1));
   const holderOf = new Map<string, { name: string; kind: ServiceKind }>();
   for (const a of loaded.accounts) {
-    const service = heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) });
+    const service = heldService({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format), services: a.batches.map((b) => b.service) });
     if (service) holderOf.set(a.id, service);
   }
   const reconciliations: Reconciliation[] = [];
@@ -1252,9 +1264,10 @@ function buildPaymentsView(
     // What the OTHER accounts show leaving for the service; the wallet's own payout rows are not collections.
     for (const p of ruled) if (p.funding?.service === service.name && p.amountCents < 0 && holderOf.get(p.accountId)?.name !== service.name) collected.set(p.bookingDay.slice(0, 7), (collected.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
     if (collected.size === 0) continue;
-    // The wallet's own payout rows are no purchases; a row the rule pairs with ANOTHER service (a PayPal
-    // purchase on the pay-later card) is still a purchase this service collects from the bank.
-    for (const p of inYear) if (holderOf.get(p.accountId)?.name === service.name && p.amountCents < 0 && p.sourceKind === 'spend' && !(p.byRule && p.funding?.service === service.name)) listed.set(p.bookingDay.slice(0, 7), (listed.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
+    // The wallet's own payout rows are no purchases, paired by the rule or not: a row without a name is a payout
+    // (plan 2026-10-23-paypal-live, point 7). A row the rule pairs with ANOTHER service (a PayPal purchase on the
+    // pay-later card) is still a purchase this service collects from the bank.
+    for (const p of inYear) if (holderOf.get(p.accountId)?.name === service.name && p.amountCents < 0 && p.sourceKind === 'spend' && p.counterparty.trim() !== '' && !(p.byRule && p.funding?.service === service.name)) listed.set(p.bookingDay.slice(0, 7), (listed.get(p.bookingDay.slice(0, 7)) ?? 0) - p.amountCents);
     let running = 0;
     const months = [...new Set([...collected.keys(), ...listed.keys()])].sort().map((month) => {
       const collectedCents = collected.get(month) ?? 0;

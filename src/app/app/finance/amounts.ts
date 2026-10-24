@@ -5,6 +5,17 @@ import { eurosToCents, formatCents } from '@/lib/tax/money';
 export const euro = (cents: number) => `${formatCents(cents)} €`;
 
 /**
+ * What a payment in another currency adds after its euro amount: the source's
+ * own amount, and, while the euro amount is converted at the reference rate,
+ * that it is an estimate. Empty for a payment in euro.
+ */
+export function foreignNote(foreign: { currency: string; cents: number; estimated: boolean } | null | undefined): string {
+  if (!foreign) return '';
+  const own = `${formatCents(foreign.cents)} ${foreign.currency}`;
+  return foreign.estimated ? ` (geschätzt: ${own} zum Referenzkurs)` : ` (${own})`;
+}
+
+/**
  * A typed euro amount to cents; null when it is not an amount. Read the German
  * way: a comma is the decimal sign and points group thousands ("1.234,56",
  * "5.000"). A single point followed by one or two digits is taken as a decimal

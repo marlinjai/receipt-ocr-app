@@ -4,10 +4,11 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { vendorKey } from '../decisions';
 import { resolveFunding, type Funding } from './funding';
 import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from './match';
-import { batchCoverage, beyondStored, covers, coveredByOtherSources, mergeIntervals, orderBatches, overlaps } from './coverage';
+import { batchCoverage, covers, coveredByOtherSources, isPaypalSource, matchStored, mergeIntervals, orderBatches, overlaps, sourcesMayShare, type PaymentSource } from './coverage';
+import { scaleLinks } from './estimate';
 import { parsePaymentFile, referenceHash } from './parse';
 import { amountQuery } from './search';
-import { OVERPAID_TOLERANCE_PERCENT, PAYMENT_KINDS, type NormalizedPayment, type PaymentFormat, type PaymentKind } from './types';
+import { OVERPAID_TOLERANCE_PERCENT, PAYMENT_KINDS, type NormalizedPayment, type ParseOptions, type PaymentFormat, type PaymentKind } from './types';
 
 /**
  * Server-side reads and writes for payments. Like the other finance services,
@@ -35,6 +36,8 @@ export type PaymentServiceErrorCode =
   | 'nothing_in_year'
   /** Every day of the file is held by another source of the account already, and it cancels nothing. */
   | 'nothing_uncovered'
+  /** Only an account without payments, imports and a live connection can be removed. */
+  | 'account_not_empty'
   /** Limited to a year (or asked to refuse an empty import), the file adds, recognizes and cancels nothing. */
   | 'nothing_new'
   /** A later import from another source of the account relied on this one's days: undo that one first. */
@@ -125,6 +128,12 @@ export interface ImportResult {
   releasedLinks: number;
   /** Payments stored without the source's number that this file gave one: recognized, not stored again. */
   adopted: number;
+  /**
+   * Payments another source of the account stored with an estimated euro amount
+   * (another currency at the reference rate) that this file lists with the real
+   * one: the real amount was taken over.
+   */
+  settled: number;
   /** Rows that were read but need a look, by reason. */
   notices: Record<string, number>;
   /** Status wordings the reader did not know; those rows were read as purchases. */
@@ -132,9 +141,6 @@ export interface ImportResult {
   firstDay: string | null;
   lastDay: string | null;
 }
-
-/** The bank sources: one bank account may be continued from one of them by another (see `coverage.ts`). */
-const BANK_FORMATS: readonly string[] = ['enable_banking_json', 'n26_csv', 'tomorrow_csv'] satisfies PaymentFormat[];
 
 export interface ImportOptions {
   /** Read only the payments booked in this year; the rest of the file is counted and left out. */
@@ -146,6 +152,17 @@ export interface ImportOptions {
    * of undoing.
    */
   refuseEmpty?: boolean;
+  /** How to read the text where its content cannot say it (the PayPal live feed: reference rates). */
+  parse?: ParseOptions;
+  /** The service the bank interface reads for this import (`paypal`), stored on the import; null for a bank. */
+  service?: string | null;
+  /**
+   * Days on which the fetch knowingly left a movement out (no reference rate,
+   * or described too incompletely), stored on the import: an import of another
+   * source compares its rows on those days like on an edge day, so the
+   * movement is not lost to the day rule.
+   */
+  partialDays?: readonly string[];
 }
 
 /** The years an import can be limited to: the same range the finance area offers. */
@@ -176,48 +193,97 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
   const onlyYear = validImportYear(options.onlyYear);
   const account = await db.taxAccount.findFirst({ where: { id: accountId, authWorkspaceId: ctx.workspaceId } });
   if (!account) throw new PaymentServiceError('account_not_found');
-  const contentHash = createHash('sha256').update(onlyYear === null ? text : `${text}\u0000only-year:${onlyYear}`).digest('hex');
+  // The rates a wallet's list is read at are part of what is imported: the same list read again once a missing
+  // rate exists is another import (it brings the movement that waited), not the same file twice.
+  const rates = options.parse?.wallet ? [...options.parse.wallet.rates].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]) => `${k}=${v}`).join(';') : null;
+  const contentHash = createHash('sha256').update(`${onlyYear === null ? text : `${text}\u0000only-year:${onlyYear}`}${rates === null ? '' : `\u0000rates:${rates}`}`).digest('hex');
   if (await db.taxImportBatch.findFirst({ where: { accountId, contentHash } })) throw new PaymentServiceError('file_already_imported');
-  const file = parsePaymentFile(text);
+  const file = parsePaymentFile(text, options.parse);
+  const source: PaymentSource = { format: file.format, service: file.format === 'enable_banking_json' ? options.service ?? null : null };
 
   // Everything from here on happens together or not at all, including the
   // automatic links: a failure leaves no batch behind that would refuse a retry.
-  const { batch, added, autoLinked, adopted, cancelledEarlier, releasedLinks, parsed } = await db.$transaction(async (tx) => {
+  const { batch, added, autoLinked, adopted, settled, cancelledEarlier, releasedLinks, parsed } = await db.$transaction(async (tx) => {
     // One import per account at a time: what other sources hold is read and judged without another import slipping in.
     const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM tax_accounts WHERE id = ${accountId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
     if (locked.length === 0) throw new PaymentServiceError('account_not_found');
     if (await tx.taxImportBatch.findFirst({ where: { accountId, contentHash } })) throw new PaymentServiceError('file_already_imported');
-    const batches = await tx.taxImportBatch.findMany({ where: { accountId }, select: { id: true, format: true, firstDay: true, lastDay: true, createdAt: true } });
-    // A bank account may be continued from another bank source; a payment service's list holds other
-    // movements than its bank (its purchases, not the bank's debits), so the two never share an account.
-    if (batches.some((b) => b.format !== file.format && !(BANK_FORMATS.includes(b.format) && BANK_FORMATS.includes(file.format)))) throw new PaymentServiceError('format_mismatch');
+    const batches = await tx.taxImportBatch.findMany({ where: { accountId }, select: { id: true, format: true, service: true, firstDay: true, lastDay: true, partialDays: true, createdAt: true } });
+    // A bank account may be continued from another bank source, PayPal's list from the bank interface reading
+    // PayPal; a payment service's list holds other movements than a bank, so the two never share an account.
+    if (batches.some((b) => !sourcesMayShare(b, source))) throw new PaymentServiceError('format_mismatch');
     const otherSources = coveredByOtherSources(batches, file.format);
     const skipped = { ...file.skipped };
-    const inYear = file.payments.filter((p) => onlyYear === null || p.bookingDay.startsWith(`${onlyYear}-`));
-    if (inYear.length < file.payments.length) skipped.other_year = file.payments.length - inYear.length;
+    const inFileYear = file.payments.filter((p) => onlyYear === null || p.bookingDay.startsWith(`${onlyYear}-`));
+    if (inFileYear.length < file.payments.length) skipped.other_year = file.payments.length - inFileYear.length;
+    // A wallet's two sources number the same movement with the same code (PayPal's transaction code; for a
+    // purchase in another currency the list's euro row names the purchase's code as its related one). A row
+    // whose code the other source stored is that movement, whatever day: left out, and when the stored one
+    // is an estimate and this row is not, the real euro amount wins.
+    let settled = 0;
+    const known = new Set<NormalizedPayment>();
+    const claimed = new Set<string>();
+    if (isPaypalSource(source)) {
+      const codes = [...new Set(inFileYear.flatMap((p) => [p.entryReference, ...(p.relatedReferences ?? [])].filter((c): c is string => !!c)))];
+      // The list stores a foreign purchase's own code as the related one of its euro row: found either way.
+      const others = codes.length === 0 ? [] : await tx.taxPayment.findMany({
+        where: { accountId, OR: [{ entryReference: { in: codes } }, { relatedReference: { in: codes } }], batch: { format: { not: file.format } } },
+        select: { id: true, entryReference: true, relatedReference: true, amountCents: true, amountEstimated: true, originalAmountCents: true },
+      });
+      const byCode = new Map<string, (typeof others)[number]>();
+      for (const o of others) for (const c of [o.entryReference, o.relatedReference]) if (c && !byCode.has(c)) byCode.set(c, o);
+      for (const p of inFileYear) {
+        const hit = [p.entryReference, ...(p.relatedReferences ?? [])].map((c) => (c ? byCode.get(c) : undefined)).find((o) => o !== undefined && !claimed.has(o.id));
+        if (!hit) continue;
+        claimed.add(hit.id);
+        known.add(p);
+        if (hit.amountEstimated && !p.estimated) {
+          await settleEstimate(tx, hit.id, hit.amountCents, p.amountCents, hit.originalAmountCents === null && p.original ? { originalAmountCents: p.original.amountCents, originalCurrency: p.original.currency } : {});
+          settled += 1;
+        }
+      }
+      if (known.size > 0) skipped.known_from_other_source = known.size;
+    }
+    const inYear = inFileYear.filter((p) => !known.has(p));
     // Days another source holds are its own. Only on the first and the last day of a range it holds as a whole,
     // which an export taken in the middle of a day may hold in part, what goes beyond its stored movements is new.
     // On this source's own days the same comparison runs against what another source added on such an edge day,
     // so a fuller export of a day that another source completed stores nothing twice. The identity of a row does
     // not change by leaving others out: identical movements are numbered over the whole file.
     const onCovered = inYear.filter((p) => covers(otherSources, p.bookingDay));
-    const edges = new Set(mergeIntervals(otherSources).flatMap((i) => [i.from, i.to]));
+    // A day another source's fetch knowingly holds in part (a movement left out without a rate) is compared like an edge day.
+    const partial = batches.filter((b) => b.format !== file.format).flatMap((b) => b.partialDays);
+    const edges = new Set([...mergeIntervals(otherSources).flatMap((i) => [i.from, i.to]), ...partial]);
     const compared = inYear.filter((p) => !covers(otherSources, p.bookingDay) || edges.has(p.bookingDay));
     const stored = compared.length === 0 ? [] : await tx.taxPayment.findMany({
       where: { accountId, bookingDay: { in: [...new Set(compared.map((p) => p.bookingDay))] }, batch: { format: { not: file.format } } },
-      select: { bookingDay: true, amountCents: true },
+      select: { id: true, bookingDay: true, amountCents: true, counterpartyKey: true, amountEstimated: true },
     });
-    const { same } = beyondStored(compared, stored);
-    const leftOut = new Set([...onCovered.filter((p) => !edges.has(p.bookingDay)), ...same]);
-    if (leftOut.size > 0) skipped.covered_by_other_source = leftOut.size;
+    const storedCents = new Map(stored.map((p) => [p.id, p.amountCents]));
+    // An estimate on either side (a purchase in another currency) is compared by day and counterparty, not amount.
+    const { same, settles } = matchStored(
+      compared.map((p) => ({ ...p, counterpartyKey: counterpartyKey(p.counterparty) })),
+      stored.filter((p) => !claimed.has(p.id)).map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, estimated: p.amountEstimated })),
+    );
+    for (const { row, storedId } of settles) {
+      await settleEstimate(tx, storedId, storedCents.get(storedId) as number, row.amountCents, {});
+      settled += 1;
+    }
+    const sameRows = new Set(same.map((p) => compared.find((c) => c.sourceHash === p.sourceHash) as NormalizedPayment));
+    const leftOut = new Set([...onCovered.filter((p) => !edges.has(p.bookingDay)), ...sameRows]);
+    // A row that gave a stored estimate its real amount is counted as that (`settled`), not again as covered.
+    const settling = new Set(settles.map(({ row }) => compared.find((c) => c.sourceHash === row.sourceHash)));
+    const coveredCount = [...leftOut].filter((p) => !settling.has(p)).length;
+    if (coveredCount > 0) skipped.covered_by_other_source = coveredCount;
     const kept = inYear.filter((p) => !leftOut.has(p));
-    // A file that keeps nothing still counts when it cancels purchases: those apply to any year and any day.
-    if (kept.length === 0 && file.payments.length > 0 && file.cancelled.length === 0) {
-      throw new PaymentServiceError(inYear.length === 0 ? 'nothing_in_year' : 'nothing_uncovered');
+    // A file that keeps nothing still counts when it cancels purchases (those apply to any year and any day) or
+    // gives another source's estimates their real euro amount.
+    if (kept.length === 0 && file.payments.length > 0 && file.cancelled.length === 0 && settled === 0) {
+      throw new PaymentServiceError(inFileYear.length === 0 ? 'nothing_in_year' : 'nothing_uncovered');
     }
     const days = kept.map((p) => p.bookingDay).sort();
     const parsed = { ...file, payments: kept, skipped, firstDay: days[0] ?? null, lastDay: days[days.length - 1] ?? null };
-    const adopted = await adoptUnreferenced(tx, accountId, parsed.payments);
+    const adopted = await adoptUnreferenced(tx, accountId, parsed.payments, file.format);
     const existing = new Set(
       (await tx.taxPayment.findMany({ where: { accountId, sourceHash: { in: parsed.payments.map((p) => p.sourceHash) } }, select: { sourceHash: true } })).map((p) => p.sourceHash),
     );
@@ -236,6 +302,8 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
         newCount: fresh.length,
         firstDay: parsed.firstDay,
         lastDay: parsed.lastDay,
+        service: source.service,
+        partialDays: [...new Set(options.partialDays ?? [])].sort(),
       },
     });
     let inserted = 0;
@@ -258,6 +326,10 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
           entryReference: p.entryReference,
           sourceKind: p.kind,
           sourceHash: p.sourceHash,
+          originalAmountCents: p.original?.amountCents ?? null,
+          originalCurrency: p.original?.currency ?? null,
+          amountEstimated: p.estimated === true,
+          relatedReference: p.relatedReferences?.[0] ?? null,
         })),
       });
       inserted = result.count;
@@ -275,8 +347,8 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     }
     // A year of a file that adds, recognizes and cancels nothing: its empty import would only stand in the way of
     // undoing. Undone with the rest. (A whole file that brings nothing new is still recorded, as before.)
-    if ((onlyYear !== null || options.refuseEmpty === true) && inserted === 0 && adopted === 0 && cancelledEarlier === 0) throw new PaymentServiceError('nothing_new');
-    return { batch: created, added: inserted, autoLinked: await linkByReference(tx, ctx, created.id), adopted, cancelledEarlier, releasedLinks, parsed };
+    if ((onlyYear !== null || options.refuseEmpty === true) && inserted === 0 && adopted === 0 && cancelledEarlier === 0 && settled === 0) throw new PaymentServiceError('nothing_new');
+    return { batch: created, added: inserted, autoLinked: await linkByReference(tx, ctx, created.id), adopted, settled, cancelledEarlier, releasedLinks, parsed };
     // A year of payments on a busy server takes longer than the five seconds a transaction gets by default.
   }, { maxWait: 20_000, timeout: 120_000 });
 
@@ -292,11 +364,35 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     cancelledEarlier,
     releasedLinks,
     adopted,
+    settled,
     notices: parsed.notices,
     unknownStatuses: parsed.unknownStatuses,
     firstDay: parsed.firstDay,
     lastDay: parsed.lastDay,
   };
+}
+
+/**
+ * Give a payment whose euro amount was an estimate the real amount another
+ * source states. Its links say how much of it pays each receipt or invoice, in
+ * cents of the estimate: each is scaled to the real amount, so a receipt the
+ * payment paid in full is paid in full at the real amount and no remainder is
+ * left open (the rounding difference goes to the last link). Links of every
+ * company (a shared payment) are scaled, under the payment's row lock, the one
+ * a link takes.
+ */
+async function settleEstimate(db: Prisma.TransactionClient, paymentId: string, estimateCents: number, realCents: number, extra: Prisma.TaxPaymentUpdateInput): Promise<void> {
+  await db.$queryRaw`SELECT id FROM tax_payments WHERE id = ${paymentId} FOR UPDATE`;
+  await db.taxPayment.update({ where: { id: paymentId }, data: { amountCents: realCents, amountEstimated: false, ...extra } });
+  const from = Math.abs(estimateCents);
+  const to = Math.abs(realCents);
+  if (from === 0 || from === to) return;
+  const links = await db.taxPaymentLink.findMany({ where: { paymentId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { id: true, cents: true } });
+  if (links.length === 0) return;
+  for (const { id, cents } of scaleLinks(links, from, to)) {
+    if (cents === 0) await db.taxPaymentLink.delete({ where: { id } });
+    else if (cents !== links.find((l) => l.id === id)?.cents) await db.taxPaymentLink.update({ where: { id }, data: { cents } });
+  }
 }
 
 /**
@@ -307,7 +403,7 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
  * day, amount and merchant, the stored row takes the number as its identity
  * and keeps everything else, its links included. Returns how many did.
  */
-async function adoptUnreferenced(db: Prisma.TransactionClient, accountId: string, parsed: readonly NormalizedPayment[]): Promise<number> {
+async function adoptUnreferenced(db: Prisma.TransactionClient, accountId: string, parsed: readonly NormalizedPayment[], format: string): Promise<number> {
   // Purchases only: money back carries its purchase's number and has an identity of its own.
   const numbered = parsed.filter((p) => p.byReference && p.entryReference && p.amountCents < 0);
   if (numbered.length === 0) return 0;
@@ -322,7 +418,8 @@ async function adoptUnreferenced(db: Prisma.TransactionClient, accountId: string
     const key = sameMovement({ ...p, counterpartyKey: counterpartyKey(p.counterparty) });
     claims.set(key, [...(claims.get(key) ?? []), p]);
   }
-  const stored = await db.taxPayment.findMany({ where: { accountId, bookingDay: { in: [...new Set(fresh.map((p) => p.bookingDay))] } } });
+  // Only rows of the same source: another source's row keeps its own identity (its file would store it again otherwise).
+  const stored = await db.taxPayment.findMany({ where: { accountId, bookingDay: { in: [...new Set(fresh.map((p) => p.bookingDay))] }, batch: { format } } });
   // Stored without a number: its identity is not the hash of a number of its own.
   const unnumbered = stored.filter((p) => p.amountCents < 0 && p.sourceHash !== referenceHash(p.entryReference ?? ''));
   let adopted = 0;
@@ -412,6 +509,28 @@ export async function setAccountPrivate(db: PrismaClient, ctx: PaymentContext, a
   if (typeof isPrivate !== 'boolean') throw new PaymentServiceError('invalid_private');
   const { count } = await db.taxAccount.updateMany({ where: { id: accountId, authWorkspaceId: ctx.workspaceId }, data: { isPrivate } });
   if (count === 0) throw new PaymentServiceError('account_not_found');
+}
+
+/**
+ * Remove an account that holds nothing: no payment, no import, no live
+ * connection (end that first with "Trennen"). Checked under the account's row
+ * lock, the one every import takes, so an import arriving at the same moment
+ * is either refused (the account is gone) or makes this refuse. A share of the
+ * account with another company goes with it: there is nothing to share.
+ */
+export async function deleteAccount(db: PrismaClient, ctx: PaymentContext, accountId: string): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM tax_accounts WHERE id = ${accountId} AND auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
+    if (locked.length === 0) throw new PaymentServiceError('account_not_found');
+    const [payments, batches, connection] = await Promise.all([
+      tx.taxPayment.count({ where: { accountId } }),
+      tx.taxImportBatch.count({ where: { accountId } }),
+      tx.taxBankConnection.count({ where: { accountId } }),
+    ]);
+    if (payments > 0 || batches > 0 || connection > 0) throw new PaymentServiceError('account_not_empty');
+    const { count } = await tx.taxAccount.deleteMany({ where: { id: accountId, authWorkspaceId: ctx.workspaceId } });
+    if (count === 0) throw new PaymentServiceError('account_not_found');
+  }, { maxWait: 20_000, timeout: 30_000 });
 }
 
 /** Undo an import: the batch goes, with the payments it added and their links. */
@@ -709,6 +828,20 @@ export async function deletePaymentLinksForRows(db: PrismaClient, rowIds: string
 
 // ── Reading ──────────────────────────────────────────────────────────────────
 
+/** A payment in another currency as the screens show it: the source's amount and whether the euro amount is an estimate. */
+export interface ForeignAmount {
+  currency: string;
+  /** Positive cents of that currency. */
+  cents: number;
+  /** True when the euro amount is this amount at the reference rate (not what was charged). */
+  estimated: boolean;
+}
+
+/** The foreign amount of a payment row, or null for a payment in euro. */
+export function foreignAmount(p: Pick<PaymentRow, 'original' | 'estimated'>): ForeignAmount | null {
+  return p.original ? { currency: p.original.currency, cents: Math.abs(p.original.amountCents), estimated: p.estimated } : null;
+}
+
 export interface PaymentRow {
   id: string;
   accountId: string;
@@ -723,6 +856,10 @@ export interface PaymentRow {
   sourceKind: PaymentKind;
   /** Set when the funding rule applies to the payment, whether or not a person overruled it (see `funding.ts`). */
   funding: Funding | null;
+  /** True when `amountCents` is another currency at the reference rate, not the euro amount charged. */
+  estimated: boolean;
+  /** What the source states for a movement in another currency (signed cents of that currency); null in euro. */
+  original: { currency: string; amountCents: number } | null;
   /** True when `kind` comes from the funding rule: nobody said it, and it can be overruled. */
   byRule: boolean;
   /**
@@ -735,7 +872,7 @@ export interface PaymentRow {
 }
 
 export interface LoadedPayments {
-  accounts: Array<{ id: string; label: string; kind: string; isPrivate: boolean; paymentCount: number; completeThrough: string | null; batches: Array<{ id: string; format: string; newCount: number; paymentCount: number; firstDay: string | null; lastDay: string | null; importedAt: string }> }>;
+  accounts: Array<{ id: string; label: string; kind: string; isPrivate: boolean; paymentCount: number; completeThrough: string | null; batches: Array<{ id: string; format: string; service: string | null; newCount: number; paymentCount: number; firstDay: string | null; lastDay: string | null; importedAt: string }> }>;
   payments: PaymentRow[];
   /**
    * Purchases a later import listed as cancelled or refunded in full. They are
@@ -780,8 +917,8 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
   }
   const payments = stored.filter((p) => p.cancelledByBatchId === null);
   const funding = resolveFunding(
-    accounts.map((a) => ({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format) })),
-    payments.map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: counterpartyKey(p.reference), sourceKind: p.sourceKind })),
+    accounts.map((a) => ({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format), services: a.batches.map((b) => b.service) })),
+    payments.map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: counterpartyKey(p.reference), sourceKind: p.sourceKind, estimated: p.amountEstimated })),
   );
   const privateAccounts = new Set(accounts.filter((a) => a.isPrivate).map((a) => a.id));
   const rows: PaymentRow[] = payments.map((p) => {
@@ -803,6 +940,8 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
       kindOverridden: p.kindOverride !== null,
       sourceKind: effectiveKind({ sourceKind: p.sourceKind, kindOverride: null }),
       funding: funds ?? null,
+      estimated: p.amountEstimated,
+      original: p.originalCurrency !== null && p.originalAmountCents !== null ? { currency: p.originalCurrency, amountCents: p.originalAmountCents } : null,
       byRule: funds !== undefined && treatment !== 'own_account' && p.kindOverride === null,
       byPrivateAccount: kind === 'private' && p.kindOverride === null && privateAccounts.has(p.accountId),
       links: p.links.map((l) => ({ id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method })),
@@ -819,7 +958,7 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
         paymentCount: own.length,
         // The last booked day the account has data for: how fresh this source is.
         completeThrough: own.length > 0 ? own[own.length - 1].bookingDay : null,
-        batches: a.batches.map((b) => ({ id: b.id, format: b.format, newCount: b.newCount, paymentCount: b.paymentCount, firstDay: b.firstDay, lastDay: b.lastDay, importedAt: b.createdAt.toISOString() })),
+        batches: a.batches.map((b) => ({ id: b.id, format: b.format, service: b.service, newCount: b.newCount, paymentCount: b.paymentCount, firstDay: b.firstDay, lastDay: b.lastDay, importedAt: b.createdAt.toISOString() })),
       };
     }),
     payments: rows,
@@ -846,6 +985,7 @@ export interface FoundPayment {
   target: 'receipt' | 'invoice';
   /** What the payment is already on: a payment is on invoices or on receipts, never both. */
   linkedTo: 'invoice' | 'receipt' | null;
+  foreign?: ForeignAmount | null;
 }
 
 /** At most this many payments come back from one search: enough to pick from, small enough to draw. */
@@ -897,6 +1037,7 @@ export async function findPayments(db: PrismaClient, workspaceId: string, raw: u
       accountLabel: accountLabel.get(p.accountId) ?? '',
       target: p.amountCents > 0 && own === 'income' ? 'invoice' : 'receipt',
       linkedTo: p.links.some((l) => l.invoiceId !== null) ? 'invoice' : p.links.some((l) => l.rowId !== null) ? 'receipt' : null,
+      foreign: foreignAmount(p),
     });
   }
   return { payments: found, total };

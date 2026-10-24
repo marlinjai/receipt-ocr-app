@@ -185,6 +185,20 @@ describe('resolveItem: amounts', () => {
     expect(result.businessExpenseCents).toBe(0);
   });
 
+  it('a linked payment whose euro amount is itself an estimate gives the day, not the amount (plan 2026-10-23)', () => {
+    const usd = (extra: Partial<ReceiptFacts>, fxRate: number | null = 0.9) =>
+      resolveItem(facts(receipt({ currency: 'USD', gross: 10, net: 10, fxRate, date: '2026-10-01' }), extra), [], REGULAR_BUSINESS).item;
+    // A real euro amount settles the receipt: what was charged, on the payment's day.
+    expect(usd({ paid: { day: '2026-10-06', cents: 948 }, moneyOutCents: 948 })).toMatchObject({ amountCents: 948, amountBasis: 'payment', date: '2026-10-06' });
+    // An estimate does not: the receipt keeps its own estimate, the day is the payment's.
+    expect(usd({ paid: { day: '2026-10-06', cents: 912, estimated: true }, moneyOutCents: 912 })).toMatchObject({ amountCents: 900, amountBasis: 'reference_rate', date: '2026-10-06' });
+    // Without a rate of its own, the payment's estimate is the best there is, and stays an estimate.
+    expect(usd({ paid: { day: '2026-10-06', cents: 912, estimated: true }, moneyOutCents: 912 }, null)).toMatchObject({ amountCents: 912, amountBasis: 'reference_rate' });
+    // A euro receipt paid by an estimated payment keeps its own amount.
+    const eur = resolveItem(facts(receipt({ gross: 9.5, net: 9.5, date: '2026-10-01' }), { paid: { day: '2026-10-06', cents: 912, estimated: true }, moneyOutCents: 912 }), [], REGULAR_BUSINESS).item;
+    expect(eur).toMatchObject({ amountCents: 950, amountBasis: 'document', date: '2026-10-06' });
+  });
+
   it('a net amount of the other sign is reported as not fitting, not as missing', () => {
     const r = resolveItem(facts(receipt({ gross: -119, net: 100, date: '2025-03-01' })), [], REGULAR_BUSINESS).item;
     expect(r).toMatchObject({ netCents: null, netDoesNotFit: true });

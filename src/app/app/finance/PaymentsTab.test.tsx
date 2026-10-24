@@ -9,7 +9,7 @@ import PaymentsTab from './PaymentsTab';
 
 afterEach(cleanup);
 
-const account = { id: 'acc-1', label: 'Geschäftskonto', kind: 'bank', isPrivate: false, paymentCount: 3, completeThrough: '2026-01-22', batches: [{ id: 'b-1', format: 'n26_csv', newCount: 3, paymentCount: 3, firstDay: '2026-01-05', lastDay: '2026-01-22', importedAt: '2026-02-01T08:00:00.000Z' }] };
+const account = { id: 'acc-1', label: 'Geschäftskonto', kind: 'bank', isPrivate: false, paymentCount: 3, completeThrough: '2026-01-22', batches: [{ id: 'b-1', format: 'n26_csv', service: null, newCount: 3, paymentCount: 3, firstDay: '2026-01-05', lastDay: '2026-01-22', importedAt: '2026-02-01T08:00:00.000Z' }] };
 const open = (o: Partial<OpenPayment> = {}): OpenPayment => ({
   id: 'p-1',
   bookingDay: '2026-01-05',
@@ -108,7 +108,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'enable_banking_json', total: 4, added: 4, alreadyThere: 0, skipped: { other_year: 454, covered_by_other_source: 120 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], onlyYear: 2026, firstDay: '2026-07-01', lastDay: '2026-07-04' }}
+        lastImport={{ batchId: 'b', format: 'enable_banking_json', total: 4, added: 4, alreadyThere: 0, skipped: { other_year: 454, covered_by_other_source: 120 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, settled: 0, notices: {}, unknownStatuses: [], onlyYear: 2026, firstDay: '2026-07-01', lastDay: '2026-07-04' }}
       />,
     );
     const status = screen.getByRole('status').textContent;
@@ -121,7 +121,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 10, added: 7, alreadyThere: 3, skipped: { other_currency: 2, not_completed: 4 }, autoLinked: 1, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, notices: {}, unknownStatuses: [], onlyYear: null, firstDay: null, lastDay: null }}
+        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 10, added: 7, alreadyThere: 3, skipped: { other_currency: 2, not_completed: 4 }, autoLinked: 1, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, settled: 0, notices: {}, unknownStatuses: [], onlyYear: null, firstDay: null, lastDay: null }}
       />,
     );
     const status = screen.getByRole('status').textContent;
@@ -362,7 +362,7 @@ describe('PaymentsTab', () => {
       <PaymentsTab
         view={view()}
         {...props()}
-        lastImport={{ batchId: 'b', format: 'klarna_csv', total: 5, added: 5, alreadyThere: 0, skipped: { cancelled: 2, duplicate_row: 1, zero_amount: 1 }, autoLinked: 0, cancelledEarlier: 2, releasedLinks: 1, adopted: 1, notices: { part_refunded: 1, unknown_status: 1 }, unknownStatuses: ['Angefochten'], onlyYear: null, firstDay: null, lastDay: null }}
+        lastImport={{ batchId: 'b', format: 'klarna_csv', total: 5, added: 5, alreadyThere: 0, skipped: { cancelled: 2, duplicate_row: 1, zero_amount: 1 }, autoLinked: 0, cancelledEarlier: 2, releasedLinks: 1, adopted: 1, settled: 0, notices: { part_refunded: 1, unknown_status: 1 }, unknownStatuses: ['Angefochten'], onlyYear: null, firstDay: null, lastDay: null }}
       />,
     );
     const status = screen.getByRole('status').textContent;
@@ -555,5 +555,62 @@ describe('PaymentsTab', () => {
     await user.click(choosers[0]);
     await user.click(choosers[1]);
     expect(screen.getByLabelText('Rechnung von Hand wählen')).toBeTruthy();
+  });
+  it('an account without payments, imports and connection can be removed after a confirmation; others offer no such button', async () => {
+    const user = userEvent.setup();
+    const p = { ...props(), onRemoveAccount: vi.fn() };
+    const empty = { ...account, id: 'acc-empty', label: 'Altes Konto', paymentCount: 0, completeThrough: null, batches: [] };
+    const linked = { ...account, id: 'acc-live', label: 'PayPal', paymentCount: 0, completeThrough: null, batches: [] };
+    const feed = { bank: { enabled: true, connections: [{ id: 'c-1', accountId: 'acc-live', status: 'pending', aspspName: 'PayPal', pendingAspspName: null, validUntil: null, renewSoon: false, lastSyncedAt: null, lastBookedThrough: null, lastError: null, lastErrorAt: null, notices: { gaps: [], skipped: [], undated: [], unrated: [] }, candidates: [], accountUid: null, boundMask: null, boundName: null }] }, pending: false, message: null };
+    const bank = { feed, actions: { listBankInstitutions: vi.fn() }, returnNotice: null } as unknown as ComponentProps<typeof PaymentsTab>['bank'];
+    render(<PaymentsTab view={view({ accounts: [account, empty, linked] })} {...p} bank={bank} />);
+    const buttons = screen.getAllByRole('button', { name: 'Konto entfernen' });
+    // Only the empty account: the one with imports and the one with a connection (pending) offer none.
+    expect(buttons).toHaveLength(1);
+    const confirm = vi.spyOn(window, 'confirm');
+    confirm.mockReturnValueOnce(false);
+    await user.click(buttons[0]);
+    expect(p.onRemoveAccount).not.toHaveBeenCalled();
+    confirm.mockReturnValueOnce(true);
+    await user.click(buttons[0]);
+    expect(p.onRemoveAccount).toHaveBeenCalledWith(expect.objectContaining({ id: 'acc-empty' }));
+    confirm.mockRestore();
+  });
+
+  it('a payment in another currency shows its own amount, and says when the euro amount is an estimate', () => {
+    render(
+      <PaymentsTab
+        view={view({ open: [open({ id: 'usd', amountCents: -912, freeCents: 912, foreign: { currency: 'USD', cents: 1000, estimated: true } }), open({ id: 'real', amountCents: -948, freeCents: 948, foreign: { currency: 'USD', cents: 1000, estimated: false } })] })}
+        {...props()}
+      />,
+    );
+    expect(screen.getByText(/geschätzt: 10,00 USD zum Referenzkurs/)).toBeTruthy();
+    expect(screen.getByText(/9,48 €\s*\(10,00 USD\)/)).toBeTruthy();
+  });
+
+  it('reports the rows of the live PayPal feed it left out or recognized, and real euro amounts taken over', () => {
+    render(
+      <PaymentsTab
+        view={view()}
+        {...props()}
+        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 3, added: 1, alreadyThere: 2, skipped: { known_from_other_source: 4, rejected: 1, no_exchange_rate: 1 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, settled: 2, notices: {}, unknownStatuses: [], onlyYear: null, firstDay: null, lastDay: null }}
+      />,
+    );
+    const status = screen.getByRole('status').textContent ?? '';
+    expect(status).toContain('bei 2 geschätzten Zahlungen in anderer Währung den tatsächlichen Eurobetrag übernommen');
+    expect(status).toContain('4 schon aus der anderen Quelle dieses Kontos bekannt');
+    expect(status).toContain('1 abgelehnt');
+    expect(status).toContain('1 in anderer Währung ohne Referenzkurs');
+  });
+
+  it('says one estimate in the singular', () => {
+    render(
+      <PaymentsTab
+        view={view()}
+        {...props()}
+        lastImport={{ batchId: 'b', format: 'paypal_csv', total: 1, added: 0, alreadyThere: 1, skipped: {}, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, settled: 1, notices: {}, unknownStatuses: [], onlyYear: null, firstDay: null, lastDay: null }}
+      />,
+    );
+    expect(screen.getByRole('status').textContent).toContain('bei einer geschätzten Zahlung in anderer Währung den tatsächlichen Eurobetrag übernommen');
   });
 });

@@ -9,7 +9,7 @@ import type { Result } from './actions';
 import type { BankView, Institution } from './bank-actions';
 
 /** One notice of a connection to clear. */
-export type BankNotice = { kind: 'gap'; from: string; to: string } | { kind: 'skipped'; day: string } | { kind: 'undated'; keys: string[] };
+export type BankNotice = { kind: 'gap'; from: string; to: string } | { kind: 'skipped'; day: string } | { kind: 'unrated'; day: string } | { kind: 'undated'; keys: string[] };
 
 /** The server actions the bank controls use; injected so the screen can be tested without a server. */
 export interface BankActions {
@@ -99,7 +99,7 @@ function statusLine(connection: BankConnectionView | undefined): { text: string;
       return {
         text: connection.lastSyncedAt
           ? `Live über die Bankschnittstelle (${connection.aspspName}), zuletzt abgeholt am ${dayOf(connection.lastSyncedAt)}`
-          : `Live über die Bankschnittstelle (${connection.aspspName}), noch nicht abgeholt`,
+          : `Live über die Bankschnittstelle (${connection.aspspName}), noch nicht abgeholt. Tage, die schon eine eingelesene Liste abdeckt, bleiben bei ihr`,
         tone: 'muted',
       };
     case 'expired':
@@ -212,6 +212,31 @@ export function BankAccountStatus({
                   disabled={busy}
                   aria-label={`Erledigt: ausgelassene Buchung vom ${formatDay(day)}`}
                   onClick={() => feed.clearNotice(account.id, connection.id, { kind: 'skipped', day })}
+                >
+                  Erledigt
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {connection && connection.notices.unrated.length > 0 && (
+        <div className="mt-1" style={{ color: TONE_COLOR.warn }}>
+          <p>
+            An diesen Tagen fehlt für eine Zahlung in anderer Währung der Referenzkurs; sie wurde noch nicht übernommen. Jeder
+            Abruf versucht es erneut und übernimmt sie, sobald es den Kurs gibt. Gibt es für die Währung keinen Kurs, bringt der
+            Import der PayPal-Liste die Zahlung mit dem tatsächlichen Eurobetrag; danach diesen Tag als erledigt markieren.
+          </p>
+          <ul className="mt-1 flex flex-wrap gap-2">
+            {connection.notices.unrated.map((day) => (
+              <li key={day} className="flex items-baseline gap-1">
+                {formatDay(day)}
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-sm"
+                  disabled={busy}
+                  aria-label={`Erledigt: fehlender Kurs am ${formatDay(day)}`}
+                  onClick={() => feed.clearNotice(account.id, connection.id, { kind: 'unrated', day })}
                 >
                   Erledigt
                 </button>

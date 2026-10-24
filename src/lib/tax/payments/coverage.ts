@@ -1,3 +1,4 @@
+import { withinEstimate } from './estimate';
 /**
  * Which days of an account each import brought as its own. Pure.
  *
@@ -9,7 +10,7 @@
  * of OTHER formats already held. Imports of the same format share their days:
  * they are told apart by identity. On the first and the last day another
  * source holds, a later source adds the movements beyond what is stored there
- * (see `beyondStored`), so a day the first source exported only in part is
+ * (see `matchStored`), so a day the first source exported only in part is
  * filled.
  */
 
@@ -82,26 +83,67 @@ export function coveredByOtherSources(batches: readonly BatchSpan[], format: str
   return batches.filter((b) => b.format !== format).flatMap((b) => coverage.get(b.id) ?? []);
 }
 
+/** A movement another source of the account stored, as `matchStored` compares it. */
+export interface StoredMovement {
+  id: string;
+  bookingDay: string;
+  amountCents: number;
+  counterpartyKey: string;
+  /** True when its euro amount is an estimate at the reference rate. */
+  estimated: boolean;
+}
+
 /**
  * Of a file's rows on days another source holds, the ones beyond what that
- * source stored: per day and amount, as many rows as are stored are taken to
- * be the same movements (in file order), the rest are new. `stored` is what
- * the other sources hold on those days.
+ * source stored (`beyond`) and the ones it already holds (`same`). One side
+ * may hold an estimate (a wallet's purchase in another currency at the
+ * reference rate, the other source its real euro amount). First, per day and amount, rows and stored
+ * movements that are both exact pair up in file order. Then a row and a
+ * stored movement of which at least one is an estimate pair up per day and
+ * counterparty (a named one only) when the amounts lie within the conversion's
+ * tolerance (`ESTIMATE_TOLERANCE_PERCENT`): their amounts differ by the conversion.
+ * An exact row paired with an estimated stored movement `settles` it: the real
+ * euro amount wins.
  */
-export function beyondStored<T extends { bookingDay: string; amountCents: number }>(rows: readonly T[], stored: ReadonlyArray<{ bookingDay: string; amountCents: number }>): { beyond: T[]; same: T[] } {
-  const left = new Map<string, number>();
-  for (const s of stored) left.set(`${s.bookingDay}|${s.amountCents}`, (left.get(`${s.bookingDay}|${s.amountCents}`) ?? 0) + 1);
-  const beyond: T[] = [];
+export function matchStored<T extends { bookingDay: string; amountCents: number; counterpartyKey: string; estimated?: boolean }>(
+  rows: readonly T[],
+  stored: readonly StoredMovement[],
+): { beyond: T[]; same: T[]; settles: Array<{ row: T; storedId: string }> } {
+  const used = new Set<string>();
+  const exact = new Map<string, StoredMovement[]>();
+  for (const s of stored) if (!s.estimated) exact.set(`${s.bookingDay}|${s.amountCents}`, [...(exact.get(`${s.bookingDay}|${s.amountCents}`) ?? []), s]);
   const same: T[] = [];
+  const settles: Array<{ row: T; storedId: string }> = [];
+  const rest: T[] = [];
   for (const row of rows) {
-    const key = `${row.bookingDay}|${row.amountCents}`;
-    const n = left.get(key) ?? 0;
-    if (n > 0) {
-      left.set(key, n - 1);
+    const hit = row.estimated ? undefined : exact.get(`${row.bookingDay}|${row.amountCents}`)?.find((s) => !used.has(s.id));
+    if (hit) {
+      used.add(hit.id);
       same.push(row);
-    } else beyond.push(row);
+    } else rest.push(row);
   }
-  return { beyond, same };
+  const byParty = new Map<string, StoredMovement[]>();
+  for (const s of stored) {
+    if (!s.counterpartyKey) continue;
+    const key = `${s.bookingDay}|${s.counterpartyKey}`;
+    byParty.set(key, [...(byParty.get(key) ?? []), s]);
+  }
+  const beyond: T[] = [];
+  for (const row of rest) {
+    const candidates = row.counterpartyKey ? byParty.get(`${row.bookingDay}|${row.counterpartyKey}`) ?? [] : [];
+    // The estimate's amount still has to fit the other within the conversion's tolerance: another purchase of the
+    // same merchant that day is not it.
+    const fits = (s: StoredMovement) => (s.estimated ? withinEstimate(s.amountCents, row.amountCents) : withinEstimate(row.amountCents, s.amountCents));
+    const hit = candidates.find((s) => !used.has(s.id) && (row.estimated || s.estimated) && fits(s));
+    if (!hit) {
+      beyond.push(row);
+      continue;
+    }
+    used.add(hit.id);
+    same.push(row);
+    if (!row.estimated && hit.estimated) settles.push({ row, storedId: hit.id });
+  }
+  return { beyond, same, settles };
 }
 
 /** Intervals joined where they overlap or touch: the ranges a source holds as a whole. */
@@ -115,4 +157,29 @@ export function mergeIntervals(intervals: readonly Interval[]): Interval[] {
     } else out.push({ ...i });
   }
   return out;
+}
+
+/** The bank sources: one bank account may be continued from one of them by another. */
+const BANK_FORMATS: readonly string[] = ['enable_banking_json', 'n26_csv', 'tomorrow_csv'];
+
+/** One source of an account: the format of its imports and, for the bank interface, the service it reads. */
+export interface PaymentSource {
+  format: string;
+  service: string | null;
+}
+
+/** A source holding a PayPal wallet's movements: its CSV list, or the bank interface reading PayPal. */
+export const isPaypalSource = (s: PaymentSource) => s.format === 'paypal_csv' || (s.format === 'enable_banking_json' && s.service === 'paypal');
+
+/**
+ * Whether two sources may feed one account. The same source always; two bank
+ * sources (a bank file continued from the bank interface, plan 2026-10-15);
+ * PayPal's list and the bank interface reading PayPal (plan 2026-10-23). A
+ * service's list never shares an account with a bank: they hold different
+ * movements (its purchases, not the bank's debits).
+ */
+export function sourcesMayShare(a: PaymentSource, b: PaymentSource): boolean {
+  if (a.format === b.format) return (a.service ?? null) === (b.service ?? null);
+  const bank = (s: PaymentSource) => BANK_FORMATS.includes(s.format) && !s.service;
+  return (bank(a) && bank(b)) || (isPaypalSource(a) && isPaypalSource(b));
 }

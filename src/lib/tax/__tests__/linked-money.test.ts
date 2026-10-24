@@ -16,6 +16,8 @@ function payment(id: string, bookingDay: string, amountCents: number, links: Arr
     kindOverridden: false,
     sourceKind: amountCents < 0 ? 'spend' : 'refund',
     funding: null,
+    estimated: false,
+    original: null,
     byRule: false,
     byPrivateAccount: false,
     links: links.map((l, i) => ({ id: `${id}-${i}`, rowId: l.rowId, invoiceId: null, cents: l.cents, method: 'manual' })),
@@ -40,5 +42,13 @@ describe('linkedByRow: money out and money back per receipt', () => {
       funding: { service: 'paypal', serviceKind: 'wallet', kind: 'own_transfer', twinId: 'pp' } as unknown as PaymentRow['funding'],
     });
     expect(linkedByRow([purchase, debit]).get('r')).toMatchObject({ paid: { day: '2026-02-01', cents: 5_000 }, outCents: 5_000, back: null });
+  });
+});
+
+describe('linkedByRow: an estimated payment marks what it pays', () => {
+  it('a receipt paid by a payment whose euro amount is an estimate says so; a real one does not', () => {
+    const linked = linkedByRow([payment('usd', '2026-10-06', -912, [{ rowId: 'r', cents: 912 }], { estimated: true, original: { currency: 'USD', amountCents: -1000 } }), payment('eur', '2026-10-07', -500, [{ rowId: 'q', cents: 500 }])]);
+    expect(linked.get('r')?.paid).toEqual({ day: '2026-10-06', cents: 912, estimated: true });
+    expect(linked.get('q')?.paid).toEqual({ day: '2026-10-07', cents: 500 });
   });
 });

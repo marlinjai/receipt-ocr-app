@@ -4,14 +4,21 @@
  */
 
 const SOURCE_UNSUPPORTED =
-  'Dieses Konto wird aus einer PayPal- oder Klarna-Liste gefüllt. Die Bankschnittstelle kann es nicht fortsetzen, weil beide Quellen dieselben Käufe verschieden beschreiben. Für die Live-Verbindung bitte ein eigenes Konto anlegen und die Liste für die Tage danach nicht mehr einlesen, oder beim Datei-Import bleiben.';
+  'Dieses Konto wird aus der Kaufliste von Klarna gefüllt. Klarna bietet über die Bankschnittstelle nur sein Girokonto an, nicht die Käufe auf Rechnung oder in Raten; dieses Konto bleibt deshalb beim Datei-Import. Ein PayPal-Konto lässt sich dagegen live verbinden.';
+
+const INSTITUTION_MISMATCH =
+  'Diese Auswahl passt nicht zu dem, was dieses Konto schon enthält. Ein Konto aus der PayPal-Liste lässt sich nur mit PayPal live verbinden, ein Bankkonto nur mit seiner Bank. Für die andere Quelle bitte ein eigenes Konto anlegen.';
+
+const FORMAT_MISMATCH =
+  'Die Liste eines Zahlungsdienstes und die Zahlungen einer Bank gehören nicht in dasselbe Konto. Ein PayPal-Konto lässt sich nur aus der PayPal-Liste und der Live-Verbindung zu PayPal füllen, ein Bankkonto aus seinen Bankquellen.';
 
 const MESSAGES: Record<string, string> = {
   feature_off: 'Die Live-Anbindung an Banken ist auf diesem Server nicht eingeschaltet. Die Konten werden weiter aus Dateien eingelesen.',
   aspsp_not_offered: 'Diese Bank wird über die Bankschnittstelle nicht angeboten. Das Konto bleibt beim Datei-Import.',
   wrong_aspsp: 'Diese Bank wird über die Bankschnittstelle nicht angeboten. Das Konto bleibt beim Datei-Import.',
   account_source_unsupported: SOURCE_UNSUPPORTED,
-  format_mismatch: SOURCE_UNSUPPORTED,
+  format_mismatch: FORMAT_MISMATCH,
+  institution_mismatch: INSTITUTION_MISMATCH,
   invalid_aspsp: 'Bitte eine Bank aus der Liste wählen.',
   account_not_found: 'Dieses Konto gibt es in dieser Firma nicht (mehr). Bitte die Seite neu laden.',
   connection_not_found: 'Diese Verbindung gibt es in dieser Firma nicht (mehr). Bitte die Seite neu laden.',

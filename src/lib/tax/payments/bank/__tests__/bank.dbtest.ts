@@ -535,7 +535,7 @@ describe('bank connection: re-entry after a failure', () => {
     // A clean fetch clears the error, never the skipped days: only the person does, once he has checked them.
     expect(await connectionOf(s.accountId)).toMatchObject({ lastError: null, notices: { skipped: ['2026-10-01', '2026-10-03'] } });
     await clearBankNotice(db, s.ctx, id, { kind: 'skipped', day: '2026-10-01' });
-    expect((await loadBankConnections(db, s.ctx.workspaceId, NOW))[0].notices).toEqual({ gaps: [], skipped: ['2026-10-03'], undated: [] });
+    expect((await loadBankConnections(db, s.ctx.workspaceId, NOW))[0].notices).toEqual({ gaps: [], skipped: ['2026-10-03'], undated: [], unrated: [] });
     expect(await code(clearBankNotice(db, s.ctx, id, { kind: 'other' }))).toBe('invalid_notice');
     // Beyond the bound the fetch fails as a whole, and says so.
     s.bank.transactions.set('uid-a1', Array.from({ length: MAX_UNREADABLE + 1 }, (_, i) => ({ ...broken, booking_date: `2026-10-${String(6 + (i % 9)).padStart(2, '0')}` })));
@@ -556,14 +556,15 @@ describe('bank connection: re-entry after a failure', () => {
 });
 
 describe('bank connection: refusals and isolation', () => {
-  it('an institution the interface does not offer, and a list-fed account, are refused before the bank is asked', async () => {
+  it('an institution the interface does not offer, and a bank on the PayPal list account, are refused before the bank is asked', async () => {
     const s = await setup();
     expect(await code(startConsent(db, s.ctx, s.deps, s.accountId, { name: 'Unbekannte Bank', country: 'DE' }))).toBe('aspsp_not_offered');
     expect(await code(startConsent(db, s.ctx, s.deps, s.accountId, { name: '', country: 'DE' }))).toBe('invalid_aspsp');
     const paypal = await createAccount(db, s.ctx, { label: 'Zahlungsdienst', kind: 'payment_service' });
     const header = 'Datum,Uhrzeit,Zeitzone,Name,Typ,Status,Währung,Brutto,Gebühr,Netto,Transaktionscode,Auswirkung auf Guthaben';
     await importPayments(db, s.ctx, paypal, `${header}\n01.09.2026,10:00:00,MESZ,Laden Beispiel,Zahlung,Abgeschlossen,EUR,"-10,00","0,00","-10,00",TX1,Soll\n`);
-    expect(await code(startConsent(db, s.ctx, s.deps, paypal, BANK))).toBe('account_source_unsupported');
+    // The PayPal list may continue live only from PayPal (plan 2026-10-23-paypal-live, point 8).
+    expect(await code(startConsent(db, s.ctx, s.deps, paypal, BANK))).toBe('institution_mismatch');
     expect(s.bank.starts).toHaveLength(0);
     expect(await db.taxBankConnection.count({ where: { authWorkspaceId: s.ctx.workspaceId } })).toBe(0);
   });

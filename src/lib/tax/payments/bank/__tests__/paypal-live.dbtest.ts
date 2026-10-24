@@ -209,6 +209,41 @@ describe('PayPal live: forward', () => {
   });
 });
 
+describe('PayPal live: the reconciliation of the service', () => {
+  it('a payout without a name is no purchase, also when no bank credit pairs with it', async () => {
+    const s = await setup();
+    await importPayments(db, s.ctx, s.bankId, n26(['2026-10-06', 'PayPal Europe S.a.r.l. et Cie S.C.A', '-2.99']));
+    s.api.rows = [tx({ day: '2026-10-05', cents: -299, party: 'Musik Beispiel', code: 'B1' }), tx({ day: '2026-10-12', cents: -2500, code: 'B7' })];
+    const connectionId = await connectPaypal(s);
+    expect(await syncConnection(db, s.ctx, s.deps, connectionId, { today: TODAY })).toEqual({ status: 'synced', added: 2 });
+    const view = await loadStatement(db, s.ctx.workspaceId, 2026);
+    const paypal = view.payments.reconciliations.find((r) => r.service === 'paypal');
+    expect(paypal).toMatchObject({ collectedCents: 299, listedCents: 299 });
+  });
+});
+
+describe('PayPal live: identity across the two sources', () => {
+  it('a live row with a code never takes over the identity of a list row stored without one', async () => {
+    const s = await setup();
+    // An export taken in the middle of the day: one of the two equal purchases of that day, listed without a code.
+    await importPayments(db, s.ctx, s.walletId, csv(csvRow({ day: '2026-10-01', name: 'Laden Beispiel', gross: '-10,00', code: '' })));
+    const [listRow] = await walletPayments(s.walletId);
+    s.api.rows = [
+      tx({ day: '2026-10-01', cents: -1000, party: 'Laden Beispiel', code: 'L1' }),
+      tx({ day: '2026-10-01', cents: -1000, party: 'Laden Beispiel', code: 'L1B' }),
+      tx({ day: '2026-10-02', cents: -500, party: 'Kiosk Beispiel', code: 'L2' }),
+    ];
+    const connectionId = await connectPaypal(s);
+    // On the list's edge day one live purchase is the list's, the second goes beyond it and is new.
+    expect(await syncConnection(db, s.ctx, s.deps, connectionId, { today: TODAY })).toEqual({ status: 'synced', added: 2 });
+    const stored = await walletPayments(s.walletId);
+    expect(stored).toHaveLength(3);
+    // The list's row is still the list's, with the identity its own file gave it: the second live purchase did not adopt it.
+    expect(stored.find((p) => p.id === listRow.id)).toMatchObject({ sourceHash: listRow.sourceHash, entryReference: listRow.entryReference, batchId: listRow.batchId });
+    expect(stored.filter((p) => p.bookingDay === '2026-10-01')).toHaveLength(2);
+  });
+});
+
 describe('PayPal live: an earlier input changed', () => {
   it('a list imported after the live feed gives estimates their real euro amount; the same list again changes nothing', async () => {
     const s = await setup();
@@ -236,6 +271,12 @@ describe('PayPal live: an earlier input changed', () => {
     expect(await syncConnection(db, s.ctx, s.deps, connectionId, { today: TODAY })).toMatchObject({ status: 'nothing_new' });
     expect((await db.taxPayment.findFirstOrThrow({ where: { id: server.id } })).amountCents).toBe(-471);
     expect(await db.taxPayment.count({ where: { accountId: s.walletId } })).toBe(9);
+
+    // Undoing that list removes what it added, and the real amount it wrote stays: the estimate does not come back.
+    await deleteImportBatch(db, s.ctx, result.batchId);
+    expect(await db.taxPayment.findFirst({ where: { accountId: s.walletId, entryReference: 'C1' } })).toBeNull();
+    expect(await db.taxPayment.findFirstOrThrow({ where: { id: server.id } })).toMatchObject({ amountCents: -471, amountEstimated: false, originalAmountCents: -500, originalCurrency: 'USD' });
+    expect(await db.taxPayment.count({ where: { accountId: s.walletId } })).toBe(8);
   });
 
   it('codes that differ: a later list gives the estimate on a live day its real amount by day and counterparty', async () => {
@@ -336,6 +377,7 @@ describe('PayPal live: which institution may continue which account', () => {
     const later = await createAccount(db, s.ctx, { label: 'Klarna', kind: 'payment_service' });
     await importPayments(db, s.ctx, later, 'created_date,created_time,timezone,amount,currency,merchant,status,payment_reference,items\n2026-10-02,10:00,Europe/Berlin,12.00,EUR,Laden Beispiel,Bezahlt,K-1,Ding\n');
     expect(await errorCode(startConsent(db, s.ctx, s.deps, later, PAYPAL))).toBe('account_source_unsupported');
+    expect(await errorCode(startConsent(db, s.ctx, s.deps, later, OTHER_BANK))).toBe('account_source_unsupported');
 
     const empty = await createAccount(db, s.ctx, { label: 'Leer', kind: 'payment_service' });
     expect(await errorCode(startConsent(db, s.ctx, s.deps, empty, PAYPAL))).toBe('no error');

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
-import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
+import { setupUser, type TestUser } from '../../../../test/user';
 import { rulesForYear } from '@/lib/tax/rules';
 import type { StatementItem, StatementView } from '@/lib/tax/service';
 import { incomeTaxView } from '@/lib/tax/income-tax/__tests__/fixtures';
@@ -56,19 +56,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/**
- * A user without the per-action pauses (each one a timer that stretches under a loaded machine) and without
- * the pointer-events check (it reads the computed style of the element and every ancestor on each click,
- * and jsdom loads no stylesheet, so the check can only pass). What the tests assert is unchanged.
- */
-const setupUser = () => userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
 
 /**
  * Clicks a button once it takes clicks again. An action's notice shows as soon as its answer arrives, a
  * moment before the transition ends and the buttons are enabled; a person never meets that moment, a test
  * that clicks right after the notice can. Waiting for the button (not for a fixed time) is what a person does.
  */
-async function clickWhenEnabled(user: ReturnType<typeof setupUser>, find: () => HTMLElement) {
+async function clickWhenEnabled(user: TestUser, find: () => HTMLElement) {
   // Looked up on every try: while busy a button may carry another label, or be drawn anew.
   const button = await vi.waitFor(() => {
     const found = find() as HTMLButtonElement;
@@ -831,7 +825,6 @@ describe('FinanceClient: assets', () => {
     expect(await screen.findByText('1 Zahlung dem Beleg zugeordnet; 1 Vorschlag galt nicht mehr und blieb unberührt. Die Liste zeigt den aktuellen Stand.')).toBeTruthy();
     expect(actions.acceptPaymentProposals).toHaveBeenLastCalledWith(2025, [{ paymentId: 'p-1', rowId: 'r-1' }, { paymentId: 'p-2', rowId: 'r-2' }], true);
     expect(screen.queryByRole('region', { name: 'Vorschläge für geschätzte Belege' })).toBeNull();
-    confirm.mockRestore();
   });
 
   it('"Konto entfernen" refused because the account is no longer empty shows why and what the account holds now', async () => {
@@ -849,7 +842,6 @@ describe('FinanceClient: assets', () => {
     expect(actions.getStatement).toHaveBeenCalledWith(2025);
     // The account now holds an import: the button is gone.
     await vi.waitFor(() => expect(screen.queryByRole('button', { name: 'Konto entfernen' })).toBeNull());
-    confirm.mockRestore();
   });
 
   it('a receipt that already carries a payment is not linked a second time without a question; a no links nothing, a yes sends it confirmed', async () => {
@@ -879,7 +871,6 @@ describe('FinanceClient: assets', () => {
     await vi.waitFor(() => expect(actions.confirmPaymentLink).toHaveBeenCalledTimes(3));
     expect(actions.confirmPaymentLink.mock.calls[2][1]).toEqual({ paymentId: 'p-1', rowId: 'r-1', confirmed: true });
     expect(await screen.findByText('Zahlung zugeordnet.')).toBeTruthy();
-    confirm.mockRestore();
   });
 
   it('money back a little above what the receipt still costs is asked about once and sent confirmed on a yes', async () => {
@@ -899,7 +890,6 @@ describe('FinanceClient: assets', () => {
     await vi.waitFor(() => expect(actions.confirmPaymentLink).toHaveBeenCalledTimes(2));
     expect(confirm.mock.calls[0][0]).toContain('Diese Erstattung ist größer als das, was der Beleg noch kostet (19,99 €)');
     expect(actions.confirmPaymentLink.mock.calls[1][1]).toEqual({ paymentId: 'p-2', rowId: 'r-1', confirmed: true });
-    confirm.mockRestore();
   });
 
   it('says so when a link was taken over from the bank-side debit of the same money, and re-labels a transfer through its action', async () => {
@@ -926,7 +916,7 @@ describe('FinanceClient: the income tax estimate', () => {
     render(<FinanceClient initial={view([], { incomeTax: incomeTaxView({ year: 2025, profitCents: 300_000 }) })} />);
     const tile = screen.getByText('Einkommensteuer 2025 (Schätzung)').parentElement!;
     expect(within(tile).getByText(/nur Gewerbe, ohne Lohn/)).toBeTruthy();
-    await userEvent.click(screen.getByRole('tab', { name: 'Einkommensteuer' }));
+    await setupUser().click(screen.getByRole('tab', { name: 'Einkommensteuer' }));
     expect(screen.getByRole('heading', { name: /Einkommensteuer 2025: Schätzung \(nur Gewerbe\)/ })).toBeTruthy();
   });
 

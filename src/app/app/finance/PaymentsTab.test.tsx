@@ -2,19 +2,17 @@
 import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
-import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
+import { setupUser } from '../../../../test/user';
 import type { FoundPayment } from '@/lib/tax/payments/service';
 import type { OpenPayment, PaymentsView, StatementView } from '@/lib/tax/service';
 import PaymentsTab from './PaymentsTab';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // A `window.confirm` stub of a failed test must not answer the questions of the next one.
+  vi.restoreAllMocks();
+});
 
-/**
- * A user without the per-action pauses (each one a timer that stretches under a loaded machine) and without
- * the pointer-events check (it reads the computed style of the element and every ancestor on each click,
- * and jsdom loads no stylesheet, so the check can only pass). What the tests assert is unchanged.
- */
-const setupUser = () => userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
 
 const account = { id: 'acc-1', label: 'Geschäftskonto', kind: 'bank', isPrivate: false, paymentCount: 3, completeThrough: '2026-01-22', batches: [{ id: 'b-1', format: 'n26_csv', service: null, newCount: 3, paymentCount: 3, firstDay: '2026-01-05', lastDay: '2026-01-22', importedAt: '2026-02-01T08:00:00.000Z' }] };
 const open = (o: Partial<OpenPayment> = {}): OpenPayment => ({
@@ -289,7 +287,6 @@ describe('PaymentsTab', () => {
     // What is sent is the list the dialog counted: the two unambiguous pairs, not the ambiguous third.
     expect(p.onAcceptProposals).toHaveBeenCalledWith([{ paymentId: 'p-1', rowId: 'r-1' }, { paymentId: 'p-2', rowId: 'r-2' }], true);
     expect(confirm.mock.calls[0][0]).toContain('2 eindeutige Vorschläge übernehmen?');
-    confirm.mockRestore();
   });
 
   it('while the bulk accept runs the button says so and cannot be pressed again; it comes back when the answer is in', async () => {
@@ -311,7 +308,6 @@ describe('PaymentsTab', () => {
     // The answer is in (here: a failure, the proposals are still shown): the button is usable again.
     rerender(<PaymentsTab view={shown} {...p} busy={false} />);
     expect((screen.getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }) as HTMLButtonElement).disabled).toBe(false);
-    confirm.mockRestore();
   });
 
   it('one payment for two receipts is shown for both as needing a hand: no accept button, not in the bulk count', () => {
@@ -467,7 +463,6 @@ describe('PaymentsTab', () => {
     confirm.mockReturnValueOnce(true);
     await user.click(screen.getByRole('button', { name: 'Ganzes Konto ist privat' }));
     expect(p.onAccountPrivate).toHaveBeenCalledWith(expect.objectContaining({ id: 'acc-1' }), true);
-    confirm.mockRestore();
 
     rerender(<PaymentsTab view={view({ accounts: [{ ...account, isPrivate: true }] })} {...p} />);
     expect(screen.getByText(/privat: nach seinen Zahlungen wird nicht gefragt/)).toBeTruthy();
@@ -516,8 +511,8 @@ describe('PaymentsTab', () => {
     const user = setupUser();
     const p = props();
     render(<PaymentsTab view={view({ receiptTargets: [] })} {...p} />);
-    // With 100 payments drawn, a role query over the whole page names every button on it: the queries below
-    // look only where the control lives (the search form, the found list, the alert), which keeps them fast.
+    // With 100 payments drawn, a button query over the whole page names every button on it: the buttons and
+    // the found payments are looked for where they live (the search form, the found list, the alert).
     const form = within(screen.getByRole('search', { name: 'Zahlungen suchen' }));
     const box = form.getByLabelText('Andere Zahlung suchen und von Hand zuordnen');
     await user.type(box, 'x');
@@ -532,7 +527,7 @@ describe('PaymentsTab', () => {
     // The notice is not one of the payments.
     const list = within(screen.getByRole('list', { name: 'Gefundene Zahlungen' }));
     expect(list.getAllByRole('listitem').length).toBe(100);
-    expect(screen.getAllByText(/· privat/).length).toBe(1);
+    expect(list.getAllByText(/· privat/).length).toBe(1);
     // No receipt to link to: it says so instead of an empty picker.
     await user.click(list.getAllByRole('button', { name: /^Beleg wählen für/ })[0]);
     expect(screen.getByText('Kein Beleg aus diesem oder dem Vorjahr vorhanden.')).toBeTruthy();
@@ -586,7 +581,6 @@ describe('PaymentsTab', () => {
     confirm.mockReturnValueOnce(true);
     await user.click(buttons[0]);
     expect(p.onRemoveAccount).toHaveBeenCalledWith(expect.objectContaining({ id: 'acc-empty' }));
-    confirm.mockRestore();
   });
 
   it('a payment in another currency shows its own amount, and says when the euro amount is an estimate', () => {

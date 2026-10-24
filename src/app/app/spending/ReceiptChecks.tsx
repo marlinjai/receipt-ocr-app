@@ -64,6 +64,7 @@ export function runSummary(checks: ChecksRun): string {
     ];
     if (run.deferred > 0) parts.push(`${plural(run.deferred, 'weitere folgt', 'weitere folgen')} beim nächsten Prüfen`);
     sentences.push(`${parts.join(', ')}.`);
+    if (run.settledOwnName > 0) sentences.push(`${plural(run.settledOwnName, 'Benachrichtigung', 'Benachrichtigungen')} erledigt: eigenes Konto (Zahlungen an einen der eigenen Namen).`);
     if (run.mailbox.status === 'ok' && run.mailbox.found > 0) sentences.push(`Im Postfach ${plural(run.mailbox.found, 'Rechnung', 'Rechnungen')} gefunden.`);
     if (run.mailbox.status === 'error')
       sentences.push(

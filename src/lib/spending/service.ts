@@ -1,10 +1,12 @@
 import 'server-only';
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { counterpartyKey, loadPayments, setCounterpartyTreatment, type PaymentRow } from '@/lib/tax/payments/service';
 import { loadRoutedPayments, type RoutedPaymentRow, type RoutedPayments } from '@/lib/tax/payments/routing';
 import { isSpendingCategory, type SpendingCategory } from './categories';
 import { berlinYear } from './period';
 import { buildOverview, paymentYears, type OverviewPaymentInput, type SpendingOverview } from './overview';
+import { cleanOwnNames, treatmentsWithOwnNames } from './own-names';
+import type { CounterpartyTreatmentAnswer } from './rules';
 
 /**
  * Server-side reads and writes for the spending overview. Every function takes
@@ -27,7 +29,15 @@ export type SpendingServiceErrorCode =
   /** The payments tab already answered the counterparty as business or private; that answer is changed there, not overwritten here. */
   | 'treatment_exists'
   /** Taking back an own-account answer that is not one. */
-  | 'not_own_account';
+  | 'not_own_account'
+  /** Own names that are no list of names, or a name with nothing to match on. */
+  | 'invalid_names'
+  | 'name_too_long'
+  | 'too_many_names'
+  /** The name, in this or another spelling, is listed already. */
+  | 'name_listed'
+  /** The name to take out is not in the list (any more). */
+  | 'name_not_listed';
 
 export class SpendingServiceError extends Error {
   readonly code: SpendingServiceErrorCode;
@@ -54,8 +64,13 @@ export interface SpendingView {
   /** Receipts of this company still linked to payments that moved back to the company holding their account: taken back here. */
   dormantLinks: Array<{ paymentId: string; receipts: number; cents: number; linkedOn: string }>;
   answers: CategoryAnswerView[];
-  /** Counterparties answered as an own account (here or in the payments tab), with a name to show. */
-  ownAccounts: Array<{ counterpartyKey: string; label: string }>;
+  /**
+   * Counterparties counted as an own account, with a name to show: answered so (here or in the payments
+   * tab), or `byName` because they carry one of the own names (changed with the names, not taken back here).
+   */
+  ownAccounts: Array<{ counterpartyKey: string; label: string; byName: boolean }>;
+  /** The owner's own names, as typed. */
+  ownNames: string[];
   /** True when the workspace holds no payment at all: the page explains where they come from. */
   noPayments: boolean;
 }
@@ -85,6 +100,8 @@ export function toOverviewInput(p: PaymentRow | RoutedPaymentRow): OverviewPayme
     linkedCents: p.links.reduce((sum, l) => sum + l.cents, 0),
     byPrivateAccount: p.byPrivateAccount,
     routed: 'routedFrom' in p && p.routedFrom !== null,
+    // Only while the funding rule decides it: a person who said what the debit is has answered it.
+    awaitingList: p.byRule && p.funding?.awaitingList ? p.funding.service : null,
   };
 }
 
@@ -117,10 +134,64 @@ export async function categoryAnswerMap(db: PrismaClient, workspaceId: string, r
   return out;
 }
 
+/** The owner's own names of this company, as typed; none before he set any. */
+export async function loadOwnNames(db: PrismaClient, workspaceId: string): Promise<string[]> {
+  const row = await db.spendingSettings.findUnique({ where: { authWorkspaceId: workspaceId }, select: { ownNames: true } });
+  return row?.ownNames ?? [];
+}
+
+/**
+ * The counterparty answers the spending side reads: the payments tab's, and
+ * own accounts by the owner's own names where no answer was given (see
+ * `treatmentsWithOwnNames`). The one place the names apply, for the overview,
+ * the budgets and the missing-receipt loop alike.
+ */
+export async function spendingTreatments(
+  db: PrismaClient,
+  workspaceId: string,
+  loaded: Pick<RoutedPayments, 'payments' | 'treatments'>,
+  names?: readonly string[],
+): Promise<{ treatments: ReadonlyMap<string, CounterpartyTreatmentAnswer>; byName: ReadonlySet<string> }> {
+  const ownNames = names ?? (await loadOwnNames(db, workspaceId));
+  return treatmentsWithOwnNames(loaded.treatments, loaded.payments, ownNames);
+}
+
+/**
+ * Add one own name or take one out (`{ add }` or `{ remove }`), on the list as
+ * stored now: two open pages never undo each other's change. A second
+ * spelling of a listed name is not added again.
+ */
+export async function saveOwnNames(db: PrismaClient, ctx: SpendingContext, raw: unknown): Promise<string[]> {
+  const input = (raw ?? {}) as { add?: unknown; remove?: unknown };
+  const adding = typeof input.add === 'string' && input.remove === undefined;
+  if (!adding && !(typeof input.remove === 'string' && input.add === undefined)) throw new SpendingServiceError('invalid_names');
+  // The settings row exists before it is locked, so two first changes at the same moment meet on one row.
+  try {
+    await db.spendingSettings.upsert({ where: { authWorkspaceId: ctx.workspaceId }, create: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId }, update: {} });
+  } catch (e) {
+    // Two first changes at the same moment: the other one created the row, which is all this needed.
+    if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
+  }
+  return db.$transaction(async (tx) => {
+    // Locked until the change is written: a second change waits and then applies to this one's result.
+    const [row] = await tx.$queryRaw<Array<{ own_names: string[] }>>`SELECT own_names FROM spending_settings WHERE auth_workspace_id = ${ctx.workspaceId} FOR UPDATE`;
+    const current = row?.own_names ?? [];
+    const cleaned = cleanOwnNames(adding ? [...current, input.add] : current.filter((n) => n !== input.remove));
+    if (!cleaned.ok) throw new SpendingServiceError(cleaned.error);
+    // A name typed that adds nothing (empty, or a spelling already listed) is refused, so the page says so.
+    if (adding && cleaned.names.length === current.length) throw new SpendingServiceError((input.add as string).trim() ? 'name_listed' : 'invalid_names');
+    // Taken out on another page already: said, so this page does not claim a change it did not make.
+    if (!adding && cleaned.names.length === current.length) throw new SpendingServiceError('name_not_listed');
+    await tx.spendingSettings.update({ where: { authWorkspaceId: ctx.workspaceId }, data: { ownNames: cleaned.names } });
+    return cleaned.names;
+  });
+}
+
 /** The overview of `year` (one month of it when `month` is 1 to 12). */
 export async function loadSpending(db: PrismaClient, workspaceId: string, year: number, month: number | null, today = new Date()): Promise<SpendingView> {
-  const [loaded, answers] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId)]);
-  const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments: loaded.treatments, answers: await categoryAnswerMap(db, workspaceId, loaded, answers) }, year, month);
+  const [loaded, answers, ownNames] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId), loadOwnNames(db, workspaceId)]);
+  const { treatments, byName } = await spendingTreatments(db, workspaceId, loaded, ownNames);
+  const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments, byName, answers: await categoryAnswerMap(db, workspaceId, loaded, answers) }, year, month);
   return {
     overview,
     // The year asked for is always offered, so the year picker shows what the page shows even for a year without payments.
@@ -129,10 +200,11 @@ export async function loadSpending(db: PrismaClient, workspaceId: string, year: 
     sharedOut: loaded.sharedOut.map((s) => ({ accountLabel: s.accountLabel, receiverWorkspaceId: s.receiverWorkspaceId })),
     dormantLinks: loaded.dormantLinks.map((l) => ({ paymentId: l.paymentId, receipts: l.receipts, cents: l.cents, linkedOn: l.linkedOn })),
     answers,
-    ownAccounts: [...loaded.treatments]
+    ownAccounts: [...treatments]
       .filter(([, treatment]) => treatment === 'own_account')
-      .map(([key]) => ({ counterpartyKey: key, label: loaded.payments.find((p) => p.counterpartyKey === key)?.counterparty ?? key }))
+      .map(([key]) => ({ counterpartyKey: key, label: loaded.payments.find((p) => p.counterpartyKey === key)?.counterparty ?? key, byName: byName.has(key) }))
       .sort((a, b) => a.label.localeCompare(b.label, 'de')),
+    ownNames,
     noPayments: loaded.payments.length === 0,
   };
 }

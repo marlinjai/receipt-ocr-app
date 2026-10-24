@@ -9,6 +9,7 @@ import type { AccountKind, CounterpartyTreatment, FoundPayment, ImportResult } f
 import type { RefundStrength } from '@/lib/tax/payments/refunds';
 import { PAYMENT_FORMAT_LABELS } from '@/lib/tax/payments/types';
 import type { OpenPayment, StatementView } from '@/lib/tax/service';
+import { PAY_LATER_TERM_DAYS } from '@/lib/tax/payments/pay-later';
 import type { Result } from './actions';
 import { euro, foreignNote, parseEuro } from './amounts';
 import { BankAccountStatus, type BankActions, type BankFeed } from './BankConnection';
@@ -539,10 +540,14 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
             <div key={r.service} className="mt-3">
               <p className={`ui-note ${r.reconciles ? 'ui-note-ok' : 'ui-note-danger'}`} role={r.reconciles ? undefined : 'alert'}>
                 {SERVICE_LABELS[r.service] ?? r.service} ({r.accountLabels.join(', ')}): vom Bankkonto eingezogen {euro(r.collectedCents)}, Käufe laut Liste {euro(r.listedCents)},{' '}
+                {r.carriedCents > 0 && `dazu aus früheren Jahren noch offen ${euro(r.carriedCents)} (Raten, Käufe vom Jahresende), `}
+                {r.awaitingCents > 0 && `${euro(r.awaitingCents)} Sammelzahlungen nach dem Ende der Liste warten auf die nächste Liste und sind hier nicht mitgerechnet. `}
                 Differenz {euro(Math.abs(r.differenceCents))} {r.differenceCents > 0 ? 'mehr eingezogen als gelistet' : r.differenceCents < 0 ? 'weniger eingezogen als gelistet' : ''}.{' '}
                 {r.reconciles
                   ? r.differenceCents < -r.toleranceCents
-                    ? 'Das ist bei einem Guthabenkonto üblich: der Rest wurde aus Guthaben oder über eine Karte bezahlt. Nichts wurde eingezogen, das die Liste nicht erklärt.'
+                    ? r.serviceKind === 'wallet'
+                      ? 'Das ist bei einem Guthabenkonto üblich: der Rest wurde aus Guthaben oder über eine Karte bezahlt. Nichts wurde eingezogen, das die Liste nicht erklärt.'
+                      : `Das passt zusammen: die Käufe der letzten ${PAY_LATER_TERM_DAYS} Tage der Liste (${euro(r.notDueCents)}) sind noch nicht fällig und werden später eingezogen.`
                     : 'Das passt zusammen.'
                   : `Das passt nicht zusammen (Toleranz ${euro(r.toleranceCents)}). ${
                       r.differenceCents > 0
@@ -595,6 +600,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                         {transfer.accountLabel}
                         {transfer.reference ? ` · ${transfer.reference.slice(0, 60)}` : ''}
                         {transfer.hasTwin ? ' · der Kauf dazu steht in der Liste des Dienstes' : ''}
+                        {transfer.awaitingList ? ' · Sammelzahlung nach dem Ende der Liste, die nächste Liste folgt' : ''}
                         {transfer.linkedTo.length > 0 ? ` · zugeordnet zu: ${transfer.linkedTo.join(', ')}` : ''}
                       </span>
                     </span>

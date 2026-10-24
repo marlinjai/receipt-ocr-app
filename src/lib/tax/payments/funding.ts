@@ -1,5 +1,6 @@
 import { ESTIMATE_TOLERANCE_PERCENT, withinEstimate } from './estimate';
 import type { PaymentFormat } from './types';
+import { PAY_LATER_TERM_DAYS } from './pay-later';
 
 /**
  * Money that only funds another payment account. Pure.
@@ -40,6 +41,15 @@ import type { PaymentFormat } from './types';
  *   names the service with that amount, closest to it; that debit is then a
  *   transfer too, still the twin of a purchase the wallet shows. Without one,
  *   or with two equally close, it is asked about.
+ * - A bank debit naming a PAY-LATER service after the last day of its list,
+ *   at most `PAY_LATER_TERM_DAYS` later, is a collection: of the list's own
+ *   purchases still open (those of its last `PAY_LATER_TERM_DAYS` days, less
+ *   what the bank collected since then), or, beyond them, of purchases whose
+ *   list is not imported yet ("Sammelzahlung, Liste folgt", `awaitingList`): a
+ *   transfer that waits for the next list, which then pairs it as above. Later
+ *   than that it is asked about again (the service is no longer used, or
+ *   something else). Never for a wallet: its bank debit is the purchase itself,
+ *   and a purchase the list does not show yet is asked about.
  * - A purchase whose euro amount is an estimate (another currency at the
  *   reference rate) is the twin of a funding row within `ESTIMATE_TOLERANCE_PERCENT`;
  *   every other twin has exactly the same amount.
@@ -109,6 +119,8 @@ export interface Funding {
   kind: 'own_transfer' | 'refund';
   /** The purchase in the service's own list that this payment pays, when exactly one fits. */
   twinId: string | null;
+  /** A collection after the end of the service's list: it waits for the next list (see the rules above). */
+  awaitingList?: true;
 }
 
 interface Service {
@@ -181,6 +193,30 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
       movements.set(service.name, [...(movements.get(service.name) ?? []), payment]);
     }
   }
+  // A pay-later list's end, and what of its last `PAY_LATER_TERM_DAYS` days the bank has not collected yet (see the rules above).
+  const listEnd = (service: Service) => [...service.holders.values()].reduce((max, span) => (span.last > max ? span.last : max), '');
+  const open = new Map<string, { from: number; cents: number }>();
+  for (const service of services.values()) {
+    if (service.kind !== 'pay_later') continue;
+    const end = listEnd(service);
+    if (!end) continue;
+    const from = dayNumber(end) - PAY_LATER_TERM_DAYS;
+    const cents = (purchases.get(service.name) ?? []).filter((p) => dayNumber(p.bookingDay) > from).reduce((sum, p) => sum - p.amountCents, 0);
+    open.set(service.name, { from, cents });
+  }
+  const afterList = (service: Service, day: string): boolean => {
+    const end = listEnd(service);
+    return service.kind === 'pay_later' && end !== '' && day > end && dayNumber(day) - dayNumber(end) <= PAY_LATER_TERM_DAYS;
+  };
+  /** Count a bank collection against the list's open purchases; true when they explain it (one euro or one percent of tolerance). */
+  const paysListed = (service: Service, payment: FundingPayment): boolean => {
+    const left = open.get(service.name);
+    if (!left || dayNumber(payment.bookingDay) <= left.from) return true;
+    const cents = -payment.amountCents;
+    const fits = cents <= left.cents + Math.max(100, Math.round(left.cents / 100));
+    left.cents = Math.max(0, left.cents - cents);
+    return fits;
+  };
   const hasWords = (text: string, words: string) => ` ${text} `.includes(` ${words} `);
   const taken = new Set<string>();
   const namesService = (payment: FundingPayment, service: string) => payment.counterpartyKey.split(' ').includes(service);
@@ -241,7 +277,13 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
       .find((s): s is Service => s !== undefined && s.name !== own);
     if (!service) continue;
     const covered = [...service.holders.values()].some((span) => payment.bookingDay >= span.first && payment.bookingDay <= span.last);
-    if (!covered) continue;
+    if (!covered) {
+      // Only a pay-later service (`afterList`): a wallet's top-up debit is decided by the top-up after the loop.
+      if (payment.amountCents < 0 && accountKind.get(payment.accountId) === 'bank' && own === null && afterList(service, payment.bookingDay)) {
+        out.set(payment.id, paysListed(service, payment) ? { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: null } : { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: null, awaitingList: true });
+      }
+      continue;
+    }
 
     const day = dayNumber(payment.bookingDay);
     if (payment.amountCents > 0) {
@@ -280,6 +322,8 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
     const twin = twins.length === 1 ? twins[0] : null;
     const onBank = accountKind.get(payment.accountId) === 'bank' && own === null;
     if (!onBank && twin === null) continue;
+    // A collection inside the list's last days pays its open purchases too.
+    if (onBank && service.kind === 'pay_later') paysListed(service, payment);
     if (twin) taken.add(twin.id);
     out.set(payment.id, { service: service.name, serviceKind: service.kind, kind: 'own_transfer', twinId: twin?.id ?? null });
   }

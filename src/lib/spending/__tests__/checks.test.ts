@@ -9,7 +9,7 @@ import { runSpendingChecks } from '../checks';
 
 const db = {} as never;
 const ctx = { workspaceId: 'ws', tenantId: 't' };
-const LOOP = { notified: 1, deferred: 0, settled: 0, retried: 0, open: 1 };
+const LOOP = { notified: 1, deferred: 0, settled: 0, settledOwnName: 0, retried: 0, open: 1 };
 const BUDGETS = { sent: 1, deferred: 0, settled: 0 };
 
 beforeEach(() => {

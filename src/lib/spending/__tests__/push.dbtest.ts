@@ -29,7 +29,7 @@ import { createWorkspace, db } from '../../../../test/db-helpers';
 
 const vapid = { publicKey: 'pub', privateKey: 'priv', subject: 'mailto:owner@example.com' };
 const keys = () => ({ p256dh: Buffer.concat([Buffer.from([4]), randomBytes(64)]).toString('base64url'), auth: randomBytes(16).toString('base64url') });
-/** Addresses are unique per run: the test database is shared by runs and nothing is cleaned up. */
+/** Addresses are unique per test: the test files of one run share the database, which is emptied once before the run (test/db-reset.ts). */
 const RUN = randomBytes(6).toString('hex');
 const device = (n: number) => ({ endpoint: `https://fcm.googleapis.com/fcm/send/${RUN}-device-${n}`, keys: keys() });
 const message = (key: string): NotificationMessage => ({ subjectKey: key, kind: 'missing_receipt', title: 'Beleg fehlt: Zyx', body: 'Bitte hochladen.', path: '/app/spending' });
@@ -73,7 +73,8 @@ describe('push devices', () => {
       {},
       { endpoint: 'https://internal.example/hook', keys: good.keys },
       { endpoint: 'http://fcm.googleapis.com/fcm/send/x', keys: good.keys },
-      { endpoint: good.endpoint, keys: { p256dh: randomBytes(65).toString('base64url'), auth: good.keys.auth } },
+      // 65 bytes but no point: an uncompressed point starts with 0x04, so a random first byte would be one in 256 runs.
+      { endpoint: good.endpoint, keys: { p256dh: Buffer.concat([Buffer.from([0x05]), randomBytes(64)]).toString('base64url'), auth: good.keys.auth } },
       { endpoint: good.endpoint, keys: { p256dh: good.keys.p256dh, auth: randomBytes(8).toString('base64url') } },
       { endpoint: good.endpoint, keys: { p256dh: 'has spaces', auth: good.keys.auth } },
       { endpoint: good.endpoint },

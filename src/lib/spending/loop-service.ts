@@ -7,7 +7,7 @@ import { eurosToCents, formatCents } from '@/lib/tax/money';
 import { linkPayment, paidByReceipt, type PaymentRow } from '@/lib/tax/payments/service';
 import { linkRoutedPayment, loadRoutedPayments, paymentOnSpendingSide, receiversOf, type RoutedPaymentRow } from '@/lib/tax/payments/routing';
 import { receiptForLink } from '@/lib/tax/service';
-import { categoryAnswerMap } from './service';
+import { categoryAnswerMap, spendingTreatments } from './service';
 import { loopState, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
 import { notify, retryFailedDeliveries, serverChannels, settleAllBut, settleNotifications, type NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
@@ -112,6 +112,8 @@ interface Loaded {
   states: Map<string, LoopState>;
   /** Vendor keys each counterparty stands for, learned from links: the names a mailbox search uses besides the counterparty's own. */
   aliases: Map<string, Set<string>>;
+  /** Counterparties that are own accounts only by the owner's own names. */
+  byName: ReadonlySet<string>;
 }
 
 async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loaded> {
@@ -120,6 +122,8 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
     db.spendingReceiptAnswer.findMany({ where: { authWorkspaceId: workspaceId } }),
     loadMailCandidates(db, workspaceId),
   ]);
+  // A transfer to the owner's own name is an own transfer: it needs no receipt and is never asked about.
+  const { treatments, byName } = await spendingTreatments(db, workspaceId, loaded);
   // "No receipt exists", said in the holding company before the payment was routed here, still holds.
   // Never the other way: what this company says stays here.
   const routedIds = loaded.payments.filter((p) => p.routedFrom !== null).map((p) => p.id);
@@ -137,7 +141,7 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   const receipts = await loadLoopReceipts(db, workspaceId, linkedRows);
   const aliases = vendorAliases(loaded.payments, receipts);
   const ctx: LoopContext = {
-    treatments: loaded.treatments,
+    treatments,
     categoryAnswers: await categoryAnswerMap(db, workspaceId, loaded),
     noReceipt: reasons,
     noReceiptFromHolder: fromHolder,
@@ -151,7 +155,7 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   }
   const ownReasons = new Map(noReceipt.map((a) => [a.paymentId, a.reason]));
   const routedAwayAnswered = loaded.routedAway.flatMap((p) => (ownReasons.has(p.id) ? [{ payment: p, reason: ownReasons.get(p.id) as string }] : []));
-  return { payments: loaded.payments, states, aliases, routedAwayAnswered, receipts, ownPayments: loaded.payments.filter((p) => p.routedFrom === null), linkedElsewhere: loaded.linkedElsewhere };
+  return { payments: loaded.payments, states, aliases, byName, routedAwayAnswered, receipts, ownPayments: loaded.payments.filter((p) => p.routedFrom === null), linkedElsewhere: loaded.linkedElsewhere };
 }
 
 /** The subjects of the payments still waiting for their receipt: what keeps its messages in the in-app queue. */
@@ -169,6 +173,28 @@ function openSubjects(payments: readonly PaymentRow[], states: ReadonlyMap<strin
   }
   const stillOpen = new Set(waiting.flatMap((p) => [missingReceiptSubject(p.id), ...(inMailbox.has(p.id) ? [mailFoundSubject(p.id)] : [])]));
   return { waiting, inMailbox, open, stillOpen };
+}
+
+/**
+ * The messages about payments to one of the owner's own names that no longer
+ * wait (`stillOpen`): settled apart, so a run can say why they went.
+ */
+function ownNameSubjects(payments: readonly PaymentRow[], byName: ReadonlySet<string>, stillOpen: ReadonlySet<string>): string[] {
+  return payments.filter((p) => byName.has(p.counterpartyKey) && !stillOpen.has(missingReceiptSubject(p.id))).flatMap((p) => [missingReceiptSubject(p.id), mailFoundSubject(p.id)]);
+}
+
+/**
+ * After the own names changed: take the messages about payments to them out of
+ * the in-app queue at once (and every other message that no longer waits, as
+ * `settleMovedPayments` does). Sends nothing. Returns how many messages went
+ * because of the names.
+ */
+export async function settleAfterOwnNames(db: PrismaClient, workspaceId: string): Promise<number> {
+  const { payments, states, byName } = await computeStates(db, workspaceId);
+  const { stillOpen } = openSubjects(payments, states);
+  const settled = await settleNotifications(db, workspaceId, ownNameSubjects(payments, byName, stillOpen));
+  await settleAllBut(db, workspaceId, 'missing_receipt', stillOpen);
+  return settled;
 }
 
 /**
@@ -309,6 +335,8 @@ export interface RunResult {
   deferred: number;
   /** Notifications taken out of the in-app queue because their payment is settled now. */
   settled: number;
+  /** Of `settled`, those whose payment went to one of the owner's own names: settled as "eigenes Konto". */
+  settledOwnName: number;
   /** Failed deliveries that were tried again. */
   retried: number;
   open: number;
@@ -329,7 +357,7 @@ export async function runReceiptLoop(
 ): Promise<RunResult> {
   const channels = options.channels ?? serverChannels(db);
   await forgetGonePayments(db, ctx.workspaceId);
-  let { payments, states, aliases } = await computeStates(db, ctx.workspaceId);
+  let { payments, states, aliases, byName } = await computeStates(db, ctx.workspaceId);
   // Step 3: look in the mailbox for the invoices of recent payments still missing one, by the
   // counterparty's name and the vendors it is known to stand for, then read the states again.
   // A borrowed mailbox (the owner's, for the payments routed here from the owner) is searched only for those
@@ -340,12 +368,14 @@ export async function runReceiptLoop(
     .filter((p) => (borrowedFrom === null || p.routedFrom === borrowedFrom) && states.get(p.id)?.state === 'missing' && notifiable(p, options.today))
     .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, vendorWords: p.counterpartyKey ? mailWordsFor(p.counterparty, p.counterpartyKey, aliases.get(p.counterpartyKey) ?? []) : [] }));
   const mailbox = await searchMailbox(db, ctx, lookFor, selected.port, options.now);
-  if (mailbox.status !== 'off' && mailbox.found > 0) ({ payments, states, aliases } = await computeStates(db, ctx.workspaceId));
+  if (mailbox.status !== 'off' && mailbox.found > 0) ({ payments, states, aliases, byName } = await computeStates(db, ctx.workspaceId));
   const { waiting, inMailbox, open, stillOpen } = openSubjects(payments, states);
   // In this order: what is settled (or gone with an undone import, or moved to another company) leaves
   // the queue and is never retried, earlier failed deliveries are tried again, and only then are new
-  // ones sent, so a notification created in this run is not tried twice in it.
-  const settled = await settleAllBut(db, ctx.workspaceId, 'missing_receipt', stillOpen);
+  // ones sent, so a notification created in this run is not tried twice in it. Messages about money to
+  // the owner's own name go first, so the run can say why they went.
+  const settledOwnName = await settleNotifications(db, ctx.workspaceId, ownNameSubjects(payments, byName, stillOpen));
+  const settled = settledOwnName + (await settleAllBut(db, ctx.workspaceId, 'missing_receipt', stillOpen));
   const retried = await retryFailedDeliveries(db, ctx.workspaceId, channels, options.now);
   let notified = 0;
   let deferred = 0;
@@ -379,7 +409,7 @@ export async function runReceiptLoop(
     // At most once in the whole database: the subject names the payment, which may have moved between companies.
     if ((await notify(db, ctx, { subjectKey: subjectOf(p), kind: 'missing_receipt', ...message }, channels, { acrossCompanies: true })) === 'sent') notified += 1;
   }
-  return { notified, deferred, settled, retried, open, mailbox };
+  return { notified, deferred, settled, settledOwnName, retried, open, mailbox };
 }
 
 /** The payment must be on this company's spending side: its own and not routed away, or routed here. */

@@ -896,7 +896,7 @@ describe('FinanceClient: assets', () => {
     const user = setupUser();
     const payments = view([]).payments;
     const openPayment = { id: 'p-1', bookingDay: '2025-03-11', amountCents: -1_999, freeCents: 1_999, counterparty: 'Laden Beispiel', reference: '', kind: 'spend' as const, accountLabel: 'Geldbörse', check: 'payment_without_document' as const, proposals: [{ target: 'receipt' as const, targetId: 'r-1', label: 'Einkauf Laden', strength: 'amount_and_date' as const }], namesService: false };
-    const ruleTransfers = [{ id: 't-1', bookingDay: '2025-03-12', amountCents: -1_999, counterparty: 'Geldbörse Beispiel', reference: '', accountLabel: 'Geschäftskonto', hasTwin: true, linkedTo: [] }];
+    const ruleTransfers = [{ id: 't-1', bookingDay: '2025-03-12', amountCents: -1_999, counterparty: 'Geldbörse Beispiel', reference: '', accountLabel: 'Geschäftskonto', hasTwin: true, awaitingList: false, linkedTo: [] }];
     const initial = view([], { payments: { ...payments, open: [openPayment], ruleTransfers, ruleTransferCents: 1_999 } });
     actions.confirmPaymentLink.mockResolvedValue({ ok: true, value: { view: initial, moved: true } });
     actions.markPaymentTransfer.mockResolvedValue({ ok: true, value: view([]) });

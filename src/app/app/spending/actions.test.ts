@@ -14,6 +14,8 @@ const setCounterpartyCategory = vi.fn();
 const removeCounterpartyCategory = vi.fn();
 const markCounterpartyOwnAccount = vi.fn();
 const unmarkCounterpartyOwnAccount = vi.fn();
+const saveOwnNamesService = vi.fn();
+const settleAfterOwnNames = vi.fn();
 
 vi.mock('@/lib/auth', () => ({ auth: { requireAction: (...a: unknown[]) => requireAction(...a) } }));
 vi.mock('@/lib/auth-guards', () => {
@@ -38,6 +40,7 @@ vi.mock('@/lib/spending/service', () => {
     removeCounterpartyCategory: (...a: unknown[]) => removeCounterpartyCategory(...a),
     markCounterpartyOwnAccount: (...a: unknown[]) => markCounterpartyOwnAccount(...a),
     unmarkCounterpartyOwnAccount: (...a: unknown[]) => unmarkCounterpartyOwnAccount(...a),
+    saveOwnNames: (...a: unknown[]) => saveOwnNamesService(...a),
   };
 });
 const unlinkRoutedPayment = vi.fn();
@@ -48,7 +51,10 @@ vi.mock('@/lib/tax/payments/routing', () => ({
   unlinkRoutedPayment: (...a: unknown[]) => unlinkRoutedPayment(...a),
   touchesSharedAccount: (...a: unknown[]) => touchesSharedAccount(...a),
 }));
-vi.mock('@/lib/spending/loop-service', () => ({ settleAcrossSharesCoalesced: (...a: unknown[]) => settleAcrossSharesCoalesced(...a) }));
+vi.mock('@/lib/spending/loop-service', () => ({
+  settleAcrossSharesCoalesced: (...a: unknown[]) => settleAcrossSharesCoalesced(...a),
+  settleAfterOwnNames: (...a: unknown[]) => settleAfterOwnNames(...a),
+}));
 vi.mock('@/lib/tax/payments/service', () => {
   class PaymentServiceError extends Error {
     constructor(readonly code: string) {
@@ -61,14 +67,14 @@ vi.mock('@/lib/tax/payments/service', () => {
 import { ReceiptsAuthError } from '@/lib/auth-guards';
 import { SpendingServiceError } from '@/lib/spending/service';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
-import { answerCategory, getSpending, markOwnAccount, unlinkRoutedReceipt, unmarkOwnAccount, withdrawCategory } from './actions';
+import { answerCategory, getSpending, markOwnAccount, saveOwnNames, unlinkRoutedReceipt, unmarkOwnAccount, withdrawCategory } from './actions';
 
 const WS = { id: 'ws-a', slug: 'beispiel', role: 'member', tenantId: 't-a' };
 const SESSION = { memberships: [WS], activeWorkspace: WS };
 const VIEW = { overview: { year: 2026 }, accounts: [], sharedOut: [], dormantLinks: [] };
 
 beforeEach(() => {
-  for (const f of [requireAction, requireReceiptsSession, loadSpending, setCounterpartyCategory, removeCounterpartyCategory, markCounterpartyOwnAccount, unmarkCounterpartyOwnAccount, unlinkRoutedPayment, touchesSharedAccount, settleAcrossSharesCoalesced]) f.mockReset();
+  for (const f of [requireAction, requireReceiptsSession, loadSpending, setCounterpartyCategory, removeCounterpartyCategory, markCounterpartyOwnAccount, unmarkCounterpartyOwnAccount, unlinkRoutedPayment, touchesSharedAccount, settleAcrossSharesCoalesced, saveOwnNamesService, settleAfterOwnNames]) f.mockReset();
   loadSpending.mockResolvedValue(VIEW);
 });
 
@@ -171,6 +177,29 @@ describe('writes', () => {
     expect(unlinkRoutedPayment).not.toHaveBeenCalled();
     unlinkRoutedPayment.mockRejectedValue(new PaymentServiceError('link_not_found'));
     expect(await unlinkRoutedReceipt(2026, null, 'pay-2')).toEqual({ ok: false, error: 'invalid_input', detail: 'link_not_found' });
+  });
+
+  it('keeps the own names in the active workspace, settles its messages at once, and answers with the fresh view', async () => {
+    requireAction.mockResolvedValue(SESSION);
+    settleAfterOwnNames.mockResolvedValue(2);
+    expect(await saveOwnNames(2026, 3, { add: 'Erika Beispiel' })).toEqual({ ok: true, value: { ...VIEW, canWrite: true, companies: {}, settledOwnName: 2 } });
+    expect(saveOwnNamesService).toHaveBeenCalledWith({ marker: 'prisma' }, expect.objectContaining({ workspaceId: 'ws-a', tenantId: 't-a' }), { add: 'Erika Beispiel' });
+    expect(settleAfterOwnNames).toHaveBeenCalledWith({ marker: 'prisma' }, 'ws-a');
+    expect(loadSpending).toHaveBeenLastCalledWith({ marker: 'prisma' }, 'ws-a', 2026, 3);
+  });
+
+  it('keeps the names when settling the messages fails, and refuses names without the permission or with a bad name', async () => {
+    requireAction.mockResolvedValue(SESSION);
+    settleAfterOwnNames.mockRejectedValue(new Error('database busy'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await saveOwnNames(2026, null, { add: 'Erika Beispiel' })).toMatchObject({ ok: true, value: { settledOwnName: 0 } });
+    spy.mockRestore();
+    saveOwnNamesService.mockRejectedValue(new SpendingServiceError('invalid_names'));
+    expect(await saveOwnNames(2026, null, { add: '-' })).toEqual({ ok: false, error: 'invalid_input', detail: 'invalid_names' });
+    saveOwnNamesService.mockReset();
+    requireAction.mockRejectedValue(new ReceiptsAuthError(403));
+    expect(await saveOwnNames(2026, null, { add: 'Erika Beispiel' })).toEqual({ ok: false, error: 'forbidden' });
+    expect(saveOwnNamesService).not.toHaveBeenCalled();
   });
 
   it('report anything unexpected as failed', async () => {

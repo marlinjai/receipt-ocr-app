@@ -58,7 +58,7 @@ function sortKey(row: Row, dateId: string): string {
 export interface ReceiptPhoneListProps {
   /** The rows the page shows (years, search and filters already applied), groups and receipts alike. */
   rows: Row[];
-  /** Every loaded row, so a group card can say when the choice above shows only some of its receipts. */
+  /** Every loaded row, so a group card can say when a search or filter shows only some of its receipts. */
   loadedRows: Row[];
   columns: Column[];
   selectOptions: Map<string, SelectOption[]>;
@@ -134,6 +134,8 @@ export default function ReceiptPhoneList({ rows, loadedRows, columns, selectOpti
       {items.map((row) => {
         if (isGroupRow(row, columns)) {
           // The sum and count are of the receipts shown, like the wide table; the group panel lists all of them.
+          // "x von y" covers what a search or filter hides among the loaded rows. Receipts of years that are not
+          // loaded are not counted: the server sends only the chosen years, and the wide table counts the same.
           const children = receiptsInGroup(row.id, rows, columns);
           const all = receiptsInGroup(row.id, loadedRows, columns).length;
           const euroColumn = columns.find((c) => c.id === euroId);
@@ -147,7 +149,7 @@ export default function ReceiptPhoneList({ rows, loadedRows, columns, selectOpti
                     {name}
                   </span>
                   <span className="shrink-0 text-right text-sm font-semibold tabular-nums" style={{ color: 'var(--foreground)' }}>
-                    {phoneAmount(sum, 'EUR')}
+                    {phoneAmount(sum, 'EUR') || <span className="font-normal" style={{ color: 'var(--muted)' }}>kein Betrag</span>}
                   </span>
                 </span>
                 <span className="mt-1 block text-xs" style={{ color: 'var(--muted)' }}>

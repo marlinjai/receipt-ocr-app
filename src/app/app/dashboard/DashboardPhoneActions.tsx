@@ -62,34 +62,34 @@ export default function DashboardPhoneActions({
       {open && (
         <nav id={menuId} aria-label="Weitere Bereiche und Aktionen" className="ui-panel-in mt-3">
           <div className="grid grid-cols-2 gap-2">
-            <Link href="/app/overview" className="ui-btn justify-start">
+            <Link href="/app/overview" className="ui-btn ui-btn-start">
               <OverviewIcon />
               Overview
             </Link>
-            <Link href="/app/finance" className="ui-btn justify-start">
+            <Link href="/app/finance" className="ui-btn ui-btn-start">
               <FinanceIcon />
               Finanzen
             </Link>
-            <Link href="/app/meals" className="ui-btn justify-start">
+            <Link href="/app/meals" className="ui-btn ui-btn-start">
               <MealsIcon />
               Bewirtung
               {openMealCount > 0 && (
                 <span
                   className="rounded-full px-1.5 py-0.5 text-xs font-semibold tabular-nums"
                   style={{ background: 'var(--accent-muted)', color: 'var(--accent)' }}
-                  aria-label={`${openMealCount} offen`}
                 >
                   {openMealCount}
+                  <span className="sr-only"> offen</span>
                 </span>
               )}
             </Link>
-            <Link href="/app/contacts" className="ui-btn justify-start">
+            <Link href="/app/contacts" className="ui-btn ui-btn-start">
               <ContactsIcon />
               Kontakte
             </Link>
             <button
               type="button"
-              className="ui-btn justify-start"
+              className="ui-btn ui-btn-start"
               onClick={() => {
                 onExport();
                 setOpen(false);
@@ -98,13 +98,13 @@ export default function DashboardPhoneActions({
               <ExportIcon />
               Export CSV
             </button>
-            <Link href="/app/import" className="ui-btn justify-start">
+            <Link href="/app/import" className="ui-btn ui-btn-start">
               <ImportIcon />
               Import
             </Link>
             <button
               type="button"
-              className="ui-btn justify-start"
+              className="ui-btn ui-btn-start"
               onClick={() => {
                 onToggleAi();
                 setOpen(false);

@@ -35,7 +35,7 @@ export default function FxRecomputePanel() {
     <div className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 max-sm:min-h-11 max-sm:w-full"
+        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 max-sm:min-h-11 max-sm:w-full max-sm:justify-start"
         style={{
           background: open ? 'var(--accent-muted)' : 'var(--surface)',
           color: open ? 'var(--accent)' : 'var(--foreground)',

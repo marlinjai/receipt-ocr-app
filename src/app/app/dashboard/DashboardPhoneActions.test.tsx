@@ -39,7 +39,7 @@ describe('the dashboard actions on a phone', () => {
     const user = userEvent.setup();
     actions(4);
     await user.click(screen.getByRole('button', { name: 'Mehr' }));
-    expect(screen.getByLabelText('4 offen')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Bewirtung/ }).textContent).toBe('Bewirtung4 offen');
   });
 
   it('exports and opens the assistant, closing the menu each time', async () => {

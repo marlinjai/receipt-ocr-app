@@ -50,17 +50,21 @@ All decided by the coordinating session on 2026-10-24, say so if you disagree.
    on the same 640 pixel boundary) because only one of the two may be mounted: the table keeps
    keyboard focus and selection state. Until the width is known (on the server and during
    hydration) neither is drawn, so a phone never mounts the table only to swap it out; the rows
-   load in the browser anyway. While a reload is still running the list says the receipts are
+   load in the browser anyway. Everything else that differs (the heading row, the view picker
+   against the tab row, the bulk tools) switches by CSS, so the wide layout paints as before. While a reload is still running the list says the receipts are
    loading, and when loading failed it draws nothing under the page's error banner, never "no
    receipts". A group card counts and sums the receipts the choice above shows, like the wide
-   table, and says "1 von 2 Belegen" when the choice hides some of them.
+   table, and says "1 von 2 Belegen" when a search or filter hides some of its loaded receipts.
+   Receipts of years that are not chosen are not loaded at all (the server sends only the
+   chosen years), so they are not counted there, exactly as in the wide table.
 2. **Selecting, bulk editing and making groups stay on the wide layout.** The card list has
    no selection, so "Set field", "Neue Gruppe" and the delete-selected button are hidden on a
-   phone rather than shown doing nothing. A receipt is still edited, re-read or deleted from its
+   phone rather than shown doing nothing, and the Delete key does nothing there (a selection made
+   on a wider window must not be deleted unseen). A receipt is still edited, re-read or deleted from its
    detail panel, and a group is still opened, emptied or dissolved from its panel.
 3. **The view tabs on a phone are a plain picker ("Ansicht").** The package's `ViewSwitcher`
    carries rename, delete and add menus that open as popovers below each tab; inside a
-   sideways-scrolling strip those would be clipped. On a phone a native select switches
+   sideways-scrolling strip those would be clipped. On a phone (by CSS, below `sm`) a native select switches
    between the existing views; creating, renaming and deleting views stays on the wide layout.
    The Board and Calendar views keep the package's components and scroll sideways inside
    their own box, never the page. No package change is needed for this, so none is filed.
@@ -69,7 +73,8 @@ All decided by the coordinating session on 2026-10-24, say so if you disagree.
    page's flow (no popover to position or clip) with the same destinations as the wide row:
    Overview, Finanzen, Bewirtung (with its open count), Kontakte, Export CSV, Import, AI,
    Recompute FX. The wide row is unchanged and hidden below 640 pixels. The icons of both moved
-   to one shared file so they cannot drift apart.
+   to one shared file; the destinations are written in both places (the wide row's styling is
+   kept exactly as it was), and a test checks the menu's list of destinations.
 5. **Every page follows the same phone rules**, at 360 and 390 pixels:
    - no sideways page scroll (`scrollWidth` equals the window width minus the scroll bar);
    - a tab row scrolls inside itself. The finance row (up to nine tabs, the only one wider than a
@@ -136,9 +141,10 @@ after are kept under the dev-browser temporary folder (`mobile-rework/before` an
 Calendar views, a search with hits and one without, and the AI panel were opened, each with no
 sideways page scroll. Tests: `DashboardClient.phone.test.tsx` runs the whole dashboard at phone width
 with the real table package and a fake data source: cards and the view picker in place of the
-table, a card opening the detail panel, resuming from `?jahre=2025`, the search narrowing the
+table, a card opening the detail panel, opening on the years a link names, the search narrowing the
 cards down to none and back, a failed load not shown as an empty list, and the wide layout
-keeping its table. `ReceiptPhoneList.test.tsx` covers the list itself (order, groups, the empty,
+keeping its table and tab row. The year test hands the years over as the page does (it reads
+`?jahre=` on the server and passes it as `initialYears`). `ReceiptPhoneList.test.tsx` covers the list itself (order, groups, the empty,
 narrowed, loading and failed states, formatting), `DashboardPhoneActions.test.tsx` the menu,
 and `src/lib/__tests__/phone-layout-hooks.test.tsx` the two hooks.
 

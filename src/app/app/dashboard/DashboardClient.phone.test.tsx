@@ -83,6 +83,10 @@ async function open(initialYears: string | null) {
   );
 }
 
+/** The wrapper of the package's tab row: the element holding a button for every view. */
+const tabRowWrapper = () =>
+  [...document.querySelectorAll<HTMLElement>('div')].find((d) => d.className === 'max-sm:hidden' && within(d).queryByRole('button', { name: /Table/ }));
+
 const cardLabels = () => within(screen.getByRole('list', { name: 'Belege' })).getAllByRole('button').map((b) => b.getAttribute('aria-label'));
 
 beforeEach(() => {
@@ -94,7 +98,7 @@ afterEach(() => {
 });
 
 describe('the dashboard on a phone', () => {
-  it('shows the receipts of the newest year as cards, with the view picker in place of the tab row', async () => {
+  it('shows the receipts of the newest year as cards, and the view picker for phones beside the tab row for wide screens', async () => {
     phoneWidth(true);
     setAdapter();
     await open(null);
@@ -102,6 +106,10 @@ describe('the dashboard on a phone', () => {
     expect(cardLabels()).toEqual(['Beleg Taxi Beispiel vom 13.03.2026 öffnen', 'Beleg Softwarehaus Beispiel vom 12.03.2026 öffnen', 'Gruppe Messe öffnen']);
     const picker = screen.getByLabelText('Ansicht') as HTMLSelectElement;
     expect([...picker.options].map((o) => o.textContent)).toEqual(['Table', 'Board']);
+    // Picker and tab row are switched by CSS (jsdom applies none): the picker only below `sm`, the tab row only above.
+    expect(picker.parentElement?.className).toContain('sm:hidden');
+    expect(picker.parentElement?.className).not.toContain('max-sm:hidden');
+    expect(tabRowWrapper()?.className).toBe('max-sm:hidden');
     expect(document.querySelector('.dt-table-view')).toBeNull();
   });
 
@@ -114,7 +122,7 @@ describe('the dashboard on a phone', () => {
     expect(screen.getByRole('dialog', { name: 'Beleg' }).textContent).toBe('licence');
   });
 
-  it('resumes the years the address names: a link to 2025 shows the 2025 receipt only', async () => {
+  it('opens on the years a link names (the page hands `?jahre=2025` over as initialYears): the 2025 receipt only', async () => {
     phoneWidth(true);
     setAdapter();
     await open('2025');
@@ -154,6 +162,9 @@ describe('the dashboard on a wide screen', () => {
     await open(null);
     await waitFor(() => expect(document.querySelector('.dt-table-view')).not.toBeNull());
     expect(screen.queryByRole('list', { name: 'Belege' })).toBeNull();
-    expect(screen.queryByLabelText('Ansicht')).toBeNull();
+    // The package's tab row with every view, outside anything hidden on a wide screen.
+    const row = tabRowWrapper();
+    expect(row && within(row).getByRole('button', { name: /Board/ })).toBeTruthy();
+    expect(screen.getByLabelText('Ansicht').parentElement?.className).toContain('sm:hidden');
   });
 });

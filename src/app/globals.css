@@ -252,6 +252,10 @@ body::after {
   min-width: 2rem;
   padding: 0;
 }
+/* A button whose icon and label line up at its start, in a column of such buttons (the phone menu). */
+.ui-btn-start {
+  justify-content: flex-start;
+}
 .ui-btn-sm {
   min-height: 2rem;
   padding: 0.25rem 0.625rem;
@@ -887,10 +891,6 @@ textarea.ui-input {
    `sm` breakpoint only, so the wide layout is untouched. */
 
 /* One receipt on the phone list: the whole card is the tap target. */
-.ui-phone-card {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 4.25rem;
-}
 .ui-phone-card-button {
   display: block;
   width: 100%;
@@ -934,7 +934,8 @@ textarea.ui-input {
     width: 2.75rem;
     min-width: 2.75rem;
   }
-  /* The data-table package's filter controls in the dashboard's search row (no class of their own to size). */
+  /* The data-table package's filter controls in the dashboard's search row (no class of their own to size).
+     The filter bar edits in place with native pickers and draws no popover, so only its own buttons are hit. */
   .dashboard-filter-row button {
     min-height: 2.75rem;
   }

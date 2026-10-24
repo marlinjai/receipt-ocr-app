@@ -450,7 +450,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (selectedRows.size === 0) return;
+      // On a phone the selection is not shown (a selection made on a wider window may linger): never delete it unseen.
+      if (selectedRows.size === 0 || isPhone) return;
       // Don't trigger if user is typing in an input/textarea
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return;
@@ -461,7 +462,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [selectedRows, handleDeleteSelected]);
+  }, [selectedRows, handleDeleteSelected, isPhone]);
 
   // A link from another area (a finance line, a payment) opens its receipt:
   // once, as soon as the row has arrived. The table loads in pages, so the row
@@ -684,9 +685,9 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
                 <span
                   className="rounded-full px-1.5 py-0.5 text-xs font-semibold tabular-nums"
                   style={{ background: 'var(--accent-muted)', color: 'var(--accent)' }}
-                  aria-label={`${openMealCount} offen`}
                 >
                   {openMealCount}
+                  <span className="sr-only"> offen</span>
                 </span>
               )}
             </Link>
@@ -872,9 +873,9 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       </ConfirmDialog>
 
       {/* View Switcher. On a phone the package's tab row (with its rename and add menus) is wider than the screen,
-          so a plain picker switches the views there; creating and renaming views stays on the wide layout. */}
-      {isPhone === null ? null : isPhone ? (
-        <div className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: '1px solid var(--dt-border-color)', background: 'var(--dt-bg-secondary)' }}>
+          so a plain picker switches the views there; creating and renaming views stays on the wide layout. Both are
+          switched by CSS, so the wide tab row is in the first paint as before. */}
+      <div className="flex items-center gap-2 px-4 py-2 sm:hidden" style={{ borderBottom: '1px solid var(--dt-border-color)', background: 'var(--dt-bg-secondary)' }}>
           <label htmlFor="phone-view-picker" className="text-sm" style={{ color: 'var(--dt-text-secondary)' }}>
             Ansicht
           </label>
@@ -890,8 +891,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
               </option>
             ))}
           </select>
-        </div>
-      ) : (
+      </div>
+      <div className="max-sm:hidden">
         <ViewSwitcher
           views={views}
           currentViewId={currentView?.id ?? null}
@@ -900,7 +901,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           onDeleteView={deleteView}
           onRenameView={(viewId, name) => updateView(viewId, { name })}
         />
-      )}
+      </div>
 
       {/* Search & Filter */}
       <div className="dashboard-filter-row px-4 py-2 flex flex-wrap gap-2 items-center" style={{ borderBottom: '1px solid var(--dt-border-color)', background: 'rgba(10, 10, 15, 0.3)' }}>

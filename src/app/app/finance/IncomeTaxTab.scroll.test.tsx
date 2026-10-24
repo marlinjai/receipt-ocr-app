@@ -28,13 +28,18 @@ const slip = (month: number): WageEntry => ({
 const view = (incomeTax = incomeTaxView()): StatementView => ({ year: incomeTax.year, employmentCostCents: 0, incomeTax }) as StatementView;
 const props = { busy: false, error: null, onSaveWage: vi.fn(), onRemoveWage: vi.fn(), onSaveItem: vi.fn(), onRemoveItem: vi.fn(), onChurchMonths: vi.fn(), onFederalState: vi.fn() };
 
-describe('the income tax tables on a phone', () => {
-  it('puts the taxes table and the wage table each in its own sideways scroll box', () => {
+describe('the income tax tables', () => {
+  // jsdom applies no CSS: this checks the boxes are there and reachable; the sticky column and the one-line
+  // amounts were checked in the browser at 360 and 390 (plan, follow-up section).
+  it('puts the taxes table and the wage table each in its own named, focusable scroll box', () => {
     const tax = incomeTaxView({ year: 2025, profitCents: 100_000, wageEntries: [slip(1), slip(2)], federalState: 'BE' });
     render(<IncomeTaxTab view={view(tax)} {...props} />);
     for (const name of [/Steuern 2025/, /Lohnangaben 2025/]) {
-      const box = screen.getByRole('table', { name }).parentElement;
-      expect(box?.className).toBe('ui-table-scroll');
+      const box = screen.getByRole('table', { name }).parentElement as HTMLElement;
+      expect(box.className).toBe('ui-table-scroll');
+      expect(box.getAttribute('role')).toBe('region');
+      expect(box.getAttribute('aria-label')).toMatch(name);
+      expect(box.tabIndex).toBe(0);
     }
   });
 });

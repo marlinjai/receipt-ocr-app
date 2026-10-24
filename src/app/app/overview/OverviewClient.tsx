@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { aggregateOverview, type OverviewData } from '@/lib/overview/aggregate';
 import {
@@ -105,20 +105,33 @@ function StackedMonthly({
   const monthTotal = (m: (typeof series.months)[number]) => Object.values(m.byVendor).reduce((a, b) => a + b, 0);
   const max = Math.max(1, ...series.months.map(monthTotal));
   // Two years of months do not fit a phone (or half a wide screen): every month keeps a readable column and the
-  // chart scrolls sideways in its own panel, never the page. It opens on the newest months.
+  // chart scrolls sideways in its own panel, never the page. It opens on the newest months, before the first
+  // paint, and again when the panel narrows (a phone turned) while nobody has scrolled it away from its start.
+  // Only a panel that scrolls is a tab stop.
   const panel = useRef<HTMLDivElement>(null);
   const monthCount = series.months.length;
-  useEffect(() => {
+  const [scrolls, setScrolls] = useState(false);
+  useLayoutEffect(() => {
     const el = panel.current;
-    if (el && el.scrollWidth > el.clientWidth) el.scrollTo({ left: el.scrollWidth });
+    if (!el) return;
+    const fit = (first: boolean) => {
+      const overflows = el.scrollWidth > el.clientWidth;
+      setScrolls(overflows);
+      if (overflows && (first || el.scrollLeft === 0)) el.scrollTo({ left: el.scrollWidth });
+    };
+    fit(true);
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => fit(false));
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [monthCount]);
   return (
     <div
       ref={panel}
       role="region"
-      aria-label={`${series.currency} je Monat`}
-      tabIndex={0}
-      className="overflow-x-auto overscroll-x-contain pb-1 outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent)]"
+      aria-label={`${series.currency} by month`}
+      tabIndex={scrolls ? 0 : undefined}
+      className="overflow-x-auto overscroll-x-contain pb-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--accent)]"
     >
       <div style={{ minWidth: monthCount * MONTH_COLUMN_PX }}>
         <div className="flex items-end gap-2" style={{ height: H }}>

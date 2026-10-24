@@ -285,7 +285,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
                   : `${euro(estimate.businessEffectCents)} mehr`}
               </p>
             )}
-            <div className="ui-table-scroll">
+            <div className="ui-table-scroll" role="region" aria-label={`Steuern ${view.year}`} tabIndex={0}>
             <table className="mt-3 w-full text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
               <caption className="sr-only">Steuern {view.year}</caption>
               <thead>
@@ -356,7 +356,7 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
           laufenden Jahr kann die letzte bis Dezember hochgerechnet werden.
         </p>
         {tax.wageEntries.length > 0 && (
-          <div className="ui-table-scroll">
+          <div className="ui-table-scroll" role="region" aria-label={`Lohnangaben ${view.year}`} tabIndex={0}>
           <table className="mt-3 w-full text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
             <caption className="sr-only">Lohnangaben {view.year}</caption>
             <thead>

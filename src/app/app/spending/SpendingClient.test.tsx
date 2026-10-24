@@ -251,6 +251,8 @@ describe('SpendingClient charts', () => {
     render(<SpendingClient today="2026-04-15" initial={view(true)} budgetLines={null} />);
     expect(screen.queryByText(/Budget und Ausgaben/)).toBeNull();
     expect(screen.getByText(/Monate 2026 nach Kategorie/)).toBeTruthy();
+    // All spending by category stays, also without the budgets.
+    expect(screen.getByRole('heading', { name: 'Kategorien 2026' })).toBeTruthy();
   });
 });
 
@@ -259,6 +261,8 @@ describe('SpendingClient waiting collections', () => {
     const waiting = { ...pay, id: 'p-k', counterparty: 'Klarna Bank AB', counterpartyKey: 'klarna bank ab', amountCents: -126_169, kind: 'own_transfer' as const, awaitingList: 'klarna' };
     render(<SpendingClient today="2026-10-24" initial={{ ...view(true), overview: buildOverview([pay, waiting], { treatments: new Map(), answers: new Map() }, 2026, null) }} />);
     expect(screen.getByText(/Nicht mitgezählt: 1 Klarna-Sammelzahlung über 1\.261,69 € wartet auf die nächste Klarna-Liste\./)).toBeTruthy();
+    // The payments table says it waits, not merely "Umbuchung".
+    expect(screen.getByText('Sammelzahlung, wartet auf die nächste Klarna-Liste')).toBeTruthy();
   });
 });
 
@@ -335,5 +339,6 @@ describe('spendingActionMessage', () => {
     expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'name_too_long' })).toMatch(/höchstens 120 Zeichen/);
     expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'too_many_names' })).toMatch(/höchstens 20/);
     expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'name_listed' })).toMatch(/schon in der Liste/);
+    expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'name_not_listed' })).toMatch(/nicht mehr in der Liste/);
   });
 });

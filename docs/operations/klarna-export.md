@@ -29,7 +29,9 @@ it into the file the importer reads as `klarna_csv`.
 
 ## Running it
 
-1. Sign in to Klarna in the visible automation Chrome, if the session has run out.
+1. Sign in to Klarna in the visible automation Chrome, if the session has run out. Start a new
+   export by deleting `~/.dev-browser/tmp/klarna-raw.json`: otherwise the list of purchases of the
+   last export is used and a new purchase is never found.
 2. Read the purchases. The app's token lasts only a few dozen requests, so each run reads at most 35
    purchases; run it again until it prints `left 0`:
 
@@ -37,8 +39,9 @@ it into the file the importer reads as `klarna_csv`.
    dev-browser-auto --visible --timeout 170 run scripts/klarna/klarna-web-export.js
    ```
 
-   Each run prints `purchases <n> read <n> failed this run <n> left <n>`. A purchase that failed is
-   read again by the next run.
+   Each run prints `purchases <n> read <n> reserved <n> failed this run <n> left <n>`. A purchase
+   that failed is read again by the next run, and so is a reserved one (not charged yet), so its
+   status is current when the export ends.
 3. Convert, naming every Klarna file imported before, so only new purchases are written:
 
    ```bash
@@ -46,7 +49,8 @@ it into the file the importer reads as `klarna_csv`.
    ```
 
    It stops with a message when an amount is not in euros (another currency), rather than writing a
-   wrong amount.
+   wrong amount. A row of an earlier file with the status "In Bearbeitung" counts as not imported
+   (the importer skipped it), so a reserved purchase is written again once it is charged.
 4. Import `klarna-new.csv` under Finanzen, Zahlungen, on the Klarna account.
 
 ## The run of 2026-10-23

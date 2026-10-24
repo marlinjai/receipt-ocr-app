@@ -4,8 +4,9 @@ imports as `klarna_csv`, keeping only purchases not in the files already importe
     python3 -I klarna-to-csv.py ~/.dev-browser/tmp/klarna-raw.json out.csv imported1.csv [imported2.csv ...]
 
 A purchase counts as imported when its payment reference or order reference appears in one of
-those files. A purchase the shop has not charged yet is written with the status
-"In Bearbeitung", which the importer skips until a later export shows it charged.
+those files, on a row the importer took (not "In Bearbeitung", which it skips). A purchase the
+shop has not charged yet is written with the status "In Bearbeitung", so a later export, once it
+is charged, writes it again as a purchase.
 """
 import csv
 import json
@@ -21,6 +22,9 @@ raw_path, out_path, *imported = sys.argv[1:]
 known = set()
 for path in imported:
     for row in csv.DictReader(open(path, newline='')):
+        # The importer skipped a reserved row: it is not imported, whatever file it stands in.
+        if row.get('status', '').strip() == 'In Bearbeitung':
+            continue
         known.update({row.get('payment_reference', ''), row.get('statement_number', '')})
 known.discard('')
 berlin = ZoneInfo('Europe/Berlin')

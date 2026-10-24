@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { createAccount, deleteImportBatch, importPayments, loadPayments, setPaymentKind } from '@/lib/tax/payments/service';
 import { loadLoopOverview, runReceiptLoop } from '../loop-service';
+import { listUnreadNotifications } from '../notify/service';
 import type { NotificationChannel, NotificationMessage } from '../notify/port';
 import { loadSpending } from '../service';
 import { createWorkspace, db } from '../../../../test/db-helpers';
@@ -81,6 +82,31 @@ describe('a collective debit after the end of its list', () => {
     expect((await loadLoopOverview(db, ctx.workspaceId)).open.map((c) => c.counterparty).sort()).toEqual(['Klarna Bank AB (publ)', 'Zyx Handel']);
     await setPaymentKind(db, ctx, debitId, null);
     expect((await loadSpending(db, ctx.workspaceId, 2026, 10)).overview.waitingDebits).toHaveLength(1);
+  });
+
+  it('forward, as on production: a debit already asked about starts waiting once the list is imported, and its message is settled', async () => {
+    const ws = await createWorkspace();
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    const bankId = await createAccount(db, ctx, { label: 'Girokonto', kind: 'bank' });
+    const laterId = await createAccount(db, ctx, { label: 'Später zahlen', kind: 'payment_service' });
+    await importPayments(db, ctx, bankId, file(line('2026-10-23', 'Klarna Bank AB (publ)', 'Klarna Sammelzahlung', '-1261.69', 'Direct Debit')));
+    const push = recorder();
+    await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] });
+    expect(push.sent.map((m) => m.title)).toEqual(['Beleg fehlt: Klarna Bank AB (publ)']);
+    await importPayments(db, ctx, laterId, laterFile(later('2026-09-10', 'Kiosk Beispiel', '20.00', '6100000000001'), later('2026-09-30', 'Laden Beispiel', '30.00', '6100000000002')));
+    const run = await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] });
+    expect(run).toMatchObject({ notified: 0, settled: 1, open: 0 });
+    expect(await listUnreadNotifications(db, ctx.workspaceId)).toEqual([]);
+  });
+
+  it('waits at most 60 days after the list: a later debit is asked about again', async () => {
+    const { ctx } = await setup();
+    const { payments } = await loadPayments(db, ctx.workspaceId);
+    const bankId = payments.find((p) => p.amountCents === -126_169)?.accountId as string;
+    await importPayments(db, ctx, bankId, file(line('2026-12-01', 'Klarna Bank AB (publ)', 'Klarna Sammelzahlung', '-80.00', 'Direct Debit')));
+    const view = await loadSpending(db, ctx.workspaceId, 2026, 12);
+    expect(view.overview.waitingDebits).toEqual([]);
+    expect(view.overview.unclear.map((u) => u.counterparty)).toEqual(['Klarna Bank AB (publ)']);
   });
 
   it('resume and re-entry: read again it is the same, and a second run of the loop sends nothing', async () => {

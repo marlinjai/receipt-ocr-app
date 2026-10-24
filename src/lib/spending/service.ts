@@ -35,7 +35,9 @@ export type SpendingServiceErrorCode =
   | 'name_too_long'
   | 'too_many_names'
   /** The name, in this or another spelling, is listed already. */
-  | 'name_listed';
+  | 'name_listed'
+  /** The name to take out is not in the list (any more). */
+  | 'name_not_listed';
 
 export class SpendingServiceError extends Error {
   readonly code: SpendingServiceErrorCode;
@@ -178,6 +180,8 @@ export async function saveOwnNames(db: PrismaClient, ctx: SpendingContext, raw: 
     if (!cleaned.ok) throw new SpendingServiceError(cleaned.error);
     // A name typed that adds nothing (empty, or a spelling already listed) is refused, so the page says so.
     if (adding && cleaned.names.length === current.length) throw new SpendingServiceError((input.add as string).trim() ? 'name_listed' : 'invalid_names');
+    // Taken out on another page already: said, so this page does not claim a change it did not make.
+    if (!adding && cleaned.names.length === current.length) throw new SpendingServiceError('name_not_listed');
     await tx.spendingSettings.update({ where: { authWorkspaceId: ctx.workspaceId }, data: { ownNames: cleaned.names } });
     return cleaned.names;
   });

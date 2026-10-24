@@ -125,6 +125,18 @@ Built so far, with what the build decided on the way (say so if you disagree):
   "Klarna ends" closes without a new setting: after the last export, a later Klarna debit asks. A
   wallet waits only while no live connection continues its list (PayPal through the bank interface
   is never late).
+- **Decided after the second review:** the waiting rule applies to pay-later services only (Klarna):
+  a PayPal bank debit is the purchase itself and stays a question when the list does not show it. A
+  Klarna debit after the end of the list first pays what the list still holds open (its purchases of
+  the last 60 days, less what the bank collected since); only what goes beyond waits, so the final
+  collections after the last export are ordinary collections, not waiting ones. The reconciliation
+  leaves waiting debits out of "collected" and names them. The carry-over from earlier years is
+  limited to their last 60 days of purchases (a purchase never collected stays a question in its own
+  year), and a year whose last purchases the next year collects is no gap either. On the spending
+  side the names now win over a "private" answer of the payments tab (a private withdrawal to the
+  owner is still no spending); "business" or "mixed" there still wins. The per-category totals of all
+  spending are back under the charts, the payments table says when a debit waits for its list, and
+  the Klarna scripts read reserved purchases again until they are charged.
 - **Decided after the first review:** own names are matched word for word without dropping legal
   forms, so "Erika Beispiel UG" (another legal person) is never the owner; and because answers are kept
   per counterparty key (which drops legal forms), a key counts only when every payment under it names

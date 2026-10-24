@@ -52,13 +52,17 @@ describe('treatmentsWithOwnNames', () => {
     expect(treatments.has('erika shop')).toBe(false);
   });
 
-  it('lets an answer of the payments tab win', () => {
-    const answered = new Map<string, CounterpartyTreatmentAnswer>([['erika beispiel', 'private']]);
+  it('lets an answer of the payments tab that says it is something else win, but not "private"', () => {
+    const answered = new Map<string, CounterpartyTreatmentAnswer>([['erika beispiel', 'business']]);
     const { treatments, byName } = treatmentsWithOwnNames(answered, keys, ['Erika Beispiel']);
-    expect(treatments.get('erika beispiel')).toBe('private');
+    expect(treatments.get('erika beispiel')).toBe('business');
     expect([...byName]).toEqual(['beispiel erika']);
     // The input map is never changed.
-    expect(answered.size).toBe(1);
+    expect(answered.get('erika beispiel')).toBe('business');
+    // "Private" there (a private withdrawal) is still money to oneself here.
+    const privately = treatmentsWithOwnNames(new Map<string, CounterpartyTreatmentAnswer>([['erika beispiel', 'private']]), keys, ['Erika Beispiel']);
+    expect(privately.treatments.get('erika beispiel')).toBe('own_account');
+    expect(privately.byName.has('erika beispiel')).toBe(true);
   });
 
   it('changes nothing without names', () => {

@@ -71,8 +71,10 @@ export function cleanOwnNames(raw: unknown): { ok: true; names: string[] } | { o
 /**
  * The counterparty answers with the own names applied: a counterparty that
  * carries one of the names and has no answer of its own counts as an own
- * account. An answer given in the payments tab always wins, so a person can
- * say "this one is private after all" for one spelling. Answers are kept per
+ * account. An answer of the payments tab that says it is something else wins
+ * (business, mixed, or own account itself); "private" does not, because money
+ * to oneself answered private there (a private withdrawal from a business
+ * account, a tax matter) is still no spending here. Answers are kept per
  * counterparty key, which leaves legal forms out, so a key counts only when
  * every payment under it names the owner exactly: one "... UG" among them and
  * none of them does. `byName` lists the counterparties the names made own
@@ -88,7 +90,9 @@ export function treatmentsWithOwnNames(
   if (wanted.size === 0) return { treatments, byName };
   const refused = new Set<string>();
   for (const { counterpartyKey: key, counterparty } of payments) {
-    if (!key || refused.has(key) || treatments.has(key)) continue;
+    if (!key || refused.has(key)) continue;
+    const answer = treatments.get(key);
+    if (answer !== undefined && answer !== 'private') continue;
     if (wanted.has(ownNameKey(counterparty))) byName.add(key);
     else {
       refused.add(key);

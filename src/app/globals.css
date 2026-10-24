@@ -1004,6 +1004,7 @@ textarea.ui-input {
     background: var(--surface-solid);
     box-shadow: inset -1px 0 0 var(--border-subtle);
   }
+}
 
 /*
  * Charts of the spending overview (src/app/app/spending/OverviewCharts.tsx). Seven category

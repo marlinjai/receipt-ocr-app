@@ -104,12 +104,15 @@ describe('own names', () => {
     await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] });
     expect(push.sent).toHaveLength(3);
 
-    // An explicit answer overrides the names both ways: "private" keeps one spelling as spending ...
+    // An explicit answer that says it is something else overrides the names: "business" keeps one spelling as spending ...
     await saveOwnNames(db, ctx, { add: 'Erika Beispiel' });
-    await setCounterpartyTreatment(db, ctx, { counterparty: 'BEISPIEL ERIKA', treatment: 'private' });
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'BEISPIEL ERIKA', treatment: 'business' });
     const view = await loadSpending(db, ctx.workspaceId, 2026, null);
     expect(view.overview.totalCents).toBe(28_000);
     expect(view.ownAccounts.map((o) => o.label)).toEqual(['Erika Beispiel']);
+    // ... while "private" there (a private withdrawal for tax) is still money to oneself here.
+    await setCounterpartyTreatment(db, ctx, { counterparty: 'BEISPIEL ERIKA', treatment: 'private' });
+    expect((await loadSpending(db, ctx.workspaceId, 2026, null)).overview.totalCents).toBe(3000);
     // ... and an own-account answer stays one without the name, then with a take-back button.
     await setCounterpartyTreatment(db, ctx, { counterparty: 'Erika Beispiel', treatment: 'own_account' });
     await saveOwnNames(db, ctx, { remove: 'Erika Beispiel' });
@@ -129,7 +132,17 @@ describe('own names', () => {
     expect(await loadOwnNames(db, other.ctx.workspaceId)).toEqual([]);
     expect((await loadSpending(db, other.ctx.workspaceId, 2026, null)).overview.totalCents).toBe(78_000);
     // A company in the owner's name is another legal person, never an own account.
-    expect((await loadSpending(db, ctx.workspaceId, 2026, null)).overview.ownTransfers.byName.count).toBe(2);
+    const companyCtx = (await setup()).ctx;
+    const { payments } = await loadPayments(db, companyCtx.workspaceId);
+    await importPayments(db, companyCtx, payments[0].accountId, file(line('2026-10-22', 'Erika Beispiel UG', 'Rechnung 17', '-90', 'Debit Transfer'), line('2026-10-23', 'Erika Beispiel Laden', 'Einkauf', '-12')));
+    await saveOwnNames(db, companyCtx, { add: 'Erika Beispiel' });
+    const company = await loadSpending(db, companyCtx.workspaceId, 2026, null);
+    // "Erika Beispiel UG" shares the key of "Erika Beispiel", so neither counts by the name; "BEISPIEL ERIKA" still does.
+    expect(company.ownAccounts.map((o) => o.label)).toEqual(['BEISPIEL ERIKA']);
+    expect(company.overview.unclear.map((u) => u.counterparty).sort()).toEqual(['Erika Beispiel', 'Erika Beispiel Laden', 'Zyx Handel']);
+    // Taking out a name another page took out already is said, not claimed.
+    await saveOwnNames(db, companyCtx, { remove: 'Erika Beispiel' });
+    await expect(saveOwnNames(db, companyCtx, { remove: 'Erika Beispiel' })).rejects.toMatchObject({ code: 'name_not_listed' });
     // A name with nothing to match on is refused and changes nothing.
     await expect(saveOwnNames(db, ctx, { add: '-' })).rejects.toBeInstanceOf(SpendingServiceError);
     await expect(saveOwnNames(db, ctx, ['Erika'])).rejects.toMatchObject({ code: 'invalid_names' });

@@ -9,7 +9,7 @@ import { ANSWERABLE_CATEGORIES, SPENDING_CATEGORY_LABELS, isSpendingCategory, ty
 import type { CategoryBasis, SpendingPurpose } from '@/lib/spending/rules';
 import type { UnclearCounterparty } from '@/lib/spending/overview';
 import type { BudgetLine } from '@/lib/spending/budgets';
-import { budgetBars, monthStacks, monthlyBudgetSum, topCounterparties } from '@/lib/spending/charts';
+import { CATEGORY_GROUP, budgetBars, monthStacks, monthlyBudgetSum, topCounterparties } from '@/lib/spending/charts';
 import { MAX_OWN_NAMES, MAX_OWN_NAME_LENGTH } from '@/lib/spending/own-names';
 import { spendingHref, type SpendingTab } from '@/lib/spending/paths';
 import { answerCategory, markOwnAccount, saveOwnNames, unlinkRoutedReceipt, unmarkOwnAccount, withdrawCategory, type Result, type SpendingPageView } from './actions';
@@ -53,6 +53,7 @@ export function spendingActionMessage(result: Extract<Result<unknown>, { ok: fal
   if (result.detail === 'name_too_long') return `Ein Name darf höchstens ${MAX_OWN_NAME_LENGTH} Zeichen lang sein.`;
   if (result.detail === 'too_many_names') return `Es lassen sich höchstens ${MAX_OWN_NAMES} eigene Namen merken.`;
   if (result.detail === 'name_listed') return 'Dieser Name steht schon in der Liste, vielleicht in einer anderen Schreibweise.';
+  if (result.detail === 'name_not_listed') return 'Dieser Name steht nicht mehr in der Liste, vielleicht wurde er auf einer anderen Seite entfernt. Bitte die Seite neu laden.';
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
 
@@ -158,7 +159,8 @@ function OwnNames({
   const explanation = (
     <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
       Zahlungen an oder von diesen Namen sind Umbuchungen zwischen eigenen Konten: keine Ausgabe, kein Beleg nötig, keine Benachrichtigung. Groß- und
-      Kleinschreibung, Akzente, Satzzeichen und die Reihenfolge der Wörter zählen nicht. Eine Antwort unter Finanzen, Zahlungen geht vor.
+      Kleinschreibung, Akzente, Satzzeichen und die Reihenfolge der Wörter zählen nicht; Rechtsformen wie UG oder GmbH schon. Eine Antwort unter
+      Finanzen, Zahlungen als geschäftlich oder gemischt geht vor; „privat“ dort (eine Privatentnahme) bleibt hier eine Umbuchung.
     </p>
   );
   const editor = canWrite && (
@@ -286,6 +288,7 @@ export default function SpendingClient({
   const [pending, startTransition] = useTransition();
   const { overview } = view;
   const period = overview.month === null ? `${overview.year}` : `${MONTHS[overview.month - 1]} ${overview.year}`;
+  const largestCategory = Math.max(1, ...overview.byCategory.map((c) => c.cents));
   const currentMonth = overview.month !== null && `${overview.year}-${String(overview.month).padStart(2, '0')}` === today.slice(0, 7);
 
   // The period and the tab live in the address, so a reload or a shared link shows the same.
@@ -529,6 +532,40 @@ export default function SpendingClient({
 
           {budgets}
 
+          <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-categories`}>
+            <h2 id={`${id}-categories`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+              Kategorien {period}
+            </h2>
+            <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+              Alle Ausgaben, private, geschäftliche und noch nicht zugeordnete; Erstattungen abgezogen.
+            </p>
+            <ul className="mt-3 space-y-2">
+              {[...overview.byCategory]
+                .sort((a, b) => b.cents - a.cents)
+                .map((c) => (
+                  <li key={c.category}>
+                    <div className="flex items-baseline justify-between gap-3 text-sm">
+                      <span style={{ color: c.category === 'unclear' && c.cents !== 0 ? 'var(--danger, var(--foreground))' : 'var(--foreground)' }}>
+                        {SPENDING_CATEGORY_LABELS[c.category]}
+                        <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                          {c.count} {c.count === 1 ? 'Zahlung' : 'Zahlungen'}
+                        </span>
+                      </span>
+                      <span className="tabular-nums" style={{ color: 'var(--foreground)' }}>
+                        {euro(c.cents)}
+                      </span>
+                    </div>
+                    <div className="mt-1 h-1.5 w-full rounded-full" style={{ background: 'var(--border, rgba(128,128,128,0.2))' }}>
+                      <div
+                        className={`h-1.5 rounded-full ${c.category === 'unclear' ? 'ui-chart-hatch' : ''}`}
+                        style={{ width: `${Math.round((Math.max(0, c.cents) / largestCategory) * 100)}%`, backgroundColor: `var(--chart-${CATEGORY_GROUP[c.category]})` }}
+                      />
+                    </div>
+                  </li>
+                ))}
+            </ul>
+          </section>
+
           <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-unclear`}>
             <h2 id={`${id}-unclear`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
               Unklar {period}
@@ -725,7 +762,9 @@ export default function SpendingClient({
                           {BASIS_LABELS[p.basis]}
                         </span>
                       </td>
-                      <td className="py-1 pr-3">{p.spendingCents === null ? 'Umbuchung' : PURPOSE_LABELS[p.purpose]}</td>
+                      <td className="py-1 pr-3">
+                        {p.awaitingList !== null ? `Sammelzahlung, wartet auf die nächste ${SERVICE_LABELS[p.awaitingList] ?? p.awaitingList}-Liste` : p.spendingCents === null ? 'Umbuchung' : PURPOSE_LABELS[p.purpose]}
+                      </td>
                       <td className="py-1 pr-3">
                         {p.spendingCents === null ? 'nicht nötig' : p.hasReceipt ? 'verknüpft' : 'keiner'}
                         {p.routed && p.hasReceipt && view.canWrite && (

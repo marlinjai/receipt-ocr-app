@@ -6,7 +6,9 @@
 // Run it again until it prints "left 0": the app's sign-in token lasts only a few dozen
 // requests, so each run takes a fresh one and reads at most 35 purchases. The token stays
 // inside the page and is never printed. Turn the result into the importer's file with
-// klarna-to-csv.py.
+// klarna-to-csv.py. A new export starts by deleting klarna-raw.json, so the list of purchases is
+// fetched afresh; a purchase still reserved (not charged) is read again on every run until it is.
+const reserved = (row) => (row.statuses || []).includes('UNCAPTURED');
 const page = await browser.getPage('klarna-export');
 const base = '/de/api/post_purchase_bff/post-purchase/feature';
 let state = { krns: null, rows: [], errors: [] };
@@ -29,7 +31,7 @@ const result = await page.evaluate(async ({ headers, base, state }) => {
     collect(await (await fetch(`${base}/manage-payments/v1/active`, { headers, credentials: 'include' })).json());
     krns = [...found];
   }
-  const done = new Set(state.rows.map((r) => r.krn));
+  const done = new Set(state.rows.filter((r) => !r.reserved).map((r) => r.krn));
   const todo = krns.filter((k) => !done.has(k)).slice(0, 35);
   const rows = [];
   const errors = [];
@@ -58,8 +60,11 @@ const result = await page.evaluate(async ({ headers, base, state }) => {
     await new Promise((s) => setTimeout(s, 200));
   }
   return { krns, rows, errors };
-}, { headers, base, state });
+}, { headers, base, state: { ...state, rows: state.rows.map((r) => ({ ...r, reserved: reserved(r) })) } });
 
-state = { krns: result.krns, rows: [...state.rows, ...result.rows], errors: result.errors };
+// A row read again replaces the one before (a reserved purchase that is charged now).
+const fresh = new Set(result.rows.map((r) => r.krn));
+state = { krns: result.krns, rows: [...state.rows.filter((r) => !fresh.has(r.krn)), ...result.rows], errors: result.errors };
 await writeFile('klarna-raw.json', JSON.stringify(state));
-console.log('purchases', state.krns.length, 'read', state.rows.length, 'failed this run', result.errors.length, 'left', state.krns.length - state.rows.length);
+const left = state.krns.length - state.rows.filter((r) => !reserved(r)).length;
+console.log('purchases', state.krns.length, 'read', state.rows.length, 'reserved', state.rows.filter(reserved).length, 'failed this run', result.errors.length, 'left', left);

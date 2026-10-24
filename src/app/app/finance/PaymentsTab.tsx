@@ -541,6 +541,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
               <p className={`ui-note ${r.reconciles ? 'ui-note-ok' : 'ui-note-danger'}`} role={r.reconciles ? undefined : 'alert'}>
                 {SERVICE_LABELS[r.service] ?? r.service} ({r.accountLabels.join(', ')}): vom Bankkonto eingezogen {euro(r.collectedCents)}, Käufe laut Liste {euro(r.listedCents)},{' '}
                 {r.carriedCents > 0 && `dazu aus früheren Jahren noch offen ${euro(r.carriedCents)} (Raten, Käufe vom Jahresende), `}
+                {r.awaitingCents > 0 && `${euro(r.awaitingCents)} Sammelzahlungen nach dem Ende der Liste warten auf die nächste Liste und sind hier nicht mitgerechnet. `}
                 Differenz {euro(Math.abs(r.differenceCents))} {r.differenceCents > 0 ? 'mehr eingezogen als gelistet' : r.differenceCents < 0 ? 'weniger eingezogen als gelistet' : ''}.{' '}
                 {r.reconciles
                   ? r.differenceCents < -r.toleranceCents

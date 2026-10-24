@@ -407,9 +407,9 @@ describe('PaymentsTab', () => {
 
   it('sets what was collected against what the service’s list states, and calls out a year that does not fit', () => {
     const months = [{ month: '2026-03', collectedCents: 4_065, listedCents: 3_615, differenceCents: 450, runningCents: 450 }];
-    const fits = { service: 'paypal', serviceKind: 'wallet' as const, accountLabels: ['Geldbörse'], months: [], collectedCents: 1_999, listedCents: 1_999, carriedCents: 0, notDueCents: 0, differenceCents: 0, reconciles: true, toleranceCents: 100 };
+    const fits = { service: 'paypal', serviceKind: 'wallet' as const, accountLabels: ['Geldbörse'], months: [], collectedCents: 1_999, listedCents: 1_999, carriedCents: 0, notDueCents: 0, awaitingCents: 0, differenceCents: 0, reconciles: true, toleranceCents: 100 };
     const fromBalance = { ...fits, accountLabels: ['Zweite Geldbörse'], listedCents: 9_999, differenceCents: -8_000 };
-    const off = { service: 'klarna', serviceKind: 'pay_later' as const, accountLabels: ['Später zahlen'], months, collectedCents: 4_065, listedCents: 3_615, carriedCents: 0, notDueCents: 0, differenceCents: 450, reconciles: false, toleranceCents: 100 };
+    const off = { service: 'klarna', serviceKind: 'pay_later' as const, accountLabels: ['Später zahlen'], months, collectedCents: 4_065, listedCents: 3_615, carriedCents: 0, notDueCents: 0, awaitingCents: 0, differenceCents: 450, reconciles: false, toleranceCents: 100 };
     render(<PaymentsTab view={view({ reconciliations: [fits, fromBalance, off] })} {...props()} />);
     const section = screen.getByRole('region', { name: 'Umbuchungen zwischen eigenen Konten' });
     expect(within(section).getByText(/PayPal \(Geldbörse\): vom Bankkonto eingezogen 19,99 €, Käufe laut Liste 19,99 €/).textContent).toContain('Das passt zusammen.');
@@ -424,15 +424,21 @@ describe('PaymentsTab', () => {
   });
 
   it('names what earlier years left open for a pay-later service, and counts it in the difference', () => {
-    const carried = { service: 'klarna', serviceKind: 'pay_later' as const, accountLabels: ['Später zahlen'], months: [], collectedCents: 50_000, listedCents: 40_000, carriedCents: 10_000, notDueCents: 0, differenceCents: 0, reconciles: true, toleranceCents: 500 };
+    const carried = { service: 'klarna', serviceKind: 'pay_later' as const, accountLabels: ['Später zahlen'], months: [], collectedCents: 50_000, listedCents: 40_000, carriedCents: 10_000, notDueCents: 0, awaitingCents: 0, differenceCents: 0, reconciles: true, toleranceCents: 500 };
     render(<PaymentsTab view={view({ reconciliations: [carried] })} {...props()} />);
     const note = screen.getByText(/Klarna \(Später zahlen\)/);
     expect(note.textContent).toContain('dazu aus früheren Jahren noch offen 100,00 € (Raten, Käufe vom Jahresende)');
     expect(note.textContent).toContain('Das passt zusammen.');
   });
 
+  it('names collections that wait for the next list apart, never counted against the list', () => {
+    const waiting = { service: 'klarna', serviceKind: 'pay_later' as const, accountLabels: ['Später zahlen'], months: [], collectedCents: 3615, listedCents: 3615, carriedCents: 0, notDueCents: 0, awaitingCents: 126_169, differenceCents: 0, reconciles: true, toleranceCents: 100 };
+    render(<PaymentsTab view={view({ reconciliations: [waiting] })} {...props()} />);
+    expect(screen.getByText(/Klarna \(Später zahlen\)/).textContent).toContain('1.261,69 € Sammelzahlungen nach dem Ende der Liste warten auf die nächste Liste und sind hier nicht mitgerechnet.');
+  });
+
   it('says that a pay-later service is behind only by purchases not due yet', () => {
-    const behind = { service: 'klarna', serviceKind: 'pay_later' as const, accountLabels: ['Später zahlen'], months: [], collectedCents: 30_000, listedCents: 50_000, carriedCents: 0, notDueCents: 25_000, differenceCents: -20_000, reconciles: true, toleranceCents: 500 };
+    const behind = { service: 'klarna', serviceKind: 'pay_later' as const, accountLabels: ['Später zahlen'], months: [], collectedCents: 30_000, listedCents: 50_000, carriedCents: 0, notDueCents: 25_000, awaitingCents: 0, differenceCents: -20_000, reconciles: true, toleranceCents: 500 };
     render(<PaymentsTab view={view({ reconciliations: [behind] })} {...props()} />);
     expect(screen.getByText(/Klarna \(Später zahlen\)/).textContent).toContain('die Käufe der letzten 60 Tage der Liste (250,00 €) sind noch nicht fällig');
   });

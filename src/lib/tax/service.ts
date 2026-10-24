@@ -996,11 +996,13 @@ export interface Reconciliation {
    */
   carriedCents: number;
   /**
-   * Of a pay-later service, what its list holds from the last `PAY_LATER_TERM_DAYS` days before the
-   * list ends, when it ends in this year: purchases not due yet, so collected less by up to this much is
-   * no gap.
+   * Of a pay-later service, what its list holds from the last `PAY_LATER_TERM_DAYS` days before it ends
+   * in this year, or before this year ends when the list goes on: purchases not due yet in the year, so
+   * collected less by up to this much is no gap.
    */
   notDueCents: number;
+  /** Of a pay-later service, the collections of the year after the end of its list, waiting for the next list: left out of `collectedCents`. */
+  awaitingCents: number;
   /** Collected less listed over the year, less what earlier years carried over. */
   differenceCents: number;
   /** The difference of the year stays within the tolerance (for a wallet: no more collected than listed plus the tolerance). */
@@ -1280,8 +1282,10 @@ function buildPaymentsView(
   for (const service of new Map([...holderOf.values()].map((v) => [v.name, v])).values()) {
     const collected = new Map<string, number>();
     const listed = new Map<string, number>();
-    // What the OTHER accounts show leaving for the service; the wallet's own payout rows are not collections.
-    for (const p of ruledAll) if (p.funding?.service === service.name && p.amountCents < 0 && holderOf.get(p.accountId)?.name !== service.name) add(collected, p.bookingDay.slice(0, 7), -p.amountCents);
+    const awaiting = new Map<string, number>();
+    // What the OTHER accounts show leaving for the service; the wallet's own payout rows are not collections. A
+    // collection waiting for its list pays purchases no list holds yet: counted apart, never against the list.
+    for (const p of ruledAll) if (p.funding?.service === service.name && p.amountCents < 0 && holderOf.get(p.accountId)?.name !== service.name) add(p.funding.awaitingList ? awaiting : collected, p.bookingDay.slice(0, 7), -p.amountCents);
     // The wallet's own payout rows are no purchases, paired by the rule or not: a row without a name is a payout
     // (plan 2026-10-23-paypal-live, point 7). A row the rule pairs with ANOTHER service (a PayPal purchase on the
     // pay-later card) is still a purchase this service collects from the bank.
@@ -1289,27 +1293,32 @@ function buildPaymentsView(
       holderOf.get(p.accountId)?.name === service.name && p.amountCents < 0 && p.sourceKind === 'spend' && p.counterparty.trim() !== '' && !(p.byRule && p.funding?.service === service.name);
     for (const p of loaded.payments) if (isPurchase(p)) add(listed, p.bookingDay.slice(0, 7), -p.amountCents);
     const ofYear = (m: string) => m.startsWith(`${year}-`);
-    if (![...collected.keys()].some(ofYear)) continue;
+    if (![...collected.keys(), ...awaiting.keys()].some(ofYear)) continue;
     // A pay-later service collects every listed purchase, some only in a later year (instalments, a
-    // purchase of late December): what earlier years listed beyond what they collected is collected now.
-    // A wallet also pays from its balance or a card, so nothing it listed is owed to the bank.
-    const firstCollected = [...collected.keys()].sort()[0];
+    // purchase of late December): what earlier years listed beyond what they collected is collected now,
+    // at most the purchases of their last `PAY_LATER_TERM_DAYS` days (older ones are due long since; a
+    // purchase never collected stays a question in its own year, it is not carried on for ever). A
+    // wallet also pays from its balance or a card, so nothing it listed is owed to the bank.
+    const firstCollected = [...collected.keys(), ...awaiting.keys()].sort()[0];
     let carriedCents = 0;
     let notDueCents = 0;
     if (service.kind === 'pay_later') {
+      const purchases = loaded.payments.filter(isPurchase);
+      const termBefore = (day: string) => new Date(Date.parse(`${day}T00:00:00Z`) - PAY_LATER_TERM_DAYS * 86_400_000).toISOString().slice(0, 10);
+      const listedBetween = (after: string, upTo: string) => purchases.filter((p) => p.bookingDay > after && p.bookingDay <= upTo).reduce((sum, p) => sum - p.amountCents, 0);
       for (const month of new Set([...collected.keys(), ...listed.keys()])) {
         if (month >= firstCollected && month < yearStart) carriedCents += (listed.get(month) ?? 0) - (collected.get(month) ?? 0);
       }
       // Collected beyond the lists of earlier years is no credit for this one: that stays a question there.
-      carriedCents = Math.max(0, carriedCents);
-      // The newest purchases of the list are not due yet: the bank collects them later.
-      const purchases = loaded.payments.filter(isPurchase);
+      const yearBefore = `${year - 1}-12-31`;
+      carriedCents = Math.min(Math.max(0, carriedCents), listedBetween(termBefore(yearBefore), yearBefore));
+      // The newest purchases are not due yet: those of the last days of the list, or of this year when the
+      // list goes on past it (they are collected in the next year).
       const listEnd = purchases.reduce((max, p) => (p.bookingDay > max ? p.bookingDay : max), '');
-      if (listEnd.startsWith(`${year}-`)) {
-        const from = new Date(Date.parse(`${listEnd}T00:00:00Z`) - PAY_LATER_TERM_DAYS * 86_400_000).toISOString().slice(0, 10);
-        notDueCents = purchases.filter((p) => p.bookingDay > from).reduce((sum, p) => sum - p.amountCents, 0);
-      }
+      const until = listEnd > `${year}-12-31` ? `${year}-12-31` : listEnd;
+      if (until.startsWith(`${year}-`)) notDueCents = listedBetween(termBefore(until), until);
     }
+    const awaitingCents = [...awaiting].filter(([m]) => ofYear(m)).reduce((sum, [, c]) => sum + c, 0);
     let running = -carriedCents;
     const months = [...new Set([...collected.keys(), ...listed.keys()])].filter(ofYear).sort().map((month) => {
       const collectedCents = collected.get(month) ?? 0;
@@ -1330,6 +1339,7 @@ function buildPaymentsView(
       listedCents,
       carriedCents,
       notDueCents,
+      awaitingCents,
       differenceCents,
       // A wallet also pays from its balance or a card, so less collected than listed is its normal case;
       // what must not pass unseen is more collected than the list explains. A pay-later service collects

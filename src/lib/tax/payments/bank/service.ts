@@ -708,7 +708,9 @@ export async function clearBankNotice(db: PrismaClient, ctx: PaymentContext, con
  * second time. Within the days this fetch covers completely, a stored movement
  * of the bank interface that the bank no longer lists and a fetched one that is
  * not stored, alone on the same day with the same amount, are the same booking:
- * the stored one takes the new identity and words and keeps its links. Days
+ * the stored one takes the new identity and words and keeps its links (when
+ * the bank now lists the booking more than once in the same words, the stored
+ * one is the first of them and the others are new bookings). Days
  * with a skipped movement are left alone, because their list is incomplete.
  */
 async function adoptReworded(
@@ -742,7 +744,14 @@ async function adoptReworded(
   let adopted = 0;
   for (const [k, olds] of vanished) {
     const news = fresh.get(k);
-    if (olds.length !== 1 || !news || news.length !== 1) continue;
+    if (olds.length !== 1 || !news) continue;
+    // Several fresh rows are only the same booking repeated when they say the same in every word; otherwise
+    // which of them the stored one became is a guess. The first in the bank's order takes the identity, and
+    // the others, which the stored one does not stand for, are imported as the further bookings they are.
+    const same = (a: NormalizedPayment, b: NormalizedPayment) =>
+      a.counterparty === b.counterparty && a.reference === b.reference && (a.entryReference ?? '') === (b.entryReference ?? '') &&
+      (a.original?.currency ?? '') === (b.original?.currency ?? '') && (a.original?.amountCents ?? null) === (b.original?.amountCents ?? null) && (a.estimated === true) === (b.estimated === true);
+    if (!news.every((n) => same(n, news[0]))) continue;
     const p = news[0];
     await db.taxPayment.update({
       where: { id: olds[0].id },

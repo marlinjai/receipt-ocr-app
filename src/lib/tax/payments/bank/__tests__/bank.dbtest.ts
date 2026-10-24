@@ -648,6 +648,23 @@ describe('bank connection: what the review of 2026-10-19 found', () => {
     expect(await paymentCount(s.accountId)).toBe(2);
   });
 
+  it('a reworded booking that the bank now lists twice in the same words stays one payment and gains the second as a new one', async () => {
+    const s = await setup();
+    const id = await connect(s);
+    s.bank.transactions.set('uid-a1', [tx('2026-10-02', -1000, 'Laden Beispiel', 'Bestellung 1')]);
+    await syncConnection(db, s.ctx, s.deps, id, { today: TODAY });
+    const before = await db.taxPayment.findFirstOrThrow({ where: { accountId: s.accountId } });
+    const reworded = tx('2026-10-02', -1000, 'Laden Beispiel GmbH', 'Bestellung 1 vom 1.10.');
+    s.bank.transactions.set('uid-a1', [reworded, { ...reworded }]);
+    expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'synced', added: 1 });
+    const after = await db.taxPayment.findMany({ where: { accountId: s.accountId } });
+    expect(after).toHaveLength(2);
+    expect(after.map((p) => p.id)).toContain(before.id);
+    // The next fetch changes nothing.
+    expect(await syncConnection(db, s.ctx, s.deps, id, { today: TODAY })).toEqual({ status: 'nothing_new', added: 0 });
+    expect(await paymentCount(s.accountId)).toBe(2);
+  });
+
   it('after a switch to another account of the session, the payments of the one read before are not taken for its bookings', async () => {
     const s = await setup();
     s.bank.nextAccounts = [

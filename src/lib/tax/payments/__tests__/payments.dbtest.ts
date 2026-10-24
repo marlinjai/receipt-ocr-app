@@ -815,7 +815,8 @@ describe('money that only funds another payment account', () => {
     line('2025-03-15', 'Werkzeug Beispiel GmbH', 'Bestellung 4712', '-40', 'Presentment'),
     line('2025-03-20', 'Klarna Bank AB (publ)', 'Erstattung Schreibwaren', '12.40', 'Credit Transfer'),
     line('2025-03-28', 'Klarna Bank AB (publ)', 'Sammelabrechnung März', '-36.15', 'Direct Debit'),
-    line('2025-04-28', 'Klarna Bank AB (publ)', 'Sammelabrechnung April', '-9', 'Direct Debit'),
+    // Beyond the 60 days a collection may wait for the next list (see funding.ts): the list ended on 31 March.
+    line('2025-07-28', 'Klarna Bank AB (publ)', 'Sammelabrechnung Juli', '-9', 'Direct Debit'),
   );
 
   async function bankAskedAbout() {
@@ -846,7 +847,7 @@ describe('money that only funds another payment account', () => {
 
   it('the rule holds only on days the list covers: a debit before or after them stays a payment that asks', async () => {
     const { ws } = await bothLists();
-    // Both lists cover 1 to 31 March 2025. The PayPal debit of November 2024 and the collection of April 2025 are the only record of that money.
+    // Both lists cover 1 to 31 March 2025. The PayPal debit of November 2024 and the collection of July 2025 (too long after the list to wait for the next one) are the only record of that money.
     expect(await openNames(ws.workspaceId, 2024)).toEqual(['PayPal -3000']);
     expect(await openNames(ws.workspaceId)).toEqual(['Klarna -900', 'Klarna 1240', 'PayPal 749', 'Werkzeug -4000']);
     const view = await loadStatement(db, ws.workspaceId, 2025);
@@ -873,7 +874,7 @@ describe('money that only funds another payment account', () => {
     expect(view.payments.open.find((p) => p.amountCents === 749)).toMatchObject({ kind: 'income', check: 'income_without_invoice' });
 
     // It asks even when nobody ever said what the service is; the counterparty question then counts only the
-    // collection of April, which lies outside the covered days.
+    // collection of July, which lies outside the covered days.
     await setCounterpartyTreatment(db, ctx, { counterparty: 'Klarna Bank AB (publ)', treatment: null });
     const unanswered = await loadStatement(db, ws.workspaceId, 2025);
     expect(unanswered.payments.open.some((p) => p.id === back.id)).toBe(true);
@@ -904,17 +905,17 @@ describe('money that only funds another payment account', () => {
     await setPaymentKind(db, ctx, debit.id, null);
     expect((await loadStatement(db, ws.workspaceId, 2025)).payments.ruleTransfers.some((t) => t.id === debit.id)).toBe(true);
 
-    // The reverse: the collection of April lies outside the covered days and asks; "Übertrag zwischen eigenen Konten" on the open payment settles it.
-    const april = purchase.payments.open.find((p) => p.amountCents === -900)!;
-    expect(april.namesService).toBe(true);
-    await setPaymentTransfer(db, ctx, april.id, true);
+    // The reverse: the collection of July lies outside the covered days and asks; "Übertrag zwischen eigenen Konten" on the open payment settles it.
+    const july = purchase.payments.open.find((p) => p.amountCents === -900)!;
+    expect(july.namesService).toBe(true);
+    await setPaymentTransfer(db, ctx, july.id, true);
     const settled = await loadStatement(db, ws.workspaceId, 2025);
-    expect(settled.payments.open.some((p) => p.id === april.id)).toBe(false);
-    expect(settled.payments.overridden).toEqual([expect.objectContaining({ id: april.id, kind: 'own_transfer' })]);
+    expect(settled.payments.open.some((p) => p.id === july.id)).toBe(false);
+    expect(settled.payments.overridden).toEqual([expect.objectContaining({ id: july.id, kind: 'own_transfer' })]);
     // A payment that names no service is not offered that button.
     expect(settled.payments.open.find((p) => p.counterparty.startsWith('Werkzeug'))?.namesService).toBe(false);
-    expect(await code(setPaymentTransfer(db, ctx, april.id, 'ja'))).toBe('invalid_kind');
-    expect(await code(setPaymentTransfer(db, otherCtx, april.id, true))).toBe('payment_not_found');
+    expect(await code(setPaymentTransfer(db, ctx, july.id, 'ja'))).toBe('invalid_kind');
+    expect(await code(setPaymentTransfer(db, otherCtx, july.id, true))).toBe('payment_not_found');
   });
 
   it('what the rule hides is set against the service’s own list, month by month, and a difference is called out', async () => {

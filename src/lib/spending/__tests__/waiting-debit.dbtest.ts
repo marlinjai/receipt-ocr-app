@@ -79,7 +79,7 @@ describe('a collective debit after the end of its list', () => {
     const view = await loadSpending(db, ctx.workspaceId, 2026, 10);
     expect(view.overview.waitingDebits).toEqual([]);
     expect(view.overview.totalCents).toBe(3000 + 126_169);
-    expect((await loadLoopOverview(db, ctx.workspaceId)).open.map((c) => c.counterparty).sort()).toEqual(['Klarna Bank AB (publ)', 'Zyx Handel']);
+    expect((await loadLoopOverview(db, ctx.workspaceId)).open.map((c) => c.counterparty).sort()).toEqual(['Kiosk Beispiel', 'Klarna Bank AB (publ)', 'Laden Beispiel', 'Zyx Handel']);
     await setPaymentKind(db, ctx, debitId, null);
     expect((await loadSpending(db, ctx.workspaceId, 2026, 10)).overview.waitingDebits).toHaveLength(1);
   });
@@ -95,7 +95,7 @@ describe('a collective debit after the end of its list', () => {
     expect(push.sent.map((m) => m.title)).toEqual(['Beleg fehlt: Klarna Bank AB (publ)']);
     await importPayments(db, ctx, laterId, laterFile(later('2026-09-10', 'Kiosk Beispiel', '20.00', '6100000000001'), later('2026-09-30', 'Laden Beispiel', '30.00', '6100000000002')));
     const run = await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] });
-    expect(run).toMatchObject({ notified: 0, settled: 1, open: 0 });
+    expect(run).toMatchObject({ notified: 0, settled: 1, open: 2 });
     expect(await listUnreadNotifications(db, ctx.workspaceId)).toEqual([]);
   });
 

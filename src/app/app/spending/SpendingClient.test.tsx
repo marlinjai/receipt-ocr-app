@@ -22,7 +22,10 @@ vi.mock('./actions', () => ({
   saveOwnNames: (...a: unknown[]) => saveOwnNames(...a),
 }));
 
+vi.mock('./budget-actions', () => ({ setBudget: vi.fn() }));
+
 import SpendingClient, { spendingActionMessage } from './SpendingClient';
+import type { BudgetsView } from './budget-actions';
 import { spendingHref, spendingTabOf } from '@/lib/spending/paths';
 import type { BudgetLine } from '@/lib/spending/budgets';
 import type { SpendingPageView } from './actions';
@@ -159,11 +162,13 @@ describe('SpendingClient with payments of another company', () => {
   });
 });
 
+const budgetsOf = (lines: BudgetLine[] = []): BudgetsView => ({ lines, month: '2026-04', counterparties: [], canWrite: true });
+
 describe('SpendingClient tabs', () => {
   it('opens the overview by default and keeps the period when switching to the receipt checks, with the open count on the tab', async () => {
-    render(<SpendingClient today="2026-04-15" initial={view(true)} openChecks={7} checks={<p>Belegliste</p>} budgets={<p>Budgetliste</p>} />);
+    render(<SpendingClient today="2026-04-15" initial={view(true)} openChecks={7} checks={<p>Belegliste</p>} budgets={budgetsOf()} />);
     expect(screen.getByRole('tab', { name: 'Überblick' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByText('Budgetliste')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /Budget und Ausgaben 2026/ })).toBeTruthy();
     expect(screen.queryByText('Belegliste')).toBeNull();
     const checks = screen.getByRole('tab', { name: /Belege/ });
     expect(checks.textContent).toMatch(/7/);
@@ -172,10 +177,10 @@ describe('SpendingClient tabs', () => {
   });
 
   it('shows the receipt checks on their tab, and nothing of the overview', () => {
-    render(<SpendingClient today="2026-04-15" tab="belege" initial={view(true)} openChecks={0} checks={<p>Belegliste</p>} budgets={<p>Budgetliste</p>} />);
+    render(<SpendingClient today="2026-04-15" tab="belege" initial={view(true)} openChecks={0} checks={<p>Belegliste</p>} budgets={budgetsOf()} />);
     expect(screen.getByRole('tab', { name: /Belege/ }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('Belegliste')).toBeTruthy();
-    expect(screen.queryByText('Budgetliste')).toBeNull();
+    expect(screen.queryByText(/Budget und Ausgaben/)).toBeNull();
     expect(screen.queryByText(/Monate 2026 nach Kategorie/)).toBeNull();
   });
 
@@ -235,7 +240,7 @@ describe('SpendingClient charts', () => {
 
   it('draws the months with the budget line, budget against spent, and the biggest counterparties, each also in words', () => {
     const april: SpendingPageView = { ...view(true), overview: buildOverview([pay], { treatments: new Map(), answers: new Map() }, 2026, 4) };
-    render(<SpendingClient today="2026-04-15" initial={april} budgetLines={[line('unclear', 2000, { projectedCents: 5000, level: 'passed' }), line('cash', 10_000)]} />);
+    render(<SpendingClient today="2026-04-15" initial={april} budgets={budgetsOf([line('unclear', 2000, { projectedCents: 5000, level: 'passed' }), line('cash', 10_000)])} />);
     expect(screen.getByText(/Budgets 120 € im Monat/)).toBeTruthy();
     // Over budget is said in words, not by colour alone.
     const bar = screen.getByRole('img', { name: /Unklar: 30,00 € ausgegeben, Budget 20,00 €, bei gleichem Tempo etwa 50,00 €, überschritten/ });
@@ -247,12 +252,12 @@ describe('SpendingClient charts', () => {
     expect(screen.getByRole('table', { name: /Ausgaben 2026 nach Monat und Kategorie/ })).toBeTruthy();
   });
 
-  it('leaves the budget chart out when the budgets could not be read', () => {
-    render(<SpendingClient today="2026-04-15" initial={view(true)} budgetLines={null} />);
+  it('says so when the budgets could not be read, and keeps the other charts', () => {
+    render(<SpendingClient today="2026-04-15" initial={view(true)} budgets={null} />);
     expect(screen.queryByText(/Budget und Ausgaben/)).toBeNull();
+    expect(screen.getByText(/Die Budgets konnten nicht geladen werden/)).toBeTruthy();
     expect(screen.getByText(/Monate 2026 nach Kategorie/)).toBeTruthy();
-    // All spending by category stays, also without the budgets.
-    expect(screen.getByRole('heading', { name: 'Kategorien 2026' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Größte Gegenseiten 2026' })).toBeTruthy();
   });
 });
 

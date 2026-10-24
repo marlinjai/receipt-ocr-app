@@ -3,14 +3,15 @@
 import { useId, useState } from 'react';
 import { formatCents } from '@/lib/tax/money';
 import { SPENDING_CATEGORY_LABELS } from '@/lib/spending/categories';
-import { CATEGORY_GROUP, CHART_GROUPS, axisStep, groupLabel, type BudgetBar, type ChartGroup, type MonthStack, type TopCounterparty } from '@/lib/spending/charts';
+import { CATEGORY_GROUP, CHART_GROUPS, axisStep, groupLabel, type ChartGroup, type MonthStack, type TopCounterparty } from '@/lib/spending/charts';
 
 /**
- * The three charts of the spending overview, in plain HTML and CSS (no chart
- * library): the months by category, budget against spent, and the biggest
- * counterparties. Each one has its numbers in words as well (a table or a
- * labelled list), scrolls sideways inside its panel on a phone, and colours a
- * category the same everywhere (`CATEGORY_GROUP`).
+ * Two of the three charts of the spending overview, in plain HTML and CSS (no
+ * chart library): the months by category and the biggest counterparties; the
+ * third, budget against spent, is the budget block (`BudgetsPanel.tsx`). Each
+ * has its numbers in words as well (a table or a labelled list), scrolls
+ * sideways inside its panel on a phone, and colours a category the same
+ * everywhere (`CATEGORY_GROUP`).
  */
 
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -25,9 +26,9 @@ function euroShort(cents: number): string {
   return `${Math.round(cents / 100).toLocaleString('de-DE')} €`;
 }
 
-const groupColor = (group: ChartGroup) => `var(--chart-${group})`;
+export const groupColor = (group: ChartGroup) => `var(--chart-${group})`;
 
-function Swatch({ group }: { group: ChartGroup }) {
+export function Swatch({ group }: { group: ChartGroup }) {
   return <span aria-hidden="true" className={`inline-block h-2.5 w-2.5 shrink-0 rounded-sm ${group === 'unclear' ? 'ui-chart-hatch' : ''}`} style={{ backgroundColor: groupColor(group) }} />;
 }
 
@@ -203,74 +204,6 @@ export function MonthsChart({
           </table>
         </div>
       </details>
-    </section>
-  );
-}
-
-const LEVEL_TEXT = { ok: null, on_pace: 'wird bei gleichem Tempo überschritten', passed: 'überschritten' } as const;
-
-export function BudgetChart({ bars, period, currentMonth }: { bars: readonly BudgetBar[]; period: string; currentMonth: boolean }) {
-  const id = useId();
-  const scale = Math.max(1, ...bars.map((b) => Math.max(b.spentCents, b.limitCents ?? 0, b.projectedCents ?? 0)));
-  const pct = (cents: number) => `${(Math.max(0, cents) / scale) * 100}%`;
-  return (
-    <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-title`}>
-      <h2 id={`${id}-title`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-        Budget und Ausgaben {period}
-      </h2>
-      <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-        Gezählt wird der private Teil, wie bei den Budgets. Der Strich ist das Budget für diesen Zeitraum (ein Monatsbudget mal die Monate; ohne
-        eigenes Budget der Durchschnitt der letzten Monate)
-        {currentMonth ? ', der blasse Teil zeigt, wo der Monat bei gleichem Tempo endet' : ''}.
-      </p>
-      {bars.length === 0 ? (
-        <p className="mt-3 text-sm" style={{ color: 'var(--muted)' }}>
-          In diesem Zeitraum gibt es weder Ausgaben noch Budgets.
-        </p>
-      ) : (
-        <ul className="mt-3 space-y-3">
-          {bars.map((b) => {
-            const over = b.level === 'passed';
-            const fill = over ? 'var(--danger)' : b.level === 'on_pace' ? 'var(--warning)' : groupColor(CATEGORY_GROUP[b.category]);
-            const status = LEVEL_TEXT[b.level];
-            return (
-              <li key={b.category}>
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-sm">
-                  <span className="inline-flex items-center gap-1.5" style={{ color: 'var(--foreground)' }}>
-                    <Swatch group={CATEGORY_GROUP[b.category]} />
-                    {b.label}
-                  </span>
-                  <span className="tabular-nums" style={{ color: 'var(--foreground)' }}>
-                    {euro(b.spentCents)}
-                    <span style={{ color: 'var(--muted)' }}>{b.limitCents !== null ? ` von ${euro(b.limitCents)}${b.average ? ' (Durchschnitt)' : ''}` : ', kein Budget'}</span>
-                  </span>
-                </div>
-                <div
-                  className="relative mt-1 h-2 w-full rounded-full"
-                  style={{ background: 'var(--chart-grid)' }}
-                  role="img"
-                  aria-label={`${b.label}: ${euro(b.spentCents)} ausgegeben${b.limitCents !== null ? `, Budget ${euro(b.limitCents)}${b.average ? ' (Durchschnitt der letzten Monate)' : ''}` : ', kein Budget'}${b.projectedCents !== null ? `, bei gleichem Tempo etwa ${euro(b.projectedCents)}` : ''}${status ? `, ${status}` : ''}`}
-                >
-                  {b.projectedCents !== null && b.projectedCents > b.spentCents && (
-                    <span aria-hidden="true" className="absolute inset-y-0 left-0 rounded-full" style={{ width: pct(b.projectedCents), background: fill, opacity: 0.3 }} />
-                  )}
-                  <span aria-hidden="true" className="absolute inset-y-0 left-0 rounded-full" style={{ width: pct(b.spentCents), background: fill }} />
-                  {b.limitCents !== null && (
-                    <span aria-hidden="true" className="absolute -inset-y-1 w-0.5 rounded" style={{ left: `calc(${pct(b.limitCents)} - 1px)`, background: 'var(--foreground)' }} />
-                  )}
-                </div>
-                {status && (
-                  <p className="mt-1 text-xs" style={{ color: over ? 'var(--danger)' : 'var(--warning)' }}>
-                    <span aria-hidden="true">⚠ </span>
-                    {status}
-                    {b.projectedCents !== null && b.level === 'on_pace' && `, etwa ${euro(b.projectedCents)} am Monatsende`}
-                  </p>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
     </section>
   );
 }

@@ -5,7 +5,6 @@ import SpendingClient from './SpendingClient';
 import { spendingTabOf } from '@/lib/spending/paths';
 import ReceiptChecks from './ReceiptChecks';
 import { getReceiptChecks } from './loop-actions';
-import BudgetsPanel from './BudgetsPanel';
 import { getBudgets } from './budget-actions';
 import { berlinToday } from '@/lib/spending/period';
 
@@ -60,7 +59,6 @@ export default async function SpendingPage({ searchParams }: { searchParams: Pro
       tab={tab}
       today={berlinToday()}
       openChecks={checks.ok ? checks.value.loop.open.length : null}
-      budgetLines={budgets.ok ? budgets.value.lines : null}
       checks={
         checks.ok ? (
           // Keyed by company: after a switch nothing of the other company (a summary, a notice, the settings form) stays.
@@ -69,13 +67,7 @@ export default async function SpendingPage({ searchParams }: { searchParams: Pro
           <p key="checks" className="ui-note ui-note-danger mt-4">Die offenen Belege konnten nicht geladen werden. Bitte die Seite neu laden.</p>
         )
       }
-      budgets={
-        budgets.ok ? (
-          <BudgetsPanel key="budgets" initial={budgets.value} />
-        ) : (
-          <p key="budgets" className="ui-note ui-note-danger mt-4">Die Budgets konnten nicht geladen werden. Bitte die Seite neu laden.</p>
-        )
-      }
+      budgets={budgets.ok ? budgets.value : null}
     />
   );
 }

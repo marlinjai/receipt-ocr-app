@@ -137,6 +137,15 @@ Built so far, with what the build decided on the way (say so if you disagree):
   owner is still no spending); "business" or "mixed" there still wins. The per-category totals of all
   spending are back under the charts, the payments table says when a debit waits for its list, and
   the Klarna scripts read reserved purchases again until they are charged.
+- **One budget block (decided by the coordinating session on 2026-10-24, the owner can overrule):**
+  the overview showed the same numbers three times (the budget chart, the older budgets panel, the
+  category list), and at 390 pixels the page was about 6,000 pixels tall. Now "Budget und Ausgaben"
+  is the one block: each category row is the bar for the period with its number of payments, where
+  this month's limit comes from, and "Ändern" inline (set, switch off, back to the average, as
+  before); the warnings count is in its heading (with the month when another period is shown); the
+  budgets per counterparty and the form for a new one close the block. The separate budgets panel and
+  the category list are gone. The total tiles sit two to a row on a phone. Measured on invented data
+  in a local browser: 5,068 pixels tall at 390, 3,275 at 1280, chart colours on at both widths.
 - **Decided after the first review:** own names are matched word for word without dropping legal
   forms, so "Erika Beispiel UG" (another legal person) is never the owner; and because answers are kept
   per counterparty key (which drops legal forms), a key counts only when every payment under it names

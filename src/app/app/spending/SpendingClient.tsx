@@ -8,12 +8,13 @@ import { formatCents } from '@/lib/tax/money';
 import { ANSWERABLE_CATEGORIES, SPENDING_CATEGORY_LABELS, isSpendingCategory, type SpendingCategory } from '@/lib/spending/categories';
 import type { CategoryBasis, SpendingPurpose } from '@/lib/spending/rules';
 import type { UnclearCounterparty } from '@/lib/spending/overview';
-import type { BudgetLine } from '@/lib/spending/budgets';
-import { CATEGORY_GROUP, budgetBars, monthStacks, monthlyBudgetSum, topCounterparties } from '@/lib/spending/charts';
+import { monthStacks, monthlyBudgetSum, topCounterparties } from '@/lib/spending/charts';
 import { MAX_OWN_NAMES, MAX_OWN_NAME_LENGTH } from '@/lib/spending/own-names';
 import { spendingHref, type SpendingTab } from '@/lib/spending/paths';
 import { answerCategory, markOwnAccount, saveOwnNames, unlinkRoutedReceipt, unmarkOwnAccount, withdrawCategory, type Result, type SpendingPageView } from './actions';
-import { BudgetChart, MonthsChart, TopCounterpartiesChart } from './OverviewCharts';
+import { MonthsChart, TopCounterpartiesChart } from './OverviewCharts';
+import BudgetsPanel from './BudgetsPanel';
+import type { BudgetsView } from './budget-actions';
 
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
@@ -255,7 +256,6 @@ export default function SpendingClient({
   openChecks = null,
   checks,
   budgets,
-  budgetLines = null,
   today,
 }: {
   initial: SpendingPageView;
@@ -264,10 +264,8 @@ export default function SpendingClient({
   openChecks?: number | null;
   /** The receipt checks and the notifications: the "Belege" tab. */
   checks?: ReactNode;
-  /** The budgets of this month with their limits to change, under the charts. */
-  budgets?: ReactNode;
-  /** The budget lines of this month, for the charts; null when the budgets could not be read. */
-  budgetLines?: readonly BudgetLine[] | null;
+  /** The budgets of this month, for the budget block; null when they could not be read. */
+  budgets?: BudgetsView | null;
   /** Today in the owner's time zone, "YYYY-MM-DD". */
   today: string;
 }) {
@@ -288,8 +286,6 @@ export default function SpendingClient({
   const [pending, startTransition] = useTransition();
   const { overview } = view;
   const period = overview.month === null ? `${overview.year}` : `${MONTHS[overview.month - 1]} ${overview.year}`;
-  const largestCategory = Math.max(1, ...overview.byCategory.map((c) => c.cents));
-  const currentMonth = overview.month !== null && `${overview.year}-${String(overview.month).padStart(2, '0')}` === today.slice(0, 7);
 
   // The period and the tab live in the address, so a reload or a shared link shows the same.
   const go = (year: number, month: number | null) => {
@@ -469,7 +465,7 @@ export default function SpendingClient({
         </div>
       ) : (
         <div role="tabpanel" id={`${id}-panel-ueberblick`} aria-labelledby={`${id}-tab-ueberblick`}>
-          <section className="mt-4 grid gap-3 sm:grid-cols-4" aria-label={`Summen ${period}`}>
+          <section className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label={`Summen ${period}`}>
             <div className="glass-panel rounded-xl p-4">
               <p className="text-xs" style={{ color: 'var(--muted)' }}>
                 Ausgaben {period}
@@ -523,48 +519,16 @@ export default function SpendingClient({
           <MonthsChart
             year={overview.year}
             stacks={monthStacks(overview)}
-            budgetSum={budgetLines ? monthlyBudgetSum(budgetLines) : null}
+            budgetSum={budgets ? monthlyBudgetSum(budgets.lines) : null}
             selectedMonth={overview.month}
             onSelect={(month) => go(overview.year, month)}
           />
-          {budgetLines && <BudgetChart bars={budgetBars(overview, budgetLines, today, SPENDING_CATEGORY_LABELS)} period={period} currentMonth={currentMonth} />}
+          {budgets === null ? (
+            <p className="ui-note ui-note-danger mt-4">Die Budgets konnten nicht geladen werden. Bitte die Seite neu laden.</p>
+          ) : (
+            budgets && <BudgetsPanel initial={budgets} overview={overview} today={today} period={period} />
+          )}
           <TopCounterpartiesChart items={topCounterparties(overview.payments, overview.totalCents)} period={period} />
-
-          {budgets}
-
-          <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-categories`}>
-            <h2 id={`${id}-categories`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-              Kategorien {period}
-            </h2>
-            <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-              Alle Ausgaben, private, geschäftliche und noch nicht zugeordnete; Erstattungen abgezogen.
-            </p>
-            <ul className="mt-3 space-y-2">
-              {[...overview.byCategory]
-                .sort((a, b) => b.cents - a.cents)
-                .map((c) => (
-                  <li key={c.category}>
-                    <div className="flex items-baseline justify-between gap-3 text-sm">
-                      <span style={{ color: c.category === 'unclear' && c.cents !== 0 ? 'var(--danger, var(--foreground))' : 'var(--foreground)' }}>
-                        {SPENDING_CATEGORY_LABELS[c.category]}
-                        <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                          {c.count} {c.count === 1 ? 'Zahlung' : 'Zahlungen'}
-                        </span>
-                      </span>
-                      <span className="tabular-nums" style={{ color: 'var(--foreground)' }}>
-                        {euro(c.cents)}
-                      </span>
-                    </div>
-                    <div className="mt-1 h-1.5 w-full rounded-full" style={{ background: 'var(--border, rgba(128,128,128,0.2))' }}>
-                      <div
-                        className={`h-1.5 rounded-full ${c.category === 'unclear' ? 'ui-chart-hatch' : ''}`}
-                        style={{ width: `${Math.round((Math.max(0, c.cents) / largestCategory) * 100)}%`, backgroundColor: `var(--chart-${CATEGORY_GROUP[c.category]})` }}
-                      />
-                    </div>
-                  </li>
-                ))}
-            </ul>
-          </section>
 
           <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-unclear`}>
             <h2 id={`${id}-unclear`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>

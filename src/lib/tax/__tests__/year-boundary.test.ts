@@ -125,7 +125,7 @@ describe('the answer that applies to a payment at the turn of the year', () => {
   const decide = (o: Partial<BoundaryFacts>) => decideBoundary({ kind: 'receipt', cashDay: '2025-12-26', stored: undefined, filedOn: none, recurring: false, ...o });
   const stored = (belongsToOtherYear: boolean, savedOn: string, cashDay = '2025-12-26') => ({ cashDay, belongsToOtherYear, savedOn });
 
-  it('open years: a recurring receipt and a one-off stay by rule, one without a vendor is asked', () => {
+  it('open years: a recurring receipt and a one-off stay by rule, one without a vendor stays undecided', () => {
     expect(decide({ recurring: true })).toEqual({ answer: false, source: 'rule', reason: 'Abo, Zeitraum beginnt am Zahltag', storedAnswer: null, filedYear: null, filedWith: null, departsFromFiled: null });
     expect(decide({ recurring: false })).toMatchObject({ answer: false, source: 'rule', reason: 'einmalige Zahlung' });
     expect(decide({ recurring: null })).toMatchObject({ answer: null, source: null, storedAnswer: null });
@@ -138,7 +138,7 @@ describe('the answer that applies to a payment at the turn of the year', () => {
     expect(decide({ ...vat, cashDay: '2025-12-22' })).toMatchObject({ answer: false, source: 'rule' });
   });
 
-  it('open years, small business: a payment to the tax office is not recurring and stays; an unanswered status is asked', () => {
+  it('open years, small business: a payment to the tax office is not recurring and stays; an unanswered status leaves it undecided', () => {
     expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-08', vatStatus: 'small' })).toMatchObject({ answer: false, source: 'rule', reason: 'Kleinunternehmer: keine regelmäßige Vorauszahlung' });
     expect(decide({ kind: 'vat_settlement', cashDay: '2025-12-23', vatStatus: 'small' })).toMatchObject({ answer: false, source: 'rule' });
     expect(decide({ kind: 'vat_settlement', cashDay: '2026-01-08', vatStatus: 'status_unanswered' })).toMatchObject({ answer: null, source: null });

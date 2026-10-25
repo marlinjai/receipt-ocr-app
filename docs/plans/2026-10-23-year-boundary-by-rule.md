@@ -1,6 +1,6 @@
 ---
 title: The year-change list answers itself
-summary: Payments between 22 December and 10 January no longer wait for a person. A year whose return is filed fixes them the way it was filed, and for open years a rule decides from the payment data (a subscription billed on its own period start stays in the year it was paid, an advance payment of value-added tax in early January belongs to the year before). A person's answer still overrides, and only what no rule settles is asked.
+summary: Payments between 22 December and 10 January no longer wait for a person. A year whose return is filed fixes them the way it was filed, and for open years a rule decides from the payment data (a subscription billed on its own period start stays in the year it was paid, an advance payment of value-added tax in early January belongs to the year before). Since 2026-10-25 there is no list to answer at all (decision 6): the rules decide, answers given before still apply, and what no rule settles stays in the year it was paid.
 type: plan
 status: in-progress
 tags: [receipts, tax, year-boundary, payments]
@@ -79,8 +79,21 @@ Two facts settle most of it:
 5. **The tab shows the reason for every entry** and counts as open only what has neither a
    person's answer nor a rule. The "Jahreswechsel" tab count in the finance page shows that open
    number, expected to be zero for 2025/2026.
+6. **No year-change list at all** (the owner, 2026-10-25: "the tab in the UI can go, it only
+   confuses people"; supersedes decision 5 and the person's override of decision 3). The rules
+   above decide by themselves; the "Jahreswechsel" tab, its answer buttons and the server actions
+   behind them are removed. Answers a person gave before still apply as stored (the read is
+   unchanged); nothing creates new ones. A payment no rule decides (a receipt without a vendor, a
+   settlement while the small-business question or the advance return period is unanswered)
+   stays in the year it was paid, the cash-basis default. Where the rule moved something, the
+   statement still says so on the item ("zählt für {Jahr} (Jahreswechsel)"). The filing-day
+   control in the income-tax tab stays: decision 2 needs it.
 
 ## Implementation notes (decided while building, 2026-10-23, say so if you disagree)
+
+Notes about refusing, showing or taking back answers describe pull request 174; since decision 6
+(pull request "no year-change tab") nothing writes answers and nothing shows them, so those parts
+are superseded. The read rules below still hold.
 
 - **"Saved after the filing day"** compares the day (Europe/Berlin) a person's answer was last
   saved (`updatedAt`) with `filed_on`. An answer saved on the filing day itself counts as filed with
@@ -100,7 +113,7 @@ Two facts settle most of it:
   pay (status changes included): for a January payment the status on 31 December of the year before
   (it pays the December or fourth-quarter return), for a December payment the status on its day; and
   by whether an advance return period is chosen. While either answer
-  is missing the settlement stays an open question instead of being guessed.
+  is missing no rule decides, so the settlement stays in the year it was paid instead of being guessed.
   The return period is the company's current setting (it is not kept per day).
 - **An answer that went into a filed return** (saved up to the filing day, for the payment day
   that still applies) is refused when changed or taken back; one given after the filing day can be
@@ -108,17 +121,17 @@ Two facts settle most of it:
 - **Both years filed, answer saved between the two filing days:** the payment was declared in
   neither return (the earlier one was filed before the answer, the later one with it). The answer
   is reported as departing from the earlier return and the payment counts in the year it was paid,
-  the cash-basis default, so the list shows the mismatch instead of moving money into a closed year.
+  the cash-basis default, instead of moving money into a closed year.
 - **The filing day** must be a real day, not in the future and not before the year ended.
-- Meals and assets keep their behaviour: no rule or filed year applies to them, only an earlier
-  person's answer is shown so it can be taken back.
+- Meals and assets keep their behaviour: no rule or filed year applies to them, and an earlier
+  person's answer has no effect on them.
 
 ## Tests (four paths, standard `stateful-flow-testing.md`)
 
 - Forward: the 17 kinds of entries resolve to their rule; the filed year locks its turn; the
   statement totals of a filed year do not change.
 - Backtrack and revise: clearing a filed day unlocks the turn and the open-year rules apply;
-  a person's answer overrides a rule and taking it back returns the rule; a counterparty that
+  an earlier answer overrides a rule and without it the rule returns; a counterparty that
   stops recurring changes its reason.
 - Resume: reload shows the same derived answers (nothing stored but the filed day).
 - Re-entry: setting the same filed day twice is a no-op; a stored answer after the filing day is
@@ -131,5 +144,7 @@ Two facts settle most of it:
    `YearBoundaryTab`. Wait for the PayPal live pull request (branch `feat/paypal-live`, which also
    changes `src/lib/tax/service.ts`) to merge, then rebase before opening the pull request; take
    the next free migration number at that point.
-3. Fresh-agent review, pull request, land-pr. Afterwards check on production that the open count
-   for 2025/2026 is zero.
+3. Fresh-agent review, pull request, land-pr (done: pull request 174).
+4. Remove the year-change tab (decision 6), then record 2021 to 2025 as filed for Whiz-Art Media on
+   production through the income-tax tab and check on a moved and an unmoved 2025/2026 payment that
+   the statement shows them in the year they were filed.

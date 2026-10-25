@@ -32,9 +32,12 @@
  *    recur is no regularly recurring payment and stays. A service period on
  *    the receipt (rent for January paid on 28 December) would be the one case
  *    that moves, but receipts do not carry one yet, so no rule moves a receipt.
- * 4. Anything else is asked: a receipt without a vendor, whose recurrence
- *    cannot be told, and a settlement while the small-business question or the
- *    advance return period is unanswered.
+ * 4. Anything else stays in the year it was paid, the cash-basis default:
+ *    a receipt without a vendor, whose recurrence cannot be told, and a
+ *    settlement while the small-business question or the advance return
+ *    period is unanswered. Nobody is asked: since 2026-10-25 the app shows no
+ *    year-change list, the rules decide (the owner found the list confusing).
+ *    Answers a person gave before still apply, and nothing creates new ones.
  */
 
 export const YEAR_BOUNDARY_DAYS = 10;
@@ -45,7 +48,6 @@ export function berlinDay(at: Date = new Date()): string {
 }
 
 export type BoundarySubjectKind = 'receipt' | 'vat_settlement';
-export const BOUNDARY_SUBJECT_KINDS: readonly BoundarySubjectKind[] = ['receipt', 'vat_settlement'];
 
 const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -75,7 +77,7 @@ export function boundaryDay(cashDay: string | null | undefined): string | null {
   return Number((cashDay as string).slice(0, 4)) < other ? `${other}-01-01` : `${other}-12-31`;
 }
 
-/** A stored answer applies only to the payment day it was given for. */
+/** A stored answer applies only to the payment day it was given for. Exported for its unit tests. */
 export function answerFor(stored: { cashDay: string; belongsToOtherYear: boolean } | undefined, cashDay: string | null): boolean | null {
   if (!stored || cashDay === null || stored.cashDay !== cashDay) return null;
   return stored.belongsToOtherYear;
@@ -132,12 +134,12 @@ export function vatStatusOn(smallBusiness: boolean | null, frequencySet: boolean
 }
 
 export interface BoundaryDecision {
-  /** True: counts in the other year. False: stays. Null: open, nobody and no rule answered. */
+  /** True: counts in the other year. False: stays. Null: nobody and no rule decided; it stays where it was paid. */
   answer: boolean | null;
   source: BoundarySource | null;
-  /** Why, in German, as the year-change list shows it. */
+  /** Why, in German. */
   reason: string;
-  /** The person's answer for this payment day, applied or not (it can be taken back). */
+  /** The person's answer for this payment day, applied or not. */
   storedAnswer: boolean | null;
   /** The filed year that fixes this payment (the paid year first); null while both years are open. */
   filedYear: number | null;
@@ -157,8 +159,7 @@ function filedYearsOf(cashDay: string, filedOn: ReadonlyMap<number, string>): nu
  * The filed return a person's answer went into: one of the two years of its
  * payment day is filed and the answer was saved up to every such filing day.
  * Null when both years are open or the answer was saved after a filing day
- * (then it is not part of a return and may be taken back). One test, used by
- * the read (`decideBoundary`) and by the write that protects filed answers.
+ * (then it is not part of a return). Exported for its unit tests.
  */
 export function filedWithOf(cashDay: string, savedOn: string, filedOn: ReadonlyMap<number, string>): number | null {
   const filed = filedYearsOf(cashDay, filedOn);

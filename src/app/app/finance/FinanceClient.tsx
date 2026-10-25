@@ -16,8 +16,6 @@ import {
   getStatement,
   removeAccount,
   addAccount,
-  answerYearBoundary,
-  declineYearBoundary,
   decideLine,
   removeLines,
   saveLines,
@@ -54,7 +52,6 @@ import { chooseBankConnectionAccount, clearBankConnectionNotice, disconnectBank,
 import AccountSharing, { type SharingActions } from './AccountSharing';
 import { endAccountShare, shareAccountWith, type SharingView } from './sharing-actions';
 import { returnMessage } from '@/lib/tax/payments/bank/messages';
-import YearBoundaryTab from './YearBoundaryTab';
 import type { ImportResult } from '@/lib/tax/payments/service';
 import RevenueTab from './RevenueTab';
 import OverdueInvoices from './OverdueInvoices';
@@ -67,7 +64,7 @@ import { incomeTaxActionMessage } from '@/lib/tax/income-tax/messages';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 import { useTabInView } from '@/lib/use-tab-in-view';
 
-export type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'tax' | 'boundary' | 'vendors';
+export type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'tax' | 'vendors';
 
 /** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
 const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
@@ -298,8 +295,6 @@ export default function FinanceClient({
     { key: 'assets', label: 'Anlagen', count: view.assets.length },
     { key: 'vat', label: 'Umsatzsteuer' },
     { key: 'tax', label: 'Einkommensteuer' },
-    // Only when the year has a payment in the ten-day window; the count is what is not answered yet.
-    ...(view.yearBoundary.length > 0 ? [{ key: 'boundary' as const, label: 'Jahreswechsel', count: view.yearBoundary.filter((e) => e.source === null && e.inactive === null).length }] : []),
     { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length + view.reverseChargeVendors.length },
   ];
 
@@ -934,30 +929,6 @@ export default function FinanceClient({
                   filedOn ? `Erklärung ${view.year} als abgegeben eingetragen.` : `Abgabedatum ${view.year} entfernt: das Jahr ist wieder offen.`,
                   undefined,
                   incomeTaxActionMessage,
-                )
-              }
-            />
-          )}
-
-          {tab === 'boundary' && (
-            <YearBoundaryTab
-              view={view}
-              busy={pending}
-              error={error}
-              onAnswer={(entry, belongsToOtherYear) =>
-                run(
-                  () => answerYearBoundary(view.year, { kind: entry.kind, subjectId: entry.subjectId, cashDay: entry.cashDay, belongsToOtherYear }),
-                  belongsToOtherYear === null ? `${entry.label}: Antwort zurückgenommen.` : belongsToOtherYear ? `${entry.label}: zählt für ${entry.otherYear}.` : `${entry.label}: bleibt in ${entry.cashDay.slice(0, 4)}.`,
-                )
-              }
-              onDeclineOpen={() =>
-                run(
-                  () =>
-                    declineYearBoundary(
-                      view.year,
-                      view.yearBoundary.filter((e) => e.source === null && e.inactive === null).map((e) => ({ kind: e.kind, subjectId: e.subjectId, cashDay: e.cashDay })),
-                    ),
-                  'Alle offenen Zahlungen bleiben in dem Jahr, in dem sie gezahlt wurden.',
                 )
               }
             />

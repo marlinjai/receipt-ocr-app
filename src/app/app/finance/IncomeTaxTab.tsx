@@ -552,9 +552,8 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
           {tax.filedOn ? `Abgegeben am ${formatDay(tax.filedOn)}.` : 'Noch nicht als abgegeben eingetragen.'}
         </p>
         <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-          Ein abgegebenes Jahr legt die Zahlungen um seinen Jahreswechsel so fest, wie sie erklärt wurden: jede bleibt in dem
-          Jahr, in dem sie bezahlt wurde. Eine später gegebene Antwort, die eine Zahlung über das abgegebene Jahr verschieben
-          würde, wird nicht angewendet, sondern im Tab „Jahreswechsel“ angezeigt.
+          Ein abgegebenes Jahr legt die Zahlungen um seinen Jahreswechsel (22. Dezember bis 10. Januar) so fest, wie sie
+          erklärt wurden: jede bleibt in dem Jahr, in dem sie bezahlt wurde.
         </p>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div>

@@ -34,10 +34,16 @@ const MAX_RETRIES = 1;
 /** How often a paused server-tool turn is resumed before the answer is taken as it is. */
 const MAX_RESUMES = 3;
 
-async function askAnthropic(apiKey: string, model: string, counterparties: readonly ModelCounterparty[]): Promise<string> {
-  const client = new Anthropic({ apiKey, maxRetries: MAX_RETRIES });
+/**
+ * One call for a group of counterparties. The web search tool is given only
+ * when every counterparty of the group may be looked up (`mayLookUp`): a name
+ * that may be a private person never reaches a search, whatever the model
+ * would do with the instruction.
+ */
+export async function askAnthropic(client: Pick<Anthropic, 'messages'>, model: string, counterparties: readonly ModelCounterparty[]): Promise<string> {
+  const webSearch = counterparties.every((c) => c.mayLookUp);
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: classificationRequest(counterparties) }];
-  let text = '';
+  let usage = { input: 0, output: 0 };
   for (let attempt = 0; attempt <= MAX_RESUMES; attempt++) {
     const response = await client.messages.create(
       {
@@ -45,27 +51,43 @@ async function askAnthropic(apiKey: string, model: string, counterparties: reado
         max_tokens: 16000,
         // Telling a supermarket from a software vendor is not a hard problem.
         output_config: { effort: 'low' },
-        system: classificationPrompt({ webSearch: true }),
-        tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }],
+        system: classificationPrompt({ webSearch }),
+        ...(webSearch ? { tools: [{ type: 'web_search_20260209' as const, name: 'web_search' as const, max_uses: 5 }] } : {}),
         messages,
       },
       { timeout: REQUEST_TIMEOUT_MS },
     );
+    usage = { input: usage.input + response.usage.input_tokens, output: usage.output + response.usage.output_tokens };
     if (response.stop_reason === 'refusal') throw new Error('The model declined to classify these counterparties.');
     if (response.stop_reason === 'max_tokens') throw new Error('The answer was cut off.');
-    const textBlock = response.content.findLast((block) => block.type === 'text');
-    if (textBlock && textBlock.type === 'text') text = textBlock.text;
     // A long-running server-tool turn pauses; sending the content back resumes it.
-    if (response.stop_reason !== 'pause_turn') break;
-    messages.push({ role: 'assistant', content: response.content });
+    if (response.stop_reason === 'pause_turn') {
+      messages.push({ role: 'assistant', content: response.content });
+      continue;
+    }
+    // What a batch cost, for the log: counts only, never a name.
+    console.info('[payments] classified counterparties', { model, counterparties: counterparties.length, webSearch, inputTokens: usage.input, outputTokens: usage.output });
+    const textBlock = response.content.findLast((block) => block.type === 'text');
+    return textBlock && textBlock.type === 'text' ? textBlock.text : '';
   }
-  return text;
+  throw new Error('The model did not finish its answer.');
+}
+
+/** Ask about a batch: the names that may be looked up in one call with web search, the others in one without. */
+export async function classifyWithAnthropic(client: Pick<Anthropic, 'messages'>, model: string, counterparties: readonly ModelCounterparty[]): Promise<Map<string, DecidedVerdict>> {
+  const out = new Map<string, DecidedVerdict>();
+  const groups = [counterparties.filter((c) => c.mayLookUp), counterparties.filter((c) => !c.mayLookUp)].filter((g) => g.length > 0);
+  for (const group of groups) {
+    for (const [key, verdict] of parseModelVerdicts(await askAnthropic(client, model, group), group.map((c) => c.key))) out.set(key, verdict);
+  }
+  return out;
 }
 
 async function askOpenRouter(counterparties: readonly ModelCounterparty[]): Promise<string> {
-  const request: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+  const request: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & { reasoning?: { effort: 'low' } } = {
     model: getChatModel(),
     max_tokens: 8000,
+    reasoning: { effort: 'low' },
     messages: [
       { role: 'system', content: classificationPrompt({ webSearch: false }) },
       { role: 'user', content: classificationRequest(counterparties) },
@@ -82,10 +104,8 @@ export function serverCounterpartyClassifier(env: Record<string, string | undefi
   const provider = classifierProvider(env);
   if (provider === 'anthropic_web_search') {
     const model = env.ANTHROPIC_COUNTERPARTY_MODEL || DEFAULT_ANTHROPIC_MODEL;
-    return {
-      model,
-      classify: async (counterparties) => parseModelVerdicts(await askAnthropic(env.ANTHROPIC_API_KEY as string, model, counterparties), counterparties.map((c) => c.key)),
-    };
+    const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: MAX_RETRIES });
+    return { model, classify: (counterparties) => classifyWithAnthropic(client, model, counterparties) };
   }
   if (provider === 'openrouter') {
     return {

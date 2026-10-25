@@ -343,6 +343,11 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
             gefragt, betrieblich ist, was du von Hand einem Beleg zuordnest. Die Antwort gilt für alle Zahlungen dieser
             Gegenseite. Eine einzelne Zahlung lässt sich auch ohne Antwort zuordnen: „Zahlungen ansehen“.
           </p>
+          {!p.classifierAvailable && (
+            <p className="ui-note mt-2 text-xs">
+              Auf dem Server ist kein Sprachmodell eingerichtet: die App ordnet nur ein, was zugeordnete Belege eindeutig sagen.
+            </p>
+          )}
           <ul className="mt-3 space-y-2">
             {p.unclassified.map((c) => (
               <li key={c.key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
@@ -359,9 +364,15 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                     </span>
                   )}
                 </span>
-                <span className="flex flex-wrap gap-1.5">
+                <span className="flex flex-wrap gap-1.5" role="group" aria-label={`Antwort für ${c.label}`}>
                   {c.proposal && (
-                    <button type="button" className="ui-btn ui-btn-sm ui-btn-primary" disabled={busy} onClick={() => onTreat(c.label, c.proposal!.treatment)}>
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm ui-btn-primary"
+                      disabled={busy}
+                      aria-label={`Vorschlag für ${c.label} übernehmen: ${TREATMENT_LABELS[c.proposal.treatment]}`}
+                      onClick={() => onTreat(c.label, c.proposal!.treatment)}
+                    >
                       Vorschlag übernehmen
                     </button>
                   )}
@@ -389,14 +400,14 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
 
       {p.appTreatments.length > 0 && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Von der App eingeordnet">
-          <details>
+          <details open>
             <summary className="cursor-pointer text-base font-semibold" style={{ color: 'var(--foreground)' }}>
               Von der App eingeordnet ({p.appTreatments.length})
             </summary>
             <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
               Diese Gegenseiten hat die App selbst eingeordnet: aus deinen zugeordneten Belegen, deinen eigenen Namen oder weil
-              sie eindeutig erkennbar sind. Die Einordnung zählt schon überall. Ein Klick auf eine andere Antwort ersetzt sie, und
-              deine Antwort gilt dann für alle Zahlungen dieser Gegenseite.
+              sie eindeutig erkennbar sind. Die Einordnung zählt schon überall. „Bestätigen“ macht sie zu deiner Antwort, ein Klick
+              auf eine andere Antwort ersetzt sie; deine Antwort gilt dann für alle Zahlungen dieser Gegenseite.
             </p>
             <ul className="mt-3 space-y-2">
               {p.appTreatments.map((c) => (
@@ -406,6 +417,15 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                     <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>{c.reason}</span>
                   </span>
                   <span className="flex flex-wrap gap-1.5" role="group" aria-label={`Antwort für ${c.label}`}>
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm ui-btn-primary"
+                      disabled={busy}
+                      aria-label={`${c.label}: ${TREATMENT_LABELS[c.treatment]} bestätigen`}
+                      onClick={() => onTreat(c.label, c.treatment)}
+                    >
+                      Bestätigen
+                    </button>
                     {(Object.keys(TREATMENT_LABELS) as CounterpartyTreatment[]).map((t) => (
                       <button
                         key={t}

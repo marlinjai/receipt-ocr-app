@@ -6,7 +6,7 @@ import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '
 import { after } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
-import { classifySummary } from '@/lib/tax/payments/classify';
+import { classifyFailed, classifySummary } from '@/lib/tax/payments/classify-summary';
 import { classifyCounterparties } from '@/lib/tax/payments/classify-service';
 import { serverCounterpartyClassifier } from '@/lib/tax/payments/counterparty-classifier';
 import { settleMovedPaymentsLater } from '@/lib/spending/settle-later';
@@ -361,13 +361,19 @@ const CLASSIFY_NOW_LIMIT = 40;
  * decision 6) instead of at the next check, and say what it did. The largest
  * undecided ones go first; what is left follows on the next click or check.
  */
-export async function classifyCounterpartiesNow(year: number): Promise<Result<{ view: StatementView; summary: string }>> {
+export async function classifyCounterpartiesNow(year: number): Promise<Result<{ view: StatementView; summary: string; failed: boolean }>> {
   try {
     const ctx = await writeContext();
     const run = await classifyCounterparties(prisma, ctx, serverCounterpartyClassifier(), { limit: CLASSIFY_NOW_LIMIT });
+    // A verdict can move payments of a shared account to the receiving company, like a person's answer: settle that the same way.
+    if (run.byEvidence + run.byModel > 0) settleMovedLater(ctx);
     return {
       ok: true,
-      value: { view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)), summary: classifySummary(run) || 'Es gibt gerade nichts einzuordnen.' },
+      value: {
+        view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)),
+        summary: classifySummary(run) || 'Es gibt gerade nichts einzuordnen.',
+        failed: classifyFailed(run),
+      },
     };
   } catch (e) {
     return failure(e);

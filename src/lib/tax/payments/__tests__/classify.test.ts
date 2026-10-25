@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { categorise } from '@/lib/spending/rules';
 import {
+  capModelVerdict,
   classificationPrompt,
-  classifySummary,
   cleanReason,
+  maskText,
   evidenceFingerprint,
   evidenceVerdict,
   mayLookUp,
@@ -11,6 +12,7 @@ import {
   toModelCounterparty,
   type CounterpartyEvidence,
 } from '../classify';
+import { classifyFailed, classifySummary } from '../classify-summary';
 import { appCategories, mergeTreatments, storedVerdict, verdictApplies, type Verdict } from '../verdicts';
 
 /** Every name, text and amount is invented. */
@@ -108,6 +110,9 @@ describe('what the model sees', () => {
     expect(mayLookUp('Laden 24')).toBe(true);
     expect(mayLookUp('Max Beispiel')).toBe(false);
     expect(mayLookUp('Agnes Beispiel')).toBe(false);
+    // Short words that are also parts of names are no legal form, and one digit makes no business.
+    expect(mayLookUp('Jonas Ab')).toBe(false);
+    expect(mayLookUp('Max Beispiel 2')).toBe(false);
   });
 
   it('gets the name, counts, sums, a few texts and the linked receipts, and nothing else', () => {
@@ -125,6 +130,27 @@ describe('what the model sees', () => {
     });
     expect(classificationPrompt({ webSearch: true })).toMatch(/Never search for a counterparty marked mayLookUp false/);
     expect(classificationPrompt({ webSearch: false })).not.toMatch(/You have web search/);
+  });
+});
+
+describe("what of the model's verdict may count by itself", () => {
+  const certain = (treatment: 'business' | 'private' | 'own_account' | 'mixed') => ({ treatment, category: null, confidence: 'certain' as const, reason: 'r' });
+  it('never an own account, and nothing but business for someone who paid money in: those stay proposals', () => {
+    expect(capModelVerdict(certain('own_account'), { inCents: 0 }).confidence).toBe('likely');
+    expect(capModelVerdict(certain('private'), { inCents: 500 }).confidence).toBe('likely');
+    expect(capModelVerdict(certain('mixed'), { inCents: 500 }).confidence).toBe('likely');
+    expect(capModelVerdict(certain('business'), { inCents: 500 }).confidence).toBe('certain');
+    expect(capModelVerdict(certain('private'), { inCents: 0 }).confidence).toBe('certain');
+    expect(capModelVerdict({ ...certain('own_account'), confidence: 'unsure' }, { inCents: 0 }).confidence).toBe('unsure');
+  });
+});
+
+describe('what leaves the house', () => {
+  it('payment texts lose account, card and other long numbers', () => {
+    expect(maskText('SEPA Lastschrift DE89 3704 0044 0532 0130 00 Mandat 4711-0815-2233 Abo')).toBe('SEPA Lastschrift [Konto] Mandat [Nummer] Abo');
+    expect(maskText('Karte 4111 1111 1111 1111 Einkauf')).toBe('Karte [Nummer] Einkauf');
+    expect(maskText('Abo Oktober 2026')).toBe('Abo Oktober 2026');
+    expect(maskText('x'.repeat(300))).toHaveLength(140);
   });
 });
 
@@ -154,8 +180,8 @@ describe("reading the model's answer", () => {
   });
 
   it('a reason is one line, without long dashes, at most 200 characters', () => {
-    expect(cleanReason('Supermarkt — Einkauf\n für zu Hause')).toBe('Supermarkt, Einkauf für zu Hause');
-    expect(cleanReason('Laden – Haushalt')).toBe('Laden, Haushalt');
+    expect(cleanReason('Supermarkt \u2014 Einkauf\n für zu Hause')).toBe('Supermarkt, Einkauf für zu Hause');
+    expect(cleanReason('Laden \u2013 Haushalt')).toBe('Laden, Haushalt');
     expect(cleanReason('x'.repeat(300))).toHaveLength(200);
     expect(cleanReason(42)).toBe('');
   });
@@ -167,6 +193,13 @@ describe('what a run says', () => {
     expect(classifySummary(run)).toBe('');
     expect(classifySummary({ ...run, pending: 5, byEvidence: 1, byModel: 4, applied: 5 })).toBe('Die App hat 5 Gegenseiten eingeordnet, alle sicher.');
     expect(classifySummary({ ...run, pending: 50, byModel: 40, applied: 30 })).toBe('Die App hat 40 Gegenseiten eingeordnet, davon 30 sicher; die übrigen sind Vorschläge. 10 weitere folgen beim nächsten Prüfen.');
+  });
+  it('a run that decided nothing because the model failed is a failure, not a notice', () => {
+    expect(classifySummary({ ...run, pending: 3, failedBatches: 1 })).toBe('Die Gegenseiten konnten gerade nicht eingeordnet werden; beim nächsten Prüfen wird es wieder versucht.');
+    expect(classifyFailed({ ...run, pending: 3, failedBatches: 1 })).toBe(true);
+    expect(classifyFailed({ ...run, pending: 3, byEvidence: 1, failedBatches: 1 })).toBe(false);
+    expect(classifyFailed(null)).toBe(true);
+    expect(classifyFailed(run)).toBe(false);
   });
   it('says when no model is configured or a batch failed, and when the whole step failed', () => {
     expect(classifySummary({ ...run, pending: 4, byEvidence: 1, applied: 1, unavailable: true })).toBe('Die App hat 1 Gegenseite eingeordnet, alle sicher. Ohne Sprachmodell auf dem Server ordnet die App nur ein, was zugeordnete Belege eindeutig sagen.');

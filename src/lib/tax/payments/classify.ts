@@ -53,15 +53,16 @@ export function evidenceVerdict(evidence: CounterpartyEvidence): DecidedVerdict 
   const { business, private: priv, mixed } = evidence.receipts;
   if (mixed > 0) return null;
   if (business > 0 && priv === 0) {
-    return { treatment: 'business', category: null, confidence: 'certain', reason: `Alle ${business} zugeordneten Belege sind betrieblich.` };
+    return { treatment: 'business', category: null, confidence: 'certain', reason: business === 1 ? 'Der zugeordnete Beleg ist betrieblich.' : `Alle ${business} zugeordneten Belege sind betrieblich.` };
   }
   if (priv > 0 && business === 0) {
-    return { treatment: 'private', category: null, confidence: 'certain', reason: `Alle ${priv} zugeordneten Belege sind privat.` };
+    return { treatment: 'private', category: null, confidence: 'certain', reason: priv === 1 ? 'Der zugeordnete Beleg ist privat.' : `Alle ${priv} zugeordneten Belege sind privat.` };
   }
   return null;
 }
 
-const LEGAL_FORMS = /\b(gmbh|ag|ug|kg|ohg|gbr|ev|e v|se|inc|ltd|llc|limited|corp|corporation|co|bv|nv|sarl|sas|srl|spa|ab|as|oy|plc|pty)\b/;
+// Legal forms that are not also short words of a person's name ("as", "ab", "co" are left out on purpose).
+const LEGAL_FORMS = /\b(gmbh|ag|ug|kg|ohg|gbr|ev|e v|se|inc|ltd|llc|limited|corp|corporation|bv|nv|sarl|sas|srl|spa|oy|plc|pty)\b/;
 
 /**
  * Whether the model may look the counterparty up on the web: only a name
@@ -70,7 +71,19 @@ const LEGAL_FORMS = /\b(gmbh|ag|ug|kg|ohg|gbr|ev|e v|se|inc|ltd|llc|limited|corp
  */
 export function mayLookUp(label: string): boolean {
   const name = label.toLowerCase();
-  return LEGAL_FORMS.test(name.replace(/\./g, ' ')) || /\.[a-z]{2,}\b/.test(name) || /\d/.test(name);
+  return LEGAL_FORMS.test(name.replace(/\./g, ' ')) || /[a-z0-9-]\.(com|de|io|net|org|ai|app|co|eu|dev)\b/.test(name) || /\b\d{2,}\b/.test(name);
+}
+
+/**
+ * A payment text as it may be sent: account numbers (an IBAN), card numbers
+ * and other runs of digits (mandates, customer numbers) masked, at most 140
+ * characters. The vendor's words are what the model needs, never the numbers.
+ */
+export function maskText(text: string): string {
+  return text
+    .replace(/\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,4})?\b/gi, '[Konto]')
+    .replace(/\d[\d\s./-]{5,}\d/g, '[Nummer]')
+    .slice(0, 140);
 }
 
 /** The counterparty as the model sees it: no account number, nothing but what is listed here. */
@@ -97,7 +110,7 @@ export function toModelCounterparty(evidence: CounterpartyEvidence): ModelCounte
     payments: evidence.paymentCount,
     paidEuro: euroText(evidence.outCents),
     receivedEuro: euroText(evidence.inCents),
-    texts: evidence.samples.slice(0, 3).map((t) => t.slice(0, 140)),
+    texts: evidence.samples.slice(0, 3).map(maskText),
     privateAccount: evidence.onPrivateAccount,
     linkedReceipts: linked === 0 ? 'none' : `${business} business, ${priv} private, ${mixed} mixed; categories: ${[...new Set(categories)].join(', ') || 'none'}`,
     mayLookUp: mayLookUp(evidence.label),
@@ -127,7 +140,7 @@ export function classificationRequest(counterparties: readonly ModelCounterparty
 /** A reason as stored and shown: one line, no long dashes, at most 200 characters. */
 export function cleanReason(raw: unknown): string {
   if (typeof raw !== 'string') return '';
-  const text = raw.replace(/\s+/g, ' ').replace(/\s*[–—]\s*/g, ', ').trim();
+  const text = raw.replace(/\s+/g, ' ').replace(/\s*[\u2013\u2014]\s*/g, ', ').trim();
   return text.length > 200 ? `${text.slice(0, 199).trimEnd()}…` : text;
 }
 
@@ -170,31 +183,16 @@ export function parseModelVerdicts(text: string, askedKeys: readonly string[]): 
   return out;
 }
 
-/** What one run of deciding counterparties did, as `classify-service.ts` reports it. */
-export interface ClassifyRunCounts {
-  pending: number;
-  byEvidence: number;
-  byModel: number;
-  applied: number;
-  unavailable: boolean;
-  failedBatches: number;
-}
-
-const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-
-/** What a run did, in German, for the page that started it; empty when there was nothing to decide. */
-export function classifySummary(run: ClassifyRunCounts | null): string {
-  if (run === null) return 'Die Gegenseiten konnten nicht eingeordnet werden; bitte gleich noch einmal versuchen.';
-  const decided = run.byEvidence + run.byModel;
-  const sentences: string[] = [];
-  if (decided > 0) {
-    sentences.push(`Die App hat ${counted(decided, 'Gegenseite', 'Gegenseiten')} eingeordnet, ${run.applied === decided ? 'alle sicher' : `davon ${run.applied} sicher; die übrigen sind Vorschläge`}.`);
-  }
-  if (run.unavailable && run.pending > run.byEvidence) {
-    sentences.push('Ohne Sprachmodell auf dem Server ordnet die App nur ein, was zugeordnete Belege eindeutig sagen.');
-  }
-  if (run.failedBatches > 0) sentences.push('Ein Teil konnte gerade nicht eingeordnet werden; beim nächsten Prüfen wird es wieder versucht.');
-  const left = run.pending - decided;
-  if (!run.unavailable && run.failedBatches === 0 && left > 0) sentences.push(`${counted(left, 'weitere folgt', 'weitere folgen')} beim nächsten Prüfen.`);
-  return sentences.join(' ');
+/**
+ * What of a model's verdict may count by itself. The model never makes a
+ * counterparty an own account (own names and the funding rule decide that,
+ * and an own account takes its money out of every figure), and a counterparty
+ * that paid money IN is never made private or anything but business by the
+ * model (a client's payment would stop asking for its invoice). Such a verdict
+ * is kept as a proposal: at most likely.
+ */
+export function capModelVerdict(verdict: DecidedVerdict, evidence: Pick<CounterpartyEvidence, 'inCents'>): DecidedVerdict {
+  if (verdict.confidence !== 'certain') return verdict;
+  if (verdict.treatment === 'own_account' || (evidence.inCents > 0 && verdict.treatment !== 'business')) return { ...verdict, confidence: 'likely' };
+  return verdict;
 }

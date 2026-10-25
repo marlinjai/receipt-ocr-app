@@ -1,4 +1,5 @@
 import 'server-only';
+import { classifierProvider } from '@/lib/receipt-classifier';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { PAY_LATER_TERM_DAYS } from './payments/pay-later';
 import { rowToMealRecord } from '@/lib/meals/record';
@@ -1154,6 +1155,8 @@ export interface PaymentsView {
   unclassified: Array<{ key: string; label: string; count: number; outCents: number; inCents: number; proposal: CounterpartyProposal | null }>;
   /** What a person answered per counterparty. */
   treatments: Array<{ key: string; label: string; treatment: CounterpartyTreatment }>;
+  /** False when no language model is configured on the server: the app then decides only from receipts, and the tab says so. */
+  classifierAvailable: boolean;
   /** What the app decided per counterparty (an own name or a certain verdict), each changeable by a person's answer. */
   appTreatments: Array<{ key: string; label: string; treatment: CounterpartyTreatment; source: 'own_name' | 'app'; reason: string }>;
   /** Business payments without a document and money received without an invoice. */
@@ -1487,6 +1490,7 @@ function buildPaymentsView(
     treatments: [...loaded.treatments.entries()]
       .filter(([key]) => loaded.treatmentSources.get(key) === 'person')
       .map(([key, treatment]) => ({ key, label: labelByCounterparty.get(key) ?? key, treatment })),
+    classifierAvailable: classifierProvider() !== null,
     // Only counterparties with payments in the year: the app's verdicts of other years stay out of this year's list.
     appTreatments: [...loaded.treatments.entries()].flatMap(([key, treatment]) => {
       const source = loaded.treatmentSources.get(key);

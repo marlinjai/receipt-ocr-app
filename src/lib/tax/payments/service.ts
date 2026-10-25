@@ -944,7 +944,10 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
   const rows: PaymentRow[] = payments.map((p) => {
     const treatment = treatments.get(p.counterpartyKey);
     const funds = funding.get(p.id);
-    const resolved = paymentKind(p, treatment, funds, privateAccounts.has(p.accountId));
+    // An account said to be private as a whole stays private unless a person says a counterparty on it is
+    // business: the app's verdict never overrules what the owner said about the whole account.
+    const byApp = treatmentSources.get(p.counterpartyKey) === 'app';
+    const resolved = paymentKind(p, byApp && treatment === 'business' ? undefined : treatment, funds, privateAccounts.has(p.accountId));
     // Money in that the file calls income and that a person put on a receipt is money back, not revenue. Derived
     // from the link, nothing stored: taking the link back makes it income again.
     const kind = resolved === 'income' && p.kindOverride === null && p.amountCents > 0 && p.links.some((l) => l.rowId !== null) ? 'refund' : resolved;

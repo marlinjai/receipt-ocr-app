@@ -12,9 +12,12 @@ import type { CounterpartyTreatmentAnswer } from './rules';
  * "Marlin Shop" an own account, and a legal form is a word of its own, so
  * "Marlin Jai Pohl UG" (another legal person) is not "Marlin Jai Pohl".
  *
- * This is about spending only: under Finanzen, Zahlungen the same transfer
- * keeps its own answer (from a business account it is a private withdrawal,
- * which is a tax matter, not a move between own accounts).
+ * Since 2026-10-25 the names count under Finanzen, Zahlungen too, where nobody
+ * answered the counterparty (plan 2026-10-25-auto-classify-payments, decision
+ * 5): for the income-surplus statement a private withdrawal and an own
+ * transfer are the same, neither is an expense. A person's answer there wins,
+ * a "private" one included; here, for spending, the names win over "private"
+ * as well (`treatmentsWithOwnNames`).
  */
 
 /** Names kept per company at most, and the longest name accepted. */

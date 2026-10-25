@@ -6,7 +6,9 @@ import { loadStatement, receiptForLink } from '../../service';
 import type { DecidedVerdict, ModelCounterparty } from '../classify';
 import { classifyCounterparties } from '../classify-service';
 import type { CounterpartyClassifierPort } from '../counterparty-classifier';
-import { createAccount, importPayments, linkPayment, loadPayments, setCounterpartyTreatment } from '../service';
+import { loadRoutedPayments, shareAccount } from '../routing';
+import { markCounterpartyOwnAccount, unmarkCounterpartyOwnAccount, SpendingServiceError } from '@/lib/spending/service';
+import { createAccount, importPayments, linkPayment, loadPayments, setAccountPrivate, setCounterpartyTreatment } from '../service';
 import { createWorkspace, db, type TestWorkspace } from '../../../../../test/db-helpers';
 
 /**
@@ -85,7 +87,7 @@ describe('the app classifies counterparties: forward', () => {
       ['Vermieter Beispiel', 'business', 'app'],
       ['Werkzeug Abo Beispiel GmbH', 'business', 'app'],
     ]);
-    expect(view.appTreatments.find((t) => t.label === 'Vermieter Beispiel')?.reason).toBe('Alle 1 zugeordneten Belege sind betrieblich.');
+    expect(view.appTreatments.find((t) => t.label === 'Vermieter Beispiel')?.reason).toBe('Der zugeordnete Beleg ist betrieblich.');
     // The likely one is still a question, with the proposal next to it; nobody answered anything.
     expect(view.unclassified.map((c) => [c.label, c.proposal?.treatment, c.proposal?.confidence])).toEqual([['Laden Beispiel', 'private', 'likely']]);
     expect(view.treatments).toEqual([]);
@@ -180,5 +182,117 @@ describe('the app classifies counterparties: failures and isolation', () => {
     await classifyCounterparties(db, theirs.ctx, fakeModel(ANSWERS).port);
     expect((await paymentsView(mine.ctx.workspaceId)).appTreatments.map((t) => t.label)).toEqual(['Erika Beispiel']);
     expect(await db.taxCounterpartyVerdict.count({ where: { authWorkspaceId: mine.ctx.workspaceId } })).toBe(0);
+  });
+});
+
+describe('the app classifies counterparties: what it must never do on its own', () => {
+  it("an account said to be private stays private: its payments are not sent to the model and a business verdict does not lift it", async () => {
+    const ws = await createWorkspace();
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    const privateAccount = await createAccount(db, ctx, { label: 'Privatkonto', kind: 'bank' });
+    const businessAccount = await createAccount(db, ctx, { label: 'Geschäftskonto', kind: 'bank' });
+    await importPayments(db, ctx, privateAccount, file(line('2026-10-03', 'Werkzeug Abo Beispiel GmbH', 'Abo privat', '-20'), line('2026-10-04', 'Laden Beispiel', 'Einkauf', '-45')));
+    await importPayments(db, ctx, businessAccount, file(line('2026-10-05', 'Werkzeug Abo Beispiel GmbH', 'Abo Firma', '-20')));
+    await setAccountPrivate(db, ctx, privateAccount, true);
+    const model = fakeModel(ANSWERS);
+    await classifyCounterparties(db, ctx, model.port);
+    // The shop only has payments on the private account: never asked about.
+    expect(model.asked).toEqual([['Werkzeug Abo Beispiel GmbH']]);
+    const kinds = (await loadPayments(db, ctx.workspaceId)).payments.map((p) => [p.reference, p.kind]);
+    expect(kinds).toEqual(expect.arrayContaining([['Abo privat', 'private'], ['Abo Firma', 'spend']]));
+  });
+
+  it('the model never makes an own account, nor anything but business of someone who paid money in', async () => {
+    const ws = await createWorkspace();
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    const accountId = await createAccount(db, ctx, { label: 'Girokonto', kind: 'bank' });
+    await importPayments(db, ctx, accountId, file(line('2026-10-03', 'Sparkonto Beispiel', 'Sparen', '-100', 'Debit Transfer'), line('2026-10-04', 'Kunde Beispiel GmbH', 'Rechnung 12', '500', 'Credit Transfer')));
+    await classifyCounterparties(
+      db,
+      ctx,
+      fakeModel({
+        'Sparkonto Beispiel': { treatment: 'own_account', category: 'transfers', confidence: 'certain', reason: 'Sparkonto' },
+        'Kunde Beispiel GmbH': { treatment: 'private', category: 'transfers', confidence: 'certain', reason: 'Person' },
+      }).port,
+    );
+    const view = await paymentsView(ctx.workspaceId);
+    expect(view.appTreatments).toEqual([]);
+    expect(view.unclassified.map((c) => [c.label, c.proposal?.treatment, c.proposal?.confidence]).sort()).toEqual([
+      ['Kunde Beispiel GmbH', 'private', 'likely'],
+      ['Sparkonto Beispiel', 'own_account', 'likely'],
+    ]);
+  });
+
+  it('a verdict the receipts made stops counting as soon as they say something else, also without a model', async () => {
+    const { ws, ctx } = await setup();
+    await classifyCounterparties(db, ctx, null);
+    expect(await appList(ctx.workspaceId)).toContainEqual(['Vermieter Beispiel', 'business', 'app']);
+    // A private receipt linked to the landlord as well: the receipts no longer agree.
+    const second = await ws.addReceipt({ Name: 'Miete Wohnung', Vendor: 'Vermieter Beispiel', Gross: 650, Date: '2026-10-02', Category: 'Miete & Nebenkosten', Zuordnung: 'Privat', Currency: 'EUR', 'FX Rate': 1 });
+    const accountId = (await loadPayments(db, ctx.workspaceId)).accounts[0].id;
+    await importPayments(db, ctx, accountId, file(line('2026-10-08', 'Vermieter Beispiel', 'Miete Wohnung', '-650', 'Debit Transfer')));
+    const flat = (await loadPayments(db, ctx.workspaceId)).payments.find((p) => p.reference === 'Miete Wohnung')!;
+    await linkPayment(db, ctx, { paymentId: flat.id, rowId: second }, receiptForLink(db, ctx.workspaceId));
+    await classifyCounterparties(db, ctx, null);
+    expect((await appList(ctx.workspaceId)).map(([label]) => label)).not.toContain('Vermieter Beispiel');
+  });
+});
+
+describe('the app classifies counterparties: what the model is asked, and how often', () => {
+  it('a counterparty the model left out is stored as unsure and not paid for again', async () => {
+    const { ctx } = await setup();
+    const model = fakeModel({ 'Werkzeug Abo Beispiel GmbH': ANSWERS['Werkzeug Abo Beispiel GmbH'] });
+    await classifyCounterparties(db, ctx, model.port);
+    const view = await paymentsView(ctx.workspaceId);
+    expect(view.unclassified.find((c) => c.label === 'Laden Beispiel')?.proposal).toBeNull();
+    expect(await classifyCounterparties(db, ctx, model.port)).toMatchObject({ pending: 0 });
+    expect(model.asked).toHaveLength(1);
+  });
+
+  it('a run asks at most its limit, in batches, largest sums first; the rest follows on the next run', async () => {
+    const ws = await createWorkspace();
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    const accountId = await createAccount(db, ctx, { label: 'Girokonto', kind: 'bank' });
+    await importPayments(db, ctx, accountId, file(...Array.from({ length: 5 }, (_, i) => line(`2026-10-1${i}`, `Händler ${String.fromCharCode(65 + i)} Beispiel`, 'Kauf', `-${(i + 1) * 10}`))));
+    const model = fakeModel({});
+    expect(await classifyCounterparties(db, ctx, model.port, { limit: 3, batch: 2 })).toMatchObject({ pending: 5 });
+    expect(model.asked).toEqual([['Händler E Beispiel', 'Händler D Beispiel'], ['Händler C Beispiel']]);
+    await classifyCounterparties(db, ctx, model.port, { limit: 3, batch: 2 });
+    expect(model.asked.at(-1)).toEqual(['Händler B Beispiel', 'Händler A Beispiel']);
+  });
+
+  it('adding an own name takes the counterparty from the app at once', async () => {
+    const { ctx } = await setup();
+    await classifyCounterparties(db, ctx, fakeModel(ANSWERS).port);
+    await saveOwnNames(db, ctx, { add: 'Laden Beispiel' });
+    const view = await paymentsView(ctx.workspaceId);
+    expect(view.appTreatments.find((t) => t.label === 'Laden Beispiel')).toMatchObject({ treatment: 'own_account', source: 'own_name' });
+    expect(view.unclassified.map((c) => c.label)).not.toContain('Laden Beispiel');
+  });
+});
+
+describe('the app classifies counterparties: with the spending side and other companies', () => {
+  it('an own account can be marked over an app verdict and taken back; an app verdict is no answer to take back', async () => {
+    const { ctx } = await setup();
+    await classifyCounterparties(db, ctx, fakeModel(ANSWERS).port);
+    await markCounterpartyOwnAccount(db, ctx, 'Werkzeug Abo Beispiel GmbH');
+    expect((await paymentsView(ctx.workspaceId)).treatments.map((t) => [t.label, t.treatment])).toEqual([['Werkzeug Abo Beispiel GmbH', 'own_account']]);
+    await unmarkCounterpartyOwnAccount(db, ctx, 'werkzeug abo beispiel');
+    expect((await paymentsView(ctx.workspaceId)).appTreatments.find((t) => t.label === 'Werkzeug Abo Beispiel GmbH')).toMatchObject({ treatment: 'business', source: 'app' });
+    const refused = await unmarkCounterpartyOwnAccount(db, ctx, 'erika beispiel').catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(SpendingServiceError);
+  });
+
+  it('a certain private verdict moves the payments of a shared account to the receiving company, like an answer', async () => {
+    const { ctx: holder } = await setup();
+    const receiverWs = await createWorkspace();
+    const receiver = { workspaceId: receiverWs.workspaceId, tenantId: receiverWs.tenantId };
+    const accountId = (await loadPayments(db, holder.workspaceId)).accounts[0].id;
+    await shareAccount(db, holder, accountId, receiver, 'user-owner');
+    await classifyCounterparties(db, holder, fakeModel({ ...ANSWERS, 'Laden Beispiel': { ...ANSWERS['Laden Beispiel'], confidence: 'certain' } }).port);
+    const routed = await loadRoutedPayments(db, receiver.workspaceId);
+    expect(routed.payments.map((p) => p.counterparty)).toEqual(['Laden Beispiel']);
+    // The business one stays with the holder.
+    expect((await loadRoutedPayments(db, holder.workspaceId)).payments.map((p) => p.counterparty)).toContain('Werkzeug Abo Beispiel GmbH');
   });
 });

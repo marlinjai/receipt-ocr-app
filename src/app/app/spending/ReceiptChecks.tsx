@@ -12,7 +12,7 @@ import { takeOverMail, takeOverMessage } from './take-over-mail';
 import { browserPushEnvironment, currentSubscription, pushSwitchMessage, switchPushOff, switchPushOn, type PushEnvironment } from './push-device';
 import type { PaymentCheck } from '@/lib/spending/loop-service';
 import type { ChecksRun } from '@/lib/spending/checks';
-import { classifySummary } from '@/lib/tax/payments/classify';
+import { classifySummary } from '@/lib/tax/payments/classify-summary';
 import { useRouter } from 'next/navigation';
 import type { ChannelSetting } from '@/lib/spending/notify/port';
 import {

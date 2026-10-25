@@ -848,16 +848,22 @@ export default function FinanceClient({
               }
               onSearch={(query) => searchPayments(view.year, query)}
               onClassify={() => {
-                let summary = '';
+                let outcome = { summary: '', failed: false };
                 run(
                   async () => {
                     const result = await classifyCounterpartiesNow(view.year);
                     if (!result.ok) return result;
-                    summary = result.value.summary;
+                    outcome = { summary: result.value.summary, failed: result.value.failed };
                     return { ok: true, value: result.value.view };
                   },
                   'Eingeordnet.',
-                  () => setNotice(summary),
+                  () => {
+                    // Nothing decided because the model failed: said as a failure, never as a quiet notice.
+                    if (outcome.failed) {
+                      setNotice(null);
+                      setError(outcome.summary);
+                    } else setNotice(outcome.summary);
+                  },
                 );
               }}
               bank={bankInitial ? { feed: bankFeed, actions: bankActions, returnNotice: bankNotice } : null}

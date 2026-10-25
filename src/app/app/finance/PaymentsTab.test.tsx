@@ -33,7 +33,7 @@ const open = (o: Partial<OpenPayment> = {}): OpenPayment => ({
 function view(payments: Partial<PaymentsView> = {}): StatementView {
   return {
     year: 2026,
-    payments: { accounts: [account], yearCount: 3, linkedCount: 1, transferCount: 0, unclassified: [], treatments: [], appTreatments: [], open: [], estimateProposals: [], overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [], ...payments },
+    payments: { accounts: [account], yearCount: 3, linkedCount: 1, transferCount: 0, unclassified: [], treatments: [], appTreatments: [], classifierAvailable: true, open: [], estimateProposals: [], overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [], ...payments },
   } as StatementView;
 }
 
@@ -499,7 +499,7 @@ describe('PaymentsTab', () => {
     render(<PaymentsTab view={view({ unclassified: [{ key: 'laden beispiel', label: 'Laden Beispiel', count: 3, outCents: 4_500, inCents: 0, proposal }] })} {...p} />);
     const row = screen.getByText('Laden Beispiel').closest('li') as HTMLElement;
     expect(row.textContent).toContain('Vorschlag der App: Privat (wahrscheinlich). Kleiner Laden, wohl Einkauf für zu Hause');
-    await user.click(within(row).getByRole('button', { name: 'Vorschlag übernehmen' }));
+    await user.click(within(row).getByRole('button', { name: 'Vorschlag für Laden Beispiel übernehmen: Privat' }));
     expect(p.onTreat).toHaveBeenCalledWith('Laden Beispiel', 'private');
     // The app can be asked right away instead of at the next check.
     await user.click(screen.getByRole('button', { name: 'Jetzt einordnen' }));
@@ -523,8 +523,16 @@ describe('PaymentsTab', () => {
     expect((current as HTMLButtonElement).disabled).toBe(true);
     await user.click(within(row).getByRole('button', { name: 'Teils, teils' }));
     expect(p.onTreat).toHaveBeenCalledWith('Werkzeug Abo Beispiel', 'mixed');
+    // Confirming makes the app's answer the person's own.
+    await user.click(within(row).getByRole('button', { name: 'Werkzeug Abo Beispiel: Betrieblich bestätigen' }));
+    expect(p.onTreat).toHaveBeenLastCalledWith('Werkzeug Abo Beispiel', 'business');
     // Without the handler (a screen without it) there is no button to classify now.
     expect(screen.queryByRole('button', { name: 'Jetzt einordnen' })).toBeNull();
+  });
+
+  it('says when no language model is configured on the server', () => {
+    render(<PaymentsTab view={view({ classifierAvailable: false, unclassified: [{ key: 'laden beispiel', label: 'Laden Beispiel', count: 1, outCents: 1_500, inCents: 0, proposal: null }] })} {...props()} />);
+    expect(screen.getByText(/kein Sprachmodell eingerichtet/)).toBeTruthy();
   });
 
   it('a counterparty can be answered as mixed', async () => {

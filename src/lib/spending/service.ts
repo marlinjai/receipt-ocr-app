@@ -254,18 +254,24 @@ export async function markCounterpartyOwnAccount(db: PrismaClient, ctx: Spending
   const label = typeof raw === 'string' ? raw.trim() : '';
   const key = counterpartyKey(label);
   if (!key) throw new SpendingServiceError('counterparty_required');
-  const { treatments } = await loadPayments(db, ctx.workspaceId);
+  const { treatments, treatmentSources } = await loadPayments(db, ctx.workspaceId);
   const current = treatments.get(key);
-  if (current === 'own_account') return;
-  if (current !== undefined) throw new SpendingServiceError('treatment_exists');
+  // Only a person's answer is protected here; what the app or the own names decided gives way to a person.
+  const byPerson = treatmentSources.get(key) === 'person';
+  if (current === 'own_account' && byPerson) return;
+  if (current !== undefined && byPerson) throw new SpendingServiceError('treatment_exists');
   await setCounterpartyTreatment(db, ctx, { counterparty: label, treatment: 'own_account' });
 }
 
-/** Take an own-account answer back (by key); any other answer is left alone. */
+/**
+ * Take a person's own-account answer back (by key); any other answer is left
+ * alone. An own account the app or the own names decided is no person's answer
+ * to take back: refused, so the page never claims a change it did not make.
+ */
 export async function unmarkCounterpartyOwnAccount(db: PrismaClient, ctx: SpendingContext, rawKey: unknown): Promise<void> {
   if (typeof rawKey !== 'string' || !rawKey) throw new SpendingServiceError('counterparty_required');
   const loaded = await loadRoutedPayments(db, ctx.workspaceId);
-  if (loaded.treatments.get(rawKey) !== 'own_account') throw new SpendingServiceError('not_own_account');
+  if (loaded.treatments.get(rawKey) !== 'own_account' || loaded.treatmentSources.get(rawKey) !== 'person') throw new SpendingServiceError('not_own_account');
   const label = loaded.payments.find((p) => p.counterpartyKey === rawKey)?.counterparty ?? rawKey;
   await setCounterpartyTreatment(db, ctx, { counterparty: label, treatment: null });
 }

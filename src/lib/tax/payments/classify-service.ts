@@ -3,7 +3,7 @@ import type { PrismaClient } from '@prisma/client';
 import { getTaxSettings } from '@/lib/meals/service';
 import { resolveItem } from '../facts';
 import { listVendorRules, loadReceipts } from '../service';
-import { evidenceFingerprint, evidenceVerdict, toModelCounterparty, type CounterpartyEvidence, type DecidedVerdict } from './classify';
+import { capModelVerdict, evidenceFingerprint, evidenceVerdict, toModelCounterparty, type CounterpartyEvidence, type DecidedVerdict } from './classify';
 import type { CounterpartyClassifierPort } from './counterparty-classifier';
 import { loadPayments, type LoadedPayments } from './service';
 
@@ -58,8 +58,9 @@ export async function counterpartyEvidence(db: PrismaClient, workspaceId: string
   const privateAccounts = new Set(loaded.accounts.filter((a) => a.isPrivate).map((a) => a.id));
   const byKey = new Map<string, CounterpartyEvidence & { rows: Set<string>; allPrivate: boolean }>();
   for (const p of loaded.payments) {
-    // What asks nothing in the payments tab asks nothing here either: own transfers, fees, the funding rule's debits.
-    if (!p.counterpartyKey || p.kind === 'own_transfer' || p.kind === 'fee' || p.byRule) continue;
+    // What asks nothing in the payments tab asks nothing here either: own transfers, fees, the funding rule's
+    // debits, and payments of an account said to be private as a whole (the owner already answered for them).
+    if (!p.counterpartyKey || p.kind === 'own_transfer' || p.kind === 'fee' || p.kind === 'private' || p.byRule) continue;
     const entry = byKey.get(p.counterpartyKey) ?? {
       key: p.counterpartyKey,
       label: p.counterparty,
@@ -125,6 +126,9 @@ async function store(db: PrismaClient, ctx: ClassifyContext, evidence: Counterpa
   });
 }
 
+/** What is stored for a counterparty the model was asked about and gave no usable answer for: not asked again until its evidence changes. */
+const NO_ANSWER: DecidedVerdict = { treatment: null, category: null, confidence: 'unsure', reason: 'Keine verwertbare Antwort erhalten.' };
+
 /**
  * One run: decide what the data decides, ask the model about the rest (when one
  * is configured), store every verdict. A failed batch is logged and counted,
@@ -137,13 +141,20 @@ export async function classifyCounterparties(
   options: { limit?: number; batch?: number } = {},
 ): Promise<ClassifyRun> {
   const loaded = await loadPayments(db, ctx.workspaceId);
-  const stored = await db.taxCounterpartyVerdict.findMany({ where: { authWorkspaceId: ctx.workspaceId }, select: { counterpartyKey: true, fingerprint: true } });
+  const stored = await db.taxCounterpartyVerdict.findMany({ where: { authWorkspaceId: ctx.workspaceId }, select: { counterpartyKey: true, fingerprint: true, source: true } });
   const pending = pendingCounterparties(await counterpartyEvidence(db, ctx.workspaceId, loaded), loaded, new Map(stored.map((s) => [s.counterpartyKey, s.fingerprint])));
+  const storedSource = new Map(stored.map((s) => [s.counterpartyKey, s.source]));
   const run: ClassifyRun = { pending: pending.length, byEvidence: 0, byModel: 0, applied: 0, unavailable: port === null, failedBatches: 0 };
+  if (port === null && pending.length > 0) console.warn('[payments] no language model configured: counterparties are decided by their receipts only', { workspaceId: ctx.workspaceId, pending: pending.length });
   const toModel: CounterpartyEvidence[] = [];
   for (const evidence of pending.slice(0, options.limit ?? CLASSIFY_LIMIT)) {
     const verdict = evidenceVerdict(evidence);
     if (!verdict) {
+      // A verdict the receipts made no longer holds now that they say something else: it stops counting at once,
+      // whether or not the model can be asked right now.
+      if (storedSource.get(evidence.key) === 'evidence') {
+        await db.taxCounterpartyVerdict.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, counterpartyKey: evidence.key } });
+      }
       toModel.push(evidence);
       continue;
     }
@@ -164,9 +175,11 @@ export async function classifyCounterparties(
       continue;
     }
     for (const evidence of batch) {
-      const verdict = verdicts.get(evidence.key);
-      if (!verdict) continue;
+      const answered = verdicts.get(evidence.key);
+      // No usable answer for it (left out, garbled): stored as unsure, so it is not paid for again on every run.
+      const verdict = answered ? capModelVerdict(answered, evidence) : NO_ANSWER;
       await store(db, ctx, evidence, verdict, 'model', port.model);
+      if (!answered) continue;
       run.byModel += 1;
       if (verdict.confidence === 'certain' && verdict.treatment !== null) run.applied += 1;
     }

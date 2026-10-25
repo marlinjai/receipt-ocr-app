@@ -51,15 +51,27 @@ answer per counterparty matters.
    - **The model for the rest:** one call per batch of up to 20 counterparties. Sent per
      counterparty: its name, how many payments and the sums in and out, up to three payment
      texts, whether the account is marked private, and the categories of receipts linked to it.
-     Never an account number. It is told what the company does (from its name). It answers per
+     Account and card numbers and other long digit runs are masked out of the texts. The company's
+     name is known only in a signed-in session, not in the daily run, so the prompt describes the
+     situation the same way every time (a sole proprietor in Germany whose money runs over shared
+     accounts until 2027) instead. It answers per
      counterparty: treatment, category (one of the twelve), confidence (`certain`, `likely`,
      `unsure`) and a short German reason.
    - **Web search** (as the receipt reader does) only for a name that looks like a business (a
-     legal form or a brand word), never for what looks like a private person's name.
+     legal form, a domain, a number of two digits or more), never for what looks like a private
+     person's name: those are asked in a separate call that has no search tool at all.
+   - **What the model may not decide alone:** an own account (own names and the funding rule
+     decide that, and it takes the money out of every figure), and anything but business for a
+     counterparty that paid money in (a client's payment would stop asking for its invoice). Such
+     a verdict is kept as a proposal.
+   - **Payments of an account said to be private as a whole** are not sent at all, and a business
+     verdict of the app never lifts the private account: only a person's answer does.
    - **Only `certain` is applied.** `likely` and `unsure` are stored too, so the model is not
      asked again on every run, and shown as a proposal with one-click confirm in the open list.
    - The verdict is stored with a fingerprint of its evidence (the linked receipts). It is
-     asked again only when that evidence changes, never on every run.
+     asked again only when that evidence changes, never on every run. A counterparty the model
+     answered nothing usable for is stored as unsure, so it is not paid for again; a verdict the
+     receipts made is removed as soon as they disagree, also when no model can be asked.
    - The model's output is checked strictly (known values only); long dashes in the reason are
      replaced, the reason is cut to 200 characters.
 4. **Stored as the app's, never as a person's.** New table `tax_counterparty_verdicts`
@@ -88,9 +100,11 @@ answer per counterparty matters.
    - A counterparty the app calls business asks for receipts where they are missing: the open
      list grows, notifications stay limited to payments of the last 14 days
      (`NOTIFY_WITHIN_DAYS`), so history sends no messages.
-8. **Cost.** A few hundred counterparties per company, 20 per call, the small model for the
-   batch and the larger one only where the small one is unsure: well under one euro for the
-   backfill of a company, then a few calls a week.
+8. **Cost.** A few hundred counterparties per company, 20 per call, `claude-opus-5-5` at low
+   effort (configurable with `ANTHROPIC_COUNTERPARTY_MODEL`; the house default for new model code,
+   a second, escalating model was left out as it saves cents and adds a failure path): about four
+   cents per batch, well under one euro for the backfill of a company, then a few calls a week.
+   Each batch logs its token counts, never a name.
 
 ## Build order
 

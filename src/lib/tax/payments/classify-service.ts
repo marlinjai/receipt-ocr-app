@@ -33,6 +33,9 @@ export const CLASSIFY_LIMIT = 100;
 export const CLASSIFY_BATCH = 20;
 
 /** What is known about each counterparty of the company that may need a verdict. */
+/** The key a counterparty has in one request to the model: its position, so no name-derived key is sent. */
+const requestKey = (index: number) => `c${index + 1}`;
+
 export async function counterpartyEvidence(db: PrismaClient, workspaceId: string, loaded: LoadedPayments): Promise<CounterpartyEvidence[]> {
   const [receipts, vendorRules, settings] = await Promise.all([loadReceipts(db, workspaceId), listVendorRules(db, workspaceId), getTaxSettings(db, workspaceId)]);
   // How each receipt is allocated: all business (or the job and study annexes, also deductible), all private, or both.
@@ -175,7 +178,7 @@ export async function classifyCounterparties(
     for (const group of groups) {
       let verdicts: Map<string, DecidedVerdict>;
       try {
-        verdicts = await port.classify(group.map(toModelCounterparty));
+        verdicts = await port.classify(group.map((e, i) => toModelCounterparty(e, requestKey(i))));
       } catch (e) {
         console.error('[payments] classifying counterparties failed', { workspaceId: ctx.workspaceId, counterparties: group.length, error: e instanceof Error ? e.message : String(e) });
         run.failedBatches += 1;
@@ -186,8 +189,8 @@ export async function classifyCounterparties(
         run.failedBatches += 1;
         continue;
       }
-      for (const evidence of group) {
-        const answered = verdicts.get(evidence.key);
+      for (const [index, evidence] of group.entries()) {
+        const answered = verdicts.get(requestKey(index));
         // Left out of an otherwise readable answer: stored as unsure, so it is not paid for again on every run.
         const verdict = answered ? capModelVerdict(answered, evidence) : NO_ANSWER;
         await store(db, ctx, evidence, verdict, 'model', port.model);

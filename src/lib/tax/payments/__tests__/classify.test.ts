@@ -17,7 +17,7 @@ import { appCategories, mergeTreatments, storedVerdict, verdictApplies, type Ver
 
 /** Every name, text and amount is invented. */
 const evidence = (o: Partial<CounterpartyEvidence> = {}): CounterpartyEvidence => ({
-  key: 'werkzeug abo beispiel',
+  key: 'c1',
   label: 'Werkzeug Abo Beispiel GmbH',
   paymentCount: 3,
   outCents: 6_000,
@@ -133,10 +133,10 @@ describe('what the model sees', () => {
   });
 
   it('gets the name, counts, sums, a few texts and the linked receipts, and nothing else', () => {
-    const asked = toModelCounterparty(evidence({ samples: ['a', 'b', 'c', 'd'], receipts: { business: 1, private: 0, mixed: 0, categories: ['Software', 'Software'] } }));
+    const asked = toModelCounterparty(evidence({ samples: ['a', 'b', 'c', 'd'], receipts: { business: 1, private: 0, mixed: 0, categories: ['Software', 'Software'] } }), 'c1');
     // A name that may be looked up goes out without its payment texts: they can name other people.
     expect(asked).toEqual({
-      key: 'werkzeug abo beispiel',
+      key: 'c1',
       name: 'Werkzeug Abo Beispiel GmbH',
       payments: 3,
       paidEuro: '60.00',
@@ -146,8 +146,12 @@ describe('what the model sees', () => {
       mayLookUp: true,
     });
     // Any other name goes to a call without search, with up to three texts, numbers and addresses masked.
-    const person = toModelCounterparty(evidence({ label: 'Max Beispiel', samples: ['Miete DE89 3704 0044 0532 0130 00', 'x@beispiel.de schickt', 'c', 'd'] }));
+    const person = toModelCounterparty(evidence({ label: 'Max Beispiel', samples: ['Miete DE89 3704 0044 0532 0130 00', 'x@beispiel.de schickt', 'c', 'd'] }), 'c2');
     expect(person).toMatchObject({ mayLookUp: false, texts: ['Miete [Konto]', '[E-Mail] schickt', 'c'] });
+    // The request key is opaque and the name is masked: nothing derived from an account number or address reaches the model.
+    const leaky = toModelCounterparty(evidence({ key: 'max@beispiel.de de89370400440532013000', label: 'max@beispiel.de DE89 3704 0044 0532 0130 00' }), 'c3');
+    expect(leaky.key).toBe('c3');
+    expect(leaky.name).toBe('[E-Mail] [Konto]');
     expect(mayLookUp('max@beispiel.de')).toBe(false);
     expect(classificationPrompt({ webSearch: true })).toMatch(/Never search for a counterparty marked mayLookUp false/);
     expect(classificationPrompt({ webSearch: false })).not.toMatch(/You have web search/);

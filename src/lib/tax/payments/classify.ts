@@ -101,6 +101,7 @@ export function maskText(text: string): string {
 
 /** The counterparty as the model sees it: no account number, nothing but what is listed here. */
 export interface ModelCounterparty {
+  /** Opaque and local to one request ("c1", "c2"): the stored key is derived from the name and never leaves. */
   key: string;
   name: string;
   payments: number;
@@ -118,13 +119,13 @@ const euroText = (cents: number) => (cents / 100).toFixed(2);
  * web search, and its payment texts stay home: they can name other people,
  * and only the business's name is what a search needs.
  */
-export function toModelCounterparty(evidence: CounterpartyEvidence): ModelCounterparty {
+export function toModelCounterparty(evidence: CounterpartyEvidence, requestKey: string): ModelCounterparty {
   const { business, private: priv, mixed, categories } = evidence.receipts;
   const linked = business + priv + mixed;
   const lookUp = mayLookUp(evidence.label);
   return {
-    key: evidence.key,
-    name: evidence.label,
+    key: requestKey,
+    name: maskText(evidence.label),
     payments: evidence.paymentCount,
     paidEuro: euroText(evidence.outCents),
     receivedEuro: euroText(evidence.inCents),

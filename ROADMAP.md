@@ -375,10 +375,14 @@
   scroll inside themselves, every control is a 44 pixel touch target, the wide layout unchanged.
   Built on `feat/mobile-rework`; last step: a look at the finance tabs with real payments on
   the owner's phone. Plan: [docs/plans/2026-10-24-phone-layout.md](docs/plans/2026-10-24-phone-layout.md). (2026-10-24)
-- [ ] Decide whether Finanzen is regrouped into four groups (Erledigen, Auswerten, Steuer,
-  Einstellungen) with one overview as its entry, and whether the Ausgaben page merges into
-  Finanzen. Proposed by the session of 2026-10-25 after the Jahreswechsel tab was removed; the
-  owner has not decided it, nothing is built. (2026-10-25)
+- [ ] The filed return decides the counterparties (asked by the owner on 2026-10-25): receipts
+  that match a payment count as evidence without a link, split receipts make "Teils, teils",
+  payment-service prefixes no longer split one merchant, invoice links make income business, and
+  a filed year asks nothing. Plan:
+  [docs/plans/2026-10-25-filed-year-decides-counterparties.md](docs/plans/2026-10-25-filed-year-decides-counterparties.md). (2026-10-25)
+- [ ] Finanzen in four groups (decided by the owner on 2026-10-25): Erledigen, Auswerten, Steuer,
+  Einstellungen; the tiles and "Offen" stay the entry, Ausgaben stays its own page with a link
+  each way. Plan: [docs/plans/2026-10-25-finance-groups.md](docs/plans/2026-10-25-finance-groups.md). (2026-10-25)
 
 ## In Progress
 

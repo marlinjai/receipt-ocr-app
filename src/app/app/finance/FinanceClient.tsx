@@ -64,8 +64,9 @@ import { removeTaxReturnItem, removeWage, saveTaxReturnItem, saveWage, setChurch
 import { incomeTaxActionMessage } from '@/lib/tax/income-tax/messages';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 import { useTabInView } from '@/lib/use-tab-in-view';
-
-export type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'tax' | 'vendors';
+import { GROUPS, addressOf, defaultTab, groupCount, groupOf, waitingCounts, type GroupKey, type TabKey } from './tabs';
+import OwnNames, { ownNamesMessage } from '../spending/OwnNames';
+import { changeOwnNames, type OwnNamesView } from './own-names-actions';
 
 /** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
 const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
@@ -108,6 +109,10 @@ export function openQueue(view: StatementView): StatementItem[] {
 const BANK_ACTIONS: BankActions = { listBankInstitutions, startBankConsent, chooseBankConnectionAccount, syncBankNow, disconnectBank, clearBankConnectionNotice };
 const NO_BANK: BankView = { enabled: false, connections: [] };
 const SHARING_ACTIONS: SharingActions = { shareAccountWith, endAccountShare };
+/** The part of the payments each of their three tabs shows. */
+const PAYMENT_PARTS = { questions: ['questions'], payments: ['list'], accounts: ['accounts'] } as const;
+/** Tabs whose forms show a failure next to what was typed; on every other tab it is shown above the panel. */
+const OWN_ERROR_TABS: readonly TabKey[] = ['open', 'questions', 'accounts', 'vat', 'tax', 'names'];
 
 export default function FinanceClient({
   initial,
@@ -118,6 +123,7 @@ export default function FinanceClient({
   sharing = null,
   sharingFailed = false,
   sharingActions = SHARING_ACTIONS,
+  ownNames: ownNamesInitial = null,
 }: {
   initial: StatementView;
   initialTab?: TabKey;
@@ -131,25 +137,44 @@ export default function FinanceClient({
   /** True when the sharing section could not be read: it says so instead of disappearing. */
   sharingFailed?: boolean;
   sharingActions?: SharingActions;
+  /** The owner's own names, the same list as on Ausgaben; null when they could not be read (the tab then says so). */
+  ownNames?: OwnNamesView | null;
 }) {
   const tabsId = useId();
   const router = useRouter();
   const [view, setView] = useState(initial);
-  // An overdue invoice is an open check too (decision D6 of the invoicing plan), so it opens the "Offen" tab as well.
-  const [tab, setTab] = useState<TabKey>(() => initialTab ?? (openQueue(initial).length > 0 || initial.revenue.overdue.length > 0 ? 'open' : 'statement'));
+  // Two levels (plan 2026-10-25-finance-groups): a group, and the tab last chosen inside each group, so going
+  // to another group and back finds the tab that was open there. Without an address the page opens on the first
+  // work that waits; an overdue invoice is an open check too (decision D6 of the invoicing plan).
+  const [chosen, setChosen] = useState<Record<GroupKey, TabKey>>(() => {
+    const first = initialTab ?? defaultTab(waitingCounts(initial, openQueue(initial).length));
+    const byGroup = Object.fromEntries(GROUPS.map((g) => [g.key, g.tabs[0].key])) as Record<GroupKey, TabKey>;
+    return { ...byGroup, [groupOf(first).key]: first };
+  });
+  const [group, setGroup] = useState<GroupKey>(() => groupOf(initialTab ?? defaultTab(waitingCounts(initial, openQueue(initial).length))).key);
+  const tab = chosen[group];
+  const setTab = (next: TabKey) => {
+    const owner = groupOf(next).key;
+    setChosen((c) => ({ ...c, [owner]: next }));
+    setGroup(owner);
+  };
   // On a phone the tab row scrolls sideways; the open tab is kept in view.
   const tabRow = useRef<HTMLDivElement>(null);
   useTabInView(tabRow, tab);
   const bankFeed = useBankFeed(bankInitial ?? NO_BANK, view.year, bankActions, (next) => setView(next), (url) => window.location.assign(url));
   const [bankNotice] = useState(() => returnMessage(bankReturn));
-  // The outcome is shown once: the address loses it, so a reload does not repeat it.
+  // The address keeps the open tab, so a reload or a shared link opens the same place. The outcome of the
+  // return from the bank is shown once: the address loses it, so a reload does not repeat it.
   useEffect(() => {
-    if (!bankReturn) return;
     const url = new URL(window.location.href);
+    const before = url.toString();
+    url.searchParams.set('reiter', addressOf(tab));
     url.searchParams.delete('bank');
-    url.searchParams.delete('reiter');
-    window.history.replaceState(null, '', url.toString());
-  }, [bankReturn]);
+    if (url.toString() !== before) window.history.replaceState(null, '', url.toString());
+  }, [tab]);
+  const [ownNames, setOwnNames] = useState(ownNamesInitial);
+  const [namesError, setNamesError] = useState<string | null>(null);
+  const [namesNotice, setNamesNotice] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   // The item of the statement tab whose receipt is being split (its lines change the item ids, so both close together).
@@ -188,6 +213,7 @@ export default function FinanceClient({
   const estimated = view.items.filter((i) => i.checks.some((c) => c.kind === 'amount_estimated')).length;
   const blockedBySetting =
     view.items.filter((i) => i.checks.some((c) => WORKSPACE_CHECKS.includes(c.kind))).length;
+  const counts = waitingCounts(view, queue.length);
 
   function run(
     action: () => Promise<Result<StatementView>>,
@@ -288,16 +314,37 @@ export default function FinanceClient({
       done,
     );
 
-  const tabs: Array<{ key: TabKey; label: string; count?: number }> = [
-    { key: 'open', label: 'Offen', count: queue.length + overdue.length },
-    { key: 'statement', label: 'EÜR' },
-    { key: 'revenue', label: 'Einnahmen', count: view.revenue.invoices.length },
-    { key: 'payments', label: 'Zahlungen', count: view.payments.open.length + view.payments.unclassified.length },
-    { key: 'assets', label: 'Anlagen', count: view.assets.length },
-    { key: 'vat', label: 'Umsatzsteuer' },
-    { key: 'tax', label: 'Einkommensteuer' },
-    { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length + view.reverseChargeVendors.length },
-  ];
+  /** Add or take out an own name; resolves true when the server took it (the field is then emptied). */
+  const changeNames = (change: { add: string } | { remove: string }) =>
+    new Promise<boolean>((resolve) => {
+      setNamesError(null);
+      setNamesNotice(null);
+      startTransition(async () => {
+        let result: Awaited<ReturnType<typeof changeOwnNames>>;
+        try {
+          result = await changeOwnNames(view.year, change);
+        } catch {
+          // The request itself failed (offline, server restart): say so instead of looking saved.
+          setNamesError(financeActionMessage('failed'));
+          return resolve(false);
+        }
+        if (!result.ok) {
+          setNamesError(ownNamesMessage(result.detail) ?? financeActionMessage(result.error, result.detail));
+          return resolve(false);
+        }
+        const { names, settledOwnName, view: next } = result.value;
+        setOwnNames((current) => (current ? { ...current, names } : current));
+        if (next) setView(next);
+        setNamesNotice(
+          ('add' in change
+            ? `${change.add} gespeichert.${settledOwnName > 0 ? ` ${settledOwnName} ${settledOwnName === 1 ? 'Benachrichtigung' : 'Benachrichtigungen'} erledigt: eigenes Konto.` : ''}`
+            : `${change.remove} entfernt.`) + (next ? '' : ' Die Übersicht konnte danach nicht neu gerechnet werden; bitte die Seite neu laden.'),
+        );
+        resolve(true);
+      });
+    });
+
+  const activeGroup = GROUPS.find((g) => g.key === group)!;
 
   return (
     <main className="relative z-10 min-h-svh px-4 pb-16 pt-6 sm:px-6" data-theme="dark">
@@ -320,7 +367,7 @@ export default function FinanceClient({
               className="ui-input"
               style={{ width: 'auto' }}
               value={view.year}
-              onChange={(e) => router.push(`/app/finance?jahr=${e.target.value}`)}
+              onChange={(e) => router.push(`/app/finance?jahr=${e.target.value}&reiter=${addressOf(tab)}`)}
             >
               {view.years.map((y) => (
                 <option key={y} value={y}>
@@ -436,9 +483,48 @@ export default function FinanceClient({
             </div>
           ))}
         </dl>
+        <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style={{ color: 'var(--muted)' }}>
+          <span>Hier steht der Betrieb für die Steuererklärung. Alle Ausgaben, private eingeschlossen, mit Budgets:</span>
+          <Link href="/app/spending" className="ui-btn ui-btn-sm">
+            Ausgaben
+          </Link>
+        </p>
 
-        <div ref={tabRow} role="tablist" aria-label="Bereiche der Finanzübersicht" className="ui-scroll-bare-phone mt-6 flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
-          {tabs.map((t) => (
+        {/* Four groups (two to a row on a phone, so none scrolls out of sight), the tabs of the chosen group below. */}
+        <div role="tablist" aria-label="Bereiche der Finanzübersicht" className="mt-6 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          {GROUPS.map((g) => {
+            const count = groupCount(g, counts);
+            const selected = group === g.key;
+            return (
+              <button
+                key={g.key}
+                role="tab"
+                type="button"
+                id={`${tabsId}-group-${g.key}`}
+                aria-selected={selected}
+                aria-controls={`${tabsId}-group-panel`}
+                onClick={() => setGroup(g.key)}
+                className="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start"
+                style={{
+                  borderColor: selected ? 'rgba(226, 163, 72, 0.55)' : 'var(--border)',
+                  background: selected ? 'var(--accent-muted)' : 'var(--surface)',
+                  color: selected ? 'var(--accent)' : 'var(--foreground)',
+                }}
+              >
+                {g.label}
+                {count !== undefined && (
+                  <span className="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style={{ background: 'rgba(255,255,255,0.07)', color: 'var(--foreground)' }}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div role="tabpanel" id={`${tabsId}-group-panel`} aria-labelledby={`${tabsId}-group-${group}`}>
+        <div ref={tabRow} role="tablist" aria-label={`Reiter in ${activeGroup.label}`} className="ui-scroll-bare-phone mt-3 flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
+          {activeGroup.tabs.map((t) => ({ ...t, count: counts[t.key] })).map((t) => (
             <button
               key={t.key}
               role="tab"
@@ -467,7 +553,7 @@ export default function FinanceClient({
           {notice}
         </div>
         {/* The forms on the queue, payments and tax tabs show a failure next to what was typed; everywhere else it is shown here. */}
-        {error && tab !== 'open' && tab !== 'payments' && tab !== 'vat' && tab !== 'tax' && (
+        {error && !OWN_ERROR_TABS.includes(tab) && (
           <p className="ui-note ui-note-danger mt-2" role="alert">
             {error}
           </p>
@@ -484,10 +570,18 @@ export default function FinanceClient({
                 </p>
                 <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: 'var(--muted)' }}>
                   Jeder Beleg des Jahres ist zugeordnet. Neue Belege erscheinen hier, sobald eine Entscheidung fehlt.
+                  {(counts.questions ?? 0) > 0 ? ' Zu Zahlungen gibt es noch Fragen.' : ''}
                 </p>
-                <button type="button" className="ui-btn ui-btn-primary mt-4" onClick={() => setTab('statement')}>
-                  Zur EÜR
-                </button>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  {(counts.questions ?? 0) > 0 && (
+                    <button type="button" className="ui-btn ui-btn-primary" onClick={() => setTab('questions')}>
+                      Zahlungen klären
+                    </button>
+                  )}
+                  <button type="button" className={(counts.questions ?? 0) > 0 ? 'ui-btn' : 'ui-btn ui-btn-primary'} onClick={() => setTab('statement')}>
+                    Zur EÜR
+                  </button>
+                </div>
               </div>
               )
             ) : (
@@ -804,8 +898,22 @@ export default function FinanceClient({
             />
           )}
 
-          {tab === 'payments' && (
+          {(tab === 'questions' || tab === 'payments') && view.payments.yearCount === 0 && (
+            <p className="ui-note mb-4 flex flex-wrap items-center justify-between gap-2">
+              <span>
+                Für {view.year} sind noch keine Zahlungen eingelesen. Konten, Kontoexporte und die Live-Anbindung an Banken stehen unter
+                Einstellungen.
+              </span>
+              <button type="button" className="ui-btn ui-btn-sm" onClick={() => setTab('accounts')}>
+                Zu den Konten
+              </button>
+            </p>
+          )}
+          {(tab === 'questions' || tab === 'payments' || tab === 'accounts') && (
             <PaymentsTab
+              // A fresh part per tab: a draft or a failure typed in one part does not show up in another.
+              key={tab}
+              parts={PAYMENT_PARTS[tab]}
               view={view}
               busy={pending}
               error={error}
@@ -1030,6 +1138,20 @@ export default function FinanceClient({
                 ))}
               </ul>
             ))}
+
+          {tab === 'names' &&
+            (ownNames ? (
+              <OwnNames names={ownNames.names} canWrite={ownNames.canWrite} pending={pending} error={namesError} notice={namesNotice} onChange={changeNames} />
+            ) : (
+              <p className="ui-note ui-note-danger" role="alert">
+                Die eigenen Namen konnten nicht geladen werden. Bitte die Seite neu laden; sie stehen auch unter{' '}
+                <Link href="/app/spending" className="underline">
+                  Ausgaben
+                </Link>
+                .
+              </p>
+            ))}
+        </div>
         </div>
       </div>
     </main>

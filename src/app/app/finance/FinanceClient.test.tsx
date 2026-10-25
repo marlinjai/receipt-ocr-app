@@ -44,6 +44,9 @@ vi.mock('./income-tax-actions', () => ({
   setChurchMonths: vi.fn(),
   setFederalState: vi.fn(),
 }));
+// The own names under Einstellungen: never the real actions (they reach the database).
+const ownNameActions = vi.hoisted(() => ({ changeOwnNames: vi.fn(), getOwnNamesView: vi.fn() }));
+vi.mock('./own-names-actions', () => ownNameActions);
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
 
@@ -72,8 +75,17 @@ async function clickWhenEnabled(user: TestUser, find: () => HTMLElement) {
 }
 beforeEach(() => {
   for (const fn of Object.values(actions)) fn.mockReset();
+  for (const fn of Object.values(ownNameActions)) fn.mockReset();
   push.mockReset();
+  // Each test starts on the bare address; the page writes the open tab into it.
+  window.history.replaceState(null, '', '/app/finance');
 });
+
+/** Opens a tab the way a person does: the group first, then the tab inside it. */
+async function openTab(user: TestUser, group: string, tab: string | RegExp) {
+  await user.click(screen.getByRole('tab', { name: new RegExp(`^${group}`) }));
+  await user.click(within(screen.getByRole('tablist', { name: `Reiter in ${group}` })).getByRole('tab', { name: tab }));
+}
 
 function item(overrides: Partial<StatementItem> & { rowId: string }): StatementItem {
   return {
@@ -442,7 +454,7 @@ describe('FinanceClient: overdue invoices in the open checks (decision D6)', () 
   it('shows no reminder when nothing is overdue', async () => {
     const user = setupUser();
     render(<FinanceClient initial={view([decided('a')])} />);
-    await user.click(screen.getByRole('tab', { name: /Offen/ }));
+    await openTab(user, 'Erledigen', /Offen/);
     expect(screen.queryByRole('region', { name: /überfällig/ })).toBeNull();
     expect(screen.getByText(/Keine offenen Prüfungen/)).toBeTruthy();
   });
@@ -591,7 +603,7 @@ describe('FinanceClient: notices and statement', () => {
       .mockResolvedValueOnce({ ok: true, value: { view: initial, summary: 'Die App hat 3 Gegenseiten eingeordnet, alle sicher.', failed: false } })
       .mockResolvedValueOnce({ ok: true, value: { view: initial, summary: 'Die Gegenseiten konnten gerade nicht eingeordnet werden; beim nächsten Prüfen wird es wieder versucht.', failed: true } });
     render(<FinanceClient initial={initial} />);
-    await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
+    await openTab(user, 'Erledigen', /Zahlungen klären/);
     await user.click(screen.getByRole('button', { name: 'Jetzt einordnen' }));
     expect(await screen.findByText('Die App hat 3 Gegenseiten eingeordnet, alle sicher.')).toBeTruthy();
     expect(actions.classifyCounterpartiesNow).toHaveBeenCalledWith(2025);
@@ -608,7 +620,8 @@ describe('FinanceClient: notices and statement', () => {
     const user = setupUser();
     render(<FinanceClient initial={view([])} />);
     await user.selectOptions(screen.getByLabelText('Jahr'), '2026');
-    expect(push).toHaveBeenCalledWith('/app/finance?jahr=2026');
+    // The tab on screen stays: the address of the other year names it.
+    expect(push).toHaveBeenCalledWith('/app/finance?jahr=2026&reiter=euer');
   });
 });
 
@@ -818,7 +831,7 @@ describe('FinanceClient: assets', () => {
       .mockResolvedValueOnce({ ok: false, error: 'failed' })
       .mockResolvedValueOnce({ ok: true, value: { view: view([]), linked: 1, skipped: 1 } });
     render(<FinanceClient initial={withProposals} />);
-    await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
+    await openTab(user, 'Erledigen', /Zahlungen klären/);
 
     await user.click(screen.getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Das hat nicht geklappt');
@@ -838,7 +851,7 @@ describe('FinanceClient: assets', () => {
     actions.removeAccount.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'account_not_empty' });
     actions.getStatement.mockResolvedValue({ ok: true, value: view([], { payments: { ...payments, accounts: [filled] } }) });
     render(<FinanceClient initial={view([], { payments: { ...payments, accounts: [empty] } })} />);
-    await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
+    await openTab(user, 'Einstellungen', 'Konten');
     await user.click(screen.getByRole('button', { name: 'Konto entfernen' }));
     expect((await screen.findByRole('alert')).textContent).toContain('lässt sich nicht entfernen');
     expect(actions.getStatement).toHaveBeenCalledWith(2025);
@@ -857,7 +870,7 @@ describe('FinanceClient: assets', () => {
       input.confirmed ? { ok: true, value: { view: view([]), moved: false } } : { ok: false, error: 'invalid_input', detail: 'receipt_already_paid:1999:1999' },
     );
     render(<FinanceClient initial={initial} />);
-    await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
+    await openTab(user, 'Erledigen', /Zahlungen klären/);
     await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
     await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r:r-1');
 
@@ -885,7 +898,7 @@ describe('FinanceClient: assets', () => {
       input.confirmed ? { ok: true, value: { view: view([]), moved: false } } : { ok: false, error: 'invalid_input', detail: 'refund_exceeds_receipt:1999' },
     );
     render(<FinanceClient initial={view([], { payments: { ...payments, open: [refund], receiptTargets } })} />);
-    await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
+    await openTab(user, 'Erledigen', /Zahlungen klären/);
     await user.click(screen.getByRole('button', { name: 'Von Hand zuordnen' }));
     await user.selectOptions(screen.getByLabelText('Beleg von Hand wählen'), 'r:r-1');
     await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
@@ -903,9 +916,12 @@ describe('FinanceClient: assets', () => {
     actions.confirmPaymentLink.mockResolvedValue({ ok: true, value: { view: initial, moved: true } });
     actions.markPaymentTransfer.mockResolvedValue({ ok: true, value: view([]) });
     render(<FinanceClient initial={initial} />);
-    await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
+    await openTab(user, 'Erledigen', /Zahlungen klären/);
     await user.click(screen.getByRole('button', { name: /Zuordnen: Einkauf Laden/ }));
     expect(await screen.findByText(/wurde hierher verschoben: es ist dasselbe Geld/)).toBeTruthy();
+
+    // What the funding rule treats as a transfer is in the list under Auswerten.
+    await openTab(user, 'Auswerten', 'Zahlungen');
 
     await clickWhenEnabled(user, () => screen.getByRole('button', { name: 'Kein Übertrag, eine eigene Zahlung' }));
     await vi.waitFor(() => expect(actions.markPaymentTransfer).toHaveBeenCalledWith(2025, 't-1', false));
@@ -918,7 +934,7 @@ describe('FinanceClient: the income tax estimate', () => {
     render(<FinanceClient initial={view([], { incomeTax: incomeTaxView({ year: 2025, profitCents: 300_000 }) })} />);
     const tile = screen.getByText('Einkommensteuer 2025 (Schätzung)').parentElement!;
     expect(within(tile).getByText(/nur Gewerbe, ohne Lohn/)).toBeTruthy();
-    await setupUser().click(screen.getByRole('tab', { name: 'Einkommensteuer' }));
+    await openTab(setupUser(), 'Steuer', 'Einkommensteuer');
     expect(screen.getByRole('heading', { name: /Einkommensteuer 2025: Schätzung \(nur Gewerbe\)/ })).toBeTruthy();
   });
 
@@ -931,12 +947,200 @@ describe('FinanceClient: the income tax estimate', () => {
 
 describe('FinanceClient: sharing private payments with another company', () => {
   it('says so when the sharing section could not be read, instead of leaving it out', () => {
-    render(<FinanceClient initial={view([])} initialTab="payments" sharingFailed />);
+    render(<FinanceClient initial={view([])} initialTab="accounts" sharingFailed />);
     expect(screen.getByRole('alert').textContent).toContain('Die Weitergabe privater Zahlungen konnte nicht geladen werden');
   });
 
   it('shows nothing of it when the person has no other company and nothing is shared', () => {
-    render(<FinanceClient initial={view([])} initialTab="payments" sharing={{ outgoing: [], incoming: [], targets: [], canWrite: true }} />);
+    render(<FinanceClient initial={view([])} initialTab="accounts" sharing={{ outgoing: [], incoming: [], targets: [], canWrite: true }} />);
     expect(screen.queryByText('Private Zahlungen in einer anderen Firma')).toBeNull();
+  });
+});
+
+describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
+  const selected = (list: string) =>
+    within(screen.getByRole('tablist', { name: list }))
+      .getAllByRole('tab')
+      .filter((t) => t.getAttribute('aria-selected') === 'true')
+      .map((t) => t.textContent);
+  const groups = () => within(screen.getByRole('tablist', { name: 'Bereiche der Finanzübersicht' })).getAllByRole('tab');
+  const unanswered = { key: 'vermieter beispiel', label: 'Vermieter Beispiel', count: 2, outCents: 130_000, inCents: 0, proposal: null };
+  const openPayment = { id: 'p-1', bookingDay: '2025-03-15', amountCents: -4_000, freeCents: 4_000, counterparty: 'Werkzeug Beispiel GmbH', reference: '', kind: 'spend' as const, accountLabel: 'Geschäftskonto', check: 'payment_without_document' as const, proposals: [], namesService: false };
+  const busy = () => {
+    const base = view([item({ rowId: 'a' }), item({ rowId: 'b' })]);
+    return { ...base, payments: { ...base.payments, yearCount: 3, unclassified: [unanswered], open: [openPayment, { ...openPayment, id: 'p-2' }] } };
+  };
+
+  it('forward: four groups, each with its own tabs, and the count of Erledigen is all that waits', async () => {
+    const user = setupUser();
+    render(<FinanceClient initial={busy()} />);
+    expect(groups().map((g) => g.textContent)).toEqual(['Erledigen5', 'Auswerten', 'Steuer', 'Einstellungen']);
+    // The tabs inside Erledigen carry their parts, which add up to the group: 2 receipts, 3 payment questions.
+    expect(within(screen.getByRole('tablist', { name: 'Reiter in Erledigen' })).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Offen2', 'Zahlungen klären3']);
+    const tabsOf = async (group: string) => {
+      await user.click(screen.getByRole('tab', { name: new RegExp(`^${group}`) }));
+      return within(screen.getByRole('tablist', { name: `Reiter in ${group}` })).getAllByRole('tab').map((t) => t.textContent);
+    };
+    expect(await tabsOf('Auswerten')).toEqual(['EÜR', 'Einnahmen', 'Zahlungen', 'Anlagen']);
+    expect(await tabsOf('Steuer')).toEqual(['Umsatzsteuer', 'Einkommensteuer']);
+    expect(await tabsOf('Einstellungen')).toEqual(['Konten', 'Lieferanten', 'Eigene Namen']);
+    // The questions, the list and the accounts of the payments are three different places.
+    await openTab(user, 'Erledigen', /Zahlungen klären/);
+    expect(screen.getByRole('region', { name: 'Gegenseiten' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Konten' })).toBeNull();
+    await openTab(user, 'Einstellungen', 'Konten');
+    expect(screen.getByRole('region', { name: 'Konten' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Gegenseiten' })).toBeNull();
+  });
+
+  it('opens on the payment questions when only they wait, and "Offen" leads there when it has nothing', async () => {
+    const user = setupUser();
+    const base = view([]);
+    render(<FinanceClient initial={{ ...base, payments: { ...base.payments, yearCount: 2, unclassified: [unanswered] } }} />);
+    expect(selected('Bereiche der Finanzübersicht')).toEqual(['Erledigen1']);
+    expect(selected('Reiter in Erledigen')).toEqual(['Zahlungen klären1']);
+    await openTab(user, 'Erledigen', /Offen/);
+    await user.click(screen.getByRole('button', { name: 'Zahlungen klären' }));
+    expect(selected('Reiter in Erledigen')).toEqual(['Zahlungen klären1']);
+  });
+
+  it('with nothing waiting it opens on the statement, and Erledigen counts 0', () => {
+    render(<FinanceClient initial={view([])} />);
+    expect(selected('Bereiche der Finanzübersicht')).toEqual(['Auswerten']);
+    expect(selected('Reiter in Auswerten')).toEqual(['EÜR']);
+    expect(groups()[0].textContent).toBe('Erledigen0');
+  });
+
+  it('backtrack: switching groups and back keeps the tab chosen inside each group', async () => {
+    const user = setupUser();
+    render(<FinanceClient initial={busy()} />);
+    await openTab(user, 'Auswerten', 'Anlagen');
+    await openTab(user, 'Steuer', 'Einkommensteuer');
+    await user.click(screen.getByRole('tab', { name: /^Erledigen/ }));
+    expect(selected('Reiter in Erledigen')).toEqual(['Offen2']);
+    await user.click(screen.getByRole('tab', { name: /^Auswerten/ }));
+    expect(selected('Reiter in Auswerten')).toEqual(['Anlagen']);
+    await user.click(screen.getByRole('tab', { name: /^Steuer/ }));
+    expect(selected('Reiter in Steuer')).toEqual(['Einkommensteuer']);
+    // A new choice inside a group replaces the remembered one, and leaves the other groups' alone.
+    await openTab(user, 'Auswerten', 'EÜR');
+    await user.click(screen.getByRole('tab', { name: /^Steuer/ }));
+    expect(selected('Reiter in Steuer')).toEqual(['Einkommensteuer']);
+    await user.click(screen.getByRole('tab', { name: /^Auswerten/ }));
+    expect(selected('Reiter in Auswerten')).toEqual(['EÜR']);
+  });
+
+  it('resume: the address names the tab on screen, and a reload with it opens the same group and tab', async () => {
+    const user = setupUser();
+    render(<FinanceClient initial={busy()} />);
+    expect(new URL(window.location.href).searchParams.get('reiter')).toBe('offen');
+    await openTab(user, 'Auswerten', 'Zahlungen');
+    expect(new URL(window.location.href).searchParams.get('reiter')).toBe('zahlungsliste');
+    await user.click(screen.getByRole('tab', { name: /^Einstellungen/ }));
+    expect(new URL(window.location.href).searchParams.get('reiter')).toBe('konten');
+    cleanup();
+    // The reload: the server page turns the address into the tab (see tabs.test.ts for every value).
+    const { tabFromAddress } = await import('./tabs');
+    render(<FinanceClient initial={busy()} initialTab={tabFromAddress('zahlungsliste')} />);
+    expect(selected('Bereiche der Finanzübersicht')).toEqual(['Auswerten']);
+    expect(selected('Reiter in Auswerten')).toEqual(['Zahlungen']);
+    expect(screen.getByText(/Noch nichts entschieden/)).toBeTruthy();
+  });
+
+  it('resume: the old address "zahlungen" opens the payment questions under Erledigen', async () => {
+    const { tabFromAddress } = await import('./tabs');
+    window.history.replaceState(null, '', '/app/finance?reiter=zahlungen');
+    render(<FinanceClient initial={busy()} initialTab={tabFromAddress('zahlungen')} />);
+    expect(selected('Bereiche der Finanzübersicht')).toEqual(['Erledigen5']);
+    expect(selected('Reiter in Erledigen')).toEqual(['Zahlungen klären3']);
+    // The address now says where the person is, in the new words.
+    expect(new URL(window.location.href).searchParams.get('reiter')).toBe('zahlungen-klaeren');
+  });
+
+  it('re-entry: the return from the bank lands on the accounts under Einstellungen, its message shown once, the year kept', async () => {
+    const { tabFromAddress } = await import('./tabs');
+    window.history.replaceState(null, '', '/app/finance?jahr=2025&reiter=zahlungen&bank=verbunden');
+    const bankActions = {
+      listBankInstitutions: vi.fn(),
+      startBankConsent: vi.fn(),
+      chooseBankConnectionAccount: vi.fn(),
+      syncBankNow: vi.fn(),
+      disconnectBank: vi.fn(),
+      clearBankConnectionNotice: vi.fn(),
+    };
+    render(<FinanceClient initial={busy()} initialTab={tabFromAddress('zahlungen', true)} bank={{ enabled: true, connections: [] }} bankReturn="verbunden" bankActions={bankActions} />);
+    expect(selected('Bereiche der Finanzübersicht')).toEqual(['Einstellungen']);
+    expect(selected('Reiter in Einstellungen')).toEqual(['Konten']);
+    expect(screen.getByText(/Die Bank ist verbunden/)).toBeTruthy();
+    const address = new URL(window.location.href).searchParams;
+    expect(address.get('bank')).toBeNull();
+    expect(address.get('reiter')).toBe('konten');
+    expect(address.get('jahr')).toBe('2025');
+    // A reload of that address opens the accounts again, without the message.
+    cleanup();
+    render(<FinanceClient initial={busy()} initialTab={tabFromAddress(address.get('reiter'), address.has('bank'))} bank={{ enabled: true, connections: [] }} bankReturn={null} bankActions={bankActions} />);
+    expect(selected('Reiter in Einstellungen')).toEqual(['Konten']);
+    expect(screen.queryByText(/Die Bank ist verbunden/)).toBeNull();
+  });
+
+  it('with no payment read in, the questions and the list lead to the accounts', async () => {
+    const user = setupUser();
+    const base = view([]);
+    render(<FinanceClient initial={{ ...base, payments: { ...base.payments, yearCount: 0 } }} initialTab="questions" />);
+    await user.click(screen.getByRole('button', { name: 'Zu den Konten' }));
+    expect(selected('Reiter in Einstellungen')).toEqual(['Konten']);
+  });
+
+  it('a link to Ausgaben stands next to the tiles', () => {
+    render(<FinanceClient initial={view([])} />);
+    expect(screen.getByRole('link', { name: 'Ausgaben' }).getAttribute('href')).toBe('/app/spending');
+  });
+});
+
+describe('FinanceClient: the own names under Einstellungen', () => {
+  it('adds a name, says what it settled and shows the statement the server computed afresh', async () => {
+    const user = setupUser();
+    const after = view([], { businessExpenseCents: 12_345 });
+    ownNameActions.changeOwnNames.mockResolvedValue({ ok: true, value: { names: ['Erika Beispiel'], settledOwnName: 2, view: after } });
+    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ names: [], canWrite: true }} />);
+    expect(screen.getByText(/Noch kein eigener Name hinterlegt/)).toBeTruthy();
+    await user.type(screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt'), 'Erika Beispiel');
+    await user.click(screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
+    expect(await screen.findByText('Erika Beispiel gespeichert. 2 Benachrichtigungen erledigt: eigenes Konto.')).toBeTruthy();
+    expect(ownNameActions.changeOwnNames).toHaveBeenCalledWith(2025, { add: 'Erika Beispiel' });
+    expect(screen.getByText('Eigene Namen (1)')).toBeTruthy();
+    expect(screen.getByText('123,45 €')).toBeTruthy();
+    expect((screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt') as HTMLInputElement).value).toBe('');
+  });
+
+  it('a refused name says why and stays in the field; a request that never arrives says so too', async () => {
+    const user = setupUser();
+    ownNameActions.changeOwnNames.mockResolvedValueOnce({ ok: false, error: 'invalid_input', detail: 'name_listed' }).mockRejectedValueOnce(new Error('offline'));
+    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ names: ['Erika Beispiel'], canWrite: true }} />);
+    await user.click(screen.getByText('Eigene Namen (1)'));
+    await user.type(screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt'), 'Beispiel Erika');
+    await user.click(screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('steht schon in der Liste');
+    expect((screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt') as HTMLInputElement).value).toBe('Beispiel Erika');
+    await clickWhenEnabled(user, () => screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
+    await vi.waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Das hat nicht geklappt'));
+  });
+
+  it('a change whose statement could not be read afterwards keeps the change and asks for a reload', async () => {
+    const user = setupUser();
+    ownNameActions.changeOwnNames.mockResolvedValue({ ok: true, value: { names: [], settledOwnName: 0, view: null } });
+    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ names: ['Erika Beispiel'], canWrite: true }} />);
+    await user.click(screen.getByText('Eigene Namen (1)'));
+    await user.click(screen.getByRole('button', { name: 'Erika Beispiel aus den eigenen Namen entfernen' }));
+    expect(await screen.findByText(/Erika Beispiel entfernt. Die Übersicht konnte danach nicht neu gerechnet werden/)).toBeTruthy();
+  });
+
+  it('says so when the names could not be read, and read-only shows them without controls', () => {
+    render(<FinanceClient initial={view([])} initialTab="names" ownNames={null} />);
+    expect(screen.getByRole('alert').textContent).toContain('Die eigenen Namen konnten nicht geladen werden');
+    cleanup();
+    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ names: ['Erika Beispiel'], canWrite: false }} />);
+    expect(screen.queryByRole('button', { name: 'Eigenen Namen hinzufügen' })).toBeNull();
+    expect(screen.getByText('Erika Beispiel')).toBeTruthy();
   });
 });

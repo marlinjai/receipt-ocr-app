@@ -156,3 +156,8 @@ are superseded. The read rules below still hold.
    day cleared and with it set again, 2025 shows the same loss (9,539.04 EUR), business expenses
    (14,376.04 EUR, 266 receipts) and income (4,837.00 EUR), and 2026 the same loss (3,147.39 EUR),
    business expenses (9,219.17 EUR, 311 receipts) and income (6,071.78 EUR).
+
+   **Still unverified:** the moved-payment half of this acceptance check. No payment moves for a
+   small business, so no moved payment could be inspected on production. It needs a VAT-registered
+   company with a filed year and an open-year rule that applies; until one exists, the moved case
+   is covered only by the automated tests above, not by a production check.

@@ -2,7 +2,7 @@
 title: The app classifies payments by itself
 summary: Every counterparty of the payments gets private, business, own account or mixed, and a spending category, without the owner answering it. Clear cases are decided from the company's own data and, for the rest, by a language model, and applied directly, marked as made by the app and changeable in one click. Only what stays uncertain is asked, largest sums first. Transfers to the owner's own name count as own account under Finanzen too.
 type: plan
-status: decided
+status: completed
 tags: [receipts, payments, spending, classification, ai]
 projects: [receipt-ocr-app]
 date: 2026-10-25
@@ -125,6 +125,14 @@ answer per counterparty matters.
    unassigned share shrinks by itself.
 5. Fresh-agent review, pull request. After the deploy, run the backfill on production and check
    in the browser what the app classified, applied and left open; report the counts.
+
+Done 2026-10-25 (pull request 176). Backfill on production, Whiz-Art Media: all 767
+counterparties classified. 2026: 177 decided by the app (45 business, 115 private, 16 mixed, 1
+own account), 218 left open with a proposal for the owner to confirm; 2025: 159 decided, 228
+open with a proposal. Spending 2026 after the run: 41,753 EUR in total, 15,592 private, 7,259
+business, 18,902 unassigned. The own name is set in Whiz-Art Media. Checked in the browser:
+"Von der App eingeordnet" lists the decided counterparties, and "Jetzt einordnen" reports
+nothing left to classify.
 
 ## Tests (four paths, standard `stateful-flow-testing.md`)
 

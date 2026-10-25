@@ -375,22 +375,15 @@
   scroll inside themselves, every control is a 44 pixel touch target, the wide layout unchanged.
   Built on `feat/mobile-rework`; last step: a look at the finance tabs with real payments on
   the owner's phone. Plan: [docs/plans/2026-10-24-phone-layout.md](docs/plans/2026-10-24-phone-layout.md). (2026-10-24)
+- [ ] Decide whether Finanzen is regrouped into four groups (Erledigen, Auswerten, Steuer,
+  Einstellungen) with one overview as its entry, and whether the Ausgaben page merges into
+  Finanzen. Proposed by the session of 2026-10-25 after the Jahreswechsel tab was removed; the
+  owner has not decided it, nothing is built. (2026-10-25)
 
 ## In Progress
 
 <!-- Currently being implemented -->
 
-- [ ] The year-change list answers itself (asked by the owner on 2026-10-23): filed years
-  (2021 to 2025) fix their turn the way they were filed, and for open years a rule decides
-  (subscriptions stay in the year paid, a January value-added tax payment belongs to the year
-  before). Built (pull request 174); since 2026-10-25 without the Jahreswechsel tab, the rules
-  decide alone. Open: record 2021 to 2025 as filed for Whiz-Art Media on production. Plan:
-  [docs/plans/2026-10-23-year-boundary-by-rule.md](docs/plans/2026-10-23-year-boundary-by-rule.md). (2026-10-25)
-- [ ] The app classifies payments by itself (decided by the owner on 2026-10-25): private,
-  business, own account or mixed and a spending category per counterparty, from the company's
-  own data and a language model, applied directly and marked, changeable in one click; own
-  names count under Finanzen too. Plan:
-  [docs/plans/2026-10-25-auto-classify-payments.md](docs/plans/2026-10-25-auto-classify-payments.md). (2026-10-25)
 - [ ] A visual budget overview that shows real spending (asked by the owner on 2026-10-23): the
   spending page opens with months by category, budget against spent and the biggest
   counterparties, the receipt checks move to their own tab, transfers to the owner's own name
@@ -500,6 +493,19 @@
 
 <!-- Done — move to CHANGELOG.md on release -->
 
+- [x] The year-change list answers itself (asked by the owner on 2026-10-23): filed years
+  (2021 to 2025) fix their turn the way they were filed, and for open years a rule decides
+  (subscriptions stay in the year paid, a January value-added tax payment belongs to the year
+  before). Built (pull request 174); since 2026-10-25 without the Jahreswechsel tab, the rules
+  decide alone. 2021 to 2025 are recorded as filed for Whiz-Art Media on production, the
+  statement totals checked unchanged. Plan:
+  [docs/plans/2026-10-23-year-boundary-by-rule.md](docs/plans/2026-10-23-year-boundary-by-rule.md). Done 2026-10-25.
+- [x] The app classifies payments by itself (decided by the owner on 2026-10-25): private,
+  business, own account or mixed and a spending category per counterparty, from the company's
+  own data and a language model, applied directly and marked, changeable in one click; own
+  names count under Finanzen too. Built (pull request 176); backfilled on production, all 767
+  counterparties of Whiz-Art Media classified, the uncertain ones wait as proposals. Plan:
+  [docs/plans/2026-10-25-auto-classify-payments.md](docs/plans/2026-10-25-auto-classify-payments.md). Done 2026-10-25.
 - [x] A year filter on the receipts table (requested by the owner on 2026-10-12): chips per year with their count, one year, several or a range with Shift, kept in the address as `?jahr=`. Done 2026-10-12.
 - [x] Phone capture queue: a photo the server has is never sent again. Sending a queued photo and
   removing its entry were one step, so a failed removal looked like a failed send: the photo was

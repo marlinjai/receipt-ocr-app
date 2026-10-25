@@ -2,7 +2,7 @@
 title: The year-change list answers itself
 summary: Payments between 22 December and 10 January no longer wait for a person. A year whose return is filed fixes them the way it was filed, and for open years a rule decides from the payment data (a subscription billed on its own period start stays in the year it was paid, an advance payment of value-added tax in early January belongs to the year before). Since 2026-10-25 there is no list to answer at all (decision 6): the rules decide, answers given before still apply, and what no rule settles stays in the year it was paid.
 type: plan
-status: in-progress
+status: completed
 tags: [receipts, tax, year-boundary, payments]
 projects: [receipt-ocr-app]
 date: 2026-10-23
@@ -148,3 +148,16 @@ are superseded. The read rules below still hold.
 4. Remove the year-change tab (decision 6), then record 2021 to 2025 as filed for Whiz-Art Media on
    production through the income-tax tab and check on a moved and an unmoved 2025/2026 payment that
    the statement shows them in the year they were filed.
+
+   Done 2026-10-25: the tab went with pull request 175. 2021 to 2024 are recorded as filed on
+   2026-10-11 and 2025 on 2026-10-17 in Whiz-Art Media, each read back after a reload of the
+   income-tax tab. Whiz-Art Media is a small business under section 19, so no open-year rule moves
+   a payment there; the check was therefore made on the totals: with 2025 filed, with the filing
+   day cleared and with it set again, 2025 shows the same loss (9,539.04 EUR), business expenses
+   (14,376.04 EUR, 266 receipts) and income (4,837.00 EUR), and 2026 the same loss (3,147.39 EUR),
+   business expenses (9,219.17 EUR, 311 receipts) and income (6,071.78 EUR).
+
+   **Still unverified:** the moved-payment half of this acceptance check. No payment moves for a
+   small business, so no moved payment could be inspected on production. It needs a VAT-registered
+   company with a filed year and an open-year rule that applies; until one exists, the moved case
+   is covered only by the automated tests above, not by a production check.

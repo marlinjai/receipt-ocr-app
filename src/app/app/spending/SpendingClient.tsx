@@ -47,7 +47,7 @@ export function spendingActionMessage(result: Extract<Result<unknown>, { ok: fal
   if (result.detail === 'counterparty_required') return 'Diese Zahlung nennt keine Gegenseite, deshalb lässt sich keine Kategorie für sie merken.';
   if (result.detail === 'invalid_category') return 'Diese Kategorie gibt es nicht. Bitte eine aus der Liste wählen.';
   if (result.detail === 'treatment_exists')
-    return 'Diese Gegenseite ist unter Finanzen, Zahlungen schon als geschäftlich oder privat beantwortet. Das bitte dort ändern, damit die steuerliche Zuordnung nicht unbemerkt verloren geht.';
+    return 'Diese Gegenseite ist unter Finanzen (Auswerten, Zahlungen) schon als geschäftlich oder privat beantwortet. Das bitte dort ändern, damit die steuerliche Zuordnung nicht unbemerkt verloren geht.';
   if (result.detail === 'invalid_treatment') return 'Diese Gegenseite lässt sich nicht als eigenes Konto merken, weil die Zahlung keinen Namen nennt.';
   if (result.detail === 'not_own_account') return 'Diese Gegenseite ist nicht mehr als eigenes Konto beantwortet. Bitte die Seite neu laden.';
   if (result.detail === 'link_not_found') return 'An dieser Zahlung hängt hier kein Beleg mehr. Bitte die Seite neu laden.';
@@ -161,8 +161,8 @@ function OwnNames({
   const explanation = (
     <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
       Zahlungen an oder von diesen Namen sind Umbuchungen zwischen eigenen Konten: keine Ausgabe, kein Beleg nötig, keine Benachrichtigung. Groß- und
-      Kleinschreibung, Akzente, Satzzeichen und die Reihenfolge der Wörter zählen nicht; Rechtsformen wie UG oder GmbH schon. Eine Antwort unter
-      Finanzen, Zahlungen als geschäftlich oder gemischt geht vor; „privat“ dort (eine Privatentnahme) bleibt hier eine Umbuchung.
+      Kleinschreibung, Akzente, Satzzeichen und die Reihenfolge der Wörter zählen nicht; Rechtsformen wie UG oder GmbH schon. Eine Antwort zu einer
+      Gegenseite unter Finanzen als geschäftlich oder gemischt geht vor; „privat“ dort (eine Privatentnahme) bleibt für die Ausgaben eine Umbuchung.
     </p>
   );
   const editor = canWrite && (
@@ -392,8 +392,8 @@ export default function SpendingClient({
         {view.noPayments && (
           <p className="ui-note ui-note-warn">
             In diesem Arbeitsbereich sind noch keine Zahlungen. Sie kommen aus den Kontoauszügen, die unter{' '}
-            <Link href="/app/finance" className="underline">
-              Finanzen, Zahlungen
+            <Link href="/app/finance?reiter=konten" className="underline">
+              Finanzen, Einstellungen, Konten
             </Link>{' '}
             eingelesen werden.
           </p>
@@ -560,8 +560,8 @@ export default function SpendingClient({
                 <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
                   Eine Abbuchung, die nur eine eigene Kreditkarte oder ein eigenes Konto ausgleicht, ist keine Ausgabe: dafür „Eigenes Konto“
                   wählen. Das gilt dann auch unter{' '}
-                  <Link href="/app/finance" className="underline">
-                    Finanzen, Zahlungen
+                  <Link href="/app/finance?reiter=zahlungsliste" className="underline">
+                    Finanzen, Auswerten, Zahlungen
                   </Link>
                   .
                 </p>
@@ -575,7 +575,7 @@ export default function SpendingClient({
                 Eigene Konten ({view.ownAccounts.length})
               </summary>
               <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
-                Zahlungen an diese Gegenseiten zählen nicht als Ausgabe. Dieselbe Antwort steht unter Finanzen, Zahlungen; was über die eigenen Namen
+                Zahlungen an diese Gegenseiten zählen nicht als Ausgabe. Dieselbe Antwort steht unter Finanzen, Auswerten, Zahlungen; was über die eigenen Namen
                 dazukommt, ändert sich mit den Namen.
               </p>
               <ul className="mt-2 divide-y">

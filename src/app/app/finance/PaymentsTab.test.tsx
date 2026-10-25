@@ -685,3 +685,53 @@ describe('PaymentsTab', () => {
     expect(screen.getByRole('status').textContent).toContain('bei einer geschätzten Zahlung in anderer Währung den tatsächlichen Eurobetrag übernommen');
   });
 });
+
+describe('PaymentsTab in parts (plan 2026-10-25-finance-groups)', () => {
+  const full = () =>
+    view({
+      unclassified: [{ key: 'vermieter beispiel', label: 'Vermieter Beispiel', count: 2, outCents: 130_000, inCents: 0, proposal: null }],
+      open: [open()],
+      appTreatments: [{ key: 'laden beispiel', label: 'Laden Beispiel', treatment: 'private', source: 'app', reason: 'eindeutig privat' }],
+      treatments: [{ key: 'netz beispiel', label: 'Netz Beispiel', treatment: 'business' }],
+    } as Partial<PaymentsView>);
+  const sections = () => screen.queryAllByRole('region').map((r) => r.getAttribute('aria-label'));
+
+  it('the questions: who is that, the payments without a receipt and the search; no accounts, no list', () => {
+    render(<PaymentsTab view={full()} {...props()} onClassify={vi.fn()} parts={['questions']} sharing={<p>Teilen</p>} />);
+    expect(sections()).toEqual(['Einordnen durch die App', 'Gegenseiten', 'Offene Zahlungen']);
+    expect(screen.getByRole('search', { name: 'Zahlungen suchen' })).toBeTruthy();
+    expect(screen.queryByText('Teilen')).toBeNull();
+  });
+
+  it('the list: what was decided, each to take back; no questions, no accounts', () => {
+    render(<PaymentsTab view={full()} {...props()} parts={['list']} sharing={<p>Teilen</p>} />);
+    expect(sections()).toEqual(['Von der App eingeordnet', 'Zuordnungen']);
+    expect(screen.getByRole('button', { name: 'Antwort zurücknehmen' })).toBeTruthy();
+    expect(screen.queryByText('Teilen')).toBeNull();
+  });
+
+  it('the list says so when nothing is decided yet, and when nothing is read in for the year', () => {
+    render(<PaymentsTab view={view()} {...props()} parts={['list']} />);
+    expect(screen.getByText(/Noch nichts entschieden/)).toBeTruthy();
+    cleanup();
+    render(<PaymentsTab view={view({ yearCount: 0 })} {...props()} parts={['list']} />);
+    expect(screen.getByText('Für 2026 sind keine Zahlungen eingelesen.')).toBeTruthy();
+  });
+
+  it('the accounts: accounts, sharing and the import, with a failure of the import shown there', async () => {
+    const user = setupUser();
+    render(<PaymentsTab view={full()} {...props()} parts={['accounts']} sharing={<p>Teilen</p>} />);
+    expect(sections()).toEqual(['Konten', 'Import']);
+    expect(screen.getByText('Teilen')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Einlesen' }));
+    expect(screen.getByRole('alert').textContent).toContain('Exportdatei auswählen');
+  });
+
+  it('a failure from the server is shown in whichever part is on screen', () => {
+    for (const part of ['questions', 'list', 'accounts'] as const) {
+      render(<PaymentsTab view={full()} {...props()} error="Das hat nicht geklappt." parts={[part]} />);
+      expect(screen.getByRole('alert').textContent).toBe('Das hat nicht geklappt.');
+      cleanup();
+    }
+  });
+});

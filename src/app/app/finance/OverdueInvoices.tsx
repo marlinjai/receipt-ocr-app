@@ -20,7 +20,7 @@ export default function OverdueInvoices({ overdue, onOpenRevenue }: { overdue: r
       </h2>
       <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
         Stand heute: {REMINDER_AFTER_DAYS} Tage oder länger nach Fälligkeit (ohne eigene Angabe: Rechnungsdatum plus {PAYMENT_TERM_DAYS} Tage) noch nicht ganz
-        bezahlt. Ist das Geld schon da, die Zahlung unter „Zahlungen“ zuordnen oder unter „Einnahmen“ eintragen; sonst ist eine Erinnerung an den Kunden fällig.
+        bezahlt. Ist das Geld schon da, die Zahlung unter „Zahlungen klären“ zuordnen oder unter „Einnahmen“ eintragen; sonst ist eine Erinnerung an den Kunden fällig.
       </p>
       <ul className="mt-3 divide-y" style={{ borderColor: 'var(--border)' }}>
         {overdue.map((invoice) => (

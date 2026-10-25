@@ -52,7 +52,17 @@ interface Props {
   sharing?: ReactNode;
   /** Let the app decide counterparties now instead of at the next check; absent where the screen is shown without it. */
   onClassify?: () => void;
+  /**
+   * Which parts to draw (plan 2026-10-25-finance-groups): the questions that
+   * wait (under Erledigen), the list of what was decided (under Auswerten), the
+   * accounts with their import, bank connections and sharing (under
+   * Einstellungen). All three when absent.
+   */
+  parts?: ReadonlyArray<PaymentsPart>;
 }
+
+export type PaymentsPart = 'questions' | 'list' | 'accounts';
+const ALL_PARTS: ReadonlyArray<PaymentsPart> = ['questions', 'list', 'accounts'];
 
 const ACCOUNT_KIND_LABELS: Record<AccountKind, string> = { bank: 'Bankkonto', card: 'Kreditkarte', payment_service: 'Zahlungsdienst' };
 const TREATMENT_LABELS: Record<CounterpartyTreatment, string> = { business: 'Betrieblich', private: 'Privat', own_account: 'Eigenes Konto', mixed: 'Teils, teils' };
@@ -102,7 +112,7 @@ const LINK_METHOD_LABELS: Record<string, string> = {
  * a counterparty is treated, and linking payments to receipts and invoices.
  * A link is only made on a reference or by a person's confirmation.
  */
-export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onRemoveAccount, onSearch, bank, sharing, onClassify }: Props) {
+export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onRemoveAccount, onSearch, bank, sharing, onClassify, parts = ALL_PARTS }: Props) {
   const id = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState('');
@@ -128,6 +138,8 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
   const unambiguous = unambiguousPairs.length;
   const shown = localError ?? error;
   const selectedAccount = p.accounts.some((a) => a.id === accountId) ? accountId : (p.accounts[0]?.id ?? '');
+  const show = { questions: parts.includes('questions'), list: parts.includes('list'), accounts: parts.includes('accounts') };
+  const listEmpty = p.appTreatments.length === 0 && p.ruleTransfers.length === 0 && p.reconciliations.length === 0 && p.cancelled.length === 0 && p.overridden.length === 0 && p.links.length === 0 && p.treatments.length === 0;
 
   async function readAndImport() {
     const file = fileInput.current?.files?.[0];
@@ -148,6 +160,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
 
   return (
     <div className="space-y-6">
+      {show.accounts && (
       <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Konten">
         <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Konten und Stand</h2>
         {bank?.returnNotice && (
@@ -264,10 +277,11 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
           <button type="submit" className="ui-btn" disabled={busy}>Konto anlegen</button>
         </form>
       </section>
+      )}
 
-      {sharing}
+      {show.accounts && sharing}
 
-      {p.accounts.length > 0 && (
+      {show.accounts && p.accounts.length > 0 && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Import">
           <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Kontoexport einlesen</h2>
           <div className="mt-3 flex flex-wrap items-end gap-2">
@@ -326,7 +340,15 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
 
       {shown && <p className="ui-note ui-note-danger" role="alert">{shown}</p>}
 
-      {p.yearCount > 0 && (onClassify || !p.classifierAvailable) && (
+      {show.list && listEmpty && (
+        <p className="glass-panel rounded-xl p-8 text-center text-sm" style={{ color: 'var(--muted)' }}>
+          {p.yearCount === 0
+            ? `Für ${view.year} sind keine Zahlungen eingelesen.`
+            : 'Noch nichts entschieden: keine Zuordnung, keine Antwort zu einer Gegenseite, keine Umbuchung.'}
+        </p>
+      )}
+
+      {show.questions && p.yearCount > 0 && (onClassify || !p.classifierAvailable) && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Einordnen durch die App">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm" style={{ color: 'var(--foreground)' }}>
@@ -346,7 +368,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         </section>
       )}
 
-      {p.unclassified.length > 0 && (
+      {show.questions && p.unclassified.length > 0 && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Gegenseiten">
           <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Wer ist das? Was die App nicht sicher einordnen konnte</h2>
           <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
@@ -406,7 +428,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         </section>
       )}
 
-      {p.appTreatments.length > 0 && (
+      {show.list && p.appTreatments.length > 0 && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Von der App eingeordnet">
           <details open>
             <summary className="cursor-pointer text-base font-semibold" style={{ color: 'var(--foreground)' }}>
@@ -454,7 +476,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         </section>
       )}
 
-      {p.estimateProposals.length > 0 && (
+      {show.questions && p.estimateProposals.length > 0 && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Vorschläge für geschätzte Belege">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Belege mit geschätztem Eurobetrag: passende Zahlung</h2>
@@ -465,7 +487,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 disabled={busy || accepting}
                 aria-busy={accepting}
                 onClick={() => {
-                  if (!window.confirm(`${unambiguous} ${unambiguous === 1 ? 'eindeutigen Vorschlag' : 'eindeutige Vorschläge'} übernehmen? Jede Zuordnung lässt sich unter „Zuordnungen und Regeln“ wieder lösen.`)) return;
+                  if (!window.confirm(`${unambiguous} ${unambiguous === 1 ? 'eindeutigen Vorschlag' : 'eindeutige Vorschläge'} übernehmen? Jede Zuordnung lässt sich unter Auswerten, Zahlungen („Zuordnungen und Regeln“) wieder lösen.`)) return;
                   setAccepting(true);
                   onAcceptProposals(unambiguousPairs, true);
                 }}
@@ -517,6 +539,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         </section>
       )}
 
+      {show.questions && (
       <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Offene Zahlungen">
         <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>
           Zahlungen ohne Beleg oder Rechnung {view.year}
@@ -614,8 +637,9 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         )}
         {p.yearCount > 0 && <PaymentSearch view={view} busy={busy} onSearch={onSearch} onLink={onLink} />}
       </section>
+      )}
 
-      {(p.ruleTransfers.length > 0 || p.reconciliations.length > 0) && (
+      {show.list && (p.ruleTransfers.length > 0 || p.reconciliations.length > 0) && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Umbuchungen zwischen eigenen Konten">
           <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Umbuchungen zwischen eigenen Konten {view.year}</h2>
           <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
@@ -702,7 +726,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         </section>
       )}
 
-      {p.cancelled.length > 0 && (
+      {show.list && p.cancelled.length > 0 && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Stornierte Käufe">
           <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Stornierte Käufe {view.year}</h2>
           <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
@@ -724,7 +748,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         </section>
       )}
 
-      {p.overridden.length > 0 && (
+      {show.list && p.overridden.length > 0 && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Umgewidmete Zahlungen">
           <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Von dir umgewidmete Zahlungen</h2>
           <ul className="mt-3 space-y-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
@@ -741,7 +765,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         </section>
       )}
 
-      {(p.links.length > 0 || p.treatments.length > 0) && (
+      {show.list && (p.links.length > 0 || p.treatments.length > 0) && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Zuordnungen">
           <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Zuordnungen und Regeln</h2>
           {p.links.length > 0 && (

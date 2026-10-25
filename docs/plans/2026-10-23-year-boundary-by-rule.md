@@ -79,6 +79,15 @@ Two facts settle most of it:
 5. **The tab shows the reason for every entry** and counts as open only what has neither a
    person's answer nor a rule. The "Jahreswechsel" tab count in the finance page shows that open
    number, expected to be zero for 2025/2026.
+6. **No year-change list at all** (the owner, 2026-10-25: "the tab in the UI can go, it only
+   confuses people"; supersedes decision 5 and the person's override of decision 3). The rules
+   above decide by themselves; the "Jahreswechsel" tab, its answer buttons and the server actions
+   behind them are removed. Answers a person gave before still apply as stored (the read is
+   unchanged); nothing creates new ones. A payment no rule decides (a receipt without a vendor, a
+   settlement while the small-business question or the advance return period is unanswered)
+   stays in the year it was paid, the cash-basis default. Where the rule moved something, the
+   statement still says so on the item ("zählt für {Jahr} (Jahreswechsel)"). The filing-day
+   control in the income-tax tab stays: decision 2 needs it.
 
 ## Implementation notes (decided while building, 2026-10-23, say so if you disagree)
 

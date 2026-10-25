@@ -10,8 +10,6 @@ const actions = vi.hoisted(() => ({
   acceptPaymentProposals: vi.fn(),
   confirmPaymentLink: vi.fn(),
   markPaymentTransfer: vi.fn(),
-  answerYearBoundary: vi.fn(),
-  declineYearBoundary: vi.fn(),
   saveLines: vi.fn(),
   removeLines: vi.fn(),
   decideLine: vi.fn(),
@@ -585,28 +583,27 @@ describe('FinanceClient: notices and statement', () => {
     expect(row.textContent).toContain('gezahlt 29.12.2024, zählt für 2025 (Jahreswechsel)');
   });
 
-  it('the turn-of-the-year tab exists only when the year has a payment in the window, counts only what nothing answers, and saves an answer', async () => {
-    const user = setupUser();
-    const { unmount } = render(<FinanceClient initial={view([])} />);
+  it('shows no turn-of-the-year tab: the ten-day rule decides by itself, also with payments in the window', () => {
+    const entry = {
+      kind: 'receipt' as const,
+      subjectId: 'a',
+      label: 'Vermieter Beispiel',
+      cashDay: '2025-12-29',
+      dayBasis: 'payment' as const,
+      cents: 65_000,
+      otherYear: 2026,
+      answer: null,
+      source: null,
+      reason: 'Ohne Lieferant lässt sich nicht erkennen, ob die Zahlung regelmäßig wiederkehrt',
+      storedAnswer: null,
+      filedYear: null,
+      filedWith: null,
+      departsFromFiled: null,
+      inactive: null,
+    };
+    render(<FinanceClient initial={view([], { yearBoundary: [entry] })} />);
     expect(screen.queryByRole('tab', { name: /Jahreswechsel/ })).toBeNull();
-    unmount();
-    const base = { kind: 'receipt' as const, dayBasis: 'payment' as const, cents: 65_000, otherYear: 2026, storedAnswer: null, filedYear: null, filedWith: null, departsFromFiled: null, inactive: null };
-    const entry = { ...base, subjectId: 'a', label: 'Vermieter Beispiel', cashDay: '2025-12-29', answer: null, source: null, reason: 'Ohne Lieferant lässt sich nicht erkennen, ob die Zahlung regelmäßig wiederkehrt' };
-    // Answered by a rule and by a filed year: not counted as open.
-    const byRule = { ...base, subjectId: 'b', label: 'Abo Beispiel', cashDay: '2025-12-27', answer: false, source: 'rule' as const, reason: 'Abo, Zeitraum beginnt am Zahltag' };
-    const byFiled = { ...base, subjectId: 'c', label: 'Laden Beispiel', cashDay: '2025-12-23', answer: false, source: 'filed' as const, filedYear: 2025, reason: 'Festgelegt durch die abgegebene Erklärung 2025' };
-    actions.answerYearBoundary.mockResolvedValue({ ok: true, value: view([], { yearBoundary: [{ ...entry, answer: true, storedAnswer: true, source: 'person', reason: 'Antwort von Hand' }, byRule, byFiled] }) });
-    render(<FinanceClient initial={view([], { yearBoundary: [entry, byRule, byFiled] })} />);
-    const tab = screen.getByRole('tab', { name: /Jahreswechsel/ });
-    expect(tab.textContent).toContain('1');
-    await user.click(tab);
-    const rowOf = () => screen.getByText('Vermieter Beispiel').closest('li') as HTMLElement;
-    await user.click(within(rowOf()).getByRole('button', { name: 'Regelmäßig wiederkehrend, gehört zu 2026' }));
-    expect(actions.answerYearBoundary).toHaveBeenCalledWith(2025, { kind: 'receipt', subjectId: 'a', cashDay: '2025-12-29', belongsToOtherYear: true });
-    expect(await screen.findByText('Vermieter Beispiel: zählt für 2026.')).toBeTruthy();
-    expect(within(rowOf()).getByRole('button', { name: 'Regelmäßig wiederkehrend, gehört zu 2026' }).getAttribute('aria-pressed')).toBe('true');
-    // Answered now: nothing is open any more.
-    expect(screen.getByRole('tab', { name: /Jahreswechsel/ }).textContent).toContain('0');
+    expect(screen.queryByRole('button', { name: /Regelmäßig wiederkehrend/ })).toBeNull();
   });
 
   it('changing the year navigates, so the server computes the other year', async () => {

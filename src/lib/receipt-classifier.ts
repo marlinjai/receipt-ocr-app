@@ -541,6 +541,14 @@ export interface LinesInput {
   currency: string | null;
 }
 
+/** The lines-only answer is unusable (cut off at the token limit, or declined): asking again the same way gives the same. */
+export class UnusableAnswerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnusableAnswerError';
+  }
+}
+
 export interface LinesAnswer {
   /** Null when the answer held no well-formed list. */
   lines: ReceiptLine[] | null;
@@ -600,9 +608,9 @@ export async function readReceiptLines(input: LinesInput): Promise<LinesAnswer> 
       { model, max_tokens: LINES_MAX_TOKENS, output_config: { effort: 'low' }, system: linesPrompt(), messages: [{ role: 'user', content: user }] },
       { timeout: LINES_TIMEOUT_MS },
     );
-    if (response.stop_reason === 'refusal') throw new Error('The model declined to read this receipt.');
+    if (response.stop_reason === 'refusal') throw new UnusableAnswerError('The model declined to read this receipt.');
     // A cut answer is no answer: half a list must not pass for the receipt's lines.
-    if (response.stop_reason === 'max_tokens') throw new Error('The answer was cut off.');
+    if (response.stop_reason === 'max_tokens') throw new UnusableAnswerError('The answer was cut off.');
     const block = response.content.findLast((b) => b.type === 'text');
     return {
       lines: parseLinesResponse(block && block.type === 'text' ? block.text : ''),
@@ -624,8 +632,8 @@ export async function readReceiptLines(input: LinesInput): Promise<LinesAnswer> 
   };
   const response = await getAiClient().chat.completions.create(request, { timeout: LINES_TIMEOUT_MS, maxRetries: MAX_RETRIES });
   const choice = response.choices[0];
-  if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) throw new Error('The model declined to read this receipt.');
-  if (choice?.finish_reason === 'length') throw new Error('The answer was cut off.');
+  if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) throw new UnusableAnswerError('The model declined to read this receipt.');
+  if (choice?.finish_reason === 'length') throw new UnusableAnswerError('The answer was cut off.');
   const billed = (response.usage as { cost?: unknown } | undefined)?.cost;
   return {
     lines: parseLinesResponse(choice?.message?.content ?? ''),

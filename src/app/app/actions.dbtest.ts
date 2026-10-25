@@ -861,3 +861,66 @@ describe('a page without any recognized text is read by the model alone, unverif
     expect(await cellOf(ws, first.rowId, 'Gross')).toBe(5);
   });
 });
+
+describe('the lines of a receipt are read with it (plan 2026-10-26-receipt-line-items)', () => {
+  const items = (...entries: Array<[string, number, string]>) => entries.map(([text, cents, kind]) => ({ text, quantity: 1, unitPriceCents: cents, grossCents: cents, netCents: null, taxRate: 19, kind }));
+  const CAFE_LINES = items(['Kräutertee', 350, 'drink_out'], ['Cappuccino', 420, 'drink_out'], ['Quiche', 5100, 'meal_out']);
+  const linesOf = async (rowId: string) => (await db.receiptItem.findMany({ where: { rowId }, orderBy: { position: 'asc' } })).map((l) => [l.text, l.grossCents, l.kind]);
+
+  it('an upload stores the lines the classification returned, and a retake replaces them (forward, backtrack)', async () => {
+    classify.mockResolvedValue({ ...MEAL_ANSWER, vendor: 'Cafe Morgenrot', gross: 58.7, date: CAFE_DAY, items: CAFE_LINES, model: 'test-model', usage: { inputTokens: 1, outputTokens: 2, cost: null } });
+    const first = await upload(file(301), ocr(CAFE), {});
+    expect(await linesOf(first.rowId)).toEqual([['Kräutertee', 350, 'drink_out'], ['Cappuccino', 420, 'drink_out'], ['Quiche', 5100, 'meal_out']]);
+    expect(await db.receiptItemReading.findUnique({ where: { rowId: first.rowId } })).toMatchObject({ outcome: 'lines', source: 'reading', lineCount: 3, linesSumCents: 5870, model: 'test-model' });
+
+    classify.mockResolvedValue({ ...MEAL_ANSWER, vendor: 'Cafe Morgenrot', gross: 58.7, date: CAFE_DAY, items: items(['Kräutertee', 350, 'drink_out'], ['Quiche Lorraine', 5520, 'meal_out']) });
+    await retakeReceipt(first.rowId, file(302), ocr(CAFE), {});
+    expect(await linesOf(first.rowId)).toEqual([['Kräutertee', 350, 'drink_out'], ['Quiche Lorraine', 5520, 'meal_out']]);
+
+    // A reading without a usable list leaves the lines as they are.
+    classify.mockResolvedValue({ ...MEAL_ANSWER, vendor: 'Cafe Morgenrot', gross: 58.7, date: CAFE_DAY, items: null });
+    await retakeReceipt(first.rowId, file(303), ocr(CAFE), {});
+    expect(await linesOf(first.rowId)).toHaveLength(2);
+  });
+
+  it('an upload whose classification failed stores no lines and no reading, so the backfill reads it later', async () => {
+    classify.mockRejectedValue(new Error('provider down'));
+    const result = await upload(file(304), ocr(CAFE), {});
+    expect(await db.receiptItem.count({ where: { rowId: result.rowId } })).toBe(0);
+    expect(await db.receiptItemReading.findUnique({ where: { rowId: result.rowId } })).toBeNull();
+  });
+
+  it('an electronic invoice takes its lines from the XML, checked on net, with the model\'s kinds where the texts match', async () => {
+    const { readStructuredInvoice } = await import('@/lib/einvoice');
+    const { UBL_INVOICE_WITH_LINES } = await import('@/lib/einvoice/__tests__/samples');
+    loadStructured.mockResolvedValue(await readStructuredInvoice(new TextEncoder().encode(UBL_INVOICE_WITH_LINES)));
+    classify.mockResolvedValue({
+      ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', vendor: 'Muster Software', gross: 166.55, date: '2026-10-20T00:00:00.000Z',
+      meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null, place: null },
+      items: items(['Lizenz Pro', 11900, 'software_services'], ['Handbuch', 5350, 'other']),
+    });
+    const xml = await upload(file(305), null, {});
+    expect(await linesOf(xml.rowId)).toEqual([
+      ['Lizenz Pro', 11900, 'software_services'],
+      ['Handbuch', 5350, 'other'],
+      ['Treuerabatt', -1190, 'deposit_discount'],
+      ['Versand', 595, 'shipping'],
+    ]);
+    expect(await db.receiptItemReading.findUnique({ where: { rowId: xml.rowId } })).toMatchObject({ source: 'einvoice', linesNetCents: 14500, totalNetCents: 14500 });
+  });
+
+  it('"Seite neu lesen" replaces the lines; a reading that is refused leaves them', async () => {
+    const rowId = await ws.addReceipt({ Name: 'Cafe', Vendor: 'Cafe Morgenrot', Gross: 58.7, 'OCR Text': CAFE } as Parameters<TestWorkspace['addReceipt']>[0]);
+    const columns = await ws.adapter.getColumns(ws.tableId);
+    await ws.adapter.addFileReference({
+      rowId, columnId: columns.find((c) => c.name === 'Receipt Image')!.id, fileId: file(306).id, fileUrl: `/api/files/${file(306).id}`,
+      originalName: 'foto-306.jpg', mimeType: 'image/jpeg', metadata: { source: 'ocr-upload' },
+    });
+    classify.mockResolvedValue({ ...MEAL_ANSWER, vendor: 'Cafe Morgenrot', gross: 58.7, date: CAFE_DAY, items: CAFE_LINES });
+    expect((await rereadReceipt(rowId)).ok).toBe(true);
+    expect(await linesOf(rowId)).toHaveLength(3);
+    classify.mockRejectedValue(new Error('provider down'));
+    expect(await rereadReceipt(rowId)).toEqual({ ok: false, error: 'model_unavailable' });
+    expect(await linesOf(rowId)).toHaveLength(3);
+  });
+});

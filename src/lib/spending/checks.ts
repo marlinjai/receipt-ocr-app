@@ -6,28 +6,50 @@ import type { NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
 import type { MailboxPort } from './mailbox/port';
 import { receiversOf } from '@/lib/tax/payments/routing';
+import { classifyCounterparties, type ClassifyRun } from '@/lib/tax/payments/classify-service';
+import { serverCounterpartyClassifier, type CounterpartyClassifierPort } from '@/lib/tax/payments/counterparty-classifier';
 
 export interface ChecksRun {
+  /** The app deciding counterparties by itself (plan 2026-10-25-auto-classify-payments), or null when it failed. */
+  classify: ClassifyRun | null;
   /** The missing-receipt loop's result, or null when it failed. */
   loop: RunResult | null;
   /** The budget warnings' result, or null when they failed. */
   budgets: WarningRun | null;
 }
 
+/** What the checks are given; `classifier` is the server's model unless a caller (a test) gives its own, or null for none. */
+export interface ChecksOptions {
+  today: string;
+  channels?: readonly NotificationChannel[];
+  now?: Date;
+  mailbox?: MailboxPort;
+  classifier?: CounterpartyClassifierPort | null;
+  /** At most this many counterparties go to the model in this run: a page waiting for the answer asks for few. */
+  classifyLimit?: number;
+}
+
+/** What a page that waits for the checks lets the model decide: one batch, so "Jetzt prüfen" answers within about a minute. */
+export const INTERACTIVE_CLASSIFY_LIMIT = 20;
+
 /**
- * Everything the spending side checks after new payments arrive: the
- * missing-receipt loop and the budget warnings, each on its own, so one
- * failing never stops the other. A failure is logged and reported as null,
- * so the page can say which part could not be checked. One entry point for
- * the payment import, the live bank feed and the "check now" button.
+ * Everything the spending side checks after new payments arrive: the app
+ * deciding new counterparties, the missing-receipt loop and the budget
+ * warnings, each on its own, so one failing never stops the others. The
+ * counterparties come first, so the loop and the warnings see what the app
+ * decided. A failure is logged and reported as null, so the page can say which
+ * part could not be checked. One entry point for the payment import, the live
+ * bank feed and the "check now" button.
  */
-export async function runSpendingChecks(
-  db: PrismaClient,
-  ctx: NotifyContext,
-  options: { today: string; channels?: readonly NotificationChannel[]; now?: Date; mailbox?: MailboxPort },
-): Promise<ChecksRun> {
+export async function runSpendingChecks(db: PrismaClient, ctx: NotifyContext, options: ChecksOptions): Promise<ChecksRun> {
+  let classify: ClassifyRun | null = null;
   let loop: RunResult | null = null;
   let budgets: WarningRun | null = null;
+  try {
+    classify = await classifyCounterparties(db, ctx, options.classifier === undefined ? serverCounterpartyClassifier() : options.classifier, { limit: options.classifyLimit });
+  } catch (e) {
+    console.error('[spending] classifying counterparties failed', e);
+  }
   try {
     loop = await runReceiptLoop(db, ctx, options);
   } catch (e) {
@@ -38,7 +60,7 @@ export async function runSpendingChecks(
   } catch (e) {
     console.error('[spending] budget warnings failed', e);
   }
-  return { loop, budgets };
+  return { classify, loop, budgets };
 }
 
 /**
@@ -53,7 +75,7 @@ export async function runSpendingChecks(
 export async function runSpendingChecksAfterNewPayments(
   db: PrismaClient,
   ctx: NotifyContext,
-  options: { today: string; channels?: readonly NotificationChannel[]; now?: Date; mailbox?: MailboxPort },
+  options: ChecksOptions,
   /** Companies already checked in this pass (the daily run checks many): each one is checked once. */
   done: Set<string> = new Set(),
 ): Promise<ChecksRun | null> {
@@ -69,7 +91,7 @@ export async function runSpendingChecksAfterNewPayments(
     console.error('[spending] the companies receiving private payments could not be read', (e as Error)?.name ?? 'error');
   }
   // A mailbox given is the caller's company's; a receiver looks its own up.
-  const rest = { today: options.today, channels: options.channels, now: options.now };
+  const rest = { today: options.today, channels: options.channels, now: options.now, classifier: options.classifier, classifyLimit: options.classifyLimit };
   for (const receiver of receivers) {
     if (done.has(receiver.workspaceId)) continue;
     done.add(receiver.workspaceId);

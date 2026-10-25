@@ -25,6 +25,8 @@ export interface OverviewPaymentInput {
   byPrivateAccount?: boolean;
   /** True when the payment is here because the company holding its account calls it private (src/lib/tax/payments/route.ts). */
   routed?: boolean;
+  /** For a routed payment, the company holding its account. */
+  routedFrom?: string | null;
   /** The service whose next list this debit waits for (a collection after the end of its list, `funding.ts`); null otherwise. */
   awaitingList?: string | null;
 }
@@ -94,6 +96,10 @@ export interface SpendingOverview {
 export interface OverviewContext {
   treatments: ReadonlyMap<string, CounterpartyTreatmentAnswer>;
   answers: ReadonlyMap<string, SpendingCategory>;
+  /** The app's certain categories by counterparty, used where no person and no word rule says one. */
+  appCategories?: ReadonlyMap<string, SpendingCategory>;
+  /** For payments routed here, the holding company's certain categories, by holder. */
+  holderAppCategories?: ReadonlyMap<string, ReadonlyMap<string, SpendingCategory>>;
   /** Counterparties that are own accounts only by the owner's own names (see `own-names.ts`): named apart in the totals. */
   byName?: ReadonlySet<string>;
 }
@@ -101,7 +107,10 @@ export interface OverviewContext {
 export function classifyPayment(p: OverviewPaymentInput, ctx: OverviewContext): OverviewPayment {
   const treatment = p.counterpartyKey ? ctx.treatments.get(p.counterpartyKey) : undefined;
   const answer = p.counterpartyKey ? ctx.answers.get(p.counterpartyKey) : undefined;
-  const { category, basis } = categorise(p, { treatment, answer });
+  // A routed payment is judged by the company that holds its account; another company's verdict never applies to this company's own payments.
+  const appCategories = p.routedFrom ? ctx.holderAppCategories?.get(p.routedFrom) : ctx.appCategories;
+  const suggested = p.counterpartyKey ? appCategories?.get(p.counterpartyKey) : undefined;
+  const { category, basis } = categorise(p, { treatment, answer, suggested });
   // An own account is never spending, even when the file calls the line a purchase. The payments read
   // already turns such payments into own transfers; this is a deliberate second guard, so the overview
   // stays right should that read ever change.

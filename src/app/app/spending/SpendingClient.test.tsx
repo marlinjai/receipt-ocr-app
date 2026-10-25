@@ -301,6 +301,8 @@ describe('SpendingClient own names', () => {
     expect(await screen.findByText(/Beispiel, Erika M\. entfernt\. Zahlungen an diesen Namen zählen wieder als Ausgabe\./)).toBeTruthy();
     saveOwnNames.mockResolvedValueOnce({ ok: false, error: 'invalid_input', detail: 'invalid_names' });
     const input = screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt');
+    // The notice appears inside the transition: the field and button stay disabled until it settles.
+    await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
     await user.type(input, '-');
     await user.click(screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/zwei Buchstaben/);

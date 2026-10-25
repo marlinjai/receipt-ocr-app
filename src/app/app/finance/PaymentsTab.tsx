@@ -50,6 +50,8 @@ interface Props {
   bank?: { feed: BankFeed; actions: BankActions; returnNotice: { text: string; ok: boolean } | null } | null;
   /** The section for sharing an account's private payments with another company, shown below the accounts. */
   sharing?: ReactNode;
+  /** Let the app decide counterparties now instead of at the next check; absent where the screen is shown without it. */
+  onClassify?: () => void;
 }
 
 const ACCOUNT_KIND_LABELS: Record<AccountKind, string> = { bank: 'Bankkonto', card: 'Kreditkarte', payment_service: 'Zahlungsdienst' };
@@ -100,7 +102,7 @@ const LINK_METHOD_LABELS: Record<string, string> = {
  * a counterparty is treated, and linking payments to receipts and invoices.
  * A link is only made on a reference or by a person's confirmation.
  */
-export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onRemoveAccount, onSearch, bank, sharing }: Props) {
+export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onRemoveAccount, onSearch, bank, sharing, onClassify }: Props) {
   const id = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState('');
@@ -324,10 +326,31 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
 
       {shown && <p className="ui-note ui-note-danger" role="alert">{shown}</p>}
 
+      {p.yearCount > 0 && (onClassify || !p.classifierAvailable) && (
+        <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Einordnen durch die App">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm" style={{ color: 'var(--foreground)' }}>
+              Die App ordnet neue Gegenseiten nach jedem Import und jedem Abruf selbst ein.
+            </p>
+            {onClassify && (
+              <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={onClassify}>
+                Jetzt einordnen
+              </button>
+            )}
+          </div>
+          {!p.classifierAvailable && (
+            <p className="ui-note mt-2 text-xs">
+              Auf dem Server ist kein Sprachmodell eingerichtet: die App ordnet nur ein, was zugeordnete Belege eindeutig sagen.
+            </p>
+          )}
+        </section>
+      )}
+
       {p.unclassified.length > 0 && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Gegenseiten">
-          <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Wer ist das? Einmal je Gegenseite</h2>
+          <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Wer ist das? Was die App nicht sicher einordnen konnte</h2>
           <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+            Die App ordnet Gegenseiten selbst ein, wenn sie sicher ist; hier steht nur der Rest, die größten Beträge zuerst.
             Betriebliche Zahlungen brauchen einen Beleg; private werden für den Betrieb nicht weiter beachtet; eigene
             Konten sind nur Umbuchungen. „Teils, teils“ (ein Versandhändler, ein Supermarkt): nach keiner Zahlung wird
             gefragt, betrieblich ist, was du von Hand einem Beleg zuordnest. Die Antwort gilt für alle Zahlungen dieser
@@ -343,8 +366,24 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                     {c.outCents > 0 ? ` · bezahlt ${euro(c.outCents)}` : ''}
                     {c.inCents > 0 ? ` · erhalten ${euro(c.inCents)}` : ''}
                   </span>
+                  {c.proposal && (
+                    <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>
+                      Vorschlag der App: {TREATMENT_LABELS[c.proposal.treatment]} ({c.proposal.confidence === 'likely' ? 'wahrscheinlich' : 'unsicher'}). {c.proposal.reason}
+                    </span>
+                  )}
                 </span>
-                <span className="flex flex-wrap gap-1.5">
+                <span className="flex flex-wrap gap-1.5" role="group" aria-label={`Antwort für ${c.label}`}>
+                  {c.proposal && (
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm ui-btn-primary"
+                      disabled={busy}
+                      aria-label={`Vorschlag für ${c.label} übernehmen: ${TREATMENT_LABELS[c.proposal.treatment]}`}
+                      onClick={() => onTreat(c.label, c.proposal!.treatment)}
+                    >
+                      Vorschlag übernehmen
+                    </button>
+                  )}
                   {(Object.keys(TREATMENT_LABELS) as CounterpartyTreatment[]).map((t) => (
                     <button key={t} type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onTreat(c.label, t)}>{TREATMENT_LABELS[t]}</button>
                   ))}
@@ -364,6 +403,54 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {p.appTreatments.length > 0 && (
+        <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Von der App eingeordnet">
+          <details open>
+            <summary className="cursor-pointer text-base font-semibold" style={{ color: 'var(--foreground)' }}>
+              Von der App eingeordnet ({p.appTreatments.length})
+            </summary>
+            <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+              Diese Gegenseiten hat die App selbst eingeordnet: aus deinen zugeordneten Belegen, deinen eigenen Namen oder weil
+              sie eindeutig erkennbar sind. Die Einordnung zählt schon überall. „Bestätigen“ macht sie zu deiner Antwort, ein Klick
+              auf eine andere Antwort ersetzt sie; deine Antwort gilt dann für alle Zahlungen dieser Gegenseite.
+            </p>
+            <ul className="mt-3 space-y-2">
+              {p.appTreatments.map((c) => (
+                <li key={c.key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+                  <span className="text-sm" style={{ color: 'var(--foreground)' }}>
+                    {c.label}: {TREATMENT_LABELS[c.treatment]}
+                    <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>{c.reason}</span>
+                  </span>
+                  <span className="flex flex-wrap gap-1.5" role="group" aria-label={`Antwort für ${c.label}`}>
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm ui-btn-primary"
+                      disabled={busy}
+                      aria-label={`${c.label}: ${TREATMENT_LABELS[c.treatment]} bestätigen`}
+                      onClick={() => onTreat(c.label, c.treatment)}
+                    >
+                      Bestätigen
+                    </button>
+                    {(Object.keys(TREATMENT_LABELS) as CounterpartyTreatment[]).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        className="ui-btn ui-btn-sm"
+                        aria-pressed={c.treatment === t}
+                        disabled={busy || c.treatment === t}
+                        onClick={() => onTreat(c.label, t)}
+                      >
+                        {TREATMENT_LABELS[t]}
+                      </button>
+                    ))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
         </section>
       )}
 

@@ -115,6 +115,7 @@ export function notNeededReason(payment: LoopPayment, ctx: Pick<LoopContext, 'tr
   if (payment.kind === 'refund' || payment.amountCents >= 0) return 'refund';
   if (payment.kind === 'fee') return 'fee';
   const answer = payment.counterpartyKey ? ctx.categoryAnswers.get(payment.counterpartyKey) : undefined;
+  // Never the app's category: a counterparty the app calls business asks for its receipts, whatever category it guessed.
   const { category } = categorise(payment, { treatment, answer });
   if (category === 'fees_interest') return 'fee';
   if (category === 'loans_leasing_credit') return 'loan';

@@ -28,7 +28,7 @@ vi.mock('@/lib/auth-guards', () => {
 });
 vi.mock('@/lib/prisma', () => ({ prisma: { marker: 'prisma' } }));
 vi.mock('@/lib/spending/loop-service', () => ({ settleAcrossShares: (...a: unknown[]) => settleAcrossShares(...a) }));
-vi.mock('@/lib/spending/checks', () => ({ runSpendingChecks: (...a: unknown[]) => runSpendingChecks(...a) }));
+vi.mock('@/lib/spending/checks', () => ({ runSpendingChecks: (...a: unknown[]) => runSpendingChecks(...a), INTERACTIVE_CLASSIFY_LIMIT: 20 }));
 vi.mock('@/lib/tax/payments/routing', () => {
   class ShareError extends Error {
     constructor(readonly code: string) {

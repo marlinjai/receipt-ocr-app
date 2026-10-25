@@ -24,6 +24,7 @@ import {
   decideItem,
   disposeAsset,
   importPaymentFile,
+  classifyCounterpartiesNow,
   recordStatusChange,
   recordVatSettlement,
   removeAsset,
@@ -846,6 +847,25 @@ export default function FinanceClient({
                 }, `${account.label}: entfernt.`)
               }
               onSearch={(query) => searchPayments(view.year, query)}
+              onClassify={() => {
+                let outcome = { summary: '', failed: false };
+                run(
+                  async () => {
+                    const result = await classifyCounterpartiesNow(view.year);
+                    if (!result.ok) return result;
+                    outcome = { summary: result.value.summary, failed: result.value.failed };
+                    return { ok: true, value: result.value.view };
+                  },
+                  'Eingeordnet.',
+                  () => {
+                    // Nothing decided because the model failed: said as a failure, never as a quiet notice.
+                    if (outcome.failed) {
+                      setNotice(null);
+                      setError(outcome.summary);
+                    } else setNotice(outcome.summary);
+                  },
+                );
+              }}
               bank={bankInitial ? { feed: bankFeed, actions: bankActions, returnNotice: bankNotice } : null}
               sharing={
                 sharing ? (

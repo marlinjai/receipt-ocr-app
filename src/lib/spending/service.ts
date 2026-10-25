@@ -100,6 +100,7 @@ export function toOverviewInput(p: PaymentRow | RoutedPaymentRow): OverviewPayme
     linkedCents: p.links.reduce((sum, l) => sum + l.cents, 0),
     byPrivateAccount: p.byPrivateAccount,
     routed: 'routedFrom' in p && p.routedFrom !== null,
+    routedFrom: 'routedFrom' in p ? p.routedFrom : null,
     // Only while the funding rule decides it: a person who said what the debit is has answered it.
     awaitingList: p.byRule && p.funding?.awaitingList ? p.funding.service : null,
   };
@@ -141,19 +142,27 @@ export async function loadOwnNames(db: PrismaClient, workspaceId: string): Promi
 }
 
 /**
- * The counterparty answers the spending side reads: the payments tab's, and
- * own accounts by the owner's own names where no answer was given (see
- * `treatmentsWithOwnNames`). The one place the names apply, for the overview,
- * the budgets and the missing-receipt loop alike.
+ * The counterparty answers the spending side reads: what the payments read
+ * decided (a person's answer, the own names, the app's certain verdict), with
+ * the own names applied over a person's "private" as well (see
+ * `treatmentsWithOwnNames`: money to oneself is no spending whatever was
+ * answered). The names are judged against the person's answers only, so
+ * `byName` keeps naming every counterparty that is an own account by a name.
+ * The one place the names apply, for the overview, the budgets and the
+ * missing-receipt loop alike.
  */
 export async function spendingTreatments(
   db: PrismaClient,
   workspaceId: string,
-  loaded: Pick<RoutedPayments, 'payments' | 'treatments'>,
+  loaded: Pick<RoutedPayments, 'payments' | 'treatments' | 'treatmentSources'>,
   names?: readonly string[],
 ): Promise<{ treatments: ReadonlyMap<string, CounterpartyTreatmentAnswer>; byName: ReadonlySet<string> }> {
   const ownNames = names ?? (await loadOwnNames(db, workspaceId));
-  return treatmentsWithOwnNames(loaded.treatments, loaded.payments, ownNames);
+  const answered = new Map([...loaded.treatments].filter(([key]) => loaded.treatmentSources.get(key) === 'person'));
+  const named = treatmentsWithOwnNames(answered, loaded.payments, ownNames);
+  const treatments = new Map(loaded.treatments);
+  for (const key of named.byName) treatments.set(key, 'own_account');
+  return { treatments, byName: named.byName };
 }
 
 /**
@@ -191,7 +200,7 @@ export async function saveOwnNames(db: PrismaClient, ctx: SpendingContext, raw: 
 export async function loadSpending(db: PrismaClient, workspaceId: string, year: number, month: number | null, today = new Date()): Promise<SpendingView> {
   const [loaded, answers, ownNames] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId), loadOwnNames(db, workspaceId)]);
   const { treatments, byName } = await spendingTreatments(db, workspaceId, loaded, ownNames);
-  const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments, byName, answers: await categoryAnswerMap(db, workspaceId, loaded, answers) }, year, month);
+  const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments, byName, answers: await categoryAnswerMap(db, workspaceId, loaded, answers), appCategories: loaded.appCategories, holderAppCategories: loaded.holderAppCategories }, year, month);
   return {
     overview,
     // The year asked for is always offered, so the year picker shows what the page shows even for a year without payments.
@@ -246,18 +255,24 @@ export async function markCounterpartyOwnAccount(db: PrismaClient, ctx: Spending
   const label = typeof raw === 'string' ? raw.trim() : '';
   const key = counterpartyKey(label);
   if (!key) throw new SpendingServiceError('counterparty_required');
-  const { treatments } = await loadPayments(db, ctx.workspaceId);
+  const { treatments, treatmentSources } = await loadPayments(db, ctx.workspaceId);
   const current = treatments.get(key);
-  if (current === 'own_account') return;
-  if (current !== undefined) throw new SpendingServiceError('treatment_exists');
+  // Only a person's answer is protected here; what the app or the own names decided gives way to a person.
+  const byPerson = treatmentSources.get(key) === 'person';
+  if (current === 'own_account' && byPerson) return;
+  if (current !== undefined && byPerson) throw new SpendingServiceError('treatment_exists');
   await setCounterpartyTreatment(db, ctx, { counterparty: label, treatment: 'own_account' });
 }
 
-/** Take an own-account answer back (by key); any other answer is left alone. */
+/**
+ * Take a person's own-account answer back (by key); any other answer is left
+ * alone. An own account the app or the own names decided is no person's answer
+ * to take back: refused, so the page never claims a change it did not make.
+ */
 export async function unmarkCounterpartyOwnAccount(db: PrismaClient, ctx: SpendingContext, rawKey: unknown): Promise<void> {
   if (typeof rawKey !== 'string' || !rawKey) throw new SpendingServiceError('counterparty_required');
   const loaded = await loadRoutedPayments(db, ctx.workspaceId);
-  if (loaded.treatments.get(rawKey) !== 'own_account') throw new SpendingServiceError('not_own_account');
+  if (loaded.treatments.get(rawKey) !== 'own_account' || loaded.treatmentSources.get(rawKey) !== 'person') throw new SpendingServiceError('not_own_account');
   const label = loaded.payments.find((p) => p.counterpartyKey === rawKey)?.counterparty ?? rawKey;
   await setCounterpartyTreatment(db, ctx, { counterparty: label, treatment: null });
 }

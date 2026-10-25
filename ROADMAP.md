@@ -386,6 +386,11 @@
   before). Built (pull request 174); since 2026-10-25 without the Jahreswechsel tab, the rules
   decide alone. Open: record 2021 to 2025 as filed for Whiz-Art Media on production. Plan:
   [docs/plans/2026-10-23-year-boundary-by-rule.md](docs/plans/2026-10-23-year-boundary-by-rule.md). (2026-10-25)
+- [ ] The app classifies payments by itself (decided by the owner on 2026-10-25): private,
+  business, own account or mixed and a spending category per counterparty, from the company's
+  own data and a language model, applied directly and marked, changeable in one click; own
+  names count under Finanzen too. Plan:
+  [docs/plans/2026-10-25-auto-classify-payments.md](docs/plans/2026-10-25-auto-classify-payments.md). (2026-10-25)
 - [ ] A visual budget overview that shows real spending (asked by the owner on 2026-10-23): the
   spending page opens with months by category, budget against spent and the biggest
   counterparties, the receipt checks move to their own tab, transfers to the owner's own name

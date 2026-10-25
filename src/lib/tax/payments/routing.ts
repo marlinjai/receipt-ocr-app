@@ -64,8 +64,10 @@ export interface RoutedPayments {
   treatments: Map<string, CounterpartyTreatment>;
   /** Where each of this company's treatments comes from (a person, the own names, the app). */
   treatmentSources: Map<string, TreatmentSource>;
-  /** The app's certain categories: this company's, and the holders' for the payments routed here (this company's win). */
+  /** The app's certain categories of this company. */
   appCategories: Map<string, SpendingCategory>;
+  /** The holders' certain categories, by holder: they apply only to the payments routed here from that holder. */
+  holderAppCategories: Map<string, Map<string, SpendingCategory>>;
   /** The workspaces of the companies whose accounts route payments here (their category and "no receipt" answers apply to those payments). */
   holders: string[];
   /** This company's receipts paid on other companies' payments (routed here or moved back), by receipt: see `loadPayments`. */
@@ -110,14 +112,14 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
     byHolder.set(s.authWorkspaceId, (byHolder.get(s.authWorkspaceId) ?? new Set()).add(s.accountId));
   }
   const routedIn: RoutedPaymentRow[] = [];
-  const appCategories = new Map(own.appCategories);
+  const holderAppCategories = new Map<string, Map<string, SpendingCategory>>();
   for (const [holder, accountIds] of byHolder) {
     const loaded = await loadPayments(db, holder);
     for (const a of loaded.accounts) {
       if (accountIds.has(a.id)) accounts.push({ id: a.id, label: a.label, completeThrough: a.completeThrough, sharedFrom: holder });
     }
     for (const p of loaded.payments) if (routesToReceiver(p, loaded.treatments, accountIds)) routedIn.push({ ...p, routedFrom: holder });
-    for (const [key, category] of loaded.appCategories) if (!appCategories.has(key)) appCategories.set(key, category);
+    holderAppCategories.set(holder, loaded.appCategories);
   }
   // This company's own links on other companies' payments: live on what is routed here, dormant on the rest.
   // The holder's links are never shown here (there are none: a payment the holder linked stays there).
@@ -151,7 +153,8 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
     payments,
     treatments: own.treatments,
     treatmentSources: own.treatmentSources,
-    appCategories,
+    appCategories: own.appCategories,
+    holderAppCategories,
     holders: [...byHolder.keys()],
     linkedElsewhere: own.linkedElsewhere,
     dormantLinks,

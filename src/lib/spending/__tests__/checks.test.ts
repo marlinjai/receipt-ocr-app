@@ -14,7 +14,7 @@ const db = {} as never;
 const ctx = { workspaceId: 'ws', tenantId: 't' };
 const LOOP = { notified: 1, deferred: 0, settled: 0, settledOwnName: 0, retried: 0, open: 1 };
 const BUDGETS = { sent: 1, deferred: 0, settled: 0 };
-const CLASSIFY = { pending: 2, byEvidence: 1, byModel: 1, applied: 2, unavailable: false, failedBatches: 0 };
+const CLASSIFY = { pending: 2, byEvidence: 1, byModel: 1, applied: 2, unavailable: false, failedBatches: 0, unanswered: 0, removed: 0, stoppedEarly: false };
 
 beforeEach(() => {
   runReceiptLoop.mockReset().mockResolvedValue(LOOP);
@@ -41,9 +41,9 @@ describe('runSpendingChecks', () => {
   it('a classifier given by the caller is used, also none at all', async () => {
     const port = { model: 'fake', classify: vi.fn() };
     await runSpendingChecks(db, ctx, { today: '2026-03-05', classifier: port });
-    expect(classifyCounterparties).toHaveBeenLastCalledWith(db, ctx, port);
-    await runSpendingChecks(db, ctx, { today: '2026-03-05', classifier: null });
-    expect(classifyCounterparties).toHaveBeenLastCalledWith(db, ctx, null);
+    expect(classifyCounterparties).toHaveBeenLastCalledWith(db, ctx, port, { limit: undefined });
+    await runSpendingChecks(db, ctx, { today: '2026-03-05', classifier: null, classifyLimit: 20 });
+    expect(classifyCounterparties).toHaveBeenLastCalledWith(db, ctx, null, { limit: 20 });
   });
 
   it('still warns about budgets when the loop fails, and says the loop failed', async () => {

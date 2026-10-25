@@ -32,13 +32,13 @@ const LINES = [
 ];
 
 /** The fake model: answers from a table, records every batch, or fails when told to. */
-function fakeModel(answers: Record<string, DecidedVerdict>, options: { fail?: boolean } = {}) {
+function fakeModel(answers: Record<string, DecidedVerdict>, options: { fail?: boolean; failFor?: string } = {}) {
   const asked: string[][] = [];
   const port: CounterpartyClassifierPort = {
     model: 'fake-model',
     async classify(counterparties: readonly ModelCounterparty[]) {
       asked.push(counterparties.map((c) => c.name));
-      if (options.fail) throw new Error('the model is down');
+      if (options.fail || counterparties.some((c) => c.name === options.failFor)) throw new Error('the model is down');
       return new Map(counterparties.flatMap((c) => (answers[c.name] ? [[c.key, answers[c.name]] as const] : [])));
     },
   };
@@ -77,9 +77,10 @@ describe('the app classifies counterparties: forward', () => {
     const { ctx } = await setup();
     const model = fakeModel(ANSWERS);
     const run = await classifyCounterparties(db, ctx, model.port);
-    // One batch, largest sums first; neither the rent (own data) nor the own name went to the model.
-    expect(model.asked).toEqual([['Laden Beispiel', 'Werkzeug Abo Beispiel GmbH']]);
-    expect(run).toEqual({ pending: 3, byEvidence: 1, byModel: 2, applied: 2, unavailable: false, failedBatches: 0 });
+    // One batch, asked in two calls: the business-looking name (with search) and the other (without).
+    // Neither the rent (own data) nor the own name went to the model.
+    expect(model.asked).toEqual([['Werkzeug Abo Beispiel GmbH'], ['Laden Beispiel']]);
+    expect(run).toEqual({ pending: 3, byEvidence: 1, byModel: 2, applied: 2, unavailable: false, failedBatches: 0, unanswered: 0, removed: 0, stoppedEarly: false });
 
     const view = await paymentsView(ctx.workspaceId);
     expect(await appList(ctx.workspaceId)).toEqual([
@@ -105,7 +106,7 @@ describe('the app classifies counterparties: forward', () => {
 
   it('without a model only the own data decides, and the run says so', async () => {
     const { ctx } = await setup();
-    expect(await classifyCounterparties(db, ctx, null)).toEqual({ pending: 3, byEvidence: 1, byModel: 0, applied: 1, unavailable: true, failedBatches: 0 });
+    expect(await classifyCounterparties(db, ctx, null)).toEqual({ pending: 3, byEvidence: 1, byModel: 0, applied: 1, unavailable: true, failedBatches: 0, unanswered: 0, removed: 0, stoppedEarly: false });
     expect((await paymentsView(ctx.workspaceId)).unclassified.map((c) => [c.label, c.proposal])).toEqual([
       ['Laden Beispiel', null],
       ['Werkzeug Abo Beispiel GmbH', null],
@@ -140,13 +141,13 @@ describe('the app classifies counterparties: change, resume, re-entry', () => {
     expect(await paymentsView(ctx.workspaceId)).toEqual(before);
     // Re-entry: nothing is asked again, also not the unsure or likely ones.
     expect(await classifyCounterparties(db, ctx, model.port)).toMatchObject({ pending: 0, byModel: 0 });
-    expect(model.asked).toHaveLength(1);
+    expect(model.asked).toHaveLength(2);
 
     // New evidence: a private receipt linked to the shop decides it from the company's own data, without the model.
     const shopping = await ws.addReceipt({ Name: 'Einkauf', Vendor: 'Laden Beispiel', Gross: 45, Date: '2026-10-05', Category: 'Bürobedarf', Zuordnung: 'Privat', Currency: 'EUR', 'FX Rate': 1 });
     await linkPayment(db, ctx, { paymentId: ids.get('Laden Beispiel'), rowId: shopping }, receiptForLink(db, ctx.workspaceId));
     expect(await classifyCounterparties(db, ctx, model.port)).toMatchObject({ pending: 1, byEvidence: 1, byModel: 0 });
-    expect(model.asked).toHaveLength(1);
+    expect(model.asked).toHaveLength(2);
     expect((await paymentsView(ctx.workspaceId)).appTreatments.find((t) => t.label === 'Laden Beispiel')).toMatchObject({ treatment: 'private', source: 'app' });
   });
 
@@ -166,10 +167,10 @@ describe('the app classifies counterparties: failures and isolation', () => {
   it('a failing model leaves the counterparties open and stores nothing; the other checks still run', async () => {
     const { ctx } = await setup();
     const model = fakeModel(ANSWERS, { fail: true });
-    expect(await classifyCounterparties(db, ctx, model.port)).toMatchObject({ byEvidence: 1, byModel: 0, failedBatches: 1 });
+    expect(await classifyCounterparties(db, ctx, model.port)).toMatchObject({ byEvidence: 1, byModel: 0, failedBatches: 2 });
     expect(await db.taxCounterpartyVerdict.count({ where: { authWorkspaceId: ctx.workspaceId, source: 'model' } })).toBe(0);
     const checks = await runSpendingChecks(db, ctx, { today: '2026-10-23', channels: [], classifier: model.port });
-    expect(checks.classify).toMatchObject({ failedBatches: 1 });
+    expect(checks.classify).toMatchObject({ failedBatches: 2 });
     expect(checks.loop).not.toBeNull();
     // Asked again on the next run, as nothing was stored.
     await classifyCounterparties(db, ctx, fakeModel(ANSWERS).port);
@@ -200,6 +201,13 @@ describe('the app classifies counterparties: what it must never do on its own', 
     expect(model.asked).toEqual([['Werkzeug Abo Beispiel GmbH']]);
     const kinds = (await loadPayments(db, ctx.workspaceId)).payments.map((p) => [p.reference, p.kind]);
     expect(kinds).toEqual(expect.arrayContaining([['Abo privat', 'private'], ['Abo Firma', 'spend']]));
+    // The spending side and the routing read it the same way: the private-account payment stays private.
+    const spending = await loadSpending(db, ctx.workspaceId, 2026, null);
+    expect(spending.overview.payments.filter((p) => p.counterparty === 'Werkzeug Abo Beispiel GmbH').map((p) => p.purpose).sort()).toEqual(['business', 'private']);
+    const receiverWs = await createWorkspace();
+    const receiver = { workspaceId: receiverWs.workspaceId, tenantId: receiverWs.tenantId };
+    await shareAccount(db, ctx, privateAccount, receiver, 'user-owner');
+    expect((await loadRoutedPayments(db, receiver.workspaceId)).payments.map((p) => p.reference).sort()).toEqual(['Abo privat', 'Einkauf']);
   });
 
   it('the model never makes an own account, nor anything but business of someone who paid money in', async () => {
@@ -239,12 +247,14 @@ describe('the app classifies counterparties: what it must never do on its own', 
 });
 
 describe('the app classifies counterparties: what the model is asked, and how often', () => {
-  it('a counterparty the model left out is stored as unsure and not paid for again', async () => {
-    const { ctx } = await setup();
-    const model = fakeModel({ 'Werkzeug Abo Beispiel GmbH': ANSWERS['Werkzeug Abo Beispiel GmbH'] });
-    await classifyCounterparties(db, ctx, model.port);
-    const view = await paymentsView(ctx.workspaceId);
-    expect(view.unclassified.find((c) => c.label === 'Laden Beispiel')?.proposal).toBeNull();
+  it('a counterparty left out of an otherwise readable answer is stored as unanswered and not paid for again', async () => {
+    const ws = await createWorkspace();
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    const accountId = await createAccount(db, ctx, { label: 'Girokonto', kind: 'bank' });
+    await importPayments(db, ctx, accountId, file(line('2026-10-03', 'Laden Beispiel', 'Einkauf', '-45'), line('2026-10-04', 'Kiosk Beispiel', 'Zeitung', '-3')));
+    const model = fakeModel({ 'Laden Beispiel': ANSWERS['Laden Beispiel'] });
+    expect(await classifyCounterparties(db, ctx, model.port)).toMatchObject({ byModel: 1, unanswered: 1, failedBatches: 0 });
+    expect((await paymentsView(ctx.workspaceId)).unclassified.find((c) => c.label === 'Kiosk Beispiel')?.proposal).toBeNull();
     expect(await classifyCounterparties(db, ctx, model.port)).toMatchObject({ pending: 0 });
     expect(model.asked).toHaveLength(1);
   });
@@ -254,7 +264,7 @@ describe('the app classifies counterparties: what the model is asked, and how of
     const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
     const accountId = await createAccount(db, ctx, { label: 'Girokonto', kind: 'bank' });
     await importPayments(db, ctx, accountId, file(...Array.from({ length: 5 }, (_, i) => line(`2026-10-1${i}`, `Händler ${String.fromCharCode(65 + i)} Beispiel`, 'Kauf', `-${(i + 1) * 10}`))));
-    const model = fakeModel({});
+    const model = fakeModel(Object.fromEntries(['A', 'B', 'C', 'D', 'E'].map((c) => [`Händler ${c} Beispiel`, ANSWERS['Laden Beispiel']])));
     expect(await classifyCounterparties(db, ctx, model.port, { limit: 3, batch: 2 })).toMatchObject({ pending: 5 });
     expect(model.asked).toEqual([['Händler E Beispiel', 'Händler D Beispiel'], ['Händler C Beispiel']]);
     await classifyCounterparties(db, ctx, model.port, { limit: 3, batch: 2 });
@@ -294,5 +304,50 @@ describe('the app classifies counterparties: with the spending side and other co
     expect(routed.payments.map((p) => p.counterparty)).toEqual(['Laden Beispiel']);
     // The business one stays with the holder.
     expect((await loadRoutedPayments(db, holder.workspaceId)).payments.map((p) => p.counterparty)).toContain('Werkzeug Abo Beispiel GmbH');
+  });
+});
+
+describe('the app classifies counterparties: limits and partial failures', () => {
+  it("the company's own data decides every counterparty, beyond the model's limit, also without a model", async () => {
+    const { ctx } = await setup();
+    const model = fakeModel(ANSWERS);
+    expect(await classifyCounterparties(db, ctx, model.port, { limit: 0 })).toMatchObject({ byEvidence: 1, byModel: 0 });
+    expect(model.asked).toEqual([]);
+    expect(await appList(ctx.workspaceId)).toContainEqual(['Vermieter Beispiel', 'business', 'app']);
+  });
+
+  it('one failing call keeps the answer of the other call of the batch', async () => {
+    const { ctx } = await setup();
+    const run = await classifyCounterparties(db, ctx, fakeModel(ANSWERS, { failFor: 'Laden Beispiel' }).port);
+    expect(run).toMatchObject({ byModel: 1, failedBatches: 1 });
+    expect((await paymentsView(ctx.workspaceId)).appTreatments.map((t) => t.label)).toContain('Werkzeug Abo Beispiel GmbH');
+    // The failed one is asked again next time.
+    const retry = fakeModel(ANSWERS);
+    await classifyCounterparties(db, ctx, retry.port);
+    expect(retry.asked).toEqual([['Laden Beispiel']]);
+  });
+
+  it('an answer with nothing readable is a failed call: nothing stored, asked again', async () => {
+    const { ctx } = await setup();
+    const run = await classifyCounterparties(db, ctx, fakeModel({}).port);
+    expect(run).toMatchObject({ byModel: 0, unanswered: 0, failedBatches: 2 });
+    expect(await db.taxCounterpartyVerdict.count({ where: { authWorkspaceId: ctx.workspaceId, source: 'model' } })).toBe(0);
+  });
+
+  it("a payment routed in takes the holder's category; the receiver's own payments of the same name never do", async () => {
+    const { ctx: holder } = await setup();
+    const receiverWs = await createWorkspace();
+    const receiver = { workspaceId: receiverWs.workspaceId, tenantId: receiverWs.tenantId };
+    const own = await createAccount(db, receiver, { label: 'Privatgiro', kind: 'bank' });
+    await importPayments(db, receiver, own, file(line('2026-10-09', 'Laden Beispiel', 'Einkauf eigenes Konto', '-12')));
+    const accountId = (await loadPayments(db, holder.workspaceId)).accounts[0].id;
+    await shareAccount(db, holder, accountId, receiver, 'user-owner');
+    await classifyCounterparties(db, holder, fakeModel({ ...ANSWERS, 'Laden Beispiel': { ...ANSWERS['Laden Beispiel'], confidence: 'certain' } }).port);
+    const spending = await loadSpending(db, receiver.workspaceId, 2026, null);
+    const shop = spending.overview.payments.filter((p) => p.counterparty === 'Laden Beispiel').map((p) => [p.routed, p.category, p.basis]);
+    expect(shop.sort()).toEqual([
+      [false, 'unclear', 'none'],
+      [true, 'shopping_household', 'app'],
+    ]);
   });
 });

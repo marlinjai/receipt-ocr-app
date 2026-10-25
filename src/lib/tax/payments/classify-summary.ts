@@ -10,8 +10,14 @@ export interface ClassifyRunCounts {
   byEvidence: number;
   byModel: number;
   applied: number;
+  /** Asked, but the model gave no usable answer for them: stored as such, not asked again until their evidence changes. */
+  unanswered: number;
+  /** A verdict the receipts made removed because they no longer agree. */
+  removed: number;
   unavailable: boolean;
   failedBatches: number;
+  /** The run stopped starting new calls at its time limit; the rest follows on the next run. */
+  stoppedEarly: boolean;
 }
 
 const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -39,7 +45,8 @@ export function classifySummary(run: ClassifyRunCounts | null): string {
         : 'Die Gegenseiten konnten gerade nicht eingeordnet werden; beim nächsten Prüfen wird es wieder versucht.',
     );
   }
-  const left = run.pending - decided;
+  if (run.unanswered > 0) sentences.push(`Zu ${counted(run.unanswered, 'Gegenseite', 'Gegenseiten')} kam keine verwertbare Antwort; sie bleiben offen.`);
+  const left = run.pending - decided - run.unanswered;
   if (!run.unavailable && run.failedBatches === 0 && left > 0) sentences.push(`${counted(left, 'weitere folgt', 'weitere folgen')} beim nächsten Prüfen.`);
   return sentences.join(' ');
 }

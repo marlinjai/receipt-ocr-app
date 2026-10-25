@@ -326,16 +326,29 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
 
       {shown && <p className="ui-note ui-note-danger" role="alert">{shown}</p>}
 
-      {p.unclassified.length > 0 && (
-        <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Gegenseiten">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Wer ist das? Was die App nicht sicher einordnen konnte</h2>
+      {p.yearCount > 0 && (onClassify || !p.classifierAvailable) && (
+        <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Einordnen durch die App">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm" style={{ color: 'var(--foreground)' }}>
+              Die App ordnet neue Gegenseiten nach jedem Import und jedem Abruf selbst ein.
+            </p>
             {onClassify && (
               <button type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={onClassify}>
                 Jetzt einordnen
               </button>
             )}
           </div>
+          {!p.classifierAvailable && (
+            <p className="ui-note mt-2 text-xs">
+              Auf dem Server ist kein Sprachmodell eingerichtet: die App ordnet nur ein, was zugeordnete Belege eindeutig sagen.
+            </p>
+          )}
+        </section>
+      )}
+
+      {p.unclassified.length > 0 && (
+        <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Gegenseiten">
+          <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Wer ist das? Was die App nicht sicher einordnen konnte</h2>
           <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
             Die App ordnet Gegenseiten selbst ein, wenn sie sicher ist; hier steht nur der Rest, die größten Beträge zuerst.
             Betriebliche Zahlungen brauchen einen Beleg; private werden für den Betrieb nicht weiter beachtet; eigene
@@ -343,11 +356,6 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
             gefragt, betrieblich ist, was du von Hand einem Beleg zuordnest. Die Antwort gilt für alle Zahlungen dieser
             Gegenseite. Eine einzelne Zahlung lässt sich auch ohne Antwort zuordnen: „Zahlungen ansehen“.
           </p>
-          {!p.classifierAvailable && (
-            <p className="ui-note mt-2 text-xs">
-              Auf dem Server ist kein Sprachmodell eingerichtet: die App ordnet nur ein, was zugeordnete Belege eindeutig sagen.
-            </p>
-          )}
           <ul className="mt-3 space-y-2">
             {p.unclassified.map((c) => (
               <li key={c.key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>

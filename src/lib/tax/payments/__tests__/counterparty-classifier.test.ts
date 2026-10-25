@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { ModelCounterparty } from '../classify';
-import { askAnthropic, classifyWithAnthropic, serverCounterpartyClassifier } from '../counterparty-classifier';
+import { answerText, askAnthropic, classifyWithAnthropic, serverCounterpartyClassifier } from '../counterparty-classifier';
 
 /** Every name is invented; no test reaches a real model. */
 const counterparty = (name: string, mayLookUp: boolean): ModelCounterparty => ({
@@ -11,7 +11,6 @@ const counterparty = (name: string, mayLookUp: boolean): ModelCounterparty => ({
   paidEuro: '40.00',
   receivedEuro: '0.00',
   texts: ['Abo'],
-  privateAccount: false,
   linkedReceipts: 'none',
   mayLookUp,
 });
@@ -29,20 +28,32 @@ function fakeClient(...responses: unknown[]) {
 }
 
 describe('asking the model', () => {
-  it('a name that may be a person never goes out with web search: business names and the others are asked apart', async () => {
+  it('web search is given only when every counterparty of the call may be looked up', async () => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
     const business = counterparty('Werkzeug Abo Beispiel GmbH', true);
     const person = counterparty('Max Beispiel', false);
-    const { client, create } = fakeClient(answer([business.key]), answer([person.key]));
-    const verdicts = await classifyWithAnthropic(client, 'test-model', [person, business]);
-    expect([...verdicts.keys()].sort()).toEqual([person.key, business.key].sort());
-    const [withSearch, without] = create.mock.calls.map((call) => (call as unknown[])[0] as { tools?: unknown[]; messages: Array<{ content: string }>; system: string });
-    expect(withSearch.tools).toEqual([{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }]);
-    expect(withSearch.messages[0].content).toContain('Werkzeug Abo Beispiel GmbH');
-    expect(withSearch.messages[0].content).not.toContain('Max Beispiel');
-    expect(without.tools).toBeUndefined();
-    expect(without.system).toMatch(/You have no web search/);
-    expect(without.messages[0].content).toContain('Max Beispiel');
+    const { client, create } = fakeClient(answer([business.key]), answer([person.key]), answer([business.key, person.key]));
+    expect([...(await classifyWithAnthropic(client, 'test-model', [business])).keys()]).toEqual([business.key]);
+    await classifyWithAnthropic(client, 'test-model', [person]);
+    await classifyWithAnthropic(client, 'test-model', [business, person]);
+    const requests = create.mock.calls.map((call) => (call as unknown[])[0] as { tools?: unknown[]; system: string });
+    expect(requests[0].tools).toEqual([{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }]);
+    expect(requests[1].tools).toBeUndefined();
+    expect(requests[1].system).toMatch(/You have no web search/);
+    // A mixed group (the service never builds one) gets no search either.
+    expect(requests[2].tools).toBeUndefined();
+  });
+
+  it('reads an answer split into several text blocks around the search results', () => {
+    const json = JSON.stringify({ verdicts: [{ key: 'k', treatment: 'business', category: null, confidence: 'certain', reason: 'r' }] });
+    const content = [
+      { type: 'text', text: 'Ich suche.' },
+      { type: 'server_tool_use', id: 's1', name: 'web_search', input: {} },
+      { type: 'web_search_tool_result', tool_use_id: 's1', content: [] },
+      { type: 'text', text: json.slice(0, 20) },
+      { type: 'text', text: json.slice(20) },
+    ] as unknown as Anthropic.ContentBlock[];
+    expect(answerText(content)).toBe(json);
   });
 
   it('a paused turn is resumed; one that never finishes, a refusal or a cut-off answer is an error, never an empty verdict', async () => {

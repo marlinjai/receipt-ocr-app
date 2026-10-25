@@ -108,7 +108,7 @@ describe('ReceiptChecks', () => {
 
   it('keeps the summary of "Jetzt prüfen" when the page reads the checks afresh', async () => {
     const base = view();
-    checkNow.mockResolvedValue({ ok: true, value: { ...base, lastRun: { classify: { pending: 0, byEvidence: 0, byModel: 0, applied: 0, unavailable: false, failedBatches: 0 }, loop: { notified: 1, settled: 0, settledOwnName: 0, retried: 0, open: 2, deferred: 0, mailbox: { status: 'off', missing: [] } }, budgets: null } } });
+    checkNow.mockResolvedValue({ ok: true, value: { ...base, lastRun: { classify: { pending: 0, byEvidence: 0, byModel: 0, applied: 0, unavailable: false, failedBatches: 0, unanswered: 0, removed: 0, stoppedEarly: false }, loop: { notified: 1, settled: 0, settledOwnName: 0, retried: 0, open: 2, deferred: 0, mailbox: { status: 'off', missing: [] } }, budgets: null } } });
     const { rerender } = render(<ReceiptChecks initial={base} focusPaymentId={null} />);
     await userEvent.setup().click(screen.getByRole('button', { name: 'Jetzt prüfen' }));
     const summary = (await screen.findByText(/Geprüft/)).textContent;
@@ -396,7 +396,7 @@ describe('a mail found in the mailbox', () => {
 
 describe('runSummary', () => {
   /** A run of the app's classifying with nothing to decide: it says nothing. */
-  const NONE = { pending: 0, byEvidence: 0, byModel: 0, applied: 0, unavailable: false, failedBatches: 0 };
+  const NONE = { pending: 0, byEvidence: 0, byModel: 0, applied: 0, unavailable: false, failedBatches: 0, unanswered: 0, removed: 0, stoppedEarly: false };
   it('says what a run did, in singular and plural', () => {
     expect(runSummary({ classify: NONE, loop: { notified: 1, deferred: 0, open: 1, settled: 0, settledOwnName: 0, retried: 0, mailbox: { status: 'off' as const, missing: [] } }, budgets: { sent: 0, deferred: 0, settled: 0 } })).toBe(
       'Geprüft: 1 neue Benachrichtigung, 1 Zahlung wartet auf einen Beleg.',
@@ -411,7 +411,7 @@ describe('runSummary', () => {
     );
   });
   it('names what the app classified first, and says when that part failed', () => {
-    expect(runSummary({ classify: { pending: 30, byEvidence: 2, byModel: 18, applied: 15, unavailable: false, failedBatches: 0 }, loop: null, budgets: null })).toMatch(
+    expect(runSummary({ classify: { pending: 30, byEvidence: 2, byModel: 18, applied: 15, unavailable: false, failedBatches: 0, unanswered: 0, removed: 0, stoppedEarly: false }, loop: null, budgets: null })).toMatch(
       /^Die App hat 20 Gegenseiten eingeordnet, davon 15 sicher; die übrigen sind Vorschläge\. 10 weitere folgen beim nächsten Prüfen\./,
     );
     expect(runSummary({ classify: null, loop: null, budgets: null })).toMatch(/^Die Gegenseiten konnten nicht eingeordnet werden/);

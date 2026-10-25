@@ -35,6 +35,19 @@ const MAX_RETRIES = 1;
 const MAX_RESUMES = 3;
 
 /**
+ * The answer's text: every text block after the last web search result,
+ * joined. With search the final answer often comes in several blocks split
+ * around citations, so the last block alone may be a fragment of the JSON.
+ */
+export function answerText(content: readonly Anthropic.ContentBlock[]): string {
+  const lastTool = content.reduce((last, block, index) => (block.type === 'server_tool_use' || block.type === 'web_search_tool_result' ? index : last), -1);
+  return content
+    .slice(lastTool + 1)
+    .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+    .join('');
+}
+
+/**
  * One call for a group of counterparties. The web search tool is given only
  * when every counterparty of the group may be looked up (`mayLookUp`): a name
  * that may be a private person never reaches a search, whatever the model
@@ -67,20 +80,14 @@ export async function askAnthropic(client: Pick<Anthropic, 'messages'>, model: s
     }
     // What a batch cost, for the log: counts only, never a name.
     console.info('[payments] classified counterparties', { model, counterparties: counterparties.length, webSearch, inputTokens: usage.input, outputTokens: usage.output });
-    const textBlock = response.content.findLast((block) => block.type === 'text');
-    return textBlock && textBlock.type === 'text' ? textBlock.text : '';
+    return answerText(response.content);
   }
   throw new Error('The model did not finish its answer.');
 }
 
-/** Ask about a batch: the names that may be looked up in one call with web search, the others in one without. */
+/** Ask about one group; the caller (`classify-service`) puts names that may be looked up and the others in separate groups. */
 export async function classifyWithAnthropic(client: Pick<Anthropic, 'messages'>, model: string, counterparties: readonly ModelCounterparty[]): Promise<Map<string, DecidedVerdict>> {
-  const out = new Map<string, DecidedVerdict>();
-  const groups = [counterparties.filter((c) => c.mayLookUp), counterparties.filter((c) => !c.mayLookUp)].filter((g) => g.length > 0);
-  for (const group of groups) {
-    for (const [key, verdict] of parseModelVerdicts(await askAnthropic(client, model, group), group.map((c) => c.key))) out.set(key, verdict);
-  }
-  return out;
+  return parseModelVerdicts(await askAnthropic(client, model, counterparties), counterparties.map((c) => c.key));
 }
 
 async function askOpenRouter(counterparties: readonly ModelCounterparty[]): Promise<string> {

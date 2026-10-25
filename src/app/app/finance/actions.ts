@@ -366,7 +366,7 @@ export async function classifyCounterpartiesNow(year: number): Promise<Result<{ 
     const ctx = await writeContext();
     const run = await classifyCounterparties(prisma, ctx, serverCounterpartyClassifier(), { limit: CLASSIFY_NOW_LIMIT });
     // A verdict can move payments of a shared account to the receiving company, like a person's answer: settle that the same way.
-    if (run.byEvidence + run.byModel > 0) settleMovedLater(ctx);
+    if (run.byEvidence + run.byModel + run.removed > 0) settleMovedLater(ctx);
     return {
       ok: true,
       value: {

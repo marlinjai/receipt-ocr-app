@@ -5,7 +5,7 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, membershipLabel, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
-import { runSpendingChecks } from '@/lib/spending/checks';
+import { runSpendingChecks, INTERACTIVE_CLASSIFY_LIMIT } from '@/lib/spending/checks';
 import { settleAcrossShares } from '@/lib/spending/loop-service';
 import { berlinToday } from '@/lib/spending/period';
 import { ShareError, endShare, loadShares, shareAccount, type ShareView } from '@/lib/tax/payments/routing';
@@ -110,7 +110,7 @@ export async function shareAccountWith(accountId: unknown, targetWorkspaceId: un
     after(async () => {
       await settleAcrossShares(prisma, [workspaceId, receiver.workspaceId]);
       try {
-        await runSpendingChecks(prisma, receiver, { today: berlinToday() });
+        await runSpendingChecks(prisma, receiver, { today: berlinToday(), classifyLimit: INTERACTIVE_CLASSIFY_LIMIT });
       } catch (e) {
         console.error('[finance] spending checks after sharing failed', (e as Error)?.name ?? 'error');
       }

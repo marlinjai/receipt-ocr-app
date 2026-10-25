@@ -49,7 +49,7 @@ vi.mock('@/lib/spending/loop-service', () => {
   };
 });
 const runSpendingChecks = vi.fn();
-vi.mock('@/lib/spending/checks', () => ({ runSpendingChecks: (...a: unknown[]) => runSpendingChecks(...a) }));
+vi.mock('@/lib/spending/checks', () => ({ runSpendingChecks: (...a: unknown[]) => runSpendingChecks(...a), INTERACTIVE_CLASSIFY_LIMIT: 20 }));
 vi.mock('@/lib/spending/notify/service', () => {
   class NotifyServiceError extends Error {
     constructor(readonly code: string) {

@@ -7,6 +7,7 @@ import type { StatementItem, StatementView } from '@/lib/tax/service';
 import { incomeTaxView } from '@/lib/tax/income-tax/__tests__/fixtures';
 
 const actions = vi.hoisted(() => ({
+  classifyCounterpartiesNow: vi.fn(),
   acceptPaymentProposals: vi.fn(),
   confirmPaymentLink: vi.fn(),
   markPaymentTransfer: vi.fn(),
@@ -580,6 +581,22 @@ describe('FinanceClient: notices and statement', () => {
     await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
     const row = screen.getByText('Netzwerk Nord GmbH').closest('li') as HTMLElement;
     expect(row.textContent).toContain('gezahlt 29.12.2024, zählt für 2025 (Jahreswechsel)');
+  });
+
+  it('"Jetzt einordnen" says what the app did, and a run that decided nothing because the model failed is shown as an error', async () => {
+    const user = setupUser();
+    const payments = { ...view([]).payments, yearCount: 4 };
+    const initial = view([], { payments });
+    actions.classifyCounterpartiesNow
+      .mockResolvedValueOnce({ ok: true, value: { view: initial, summary: 'Die App hat 3 Gegenseiten eingeordnet, alle sicher.', failed: false } })
+      .mockResolvedValueOnce({ ok: true, value: { view: initial, summary: 'Die Gegenseiten konnten gerade nicht eingeordnet werden; beim nächsten Prüfen wird es wieder versucht.', failed: true } });
+    render(<FinanceClient initial={initial} />);
+    await user.click(screen.getByRole('tab', { name: /Zahlungen/ }));
+    await user.click(screen.getByRole('button', { name: 'Jetzt einordnen' }));
+    expect(await screen.findByText('Die App hat 3 Gegenseiten eingeordnet, alle sicher.')).toBeTruthy();
+    expect(actions.classifyCounterpartiesNow).toHaveBeenCalledWith(2025);
+    await clickWhenEnabled(user, () => screen.getByRole('button', { name: 'Jetzt einordnen' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('konnten gerade nicht eingeordnet werden');
   });
 
   it('shows no turn-of-the-year tab: the ten-day rule decides by itself', () => {

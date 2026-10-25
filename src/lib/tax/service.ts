@@ -796,7 +796,7 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
     today(),
   );
   const overdueIds = new Set(overdue.map((o) => o.invoiceId));
-  const paymentsView = buildPaymentsView(loadedPayments, year, wholeReceipts, invoiceFacts, result.revenue.invoices);
+  const paymentsView = buildPaymentsView(loadedPayments, year, wholeReceipts, invoiceFacts, result.revenue.invoices, classifierProvider() !== null);
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));
 
   const items: StatementItem[] = [];
@@ -1212,6 +1212,7 @@ function buildPaymentsView(
   resolved: ResolvedItem[],
   invoices: InvoiceFact[],
   invoiceResults: Array<{ invoiceId: string; outstandingCents: number }>,
+  classifierAvailable: boolean,
 ): PaymentsView {
   const inYear = loaded.payments.filter((p) => p.bookingDay.startsWith(`${year}-`));
   const accountLabel = new Map(loaded.accounts.map((a) => [a.id, a.label]));
@@ -1490,7 +1491,7 @@ function buildPaymentsView(
     treatments: [...loaded.treatments.entries()]
       .filter(([key]) => loaded.treatmentSources.get(key) === 'person')
       .map(([key, treatment]) => ({ key, label: labelByCounterparty.get(key) ?? key, treatment })),
-    classifierAvailable: classifierProvider() !== null,
+    classifierAvailable,
     // Only counterparties with payments in the year: the app's verdicts of other years stay out of this year's list.
     appTreatments: [...loaded.treatments.entries()].flatMap(([key, treatment]) => {
       const source = loaded.treatmentSources.get(key);

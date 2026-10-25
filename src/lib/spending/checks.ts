@@ -25,7 +25,12 @@ export interface ChecksOptions {
   now?: Date;
   mailbox?: MailboxPort;
   classifier?: CounterpartyClassifierPort | null;
+  /** At most this many counterparties go to the model in this run: a page waiting for the answer asks for few. */
+  classifyLimit?: number;
 }
+
+/** What a page that waits for the checks lets the model decide: one batch, so "Jetzt prüfen" answers within about a minute. */
+export const INTERACTIVE_CLASSIFY_LIMIT = 20;
 
 /**
  * Everything the spending side checks after new payments arrive: the app
@@ -41,7 +46,7 @@ export async function runSpendingChecks(db: PrismaClient, ctx: NotifyContext, op
   let loop: RunResult | null = null;
   let budgets: WarningRun | null = null;
   try {
-    classify = await classifyCounterparties(db, ctx, options.classifier === undefined ? serverCounterpartyClassifier() : options.classifier);
+    classify = await classifyCounterparties(db, ctx, options.classifier === undefined ? serverCounterpartyClassifier() : options.classifier, { limit: options.classifyLimit });
   } catch (e) {
     console.error('[spending] classifying counterparties failed', e);
   }
@@ -86,7 +91,7 @@ export async function runSpendingChecksAfterNewPayments(
     console.error('[spending] the companies receiving private payments could not be read', (e as Error)?.name ?? 'error');
   }
   // A mailbox given is the caller's company's; a receiver looks its own up.
-  const rest = { today: options.today, channels: options.channels, now: options.now, classifier: options.classifier };
+  const rest = { today: options.today, channels: options.channels, now: options.now, classifier: options.classifier, classifyLimit: options.classifyLimit };
   for (const receiver of receivers) {
     if (done.has(receiver.workspaceId)) continue;
     done.add(receiver.workspaceId);

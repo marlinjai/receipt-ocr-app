@@ -100,6 +100,7 @@ export function toOverviewInput(p: PaymentRow | RoutedPaymentRow): OverviewPayme
     linkedCents: p.links.reduce((sum, l) => sum + l.cents, 0),
     byPrivateAccount: p.byPrivateAccount,
     routed: 'routedFrom' in p && p.routedFrom !== null,
+    routedFrom: 'routedFrom' in p ? p.routedFrom : null,
     // Only while the funding rule decides it: a person who said what the debit is has answered it.
     awaitingList: p.byRule && p.funding?.awaitingList ? p.funding.service : null,
   };
@@ -199,7 +200,7 @@ export async function saveOwnNames(db: PrismaClient, ctx: SpendingContext, raw: 
 export async function loadSpending(db: PrismaClient, workspaceId: string, year: number, month: number | null, today = new Date()): Promise<SpendingView> {
   const [loaded, answers, ownNames] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId), loadOwnNames(db, workspaceId)]);
   const { treatments, byName } = await spendingTreatments(db, workspaceId, loaded, ownNames);
-  const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments, byName, answers: await categoryAnswerMap(db, workspaceId, loaded, answers), appCategories: loaded.appCategories }, year, month);
+  const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments, byName, answers: await categoryAnswerMap(db, workspaceId, loaded, answers), appCategories: loaded.appCategories, holderAppCategories: loaded.holderAppCategories }, year, month);
   return {
     overview,
     // The year asked for is always offered, so the year picker shows what the page shows even for a year without payments.

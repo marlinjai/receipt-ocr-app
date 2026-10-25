@@ -86,13 +86,16 @@ export function storedVerdict(row: {
  */
 export function mergeTreatments(
   person: ReadonlyMap<string, CounterpartyTreatmentAnswer>,
-  payments: Iterable<{ counterpartyKey: string; counterparty: string }>,
+  payments: Iterable<{ counterpartyKey: string; counterparty: string; amountCents: number }>,
   ownNames: readonly string[],
   verdicts: Iterable<Verdict>,
 ): { treatments: Map<string, CounterpartyTreatmentAnswer>; sources: Map<string, TreatmentSource> } {
   const treatments = new Map(person);
   const sources = new Map<string, TreatmentSource>([...person.keys()].map((key) => [key, 'person']));
-  const { byName } = treatmentsWithOwnNames(person, payments, ownNames);
+  const list = [...payments];
+  // Who paid money in: the app never makes such a counterparty anything but business on its own, whenever the money came.
+  const paidIn = new Set(list.filter((p) => p.amountCents > 0).map((p) => p.counterpartyKey));
+  const { byName } = treatmentsWithOwnNames(person, list, ownNames);
   for (const key of byName) {
     if (person.has(key)) continue;
     treatments.set(key, 'own_account');
@@ -100,6 +103,7 @@ export function mergeTreatments(
   }
   for (const verdict of verdicts) {
     if (treatments.has(verdict.counterpartyKey) || verdict.treatment === null || !verdictApplies(verdict)) continue;
+    if (verdict.source === 'model' && (verdict.treatment === 'own_account' || (verdict.treatment !== 'business' && paidIn.has(verdict.counterpartyKey)))) continue;
     treatments.set(verdict.counterpartyKey, verdict.treatment);
     sources.set(verdict.counterpartyKey, 'app');
   }

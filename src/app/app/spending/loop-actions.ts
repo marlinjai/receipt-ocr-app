@@ -5,7 +5,7 @@ import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
 import { LoopServiceError, answerNoReceipt, confirmCandidate, loadLoopOverview, withdrawNoReceipt, type LoopOverview } from '@/lib/spending/loop-service';
-import { runSpendingChecks, type ChecksRun } from '@/lib/spending/checks';
+import { runSpendingChecks, type ChecksRun, INTERACTIVE_CLASSIFY_LIMIT } from '@/lib/spending/checks';
 import { NotifyServiceError, devicePushState, forgetDeviceEverywhere, validVapidConfig, getNotifySettings, pushDeviceCount, removePushSubscription, savePushSubscription, type PushContext, listUnreadNotifications, markNotificationRead, saveNotifySettings, type NotificationView, type NotifySettings, type NotifyContext } from '@/lib/spending/notify/service';
 import { berlinToday } from '@/lib/spending/period';
 import { mailboxFor } from '@/lib/spending/mailbox/server';
@@ -100,7 +100,7 @@ export async function getReceiptChecks(): Promise<ChecksResult<ChecksView>> {
 export async function checkNow(): Promise<ChecksResult<ChecksView>> {
   try {
     const ctx = await writeContext();
-    const run = await runSpendingChecks(prisma, ctx, { today: berlinToday() });
+    const run = await runSpendingChecks(prisma, ctx, { today: berlinToday(), classifyLimit: INTERACTIVE_CLASSIFY_LIMIT });
     return { ok: true, value: await view(ctx.workspaceId, true, run) };
   } catch (e) {
     return failure(e);

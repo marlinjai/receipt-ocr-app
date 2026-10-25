@@ -85,12 +85,18 @@ answer per counterparty matters.
    counterparty. This reverses the limit in `src/lib/spending/own-names.ts` ("about spending
    only"): for the income-surplus statement it makes no difference whether money from a mixed
    account to the owner is a private withdrawal or an own transfer, neither is an expense, so the
-   question asked nothing useful. Recorded in the budget-overview plan as well.
+   question asked nothing useful. Recorded in the budget-overview plan as well. This holds for every
+   company in the app: it computes only the income-surplus statement, which a corporation (a UG,
+   a GmbH) does not file, so money to the owner of a corporation never runs through these
+   figures.
 6. **When it runs.** As a third step of `runSpendingChecks` (`src/lib/spending/checks.ts`),
    before the missing-receipt loop so the loop sees the new verdicts, on its own try/catch like
    the other two steps: after a file import, "Jetzt abholen" and the daily bank run. A run
    classifies at most 100 counterparties, largest sums first, so the history is worked down over
-   a few runs and the daily run stays inside its time limit. The payments tab gets "Jetzt
+   a few runs and the daily run stays inside its time limit. A run stops starting new model calls
+   after two minutes; a page waiting for the checks ("Jetzt prüfen") lets the model decide at most
+   one batch. Deciding from the company's own receipts, and removing such a verdict when they
+   disagree, runs over every undecided counterparty, as it costs nothing. The payments tab gets "Jetzt
    einordnen", which runs one batch and returns the view. Without a model key the step says so
    (logged and shown on the tab), it never pretends to have classified.
 7. **Consequences, intended.**

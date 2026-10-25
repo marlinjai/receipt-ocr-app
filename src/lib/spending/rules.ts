@@ -205,8 +205,10 @@ export type SpendingPurpose = 'private' | 'business' | 'unanswered';
 export function purposeOf(payment: { kind: PaymentKind; linkCount?: number; byPrivateAccount?: boolean; routed?: boolean }, treatment: CounterpartyTreatmentAnswer | undefined): SpendingPurpose {
   if (payment.routed) return 'private';
   if (treatment === 'private' || (payment.kind === 'private' && !payment.byPrivateAccount)) return 'private';
-  if (treatment === 'business') return 'business';
+  // Still private by its account: only a person's business answer lifts that, and then the payment is no
+  // longer marked so (`loadPayments`), so a business treatment here is the app's and does not count.
   if (treatment === 'mixed' || payment.byPrivateAccount) return (payment.linkCount ?? 0) > 0 ? 'business' : 'private';
+  if (treatment === 'business') return 'business';
   return 'unanswered';
 }
 

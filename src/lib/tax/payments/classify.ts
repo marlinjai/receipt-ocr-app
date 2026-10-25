@@ -19,8 +19,8 @@ export interface CounterpartyEvidence {
   inCents: number;
   /** Up to three different payment texts, as booked. */
   samples: string[];
-  /** Every payment of it is on an account said to be private as a whole. */
-  onPrivateAccount: boolean;
+  /** How many of its payments are linked to a receipt. */
+  linkedPayments: number;
   /** The receipts its payments are linked to, by how they are allocated, and their categories. */
   receipts: { business: number; private: number; mixed: number; categories: string[] };
 }
@@ -38,9 +38,10 @@ export interface DecidedVerdict {
  * linked or unlinked, its allocation changed), never on every run, and never
  * merely because another payment of the same counterparty arrived.
  */
-export function evidenceFingerprint(evidence: Pick<CounterpartyEvidence, 'receipts' | 'onPrivateAccount'>): string {
+export function evidenceFingerprint(evidence: Pick<CounterpartyEvidence, 'receipts' | 'linkedPayments' | 'inCents'>): string {
   const { business, private: priv, mixed, categories } = evidence.receipts;
-  const text = [business, priv, mixed, [...new Set(categories)].sort().join(','), evidence.onPrivateAccount ? 'p' : ''].join('|');
+  // Money coming in changes what the app may decide alone (`capModelVerdict`): its first arrival is new evidence.
+  const text = [business, priv, mixed, [...new Set(categories)].sort().join(','), evidence.linkedPayments, evidence.inCents > 0 ? 'in' : ''].join('|');
   return createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
@@ -48,8 +49,17 @@ export function evidenceFingerprint(evidence: Pick<CounterpartyEvidence, 'receip
  * The verdict the company's own data gives, without a model: every linked
  * receipt business makes the counterparty business, every one private makes
  * it private. Mixed receipts, or receipts of both kinds, say nothing certain.
+ * It is certain only when at least half of the counterparty's payments are
+ * linked: one business receipt among hundreds of unlinked purchases at a
+ * marketplace is a hint, not a verdict for all of them, and stays a proposal.
  */
 export function evidenceVerdict(evidence: CounterpartyEvidence): DecidedVerdict | null {
+  const verdict = receiptVerdict(evidence);
+  if (!verdict) return null;
+  return evidence.linkedPayments * 2 >= evidence.paymentCount ? verdict : { ...verdict, confidence: 'likely' };
+}
+
+function receiptVerdict(evidence: CounterpartyEvidence): DecidedVerdict | null {
   const { business, private: priv, mixed } = evidence.receipts;
   if (mixed > 0) return null;
   if (business > 0 && priv === 0) {
@@ -71,6 +81,8 @@ const LEGAL_FORMS = /\b(gmbh|ag|ug|kg|ohg|gbr|ev|e v|se|inc|ltd|llc|limited|corp
  */
 export function mayLookUp(label: string): boolean {
   const name = label.toLowerCase();
+  // An e-mail address names a person as often as a business: never looked up.
+  if (name.includes('@')) return false;
   return LEGAL_FORMS.test(name.replace(/\./g, ' ')) || /[a-z0-9-]\.(com|de|io|net|org|ai|app|co|eu|dev)\b/.test(name) || /\b\d{2,}\b/.test(name);
 }
 
@@ -81,6 +93,7 @@ export function mayLookUp(label: string): boolean {
  */
 export function maskText(text: string): string {
   return text
+    .replace(/[^\s@]+@[^\s@]+\.[a-z]{2,}/gi, '[E-Mail]')
     .replace(/\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,4})?\b/gi, '[Konto]')
     .replace(/\d[\d\s./-]{5,}\d/g, '[Nummer]')
     .slice(0, 140);
@@ -94,26 +107,30 @@ export interface ModelCounterparty {
   paidEuro: string;
   receivedEuro: string;
   texts: string[];
-  privateAccount: boolean;
   linkedReceipts: string;
   mayLookUp: boolean;
 }
 
 const euroText = (cents: number) => (cents / 100).toFixed(2);
 
+/**
+ * The counterparty as sent. A name that may be looked up goes to a call with
+ * web search, and its payment texts stay home: they can name other people,
+ * and only the business's name is what a search needs.
+ */
 export function toModelCounterparty(evidence: CounterpartyEvidence): ModelCounterparty {
   const { business, private: priv, mixed, categories } = evidence.receipts;
   const linked = business + priv + mixed;
+  const lookUp = mayLookUp(evidence.label);
   return {
     key: evidence.key,
     name: evidence.label,
     payments: evidence.paymentCount,
     paidEuro: euroText(evidence.outCents),
     receivedEuro: euroText(evidence.inCents),
-    texts: evidence.samples.slice(0, 3).map(maskText),
-    privateAccount: evidence.onPrivateAccount,
+    texts: lookUp ? [] : evidence.samples.slice(0, 3).map(maskText),
     linkedReceipts: linked === 0 ? 'none' : `${business} business, ${priv} private, ${mixed} mixed; categories: ${[...new Set(categories)].join(', ') || 'none'}`,
-    mayLookUp: mayLookUp(evidence.label),
+    mayLookUp: lookUp,
   };
 }
 
@@ -147,9 +164,10 @@ export function cleanReason(raw: unknown): string {
 /**
  * The model's answer read strictly: only known treatments, categories and
  * confidences, only the keys that were asked, each once. Anything else is
- * dropped, so a counterparty with a garbled answer simply stays undecided and
- * is asked again on a later run. A missing reason makes the verdict at most
- * unsure: nothing is applied without saying why.
+ * dropped. The caller decides what a missing entry means (`classify-service`:
+ * an answer with no readable entry at all is a failed call, asked again; a
+ * single entry missing is stored as unanswered). A missing reason makes the
+ * verdict at most unsure: nothing is applied without saying why.
  */
 export function parseModelVerdicts(text: string, askedKeys: readonly string[]): Map<string, DecidedVerdict> {
   const out = new Map<string, DecidedVerdict>();

@@ -82,21 +82,27 @@ The table of groups, tabs and addresses is `src/app/app/finance/tabs.ts`, tested
 Decided while building, say so if you disagree:
 
 1. **The own names got a tab of their own under Einstellungen**, editing the same list as Ausgaben
-   (the editor moved into `src/app/app/spending/OwnNames.tsx`, used by both pages; a change from
+   (the editor moved into `src/app/app/spending/OwnNames.tsx`, used by both pages and unfolded on
+   the tab; a change from
    Finanzen answers with the recomputed statement, since the payments read counts the names).
    Ausgaben keeps its editor.
 2. **The file import sits with the accounts** under Einstellungen: it needs the account picker,
    and the bank connection, its alternative, is there too.
 3. **Counts.** Erledigen carries the sum of what waits (open receipts, overdue invoices, open
    payments and unanswered counterparties, as the old tabs counted them); its two tabs keep their
-   parts, which add up to it. The informational counts (invoices, assets, vendor rules) are gone:
-   they were not work. The estimates to accept are not counted, as before (their payment can be an
-   open payment already).
+   parts, which add up to it. Assets with an open check count on Anlagen and so on Auswerten (only
+   when there are any), so the "Offene Prüfungen" tile is never the only pointer to them. The
+   informational counts (number of invoices, assets, vendor rules) are gone: they were not work.
+   The estimates to accept are not counted, as before (their payment can be an open payment
+   already). A count is read out as "5 offen" by a screen reader.
 4. **Without an address** the page opens on the first work that waits ("Offen", then "Zahlungen
    klären"), else on the statement. "Offen" with nothing left offers "Zahlungen klären" when
    questions wait, and the payment tabs without any payment read in lead to the accounts.
 5. **Tab names.** The questions are "Zahlungen klären" and the list "Zahlungen", so no two tabs
    share a name.
+6. **Messages stay where they were said.** A failure or notice of the last action is cleared when
+   the person opens another tab or group, and a year change also clears the own names' messages
+   and reads the names afresh.
 
 Still open: the phone and wide layout check in the browser on production data (build order step
 3) happens after the deploy; locally the controls were checked in code (group buttons

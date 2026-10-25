@@ -112,7 +112,7 @@ const SHARING_ACTIONS: SharingActions = { shareAccountWith, endAccountShare };
 /** The part of the payments each of their three tabs shows. */
 const PAYMENT_PARTS = { questions: ['questions'], payments: ['list'], accounts: ['accounts'] } as const;
 /** Tabs whose forms show a failure next to what was typed; on every other tab it is shown above the panel. */
-const OWN_ERROR_TABS: readonly TabKey[] = ['open', 'questions', 'accounts', 'vat', 'tax', 'names'];
+const OWN_ERROR_TABS: readonly TabKey[] = ['open', 'questions', 'payments', 'accounts', 'vat', 'tax', 'names'];
 
 export default function FinanceClient({
   initial,
@@ -153,8 +153,20 @@ export default function FinanceClient({
   });
   const [group, setGroup] = useState<GroupKey>(() => groupOf(initialTab ?? defaultTab(waitingCounts(initial, openQueue(initial).length))).key);
   const tab = chosen[group];
+  // What the last action said belongs to the place it was done in: another tab or group starts without it.
+  const showGroup = (next: GroupKey) => {
+    if (next !== group) {
+      setError(null);
+      setNotice(null);
+    }
+    setGroup(next);
+  };
   const setTab = (next: TabKey) => {
     const owner = groupOf(next).key;
+    if (next !== tab) {
+      setError(null);
+      setNotice(null);
+    }
     setChosen((c) => ({ ...c, [owner]: next }));
     setGroup(owner);
   };
@@ -202,6 +214,10 @@ export default function FinanceClient({
     setLastImport(null);
     setError(null);
     setNotice(null);
+    // The names are read afresh with the other year (another page may have changed them); old messages go.
+    setOwnNames(ownNamesInitial);
+    setNamesError(null);
+    setNamesNotice(null);
   }
 
   const queue = useMemo(() => openQueue(view), [view]);
@@ -503,7 +519,7 @@ export default function FinanceClient({
                 id={`${tabsId}-group-${g.key}`}
                 aria-selected={selected}
                 aria-controls={`${tabsId}-group-panel`}
-                onClick={() => setGroup(g.key)}
+                onClick={() => showGroup(g.key)}
                 className="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start"
                 style={{
                   borderColor: selected ? 'rgba(226, 163, 72, 0.55)' : 'var(--border)',
@@ -514,7 +530,9 @@ export default function FinanceClient({
                 {g.label}
                 {count !== undefined && (
                   <span className="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style={{ background: 'rgba(255,255,255,0.07)', color: 'var(--foreground)' }}>
+                    <span className="sr-only">, </span>
                     {count}
+                    <span className="sr-only"> offen</span>
                   </span>
                 )}
               </button>
@@ -531,7 +549,7 @@ export default function FinanceClient({
               type="button"
               id={`${tabsId}-tab-${t.key}`}
               aria-selected={tab === t.key}
-              aria-controls={`${tabsId}-panel-${t.key}`}
+              aria-controls={`${tabsId}-panel`}
               onClick={() => setTab(t.key)}
               className="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11"
               style={{
@@ -542,7 +560,9 @@ export default function FinanceClient({
               {t.label}
               {t.count !== undefined && (
                 <span className="ml-2 rounded-full px-1.5 py-0.5 text-xs tabular-nums" style={{ background: 'rgba(255,255,255,0.07)', color: 'var(--foreground)' }}>
+                  <span className="sr-only">, </span>
                   {t.count}
+                  <span className="sr-only"> offen</span>
                 </span>
               )}
             </button>
@@ -559,7 +579,7 @@ export default function FinanceClient({
           </p>
         )}
 
-        <div role="tabpanel" id={`${tabsId}-panel-${tab}`} aria-labelledby={`${tabsId}-tab-${tab}`} className="mt-4">
+        <div role="tabpanel" id={`${tabsId}-panel`} aria-labelledby={`${tabsId}-tab-${tab}`} className="mt-4">
           {tab === 'open' && overdue.length > 0 && <OverdueInvoices overdue={overdue} onOpenRevenue={() => setTab('revenue')} />}
           {tab === 'open' &&
             (queue.length === 0 ? (
@@ -911,7 +931,7 @@ export default function FinanceClient({
           )}
           {(tab === 'questions' || tab === 'payments' || tab === 'accounts') && (
             <PaymentsTab
-              // A fresh part per tab: a draft or a failure typed in one part does not show up in another.
+              // A fresh part per tab: a draft or a check of a form in one part does not show up in another.
               key={tab}
               parts={PAYMENT_PARTS[tab]}
               view={view}
@@ -1141,7 +1161,7 @@ export default function FinanceClient({
 
           {tab === 'names' &&
             (ownNames ? (
-              <OwnNames names={ownNames.names} canWrite={ownNames.canWrite} pending={pending} error={namesError} notice={namesNotice} onChange={changeNames} />
+              <OwnNames open names={ownNames.names} canWrite={ownNames.canWrite} pending={pending} error={namesError} notice={namesNotice} onChange={changeNames} />
             ) : (
               <p className="ui-note ui-note-danger" role="alert">
                 Die eigenen Namen konnten nicht geladen werden. Bitte die Seite neu laden; sie stehen auch unter{' '}

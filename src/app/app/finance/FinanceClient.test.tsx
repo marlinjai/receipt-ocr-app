@@ -8,6 +8,7 @@ import { incomeTaxView } from '@/lib/tax/income-tax/__tests__/fixtures';
 
 const actions = vi.hoisted(() => ({
   classifyCounterpartiesNow: vi.fn(),
+  treatCounterparty: vi.fn(),
   acceptPaymentProposals: vi.fn(),
   confirmPaymentLink: vi.fn(),
   markPaymentTransfer: vi.fn(),
@@ -428,7 +429,7 @@ describe('FinanceClient: overdue invoices in the open checks (decision D6)', () 
     const panel = screen.getByRole('region', { name: '1 Rechnung überfällig' });
     expect(within(panel).getByText('Rechnung 58 vom 03.08.2026')).toBeTruthy();
     expect(within(panel).getByText(/fällig 17\.08\.2026, 59 Tage überfällig, offen 900,00 €/)).toBeTruthy();
-    expect(screen.getByRole('tab', { name: /Offen/ }).textContent).toBe('Offen2');
+    expect(screen.getByRole('tab', { name: /Offen/ }).textContent).toBe('Offen, 2 offen');
     expect(screen.getByText(/1 Rechnung überfällig,|^1 Rechnung überfällig$/, { selector: 'dd' })).toBeTruthy();
     // The receipt queue is still there below it.
     expect(screen.getByText('Noch 1 Beleg offen.')).toBeTruthy();
@@ -439,7 +440,7 @@ describe('FinanceClient: overdue invoices in the open checks (decision D6)', () 
     const second = { invoiceId: 'inv-59', number: '59', issueDate: '2026-08-10', dueDate: '2026-08-24', openCents: 10_000, daysPastDue: 52 };
     render(<FinanceClient initial={{ ...base, revenue: { ...base.revenue, overdue: [...base.revenue.overdue, second] } }} />);
     expect(screen.getByRole('region', { name: '2 Rechnungen überfällig' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: /Offen/ }).textContent).toBe('Offen2');
+    expect(screen.getByRole('tab', { name: /Offen/ }).textContent).toBe('Offen, 2 offen');
     expect(screen.getByText('2 Rechnungen überfällig', { selector: 'dd' })).toBeTruthy();
   });
 
@@ -974,9 +975,9 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
   it('forward: four groups, each with its own tabs, and the count of Erledigen is all that waits', async () => {
     const user = setupUser();
     render(<FinanceClient initial={busy()} />);
-    expect(groups().map((g) => g.textContent)).toEqual(['Erledigen5', 'Auswerten', 'Steuer', 'Einstellungen']);
+    expect(groups().map((g) => g.textContent)).toEqual(['Erledigen, 5 offen', 'Auswerten', 'Steuer', 'Einstellungen']);
     // The tabs inside Erledigen carry their parts, which add up to the group: 2 receipts, 3 payment questions.
-    expect(within(screen.getByRole('tablist', { name: 'Reiter in Erledigen' })).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Offen2', 'Zahlungen klären3']);
+    expect(within(screen.getByRole('tablist', { name: 'Reiter in Erledigen' })).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Offen, 2 offen', 'Zahlungen klären, 3 offen']);
     const tabsOf = async (group: string) => {
       await user.click(screen.getByRole('tab', { name: new RegExp(`^${group}`) }));
       return within(screen.getByRole('tablist', { name: `Reiter in ${group}` })).getAllByRole('tab').map((t) => t.textContent);
@@ -997,18 +998,18 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
     const user = setupUser();
     const base = view([]);
     render(<FinanceClient initial={{ ...base, payments: { ...base.payments, yearCount: 2, unclassified: [unanswered] } }} />);
-    expect(selected('Bereiche der Finanzübersicht')).toEqual(['Erledigen1']);
-    expect(selected('Reiter in Erledigen')).toEqual(['Zahlungen klären1']);
+    expect(selected('Bereiche der Finanzübersicht')).toEqual(['Erledigen, 1 offen']);
+    expect(selected('Reiter in Erledigen')).toEqual(['Zahlungen klären, 1 offen']);
     await openTab(user, 'Erledigen', /Offen/);
     await user.click(screen.getByRole('button', { name: 'Zahlungen klären' }));
-    expect(selected('Reiter in Erledigen')).toEqual(['Zahlungen klären1']);
+    expect(selected('Reiter in Erledigen')).toEqual(['Zahlungen klären, 1 offen']);
   });
 
   it('with nothing waiting it opens on the statement, and Erledigen counts 0', () => {
     render(<FinanceClient initial={view([])} />);
     expect(selected('Bereiche der Finanzübersicht')).toEqual(['Auswerten']);
     expect(selected('Reiter in Auswerten')).toEqual(['EÜR']);
-    expect(groups()[0].textContent).toBe('Erledigen0');
+    expect(groups()[0].textContent).toBe('Erledigen, 0 offen');
   });
 
   it('backtrack: switching groups and back keeps the tab chosen inside each group', async () => {
@@ -1017,7 +1018,7 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
     await openTab(user, 'Auswerten', 'Anlagen');
     await openTab(user, 'Steuer', 'Einkommensteuer');
     await user.click(screen.getByRole('tab', { name: /^Erledigen/ }));
-    expect(selected('Reiter in Erledigen')).toEqual(['Offen2']);
+    expect(selected('Reiter in Erledigen')).toEqual(['Offen, 2 offen']);
     await user.click(screen.getByRole('tab', { name: /^Auswerten/ }));
     expect(selected('Reiter in Auswerten')).toEqual(['Anlagen']);
     await user.click(screen.getByRole('tab', { name: /^Steuer/ }));
@@ -1051,8 +1052,8 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
     const { tabFromAddress } = await import('./tabs');
     window.history.replaceState(null, '', '/app/finance?reiter=zahlungen');
     render(<FinanceClient initial={busy()} initialTab={tabFromAddress('zahlungen')} />);
-    expect(selected('Bereiche der Finanzübersicht')).toEqual(['Erledigen5']);
-    expect(selected('Reiter in Erledigen')).toEqual(['Zahlungen klären3']);
+    expect(selected('Bereiche der Finanzübersicht')).toEqual(['Erledigen, 5 offen']);
+    expect(selected('Reiter in Erledigen')).toEqual(['Zahlungen klären, 3 offen']);
     // The address now says where the person is, in the new words.
     expect(new URL(window.location.href).searchParams.get('reiter')).toBe('zahlungen-klaeren');
   });
@@ -1091,6 +1092,38 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
     expect(selected('Reiter in Einstellungen')).toEqual(['Konten']);
   });
 
+  it('a failure on the list of payments is shown once, inside the list', async () => {
+    const user = setupUser();
+    const base = view([]);
+    const treatments = [{ key: 'netz beispiel', label: 'Netz Beispiel', treatment: 'business' as const }];
+    render(<FinanceClient initial={{ ...base, payments: { ...base.payments, yearCount: 2, treatments } }} initialTab="payments" />);
+    actions.treatCounterparty.mockResolvedValue({ ok: false, error: 'failed' });
+    await user.click(screen.getByRole('button', { name: 'Antwort zurücknehmen' }));
+    await vi.waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(1));
+    expect(screen.getByRole('alert').textContent).toContain('Das hat nicht geklappt');
+    // Another place starts without it.
+    await openTab(user, 'Auswerten', 'EÜR');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('changing the year keeps the tab chosen in each group and clears what the last action said', async () => {
+    const user = setupUser();
+    ownNameActions.changeOwnNames.mockResolvedValue({ ok: true, value: { names: ['Erika Beispiel'], settledOwnName: 0, view: view([]) } });
+    const { rerender } = render(<FinanceClient initial={busy()} ownNames={{ names: [], canWrite: true }} />);
+    await openTab(user, 'Auswerten', 'Anlagen');
+    await openTab(user, 'Einstellungen', 'Eigene Namen');
+    await user.type(screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt'), 'Erika Beispiel');
+    await user.click(screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
+    expect(await screen.findByText('Erika Beispiel gespeichert.')).toBeTruthy();
+    // The other year arrives as new props, with the names as the server reads them now.
+    rerender(<FinanceClient initial={{ ...busy(), year: 2024 }} ownNames={{ names: ['Erika Beispiel', 'Max Beispiel'], canWrite: true }} />);
+    expect(selected('Reiter in Einstellungen')).toEqual(['Eigene Namen']);
+    expect(screen.queryByText('Erika Beispiel gespeichert.')).toBeNull();
+    expect(screen.getByText('Eigene Namen (2)')).toBeTruthy();
+    await user.click(screen.getByRole('tab', { name: /^Auswerten/ }));
+    expect(selected('Reiter in Auswerten')).toEqual(['Anlagen']);
+  });
+
   it('a link to Ausgaben stands next to the tiles', () => {
     render(<FinanceClient initial={view([])} />);
     expect(screen.getByRole('link', { name: 'Ausgaben' }).getAttribute('href')).toBe('/app/spending');
@@ -1117,7 +1150,6 @@ describe('FinanceClient: the own names under Einstellungen', () => {
     const user = setupUser();
     ownNameActions.changeOwnNames.mockResolvedValueOnce({ ok: false, error: 'invalid_input', detail: 'name_listed' }).mockRejectedValueOnce(new Error('offline'));
     render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ names: ['Erika Beispiel'], canWrite: true }} />);
-    await user.click(screen.getByText('Eigene Namen (1)'));
     await user.type(screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt'), 'Beispiel Erika');
     await user.click(screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
     expect((await screen.findByRole('alert')).textContent).toContain('steht schon in der Liste');
@@ -1130,7 +1162,6 @@ describe('FinanceClient: the own names under Einstellungen', () => {
     const user = setupUser();
     ownNameActions.changeOwnNames.mockResolvedValue({ ok: true, value: { names: [], settledOwnName: 0, view: null } });
     render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ names: ['Erika Beispiel'], canWrite: true }} />);
-    await user.click(screen.getByText('Eigene Namen (1)'));
     await user.click(screen.getByRole('button', { name: 'Erika Beispiel aus den eigenen Namen entfernen' }));
     expect(await screen.findByText(/Erika Beispiel entfernt. Die Übersicht konnte danach nicht neu gerechnet werden/)).toBeTruthy();
   });

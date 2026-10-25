@@ -53,8 +53,9 @@ describe('tabFromAddress', () => {
   });
 });
 
-function counts(over: { queue?: number; overdue?: number; open?: number; unclassified?: number }) {
+function counts(over: { queue?: number; overdue?: number; open?: number; unclassified?: number; assetChecks?: number }) {
   const view = {
+    assets: [{ checks: [] }, ...Array.from({ length: over.assetChecks ?? 0 }, () => ({ checks: [{ kind: 'x' }] }))],
     revenue: { overdue: Array.from({ length: over.overdue ?? 0 }, () => ({})) },
     payments: { open: Array.from({ length: over.open ?? 0 }, () => ({})), unclassified: Array.from({ length: over.unclassified ?? 0 }, () => ({})) },
   } as unknown as StatementView;
@@ -69,6 +70,13 @@ describe('counts and the first tab', () => {
     expect(byGroup).toEqual({ todo: 10, review: undefined, taxes: undefined, settings: undefined });
   });
 
+  it('assets with an open check count on Anlagen and so on Auswerten; without any, Auswerten carries no count', () => {
+    const c = counts({ queue: 1, assetChecks: 2 });
+    expect(c).toEqual({ open: 1, questions: 0, assets: 2 });
+    expect(groupCount(GROUPS.find((g) => g.key === 'review')!, c)).toBe(2);
+    expect(groupCount(GROUPS.find((g) => g.key === 'review')!, counts({ queue: 1 }))).toBeUndefined();
+  });
+
   it('opens on the first work that waits, else on the statement', () => {
     const cases: Array<[Parameters<typeof counts>[0], TabKey]> = [
       [{ queue: 1 }, 'open'],
@@ -76,6 +84,7 @@ describe('counts and the first tab', () => {
       [{ open: 1 }, 'questions'],
       [{ unclassified: 1 }, 'questions'],
       [{}, 'statement'],
+      [{ assetChecks: 3 }, 'statement'],
     ];
     for (const [input, tab] of cases) expect(defaultTab(counts(input))).toBe(tab);
   });

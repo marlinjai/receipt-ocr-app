@@ -119,11 +119,17 @@ export function tabFromAddress(reiter: string | null | undefined, bank = false):
   return undefined;
 }
 
-/** What waits on the tabs that hold work: the items to decide with the overdue invoices, and the payment questions. */
+/**
+ * What waits on the tabs that hold work: the items to decide with the overdue
+ * invoices, the payment questions, and (only when there are any) the assets
+ * with an open check, which are decided on their own tab.
+ */
 export function waitingCounts(view: StatementView, queueLength: number): Partial<Record<TabKey, number>> {
+  const openAssets = view.assets.filter((a) => a.checks.length > 0).length;
   return {
     open: queueLength + view.revenue.overdue.length,
     questions: view.payments.open.length + view.payments.unclassified.length,
+    ...(openAssets > 0 ? { assets: openAssets } : {}),
   };
 }
 

@@ -30,6 +30,7 @@ export default function OwnNames({
   error,
   notice,
   onChange,
+  open = false,
 }: {
   names: readonly string[];
   canWrite: boolean;
@@ -39,6 +40,8 @@ export default function OwnNames({
   notice: string | null;
   /** Add or take out one name; resolves true when the server took it. */
   onChange: (change: { add: string } | { remove: string }) => Promise<boolean>;
+  /** Unfolded from the start: on a tab of its own (Finanzen, Einstellungen) the list is the content, not an aside. */
+  open?: boolean;
 }) {
   const id = useId();
   const [draft, setDraft] = useState('');
@@ -124,7 +127,7 @@ export default function OwnNames({
     );
   }
   return (
-    <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4">
+    <details className="glass-panel ui-disclosure mt-4 rounded-xl p-4" open={open}>
       <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
         Eigene Namen ({names.length})
       </summary>

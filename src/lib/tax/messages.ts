@@ -24,7 +24,7 @@ export const CHECK_LABELS: Record<OpenCheckKind, string> = {
   net_amount_needed: 'Nettobetrag fehlt: nahe an der Grenze für geringwertige Wirtschaftsgüter',
   net_does_not_fit: 'Nettobetrag passt nicht zum Bruttobetrag (größer als dieser oder mit anderem Vorzeichen): bitte im Beleg korrigieren',
   credit_note_payment_out:
-    'Rechnungskorrektur (Gutschrift) mit zugeordneter Ausgabe: bitte unter „Zahlungen klären“ prüfen und die Ausgabe der Rechnung zuordnen, mit der die Gutschrift verrechnet wurde',
+    'Rechnungskorrektur (Gutschrift) mit zugeordneter Ausgabe: bitte unter Auswerten, Zahlungen („Zuordnungen und Regeln“) die Zuordnung prüfen und die Ausgabe unter „Zahlungen klären“ der Rechnung zuordnen, mit der die Gutschrift verrechnet wurde',
   credit_note_on_meal_line:
     'Rechnungskorrektur (Gutschrift) auf der Zeile für Bewirtungen: das Bewirtungsverzeichnis führt keine Gutschriften. Bitte die Bewirtung im Verzeichnis berichtigen und hier eine andere Zeile wählen oder „Privat“',
   credit_note_status_review:

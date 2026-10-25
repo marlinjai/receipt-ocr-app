@@ -474,7 +474,7 @@ function InvoiceForm({
         <legend className="ui-label">Zahlungseingänge</legend>
         {linkedCents > 0 && (
           <p className="text-sm" style={{ color: 'var(--muted)' }}>
-            Dazu {euro(linkedCents)} aus zugeordneten Bankzahlungen; die werden unter „Zahlungen“ geändert.
+            Dazu {euro(linkedCents)} aus zugeordneten Bankzahlungen; die werden unter Auswerten, Zahlungen geändert.
           </p>
         )}
         {payments.length === 0 && linkedCents === 0 && <p className="text-sm" style={{ color: 'var(--muted)' }}>Noch kein Eingang: die Rechnung steht als offen.</p>}

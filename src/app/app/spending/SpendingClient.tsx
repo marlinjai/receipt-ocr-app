@@ -367,8 +367,11 @@ export default function SpendingClient({
           </section>
           {overview.split.unanswered !== 0 && (
             <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
-              „Nicht zugeordnet“ heißt: für die Gegenseite ist noch nicht gesagt, ob sie privat oder geschäftlich ist. Das wird unter Finanzen,
-              Zahlungen einmal pro Gegenseite beantwortet.
+              „Nicht zugeordnet“ heißt: für die Gegenseite ist noch nicht gesagt, ob sie privat oder geschäftlich ist. Das wird unter{' '}
+              <Link href="/app/finance?reiter=zahlungen-klaeren" className="underline">
+                Finanzen, Erledigen, Zahlungen klären
+              </Link>{' '}
+              einmal pro Gegenseite beantwortet.
             </p>
           )}
           {overview.ownTransfers.count > 0 && (

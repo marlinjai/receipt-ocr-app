@@ -33,7 +33,7 @@ const open = (o: Partial<OpenPayment> = {}): OpenPayment => ({
 function view(payments: Partial<PaymentsView> = {}): StatementView {
   return {
     year: 2026,
-    payments: { accounts: [account], yearCount: 3, linkedCount: 1, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [], ...payments },
+    payments: { accounts: [account], yearCount: 3, linkedCount: 1, transferCount: 0, unclassified: [], treatments: [], appTreatments: [], open: [], estimateProposals: [], overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [], ...payments },
   } as StatementView;
 }
 
@@ -137,7 +137,7 @@ describe('PaymentsTab', () => {
   it('asks once per counterparty', async () => {
     const user = setupUser();
     const p = props();
-    render(<PaymentsTab view={view({ unclassified: [{ key: 'vermieter beispiel', label: 'Vermieter Beispiel', count: 2, outCents: 130_000, inCents: 0 }] })} {...p} />);
+    render(<PaymentsTab view={view({ unclassified: [{ key: 'vermieter beispiel', label: 'Vermieter Beispiel', count: 2, outCents: 130_000, inCents: 0, proposal: null }] })} {...p} />);
     const row = screen.getByText('Vermieter Beispiel').closest('li') as HTMLElement;
     expect(row.textContent).toContain('2 Zahlungen · bezahlt 1.300,00 €');
     await user.click(within(row).getByRole('button', { name: 'Privat' }));
@@ -492,10 +492,45 @@ describe('PaymentsTab', () => {
     expect(p.onAccountPrivate).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'acc-1' }), false);
   });
 
+  it("shows the app's proposal with its reason, and taking it over answers the counterparty", async () => {
+    const user = setupUser();
+    const p = { ...props(), onClassify: vi.fn() };
+    const proposal = { treatment: 'private' as const, confidence: 'likely' as const, reason: 'Kleiner Laden, wohl Einkauf für zu Hause' };
+    render(<PaymentsTab view={view({ unclassified: [{ key: 'laden beispiel', label: 'Laden Beispiel', count: 3, outCents: 4_500, inCents: 0, proposal }] })} {...p} />);
+    const row = screen.getByText('Laden Beispiel').closest('li') as HTMLElement;
+    expect(row.textContent).toContain('Vorschlag der App: Privat (wahrscheinlich). Kleiner Laden, wohl Einkauf für zu Hause');
+    await user.click(within(row).getByRole('button', { name: 'Vorschlag übernehmen' }));
+    expect(p.onTreat).toHaveBeenCalledWith('Laden Beispiel', 'private');
+    // The app can be asked right away instead of at the next check.
+    await user.click(screen.getByRole('button', { name: 'Jetzt einordnen' }));
+    expect(p.onClassify).toHaveBeenCalled();
+  });
+
+  it('lists what the app decided with its reason, and a click on another answer replaces it', async () => {
+    const user = setupUser();
+    const p = props();
+    const appTreatments = [
+      { key: 'werkzeug abo beispiel', label: 'Werkzeug Abo Beispiel', treatment: 'business' as const, source: 'app' as const, reason: 'Software-Abo für die Arbeit' },
+      { key: 'max beispiel', label: 'Max Beispiel', treatment: 'own_account' as const, source: 'own_name' as const, reason: 'Eigener Name: Geld zwischen deinen eigenen Konten' },
+    ];
+    render(<PaymentsTab view={view({ appTreatments })} {...p} />);
+    expect(screen.getByText('Von der App eingeordnet (2)')).toBeTruthy();
+    const row = screen.getByText(/Werkzeug Abo Beispiel: Betrieblich/).closest('li') as HTMLElement;
+    expect(row.textContent).toContain('Software-Abo für die Arbeit');
+    // The answer that counts now is pressed and not offered again.
+    const current = within(row).getByRole('button', { name: 'Betrieblich' });
+    expect(current.getAttribute('aria-pressed')).toBe('true');
+    expect((current as HTMLButtonElement).disabled).toBe(true);
+    await user.click(within(row).getByRole('button', { name: 'Teils, teils' }));
+    expect(p.onTreat).toHaveBeenCalledWith('Werkzeug Abo Beispiel', 'mixed');
+    // Without the handler (a screen without it) there is no button to classify now.
+    expect(screen.queryByRole('button', { name: 'Jetzt einordnen' })).toBeNull();
+  });
+
   it('a counterparty can be answered as mixed', async () => {
     const user = setupUser();
     const p = props();
-    render(<PaymentsTab view={view({ unclassified: [{ key: 'versand beispiel', label: 'Versand Beispiel', count: 4, outCents: 20_000, inCents: 0 }] })} {...p} />);
+    render(<PaymentsTab view={view({ unclassified: [{ key: 'versand beispiel', label: 'Versand Beispiel', count: 4, outCents: 20_000, inCents: 0, proposal: null }] })} {...p} />);
     await user.click(screen.getByRole('button', { name: 'Teils, teils' }));
     expect(p.onTreat).toHaveBeenCalledWith('Versand Beispiel', 'mixed');
   });
@@ -503,7 +538,7 @@ describe('PaymentsTab', () => {
   it('one payment of an unanswered counterparty is linked by hand without answering for the others, and the list follows the statement', async () => {
     const user = setupUser();
     const p = props();
-    const unclassified = [{ key: 'versand beispiel', label: 'Versand Beispiel', count: 2, outCents: 9_998, inCents: 0 }];
+    const unclassified = [{ key: 'versand beispiel', label: 'Versand Beispiel', count: 2, outCents: 9_998, inCents: 0, proposal: null }];
     const receiptTargets = [{ id: 'r-1', label: 'Bürostuhl', day: '2026-02-01', amountCents: 4_999, linkedCents: 0 }];
     p.onSearch.mockResolvedValueOnce({ ok: true, value: { payments: [found(), found({ id: 'f-2', bookingDay: '2026-03-03' })], total: 2 } });
     const first = view({ unclassified, receiptTargets });

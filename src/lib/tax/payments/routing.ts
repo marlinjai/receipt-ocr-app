@@ -4,6 +4,7 @@ import { counterpartyKey, loadPayments, paidByReceipt, PaymentServiceError, type
 import { OVERPAID_TOLERANCE_PERCENT } from './types';
 import { routesToReceiver } from './route';
 import type { SpendingCategory } from '@/lib/spending/categories';
+import type { TreatmentSource } from './verdicts';
 
 /**
  * Payments across companies (plan docs/plans/2026-10-22-payments-across-companies.md).
@@ -61,6 +62,8 @@ export interface RoutedPayments {
   payments: RoutedPaymentRow[];
   /** This company's own counterparty answers (a routed payment is private whatever they say). */
   treatments: Map<string, CounterpartyTreatment>;
+  /** Where each of this company's treatments comes from (a person, the own names, the app). */
+  treatmentSources: Map<string, TreatmentSource>;
   /** The app's certain categories: this company's, and the holders' for the payments routed here (this company's win). */
   appCategories: Map<string, SpendingCategory>;
   /** The workspaces of the companies whose accounts route payments here (their category and "no receipt" answers apply to those payments). */
@@ -147,6 +150,7 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
     accounts,
     payments,
     treatments: own.treatments,
+    treatmentSources: own.treatmentSources,
     appCategories,
     holders: [...byHolder.keys()],
     linkedElsewhere: own.linkedElsewhere,

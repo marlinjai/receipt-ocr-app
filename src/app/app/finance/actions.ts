@@ -6,6 +6,9 @@ import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '
 import { after } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
+import { classifySummary } from '@/lib/tax/payments/classify';
+import { classifyCounterparties } from '@/lib/tax/payments/classify-service';
+import { serverCounterpartyClassifier } from '@/lib/tax/payments/counterparty-classifier';
 import { settleMovedPaymentsLater } from '@/lib/spending/settle-later';
 import { berlinToday } from '@/lib/spending/period';
 import {
@@ -345,6 +348,27 @@ export async function importPaymentFile(year: number, accountId: string, text: s
       }
     });
     return { ok: true, value: { view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)), imported } };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** How many counterparties one click of "Jetzt einordnen" decides at most: two batches, so the answer comes in about a minute. */
+const CLASSIFY_NOW_LIMIT = 40;
+
+/**
+ * Let the app decide counterparties now (plan 2026-10-25-auto-classify-payments,
+ * decision 6) instead of at the next check, and say what it did. The largest
+ * undecided ones go first; what is left follows on the next click or check.
+ */
+export async function classifyCounterpartiesNow(year: number): Promise<Result<{ view: StatementView; summary: string }>> {
+  try {
+    const ctx = await writeContext();
+    const run = await classifyCounterparties(prisma, ctx, serverCounterpartyClassifier(), { limit: CLASSIFY_NOW_LIMIT });
+    return {
+      ok: true,
+      value: { view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)), summary: classifySummary(run) || 'Es gibt gerade nichts einzuordnen.' },
+    };
   } catch (e) {
     return failure(e);
   }

@@ -108,7 +108,7 @@ describe('ReceiptChecks', () => {
 
   it('keeps the summary of "Jetzt prüfen" when the page reads the checks afresh', async () => {
     const base = view();
-    checkNow.mockResolvedValue({ ok: true, value: { ...base, lastRun: { loop: { notified: 1, settled: 0, settledOwnName: 0, retried: 0, open: 2, deferred: 0, mailbox: { status: 'off', missing: [] } }, budgets: null } } });
+    checkNow.mockResolvedValue({ ok: true, value: { ...base, lastRun: { classify: { pending: 0, byEvidence: 0, byModel: 0, applied: 0, unavailable: false, failedBatches: 0 }, loop: { notified: 1, settled: 0, settledOwnName: 0, retried: 0, open: 2, deferred: 0, mailbox: { status: 'off', missing: [] } }, budgets: null } } });
     const { rerender } = render(<ReceiptChecks initial={base} focusPaymentId={null} />);
     await userEvent.setup().click(screen.getByRole('button', { name: 'Jetzt prüfen' }));
     const summary = (await screen.findByText(/Geprüft/)).textContent;

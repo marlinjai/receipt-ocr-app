@@ -24,6 +24,7 @@ import {
   decideItem,
   disposeAsset,
   importPaymentFile,
+  classifyCounterpartiesNow,
   recordStatusChange,
   recordVatSettlement,
   removeAsset,
@@ -846,6 +847,19 @@ export default function FinanceClient({
                 }, `${account.label}: entfernt.`)
               }
               onSearch={(query) => searchPayments(view.year, query)}
+              onClassify={() => {
+                let summary = '';
+                run(
+                  async () => {
+                    const result = await classifyCounterpartiesNow(view.year);
+                    if (!result.ok) return result;
+                    summary = result.value.summary;
+                    return { ok: true, value: result.value.view };
+                  },
+                  'Eingeordnet.',
+                  () => setNotice(summary),
+                );
+              }}
               bank={bankInitial ? { feed: bankFeed, actions: bankActions, returnNotice: bankNotice } : null}
               sharing={
                 sharing ? (

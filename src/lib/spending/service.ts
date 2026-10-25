@@ -141,19 +141,27 @@ export async function loadOwnNames(db: PrismaClient, workspaceId: string): Promi
 }
 
 /**
- * The counterparty answers the spending side reads: the payments tab's, and
- * own accounts by the owner's own names where no answer was given (see
- * `treatmentsWithOwnNames`). The one place the names apply, for the overview,
- * the budgets and the missing-receipt loop alike.
+ * The counterparty answers the spending side reads: what the payments read
+ * decided (a person's answer, the own names, the app's certain verdict), with
+ * the own names applied over a person's "private" as well (see
+ * `treatmentsWithOwnNames`: money to oneself is no spending whatever was
+ * answered). The names are judged against the person's answers only, so
+ * `byName` keeps naming every counterparty that is an own account by a name.
+ * The one place the names apply, for the overview, the budgets and the
+ * missing-receipt loop alike.
  */
 export async function spendingTreatments(
   db: PrismaClient,
   workspaceId: string,
-  loaded: Pick<RoutedPayments, 'payments' | 'treatments'>,
+  loaded: Pick<RoutedPayments, 'payments' | 'treatments' | 'treatmentSources'>,
   names?: readonly string[],
 ): Promise<{ treatments: ReadonlyMap<string, CounterpartyTreatmentAnswer>; byName: ReadonlySet<string> }> {
   const ownNames = names ?? (await loadOwnNames(db, workspaceId));
-  return treatmentsWithOwnNames(loaded.treatments, loaded.payments, ownNames);
+  const answered = new Map([...loaded.treatments].filter(([key]) => loaded.treatmentSources.get(key) === 'person'));
+  const named = treatmentsWithOwnNames(answered, loaded.payments, ownNames);
+  const treatments = new Map(loaded.treatments);
+  for (const key of named.byName) treatments.set(key, 'own_account');
+  return { treatments, byName: named.byName };
 }
 
 /**

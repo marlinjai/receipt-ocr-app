@@ -21,4 +21,4 @@ CREATE TABLE "tax_counterparty_verdicts" (
     CONSTRAINT "tax_counterparty_verdicts_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "tax_counterparty_verdicts_auth_workspace_id_counterparty_key_key" ON "tax_counterparty_verdicts"("auth_workspace_id", "counterparty_key");
+CREATE UNIQUE INDEX "tax_counterparty_verdicts_auth_workspace_id_counterparty_ke_key" ON "tax_counterparty_verdicts"("auth_workspace_id", "counterparty_key");

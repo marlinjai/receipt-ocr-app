@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CLASSIFY_MODEL, getClassifyModel } from '@/lib/ai-client';
 import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
-import { classificationPrompt, classifierProvider, itemPrompt, parseClassificationResponse, parseItemResponse, textForModel, type ClassifyInput } from '../receipt-classifier';
+import { classificationPrompt, classifierProvider, itemPrompt, linesPrompt, parseClassificationResponse, parseItemResponse, parseLinesResponse, textForLines, textForModel, type ClassifyInput } from '../receipt-classifier';
 
 const INPUT: ClassifyInput = {
   vendor: 'Since 2016',
@@ -171,5 +171,53 @@ describe('how many documents the file holds', () => {
   it('is asked for in the prompt', () => {
     expect(classificationPrompt(INPUT, { webSearch: false })).toContain('**documents**');
     expect(classificationPrompt(INPUT, { webSearch: false })).toContain('"documents": 1');
+  });
+});
+
+describe('the lines of the receipt, read in the same call', () => {
+  const answer = (extra: Record<string, unknown>) => JSON.stringify({ category: 'Bewirtung', vendor: 'Café Beispiel', gross: 17.3, confidence: 0.9, reasoning: '', ...extra });
+
+  it('asks for every position with deposit and discounts as their own lines, and names the kinds', () => {
+    const prompt = classificationPrompt(INPUT, { webSearch: false });
+    expect(prompt).toContain('**items**');
+    expect(prompt).toContain('"Pfand"');
+    expect(prompt).toContain('negative "gross"');
+    expect(prompt).toContain('drink_out:');
+    expect(prompt).toContain('"items": [');
+    expect(linesPrompt()).toContain('**items**');
+  });
+
+  it('reads a café bill as drinks and a meal', () => {
+    const result = parseClassificationResponse(
+      answer({ items: [{ text: 'Cappuccino', quantity: 2, unitPrice: 3.9, gross: 7.8, taxRate: 19, kind: 'drink_out' }, { text: 'Croque', quantity: 1, unitPrice: 9.5, gross: 9.5, taxRate: 7, kind: 'meal_out' }] }),
+      INPUT,
+    );
+    expect(result.items?.map((l) => [l.kind, l.grossCents])).toEqual([['drink_out', 780], ['meal_out', 950]]);
+  });
+
+  it('keeps no lines at all when one is malformed, and the rest of the reading stands', () => {
+    const result = parseClassificationResponse(answer({ items: [{ text: 'Cappuccino', gross: 7.8, kind: 'drink_out' }, { text: 'Croque', gross: 'neun', kind: 'meal_out' }] }), INPUT);
+    expect(result.items).toBeNull();
+    expect(result).toMatchObject({ vendor: 'Café Beispiel', gross: 17.3, category: 'Bewirtung' });
+    expect(parseClassificationResponse(answer({}), INPUT).items).toBeNull();
+    expect(parseClassificationResponse(answer({ items: [] }), INPUT).items).toEqual([]);
+    expect(parseClassificationResponse('nothing', INPUT).items).toBeNull();
+  });
+
+  it('the lines-only answer of the backfill is read just as strictly', () => {
+    expect(parseLinesResponse('{ "items": [{ "text": "Brot", "gross": 2.49, "kind": "groceries" }] }')).toEqual([
+      { text: 'Brot', quantity: null, unitPriceCents: null, grossCents: 249, netCents: null, taxRate: null, kind: 'groceries' },
+    ]);
+    expect(parseLinesResponse('{ "items": [{ "text": "Brot", "gross": 2.49 }] }')).toBeNull();
+    expect(parseLinesResponse('{ broken')).toBeNull();
+  });
+
+  it('gives the backfill the whole stored text, and says when a very long one had to be cut', () => {
+    expect(textForLines('kurz')).toEqual({ text: 'kurz', cut: false });
+    const long = `${'a'.repeat(30_000)}SUMME`;
+    const { text, cut } = textForLines(long);
+    expect(cut).toBe(true);
+    expect(text.endsWith('SUMME')).toBe(true);
+    expect(text.length).toBeLessThan(long.length);
   });
 });

@@ -18,7 +18,9 @@ import { listRules } from '@/lib/classification-rules-store';
 import { ReceiptsAuthError } from '@/lib/auth-guards';
 import { serializeTaxLines } from '@/lib/meals/rules';
 import { receiptAttention, type ReceiptAttention } from '@/lib/upload/quality';
-import { ClassifierUnavailableError, classifyReceiptText } from '@/lib/receipt-classifier';
+import { ClassifierUnavailableError, classifyReceiptText, type ReceiptReadingAnswer } from '@/lib/receipt-classifier';
+import { linesFromInvoice } from '@/lib/line-items/einvoice';
+import { replaceReceiptLines, type StoreLinesInput } from '@/lib/line-items/store';
 import type { ReceiptPage } from '@/lib/receipt-page';
 import { loadReceiptSource } from '@/lib/receipt-page-source';
 import { structuredReceiptFields } from '@/lib/einvoice';
@@ -73,7 +75,7 @@ async function classifyReceipt(
   fullText: string,
   page: ReceiptPage | null,
   knownItems: readonly string[],
-): Promise<ModelReading | null> {
+): Promise<ReceiptReadingAnswer | null> {
   try {
     const result = await classifyReceiptText({
       knownItems,
@@ -206,6 +208,8 @@ interface ReadReceipt {
   fullText: string;
   /** Set for an electronic credit note: the number of the invoice it corrects, where the XML names one. */
   creditNote: { referencedInvoiceNumber: string | null } | null;
+  /** The receipt's lines as this reading found them (from the XML of an electronic invoice, else the model); null when it found no usable list. */
+  lines: StoreLinesInput | null;
 }
 
 /**
@@ -267,6 +271,15 @@ async function readReceipt(
   const read = extracted ? settleReading(fullText, extracted, ai) : fromImage ? settleFromPageOnly(fromImage) : null;
   // Where the text was built from the XML, its heading is no vendor: the seller's name is, unless the model named one.
   const settled = read && structured ? withStructuredInvoice(read, structured, { textFromStructure: source?.structured?.source.kind === 'xml', modelVendor: ai?.vendor ?? null }) : read;
+  // The lines: an electronic invoice's from its XML, else the model's, and only from a reading that stands.
+  const invoiceLines = settled && structured ? linesFromInvoice(structured, ai?.items ?? null) : null;
+  const lines: StoreLinesInput | null = !settled
+    ? null
+    : invoiceLines
+      ? { lines: invoiceLines.lines, source: 'einvoice', linesNetCents: invoiceLines.linesNetCents, totalNetCents: invoiceLines.totalNetCents }
+      : ai?.items
+        ? { lines: ai.items, source: 'reading', model: ai.model, usage: ai.usage }
+        : null;
   const reviewFlags: ReadFlag[] = settled?.flags ?? [];
   const date = settled?.date ?? null;
   const vendor = settled?.vendor ?? null;
@@ -372,6 +385,7 @@ async function readReceipt(
     modelFailedOnPage: imageOnly && ai === null,
     creditNote: structured?.creditNote ? { referencedInvoiceNumber: structured.referencedInvoiceNumber } : null,
     fullText,
+    lines,
   };
 }
 
@@ -413,6 +427,15 @@ async function storeReviewFlags(workspaceId: string, tenantId: string | null, ro
     await recordReadFlags(prisma, { workspaceId, tenantId }, rowId, read.reviewFlags, read.gross);
   } catch (err) {
     console.error('[processReceipt] storing the review flags failed:', err);
+  }
+  // The receipt's lines replace the ones of an earlier reading. A reading without a usable list leaves
+  // the lines as they are (the backfill reads a receipt that has none). Counts only, never a line's text.
+  if (read.lines) {
+    try {
+      await replaceReceiptLines(prisma, { workspaceId, tenantId }, rowId, read.lines);
+    } catch (err) {
+      console.error('[processReceipt] storing the lines failed:', err instanceof Error ? err.name : 'error', { count: read.lines.lines.length });
+    }
   }
 }
 

@@ -16,7 +16,7 @@ import { embeddedXmlFiles } from './pdf';
 import { MAX_XML_CHARS } from './xml';
 import { readInvoiceXml, type StructuredInvoice } from './parse';
 
-export type { StructuredInvoice, StructuredTaxGroup } from './parse';
+export type { StructuredAllowanceCharge, StructuredInvoice, StructuredLine, StructuredTaxGroup } from './parse';
 
 export interface StructuredReading {
   /** Where the XML came from: the file itself, or the file embedded in a PDF (its name). */
@@ -47,6 +47,9 @@ export interface StructuredReceiptFields {
   problems: string[];
   /** A plain text of the figures, for the receipt's text column and its search. */
   text: string;
+  /** The invoice's lines and document-level discounts and surcharges, net, positive as stated (`creditNote` says the direction). */
+  lines: StructuredInvoice['lines'];
+  allowanceCharges: StructuredInvoice['allowanceCharges'];
 }
 
 const looksLikeXml = (bytes: Uint8Array) => {
@@ -92,6 +95,10 @@ export function structuredReceiptFields(invoice: StructuredInvoice): StructuredR
     invoice.issueDate ? `Rechnungsdatum: ${invoice.issueDate}` : '',
     invoice.dueDate ? `Fällig: ${invoice.dueDate}` : '',
     ...groups.map((g) => `Steuer ${g.ratePercent} % (${g.category ?? '?'}): netto ${amountText(g.netCents, invoice.currency)}, Steuer ${amountText(g.taxCents, invoice.currency)}`),
+    // The positions, so the receipt's text (and the model reading it) names what was bought.
+    ...(invoice.lines.length > 0 ? ['Positionen:'] : []),
+    ...invoice.lines.map((l) => `${l.quantity !== null ? `${l.quantity} x ` : ''}${l.name ?? 'Position'}: netto ${amountText(l.netCents, invoice.currency)}${l.ratePercent !== null ? ` (${l.ratePercent} %)` : ''}`),
+    ...invoice.allowanceCharges.map((a) => `${a.charge ? 'Zuschlag' : 'Nachlass'}${a.reason ? ` ${a.reason}` : ''}: netto ${amountText(a.netCents, invoice.currency)}`),
     invoice.netCents !== null ? `Netto: ${amountText(invoice.netCents, invoice.currency)}` : '',
     invoice.taxCents !== null ? `Steuer: ${amountText(invoice.taxCents, invoice.currency)}` : '',
     invoice.grossCents !== null ? `Gesamt: ${amountText(invoice.grossCents, invoice.currency)}` : '',
@@ -111,5 +118,7 @@ export function structuredReceiptFields(invoice: StructuredInvoice): StructuredR
     creditNote: (invoice.kind === 'credit_note') !== (invoice.grossCents !== null && invoice.grossCents < 0),
     problems: invoice.problems,
     text: text.join('\n'),
+    lines: invoice.lines,
+    allowanceCharges: invoice.allowanceCharges,
   };
 }

@@ -1,4 +1,5 @@
 import 'server-only';
+import { deleteLinesForRows } from '@/lib/line-items/store';
 import { classifierProvider } from '@/lib/receipt-classifier';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { PAY_LATER_TERM_DAYS } from './payments/pay-later';
@@ -2334,6 +2335,7 @@ export async function deleteDecisionsForRows(db: PrismaClient, rowIds: string[])
   await db.taxReverseCharge.deleteMany({ where: { scope: 'row', subject: { in: rowIds } } });
   await db.taxAssignmentOrigin.deleteMany({ where: { rowId: { in: rowIds } } });
   await db.taxReceiptLine.deleteMany({ where: { rowId: { in: rowIds } } });
+  await deleteLinesForRows(db, rowIds);
   // An asset keeps existing without the receipt; with no receipt left it shows
   // up as "no cost" and asks for one, instead of vanishing with its history.
   await db.taxAssetPart.deleteMany({ where: { rowId: { in: rowIds } } });

@@ -42,6 +42,9 @@ So the picture is wrong before it is ugly. Both are fixed here.
    payments are closed by the next loop run with the reason "eigenes Konto".
    Why a list and not one answer: the bank spells the name three ways, and the private company
    (marlinjai) sees the same name again once accounts are shared.
+   Widened on 2026-10-25 (plan 2026-10-25-auto-classify-payments, decision 5): the own names
+   count under Finanzen, Zahlungen too, because for the income-surplus statement a private
+   withdrawal and an own transfer are the same (neither is an expense).
 2. **A pay-later debit beyond its list waits for the list.** A bank debit to a held pay-later
    service (Klarna) after the end of that service's imported list is "Sammelzahlung, Liste
    folgt": not spending, no receipt asked, and the overview names it ("1 Klarna-Sammelzahlung

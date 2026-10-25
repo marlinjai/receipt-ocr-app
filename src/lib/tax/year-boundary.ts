@@ -77,7 +77,7 @@ export function boundaryDay(cashDay: string | null | undefined): string | null {
   return Number((cashDay as string).slice(0, 4)) < other ? `${other}-01-01` : `${other}-12-31`;
 }
 
-/** A stored answer applies only to the payment day it was given for. */
+/** A stored answer applies only to the payment day it was given for. Exported for its unit tests. */
 export function answerFor(stored: { cashDay: string; belongsToOtherYear: boolean } | undefined, cashDay: string | null): boolean | null {
   if (!stored || cashDay === null || stored.cashDay !== cashDay) return null;
   return stored.belongsToOtherYear;
@@ -134,7 +134,7 @@ export function vatStatusOn(smallBusiness: boolean | null, frequencySet: boolean
 }
 
 export interface BoundaryDecision {
-  /** True: counts in the other year. False: stays. Null: open, nobody and no rule answered. */
+  /** True: counts in the other year. False: stays. Null: nobody and no rule decided; it stays where it was paid. */
   answer: boolean | null;
   source: BoundarySource | null;
   /** Why, in German. */
@@ -159,7 +159,7 @@ function filedYearsOf(cashDay: string, filedOn: ReadonlyMap<number, string>): nu
  * The filed return a person's answer went into: one of the two years of its
  * payment day is filed and the answer was saved up to every such filing day.
  * Null when both years are open or the answer was saved after a filing day
- * (then it is not part of a return).
+ * (then it is not part of a return). Exported for its unit tests.
  */
 export function filedWithOf(cashDay: string, savedOn: string, filedOn: ReadonlyMap<number, string>): number | null {
   const filed = filedYearsOf(cashDay, filedOn);

@@ -10,6 +10,7 @@ import {
   deleteVatSettlement,
   receiptForLink,
   loadStatement,
+  loadYearBoundaryDecisions,
   saveStatusChange,
   saveVatSettings,
   saveVatSettlement,
@@ -96,21 +97,21 @@ const regularWorkspace = async () => {
 };
 
 const expense = async (ws: TestWorkspace, year: number) => (await loadStatement(db, ws.workspaceId, year)).businessExpenseCents;
-const entryOf = async (ws: TestWorkspace, year: number, subjectId: string) => (await loadStatement(db, ws.workspaceId, year)).yearBoundary.find((e) => e.subjectId === subjectId);
+const entryOf = async (ws: TestWorkspace, year: number, subjectId: string) => (await loadYearBoundaryDecisions(db, ws.workspaceId, year)).find((e) => e.subjectId === subjectId);
 
 describe('the ten-day rule: forward', () => {
-  it('lists a payment in the window in both years it touches; confirming it moves it, once', async () => {
+  it('lists a payment in the window in both years it touches; an earlier answer moves it, once', async () => {
     const { ws, ctx } = await workspace();
     const rowId = await ws.addReceipt(rent());
     const outside = await ws.addReceipt(rent({ Name: 'Miete Dezember', Date: '2025-12-01' }));
     for (const year of [2025, 2026]) {
-      const view = await loadStatement(db, ws.workspaceId, year);
+      const decisions = await loadYearBoundaryDecisions(db, ws.workspaceId, year);
       // One rent receipt of this landlord in the year before: a one-off by the data, so it stays by rule.
-      expect(view.yearBoundary.map((e) => [e.subjectId, e.cashDay, e.dayBasis, e.cents, e.otherYear, e.answer, e.source, e.reason, e.storedAnswer])).toEqual([
+      expect(decisions.map((e) => [e.subjectId, e.cashDay, e.dayBasis, e.cents, e.otherYear, e.answer, e.source, e.reason, e.storedAnswer])).toEqual([
         [rowId, '2025-12-29', 'document', 65_000, 2026, false, 'rule', 'einmalige Zahlung', null],
       ]);
     }
-    expect((await loadStatement(db, ws.workspaceId, 2024)).yearBoundary).toEqual([]);
+    expect((await loadYearBoundaryDecisions(db, ws.workspaceId, 2024))).toEqual([]);
     // The rule writes nothing and moves nothing.
     expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([130_000, 0]);
     expect(await db.taxYearBoundaryAnswer.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
@@ -126,7 +127,7 @@ describe('the ten-day rule: forward', () => {
     expect((await loadStatement(db, ws.workspaceId, 2025)).items.find((i) => i.rowId === outside)).toMatchObject({ date: '2025-12-01' });
   });
 
-  it('regular taxation: an advance payment of value-added tax paid in January counts in the old year by rule; a person can override it and take that back', async () => {
+  it('regular taxation: an advance payment of value-added tax paid in January counts in the old year by rule; an earlier answer overrides it, and without it the rule returns', async () => {
     const { ws, ctx } = await workspace();
     await regular(ctx);
     const id = await saveVatSettlement(db, ctx, { date: '2026-01-08', cents: 19_000, direction: 'paid' });
@@ -143,7 +144,7 @@ describe('the ten-day rule: forward', () => {
       { id, date: '2026-01-08', cents: 19_000, direction: 'paid', countsOn: '2025-12-31' },
     ]);
     expect((await loadStatement(db, ws.workspaceId, 2026)).vat.settlements).toEqual([]);
-    expect((await loadStatement(db, ws.workspaceId, 2025)).yearBoundary.filter((e) => e.source === null)).toEqual([]);
+    expect((await loadYearBoundaryDecisions(db, ws.workspaceId, 2025)).filter((e) => e.source === null)).toEqual([]);
 
     // A person says it pays a period of 2026 after all: that overrides the rule.
     await storeAnswer(ctx, { kind: 'vat_settlement', subjectId: id, cashDay: '2026-01-08', belongsToOtherYear: false });
@@ -168,7 +169,7 @@ describe('the ten-day rule: value-added tax by the status on the payment day', (
     const id = await saveVatSettlement(db, ctx, { date: '2026-01-08', cents: 4_200, direction: 'paid' });
     expect(await entryOf(ws, 2026, id)).toMatchObject({ answer: false, source: 'rule', reason: 'Kleinunternehmer: keine regelmäßige Vorauszahlung' });
     expect([await paid(ws, 2025), await paid(ws, 2026)]).toEqual([0, 4_200]);
-    expect((await loadStatement(db, ws.workspaceId, 2026)).yearBoundary.filter((e) => e.source === null)).toEqual([]);
+    expect((await loadYearBoundaryDecisions(db, ws.workspaceId, 2026)).filter((e) => e.source === null)).toEqual([]);
   });
 
   it('unanswered status or advance return period: no rule decides, so the settlement stays in the year it was paid', async () => {
@@ -277,7 +278,7 @@ describe('the ten-day rule: change, resume, re-entry', () => {
     await storeAnswer(ctx, { kind: 'receipt', subjectId: a, cashDay: '2025-12-29', belongsToOtherYear: true });
     await storeAnswer(ctx, { kind: 'receipt', subjectId: b, cashDay: '2026-01-04', belongsToOtherYear: true });
     expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([12_000, 65_000]);
-    expect((await loadStatement(db, ws.workspaceId, 2026)).yearBoundary.map((e) => [e.subjectId, e.answer, e.source])).toEqual([
+    expect((await loadYearBoundaryDecisions(db, ws.workspaceId, 2026)).map((e) => [e.subjectId, e.answer, e.source])).toEqual([
       [a, true, 'person'],
       [b, true, 'person'],
     ]);
@@ -306,15 +307,14 @@ describe('the ten-day rule: what is never moved, and isolation', () => {
     const camera = await ws.addReceipt(rent({ Name: 'Kamera', Vendor: 'Foto Beispiel', Gross: 1500, Category: 'Hardware & IT' }));
     await storeAnswer(ctx, { kind: 'receipt', subjectId: camera, cashDay: '2025-12-29', belongsToOtherYear: true });
     await createAsset(db, ctx, { label: 'Kamera', kind: 'movable', acquisitionDate: '2025-12-29', method: 'linear', usefulLifeMonths: 84, itemIds: [camera] });
-    let view = await loadStatement(db, ws.workspaceId, 2025);
+    const view = await loadStatement(db, ws.workspaceId, 2025);
     // The meal is no entry at all. The earlier answer for the camera has no effect on an
     // asset (it is depreciated from December 2025).
-    expect(view.yearBoundary.map((e) => [e.subjectId, e.answer, e.inactive])).toEqual([[camera, true, 'asset']]);
+    expect((await loadYearBoundaryDecisions(db, ws.workspaceId, 2025)).map((e) => [e.subjectId, e.answer, e.inactive])).toEqual([[camera, true, 'asset']]);
     expect(view.assets[0]).toMatchObject({ counted: true, costCents: 150_000 });
-    expect((await loadStatement(db, ws.workspaceId, 2025)).items.some((i) => i.rowId === mealRow)).toBe(true);
+    expect(view.items.some((i) => i.rowId === mealRow)).toBe(true);
     await storeAnswer(ctx, { kind: 'receipt', subjectId: camera, cashDay: '', belongsToOtherYear: null });
-    view = await loadStatement(db, ws.workspaceId, 2025);
-    expect(view.yearBoundary).toEqual([]);
+    expect(await loadYearBoundaryDecisions(db, ws.workspaceId, 2025)).toEqual([]);
     expect(await db.taxYearBoundaryAnswer.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(0);
   });
 
@@ -342,8 +342,8 @@ describe('the ten-day rule: rules from the payment data', () => {
     // Backtrack: one of the earlier receipts goes; two months are no pattern, so it is a one-off now.
     await ws.adapter.deleteRow(earlier[0]);
     expect(await entryOf(ws, 2025, december)).toMatchObject({ answer: false, source: 'rule', reason: 'einmalige Zahlung' });
-    // The open count of the year stays zero either way.
-    expect((await loadStatement(db, ws.workspaceId, 2025)).yearBoundary.filter((e) => e.source === null)).toEqual([]);
+    // A rule decides either way: nothing is left undecided.
+    expect((await loadYearBoundaryDecisions(db, ws.workspaceId, 2025)).filter((e) => e.source === null)).toEqual([]);
   });
 
   it('payments out that name the vendor count as months too, without any receipt for them', async () => {
@@ -384,7 +384,7 @@ describe('the ten-day rule: filed years', () => {
     expect(filed2025.expense).toBe(65_000);
     expect(filed2025.settlements).toEqual([]);
     expect(open2026.settlements).toEqual([{ id: settlement, date: '2026-01-08', cents: 19_000, direction: 'paid' }]);
-    expect((await loadStatement(db, ws.workspaceId, 2025)).yearBoundary.filter((e) => e.source === null)).toEqual([]);
+    expect((await loadYearBoundaryDecisions(db, ws.workspaceId, 2025)).filter((e) => e.source === null)).toEqual([]);
 
     // Re-entry: the same filing day again changes nothing.
     await saveFiledOn(db, ctx, { year: 2025, filedOn: '2026-10-17' });
@@ -431,8 +431,8 @@ describe('the ten-day rule: filed years', () => {
     expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([65_000, 19_000]);
 
     // Resume: a reload works out the same answers, and nothing but the filing day and the person's answer is stored.
-    const before = (await loadStatement(db, ws.workspaceId, 2025)).yearBoundary;
-    expect((await loadStatement(db, ws.workspaceId, 2025)).yearBoundary).toEqual(before);
+    const before = (await loadYearBoundaryDecisions(db, ws.workspaceId, 2025));
+    expect((await loadYearBoundaryDecisions(db, ws.workspaceId, 2025))).toEqual(before);
     expect(await db.taxYearBoundaryAnswer.count({ where: { authWorkspaceId: ws.workspaceId } })).toBe(1);
 
     await saveFiledOn(db, ctx, { year: 2025, filedOn: null });

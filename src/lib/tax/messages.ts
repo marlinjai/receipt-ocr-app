@@ -107,8 +107,6 @@ export function financeActionMessage(error: string, detail?: string): string {
     case 'not_found':
       return detail === 'rule_not_found'
         ? 'Diese Regel gibt es nicht mehr. Die Ansicht wurde vermutlich in einem anderen Fenster geändert; bitte neu laden.'
-        : detail === 'boundary_subject_not_found'
-          ? 'Diese Zahlung gibt es nicht mehr. Die Ansicht wurde vermutlich in einem anderen Fenster geändert; bitte neu laden.'
         : detail === 'line_not_found'
           ? 'Diese Position gibt es nicht mehr. Die Ansicht wurde vermutlich in einem anderen Fenster geändert; bitte neu laden.'
         : detail === 'asset_not_found'

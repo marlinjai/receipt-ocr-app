@@ -186,7 +186,6 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
     payments: { accounts: [], yearCount: 0, linkedCount: 0, transferCount: 0, unclassified: [], treatments: [], open: [], estimateProposals: [], overridden: [], ruleTransfers: [], ruleTransferCents: 0, reconciliations: [], cancelled: [], receiptTargets: [], invoiceTargets: [], links: [] },
     vendorRules: [],
     reverseChargeVendors: [],
-    yearBoundary: [],
     initialized: true,
     incomeTax: incomeTaxView({ year: 2025 }),
     ...overrides,
@@ -583,27 +582,9 @@ describe('FinanceClient: notices and statement', () => {
     expect(row.textContent).toContain('gezahlt 29.12.2024, zählt für 2025 (Jahreswechsel)');
   });
 
-  it('shows no turn-of-the-year tab: the ten-day rule decides by itself, also with payments in the window', () => {
-    const entry = {
-      kind: 'receipt' as const,
-      subjectId: 'a',
-      label: 'Vermieter Beispiel',
-      cashDay: '2025-12-29',
-      dayBasis: 'payment' as const,
-      cents: 65_000,
-      otherYear: 2026,
-      answer: null,
-      source: null,
-      reason: 'Ohne Lieferant lässt sich nicht erkennen, ob die Zahlung regelmäßig wiederkehrt',
-      storedAnswer: null,
-      filedYear: null,
-      filedWith: null,
-      departsFromFiled: null,
-      inactive: null,
-    };
-    render(<FinanceClient initial={view([], { yearBoundary: [entry] })} />);
+  it('shows no turn-of-the-year tab: the ten-day rule decides by itself', () => {
+    render(<FinanceClient initial={view([])} />);
     expect(screen.queryByRole('tab', { name: /Jahreswechsel/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Regelmäßig wiederkehrend/ })).toBeNull();
   });
 
   it('changing the year navigates, so the server computes the other year', async () => {

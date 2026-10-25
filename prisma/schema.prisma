@@ -571,11 +571,12 @@ model TaxVatSettlement {
 
 // The ten-day rule at the turn of the year (section 11 of the income tax act):
 // a regularly recurring payment made between 22 December and 10 January counts
-// for the year it belongs to, not the year it was paid in. A person answers per
-// payment. `subjectKind` is 'receipt' (`subjectId` is the row id, no foreign
-// key, see meal_guests.row_id) or 'vat_settlement'. `cashDay` is the payment
-// day the answer was given for: when that day changes, the answer no longer
-// applies and the question is asked again.
+// for the year it belongs to, not the year it was paid in. The rules decide
+// (src/lib/tax/year-boundary.ts); this table holds the answers people gave
+// until the year-change list was removed on 2026-10-25, which still apply.
+// `subjectKind` is 'receipt' (`subjectId` is the row id, no foreign key, see
+// meal_guests.row_id) or 'vat_settlement'. `cashDay` is the payment day the
+// answer was given for: when that day changes, the answer no longer applies.
 model TaxYearBoundaryAnswer {
   id                 String   @id @default(uuid())
   authWorkspaceId    String   @map("auth_workspace_id")

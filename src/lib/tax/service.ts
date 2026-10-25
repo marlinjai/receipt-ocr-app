@@ -498,8 +498,6 @@ export interface StatementView {
     /** `date` is the day of the payment; `countsOn` is set when the ten-day rule moved it into this year. */
     settlements: Array<{ id: string; date: string; cents: number; direction: 'paid' | 'refunded'; countsOn?: string }>;
   };
-  /** Payments at the turn of the year and how the ten-day rule treats each, for this year (not shown as a list). */
-  yearBoundary: YearBoundaryEntry[];
   payments: PaymentsView;
   vendorRules: VendorRule[];
   /** The vendors whose purchases are under section 13b, each from its day on. */
@@ -558,6 +556,20 @@ function toStatementItem(
 }
 
 export async function loadStatement(db: PrismaClient, workspaceId: string, year: number): Promise<StatementView> {
+  return (await computeStatement(db, workspaceId, year)).view;
+}
+
+/**
+ * How the ten-day rule decided each payment at the turn of `year` (see
+ * `year-boundary.ts`). The app shows no list of them since 2026-10-25, the
+ * rules decide by themselves; this is the record to check a figure against,
+ * read by the tests. The totals of `loadStatement` use the same decisions.
+ */
+export async function loadYearBoundaryDecisions(db: PrismaClient, workspaceId: string, year: number): Promise<YearBoundaryEntry[]> {
+  return (await computeStatement(db, workspaceId, year)).yearBoundary;
+}
+
+async function computeStatement(db: PrismaClient, workspaceId: string, year: number): Promise<{ view: StatementView; yearBoundary: YearBoundaryEntry[] }> {
   const loadedPayments = await loadPayments(db, workspaceId);
   const [loaded, vendorRules, settings, storedAssets] = await Promise.all([
     loadReceipts(db, workspaceId, undefined, linkedByRow(loadedPayments.payments)),
@@ -581,7 +593,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     storedBoundaryAnswers.map((a) => [`${a.subjectKind}:${a.subjectId}`, { cashDay: a.cashDay, belongsToOtherYear: a.belongsToOtherYear, savedOn: berlinDay(a.updatedAt) }]),
   );
   const filedOn = new Map(filedYears.map((y) => [y.year, y.filedOn as string]));
-  // The ten-day rule for the settlements with the tax office: worked out once, used by the totals and `yearBoundary` alike.
+  // The ten-day rule for the settlements with the tax office: worked out once, used by the totals and the record of decisions alike.
   // Judged by the status of the period the payment can pay (the small-business rule can change from
   // one year to the next): a January payment pays the December or fourth-quarter return of the year
   // before, so the status on its 31 December counts; a December payment pays a period of its own year.
@@ -857,7 +869,49 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
   for (const change of storedChanges) yearOfDay(change.effectiveFrom);
   for (const payment of loadedPayments.payments) yearOfDay(payment.bookingDay);
   const incomeTax = await loadIncomeTax(db, workspaceId, year, { profitCents: result.profitCents, lines: result.lines });
-  return {
+  const yearBoundary: YearBoundaryEntry[] = [
+    ...wholeReceipts.flatMap((r, index): YearBoundaryEntry[] => {
+      const f = facts[index];
+      const cashDay = cashDayOf(f);
+      const boundary = receiptBoundary.get(f.record.rowId);
+      const otherYear = otherYearOf(cashDay);
+      if (!boundary || cashDay === null || otherYear === null || !touchesYear(cashDay, year)) return [];
+      // A meal or an asset without an earlier answer is no entry.
+      if (boundary.inactive !== null && boundary.decision.storedAnswer === null) return [];
+      return [
+        {
+          kind: 'receipt',
+          subjectId: f.record.rowId,
+          label: r.item.vendor || r.item.label,
+          cashDay,
+          dayBasis: f.paid ? 'payment' : 'document',
+          cents: r.item.amountCents,
+          otherYear,
+          ...boundary.decision,
+          inactive: boundary.inactive,
+        },
+      ];
+    }),
+    ...storedSettlements.flatMap((s): YearBoundaryEntry[] => {
+      const otherYear = otherYearOf(s.settledOn);
+      const decision = settlementBoundary.get(s.id);
+      if (otherYear === null || !decision || !touchesYear(s.settledOn, year)) return [];
+      return [
+        {
+          kind: 'vat_settlement',
+          subjectId: s.id,
+          label: s.direction === 'refunded' ? 'Umsatzsteuer: Erstattung vom Finanzamt' : 'Umsatzsteuer: Zahlung an das Finanzamt',
+          cashDay: s.settledOn,
+          dayBasis: 'payment',
+          cents: s.cents,
+          otherYear,
+          ...decision,
+          inactive: null,
+        },
+      ];
+    }),
+  ].sort((a, b) => (a.cashDay < b.cashDay ? -1 : a.cashDay > b.cashDay ? 1 : a.label.localeCompare(b.label, 'de')));
+  const view: StatementView = {
     year,
     years: [...years].sort((a, b) => b - a),
     smallBusiness: settings.smallBusiness,
@@ -956,48 +1010,6 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
         .map((s, index) => ({ ...s, date: storedSettlements[index].settledOn, ...(s.date !== storedSettlements[index].settledOn ? { countsOn: s.date } : {}) }))
         .filter((s) => (s.countsOn ?? s.date).startsWith(`${year}-`)),
     },
-    yearBoundary: [
-      ...wholeReceipts.flatMap((r, index): YearBoundaryEntry[] => {
-        const f = facts[index];
-        const cashDay = cashDayOf(f);
-        const boundary = receiptBoundary.get(f.record.rowId);
-        const otherYear = otherYearOf(cashDay);
-        if (!boundary || cashDay === null || otherYear === null || !touchesYear(cashDay, year)) return [];
-        // A meal or an asset without an earlier answer is no entry.
-        if (boundary.inactive !== null && boundary.decision.storedAnswer === null) return [];
-        return [
-          {
-            kind: 'receipt',
-            subjectId: f.record.rowId,
-            label: r.item.vendor || r.item.label,
-            cashDay,
-            dayBasis: f.paid ? 'payment' : 'document',
-            cents: r.item.amountCents,
-            otherYear,
-            ...boundary.decision,
-            inactive: boundary.inactive,
-          },
-        ];
-      }),
-      ...storedSettlements.flatMap((s): YearBoundaryEntry[] => {
-        const otherYear = otherYearOf(s.settledOn);
-        const decision = settlementBoundary.get(s.id);
-        if (otherYear === null || !decision || !touchesYear(s.settledOn, year)) return [];
-        return [
-          {
-            kind: 'vat_settlement',
-            subjectId: s.id,
-            label: s.direction === 'refunded' ? 'Umsatzsteuer: Erstattung vom Finanzamt' : 'Umsatzsteuer: Zahlung an das Finanzamt',
-            cashDay: s.settledOn,
-            dayBasis: 'payment',
-            cents: s.cents,
-            otherYear,
-            ...decision,
-            inactive: null,
-          },
-        ];
-      }),
-    ].sort((a, b) => (a.cashDay < b.cashDay ? -1 : a.cashDay > b.cashDay ? 1 : a.label.localeCompare(b.label, 'de'))),
     payments: paymentsView,
     assets,
     assetLimits: {
@@ -1018,6 +1030,7 @@ export async function loadStatement(db: PrismaClient, workspaceId: string, year:
     initialized: loaded !== null,
     incomeTax,
   };
+  return { view, yearBoundary };
 }
 
 export interface PaymentProposal {

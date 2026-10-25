@@ -295,7 +295,6 @@ export default function FinanceClient({
     { key: 'assets', label: 'Anlagen', count: view.assets.length },
     { key: 'vat', label: 'Umsatzsteuer' },
     { key: 'tax', label: 'Einkommensteuer' },
-    // Only when the year has a payment in the ten-day window; the count is what is not answered yet.
     { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length + view.reverseChargeVendors.length },
   ];
 

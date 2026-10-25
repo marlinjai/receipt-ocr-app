@@ -32,6 +32,7 @@ const BASIS_LABELS: Record<CategoryBasis, string> = {
   answer: 'von dir zugeordnet',
   kind: 'aus der Zahlungsart',
   keyword: 'aus Name oder Verwendungszweck',
+  app: 'von der App eingeordnet',
   none: 'nicht erkannt',
 };
 

@@ -3,6 +3,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { counterpartyKey, loadPayments, paidByReceipt, PaymentServiceError, type CounterpartyTreatment, type PaymentContext, type PaymentRow, type ReceiptForLink } from './service';
 import { OVERPAID_TOLERANCE_PERCENT } from './types';
 import { routesToReceiver } from './route';
+import type { SpendingCategory } from '@/lib/spending/categories';
 
 /**
  * Payments across companies (plan docs/plans/2026-10-22-payments-across-companies.md).
@@ -60,6 +61,8 @@ export interface RoutedPayments {
   payments: RoutedPaymentRow[];
   /** This company's own counterparty answers (a routed payment is private whatever they say). */
   treatments: Map<string, CounterpartyTreatment>;
+  /** The app's certain categories: this company's, and the holders' for the payments routed here (this company's win). */
+  appCategories: Map<string, SpendingCategory>;
   /** The workspaces of the companies whose accounts route payments here (their category and "no receipt" answers apply to those payments). */
   holders: string[];
   /** This company's receipts paid on other companies' payments (routed here or moved back), by receipt: see `loadPayments`. */
@@ -104,12 +107,14 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
     byHolder.set(s.authWorkspaceId, (byHolder.get(s.authWorkspaceId) ?? new Set()).add(s.accountId));
   }
   const routedIn: RoutedPaymentRow[] = [];
+  const appCategories = new Map(own.appCategories);
   for (const [holder, accountIds] of byHolder) {
     const loaded = await loadPayments(db, holder);
     for (const a of loaded.accounts) {
       if (accountIds.has(a.id)) accounts.push({ id: a.id, label: a.label, completeThrough: a.completeThrough, sharedFrom: holder });
     }
     for (const p of loaded.payments) if (routesToReceiver(p, loaded.treatments, accountIds)) routedIn.push({ ...p, routedFrom: holder });
+    for (const [key, category] of loaded.appCategories) if (!appCategories.has(key)) appCategories.set(key, category);
   }
   // This company's own links on other companies' payments: live on what is routed here, dormant on the rest.
   // The holder's links are never shown here (there are none: a payment the holder linked stays there).
@@ -142,6 +147,7 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
     accounts,
     payments,
     treatments: own.treatments,
+    appCategories,
     holders: [...byHolder.keys()],
     linkedElsewhere: own.linkedElsewhere,
     dormantLinks,

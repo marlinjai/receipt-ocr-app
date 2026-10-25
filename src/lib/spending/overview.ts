@@ -94,6 +94,8 @@ export interface SpendingOverview {
 export interface OverviewContext {
   treatments: ReadonlyMap<string, CounterpartyTreatmentAnswer>;
   answers: ReadonlyMap<string, SpendingCategory>;
+  /** The app's certain categories by counterparty, used where no person and no word rule says one. */
+  appCategories?: ReadonlyMap<string, SpendingCategory>;
   /** Counterparties that are own accounts only by the owner's own names (see `own-names.ts`): named apart in the totals. */
   byName?: ReadonlySet<string>;
 }
@@ -101,7 +103,8 @@ export interface OverviewContext {
 export function classifyPayment(p: OverviewPaymentInput, ctx: OverviewContext): OverviewPayment {
   const treatment = p.counterpartyKey ? ctx.treatments.get(p.counterpartyKey) : undefined;
   const answer = p.counterpartyKey ? ctx.answers.get(p.counterpartyKey) : undefined;
-  const { category, basis } = categorise(p, { treatment, answer });
+  const suggested = p.counterpartyKey ? ctx.appCategories?.get(p.counterpartyKey) : undefined;
+  const { category, basis } = categorise(p, { treatment, answer, suggested });
   // An own account is never spending, even when the file calls the line a purchase. The payments read
   // already turns such payments into own transfers; this is a deliberate second guard, so the overview
   // stays right should that read ever change.

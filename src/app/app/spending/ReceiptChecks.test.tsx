@@ -395,22 +395,30 @@ describe('a mail found in the mailbox', () => {
 });
 
 describe('runSummary', () => {
+  /** A run of the app's classifying with nothing to decide: it says nothing. */
+  const NONE = { pending: 0, byEvidence: 0, byModel: 0, applied: 0, unavailable: false, failedBatches: 0 };
   it('says what a run did, in singular and plural', () => {
-    expect(runSummary({ loop: { notified: 1, deferred: 0, open: 1, settled: 0, settledOwnName: 0, retried: 0, mailbox: { status: 'off' as const, missing: [] } }, budgets: { sent: 0, deferred: 0, settled: 0 } })).toBe(
+    expect(runSummary({ classify: NONE, loop: { notified: 1, deferred: 0, open: 1, settled: 0, settledOwnName: 0, retried: 0, mailbox: { status: 'off' as const, missing: [] } }, budgets: { sent: 0, deferred: 0, settled: 0 } })).toBe(
       'Geprüft: 1 neue Benachrichtigung, 1 Zahlung wartet auf einen Beleg.',
     );
-    expect(runSummary({ loop: { notified: 10, deferred: 2, open: 14, settled: 0, settledOwnName: 0, retried: 0, mailbox: { status: 'ok' as const, searched: 3, found: 1 } }, budgets: { sent: 2, deferred: 1, settled: 0 } })).toBe(
+    expect(runSummary({ classify: NONE, loop: { notified: 10, deferred: 2, open: 14, settled: 0, settledOwnName: 0, retried: 0, mailbox: { status: 'ok' as const, searched: 3, found: 1 } }, budgets: { sent: 2, deferred: 1, settled: 0 } })).toBe(
       'Geprüft: 10 neue Benachrichtigungen, 14 Zahlungen warten auf einen Beleg, 2 weitere folgen beim nächsten Prüfen. Im Postfach 1 Rechnung gefunden. 2 neue Budgetwarnungen, 1 weitere folgt beim nächsten Prüfen.',
     );
   });
   it('names the messages settled because the money went to one of the own names', () => {
-    expect(runSummary({ loop: { notified: 0, deferred: 0, open: 0, settled: 3, settledOwnName: 2, retried: 0, mailbox: { status: 'off' as const, missing: [] } }, budgets: null })).toMatch(
+    expect(runSummary({ classify: NONE, loop: { notified: 0, deferred: 0, open: 0, settled: 3, settledOwnName: 2, retried: 0, mailbox: { status: 'off' as const, missing: [] } }, budgets: null })).toMatch(
       /2 Benachrichtigungen erledigt: eigenes Konto/,
     );
   });
+  it('names what the app classified first, and says when that part failed', () => {
+    expect(runSummary({ classify: { pending: 30, byEvidence: 2, byModel: 18, applied: 15, unavailable: false, failedBatches: 0 }, loop: null, budgets: null })).toMatch(
+      /^Die App hat 20 Gegenseiten eingeordnet, davon 15 sicher; die übrigen sind Vorschläge\. 10 weitere folgen beim nächsten Prüfen\./,
+    );
+    expect(runSummary({ classify: null, loop: null, budgets: null })).toMatch(/^Die Gegenseiten konnten nicht eingeordnet werden/);
+  });
   it('says which part could not be checked', () => {
-    expect(runSummary({ loop: null, budgets: { sent: 1, deferred: 0, settled: 0 } })).toBe('Die Belege konnten nicht geprüft werden; bitte gleich noch einmal versuchen. 1 neue Budgetwarnung.');
-    const failed = runSummary({ loop: { notified: 0, deferred: 0, open: 0, settled: 0, settledOwnName: 0, retried: 0, mailbox: { status: 'error' as const, code: 'auth_failed' as const, searched: 1, found: 0 } }, budgets: null });
+    expect(runSummary({ classify: NONE, loop: null, budgets: { sent: 1, deferred: 0, settled: 0 } })).toBe('Die Belege konnten nicht geprüft werden; bitte gleich noch einmal versuchen. 1 neue Budgetwarnung.');
+    const failed = runSummary({ classify: NONE, loop: { notified: 0, deferred: 0, open: 0, settled: 0, settledOwnName: 0, retried: 0, mailbox: { status: 'error' as const, code: 'auth_failed' as const, searched: 1, found: 0 } }, budgets: null });
     expect(failed).toMatch(/Die Budgets konnten nicht geprüft werden/);
     expect(failed).toMatch(/Zugang zum Ausgaben-Postfach ist abgelaufen/);
   });

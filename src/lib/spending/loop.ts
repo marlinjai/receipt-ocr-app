@@ -87,6 +87,8 @@ export interface MailCandidateView {
 export interface LoopContext {
   treatments: ReadonlyMap<string, CounterpartyTreatmentAnswer>;
   categoryAnswers: ReadonlyMap<string, SpendingCategory>;
+  /** The app's certain categories by counterparty (a cash, loan or person category asks for no receipt either). */
+  appCategories?: ReadonlyMap<string, SpendingCategory>;
   /** "No receipt exists" answers by payment id, with the reason. */
   noReceipt: ReadonlyMap<string, string>;
   /** Of those, the ones said in the company that holds the account (a payment routed here). */
@@ -107,7 +109,7 @@ export const ESTIMATE_TOLERANCE_PERCENT = 8;
 const dayNumber = (day: string) => Math.round(Date.parse(`${day}T00:00:00Z`) / 86_400_000);
 
 /** Step 1: why a payment needs no receipt, or null when it needs one. */
-export function notNeededReason(payment: LoopPayment, ctx: Pick<LoopContext, 'treatments' | 'categoryAnswers'>): NotNeededReason | null {
+export function notNeededReason(payment: LoopPayment, ctx: Pick<LoopContext, 'treatments' | 'categoryAnswers' | 'appCategories'>): NotNeededReason | null {
   const treatment = payment.counterpartyKey ? ctx.treatments.get(payment.counterpartyKey) : undefined;
   if (treatment === 'own_account' || payment.kind === 'own_transfer') return 'own_transfer';
   if (payment.kind === 'income') return 'income';
@@ -115,7 +117,8 @@ export function notNeededReason(payment: LoopPayment, ctx: Pick<LoopContext, 'tr
   if (payment.kind === 'refund' || payment.amountCents >= 0) return 'refund';
   if (payment.kind === 'fee') return 'fee';
   const answer = payment.counterpartyKey ? ctx.categoryAnswers.get(payment.counterpartyKey) : undefined;
-  const { category } = categorise(payment, { treatment, answer });
+  const suggested = payment.counterpartyKey ? ctx.appCategories?.get(payment.counterpartyKey) : undefined;
+  const { category } = categorise(payment, { treatment, answer, suggested });
   if (category === 'fees_interest') return 'fee';
   if (category === 'loans_leasing_credit') return 'loan';
   if (category === 'cash') return 'cash';

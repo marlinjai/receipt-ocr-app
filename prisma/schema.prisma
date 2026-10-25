@@ -793,6 +793,33 @@ model TaxCounterpartyRule {
   @@map("tax_counterparty_rules")
 }
 
+// What the APP decided about a counterparty (plan 2026-10-25-auto-classify-payments):
+// `treatment` one of the payments tab's answers (business, private, own_account, mixed),
+// `category` one of the twelve spending categories, `confidence` certain, likely or unsure
+// (only certain counts; the others are proposals), `reason` in German, `source` evidence
+// (decided from the company's own data) or model. `fingerprint` is the evidence the verdict
+// was made on: when it changes, the counterparty is decided again. A person's answer
+// (tax_counterparty_rules, spending_category_answers) always wins and is never written here.
+model TaxCounterpartyVerdict {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  counterpartyKey String   @map("counterparty_key")
+  label           String
+  treatment       String?
+  category        String?
+  confidence      String
+  reason          String
+  source          String
+  model           String?
+  fingerprint     String
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([authWorkspaceId, counterpartyKey])
+  @@map("tax_counterparty_verdicts")
+}
+
 // A payment (or part of it) that belongs to a receipt row or to an issued
 // invoice; exactly one of `rowId` and `invoiceId` is set. `cents` is positive.
 // `method` says how the link came about: 'reference' (the document's number is

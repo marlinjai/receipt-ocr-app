@@ -9,6 +9,8 @@ import { scaleLinks } from './estimate';
 import { parsePaymentFile, referenceHash } from './parse';
 import { amountQuery } from './search';
 import { OVERPAID_TOLERANCE_PERCENT, PAYMENT_KINDS, type NormalizedPayment, type ParseOptions, type PaymentFormat, type PaymentKind } from './types';
+import { appCategories, mergeTreatments, storedVerdict, type TreatmentSource, type Verdict } from './verdicts';
+import type { SpendingCategory } from '@/lib/spending/categories';
 
 /**
  * Server-side reads and writes for payments. Like the other finance services,
@@ -880,7 +882,18 @@ export interface LoadedPayments {
    * brings both back) but count for no receipt.
    */
   cancelled: Array<{ id: string; accountId: string; bookingDay: string; amountCents: number; counterparty: string; rowIds: string[] }>;
+  /**
+   * What counts per counterparty: a person's answer, else the owner's own
+   * names, else the app's certain verdict (`verdicts.ts`, `mergeTreatments`).
+   * Every read of the payments goes through this one map.
+   */
   treatments: Map<string, CounterpartyTreatment>;
+  /** Where each entry of `treatments` comes from. */
+  treatmentSources: Map<string, TreatmentSource>;
+  /** Every verdict of the app, also the likely and unsure ones that only propose. */
+  verdicts: Map<string, Verdict>;
+  /** The app's certain categories, for the spending side. */
+  appCategories: Map<string, SpendingCategory>;
   /**
    * What this company's receipts are paid by on payments of ANOTHER company
    * (an account whose private payments are shared with this one, plan
@@ -900,7 +913,7 @@ export interface LoadedPayments {
  * through them.
  */
 export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, workspaceId: string): Promise<LoadedPayments> {
-  const [accounts, stored, rules, elsewhere] = await Promise.all([
+  const [accounts, stored, rules, elsewhere, settings, verdictRows] = await Promise.all([
     db.taxAccount.findMany({ where: { authWorkspaceId: workspaceId }, include: { batches: { orderBy: { createdAt: 'desc' } } }, orderBy: { label: 'asc' } }),
     db.taxPayment.findMany({ where: { authWorkspaceId: workspaceId }, include: { links: { where: { authWorkspaceId: workspaceId } } }, orderBy: [{ bookingDay: 'asc' }, { createdAt: 'asc' }] }),
     db.taxCounterpartyRule.findMany({ where: { authWorkspaceId: workspaceId } }),
@@ -908,14 +921,21 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
       where: { authWorkspaceId: workspaceId, rowId: { not: null }, payment: { authWorkspaceId: { not: workspaceId }, cancelledByBatchId: null } },
       select: { rowId: true, cents: true, payment: { select: { amountCents: true } } },
     }),
+    db.spendingSettings.findUnique({ where: { authWorkspaceId: workspaceId }, select: { ownNames: true } }),
+    db.taxCounterpartyVerdict.findMany({ where: { authWorkspaceId: workspaceId } }),
   ]);
   const linkedElsewhere = new Map<string, number>();
   for (const l of elsewhere) linkedElsewhere.set(l.rowId as string, (linkedElsewhere.get(l.rowId as string) ?? 0) + (l.payment.amountCents < 0 ? l.cents : -l.cents));
-  const treatments = new Map<string, CounterpartyTreatment>();
+  const answered = new Map<string, CounterpartyTreatment>();
   for (const rule of rules) {
-    if ((COUNTERPARTY_TREATMENTS as readonly string[]).includes(rule.treatment)) treatments.set(rule.counterpartyKey, rule.treatment as CounterpartyTreatment);
+    if ((COUNTERPARTY_TREATMENTS as readonly string[]).includes(rule.treatment)) answered.set(rule.counterpartyKey, rule.treatment as CounterpartyTreatment);
   }
   const payments = stored.filter((p) => p.cancelledByBatchId === null);
+  const verdicts = new Map(verdictRows.flatMap((row) => {
+    const verdict = storedVerdict(row);
+    return verdict ? [[verdict.counterpartyKey, verdict] as const] : [];
+  }));
+  const { treatments, sources: treatmentSources } = mergeTreatments(answered, payments, settings?.ownNames ?? [], verdicts.values());
   const funding = resolveFunding(
     accounts.map((a) => ({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format), services: a.batches.map((b) => b.service) })),
     payments.map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: counterpartyKey(p.reference), sourceKind: p.sourceKind, estimated: p.amountEstimated })),
@@ -966,6 +986,9 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
       .filter((p) => p.cancelledByBatchId !== null)
       .map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, rowIds: p.links.flatMap((l) => (l.rowId ? [l.rowId] : [])) })),
     treatments,
+    treatmentSources,
+    verdicts,
+    appCategories: appCategories(verdicts.values()),
     linkedElsewhere,
   };
 }

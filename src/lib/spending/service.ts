@@ -191,7 +191,7 @@ export async function saveOwnNames(db: PrismaClient, ctx: SpendingContext, raw: 
 export async function loadSpending(db: PrismaClient, workspaceId: string, year: number, month: number | null, today = new Date()): Promise<SpendingView> {
   const [loaded, answers, ownNames] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId), loadOwnNames(db, workspaceId)]);
   const { treatments, byName } = await spendingTreatments(db, workspaceId, loaded, ownNames);
-  const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments, byName, answers: await categoryAnswerMap(db, workspaceId, loaded, answers) }, year, month);
+  const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments, byName, answers: await categoryAnswerMap(db, workspaceId, loaded, answers), appCategories: loaded.appCategories }, year, month);
   return {
     overview,
     // The year asked for is always offered, so the year picker shows what the page shows even for a year without payments.

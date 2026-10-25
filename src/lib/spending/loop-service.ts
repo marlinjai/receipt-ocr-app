@@ -143,6 +143,7 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   const ctx: LoopContext = {
     treatments,
     categoryAnswers: await categoryAnswerMap(db, workspaceId, loaded),
+    appCategories: loaded.appCategories,
     noReceipt: reasons,
     noReceiptFromHolder: fromHolder,
     receipts,

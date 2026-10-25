@@ -20,7 +20,10 @@ import type { SpendingCategory } from './categories';
  *    name "vodafone" wins over the word "Gebühr" in its text. Only generic
  *    brand and trade words live here, never a person; a word that is also a
  *    common surname or an ordinary invoice word is matched in the name only.
- * 5. Otherwise "unclear", shown as such until a person answers.
+ * 5. The app's certain verdict for the counterparty (plan
+ *    2026-10-25-auto-classify-payments): a language model or the company's
+ *    own data named the category where no word rule does.
+ * 6. Otherwise "unclear", shown as such until a person answers.
  */
 
 /** The payments tab's answer on a counterparty (`CounterpartyTreatment`); `mixed`: partly business, partly private. */
@@ -53,6 +56,8 @@ export type CategoryBasis =
   | 'kind'
   /** A word in the name or text matched a rule. */
   | 'keyword'
+  /** The app decided it (`src/lib/tax/payments/verdicts.ts`). */
+  | 'app'
   /** Nothing said anything. */
   | 'none';
 
@@ -170,13 +175,14 @@ export function keywordCategory(counterpartyKey: string, reference: string): Spe
 
 export function categorise(
   payment: CategorisablePayment,
-  context: { treatment?: CounterpartyTreatmentAnswer; answer?: SpendingCategory } = {},
+  context: { treatment?: CounterpartyTreatmentAnswer; answer?: SpendingCategory; suggested?: SpendingCategory } = {},
 ): Categorised {
   if (context.treatment === 'own_account' || payment.kind === 'own_transfer') return { category: 'transfers', basis: 'own_account' };
   if (context.answer) return { category: context.answer, basis: 'answer' };
   if (payment.kind === 'fee') return { category: 'fees_interest', basis: 'kind' };
   const byWord = keywordCategory(payment.counterpartyKey, payment.reference);
   if (byWord) return { category: byWord, basis: 'keyword' };
+  if (context.suggested) return { category: context.suggested, basis: 'app' };
   return { category: 'unclear', basis: 'none' };
 }
 

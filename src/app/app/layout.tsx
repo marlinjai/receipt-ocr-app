@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import Link from 'next/link';
 import { auth } from '@/lib/auth';
 import { initializeReceiptsTable } from './actions';
@@ -5,10 +6,24 @@ import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import BrowserRulesImport from '@/components/BrowserRulesImport';
 import { PushRenewal, SignOutLink } from './spending/PushSession';
 import { workspaceLabel } from '@/lib/auth-workspace';
+import AppLoading from './loading';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AppLayout({ children }: { children: React.ReactNode }) {
+/**
+ * The session check and the table setup run inside a Suspense boundary of
+ * their own: a loading.tsx never covers the layout beside it, so without this
+ * a direct load of an /app page showed nothing while that work ran.
+ */
+export default function AppLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={<AppLoading />}>
+      <AppShell>{children}</AppShell>
+    </Suspense>
+  );
+}
+
+async function AppShell({ children }: { children: React.ReactNode }) {
   // The middleware already gates /app/*; this resolves the verified session
   // for the header and redirects defensively if it is somehow absent.
   const session = await auth.requireSession('/app');

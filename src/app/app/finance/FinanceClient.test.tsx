@@ -1034,7 +1034,8 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
   it('resume: the address names the tab on screen, and a reload with it opens the same group and tab', async () => {
     const user = setupUser();
     render(<FinanceClient initial={busy()} />);
-    expect(new URL(window.location.href).searchParams.get('reiter')).toBe('offen');
+    // Opened without an address, none is written: a reload chooses again by what waits.
+    expect(new URL(window.location.href).searchParams.get('reiter')).toBeNull();
     await openTab(user, 'Auswerten', 'Zahlungen');
     expect(new URL(window.location.href).searchParams.get('reiter')).toBe('zahlungsliste');
     await user.click(screen.getByRole('tab', { name: /^Einstellungen/ }));
@@ -1077,6 +1078,12 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
     expect(address.get('bank')).toBeNull();
     expect(address.get('reiter')).toBe('konten');
     expect(address.get('jahr')).toBe('2025');
+    // Away and back within the page: the message was shown once and stays gone.
+    const user = setupUser();
+    await user.click(screen.getByRole('tab', { name: /^Auswerten/ }));
+    await user.click(screen.getByRole('tab', { name: /^Einstellungen/ }));
+    expect(selected('Reiter in Einstellungen')).toEqual(['Konten']);
+    expect(screen.queryByText(/Die Bank ist verbunden/)).toBeNull();
     // A reload of that address opens the accounts again, without the message.
     cleanup();
     render(<FinanceClient initial={busy()} initialTab={tabFromAddress(address.get('reiter'), address.has('bank'))} bank={{ enabled: true, connections: [] }} bankReturn={null} bankActions={bankActions} />);
@@ -1088,6 +1095,10 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
     const user = setupUser();
     const base = view([]);
     render(<FinanceClient initial={{ ...base, payments: { ...base.payments, yearCount: 0 } }} initialTab="questions" />);
+    // Said once, by the part itself; the note above adds only the way to the accounts.
+    expect(screen.getAllByText(/keine Zahlungen eingelesen/)).toHaveLength(1);
+    await openTab(user, 'Auswerten', 'Zahlungen');
+    expect(screen.getAllByText(/keine Zahlungen eingelesen/)).toHaveLength(1);
     await user.click(screen.getByRole('button', { name: 'Zu den Konten' }));
     expect(selected('Reiter in Einstellungen')).toEqual(['Konten']);
   });
@@ -1122,6 +1133,41 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
     expect(screen.getByText('Eigene Namen (2)')).toBeTruthy();
     await user.click(screen.getByRole('tab', { name: /^Auswerten/ }));
     expect(selected('Reiter in Auswerten')).toEqual(['Anlagen']);
+  });
+
+  it('the arrow keys move between groups and between tabs; only the chosen one is in the Tab order', async () => {
+    const user = setupUser();
+    render(<FinanceClient initial={busy()} />);
+    const erledigen = screen.getByRole('tab', { name: /^Erledigen/ });
+    expect(erledigen.tabIndex).toBe(0);
+    expect(screen.getByRole('tab', { name: /^Auswerten/ }).tabIndex).toBe(-1);
+    erledigen.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(selected('Bereiche der Finanzübersicht')).toEqual(['Auswerten']);
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: /^Auswerten/ }));
+    await user.keyboard('{End}');
+    expect(selected('Bereiche der Finanzübersicht')).toEqual(['Einstellungen']);
+    await user.keyboard('{ArrowRight}');
+    expect(selected('Bereiche der Finanzübersicht')).toEqual(['Erledigen, 5 offen']);
+    // Into the tab row: Tab reaches its chosen tab, and the arrows move there.
+    await user.tab();
+    expect(document.activeElement?.textContent).toBe('Offen, 2 offen');
+    await user.keyboard('{ArrowLeft}');
+    expect(selected('Reiter in Erledigen')).toEqual(['Zahlungen klären, 3 offen']);
+    await user.keyboard('{Home}');
+    expect(selected('Reiter in Erledigen')).toEqual(['Offen, 2 offen']);
+  });
+
+  it('the own names\' message stays with the own names: another tab and back starts without it', async () => {
+    const user = setupUser();
+    ownNameActions.changeOwnNames.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'name_listed' });
+    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ names: ['Erika Beispiel'], canWrite: true }} />);
+    await user.type(screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt'), 'Beispiel Erika');
+    await user.click(screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('steht schon in der Liste');
+    await openTab(user, 'Einstellungen', 'Konten');
+    await openTab(user, 'Einstellungen', 'Eigene Namen');
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('a link to Ausgaben stands next to the tiles', () => {

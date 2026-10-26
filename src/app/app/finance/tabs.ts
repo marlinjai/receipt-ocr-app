@@ -88,7 +88,7 @@ export const GROUPS: readonly GroupDef[] = [
  * all payments; what waited there (and what its count counted) are now the
  * questions under Erledigen.
  */
-const LEGACY: Readonly<Record<string, TabKey>> = { zahlungen: 'questions' };
+const LEGACY: ReadonlyMap<string, TabKey> = new Map([['zahlungen', 'questions']]);
 
 const BY_TAB = new Map(GROUPS.flatMap((g) => g.tabs.map((t) => [t.key, { group: g, tab: t }] as const)));
 
@@ -110,7 +110,9 @@ export function tabFromAddress(reiter: string | null | undefined, bank = false):
   if (bank) return 'accounts';
   if (typeof reiter !== 'string') return undefined;
   const value = reiter.trim().toLowerCase();
-  if (LEGACY[value]) return LEGACY[value];
+  // A Map, not an object: an address such as `constructor` must name nothing, not something every object inherits.
+  const legacy = LEGACY.get(value);
+  if (legacy) return legacy;
   for (const group of GROUPS) {
     if (group.address === value) return group.tabs[0].key;
     const tab = group.tabs.find((t) => t.address === value);

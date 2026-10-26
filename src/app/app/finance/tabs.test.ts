@@ -49,7 +49,7 @@ describe('tabFromAddress', () => {
   it('takes the value however it is written, and names no tab for anything else', () => {
     expect(tabFromAddress(' Konten ')).toBe('accounts');
     expect(tabFromAddress('ZAHLUNGEN')).toBe('questions');
-    for (const value of [undefined, null, '', 'jahreswechsel', 'payments', 'open', 'konten2']) expect(tabFromAddress(value)).toBeUndefined();
+    for (const value of [undefined, null, '', 'jahreswechsel', 'payments', 'open', 'konten2', 'constructor', '__proto__', 'toString', 'hasOwnProperty']) expect(tabFromAddress(value)).toBeUndefined();
   });
 });
 

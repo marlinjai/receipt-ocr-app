@@ -371,7 +371,7 @@ describe('PaymentsTab', () => {
     const status = screen.getByRole('status').textContent;
     expect(status).toContain('2 storniert oder vollständig erstattet, 1 doppelt in der Datei, 1 ohne Betrag');
     expect(status).toContain('1 schon vorhandene an ihrer neuen Nummer wiedererkannt');
-    expect(status).toContain('2 früher eingelesene Käufe sind laut dieser Datei storniert oder vollständig erstattet und zählen nicht mehr; 1 Zuordnung wurde gelöst, siehe „Stornierte Käufe“');
+    expect(status).toContain('2 früher eingelesene Käufe sind laut dieser Datei storniert oder vollständig erstattet und zählen nicht mehr; 1 Zuordnung wurde gelöst, siehe Auswerten, Zahlungen („Stornierte Käufe“)');
     expect(status).toContain('Bitte ansehen: 1 teilweise erstattet');
     // A wording the reader did not know is read as a purchase and named, never dropped in silence.
     expect(status).toContain('1 mit unbekanntem Status (als Kauf eingelesen');

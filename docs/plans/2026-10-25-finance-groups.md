@@ -73,8 +73,9 @@ The table of groups, tabs and addresses is `src/app/app/finance/tabs.ts`, tested
 - **Addresses.** Every tab has its own `?reiter=` value (`offen`, `zahlungen-klaeren`, `euer`,
   `einnahmen`, `zahlungsliste`, `anlagen`, `umsatzsteuer`, `einkommensteuer`, `konten`,
   `lieferanten`, `eigene-namen`), a group name opens its first tab, the old `zahlungen` opens the
-  payment questions. The page writes the open tab into the address, and the year change keeps
-  it. The bank return now sends `reiter=konten`; `?bank=` alone lands on the accounts as well, so
+  payment questions; anything else names no tab. The page writes the open tab into the address
+  once the person chooses one (a visit without an address keeps none, so a reload chooses again
+  by what waits), and the year change keeps it. Both rows answer the arrow keys, Home and End. The bank return now sends `reiter=konten`; `?bank=` alone lands on the accounts as well, so
   a return started before the deploy still lands right, with its message shown once.
 - **Copy.** Texts that named "Zahlungen" or "Finanzen, Zahlungen" as a place (in Finanzen,
   Ausgaben and the check messages) name the new place.
@@ -100,9 +101,10 @@ Decided while building, say so if you disagree:
    questions wait, and the payment tabs without any payment read in lead to the accounts.
 5. **Tab names.** The questions are "Zahlungen klären" and the list "Zahlungen", so no two tabs
    share a name.
-6. **Messages stay where they were said.** A failure or notice of the last action is cleared when
-   the person opens another tab or group, and a year change also clears the own names' messages
-   and reads the names afresh.
+6. **Messages stay where they were said.** A failure or notice of the last action (the own names'
+   and the import's included) is cleared when the person opens another tab or group, and so is the
+   outcome of the bank return, which is therefore shown once; a year change also reads the names
+   afresh.
 
 Still open: the phone and wide layout check in the browser on production data (build order step
 3) happens after the deploy; locally the controls were checked in code (group buttons

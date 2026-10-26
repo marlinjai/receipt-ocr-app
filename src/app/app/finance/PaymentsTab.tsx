@@ -322,7 +322,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
               {lastImport.settled > 0 ? `, bei ${lastImport.settled === 1 ? 'einer geschätzten Zahlung' : `${lastImport.settled} geschätzten Zahlungen`} in anderer Währung den tatsächlichen Eurobetrag übernommen` : ''}.
               {lastImport.cancelledEarlier > 0 &&
                 ` ${lastImport.cancelledEarlier} früher eingelesene ${lastImport.cancelledEarlier === 1 ? 'Kauf ist' : 'Käufe sind'} laut dieser Datei storniert oder vollständig erstattet und ${lastImport.cancelledEarlier === 1 ? 'zählt' : 'zählen'} nicht mehr${
-                  lastImport.releasedLinks > 0 ? `; ${lastImport.releasedLinks} ${lastImport.releasedLinks === 1 ? 'Zuordnung wurde' : 'Zuordnungen wurden'} gelöst, siehe „Stornierte Käufe“` : ''
+                  lastImport.releasedLinks > 0 ? `; ${lastImport.releasedLinks} ${lastImport.releasedLinks === 1 ? 'Zuordnung wurde' : 'Zuordnungen wurden'} gelöst, siehe Auswerten, Zahlungen („Stornierte Käufe“)` : ''
                 }.`}
               {Object.keys(lastImport.notices).length > 0 &&
                 ` Bitte ansehen${lastImport.onlyYear !== null ? ' (gezählt über die ganze Datei)' : ''}: ${Object.entries(lastImport.notices)

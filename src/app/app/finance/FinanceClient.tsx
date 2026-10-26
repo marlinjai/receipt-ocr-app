@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState, useTransition } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import { receiptHref } from '@/lib/receipt-link';
 import { useRouter } from 'next/navigation';
@@ -153,20 +153,23 @@ export default function FinanceClient({
   });
   const [group, setGroup] = useState<GroupKey>(() => groupOf(initialTab ?? defaultTab(waitingCounts(initial, openQueue(initial).length))).key);
   const tab = chosen[group];
-  // What the last action said belongs to the place it was done in: another tab or group starts without it.
+  // What the last action said belongs to the place it was done in: another tab or group starts without it,
+  // and the outcome of the return from the bank is shown once, not again on the next visit to the accounts.
+  const leave = () => {
+    setError(null);
+    setNotice(null);
+    setNamesError(null);
+    setNamesNotice(null);
+    setBankNotice(null);
+    setLastImport(null);
+  };
   const showGroup = (next: GroupKey) => {
-    if (next !== group) {
-      setError(null);
-      setNotice(null);
-    }
+    if (next !== group) leave();
     setGroup(next);
   };
   const setTab = (next: TabKey) => {
     const owner = groupOf(next).key;
-    if (next !== tab) {
-      setError(null);
-      setNotice(null);
-    }
+    if (next !== tab) leave();
     setChosen((c) => ({ ...c, [owner]: next }));
     setGroup(owner);
   };
@@ -174,11 +177,16 @@ export default function FinanceClient({
   const tabRow = useRef<HTMLDivElement>(null);
   useTabInView(tabRow, tab);
   const bankFeed = useBankFeed(bankInitial ?? NO_BANK, view.year, bankActions, (next) => setView(next), (url) => window.location.assign(url));
-  const [bankNotice] = useState(() => returnMessage(bankReturn));
+  const [bankNotice, setBankNotice] = useState(() => returnMessage(bankReturn));
   // The address keeps the open tab, so a reload or a shared link opens the same place. The outcome of the
-  // return from the bank is shown once: the address loses it, so a reload does not repeat it.
+  // return from the bank is shown once: the address loses it, so a reload does not repeat it. A visit
+  // without an address keeps none until the person chooses a tab: a reload then chooses again by what waits.
+  const addressed = useRef(false);
   useEffect(() => {
     const url = new URL(window.location.href);
+    const first = !addressed.current;
+    addressed.current = true;
+    if (first && !url.searchParams.has('reiter') && !url.searchParams.has('bank')) return;
     const before = url.toString();
     url.searchParams.set('reiter', addressOf(tab));
     url.searchParams.delete('bank');
@@ -218,6 +226,7 @@ export default function FinanceClient({
     setOwnNames(ownNamesInitial);
     setNamesError(null);
     setNamesNotice(null);
+    setBankNotice(null);
   }
 
   const queue = useMemo(() => openQueue(view), [view]);
@@ -519,7 +528,9 @@ export default function FinanceClient({
                 id={`${tabsId}-group-${g.key}`}
                 aria-selected={selected}
                 aria-controls={`${tabsId}-group-panel`}
+                tabIndex={selected ? 0 : -1}
                 onClick={() => showGroup(g.key)}
+                onKeyDown={(e) => arrowTo(e, GROUPS.map((x) => x.key), g.key, `${tabsId}-group-`, showGroup)}
                 className="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start"
                 style={{
                   borderColor: selected ? 'rgba(226, 163, 72, 0.55)' : 'var(--border)',
@@ -550,7 +561,9 @@ export default function FinanceClient({
               id={`${tabsId}-tab-${t.key}`}
               aria-selected={tab === t.key}
               aria-controls={`${tabsId}-panel`}
+              tabIndex={tab === t.key ? 0 : -1}
               onClick={() => setTab(t.key)}
+              onKeyDown={(e) => arrowTo(e, activeGroup.tabs.map((x) => x.key), t.key, `${tabsId}-tab-`, setTab)}
               className="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11"
               style={{
                 borderColor: tab === t.key ? 'var(--accent)' : 'transparent',
@@ -920,10 +933,7 @@ export default function FinanceClient({
 
           {(tab === 'questions' || tab === 'payments') && view.payments.yearCount === 0 && (
             <p className="ui-note mb-4 flex flex-wrap items-center justify-between gap-2">
-              <span>
-                Für {view.year} sind noch keine Zahlungen eingelesen. Konten, Kontoexporte und die Live-Anbindung an Banken stehen unter
-                Einstellungen.
-              </span>
+              <span>Konten, Kontoexporte und die Live-Anbindung an Banken stehen unter Einstellungen.</span>
               <button type="button" className="ui-btn ui-btn-sm" onClick={() => setTab('accounts')}>
                 Zu den Konten
               </button>
@@ -1176,6 +1186,27 @@ export default function FinanceClient({
       </div>
     </main>
   );
+}
+
+/**
+ * The arrow keys of a tab row (the ARIA tabs pattern): left and right move to
+ * the neighbouring tab, wrapping around, Home and End to the first and last;
+ * the tab is chosen and takes the focus. Only the chosen tab is in the Tab
+ * order, so Tab leaves the row.
+ */
+function arrowTo<K extends string>(event: KeyboardEvent<HTMLButtonElement>, keys: readonly K[], current: K, idPrefix: string, choose: (key: K) => void) {
+  const at = keys.indexOf(current);
+  const target =
+    event.key === 'ArrowRight' ? keys[(at + 1) % keys.length]
+    : event.key === 'ArrowLeft' ? keys[(at - 1 + keys.length) % keys.length]
+    : event.key === 'Home' ? keys[0]
+    : event.key === 'End' ? keys[keys.length - 1]
+    : null;
+  if (target === null) return;
+  event.preventDefault();
+  choose(target);
+  // Drawn after the choice; the button exists already in the same row.
+  document.getElementById(`${idPrefix}${target}`)?.focus();
 }
 
 function ItemHeader({ item }: { item: StatementItem }) {

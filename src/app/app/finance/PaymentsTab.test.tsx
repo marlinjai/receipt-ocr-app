@@ -294,7 +294,7 @@ describe('PaymentsTab', () => {
     const p = props();
     const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: '', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false };
     const shown = view({ estimateProposals: [proposal, { ...proposal, paymentId: 'p-2', rowId: 'r-2' }] });
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const { rerender } = render(<PaymentsTab view={shown} {...p} />);
     await user.click(screen.getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
     // The parent turns `busy` on a moment later; the button is locked from the press itself.

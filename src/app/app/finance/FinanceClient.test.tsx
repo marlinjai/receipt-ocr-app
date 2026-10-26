@@ -823,7 +823,7 @@ describe('FinanceClient: assets', () => {
   });
   it('accepting the proposals sends the pairs the dialog counted, says exactly what was linked and what was left out, and shows a failure', async () => {
     const user = setupUser();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2025-03-02', estimateCents: 2_000, bookingDay: '2025-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false };
     const second = { ...proposal, paymentId: 'p-2', rowId: 'r-2', receiptLabel: 'Hosting Beispiel' };
     const payments = view([]).payments;
@@ -845,7 +845,7 @@ describe('FinanceClient: assets', () => {
 
   it('"Konto entfernen" refused because the account is no longer empty shows why and what the account holds now', async () => {
     const user = setupUser();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const payments = view([]).payments;
     const empty = { id: 'acc-empty', label: 'Altes Konto', kind: 'bank' as const, isPrivate: false, paymentCount: 0, completeThrough: null, batches: [] };
     const filled = { ...empty, paymentCount: 1, completeThrough: '2025-03-02', batches: [{ id: 'b-1', format: 'n26_csv' as const, service: null, newCount: 1, paymentCount: 1, firstDay: '2025-03-02', lastDay: '2025-03-02', importedAt: '2025-03-03T08:00:00.000Z' }] };

@@ -146,12 +146,12 @@ export default function FinanceClient({
   // Two levels (plan 2026-10-25-finance-groups): a group, and the tab last chosen inside each group, so going
   // to another group and back finds the tab that was open there. Without an address the page opens on the first
   // work that waits; an overdue invoice is an open check too (decision D6 of the invoicing plan).
+  const [firstTab] = useState<TabKey>(() => initialTab ?? defaultTab(waitingCounts(initial, openQueue(initial).length)));
   const [chosen, setChosen] = useState<Record<GroupKey, TabKey>>(() => {
-    const first = initialTab ?? defaultTab(waitingCounts(initial, openQueue(initial).length));
     const byGroup = Object.fromEntries(GROUPS.map((g) => [g.key, g.tabs[0].key])) as Record<GroupKey, TabKey>;
-    return { ...byGroup, [groupOf(first).key]: first };
+    return { ...byGroup, [groupOf(firstTab).key]: firstTab };
   });
-  const [group, setGroup] = useState<GroupKey>(() => groupOf(initialTab ?? defaultTab(waitingCounts(initial, openQueue(initial).length))).key);
+  const [group, setGroup] = useState<GroupKey>(() => groupOf(firstTab).key);
   const tab = chosen[group];
   // What the last action said belongs to the place it was done in: another tab or group starts without it,
   // and the outcome of the return from the bank is shown once, not again on the next visit to the accounts.
@@ -181,17 +181,14 @@ export default function FinanceClient({
   // The address keeps the open tab, so a reload or a shared link opens the same place. The outcome of the
   // return from the bank is shown once: the address loses it, so a reload does not repeat it. A visit
   // without an address keeps none until the person chooses a tab: a reload then chooses again by what waits.
-  const addressed = useRef(false);
   useEffect(() => {
     const url = new URL(window.location.href);
-    const first = !addressed.current;
-    addressed.current = true;
-    if (first && !url.searchParams.has('reiter') && !url.searchParams.has('bank')) return;
+    if (tab === firstTab && !url.searchParams.has('reiter') && !url.searchParams.has('bank')) return;
     const before = url.toString();
     url.searchParams.set('reiter', addressOf(tab));
     url.searchParams.delete('bank');
     if (url.toString() !== before) window.history.replaceState(null, '', url.toString());
-  }, [tab]);
+  }, [tab, firstTab]);
   const [ownNames, setOwnNames] = useState(ownNamesInitial);
   const [namesError, setNamesError] = useState<string | null>(null);
   const [namesNotice, setNamesNotice] = useState<string | null>(null);

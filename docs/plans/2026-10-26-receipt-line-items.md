@@ -2,7 +2,7 @@
 title: Every line of every receipt
 summary: Each receipt's printed positions (what, how many, what it cost, at which tax rate) are read and stored, and each line gets a kind of purchase finer than the twelve spending categories (groceries, drinks, alcohol, coffee and tea, sweets, drugstore, a meal, a drink in a café). The spending overview shows what the money bought, month by month, across business and private receipts. Receipts already in the app get their lines from their stored text.
 type: plan
-status: decided
+status: in-progress
 tags: [receipts, spending, line-items, ai]
 projects: [receipt-ocr-app]
 date: 2026-10-26
@@ -78,3 +78,60 @@ place for a supermarket's thirty positions.
 - Resume: a reload shows the same lines, nothing recomputed but the add-up check.
 - Re-entry: the backfill run twice reads nothing a second time; a failed read is retried on the
   next run and never leaves half the lines.
+
+## Reality (2026-10-26, built on branch feat/receipt-line-items)
+
+What was built:
+
+- **Storage** (migration `0040_receipt_items`, additive): `receipt_items` (one row per printed
+  position: text, quantity, unit price, gross cents in the receipt's currency, net cents where the
+  source states one, tax rate, kind), `receipt_item_readings` (one row per receipt: lines, no lines,
+  no stored text, or failed with an attempt count, plus the lines' sum, the model and token counts)
+  and `receipt_item_kind_answers` (a person's kind for a text at a shop). `tax_receipt_lines` is
+  untouched. Every write of lines goes through `replaceReceiptLines` (`src/lib/line-items/store.ts`):
+  delete, insert and the reading record in one transaction under a per-receipt advisory lock. Both
+  row delete paths take lines and reading along.
+- **Kinds** (`src/lib/line-items/kinds.ts`): the sixteen kinds of decision 3 with German labels, a
+  hint per kind for the model, and the mapping into the twelve spending categories.
+- **Reading** (`src/lib/receipt-classifier.ts`): the classification call returns `items` with
+  deposit, returned deposit and discounts as their own lines; the parser
+  (`src/lib/line-items/lines.ts`) is all or nothing. Every upload, retake and "Seite neu lesen"
+  replaces the lines; a reading without a usable list leaves the old lines.
+- **Electronic invoices** (`src/lib/einvoice/parse.ts`, `src/lib/line-items/einvoice.ts`): UBL and CII
+  lines and document-level discounts and surcharges are read from the XML; the receipt's text now
+  lists the positions too.
+- **Backfill** (`src/lib/line-items/backfill.ts`): "Positionen lesen" on the receipts page
+  (`POST /api/receipts/lines`, 15 receipts per request, the page asks again until none is left) and
+  40 per company after the daily bank sync (`/api/internal/bank-sync`).
+- **Pages**: the receipt view's "Positionen" section with the kind correction; the review list's
+  "Positionen prüfen"; the spending page's "Was gekauft" tab (`?ansicht=gekauft`).
+
+Decided while building, say so if you disagree:
+
+1. **A deposit or a discount has no spending category of its own**: it counts towards the category
+   of the largest line of its receipt, so returned bottles lower "Lebensmittel und Drogerie".
+2. **A kind answer is applied on read, not written onto the lines.** It is stored per company, shop
+   (the row's vendor, case and punctuation ignored) and text, so a receipt read again keeps it for
+   every line with the same text, and every other receipt of the shop gets it. Choosing the read
+   kind again takes the answer back.
+3. **An electronic invoice's lines are checked on net** against the invoice's net total, because
+   EN 16931 states line amounts net and per-line rounding of the gross alone can exceed 2 cents. A
+   line's gross is its net plus its tax rounded per line. An XML line takes the kind of the model's
+   line with the same text (else the one at the same place, else "Sonstiges"): no extra model call.
+4. **The difference is worked out on read** against the total the row holds now, so a corrected
+   total shows (or ends) it at once. In the review list it is a reason a person can settle with
+   "Geprüft" (a café bill whose tip is printed apart never adds up).
+5. **The backfill uses the small model** that already names stored receipts' items
+   (`ANTHROPIC_ITEM_MODEL`), with up to 24,000 characters of stored text (a longer text is cut in the
+   middle and the receipt says lines may be missing). A call that does not get through (provider
+   down, rate limit, timeout) counts nothing against the receipt; an unusable answer (malformed, cut
+   off, declined) counts, and after 3 the receipt is no longer asked about. A missing key stops the
+   run without counting anything. Receipts are read newest first.
+6. **The OpenRouter path of the classification call got 16,000 output tokens** (was 8,000), so the
+   lines of a long receipt fit next to the facts. The model choice is unchanged.
+7. **"Was gekauft" lives in the active company**, like the rest of the spending page, and uses the
+   period chosen at the top of the page by receipt date. A receipt in another currency counts at its
+   stored exchange rate; one without a rate is left out and counted.
+
+Not done here: the backfill on production (the coordinating session runs it after the deploy, with
+the button on the receipts page or `POST /api/receipts/lines` signed in as the company).

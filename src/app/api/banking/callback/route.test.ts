@@ -63,7 +63,7 @@ describe('GET /api/banking/callback', () => {
     completeConsent.mockResolvedValue({ outcome: 'connected', connectionId: 'con-1' });
     const res = await GET(request('code=c-1&state=s-1'));
     expect(completeConsent).toHaveBeenCalledWith({ marker: 'prisma' }, 'ws-a', expect.anything(), { state: 's-1', code: 'c-1', error: null });
-    expect(res.headers.get('location')).toBe('https://receipts.example.test/app/finance?reiter=zahlungen&bank=verbunden');
+    expect(res.headers.get('location')).toBe('https://receipts.example.test/app/finance?reiter=konten&bank=verbunden');
   });
 
   it('without write permission the answer is not taken', async () => {
@@ -77,7 +77,7 @@ describe('GET /api/banking/callback', () => {
     deps = null;
     requireAction.mockRejectedValue(Object.assign(new Error('unauthorized'), { status: 401 }));
     const res = await GET(request('code=c-1&state=s-1'));
-    expect(res.headers.get('location')).toBe('https://receipts.example.test/app/finance?reiter=zahlungen&bank=fehler%3Afeature_off');
+    expect(res.headers.get('location')).toBe('https://receipts.example.test/app/finance?reiter=konten&bank=fehler%3Afeature_off');
     expect(requireAction).not.toHaveBeenCalled();
   });
 });

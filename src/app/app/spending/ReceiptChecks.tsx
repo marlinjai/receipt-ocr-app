@@ -288,7 +288,7 @@ export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok:
   if (result.detail === 'target_not_found') return 'Dieser Beleg ist nicht mehr da oder gehört nicht zu dieser Firma. Bitte die Seite neu laden.';
   if (result.detail === 'not_a_candidate') return 'Dieser Beleg passt nicht mehr zu der Zahlung (er wurde inzwischen verknüpft oder geändert). Bitte die Seite neu laden.';
   if (result.detail?.startsWith('receipt_already_paid'))
-    return 'Dieser Beleg ist schon durch andere Zahlungen bezahlt. Bitte prüfen, ob es der richtige Beleg ist; eine falsche Verknüpfung lässt sich unter Ausgaben (Zahlungen) oder unter Finanzen, Zahlungen lösen.';
+    return 'Dieser Beleg ist schon durch andere Zahlungen bezahlt. Bitte prüfen, ob es der richtige Beleg ist; eine falsche Verknüpfung lässt sich unter Ausgaben (Zahlungen) oder unter Finanzen, Auswerten, Zahlungen lösen.';
   if (result.detail === 'answered_by_holder') return 'Diese Antwort wurde in der Firma gegeben, die das Konto führt, und lässt sich nur dort zurücknehmen.';
   if (result.detail === 'invalid_email') return 'Diese E-Mail-Adresse sieht nicht gültig aus.';
   if (result.detail === 'invalid_channel') return 'Bitte einen der angebotenen Wege wählen.';

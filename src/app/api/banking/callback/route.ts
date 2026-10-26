@@ -24,7 +24,8 @@ export async function GET(req: NextRequest) {
   const origin = deps ? new URL(deps.redirectUrl).origin : auth.appUrl();
   const back = (bank: string) => {
     const url = new URL('/app/finance', origin);
-    url.searchParams.set('reiter', 'zahlungen');
+    // The accounts under Finanzen, Einstellungen, where the bank connections are (the page lands there on `bank` alone too).
+    url.searchParams.set('reiter', 'konten');
     url.searchParams.set('bank', bank);
     return NextResponse.redirect(url, 303);
   };

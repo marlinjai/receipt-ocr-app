@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState, useTransition } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import { receiptHref } from '@/lib/receipt-link';
 import { useRouter } from 'next/navigation';
@@ -64,8 +64,9 @@ import { removeTaxReturnItem, removeWage, saveTaxReturnItem, saveWage, setChurch
 import { incomeTaxActionMessage } from '@/lib/tax/income-tax/messages';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 import { useTabInView } from '@/lib/use-tab-in-view';
-
-export type TabKey = 'open' | 'statement' | 'revenue' | 'payments' | 'assets' | 'vat' | 'tax' | 'vendors';
+import { GROUPS, addressOf, defaultTab, groupCount, groupOf, waitingCounts, type GroupKey, type TabKey } from './tabs';
+import OwnNames, { ownNamesMessage } from '../spending/OwnNames';
+import { changeOwnNames, type OwnNamesView } from './own-names-actions';
 
 /** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
 const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
@@ -108,6 +109,10 @@ export function openQueue(view: StatementView): StatementItem[] {
 const BANK_ACTIONS: BankActions = { listBankInstitutions, startBankConsent, chooseBankConnectionAccount, syncBankNow, disconnectBank, clearBankConnectionNotice };
 const NO_BANK: BankView = { enabled: false, connections: [] };
 const SHARING_ACTIONS: SharingActions = { shareAccountWith, endAccountShare };
+/** The part of the payments each of their three tabs shows. */
+const PAYMENT_PARTS = { questions: ['questions'], payments: ['list'], accounts: ['accounts'] } as const;
+/** Tabs whose forms show a failure next to what was typed; on every other tab it is shown above the panel. */
+const OWN_ERROR_TABS: readonly TabKey[] = ['open', 'questions', 'payments', 'accounts', 'vat', 'tax', 'names'];
 
 export default function FinanceClient({
   initial,
@@ -118,6 +123,7 @@ export default function FinanceClient({
   sharing = null,
   sharingFailed = false,
   sharingActions = SHARING_ACTIONS,
+  ownNames: ownNamesInitial = null,
 }: {
   initial: StatementView;
   initialTab?: TabKey;
@@ -131,25 +137,61 @@ export default function FinanceClient({
   /** True when the sharing section could not be read: it says so instead of disappearing. */
   sharingFailed?: boolean;
   sharingActions?: SharingActions;
+  /** The owner's own names, the same list as on Ausgaben; null when they could not be read (the tab then says so). */
+  ownNames?: OwnNamesView | null;
 }) {
   const tabsId = useId();
   const router = useRouter();
   const [view, setView] = useState(initial);
-  // An overdue invoice is an open check too (decision D6 of the invoicing plan), so it opens the "Offen" tab as well.
-  const [tab, setTab] = useState<TabKey>(() => initialTab ?? (openQueue(initial).length > 0 || initial.revenue.overdue.length > 0 ? 'open' : 'statement'));
+  // Two levels (plan 2026-10-25-finance-groups): a group, and the tab last chosen inside each group, so going
+  // to another group and back finds the tab that was open there. Without an address the page opens on the first
+  // work that waits; an overdue invoice is an open check too (decision D6 of the invoicing plan).
+  const [firstTab] = useState<TabKey>(() => initialTab ?? defaultTab(waitingCounts(initial, openQueue(initial).length)));
+  const [chosen, setChosen] = useState<Record<GroupKey, TabKey>>(() => {
+    const byGroup = Object.fromEntries(GROUPS.map((g) => [g.key, g.tabs[0].key])) as Record<GroupKey, TabKey>;
+    return { ...byGroup, [groupOf(firstTab).key]: firstTab };
+  });
+  const [group, setGroup] = useState<GroupKey>(() => groupOf(firstTab).key);
+  const tab = chosen[group];
+  // What the last action said belongs to the place it was done in: another tab or group starts without it,
+  // and the outcome of the return from the bank is shown once, not again on the next visit to the accounts.
+  const leave = () => {
+    setError(null);
+    setNotice(null);
+    setNamesError(null);
+    setNamesNotice(null);
+    setBankNotice(null);
+    setLastImport(null);
+  };
+  const showGroup = (next: GroupKey) => {
+    if (next !== group) leave();
+    setGroup(next);
+  };
+  const setTab = (next: TabKey) => {
+    const owner = groupOf(next).key;
+    if (next !== tab) leave();
+    setChosen((c) => ({ ...c, [owner]: next }));
+    setGroup(owner);
+  };
   // On a phone the tab row scrolls sideways; the open tab is kept in view.
   const tabRow = useRef<HTMLDivElement>(null);
   useTabInView(tabRow, tab);
   const bankFeed = useBankFeed(bankInitial ?? NO_BANK, view.year, bankActions, (next) => setView(next), (url) => window.location.assign(url));
-  const [bankNotice] = useState(() => returnMessage(bankReturn));
-  // The outcome is shown once: the address loses it, so a reload does not repeat it.
+  const [bankNotice, setBankNotice] = useState(() => returnMessage(bankReturn));
+  // The address keeps the open tab, so a reload or a shared link opens the same place. The outcome of the
+  // return from the bank is shown once: the address loses it, so a reload does not repeat it. A visit
+  // without an address keeps none until the person chooses a tab: a reload then chooses again by what waits.
   useEffect(() => {
-    if (!bankReturn) return;
     const url = new URL(window.location.href);
+    if (tab === firstTab && !url.searchParams.has('reiter') && !url.searchParams.has('bank')) return;
+    const before = url.toString();
+    url.searchParams.set('reiter', addressOf(tab));
     url.searchParams.delete('bank');
-    url.searchParams.delete('reiter');
-    window.history.replaceState(null, '', url.toString());
-  }, [bankReturn]);
+    if (url.toString() !== before) window.history.replaceState(null, '', url.toString());
+  }, [tab, firstTab]);
+  const [ownNames, setOwnNames] = useState(ownNamesInitial);
+  const [namesError, setNamesError] = useState<string | null>(null);
+  const [namesNotice, setNamesNotice] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   // The item of the statement tab whose receipt is being split (its lines change the item ids, so both close together).
@@ -177,6 +219,11 @@ export default function FinanceClient({
     setLastImport(null);
     setError(null);
     setNotice(null);
+    // The names are read afresh with the other year (another page may have changed them); old messages go.
+    setOwnNames(ownNamesInitial);
+    setNamesError(null);
+    setNamesNotice(null);
+    setBankNotice(null);
   }
 
   const queue = useMemo(() => openQueue(view), [view]);
@@ -188,6 +235,7 @@ export default function FinanceClient({
   const estimated = view.items.filter((i) => i.checks.some((c) => c.kind === 'amount_estimated')).length;
   const blockedBySetting =
     view.items.filter((i) => i.checks.some((c) => WORKSPACE_CHECKS.includes(c.kind))).length;
+  const counts = waitingCounts(view, queue.length);
 
   function run(
     action: () => Promise<Result<StatementView>>,
@@ -288,16 +336,37 @@ export default function FinanceClient({
       done,
     );
 
-  const tabs: Array<{ key: TabKey; label: string; count?: number }> = [
-    { key: 'open', label: 'Offen', count: queue.length + overdue.length },
-    { key: 'statement', label: 'EÜR' },
-    { key: 'revenue', label: 'Einnahmen', count: view.revenue.invoices.length },
-    { key: 'payments', label: 'Zahlungen', count: view.payments.open.length + view.payments.unclassified.length },
-    { key: 'assets', label: 'Anlagen', count: view.assets.length },
-    { key: 'vat', label: 'Umsatzsteuer' },
-    { key: 'tax', label: 'Einkommensteuer' },
-    { key: 'vendors', label: 'Lieferanten', count: view.vendorRules.length + view.reverseChargeVendors.length },
-  ];
+  /** Add or take out an own name; resolves true when the server took it (the field is then emptied). */
+  const changeNames = (change: { add: string } | { remove: string }) =>
+    new Promise<boolean>((resolve) => {
+      setNamesError(null);
+      setNamesNotice(null);
+      startTransition(async () => {
+        let result: Awaited<ReturnType<typeof changeOwnNames>>;
+        try {
+          result = await changeOwnNames(view.year, change);
+        } catch {
+          // The request itself failed (offline, server restart): say so instead of looking saved.
+          setNamesError(financeActionMessage('failed'));
+          return resolve(false);
+        }
+        if (!result.ok) {
+          setNamesError(ownNamesMessage(result.detail) ?? financeActionMessage(result.error, result.detail));
+          return resolve(false);
+        }
+        const { names, settledOwnName, view: next } = result.value;
+        setOwnNames((current) => (current ? { ...current, names } : current));
+        if (next) setView(next);
+        setNamesNotice(
+          ('add' in change
+            ? `${change.add} gespeichert.${settledOwnName > 0 ? ` ${settledOwnName} ${settledOwnName === 1 ? 'Benachrichtigung' : 'Benachrichtigungen'} erledigt: eigenes Konto.` : ''}`
+            : `${change.remove} entfernt.`) + (next ? '' : ' Die Übersicht konnte danach nicht neu gerechnet werden; bitte die Seite neu laden.'),
+        );
+        resolve(true);
+      });
+    });
+
+  const activeGroup = GROUPS.find((g) => g.key === group)!;
 
   return (
     <main className="relative z-10 min-h-svh px-4 pb-16 pt-6 sm:px-6" data-theme="dark">
@@ -320,7 +389,7 @@ export default function FinanceClient({
               className="ui-input"
               style={{ width: 'auto' }}
               value={view.year}
-              onChange={(e) => router.push(`/app/finance?jahr=${e.target.value}`)}
+              onChange={(e) => router.push(`/app/finance?jahr=${e.target.value}&reiter=${addressOf(tab)}`)}
             >
               {view.years.map((y) => (
                 <option key={y} value={y}>
@@ -436,17 +505,62 @@ export default function FinanceClient({
             </div>
           ))}
         </dl>
+        <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style={{ color: 'var(--muted)' }}>
+          <span>Hier steht der Betrieb für die Steuererklärung. Alle Ausgaben, private eingeschlossen, mit Budgets:</span>
+          <Link href="/app/spending" className="ui-btn ui-btn-sm">
+            Ausgaben
+          </Link>
+        </p>
 
-        <div ref={tabRow} role="tablist" aria-label="Bereiche der Finanzübersicht" className="ui-scroll-bare-phone mt-6 flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
-          {tabs.map((t) => (
+        {/* Four groups (two to a row on a phone, so none scrolls out of sight), the tabs of the chosen group below. */}
+        <div role="tablist" aria-label="Bereiche der Finanzübersicht" className="mt-6 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          {GROUPS.map((g) => {
+            const count = groupCount(g, counts);
+            const selected = group === g.key;
+            return (
+              <button
+                key={g.key}
+                role="tab"
+                type="button"
+                id={`${tabsId}-group-${g.key}`}
+                aria-selected={selected}
+                aria-controls={`${tabsId}-group-panel`}
+                tabIndex={selected ? 0 : -1}
+                onClick={() => showGroup(g.key)}
+                onKeyDown={(e) => arrowTo(e, GROUPS.map((x) => x.key), g.key, `${tabsId}-group-`, showGroup)}
+                className="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start"
+                style={{
+                  borderColor: selected ? 'rgba(226, 163, 72, 0.55)' : 'var(--border)',
+                  background: selected ? 'var(--accent-muted)' : 'var(--surface)',
+                  color: selected ? 'var(--accent)' : 'var(--foreground)',
+                }}
+              >
+                {g.label}
+                {count !== undefined && (
+                  <span className="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style={{ background: 'rgba(255,255,255,0.07)', color: 'var(--foreground)' }}>
+                    <span className="sr-only">, </span>
+                    {count}
+                    <span className="sr-only"> offen</span>
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div role="tabpanel" id={`${tabsId}-group-panel`} aria-labelledby={`${tabsId}-group-${group}`}>
+        <div ref={tabRow} role="tablist" aria-label={`Reiter in ${activeGroup.label}`} className="ui-scroll-bare-phone mt-3 flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
+          {activeGroup.tabs.map((t) => ({ ...t, count: counts[t.key] })).map((t) => (
             <button
               key={t.key}
               role="tab"
               type="button"
               id={`${tabsId}-tab-${t.key}`}
               aria-selected={tab === t.key}
-              aria-controls={`${tabsId}-panel-${t.key}`}
+              aria-controls={`${tabsId}-panel`}
+              tabIndex={tab === t.key ? 0 : -1}
               onClick={() => setTab(t.key)}
+              onKeyDown={(e) => arrowTo(e, activeGroup.tabs.map((x) => x.key), t.key, `${tabsId}-tab-`, setTab)}
               className="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11"
               style={{
                 borderColor: tab === t.key ? 'var(--accent)' : 'transparent',
@@ -456,7 +570,9 @@ export default function FinanceClient({
               {t.label}
               {t.count !== undefined && (
                 <span className="ml-2 rounded-full px-1.5 py-0.5 text-xs tabular-nums" style={{ background: 'rgba(255,255,255,0.07)', color: 'var(--foreground)' }}>
+                  <span className="sr-only">, </span>
                   {t.count}
+                  <span className="sr-only"> offen</span>
                 </span>
               )}
             </button>
@@ -467,13 +583,13 @@ export default function FinanceClient({
           {notice}
         </div>
         {/* The forms on the queue, payments and tax tabs show a failure next to what was typed; everywhere else it is shown here. */}
-        {error && tab !== 'open' && tab !== 'payments' && tab !== 'vat' && tab !== 'tax' && (
+        {error && !OWN_ERROR_TABS.includes(tab) && (
           <p className="ui-note ui-note-danger mt-2" role="alert">
             {error}
           </p>
         )}
 
-        <div role="tabpanel" id={`${tabsId}-panel-${tab}`} aria-labelledby={`${tabsId}-tab-${tab}`} className="mt-4">
+        <div role="tabpanel" id={`${tabsId}-panel`} aria-labelledby={`${tabsId}-tab-${tab}`} className="mt-4">
           {tab === 'open' && overdue.length > 0 && <OverdueInvoices overdue={overdue} onOpenRevenue={() => setTab('revenue')} />}
           {tab === 'open' &&
             (queue.length === 0 ? (
@@ -484,10 +600,18 @@ export default function FinanceClient({
                 </p>
                 <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: 'var(--muted)' }}>
                   Jeder Beleg des Jahres ist zugeordnet. Neue Belege erscheinen hier, sobald eine Entscheidung fehlt.
+                  {(counts.questions ?? 0) > 0 ? ' Zu Zahlungen gibt es noch Fragen.' : ''}
                 </p>
-                <button type="button" className="ui-btn ui-btn-primary mt-4" onClick={() => setTab('statement')}>
-                  Zur EÜR
-                </button>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  {(counts.questions ?? 0) > 0 && (
+                    <button type="button" className="ui-btn ui-btn-primary" onClick={() => setTab('questions')}>
+                      Zahlungen klären
+                    </button>
+                  )}
+                  <button type="button" className={(counts.questions ?? 0) > 0 ? 'ui-btn' : 'ui-btn ui-btn-primary'} onClick={() => setTab('statement')}>
+                    Zur EÜR
+                  </button>
+                </div>
               </div>
               )
             ) : (
@@ -804,8 +928,19 @@ export default function FinanceClient({
             />
           )}
 
-          {tab === 'payments' && (
+          {(tab === 'questions' || tab === 'payments') && view.payments.yearCount === 0 && (
+            <p className="ui-note mb-4 flex flex-wrap items-center justify-between gap-2">
+              <span>Konten, Kontoexporte und die Live-Anbindung an Banken stehen unter Einstellungen.</span>
+              <button type="button" className="ui-btn ui-btn-sm" onClick={() => setTab('accounts')}>
+                Zu den Konten
+              </button>
+            </p>
+          )}
+          {(tab === 'questions' || tab === 'payments' || tab === 'accounts') && (
             <PaymentsTab
+              // A fresh part per tab: a draft or a check of a form in one part does not show up in another.
+              key={tab}
+              parts={PAYMENT_PARTS[tab]}
               view={view}
               busy={pending}
               error={error}
@@ -908,7 +1043,7 @@ export default function FinanceClient({
                 )
               }
               onUnlink={(linkId) => run(() => removePaymentLink(view.year, linkId), 'Zuordnung gelöst.')}
-              onNotIncome={(payment) => run(() => correctPaymentKind(view.year, payment.id, 'refund'), 'Als Erstattung oder Umbuchung vermerkt. Unter „Von dir umgewidmete Zahlungen“ lässt sich das zurücksetzen.')}
+              onNotIncome={(payment) => run(() => correctPaymentKind(view.year, payment.id, 'refund'), 'Als Erstattung oder Umbuchung vermerkt. Unter Auswerten, Zahlungen („Von dir umgewidmete Zahlungen“) lässt sich das zurücksetzen.')}
               onKind={(paymentId, kind) => run(() => correctPaymentKind(view.year, paymentId, kind), kind === null ? 'Zahlung zurückgesetzt.' : 'Zahlung umgewidmet.')}
             />
           )}
@@ -1030,10 +1165,45 @@ export default function FinanceClient({
                 ))}
               </ul>
             ))}
+
+          {tab === 'names' &&
+            (ownNames ? (
+              <OwnNames open names={ownNames.names} canWrite={ownNames.canWrite} pending={pending} error={namesError} notice={namesNotice} onChange={changeNames} />
+            ) : (
+              <p className="ui-note ui-note-danger" role="alert">
+                Die eigenen Namen konnten nicht geladen werden. Bitte die Seite neu laden; sie stehen auch unter{' '}
+                <Link href="/app/spending" className="underline">
+                  Ausgaben
+                </Link>
+                .
+              </p>
+            ))}
+        </div>
         </div>
       </div>
     </main>
   );
+}
+
+/**
+ * The arrow keys of a tab row (the ARIA tabs pattern): left and right move to
+ * the neighbouring tab, wrapping around, Home and End to the first and last;
+ * the tab is chosen and takes the focus. Only the chosen tab is in the Tab
+ * order, so Tab leaves the row.
+ */
+function arrowTo<K extends string>(event: KeyboardEvent<HTMLButtonElement>, keys: readonly K[], current: K, idPrefix: string, choose: (key: K) => void) {
+  const at = keys.indexOf(current);
+  const target =
+    event.key === 'ArrowRight' ? keys[(at + 1) % keys.length]
+    : event.key === 'ArrowLeft' ? keys[(at - 1 + keys.length) % keys.length]
+    : event.key === 'Home' ? keys[0]
+    : event.key === 'End' ? keys[keys.length - 1]
+    : null;
+  if (target === null) return;
+  event.preventDefault();
+  choose(target);
+  // Drawn after the choice; the button exists already in the same row.
+  document.getElementById(`${idPrefix}${target}`)?.focus();
 }
 
 function ItemHeader({ item }: { item: StatementItem }) {

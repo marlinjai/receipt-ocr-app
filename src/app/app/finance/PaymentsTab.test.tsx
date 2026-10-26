@@ -294,7 +294,7 @@ describe('PaymentsTab', () => {
     const p = props();
     const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: '', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false };
     const shown = view({ estimateProposals: [proposal, { ...proposal, paymentId: 'p-2', rowId: 'r-2' }] });
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const { rerender } = render(<PaymentsTab view={shown} {...p} />);
     await user.click(screen.getByRole('button', { name: 'Alle 2 eindeutigen Vorschläge übernehmen' }));
     // The parent turns `busy` on a moment later; the button is locked from the press itself.
@@ -371,7 +371,7 @@ describe('PaymentsTab', () => {
     const status = screen.getByRole('status').textContent;
     expect(status).toContain('2 storniert oder vollständig erstattet, 1 doppelt in der Datei, 1 ohne Betrag');
     expect(status).toContain('1 schon vorhandene an ihrer neuen Nummer wiedererkannt');
-    expect(status).toContain('2 früher eingelesene Käufe sind laut dieser Datei storniert oder vollständig erstattet und zählen nicht mehr; 1 Zuordnung wurde gelöst, siehe „Stornierte Käufe“');
+    expect(status).toContain('2 früher eingelesene Käufe sind laut dieser Datei storniert oder vollständig erstattet und zählen nicht mehr; 1 Zuordnung wurde gelöst, siehe Auswerten, Zahlungen („Stornierte Käufe“)');
     expect(status).toContain('Bitte ansehen: 1 teilweise erstattet');
     // A wording the reader did not know is read as a purchase and named, never dropped in silence.
     expect(status).toContain('1 mit unbekanntem Status (als Kauf eingelesen');
@@ -683,5 +683,55 @@ describe('PaymentsTab', () => {
       />,
     );
     expect(screen.getByRole('status').textContent).toContain('bei einer geschätzten Zahlung in anderer Währung den tatsächlichen Eurobetrag übernommen');
+  });
+});
+
+describe('PaymentsTab in parts (plan 2026-10-25-finance-groups)', () => {
+  const full = () =>
+    view({
+      unclassified: [{ key: 'vermieter beispiel', label: 'Vermieter Beispiel', count: 2, outCents: 130_000, inCents: 0, proposal: null }],
+      open: [open()],
+      appTreatments: [{ key: 'laden beispiel', label: 'Laden Beispiel', treatment: 'private', source: 'app', reason: 'eindeutig privat' }],
+      treatments: [{ key: 'netz beispiel', label: 'Netz Beispiel', treatment: 'business' }],
+    } as Partial<PaymentsView>);
+  const sections = () => screen.queryAllByRole('region').map((r) => r.getAttribute('aria-label'));
+
+  it('the questions: who is that, the payments without a receipt and the search; no accounts, no list', () => {
+    render(<PaymentsTab view={full()} {...props()} onClassify={vi.fn()} parts={['questions']} sharing={<p>Teilen</p>} />);
+    expect(sections()).toEqual(['Einordnen durch die App', 'Gegenseiten', 'Offene Zahlungen']);
+    expect(screen.getByRole('search', { name: 'Zahlungen suchen' })).toBeTruthy();
+    expect(screen.queryByText('Teilen')).toBeNull();
+  });
+
+  it('the list: what was decided, each to take back; no questions, no accounts', () => {
+    render(<PaymentsTab view={full()} {...props()} parts={['list']} sharing={<p>Teilen</p>} />);
+    expect(sections()).toEqual(['Von der App eingeordnet', 'Zuordnungen']);
+    expect(screen.getByRole('button', { name: 'Antwort zurücknehmen' })).toBeTruthy();
+    expect(screen.queryByText('Teilen')).toBeNull();
+  });
+
+  it('the list says so when nothing is decided yet, and when nothing is read in for the year', () => {
+    render(<PaymentsTab view={view()} {...props()} parts={['list']} />);
+    expect(screen.getByText(/Noch nichts entschieden/)).toBeTruthy();
+    cleanup();
+    render(<PaymentsTab view={view({ yearCount: 0 })} {...props()} parts={['list']} />);
+    expect(screen.getByText('Für 2026 sind keine Zahlungen eingelesen.')).toBeTruthy();
+  });
+
+  it('the accounts: accounts, sharing and the import, with a failure of the import shown there', async () => {
+    const user = setupUser();
+    render(<PaymentsTab view={full()} {...props()} parts={['accounts']} sharing={<p>Teilen</p>} />);
+    expect(sections()).toEqual(['Konten', 'Import']);
+    expect(screen.getByText('Teilen')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Einlesen' }));
+    expect(screen.getByRole('alert').textContent).toContain('Exportdatei auswählen');
+  });
+
+  it('a failure from the server is shown in whichever part is on screen', () => {
+    for (const part of ['questions', 'list', 'accounts'] as const) {
+      render(<PaymentsTab view={full()} {...props()} error="Das hat nicht geklappt." parts={[part]} />);
+      expect(screen.getByRole('alert').textContent).toBe('Das hat nicht geklappt.');
+      cleanup();
+    }
   });
 });

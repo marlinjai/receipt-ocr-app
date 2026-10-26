@@ -182,7 +182,11 @@ function receiptIndex(receipts: readonly LoopReceipt[]): { byAmount: Map<number,
     if (!Number.isFinite(day)) return;
     const entry = { receipt, day, order };
     if (receipt.estimated) estimated.push(entry);
-    else byAmount.set(receipt.amountCents, [...(byAmount.get(receipt.amountCents) ?? []), entry]);
+    else {
+      const bucket = byAmount.get(receipt.amountCents) ?? [];
+      bucket.push(entry);
+      byAmount.set(receipt.amountCents, bucket);
+    }
   });
   const index = { byAmount, estimated };
   indexes.set(receipts, index);

@@ -38,4 +38,14 @@ describe('batchedSelectOptions', () => {
     expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected']);
     await expect(ask('category')).resolves.toEqual([option('category', 'A')]);
   });
+
+  it('splits a moment of more than 200 columns into calls of at most 200 and merges them', async () => {
+    const load = vi.fn(async (ids: string[]) => Object.fromEntries(ids.map((id) => [id, [option(id, 'A')]])));
+    const ask = batchedSelectOptions(load);
+    const ids = Array.from({ length: 201 }, (_, i) => `col-${i}`);
+    const results = await Promise.all(ids.map((id) => ask(id)));
+    expect(load.mock.calls.map(([chunk]) => chunk.length)).toEqual([200, 1]);
+    expect(results[200]).toEqual([option('col-200', 'A')]);
+    expect(results[0]).toEqual([option('col-0', 'A')]);
+  });
 });

@@ -14,6 +14,7 @@ import { countedReceiptLinks, loadPayments } from '@/lib/tax/payments/service';
 import { getFxRate } from '@/lib/fx-rates';
 import { orderedRates, withTaxRates } from '@/lib/tax-rates';
 import { rowsWithOwnTreatment } from '@/lib/tax/service';
+import { timed } from '@/lib/timing';
 
 /**
  * The review queue of a workspace: every receipt that needs a person's eye,
@@ -192,32 +193,32 @@ async function paidByRow(db: PrismaClient, workspaceId: string, rowIds: readonly
 
 /** Every receipt of the workspace that needs a look, oldest receipt first, undated ones last. */
 export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Promise<ReviewEntry[]> {
-  const ctx = await tableContext(db, workspaceId);
+  const ctx = await timed('review.table', () => tableContext(db, workspaceId));
   if (!ctx) return [];
   // Receipts only: a group has no amount, vendor or file and would sit in this list forever.
-  const rows = await allReceiptRows(ctx.adapter, ctx.tableId, ctx.columns);
+  const rows = await timed('review.rows', () => allReceiptRows(ctx.adapter, ctx.tableId, ctx.columns));
   if (rows.length === 0) return [];
   const rowIds = rows.map((r) => r.id);
   const [hashes, stored] = await Promise.all([
-    fileHashesByRow(db, rowIds),
-    db.receiptReview.findMany({ where: { authWorkspaceId: workspaceId, rowId: { in: rowIds } } }),
+    timed('review.hashes', () => fileHashesByRow(db, rowIds)),
+    timed('review.stored', () => db.receiptReview.findMany({ where: { authWorkspaceId: workspaceId, rowId: { in: rowIds } } })),
   ]);
   // Only a receipt with an open doubt about its total (or one read from its image alone) needs its payments.
   // A credit note whose invoice is not linked, or linked to a row that is no live receipt any more (archived).
   const liveRows = new Set(rowIds);
   const unlinkedCreditNotes = new Set(
-    (await db.receiptReference.findMany({ where: { authWorkspaceId: workspaceId }, select: { rowId: true, referencedRowId: true } }))
+    (await timed('review.references', () => db.receiptReference.findMany({ where: { authWorkspaceId: workspaceId }, select: { rowId: true, referencedRowId: true } })))
       .filter((r) => r.referencedRowId === null || !liveRows.has(r.referencedRowId))
       .map((r) => r.rowId),
   );
   const inDoubt = stored.filter((r) => !r.checkedAt && r.flags.some((f) => f === 'total_unconfirmed' || f === 'total_conflict' || f === 'image_only')).map((r) => r.rowId);
-  const paid = await paidByRow(db, workspaceId, inDoubt);
+  const paid = await timed('review.paid', () => paidByRow(db, workspaceId, inDoubt));
   const storedByRow = new Map(stored.map((r) => [r.rowId, r]));
   const distinct = new Map(stored.map((r) => [r.rowId, new Set(r.distinctFrom)]));
-  const read = rows.map((row) => snapshotOf(row, ctx.columns, ctx.selectOptions, hashes));
+  const read = await timed('review.snapshots', async () => rows.map((row) => snapshotOf(row, ctx.columns, ctx.selectOptions, hashes)));
   // Who bears a receipt is settled without the assignment column where the
   // meal register judges it or the tax side holds a decision or a vendor rule.
-  const treated = await rowsWithOwnTreatment(db, workspaceId, read);
+  const treated = await timed('review.treated', () => rowsWithOwnTreatment(db, workspaceId, read));
   const snapshots = read.map((s) => ({
     ...s,
     assignmentSettled: s.isMeal || treated.has(s.rowId),
@@ -225,33 +226,35 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
     creditNoteUnlinked: unlinkedCreditNotes.has(s.rowId),
   }));
   const byId = new Map(snapshots.map((s) => [s.rowId, s]));
-  const alike = lookAlikes(snapshots, distinct);
+  const alike = await timed('review.alike', async () => lookAlikes(snapshots, distinct));
 
   const entries: ReviewEntry[] = [];
-  for (const s of snapshots) {
-    const duplicates = alike.get(s.rowId) ?? [];
-    const record = storedByRow.get(s.rowId);
-    // Reading the stored text again costs nothing (no model is asked); a confirmed receipt is left alone.
-    const proposal = record?.checkedAt ? [] : readingOf(s.reading, ctx.columns, ctx.selectOptions, { isMeal: s.isMeal, cells: s.cells }).changes;
-    const reasons = reviewReasons(s, record, duplicates, proposal.length > 0);
-    if (reasons.length === 0) continue;
-    entries.push({
-      rowId: s.rowId,
-      name: s.name,
-      vendor: s.vendor,
-      date: s.date,
-      gross: s.gross,
-      currency: s.currency,
-      isMeal: s.isMeal,
-      reasons,
-      canConfirm: reasons.some(isConfirmable),
-      duplicates: duplicates
-        .map((id) => byId.get(id))
-        .filter((d): d is NonNullable<typeof d> => d !== undefined)
-        .map((d) => ({ rowId: d.rowId, name: d.name, date: d.date, gross: d.gross })),
-      proposal,
-    });
-  }
+  await timed('review.entries', async () => {
+    for (const s of snapshots) {
+      const duplicates = alike.get(s.rowId) ?? [];
+      const record = storedByRow.get(s.rowId);
+      // Reading the stored text again costs nothing (no model is asked); a confirmed receipt is left alone.
+      const proposal = record?.checkedAt ? [] : readingOf(s.reading, ctx.columns, ctx.selectOptions, { isMeal: s.isMeal, cells: s.cells }).changes;
+      const reasons = reviewReasons(s, record, duplicates, proposal.length > 0);
+      if (reasons.length === 0) continue;
+      entries.push({
+        rowId: s.rowId,
+        name: s.name,
+        vendor: s.vendor,
+        date: s.date,
+        gross: s.gross,
+        currency: s.currency,
+        isMeal: s.isMeal,
+        reasons,
+        canConfirm: reasons.some(isConfirmable),
+        duplicates: duplicates
+          .map((id) => byId.get(id))
+          .filter((d): d is NonNullable<typeof d> => d !== undefined)
+          .map((d) => ({ rowId: d.rowId, name: d.name, date: d.date, gross: d.gross })),
+        proposal,
+      });
+    }
+  });
   return entries.sort((a, b) => {
     if (a.date !== b.date) return (a.date ?? '9999') < (b.date ?? '9999') ? -1 : 1;
     return a.rowId < b.rowId ? -1 : 1;

@@ -10,6 +10,7 @@ import { batchCoverage, covers, coveredByOtherSources, isPaypalSource, matchStor
 import { scaleLinks } from './estimate';
 import { parsePaymentFile, referenceHash } from './parse';
 import { amountQuery } from './search';
+import { timed } from '@/lib/timing';
 import { OVERPAID_TOLERANCE_PERCENT, PAYMENT_KINDS, type NormalizedPayment, type ParseOptions, type PaymentFormat, type PaymentKind } from './types';
 import { appCategories, mergeTreatments, storedVerdict, type TreatmentSource, type Verdict } from './verdicts';
 import type { SpendingCategory } from '@/lib/spending/categories';
@@ -930,7 +931,7 @@ export interface LoadedPayments {
  */
 export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, workspaceId: string): Promise<LoadedPayments> {
   await ensureMerchantKeys(db);
-  const [accounts, stored, rules, elsewhere, settings, verdictRows] = await Promise.all([
+  const [accounts, stored, rules, elsewhere, settings, verdictRows] = await timed('payments.read', () => Promise.all([
     db.taxAccount.findMany({ where: { authWorkspaceId: workspaceId }, include: { batches: { orderBy: { createdAt: 'desc' } } }, orderBy: { label: 'asc' } }),
     db.taxPayment.findMany({ where: { authWorkspaceId: workspaceId }, include: { links: { where: { authWorkspaceId: workspaceId } } }, orderBy: [{ bookingDay: 'asc' }, { createdAt: 'asc' }] }),
     db.taxCounterpartyRule.findMany({ where: { authWorkspaceId: workspaceId } }),
@@ -940,7 +941,7 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
     }),
     db.spendingSettings.findUnique({ where: { authWorkspaceId: workspaceId }, select: { ownNames: true } }),
     db.taxCounterpartyVerdict.findMany({ where: { authWorkspaceId: workspaceId } }),
-  ]);
+  ]));
   const linkedElsewhere = new Map<string, number>();
   for (const l of elsewhere) linkedElsewhere.set(l.rowId as string, (linkedElsewhere.get(l.rowId as string) ?? 0) + (l.payment.amountCents < 0 ? l.cents : -l.cents));
   const answered = new Map<string, CounterpartyTreatment>();
@@ -953,10 +954,10 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
     return verdict ? [[verdict.counterpartyKey, verdict] as const] : [];
   }));
   const { treatments, sources: treatmentSources } = mergeTreatments(answered, payments, settings?.ownNames ?? [], verdicts.values());
-  const funding = resolveFunding(
+  const funding = await timed('payments.funding', async () => resolveFunding(
     accounts.map((a) => ({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format), services: a.batches.map((b) => b.service) })),
     payments.map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, nameKey: vendorKey(p.counterparty) ?? '', referenceKey: vendorKey(p.reference) ?? '', sourceKind: p.sourceKind, estimated: p.amountEstimated })),
-  );
+  ));
   const privateAccounts = new Set(accounts.filter((a) => a.isPrivate).map((a) => a.id));
   const rows: PaymentRow[] = payments.map((p) => {
     const treatment = treatments.get(p.counterpartyKey);

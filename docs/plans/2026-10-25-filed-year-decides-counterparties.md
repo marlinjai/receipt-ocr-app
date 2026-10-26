@@ -126,7 +126,7 @@ build reports the before and after counts on production.
   of one company apply to payments another holds, also across tenants), before anything reads or
   writes a key: the payments' load, every import and bank fetch, every answer that stores a key, the
   spending page and the shop budgets call `ensureMerchantKeys`. A stored marker (`tax_key_versions`,
-  migration 0040) says it is done; afterwards a call costs one lookup, then nothing in that process.
+  migration 0041) says it is done; afterwards a call costs one lookup, then nothing in that process.
   It always runs in a transaction of its own, taking its database lock before any row lock, never
   inside a caller's transaction (a refused link would roll it back while the process believed it
   done); every function that opens a transaction and reads keys inside carries first. The daily

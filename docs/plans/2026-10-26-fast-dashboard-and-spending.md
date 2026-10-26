@@ -2,7 +2,7 @@
 title: A fast dashboard and spending page
 summary: The dashboard took 3.3 to 3.7 s on the server and about 7 s in the browser, the spending page 3.1 s. Measured step by step on production, the time sits in four places, each fixed without changing what the pages show.
 type: plan
-status: in-progress
+status: completed
 tags: [receipts, performance, dashboard, spending]
 projects: [receipt-ocr-app]
 date: 2026-10-26
@@ -105,3 +105,24 @@ The table package (`@marlinjai/data-table-react` 0.7.0) loads the select options
 column after another, and asks again for columns a load is already bringing; the dashboard's own
 load of all options at once cannot stop it. That is fixed in the package (load what is missing
 at once, never twice), then bumped here.
+
+After everything (#186, #187, #188 with `@marlinjai/data-table-react` 0.7.1), production,
+2026-10-26, a warm server:
+
+| | Before | After |
+|---|---|---|
+| Dashboard, server | 2.8 to 4.2 s | 0.8 to 1.0 s |
+| Dashboard, server actions the browser makes on a visit | 59 | 19 |
+| Spending, server | 3.1 s | 1.1 to 1.3 s |
+
+What is left is reading: the payments (0.4 to 0.5 s) and the receipts table (0.5 s) of the
+company, which now run side by side. On the spending page the overlap gained little: the
+database answers both reads about as slowly together as one after the other.
+
+The time until everything is in the browser could not be measured cleanly at the end: the
+measuring machine was under heavy load (load average 26 to 30), and the same page took 2.0 s on
+one run and 4.4 s on the next, all of the difference in the browser's own work. On the run with
+the machine least loaded it was 2.0 s, against 6.2 s at the start.
+
+The data-table repository's checks did not run the react package's tests; they do now
+(marlinjai/marlinjai-data-table#15).

@@ -8,6 +8,7 @@ import { getReceiptChecks } from './loop-actions';
 import { getBudgets } from './budget-actions';
 import { berlinToday } from '@/lib/spending/period';
 import { measurePage, timed } from '@/lib/timing';
+import { withSharedReads } from '@/lib/shared-reads';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,11 +24,15 @@ async function renderSpending(searchParams: SpendingParams) {
   await timed('auth.session', () => auth.requireSession('/app/spending'));
   const { jahr, monat, pruefen, firma, ansicht } = await searchParams;
   const tab = spendingTabOf(ansicht, pruefen);
-  const [data, checks, budgets] = await Promise.all([
-    timed('spending', () => getSpending(jahr ?? null, monat ?? null)),
-    timed('checks', () => getReceiptChecks()),
-    timed('budgets', () => getBudgets()),
-  ]);
+  // The overview, the receipt checks and the budgets all start from the company's payments: read once for all
+  // three (`withSharedReads`), the page only reads.
+  const [data, checks, budgets] = await withSharedReads(() =>
+    Promise.all([
+      timed('spending', () => getSpending(jahr ?? null, monat ?? null)),
+      timed('checks', () => getReceiptChecks()),
+      timed('budgets', () => getBudgets()),
+    ]),
+  );
 
   // "Reload" keeps the period that was asked for.
   const params = new URLSearchParams();

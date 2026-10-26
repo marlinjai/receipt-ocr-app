@@ -10,6 +10,7 @@ import { YEAR_PARAM } from '@/lib/receipt-years';
 import { yearCounts } from '@/lib/receipt-year-counts';
 import { autoGroupRecurring } from '@/lib/groups/auto-service';
 import { measurePage, timed } from '@/lib/timing';
+import { withSharedReads } from '@/lib/shared-reads';
 import { initializeReceiptsTable } from '../actions';
 import DashboardClient from './DashboardClient';
 
@@ -63,33 +64,32 @@ async function renderDashboard(searchParams: Promise<Record<string, string | str
   } catch (e) {
     console.error('[dashboard] automatic grouping failed', e instanceof Error ? e.name : 'unknown');
   }
-  // How many receipts each year has: the year chips and the year the table opens on.
-  let counts: YearCountsProp = { years: [], undated: 0 };
-  try {
-    counts = await timed('yearCounts', async () => yearCounts(prisma, table.id, await adapter.getColumns(table.id)));
-  } catch (e) {
-    console.error('[dashboard] year counts failed', e instanceof Error ? e.name : 'unknown');
-  }
-
-  // The badge on the "Bewirtung" link. A failure here must not take the whole
-  // dashboard down: the count is a convenience, the page behind it has the truth.
-  let openMealCount = 0;
-  try {
-    openMealCount = incompleteQueue(await timed('meals', () => loadMealRecords(prisma, workspaceId))).length;
-  } catch (e) {
-    console.error('[dashboard] open meal count failed', e);
-  }
-
-  // Receipts that need a look. Same rule as the badge: the list is help, not
-  // a condition for seeing the receipts. The page reloads it after each action.
-  let initialReview: ReviewEntry[] | null = [];
-  try {
-    initialReview = await timed('review', () => loadReviewQueue(prisma, workspaceId));
-  } catch (e) {
-    console.error('[dashboard] review queue failed', e);
-    // Null, not an empty list: the page then says the list could not be loaded.
-    initialReview = null;
-  }
+  // The year counts, the meal badge and the review list read side by side, after the grouping (which writes) is
+  // done, and the receipts table once for both that need it (`withSharedReads`). Each is help, not a condition
+  // for seeing the receipts: a failure leaves its part empty and the table stands.
+  const [counts, openMealCount, initialReview] = await withSharedReads(() =>
+    Promise.all([
+      // How many receipts each year has: the year chips and the year the table opens on.
+      timed('yearCounts', async () => yearCounts(prisma, table.id, await adapter.getColumns(table.id))).catch((e): YearCountsProp => {
+        console.error('[dashboard] year counts failed', e instanceof Error ? e.name : 'unknown');
+        return { years: [], undated: 0 };
+      }),
+      // The badge on the "Bewirtung" link: the page behind it has the truth.
+      timed('meals', () => loadMealRecords(prisma, workspaceId)).then(
+        (records) => incompleteQueue(records).length,
+        (e) => {
+          console.error('[dashboard] open meal count failed', e);
+          return 0;
+        },
+      ),
+      // Receipts that need a look. The page reloads it after each action.
+      timed('review', () => loadReviewQueue(prisma, workspaceId)).catch((e): ReviewEntry[] | null => {
+        console.error('[dashboard] review queue failed', e);
+        // Null, not an empty list: the page then says the list could not be loaded.
+        return null;
+      }),
+    ]),
+  );
 
   return (
     <DashboardClient

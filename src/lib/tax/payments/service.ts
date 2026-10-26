@@ -10,6 +10,7 @@ import { batchCoverage, covers, coveredByOtherSources, isPaypalSource, matchStor
 import { scaleLinks } from './estimate';
 import { parsePaymentFile, referenceHash } from './parse';
 import { amountQuery } from './search';
+import { sharedRead } from '@/lib/shared-reads';
 import { timed } from '@/lib/timing';
 import { OVERPAID_TOLERANCE_PERCENT, PAYMENT_KINDS, type NormalizedPayment, type ParseOptions, type PaymentFormat, type PaymentKind } from './types';
 import { appCategories, mergeTreatments, storedVerdict, type TreatmentSource, type Verdict } from './verdicts';
@@ -929,7 +930,12 @@ export interface LoadedPayments {
  * so neither the tax figures nor the questions of this company can change
  * through them.
  */
-export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, workspaceId: string): Promise<LoadedPayments> {
+export function loadPayments(db: PrismaClient | Prisma.TransactionClient, workspaceId: string): Promise<LoadedPayments> {
+  // Read once per page (see `sharedRead`); never inside a transaction, which must see its own writes.
+  return '$transaction' in db ? sharedRead(`payments:${workspaceId}`, () => readPayments(db, workspaceId)) : readPayments(db, workspaceId);
+}
+
+async function readPayments(db: PrismaClient | Prisma.TransactionClient, workspaceId: string): Promise<LoadedPayments> {
   await ensureMerchantKeys(db);
   const [accounts, stored, rules, elsewhere, settings, verdictRows] = await timed('payments.read', () => Promise.all([
     db.taxAccount.findMany({ where: { authWorkspaceId: workspaceId }, include: { batches: { orderBy: { createdAt: 'desc' } } }, orderBy: { label: 'asc' } }),

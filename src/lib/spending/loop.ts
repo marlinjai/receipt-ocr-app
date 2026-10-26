@@ -139,20 +139,54 @@ export function receiptCandidates(payment: LoopPayment, ctx: Pick<LoopContext, '
   if (!Number.isFinite(booked)) return [];
   const referenceKey = normalizeText(payment.reference);
   const aliases = ctx.vendorAliases.get(payment.counterpartyKey);
-  const out: ReceiptCandidate[] = [];
-  for (const r of ctx.receipts) {
-    if (r.linked || r.vendorKey === null || r.day === null || r.amountCents === null || r.amountCents <= 0) continue;
-    const gap = booked - dayNumber(r.day);
-    // A date that is no real day ("2026-13-45") places the receipt nowhere.
-    if (!Number.isFinite(gap)) continue;
+  const index = receiptIndex(ctx.receipts);
+  // Only receipts that can fit the amount are looked at: a euro receipt of exactly this amount, or one in
+  // another currency. In the order of the receipts, as a plain pass over all of them would find them.
+  const fitting = [...(index.byAmount.get(paid) ?? []), ...index.estimated].sort((a, b) => a.order - b.order);
+  const out: Array<{ candidate: ReceiptCandidate; gap: number }> = [];
+  for (const { receipt: r, day } of fitting) {
+    const gap = booked - day;
     if (gap > RECEIPT_DAYS_BEFORE_PAYMENT || gap < -RECEIPT_DAYS_AFTER_PAYMENT) continue;
-    const fits = r.estimated ? Math.abs(paid - r.amountCents) * 100 <= ESTIMATE_TOLERANCE_PERCENT * r.amountCents : paid === r.amountCents;
-    if (!fits) continue;
-    if (!vendorNamed(r.vendorKey, payment.counterpartyKey, referenceKey) && !aliases?.has(r.vendorKey)) continue;
-    out.push({ rowId: r.rowId, label: r.label, day: r.day, amountCents: r.amountCents, estimated: r.estimated });
+    const amount = r.amountCents as number;
+    if (r.estimated && Math.abs(paid - amount) * 100 > ESTIMATE_TOLERANCE_PERCENT * amount) continue;
+    if (!vendorNamed(r.vendorKey as string, payment.counterpartyKey, referenceKey) && !aliases?.has(r.vendorKey as string)) continue;
+    out.push({ candidate: { rowId: r.rowId, label: r.label, day: r.day as string, amountCents: amount, estimated: r.estimated }, gap: Math.abs(gap) });
   }
   // The closest day first: the likeliest receipt is at the top.
-  return out.sort((a, b) => Math.abs(booked - dayNumber(a.day)) - Math.abs(booked - dayNumber(b.day)));
+  return out.sort((a, b) => a.gap - b.gap).map((c) => c.candidate);
+}
+
+interface IndexedReceipt {
+  receipt: LoopReceipt;
+  day: number;
+  /** Its place among the receipts: candidates keep the order of a pass over all of them. */
+  order: number;
+}
+
+/**
+ * The receipts a payment can be proposed, by euro amount, worked out once per list of receipts (a run looks at
+ * every payment against the same list). A linked receipt, one without a vendor, a real day or an amount above
+ * zero is never proposed and is left out here.
+ */
+const indexes = new WeakMap<readonly LoopReceipt[], { byAmount: Map<number, IndexedReceipt[]>; estimated: IndexedReceipt[] }>();
+
+function receiptIndex(receipts: readonly LoopReceipt[]): { byAmount: Map<number, IndexedReceipt[]>; estimated: IndexedReceipt[] } {
+  const known = indexes.get(receipts);
+  if (known) return known;
+  const byAmount = new Map<number, IndexedReceipt[]>();
+  const estimated: IndexedReceipt[] = [];
+  receipts.forEach((receipt, order) => {
+    if (receipt.linked || receipt.vendorKey === null || receipt.day === null || receipt.amountCents === null || receipt.amountCents <= 0) return;
+    const day = dayNumber(receipt.day);
+    // A date that is no real day ("2026-13-45") places the receipt nowhere.
+    if (!Number.isFinite(day)) return;
+    const entry = { receipt, day, order };
+    if (receipt.estimated) estimated.push(entry);
+    else byAmount.set(receipt.amountCents, [...(byAmount.get(receipt.amountCents) ?? []), entry]);
+  });
+  const index = { byAmount, estimated };
+  indexes.set(receipts, index);
+  return index;
 }
 
 export function loopState(payment: LoopPayment, ctx: LoopContext): LoopState {

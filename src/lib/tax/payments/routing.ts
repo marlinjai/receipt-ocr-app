@@ -6,6 +6,7 @@ import { ensureMerchantKeys } from './rekey';
 import { routesToReceiver } from './route';
 import type { SpendingCategory } from '@/lib/spending/categories';
 import type { TreatmentSource } from './verdicts';
+import { sharedRead } from '@/lib/shared-reads';
 
 /**
  * Payments across companies (plan docs/plans/2026-10-22-payments-across-companies.md).
@@ -90,7 +91,12 @@ export interface RoutedPayments {
  * routes to another company, plus those other companies route to it (with
  * this company's own links on them, never the holder's).
  */
-export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<RoutedPayments> {
+export function loadRoutedPayments(db: Db, workspaceId: string): Promise<RoutedPayments> {
+  // Read once per page (see `sharedRead`); never inside a transaction, which must see its own writes.
+  return '$transaction' in db ? sharedRead(`routed:${workspaceId}`, () => readRoutedPayments(db, workspaceId)) : readRoutedPayments(db, workspaceId);
+}
+
+async function readRoutedPayments(db: Db, workspaceId: string): Promise<RoutedPayments> {
   const [own, outgoing, incoming] = await Promise.all([
     loadPayments(db, workspaceId),
     db.taxAccountShare.findMany({ where: { authWorkspaceId: workspaceId }, include: { account: { select: { label: true, authWorkspaceId: true } } } }),

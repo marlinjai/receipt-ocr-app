@@ -9,6 +9,8 @@ import { getBudgets } from './budget-actions';
 import { berlinToday } from '@/lib/spending/period';
 import { measurePage, timed } from '@/lib/timing';
 import { withSharedReads } from '@/lib/shared-reads';
+import { getPurchases } from './purchases-actions';
+import PurchasesPanel from './PurchasesPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,11 +28,13 @@ async function renderSpending(searchParams: SpendingParams) {
   const tab = spendingTabOf(ansicht, pruefen);
   // The overview, the receipt checks and the budgets all start from the company's payments: read once for all
   // three (`withSharedReads`), the page only reads.
-  const [data, checks, budgets] = await withSharedReads(() =>
+  const [data, checks, budgets, purchases] = await withSharedReads(() =>
     Promise.all([
       timed('spending', () => getSpending(jahr ?? null, monat ?? null)),
       timed('checks', () => getReceiptChecks()),
       timed('budgets', () => getBudgets()),
+      // "Was gekauft" is read only when its tab is open.
+      tab === 'gekauft' ? timed('purchases', () => getPurchases(jahr ?? null, monat ?? null)) : Promise.resolve(null),
     ]),
   );
 
@@ -38,7 +42,7 @@ async function renderSpending(searchParams: SpendingParams) {
   const params = new URLSearchParams();
   if (jahr) params.set('jahr', jahr);
   if (monat) params.set('monat', monat);
-  if (tab === 'belege') params.set('ansicht', 'belege');
+  if (tab !== 'ueberblick') params.set('ansicht', tab);
   const reload = params.size > 0 ? `/app/spending?${params.toString()}` : '/app/spending';
 
   if (!data.ok) {
@@ -84,6 +88,15 @@ async function renderSpending(searchParams: SpendingParams) {
         )
       }
       budgets={budgets.ok ? budgets.value : null}
+      purchases={
+        purchases === null ? null : purchases.ok ? (
+          <PurchasesPanel key="purchases" overview={purchases.value} />
+        ) : (
+          <p key="purchases" className="ui-note ui-note-danger mt-4">
+            {purchases.error === 'failed' ? 'Was gekauft wurde, konnte nicht geladen werden. Bitte die Seite neu laden.' : 'Für diesen Arbeitsbereich fehlt der Zugriff. Bitte neu anmelden oder den Arbeitsbereich wechseln.'}
+          </p>
+        )
+      }
     />
   );
 }

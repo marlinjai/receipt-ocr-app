@@ -136,6 +136,7 @@ export default function SpendingClient({
   openChecks = null,
   checks,
   budgets,
+  purchases = null,
   today,
 }: {
   initial: SpendingPageView;
@@ -146,6 +147,8 @@ export default function SpendingClient({
   checks?: ReactNode;
   /** The budgets of this month, for the budget block; null when they could not be read. */
   budgets?: BudgetsView | null;
+  /** "Was gekauft", rendered on the server when its tab is open. */
+  purchases?: ReactNode;
   /** Today in the owner's time zone, "YYYY-MM-DD". */
   today: string;
 }) {
@@ -176,6 +179,7 @@ export default function SpendingClient({
   };
   const tabs: Array<{ key: SpendingTab; label: string; count: number | null }> = [
     { key: 'ueberblick', label: 'Überblick', count: null },
+    { key: 'gekauft', label: 'Was gekauft', count: null },
     { key: 'belege', label: 'Belege', count: openChecks },
   ];
 
@@ -342,6 +346,10 @@ export default function SpendingClient({
       {tab === 'belege' ? (
         <div role="tabpanel" id={`${id}-panel-belege`} aria-labelledby={`${id}-tab-belege`}>
           {checks}
+        </div>
+      ) : tab === 'gekauft' ? (
+        <div role="tabpanel" id={`${id}-panel-gekauft`} aria-labelledby={`${id}-tab-gekauft`}>
+          {purchases}
         </div>
       ) : (
         <div role="tabpanel" id={`${id}-panel-ueberblick`} aria-labelledby={`${id}-tab-ueberblick`}>

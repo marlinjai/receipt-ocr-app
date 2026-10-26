@@ -182,9 +182,10 @@ export class LineItemsError extends Error {
  * shop. Choosing the kind the line was read with takes the answer back.
  * `vendor` is the receipt's vendor as the row holds it now.
  */
-export async function answerLineKind(db: PrismaClient, ctx: LineItemsContext, lineId: string, kind: unknown, vendor: string | null): Promise<{ rowId: string }> {
+export async function answerLineKind(db: PrismaClient, ctx: LineItemsContext, lineId: string, kind: unknown, vendor: string | null, options: { rowId?: string } = {}): Promise<{ rowId: string }> {
   if (!isPurchaseKind(kind)) throw new LineItemsError('invalid_kind');
-  const line = await db.receiptItem.findFirst({ where: { id: lineId, authWorkspaceId: ctx.workspaceId }, select: { rowId: true, text: true, kind: true } });
+  // With `rowId`, only a line of that receipt: a line id of another receipt is not answered through this one.
+  const line = await db.receiptItem.findFirst({ where: { id: lineId, authWorkspaceId: ctx.workspaceId, ...(options.rowId ? { rowId: options.rowId } : {}) }, select: { rowId: true, text: true, kind: true } });
   if (!line) throw new LineItemsError('line_not_found');
   const where = { authWorkspaceId_vendorKey_textKey: { authWorkspaceId: ctx.workspaceId, vendorKey: vendorKey(vendor), textKey: textKey(line.text) } };
   if (kind === line.kind) {

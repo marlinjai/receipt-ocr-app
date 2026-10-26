@@ -1,4 +1,5 @@
 import 'server-only';
+import { checkLines, type LinesCheck } from '@/lib/line-items/lines';
 import type { PrismaClient } from '@prisma/client';
 import type { Column, Row } from '@marlinjai/data-table-core';
 import { withFollowingName } from '@/lib/receipt-name-cells';
@@ -63,6 +64,8 @@ export interface ReviewEntry {
   duplicates: Array<{ rowId: string; name: string; date: string | null; gross: number | null }>;
   /** What a new reading of the stored text would change, field by field. Empty when nothing. */
   proposal: ReadingChange[];
+  /** The receipt's lines against its total, where they were read; the review list says by how much they miss it. */
+  linesCheck: LinesCheck | null;
 }
 
 function text(value: unknown): string {
@@ -229,6 +232,14 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
       .filter((r) => r.referencedRowId === null || !liveRows.has(r.referencedRowId))
       .map((r) => r.rowId),
   );
+  // The receipts' lines against the totals they hold now (src/lib/line-items). A failure to read them hides no other reason.
+  const lineReadings = await db.receiptItemReading
+    .findMany({ where: { authWorkspaceId: workspaceId, outcome: 'lines', rowId: { in: rowIds } }, select: { rowId: true, lineCount: true, linesSumCents: true, linesNetCents: true, totalNetCents: true } })
+    .catch((err) => {
+      console.error('[review] the line readings could not be read:', err instanceof Error ? err.name : 'error');
+      return [];
+    });
+  const linesByRow = new Map(lineReadings.map((r) => [r.rowId, r]));
   const inDoubt = stored.filter((r) => !r.checkedAt && r.flags.some((f) => f === 'total_unconfirmed' || f === 'total_conflict' || f === 'image_only')).map((r) => r.rowId);
   const paid = await timed('review.paid', () => paidByRow(db, workspaceId, inDoubt, payments));
   const storedByRow = new Map(stored.map((r) => [r.rowId, r]));
@@ -243,6 +254,10 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
     totalPaid: paymentsCoverTotal(paid.get(s.rowId) ?? 0, s),
     creditNoteUnlinked: unlinkedCreditNotes.has(s.rowId),
   }));
+  const linesCheckOf = (s: (typeof snapshots)[number]) => {
+    const reading = linesByRow.get(s.rowId);
+    return reading ? checkLines(reading, s.gross) : null;
+  };
   const byId = new Map(snapshots.map((s) => [s.rowId, s]));
   const alike = await timed('review.alike', async () => lookAlikes(snapshots, distinct));
 
@@ -253,7 +268,8 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
       const record = storedByRow.get(s.rowId);
       // Reading the stored text again costs nothing (no model is asked); a confirmed receipt is left alone.
       const proposal = record?.checkedAt ? [] : readingOf(s.reading, ctx.columns, ctx.selectOptions, { isMeal: s.isMeal, cells: s.cells }).changes;
-      const reasons = reviewReasons(s, record, duplicates, proposal.length > 0);
+      const linesCheck = linesCheckOf(s);
+      const reasons = reviewReasons({ ...s, linesDiffer: linesCheck !== null && !linesCheck.addsUp }, record, duplicates, proposal.length > 0);
       if (reasons.length === 0) continue;
       entries.push({
         rowId: s.rowId,
@@ -270,6 +286,7 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
           .filter((d): d is NonNullable<typeof d> => d !== undefined)
           .map((d) => ({ rowId: d.rowId, name: d.name, date: d.date, gross: d.gross })),
         proposal,
+        linesCheck,
       });
     }
   });

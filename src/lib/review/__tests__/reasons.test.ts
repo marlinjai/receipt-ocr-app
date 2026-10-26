@@ -193,3 +193,15 @@ describe('a credit note without its invoice', () => {
     expect(reviewReasons(receipt({ gross: -11.9, net: -10, creditNoteUnlinked: true }), { flags: [], checkedAt: new Date() }, [])).toEqual([]);
   });
 });
+
+describe('lines that do not add up to the total', () => {
+  it('ask for a look until a person confirms the receipt, and never next to a missing amount', () => {
+    const stored = { flags: [], checkedAt: null };
+    expect(reviewReasons(receipt({ linesDiffer: true }), stored, [])).toEqual(['lines_differ']);
+    expect(reviewReasons(receipt({ linesDiffer: true }), { ...stored, checkedAt: new Date() }, [])).toEqual([]);
+    expect(reviewReasons(receipt({ linesDiffer: true, gross: null }), stored, [])).toEqual(['amount_missing']);
+    expect(reviewReasons(receipt({ linesDiffer: false }), stored, [])).toEqual([]);
+    expect(isConfirmable('lines_differ')).toBe(true);
+    expect(REASON_TEXT.lines_differ).toContain('Gesamtbetrag');
+  });
+});

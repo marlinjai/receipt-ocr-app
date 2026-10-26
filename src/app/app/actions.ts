@@ -26,7 +26,7 @@ import { loadReceiptSource } from '@/lib/receipt-page-source';
 import { structuredReceiptFields } from '@/lib/einvoice';
 import { withStructuredInvoice } from '@/lib/structured-reading';
 import { linkCreditNote, relinkCreditNotes } from '@/lib/receipt-references';
-import { settleFromPageOnly, settleReading, type ModelReading } from '@/lib/receipt-reading';
+import { settleFromPageOnly, settleReading } from '@/lib/receipt-reading';
 import { fileOpenToWorkspace } from '@/lib/file-access';
 import type { ReadFlag } from '@/lib/review/reasons';
 import type { RereadResult } from '@/lib/review/reread';

@@ -4,6 +4,7 @@ import { useId, useState } from 'react';
 import type { ReviewEntry } from '@/lib/review/service';
 import type { ReadingChange, ReadingField } from '@/lib/review/reading';
 import { REASON_TEXT, type ReviewReason } from '@/lib/review/reasons';
+import { differenceText } from '@/lib/line-items/format';
 
 /**
  * "Belege prüfen": the receipts that need a person's eye, each with the
@@ -49,6 +50,7 @@ const SHORT: Record<ReviewReason, string> = {
   category_doubt: 'Kategorie prüfen',
   possible_duplicate: 'Mögliches Duplikat',
   reading_differs: 'Neue Lesart',
+  lines_differ: 'Positionen prüfen',
 };
 
 const FIELD_LABEL: Record<ReadingField, string> = {
@@ -158,7 +160,10 @@ export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, o
                 {entry.reasons.map((reason) => (
                   <li key={reason} className="flex items-start gap-2 text-xs" style={{ color: 'var(--dt-text-secondary)' }}>
                     <span className="ui-chip shrink-0">{SHORT[reason]}</span>
-                    <span>{REASON_TEXT[reason]}</span>
+                    <span>
+                      {reason === 'lines_differ' && entry.linesCheck ? `${differenceText(entry.linesCheck, entry.currency)}. ` : ''}
+                      {REASON_TEXT[reason]}
+                    </span>
                   </li>
                 ))}
               </ul>

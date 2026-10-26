@@ -428,11 +428,11 @@ async function storeReviewFlags(workspaceId: string, tenantId: string | null, ro
   } catch (err) {
     console.error('[processReceipt] storing the review flags failed:', err);
   }
-  // The receipt's lines replace the ones of an earlier reading. A reading without a usable list leaves
-  // the lines as they are (the backfill reads a receipt that has none). Counts only, never a line's text.
+  // The receipt's lines replace the ones of an earlier reading. A reading without a usable list, or with an
+  // empty one, leaves stored lines as they are (the backfill reads a receipt that has none). Counts only, never a line's text.
   if (read.lines) {
     try {
-      await replaceReceiptLines(prisma, { workspaceId, tenantId }, rowId, read.lines);
+      await replaceReceiptLines(prisma, { workspaceId, tenantId }, rowId, read.lines, { keepOverEmpty: true });
     } catch (err) {
       console.error('[processReceipt] storing the lines failed:', err instanceof Error ? err.name : 'error', { count: read.lines.lines.length });
     }

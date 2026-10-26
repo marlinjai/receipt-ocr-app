@@ -40,6 +40,14 @@ describe('LinesBackfillPanel', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('versucht es erneut');
   });
 
+  it('stops when more receipts of a batch failed than were read', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(reply(200, { result: result({ read: 1, failed: 4, remaining: 30 }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    await start();
+    expect((await screen.findByRole('alert')).textContent).toContain('versucht es erneut');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('says when no language model is configured', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(reply(503, { error: 'model_unavailable', result: result({ unavailable: true, remaining: 4 }) })));
     await start();

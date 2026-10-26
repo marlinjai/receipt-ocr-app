@@ -76,6 +76,8 @@ export interface ReviewSnapshot {
   creditNoteUnlinked?: boolean;
   /** True when the receipt's lines miss its total by more than the tolerance (src/lib/line-items/lines.ts, `checkLines`). */
   linesDiffer?: boolean;
+  /** When the lines were read: a confirmation given before that says nothing about them. */
+  linesReadAt?: Date | string | null;
 }
 
 /** No tax rate of a real receipt is above this (the highest standard rate in the European Union is 27 percent). */
@@ -205,7 +207,8 @@ export function reviewReasons(
   const offer = readingDiffers && !stored?.checkedAt;
   // Lines that miss the total are worked out on read (a corrected total ends it at once). A person who
   // confirmed the receipt has seen them: a café bill whose tip is not printed as a line never adds up.
-  const linesOff = Boolean(snapshot.linesDiffer) && !stored?.checkedAt && !derived.includes('amount_missing');
+  const confirmedAfterLines = Boolean(stored?.checkedAt) && (!snapshot.linesReadAt || new Date(stored!.checkedAt!).getTime() >= new Date(snapshot.linesReadAt).getTime());
+  const linesOff = Boolean(snapshot.linesDiffer) && !confirmedAfterLines && !derived.includes('amount_missing');
   return [
     ...derived,
     ...kept,

@@ -60,6 +60,8 @@ export interface PurchasesOverview {
   receiptsWithLines: number;
   /** Receipts in another currency without an exchange rate: left out of every sum. */
   unconverted: number;
+  /** Receipts without a total: left out of every sum (the review list asks for their amount). */
+  withoutTotal: number;
   kinds: KindSum[];
   categories: Array<{ category: SpendingCategory; label: string; cents: number }>;
   /** The items bought most often ("Hafermilch, 23 mal, 41,17 €"). */
@@ -97,6 +99,7 @@ export function buildPurchasesOverview(receipts: readonly PurchaseReceiptInput[]
     receipts: 0,
     receiptsWithLines: 0,
     unconverted: 0,
+    withoutTotal: 0,
     kinds: [],
     categories: [],
     topItems: [],
@@ -119,9 +122,14 @@ export function buildPurchasesOverview(receipts: readonly PurchaseReceiptInput[]
       out.unconverted++;
       continue;
     }
+    // Without a total there is nothing the lines could be measured against: the receipt waits for its amount.
+    if (r.grossCents === null) {
+      out.withoutTotal++;
+      continue;
+    }
     const euro = (cents: number) => Math.round(cents * rate);
     out.receipts++;
-    const total = r.grossCents === null ? 0 : euro(r.grossCents);
+    const total = euro(r.grossCents);
     out.totalCents += total;
     const monthEntry = months.get(month) ?? { totalCents: 0, linesCents: 0, kinds: new Map() };
     monthEntry.totalCents += total;
@@ -129,15 +137,19 @@ export function buildPurchasesOverview(receipts: readonly PurchaseReceiptInput[]
     if (!r.lines || r.lines.length === 0) continue;
     out.receiptsWithLines++;
     // A deposit or a discount follows the receipt's main category: the one of its largest line that has one.
-    const main = [...r.lines].filter((l) => KIND_CATEGORY[l.kind] !== null && l.grossCents > 0).sort((a, b) => b.grossCents - a.grossCents)[0];
+    // Largest by amount, so a credit note (all lines negative) has one too.
+    const main = [...r.lines].filter((l) => KIND_CATEGORY[l.kind] !== null).sort((a, b) => Math.abs(b.grossCents) - Math.abs(a.grossCents))[0];
     const mainCategory: SpendingCategory = main ? (KIND_CATEGORY[main.kind] as SpendingCategory) : 'unclear';
     const shopKey = r.vendor.trim().toLocaleLowerCase('de-DE') || '?';
     const shop = shops.get(shopKey) ?? { vendor: r.vendor.trim() || 'Ohne Händler', cents: 0, receipts: 0, kinds: new Map() };
     shop.receipts++;
+    // The receipt's lines in euros, converted once as a sum, so lines that add up in another currency
+    // leave no cents of rounding as "not explained"; each kind is converted line by line.
+    const receiptLines = euro(r.lines.reduce((sum, l) => sum + l.grossCents, 0));
+    out.linesCents += receiptLines;
+    monthEntry.linesCents += receiptLines;
     for (const l of r.lines) {
       const cents = euro(l.grossCents);
-      out.linesCents += cents;
-      monthEntry.linesCents += cents;
       add(monthEntry.kinds, l.kind, cents);
       const k = kinds.get(l.kind) ?? { cents: 0, lines: 0 };
       k.cents += cents;

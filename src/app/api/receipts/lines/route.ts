@@ -5,9 +5,10 @@ import { sessionWorkspaceId, tenantIdForWorkspace } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
 import { readReceiptLines } from '@/lib/receipt-classifier';
 import { LINES_BATCH_LIMIT, backfillReceiptLines } from '@/lib/line-items/backfill';
+import { storedInvoiceFields } from '@/lib/line-items/structured-source';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+export const maxDuration = 180;
 
 /**
  * POST /api/receipts/lines  ("Positionen lesen" on the receipts page)
@@ -28,7 +29,7 @@ export async function POST() {
   }
   try {
     const workspaceId = sessionWorkspaceId(principal);
-    const result = await backfillReceiptLines(prisma, { workspaceId, tenantId: tenantIdForWorkspace(principal, workspaceId) }, readReceiptLines, { limit: LINES_BATCH_LIMIT });
+    const result = await backfillReceiptLines(prisma, { workspaceId, tenantId: tenantIdForWorkspace(principal, workspaceId) }, readReceiptLines, { limit: LINES_BATCH_LIMIT, structuredOf: storedInvoiceFields });
     if (result.unavailable) return NextResponse.json({ error: 'model_unavailable', result }, { status: 503 });
     return NextResponse.json({ result });
   } catch (e) {

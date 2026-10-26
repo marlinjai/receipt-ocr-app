@@ -234,7 +234,7 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
   );
   // The receipts' lines against the totals they hold now (src/lib/line-items). A failure to read them hides no other reason.
   const lineReadings = await db.receiptItemReading
-    .findMany({ where: { authWorkspaceId: workspaceId, outcome: 'lines', rowId: { in: rowIds } }, select: { rowId: true, lineCount: true, linesSumCents: true, linesNetCents: true, totalNetCents: true } })
+    .findMany({ where: { authWorkspaceId: workspaceId, outcome: 'lines', rowId: { in: rowIds } }, select: { rowId: true, lineCount: true, linesSumCents: true, linesNetCents: true, totalNetCents: true, readAt: true } })
     .catch((err) => {
       console.error('[review] the line readings could not be read:', err instanceof Error ? err.name : 'error');
       return [];
@@ -269,7 +269,7 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
       // Reading the stored text again costs nothing (no model is asked); a confirmed receipt is left alone.
       const proposal = record?.checkedAt ? [] : readingOf(s.reading, ctx.columns, ctx.selectOptions, { isMeal: s.isMeal, cells: s.cells }).changes;
       const linesCheck = linesCheckOf(s);
-      const reasons = reviewReasons({ ...s, linesDiffer: linesCheck !== null && !linesCheck.addsUp }, record, duplicates, proposal.length > 0);
+      const reasons = reviewReasons({ ...s, linesDiffer: linesCheck !== null && !linesCheck.addsUp, linesReadAt: linesByRow.get(s.rowId)?.readAt ?? null }, record, duplicates, proposal.length > 0);
       if (reasons.length === 0) continue;
       entries.push({
         rowId: s.rowId,

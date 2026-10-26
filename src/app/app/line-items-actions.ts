@@ -13,7 +13,7 @@ import { loadReceiptLines, receiptVendor, type ReceiptLinesView } from '@/lib/li
  * code, as everywhere in the app.
  */
 
-export type LineItemsActionError = 'unauthorized' | 'forbidden' | 'not_found' | 'invalid_input' | 'failed';
+export type LineItemsActionError = 'unauthorized' | 'forbidden' | 'not_found' | 'invalid_input' | 'no_vendor' | 'failed';
 export type LineItemsResult<T> = { ok: true; value: T } | { ok: false; error: LineItemsActionError };
 
 function failure(e: unknown): { ok: false; error: LineItemsActionError } {
@@ -22,7 +22,7 @@ function failure(e: unknown): { ok: false; error: LineItemsActionError } {
   if (status === 401) return { ok: false, error: 'unauthorized' };
   if (status === 403) return { ok: false, error: 'forbidden' };
   if (e instanceof MissingTenantError) return { ok: false, error: 'forbidden' };
-  if (e instanceof LineItemsError) return { ok: false, error: e.code === 'line_not_found' ? 'not_found' : 'invalid_input' };
+  if (e instanceof LineItemsError) return { ok: false, error: e.code === 'line_not_found' ? 'not_found' : e.code === 'no_vendor' ? 'no_vendor' : 'invalid_input' };
   console.error('[line-items] action failed:', e instanceof Error ? e.name : 'error');
   return { ok: false, error: 'failed' };
 }

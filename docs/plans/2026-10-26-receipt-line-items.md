@@ -101,8 +101,10 @@ What was built:
   lines and document-level discounts and surcharges are read from the XML; the receipt's text now
   lists the positions too.
 - **Backfill** (`src/lib/line-items/backfill.ts`): "Positionen lesen" on the receipts page
-  (`POST /api/receipts/lines`, 15 receipts per request, the page asks again until none is left) and
-  40 per company after the daily bank sync (`/api/internal/bank-sync`).
+  (`POST /api/receipts/lines`, 5 receipts per request so a request stays well inside a proxy's time
+  limit, the page asks again until none is left) and 40 per company, at most 120 in all, after the
+  daily bank sync (`/api/internal/bank-sync`). An electronic invoice stored before this takes its
+  lines from its stored XML, not its text.
 - **Pages**: the receipt view's "Positionen" section with the kind correction; the review list's
   "Positionen prüfen"; the spending page's "Was gekauft" tab (`?ansicht=gekauft`).
 
@@ -125,10 +127,23 @@ Decided while building, say so if you disagree:
    (`ANTHROPIC_ITEM_MODEL`), with up to 24,000 characters of stored text (a longer text is cut in the
    middle and the receipt says lines may be missing). A call that does not get through (provider
    down, rate limit, timeout) counts nothing against the receipt; an unusable answer (malformed, cut
-   off, declined) counts, and after 3 the receipt is no longer asked about. A missing key stops the
-   run without counting anything. Receipts are read newest first.
-6. **The OpenRouter path of the classification call got 16,000 output tokens** (was 8,000), so the
-   lines of a long receipt fit next to the facts. The model choice is unchanged.
+   off, declined) or a request the provider refuses for the receipt itself (a 4xx other than
+   authentication, payment, timeout, conflict and rate limit) counts, and after 3 the receipt is no
+   longer asked about (its view then points to "Seite neu lesen"). A missing key stops the run
+   without counting anything. Receipts are read newest first. A receipt recorded without text is
+   read again once it holds text.
+6. **The classification call has room for the lines**: the OpenRouter path got 16,000 output tokens
+   (was 8,000), the answer timeout is 90 seconds (was 60, the searching Anthropic turn twice that),
+   and the lines are the last field of the answer, so an answer cut off inside them still gives
+   every fact, without any line. The model choice is unchanged.
+8. **A new reading never replaces stored lines with an empty list** (a blurry retake says nothing
+   against lines read before), and a line's kind cannot be remembered on a receipt without a vendor
+   (it would apply to every receipt without one).
+9. **A confirmation in the review list settles a difference only when it came after the lines were
+   read**; a receipt confirmed in 2025 and backfilled now still shows a difference.
+10. **"Was gekauft" leaves out a receipt without a total** (and says how many), converts a receipt's
+   lines into euros once as a sum, and lets a credit note's discount follow the credit note's own
+   category.
 7. **"Was gekauft" lives in the active company**, like the rest of the spending page, and uses the
    period chosen at the top of the page by receipt date. A receipt in another currency counts at its
    stored exchange rate; one without a rate is left out and counted.

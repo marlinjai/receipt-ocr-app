@@ -25,7 +25,7 @@ const line = (id: string, text: string, grossCents: number, kind: StoredLine['ki
 });
 const view = (extra: Partial<ReceiptLinesView> = {}): ReceiptLinesView => ({
   lines: [line('l1', 'Cappuccino', 780, 'drink_out', { quantity: 2, unitPriceCents: 390 }), line('l2', 'Croque', 950, 'meal_out')],
-  reading: { outcome: 'lines', source: 'reading', textCut: false },
+  reading: { outcome: 'lines', source: 'reading', textCut: false, retried: false },
   check: { sumCents: 1730, totalCents: 1730, differenceCents: 0, addsUp: true, basis: 'gross' },
   currency: 'EUR',
   ...extra,
@@ -73,7 +73,7 @@ describe('ReceiptLinesSection', () => {
     const { unmount } = render(<ReceiptLinesSection rowId="r1" version="v1" />);
     expect(await screen.findByText(/noch nicht gelesen/)).toBeTruthy();
     unmount();
-    getReceiptLines.mockResolvedValueOnce({ ok: true, value: view({ lines: [], reading: { outcome: 'no_text', source: 'backfill', textCut: false }, check: null }) });
+    getReceiptLines.mockResolvedValueOnce({ ok: true, value: view({ lines: [], reading: { outcome: 'no_text', source: 'backfill', textCut: false, retried: false }, check: null }) });
     render(<ReceiptLinesSection rowId="r2" version="v1" />);
     expect(await screen.findByText(/kein erkannter Text gespeichert/)).toBeTruthy();
     cleanup();
@@ -82,6 +82,12 @@ describe('ReceiptLinesSection', () => {
     render(<ReceiptLinesSection rowId="r3" version="v1" />);
     await user.click(await screen.findByRole('button', { name: 'Erneut laden' }));
     await waitFor(() => expect(screen.getByText('Croque')).toBeTruthy());
+  });
+
+  it('after the attempt limit points to reading the page again, instead of promising another run', async () => {
+    getReceiptLines.mockResolvedValueOnce({ ok: true, value: view({ lines: [], reading: { outcome: 'failed', source: 'backfill', textCut: false, retried: false }, check: null }) });
+    render(<ReceiptLinesSection rowId="r1" version="v1" />);
+    expect((await screen.findByText(/nach mehreren Versuchen/)).textContent).toContain('Seite neu lesen');
   });
 
   it('loads afresh when the receipt was read again (backtrack)', async () => {

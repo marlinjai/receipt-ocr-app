@@ -79,6 +79,11 @@ export default function PurchasesPanel({ overview }: { overview: PurchasesOvervi
             mit „Positionen lesen“ gelesen, und jeden Tag ein Teil von selbst.
           </p>
         )}
+        {overview.withoutTotal > 0 && (
+          <p className="ui-note ui-note-warn">
+            {overview.withoutTotal === 1 ? 'Ein Beleg hat' : `${overview.withoutTotal} Belege haben`} keinen Gesamtbetrag und {overview.withoutTotal === 1 ? 'zählt' : 'zählen'} hier erst mit, wenn der Betrag eingetragen ist.
+          </p>
+        )}
         {overview.unconverted > 0 && (
           <p className="ui-note ui-note-warn">
             {overview.unconverted === 1 ? 'Ein Beleg in einer anderen Währung hat' : `${overview.unconverted} Belege in einer anderen Währung haben`} keinen Wechselkurs und {overview.unconverted === 1 ? 'zählt' : 'zählen'} hier nicht mit.

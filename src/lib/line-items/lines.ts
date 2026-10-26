@@ -59,7 +59,9 @@ export function parseModelLines(raw: unknown): ReceiptLine[] | null {
     if (unitPriceCents === undefined) return null;
     let quantity: number | null = null;
     if (e.quantity !== null && e.quantity !== undefined) {
-      if (typeof e.quantity !== 'number' || !Number.isFinite(e.quantity) || e.quantity <= 0 || e.quantity > 100_000) return null;
+      if (typeof e.quantity !== 'number' || !Number.isFinite(e.quantity) || e.quantity === 0 || Math.abs(e.quantity) > 100_000) return null;
+      // A negative quantity is printed only for money back: returned bottles ("-6 x 0,25"), a cancelled item.
+      if (e.quantity < 0 && e.kind !== 'deposit_discount') return null;
       quantity = Math.round(e.quantity * 1000) / 1000;
     }
     let taxRate: number | null = null;

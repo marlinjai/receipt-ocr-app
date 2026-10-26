@@ -11,6 +11,7 @@ function failureText(result: Extract<LineItemsResult<unknown>, { ok: false }>): 
   if (result.error === 'forbidden') return 'Für diesen Arbeitsbereich fehlt die Berechtigung zum Ändern.';
   if (result.error === 'not_found') return 'Diese Position gibt es nicht mehr, vielleicht wurde der Beleg neu gelesen. Bitte die Seite neu laden.';
   if (result.error === 'invalid_input') return 'Diese Art gibt es nicht. Bitte eine aus der Liste wählen.';
+  if (result.error === 'no_vendor') return 'Der Beleg nennt keinen Händler, deshalb lässt sich die Art nicht merken. Bitte zuerst den Händler eintragen.';
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
 
@@ -96,7 +97,13 @@ function LinesBody({
     );
   }
   if (reading.outcome === 'no_text') return <p className="text-sm text-gray-400">Für diesen Beleg ist kein erkannter Text gespeichert, daher gibt es keine Positionen. „Seite neu lesen“ liest sie von der Seite.</p>;
-  if (reading.outcome === 'failed') return <p className="text-sm text-gray-400">Die Positionen konnten noch nicht gelesen werden. Der nächste Lauf versucht es erneut.</p>;
+  if (reading.outcome === 'failed') {
+    return reading.retried ? (
+      <p className="text-sm text-gray-400">Die Positionen konnten nicht gelesen werden. Der nächste Lauf versucht es erneut.</p>
+    ) : (
+      <p className="text-sm text-gray-400">Die Positionen konnten auch nach mehreren Versuchen nicht aus dem Text gelesen werden. „Seite neu lesen“ liest sie von der Seite.</p>
+    );
+  }
   if (lines.length === 0) return <p className="text-sm text-gray-400">Auf dem Beleg wurden keine Positionen gefunden.</p>;
   return (
     <>

@@ -69,6 +69,11 @@ describe('parseModelLines', () => {
     expect(parseModelLines([supermarket[0], 'Brot 2,49'])).toBeNull();
   });
 
+  it('takes a returned deposit printed with a negative quantity, but no negative quantity of a purchase', () => {
+    expect(parseModelLines([{ text: 'Leergut', quantity: -6, unitPrice: 0.25, gross: -1.5, kind: 'deposit_discount' }])![0]).toMatchObject({ quantity: -6, grossCents: -150 });
+    expect(parseModelLines([{ text: 'Brot', quantity: -1, gross: -2.49, kind: 'groceries' }])).toBeNull();
+  });
+
   it('refuses a list longer than any receipt', () => {
     const many = Array.from({ length: MAX_LINES + 1 }, () => ({ text: 'Brötchen', gross: 0.4, kind: 'groceries' }));
     expect(parseModelLines(many)).toBeNull();

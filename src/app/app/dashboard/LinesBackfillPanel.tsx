@@ -69,8 +69,9 @@ export default function LinesBackfillPanel() {
           setDone(true);
           break;
         }
-        // A batch that left as many as before made no progress (every receipt in it failed): the next run tries again.
-        if (before !== null && r.remaining >= before) {
+        // A batch that left as many as before made no progress, and one where more failed than were read
+        // means the provider is struggling: the page stops asking, and the next run tries again.
+        if ((before !== null && r.remaining >= before) || r.failed > r.read + r.noLines) {
           setError('Die letzten Belege konnten nicht gelesen werden. Ein neuer Lauf, später oder morgen der tägliche, versucht es erneut.');
           break;
         }

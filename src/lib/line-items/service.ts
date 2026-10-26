@@ -12,12 +12,13 @@ import { allReceiptRows, tableContext, type TableContext } from '@/lib/meals/ser
 import { isoDay } from '@/lib/meals/record';
 import { checkLines, type LinesCheck } from './lines';
 import { buildPurchasesOverview, type PurchasesOverview } from './overview';
-import { loadKindAnswers, withAnswers, type LineSource, type ReadingOutcome, type StoredLine } from './store';
+import { MAX_ATTEMPTS, loadKindAnswers, withAnswers, type LineSource, type ReadingOutcome, type StoredLine } from './store';
 
 export interface ReceiptLinesView {
   lines: StoredLine[];
   /** How the lines were read; null when they never were. */
-  reading: { outcome: ReadingOutcome; source: LineSource; textCut: boolean } | null;
+  /** `retried`: a failed reading the backfill will try again (under the attempt limit). */
+  reading: { outcome: ReadingOutcome; source: LineSource; textCut: boolean; retried: boolean } | null;
   /** The lines against the receipt as it is now; null without lines or total. */
   check: LinesCheck | null;
   currency: string;
@@ -54,7 +55,7 @@ export async function loadReceiptLines(db: PrismaClient, workspaceId: string, ro
   const own = reading && reading.authWorkspaceId === workspaceId ? reading : null;
   return {
     lines: items.map((i) => withAnswers(i, cells.vendor, answers)),
-    reading: own ? { outcome: own.outcome as ReadingOutcome, source: own.source as LineSource, textCut: own.textCut } : null,
+    reading: own ? { outcome: own.outcome as ReadingOutcome, source: own.source as LineSource, textCut: own.textCut, retried: own.outcome === 'failed' && own.attempts < MAX_ATTEMPTS } : null,
     check: own ? checkLines(own, cells.gross) : null,
     currency: cells.currency,
   };

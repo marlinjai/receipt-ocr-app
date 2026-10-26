@@ -84,6 +84,20 @@ describe('Was gekauft', () => {
     expect(o).toMatchObject({ totalCents: 900, linesCents: 900, unconverted: 1, receipts: 1 });
   });
 
+  it('converts a receipt\'s lines once, so lines that add up leave no rounding unexplained', () => {
+    const o = buildPurchasesOverview([r('2026-10-03', 1000, [l('A', 333, 'drink_out'), l('B', 333, 'drink_out'), l('C', 334, 'drink_out')], { currency: 'USD', fxRate: 0.915 })], { year: 2026, month: 10 });
+    expect(o).toMatchObject({ totalCents: 915, linesCents: 915, unexplainedCents: 0 });
+  });
+
+  it('leaves a receipt without a total out, and a credit note\'s discount follows its own category', () => {
+    const o = buildPurchasesOverview(
+      [r('2026-10-03', null, [l('Brot', 300, 'groceries')]), r('2026-10-04', -1100, [l('Lizenz', -1000, 'software_services'), l('Rabatt zurück', -100, 'deposit_discount')])],
+      { year: 2026, month: 10 },
+    );
+    expect(o).toMatchObject({ withoutTotal: 1, receipts: 1, totalCents: -1100, unexplainedCents: 0 });
+    expect(o.categories).toEqual([{ category: 'software_ai_hosting', label: 'Software, KI und Hosting', cents: -1100 }]);
+  });
+
   it('a credit note lowers what was bought', () => {
     const o = buildPurchasesOverview([r('2026-10-03', 1000, [l('Lizenz', 1000, 'software_services')]), r('2026-10-04', -1000, [l('Lizenz', -1000, 'software_services')])], { year: 2026, month: 10 });
     expect(o).toMatchObject({ totalCents: 0, linesCents: 0, kinds: [] });

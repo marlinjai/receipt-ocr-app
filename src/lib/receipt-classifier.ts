@@ -49,8 +49,8 @@ const MAX_RESUMES = 3;
 const TEXT_LIMIT = 6000;
 /** How much of that is the end of the text, where a long invoice prints its totals. */
 const TEXT_TAIL = 2000;
-/** How long one answer may take. Beyond it the receipt is stored with its text reading and says it was not classified. */
-const REQUEST_TIMEOUT_MS = 60_000;
+/** How long one answer may take: room for every line of a long receipt. Beyond it the receipt is stored with its text reading and says it was not classified. */
+const REQUEST_TIMEOUT_MS = 90_000;
 /** One more attempt after a connection error or a server error, none after a timeout of the second. */
 const MAX_RETRIES = 1;
 
@@ -171,6 +171,24 @@ function vendorName(value: unknown): string | null {
 }
 
 /**
+ * The answer as an object. The lines come last in the answer, after every
+ * fact: an answer cut off inside the lines (a very long receipt at the token
+ * limit) still gives the facts, read from everything before "items", and no
+ * lines at all (never half of them).
+ */
+function parseWithLinesLast(cleaned: string, first: number, candidate: string): Record<string, unknown> & { items?: unknown } {
+  try {
+    return JSON.parse(candidate);
+  } catch (err) {
+    const at = first >= 0 ? cleaned.indexOf('"items"', first) : -1;
+    if (at < 0) throw err;
+    const facts = JSON.parse(`${cleaned.slice(first, at).replace(/[\s,]+$/, '')}}`);
+    console.error('[receipt-classifier] the answer was cut off in its lines: the facts are kept, the lines are not');
+    return { ...facts, items: undefined };
+  }
+}
+
+/**
  * Parse the model's final text into a classification. Exported so the parser
  * can be tested on its own against recorded answers; every field is validated
  * and anything malformed degrades to null instead of reaching a cell.
@@ -182,7 +200,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
   const last = cleaned.lastIndexOf('}');
   const candidate = first >= 0 && last > first ? cleaned.slice(first, last + 1) : cleaned;
   try {
-    const parsed = JSON.parse(candidate);
+    const parsed = parseWithLinesLast(cleaned, first, candidate) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     const category = input.categoryNames.includes(parsed.category) ? (parsed.category as string) : null;
     const gross = amount(parsed.gross);
     const items = parseModelLines(parsed.items);
@@ -302,12 +320,12 @@ Only when the category is "Bewirtung", also give:
 16. **place**: the restaurant's name and postal address as one line, as printed, else null.
 
 For every receipt, also give:
-17. **items**: ${ITEMS_RULE}
+17. **items** (always the last field of the answer): ${ITEMS_RULE}
 
 ${input.userRules || ''}
 
 Respond with ONLY a JSON object (no markdown, no explanation):
-{ "item": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "documents": 1, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "items": [{ "text": "...", "quantity": 1, "unitPrice": 0.00, "gross": 0.00, "taxRate": 19, "kind": "..." }], "confidence": 0.0-1.0, "reasoning": "..." }`;
+{ "item": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "documents": 1, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "...", "items": [{ "text": "...", "quantity": 1, "unitPrice": 0.00, "gross": 0.00, "taxRate": 19, "kind": "..." }] }`;
 }
 
 /** Told only where the vendor's earlier receipts name what was bought; the list itself is in the user message. */

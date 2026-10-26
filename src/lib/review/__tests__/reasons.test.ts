@@ -199,6 +199,9 @@ describe('lines that do not add up to the total', () => {
     const stored = { flags: [], checkedAt: null };
     expect(reviewReasons(receipt({ linesDiffer: true }), stored, [])).toEqual(['lines_differ']);
     expect(reviewReasons(receipt({ linesDiffer: true }), { ...stored, checkedAt: new Date() }, [])).toEqual([]);
+    // A confirmation from before the lines were read says nothing about them.
+    expect(reviewReasons(receipt({ linesDiffer: true, linesReadAt: '2026-10-26T10:00:00Z' }), { ...stored, checkedAt: '2025-05-01T00:00:00Z' }, [])).toEqual(['lines_differ']);
+    expect(reviewReasons(receipt({ linesDiffer: true, linesReadAt: '2026-10-26T10:00:00Z' }), { ...stored, checkedAt: '2026-10-27T00:00:00Z' }, [])).toEqual([]);
     expect(reviewReasons(receipt({ linesDiffer: true, gross: null }), stored, [])).toEqual(['amount_missing']);
     expect(reviewReasons(receipt({ linesDiffer: false }), stored, [])).toEqual([]);
     expect(isConfirmable('lines_differ')).toBe(true);

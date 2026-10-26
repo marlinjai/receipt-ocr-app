@@ -55,15 +55,19 @@ const settled = (outcome: string | undefined) => outcome === 'lines' || outcome 
 /**
  * Replace a receipt's lines and record the reading, in one transaction. With
  * `onlyIfUnread` (the backfill), nothing is written when the receipt was read
- * meanwhile; the return value says whether it was written.
+ * meanwhile. With `keepOverEmpty` (a new reading of the page), an empty list
+ * never replaces lines that are stored: a blurry retake that shows no lines
+ * says nothing against the lines read before. The return value says whether
+ * it was written.
  */
-export async function replaceReceiptLines(db: PrismaClient, ctx: LineItemsContext, rowId: string, input: StoreLinesInput, options: { onlyIfUnread?: boolean } = {}): Promise<boolean> {
+export async function replaceReceiptLines(db: PrismaClient, ctx: LineItemsContext, rowId: string, input: StoreLinesInput, options: { onlyIfUnread?: boolean; keepOverEmpty?: boolean } = {}): Promise<boolean> {
   return db.$transaction(async (tx) => {
     await lockRow(tx, rowId);
     const existing = await tx.receiptItemReading.findUnique({ where: { rowId }, select: { outcome: true, authWorkspaceId: true } });
     // A row id is unique across companies; a record of another company is never touched.
     if (existing && existing.authWorkspaceId !== ctx.workspaceId) return false;
     if (options.onlyIfUnread && settled(existing?.outcome)) return false;
+    if (options.keepOverEmpty && input.lines.length === 0 && existing?.outcome === 'lines') return false;
     await tx.receiptItem.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId } });
     if (input.lines.length > 0) {
       await tx.receiptItem.createMany({
@@ -184,6 +188,8 @@ export class LineItemsError extends Error {
  */
 export async function answerLineKind(db: PrismaClient, ctx: LineItemsContext, lineId: string, kind: unknown, vendor: string | null, options: { rowId?: string } = {}): Promise<{ rowId: string }> {
   if (!isPurchaseKind(kind)) throw new LineItemsError('invalid_kind');
+  // A receipt without a vendor names no shop: an answer for it would apply to every receipt without one.
+  if (!vendorKey(vendor)) throw new LineItemsError('no_vendor');
   // With `rowId`, only a line of that receipt: a line id of another receipt is not answered through this one.
   const line = await db.receiptItem.findFirst({ where: { id: lineId, authWorkspaceId: ctx.workspaceId, ...(options.rowId ? { rowId: options.rowId } : {}) }, select: { rowId: true, text: true, kind: true } });
   if (!line) throw new LineItemsError('line_not_found');

@@ -4,7 +4,10 @@ import { deleteReceiptRows } from '@/lib/meals/service';
 import type { LinesAnswer, LinesInput } from '@/lib/receipt-classifier';
 import { ClassifierUnavailableError, UnusableAnswerError } from '@/lib/receipt-classifier';
 import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
-import { backfillReceiptLines } from '../backfill';
+import { backfillReceiptLines, type LinesReader } from '../backfill';
+import { structuredReceiptFields } from '@/lib/einvoice';
+import { readInvoiceXml } from '@/lib/einvoice/parse';
+import { UBL_INVOICE_WITH_LINES } from '@/lib/einvoice/__tests__/samples';
 import { parseModelLines, type ReceiptLine } from '../lines';
 import { MAX_ATTEMPTS, answerLineKind, loadKindAnswers, replaceReceiptLines, withAnswers, type LineItemsContext } from '../store';
 
@@ -83,6 +86,16 @@ describe('storing the lines of a reading', () => {
     expect((await linesOf(rowId))[0]).toMatchObject({ kind: 'coffee_tea', answered: false });
   });
 
+  it('an empty list from a new reading of the page never replaces stored lines', async () => {
+    const rowId = await receipt();
+    await replaceReceiptLines(db, ctx, rowId, { lines: supermarket, source: 'reading' });
+    expect(await replaceReceiptLines(db, ctx, rowId, { lines: [], source: 'reading' }, { keepOverEmpty: true })).toBe(false);
+    expect(await db.receiptItem.count({ where: { rowId } })).toBe(4);
+    const fresh = await receipt();
+    expect(await replaceReceiptLines(db, ctx, fresh, { lines: [], source: 'reading' }, { keepOverEmpty: true })).toBe(true);
+    expect((await db.receiptItemReading.findUnique({ where: { rowId: fresh } }))!.outcome).toBe('no_lines');
+  });
+
   it('a reload shows the same lines, in the same order (resume)', async () => {
     const rowId = await receipt();
     await replaceReceiptLines(db, ctx, rowId, { lines: supermarket, source: 'reading' });
@@ -95,6 +108,8 @@ describe('storing the lines of a reading', () => {
     await replaceReceiptLines(db, ctx, rowId, { lines: [line('Spezi', 199, 'soft_drinks')], source: 'reading' });
     const [spezi] = await linesOf(rowId);
     await expect(answerLineKind(db, ctx, spezi.id, 'beer', 'REWE Markt')).rejects.toMatchObject({ code: 'invalid_kind' });
+    // A receipt without a vendor names no shop to remember the answer for.
+    await expect(answerLineKind(db, ctx, spezi.id, 'alcohol', '  ')).rejects.toMatchObject({ code: 'no_vendor' });
     await expect(answerLineKind(db, { workspaceId: other.workspaceId, tenantId: other.tenantId }, spezi.id, 'alcohol', 'REWE Markt')).rejects.toMatchObject({ code: 'line_not_found' });
     await answerLineKind(db, ctx, spezi.id, 'alcohol', 'REWE Markt');
     const answers = await loadKindAnswers(db, ws.workspaceId);
@@ -212,11 +227,63 @@ describe('the backfill of stored receipts', () => {
   it('reads at most the batch, newest first, and says how many are left', async () => {
     const w = await createWorkspace();
     const c = { workspaceId: w.workspaceId, tenantId: w.tenantId };
-    for (let i = 0; i < 4; i++) await w.addReceipt({ Name: `Beleg ${i}`, Vendor: 'Markt', Gross: 1, 'OCR Text': `Ware ${i} 1,00`, Currency: 'EUR' });
-    const reader = vi.fn(async () => answer([line('Ware', 100)]));
-    expect(await backfillReceiptLines(db, c, reader, { limit: 3 })).toMatchObject({ read: 3, remaining: 1 });
-    expect(await backfillReceiptLines(db, c, reader, { limit: 3 })).toMatchObject({ read: 1, remaining: 0 });
+    for (let i = 0; i < 4; i++) {
+      await w.addReceipt({ Name: `Beleg ${i}`, Vendor: 'Markt', Gross: 1, 'OCR Text': `Ware ${i} 1,00`, Currency: 'EUR' });
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    const reader = vi.fn<LinesReader>(async () => answer([line('Ware', 100)]));
+    expect(await backfillReceiptLines(db, c, reader, { limit: 1 })).toMatchObject({ read: 1, remaining: 3 });
+    expect(reader.mock.calls[0][0].fullText).toBe('Ware 3 1,00');
+    expect(await backfillReceiptLines(db, c, reader, { limit: 3 })).toMatchObject({ read: 3, remaining: 0 });
     expect(reader).toHaveBeenCalledTimes(4);
+  });
+
+  it('counts a request the provider refused for the receipt itself, but not a rate limit', async () => {
+    const w = await createWorkspace();
+    const c = { workspaceId: w.workspaceId, tenantId: w.tenantId };
+    const rowId = await w.addReceipt({ Name: 'Riesig', Vendor: 'Markt', Gross: 1, 'OCR Text': 'Ware 1,00', Currency: 'EUR' });
+    await backfillReceiptLines(db, c, async () => {
+      throw Object.assign(new Error('rate limited'), { status: 429 });
+    });
+    expect(await db.receiptItemReading.findUnique({ where: { rowId } })).toBeNull();
+    await backfillReceiptLines(db, c, async () => {
+      throw Object.assign(new Error('request too large'), { status: 400 });
+    });
+    expect(await db.receiptItemReading.findUnique({ where: { rowId } })).toMatchObject({ outcome: 'failed', attempts: 1 });
+  });
+
+  it('reads a receipt recorded without text again once it holds text', async () => {
+    const w = await createWorkspace();
+    const c = { workspaceId: w.workspaceId, tenantId: w.tenantId };
+    const rowId = await w.addReceipt({ Name: 'Foto', Vendor: 'Markt', Gross: 2, 'OCR Text': '', Currency: 'EUR' });
+    expect((await backfillReceiptLines(db, c, async () => answer([]))).noText).toHaveLength(1);
+    const textColumn = (await w.adapter.getColumns(w.tableId)).find((col) => col.name === 'OCR Text')!;
+    await w.adapter.updateRow(rowId, { [textColumn.id]: 'Brot 2,00' });
+    const run = await backfillReceiptLines(db, c, async () => answer([line('Brot', 200)]));
+    expect(run).toMatchObject({ read: 1, addUp: 1, noText: [] });
+    expect(await db.receiptItemReading.findUnique({ where: { rowId } })).toMatchObject({ outcome: 'lines' });
+  });
+
+  it('an electronic invoice stored before lines were kept takes its lines from its XML, with the model\'s kinds', async () => {
+    const w = await createWorkspace();
+    const c = { workspaceId: w.workspaceId, tenantId: w.tenantId };
+    const fields = structuredReceiptFields(readInvoiceXml(UBL_INVOICE_WITH_LINES)!);
+    const rowId = await w.addReceipt({ Name: 'Rechnung', Vendor: 'Muster Software', Gross: 166.55, 'OCR Text': 'Rechnung (elektronisch)\nGesamt: 166.55 EUR', Currency: 'EUR' });
+    const imageColumn = (await w.adapter.getColumns(w.tableId)).find((col) => col.name === 'Receipt Image')!;
+    await w.adapter.addFileReference({ rowId, columnId: imageColumn.id, fileId: `file-${rowId}`, fileUrl: '/api/files/x', originalName: 'rechnung.xml', mimeType: 'application/xml', metadata: { source: 'ocr-upload' } });
+    const reader = vi.fn<LinesReader>(async () => answer([line('Lizenz Pro', 11900, 'software_services'), line('Handbuch', 5350, 'other')]));
+    const structuredOf = vi.fn(async () => fields);
+    const run = await backfillReceiptLines(db, c, reader, { structuredOf });
+    expect(structuredOf).toHaveBeenCalledWith(`file-${rowId}`);
+    expect(reader.mock.calls[0][0].fullText).toContain('Lizenz Pro');
+    expect(run).toMatchObject({ read: 1, addUp: 1 });
+    expect((await db.receiptItem.findMany({ where: { rowId }, orderBy: { position: 'asc' } })).map((i) => [i.text, i.netCents, i.kind])).toEqual([
+      ['Lizenz Pro', 10000, 'software_services'],
+      ['Handbuch', 5000, 'other'],
+      ['Treuerabatt', -1000, 'deposit_discount'],
+      ['Versand', 500, 'shipping'],
+    ]);
+    expect(await db.receiptItemReading.findUnique({ where: { rowId } })).toMatchObject({ source: 'einvoice', linesNetCents: 14500, totalNetCents: 14500 });
   });
 
   it('never reads a receipt of another company', async () => {

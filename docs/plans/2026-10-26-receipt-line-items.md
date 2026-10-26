@@ -141,20 +141,20 @@ Decided while building, say so if you disagree:
    (was 8,000), the answer timeout is 90 seconds (was 60, the searching Anthropic turn twice that),
    and the lines are the last field of the answer, so an answer cut off inside them still gives
    every fact, without any line. The model choice is unchanged.
-8. **A new reading never replaces stored lines with an empty list** (a blurry retake says nothing
+7. **A new reading never replaces stored lines with an empty list** (a blurry retake says nothing
    against lines read before), and a line's kind cannot be remembered on a receipt without a vendor
    (it would apply to every receipt without one).
-11. **An electronic invoice's line keeps the sign it is stated with**, turned by the document's kind
+8. **An electronic invoice's line keeps the sign it is stated with**, turned by the document's kind
    (a credit note's +100 is -100), so an invoice that states negative amounts, which EN 16931
    allows, is money back through its own signs and still adds up.
-12. **A receipt deleted while its lines are being read gets none back**: the write checks under the
+9. **A receipt deleted while its lines are being read gets none back**: the write checks under the
    receipt's lock that the row still exists, and the delete paths remove lines under the same lock.
-9. **A confirmation in the review list settles a difference only when it came after the lines were
+10. **A confirmation in the review list settles a difference only when it came after the lines were
    read**; a receipt confirmed in 2025 and backfilled now still shows a difference.
-10. **"Was gekauft" leaves out a receipt without a total** (and says how many), converts a receipt's
+11. **"Was gekauft" leaves out a receipt without a total** (and says how many), converts a receipt's
    lines into euros once as a sum, and lets a credit note's discount follow the credit note's own
    category.
-7. **"Was gekauft" lives in the active company**, like the rest of the spending page, and uses the
+12. **"Was gekauft" lives in the active company**, like the rest of the spending page, and uses the
    period chosen at the top of the page by receipt date. A receipt in another currency counts at its
    stored exchange rate; one without a rate is left out and counted.
 

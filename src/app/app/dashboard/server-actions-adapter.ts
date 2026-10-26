@@ -5,6 +5,7 @@
 import type { DatabaseAdapter } from '@marlinjai/data-table-core';
 import * as actions from './actions';
 import { getYearScope } from './year-scope';
+import { batchedSelectOptions } from './batch-options';
 
 export function createServerActionsAdapter(): DatabaseAdapter {
   return {
@@ -25,7 +26,8 @@ export function createServerActionsAdapter(): DatabaseAdapter {
 
     // Select option operations
     createSelectOption: actions.createSelectOption,
-    getSelectOptions: actions.getSelectOptions,
+    // One call for the columns asked for in the same moment (see `batch-options.ts`).
+    getSelectOptions: batchedSelectOptions(actions.getSelectOptionsBatch),
     updateSelectOption: actions.updateSelectOption,
     deleteSelectOption: actions.deleteSelectOption,
     reorderSelectOptions: actions.reorderSelectOptions,

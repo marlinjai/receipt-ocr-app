@@ -171,6 +171,26 @@ export async function getSelectOptions(columnId: string): Promise<SelectOption[]
   return getAdapter().getSelectOptions(columnId);
 }
 
+/** Columns asked for in one batch at most: a receipts table has a few dozen. */
+const OPTION_BATCH_LIMIT = 200;
+
+/**
+ * The options of several select columns in one call (plan docs/plans/2026-10-26-fast-dashboard-and-spending.md,
+ * decision 5): Next.js runs a page's server actions one after another, so a call per column made the table wait
+ * for dozens of them. A column that no longer exists has no entry; a column of a table this person may not read
+ * refuses the whole call, as `getSelectOptions` refuses it.
+ */
+export async function getSelectOptionsBatch(columnIds: string[]): Promise<Record<string, SelectOption[]>> {
+  if (!Array.isArray(columnIds) || columnIds.length > OPTION_BATCH_LIMIT || columnIds.some((id) => typeof id !== 'string')) {
+    throw new Error('invalid_column_ids');
+  }
+  const columns = await prisma.dtColumn.findMany({ where: { id: { in: [...new Set(columnIds)] } }, select: { id: true, tableId: true } });
+  for (const tableId of new Set(columns.map((c) => c.tableId))) await requireTableAccess(tableId);
+  const adapter = getAdapter();
+  const options = await Promise.all(columns.map(async (c) => [c.id, await adapter.getSelectOptions(c.id)] as const));
+  return Object.fromEntries(options);
+}
+
 export async function updateSelectOption(optionId: string, updates: UpdateSelectOptionInput): Promise<SelectOption> {
   await requireSelectOptionAccess(optionId, 'receipts.schema.write');
   return getAdapter().updateSelectOption(optionId, updates);

@@ -8,7 +8,8 @@ import { allReceiptRows, tableContext } from '@/lib/meals/service';
 import { isGroupRow } from '@/lib/receipts-kind';
 import { parseTaxLines, serializeTaxLines } from '@/lib/meals/rules';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
-import { kontoFor, newReading, type NewReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
+import { kontoFor, type NewReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
+import { cachedReading } from './reading-cache';
 import { isConfirmable, isReadFlag, lookAlikes, paymentsCoverTotal, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
 import { countedReceiptLinks, loadPayments } from '@/lib/tax/payments/service';
 import { getFxRate } from '@/lib/fx-rates';
@@ -139,7 +140,7 @@ function readingOf(
   /** The row's stored tax lines, and whether it is a meal: a meal's typed lines are the person's answer. */
   row: { isMeal: boolean; cells: Record<string, unknown> },
 ): NewReading {
-  const read = newReading(stored);
+  const read = cachedReading(stored);
   // A rate the reading brings without lines of its own is not offered against
   // the tax lines a person typed for a meal: the person's lines decide its rate.
   const linesId = firstColumnIdByName(columns).get(MEAL_COLUMNS.taxLines);

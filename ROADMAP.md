@@ -383,6 +383,11 @@
 - [ ] Finanzen in four groups (decided by the owner on 2026-10-25): Erledigen, Auswerten, Steuer,
   Einstellungen; the tiles and "Offen" stay the entry, Ausgaben stays its own page with a link
   each way. Plan: [docs/plans/2026-10-25-finance-groups.md](docs/plans/2026-10-25-finance-groups.md). (2026-10-25)
+- [ ] A fast dashboard and spending page (asked by the owner on 2026-10-26): the review list keeps
+  each receipt's new reading in memory, a page reads the receipts and payments once, the
+  dashboard's independent steps run side by side, a payment looks only at receipts of its amount,
+  and the table asks for all select options in one request. Plan:
+  [docs/plans/2026-10-26-fast-dashboard-and-spending.md](docs/plans/2026-10-26-fast-dashboard-and-spending.md). (2026-10-26)
 
 ## In Progress
 

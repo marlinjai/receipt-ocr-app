@@ -22,6 +22,7 @@ import { DEFAULT_TAX_SETTINGS, type MealGuestEntry, type MealRecord, type MealTa
 import { TAX_RATES_COLUMN, TAX_RATE_COLUMN, formatTaxRates, orderedRates } from '@/lib/tax-rates';
 import { isGroupRow, receiptsOnly } from '@/lib/receipts-kind';
 import { releaseChildRows, restoreChildRows } from '@/lib/groups/links';
+import { sharedRead } from '@/lib/shared-reads';
 
 /**
  * Server-side reads and writes for the meal register.
@@ -99,8 +100,15 @@ export async function allReceiptRows(
   return receiptsOnly(await allRows(adapter, tableId), columns);
 }
 
-/** Every row of the table, groups included. Only for callers that handle the rows as rows; receipts are read through `allReceiptRows`. */
-async function allRows(adapter: Pick<PrismaAdapter, 'getRows'>, tableId: string): Promise<Row[]> {
+/**
+ * Every row of the table, groups included. Only for callers that handle the rows as rows; receipts are read through
+ * `allReceiptRows`. Read once per page (see `sharedRead`): the meal badge and the review list share it.
+ */
+function allRows(adapter: Pick<PrismaAdapter, 'getRows'>, tableId: string): Promise<Row[]> {
+  return sharedRead(`rows:${tableId}`, () => readAllRows(adapter, tableId));
+}
+
+async function readAllRows(adapter: Pick<PrismaAdapter, 'getRows'>, tableId: string): Promise<Row[]> {
   const out: Row[] = [];
   let offset = 0;
   const limit = 500;

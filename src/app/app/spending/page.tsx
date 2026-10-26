@@ -7,16 +7,27 @@ import ReceiptChecks from './ReceiptChecks';
 import { getReceiptChecks } from './loop-actions';
 import { getBudgets } from './budget-actions';
 import { berlinToday } from '@/lib/spending/period';
+import { measurePage, timed } from '@/lib/timing';
 
 export const dynamic = 'force-dynamic';
 
 export const metadata = { title: 'Ausgaben' };
 
-export default async function SpendingPage({ searchParams }: { searchParams: Promise<{ jahr?: string; monat?: string; pruefen?: string; firma?: string; ansicht?: string }> }) {
-  await auth.requireSession('/app/spending');
+type SpendingParams = Promise<{ jahr?: string; monat?: string; pruefen?: string; firma?: string; ansicht?: string }>;
+
+export default async function SpendingPage({ searchParams }: { searchParams: SpendingParams }) {
+  return measurePage('/app/spending', () => renderSpending(searchParams));
+}
+
+async function renderSpending(searchParams: SpendingParams) {
+  await timed('auth.session', () => auth.requireSession('/app/spending'));
   const { jahr, monat, pruefen, firma, ansicht } = await searchParams;
   const tab = spendingTabOf(ansicht, pruefen);
-  const [data, checks, budgets] = await Promise.all([getSpending(jahr ?? null, monat ?? null), getReceiptChecks(), getBudgets()]);
+  const [data, checks, budgets] = await Promise.all([
+    timed('spending', () => getSpending(jahr ?? null, monat ?? null)),
+    timed('checks', () => getReceiptChecks()),
+    timed('budgets', () => getBudgets()),
+  ]);
 
   // "Reload" keeps the period that was asked for.
   const params = new URLSearchParams();

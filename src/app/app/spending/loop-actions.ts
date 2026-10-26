@@ -13,6 +13,7 @@ import { MailCandidateError, dismissMailCandidate } from '@/lib/spending/mailbox
 import { linkReceiptToPayment, searchReceiptChoices } from '@/lib/spending/loop-service';
 import type { ReceiptChoice } from '@/lib/spending/loop';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
+import { timed } from '@/lib/timing';
 
 /**
  * Server actions of the missing-receipt loop and the notifications. Same
@@ -57,18 +58,18 @@ function failure(e: unknown): { ok: false; error: ChecksActionError; detail?: st
 }
 
 async function writeContext(): Promise<NotifyContext> {
-  const session = await auth.requireAction('receipts.row.write');
+  const session = await timed('auth.action', () => auth.requireAction('receipts.row.write'));
   const workspaceId = sessionWorkspaceId(session);
   return { workspaceId, tenantId: requireSessionTenantId(session, workspaceId) };
 }
 
 async function view(workspaceId: string, canWrite: boolean, lastRun: ChecksView['lastRun'] = null): Promise<ChecksView> {
   const [loop, notifications, settings] = await Promise.all([
-    loadLoopOverview(prisma, workspaceId),
-    canWrite ? listUnreadNotifications(prisma, workspaceId) : Promise.resolve([]),
-    getNotifySettings(prisma, workspaceId),
+    timed('checks.loop', () => loadLoopOverview(prisma, workspaceId)),
+    canWrite ? timed('checks.notifications', () => listUnreadNotifications(prisma, workspaceId)) : Promise.resolve([]),
+    timed('checks.settings', () => getNotifySettings(prisma, workspaceId)),
   ]);
-  const status = (await mailboxFor(prisma, workspaceId)).status();
+  const status = (await timed('checks.mailbox', () => mailboxFor(prisma, workspaceId))).status();
   const mailbox = status.configured ? 'on' : status.reason === 'other_company' ? 'other_company' : 'off';
   return {
     loop,
@@ -79,14 +80,14 @@ async function view(workspaceId: string, canWrite: boolean, lastRun: ChecksView[
     workspaceId,
     mailbox,
     pushPublicKey: validVapidConfig()?.publicKey ?? null,
-    pushDevices: canWrite ? await pushDeviceCount(prisma, workspaceId) : 0,
+    pushDevices: canWrite ? await timed('checks.push', () => pushDeviceCount(prisma, workspaceId)) : 0,
   };
 }
 
 export async function getReceiptChecks(): Promise<ChecksResult<ChecksView>> {
   try {
     const session = await requireReceiptsSession();
-    const canWrite = await auth.requireAction('receipts.row.write').then(
+    const canWrite = await timed('auth.action', () => auth.requireAction('receipts.row.write')).then(
       () => true,
       () => false,
     );
@@ -212,7 +213,7 @@ export async function findReceiptChoices(paymentId: unknown, text: unknown): Pro
 }
 
 async function pushContext(): Promise<PushContext> {
-  const session = await auth.requireAction('receipts.row.write');
+  const session = await timed('auth.action', () => auth.requireAction('receipts.row.write'));
   const workspaceId = sessionWorkspaceId(session);
   return { workspaceId, tenantId: requireSessionTenantId(session, workspaceId), userId: session.userId };
 }

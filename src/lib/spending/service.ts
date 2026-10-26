@@ -4,6 +4,7 @@ import { counterpartyKey, loadPayments, setCounterpartyTreatment, type PaymentRo
 import { loadRoutedPayments, type RoutedPaymentRow, type RoutedPayments } from '@/lib/tax/payments/routing';
 import { ensureMerchantKeys } from '@/lib/tax/payments/rekey';
 import { merchantName } from '@/lib/tax/payments/merchant';
+import { timed } from '@/lib/timing';
 import { isSpendingCategory, type SpendingCategory } from './categories';
 import { berlinYear } from './period';
 import { buildOverview, paymentYears, type OverviewPaymentInput, type SpendingOverview } from './overview';
@@ -207,10 +208,17 @@ function merchantOf(payments: readonly { counterpartyKey: string; counterparty: 
 /** The overview of `year` (one month of it when `month` is 1 to 12). */
 export async function loadSpending(db: PrismaClient, workspaceId: string, year: number, month: number | null, today = new Date()): Promise<SpendingView> {
   // The category answers are read by key in parallel with the payments: the keys are carried first.
-  await ensureMerchantKeys(db);
-  const [loaded, answers, ownNames] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId), loadOwnNames(db, workspaceId)]);
-  const { treatments, byName } = await spendingTreatments(db, workspaceId, loaded, ownNames);
-  const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments, byName, answers: await categoryAnswerMap(db, workspaceId, loaded, answers), appCategories: loaded.appCategories, holderAppCategories: loaded.holderAppCategories }, year, month);
+  await timed('spending.keys', () => ensureMerchantKeys(db));
+  const [loaded, answers, ownNames] = await Promise.all([
+    timed('spending.payments', () => loadRoutedPayments(db, workspaceId)),
+    timed('spending.answers', () => loadCategoryAnswers(db, workspaceId)),
+    timed('spending.ownNames', () => loadOwnNames(db, workspaceId)),
+  ]);
+  const { treatments, byName } = await timed('spending.treatments', () => spendingTreatments(db, workspaceId, loaded, ownNames));
+  const answerMap = await timed('spending.answerMap', () => categoryAnswerMap(db, workspaceId, loaded, answers));
+  const overview = await timed('spending.overview', async () =>
+    buildOverview(loaded.payments.map(toOverviewInput), { treatments, byName, answers: answerMap, appCategories: loaded.appCategories, holderAppCategories: loaded.holderAppCategories }, year, month),
+  );
   return {
     overview,
     // The year asked for is always offered, so the year picker shows what the page shows even for a year without payments.

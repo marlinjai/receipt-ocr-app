@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma';
 import { BudgetServiceError, loadBudgetsView, saveBudget } from '@/lib/spending/budget-service';
 import type { BudgetLine } from '@/lib/spending/budgets';
 import { berlinToday } from '@/lib/spending/period';
+import { timed } from '@/lib/timing';
 
 /**
  * Server actions of the budgets. Same rules as every action here: the
@@ -40,7 +41,7 @@ function failure(e: unknown): { ok: false; error: BudgetActionError; detail?: st
 
 async function view(workspaceId: string, canWrite: boolean): Promise<BudgetsView> {
   const today = berlinToday();
-  const { lines, counterparties } = await loadBudgetsView(prisma, workspaceId, today, canWrite);
+  const { lines, counterparties } = await timed('budgets.view', () => loadBudgetsView(prisma, workspaceId, today, canWrite));
   return { lines, month: today.slice(0, 7), counterparties, canWrite };
 }
 
@@ -51,7 +52,7 @@ async function view(workspaceId: string, canWrite: boolean): Promise<BudgetsView
  */
 async function mayWrite(): Promise<boolean> {
   try {
-    await auth.requireAction('receipts.row.write');
+    await timed('auth.action', () => auth.requireAction('receipts.row.write'));
     return true;
   } catch (e) {
     const status = e instanceof ReceiptsAuthError ? e.status : (e as { status?: number })?.status;
@@ -72,7 +73,7 @@ export async function getBudgets(): Promise<BudgetResult<BudgetsView>> {
 /** Set, switch off or reset a budget (see `saveBudget`). */
 export async function setBudget(input: unknown): Promise<BudgetResult<BudgetsView>> {
   try {
-    const session = await auth.requireAction('receipts.row.write');
+    const session = await timed('auth.action', () => auth.requireAction('receipts.row.write'));
     const workspaceId = sessionWorkspaceId(session);
     await saveBudget(prisma, { workspaceId, tenantId: requireSessionTenantId(session, workspaceId) }, input);
     return { ok: true, value: await view(workspaceId, true) };

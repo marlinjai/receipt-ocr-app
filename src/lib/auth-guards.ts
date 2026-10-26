@@ -5,6 +5,7 @@ import { safeTableName } from '@marlinjai/data-table-adapter-shared';
 import { prisma } from '@/lib/prisma';
 import { auth, type ReceiptsAction } from '@/lib/auth';
 import { requestedUploadWorkspace, sessionMayAccessWorkspace, sessionWorkspaceId } from '@/lib/auth-workspace';
+import { timed } from '@/lib/timing';
 
 export { sessionMayAccessWorkspace, sessionWorkspaceId };
 
@@ -40,7 +41,7 @@ function isDevBypass(session: AppSession): boolean {
 
 /** The verified session, or a thrown 401. */
 export async function requireReceiptsSession(): Promise<AppSession> {
-  const session = await auth.getSession();
+  const session = await timed('auth.session', () => auth.getSession());
   if (!session) throw new ReceiptsAuthError(401);
   return session;
 }

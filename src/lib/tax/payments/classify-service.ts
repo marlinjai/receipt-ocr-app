@@ -3,11 +3,10 @@ import type { PrismaClient } from '@prisma/client';
 import { getTaxSettings } from '@/lib/meals/service';
 import { resolveItem } from '../facts';
 import { listVendorRules, loadReceipts } from '../service';
-import { loadLoopReceipts, vendorAliases } from '@/lib/spending/loop-service';
-import { normalizeText } from '@/lib/spending/rules';
+import { toLoopReceipt, vendorAliases } from '@/lib/spending/loop-service';
 import { vendorNamed } from './match';
 import { merchantName } from './merchant';
-import { capModelVerdict, evidenceFingerprint, evidenceVerdict, mayLookUp, pairReceipts, toModelCounterparty, type CounterpartyEvidence, type DecidedVerdict } from './classify';
+import { capModelVerdict, evidenceFingerprint, evidenceVerdict, filedVerdict, mayLookUp, pairReceipts, toModelCounterparty, type CounterpartyEvidence, type DecidedVerdict } from './classify';
 import type { ClassifyRunCounts } from './classify-summary';
 import type { CounterpartyClassifierPort } from './counterparty-classifier';
 import { loadPayments, type LoadedPayments } from './service';
@@ -42,13 +41,14 @@ const requestKey = (index: number) => `c${index + 1}`;
 
 export async function counterpartyEvidence(db: PrismaClient, workspaceId: string, loaded: LoadedPayments): Promise<CounterpartyEvidence[]> {
   const linkedRows = new Set([...loaded.payments.flatMap((p) => p.links.flatMap((l) => (l.rowId ? [l.rowId] : []))), ...loaded.linkedElsewhere.keys()]);
-  const [receipts, vendorRules, settings, loopReceipts, filedRows] = await Promise.all([
+  const [receipts, vendorRules, settings, filedRows] = await Promise.all([
     loadReceipts(db, workspaceId),
     listVendorRules(db, workspaceId),
     getTaxSettings(db, workspaceId),
-    loadLoopReceipts(db, workspaceId, linkedRows),
     db.taxYearSettings.findMany({ where: { authWorkspaceId: workspaceId, filedOn: { not: null } }, select: { year: true } }),
   ]);
+  // The receipts as the missing-receipt loop sees them, from the same read (the table is read once).
+  const loopReceipts = (receipts?.facts ?? []).map((f) => toLoopReceipt(f.record.rowId, f.record, linkedRows.has(f.record.rowId)));
   const filed = new Set(filedRows.map((r) => r.year));
   // The year a payment counts in for the filed-year rule: its booking year, unless it lies at the turn of the
   // year (22 December to 10 January) and the year next to it is open; then it may belong there and counts as open.
@@ -74,12 +74,13 @@ export async function counterpartyEvidence(db: PrismaClient, workspaceId: string
   }
   // What counts here is what the payments tab and the counterparty question consider (see the loop below).
   const considered = loaded.payments.filter((p) => p.counterpartyKey && p.kind !== 'own_transfer' && p.kind !== 'fee' && p.kind !== 'private' && !p.byRule);
+  const aliases = vendorAliases(loaded.payments, loopReceipts);
   // Receipts that pay a payment without a link: evidence like a link, nothing linked (plan 2026-10-25, decision 1).
   const matched = pairReceipts(
     considered.map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, counterpartyKey: p.counterpartyKey, reference: p.reference, kind: p.kind, linkCount: p.links.length })),
-    { receipts: loopReceipts, vendorAliases: vendorAliases(loaded.payments, loopReceipts) },
+    { receipts: loopReceipts, vendorAliases: aliases },
   );
-  const byKey = new Map<string, CounterpartyEvidence & { rows: string[]; filedRows: string[]; referenceKeys: string[] }>();
+  const byKey = new Map<string, CounterpartyEvidence & { rows: string[]; filedRows: string[] }>();
   for (const p of considered) {
     // What asks nothing in the payments tab asks nothing here either: own transfers, fees, the funding rule's
     // debits, and payments of an account said to be private as a whole (the owner already answered for them).
@@ -101,7 +102,7 @@ export async function counterpartyEvidence(db: PrismaClient, workspaceId: string
       filedBusinessReceipts: 0,
       rows: [],
       filedRows: [],
-      referenceKeys: [],
+
     };
     entry.paymentCount += 1;
     if (p.amountCents < 0) entry.outCents += -p.amountCents;
@@ -111,8 +112,6 @@ export async function counterpartyEvidence(db: PrismaClient, workspaceId: string
     if (p.links.some((l) => l.rowId)) entry.linkedPayments += 1;
     if (p.amountCents > 0) entry.incomingPayments += 1;
     if (p.amountCents > 0 && p.links.some((l) => l.invoiceId)) entry.invoicePayments += 1;
-    const referenceKey = normalizeText(p.reference);
-    if (referenceKey && entry.referenceKeys.length < 20 && !entry.referenceKeys.includes(referenceKey)) entry.referenceKeys.push(referenceKey);
     const filedYear = filedYearOf(p.bookingDay);
     for (const link of p.links) if (link.rowId && !entry.rows.includes(link.rowId)) entry.rows.push(link.rowId);
     const pairedRow = matched.get(p.id);
@@ -127,13 +126,12 @@ export async function counterpartyEvidence(db: PrismaClient, workspaceId: string
     } else entry.openYearPayments += 1;
     byKey.set(p.counterpartyKey, entry);
   }
-  const aliases = vendorAliases(loaded.payments, loopReceipts);
   // Business or split receipts dated in a filed year: the ones a filed return may have claimed.
   const claimable = loopReceipts.filter((r) => {
     const kind = allocationOf.get(r.rowId)?.kind;
     return (kind === 'business' || kind === 'mixed') && r.day !== null && filed.has(Number(r.day.slice(0, 4)));
   });
-  return [...byKey.values()].map(({ rows, filedRows, referenceKeys, ...evidence }) => {
+  return [...byKey.values()].map(({ rows, filedRows, ...evidence }) => {
     for (const rowId of rows) {
       const allocation = allocationOf.get(rowId);
       if (!allocation) continue;
@@ -142,11 +140,12 @@ export async function counterpartyEvidence(db: PrismaClient, workspaceId: string
     }
     evidence.filedYears.sort((a, b) => a - b);
     if (evidence.filedYears.length > 0) {
-      // Matching needs the exact amount and a near day, so a receipt it missed (another currency, a tip, a far
-      // date) would read as "not claimed". Any business receipt of the vendor in a filed year keeps the rule out.
+      // Matching needs the amount and a near day, so a receipt it missed (a tip, a far date, no exchange rate) would
+      // read as "not claimed". Any business receipt in a filed year of a vendor its name names keeps the rule out.
+      // The payment texts are not read for this: "Apple Pay" in a text would let one Apple invoice block every shop.
       const named = new Set(
         claimable
-          .filter((r) => vendorNamed(r.vendorKey, evidence.key, '') || referenceKeys.some((ref) => vendorNamed(r.vendorKey, '', ref)) || (r.vendorKey !== null && aliases.get(evidence.key)?.has(r.vendorKey)))
+          .filter((r) => vendorNamed(r.vendorKey, evidence.key, '') || (r.vendorKey !== null && aliases.get(evidence.key)?.has(r.vendorKey)))
           .map((r) => r.rowId),
       );
       for (const rowId of filedRows) {
@@ -220,31 +219,47 @@ export async function classifyCounterparties(
   const stored = await db.taxCounterpartyVerdict.findMany({ where: { authWorkspaceId: ctx.workspaceId }, select: { counterpartyKey: true, fingerprint: true, source: true, treatment: true } });
   const pending = pendingCounterparties(await counterpartyEvidence(db, ctx.workspaceId, loaded), loaded, new Map(stored.map((s) => [s.counterpartyKey, s.fingerprint])));
   const storedSource = new Map(stored.map((s) => [s.counterpartyKey, s.source]));
-  const storedOwnAccount = new Set(stored.filter((s) => s.source === 'model' && s.treatment === 'own_account').map((s) => s.counterpartyKey));
+  // What the model said before, where it said something: the filed-year rule asks it only about the rest.
+  const modelSaid = new Map(stored.filter((s) => s.source === 'model' && s.treatment !== null).map((s) => [s.counterpartyKey, s.treatment]));
   const run: ClassifyRun = { pending: pending.length, byEvidence: 0, byModel: 0, applied: 0, unanswered: 0, removed: 0, unavailable: port === null, failedBatches: 0, stoppedEarly: false };
   if (port === null && pending.length > 0) console.warn('[payments] no language model configured: counterparties are decided by their receipts only', { workspaceId: ctx.workspaceId, pending: pending.length });
   const toModel: CounterpartyEvidence[] = [];
-  for (const evidence of pending) {
-    const verdict = evidenceVerdict(evidence);
-    if (!verdict) {
-      // A verdict the receipts made no longer holds now that they say something else: it stops counting at once,
-      // whether or not the model can be asked right now.
-      if (storedSource.get(evidence.key) === 'evidence') {
-        await db.taxCounterpartyVerdict.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, counterpartyKey: evidence.key } });
-        run.removed += 1;
-      }
-      toModel.push(evidence);
-      continue;
-    }
-    // A filed year says "not claimed", which is also what a transfer to an own savings account looks like: the
-    // model's "own account" proposal stays (the app never decides own account alone), on the new evidence.
-    if (verdict.treatment === 'private' && evidence.receipts.private === 0 && storedOwnAccount.has(evidence.key)) {
-      await db.taxCounterpartyVerdict.updateMany({ where: { authWorkspaceId: ctx.workspaceId, counterpartyKey: evidence.key }, data: { fingerprint: evidenceFingerprint(evidence) } });
-      continue;
-    }
+  // Counterparties the filed-year rule would make private once the model has said it is no own account.
+  const filedAfterModel = new Map<string, DecidedVerdict>();
+  const applyEvidence = async (evidence: CounterpartyEvidence, verdict: DecidedVerdict) => {
     await store(db, ctx, evidence, verdict, 'evidence', null);
     run.byEvidence += 1;
     if (verdict.confidence === 'certain') run.applied += 1;
+  };
+  for (const evidence of pending) {
+    const verdict = evidenceVerdict(evidence);
+    if (verdict) {
+      await applyEvidence(evidence, verdict);
+      continue;
+    }
+    // A verdict the company's data made no longer holds now that it says something else: it stops counting at
+    // once, whether or not the model can be asked right now.
+    if (storedSource.get(evidence.key) === 'evidence') {
+      await db.taxCounterpartyVerdict.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, counterpartyKey: evidence.key } });
+      run.removed += 1;
+    }
+    const filed = filedVerdict(evidence);
+    if (filed) {
+      // "Not claimed" in a filed year is also what a transfer to an own savings account looks like. The model's
+      // "own account" proposal stays (the app never decides own account alone); what it called anything else is
+      // private by the filed return; and what it was never asked about is asked first.
+      const said = modelSaid.get(evidence.key);
+      if (said === 'own_account') {
+        await db.taxCounterpartyVerdict.updateMany({ where: { authWorkspaceId: ctx.workspaceId, counterpartyKey: evidence.key }, data: { fingerprint: evidenceFingerprint(evidence) } });
+        continue;
+      }
+      if (said !== undefined || !port) {
+        await applyEvidence(evidence, filed);
+        continue;
+      }
+      filedAfterModel.set(evidence.key, filed);
+    }
+    toModel.push(evidence);
   }
   if (!port) return run;
   const size = options.batch ?? CLASSIFY_BATCH;
@@ -273,6 +288,11 @@ export async function classifyCounterparties(
       }
       for (const [index, evidence] of group.entries()) {
         const answered = verdicts.get(requestKey(index));
+        const filed = filedAfterModel.get(evidence.key);
+        if (filed && answered?.treatment !== 'own_account') {
+          await applyEvidence(evidence, filed);
+          continue;
+        }
         // Left out of an otherwise readable answer: stored as unsure, so it is not paid for again on every run.
         const verdict = answered ? capModelVerdict(answered, evidence) : NO_ANSWER;
         await store(db, ctx, evidence, verdict, 'model', port.model);

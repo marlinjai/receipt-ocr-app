@@ -145,12 +145,24 @@ export async function rekeyCounterparties(tx: Tx): Promise<RekeyResult> {
 
 let doneVersion = 0;
 
+/** Raised when a key is read inside a transaction before the keys were carried: a caller forgot to carry first. */
+export class KeysNotCarriedError extends Error {
+  constructor() {
+    super('counterparty keys not carried yet');
+    this.name = 'KeysNotCarriedError';
+  }
+}
+
 /**
  * Make sure the stored keys are the current ones, before a key is read or
- * written. Once per key version: the first caller carries them (under a lock,
- * so a second caller waits and then finds the marker), every later caller only
- * sees the marker. A failure is thrown: reading payments under keys that answers
- * no longer match would show wrong figures without saying so.
+ * written. Once per key version: the first caller carries them in a
+ * transaction of its own (under a lock, so a second caller waits and then finds
+ * the marker), every later caller only sees the marker. It never carries
+ * inside a caller's transaction: that one may roll back (a refused link) and
+ * take the carrying with it, while this process would believe it done. A
+ * caller that opens a transaction carries before it; inside one, keys that are
+ * not carried yet are an error. A failure is thrown: reading payments under
+ * keys that answers no longer match would show wrong figures without saying so.
  */
 export async function ensureMerchantKeys(db: PrismaClient | Tx): Promise<RekeyResult | null> {
   if (doneVersion >= MERCHANT_KEY_VERSION) return null;
@@ -159,19 +171,36 @@ export async function ensureMerchantKeys(db: PrismaClient | Tx): Promise<RekeyRe
     doneVersion = marker.version;
     return null;
   }
-  // Inside a caller's transaction the carrying joins it; otherwise it gets one of its own.
-  const run = async (tx: Tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LOCK})`;
-    const again = await tx.taxKeyVersion.findUnique({ where: { name: MARKER } });
-    if (again && again.version >= MERCHANT_KEY_VERSION) return null;
-    const result = await rekeyCounterparties(tx);
-    await tx.taxKeyVersion.upsert({ where: { name: MARKER }, create: { name: MARKER, version: MERCHANT_KEY_VERSION }, update: { version: MERCHANT_KEY_VERSION } });
-    console.info('[payments] counterparty keys carried to their merchant', { version: MERCHANT_KEY_VERSION, ...result });
-    return result;
-  };
-  const result = '$transaction' in db ? await (db as PrismaClient).$transaction(run, { maxWait: 30_000, timeout: 120_000 }) : await run(db as Tx);
+  if (!('$transaction' in db)) throw new KeysNotCarriedError();
+  const result = await carry(db as PrismaClient, false);
   doneVersion = MERCHANT_KEY_VERSION;
   return result;
+}
+
+/**
+ * Carry again whatever does not fit the current key, whatever the marker says:
+ * the daily run's safety net for rows an older server version still wrote with
+ * the old keys while a new one was starting. Nothing to carry costs one read of
+ * the keys.
+ */
+export async function sweepMerchantKeys(db: PrismaClient): Promise<RekeyResult | null> {
+  return carry(db, true);
+}
+
+async function carry(db: PrismaClient, always: boolean): Promise<RekeyResult | null> {
+  return db.$transaction(
+    async (tx) => {
+      // Taken first, before any row lock, so it never waits on a link holding payment rows (lock order).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LOCK})`;
+      const again = await tx.taxKeyVersion.findUnique({ where: { name: MARKER } });
+      if (!always && again && again.version >= MERCHANT_KEY_VERSION) return null;
+      const result = await rekeyCounterparties(tx);
+      await tx.taxKeyVersion.upsert({ where: { name: MARKER }, create: { name: MARKER, version: MERCHANT_KEY_VERSION }, update: { version: MERCHANT_KEY_VERSION } });
+      if (result.payments + result.carried + result.conflicting + result.verdicts > 0) console.info('[payments] counterparty keys carried to their merchant', { version: MERCHANT_KEY_VERSION, ...result });
+      return result;
+    },
+    { maxWait: 30_000, timeout: 120_000 },
+  );
 }
 
 /** For tests: forget that this process has seen the marker. */

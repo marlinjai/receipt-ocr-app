@@ -662,6 +662,8 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
   const rowId = typeof input.rowId === 'string' && input.rowId ? input.rowId : null;
   const invoiceId = typeof input.invoiceId === 'string' && input.invoiceId ? input.invoiceId : null;
   if (typeof input.paymentId !== 'string' || (rowId === null) === (invoiceId === null)) throw new PaymentServiceError('invalid_link');
+  // Carried before the transaction: inside it the carrying would roll back with a refused link.
+  await ensureMerchantKeys(db);
   const receipt = rowId !== null ? await receiptOf(rowId) : null;
   if (rowId !== null && receipt === null) throw new PaymentServiceError('target_not_found');
 
@@ -771,6 +773,7 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
  */
 export async function linkProposals(db: PrismaClient, ctx: PaymentContext, pairs: ReadonlyArray<{ paymentId: string; rowId: string }>): Promise<Array<{ paymentId: string; rowId: string }>> {
   if (pairs.length === 0) return [];
+  await ensureMerchantKeys(db);
   return db.$transaction(async (tx) => {
     const paymentIds = [...new Set(pairs.map((p) => p.paymentId))].sort();
     const rowKeys = [...new Set(pairs.map((p) => `tax-receipt:${p.rowId}`))].sort();
@@ -952,7 +955,7 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
   const { treatments, sources: treatmentSources } = mergeTreatments(answered, payments, settings?.ownNames ?? [], verdicts.values());
   const funding = resolveFunding(
     accounts.map((a) => ({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format), services: a.batches.map((b) => b.service) })),
-    payments.map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: vendorKey(p.reference) ?? '', sourceKind: p.sourceKind, estimated: p.amountEstimated })),
+    payments.map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, nameKey: vendorKey(p.counterparty) ?? '', referenceKey: vendorKey(p.reference) ?? '', sourceKind: p.sourceKind, estimated: p.amountEstimated })),
   );
   const privateAccounts = new Set(accounts.filter((a) => a.isPrivate).map((a) => a.id));
   const rows: PaymentRow[] = payments.map((p) => {

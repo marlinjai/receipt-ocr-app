@@ -7,6 +7,7 @@ import {
   maskText,
   evidenceFingerprint,
   evidenceVerdict,
+  filedVerdict,
   mayLookUp,
   pairReceipts,
   parseModelVerdicts,
@@ -126,16 +127,19 @@ describe("the company's own data", () => {
 
   it('a filed year decides what it did not claim: private, never against a receipt or money in', () => {
     const filed = evidence({ filedYears: [2025], openYearPayments: 0 });
-    expect(evidenceVerdict(filed)).toMatchObject({ treatment: 'private', confidence: 'certain', reason: 'In der abgegebenen Erklärung 2025 nicht als Betriebsausgabe abgesetzt.' });
-    expect(evidenceVerdict({ ...filed, filedYears: [2024, 2025] })?.reason).toBe('In der abgegebenen Erklärungen 2024 und 2025 nicht als Betriebsausgabe abgesetzt.');
+    expect(filedVerdict(filed)).toMatchObject({ treatment: 'private', confidence: 'certain', reason: 'In der abgegebenen Erklärung 2025 nicht als Betriebsausgabe abgesetzt.' });
+    expect(filedVerdict({ ...filed, filedYears: [2024, 2025] })?.reason).toBe('In der abgegebenen Erklärungen 2024 und 2025 nicht als Betriebsausgabe abgesetzt.');
     // Payments in a year still open: the filed year alone does not decide them.
-    expect(evidenceVerdict({ ...filed, openYearPayments: 2 })).toBeNull();
+    expect(filedVerdict({ ...filed, openYearPayments: 2 })).toBeNull();
     // Money came in: never made private by a rule that only knows what was not claimed.
-    expect(evidenceVerdict({ ...filed, inCents: 5_000 })).toBeNull();
+    expect(filedVerdict({ ...filed, inCents: 5_000 })).toBeNull();
     // A business receipt of the vendor in the filed year that matching missed (another currency, a far day): nothing decided.
-    expect(evidenceVerdict({ ...filed, filedBusinessReceipts: 1 })).toBeNull();
+    expect(filedVerdict({ ...filed, filedBusinessReceipts: 1 })).toBeNull();
     // A business receipt among few payments is only a hint, and the filed year does not overrule it.
+    expect(filedVerdict({ ...filed, paymentCount: 9, linkedPayments: 1, receipts: { business: 1, private: 0, mixed: 0, categories: [] } })).toBeNull();
     expect(evidenceVerdict({ ...filed, paymentCount: 9, linkedPayments: 1, receipts: { business: 1, private: 0, mixed: 0, categories: [] } })).toMatchObject({ treatment: 'business', confidence: 'likely' });
+    // The receipts decide before the filed year; the filed year is never the company's data verdict itself.
+    expect(evidenceVerdict(filed)).toBeNull();
   });
 
   it('the model is told what the filed returns say', () => {
@@ -143,6 +147,8 @@ describe("the company's own data", () => {
     // Only receipts of the filed years count there, not a business receipt linked in an open year.
     expect(toModelCounterparty(evidence({ filedYears: [2025], openYearPayments: 2, receipts: { business: 1, private: 0, mixed: 0, categories: [] } }), 'c1').filedReturns).toBe('2025 filed; no business receipt of it found in those years; 2 payments in open years');
     expect(toModelCounterparty(evidence({ filedYears: [2025], filedBusinessReceipts: 2 }), 'c1').filedReturns).toMatch(/^2025 filed; 2 business or split receipts of it in those years/);
+    // A client that is also a shop: the invoices reach the model even when money went out too.
+    expect(toModelCounterparty(evidence({ outCents: 34_200, inCents: 1_088_200, invoicePayments: 4, incomingPayments: 4 }), 'c1').invoices).toBe("4 of 4 payments received pay the person's own invoices");
   });
 
   it('the fingerprint follows the linked receipts, not the number of payments', () => {
@@ -158,6 +164,15 @@ describe("the company's own data", () => {
     expect(evidenceFingerprint(evidence({ matchedPayments: 1 }))).not.toBe(base);
     expect(evidenceFingerprint(evidence({ invoicePayments: 1 }))).not.toBe(base);
     expect(evidenceFingerprint(evidence({ filedYears: [2025] }))).not.toBe(evidenceFingerprint(evidence({ filedYears: [2024, 2025] })));
+    // A new invoice payment that changes no class changes nothing; money going out to an invoice payer does.
+    const payer = evidence({ outCents: 0, invoicePayments: 2, incomingPayments: 2 });
+    expect(evidenceFingerprint({ ...payer, invoicePayments: 3, incomingPayments: 3, paymentCount: 9 })).toBe(evidenceFingerprint(payer));
+    expect(evidenceFingerprint({ ...payer, incomingPayments: 3 })).not.toBe(evidenceFingerprint(payer));
+    expect(evidenceFingerprint({ ...payer, outCents: 4_000 })).not.toBe(evidenceFingerprint(payer));
+    // More matched payments change nothing until they cross half of all payments.
+    const matched = evidence({ paymentCount: 10, matchedPayments: 6 });
+    expect(evidenceFingerprint({ ...matched, matchedPayments: 7 })).toBe(evidenceFingerprint(matched));
+    expect(evidenceFingerprint({ ...matched, matchedPayments: 4 })).not.toBe(evidenceFingerprint(matched));
   });
 });
 
@@ -215,6 +230,7 @@ describe('what the model sees', () => {
       receivedEuro: '0.00',
       texts: [],
       linkedReceipts: '1 business, 0 private, 0 mixed; categories: Software',
+      invoices: 'none',
       filedReturns: 'none',
       mayLookUp: true,
     });

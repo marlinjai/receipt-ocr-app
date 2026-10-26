@@ -6,6 +6,7 @@ import { berlinToday } from '@/lib/spending/period';
 import { bankSyncSecret } from '@/lib/tax/payments/bank/config';
 import { serverBankDeps } from '@/lib/tax/payments/bank/server';
 import { claimDailySync, runSpendingChecksForLiveCompanies, syncAllConnections } from '@/lib/tax/payments/bank/service';
+import { sweepMerchantKeys } from '@/lib/tax/payments/rekey';
 import { receiveBankSync } from '@/lib/tax/payments/bank/sync-receiver';
 
 /**
@@ -28,6 +29,8 @@ export async function POST(req: NextRequest) {
     enabled: deps !== null,
     claim: (ts) => claimDailySync(prisma, ts),
     sync: async () => {
+      // Once a day, rows an older server version wrote with old counterparty keys are carried too (`rekey.ts`).
+      await sweepMerchantKeys(prisma).catch((e: unknown) => console.error('[payments] the daily key sweep failed', e instanceof Error ? e.message : String(e)));
       const results = await syncAllConnections(prisma, deps!, { today });
       // The spending checks run after the answer, so the scheduler only waits for the fetches.
       // Each company with a live connection, and the companies receiving private payments of its accounts.

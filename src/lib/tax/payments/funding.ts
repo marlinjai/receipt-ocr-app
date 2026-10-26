@@ -103,6 +103,11 @@ export interface FundingPayment {
   amountCents: number;
   /** The normalized counterparty: lower case words separated by single spaces. */
   counterpartyKey: string;
+  /**
+   * The full name normalized the same way, without the merchant step (`merchant.ts`): what a bank debit's text
+   * has to name to be the twin of a wallet purchase. Absent: the counterparty key is used.
+   */
+  nameKey?: string;
   /** The payment's text, normalized like the counterparty. */
   referenceKey: string;
   /** What the file says the movement is. */
@@ -259,9 +264,10 @@ export function resolveFunding(accounts: readonly FundingAccount[], payments: re
       for (const service of services.values()) {
         if (service.kind !== 'wallet') continue;
         const fits = (purchases.get(service.name) ?? []).filter((purchase) => {
-          if (taken.has(purchase.id) || purchase.counterpartyKey.length < 3 || purchase.amountCents > payment.amountCents) return false;
+          const name = purchase.nameKey ?? purchase.counterpartyKey;
+          if (taken.has(purchase.id) || name.length < 3 || purchase.amountCents > payment.amountCents) return false;
           const gap = day - dayNumber(purchase.bookingDay);
-          return gap >= -TWIN_DAYS_BEFORE && gap <= TWIN_DAYS_AFTER && hasWords(payment.referenceKey, purchase.counterpartyKey);
+          return gap >= -TWIN_DAYS_BEFORE && gap <= TWIN_DAYS_AFTER && hasWords(payment.referenceKey, name);
         });
         if (fits.length !== 1) continue;
         taken.add(fits[0].id);

@@ -1,6 +1,7 @@
 import type { PaymentKind } from '@/lib/tax/payments/types';
 import { SPENDING_CATEGORIES, type SpendingCategory } from './categories';
 import { businessShare, categorise, purposeOf, spendingCents, type CategoryBasis, type CounterpartyTreatmentAnswer, type SpendingPurpose } from './rules';
+import { merchantName } from '@/lib/tax/payments/merchant';
 
 /**
  * The spending overview of one year (or one month of it), from the payments
@@ -194,7 +195,7 @@ export function buildOverview(payments: readonly OverviewPaymentInput[], ctx: Ov
     if (p.category === 'unclear') {
       // Nameless payments are kept apart, one entry each: there is nobody to answer for.
       const key = p.counterpartyKey || `payment:${p.id}`;
-      const entry = unclear.get(key) ?? { counterpartyKey: p.counterpartyKey, counterparty: p.counterparty || p.reference, cents: 0, count: 0, lastDay: p.bookingDay };
+      const entry = unclear.get(key) ?? { counterpartyKey: p.counterpartyKey, counterparty: (p.counterparty && merchantName(p.counterparty)) || p.reference, cents: 0, count: 0, lastDay: p.bookingDay };
       entry.cents += p.spendingCents;
       entry.count += 1;
       if (p.bookingDay > entry.lastDay) entry.lastDay = p.bookingDay;

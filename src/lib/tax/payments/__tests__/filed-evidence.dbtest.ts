@@ -288,3 +288,63 @@ describe('evidence that changes is decided again, once', () => {
     expect(model.asked).toEqual(['Markt Beispiel']);
   });
 });
+
+describe('the second review: carrying, invoice payers and a fresh filed year', () => {
+  it('a refused link as the first call after a deploy still leaves the keys carried', async () => {
+    const { ws, ctx } = await company([line('2026-02-01', 'AMAZON* KT2PC3H85', 'Bestellung', '-12.99')]);
+    for (const p of await db.taxPayment.findMany({ where: { authWorkspaceId: ctx.workspaceId } })) await db.taxPayment.update({ where: { id: p.id }, data: { counterpartyKey: 'amazon kt2pc3h85' } });
+    await db.taxKeyVersion.deleteMany({});
+    forgetMerchantKeys();
+    const rowId = await ws.addReceipt({ Name: 'Kabel', Vendor: 'Amazon', Gross: 12.99, Date: '2026-02-01', Category: 'Miete & Nebenkosten', Zuordnung: 'Geschäftlich', Currency: 'EUR', 'FX Rate': 1 });
+    const [payment] = await db.taxPayment.findMany({ where: { authWorkspaceId: ctx.workspaceId } });
+    // More than the payment holds: the link is refused, its transaction rolls back.
+    await expect(linkPayment(db, ctx, { paymentId: payment.id, rowId, cents: 99_999 }, receiptForLink(db, ctx.workspaceId))).rejects.toThrow();
+    expect(await db.taxKeyVersion.count()).toBe(1);
+    expect((await db.taxPayment.findUnique({ where: { id: payment.id } }))?.counterpartyKey).toBe('amazon');
+  });
+
+  it('an invoice payer is decided again once money goes out to it, and not for every new invoice payment', async () => {
+    const ws = await createWorkspace();
+    const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+    await saveTaxSettings(db, ctx, { smallBusiness: true });
+    await saveInvoice(db, ctx, null, { number: 'R-2026-001', issueDate: '2026-01-10', grossCents: 100_000, treatment: 'small_business', payments: [] });
+    await saveInvoice(db, ctx, null, { number: 'R-2026-002', issueDate: '2026-02-10', grossCents: 50_000, treatment: 'small_business', payments: [] });
+    const accountId = await createAccount(db, ctx, { label: 'Girokonto', kind: 'bank' });
+    await importPayments(db, ctx, accountId, file(line('2026-01-20', 'Kunde Beispiel AG', 'Rechnung R-2026-001', '1000', 'Credit Transfer')));
+    const model = fakeModel({ 'Kunde Beispiel AG': { treatment: 'mixed', category: null, confidence: 'likely', reason: 'Kunde, der auch ein Laden ist.' } });
+    await classifyCounterparties(db, ctx, model.port);
+    expect(await verdictOf(ctx.workspaceId, 'kunde beispiel')).toMatchObject({ treatment: 'business', confidence: 'certain', source: 'evidence' });
+    // A purchase in the client's shop: the invoices alone no longer decide it, the model is asked, once.
+    await importPayments(db, ctx, accountId, file(line('2026-02-15', 'Kunde Beispiel AG', 'Schuhe', '-171', 'Presentment')));
+    await classifyCounterparties(db, ctx, model.port);
+    expect(model.asked).toEqual(['Kunde Beispiel AG']);
+    expect(await verdictOf(ctx.workspaceId, 'kunde beispiel')).toMatchObject({ source: 'model' });
+    // The next invoice payment changes no class of the evidence: nobody is asked again.
+    await importPayments(db, ctx, accountId, file(line('2026-02-25', 'Kunde Beispiel AG', 'Rechnung R-2026-002', '500', 'Credit Transfer')));
+    expect(await classifyCounterparties(db, ctx, model.port)).toMatchObject({ pending: 0 });
+    expect(model.asked).toHaveLength(1);
+  });
+
+  it('a counterparty of a filed year never asked before is asked first: own account stays a proposal, anything else is private', async () => {
+    const { ctx } = await company([line('2025-06-01', 'Tagesgeld Beispiel', 'Sparen', '-500', 'Debit Transfer'), line('2025-06-02', 'Kiosk Beispiel', 'Zeitung', '-3', 'Presentment')]);
+    await filed(ctx, 2025, '2026-10-17');
+    const model = fakeModel({
+      'Tagesgeld Beispiel': { treatment: 'own_account', category: 'transfers', confidence: 'likely', reason: 'Wohl ein eigenes Sparkonto.' },
+      'Kiosk Beispiel': { treatment: 'private', category: null, confidence: 'unsure', reason: 'Kiosk.' },
+    });
+    const run = await classifyCounterparties(db, ctx, model.port);
+    expect(model.asked.sort()).toEqual(['Kiosk Beispiel', 'Tagesgeld Beispiel']);
+    expect(await verdictOf(ctx.workspaceId, 'tagesgeld beispiel')).toMatchObject({ treatment: 'own_account', confidence: 'likely', source: 'model' });
+    expect(await verdictOf(ctx.workspaceId, 'kiosk beispiel')).toMatchObject({ treatment: 'private', confidence: 'certain', source: 'evidence' });
+    expect(run).toMatchObject({ byEvidence: 1, byModel: 1 });
+    // Re-entry: nothing asked again.
+    expect(await classifyCounterparties(db, ctx, model.port)).toMatchObject({ pending: 0 });
+  });
+
+  it('without a model the filed year decides alone', async () => {
+    const { ctx } = await company([line('2025-06-02', 'Kiosk Beispiel', 'Zeitung', '-3', 'Presentment')]);
+    await filed(ctx, 2025, '2026-10-17');
+    await classifyCounterparties(db, ctx, null);
+    expect(await verdictOf(ctx.workspaceId, 'kiosk beispiel')).toMatchObject({ treatment: 'private', confidence: 'certain' });
+  });
+});

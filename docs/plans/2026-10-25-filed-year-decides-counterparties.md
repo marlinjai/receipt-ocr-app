@@ -124,10 +124,14 @@ build reports the before and after counts on production.
   (reference) is still keyed as before, because the funding rule reads it too.
 - **Carrying the keys** (`rekey.ts`) runs once per key version, for all companies together (answers
   of one company apply to payments another holds, also across tenants), before anything reads or
-  writes a key: the payments' load, every import and bank fetch, every answer that stores a key and
-  the shop budgets call `ensureMerchantKeys`. A stored marker (`tax_key_versions`, migration 0040)
-  says it is done; afterwards a call costs one lookup, then nothing in that process. It takes a
-  database lock, so two servers never carry at once. Rules, category answers and shop budgets are
+  writes a key: the payments' load, every import and bank fetch, every answer that stores a key, the
+  spending page and the shop budgets call `ensureMerchantKeys`. A stored marker (`tax_key_versions`,
+  migration 0040) says it is done; afterwards a call costs one lookup, then nothing in that process.
+  It always runs in a transaction of its own, taking its database lock before any row lock, never
+  inside a caller's transaction (a refused link would roll it back while the process believed it
+  done); every function that opens a transaction and reads keys inside carries first. The daily
+  bank run sweeps once more whatever does not fit the current key, for rows an older server version
+  still wrote during a deploy. Rules, category answers and shop budgets are
   carried by their own name and get the merchant's name as their label; disagreeing ones of a
   person are dropped and logged; verdicts on a changed key, and on every key that took over
   payments, are removed and made again (a verdict made on 2 payments must not cover 300).
@@ -140,12 +144,24 @@ build reports the before and after counts on production.
 - **A share left open is private.** A receipt stored as "50 percent business, 30 percent study"
   carries no private line; the 20 percent left are private, so it counts as split. Without this
   the Telekom receipts read as all business.
-- **The filed-year rule keeps an own-account proposal**: a counterparty the model proposed as own
-  account keeps that proposal on the new evidence instead of becoming private.
+- **The filed-year rule asks the model first.** A transfer to an own savings account looks like
+  "not claimed" too. A counterparty the model already called an own account keeps that proposal;
+  one it called anything else is private by the filed return; one it was never asked about is asked
+  first, and is private unless the model says own account (without a model, the filed year decides
+  alone).
+- **Fingerprints use classes, not counts**, where a count grows with every payment: whether half
+  the payments are paid by receipts, whether all money in pays invoices, whether money also went
+  out to an invoice payer. A new invoice payment asks nobody again; the first purchase from a
+  client does.
+- **The model hears about invoices** ("4 of 4 payments received pay the person's own invoices"),
+  also for a client that is a shop too, where the invoices alone decide nothing.
+- **The PayPal twin of a bank debit** is still found by the purchase's full name, not the shorter
+  merchant key.
 - **The filed-year rule does not trust a missed match.** Matching needs the exact amount and a near
-  day, so a receipt in another currency, with a tip or far from its payment is not paired. Any
-  business or split receipt dated in a filed year whose vendor the counterparty's name or payment
-  texts name keeps the rule out (the model decides instead, told what the filed years hold). A
+  day, so a receipt with a tip, far from its payment, in another currency outside 8 percent or
+  without a rate is not paired. Any business or split receipt dated in a filed year whose vendor the
+  counterparty's name names keeps the rule out (the payment texts are not read for this: "Apple Pay"
+  in a text would let one Apple invoice block every shop) (the model decides instead, told what the filed years hold). A
   payment between 22 December and 10 January counts as a filed-year payment only when the year next
   to it is filed too, because the ten-day rule may count it there.
 - **Invoices decide only when all money in pays them.** A payer with invoice payments and other
@@ -165,3 +181,6 @@ build reports the before and after counts on production.
   change there.
 - **A filed year's payments tab** lists nothing under "Wer ist das?" and asks for no receipt, and
   says why ("Die Erklärung {Jahr} ist am … abgegeben").
+- **Accepted:** a budget warning already sent for a coded shop name is sent once more after its
+  budget is carried to the merchant (its subject contains the key). It happens at most once, only
+  where a budget was set on a coded name.

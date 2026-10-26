@@ -2,6 +2,7 @@ import 'server-only';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { counterpartyKey, loadPayments, paidByReceipt, PaymentServiceError, type CounterpartyTreatment, type LoadedPayments, type PaymentContext, type PaymentRow, type ReceiptForLink } from './service';
 import { OVERPAID_TOLERANCE_PERCENT } from './types';
+import { ensureMerchantKeys } from './rekey';
 import { routesToReceiver } from './route';
 import type { SpendingCategory } from '@/lib/spending/categories';
 import type { TreatmentSource } from './verdicts';
@@ -100,8 +101,9 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
   const sharedOut = new Set(validOut.map((s) => s.accountId));
   const kept: RoutedPaymentRow[] = [];
   const routedAway: PaymentRow[] = [];
+  const ownRouting = routingTreatments(own);
   for (const p of own.payments) {
-    if (routesToReceiver(p, routingTreatments(own), sharedOut)) routedAway.push(p);
+    if (routesToReceiver(p, ownRouting, sharedOut)) routedAway.push(p);
     else kept.push({ ...p, routedFrom: null });
   }
   const accounts: RoutedAccount[] = own.accounts.map((a) => ({ id: a.id, label: a.label, completeThrough: a.completeThrough, sharedFrom: null }));
@@ -118,7 +120,8 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
     for (const a of loaded.accounts) {
       if (accountIds.has(a.id)) accounts.push({ id: a.id, label: a.label, completeThrough: a.completeThrough, sharedFrom: holder });
     }
-    for (const p of loaded.payments) if (routesToReceiver(p, routingTreatments(loaded), accountIds)) routedIn.push({ ...p, routedFrom: holder });
+    const holderRouting = routingTreatments(loaded);
+    for (const p of loaded.payments) if (routesToReceiver(p, holderRouting, accountIds)) routedIn.push({ ...p, routedFrom: holder });
     holderAppCategories.set(holder, loaded.appCategories);
   }
   // This company's own links on other companies' payments: live on what is routed here, dormant on the rest.
@@ -227,6 +230,7 @@ export async function linkRoutedPayment(
   if (typeof paymentId !== 'string' || !paymentId || typeof rowId !== 'string' || !rowId) throw new PaymentServiceError('invalid_link');
   const receipt = await receiptOf(rowId);
   if (receipt === null) throw new PaymentServiceError('target_not_found');
+  await ensureMerchantKeys(db);
   return db.$transaction(async (tx) => {
     // The same lock order as the holder's own link: the payment first, then the receipt.
     // Locked only when the payment's account is shared with this company: no other company's payment is ever held.

@@ -41,6 +41,8 @@ export async function loadStoredLimits(db: PrismaClient, workspaceId: string): P
 
 /** The budgets of the month `today` falls in, and (when asked) the counterparties to pick from, from one read of the payments. */
 export async function loadBudgetsView(db: PrismaClient, workspaceId: string, today: string, withCounterparties = false): Promise<{ lines: BudgetLine[]; counterparties: string[] }> {
+  // The answers and budgets below are read by key in parallel with the payments: the keys are carried first.
+  await ensureMerchantKeys(db);
   // The spending side's read: private payments of a shared account count in the company they are routed to, never twice.
   const [loaded, answers, limits] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId), loadStoredLimits(db, workspaceId)]);
   const ctx = { treatments: (await spendingTreatments(db, workspaceId, loaded)).treatments, answers: await categoryAnswerMap(db, workspaceId, loaded, answers), appCategories: loaded.appCategories, holderAppCategories: loaded.holderAppCategories };

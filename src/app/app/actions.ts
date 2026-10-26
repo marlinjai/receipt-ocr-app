@@ -432,7 +432,14 @@ async function storeReviewFlags(workspaceId: string, tenantId: string | null, ro
   // empty one, leaves stored lines as they are (the backfill reads a receipt that has none). Counts only, never a line's text.
   if (read.lines) {
     try {
-      await replaceReceiptLines(prisma, { workspaceId, tenantId }, rowId, read.lines, { keepOverEmpty: true });
+      await replaceReceiptLines(prisma, { workspaceId, tenantId }, rowId, read.lines, {
+        keepOverEmpty: true,
+        // A receipt deleted while it was being read gets no lines back.
+        rowExists: async () => {
+          const row = await adapter.getRow(rowId);
+          return row !== null && row.tableId === tableId;
+        },
+      });
     } catch (err) {
       console.error('[processReceipt] storing the lines failed:', err instanceof Error ? err.name : 'error', { count: read.lines.lines.length });
     }

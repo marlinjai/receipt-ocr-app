@@ -1256,23 +1256,26 @@ model ReceiptItem {
 // they were stored; the difference to the receipt's total is worked out on read,
 // against the total the row holds then.
 model ReceiptItemReading {
-  rowId           String   @id @map("row_id")
-  authWorkspaceId String   @map("auth_workspace_id")
-  authTenantId    String?  @map("auth_tenant_id")
-  outcome         String
-  source          String
-  lineCount       Int      @default(0) @map("line_count")
-  linesSumCents   Int?     @map("lines_sum_cents")
+  rowId             String   @id @map("row_id")
+  authWorkspaceId   String   @map("auth_workspace_id")
+  authTenantId      String?  @map("auth_tenant_id")
+  outcome           String
+  source            String
+  lineCount         Int      @default(0) @map("line_count")
+  linesSumCents     Int?     @map("lines_sum_cents")
   // Net sum and net total of an electronic invoice: its lines are net amounts, checked on net.
-  linesNetCents   Int?     @map("lines_net_cents")
-  totalNetCents   Int?     @map("total_net_cents")
-  textCut         Boolean  @default(false) @map("text_cut")
-  attempts        Int      @default(0)
-  model           String?
-  inputTokens     Int?     @map("input_tokens")
-  outputTokens    Int?     @map("output_tokens")
-  readAt          DateTime @default(now()) @map("read_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  linesNetCents     Int?     @map("lines_net_cents")
+  totalNetCents     Int?     @map("total_net_cents")
+  textCut           Boolean  @default(false) @map("text_cut")
+  attempts          Int      @default(0)
+  // Calls in a row that did not get through for this receipt (a timeout, a server error): counted
+  // apart from `attempts`, so an outage never stops a receipt, but one that times out every time does.
+  transientFailures Int      @default(0) @map("transient_failures")
+  model             String?
+  inputTokens       Int?     @map("input_tokens")
+  outputTokens      Int?     @map("output_tokens")
+  readAt            DateTime @default(now()) @map("read_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
 
   @@index([authWorkspaceId, outcome])
   @@map("receipt_item_readings")

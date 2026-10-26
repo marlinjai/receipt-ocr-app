@@ -548,7 +548,11 @@ const LINES_TEXT_LIMIT = 24_000;
 const LINES_TEXT_TAIL = 4_000;
 /** Room for the reasoning and every line of a long receipt. */
 const LINES_MAX_TOKENS = 16_000;
-const LINES_TIMEOUT_MS = 90_000;
+/**
+ * One try per receipt and run, within a minute: a batch of the button answers well inside a proxy's
+ * time limit, and the backfill tries a receipt again on its next run instead of within the request.
+ */
+const LINES_TIMEOUT_MS = 60_000;
 
 /** What the lines-only reading is given: the stored text, and what the row says the receipt is. */
 export interface LinesInput {
@@ -621,7 +625,7 @@ export async function readReceiptLines(input: LinesInput): Promise<LinesAnswer> 
     .join('\n');
   if (provider === 'anthropic_web_search') {
     const model = process.env.ANTHROPIC_ITEM_MODEL || DEFAULT_ANTHROPIC_ITEM_MODEL;
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, maxRetries: MAX_RETRIES });
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, maxRetries: 0 });
     const response = await client.messages.create(
       { model, max_tokens: LINES_MAX_TOKENS, output_config: { effort: 'low' }, system: linesPrompt(), messages: [{ role: 'user', content: user }] },
       { timeout: LINES_TIMEOUT_MS },
@@ -648,7 +652,7 @@ export async function readReceiptLines(input: LinesInput): Promise<LinesAnswer> 
       { role: 'user', content: user },
     ],
   };
-  const response = await getAiClient().chat.completions.create(request, { timeout: LINES_TIMEOUT_MS, maxRetries: MAX_RETRIES });
+  const response = await getAiClient().chat.completions.create(request, { timeout: LINES_TIMEOUT_MS, maxRetries: 0 });
   const choice = response.choices[0];
   if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) throw new UnusableAnswerError('The model declined to read this receipt.');
   if (choice?.finish_reason === 'length') throw new UnusableAnswerError('The answer was cut off.');

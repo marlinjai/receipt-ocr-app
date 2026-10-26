@@ -47,7 +47,9 @@ export interface StructuredReceiptFields {
   problems: string[];
   /** A plain text of the figures, for the receipt's text column and its search. */
   text: string;
-  /** The invoice's lines and document-level discounts and surcharges, net, positive as stated (`creditNote` says the direction). */
+  /** Whether the document is an invoice or a credit note by its type, whatever the sign of its amounts. */
+  documentKind: StructuredInvoice['kind'];
+  /** The invoice's lines and document-level discounts and surcharges, net, with the sign the document states (`documentKind` says its direction). */
   lines: StructuredInvoice['lines'];
   allowanceCharges: StructuredInvoice['allowanceCharges'];
 }
@@ -118,6 +120,7 @@ export function structuredReceiptFields(invoice: StructuredInvoice): StructuredR
     creditNote: (invoice.kind === 'credit_note') !== (invoice.grossCents !== null && invoice.grossCents < 0),
     problems: invoice.problems,
     text: text.join('\n'),
+    documentKind: invoice.kind,
     lines: invoice.lines,
     allowanceCharges: invoice.allowanceCharges,
   };

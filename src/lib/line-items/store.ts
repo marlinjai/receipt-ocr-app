@@ -31,6 +31,8 @@ export type ReadingOutcome = 'lines' | 'no_lines' | 'no_text' | 'failed';
 
 /** How often the backfill tries a receipt whose reading failed before it stops asking. */
 export const MAX_ATTEMPTS = 3;
+/** How many calls in a row may not get through for one receipt (a timeout every time) before it is no longer asked about. */
+export const MAX_TRANSIENT_FAILURES = 6;
 
 export interface StoreLinesInput {
   lines: readonly ReceiptLine[];
@@ -60,9 +62,19 @@ const settled = (outcome: string | undefined) => outcome === 'lines' || outcome 
  * says nothing against the lines read before. The return value says whether
  * it was written.
  */
-export async function replaceReceiptLines(db: PrismaClient, ctx: LineItemsContext, rowId: string, input: StoreLinesInput, options: { onlyIfUnread?: boolean; keepOverEmpty?: boolean } = {}): Promise<boolean> {
+export interface WriteOptions {
+  /**
+   * Asked under the receipt's lock, before anything is written: false when the receipt was deleted
+   * meanwhile (a long model call), so no lines come back for a receipt that is gone. The delete path
+   * removes the lines under the same lock after the row is gone.
+   */
+  rowExists?: () => Promise<boolean>;
+}
+
+export async function replaceReceiptLines(db: PrismaClient, ctx: LineItemsContext, rowId: string, input: StoreLinesInput, options: WriteOptions & { onlyIfUnread?: boolean; keepOverEmpty?: boolean } = {}): Promise<boolean> {
   return db.$transaction(async (tx) => {
     await lockRow(tx, rowId);
+    if (options.rowExists && !(await options.rowExists())) return false;
     const existing = await tx.receiptItemReading.findUnique({ where: { rowId }, select: { outcome: true, authWorkspaceId: true } });
     // A row id is unique across companies; a record of another company is never touched.
     if (existing && existing.authWorkspaceId !== ctx.workspaceId) return false;
@@ -97,6 +109,7 @@ export async function replaceReceiptLines(db: PrismaClient, ctx: LineItemsContex
       model: input.model ?? null,
       inputTokens: input.usage?.inputTokens ?? null,
       outputTokens: input.usage?.outputTokens ?? null,
+      transientFailures: 0,
       readAt: new Date(),
     };
     await tx.receiptItemReading.upsert({
@@ -109,17 +122,21 @@ export async function replaceReceiptLines(db: PrismaClient, ctx: LineItemsContex
 }
 
 /**
- * Record that a receipt's lines could not be read: it has no stored text, or
- * the model failed (counted, so the backfill stops after MAX_ATTEMPTS). Lines
- * that were read before stay: a failed reading never takes them away.
+ * Record that a receipt's lines could not be read: it has no stored text
+ * ('no_text'), the answer was unusable ('failed', counted towards
+ * MAX_ATTEMPTS), or the call did not get through ('transient', counted apart
+ * towards MAX_TRANSIENT_FAILURES and reset by any reading). Lines that were
+ * read before stay: a failed reading never takes them away.
  */
-export async function recordUnread(db: PrismaClient, ctx: LineItemsContext, rowId: string, outcome: 'no_text' | 'failed', meta: { source: LineSource; model?: string | null } = { source: 'backfill' }): Promise<void> {
+export async function recordUnread(db: PrismaClient, ctx: LineItemsContext, rowId: string, outcome: 'no_text' | 'failed' | 'transient', meta: WriteOptions & { source: LineSource; model?: string | null } = { source: 'backfill' }): Promise<void> {
   await db.$transaction(async (tx) => {
     await lockRow(tx, rowId);
-    const existing = await tx.receiptItemReading.findUnique({ where: { rowId }, select: { outcome: true, attempts: true, authWorkspaceId: true } });
+    if (meta.rowExists && !(await meta.rowExists())) return;
+    const existing = await tx.receiptItemReading.findUnique({ where: { rowId }, select: { outcome: true, attempts: true, transientFailures: true, authWorkspaceId: true } });
     if (existing && (existing.authWorkspaceId !== ctx.workspaceId || settled(existing.outcome))) return;
     const attempts = (existing?.attempts ?? 0) + (outcome === 'failed' ? 1 : 0);
-    const data = { outcome, source: meta.source, lineCount: 0, linesSumCents: null, linesNetCents: null, totalNetCents: null, model: meta.model ?? null, attempts, readAt: new Date() };
+    const transientFailures = outcome === 'transient' ? (existing?.transientFailures ?? 0) + 1 : 0;
+    const data = { outcome: outcome === 'no_text' ? 'no_text' : 'failed', source: meta.source, lineCount: 0, linesSumCents: null, linesNetCents: null, totalNetCents: null, model: meta.model ?? null, attempts, transientFailures, readAt: new Date() };
     await tx.receiptItemReading.upsert({ where: { rowId }, create: { rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, ...data }, update: data });
   });
 }
@@ -206,9 +223,18 @@ export async function answerLineKind(db: PrismaClient, ctx: LineItemsContext, li
   return { rowId: line.rowId };
 }
 
-/** Called by the row delete paths: a deleted receipt takes its lines and its reading with it. The kind answers stay: they belong to the shop. */
-export async function deleteLinesForRows(db: Pick<PrismaClient, 'receiptItem' | 'receiptItemReading'>, rowIds: readonly string[]): Promise<void> {
-  if (rowIds.length === 0) return;
-  await db.receiptItem.deleteMany({ where: { rowId: { in: [...rowIds] } } });
-  await db.receiptItemReading.deleteMany({ where: { rowId: { in: [...rowIds] } } });
+/**
+ * Called by the row delete paths after the row is gone: a deleted receipt takes its lines and its
+ * reading with it, under the receipt's lock, so a reading that was under way when the receipt was
+ * deleted either finished before (and is removed here) or finds the row gone. The kind answers stay:
+ * they belong to the shop.
+ */
+export async function deleteLinesForRows(db: PrismaClient, rowIds: readonly string[]): Promise<void> {
+  for (const rowId of new Set(rowIds)) {
+    await db.$transaction(async (tx) => {
+      await lockRow(tx, rowId);
+      await tx.receiptItem.deleteMany({ where: { rowId } });
+      await tx.receiptItemReading.deleteMany({ where: { rowId } });
+    });
+  }
 }

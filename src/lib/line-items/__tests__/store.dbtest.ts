@@ -4,12 +4,12 @@ import { deleteReceiptRows } from '@/lib/meals/service';
 import type { LinesAnswer, LinesInput } from '@/lib/receipt-classifier';
 import { ClassifierUnavailableError, UnusableAnswerError } from '@/lib/receipt-classifier';
 import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
-import { backfillReceiptLines, type LinesReader } from '../backfill';
+import { backfillReceiptLines, companiesWithReceipts, dailyLinesBackfill, type LinesReader } from '../backfill';
 import { structuredReceiptFields } from '@/lib/einvoice';
 import { readInvoiceXml } from '@/lib/einvoice/parse';
 import { UBL_INVOICE_WITH_LINES } from '@/lib/einvoice/__tests__/samples';
 import { parseModelLines, type ReceiptLine } from '../lines';
-import { MAX_ATTEMPTS, answerLineKind, loadKindAnswers, replaceReceiptLines, withAnswers, type LineItemsContext } from '../store';
+import { MAX_ATTEMPTS, MAX_TRANSIENT_FAILURES, answerLineKind, loadKindAnswers, replaceReceiptLines, withAnswers, type LineItemsContext } from '../store';
 
 /**
  * Storing a receipt's lines and the backfill of stored receipts, against a
@@ -172,7 +172,7 @@ describe('the backfill of stored receipts', () => {
       throw Object.assign(new Error('overloaded'), { status: 529 });
     });
     expect(await backfillReceiptLines(db, c, down)).toMatchObject({ failed: 1, remaining: 1 });
-    expect(await db.receiptItemReading.findUnique({ where: { rowId } })).toBeNull();
+    expect(await db.receiptItemReading.findUnique({ where: { rowId } })).toMatchObject({ outcome: 'failed', attempts: 0, transientFailures: 1 });
     expect(await db.receiptItem.count({ where: { rowId } })).toBe(0);
 
     // A malformed answer is counted, up to the limit; never a part of the list.
@@ -245,11 +245,87 @@ describe('the backfill of stored receipts', () => {
     await backfillReceiptLines(db, c, async () => {
       throw Object.assign(new Error('rate limited'), { status: 429 });
     });
-    expect(await db.receiptItemReading.findUnique({ where: { rowId } })).toBeNull();
+    expect(await db.receiptItemReading.findUnique({ where: { rowId } })).toMatchObject({ attempts: 0, transientFailures: 1 });
     await backfillReceiptLines(db, c, async () => {
       throw Object.assign(new Error('request too large'), { status: 400 });
     });
-    expect(await db.receiptItemReading.findUnique({ where: { rowId } })).toMatchObject({ outcome: 'failed', attempts: 1 });
+    expect(await db.receiptItemReading.findUnique({ where: { rowId } })).toMatchObject({ outcome: 'failed', attempts: 1, transientFailures: 0 });
+  });
+
+  it('a receipt that times out on every run stops being asked after the limit, and never blocks fresh receipts', async () => {
+    const w = await createWorkspace();
+    const c = { workspaceId: w.workspaceId, tenantId: w.tenantId };
+    const slow = await w.addReceipt({ Name: 'Langsam', Vendor: 'Markt', Gross: 1, 'OCR Text': 'LANGSAM 1,00', Currency: 'EUR' });
+    const timeout = vi.fn<LinesReader>(async () => {
+      throw new Error('Request timed out.');
+    });
+    for (let run = 1; run <= MAX_TRANSIENT_FAILURES; run++) await backfillReceiptLines(db, c, timeout);
+    expect(await db.receiptItemReading.findUnique({ where: { rowId: slow } })).toMatchObject({ outcome: 'failed', transientFailures: MAX_TRANSIENT_FAILURES });
+    timeout.mockClear();
+    expect(await backfillReceiptLines(db, c, timeout)).toMatchObject({ remaining: 0 });
+    expect(timeout).not.toHaveBeenCalled();
+
+    // A fresh receipt goes before one that failed, even when it is older.
+    const w2 = await createWorkspace();
+    const c2 = { workspaceId: w2.workspaceId, tenantId: w2.tenantId };
+    const older = await w2.addReceipt({ Name: 'Alt', Vendor: 'Markt', Gross: 1, 'OCR Text': 'ALT 1,00', Currency: 'EUR' });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    await w2.addReceipt({ Name: 'Neu', Vendor: 'Markt', Gross: 1, 'OCR Text': 'NEU 1,00', Currency: 'EUR' });
+    const flaky = vi.fn<LinesReader>(async (input) => {
+      if (input.fullText.startsWith('NEU')) throw new Error('Request timed out.');
+      return answer([line('Alt', 100)]);
+    });
+    await backfillReceiptLines(db, c2, flaky, { limit: 1 });
+    expect(flaky.mock.calls[0][0].fullText).toBe('NEU 1,00');
+    await backfillReceiptLines(db, c2, flaky, { limit: 1 });
+    expect(flaky.mock.calls[1][0].fullText).toBe('ALT 1,00');
+    expect((await db.receiptItemReading.findUnique({ where: { rowId: older } }))!.outcome).toBe('lines');
+  });
+
+  it('an electronic invoice whose model call did not get through, or whose file could not be fetched, is tried again, never stored half-read', async () => {
+    const w = await createWorkspace();
+    const c = { workspaceId: w.workspaceId, tenantId: w.tenantId };
+    const fields = structuredReceiptFields(readInvoiceXml(UBL_INVOICE_WITH_LINES)!);
+    const rowId = await w.addReceipt({ Name: 'Rechnung', Vendor: 'Muster Software', Gross: 166.55, 'OCR Text': 'Rechnung (elektronisch)', Currency: 'EUR' });
+    const imageColumn = (await w.adapter.getColumns(w.tableId)).find((col) => col.name === 'Receipt Image')!;
+    await w.adapter.addFileReference({ rowId, columnId: imageColumn.id, fileId: `file-${rowId}`, fileUrl: '/api/files/x', originalName: 'r.pdf', mimeType: 'application/pdf', metadata: { source: 'ocr-upload' } });
+    const reader = vi.fn<LinesReader>(async () => answer([]));
+
+    expect(await backfillReceiptLines(db, c, reader, { structuredOf: async () => { throw new Error('storage down'); } })).toMatchObject({ failed: 1, noLines: 0, remaining: 1 });
+    expect(reader).not.toHaveBeenCalled();
+    expect(await backfillReceiptLines(db, c, async () => { throw new Error('Request timed out.'); }, { structuredOf: async () => fields })).toMatchObject({ failed: 1, read: 0, remaining: 1 });
+    expect(await db.receiptItem.count({ where: { rowId } })).toBe(0);
+
+    // An unusable answer stores the XML's lines as "Sonstiges".
+    const run = await backfillReceiptLines(db, c, async () => { throw new UnusableAnswerError('The answer was cut off.'); }, { structuredOf: async () => fields });
+    expect(run).toMatchObject({ read: 1, addUp: 1 });
+    expect((await db.receiptItem.findMany({ where: { rowId }, orderBy: { position: 'asc' } })).map((i) => i.kind)).toEqual(['other', 'other', 'deposit_discount', 'shipping']);
+  });
+
+  it('a receipt deleted while its lines were being read gets none back', async () => {
+    const w = await createWorkspace();
+    const c = { workspaceId: w.workspaceId, tenantId: w.tenantId };
+    const rowId = await w.addReceipt({ Name: 'Weg', Vendor: 'Markt', Gross: 1, 'OCR Text': 'Ware 1,00', Currency: 'EUR' });
+    const run = await backfillReceiptLines(db, c, async () => {
+      await deleteReceiptRows(db, c, [rowId], { deleteStoredFile: async () => {} });
+      return answer([line('Ware', 100)]);
+    });
+    expect(run.read).toBe(0);
+    expect(await db.receiptItem.count({ where: { rowId } })).toBe(0);
+    expect(await db.receiptItemReading.count({ where: { rowId } })).toBe(0);
+  });
+
+  it('the daily run reads every company within its total budget, and goes on where it stopped the next day', async () => {
+    const companies = await Promise.all([createWorkspace(), createWorkspace()]);
+    for (const w of companies) for (let i = 0; i < 3; i++) await w.addReceipt({ Name: `Beleg ${i}`, Vendor: 'Markt', Gross: 1, 'OCR Text': `Ware ${i} 1,00`, Currency: 'EUR' });
+    const reader = vi.fn<LinesReader>(async () => answer([line('Ware', 100)]));
+    const ids = new Set(companies.map((w) => w.workspaceId));
+    const only = async () => (await companiesWithReceipts(db)).filter((x) => ids.has(x.workspaceId));
+    await dailyLinesBackfill(db, reader, { companies: await only(), totalLimit: 4 });
+    expect(reader).toHaveBeenCalledTimes(4);
+    await dailyLinesBackfill(db, reader, { companies: await only(), totalLimit: 4 });
+    expect(reader).toHaveBeenCalledTimes(6);
+    expect(await db.receiptItemReading.count({ where: { authWorkspaceId: { in: [...ids] }, outcome: 'lines' } })).toBe(6);
   });
 
   it('reads a receipt recorded without text again once it holds text', async () => {

@@ -27,7 +27,7 @@ import { UnusableAnswerError, ClassifierUnavailableError, type LinesAnswer, type
 import type { StructuredReceiptFields } from '@/lib/einvoice';
 import { linesFromInvoice } from './einvoice';
 import { checkLines, sumGrossCents } from './lines';
-import { MAX_ATTEMPTS, recordUnread, replaceReceiptLines, type LineItemsContext } from './store';
+import { MAX_ATTEMPTS, MAX_TRANSIENT_FAILURES, recordUnread, replaceReceiptLines, type LineItemsContext } from './store';
 
 /** How many receipts one run from the receipts page reads: each is one model call, side by side, so the request answers well within a proxy's time limit; the page asks again. */
 export const LINES_BATCH_LIMIT = 5;
@@ -61,7 +61,7 @@ export interface LinesBackfillResult {
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 const number = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 
-type ReadingState = { outcome: string; attempts: number };
+type ReadingState = { outcome: string; attempts: number; transientFailures: number };
 
 /**
  * Whether a receipt still needs its lines read: never read; failed and under
@@ -70,7 +70,7 @@ type ReadingState = { outcome: string; attempts: number };
  */
 function isOpen(reading: ReadingState | undefined, hasText: boolean): boolean {
   if (!reading) return true;
-  if (reading.outcome === 'failed') return reading.attempts < MAX_ATTEMPTS;
+  if (reading.outcome === 'failed') return reading.attempts < MAX_ATTEMPTS && reading.transientFailures < MAX_TRANSIENT_FAILURES;
   return reading.outcome === 'no_text' && hasText;
 }
 
@@ -78,7 +78,9 @@ function isOpen(reading: ReadingState | undefined, hasText: boolean): boolean {
  * True when a failed call says something about the receipt, not about the
  * moment: an unusable answer, or a request the provider refused as such (a
  * 4xx other than authentication, payment, timeout, conflict and rate limit).
- * Those count towards the attempt limit; a call that did not get through does not.
+ * Those count towards the attempt limit; a call that did not get through is
+ * counted apart (MAX_TRANSIENT_FAILURES in a row), so an outage never stops a
+ * receipt but one that times out on every run does.
  */
 function countsAgainstReceipt(err: unknown): boolean {
   if (err instanceof UnusableAnswerError) return true;
@@ -119,10 +121,18 @@ export async function backfillReceiptLines(db: PrismaClient, ctx: LineItemsConte
 
   const rows = await allReceiptRows(table.adapter, table.tableId, columns);
   const readingsOf = async (rowIds: string[]) =>
-    new Map((await db.receiptItemReading.findMany({ where: { authWorkspaceId: ctx.workspaceId, rowId: { in: rowIds } }, select: { rowId: true, outcome: true, attempts: true } })).map((r) => [r.rowId, r]));
+    new Map((await db.receiptItemReading.findMany({ where: { authWorkspaceId: ctx.workspaceId, rowId: { in: rowIds } }, select: { rowId: true, outcome: true, attempts: true, transientFailures: true } })).map((r) => [r.rowId, r]));
   const readings = await readingsOf(rows.map((r) => r.id));
-  // Newest first, by when the receipt was stored.
-  const open = rows.filter((row) => isOpen(readings.get(row.id), textOf(row) !== '')).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime() || (a.id < b.id ? -1 : 1));
+  // Receipts never tried before those that failed, so one that keeps failing never blocks a batch; within each, newest first.
+  const tried = (row: Row) => (readings.get(row.id)?.outcome === 'failed' ? 1 : 0);
+  const open = rows
+    .filter((row) => isOpen(readings.get(row.id), textOf(row) !== ''))
+    .sort((a, b) => tried(a) - tried(b) || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime() || (a.id < b.id ? -1 : 1));
+  // Asked under the receipt's lock before a write: a receipt deleted during its model call gets nothing back.
+  const stillThere = (rowId: string) => async () => {
+    const row = await table.adapter.getRow(rowId);
+    return row !== null && row.tableId === table.tableId && !row.archived;
+  };
   const listed = new Map(rows.filter((row) => readings.get(row.id)?.outcome === 'no_text' && !textOf(row)).map((row) => [row.id, { rowId: row.id, name: nameOf(row) }]));
 
   const batch = open.slice(0, limit);
@@ -135,17 +145,15 @@ export async function backfillReceiptLines(db: PrismaClient, ctx: LineItemsConte
       if (!invoiceFile.has(f.rowId) && /pdf|xml/i.test(f.mimeType)) invoiceFile.set(f.rowId, f.fileId);
     }
   }
+  /** The receipt's invoice fields; throws when its file could not be fetched (tried again on the next run, never read from its text instead). */
   const fieldsOf = async (row: Row): Promise<StructuredReceiptFields | null> => {
     const fileId = invoiceFile.get(row.id);
     if (!fileId || !options.structuredOf) return null;
-    try {
-      return await options.structuredOf(fileId);
-    } catch {
-      return null;
-    }
+    return options.structuredOf(fileId);
   };
 
-  const ask = async (row: Row, fullText: string, gross: number | null): Promise<LinesAnswer | 'failed' | 'unavailable'> => {
+  /** 'unusable' was recorded against the receipt; 'transient' was not (and is recorded by the caller where it writes nothing). */
+  const ask = async (row: Row, fullText: string, gross: number | null): Promise<LinesAnswer | 'unusable' | 'transient' | 'unavailable'> => {
     try {
       const answer = await readLines({ vendor: (vendorId && text(row.cells[vendorId])) || null, fullText, gross, currency: currencyOf(row) });
       result.inputTokens += answer.usage.inputTokens;
@@ -158,9 +166,14 @@ export async function backfillReceiptLines(db: PrismaClient, ctx: LineItemsConte
       }
       // The message only: an error object of the client library can carry the request, and with it the text.
       console.error('[line-items] the lines could not be read:', err instanceof Error ? `${err.name}: ${err.message}` : 'unknown error');
-      if (countsAgainstReceipt(err)) await recordUnread(db, ctx, row.id, 'failed').catch(() => undefined);
-      return 'failed';
+      return countsAgainstReceipt(err) ? 'unusable' : 'transient';
     }
+  };
+  const recordFailure = async (row: Row, kind: 'failed' | 'transient', model: string | null = null) => {
+    await recordUnread(db, ctx, row.id, kind, { source: 'backfill', model, rowExists: stillThere(row.id) }).catch((err) =>
+      console.error('[line-items] recording a failed reading failed:', err instanceof Error ? err.name : 'error'),
+    );
+    result.failed++;
   };
 
   const tally = (lines: readonly { grossCents: number }[], check: ReturnType<typeof checkLines>) => {
@@ -176,42 +189,52 @@ export async function backfillReceiptLines(db: PrismaClient, ctx: LineItemsConte
   const one = async (row: Row) => {
     if (result.unavailable) return;
     const gross = grossId ? number(row.cells[grossId]) : null;
-    const fields = await fieldsOf(row);
+    let fields: StructuredReceiptFields | null;
+    try {
+      fields = await fieldsOf(row);
+    } catch (err) {
+      console.error('[line-items] the stored file could not be fetched:', err instanceof Error ? err.name : 'error');
+      await recordFailure(row, 'transient');
+      return;
+    }
     if (fields && fields.lines.length > 0) {
       // An electronic invoice: its lines are the XML's. The model is asked only for their kinds, from the
-      // invoice's text that lists them; without an answer they are stored as "Sonstiges".
+      // invoice's text that lists them. A call that did not get through writes nothing (the next run asks
+      // again); after an unusable answer the XML's lines are stored as "Sonstiges", a person corrects them.
       const answer = await ask(row, fields.text, gross);
       if (answer === 'unavailable') return;
-      const modelLines = answer === 'failed' ? null : answer.lines;
-      const invoice = linesFromInvoice(fields, modelLines)!;
+      if (answer === 'transient') {
+        await recordFailure(row, 'transient');
+        return;
+      }
+      const invoice = linesFromInvoice(fields, answer === 'unusable' ? null : answer.lines)!;
       const written = await replaceReceiptLines(
         db,
         ctx,
         row.id,
-        { lines: invoice.lines, source: 'einvoice', linesNetCents: invoice.linesNetCents, totalNetCents: invoice.totalNetCents, model: answer === 'failed' ? null : answer.model, usage: answer === 'failed' ? null : answer.usage },
-        { onlyIfUnread: true },
+        { lines: invoice.lines, source: 'einvoice', linesNetCents: invoice.linesNetCents, totalNetCents: invoice.totalNetCents, model: answer === 'unusable' ? null : answer.model, usage: answer === 'unusable' ? null : answer.usage },
+        { onlyIfUnread: true, rowExists: stillThere(row.id) },
       );
       if (written) tally(invoice.lines, checkLines({ lineCount: invoice.lines.length, linesSumCents: null, linesNetCents: invoice.linesNetCents, totalNetCents: invoice.totalNetCents }, gross));
       return;
     }
     const fullText = textOf(row);
     if (!fullText) {
-      await recordUnread(db, ctx, row.id, 'no_text');
+      await recordUnread(db, ctx, row.id, 'no_text', { source: 'backfill', rowExists: stillThere(row.id) });
       listed.set(row.id, { rowId: row.id, name: nameOf(row) });
       return;
     }
     const answer = await ask(row, fullText, gross);
     if (answer === 'unavailable') return;
-    if (answer === 'failed') {
-      result.failed++;
+    if (answer === 'transient' || answer === 'unusable') {
+      await recordFailure(row, answer === 'unusable' ? 'failed' : 'transient');
       return;
     }
     if (answer.lines === null) {
-      await recordUnread(db, ctx, row.id, 'failed', { source: 'backfill', model: answer.model }).catch(() => undefined);
-      result.failed++;
+      await recordFailure(row, 'failed', answer.model);
       return;
     }
-    const written = await replaceReceiptLines(db, ctx, row.id, { lines: answer.lines, source: 'backfill', textCut: answer.textCut, model: answer.model, usage: answer.usage }, { onlyIfUnread: true });
+    const written = await replaceReceiptLines(db, ctx, row.id, { lines: answer.lines, source: 'backfill', textCut: answer.textCut, model: answer.model, usage: answer.usage }, { onlyIfUnread: true, rowExists: stillThere(row.id) });
     if (written) tally(answer.lines, checkLines({ lineCount: answer.lines.length, linesSumCents: sumGrossCents(answer.lines), linesNetCents: null, totalNetCents: null }, gross));
   };
 
@@ -263,12 +286,16 @@ export const DAILY_TOTAL_LIMIT = 120;
  * at most DAILY_TOTAL_LIMIT receipts in all. A company that fails is logged
  * and the next one goes on.
  */
-export async function dailyLinesBackfill(db: PrismaClient, readLines: LinesReader, options: Pick<BackfillOptions, 'structuredOf'> = {}): Promise<void> {
-  let budget = DAILY_TOTAL_LIMIT;
-  for (const company of await companiesWithReceipts(db)) {
+export async function dailyLinesBackfill(
+  db: PrismaClient,
+  readLines: LinesReader,
+  options: Pick<BackfillOptions, 'structuredOf'> & { companies?: Array<{ workspaceId: string; tenantId: string | null }>; totalLimit?: number } = {},
+): Promise<void> {
+  let budget = options.totalLimit ?? DAILY_TOTAL_LIMIT;
+  for (const company of options.companies ?? (await companiesWithReceipts(db))) {
     if (budget <= 0) break;
     try {
-      const run = await backfillReceiptLines(db, company, readLines, { ...options, limit: Math.min(DAILY_LINES_LIMIT, budget) });
+      const run = await backfillReceiptLines(db, company, readLines, { structuredOf: options.structuredOf, limit: Math.min(DAILY_LINES_LIMIT, budget) });
       if (run.unavailable) break;
       budget -= run.read + run.noLines + run.failed;
     } catch (err) {

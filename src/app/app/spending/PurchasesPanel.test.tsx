@@ -37,6 +37,11 @@ describe('PurchasesPanel', () => {
     expect(screen.getByText(/In März 2026 gibt es in diesem Arbeitsbereich keine Belege/)).toBeTruthy();
   });
 
+  it('names the receipts that wait for an amount instead of saying there are none', () => {
+    render(<PurchasesPanel overview={buildPurchasesOverview([{ ...receipt('2026-03-02', 0, null), grossCents: null }], { year: 2026, month: 3 })} />);
+    expect(screen.getByText(/wartet ein Beleg auf einen Betrag/)).toBeTruthy();
+  });
+
   it('a whole year shows month by month', () => {
     render(<PurchasesPanel overview={buildPurchasesOverview([receipt('2026-01-05', 300, [['Brot', 300, 'groceries']]), receipt('2026-02-05', 400, [['Kaffee', 400, 'drink_out']])], { year: 2026, month: null })} />);
     const months = screen.getByRole('region', { name: 'Nach Monat' });

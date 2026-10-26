@@ -129,9 +129,14 @@ Decided while building, say so if you disagree:
    down, rate limit, timeout) counts nothing against the receipt; an unusable answer (malformed, cut
    off, declined) or a request the provider refuses for the receipt itself (a 4xx other than
    authentication, payment, timeout, conflict and rate limit) counts, and after 3 the receipt is no
-   longer asked about (its view then points to "Seite neu lesen"). A missing key stops the run
-   without counting anything. Receipts are read newest first. A receipt recorded without text is
-   read again once it holds text.
+   longer asked about (its view then points to "Seite neu lesen"). A call that did not get through
+   is counted apart and reset by any reading: after 6 in a row (a receipt that times out on every
+   run) it is no longer asked about either. One call per receipt and run, within a minute, no retry
+   inside the request. A missing key stops the run without counting anything. Receipts never tried
+   go first, newest first, then the ones that failed, so a stuck receipt never blocks a batch. A
+   receipt recorded without text is read again once it holds text. For an old electronic invoice
+   whose model call did not get through, or whose file could not be fetched, nothing is written and
+   the next run tries again; after an unusable answer its XML lines are stored as "Sonstiges".
 6. **The classification call has room for the lines**: the OpenRouter path got 16,000 output tokens
    (was 8,000), the answer timeout is 90 seconds (was 60, the searching Anthropic turn twice that),
    and the lines are the last field of the answer, so an answer cut off inside them still gives
@@ -139,6 +144,11 @@ Decided while building, say so if you disagree:
 8. **A new reading never replaces stored lines with an empty list** (a blurry retake says nothing
    against lines read before), and a line's kind cannot be remembered on a receipt without a vendor
    (it would apply to every receipt without one).
+11. **An electronic invoice's line keeps the sign it is stated with**, turned by the document's kind
+   (a credit note's +100 is -100), so an invoice that states negative amounts, which EN 16931
+   allows, is money back through its own signs and still adds up.
+12. **A receipt deleted while its lines are being read gets none back**: the write checks under the
+   receipt's lock that the row still exists, and the delete paths remove lines under the same lock.
 9. **A confirmation in the review list settles a difference only when it came after the lines were
    read**; a receipt confirmed in 2025 and backfilled now still shows a difference.
 10. **"Was gekauft" leaves out a receipt without a total** (and says how many), converts a receipt's

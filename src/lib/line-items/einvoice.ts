@@ -38,9 +38,12 @@ function kindFor(name: string, index: number, count: number, modelLines: readonl
 }
 
 /** The invoice's lines as receipt lines, or null when the XML states none (the reading's lines are used then). */
-export function linesFromInvoice(fields: Pick<StructuredReceiptFields, 'lines' | 'allowanceCharges' | 'creditNote' | 'net'>, modelLines: readonly ReceiptLine[] | null): InvoiceLines | null {
+export function linesFromInvoice(fields: Pick<StructuredReceiptFields, 'lines' | 'allowanceCharges' | 'creditNote' | 'net' | 'documentKind'>, modelLines: readonly ReceiptLine[] | null): InvoiceLines | null {
   if (fields.lines.length === 0) return null;
-  const sign = fields.creditNote ? -1 : 1;
+  // A line keeps the sign it is stated with, turned by the document's kind: on a credit note a stated
+  // +100 is money back (-100). An invoice that states negative amounts (EN 16931 allows it) is money
+  // back through its own signs. The receipt's total is negative exactly when it is money back (`creditNote`).
+  const sign = fields.documentKind === 'credit_note' ? -1 : 1;
   const withTax = (net: number, rate: number | null) => net + (rate === null ? 0 : Math.round((net * rate) / 100));
   const lines: ReceiptLine[] = fields.lines.map((l, i) => {
     const text = (l.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 200) || `Position ${i + 1}`;
@@ -68,5 +71,5 @@ export function linesFromInvoice(fields: Pick<StructuredReceiptFields, 'lines' |
     });
   }
   const linesNetCents = lines.reduce((sum, l) => sum + (l.netCents ?? 0), 0);
-  return { lines, linesNetCents, totalNetCents: fields.net === null ? null : sign * Math.round(Math.abs(fields.net) * 100) };
+  return { lines, linesNetCents, totalNetCents: fields.net === null ? null : (fields.creditNote ? -1 : 1) * Math.round(Math.abs(fields.net) * 100) };
 }

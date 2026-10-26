@@ -63,6 +63,16 @@ describe('the lines of an electronic invoice, from its XML (forward)', () => {
     expect(linesFromInvoice(fields(UBL_CREDIT_NOTE), null)).toBeNull();
   });
 
+  it('keeps the stated signs of an invoice with negative amounts, and of a credit note with negative amounts', () => {
+    const negate = (xml: string) => xml.replace(/>(\d+\.\d{2})</g, '>-$1<');
+    const refund = linesFromInvoice(fields(negate(CII_INVOICE_WITH_LINES)), null)!;
+    expect(fields(negate(CII_INVOICE_WITH_LINES)).creditNote).toBe(true);
+    expect(refund).toMatchObject({ linesNetCents: -20000, totalNetCents: -20000 });
+    const charge = negate(UBL_INVOICE_WITH_LINES.replace('<cbc:InvoiceTypeCode>380</cbc:InvoiceTypeCode>', '<cbc:InvoiceTypeCode>381</cbc:InvoiceTypeCode>'));
+    expect(fields(charge).creditNote).toBe(false);
+    expect(linesFromInvoice(fields(charge), null)!.lines.slice(0, 2).map((l) => l.netCents)).toEqual([10000, 5000]);
+  });
+
   it('signs a credit note negative, like the receipt it is stored as', () => {
     const credit = UBL_INVOICE_WITH_LINES.replace('<cbc:InvoiceTypeCode>380</cbc:InvoiceTypeCode>', '<cbc:InvoiceTypeCode>381</cbc:InvoiceTypeCode>');
     const result = linesFromInvoice(fields(credit), null)!;

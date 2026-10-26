@@ -35,6 +35,7 @@ CREATE TABLE "receipt_item_readings" (
     "total_net_cents" INTEGER,
     "text_cut" BOOLEAN NOT NULL DEFAULT false,
     "attempts" INTEGER NOT NULL DEFAULT 0,
+    "transient_failures" INTEGER NOT NULL DEFAULT 0,
     "model" TEXT,
     "input_tokens" INTEGER,
     "output_tokens" INTEGER,

@@ -39,10 +39,17 @@ export default function PurchasesPanel({ overview }: { overview: PurchasesOvervi
   const maxCategory = Math.max(0, ...overview.categories.map((c) => Math.abs(c.cents)));
 
   if (overview.receipts === 0) {
-    return (
-      <p className="ui-note mt-4">
-        In {period} gibt es in diesem Arbeitsbereich keine Belege{overview.unconverted > 0 ? ' mit einem Betrag in Euro oder einem Wechselkurs' : ''}.
+    const waiting = overview.withoutTotal + overview.unconverted;
+    return waiting > 0 ? (
+      <p className="ui-note ui-note-warn mt-4">
+        In {period} {waiting === 1 ? 'wartet ein Beleg' : `warten ${waiting} Belege`} auf {overview.withoutTotal > 0 && overview.unconverted > 0 ? 'einen Betrag oder einen Wechselkurs' : overview.withoutTotal > 0 ? 'einen Betrag' : 'einen Wechselkurs'} und {waiting === 1 ? 'zählt' : 'zählen'} hier erst dann mit. Sie stehen auf der{' '}
+        <Link href="/app/dashboard" className="underline">
+          Belegseite
+        </Link>{' '}
+        unter „Belege prüfen“.
       </p>
+    ) : (
+      <p className="ui-note mt-4">In {period} gibt es in diesem Arbeitsbereich keine Belege.</p>
     );
   }
 

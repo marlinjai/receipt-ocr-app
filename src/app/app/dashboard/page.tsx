@@ -9,6 +9,7 @@ import { RECEIPT_PARAM } from '@/lib/receipt-link';
 import { YEAR_PARAM } from '@/lib/receipt-years';
 import { yearCounts } from '@/lib/receipt-year-counts';
 import { autoGroupRecurring } from '@/lib/groups/auto-service';
+import { measurePage, timed } from '@/lib/timing';
 import { initializeReceiptsTable } from '../actions';
 import DashboardClient from './DashboardClient';
 
@@ -17,6 +18,10 @@ type YearCountsProp = Awaited<ReturnType<typeof yearCounts>>;
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  return measurePage('/app/dashboard', () => renderDashboard(searchParams));
+}
+
+async function renderDashboard(searchParams: Promise<Record<string, string | string[] | undefined>>) {
   // A link from another area names the receipt to open (see `receiptHref`).
   const openParam = (await searchParams)[RECEIPT_PARAM];
   const openRowId = typeof openParam === 'string' && openParam ? openParam : null;
@@ -26,14 +31,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   // The middleware gates the route; requireSession resolves the verified
   // session (or redirects) so the table lookup is scoped to the ACTIVE
   // workspace, server-side.
-  const session = await auth.requireSession('/app/dashboard');
+  const session = await timed('auth.session', () => auth.requireSession('/app/dashboard'));
   const workspaceId = sessionWorkspaceId(session);
 
   // The layout also does this, but the layout and the page render side by side: the columns this page
   // groups by must exist before it asks for them.
-  await initializeReceiptsTable();
+  await timed('init', () => initializeReceiptsTable());
   const adapter = new PrismaAdapter({ prisma });
-  const tables = await adapter.listTables(workspaceId);
+  const tables = await timed('tables', () => adapter.listTables(workspaceId));
   const table = tables.find((t) => t.name === 'Receipts');
 
   if (!table) {
@@ -54,14 +59,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   // Recurring receipts are grouped by vendor, item and year each time the table is opened, so it loads
   // already grouped (see `lib/groups/auto.ts`). A failure leaves the table as it is.
   try {
-    await autoGroupRecurring(prisma, workspaceId);
+    await timed('autoGroup', () => autoGroupRecurring(prisma, workspaceId));
   } catch (e) {
     console.error('[dashboard] automatic grouping failed', e instanceof Error ? e.name : 'unknown');
   }
   // How many receipts each year has: the year chips and the year the table opens on.
   let counts: YearCountsProp = { years: [], undated: 0 };
   try {
-    counts = await yearCounts(prisma, table.id, await adapter.getColumns(table.id));
+    counts = await timed('yearCounts', async () => yearCounts(prisma, table.id, await adapter.getColumns(table.id)));
   } catch (e) {
     console.error('[dashboard] year counts failed', e instanceof Error ? e.name : 'unknown');
   }
@@ -70,7 +75,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   // dashboard down: the count is a convenience, the page behind it has the truth.
   let openMealCount = 0;
   try {
-    openMealCount = incompleteQueue(await loadMealRecords(prisma, workspaceId)).length;
+    openMealCount = incompleteQueue(await timed('meals', () => loadMealRecords(prisma, workspaceId))).length;
   } catch (e) {
     console.error('[dashboard] open meal count failed', e);
   }
@@ -79,7 +84,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   // a condition for seeing the receipts. The page reloads it after each action.
   let initialReview: ReviewEntry[] | null = [];
   try {
-    initialReview = await loadReviewQueue(prisma, workspaceId);
+    initialReview = await timed('review', () => loadReviewQueue(prisma, workspaceId));
   } catch (e) {
     console.error('[dashboard] review queue failed', e);
     // Null, not an empty list: the page then says the list could not be loaded.

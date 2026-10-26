@@ -24,6 +24,7 @@ import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
 import { rowKind } from '@/lib/groups/service';
 import { AssignmentEditError, assignmentEditContext, followTreatment, routeAssignmentEdit, type AssignmentEditContext } from '@/lib/tax/assignment-sync';
 import { readRowLinks } from '@/lib/groups/links';
+import { measurePage, timed } from '@/lib/timing';
 import {
   requireReceiptsSession,
   requireTableAccess,
@@ -232,9 +233,13 @@ export async function getRow(rowId: string): Promise<Row | null> {
  * through `getReceiptText`. On 2026-10-12 the full list was 3 MB for 780 rows.
  */
 export async function getRows(tableId: string, query?: QueryOptions & YearScope): Promise<QueryResult<Row>> {
-  await requireTableAccess(tableId);
+  return measurePage('getRows action', () => readRows(tableId, query));
+}
+
+async function readRows(tableId: string, query?: QueryOptions & YearScope): Promise<QueryResult<Row>> {
+  await timed('auth.table', () => requireTableAccess(tableId));
   const adapter = getAdapter();
-  const columns = await adapter.getColumns(tableId);
+  const columns = await timed('columns', () => adapter.getColumns(tableId));
   const textIds = textColumnIds(columns);
   const { years: asked, ...asks } = query ?? {};
   // The filter bar's date comparisons are answered here, on the day each date names (see `day-filters.ts`):
@@ -247,7 +252,7 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
   // the groups in it) could not be right. The browser filters the years then.
   const sorted = (rest.sorts?.length ?? 0) > 0;
   if ((!years || !dateId) && !sorted && dayFilters.length === 0) {
-    const result = await adapter.getRows(tableId, rest);
+    const result = await timed('rows', () => adapter.getRows(tableId, rest));
     return { ...result, items: rowsWithoutText(result.items, textIds) };
   }
   if (sorted && dayFilters.length === 0) {
@@ -288,19 +293,20 @@ export async function getRows(tableId: string, query?: QueryOptions & YearScope)
   if ((rest.offset ?? 0) > 0) return { items: [], total: rest.offset ?? 0, hasMore: false } as QueryResult<Row>;
   const perYear = await Promise.all(
     years.map((year) =>
-      adapter.getRows(tableId, {
+      timed(`rows.${year}`, () => adapter.getRows(tableId, {
         ...rest,
         // Only receipts are read here (the groups come below), so "is" a day may narrow them in the database.
         filters: [...(rest.filters ?? []), ...dayPrefixes, { columnId: dateId, operator: 'startsWith', value: `${year}-` }],
         limit: SCOPED_LIST_LIMIT,
         offset: 0,
-      }),
+      })),
     ),
   );
   let items = perYear.flatMap((r) => r.items);
   const kindId = rowKindColumnId(columns);
   if (kindId) {
-    const parents = await groupsHoldingReceipts(prisma, tableId, dateId, years);
+    const scope = years;
+    const parents = await timed('groups', () => groupsHoldingReceipts(prisma, tableId, dateId, scope));
     if (parents.size > 0) {
       const groups = await adapter.getRows(tableId, { filters: [{ columnId: kindId, operator: 'equals', value: GROUP_KIND }], limit: SCOPED_LIST_LIMIT });
       const have = new Set(items.map((r) => r.id));

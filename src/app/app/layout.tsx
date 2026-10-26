@@ -6,6 +6,7 @@ import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import BrowserRulesImport from '@/components/BrowserRulesImport';
 import { PushRenewal, SignOutLink } from './spending/PushSession';
 import { workspaceLabel } from '@/lib/auth-workspace';
+import { measurePage, timed } from '@/lib/timing';
 import AppLoading from './loading';
 
 export const dynamic = 'force-dynamic';
@@ -24,13 +25,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 }
 
 async function AppShell({ children }: { children: React.ReactNode }) {
+  return measurePage('/app layout', () => renderShell(children));
+}
+
+async function renderShell(children: React.ReactNode) {
   // The middleware already gates /app/*; this resolves the verified session
   // for the header and redirects defensively if it is somehow absent.
-  const session = await auth.requireSession('/app');
+  const session = await timed('auth.session', () => auth.requireSession('/app'));
 
   // Per-workspace lazy init: ensures the ACTIVE company's Receipts table +
   // full column/view set exists (idempotent, self-healing).
-  await initializeReceiptsTable();
+  await timed('init', () => initializeReceiptsTable());
 
   const active = session.activeWorkspace;
 

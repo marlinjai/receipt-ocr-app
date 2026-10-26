@@ -20,6 +20,7 @@ import {
   type SpendingView,
 } from '@/lib/spending/service';
 import { safeMonth, safeYear } from '@/lib/spending/period';
+import { timed } from '@/lib/timing';
 
 /**
  * Server actions of the spending overview. Like the finance actions: the
@@ -58,7 +59,7 @@ function failure(e: unknown): { ok: false; error: SpendingActionError; detail?: 
 }
 
 async function writeContext(): Promise<SpendingContext & { session: Session }> {
-  const session = await auth.requireAction('receipts.row.write');
+  const session = await timed('auth.action', () => auth.requireAction('receipts.row.write'));
   const workspaceId = sessionWorkspaceId(session);
   return { workspaceId, tenantId: requireSessionTenantId(session, workspaceId), session };
 }
@@ -83,7 +84,7 @@ export async function getSpending(year: unknown, month: unknown): Promise<Result
   try {
     const session = await requireReceiptsSession();
     // Fail closed: any doubt about the permission (a denial, an unreachable check) shows the page read-only.
-    const canWrite = await auth.requireAction('receipts.row.write').then(
+    const canWrite = await timed('auth.action', () => auth.requireAction('receipts.row.write')).then(
       () => true,
       () => false,
     );

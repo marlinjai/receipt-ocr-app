@@ -46,7 +46,6 @@ import {
   PaymentServiceError,
   countedReceiptLinks,
   deletePaymentLinksForRows,
-  counterpartyKey,
   foreignAmount,
   linkProposals,
   loadPayments,
@@ -57,6 +56,7 @@ import {
   type PaymentRow,
   type ReceiptForLink,
 } from './payments/service';
+import { merchantName } from './payments/merchant';
 import type { PaymentKind } from './payments/types';
 import {
   RevenueInputError,
@@ -668,7 +668,7 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
   });
   const paymentsOut = loadedPayments.payments
     .filter((p) => p.amountCents < 0)
-    .map((p) => ({ day: p.bookingDay, counterpartyKey: p.counterpartyKey, referenceKey: counterpartyKey(p.reference) }));
+    .map((p) => ({ day: p.bookingDay, counterpartyKey: p.counterpartyKey, referenceKey: vendorKey(p.reference) ?? '' }));
   const recurringAt = (vendor: string | null, cashDay: string): boolean | null =>
     vendor === null
       ? null
@@ -796,7 +796,7 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
     today(),
   );
   const overdueIds = new Set(overdue.map((o) => o.invoiceId));
-  const paymentsView = buildPaymentsView(loadedPayments, year, wholeReceipts, invoiceFacts, result.revenue.invoices, classifierProvider() !== null);
+  const paymentsView = buildPaymentsView(loadedPayments, year, wholeReceipts, invoiceFacts, result.revenue.invoices, classifierProvider() !== null, filedOn.get(year) ?? null);
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));
 
   const items: StatementItem[] = [];
@@ -1157,6 +1157,8 @@ export interface PaymentsView {
   treatments: Array<{ key: string; label: string; treatment: CounterpartyTreatment }>;
   /** False when no language model is configured on the server: the app then decides only from receipts, and the tab says so. */
   classifierAvailable: boolean;
+  /** The day the year's return was filed, or null: a filed year asks nothing, its return already answered. */
+  filedOn: string | null;
   /** What the app decided per counterparty (an own name or a certain verdict), each changeable by a person's answer. */
   appTreatments: Array<{ key: string; label: string; treatment: CounterpartyTreatment; source: 'own_name' | 'app'; reason: string }>;
   /** Business payments without a document and money received without an invoice. */
@@ -1213,6 +1215,7 @@ function buildPaymentsView(
   invoices: InvoiceFact[],
   invoiceResults: Array<{ invoiceId: string; outstandingCents: number }>,
   classifierAvailable: boolean,
+  filedOn: string | null,
 ): PaymentsView {
   const inYear = loaded.payments.filter((p) => p.bookingDay.startsWith(`${year}-`));
   const accountLabel = new Map(loaded.accounts.map((a) => [a.id, a.label]));
@@ -1265,8 +1268,13 @@ function buildPaymentsView(
 
   // What needs a document: money out to a business counterparty, and money in
   // from a business counterparty or for an invoice. Payments on an account said
-  // to be private as a whole are kind `private` and never asked about.
+  // to be private as a whole are kind `private` and never asked about. In a year
+  // whose return is filed nothing is asked any more: the return already says what
+  // was business (plan 2026-10-25-filed-year-decides-counterparties, decision 5).
   const needing = inYear.filter((p) => {
+    // A person who answers a counterparty business in a filed year still sees its receipt to add (an expense the
+    // return left out, for an amended return or to leave).
+    if (filedOn !== null && !(loaded.treatmentSources.get(p.counterpartyKey) === 'person' && loaded.treatments.get(p.counterpartyKey) === 'business')) return false;
     if (free(p) === 0) return false;
     const treatment = loaded.treatments.get(p.counterpartyKey);
     // Money out to a business counterparty, and money out with no name at all
@@ -1289,11 +1297,11 @@ function buildPaymentsView(
   };
   // A payment already asked about on its own (an invoice's payment, money back with a proposal) is not counted here too.
   const askedAlone = new Set(needing.map((p) => p.id));
-  for (const p of inYear) {
+  for (const p of filedOn === null ? inYear : []) {
     if (askedAlone.has(p.id)) continue;
     // Money back from a pay-later service is asked about payment by payment, not once for the service.
     if (p.kind === 'own_transfer' || p.kind === 'fee' || p.kind === 'private' || p.byRule || !p.counterpartyKey || loaded.treatments.has(p.counterpartyKey) || free(p) === 0) continue;
-    const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: p.counterparty, count: 0, outCents: 0, inCents: 0, proposal: proposalOf(p.counterpartyKey) };
+    const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: merchantName(p.counterparty), count: 0, outCents: 0, inCents: 0, proposal: proposalOf(p.counterpartyKey) };
     entry.count += 1;
     if (p.amountCents < 0) entry.outCents += -p.amountCents;
     else entry.inCents += p.amountCents;
@@ -1479,7 +1487,8 @@ function buildPaymentsView(
 
   // The name a counterparty was first seen under, looked up once for all rules.
   const labelByCounterparty = new Map<string, string>();
-  for (const p of loaded.payments) if (!labelByCounterparty.has(p.counterpartyKey)) labelByCounterparty.set(p.counterpartyKey, p.counterparty);
+  // The merchant's name, the same for every coded spelling of the shop (and the name an answer is saved under).
+  for (const p of loaded.payments) if (!labelByCounterparty.has(p.counterpartyKey)) labelByCounterparty.set(p.counterpartyKey, merchantName(p.counterparty));
   const inYearKeys = new Set(inYear.map((p) => p.counterpartyKey));
 
   return {
@@ -1488,6 +1497,7 @@ function buildPaymentsView(
     linkedCount: inYear.filter((p) => p.links.length > 0).length,
     transferCount: inYear.filter((p) => p.kind === 'own_transfer').length,
     unclassified: [...unclassified.values()].sort((a, b) => b.outCents + b.inCents - (a.outCents + a.inCents)),
+    filedOn,
     treatments: [...loaded.treatments.entries()]
       .filter(([key]) => loaded.treatmentSources.get(key) === 'person')
       .map(([key, treatment]) => ({ key, label: labelByCounterparty.get(key) ?? key, treatment })),

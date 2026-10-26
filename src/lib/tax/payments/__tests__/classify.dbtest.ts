@@ -231,7 +231,7 @@ describe('the app classifies counterparties: what it must never do on its own', 
     ]);
   });
 
-  it('a verdict the receipts made stops counting as soon as they say something else, also without a model', async () => {
+  it('a verdict the receipts made changes as soon as they say something else, also without a model', async () => {
     const { ws, ctx } = await setup();
     await classifyCounterparties(db, ctx, null);
     expect(await appList(ctx.workspaceId)).toContainEqual(['Vermieter Beispiel', 'business', 'app']);
@@ -242,7 +242,9 @@ describe('the app classifies counterparties: what it must never do on its own', 
     const flat = (await loadPayments(db, ctx.workspaceId)).payments.find((p) => p.reference === 'Miete Wohnung')!;
     await linkPayment(db, ctx, { paymentId: flat.id, rowId: second }, receiptForLink(db, ctx.workspaceId));
     await classifyCounterparties(db, ctx, null);
-    expect((await appList(ctx.workspaceId)).map(([label]) => label)).not.toContain('Vermieter Beispiel');
+    // A business and a private receipt of the same counterparty: it is used for both, "Teils, teils" (plan 2026-10-25-filed-year-decides-counterparties, decision 2).
+    expect(await appList(ctx.workspaceId)).toContainEqual(['Vermieter Beispiel', 'mixed', 'app']);
+    expect((await appList(ctx.workspaceId)).filter(([label]) => label === 'Vermieter Beispiel')).toHaveLength(1);
   });
 });
 

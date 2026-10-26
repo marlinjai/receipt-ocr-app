@@ -2,6 +2,8 @@ import 'server-only';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { counterpartyKey, loadPayments, setCounterpartyTreatment, type PaymentRow } from '@/lib/tax/payments/service';
 import { loadRoutedPayments, type RoutedPaymentRow, type RoutedPayments } from '@/lib/tax/payments/routing';
+import { ensureMerchantKeys } from '@/lib/tax/payments/rekey';
+import { merchantName } from '@/lib/tax/payments/merchant';
 import { isSpendingCategory, type SpendingCategory } from './categories';
 import { berlinYear } from './period';
 import { buildOverview, paymentYears, type OverviewPaymentInput, type SpendingOverview } from './overview';
@@ -196,8 +198,16 @@ export async function saveOwnNames(db: PrismaClient, ctx: SpendingContext, raw: 
   });
 }
 
+/** The merchant's name of a counterparty key, as the payments carry it ("Amazon" for every coded spelling). */
+function merchantOf(payments: readonly { counterpartyKey: string; counterparty: string }[], key: string): string {
+  const payment = payments.find((p) => p.counterpartyKey === key);
+  return payment ? merchantName(payment.counterparty) : key;
+}
+
 /** The overview of `year` (one month of it when `month` is 1 to 12). */
 export async function loadSpending(db: PrismaClient, workspaceId: string, year: number, month: number | null, today = new Date()): Promise<SpendingView> {
+  // The category answers are read by key in parallel with the payments: the keys are carried first.
+  await ensureMerchantKeys(db);
   const [loaded, answers, ownNames] = await Promise.all([loadRoutedPayments(db, workspaceId), loadCategoryAnswers(db, workspaceId), loadOwnNames(db, workspaceId)]);
   const { treatments, byName } = await spendingTreatments(db, workspaceId, loaded, ownNames);
   const overview = buildOverview(loaded.payments.map(toOverviewInput), { treatments, byName, answers: await categoryAnswerMap(db, workspaceId, loaded, answers), appCategories: loaded.appCategories, holderAppCategories: loaded.holderAppCategories }, year, month);
@@ -211,7 +221,7 @@ export async function loadSpending(db: PrismaClient, workspaceId: string, year: 
     answers,
     ownAccounts: [...treatments]
       .filter(([, treatment]) => treatment === 'own_account')
-      .map(([key]) => ({ counterpartyKey: key, label: loaded.payments.find((p) => p.counterpartyKey === key)?.counterparty ?? key, byName: byName.has(key) }))
+      .map(([key]) => ({ counterpartyKey: key, label: merchantOf(loaded.payments, key), byName: byName.has(key) }))
       .sort((a, b) => a.label.localeCompare(b.label, 'de')),
     ownNames,
     noPayments: loaded.payments.length === 0,
@@ -225,6 +235,7 @@ export async function loadSpending(db: PrismaClient, workspaceId: string, year: 
  */
 export async function removeCounterpartyCategory(db: PrismaClient, ctx: SpendingContext, key: unknown): Promise<void> {
   if (typeof key !== 'string' || !key) throw new SpendingServiceError('counterparty_required');
+  await ensureMerchantKeys(db);
   await db.spendingCategoryAnswer.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, counterpartyKey: key } });
 }
 
@@ -234,6 +245,7 @@ export async function setCounterpartyCategory(db: PrismaClient, ctx: SpendingCon
   const label = typeof input.counterparty === 'string' ? input.counterparty.trim() : '';
   const key = counterpartyKey(label);
   if (!key) throw new SpendingServiceError('counterparty_required');
+  await ensureMerchantKeys(db);
   // "Unclear" is what no answer means; storing it would only hide the question.
   if (!isSpendingCategory(input.category) || input.category === 'unclear') throw new SpendingServiceError('invalid_category');
   await db.spendingCategoryAnswer.upsert({
@@ -255,6 +267,7 @@ export async function markCounterpartyOwnAccount(db: PrismaClient, ctx: Spending
   const label = typeof raw === 'string' ? raw.trim() : '';
   const key = counterpartyKey(label);
   if (!key) throw new SpendingServiceError('counterparty_required');
+  await ensureMerchantKeys(db);
   const { treatments, treatmentSources } = await loadPayments(db, ctx.workspaceId);
   const current = treatments.get(key);
   // Only a person's answer is protected here; what the app or the own names decided gives way to a person.

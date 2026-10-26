@@ -1,7 +1,8 @@
 import 'server-only';
 import { Prisma, type PrismaClient } from '@prisma/client';
-import { counterpartyKey, loadPayments, paidByReceipt, PaymentServiceError, type CounterpartyTreatment, type PaymentContext, type PaymentRow, type ReceiptForLink } from './service';
+import { counterpartyKey, loadPayments, paidByReceipt, PaymentServiceError, type CounterpartyTreatment, type LoadedPayments, type PaymentContext, type PaymentRow, type ReceiptForLink } from './service';
 import { OVERPAID_TOLERANCE_PERCENT } from './types';
+import { ensureMerchantKeys } from './rekey';
 import { routesToReceiver } from './route';
 import type { SpendingCategory } from '@/lib/spending/categories';
 import type { TreatmentSource } from './verdicts';
@@ -100,8 +101,9 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
   const sharedOut = new Set(validOut.map((s) => s.accountId));
   const kept: RoutedPaymentRow[] = [];
   const routedAway: PaymentRow[] = [];
+  const ownRouting = routingTreatments(own);
   for (const p of own.payments) {
-    if (routesToReceiver(p, own.treatments, sharedOut)) routedAway.push(p);
+    if (routesToReceiver(p, ownRouting, sharedOut)) routedAway.push(p);
     else kept.push({ ...p, routedFrom: null });
   }
   const accounts: RoutedAccount[] = own.accounts.map((a) => ({ id: a.id, label: a.label, completeThrough: a.completeThrough, sharedFrom: null }));
@@ -118,7 +120,8 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
     for (const a of loaded.accounts) {
       if (accountIds.has(a.id)) accounts.push({ id: a.id, label: a.label, completeThrough: a.completeThrough, sharedFrom: holder });
     }
-    for (const p of loaded.payments) if (routesToReceiver(p, loaded.treatments, accountIds)) routedIn.push({ ...p, routedFrom: holder });
+    const holderRouting = routingTreatments(loaded);
+    for (const p of loaded.payments) if (routesToReceiver(p, holderRouting, accountIds)) routedIn.push({ ...p, routedFrom: holder });
     holderAppCategories.set(holder, loaded.appCategories);
   }
   // This company's own links on other companies' payments: live on what is routed here, dormant on the rest.
@@ -164,6 +167,17 @@ export async function loadRoutedPayments(db: Db, workspaceId: string): Promise<R
 }
 
 /**
+ * The answers that move payments to the receiving company. A "Teils, teils" the
+ * app decided is left out: its business part is a receipt the holder has but
+ * nobody linked (plan 2026-10-25-filed-year-decides-counterparties, decision 1),
+ * so such a payment stays with the holder until a person answers or a receipt is
+ * linked. A person's "Teils, teils" still moves what no receipt is linked to.
+ */
+export function routingTreatments(loaded: Pick<LoadedPayments, 'treatments' | 'treatmentSources'>): Map<string, CounterpartyTreatment> {
+  return new Map([...loaded.treatments].filter(([key, treatment]) => !(treatment === 'mixed' && loaded.treatmentSources.get(key) === 'app')));
+}
+
+/**
  * The payment `paymentId` as the receiver `workspaceId` may act on it: the
  * holder's row, when the account is shared with this company and the
  * holder's answers route it here right now; null otherwise (also for a
@@ -176,7 +190,7 @@ export async function routedPaymentFor(db: Db, workspaceId: string, paymentId: s
   if (!payment || !share || share.receiverWorkspaceId !== workspaceId || share.authWorkspaceId !== payment.authWorkspaceId || payment.authWorkspaceId === workspaceId) return null;
   const loaded = await loadPayments(db, payment.authWorkspaceId);
   const row = loaded.payments.find((p) => p.id === paymentId);
-  if (!row || !routesToReceiver(row, loaded.treatments, new Set([payment.accountId]))) return null;
+  if (!row || !routesToReceiver(row, routingTreatments(loaded), new Set([payment.accountId]))) return null;
   return { row, holderWorkspaceId: payment.authWorkspaceId };
 }
 
@@ -192,7 +206,7 @@ export async function paymentOnSpendingSide(db: Db, workspaceId: string, payment
   if (!share || share.authWorkspaceId !== workspaceId || share.receiverWorkspaceId === workspaceId) return true;
   const loaded = await loadPayments(db, workspaceId);
   const row = loaded.payments.find((p) => p.id === paymentId);
-  return row !== undefined && !routesToReceiver(row, loaded.treatments, new Set([payment.accountId]));
+  return row !== undefined && !routesToReceiver(row, routingTreatments(loaded), new Set([payment.accountId]));
 }
 
 /**
@@ -216,6 +230,7 @@ export async function linkRoutedPayment(
   if (typeof paymentId !== 'string' || !paymentId || typeof rowId !== 'string' || !rowId) throw new PaymentServiceError('invalid_link');
   const receipt = await receiptOf(rowId);
   if (receipt === null) throw new PaymentServiceError('target_not_found');
+  await ensureMerchantKeys(db);
   return db.$transaction(async (tx) => {
     // The same lock order as the holder's own link: the payment first, then the receipt.
     // Locked only when the payment's account is shared with this company: no other company's payment is ever held.

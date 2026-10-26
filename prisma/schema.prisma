@@ -800,6 +800,17 @@ model TaxCounterpartyRule {
 // (decided from the company's own data) or model. `fingerprint` is the evidence the verdict
 // was made on: when it changes, the counterparty is decided again. A person's answer
 // (tax_counterparty_rules, spending_category_answers) always wins and is never written here.
+// Up to which version a stored key was carried over after the way the app makes
+// it changed (`counterparty_key`: payments and counterparty answers, see
+// src/lib/tax/payments/rekey.ts). One row per kind of key; no company owns it.
+model TaxKeyVersion {
+  name      String   @id
+  version   Int
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("tax_key_versions")
+}
+
 model TaxCounterpartyVerdict {
   id              String   @id @default(uuid())
   authWorkspaceId String   @map("auth_workspace_id")

@@ -2,6 +2,7 @@ import 'server-only';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { allReceiptRows, tableContext } from '@/lib/meals/service';
 import { rowToMealRecord } from '@/lib/meals/record';
+import type { MealRecord } from '@/lib/meals/types';
 import { vendorKey } from '@/lib/tax/decisions';
 import { eurosToCents, formatCents } from '@/lib/tax/money';
 import { linkPayment, paidByReceipt, type PaymentRow } from '@/lib/tax/payments/service';
@@ -50,26 +51,27 @@ export async function loadLoopReceipts(db: PrismaClient, workspaceId: string, li
   const ctx = await tableContext(db, workspaceId);
   if (!ctx) return [];
   const rows = (await allReceiptRows(ctx.adapter, ctx.tableId, ctx.columns)).filter((r) => !r.archived);
-  return rows.map((row) => {
-    const record = rowToMealRecord(row, ctx.columns, ctx.selectOptions, []);
-    const foreign = record.currency !== 'EUR';
-    const amountCents =
-      record.gross === null ? null : !foreign ? eurosToCents(record.gross) : record.fxRate ? Math.round(eurosToCents(record.gross) * record.fxRate) : null;
-    return {
-      rowId: row.id,
-      label: record.name ?? record.vendor ?? 'Beleg',
-      vendor: record.vendor,
-      vendorKey: vendorKey(record.vendor),
-      day: record.date,
-      amountCents,
-      estimated: foreign,
-      linked: linkedRowIds.has(row.id),
-    };
-  });
+  return rows.map((row) => toLoopReceipt(row.id, rowToMealRecord(row, ctx.columns, ctx.selectOptions, []), linkedRowIds.has(row.id)));
+}
+
+/** A receipt as the loop sees it, from its record: its euro amount (an estimate at its rate in another currency). */
+export function toLoopReceipt(rowId: string, record: Pick<MealRecord, 'name' | 'vendor' | 'date' | 'gross' | 'currency' | 'fxRate'>, linked: boolean): LoopReceipt {
+  const foreign = record.currency !== 'EUR';
+  const amountCents = record.gross === null ? null : !foreign ? eurosToCents(record.gross) : record.fxRate ? Math.round(eurosToCents(record.gross) * record.fxRate) : null;
+  return {
+    rowId,
+    label: record.name ?? record.vendor ?? 'Beleg',
+    vendor: record.vendor,
+    vendorKey: vendorKey(record.vendor),
+    day: record.date,
+    amountCents,
+    estimated: foreign,
+    linked,
+  };
 }
 
 /** Vendors each counterparty stands for, learned from the links that exist (as the payments tab does). */
-function vendorAliases(payments: readonly PaymentRow[], receipts: readonly LoopReceipt[]): Map<string, Set<string>> {
+export function vendorAliases(payments: readonly PaymentRow[], receipts: readonly LoopReceipt[]): Map<string, Set<string>> {
   const vendorByRow = new Map(receipts.map((r) => [r.rowId, r.vendorKey]));
   const out = new Map<string, Set<string>>();
   for (const p of payments) {

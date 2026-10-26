@@ -2,7 +2,7 @@
 title: The filed return decides the counterparties
 summary: The app classifies counterparties from what the company already knows for sure before it asks a model or a person. A receipt that matches a payment by vendor, amount and day counts as evidence even when nobody linked them; receipts split between business and private make a counterparty "Teils, teils"; payment-service prefixes no longer split one merchant into dozens of counterparties; a payment linked to one of the company's own invoices is business income; and in a year whose return is filed, nothing is asked any more, because the return already says what was business.
 type: plan
-status: decided
+status: in-progress
 tags: [receipts, payments, classification, tax]
 projects: [receipt-ocr-app]
 date: 2026-10-25
@@ -110,3 +110,77 @@ build reports the before and after counts on production.
 - Resume: a reload shows the same verdicts, nothing stored but verdicts and answers.
 - Re-entry: a second run decides nothing already decided; the key migration run twice changes
   nothing the second time.
+
+## Reality (decided while building, 2026-10-26, say so if you disagree)
+
+- **PayPal and Klarna keep their name in the key.** The funding rule (`funding.ts`) recognizes a
+  bank debit that pays a PayPal or Klarna purchase by the word "paypal" or "klarna" in the
+  counterparty; cutting "PAYPAL *" off would count those purchases twice. So decision 3 cuts only
+  merchants with an order code behind the star (Amazon, Amazon Prime, eBay, Airbnb, Lime,
+  Revolut, A2 Hosting, Moneynet, Uber) and card terminal providers in front of the shop (SumUp,
+  Zettle, Square, SPC, UZR, NYX, NYA, EDK, Eventbrite, CCV, FastSpring, Mollie, PSP), taken from
+  the 147 coded names among the 781 counterparties on production (`src/lib/tax/payments/merchant.ts`,
+  tests on those shapes). `PP*` (PayPal) is left alone for the same reason. The payment text
+  (reference) is still keyed as before, because the funding rule reads it too.
+- **Carrying the keys** (`rekey.ts`) runs once per key version, for all companies together (answers
+  of one company apply to payments another holds, also across tenants), before anything reads or
+  writes a key: the payments' load, every import and bank fetch, every answer that stores a key, the
+  spending page and the shop budgets call `ensureMerchantKeys`. A stored marker (`tax_key_versions`,
+  migration 0041) says it is done; afterwards a call costs one lookup, then nothing in that process.
+  It always runs in a transaction of its own, taking its database lock before any row lock, never
+  inside a caller's transaction (a refused link would roll it back while the process believed it
+  done); every function that opens a transaction and reads keys inside carries first. The daily
+  bank run sweeps once more whatever does not fit the current key, for rows an older server version
+  still wrote during a deploy. Rules, category answers and shop budgets are
+  carried by their own name and get the merchant's name as their label; disagreeing ones of a
+  person are dropped and logged; verdicts on a changed key, and on every key that took over
+  payments, are removed and made again (a verdict made on 2 payments must not cover 300).
+- **"The same movement" stays judged by the full name.** Import de-duplication (`matchStored`,
+  `adoptUnreferenced`) compares the full counterparty, never the merchant key: two Amazon orders on
+  one day are two movements.
+- **Matching without a link pairs one to one, the closest days first** (`pairReceipts`), with the
+  missing-receipt loop's own candidates. "Exactly one candidate" would have matched no monthly
+  bill: every payment of a 39.95 EUR line also fits the month before. A tie pairs nothing.
+- **A share left open is private.** A receipt stored as "50 percent business, 30 percent study"
+  carries no private line; the 20 percent left are private, so it counts as split. Without this
+  the Telekom receipts read as all business.
+- **The filed-year rule asks the model first.** A transfer to an own savings account looks like
+  "not claimed" too. A counterparty the model already called an own account keeps that proposal;
+  one it called anything else is private by the filed return; one it was never asked about is asked
+  first, and is private unless the model says own account (without a model, the filed year decides
+  alone).
+- **Fingerprints use classes, not counts**, where a count grows with every payment: whether half
+  the payments are paid by receipts, whether all money in pays invoices, whether money also went
+  out to an invoice payer. A new invoice payment asks nobody again; the first purchase from a
+  client does.
+- **The model hears about invoices** ("4 of 4 payments received pay the person's own invoices"),
+  also for a client that is a shop too, where the invoices alone decide nothing.
+- **The PayPal twin of a bank debit** is still found by the purchase's full name, not the shorter
+  merchant key.
+- **The filed-year rule does not trust a missed match.** Matching needs the exact amount and a near
+  day, so a receipt with a tip, far from its payment, in another currency outside 8 percent or
+  without a rate is not paired. Any business or split receipt dated in a filed year whose vendor the
+  counterparty's name names keeps the rule out (the payment texts are not read for this: "Apple Pay"
+  in a text would let one Apple invoice block every shop) (the model decides instead, told what the filed years hold). A
+  payment between 22 December and 10 January counts as a filed-year payment only when the year next
+  to it is filed too, because the ten-day rule may count it there.
+- **Invoices decide only when all money in pays them.** A payer with invoice payments and other
+  money in beside them gets "business, likely", a proposal.
+- **The app's "Teils, teils" moves nothing to a receiving company.** Its business part is a
+  receipt the holder has but nobody linked, so routing (plan 2026-10-22) ignores it
+  (`routingTreatments`); a person's "Teils, teils" still moves what has no receipt linked.
+- **A person's "business" in a filed year** still shows its payments as receipts to add.
+- **The spending side keeps its receipt checks for filed years.** The missing-receipt loop on the
+  spending page (Ausgaben, Belege) asks for a document for every purchase, private ones included
+  (plan 2026-10-14, decision 3); it already listed 2025 payments before this change and does not read
+  the filing day. Only Finanzen stops asking.
+- **Merchant names in the lists.** "Wer ist das?" and what the app decided show the merchant's
+  name ("Amazon"), not the first coded spelling, and an answer saved under it has the same key.
+- **No new candidates in the payments tab.** The spending page's receipt checks (Ausgaben, Belege)
+  already propose these pairs for every payment, answered or not, so decision 1's aside needed no
+  change there.
+- **A filed year's payments tab** lists nothing under "Wer ist das?" and asks for no receipt, and
+  says why ("Die Erklärung {Jahr} ist am … abgegeben").
+- **Accepted:** a budget warning already sent for a coded shop name is sent once more after its
+  budget is carried to the merchant (its subject contains the key). It happens at most once, only
+  where a budget was set on a coded name.

@@ -64,7 +64,10 @@ Decided by the agent, all reversible and without effect on what a page shows:
    checked for every payment. The result is the same as before, in the same order.
 5. **The table asks for all select options in one request.** Calls made in the same moment are
    collected into one server action (`getSelectOptionsBatch`), so the answer is always fresh and
-   the 40 requests become one per change.
+   the 40 requests become one per change. Up to `@marlinjai/data-table-react` 0.7.0 the table
+   asked column after column and asked again for columns already loaded or on their way, so the
+   asks never fell into one moment; 0.7.1 asks for every missing column at once and each column
+   only once, which is what lets the batch carry them all.
 
 Not done: storing the review results in the database. Decision 2 makes every visit after the
 first fast; storing would add a migration and an invalidation rule for the same effect.

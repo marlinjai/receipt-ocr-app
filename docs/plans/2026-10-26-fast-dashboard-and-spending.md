@@ -82,4 +82,23 @@ first fast; storing would add a migration and an invalidation rule for the same 
 
 ## Reality
 
-(filled in with the numbers after the deploy)
+After #186 (production, Whiz-Art Media, 2026-10-26, a warm server):
+
+| | Before | After #186 |
+|---|---|---|
+| Dashboard, server | 2.8 to 4.2 s | 1.0 to 1.1 s |
+| Dashboard, review entries | 1.6 to 2.2 s | 42 to 46 ms |
+| Dashboard, everything in the browser (rows and options in) | 6.2 s | 2.7 s |
+| Spending, server | 3.1 s | 1.2 to 1.3 s |
+| Spending, receipt checks compared (`loop.states`) | 0.9 s | 0.17 to 0.2 s |
+
+The first visit after a deploy still reads every receipt once (the dashboard took 4.4 s on it).
+
+Two more steps waited for each other without reason and now overlap (the follow-up pull
+request): the review list reads the payments beside the receipts, and the receipt checks read
+the receipts beside the payments.
+
+The table package (`@marlinjai/data-table-react` 0.7.0) loads the select options itself, one
+column after another, and asks again for columns a load is already bringing; the dashboard's own
+load of all options at once cannot stop it. That is fixed in the package (load what is missing
+at once, never twice), then bumped here.

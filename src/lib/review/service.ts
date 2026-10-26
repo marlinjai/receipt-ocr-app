@@ -11,7 +11,7 @@ import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 import { kontoFor, type NewReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
 import { cachedReading } from './reading-cache';
 import { isConfirmable, isReadFlag, lookAlikes, paymentsCoverTotal, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
-import { countedReceiptLinks, loadPayments } from '@/lib/tax/payments/service';
+import { countedReceiptLinks, loadPayments, type LoadedPayments } from '@/lib/tax/payments/service';
 import { getFxRate } from '@/lib/fx-rates';
 import { orderedRates, withTaxRates } from '@/lib/tax-rates';
 import { rowsWithOwnTreatment } from '@/lib/tax/service';
@@ -170,19 +170,35 @@ async function fileHashesByRow(db: PrismaClient, rowIds: string[]): Promise<Map<
 }
 
 /**
+ * The company's payments, read beside the receipts so the review list does not wait for one after the other:
+ * only when any receipt of the company has a payment linked at all. A failure is handed on as the error, for
+ * `paidByRow` to log; it is never thrown here, where nobody may be waiting for it yet.
+ */
+async function paymentsAhead(db: PrismaClient, workspaceId: string): Promise<LoadedPayments | null | Error> {
+  try {
+    const linked = await db.taxPaymentLink.count({ where: { authWorkspaceId: workspaceId, rowId: { not: null } } });
+    return linked === 0 ? null : await loadPayments(db, workspaceId);
+  } catch (err) {
+    return err instanceof Error ? err : new Error('payments could not be read');
+  }
+}
+
+/**
  * What the payments linked to each receipt add up to, in euro cents: money out
  * less money back, a payment and the debit that funds it counted once (see
  * `countedReceiptLinks`). A failure to load them is logged and settles no
  * doubt: the review list then shows the doubts as recorded.
  */
-async function paidByRow(db: PrismaClient, workspaceId: string, rowIds: readonly string[]): Promise<Map<string, number>> {
+async function paidByRow(db: PrismaClient, workspaceId: string, rowIds: readonly string[], payments: Promise<LoadedPayments | null | Error>): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (rowIds.length === 0) return out;
   try {
-    // The payments are loaded only where a receipt in doubt has a link at all.
+    // The payments count only where a receipt in doubt has a link at all.
     const linked = await db.taxPaymentLink.count({ where: { authWorkspaceId: workspaceId, rowId: { in: [...rowIds] } } });
     if (linked === 0) return out;
-    const loaded = await loadPayments(db, workspaceId);
+    const loaded = await payments;
+    if (loaded instanceof Error) throw loaded;
+    if (loaded === null) return out;
     for (const { payment, link } of countedReceiptLinks(loaded.payments)) {
       out.set(link.rowId, (out.get(link.rowId) ?? 0) + (payment.amountCents < 0 ? link.cents : -link.cents));
     }
@@ -194,6 +210,7 @@ async function paidByRow(db: PrismaClient, workspaceId: string, rowIds: readonly
 
 /** Every receipt of the workspace that needs a look, oldest receipt first, undated ones last. */
 export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Promise<ReviewEntry[]> {
+  const payments = timed('review.payments', () => paymentsAhead(db, workspaceId));
   const ctx = await timed('review.table', () => tableContext(db, workspaceId));
   if (!ctx) return [];
   // Receipts only: a group has no amount, vendor or file and would sit in this list forever.
@@ -213,7 +230,7 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
       .map((r) => r.rowId),
   );
   const inDoubt = stored.filter((r) => !r.checkedAt && r.flags.some((f) => f === 'total_unconfirmed' || f === 'total_conflict' || f === 'image_only')).map((r) => r.rowId);
-  const paid = await timed('review.paid', () => paidByRow(db, workspaceId, inDoubt));
+  const paid = await timed('review.paid', () => paidByRow(db, workspaceId, inDoubt, payments));
   const storedByRow = new Map(stored.map((r) => [r.rowId, r]));
   const distinct = new Map(stored.map((r) => [r.rowId, new Set(r.distinctFrom)]));
   const read = await timed('review.snapshots', async () => rows.map((row) => snapshotOf(row, ctx.columns, ctx.selectOptions, hashes)));

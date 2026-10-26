@@ -7,6 +7,7 @@ import { vendorKey } from '@/lib/tax/decisions';
 import { eurosToCents, formatCents } from '@/lib/tax/money';
 import { linkPayment, paidByReceipt, type PaymentRow } from '@/lib/tax/payments/service';
 import { linkRoutedPayment, loadRoutedPayments, paymentOnSpendingSide, receiversOf, type RoutedPaymentRow } from '@/lib/tax/payments/routing';
+import { timed } from '@/lib/timing';
 import { receiptForLink } from '@/lib/tax/service';
 import { categoryAnswerMap, spendingTreatments } from './service';
 import { loopState, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
@@ -120,12 +121,12 @@ interface Loaded {
 
 async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loaded> {
   const [loaded, noReceipt, mailCandidates] = await Promise.all([
-    loadRoutedPayments(db, workspaceId),
+    timed('loop.payments', () => loadRoutedPayments(db, workspaceId)),
     db.spendingReceiptAnswer.findMany({ where: { authWorkspaceId: workspaceId } }),
-    loadMailCandidates(db, workspaceId),
+    timed('loop.mail', () => loadMailCandidates(db, workspaceId)),
   ]);
   // A transfer to the owner's own name is an own transfer: it needs no receipt and is never asked about.
-  const { treatments, byName } = await spendingTreatments(db, workspaceId, loaded);
+  const { treatments, byName } = await timed('loop.treatments', () => spendingTreatments(db, workspaceId, loaded));
   // "No receipt exists", said in the holding company before the payment was routed here, still holds.
   // Never the other way: what this company says stays here.
   const routedIds = loaded.payments.filter((p) => p.routedFrom !== null).map((p) => p.id);
@@ -140,11 +141,11 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   // A receipt of this company linked to any payment, also one that moved back to the company holding its
   // account (that link counts nowhere now, but it is the receipt's payment): never proposed for another one.
   const linkedRows = new Set([...loaded.payments.flatMap((p) => p.links.flatMap((l) => (l.rowId ? [l.rowId] : []))), ...loaded.linkedElsewhere.keys()]);
-  const receipts = await loadLoopReceipts(db, workspaceId, linkedRows);
+  const receipts = await timed('loop.receipts', () => loadLoopReceipts(db, workspaceId, linkedRows));
   const aliases = vendorAliases(loaded.payments, receipts);
   const ctx: LoopContext = {
     treatments,
-    categoryAnswers: await categoryAnswerMap(db, workspaceId, loaded),
+    categoryAnswers: await timed('loop.answers', () => categoryAnswerMap(db, workspaceId, loaded)),
     noReceipt: reasons,
     noReceiptFromHolder: fromHolder,
     receipts,
@@ -152,9 +153,9 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
     mailCandidates,
   };
   const states = new Map<string, LoopState>();
-  for (const p of loaded.payments) {
-    states.set(p.id, loopState({ ...p, linkCount: p.links.length }, ctx));
-  }
+  await timed('loop.states', async () => {
+    for (const p of loaded.payments) states.set(p.id, loopState({ ...p, linkCount: p.links.length }, ctx));
+  });
   const ownReasons = new Map(noReceipt.map((a) => [a.paymentId, a.reason]));
   const routedAwayAnswered = loaded.routedAway.flatMap((p) => (ownReasons.has(p.id) ? [{ payment: p, reason: ownReasons.get(p.id) as string }] : []));
   return { payments: loaded.payments, states, aliases, byName, routedAwayAnswered, receipts, ownPayments: loaded.payments.filter((p) => p.routedFrom === null), linkedElsewhere: loaded.linkedElsewhere };

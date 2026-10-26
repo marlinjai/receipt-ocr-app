@@ -47,13 +47,19 @@ export class LoopServiceError extends Error {
   }
 }
 
-/** The receipts of the workspace as the loop sees them; empty before the Receipts table exists. */
-export async function loadLoopReceipts(db: PrismaClient, workspaceId: string, linkedRowIds: ReadonlySet<string>): Promise<LoopReceipt[]> {
+/**
+ * The company's live receipts as the loop sees them, not yet told which are linked (`markLinked`), so they are
+ * read beside the payments; empty before the Receipts table exists.
+ */
+async function readLoopReceipts(db: PrismaClient, workspaceId: string): Promise<LoopReceipt[]> {
   const ctx = await tableContext(db, workspaceId);
   if (!ctx) return [];
   const rows = (await allReceiptRows(ctx.adapter, ctx.tableId, ctx.columns)).filter((r) => !r.archived);
-  return rows.map((row) => toLoopReceipt(row.id, rowToMealRecord(row, ctx.columns, ctx.selectOptions, []), linkedRowIds.has(row.id)));
+  return rows.map((row) => toLoopReceipt(row.id, rowToMealRecord(row, ctx.columns, ctx.selectOptions, []), false));
 }
+
+const markLinked = (receipts: readonly LoopReceipt[], linkedRowIds: ReadonlySet<string>): LoopReceipt[] =>
+  receipts.map((r) => (linkedRowIds.has(r.rowId) ? { ...r, linked: true } : r));
 
 /** A receipt as the loop sees it, from its record: its euro amount (an estimate at its rate in another currency). */
 export function toLoopReceipt(rowId: string, record: Pick<MealRecord, 'name' | 'vendor' | 'date' | 'gross' | 'currency' | 'fxRate'>, linked: boolean): LoopReceipt {
@@ -120,10 +126,12 @@ interface Loaded {
 }
 
 async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loaded> {
-  const [loaded, noReceipt, mailCandidates] = await Promise.all([
+  // The receipts are read beside the payments; which of them are linked follows from the payments below.
+  const [loaded, noReceipt, mailCandidates, unmarked] = await Promise.all([
     timed('loop.payments', () => loadRoutedPayments(db, workspaceId)),
     db.spendingReceiptAnswer.findMany({ where: { authWorkspaceId: workspaceId } }),
     timed('loop.mail', () => loadMailCandidates(db, workspaceId)),
+    timed('loop.receipts', () => readLoopReceipts(db, workspaceId)),
   ]);
   // A transfer to the owner's own name is an own transfer: it needs no receipt and is never asked about.
   const { treatments, byName } = await timed('loop.treatments', () => spendingTreatments(db, workspaceId, loaded));
@@ -141,7 +149,7 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   // A receipt of this company linked to any payment, also one that moved back to the company holding its
   // account (that link counts nowhere now, but it is the receipt's payment): never proposed for another one.
   const linkedRows = new Set([...loaded.payments.flatMap((p) => p.links.flatMap((l) => (l.rowId ? [l.rowId] : []))), ...loaded.linkedElsewhere.keys()]);
-  const receipts = await timed('loop.receipts', () => loadLoopReceipts(db, workspaceId, linkedRows));
+  const receipts = markLinked(unmarked, linkedRows);
   const aliases = vendorAliases(loaded.payments, receipts);
   const ctx: LoopContext = {
     treatments,

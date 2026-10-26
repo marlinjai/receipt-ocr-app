@@ -46,7 +46,6 @@ import {
   PaymentServiceError,
   countedReceiptLinks,
   deletePaymentLinksForRows,
-  counterpartyKey,
   foreignAmount,
   linkProposals,
   loadPayments,

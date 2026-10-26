@@ -549,7 +549,7 @@ export default function FinanceClient({
         </div>
 
         <div role="tabpanel" id={`${tabsId}-group-panel`} aria-labelledby={`${tabsId}-group-${group}`}>
-        <div ref={tabRow} role="tablist" aria-label={`Reiter in ${activeGroup.label}`} className="ui-scroll-bare-phone mt-3 flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
+        <div ref={tabRow} role="tablist" aria-label={`Reiter in ${activeGroup.label}`} className="ui-scroll-bare-phone mt-3 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style={{ borderColor: 'var(--border)' }}>
           {activeGroup.tabs.map((t) => ({ ...t, count: counts[t.key] })).map((t) => (
             <button
               key={t.key}

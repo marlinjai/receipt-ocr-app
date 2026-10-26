@@ -2,7 +2,7 @@
 title: The filed return decides the counterparties
 summary: The app classifies counterparties from what the company already knows for sure before it asks a model or a person. A receipt that matches a payment by vendor, amount and day counts as evidence even when nobody linked them; receipts split between business and private make a counterparty "Teils, teils"; payment-service prefixes no longer split one merchant into dozens of counterparties; a payment linked to one of the company's own invoices is business income; and in a year whose return is filed, nothing is asked any more, because the return already says what was business.
 type: plan
-status: decided
+status: in-progress
 tags: [receipts, payments, classification, tax]
 projects: [receipt-ocr-app]
 date: 2026-10-25
@@ -110,3 +110,33 @@ build reports the before and after counts on production.
 - Resume: a reload shows the same verdicts, nothing stored but verdicts and answers.
 - Re-entry: a second run decides nothing already decided; the key migration run twice changes
   nothing the second time.
+
+## Reality (decided while building, 2026-10-26, say so if you disagree)
+
+- **PayPal and Klarna keep their name in the key.** The funding rule (`funding.ts`) recognizes a
+  bank debit that pays a PayPal or Klarna purchase by the word "paypal" or "klarna" in the
+  counterparty; cutting "PAYPAL *" off would count those purchases twice. So decision 3 cuts only
+  merchants with an order code behind the star (Amazon, Amazon Prime, eBay, Airbnb, Lime,
+  Revolut, A2 Hosting, Moneynet, Uber) and card terminal providers in front of the shop (SumUp,
+  Zettle, Square, SPC, UZR, NYX, NYA, EDK, Eventbrite, CCV, FastSpring, Mollie, PSP), taken from
+  the 147 coded names among the 781 counterparties on production (`src/lib/tax/payments/merchant.ts`,
+  tests on those shapes). `PP*` (PayPal) is left alone for the same reason. The payment text
+  (reference) is still keyed as before, because the funding rule reads it too.
+- **Carrying the keys** (`rekey.ts`) runs at the start of every classification run, for all
+  companies of the tenant in one transaction (one company's answers apply to payments another
+  holds), and is a no-op once done. Rules, category answers and shop budgets are carried by their
+  own name; disagreeing ones of a person are dropped and logged; verdicts on a changed key are
+  removed and made again.
+- **Matching without a link pairs one to one, the closest days first** (`pairReceipts`), with the
+  missing-receipt loop's own candidates. "Exactly one candidate" would have matched no monthly
+  bill: every payment of a 39.95 EUR line also fits the month before. A tie pairs nothing.
+- **A share left open is private.** A receipt stored as "50 percent business, 30 percent study"
+  carries no private line; the 20 percent left are private, so it counts as split. Without this
+  the Telekom receipts read as all business.
+- **The filed-year rule keeps an own-account proposal**: a counterparty the model proposed as own
+  account keeps that proposal on the new evidence instead of becoming private.
+- **No new candidates in the payments tab.** The spending page's receipt checks (Ausgaben, Belege)
+  already propose these pairs for every payment, answered or not, so decision 1's aside needed no
+  change there.
+- **A filed year's payments tab** lists nothing under "Wer ist das?" and asks for no receipt, and
+  says why ("Die Erklärung {Jahr} ist am … abgegeben").

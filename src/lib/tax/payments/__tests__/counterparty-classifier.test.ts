@@ -10,6 +10,7 @@ const counterparty = (name: string, mayLookUp: boolean): ModelCounterparty => ({
   payments: 2,
   paidEuro: '40.00',
   receivedEuro: '0.00',
+  filedReturns: 'none',
   texts: ['Abo'],
   linkedReceipts: 'none',
   mayLookUp,

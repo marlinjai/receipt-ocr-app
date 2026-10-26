@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ANSWERABLE_CATEGORIES, isSpendingCategory, SPENDING_CATEGORY_LABELS, type SpendingCategory } from '@/lib/spending/categories';
 import type { CounterpartyTreatmentAnswer } from '@/lib/spending/rules';
+import { receiptCandidates, type LoopContext, type LoopPayment } from '@/lib/spending/loop';
 import { isTreatment, VERDICT_CONFIDENCES, type VerdictConfidence } from './verdicts';
 
 /**
@@ -21,8 +22,24 @@ export interface CounterpartyEvidence {
   samples: string[];
   /** How many of its payments are linked to a receipt. */
   linkedPayments: number;
-  /** The receipts its payments are linked to, by how they are allocated, and their categories. */
+  /**
+   * How many of its unlinked payments a receipt of the company fits by vendor,
+   * amount and day without anyone having linked them (`pairReceipts`). Counted
+   * as evidence like a link; nothing is linked by it.
+   */
+  matchedPayments: number;
+  /** The receipts its payments are linked to or matched with, by how they are allocated, and their categories. */
   receipts: { business: number; private: number; mixed: number; categories: string[] };
+  /** How many of its payments of money in are linked to one of the company's own invoices. */
+  invoicePayments: number;
+  /**
+   * The years of its payments whose return is filed, and how many of its
+   * payments lie in a year still open. A filed return already says what was
+   * business: a payment of a filed year was claimed when a business or split
+   * receipt is linked or matched to it, and not claimed otherwise.
+   */
+  filedYears: number[];
+  openYearPayments: number;
 }
 
 export interface DecidedVerdict {
@@ -38,37 +55,106 @@ export interface DecidedVerdict {
  * linked or unlinked, its allocation changed), never on every run, and never
  * merely because another payment of the same counterparty arrived.
  */
-export function evidenceFingerprint(evidence: Pick<CounterpartyEvidence, 'receipts' | 'linkedPayments' | 'inCents'>): string {
+export function evidenceFingerprint(
+  evidence: Pick<CounterpartyEvidence, 'receipts' | 'linkedPayments' | 'inCents'> & Partial<Pick<CounterpartyEvidence, 'matchedPayments' | 'invoicePayments' | 'filedYears' | 'openYearPayments'>>,
+): string {
   const { business, private: priv, mixed, categories } = evidence.receipts;
   // Money coming in changes what the app may decide alone (`capModelVerdict`): its first arrival is new evidence.
-  const text = [business, priv, mixed, [...new Set(categories)].sort().join(','), evidence.linkedPayments, evidence.inCents > 0 ? 'in' : ''].join('|');
+  const parts: Array<string | number> = [business, priv, mixed, [...new Set(categories)].sort().join(','), evidence.linkedPayments, evidence.inCents > 0 ? 'in' : ''];
+  // The evidence added later (plan 2026-10-25-filed-year-decides-counterparties) only joins the text when present,
+  // so a counterparty without any of it keeps the fingerprint it was decided on and is not asked about again.
+  const matched = evidence.matchedPayments ?? 0;
+  const invoices = evidence.invoicePayments ?? 0;
+  const filed = evidence.filedYears ?? [];
+  if (matched > 0 || invoices > 0 || filed.length > 0) parts.push(matched, invoices, [...filed].sort().join(','), (evidence.openYearPayments ?? 0) > 0 ? 'open' : '');
+  const text = parts.join('|');
   return createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
+const dayNumber = (day: string | null) => (day === null ? NaN : Math.round(Date.parse(`${day}T00:00:00Z`) / 86_400_000));
+
 /**
- * The verdict the company's own data gives, without a model: every linked
- * receipt business makes the counterparty business, every one private makes
- * it private. Mixed receipts, or receipts of both kinds, say nothing certain.
- * It is certain only when at least half of the counterparty's payments are
- * linked: one business receipt among hundreds of unlinked purchases at a
- * marketplace is a hint, not a verdict for all of them, and stays a proposal.
+ * Which unlinked payment an unlinked receipt pays, where nobody linked them:
+ * the receipts the missing-receipt loop would propose for it (`receiptCandidates`:
+ * the vendor named, the exact amount, the receipt dated from 60 days before to
+ * 5 days after), paired one to one, the closest days first. A monthly bill of
+ * the same amount thus pairs each payment with its own month's invoice. Where
+ * two pairs are equally close and share a payment or a receipt, neither is
+ * taken: a guess is no evidence. Used only as evidence for the counterparty's
+ * verdict; nothing is linked by it. Pure.
+ */
+export function pairReceipts(payments: readonly LoopPayment[], ctx: Pick<LoopContext, 'receipts' | 'vendorAliases'>): Map<string, string> {
+  const pairs: Array<{ paymentId: string; rowId: string; gap: number }> = [];
+  for (const payment of payments) {
+    if (payment.linkCount > 0 || payment.amountCents >= 0) continue;
+    for (const c of receiptCandidates(payment, ctx)) pairs.push({ paymentId: payment.id, rowId: c.rowId, gap: Math.abs(dayNumber(payment.bookingDay) - dayNumber(c.day)) });
+  }
+  pairs.sort((a, b) => a.gap - b.gap || (a.paymentId < b.paymentId ? -1 : a.paymentId > b.paymentId ? 1 : a.rowId < b.rowId ? -1 : 1));
+  const byPayment = new Map<string, string>();
+  const taken = new Set<string>();
+  for (let i = 0; i < pairs.length; ) {
+    let j = i;
+    while (j < pairs.length && pairs[j].gap === pairs[i].gap) j += 1;
+    const open = pairs.slice(i, j).filter((p) => !byPayment.has(p.paymentId) && !taken.has(p.rowId));
+    for (const pair of open) {
+      const rivals = open.filter((p) => p !== pair && (p.paymentId === pair.paymentId || p.rowId === pair.rowId));
+      if (rivals.length > 0 || byPayment.has(pair.paymentId) || taken.has(pair.rowId)) continue;
+      byPayment.set(pair.paymentId, pair.rowId);
+      taken.add(pair.rowId);
+    }
+    i = j;
+  }
+  return byPayment;
+}
+
+/**
+ * The verdict the company's own data gives, without a model. First hit wins:
+ *
+ * 1. money in linked to the company's own invoices, and no money out: business;
+ * 2. the receipts linked or matched to its payments: all business is business,
+ *    all private is private, split or of both kinds is "Teils, teils". Certain
+ *    only when at least half of its payments are paid by a receipt: one
+ *    business receipt among hundreds of other purchases at a marketplace is a
+ *    hint, not a verdict for all of them, and stays a proposal;
+ * 3. all its payments lie in years whose return is filed, none of them was
+ *    claimed (no business or split receipt) and no money came in: private,
+ *    because the filed return did not count it. A transfer to an own account
+ *    looks the same here; the run keeps the model's "own account" proposal for
+ *    such a counterparty instead (`classifyCounterparties`).
  */
 export function evidenceVerdict(evidence: CounterpartyEvidence): DecidedVerdict | null {
+  const fromInvoices = invoiceVerdict(evidence);
+  if (fromInvoices) return fromInvoices;
   const verdict = receiptVerdict(evidence);
-  if (!verdict) return null;
-  return evidence.linkedPayments * 2 >= evidence.paymentCount ? verdict : { ...verdict, confidence: 'likely' };
+  if (verdict) return (evidence.linkedPayments + evidence.matchedPayments) * 2 >= evidence.paymentCount ? verdict : { ...verdict, confidence: 'likely' };
+  return filedVerdict(evidence);
+}
+
+function invoiceVerdict(evidence: CounterpartyEvidence): DecidedVerdict | null {
+  if (evidence.invoicePayments === 0 || evidence.outCents > 0) return null;
+  const reason = evidence.invoicePayments === 1 ? 'Der Eingang bezahlt eine eigene Rechnung.' : `Die ${evidence.invoicePayments} Eingänge bezahlen eigene Rechnungen.`;
+  return { treatment: 'business', category: null, confidence: 'certain', reason };
 }
 
 function receiptVerdict(evidence: CounterpartyEvidence): DecidedVerdict | null {
   const { business, private: priv, mixed } = evidence.receipts;
-  if (mixed > 0) return null;
-  if (business > 0 && priv === 0) {
+  const total = business + priv + mixed;
+  if (total === 0) return null;
+  if (mixed > 0 || (business > 0 && priv > 0)) {
+    return { treatment: 'mixed', category: null, confidence: 'certain', reason: total === 1 ? 'Der Beleg ist zwischen Betrieb und privat geteilt.' : `Die ${total} Belege sind zwischen Betrieb und privat geteilt.` };
+  }
+  if (business > 0) {
     return { treatment: 'business', category: null, confidence: 'certain', reason: business === 1 ? 'Der zugeordnete Beleg ist betrieblich.' : `Alle ${business} zugeordneten Belege sind betrieblich.` };
   }
-  if (priv > 0 && business === 0) {
-    return { treatment: 'private', category: null, confidence: 'certain', reason: priv === 1 ? 'Der zugeordnete Beleg ist privat.' : `Alle ${priv} zugeordneten Belege sind privat.` };
-  }
-  return null;
+  return { treatment: 'private', category: null, confidence: 'certain', reason: priv === 1 ? 'Der zugeordnete Beleg ist privat.' : `Alle ${priv} zugeordneten Belege sind privat.` };
+}
+
+function filedVerdict(evidence: CounterpartyEvidence): DecidedVerdict | null {
+  if (evidence.filedYears.length === 0 || evidence.openYearPayments > 0 || evidence.inCents > 0) return null;
+  if (evidence.receipts.business > 0 || evidence.receipts.mixed > 0) return null;
+  const years = [...evidence.filedYears].sort((a, b) => a - b);
+  const named = years.length === 1 ? `Erklärung ${years[0]}` : `Erklärungen ${years.slice(0, -1).join(', ')} und ${years[years.length - 1]}`;
+  return { treatment: 'private', category: null, confidence: 'certain', reason: `In der abgegebenen ${named} nicht als Betriebsausgabe abgesetzt.` };
 }
 
 // Legal forms that are not also short words of a person's name ("as", "ab", "co" are left out on purpose).
@@ -109,6 +195,8 @@ export interface ModelCounterparty {
   receivedEuro: string;
   texts: string[];
   linkedReceipts: string;
+  /** What the filed returns say about it: the person's own decision for those years. */
+  filedReturns: string;
   mayLookUp: boolean;
 }
 
@@ -131,6 +219,10 @@ export function toModelCounterparty(evidence: CounterpartyEvidence, requestKey: 
     receivedEuro: euroText(evidence.inCents),
     texts: lookUp ? [] : evidence.samples.slice(0, 3).map(maskText),
     linkedReceipts: linked === 0 ? 'none' : `${business} business, ${priv} private, ${mixed} mixed; categories: ${[...new Set(categories)].join(', ') || 'none'}`,
+    filedReturns:
+      evidence.filedYears.length === 0
+        ? 'none'
+        : `${evidence.filedYears.join(', ')} filed; ${business + mixed > 0 ? 'claimed there with its receipts' : 'not claimed as a business expense there'}; ${evidence.openYearPayments} payments in open years`,
     mayLookUp: lookUp,
   };
 }
@@ -146,7 +238,7 @@ ${categories}
 - confidence: "certain" only when the name or texts leave no reasonable doubt (a well-known software or AI vendor is business; a supermarket or a restaurant chain is private); "likely" when it is the probable answer but someone could reasonably answer otherwise; "unsure" when you cannot tell, for example a person's name or an unknown shop.
 - reason: one short German sentence a non-expert understands, without dashes, naming what the counterparty is (for example "Supermarktkette, Einkauf für den Haushalt").
 
-A transfer to or from a private person is "private" with category "transfers", at most "likely" unless the texts make the purpose clear. Linked receipts are strong evidence: receipts that are all business mean business. ${options.webSearch ? 'You have web search. Use it only for counterparties marked mayLookUp true, and only when the name alone does not tell you what the business is. Never search for a counterparty marked mayLookUp false.' : 'You have no web search; judge from the name and texts.'}
+A transfer to or from a private person is "private" with category "transfers", at most "likely" unless the texts make the purpose clear. Linked receipts are strong evidence: receipts that are all business mean business. "filedReturns" tells what the person already declared in a filed tax return: a counterparty not claimed there was private in those years, which is strong evidence for the open years too unless the name says otherwise. ${options.webSearch ? 'You have web search. Use it only for counterparties marked mayLookUp true, and only when the name alone does not tell you what the business is. Never search for a counterparty marked mayLookUp false.' : 'You have no web search; judge from the name and texts.'}
 
 Answer with JSON only, no prose: {"verdicts":[{"key":"...","treatment":"...","category":"...","confidence":"...","reason":"..."}]} with exactly one entry per counterparty, using the given key.`;
 }

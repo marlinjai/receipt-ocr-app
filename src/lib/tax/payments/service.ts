@@ -2,6 +2,7 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { vendorKey } from '../decisions';
+import { merchantName } from './merchant';
 import { resolveFunding, type Funding } from './funding';
 import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from './match';
 import { batchCoverage, covers, coveredByOtherSources, isPaypalSource, matchStored, mergeIntervals, orderBatches, overlaps, sourcesMayShare, type PaymentSource } from './coverage';
@@ -90,9 +91,13 @@ export const ACCOUNT_KINDS: readonly AccountKind[] = ['bank', 'card', 'payment_s
 export type CounterpartyTreatment = 'business' | 'private' | 'own_account' | 'mixed';
 export const COUNTERPARTY_TREATMENTS: readonly CounterpartyTreatment[] = ['business', 'private', 'own_account', 'mixed'];
 
-/** The key a counterparty is recognized by; payments without a name share one key per account kind of text. */
+/**
+ * The key a counterparty is recognized by: its merchant (`merchant.ts`, so a
+ * shop's order codes and card terminal providers do not split it), normalized
+ * like a vendor. Payments without a name share one key per account kind of text.
+ */
 export function counterpartyKey(name: string): string {
-  return vendorKey(name) ?? '';
+  return vendorKey(merchantName(name)) ?? '';
 }
 
 export async function createAccount(db: PrismaClient, ctx: PaymentContext, raw: unknown): Promise<string> {
@@ -938,7 +943,7 @@ export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, 
   const { treatments, sources: treatmentSources } = mergeTreatments(answered, payments, settings?.ownNames ?? [], verdicts.values());
   const funding = resolveFunding(
     accounts.map((a) => ({ id: a.id, kind: a.kind, formats: a.batches.map((b) => b.format), services: a.batches.map((b) => b.service) })),
-    payments.map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: counterpartyKey(p.reference), sourceKind: p.sourceKind, estimated: p.amountEstimated })),
+    payments.map((p) => ({ id: p.id, accountId: p.accountId, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: vendorKey(p.reference) ?? '', sourceKind: p.sourceKind, estimated: p.amountEstimated })),
   );
   const privateAccounts = new Set(accounts.filter((a) => a.isPrivate).map((a) => a.id));
   const rows: PaymentRow[] = payments.map((p) => {

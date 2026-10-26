@@ -8,6 +8,7 @@ import {
   evidenceFingerprint,
   evidenceVerdict,
   mayLookUp,
+  pairReceipts,
   parseModelVerdicts,
   toModelCounterparty,
   type CounterpartyEvidence,
@@ -24,7 +25,11 @@ const evidence = (o: Partial<CounterpartyEvidence> = {}): CounterpartyEvidence =
   inCents: 0,
   samples: ['Abo Oktober', 'Abo November'],
   linkedPayments: 0,
+  matchedPayments: 0,
   receipts: { business: 0, private: 0, mixed: 0, categories: [] },
+  invoicePayments: 0,
+  filedYears: [],
+  openYearPayments: 3,
   ...o,
 });
 
@@ -94,11 +99,13 @@ describe('who decides a counterparty', () => {
 });
 
 describe("the company's own data", () => {
-  it('receipts all business or all private decide; mixed or both kinds say nothing certain', () => {
+  it('receipts all business or all private decide; split receipts or both kinds make it mixed', () => {
     expect(evidenceVerdict(evidence({ linkedPayments: 3, receipts: { business: 3, private: 0, mixed: 0, categories: [] } }))).toMatchObject({ treatment: 'business', confidence: 'certain', reason: 'Alle 3 zugeordneten Belege sind betrieblich.' });
     expect(evidenceVerdict(evidence({ linkedPayments: 2, receipts: { business: 0, private: 1, mixed: 0, categories: [] } }))).toMatchObject({ treatment: 'private', confidence: 'certain', reason: 'Der zugeordnete Beleg ist privat.' });
-    expect(evidenceVerdict(evidence({ receipts: { business: 2, private: 1, mixed: 0, categories: [] } }))).toBeNull();
-    expect(evidenceVerdict(evidence({ receipts: { business: 2, private: 0, mixed: 1, categories: [] } }))).toBeNull();
+    expect(evidenceVerdict(evidence({ linkedPayments: 3, receipts: { business: 2, private: 1, mixed: 0, categories: [] } }))).toMatchObject({ treatment: 'mixed', confidence: 'certain', reason: 'Die 3 Belege sind zwischen Betrieb und privat geteilt.' });
+    // A receipt split between business and private, matched without a link, decides like a linked one.
+    expect(evidenceVerdict(evidence({ matchedPayments: 3, receipts: { business: 0, private: 0, mixed: 3, categories: [] } }))).toMatchObject({ treatment: 'mixed', confidence: 'certain' });
+    expect(evidenceVerdict(evidence({ matchedPayments: 1, receipts: { business: 0, private: 0, mixed: 1, categories: [] } }))).toMatchObject({ treatment: 'mixed', confidence: 'likely' });
     expect(evidenceVerdict(evidence())).toBeNull();
   });
 
@@ -106,6 +113,27 @@ describe("the company's own data", () => {
     const marketplace = evidence({ paymentCount: 40, linkedPayments: 1, receipts: { business: 1, private: 0, mixed: 0, categories: [] } });
     expect(evidenceVerdict(marketplace)).toMatchObject({ treatment: 'business', confidence: 'likely' });
     expect(evidenceVerdict({ ...marketplace, linkedPayments: 20 })).toMatchObject({ confidence: 'certain' });
+  });
+
+  it('money in for own invoices makes a counterparty business, unless money also went out to it', () => {
+    expect(evidenceVerdict(evidence({ outCents: 0, inCents: 1_088_200, invoicePayments: 4 }))).toMatchObject({ treatment: 'business', confidence: 'certain', reason: 'Die 4 Eingänge bezahlen eigene Rechnungen.' });
+    expect(evidenceVerdict(evidence({ outCents: 34_200, inCents: 1_088_200, invoicePayments: 4 }))).toBeNull();
+  });
+
+  it('a filed year decides what it did not claim: private, never against a receipt or money in', () => {
+    const filed = evidence({ filedYears: [2025], openYearPayments: 0 });
+    expect(evidenceVerdict(filed)).toMatchObject({ treatment: 'private', confidence: 'certain', reason: 'In der abgegebenen Erklärung 2025 nicht als Betriebsausgabe abgesetzt.' });
+    expect(evidenceVerdict({ ...filed, filedYears: [2024, 2025] })?.reason).toBe('In der abgegebenen Erklärungen 2024 und 2025 nicht als Betriebsausgabe abgesetzt.');
+    // Payments in a year still open: the filed year alone does not decide them.
+    expect(evidenceVerdict({ ...filed, openYearPayments: 2 })).toBeNull();
+    // Money came in: never made private by a rule that only knows what was not claimed.
+    expect(evidenceVerdict({ ...filed, inCents: 5_000 })).toBeNull();
+    // A business receipt among few payments is only a hint, and the filed year does not overrule it.
+    expect(evidenceVerdict({ ...filed, paymentCount: 9, linkedPayments: 1, receipts: { business: 1, private: 0, mixed: 0, categories: [] } })).toMatchObject({ treatment: 'business', confidence: 'likely' });
+  });
+
+  it('the model is told what the filed returns say', () => {
+    expect(toModelCounterparty(evidence({ filedYears: [2025], openYearPayments: 2 }), 'c1').filedReturns).toBe('2025 filed; not claimed as a business expense there; 2 payments in open years');
   });
 
   it('the fingerprint follows the linked receipts, not the number of payments', () => {
@@ -116,6 +144,37 @@ describe("the company's own data", () => {
     expect(evidenceFingerprint(evidence({ linkedPayments: 2 }))).not.toBe(base);
     // The first money coming in is new evidence too.
     expect(evidenceFingerprint(evidence({ inCents: 1 }))).not.toBe(base);
+    // So are a matched receipt, an invoice link and a filed year; without them the fingerprint is the one stored before.
+    expect(evidenceFingerprint({ receipts: evidence().receipts, linkedPayments: 0, inCents: 0 })).toBe(base);
+    expect(evidenceFingerprint(evidence({ matchedPayments: 1 }))).not.toBe(base);
+    expect(evidenceFingerprint(evidence({ invoicePayments: 1 }))).not.toBe(base);
+    expect(evidenceFingerprint(evidence({ filedYears: [2025] }))).not.toBe(evidenceFingerprint(evidence({ filedYears: [2024, 2025] })));
+  });
+});
+
+describe('receipts that pay a payment without a link', () => {
+  const pay = (id: string, day: string, cents = -3_995) => ({ id, bookingDay: day, amountCents: cents, counterparty: 'Netzwerk Nord GmbH', counterpartyKey: 'netzwerk nord', reference: 'Festnetz', kind: 'spend' as const, linkCount: 0 });
+  const receipt = (rowId: string, day: string, cents = 3_995) => ({ rowId, label: 'Festnetz', vendor: 'Netzwerk Nord GmbH', vendorKey: 'netzwerk nord', day, amountCents: cents, estimated: false, linked: false });
+  const ctx = (receipts: ReturnType<typeof receipt>[]) => ({ receipts, vendorAliases: new Map() });
+
+  it('pairs a monthly bill of the same amount with its own month, the closest day first', () => {
+    const pairs = pairReceipts(
+      [pay('p1', '2025-01-02'), pay('p2', '2025-01-31'), pay('p3', '2025-02-28')],
+      ctx([receipt('r12', '2024-12-16'), receipt('r01', '2025-01-22'), receipt('r02', '2025-02-19'), receipt('r11', '2024-11-18')]),
+    );
+    expect(Object.fromEntries(pairs)).toEqual({ p1: 'r12', p2: 'r01', p3: 'r02' });
+  });
+
+  it('pairs nothing where two pairs are equally close and share a payment or a receipt', () => {
+    expect(pairReceipts([pay('p1', '2025-01-10')], ctx([receipt('a', '2025-01-05'), receipt('b', '2025-01-05')])).size).toBe(0);
+    expect(pairReceipts([pay('p1', '2025-01-10'), pay('p2', '2025-01-10')], ctx([receipt('a', '2025-01-05')])).size).toBe(0);
+  });
+
+  it('never pairs a linked payment, money in, another amount or another vendor', () => {
+    expect(pairReceipts([{ ...pay('p1', '2025-01-10'), linkCount: 1 }], ctx([receipt('a', '2025-01-05')])).size).toBe(0);
+    expect(pairReceipts([pay('p1', '2025-01-10', 3_995)], ctx([receipt('a', '2025-01-05')])).size).toBe(0);
+    expect(pairReceipts([pay('p1', '2025-01-10')], ctx([receipt('a', '2025-01-05', 3_996)])).size).toBe(0);
+    expect(pairReceipts([pay('p1', '2025-01-10')], ctx([{ ...receipt('a', '2025-01-05'), vendor: 'Anderer Laden', vendorKey: 'anderer laden' }])).size).toBe(0);
   });
 });
 
@@ -143,6 +202,7 @@ describe('what the model sees', () => {
       receivedEuro: '0.00',
       texts: [],
       linkedReceipts: '1 business, 0 private, 0 mixed; categories: Software',
+      filedReturns: 'none',
       mayLookUp: true,
     });
     // Any other name goes to a call without search, with up to three texts, numbers and addresses masked.

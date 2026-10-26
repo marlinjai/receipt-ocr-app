@@ -69,7 +69,7 @@ export async function loadLoopReceipts(db: PrismaClient, workspaceId: string, li
 }
 
 /** Vendors each counterparty stands for, learned from the links that exist (as the payments tab does). */
-function vendorAliases(payments: readonly PaymentRow[], receipts: readonly LoopReceipt[]): Map<string, Set<string>> {
+export function vendorAliases(payments: readonly PaymentRow[], receipts: readonly LoopReceipt[]): Map<string, Set<string>> {
   const vendorByRow = new Map(receipts.map((r) => [r.rowId, r.vendorKey]));
   const out = new Map<string, Set<string>>();
   for (const p of payments) {

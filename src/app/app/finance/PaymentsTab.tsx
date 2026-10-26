@@ -348,6 +348,13 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         </p>
       )}
 
+      {show.questions && p.filedOn && p.yearCount > 0 && (
+        <p className="ui-note text-sm" role="status">
+          Die Erklärung {view.year} ist am {formatDay(p.filedOn)} abgegeben: zu diesem Jahr wird nichts mehr gefragt. Was sie
+          nicht als Betriebsausgabe abgesetzt hat, gilt als privat; eine Antwort hier ändert die abgegebene Erklärung nicht.
+        </p>
+      )}
+
       {show.questions && p.yearCount > 0 && (onClassify || !p.classifierAvailable) && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Einordnen durch die App">
           <div className="flex flex-wrap items-center justify-between gap-2">

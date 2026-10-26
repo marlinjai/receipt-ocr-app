@@ -54,6 +54,8 @@ function memoryTable(initial: Row[]) {
   const model = new Proxy({}, { get: (_t, method: string) => async () => (method === 'findMany' ? [] : { count: 0 }) });
   const db: Record<string, unknown> = {
     $transaction: async (run: (tx: unknown) => Promise<unknown>) => run(dbProxy),
+    // The per-receipt lock the line items take when a receipt is deleted (src/lib/line-items/store.ts).
+    $executeRaw: async () => 0,
     $queryRawUnsafe: async (sql: string, ...ids: string[]) => {
       if (sql.includes('SET parent_row_id = NULL') && sql.includes('RETURNING id')) {
         const children = rows().filter((r) => r.parentRowId === ids[1]);

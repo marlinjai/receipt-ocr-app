@@ -2,6 +2,7 @@ import 'server-only';
 import { createHash, randomBytes } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { counterpartyKey, importPayments, PaymentServiceError, type PaymentContext } from '../service';
+import { ensureMerchantKeys } from '../rekey';
 import { serviceOfInstitution } from '../funding';
 import { parsePaymentFile, rateKey, toIsoDay, walletRateNeeds } from '../parse';
 import { PaymentParseError, type NormalizedPayment } from '../types';
@@ -412,6 +413,8 @@ export async function syncConnection(
     deadline?: number;
   },
 ): Promise<SyncOutcome> {
+  // Reworded bookings are recognized against the stored rows by key: those must be the current keys first.
+  await ensureMerchantKeys(db);
   const now = (deps.now ?? (() => new Date()))();
   const connection = await ownConnection(db, ctx.workspaceId, connectionId);
   if (connection.status !== 'active' || !connection.sessionId || !connection.accountUid) return { status: 'not_active', added: 0 };

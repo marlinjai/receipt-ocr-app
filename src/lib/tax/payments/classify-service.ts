@@ -4,10 +4,12 @@ import { getTaxSettings } from '@/lib/meals/service';
 import { resolveItem } from '../facts';
 import { listVendorRules, loadReceipts } from '../service';
 import { loadLoopReceipts, vendorAliases } from '@/lib/spending/loop-service';
+import { normalizeText } from '@/lib/spending/rules';
+import { vendorNamed } from './match';
+import { merchantName } from './merchant';
 import { capModelVerdict, evidenceFingerprint, evidenceVerdict, mayLookUp, pairReceipts, toModelCounterparty, type CounterpartyEvidence, type DecidedVerdict } from './classify';
 import type { ClassifyRunCounts } from './classify-summary';
 import type { CounterpartyClassifierPort } from './counterparty-classifier';
-import { rekeyCounterparties } from './rekey';
 import { loadPayments, type LoadedPayments } from './service';
 
 /**
@@ -48,6 +50,16 @@ export async function counterpartyEvidence(db: PrismaClient, workspaceId: string
     db.taxYearSettings.findMany({ where: { authWorkspaceId: workspaceId, filedOn: { not: null } }, select: { year: true } }),
   ]);
   const filed = new Set(filedRows.map((r) => r.year));
+  // The year a payment counts in for the filed-year rule: its booking year, unless it lies at the turn of the
+  // year (22 December to 10 January) and the year next to it is open; then it may belong there and counts as open.
+  const filedYearOf = (day: string): number | null => {
+    const year = Number(day.slice(0, 4));
+    if (!filed.has(year)) return null;
+    const monthDay = day.slice(5);
+    if (monthDay >= '12-22' && !filed.has(year + 1)) return null;
+    if (monthDay <= '01-10' && !filed.has(year - 1)) return null;
+    return year;
+  };
   // How each receipt is allocated: all business (or the job and study annexes, also deductible), all private, or both.
   const allocationOf = new Map<string, { kind: 'business' | 'private' | 'mixed'; category: string | null }>();
   for (const f of receipts?.facts ?? []) {
@@ -67,13 +79,14 @@ export async function counterpartyEvidence(db: PrismaClient, workspaceId: string
     considered.map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterparty: p.counterparty, counterpartyKey: p.counterpartyKey, reference: p.reference, kind: p.kind, linkCount: p.links.length })),
     { receipts: loopReceipts, vendorAliases: vendorAliases(loaded.payments, loopReceipts) },
   );
-  const byKey = new Map<string, CounterpartyEvidence & { rows: string[] }>();
+  const byKey = new Map<string, CounterpartyEvidence & { rows: string[]; filedRows: string[]; referenceKeys: string[] }>();
   for (const p of considered) {
     // What asks nothing in the payments tab asks nothing here either: own transfers, fees, the funding rule's
     // debits, and payments of an account said to be private as a whole (the owner already answered for them).
     const entry = byKey.get(p.counterpartyKey) ?? {
       key: p.counterpartyKey,
-      label: p.counterparty,
+      // The merchant's name: "AMAZON* KT2PC3H85" stands for all of Amazon's payments.
+      label: merchantName(p.counterparty),
       paymentCount: 0,
       outCents: 0,
       inCents: 0,
@@ -82,9 +95,13 @@ export async function counterpartyEvidence(db: PrismaClient, workspaceId: string
       matchedPayments: 0,
       receipts: { business: 0, private: 0, mixed: 0, categories: [] },
       invoicePayments: 0,
+      incomingPayments: 0,
       filedYears: [],
       openYearPayments: 0,
+      filedBusinessReceipts: 0,
       rows: [],
+      filedRows: [],
+      referenceKeys: [],
     };
     entry.paymentCount += 1;
     if (p.amountCents < 0) entry.outCents += -p.amountCents;
@@ -92,20 +109,31 @@ export async function counterpartyEvidence(db: PrismaClient, workspaceId: string
     const text = p.reference.trim();
     if (text && entry.samples.length < 3 && !entry.samples.includes(text)) entry.samples.push(text);
     if (p.links.some((l) => l.rowId)) entry.linkedPayments += 1;
+    if (p.amountCents > 0) entry.incomingPayments += 1;
     if (p.amountCents > 0 && p.links.some((l) => l.invoiceId)) entry.invoicePayments += 1;
+    const referenceKey = normalizeText(p.reference);
+    if (referenceKey && entry.referenceKeys.length < 20 && !entry.referenceKeys.includes(referenceKey)) entry.referenceKeys.push(referenceKey);
+    const filedYear = filedYearOf(p.bookingDay);
     for (const link of p.links) if (link.rowId && !entry.rows.includes(link.rowId)) entry.rows.push(link.rowId);
     const pairedRow = matched.get(p.id);
     if (pairedRow) {
       entry.matchedPayments += 1;
       if (!entry.rows.includes(pairedRow)) entry.rows.push(pairedRow);
     }
-    const year = Number(p.bookingDay.slice(0, 4));
-    if (filed.has(year)) {
-      if (!entry.filedYears.includes(year)) entry.filedYears.push(year);
+    if (filedYear !== null) {
+      if (!entry.filedYears.includes(filedYear)) entry.filedYears.push(filedYear);
+      for (const link of p.links) if (link.rowId) entry.filedRows.push(link.rowId);
+      if (pairedRow) entry.filedRows.push(pairedRow);
     } else entry.openYearPayments += 1;
     byKey.set(p.counterpartyKey, entry);
   }
-  return [...byKey.values()].map(({ rows, ...evidence }) => {
+  const aliases = vendorAliases(loaded.payments, loopReceipts);
+  // Business or split receipts dated in a filed year: the ones a filed return may have claimed.
+  const claimable = loopReceipts.filter((r) => {
+    const kind = allocationOf.get(r.rowId)?.kind;
+    return (kind === 'business' || kind === 'mixed') && r.day !== null && filed.has(Number(r.day.slice(0, 4)));
+  });
+  return [...byKey.values()].map(({ rows, filedRows, referenceKeys, ...evidence }) => {
     for (const rowId of rows) {
       const allocation = allocationOf.get(rowId);
       if (!allocation) continue;
@@ -113,6 +141,20 @@ export async function counterpartyEvidence(db: PrismaClient, workspaceId: string
       if (allocation.category) evidence.receipts.categories.push(allocation.category);
     }
     evidence.filedYears.sort((a, b) => a - b);
+    if (evidence.filedYears.length > 0) {
+      // Matching needs the exact amount and a near day, so a receipt it missed (another currency, a tip, a far
+      // date) would read as "not claimed". Any business receipt of the vendor in a filed year keeps the rule out.
+      const named = new Set(
+        claimable
+          .filter((r) => vendorNamed(r.vendorKey, evidence.key, '') || referenceKeys.some((ref) => vendorNamed(r.vendorKey, '', ref)) || (r.vendorKey !== null && aliases.get(evidence.key)?.has(r.vendorKey)))
+          .map((r) => r.rowId),
+      );
+      for (const rowId of filedRows) {
+        const kind = allocationOf.get(rowId)?.kind;
+        if (kind === 'business' || kind === 'mixed') named.add(rowId);
+      }
+      evidence.filedBusinessReceipts = named.size;
+    }
     return evidence;
   });
 }
@@ -174,12 +216,6 @@ export async function classifyCounterparties(
   port: CounterpartyClassifierPort | null,
   options: { limit?: number; batch?: number; deadline?: number } = {},
 ): Promise<ClassifyRun> {
-  try {
-    await rekeyCounterparties(db, ctx.tenantId, ctx.workspaceId);
-  } catch (e) {
-    // The keys stay as they were; the run still decides on them, and the next run tries again.
-    console.error('[payments] carrying counterparty keys to their merchant failed', { workspaceId: ctx.workspaceId, error: e instanceof Error ? e.message : String(e) });
-  }
   const loaded = await loadPayments(db, ctx.workspaceId);
   const stored = await db.taxCounterpartyVerdict.findMany({ where: { authWorkspaceId: ctx.workspaceId }, select: { counterpartyKey: true, fingerprint: true, source: true, treatment: true } });
   const pending = pendingCounterparties(await counterpartyEvidence(db, ctx.workspaceId, loaded), loaded, new Map(stored.map((s) => [s.counterpartyKey, s.fingerprint])));

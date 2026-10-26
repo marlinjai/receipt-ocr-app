@@ -35,6 +35,13 @@ describe('the merchant of a counterparty', () => {
     expect(counterpartyKey('Klarna')).toBe('klarna');
   });
 
+  it('gives the same name and key when its own answer is read back', () => {
+    for (const label of ['AMAZON* KT2PC3H85', 'AMZNPrime DE*4L6RG9515', 'eBay O*13-12787-68146', 'A2WEBHOST* A-INV-13544', 'SumUp *Asia Markt', 'UBR* PENDING.UBER.COM', 'Revolut**1753*']) {
+      expect(merchantName(merchantName(label))).toBe(merchantName(label));
+      expect(counterpartyKey(merchantName(label))).toBe(counterpartyKey(label));
+    }
+  });
+
   it('leaves every other name as it was', () => {
     for (const label of ['Telekom Deutschland GmbH', 'AMAZON PAYMENTS EUROPE S.C.A.', 'Riverty fur Amazon', 'Neverless Labs SL', 'ANTHROPIC* CLAUDE SUB', 'Max Beispiel']) expect(merchantName(label)).toBe(label);
   });

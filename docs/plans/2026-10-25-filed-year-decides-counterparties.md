@@ -122,11 +122,18 @@ build reports the before and after counts on production.
   the 147 coded names among the 781 counterparties on production (`src/lib/tax/payments/merchant.ts`,
   tests on those shapes). `PP*` (PayPal) is left alone for the same reason. The payment text
   (reference) is still keyed as before, because the funding rule reads it too.
-- **Carrying the keys** (`rekey.ts`) runs at the start of every classification run, for all
-  companies of the tenant in one transaction (one company's answers apply to payments another
-  holds), and is a no-op once done. Rules, category answers and shop budgets are carried by their
-  own name; disagreeing ones of a person are dropped and logged; verdicts on a changed key are
-  removed and made again.
+- **Carrying the keys** (`rekey.ts`) runs once per key version, for all companies together (answers
+  of one company apply to payments another holds, also across tenants), before anything reads or
+  writes a key: the payments' load, every import and bank fetch, every answer that stores a key and
+  the shop budgets call `ensureMerchantKeys`. A stored marker (`tax_key_versions`, migration 0040)
+  says it is done; afterwards a call costs one lookup, then nothing in that process. It takes a
+  database lock, so two servers never carry at once. Rules, category answers and shop budgets are
+  carried by their own name and get the merchant's name as their label; disagreeing ones of a
+  person are dropped and logged; verdicts on a changed key, and on every key that took over
+  payments, are removed and made again (a verdict made on 2 payments must not cover 300).
+- **"The same movement" stays judged by the full name.** Import de-duplication (`matchStored`,
+  `adoptUnreferenced`) compares the full counterparty, never the merchant key: two Amazon orders on
+  one day are two movements.
 - **Matching without a link pairs one to one, the closest days first** (`pairReceipts`), with the
   missing-receipt loop's own candidates. "Exactly one candidate" would have matched no monthly
   bill: every payment of a 39.95 EUR line also fits the month before. A tie pairs nothing.
@@ -135,6 +142,24 @@ build reports the before and after counts on production.
   the Telekom receipts read as all business.
 - **The filed-year rule keeps an own-account proposal**: a counterparty the model proposed as own
   account keeps that proposal on the new evidence instead of becoming private.
+- **The filed-year rule does not trust a missed match.** Matching needs the exact amount and a near
+  day, so a receipt in another currency, with a tip or far from its payment is not paired. Any
+  business or split receipt dated in a filed year whose vendor the counterparty's name or payment
+  texts name keeps the rule out (the model decides instead, told what the filed years hold). A
+  payment between 22 December and 10 January counts as a filed-year payment only when the year next
+  to it is filed too, because the ten-day rule may count it there.
+- **Invoices decide only when all money in pays them.** A payer with invoice payments and other
+  money in beside them gets "business, likely", a proposal.
+- **The app's "Teils, teils" moves nothing to a receiving company.** Its business part is a
+  receipt the holder has but nobody linked, so routing (plan 2026-10-22) ignores it
+  (`routingTreatments`); a person's "Teils, teils" still moves what has no receipt linked.
+- **A person's "business" in a filed year** still shows its payments as receipts to add.
+- **The spending side keeps its receipt checks for filed years.** The missing-receipt loop on the
+  spending page (Ausgaben, Belege) asks for a document for every purchase, private ones included
+  (plan 2026-10-14, decision 3); it already listed 2025 payments before this change and does not read
+  the filing day. Only Finanzen stops asking.
+- **Merchant names in the lists.** "Wer ist das?" and what the app decided show the merchant's
+  name ("Amazon"), not the first coded spelling, and an answer saved under it has the same key.
 - **No new candidates in the payments tab.** The spending page's receipt checks (Ausgaben, Belege)
   already propose these pairs for every payment, answered or not, so decision 1's aside needed no
   change there.

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { vendorKey } from '../decisions';
 import { merchantName } from './merchant';
+import { ensureMerchantKeys } from './rekey';
 import { resolveFunding, type Funding } from './funding';
 import { proposeMatches, unambiguousReferenceMatches, type MatchProposal } from './match';
 import { batchCoverage, covers, coveredByOtherSources, isPaypalSource, matchStored, mergeIntervals, orderBatches, overlaps, sourcesMayShare, type PaymentSource } from './coverage';
@@ -197,6 +198,8 @@ function validImportYear(raw: unknown): number | null {
  * year of it) can be read later and adds only what is new.
  */
 export async function importPayments(db: PrismaClient, ctx: PaymentContext, accountId: string, text: string, options: ImportOptions = {}): Promise<ImportResult> {
+  // The new rows are compared with the stored ones by key: those must be the current keys first.
+  await ensureMerchantKeys(db);
   const onlyYear = validImportYear(options.onlyYear);
   const account = await db.taxAccount.findFirst({ where: { id: accountId, authWorkspaceId: ctx.workspaceId } });
   if (!account) throw new PaymentServiceError('account_not_found');
@@ -264,13 +267,16 @@ export async function importPayments(db: PrismaClient, ctx: PaymentContext, acco
     const compared = inYear.filter((p) => !covers(otherSources, p.bookingDay) || edges.has(p.bookingDay));
     const stored = compared.length === 0 ? [] : await tx.taxPayment.findMany({
       where: { accountId, bookingDay: { in: [...new Set(compared.map((p) => p.bookingDay))] }, batch: { format: { not: file.format } } },
-      select: { id: true, bookingDay: true, amountCents: true, counterpartyKey: true, amountEstimated: true },
+      select: { id: true, bookingDay: true, amountCents: true, counterparty: true, amountEstimated: true },
     });
+    // Whether two rows are the same movement is judged by the full name, never the merchant key: two orders of one
+    // shop on one day ("AMAZON* 7S69…", "AMAZON* B05Z…") are two movements, though one counterparty.
+    const movementName = (counterparty: string) => vendorKey(counterparty) ?? '';
     const storedCents = new Map(stored.map((p) => [p.id, p.amountCents]));
     // An estimate on either side (a purchase in another currency) is compared by day and counterparty, not amount.
     const { same, settles } = matchStored(
-      compared.map((p) => ({ ...p, counterpartyKey: counterpartyKey(p.counterparty) })),
-      stored.filter((p) => !claimed.has(p.id)).map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, estimated: p.amountEstimated })),
+      compared.map((p) => ({ ...p, counterpartyKey: movementName(p.counterparty) })),
+      stored.filter((p) => !claimed.has(p.id)).map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: movementName(p.counterparty), estimated: p.amountEstimated })),
     );
     for (const { row, storedId } of settles) {
       await settleEstimate(tx, storedId, storedCents.get(storedId) as number, row.amountCents, {});
@@ -419,10 +425,11 @@ async function adoptUnreferenced(db: Prisma.TransactionClient, accountId: string
   );
   const fresh = numbered.filter((p) => !known.has(p.sourceHash));
   if (fresh.length === 0) return 0;
-  const sameMovement = (p: { bookingDay: string; amountCents: number; counterpartyKey: string }) => `${p.bookingDay}|${p.amountCents}|${p.counterpartyKey}`;
+  // By the full name, not the merchant key: two orders of one shop on one day are two movements.
+  const sameMovement = (p: { bookingDay: string; amountCents: number; counterparty: string }) => `${p.bookingDay}|${p.amountCents}|${vendorKey(p.counterparty) ?? ''}`;
   const claims = new Map<string, NormalizedPayment[]>();
   for (const p of fresh) {
-    const key = sameMovement({ ...p, counterpartyKey: counterpartyKey(p.counterparty) });
+    const key = sameMovement(p);
     claims.set(key, [...(claims.get(key) ?? []), p]);
   }
   // Only rows of the same source: another source's row keeps its own identity (its file would store it again otherwise).
@@ -574,6 +581,7 @@ export async function setCounterpartyTreatment(db: PrismaClient, ctx: PaymentCon
   const label = typeof input.counterparty === 'string' ? input.counterparty.trim() : '';
   const key = counterpartyKey(label);
   if (!key) throw new PaymentServiceError('invalid_treatment');
+  await ensureMerchantKeys(db);
   if (input.treatment === null) {
     await db.taxCounterpartyRule.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, counterpartyKey: key } });
     return;
@@ -918,6 +926,7 @@ export interface LoadedPayments {
  * through them.
  */
 export async function loadPayments(db: PrismaClient | Prisma.TransactionClient, workspaceId: string): Promise<LoadedPayments> {
+  await ensureMerchantKeys(db);
   const [accounts, stored, rules, elsewhere, settings, verdictRows] = await Promise.all([
     db.taxAccount.findMany({ where: { authWorkspaceId: workspaceId }, include: { batches: { orderBy: { createdAt: 'desc' } } }, orderBy: { label: 'asc' } }),
     db.taxPayment.findMany({ where: { authWorkspaceId: workspaceId }, include: { links: { where: { authWorkspaceId: workspaceId } } }, orderBy: [{ bookingDay: 'asc' }, { createdAt: 'asc' }] }),

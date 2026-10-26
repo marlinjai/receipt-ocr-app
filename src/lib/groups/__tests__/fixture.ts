@@ -151,5 +151,7 @@ export function emptyDb(): never {
       },
     },
   );
-  return new Proxy({}, { get: () => model }) as never;
+  // The stored keys count as carried already (`ensureMerchantKeys`): an empty database has nothing to carry.
+  const keyVersion = { findUnique: async () => ({ name: 'counterparty_key', version: Number.MAX_SAFE_INTEGER }) };
+  return new Proxy({}, { get: (_target, name: string) => (name === 'taxKeyVersion' ? keyVersion : model) }) as never;
 }

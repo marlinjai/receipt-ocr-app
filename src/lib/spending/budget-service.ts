@@ -1,6 +1,7 @@
 import 'server-only';
 import type { PrismaClient } from '@prisma/client';
 import { counterpartyKey } from '@/lib/tax/payments/service';
+import { ensureMerchantKeys } from '@/lib/tax/payments/rekey';
 import { loadRoutedPayments } from '@/lib/tax/payments/routing';
 import { formatCents } from '@/lib/tax/money';
 import { SPENDING_CATEGORIES, SPENDING_CATEGORY_LABELS, isSpendingCategory } from './categories';
@@ -80,6 +81,7 @@ function counterpartiesOf(payments: ReturnType<typeof classifyPayment>[]): strin
  * A counterparty budget is keyed by the counterparty's name as the payments show it.
  */
 export async function saveBudget(db: PrismaClient, ctx: NotifyContext, raw: unknown): Promise<void> {
+  await ensureMerchantKeys(db);
   const input = (raw ?? {}) as { scope?: unknown; key?: unknown; label?: unknown; limitCents?: unknown; reset?: unknown };
   if (input.scope !== 'category' && input.scope !== 'vendor') throw new BudgetServiceError('invalid_scope');
   let key: string;

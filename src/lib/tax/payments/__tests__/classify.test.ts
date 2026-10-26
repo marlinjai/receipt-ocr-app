@@ -28,8 +28,10 @@ const evidence = (o: Partial<CounterpartyEvidence> = {}): CounterpartyEvidence =
   matchedPayments: 0,
   receipts: { business: 0, private: 0, mixed: 0, categories: [] },
   invoicePayments: 0,
+  incomingPayments: 0,
   filedYears: [],
   openYearPayments: 3,
+  filedBusinessReceipts: 0,
   ...o,
 });
 
@@ -116,8 +118,10 @@ describe("the company's own data", () => {
   });
 
   it('money in for own invoices makes a counterparty business, unless money also went out to it', () => {
-    expect(evidenceVerdict(evidence({ outCents: 0, inCents: 1_088_200, invoicePayments: 4 }))).toMatchObject({ treatment: 'business', confidence: 'certain', reason: 'Die 4 Eingänge bezahlen eigene Rechnungen.' });
-    expect(evidenceVerdict(evidence({ outCents: 34_200, inCents: 1_088_200, invoicePayments: 4 }))).toBeNull();
+    expect(evidenceVerdict(evidence({ outCents: 0, inCents: 1_088_200, invoicePayments: 4, incomingPayments: 4 }))).toMatchObject({ treatment: 'business', confidence: 'certain', reason: 'Die 4 Eingänge bezahlen eigene Rechnungen.' });
+    // Money in beside the invoices may be something else: only a proposal.
+    expect(evidenceVerdict(evidence({ outCents: 0, inCents: 1_100_000, invoicePayments: 4, incomingPayments: 6 }))).toMatchObject({ treatment: 'business', confidence: 'likely', reason: '4 von 6 Eingängen bezahlen eigene Rechnungen.' });
+    expect(evidenceVerdict(evidence({ outCents: 34_200, inCents: 1_088_200, invoicePayments: 4, incomingPayments: 4 }))).toBeNull();
   });
 
   it('a filed year decides what it did not claim: private, never against a receipt or money in', () => {
@@ -128,12 +132,17 @@ describe("the company's own data", () => {
     expect(evidenceVerdict({ ...filed, openYearPayments: 2 })).toBeNull();
     // Money came in: never made private by a rule that only knows what was not claimed.
     expect(evidenceVerdict({ ...filed, inCents: 5_000 })).toBeNull();
+    // A business receipt of the vendor in the filed year that matching missed (another currency, a far day): nothing decided.
+    expect(evidenceVerdict({ ...filed, filedBusinessReceipts: 1 })).toBeNull();
     // A business receipt among few payments is only a hint, and the filed year does not overrule it.
     expect(evidenceVerdict({ ...filed, paymentCount: 9, linkedPayments: 1, receipts: { business: 1, private: 0, mixed: 0, categories: [] } })).toMatchObject({ treatment: 'business', confidence: 'likely' });
   });
 
   it('the model is told what the filed returns say', () => {
-    expect(toModelCounterparty(evidence({ filedYears: [2025], openYearPayments: 2 }), 'c1').filedReturns).toBe('2025 filed; not claimed as a business expense there; 2 payments in open years');
+    expect(toModelCounterparty(evidence({ filedYears: [2025], openYearPayments: 2 }), 'c1').filedReturns).toBe('2025 filed; no business receipt of it found in those years; 2 payments in open years');
+    // Only receipts of the filed years count there, not a business receipt linked in an open year.
+    expect(toModelCounterparty(evidence({ filedYears: [2025], openYearPayments: 2, receipts: { business: 1, private: 0, mixed: 0, categories: [] } }), 'c1').filedReturns).toBe('2025 filed; no business receipt of it found in those years; 2 payments in open years');
+    expect(toModelCounterparty(evidence({ filedYears: [2025], filedBusinessReceipts: 2 }), 'c1').filedReturns).toMatch(/^2025 filed; 2 business or split receipts of it in those years/);
   });
 
   it('the fingerprint follows the linked receipts, not the number of payments', () => {
@@ -163,6 +172,10 @@ describe('receipts that pay a payment without a link', () => {
       ctx([receipt('r12', '2024-12-16'), receipt('r01', '2025-01-22'), receipt('r02', '2025-02-19'), receipt('r11', '2024-11-18')]),
     );
     expect(Object.fromEntries(pairs)).toEqual({ p1: 'r12', p2: 'r01', p3: 'r02' });
+  });
+
+  it('a tie blocks both sides, also from a worse candidate later', () => {
+    expect(pairReceipts([pay('p1', '2025-01-10')], ctx([receipt('a', '2025-01-05'), receipt('b', '2025-01-05'), receipt('c', '2024-12-20')])).size).toBe(0);
   });
 
   it('pairs nothing where two pairs are equally close and share a payment or a receipt', () => {

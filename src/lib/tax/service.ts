@@ -56,6 +56,7 @@ import {
   type PaymentRow,
   type ReceiptForLink,
 } from './payments/service';
+import { merchantName } from './payments/merchant';
 import type { PaymentKind } from './payments/types';
 import {
   RevenueInputError,
@@ -1271,7 +1272,9 @@ function buildPaymentsView(
   // whose return is filed nothing is asked any more: the return already says what
   // was business (plan 2026-10-25-filed-year-decides-counterparties, decision 5).
   const needing = inYear.filter((p) => {
-    if (filedOn !== null) return false;
+    // A person who answers a counterparty business in a filed year still sees its receipt to add (an expense the
+    // return left out, for an amended return or to leave).
+    if (filedOn !== null && !(loaded.treatmentSources.get(p.counterpartyKey) === 'person' && loaded.treatments.get(p.counterpartyKey) === 'business')) return false;
     if (free(p) === 0) return false;
     const treatment = loaded.treatments.get(p.counterpartyKey);
     // Money out to a business counterparty, and money out with no name at all
@@ -1298,7 +1301,7 @@ function buildPaymentsView(
     if (askedAlone.has(p.id)) continue;
     // Money back from a pay-later service is asked about payment by payment, not once for the service.
     if (p.kind === 'own_transfer' || p.kind === 'fee' || p.kind === 'private' || p.byRule || !p.counterpartyKey || loaded.treatments.has(p.counterpartyKey) || free(p) === 0) continue;
-    const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: p.counterparty, count: 0, outCents: 0, inCents: 0, proposal: proposalOf(p.counterpartyKey) };
+    const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: merchantName(p.counterparty), count: 0, outCents: 0, inCents: 0, proposal: proposalOf(p.counterpartyKey) };
     entry.count += 1;
     if (p.amountCents < 0) entry.outCents += -p.amountCents;
     else entry.inCents += p.amountCents;
@@ -1484,7 +1487,8 @@ function buildPaymentsView(
 
   // The name a counterparty was first seen under, looked up once for all rules.
   const labelByCounterparty = new Map<string, string>();
-  for (const p of loaded.payments) if (!labelByCounterparty.has(p.counterpartyKey)) labelByCounterparty.set(p.counterpartyKey, p.counterparty);
+  // The merchant's name, the same for every coded spelling of the shop (and the name an answer is saved under).
+  for (const p of loaded.payments) if (!labelByCounterparty.has(p.counterpartyKey)) labelByCounterparty.set(p.counterpartyKey, merchantName(p.counterparty));
   const inYearKeys = new Set(inYear.map((p) => p.counterpartyKey));
 
   return {

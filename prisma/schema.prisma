@@ -20,6 +20,7 @@ model DtTable {
   columns      DtColumn[]
   views        DtView[]
 
+  @@index([workspaceId])
   @@map("dt_tables")
 }
 
@@ -36,6 +37,7 @@ model DtColumn {
   createdAt DateTime @default(now()) @map("created_at")
   table     DtTable  @relation(fields: [tableId], references: [id], onDelete: Cascade)
 
+  @@index([tableId])
   @@map("dt_columns")
 }
 
@@ -46,6 +48,7 @@ model SelectOption {
   color    String?
   position Int
 
+  @@index([columnId])
   @@map("select_options")
 }
 
@@ -82,6 +85,7 @@ model DtFile {
   position     Int    @default(0)
   metadata     Json?
 
+  @@index([rowId])
   @@map("dt_files")
 }
 
@@ -97,6 +101,7 @@ model DtView {
   updatedAt DateTime @updatedAt @map("updated_at")
   table     DtTable  @relation(fields: [tableId], references: [id], onDelete: Cascade)
 
+  @@index([tableId])
   @@map("dt_views")
 }
 

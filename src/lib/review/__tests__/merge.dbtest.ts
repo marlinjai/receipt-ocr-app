@@ -77,7 +77,7 @@ describe('forward: the same invoice or the same file is one receipt', () => {
 
     const { merged } = await mergeDuplicates(db, ctx);
     // The photo has the payment: it stays, whatever the PDF has more of.
-    expect(merged.filter((m) => [photo, pdf].includes(m.rowId))).toEqual([{ rowId: pdf, keptRowId: photo, reason: 'same_invoice' }]);
+    expect(merged.filter((m) => [photo, pdf].includes(m.rowId))).toEqual([{ rowId: pdf, keptRowId: photo, reason: 'same_invoice', fileAdded: true }]);
     expect(await archived(pdf)).toBe(true);
     expect(await archived(photo)).toBe(false);
     // Its file is on the kept receipt too, not "ocr-upload" so a retake never swaps it; the archived one keeps its own.
@@ -100,7 +100,7 @@ describe('forward: the same invoice or the same file is one receipt', () => {
     await linkPayment(kept);
     const moved = await linkPayment(copy);
     const { merged } = await mergeDuplicates(db, ctx, { only: [copy] });
-    expect(merged).toEqual([{ rowId: copy, keptRowId: kept, reason: 'same_invoice' }]);
+    expect(merged).toEqual([{ rowId: copy, keptRowId: kept, reason: 'same_invoice', fileAdded: false }]);
     expect((await db.taxPaymentLink.findUnique({ where: { id: moved } }))!.rowId).toBe(kept);
     expect((await db.receiptMerge.findUnique({ where: { rowId: copy } }))!.movedPaymentLinkIds).toEqual([moved]);
   });
@@ -112,7 +112,7 @@ describe('forward: the same invoice or the same file is one receipt', () => {
     await attach(first, hash);
     await attach(second, hash);
     const { merged } = await mergeDuplicates(db, ctx, { only: [first, second] });
-    expect(merged).toEqual([{ rowId: second, keptRowId: first, reason: 'same_file' }]);
+    expect(merged).toEqual([{ rowId: second, keptRowId: first, reason: 'same_file', fileAdded: false }]);
     // The kept receipt holds that very file already: nothing is added to it.
     expect(await filesOf(first)).toHaveLength(1);
   });
@@ -262,7 +262,7 @@ describe('re-entry: a restore is a person’s word, and a pass run again changes
     // A third copy of the same invoice still goes into the more complete of the two.
     const third = await ws.addReceipt(receipt({ Vendor: v, Rechnungsnummer: 'R-600001', Zuordnung: null, Category: null }));
     const { merged } = await mergeDuplicates(db, ctx, { only: [third] });
-    expect(merged).toEqual([{ rowId: third, keptRowId: kept, reason: 'same_invoice' }]);
+    expect(merged).toEqual([{ rowId: third, keptRowId: kept, reason: 'same_invoice', fileAdded: false }]);
     expect(await archived(copy)).toBe(false);
   });
 

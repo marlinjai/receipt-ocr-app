@@ -160,7 +160,7 @@ export function mergeIntervals(intervals: readonly Interval[]): Interval[] {
 }
 
 /** The bank sources: one bank account may be continued from one of them by another. */
-const BANK_FORMATS: readonly string[] = ['enable_banking_json', 'n26_csv', 'tomorrow_csv', 'advanzia_pdf'];
+const BANK_FORMATS: readonly string[] = ['enable_banking_json', 'n26_csv', 'tomorrow_csv'];
 
 /** One source of an account: the format of its imports and, for the bank interface, the service it reads. */
 export interface PaymentSource {

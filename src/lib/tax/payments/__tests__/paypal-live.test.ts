@@ -129,6 +129,13 @@ describe('which sources may share an account', () => {
     expect(sourcesMayShare({ format: 'klarna_csv', service: null }, paypalLive)).toBe(false);
     expect(sourcesMayShare({ format: 'klarna_csv', service: null }, { format: 'paypal_csv', service: null })).toBe(false);
   });
+
+  it('an Advanzia statement continues only another Advanzia statement, never a bank export', () => {
+    const advanzia = { format: 'advanzia_pdf', service: null };
+    expect(sourcesMayShare(advanzia, advanzia)).toBe(true);
+    expect(sourcesMayShare(advanzia, { format: 'n26_csv', service: null })).toBe(false);
+    expect(sourcesMayShare(advanzia, { format: 'enable_banking_json', service: null })).toBe(false);
+  });
 });
 
 describe('the funding rule with a live-fed PayPal wallet', () => {

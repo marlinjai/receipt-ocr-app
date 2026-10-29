@@ -25,6 +25,8 @@ import { removeEmptyGroups } from '@/lib/groups/empty';
 import { rowKind } from '@/lib/groups/service';
 import { AssignmentEditError, assignmentEditContext, followTreatment, routeAssignmentEdit, type AssignmentEditContext } from '@/lib/tax/assignment-sync';
 import { readRowLinks } from '@/lib/groups/links';
+import { INVOICE_NUMBER_COLUMN } from '@/lib/extraction/invoice-number';
+import { mergeAfterChange, restoreMergedReceipt } from '@/lib/review/merge';
 import { measurePage, timed } from '@/lib/timing';
 import {
   requireReceiptsSession,
@@ -404,7 +406,15 @@ export async function updateRow(rowId: string, edited: Record<string, CellValue>
   // A rate typed into the grid shows up in the rates text too (see
   // `lib/tax-rates.ts`). Every edit reads the columns to know whether it is
   // one; only an edit of the rate or the tax lines also reads the stored row.
-  return writeCells(adapter, tableId, await adapter.getColumns(tableId), rowId, edited, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) });
+  const columns = await adapter.getColumns(tableId);
+  const ctx = { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) };
+  const written = await writeCells(adapter, tableId, columns, rowId, edited, ctx);
+  // A corrected invoice number or vendor can make the receipt one that is there already, or end that: the
+  // automatic pass decides at once (plan 2026-10-29-invoice-number-duplicates). Archived into another one, the row says so.
+  if (columns.some((c) => (c.name === INVOICE_NUMBER_COLUMN || c.name === 'Vendor') && c.id in edited)) {
+    if ((await mergeAfterChange(prisma, ctx, [rowId])).has(rowId)) return { ...written, archived: true };
+  }
+  return written;
 }
 
 /**
@@ -737,7 +747,11 @@ export async function archiveRow(rowId: string): Promise<void> {
 
 export async function unarchiveRow(rowId: string): Promise<void> {
   const { session, workspaceId } = await requireRowAccess(rowId, 'receipts.row.write');
-  await getAdapter().unarchiveRow(rowId);
+  // A receipt the app archived as a duplicate comes back the way a restore brings it (its moved links, the pair
+  // recorded as different), so the next pass does not archive it again.
+  const merged = await prisma.receiptMerge.findFirst({ where: { rowId, authWorkspaceId: workspaceId }, select: { rowId: true } });
+  if (merged) await restoreMergedReceipt(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, rowId);
+  else await getAdapter().unarchiveRow(rowId);
   // While archived the receipt was out of every rule change: its cells follow what applies now.
   await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [rowId] });
 }

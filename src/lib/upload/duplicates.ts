@@ -4,6 +4,7 @@ import type { PrismaClient } from '@prisma/client';
 import { isoDay } from '@/lib/meals/record';
 import { RECEIPTS_TABLE_NAME } from '@/lib/receipts-table';
 import { isGroupRow } from '@/lib/receipts-kind';
+import { INVOICE_NUMBER_COLUMN, invoiceNumberKey } from '@/lib/extraction/invoice-number';
 
 /**
  * Duplicate detection for uploads, scoped to one workspace.
@@ -17,7 +18,10 @@ import { isGroupRow } from '@/lib/receipts-kind';
  *    is a deliberate way to hold the same file twice, so no uniqueness
  *    constraint backs it.
  *  - the same RECEIPT photographed twice has a different hash, so after text
- *    recognition a soft check on vendor, date and total can only warn.
+ *    recognition a soft check on vendor, date and total can only warn. It
+ *    warns only where one of the two has no invoice number: the same number is
+ *    the same receipt and never saved twice, two different numbers are two
+ *    invoices (plan docs/plans/2026-10-29-invoice-number-duplicates.md).
  */
 
 export interface ExistingReceipt {
@@ -115,6 +119,8 @@ export interface ReceiptIdentity {
   /** Any date form the Date cell can hold. */
   date: string | null;
   gross: number | null;
+  /** The invoice number as read; a candidate that has one too is never a look-alike. */
+  invoiceNumber?: string | null;
 }
 
 /**
@@ -137,6 +143,8 @@ export async function findSimilarReceipt(
   const vendorCol = col('Vendor');
   const grossCol = col('Gross');
   if (!dateCol || !vendorCol || !grossCol) return null;
+  const numberCol = col(INVOICE_NUMBER_COLUMN);
+  const numbered = invoiceNumberKey(identity.invoiceNumber) !== null;
 
   const cents = Math.round(identity.gross * 100);
   let offset = 0;
@@ -164,6 +172,8 @@ export async function findSimilarReceipt(
       if (typeof rowVendor !== 'string' || rowVendor.trim().toLocaleLowerCase('de-DE') !== vendor) continue;
       const rowGross = Number(row.cells[grossCol.id]);
       if (!Number.isFinite(rowGross) || Math.round(rowGross * 100) !== cents) continue;
+      // Both numbered: the numbers decide, nobody is asked.
+      if (numbered && numberCol && invoiceNumberKey(row.cells[numberCol.id]) !== null) continue;
       return { rowId: row.id, name: rowName(row.cells, ctx.columns) };
     }
     if (!page.hasMore || page.items.length === 0) break;

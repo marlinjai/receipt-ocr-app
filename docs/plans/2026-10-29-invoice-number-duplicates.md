@@ -62,10 +62,11 @@ till receipts often print none.
    purchase.
 9. **Only a number the document labels as its own invoice or receipt number is read**: Rechnungsnummer
    and its spellings (Rechnungs-Nr., Rechnung Nr., Re.-Nr.), Invoice number / No. / #, Receipt number
-   / #, Belegnummer, Quittungsnummer, Facture, Fattura. Order, customer, contract, transaction and
-   till numbers (Bestellnummer, Kundennummer, Bon-Nr., Trans.-Nr.) are never taken: an order can have
-   several invoices, and till numbers reset. A text that labels two different numbers of the same kind
-   gives none.
+   / # (as online services print it), Facture, Fattura; on a credit note only its own Gutschriftsnummer.
+   Order, customer, contract, transaction and till numbers (Bestellnummer, Kundennummer, Bon-Nr.,
+   Beleg-Nr., Trans.-Nr.) are never taken: an order can have several invoices, and a till's numbers
+   repeat across its registers and stores. A text that labels two different numbers of the same kind
+   gives none, and a label preceded by "zu", "auf", "Storno" or "for" names another document.
 10. **A credit note has its own number, never the number of the invoice it corrects**, and a receipt
    with a negative total is never the same invoice as one with a positive total (a credit note's text
    names its invoice's number).

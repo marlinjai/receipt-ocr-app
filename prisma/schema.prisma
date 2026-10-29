@@ -913,11 +913,42 @@ model ReceiptReview {
   // The total the reader read when it recorded `flags`, in cents. A stored
   // total that differs from it was corrected since: a doubt about the total ends.
   readGrossCents  Int?      @map("read_gross_cents")
+  // When the invoice number backfill looked at the receipt's stored text
+  // (src/lib/review/invoice-number-backfill.ts): a receipt looked at is not
+  // read again, so a second run reads nothing and a number a person removed
+  // is not filled back.
+  invoiceNumberReadAt DateTime? @map("invoice_number_read_at")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
   @@index([authWorkspaceId])
   @@map("receipt_reviews")
+}
+
+// A receipt the app archived because it is the same receipt as another one
+// (plan docs/plans/2026-10-29-invoice-number-duplicates.md): the same file, or
+// the same invoice number from the same vendor. `rowId` is the archived
+// receipt, `keptRowId` the one it went into. What the merge changed is kept
+// so a restore undoes exactly that: the payment links it moved to the kept
+// receipt and the file references it added there. `rowId` and `keptRowId`
+// have no foreign key, as meal_guests.row_id; the row delete paths remove the
+// record in code.
+model ReceiptMerge {
+  rowId                String   @id @map("row_id")
+  authWorkspaceId      String   @map("auth_workspace_id")
+  authTenantId         String?  @map("auth_tenant_id")
+  keptRowId            String   @map("kept_row_id")
+  // 'same_file' | 'same_invoice'
+  reason               String
+  // The number as the archived receipt printed it, for the kept receipt's view.
+  invoiceNumber        String?  @map("invoice_number")
+  movedPaymentLinkIds  String[] @default([]) @map("moved_payment_link_ids")
+  addedFileRefIds      String[] @default([]) @map("added_file_ref_ids")
+  mergedAt             DateTime @default(now()) @map("merged_at")
+
+  @@index([authWorkspaceId])
+  @@index([keptRowId])
+  @@map("receipt_merges")
 }
 
 // ── Private spending ─────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ import { parseRotation, type Rotation } from '@/lib/meals/viewer-state';
 import { saveReceiptRotation } from '@/app/app/meals/actions';
 import MealPanelSection from './meals/MealPanelSection';
 import ReceiptLinesSection from './ReceiptLinesSection';
+import ReceiptMergedSection from './ReceiptMergedSection';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 import type { RereadNote } from '@/lib/review/reread';
 
@@ -582,6 +583,9 @@ export default function ReceiptDetailPanel({
 
           {/* Every printed line, with its kind of purchase: loaded afresh when the receipt was saved or read again. */}
           <ReceiptLinesSection rowId={row.id} version={String(row.updatedAt)} />
+
+          {/* The receipts the app archived into this one as the same receipt, each with "Wiederherstellen". */}
+          <ReceiptMergedSection rowId={row.id} version={String(row.updatedAt)} onRestored={onMealSaved} />
 
           {showMealSection && (
             // Keyed on the category: after a reclassification the section reloads.

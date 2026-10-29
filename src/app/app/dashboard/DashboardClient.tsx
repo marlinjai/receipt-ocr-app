@@ -23,6 +23,7 @@ import { MIN_TEXT_SEARCH_LENGTH, listColumns } from '@/lib/receipt-text';
 import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
 import FxRecomputePanel from './FxRecomputePanel';
 import LinesBackfillPanel from './LinesBackfillPanel';
+import InvoiceNumbersPanel from './InvoiceNumbersPanel';
 import DashboardPhoneActions from './DashboardPhoneActions';
 import ReceiptPhoneList from './ReceiptPhoneList';
 import { AiIcon, ContactsIcon, ExportIcon, FinanceIcon, ImportIcon, MealsIcon, OverviewIcon } from './dashboard-icons';
@@ -739,6 +740,12 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
             </button>
             <FxRecomputePanel />
             <LinesBackfillPanel />
+            <InvoiceNumbersPanel
+              onMerged={() => {
+                void reload();
+                void reloadReview();
+              }}
+            />
             <Link
               href="/app/import"
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"

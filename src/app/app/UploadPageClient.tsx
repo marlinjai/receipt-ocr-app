@@ -134,6 +134,7 @@ function UploadPageContent({ targets, initialWorkspaceId }: UploadPageProps) {
                 onRetake={retakeCapture}
                 onDiscardRow={deleteRow}
                 notice={notice}
+                activeWorkspaceId={initialWorkspaceId}
               />
             </div>
 
@@ -143,6 +144,7 @@ function UploadPageContent({ targets, initialWorkspaceId }: UploadPageProps) {
               onProcessFile={processFile}
               onAllComplete={handleAllComplete}
               onDiscardRow={deleteRow}
+              activeWorkspaceId={initialWorkspaceId}
             />
           </>
         ) : (

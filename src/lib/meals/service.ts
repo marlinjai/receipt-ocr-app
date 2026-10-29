@@ -531,6 +531,9 @@ export async function deleteReceiptRows(
       await db.taxReverseCharge.deleteMany({ where: { authWorkspaceId: mealCtx.workspaceId, scope: 'row', subject: rowId } });
       // The review state hangs off the row id the same way (review/service imports this module).
       await db.receiptReview.deleteMany({ where: { rowId } });
+      // A receipt archived as a duplicate takes its merge record with it. Copies archived INTO this one keep
+      // theirs: they stay archived (they are the receipt just deleted) and no receipt view offers them any more.
+      await db.receiptMerge.deleteMany({ where: { rowId } });
       // A credit note's reference to its invoice goes with it; one pointing at this row forgets the row, keeps the number.
       await db.receiptReference.deleteMany({ where: { rowId } });
       await db.receiptReference.updateMany({ where: { referencedRowId: rowId }, data: { referencedRowId: null } });

@@ -123,6 +123,8 @@ export interface ReceiptClassification {
   date: string | null;
   /** ISO 4217 code of the currency the total is in. */
   currency: string | null;
+  /** The document's own invoice number as printed. A second opinion: the caller takes it only where the text carries it. */
+  invoiceNumber: string | null;
   /** True when the model says the document states no total to pay at all. */
   noTotal: boolean;
   /** How many separate invoices or receipts the file holds, as the model counts them; null when it does not say. */
@@ -162,6 +164,13 @@ function currencyCode(value: unknown): string | null {
 /** A count of documents as the model was asked to give it: a whole number from 1. Null for anything else. */
 function documentCount(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : null;
+}
+
+/** An invoice number as the model gave it: a short string with a digit. Anything else is null. */
+function invoiceNumberOf(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/\s+/g, ' ').trim();
+  return cleaned.length >= 3 && cleaned.length <= 60 && /\d/.test(cleaned) ? cleaned : null;
 }
 
 function vendorName(value: unknown): string | null {
@@ -220,6 +229,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
       net: amount(parsed.net),
       date: invoiceDay(parsed.date),
       currency: currencyCode(parsed.currency),
+      invoiceNumber: invoiceNumberOf(parsed.invoiceNumber),
       // Only an explicit "no total" counts, and never next to a total.
       noTotal: parsed.totalStated === false && gross === null,
       documents: documentCount(parsed.documents),
@@ -231,7 +241,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
     return {
       item: null, category: null, konto: null, zuordnung: null, taxRate: null, confidence: 0,
       reasoning: 'Failed to parse classification response',
-      vendor: null, gross: null, net: null, date: null, currency: null, noTotal: false, documents: null,
+      vendor: null, gross: null, net: null, date: null, currency: null, invoiceNumber: null, noTotal: false, documents: null,
       meal: parseMealClassification(null),
       items: null,
     };
@@ -304,6 +314,7 @@ Classify the receipt and read these facts from it:
 5a. **net**: the amount before tax as a number, exactly as printed. Null when the document prints none. Never compute it.
 6. **currency**: the ISO 4217 code of the currency the total is in ("EUR", "USD", "GBP").
 7. **date**: the invoice date (the day the document was issued; for a till receipt the day of the purchase) as YYYY-MM-DD. Never the due date, a renewal or expiry date, a delivery date or the start or end of the period billed. Null when the document prints no such date.
+7a. **invoiceNumber**: ${INVOICE_NUMBER_RULE}
 8. **category**: one of: ${input.categoryNames.join(', ')}
 9. **konto**: the SKR03 account number (mapped from category):
 ${input.categoryNames.map((c) => `   ${c} → ${input.categoryToKonto[c]}`).join('\n')}
@@ -325,8 +336,12 @@ For every receipt, also give:
 ${input.userRules || ''}
 
 Respond with ONLY a JSON object (no markdown, no explanation):
-{ "item": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "documents": 1, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "...", "items": [{ "text": "...", "quantity": 1, "unitPrice": 0.00, "gross": 0.00, "taxRate": 19, "kind": "..." }] }`;
+{ "item": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "documents": 1, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "invoiceNumber": null, "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "...", "items": [{ "text": "...", "quantity": 1, "unitPrice": 0.00, "gross": 0.00, "taxRate": 19, "kind": "..." }] }`;
 }
+
+/** The document's own number: it decides whether two receipts are one invoice (plan 2026-10-29-invoice-number-duplicates). */
+export const INVOICE_NUMBER_RULE =
+  'the document\'s own invoice number exactly as printed, without its label ("Rechnungsnummer", "Rechnungs-Nr.", "Invoice number", "Invoice #", the "Receipt #" of an online service). On a credit note its own number, never the number of the invoice it corrects. Never an order, customer, contract, transaction, table, till ("Bon-Nr.", "Beleg-Nr.") or tax number. Null when the document prints none.';
 
 /** Told only where the vendor's earlier receipts name what was bought; the list itself is in the user message. */
 export const KNOWN_ITEMS_RULE =

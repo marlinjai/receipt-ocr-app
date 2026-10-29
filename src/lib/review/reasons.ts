@@ -27,7 +27,7 @@ export type ReviewReason =
   | 'assignment_missing'
   /** A tax rate outside anything a receipt can carry, or a net amount above the total. */
   | 'tax_implausible'
-  /** Another receipt of the same day and total from the same vendor. */
+  /** Another receipt of the same day and total from the same vendor, where one of the two has no invoice number. */
   | 'possible_duplicate'
   /** The current reader reads the stored text differently than what is stored. */
   | 'reading_differs'
@@ -55,6 +55,11 @@ export interface ReviewSnapshot {
   hasFile: boolean;
   /** Content hashes of the attached files, where known. */
   fileHashes: string[];
+  /**
+   * The compared form of the receipt's invoice number (`invoiceNumberKey`), null when it has none or only a
+   * weak one. Left out where the caller does not know it: the receipt then counts as one without a number.
+   */
+  invoiceKey?: string | null;
   /**
    * The assignment ("Zuordnung") as stored, null when its cell is empty.
    * Left out when the table has no such column: there is nothing to answer.
@@ -106,17 +111,47 @@ export function derivedReasons(s: ReviewSnapshot): ReviewReason[] {
 const vendorKey = (vendor: string) => vendor.toLocaleLowerCase('de-DE').replace(/[^\p{L}\p{N}]+/gu, '');
 
 /** Two vendor readings that can be the same business: equal, one inside the other, or one of them missing. */
-function sameVendor(a: string, b: string): boolean {
+export function sameVendor(a: string, b: string): boolean {
   const x = vendorKey(a);
   const y = vendorKey(b);
   if (!x || !y) return true;
   return x === y || (x.length >= 4 && y.includes(x)) || (y.length >= 4 && x.includes(y));
 }
 
+type InvoiceFacts = Pick<ReviewSnapshot, 'vendor' | 'gross' | 'invoiceKey'>;
+
 /**
- * For every receipt, the other receipts that look like the same purchase:
- * the very same file, or the same day and total from a vendor that can be the
- * same. `distinct` holds the pairs a person has already said are different.
+ * True when two receipts are the same invoice (plan docs/plans/2026-10-29-invoice-number-duplicates.md,
+ * decision 2): both carry an invoice number, the numbers are equal in their compared form, and the vendors
+ * can be the same business. A credit note is never the same invoice as the invoice it corrects (its text
+ * names that invoice's number): totals of opposite sign are two documents.
+ */
+export function sameInvoice(a: InvoiceFacts, b: InvoiceFacts): boolean {
+  if (!a.invoiceKey || !b.invoiceKey || a.invoiceKey !== b.invoiceKey) return false;
+  if (a.gross !== null && b.gross !== null && a.gross !== 0 && b.gross !== 0 && Math.sign(a.gross) !== Math.sign(b.gross)) return false;
+  return sameVendor(a.vendor, b.vendor);
+}
+
+/** True when both receipts hold a file with the same content: identical file, same receipt (decision 5). */
+export function sameFile(a: Pick<ReviewSnapshot, 'fileHashes'>, b: Pick<ReviewSnapshot, 'fileHashes'>): boolean {
+  return a.fileHashes.some((hash) => b.fileHashes.includes(hash));
+}
+
+export type AutomaticDuplicate = 'same_file' | 'same_invoice';
+
+/** Why two receipts are one without anybody being asked; null when they are not, or a person said they are different. */
+export function automaticDuplicate(a: ReviewSnapshot, b: ReviewSnapshot, distinct: ReadonlyMap<string, ReadonlySet<string>>): AutomaticDuplicate | null {
+  if (a.rowId === b.rowId || distinct.get(a.rowId)?.has(b.rowId) || distinct.get(b.rowId)?.has(a.rowId)) return null;
+  if (sameFile(a, b)) return 'same_file';
+  return sameInvoice(a, b) ? 'same_invoice' : null;
+}
+
+/**
+ * For every receipt, the other receipts that MAY be the same purchase and need a person's word: the same
+ * day and total from a vendor that can be the same, where at least one of the two has no invoice number.
+ * Never a pair the app settles itself: the same file or the same invoice is merged automatically
+ * (`src/lib/review/merge.ts`), and two different invoice numbers are two invoices. `distinct` holds the
+ * pairs a person has already said are different.
  */
 export function lookAlikes(
   snapshots: ReviewSnapshot[],
@@ -129,20 +164,24 @@ export function lookAlikes(
     if (!list.includes(b)) out.set(a, [...list, b]);
   };
 
-  const byHash = new Map<string, string[]>();
   const byDayAndTotal = new Map<string, ReviewSnapshot[]>();
   for (const s of snapshots) {
-    for (const hash of s.fileHashes) byHash.set(hash, [...(byHash.get(hash) ?? []), s.rowId]);
     if (s.date && s.gross !== null && s.gross !== 0) {
       const key = `${s.date}|${Math.round(s.gross * 100)}|${s.currency}`;
       byDayAndTotal.set(key, [...(byDayAndTotal.get(key) ?? []), s]);
     }
   }
-  for (const rowIds of byHash.values()) {
-    for (const a of rowIds) for (const b of rowIds) add(a, b);
-  }
   for (const group of byDayAndTotal.values()) {
-    for (const a of group) for (const b of group) if (a !== b && sameVendor(a.vendor, b.vendor)) add(a.rowId, b.rowId);
+    for (const a of group) {
+      for (const b of group) {
+        if (a === b || !sameVendor(a.vendor, b.vendor)) continue;
+        // Both numbered: the numbers decide, never a person (decisions 2 and 3).
+        if (a.invoiceKey && b.invoiceKey) continue;
+        // The same file is merged by the app, not asked about (decision 5).
+        if (sameFile(a, b)) continue;
+        add(a.rowId, b.rowId);
+      }
+    }
   }
   return out;
 }
@@ -242,7 +281,7 @@ export const REASON_TEXT: Record<ReviewReason, string> = {
   total_conflict: 'Zwei Lesarten des Gesamtbetrags widersprechen sich.',
   date_conflict: 'Das Rechnungsdatum ist nicht gesichert: Zwei Lesarten widersprechen sich, oder das Datum steht nicht im erkannten Text.',
   category_doubt: 'Sieht nach einer Bewirtung aus, wurde aber anders eingeordnet.',
-  possible_duplicate: 'Mögliches Duplikat: gleicher Tag, gleicher Betrag.',
+  possible_duplicate: 'Mögliches Duplikat: gleicher Tag, gleicher Betrag, und einem der beiden Belege fehlt die Rechnungsnummer. Steht sie auf dem Beleg, genügt es, sie einzutragen: Belege mit gleicher Nummer führt die App selbst zusammen.',
   reading_differs: 'Der Beleg wurde mit einem älteren Leser erfasst. Die neue Lesart weicht ab.',
   lines_differ: 'Die Positionen ergeben nicht den Gesamtbetrag: Betrag prüfen, oder den Beleg mit „Seite neu lesen“ neu lesen. Gezählt wird der Gesamtbetrag.',
 };

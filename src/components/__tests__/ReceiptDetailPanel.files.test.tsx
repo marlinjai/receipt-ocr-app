@@ -13,6 +13,7 @@ vi.mock('@/lib/meals/pdf-render', () => ({ renderPdfPage: vi.fn(() => new Promis
 vi.mock('@/app/app/meals/actions', () => ({ saveReceiptRotation: vi.fn() }));
 vi.mock('../meals/MealPanelSection', () => ({ default: () => null }));
 vi.mock('../ReceiptLinesSection', () => ({ default: () => null }));
+vi.mock('../ReceiptMergedSection', () => ({ default: () => null }));
 
 import ReceiptDetailPanel from '../ReceiptDetailPanel';
 import { ACCEPTED_RECEIPT_TYPES } from '@/lib/presigned-file-adapter';

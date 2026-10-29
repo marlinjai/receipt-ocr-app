@@ -59,17 +59,36 @@ describe('runUploadPipeline', () => {
   it('the same file again: reported as a duplicate and NOTHING is uploaded', async () => {
     const d = deps({ checkDuplicate: vi.fn(async () => ({ existing: { rowId: 'row-0', name: 'Mittagessen Testlokal' }, elsewhere: [] })) });
     const outcome = await runUploadPipeline(file, d);
-    expect(outcome).toEqual({ kind: 'duplicate', existing: { rowId: 'row-0', name: 'Mittagessen Testlokal' } });
+    expect(outcome).toEqual({ kind: 'duplicate', existing: { rowId: 'row-0', name: 'Mittagessen Testlokal' }, reason: 'same_file', invoiceNumber: null, fileAdded: false });
     expect(d.upload).not.toHaveBeenCalled();
     expect(d.recognize).not.toHaveBeenCalled();
     expect(d.save).not.toHaveBeenCalled();
   });
 
-  it('"upload anyway" (backtrack after the duplicate stop) uploads, and still reports the copy in another company', async () => {
+  it('the same file is never uploaded a second time: there is no "upload anyway" (the same file is the same receipt)', async () => {
     const check = vi.fn(async () => ({ existing: { rowId: 'row-0', name: 'x' }, elsewhere: ['Firma Zwei'] }));
     const d = deps({ checkDuplicate: check });
-    const outcome = await runUploadPipeline(file, d, { allowDuplicate: true });
-    expect(outcome).toEqual({ ...DONE, elsewhere: ['Firma Zwei'] });
+    const outcome = await runUploadPipeline(file, d);
+    expect(outcome.kind).toBe('duplicate');
+    expect(d.upload).not.toHaveBeenCalled();
+    expect(d.save).not.toHaveBeenCalled();
+  });
+
+  it('the same invoice as a receipt that is there: the server kept no second receipt, the outcome says so with its file added', async () => {
+    const d = deps({
+      save: vi.fn(async () => ({
+        ...SAVED,
+        rowId: 'row-0',
+        alreadyThere: { rowId: 'row-0', name: 'Hosting März', reason: 'same_invoice' as const, invoiceNumber: 'RE-2026-0042', fileAdded: true },
+      })),
+    });
+    expect(await runUploadPipeline(file, d)).toEqual({
+      kind: 'duplicate',
+      existing: { rowId: 'row-0', name: 'Hosting März' },
+      reason: 'same_invoice',
+      invoiceNumber: 'RE-2026-0042',
+      fileAdded: true,
+    });
     expect(d.save).toHaveBeenCalledTimes(1);
   });
 

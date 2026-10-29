@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REASON_TEXT, derivedReasons, isConfirmable, lookAlikes, paymentsCoverTotal, reviewReasons, totalSettled, type ReviewSnapshot } from '../reasons';
+import { REASON_TEXT, automaticDuplicate, derivedReasons, isConfirmable, lookAlikes, paymentsCoverTotal, reviewReasons, sameInvoice, totalSettled, type ReviewSnapshot } from '../reasons';
 
 const receipt = (overrides: Partial<ReviewSnapshot> = {}): ReviewSnapshot => ({
   rowId: 'r1',
@@ -127,10 +127,23 @@ describe('lookAlikes', () => {
     expect(lookAlikes([a, b], none).size).toBe(0);
   });
 
-  it('the same file is a duplicate whatever the fields say', () => {
-    const a = receipt({ rowId: 'a', fileHashes: ['h1'], date: '2025-01-01', gross: 1 });
-    const b = receipt({ rowId: 'b', fileHashes: ['h1'], date: '2025-02-02', gross: 2 });
+  it('the same file is never a question: the app merges it (decision 5)', () => {
+    const a = receipt({ rowId: 'a', fileHashes: ['h1'] });
+    const b = receipt({ rowId: 'b', fileHashes: ['h1'] });
+    expect(lookAlikes([a, b], none).size).toBe(0);
+  });
+
+  it('two numbered receipts are never a question, whether the numbers agree or not (decisions 2 and 3)', () => {
+    const a = receipt({ rowId: 'a', invoiceKey: 'RE20260042' });
+    expect(lookAlikes([a, receipt({ rowId: 'b', invoiceKey: 'RE20260042' })], none).size).toBe(0);
+    expect(lookAlikes([a, receipt({ rowId: 'b', invoiceKey: 'RE20260043' })], none).size).toBe(0);
+  });
+
+  it('a look-alike where one of the two has no number stays a question (decision 4)', () => {
+    const a = receipt({ rowId: 'a', invoiceKey: 'RE20260042' });
+    const b = receipt({ rowId: 'b', invoiceKey: null });
     expect(lookAlikes([a, b], none).get('a')).toEqual(['b']);
+    expect(lookAlikes([receipt({ rowId: 'a' }), receipt({ rowId: 'b' })], none).get('b')).toEqual(['a']);
   });
 
   it('a pair a person settled stays settled, from either side', () => {
@@ -206,5 +219,47 @@ describe('lines that do not add up to the total', () => {
     expect(reviewReasons(receipt({ linesDiffer: false }), stored, [])).toEqual([]);
     expect(isConfirmable('lines_differ')).toBe(true);
     expect(REASON_TEXT.lines_differ).toContain('Gesamtbetrag');
+  });
+});
+
+describe('sameInvoice and automaticDuplicate', () => {
+  const none = new Map<string, Set<string>>();
+
+  it('the same number from a vendor that can be the same is the same invoice, whatever day and total the copies were read with', () => {
+    const a = receipt({ rowId: 'a', vendor: 'A2 Hosting', invoiceKey: 'INV998877', date: '2025-01-01' });
+    const b = receipt({ rowId: 'b', vendor: 'A2 Hosting LLC', invoiceKey: 'INV998877', date: '2025-01-03', gross: 118 });
+    expect(sameInvoice(a, b)).toBe(true);
+    expect(automaticDuplicate(a, b, none)).toBe('same_invoice');
+  });
+
+  it('another vendor with the same number is another invoice', () => {
+    const a = receipt({ rowId: 'a', vendor: 'Hosting Beispiel', invoiceKey: 'R100200' });
+    const b = receipt({ rowId: 'b', vendor: 'Buchhandlung Muster', invoiceKey: 'R100200' });
+    expect(sameInvoice(a, b)).toBe(false);
+  });
+
+  it('a credit note is never the same invoice as the invoice it corrects', () => {
+    const invoice = receipt({ rowId: 'a', invoiceKey: 'R100200', gross: 119 });
+    const credit = receipt({ rowId: 'b', invoiceKey: 'R100200', gross: -119 });
+    expect(sameInvoice(invoice, credit)).toBe(false);
+  });
+
+  it('no number on either side, or only one, is never the same invoice', () => {
+    expect(sameInvoice(receipt({ invoiceKey: null }), receipt({ invoiceKey: null }))).toBe(false);
+    expect(sameInvoice(receipt({ invoiceKey: 'R100200' }), receipt({ invoiceKey: undefined }))).toBe(false);
+  });
+
+  it('the same file is a duplicate whatever the fields and numbers say', () => {
+    const a = receipt({ rowId: 'a', fileHashes: ['h1'], invoiceKey: 'R1111', gross: 1 });
+    const b = receipt({ rowId: 'b', fileHashes: ['h1', 'h2'], invoiceKey: 'R2222', gross: 2, vendor: 'Anderer' });
+    expect(automaticDuplicate(a, b, none)).toBe('same_file');
+  });
+
+  it('a pair a person said is different is never merged, from either side', () => {
+    const a = receipt({ rowId: 'a', fileHashes: ['h1'], invoiceKey: 'R100200' });
+    const b = receipt({ rowId: 'b', fileHashes: ['h1'], invoiceKey: 'R100200' });
+    expect(automaticDuplicate(a, b, new Map([['b', new Set(['a'])]]))).toBeNull();
+    expect(automaticDuplicate(a, b, new Map([['a', new Set(['b'])]]))).toBeNull();
+    expect(automaticDuplicate(a, a, none)).toBeNull();
   });
 });

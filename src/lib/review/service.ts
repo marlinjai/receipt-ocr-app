@@ -17,6 +17,8 @@ import { getFxRate } from '@/lib/fx-rates';
 import { orderedRates, withTaxRates } from '@/lib/tax-rates';
 import { rowsWithOwnTreatment } from '@/lib/tax/service';
 import { timed } from '@/lib/timing';
+import { INVOICE_NUMBER_COLUMN, invoiceNumberKey } from '@/lib/extraction/invoice-number';
+import { markDistinct } from './merge';
 
 /**
  * The review queue of a workspace: every receipt that needs a person's eye,
@@ -111,6 +113,7 @@ function snapshotOf(
     hasText: text(cell('OCR Text')).trim().length > 0,
     hasFile: Array.isArray(files) && files.length > 0,
     fileHashes: hashes.get(row.id) ?? [],
+    invoiceKey: invoiceNumberKey(cell(INVOICE_NUMBER_COLUMN)),
     // A table without the column has nothing to answer: the field is left out.
     ...(byName.has('Zuordnung') ? { assignment: optionName('Zuordnung') } : {}),
     isMeal: category === MEAL_CATEGORY,
@@ -345,18 +348,7 @@ export async function keepBothReceipts(db: PrismaClient, ctx: ReviewContext, row
   if (rowId === otherRowId) throw new ReviewError('row_not_found');
   await requireRow(db, ctx, rowId);
   await requireRow(db, ctx, otherRowId);
-  for (const [a, b] of [
-    [rowId, otherRowId],
-    [otherRowId, rowId],
-  ]) {
-    const existing = await db.receiptReview.findUnique({ where: { rowId: a }, select: { distinctFrom: true } });
-    const distinctFrom = [...new Set([...(existing?.distinctFrom ?? []), b])];
-    await db.receiptReview.upsert({
-      where: { rowId: a },
-      create: { rowId: a, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, distinctFrom },
-      update: { distinctFrom },
-    });
-  }
+  await markDistinct(db, ctx, rowId, otherRowId);
 }
 
 /**

@@ -11,6 +11,7 @@ import { receiveBankSync } from '@/lib/tax/payments/bank/sync-receiver';
 import { dailyLinesBackfill } from '@/lib/line-items/backfill';
 import { storedInvoiceFields } from '@/lib/line-items/structured-source';
 import { readReceiptLines } from '@/lib/receipt-classifier';
+import { dailyInvoiceNumberBackfill } from '@/lib/review/invoice-number-backfill';
 
 /**
  * The daily fetch of every active bank connection of every workspace. A
@@ -42,6 +43,8 @@ export async function POST(req: NextRequest) {
       after(() => runSpendingChecksForLiveCompanies(results, (ctx) => runSpendingChecksAfterNewPayments(prisma, ctx, { today }, done)));
       // The daily part of the line backfill (plan 2026-10-26-receipt-line-items): a bounded run per company, after the answer.
       after(() => dailyLinesBackfill(prisma, readReceiptLines, { structuredOf: storedInvoiceFields }));
+      // The daily invoice numbers and the automatic duplicate pass (plan 2026-10-29-invoice-number-duplicates): no model, after the answer.
+      after(() => dailyInvoiceNumberBackfill(prisma));
       // The answer names connections and counts only, never a company.
       return results.map(({ connectionId, status, added }) => ({ connectionId, status, added }));
     },

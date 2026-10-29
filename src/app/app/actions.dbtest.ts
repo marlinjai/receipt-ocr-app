@@ -27,6 +27,9 @@ vi.mock('@/lib/receipt-classifier', async (original) => ({
   classifyReceiptText: (...a: unknown[]) => classify(...a),
 }));
 vi.mock('@/lib/fx-rates', () => ({ getFxRate: vi.fn(async () => 0.9) }));
+/** The file store: a second copy of a stored file is removed again when the receipt holds it already. */
+const deleteStored = vi.fn(async () => {});
+vi.mock('@/lib/stored-files', () => ({ deleteStoredFile: (...a: unknown[]) => deleteStored(...(a as [])), downloadStoredFile: vi.fn() }));
 vi.mock('@/lib/receipt-page-source', () => ({
   loadReceiptPage: (...a: unknown[]) => loadPage(...a),
   loadReceiptSource: async (...a: unknown[]) => ({ page: () => loadPage(...a), structured: await loadStructured(...a) }),
@@ -379,15 +382,24 @@ describe('processReceipt: the model is shown the page, and the upload never depe
     expect(new Date((await cellOf(ws, pdf.rowId, 'Date')) as string).toISOString().slice(0, 10)).toBe('2026-09-14');
     expect(await cellOf(ws, pdf.rowId, 'Vendor')).toBe('Muster Software');
     expect(pdf.reviewFlags).not.toContain('total_conflict');
-    // An XRechnung: no text was recognized, its figures as text are stored and read.
+    // The XML states its number: the receipt carries it (plan 2026-10-29-invoice-number-duplicates).
+    expect(await cellOf(ws, pdf.rowId, 'Rechnungsnummer')).toBe('BSP-2026-0042');
+    // The same invoice again, as its XRechnung, is that receipt and no second one.
+    const again = await upload(file(9100), null, {});
+    expect(again.alreadyThere).toMatchObject({ rowId: pdf.rowId, reason: 'same_invoice' });
+    // An XRechnung (in a company that does not hold it yet): no text was recognized, its figures as text are stored and read.
+    const second = await createWorkspace();
+    await use(second);
     const xml = await upload(file(91), null, {});
-    expect(await cellOf(ws, xml.rowId, 'Gross')).toBe(172.5);
-    expect(String(await cellOf(ws, xml.rowId, 'OCR Text'))).toContain('Rechnung (elektronisch)');
-    expect(await cellOf(ws, xml.rowId, 'Status')).toBe('Processed');
+    expect(await cellOf(second, xml.rowId, 'Gross')).toBe(172.5);
+    expect(String(await cellOf(second, xml.rowId, 'OCR Text'))).toContain('Rechnung (elektronisch)');
+    expect(await cellOf(second, xml.rowId, 'Status')).toBe('Processed');
     // Without a model answer, the vendor is the seller the XML names, never the heading of its text.
+    const third = await createWorkspace();
+    await use(third);
     classify.mockRejectedValue(new Error('provider down'));
     const unclassified = await upload(file(92), null, {});
-    expect(await cellOf(ws, unclassified.rowId, 'Vendor')).toBe('Muster Software GmbH');
+    expect(await cellOf(third, unclassified.rowId, 'Vendor')).toBe('Muster Software GmbH');
   });
 
   it('an electronic credit note is a negative receipt linked to the invoice it corrects', async () => {
@@ -922,5 +934,77 @@ describe('the lines of a receipt are read with it (plan 2026-10-26-receipt-line-
     classify.mockRejectedValue(new Error('provider down'));
     expect(await rereadReceipt(rowId)).toEqual({ ok: false, error: 'model_unavailable' });
     expect(await linesOf(rowId)).toHaveLength(3);
+  });
+});
+
+describe('an upload that is a receipt already there (plan 2026-10-29-invoice-number-duplicates)', () => {
+  const INVOICE = (n: string, extra = '') => `Hosting Beispiel GmbH\nRechnungsnummer: ${n}\nRechnungsdatum 03.03.2026\nSumme 119,00\n${extra}`;
+  const HOSTING = { ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4964', meal: undefined, vendor: 'Hosting Beispiel GmbH', gross: 119, date: '2026-03-03T00:00:00.000Z' };
+
+  it('forward: the number is read and stored as printed; the same invoice again makes no second receipt and its file goes to the first', async () => {
+    const fresh = await createWorkspace();
+    await use(fresh);
+    classify.mockResolvedValue(HOSTING);
+    const first = await upload(file(9001), ocr(INVOICE('RE-2026-0042')), { sha256: HASH('a') });
+    expect(first.alreadyThere ?? null).toBeNull();
+    expect(await cellOf(fresh, first.rowId, 'Rechnungsnummer')).toBe('RE-2026-0042');
+
+    // The same invoice as a PDF with the buyer's VAT number: another file, the same number.
+    const second = await upload(file(9002), ocr(INVOICE('re-2026/0042', 'USt-IdNr. Käufer DE123456789')), { sha256: HASH('b') });
+    expect(second).toMatchObject({ rowId: first.rowId, alreadyThere: { rowId: first.rowId, reason: 'same_invoice', invoiceNumber: 're-2026/0042', fileAdded: true } });
+    expect(await rowCount(fresh)).toBe(1);
+    const attached = await files(fresh, first.rowId);
+    expect(attached.map((f) => f.fileId)).toEqual([file(9001).id, file(9002).id]);
+    expect(attached[1].metadata).toMatchObject({ source: 'duplicate-upload', sha256: HASH('b') });
+  });
+
+  it('the very same file sent again past the browser check (a second tab): no second receipt, the stored copy is removed again', async () => {
+    const fresh = await createWorkspace();
+    await use(fresh);
+    classify.mockResolvedValue(HOSTING);
+    deleteStored.mockClear();
+    const first = await upload(file(9003), ocr(INVOICE('RE-2026-0100')), { sha256: HASH('c') });
+    const again = await upload(file(9004), ocr(INVOICE('RE-2026-0100')), { sha256: HASH('c') });
+    expect(again.alreadyThere).toMatchObject({ rowId: first.rowId, reason: 'same_file', fileAdded: false });
+    expect(deleteStored).toHaveBeenCalledWith(file(9004).id);
+    expect(await rowCount(fresh)).toBe(1);
+    expect(await files(fresh, first.rowId)).toHaveLength(1);
+  });
+
+  it('two invoices of the vendor with different numbers are two receipts, and not even a look-alike', async () => {
+    const fresh = await createWorkspace();
+    await use(fresh);
+    classify.mockResolvedValue(HOSTING);
+    await upload(file(9005), ocr(INVOICE('RE-2026-0201')), { sha256: HASH('d') });
+    const other = await upload(file(9006), ocr(INVOICE('RE-2026-0202')), { sha256: HASH('e') });
+    expect(other.alreadyThere ?? null).toBeNull();
+    expect(other.possibleDuplicateOf).toBeNull();
+    expect(await rowCount(fresh)).toBe(2);
+  });
+
+  it("the model's number is taken only where the text carries it; a till receipt's Bon number never", async () => {
+    const fresh = await createWorkspace();
+    await use(fresh);
+    classify.mockResolvedValue({ ...HOSTING, invoiceNumber: 'X-777777' });
+    const invented = await upload(file(9007), ocr('Hosting Beispiel GmbH\nSumme 119,00\n03.03.2026'), { sha256: HASH('f') });
+    expect(await cellOf(fresh, invented.rowId, 'Rechnungsnummer')).toBeNull();
+    classify.mockResolvedValue({ ...HOSTING, invoiceNumber: '2026-55' });
+    const carried = await upload(file(9008), ocr('Hosting Beispiel GmbH\nNr. 2026-55\nSumme 119,00\n03.03.2026'), { sha256: HASH('9') });
+    expect(await cellOf(fresh, carried.rowId, 'Rechnungsnummer')).toBe('2026-55');
+  });
+
+  it('a retake that shows the receipt is one already there: archived into the more complete one and said so', async () => {
+    const fresh = await createWorkspace();
+    await use(fresh);
+    classify.mockResolvedValue(HOSTING);
+    const kept = await upload(file(9009), ocr(INVOICE('RE-2026-0300')), { sha256: HASH('1') });
+    // A blurry photo first, read without a number; the retake reads it.
+    classify.mockResolvedValue({ ...HOSTING, gross: null, date: null });
+    const blurry = await upload(file(9010), ocr('Hosting Beispiel'), { sha256: HASH('2') });
+    expect(blurry.alreadyThere ?? null).toBeNull();
+    classify.mockResolvedValue(HOSTING);
+    const retaken = await retakeReceipt(blurry.rowId, file(9011), ocr(INVOICE('RE-2026-0300')), { sha256: HASH('3') });
+    expect(retaken).toMatchObject({ rowId: kept.rowId, alreadyThere: { rowId: kept.rowId, reason: 'same_invoice' } });
+    expect((await fresh.adapter.getRow(blurry.rowId))!.archived).toBe(true);
   });
 });

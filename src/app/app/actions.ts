@@ -46,6 +46,10 @@ import { knownItemsOfVendor } from '@/lib/receipt-known-items';
 import { ITEM_COLUMN, receiptName } from '@/lib/receipt-name';
 import { nameFromCells } from '@/lib/receipt-name-cells';
 import type { OcrResult } from '@/lib/ocr-types';
+import { INVOICE_NUMBER_COLUMN, settleInvoiceNumber } from '@/lib/extraction/invoice-number';
+import { findFileDuplicate } from '@/lib/upload/duplicates';
+import { findSameInvoice, mergeAfterChange } from '@/lib/review/merge';
+import { deleteStoredFile } from '@/lib/stored-files';
 
 const TABLE_NAME = 'Receipts';
 const CATEGORY_NAMES = Object.keys(CATEGORY_TO_KONTO);
@@ -115,8 +119,26 @@ export interface NewReceiptOptions extends ProcessReceiptOptions {
   workspaceId: string;
 }
 
-export interface ProcessReceiptResult {
+/**
+ * The receipt an upload turned out to be already (plan
+ * docs/plans/2026-10-29-invoice-number-duplicates.md, decisions 2 and 5): the
+ * same file, or the same invoice number from the same vendor. No second
+ * receipt was kept; `fileAdded` says whether the arriving file was added to
+ * the one that is there (it was not where that one holds the very same file).
+ */
+export interface AlreadyThere {
   rowId: string;
+  name: string;
+  reason: 'same_file' | 'same_invoice';
+  invoiceNumber: string | null;
+  fileAdded: boolean;
+}
+
+export interface ProcessReceiptResult {
+  /** The receipt the upload is now: the new one, or the one that was already there (`alreadyThere`). */
+  rowId: string;
+  /** Set when no new receipt was kept because it is one that is already there. */
+  alreadyThere?: AlreadyThere | null;
   /** Another receipt with the same vendor, day and total: a warning, never a block. */
   possibleDuplicateOf: ExistingReceipt | null;
   /** The category the receipt was filed under, by name. */
@@ -139,7 +161,7 @@ type ReceiptsAdapter = ReturnType<typeof getAdapter>;
  */
 const OCR_DERIVED_COLUMNS = new Set([
   'Name', 'Vendor', ITEM_COLUMN, 'Gross', 'Net', 'Tax Rate', TAX_RATES_COLUMN, 'Date', 'Category', 'Konto', 'Zuordnung', 'Status',
-  'Confidence', 'OCR Text', 'Currency', 'FX Rate', 'Business Share %',
+  'Confidence', 'OCR Text', 'Currency', 'FX Rate', 'Business Share %', INVOICE_NUMBER_COLUMN,
   MEAL_COLUMNS.mealType, MEAL_COLUMNS.consumption, MEAL_COLUMNS.tip, MEAL_COLUMNS.taxLines, MEAL_COLUMNS.place,
 ]);
 
@@ -210,6 +232,8 @@ interface ReadReceipt {
   creditNote: { referencedInvoiceNumber: string | null } | null;
   /** The receipt's lines as this reading found them (from the XML of an electronic invoice, else the model); null when it found no usable list. */
   lines: StoreLinesInput | null;
+  /** The document's own invoice number as printed (see `settleInvoiceNumber`); null when none is known. */
+  invoiceNumber: string | null;
 }
 
 /**
@@ -281,6 +305,16 @@ async function readReceipt(
         ? { lines: ai.items, source: 'reading', model: ai.model, usage: ai.usage }
         : null;
   const reviewFlags: ReadFlag[] = settled?.flags ?? [];
+  // The XML's number, else the one the text labels, else the model's where the text carries it; never from the image alone.
+  const invoiceNumber = settled
+    ? settleInvoiceNumber({
+        structured: structured?.invoiceNumber ?? null,
+        text: fullText,
+        model: ai?.invoiceNumber ?? null,
+        fromImageOnly: !extracted,
+        creditNote: Boolean(structured?.creditNote) || (settled.gross !== null && settled.gross < 0),
+      })
+    : null;
   const date = settled?.date ?? null;
   const vendor = settled?.vendor ?? null;
   // A rule the company wrote ("this vendor is private") is the person's word:
@@ -340,6 +374,7 @@ async function readReceipt(
     // 'Receipt Image' is a file column: the uploaded file is attached as a
     // file reference after the row exists, not via a cell value.
     'OCR Text': fullText,
+    [INVOICE_NUMBER_COLUMN]: invoiceNumber,
     Currency: await optionId('Currency', currency),
     'FX Rate': fxRate,
     'Business Share %': businessSharePercent,
@@ -386,6 +421,7 @@ async function readReceipt(
     creditNote: structured?.creditNote ? { referencedInvoiceNumber: structured.referencedInvoiceNumber } : null,
     fullText,
     lines,
+    invoiceNumber,
   };
 }
 
@@ -450,7 +486,7 @@ async function similarReceipt(workspaceId: string, read: ReadReceipt, rowId: str
   // The same receipt photographed twice has a different file hash, so this is
   // the soft check. A failure here must not fail the save that just succeeded.
   try {
-    return await findSimilarReceipt(prisma, workspaceId, { vendor: read.vendor, date: read.date, gross: read.gross }, rowId);
+    return await findSimilarReceipt(prisma, workspaceId, { vendor: read.vendor, date: read.date, gross: read.gross, invoiceNumber: read.invoiceNumber }, rowId);
   } catch (err) {
     console.error('[processReceipt] similar-receipt check failed:', err);
     return null;
@@ -471,6 +507,13 @@ export async function processReceipt(
   const { adapter, tableId } = await getTableId(workspaceId);
   await requireOwnFile(file.id, workspaceId);
   const read = await readReceipt(adapter, tableId, file, ocrResult, await rulesOf(workspaceId));
+  const ctx = { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) };
+
+  // Already there: the same file, or the same invoice of the same vendor. No second receipt is kept.
+  const alreadyThere = await keptCopyOf(ctx, file, read, options);
+  if (alreadyThere) {
+    return { rowId: alreadyThere.rowId, alreadyThere, possibleDuplicateOf: null, category: read.category, isMeal: false, attention: null, reviewFlags: [] };
+  }
 
   const row = await adapter.createRow({ tableId, cells: read.cells });
 
@@ -498,6 +541,52 @@ export async function processReceipt(
     attention: read.attention,
     reviewFlags: read.reviewFlags,
   };
+}
+
+/**
+ * The receipt an arriving upload already is, settled before any row is made:
+ * one holding exactly this file (the uploader asks before it uploads; this is
+ * the same check for a second tab or a phone that sent meanwhile), or the same
+ * invoice number from the same vendor. For the same invoice the arriving file
+ * goes onto the receipt that is there, as a further file, so nothing it carries
+ * (a copy with the buyer's VAT number) is lost; for the same file it is
+ * removed from storage again, the receipt already holds it. A failure of the
+ * lookup is logged and the upload is saved as a new receipt: the automatic
+ * pass merges it later, nothing is lost either way.
+ */
+async function keptCopyOf(ctx: { workspaceId: string; tenantId: string | null }, file: FileData, read: ReadReceipt, options: ProcessReceiptOptions): Promise<AlreadyThere | null> {
+  try {
+    const sameFile = isSha256Hex(options.sha256) ? await findFileDuplicate(prisma, ctx.workspaceId, options.sha256) : null;
+    if (sameFile) {
+      // Only a stored file no receipt points at is removed: never the one a receipt of this company holds.
+      if (file.id && (await prisma.dtFile.count({ where: { fileId: file.id } })) === 0) {
+        await deleteStoredFile(file.id).catch((err) => console.error('[processReceipt] the second copy of a stored file could not be removed:', err instanceof Error ? err.name : 'error'));
+      }
+      return { rowId: sameFile.rowId, name: sameFile.name, reason: 'same_file', invoiceNumber: read.invoiceNumber, fileAdded: false };
+    }
+    const sameInvoice = await findSameInvoice(prisma, ctx, { vendor: read.vendor, gross: read.gross, invoiceNumber: read.invoiceNumber });
+    if (!sameInvoice) return null;
+    let fileAdded = false;
+    // A file the receipt holds already is not added a second time.
+    if (read.imageColumnId && file.id && (await prisma.dtFile.count({ where: { rowId: sameInvoice.rowId, fileId: file.id } })) === 0) {
+      const { adapter } = await getTableId(ctx.workspaceId);
+      await adapter.addFileReference({
+        rowId: sameInvoice.rowId,
+        columnId: read.imageColumnId,
+        fileId: file.id,
+        fileUrl: `/api/files/${file.id}`,
+        originalName: file.originalName ?? 'receipt',
+        mimeType: file.fileType ?? 'application/octet-stream',
+        // Not "ocr-upload": a retake of that receipt swaps only its own capture, never this copy.
+        metadata: { ...fileMetadata(options), source: 'duplicate-upload' },
+      });
+      fileAdded = true;
+    }
+    return { rowId: sameInvoice.rowId, name: sameInvoice.name, reason: 'same_invoice', invoiceNumber: read.invoiceNumber, fileAdded };
+  } catch (err) {
+    console.error('[processReceipt] the check for a receipt that is already there failed; saved as a new receipt:', err instanceof Error ? err.name : 'error');
+    return null;
+  }
 }
 
 /**
@@ -532,7 +621,7 @@ export async function retakeReceipt(
   // for. Meal facts the user (or an earlier reading) already filled in stay,
   // and so does an assignment: the first reading leaves it empty unless the
   // document itself shows it, so a value there is an answer somebody gave.
-  keepWhereFilled(read.cells, row, columns, [...MEAL_READ_COLUMNS, ...WORDED_COLUMNS, 'Zuordnung']);
+  keepWhereFilled(read.cells, row, columns, [...MEAL_READ_COLUMNS, ...WORDED_COLUMNS, 'Zuordnung', INVOICE_NUMBER_COLUMN]);
   // A share that is set stays: it is the full share or somebody's decision.
   keepWhereFilled(read.cells, row, columns, ['Business Share %']);
   // The rates text is derived again from what the row holds after this write:
@@ -567,6 +656,22 @@ export async function retakeReceipt(
   await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read, adapter, tableId);
   // A receipt just read may fall under a vendor rule, or leave one: its assignment cells show that.
   await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
+  // The new photo may show it is a receipt that is there already: the pass keeps the more complete one.
+  const merge = (await mergeAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id])).get(row.id);
+  if (merge) {
+    const mergedInto = merge.keptRowId;
+    const kept = await adapter.getRow(mergedInto);
+    const name = kept ? (await nameFromCells(adapter, columns, kept.cells)) || 'Beleg' : 'Beleg';
+    return {
+      rowId: mergedInto,
+      alreadyThere: { rowId: mergedInto, name, reason: merge.reason, invoiceNumber: read.invoiceNumber, fileAdded: merge.fileAdded },
+      possibleDuplicateOf: null,
+      category: read.category,
+      isMeal: false,
+      attention: null,
+      reviewFlags: [],
+    };
+  }
 
   return {
     rowId: row.id,
@@ -661,7 +766,8 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
       const optionId = categoryId ? row.cells[categoryId] : null;
       return typeof optionId === 'string' && optionId !== '' && read.mealCategoryOptionId === optionId;
     })();
-    const fillOnly = new Set([...DECISION_COLUMNS, ...WORDED_COLUMNS, ...MEAL_READ_COLUMNS.filter((name) => isMeal || name !== MEAL_COLUMNS.taxLines)]);
+    // A number a person typed stays; an empty cell takes the one read now.
+    const fillOnly = new Set([...DECISION_COLUMNS, ...WORDED_COLUMNS, INVOICE_NUMBER_COLUMN, ...MEAL_READ_COLUMNS.filter((name) => isMeal || name !== MEAL_COLUMNS.taxLines)]);
     // A receipt that waited as "Pending" because it could not be classified is read now; any other status is somebody's.
     const statusId = columnId('Status');
     const pendingId = statusId ? (await adapter.getSelectOptions(statusId)).find((o) => o.name === 'Pending')?.id : undefined;
@@ -708,7 +814,9 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read, adapter, tableId);
     // A receipt just read may fall under a vendor rule, or leave one: its assignment cells show that.
     await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
-    return { ok: true, reviewFlags: read.reviewFlags };
+    // The number read now may make it a receipt that is there already: the pass keeps the more complete one.
+    const mergedInto = (await mergeAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id])).get(row.id)?.keptRowId ?? null;
+    return { ok: true, reviewFlags: read.reviewFlags, ...(mergedInto ? { mergedInto } : {}) };
   } catch (e) {
     const status = e instanceof ReceiptsAuthError ? e.status : (e as { status?: number })?.status;
     if (status === 401) return { ok: false, error: 'unauthorized' };

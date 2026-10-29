@@ -202,13 +202,14 @@ describe('look-alike receipts', () => {
     expect(await entryFor(a)).toBeUndefined();
   });
 
-  it('the very same file on two receipts is a duplicate whatever their fields say', async () => {
+  it('the very same file on two receipts is never a question: the app merges it (plan 2026-10-29-invoice-number-duplicates)', async () => {
     const hash = 'a'.repeat(64);
     const a = await ws.addReceipt(clean({ Date: '2025-01-05', Gross: 10 }));
     const b = await ws.addReceipt(clean({ Date: '2025-02-06', Gross: 20 }));
     await attach(ws, a, hash);
     await attach(ws, b, hash);
-    expect((await entryFor(a))!.duplicates.map((d) => d.rowId)).toEqual([b]);
+    expect(await entryFor(a)).toBeUndefined();
+    expect(await entryFor(b)).toBeUndefined();
   });
 
   it('a different vendor on the same day with the same total is not a duplicate; a missing vendor may be', async () => {

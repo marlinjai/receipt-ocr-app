@@ -18,6 +18,7 @@ import { parseTaxLines, serializeTaxLines } from '@/lib/meals/rules';
 import { TAX_RATE_COLUMN, TAX_RATES_COLUMN, formatTaxRates, orderedRates } from '@/lib/tax-rates';
 import { AUTO_GROUP_OFF_COLUMN, ROW_KIND_COLUMN } from '@/lib/receipts-kind';
 import { ITEM_COLUMN } from '@/lib/receipt-name';
+import { INVOICE_NUMBER_COLUMN } from '@/lib/extraction/invoice-number';
 
 /**
  * The Receipts table definition (columns and standard views) and the
@@ -55,6 +56,8 @@ const COLUMNS: ColumnDef[] = [
   // What the receipt says about its rates, as text: "19 %" or "19 % + 7 %" (see tax-rates.ts).
   { name: TAX_RATES_COLUMN, type: 'text' },
   { name: 'Date', type: 'date' },
+  // The document's own invoice number as printed; two receipts of one vendor with the same number are one (see extraction/invoice-number.ts).
+  { name: INVOICE_NUMBER_COLUMN, type: 'text' },
   { name: 'Category', type: 'select', options: CATEGORY_NAMES, optionColors: CATEGORY_COLORS },
   { name: 'Konto', type: 'text' },
   { name: 'Status', type: 'select', options: STATUS_OPTIONS, optionColors: STATUS_COLORS },

@@ -10,7 +10,8 @@ import { captureErrorText } from '@/lib/capture/messages';
 import { newQueuedCapture, openCaptureStore, type CaptureStore, type QueuedCapture } from '@/lib/capture/offline-queue';
 import { createBrowserDeps, type SaveReceipt } from '@/lib/upload/browser-deps';
 import { uploadFailureKind } from '@/lib/upload/errors';
-import { runUploadPipeline, type ExistingReceiptRef, type PipelineOutcome, type PipelinePhase } from '@/lib/upload/pipeline';
+import { runUploadPipeline, type PipelineOutcome, type PipelinePhase } from '@/lib/upload/pipeline';
+import { receiptHref } from '@/lib/receipt-link';
 
 type Done = Extract<PipelineOutcome, { kind: 'done' }>;
 
@@ -30,13 +31,15 @@ interface PhoneCaptureProps {
   store?: CaptureStore;
   /** Shown once after a share into the app (see sharedNotice). */
   notice?: { tone: 'info' | 'error'; text: string } | null;
+  /** The company the dashboard shows: a receipt that is already there is linked only when it is in that one. */
+  activeWorkspaceId?: string;
 }
 
 type View =
   | { kind: 'idle' }
   | { kind: 'working'; phase: PipelinePhase; progress: number; fileName: string }
   | { kind: 'saved'; outcome: Done; retaken: boolean }
-  | { kind: 'duplicate'; existing: ExistingReceiptRef; file: File }
+  | { kind: 'duplicate'; outcome: Extract<PipelineOutcome, { kind: 'duplicate' }>; workspaceId: string }
   | { kind: 'queued'; reason: 'offline' | 'auth' }
   | { kind: 'error'; message: string; file: File; retakeRowId: string | null };
 
@@ -56,7 +59,7 @@ const PHASE_LABELS: Record<PipelinePhase, string> = {
  * into a queue in the browser and is sent later, visibly counted. Every
  * failure says what happened and offers the next step.
  */
-export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardRow, store: injectedStore, notice }: PhoneCaptureProps) {
+export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardRow, store: injectedStore, notice, activeWorkspaceId }: PhoneCaptureProps) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const retakeRef = useRef<HTMLInputElement>(null);
   const [view, setView] = useState<View>({ kind: 'idle' });
@@ -128,7 +131,7 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
       const elsewhere = [...new Set(result.sent.flatMap((s) => (s.outcome.kind === 'done' ? s.outcome.elsewhere : [])))];
       const parts: string[] = [];
       if (saved > 0) parts.push(saved === 1 ? '1 wartendes Foto wurde gesendet.' : `${saved} wartende Fotos wurden gesendet.`);
-      if (known > 0) parts.push(known === 1 ? '1 Foto war bereits vorhanden.' : `${known} Fotos waren bereits vorhanden.`);
+      if (known > 0) parts.push(known === 1 ? '1 Beleg war schon da und wurde nicht doppelt angelegt.' : `${known} Belege waren schon da und wurden nicht doppelt angelegt.`);
       if (elsewhere.length > 0) parts.push(`Mindestens ein gesendetes Foto liegt genau so schon in deiner Firma ${elsewhere.join(', ')}: bitte im Dashboard prüfen.`);
       if (meals > 0) parts.push(meals === 1 ? '1 Bewirtung wartet auf Teilnehmer und Anlass.' : `${meals} Bewirtungen warten auf Teilnehmer und Anlass.`);
       if (result.stopped === 'auth') parts.push('Die Anmeldung ist abgelaufen: bitte neu anmelden, die Fotos bleiben gespeichert.');
@@ -177,7 +180,7 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
   }, [store, drain, refreshWaiting]);
 
   const run = useCallback(
-    async (file: File, options: { retakeRowId?: string; allowDuplicate?: boolean } = {}) => {
+    async (file: File, options: { retakeRowId?: string } = {}) => {
       const retakeRowId = options.retakeRowId ?? null;
       setQueueNote(null);
 
@@ -194,12 +197,11 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
         : (f, ocr, o) => callbacks.current.onSave(f, ocr, o);
       try {
         const outcome = await runUploadPipeline(file, createBrowserDeps(save, callbacks.current.workspaceId), {
-          allowDuplicate: options.allowDuplicate,
           onPhase: (phase) => setView((v) => (v.kind === 'working' ? { ...v, phase } : v)),
           onProgress: (progress) => setView((v) => (v.kind === 'working' ? { ...v, progress } : v)),
         });
         if (outcome.kind === 'duplicate') {
-          setView({ kind: 'duplicate', existing: outcome.existing, file });
+          setView({ kind: 'duplicate', outcome, workspaceId: callbacks.current.workspaceId });
           return;
         }
         setView({ kind: 'saved', outcome, retaken: Boolean(retakeRowId) });
@@ -395,15 +397,19 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
       {view.kind === 'duplicate' && (
         <div className="space-y-3">
           <p className="ui-note ui-note-warn" role="status">
-            Genau dieses Foto ist schon beim Beleg „{view.existing.name}“ hinterlegt. Es wurde nichts hochgeladen.
+            {view.outcome.reason === 'same_file'
+              ? `Diesen Beleg gibt es schon: Genau dieses Foto ist beim Beleg „${view.outcome.existing.name}“ hinterlegt. Es wurde kein zweiter Beleg angelegt.`
+              : `Diesen Beleg gibt es schon: „${view.outcome.existing.name}“ ist dieselbe Rechnung${view.outcome.invoiceNumber ? ` (Nummer ${view.outcome.invoiceNumber})` : ''}. Es wurde kein zweiter Beleg angelegt${view.outcome.fileAdded ? ', das Foto hängt jetzt dort mit dran' : ''}.`}
           </p>
           <div className="flex flex-wrap gap-2">
             <button type="button" className="ui-btn ui-btn-primary" onClick={() => { setView({ kind: 'idle' }); cameraRef.current?.click(); }}>
               Nächstes Foto
             </button>
-            <button type="button" className="ui-btn" onClick={() => void run(view.file, { allowDuplicate: true })}>
-              Trotzdem hochladen
-            </button>
+            {view.workspaceId === activeWorkspaceId && (
+              <a className="ui-btn" href={receiptHref(view.outcome.existing.rowId)}>
+                Beleg öffnen
+              </a>
+            )}
           </div>
         </div>
       )}

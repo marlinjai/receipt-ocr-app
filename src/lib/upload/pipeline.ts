@@ -23,8 +23,18 @@ export interface UploadedFileInfo {
   fileType?: string;
 }
 
+/** No second receipt was kept: the upload is one that is there already (plan 2026-10-29-invoice-number-duplicates). */
+export interface AlreadyThereRef extends ExistingReceiptRef {
+  reason: 'same_file' | 'same_invoice';
+  invoiceNumber: string | null;
+  /** True when the arriving file was added to the receipt that is there. */
+  fileAdded: boolean;
+}
+
 export interface SavedReceipt {
   rowId: string;
+  /** Set when the server kept no new receipt because the upload is one that is there already. */
+  alreadyThere?: AlreadyThereRef | null;
   possibleDuplicateOf: ExistingReceiptRef | null;
   /** Category name the receipt was filed under. */
   category: string | null;
@@ -54,8 +64,12 @@ export interface PipelineDeps {
 export type PipelinePhase = 'checking' | 'uploading' | 'ocr' | 'saving';
 
 export type PipelineOutcome =
-  /** Exactly this file is already there. NOTHING was uploaded. */
-  | { kind: 'duplicate'; existing: ExistingReceiptRef }
+  /**
+   * The receipt is there already, nothing new was kept: exactly this file (then NOTHING was uploaded,
+   * or the stored copy was removed again), or the same invoice of the same vendor (then the file was
+   * added to that receipt). Never a question: the same file or invoice is the same receipt.
+   */
+  | { kind: 'duplicate'; existing: ExistingReceiptRef; reason: 'same_file' | 'same_invoice'; invoiceNumber: string | null; fileAdded: boolean }
   | {
       kind: 'done';
       rowId: string;
@@ -74,8 +88,6 @@ export type PipelineOutcome =
     };
 
 export interface PipelineOptions {
-  /** The user chose "upload anyway" for a known duplicate. */
-  allowDuplicate?: boolean;
   onPhase?: (phase: PipelinePhase) => void;
   onProgress?: (percent: number) => void;
 }
@@ -88,10 +100,9 @@ export async function runUploadPipeline(
   options.onPhase?.('checking');
   const prepared = await deps.prepare(file);
   const sha256 = await deps.hash(prepared);
-  // The check runs on "upload anyway" too: only the stop is skipped then, the
-  // warning about another company still has to reach the user.
+  // Exactly this file in this company: the same receipt, nothing is uploaded (decision 5 of the plan).
   const check = await deps.checkDuplicate(sha256);
-  if (check.existing && !options.allowDuplicate) return { kind: 'duplicate', existing: check.existing };
+  if (check.existing) return { kind: 'duplicate', existing: check.existing, reason: 'same_file', invoiceNumber: null, fileAdded: false };
 
   options.onPhase?.('uploading');
   const uploaded = await deps.upload(prepared, options.onProgress ?? (() => {}));
@@ -110,6 +121,10 @@ export async function runUploadPipeline(
 
   options.onPhase?.('saving');
   const saved = await deps.save(uploaded, ocr, { sha256 });
+  if (saved.alreadyThere) {
+    const { reason, invoiceNumber, fileAdded, rowId, name } = saved.alreadyThere;
+    return { kind: 'duplicate', existing: { rowId, name }, reason, invoiceNumber, fileAdded };
+  }
   return {
     kind: 'done',
     rowId: saved.rowId,

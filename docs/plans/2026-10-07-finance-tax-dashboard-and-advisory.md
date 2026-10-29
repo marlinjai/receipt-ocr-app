@@ -2121,8 +2121,17 @@ has **Tomorrow, N26 and PayPal** for Germany (personal, redirect login, 180 days
 for Germany as beta (personal, approval in the Klarna app), and **no Advanzia** in any country.
 The authenticated `GET /aspsps` of the application is the final word, which is why the tab
 reads it at run time; an institution missing there gets "wird über die Bankschnittstelle nicht
-angeboten, das Konto bleibt beim Datei-Import". Advanzia has no file importer either (no
-reader for its statement exists yet).
+angeboten, das Konto bleibt beim Datei-Import". Advanzia is therefore fed from its monthly
+statement PDF (added 2026-10-30): the payments import takes the PDF of the "Gebührenfrei
+Mastercard Gold" statement as it is, the server takes its text with pdf.js
+(`src/lib/tax/payments/pdf-text.ts`) and the reader `advanzia_pdf` in `parse.ts` turns every
+dated row into a payment, the card's sign turned around (a charge is money out). `EINZAHLUNG`
+(paying the card off) and `ZAHLUNG AUFS GIROKONTO` (cash to the current account) are own
+transfers, `SOLLZINSEN` a fee, `Startguthaben` income, a merchant's negative line a refund, and
+a purchase in another currency keeps its original amount. A statement whose rows do not lead
+from its old balance to its new one is refused whole, and any other PDF is refused with its own
+message. The card goes into an account of the kind "Kreditkarte"; checked locally against the
+ten real statements (every one read and balanced), which never enter the repository.
 
 Not built: the daily scheduled task itself (a production change, see the operations page).
 

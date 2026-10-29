@@ -503,11 +503,119 @@ function parseEnableBanking(data: unknown, options: ParseOptions = {}): ParsedFi
   return finish('enable_banking_json', drafts, skipped);
 }
 
+/** A statement of the Advanzia credit card, by the three things only its first page says together. */
+function isAdvanziaStatement(text: string): boolean {
+  return /Gebührenfrei Mastercard/.test(text) && /Kreditkartennummer/.test(text) && /Abrechnung vom \d{2}\.\d{2}\.\d{4} bis \d{2}\.\d{2}\.\d{4}/.test(text);
+}
+
+/** A German amount, the last cell of a line of the statement ("1.423,22", "-2.000,00"). */
+const STATEMENT_AMOUNT = /^-?\d{1,3}(?:\.\d{3})*,\d{2}$/;
+/** A purchase in another currency names it inside its description: "LADEN - USD 26,92 (KURS 1,1509)". */
+const STATEMENT_FOREIGN = /\s*-\s*([A-Z]{3})\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s*\(KURS\s+[\d.,]+\)/;
+
+/**
+ * What a movement of the card statement is, by its description. The bank
+ * writes its own lines in fixed words; every other line is a merchant's.
+ */
+function advanziaKind(description: string, amountCents: number): PaymentKind {
+  const text = description.toUpperCase();
+  // Paying the card off from the owner's own account, and cash moved from the card to his current account:
+  // money between his own accounts, neither spending nor income.
+  if (text === 'EINZAHLUNG' || text === 'ZAHLUNG AUFS GIROKONTO') return 'own_transfer';
+  // Interest the bank charges on what is left open.
+  if (text === 'SOLLZINSEN') return 'fee';
+  // The bank's credit for opening the card undoes no purchase, so it is no refund: it is money in like any
+  // other the source does not explain, and a person can call it private.
+  if (text === 'STARTGUTHABEN') return 'income';
+  // A merchant's line with money onto the card gives back what a purchase cost.
+  return amountCents > 0 ? 'refund' : 'spend';
+}
+
+/**
+ * The monthly statement of the Advanzia credit card, as text taken from its
+ * PDF: one line per printed line, columns set apart by two spaces or more (see
+ * `pdfText`; `pdftotext -layout` gives the same). A movement is a line that
+ * starts with its day: description, place (not always) and the euro amount,
+ * which the card states its own way, positive for money spent. Here it is
+ * turned around: negative is money out, like on every account.
+ *
+ * The old balance, the new one and the minimum payment are no movements; they
+ * are counted and left out. The old balance and the movements must add up to
+ * the new balance, or a row was misread or missed, and the statement is
+ * refused whole (`unbalanced_statement`). The table continues on the next
+ * page; every page is read.
+ *
+ * The statement gives a movement no number of its own: it is identified by
+ * day, amount, description and place, and two identical charges of one day
+ * are told apart by their order (see `withHashes`). Reading a statement again,
+ * or one that overlaps it, stores nothing twice.
+ */
+function parseAdvanzia(text: string): ParsedFile {
+  const skipped: Record<string, number> = {};
+  const drafts: Draft[] = [];
+  let oldBalance: number | null = null;
+  let newBalance: number | null = null;
+  let movements = 0;
+  text.split(/\r?\n/).forEach((line, index) => {
+    // Some statements indent their rows and some do not: a row is found by its day, never by where it starts.
+    const cells = line.split(/\s{2,}|\t/).map((c) => c.trim()).filter(Boolean);
+    if (cells.length < 2 || !STATEMENT_AMOUNT.test(cells[cells.length - 1])) return;
+    const statementCents = toCents(cells[cells.length - 1]);
+    if (statementCents === null) throw new PaymentParseError('unreadable_row', index + 1);
+    if (!/^\d{2}\.\d{2}\.\d{4}$/.test(cells[0])) {
+      const label = cells[0].toUpperCase();
+      if (label === 'ALTER SALDO') {
+        if (oldBalance !== null) throw new PaymentParseError('unbalanced_statement');
+        oldBalance = statementCents;
+        skip(skipped, 'statement_balance');
+      } else if (label.startsWith('MINDESTBETRAG')) skip(skipped, 'minimum_payment');
+      // Any other undated line with an amount belongs to the summary below the table (limit, available amount).
+      return;
+    }
+    const bookingDay = toIsoDay(cells[0]);
+    if (!bookingDay || cells.length < 3) throw new PaymentParseError('unreadable_row', index + 1);
+    let middle = cells.slice(1, -1).join('  ');
+    if (middle.toUpperCase() === 'NEUER SALDO') {
+      if (newBalance !== null) throw new PaymentParseError('unbalanced_statement');
+      newBalance = statementCents;
+      skip(skipped, 'statement_balance');
+      return;
+    }
+    movements += statementCents;
+    if (statementCents === 0) {
+      skip(skipped, 'zero_amount');
+      return;
+    }
+    const foreign = STATEMENT_FOREIGN.exec(middle);
+    if (foreign) middle = `${middle.slice(0, foreign.index)}  ${middle.slice(foreign.index + foreign[0].length)}`;
+    const [description = '', ...place] = middle.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
+    const amountCents = -statementCents;
+    const foreignCents = foreign ? toCents(foreign[2]) : null;
+    drafts.push({
+      bookingDay,
+      valueDay: null,
+      amountCents,
+      counterparty: clean(description),
+      reference: clean(place.join(' ')),
+      entryReference: null,
+      kind: advanziaKind(clean(description), amountCents),
+      // What it cost in its own currency, signed like the euro amount; the euro amount is what the card charged.
+      ...(foreign && foreignCents !== null ? { original: { currency: foreign[1], amountCents: Math.sign(amountCents) * foreignCents } } : {}),
+    });
+  });
+  // Without both balances there is nothing to check the rows against: that is no whole statement.
+  if (oldBalance === null || newBalance === null || oldBalance + movements !== newBalance) throw new PaymentParseError('unbalanced_statement');
+  return finish('advanzia_pdf', drafts, skipped);
+}
+
 /** Recognize the layout from the content itself and read it. */
 export function parsePaymentFile(text: string, options: ParseOptions = {}): ParsedFile {
   if (text.length > MAX_BYTES) throw new PaymentParseError('too_large');
   const trimmed = text.trimStart();
-  if (!trimmed) throw new PaymentParseError('empty');
+  if (!trimmed) throw new PaymentParseError(options.pdf ? 'pdf_without_text' : 'empty');
+  if (isAdvanziaStatement(text)) return parseAdvanzia(text);
+  // A PDF is only ever one of the statements above: its text is never guessed at as a table.
+  if (options.pdf) throw new PaymentParseError('unknown_pdf');
   if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
     let data: unknown;
     try {

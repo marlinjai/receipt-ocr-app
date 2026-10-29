@@ -14,6 +14,9 @@ import type { Result } from './actions';
 import { euro, foreignNote, parseEuro } from './amounts';
 import { BankAccountStatus, type BankActions, type BankFeed } from './BankConnection';
 
+/** A file to import: the text of an export (CSV, JSON), or a statement PDF as it is. */
+export type ImportFile = { text: string } | { pdf: File };
+
 /** A search for payments to link by hand: one counterparty's, or any whose name, text or amount contains the words. */
 export type PaymentQuery = { counterpartyKey: string } | { text: string };
 
@@ -23,8 +26,11 @@ interface Props {
   error: string | null;
   lastImport: ImportResult | null;
   onAddAccount: (input: { label: string; kind: AccountKind }, done: () => void) => void;
-  /** With `onlyThisYear` only the payments booked in the year on screen are read. */
-  onImport: (accountId: string, text: string, onlyThisYear: boolean, done: () => void) => void;
+  /**
+   * Import a file: an export's text, or a statement PDF whose text the server
+   * takes. With `onlyThisYear` only the payments booked in the year on screen are read.
+   */
+  onImport: (accountId: string, file: ImportFile, onlyThisYear: boolean, done: () => void) => void;
   onUndoImport: (batchId: string) => void;
   onTreat: (counterparty: string, treatment: CounterpartyTreatment | null) => void;
   onLink: (input: { paymentId: string; rowId?: string; invoiceId?: string; cents?: number }) => void;
@@ -85,6 +91,8 @@ const SKIP_LABELS: Record<string, string> = {
   memo_line: 'Hinweiszeilen',
   cancelled: 'storniert oder vollständig erstattet',
   zero_amount: 'ohne Betrag',
+  statement_balance: 'alter und neuer Saldo der Abrechnung',
+  minimum_payment: 'Mindestbetrag der Abrechnung',
   duplicate_row: 'doppelt in der Datei',
   other_year: 'außerhalb des gewählten Jahres',
   covered_by_other_source: 'an Tagen, die eine andere Quelle dieses Kontos schon abdeckt',
@@ -146,14 +154,15 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
     if (!selectedAccount) return setLocalError('Bitte zuerst ein Konto anlegen und auswählen.');
     if (!file) return setLocalError('Bitte eine Exportdatei auswählen.');
     if (file.size > 8 * 1024 * 1024) return setLocalError('Die Datei ist zu groß für einen Kontoexport (mehr als 8 MB).');
-    let text: string;
+    let read: ImportFile;
     try {
-      text = await file.text();
+      // A PDF is known by its marker at the start, whatever the file is called; the server takes its text.
+      read = (await file.slice(0, 1024).text()).includes('%PDF-') ? { pdf: file } : { text: await file.text() };
     } catch {
       return setLocalError('Die Datei konnte nicht gelesen werden.');
     }
     setLocalError(null);
-    onImport(selectedAccount, text, onlyThisYear, () => {
+    onImport(selectedAccount, read, onlyThisYear, () => {
       if (fileInput.current) fileInput.current.value = '';
     });
   }
@@ -294,8 +303,8 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
               </select>
             </div>
             <div>
-              <label className="ui-label" htmlFor={`${id}-file`}>Datei (CSV oder JSON)</label>
-              <input id={`${id}-file`} ref={fileInput} type="file" accept=".csv,.json,text/csv,application/json" className="ui-input" />
+              <label className="ui-label" htmlFor={`${id}-file`}>Datei (CSV, JSON oder PDF)</label>
+              <input id={`${id}-file`} ref={fileInput} type="file" accept=".csv,.json,.pdf,text/csv,application/json,application/pdf" className="ui-input" />
             </div>
             <label className="flex items-center gap-1.5 text-sm" style={{ color: 'var(--foreground)' }}>
               <input type="checkbox" checked={onlyThisYear} onChange={(e) => setOnlyThisYear(e.target.checked)} />
@@ -304,8 +313,9 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
             <button type="button" className="ui-btn ui-btn-primary" disabled={busy} onClick={readAndImport}>{busy ? 'Liest ein …' : 'Einlesen'}</button>
           </div>
           <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
-            Unterstützt: Exporte von N26, Tomorrow und PayPal, die Kaufliste von Klarna sowie die Umsatzliste der
-            Bankschnittstelle. Eine Datei wird ganz oder gar nicht eingelesen; überlappende Zeiträume legen nichts doppelt
+            Unterstützt: Exporte von N26, Tomorrow und PayPal, die Kaufliste von Klarna, die Umsatzliste der
+            Bankschnittstelle sowie die monatliche Abrechnung der Advanzia-Mastercard als PDF (in ein Konto der Art Kreditkarte).
+            Eine Datei wird ganz oder gar nicht eingelesen; überlappende Zeiträume legen nichts doppelt
             an. Was ein Zahlungsdienst später vom Bankkonto einzieht, gilt als Umbuchung zwischen eigenen Konten, sobald
             die Liste des Dienstes eingelesen ist. Ein Konto lässt sich aus einer zweiten Quelle fortsetzen (ein
             Bankexport, der mitten im Jahr endet, weiter mit der Umsatzliste der Bankschnittstelle; die PayPal-Liste weiter

@@ -33,6 +33,8 @@ const actions = vi.hoisted(() => ({
   removeAsset: vi.fn(),
   disposeAsset: vi.fn(),
   removeAccount: vi.fn(),
+  importPaymentFile: vi.fn(),
+  importPaymentPdf: vi.fn(),
   getStatement: vi.fn(),
 }));
 vi.mock('./actions', () => actions);
@@ -858,6 +860,32 @@ describe('FinanceClient: assets', () => {
     expect(actions.getStatement).toHaveBeenCalledWith(2025);
     // The account now holds an import: the button is gone.
     await vi.waitFor(() => expect(screen.queryByRole('button', { name: 'Konto entfernen' })).toBeNull());
+  });
+
+  it('a statement PDF goes to the server as it is; a PDF that is no statement says so, and the next file reads after it', async () => {
+    const user = setupUser();
+    const payments = view([]).payments;
+    const card = { id: 'acc-card', label: 'Kreditkarte', kind: 'card' as const, isPrivate: false, paymentCount: 0, completeThrough: null, batches: [] };
+    const initial = view([], { payments: { ...payments, accounts: [card] } });
+    const imported = { batchId: 'b-1', format: 'advanzia_pdf', total: 9, added: 9, alreadyThere: 0, skipped: { statement_balance: 2, minimum_payment: 1 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, settled: 0, notices: {}, unknownStatuses: [], onlyYear: null, firstDay: '2025-03-05', lastDay: '2025-04-03' };
+    actions.importPaymentPdf.mockResolvedValueOnce({ ok: false, error: 'invalid_input', detail: 'unknown_pdf' }).mockResolvedValueOnce({ ok: true, value: { view: initial, imported } });
+    render(<FinanceClient initial={initial} />);
+    await openTab(user, 'Einstellungen', 'Konten');
+    const input = screen.getByLabelText('Datei (CSV, JSON oder PDF)');
+
+    await user.upload(input, new File(['%PDF-1.7\nkeine Abrechnung'], 'rechnung.pdf', { type: 'application/pdf' }));
+    await user.click(screen.getByRole('button', { name: 'Einlesen' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('keine Abrechnung der Advanzia-Mastercard');
+    const [year, accountId, form, onlyThisYear] = actions.importPaymentPdf.mock.calls[0];
+    expect([year, accountId, onlyThisYear]).toEqual([2025, 'acc-card', false]);
+    expect((form as FormData).get('file')).toBeInstanceOf(File);
+    expect(actions.importPaymentFile).not.toHaveBeenCalled();
+
+    // Re-entry after the refusal: the right statement reads, and the message gives way to what was read.
+    await user.upload(input, new File(['%PDF-1.7\nAbrechnung'], 'abrechnung.pdf', { type: 'application/pdf' }));
+    await user.click(screen.getByRole('button', { name: 'Einlesen' }));
+    expect((await screen.findByText(/Eingelesen: 9 neue Zahlungen/)).textContent).toContain('2 alter und neuer Saldo der Abrechnung');
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('a receipt that already carries a payment is not linked a second time without a question; a no links nothing, a yes sends it confirmed', async () => {

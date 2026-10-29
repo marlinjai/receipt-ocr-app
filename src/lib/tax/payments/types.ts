@@ -13,7 +13,9 @@ export type PaymentFormat =
   | 'tomorrow_csv'
   | 'paypal_csv'
   /** The purchase list of the pay-later service (Klarna), converted to a table from its data extract. */
-  | 'klarna_csv';
+  | 'klarna_csv'
+  /** The monthly statement of the Advanzia credit card ("Gebührenfrei Mastercard Gold"), read from its PDF (see `pdf-text.ts`). */
+  | 'advanzia_pdf';
 
 export const PAYMENT_FORMAT_LABELS: Record<PaymentFormat, string> = {
   enable_banking_json: 'Bankschnittstelle (JSON)',
@@ -21,6 +23,7 @@ export const PAYMENT_FORMAT_LABELS: Record<PaymentFormat, string> = {
   tomorrow_csv: 'Tomorrow (CSV)',
   paypal_csv: 'PayPal (CSV)',
   klarna_csv: 'Klarna-Käufe (CSV)',
+  advanzia_pdf: 'Advanzia-Mastercard (PDF)',
 };
 
 /** What a movement is, as far as the source itself says. A person can override it. */
@@ -89,13 +92,27 @@ export interface ParseOptions {
    * row whose code no other row of the list repeats.
    */
   wallet?: { rates: ReadonlyMap<string, number> };
+  /**
+   * The text was taken from a PDF (see `pdfText`): only the statements read
+   * from a PDF are recognized, and any other PDF is `unknown_pdf`, never
+   * guessed at as a table.
+   */
+  pdf?: boolean;
 }
 
 export type ParseErrorCode =
   | 'unknown_layout'
   | 'empty'
   | 'unreadable_row'
-  | 'too_large';
+  | 'too_large'
+  /** The file is no PDF that can be opened (damaged, or protected by a password). */
+  | 'unreadable_pdf'
+  /** The PDF holds no text, only pictures (a scan): there is nothing to read the movements from. */
+  | 'pdf_without_text'
+  /** A readable PDF, but not a statement of a known layout. */
+  | 'unknown_pdf'
+  /** The movements read from a statement do not lead from its old balance to its new one: a row was misread or missed. */
+  | 'unbalanced_statement';
 
 export class PaymentParseError extends Error {
   readonly code: ParseErrorCode;

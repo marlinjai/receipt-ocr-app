@@ -97,15 +97,39 @@ describe('PaymentsTab', () => {
     await user.click(screen.getByRole('button', { name: 'Einlesen' }));
     expect(screen.getByRole('alert').textContent).toContain('Exportdatei auswählen');
     expect(p.onImport).not.toHaveBeenCalled();
-    await user.upload(screen.getByLabelText('Datei (CSV oder JSON)'), new File(['a,b\n1,2\n'], 'export.csv', { type: 'text/csv' }));
+    await user.upload(screen.getByLabelText('Datei (CSV, JSON oder PDF)'), new File(['a,b\n1,2\n'], 'export.csv', { type: 'text/csv' }));
     await user.click(screen.getByRole('button', { name: 'Einlesen' }));
     await vi.waitFor(() => expect(p.onImport).toHaveBeenCalled());
-    expect(p.onImport.mock.calls[0].slice(0, 3)).toEqual(['acc-1', 'a,b\n1,2\n', false]);
+    expect(p.onImport.mock.calls[0].slice(0, 3)).toEqual(['acc-1', { text: 'a,b\n1,2\n' }, false]);
     // Limited to the year on screen.
     await user.click(screen.getByLabelText('Nur Zahlungen aus 2026'));
     await user.click(screen.getByRole('button', { name: 'Einlesen' }));
     await vi.waitFor(() => expect(p.onImport).toHaveBeenCalledTimes(2));
-    expect(p.onImport.mock.calls[1].slice(0, 3)).toEqual(['acc-1', 'a,b\n1,2\n', true]);
+    expect(p.onImport.mock.calls[1].slice(0, 3)).toEqual(['acc-1', { text: 'a,b\n1,2\n' }, true]);
+  });
+
+  it('hands a PDF to the import as it is, known by its content, not by the type the browser reports', async () => {
+    const user = setupUser();
+    const p = props();
+    render(<PaymentsTab view={view()} {...p} />);
+    const statement = new File(['%PDF-1.7\n%binary'], 'abrechnung.pdf', { type: '' });
+    await user.upload(screen.getByLabelText('Datei (CSV, JSON oder PDF)'), statement);
+    await user.click(screen.getByRole('button', { name: 'Einlesen' }));
+    await vi.waitFor(() => expect(p.onImport).toHaveBeenCalled());
+    expect(p.onImport.mock.calls[0][1]).toEqual({ pdf: statement });
+    // The input offers PDFs next to the exports.
+    expect((screen.getByLabelText('Datei (CSV, JSON oder PDF)') as HTMLInputElement).accept).toContain('.pdf');
+  });
+
+  it('names the balance lines a card statement leaves out', () => {
+    render(
+      <PaymentsTab
+        view={view()}
+        {...props()}
+        lastImport={{ batchId: 'b', format: 'advanzia_pdf', total: 9, added: 9, alreadyThere: 0, skipped: { statement_balance: 2, minimum_payment: 1 }, autoLinked: 0, cancelledEarlier: 0, releasedLinks: 0, adopted: 0, settled: 0, notices: {}, unknownStatuses: [], onlyYear: null, firstDay: '2026-03-05', lastDay: '2026-04-03' }}
+      />,
+    );
+    expect(screen.getByRole('status').textContent).toContain('2 alter und neuer Saldo der Abrechnung, 1 Mindestbetrag der Abrechnung');
   });
 
   it('reports an import limited to a year and rows left out because another source covers their days', () => {

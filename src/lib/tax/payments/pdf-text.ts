@@ -11,8 +11,6 @@ import { PaymentParseError } from './types';
  */
 
 const MAX_BYTES = 8 * 1024 * 1024;
-/** No monthly statement has this many pages; a file that does is no statement and is not read through. */
-const MAX_PAGES = 100;
 /** A gap wider than this share of the letter height parts two columns; a smaller one parts two words. */
 const COLUMN_GAP = 0.9;
 const WORD_GAP = 0.15;
@@ -77,7 +75,6 @@ export async function pdfText(bytes: Uint8Array): Promise<string> {
     throw new PaymentParseError('unreadable_pdf');
   }
   try {
-    if (doc.numPages > MAX_PAGES) throw new PaymentParseError('too_large');
     const lines: string[] = [];
     for (let n = 1; n <= doc.numPages; n++) {
       const page = await doc.getPage(n);

@@ -534,12 +534,13 @@ export async function deleteReceiptRows(
       // Same for a link into an asset's cost: the asset then asks for its cost again.
       await db.taxAssetPart.deleteMany({ where: { rowId } });
       await db.taxReceiptLine.deleteMany({ where: { rowId } });
-      // The printed lines and their reading go with the receipt; the kind answers belong to the shop and stay.
-      await deleteLinesForRows(db, [rowId]);
       await db.taxYearBoundaryAnswer.deleteMany({ where: { subjectKind: 'receipt', subjectId: rowId } });
       // And for links from bank payments: the payments stay and ask for a document again.
       await db.taxPaymentLink.deleteMany({ where: { rowId } });
       await deleteGuestsForRows(db, [rowId]);
+      // The printed lines and their reading go with the receipt; the kind answers belong to the shop and stay.
+      // Last: it runs one locked transaction per row, so a failure here strands only the line records.
+      await deleteLinesForRows(db, [rowId]);
       result.done.push(rowId);
     } catch (e) {
       console.error('[meals] deleting a receipt failed', { rowId }, e);

@@ -2335,13 +2335,14 @@ export async function deleteDecisionsForRows(db: PrismaClient, rowIds: string[])
   await db.taxReverseCharge.deleteMany({ where: { scope: 'row', subject: { in: rowIds } } });
   await db.taxAssignmentOrigin.deleteMany({ where: { rowId: { in: rowIds } } });
   await db.taxReceiptLine.deleteMany({ where: { rowId: { in: rowIds } } });
-  await deleteLinesForRows(db, rowIds);
   // An asset keeps existing without the receipt; with no receipt left it shows
   // up as "no cost" and asks for one, instead of vanishing with its history.
   await db.taxAssetPart.deleteMany({ where: { rowId: { in: rowIds } } });
   await db.taxYearBoundaryAnswer.deleteMany({ where: { subjectKind: 'receipt', subjectId: { in: rowIds } } });
   // The payments stay; they then show up again as payments without a document.
   await deletePaymentLinksForRows(db, rowIds);
+  // Last: it runs one locked transaction per row, so a failure here strands only the line records.
+  await deleteLinesForRows(db, rowIds);
 }
 
 export { AssetInputError, LinesInputError, RevenueInputError, TreatmentError };

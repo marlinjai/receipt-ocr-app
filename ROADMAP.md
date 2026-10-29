@@ -393,6 +393,11 @@
   its subscription until its spelling is corrected. Take the spelling of the vendor's earlier
   receipts, or of the contact they link to. Context: section Open of the grouping plan of
   2026-10-29 (Completed below). (2026-10-29)
+- [ ] The invoice number decides duplicates (decided by the owner on 2026-10-29): every receipt
+  gets its Rechnungsnummer, the same vendor with the same number or the very same file is one
+  receipt, handled without asking (no second receipt at upload, existing copies archived into the
+  more complete one, restorable), and "Belege prüfen" asks only where a number is missing. Plan:
+  [docs/plans/2026-10-29-invoice-number-duplicates.md](docs/plans/2026-10-29-invoice-number-duplicates.md). (2026-10-29)
 
 ## In Progress
 

@@ -106,7 +106,20 @@ describe('parseClassificationResponse: vendor and total as a second opinion', ()
   });
 
   it('an answer that is not the expected object yields nothing, not a guess', () => {
-    expect(parseClassificationResponse('I could not read this.', INPUT)).toMatchObject({ category: null, vendor: null, gross: null, confidence: 0 });
+    expect(parseClassificationResponse('I could not read this.', INPUT)).toMatchObject({ category: null, vendor: null, gross: null, confidence: 0, invoiceNumber: null });
+  });
+
+  it('reads the invoice number as a second opinion: a short string with a digit, anything else is null', () => {
+    expect(parseClassificationResponse(answer({ invoiceNumber: '  RE-2026   0042 ' }), INPUT).invoiceNumber).toBe('RE-2026 0042');
+    for (const bad of [null, 42, 'Rechnung', 'R1', 'x'.repeat(58) + '123']) expect(parseClassificationResponse(answer({ invoiceNumber: bad }), INPUT).invoiceNumber).toBeNull();
+  });
+
+  it('asks for the document’s own number, never an order, till or referenced invoice’s number, before the lines', () => {
+    const prompt = classificationPrompt(INPUT, { webSearch: false });
+    expect(prompt).toContain('**invoiceNumber**');
+    expect(prompt).toContain('never the number of the invoice it corrects');
+    expect(prompt).toContain('"Bon-Nr."');
+    expect(prompt.indexOf('"invoiceNumber"')).toBeLessThan(prompt.indexOf('"items"'));
   });
 });
 

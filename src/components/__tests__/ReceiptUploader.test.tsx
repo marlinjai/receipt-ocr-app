@@ -6,8 +6,9 @@ import type { PipelineDeps, SavedReceipt } from '@/lib/upload/pipeline';
 
 /**
  * The batch uploader with the network replaced. What is pinned here: every file
- * keeps the company it was dropped for, through "upload anyway", and a copy of
- * the file in another company is a warning the user resolves.
+ * keeps the company it was dropped for, a receipt that is already there is
+ * said with its link and asks nothing, and a copy of the file in another
+ * company is a warning the user resolves.
  */
 
 const steps = { checkDuplicate: vi.fn() };
@@ -60,16 +61,30 @@ describe('the company a file goes into', () => {
     expect(onProcessFile.mock.calls[0][1]).toEqual({ sha256: 'a'.repeat(64), workspaceId: 'ws-zwei' });
   });
 
-  it('backtrack: "upload anyway" after the duplicate stop goes to the company the file was dropped for, even after the page changed company', async () => {
+  it('the same file again: said to be there with a link, nothing uploaded, nothing asked, and no "upload anyway"', async () => {
     steps.checkDuplicate.mockResolvedValueOnce({ existing: { rowId: 'row-0', name: 'Hosting Oktober' }, elsewhere: [] });
-    const user = userEvent.setup();
-    const { container, rerender } = mount('ws-eins');
+    const complete = vi.fn();
+    const { container } = render(<ReceiptUploader workspaceId="ws-eins" activeWorkspaceId="ws-eins" onProcessFile={onProcessFile} onAllComplete={complete} onDiscardRow={onDiscardRow} />);
     drop(container);
-    expect(await screen.findByText(/already attached to “Hosting Oktober”/)).toBeTruthy();
-    rerender(<ReceiptUploader workspaceId="ws-zwei" onProcessFile={onProcessFile} onAllComplete={onAllComplete} onDiscardRow={onDiscardRow} />);
-    await user.click(screen.getByRole('button', { name: 'Upload anyway' }));
-    await waitFor(() => expect(onProcessFile).toHaveBeenCalledTimes(1));
-    expect(onProcessFile.mock.calls[0][1]).toMatchObject({ workspaceId: 'ws-eins' });
+    expect(await screen.findByText(/this exact file is attached to “Hosting Oktober”/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open it' }).getAttribute('href')).toBe('/app/dashboard?beleg=row-0');
+    expect(screen.queryByRole('button', { name: 'Upload anyway' })).toBeNull();
+    expect(onProcessFile).not.toHaveBeenCalled();
+    // The word must not vanish behind a redirect: "Continue" goes on when the person has read it.
+    await new Promise((r) => setTimeout(r, 1300));
+    expect(complete).not.toHaveBeenCalled();
+    screen.getByRole('button', { name: 'Continue to dashboard' }).click();
+    expect(complete).toHaveBeenCalledWith({ total: 1, succeeded: 1, failed: 0 });
+  });
+
+  it('the same invoice: the server kept no second receipt; the file was added to the one that is there', async () => {
+    onProcessFile.mockResolvedValueOnce({ ...SAVED, rowId: 'row-0', alreadyThere: { rowId: 'row-0', name: 'Hosting Oktober', reason: 'same_invoice', invoiceNumber: 'RE-2026-0042', fileAdded: true } });
+    const { container } = render(<ReceiptUploader workspaceId="ws-eins" activeWorkspaceId="ws-zwei" onProcessFile={onProcessFile} onAllComplete={onAllComplete} onDiscardRow={onDiscardRow} />);
+    drop(container);
+    expect(await screen.findByText(/“Hosting Oktober” is the same invoice \(number RE-2026-0042\)\. No second receipt was made; this file was added to it\./)).toBeTruthy();
+    // Uploaded into another company than the dashboard shows: no link that would not find it.
+    expect(screen.queryByRole('link', { name: 'Open it' })).toBeNull();
+    expect(screen.getByText(/It is in the company this file was uploaded into/)).toBeTruthy();
   });
 
   it('the same file in another company: saved, warned with that name, nothing moves on by itself, and it can be discarded', async () => {

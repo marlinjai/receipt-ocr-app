@@ -160,14 +160,24 @@ describe('blurry photo and failed recognition: retake on the SAME receipt', () =
 });
 
 describe('duplicates', () => {
-  it('the same photo again: nothing is uploaded; "upload anyway" is explicit', async () => {
+  it('the same photo again: nothing is uploaded, nothing asked, and the receipt that is there is linked', async () => {
     steps.checkDuplicate.mockResolvedValueOnce({ existing: { rowId: 'row-0', name: 'Mittagessen Testlokal' }, elsewhere: [] });
-    const { camera, user } = mount();
-    take(camera);
-    expect(await screen.findByText(/schon beim Beleg „Mittagessen Testlokal“ hinterlegt/)).toBeTruthy();
+    render(<PhoneCapture workspaceId="ws-eins" activeWorkspaceId="ws-eins" onSave={onSave} onRetake={onRetake} onDiscardRow={onDiscardRow} store={store} />);
+    take(document.querySelector('input[type="file"]') as HTMLInputElement);
+    expect(await screen.findByText(/Genau dieses Foto ist beim Beleg „Mittagessen Testlokal“ hinterlegt/)).toBeTruthy();
     expect(steps.upload).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'Trotzdem hochladen' }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('button', { name: 'Trotzdem hochladen' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Beleg öffnen' }).getAttribute('href')).toBe('/app/dashboard?beleg=row-0');
+  });
+
+  it('the same invoice as a receipt that is there: no second receipt, the photo hangs on the one that is there', async () => {
+    onSave.mockResolvedValue({ ...OTHER, rowId: 'row-0', alreadyThere: { rowId: 'row-0', name: 'Hosting Oktober', reason: 'same_invoice', invoiceNumber: 'RE-2026-0042', fileAdded: true } });
+    const { camera } = mount();
+    take(camera);
+    expect(await screen.findByText(/„Hosting Oktober“ ist dieselbe Rechnung \(Nummer RE-2026-0042\)\. Es wurde kein zweiter Beleg angelegt, das Foto hängt jetzt dort mit dran\./)).toBeTruthy();
+    // No meal sheet and no discard: there is no new receipt.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Neuen verwerfen' })).toBeNull();
   });
 
   it('the same receipt photographed twice: warned, and "discard" deletes the new row', async () => {

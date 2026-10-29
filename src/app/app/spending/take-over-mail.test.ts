@@ -19,7 +19,7 @@ describe('takeOverMail', () => {
   });
 
   it('reports an existing copy without uploading again', async () => {
-    const run = vi.fn(async (): Promise<PipelineOutcome> => ({ kind: 'duplicate', existing: { rowId: 'r0', name: 'x' } }));
+    const run = vi.fn(async (): Promise<PipelineOutcome> => ({ kind: 'duplicate', existing: { rowId: 'r0', name: 'x' }, reason: 'same_invoice', invoiceNumber: 'R-12345', fileAdded: true }));
     expect(await takeOverMail('c1', { fetchImpl: (async () => pdf()) as unknown as typeof fetch, pipeline, run })).toEqual({ kind: 'duplicate', rowId: 'r0' });
   });
 

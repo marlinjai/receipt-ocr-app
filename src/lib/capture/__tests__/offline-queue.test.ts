@@ -96,7 +96,7 @@ describe('drainQueue', () => {
 
   it('a file that is already on the server leaves the queue without a second upload', async () => {
     await seed('a.jpg');
-    const result = await drainQueue(store, async () => ({ kind: 'duplicate', existing: { rowId: 'r', name: 'Testlokal' } }));
+    const result = await drainQueue(store, async () => ({ kind: 'duplicate' as const, existing: { rowId: 'r', name: 'Testlokal' }, reason: 'same_file' as const, invoiceNumber: null, fileAdded: false }));
     expect(result.sent[0].outcome.kind).toBe('duplicate');
     expect(result.remaining).toBe(0);
   });

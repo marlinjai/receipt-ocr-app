@@ -13,6 +13,7 @@ import { saveReceiptRotation } from '@/app/app/meals/actions';
 import MealPanelSection from './meals/MealPanelSection';
 import ReceiptLinesSection from './ReceiptLinesSection';
 import ReceiptMergedSection from './ReceiptMergedSection';
+import { INVOICE_NUMBER_COLUMN } from '@/lib/extraction/invoice-number';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 import type { RereadNote } from '@/lib/review/reread';
 
@@ -318,6 +319,11 @@ export default function ReceiptDetailPanel({
                 });
           })()
         : '—',
+    },
+    {
+      // The document's own number: the same vendor with the same number is one receipt (corrected in the grid).
+      label: 'Rechnungsnummer',
+      value: getVal(INVOICE_NUMBER_COLUMN) ? String(getVal(INVOICE_NUMBER_COLUMN)) : 'keine',
     },
     {
       label: 'Category',

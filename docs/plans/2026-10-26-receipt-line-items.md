@@ -83,7 +83,7 @@ place for a supermarket's thirty positions.
 
 What was built:
 
-- **Storage** (migration `0040_receipt_items`, additive): `receipt_items` (one row per printed
+- **Storage** (migration `0043_receipt_items`, additive): `receipt_items` (one row per printed
   position: text, quantity, unit price, gross cents in the receipt's currency, net cents where the
   source states one, tax rate, kind), `receipt_item_readings` (one row per receipt: lines, no lines,
   no stored text, or failed with an attempt count, plus the lines' sum, the model and token counts)

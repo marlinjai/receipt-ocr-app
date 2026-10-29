@@ -159,12 +159,42 @@ describe('backtrack: a person correcting a number changes what is a duplicate', 
 
     // Corrected again, to A's number: the same invoice, merged at once into the more complete one.
     await ws.adapter.updateRow(b, { [col('Rechnungsnummer')]: 'r-500001' });
-    expect(await mergeAfterChange(db, ctx, [b])).toEqual(new Map([[b, a]]));
+    expect([...(await mergeAfterChange(db, ctx, [b])).values()].map((m) => [m.rowId, m.keptRowId, m.reason])).toEqual([[b, a, 'same_invoice']]);
     expect(await archived(b)).toBe(true);
 
     // Run again with nothing changed: nothing moves.
     expect((await mergeAfterChange(db, ctx, [a])).size).toBe(0);
     expect(await archived(a)).toBe(false);
+  });
+});
+
+describe('re-entry: what a person entered on the archived receipt, and a merge planned twice', () => {
+  it('a meal guest and a tax decision move to the kept receipt, a restore moves them back, and a second run keeps the record whole', async () => {
+    const v = vendor();
+    const kept = await ws.addReceipt(receipt({ Vendor: v, Rechnungsnummer: 'RE-2026-0077', Date: '2026-04-01' }));
+    const copy = await ws.addReceipt(receipt({ Vendor: v, Rechnungsnummer: 'RE-2026-0077', Date: '2026-04-01' }));
+    await linkPayment(kept);
+    const base = { authWorkspaceId: ws.workspaceId, authTenantId: ws.tenantId };
+    const guest = await db.mealGuest.create({ data: { ...base, rowId: copy, contactId: randomUUID(), displayName: 'Gast' } });
+    const decision = await db.taxItemDecision.create({ data: { ...base, rowId: copy, allocations: [] } });
+
+    expect([...(await mergeAfterChange(db, ctx, [copy])).keys()]).toEqual([copy]);
+    expect((await db.mealGuest.findUnique({ where: { id: guest.id } }))!.rowId).toBe(kept);
+    expect((await db.taxItemDecision.findUnique({ where: { id: decision.id } }))!.rowId).toBe(kept);
+    const record = (await db.receiptMerge.findUnique({ where: { rowId: copy } }))!;
+    expect(record.movedMealGuestIds).toEqual([guest.id]);
+    expect(record.movedTaxDecisionId).toBe(decision.id);
+
+    // A pass planning the merge again (the first stopped before the archive) must not empty the record.
+    await ws.adapter.unarchiveRow(copy);
+    await mergeAfterChange(db, ctx, [copy]);
+    const again = (await db.receiptMerge.findUnique({ where: { rowId: copy } }))!;
+    expect(again.movedMealGuestIds).toEqual([guest.id]);
+    expect(again.movedTaxDecisionId).toBe(decision.id);
+
+    expect(await restoreMergedReceipt(db, ctx, copy)).toBe(kept);
+    expect((await db.mealGuest.findUnique({ where: { id: guest.id } }))!.rowId).toBe(copy);
+    expect((await db.taxItemDecision.findUnique({ where: { id: decision.id } }))!.rowId).toBe(copy);
   });
 });
 

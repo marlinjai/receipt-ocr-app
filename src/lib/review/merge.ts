@@ -15,8 +15,9 @@ import { automaticDuplicate, sameInvoice, type AutomaticDuplicate, type ReviewSn
  * Two receipts are one when they hold the very same file, or when the same
  * vendor issued both under the same invoice number (`automaticDuplicate`).
  * The pass keeps the more complete one and ARCHIVES the other: never a hard
- * delete. The archived receipt's payment links move to the kept one (where
- * that one is not linked to the payment already) and its files the kept one
+ * delete. The archived receipt's payment links, meal guests and tax decision move to the
+ * kept one (where it is not linked to the payment, lists the guest or holds a
+ * decision already) and its files the kept one
  * lacks are added there as further references, so nothing it carried is out
  * of sight. Everything the merge changed is recorded (`receipt_merges`), and
  * `restoreMergedReceipt` undoes exactly that.
@@ -186,16 +187,22 @@ function candidateOf(row: Row, columns: readonly Column[], fileHashes: string[],
   };
 }
 
-/** Archive one receipt into another, and record what changed. Skips a pair where either side is gone meanwhile. */
-async function applyMerge(db: PrismaClient, ctx: MergeContext, table: TableContext, merge: PlannedMerge, invoiceNumber: string | null): Promise<boolean> {
+/** Archive one receipt into another, and record what changed. Null for a pair where either side is gone meanwhile. */
+async function applyMerge(db: PrismaClient, ctx: MergeContext, table: TableContext, merge: PlannedMerge, invoiceNumber: string | null): Promise<{ fileAdded: boolean } | null> {
   const [row, kept] = await Promise.all([table.adapter.getRow(merge.rowId), table.adapter.getRow(merge.keptRowId)]);
   const live = (r: Row | null) => r !== null && r.tableId === table.tableId && !r.archived && !isGroupRow(r, table.columns);
-  if (!live(row) || !live(kept)) return false;
+  if (!live(row) || !live(kept)) return null;
   const imageColumnId = firstColumnIdByName(table.columns).get('Receipt Image') ?? null;
 
   // The payments of the archived receipt now document the kept one; a payment linked to both stays as it is.
   const keptPayments = new Set((await db.taxPaymentLink.findMany({ where: { rowId: merge.keptRowId }, select: { paymentId: true } })).map((l) => l.paymentId));
   const movable = (await db.taxPaymentLink.findMany({ where: { rowId: merge.rowId }, select: { id: true, paymentId: true } })).filter((l) => !keptPayments.has(l.paymentId));
+  // The person's entries follow: a guest the kept receipt does not list moves over, and the tax decision moves
+  // where the kept receipt has none (where both have one, the kept receipt's stands and the other stays on the archived row).
+  const keptContacts = new Set((await db.mealGuest.findMany({ where: { rowId: merge.keptRowId }, select: { contactId: true } })).map((g) => g.contactId));
+  const movableGuests = (await db.mealGuest.findMany({ where: { rowId: merge.rowId }, select: { id: true, contactId: true } })).filter((g) => g.contactId === null || !keptContacts.has(g.contactId));
+  const archivedDecision = await db.taxItemDecision.findUnique({ where: { rowId: merge.rowId }, select: { id: true } });
+  const movableDecision = archivedDecision && !(await db.taxItemDecision.findUnique({ where: { rowId: merge.keptRowId }, select: { id: true } })) ? archivedDecision : null;
   // Its files the kept receipt lacks go there too, as further references: the archived receipt keeps its own.
   const added: string[] = [];
   if (imageColumnId) {
@@ -219,30 +226,42 @@ async function applyMerge(db: PrismaClient, ctx: MergeContext, table: TableConte
       keptFiles.add(ref.fileId);
     }
   }
-  // The record first: a merge cut off after it can be restored, one cut off before it never happened.
+  // The record first: a merge cut off after it can be restored, one cut off before it never happened. A pass that
+  // plans the same merge again (the first one stopped midway) adds to the record, never replaces what it holds:
+  // what the first run moved already sits on the kept receipt, and the restore must still move it back.
+  const prior = await db.receiptMerge.findUnique({ where: { rowId: merge.rowId } });
+  const sameKeeper = prior?.keptRowId === merge.keptRowId ? prior : null;
+  const union = (before: readonly string[] | undefined, now: readonly string[]) => [...new Set([...(before ?? []), ...now])];
+  const record = {
+    keptRowId: merge.keptRowId,
+    reason: merge.reason,
+    invoiceNumber,
+    movedPaymentLinkIds: union(sameKeeper?.movedPaymentLinkIds, movable.map((l) => l.id)),
+    addedFileRefIds: union(sameKeeper?.addedFileRefIds, added),
+    movedMealGuestIds: union(sameKeeper?.movedMealGuestIds, movableGuests.map((g) => g.id)),
+    movedTaxDecisionId: movableDecision?.id ?? sameKeeper?.movedTaxDecisionId ?? null,
+  };
   await db.receiptMerge.upsert({
     where: { rowId: merge.rowId },
-    create: {
-      rowId: merge.rowId,
-      authWorkspaceId: ctx.workspaceId,
-      authTenantId: ctx.tenantId,
-      keptRowId: merge.keptRowId,
-      reason: merge.reason,
-      invoiceNumber,
-      movedPaymentLinkIds: movable.map((l) => l.id),
-      addedFileRefIds: added,
-    },
-    update: { keptRowId: merge.keptRowId, reason: merge.reason, invoiceNumber, movedPaymentLinkIds: movable.map((l) => l.id), addedFileRefIds: added, mergedAt: new Date() },
+    create: { rowId: merge.rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, ...record },
+    update: { ...record, mergedAt: new Date() },
   });
+  if (movableGuests.length > 0) await db.mealGuest.updateMany({ where: { id: { in: movableGuests.map((g) => g.id) }, rowId: merge.rowId }, data: { rowId: merge.keptRowId } });
+  if (movableDecision) await db.taxItemDecision.updateMany({ where: { id: movableDecision.id, rowId: merge.rowId }, data: { rowId: merge.keptRowId } });
   if (movable.length > 0) await db.taxPaymentLink.updateMany({ where: { id: { in: movable.map((l) => l.id) }, rowId: merge.rowId }, data: { rowId: merge.keptRowId } });
   // A credit note linked to the archived copy of its invoice now points at the kept one.
   await db.receiptReference.updateMany({ where: { authWorkspaceId: ctx.workspaceId, referencedRowId: merge.rowId }, data: { referencedRowId: merge.keptRowId } });
   await table.adapter.archiveRow(merge.rowId);
-  return true;
+  return { fileAdded: record.addedFileRefIds.length > 0 };
+}
+
+/** A merge that happened, and whether the archived receipt's file now hangs on the kept one. */
+export interface AppliedMerge extends PlannedMerge {
+  fileAdded: boolean;
 }
 
 export interface MergeResult {
-  merged: PlannedMerge[];
+  merged: AppliedMerge[];
 }
 
 /**
@@ -257,10 +276,11 @@ export async function mergeDuplicates(db: PrismaClient, ctx: MergeContext, optio
   const { candidates, distinct } = await loadCandidates(db, ctx, table);
   const byId = new Map(candidates.map((c) => [c.rowId, c]));
   const plan = planMerges(candidates, distinct, options.only ? new Set(options.only) : undefined);
-  const merged: PlannedMerge[] = [];
+  const merged: AppliedMerge[] = [];
   for (const merge of plan) {
     try {
-      if (await applyMerge(db, ctx, table, merge, byId.get(merge.rowId)?.invoiceNumber ?? null)) merged.push(merge);
+      const applied = await applyMerge(db, ctx, table, merge, byId.get(merge.rowId)?.invoiceNumber ?? null);
+      if (applied) merged.push({ ...merge, ...applied });
     } catch (err) {
       console.error('[merge] a duplicate could not be archived:', err instanceof Error ? err.name : 'error');
     }
@@ -272,17 +292,22 @@ export async function mergeDuplicates(db: PrismaClient, ctx: MergeContext, optio
 /**
  * Run the pass for some receipts after they changed, without failing what
  * changed them: a failure is logged and the next run (daily, the backfill)
- * catches up. Returns the receipt each of them went into, where one did.
+ * catches up. Returns each merge that touched them, by the archived receipt:
+ * where it went, why, and whether its file was added there. A receipt can be
+ * the kept one of a merge too (another receipt archived into it): see `touches`.
  */
-export async function mergeAfterChange(db: PrismaClient, ctx: MergeContext, rowIds: readonly string[]): Promise<Map<string, string>> {
+export async function mergeAfterChange(db: PrismaClient, ctx: MergeContext, rowIds: readonly string[]): Promise<Map<string, AppliedMerge>> {
   try {
     const { merged } = await mergeDuplicates(db, ctx, { only: rowIds });
-    return new Map(merged.map((m) => [m.rowId, m.keptRowId]));
+    return new Map(merged.map((m) => [m.rowId, m]));
   } catch (err) {
     console.error('[merge] the pass after a change failed:', err instanceof Error ? err.name : 'error');
     return new Map();
   }
 }
+
+/** True when one of the merges archived `rowId` or archived another receipt into it. */
+export const touches = (merges: ReadonlyMap<string, AppliedMerge>, rowId: string): boolean => [...merges.values()].some((m) => m.rowId === rowId || m.keptRowId === rowId);
 
 export interface ExistingCopy {
   rowId: string;
@@ -351,8 +376,8 @@ export async function mergedInto(db: PrismaClient, workspaceId: string, keptRowI
 
 /**
  * Bring an archived duplicate back (decision 15): the receipt is live again,
- * the payment links the merge moved go back to it where they still sit on the
- * kept receipt, the file references the merge added to the kept receipt go,
+ * the payment links, meal guests and tax decision the merge moved go back to it
+ * where they still sit on the kept receipt, the file references the merge added to the kept receipt go,
  * and the pair is recorded as different, so no later pass archives it again.
  * Returns the kept receipt's id.
  */
@@ -369,6 +394,8 @@ export async function restoreMergedReceipt(db: PrismaClient, ctx: MergeContext, 
   if (record.movedPaymentLinkIds.length > 0) {
     await db.taxPaymentLink.updateMany({ where: { id: { in: record.movedPaymentLinkIds }, rowId: record.keptRowId }, data: { rowId } });
   }
+  if (record.movedMealGuestIds.length > 0) await db.mealGuest.updateMany({ where: { id: { in: record.movedMealGuestIds }, rowId: record.keptRowId }, data: { rowId } });
+  if (record.movedTaxDecisionId) await db.taxItemDecision.updateMany({ where: { id: record.movedTaxDecisionId, rowId: record.keptRowId }, data: { rowId } });
   if (record.addedFileRefIds.length > 0) await db.dtFile.deleteMany({ where: { id: { in: record.addedFileRefIds }, rowId: record.keptRowId } });
   await table.adapter.unarchiveRow(rowId);
   await db.receiptMerge.deleteMany({ where: { rowId } });

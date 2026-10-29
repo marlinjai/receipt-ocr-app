@@ -944,6 +944,8 @@ model ReceiptMerge {
   invoiceNumber        String?  @map("invoice_number")
   movedPaymentLinkIds  String[] @default([]) @map("moved_payment_link_ids")
   addedFileRefIds      String[] @default([]) @map("added_file_ref_ids")
+  movedMealGuestIds    String[] @default([]) @map("moved_meal_guest_ids")
+  movedTaxDecisionId   String?  @map("moved_tax_decision_id")
   mergedAt             DateTime @default(now()) @map("merged_at")
 
   @@index([authWorkspaceId])

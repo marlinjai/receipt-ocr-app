@@ -26,7 +26,7 @@ import { rowKind } from '@/lib/groups/service';
 import { AssignmentEditError, assignmentEditContext, followTreatment, routeAssignmentEdit, type AssignmentEditContext } from '@/lib/tax/assignment-sync';
 import { readRowLinks } from '@/lib/groups/links';
 import { INVOICE_NUMBER_COLUMN } from '@/lib/extraction/invoice-number';
-import { mergeAfterChange, restoreMergedReceipt } from '@/lib/review/merge';
+import { mergeAfterChange, restoreMergedReceipt, touches } from '@/lib/review/merge';
 import { measurePage, timed } from '@/lib/timing';
 import {
   requireReceiptsSession,
@@ -399,7 +399,10 @@ export async function searchReceiptText(tableId: string, term: string): Promise<
   return { ids: rows.slice(0, TEXT_SEARCH_LIMIT).map((r) => r.id), truncated: rows.length > TEXT_SEARCH_LIMIT };
 }
 
-export async function updateRow(rowId: string, edited: Record<string, CellValue>): Promise<Row> {
+/** The edited row; `archived` when the edit made it a duplicate that was archived, `mergedOther` when another receipt was archived into it. */
+export type UpdatedRow = Row & { mergedOther?: boolean };
+
+export async function updateRow(rowId: string, edited: Record<string, CellValue>): Promise<UpdatedRow> {
   const { session, workspaceId } = await requireRowAccess(rowId, 'receipts.row.write');
   const { tableId } = await rowTable(rowId);
   const adapter = getAdapter();
@@ -412,7 +415,9 @@ export async function updateRow(rowId: string, edited: Record<string, CellValue>
   // A corrected invoice number or vendor can make the receipt one that is there already, or end that: the
   // automatic pass decides at once (plan 2026-10-29-invoice-number-duplicates). Archived into another one, the row says so.
   if (columns.some((c) => (c.name === INVOICE_NUMBER_COLUMN || c.name === 'Vendor') && c.id in edited)) {
-    if ((await mergeAfterChange(prisma, ctx, [rowId])).has(rowId)) return { ...written, archived: true };
+    const merges = await mergeAfterChange(prisma, ctx, [rowId]);
+    if (merges.has(rowId)) return { ...written, archived: true };
+    if (touches(merges, rowId)) return { ...written, mergedOther: true };
   }
   return written;
 }

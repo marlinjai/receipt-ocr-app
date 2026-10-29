@@ -428,7 +428,15 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         .then((row) => {
           // A corrected invoice number made the receipt one that was there already: the app archived it into
           // the more complete one (plan 2026-10-29-invoice-number-duplicates). The table and the list follow.
-          if (!row?.archived) return;
+          const mergedOther = (row as { mergedOther?: boolean } | undefined)?.mergedOther === true;
+          if (!row?.archived && !mergedOther) return;
+          if (mergedOther) {
+            // Another receipt with the same invoice number went into this one: it left the table.
+            setNotice({ tone: 'warn', text: 'Ein weiterer Beleg mit derselben Rechnungsnummer vom selben Händler wurde in diesen archiviert; dort lässt er sich unter „Zusammengeführt“ wiederherstellen.' });
+            void reload();
+            void reloadReview();
+            return;
+          }
           setNotice({
             tone: 'warn',
             text: 'Diesen Beleg gibt es schon: gleiche Rechnungsnummer vom selben Händler. Er wurde archiviert, der vollständigere bleibt; dort lässt er sich unter „Zusammengeführt“ wiederherstellen.',

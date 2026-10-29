@@ -657,13 +657,14 @@ export async function retakeReceipt(
   // A receipt just read may fall under a vendor rule, or leave one: its assignment cells show that.
   await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
   // The new photo may show it is a receipt that is there already: the pass keeps the more complete one.
-  const mergedInto = (await mergeAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id])).get(row.id);
-  if (mergedInto) {
+  const merge = (await mergeAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id])).get(row.id);
+  if (merge) {
+    const mergedInto = merge.keptRowId;
     const kept = await adapter.getRow(mergedInto);
     const name = kept ? (await nameFromCells(adapter, columns, kept.cells)) || 'Beleg' : 'Beleg';
     return {
       rowId: mergedInto,
-      alreadyThere: { rowId: mergedInto, name, reason: 'same_invoice', invoiceNumber: read.invoiceNumber, fileAdded: true },
+      alreadyThere: { rowId: mergedInto, name, reason: merge.reason, invoiceNumber: read.invoiceNumber, fileAdded: merge.fileAdded },
       possibleDuplicateOf: null,
       category: read.category,
       isMeal: false,
@@ -814,7 +815,7 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     // A receipt just read may fall under a vendor rule, or leave one: its assignment cells show that.
     await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
     // The number read now may make it a receipt that is there already: the pass keeps the more complete one.
-    const mergedInto = (await mergeAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id])).get(row.id) ?? null;
+    const mergedInto = (await mergeAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id])).get(row.id)?.keptRowId ?? null;
     return { ok: true, reviewFlags: read.reviewFlags, ...(mergedInto ? { mergedInto } : {}) };
   } catch (e) {
     const status = e instanceof ReceiptsAuthError ? e.status : (e as { status?: number })?.status;

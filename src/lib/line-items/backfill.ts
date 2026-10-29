@@ -26,7 +26,8 @@ import { allReceiptRows, tableContext } from '@/lib/meals/service';
 import { UnusableAnswerError, ClassifierUnavailableError, type LinesAnswer, type LinesInput } from '@/lib/receipt-classifier';
 import type { StructuredReceiptFields } from '@/lib/einvoice';
 import { linesFromInvoice } from './einvoice';
-import { checkLines, sumGrossCents } from './lines';
+import { checkLines, priceLines, sumGrossCents } from './lines';
+import { pricingTotalsReader } from './reprice';
 import { MAX_ATTEMPTS, MAX_TRANSIENT_FAILURES, recordUnread, replaceReceiptLines, type LineItemsContext } from './store';
 
 /** How many receipts one run from the receipts page reads: each is one model call, side by side, so the request answers well within a proxy's time limit; the page asks again. */
@@ -59,7 +60,6 @@ export interface LinesBackfillResult {
 }
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
-const number = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 
 type ReadingState = { outcome: string; attempts: number; transientFailures: number };
 
@@ -113,7 +113,8 @@ export async function backfillReceiptLines(db: PrismaClient, ctx: LineItemsConte
   if (!table) return result;
   const { columns } = table;
   const id = (name: string) => columns.find((c) => c.name === name)?.id;
-  const [nameId, vendorId, textId, grossId, currencyId] = [id('Name'), id('Vendor'), id('OCR Text'), id('Gross'), id('Currency')];
+  const [nameId, vendorId, textId, currencyId] = [id('Name'), id('Vendor'), id('OCR Text'), id('Currency')];
+  const totalsOf = pricingTotalsReader(columns);
   const currencyOptions = currencyId ? (table.selectOptions.get(currencyId) ?? (await table.adapter.getSelectOptions(currencyId))) : [];
   const currencyOf = (row: Row) => (currencyId ? (currencyOptions.find((o) => o.id === row.cells[currencyId])?.name ?? null) : null);
   const nameOf = (row: Row) => (nameId ? text(row.cells[nameId]) : '') || 'Beleg ohne Namen';
@@ -153,9 +154,10 @@ export async function backfillReceiptLines(db: PrismaClient, ctx: LineItemsConte
   };
 
   /** 'unusable' was recorded against the receipt; 'transient' was not (and is recorded by the caller where it writes nothing). */
-  const ask = async (row: Row, fullText: string, gross: number | null): Promise<LinesAnswer | 'unusable' | 'transient' | 'unavailable'> => {
+  const ask = async (row: Row, fullText: string): Promise<LinesAnswer | 'unusable' | 'transient' | 'unavailable'> => {
     try {
-      const answer = await readLines({ vendor: (vendorId && text(row.cells[vendorId])) || null, fullText, gross, currency: currencyOf(row) });
+      const { gross, net } = totalsOf(row);
+      const answer = await readLines({ vendor: (vendorId && text(row.cells[vendorId])) || null, fullText, gross, net, currency: currencyOf(row) });
       result.inputTokens += answer.usage.inputTokens;
       result.outputTokens += answer.usage.outputTokens;
       return answer;
@@ -188,7 +190,7 @@ export async function backfillReceiptLines(db: PrismaClient, ctx: LineItemsConte
 
   const one = async (row: Row) => {
     if (result.unavailable) return;
-    const gross = grossId ? number(row.cells[grossId]) : null;
+    const totals = totalsOf(row);
     let fields: StructuredReceiptFields | null;
     try {
       fields = await fieldsOf(row);
@@ -201,7 +203,7 @@ export async function backfillReceiptLines(db: PrismaClient, ctx: LineItemsConte
       // An electronic invoice: its lines are the XML's. The model is asked only for their kinds, from the
       // invoice's text that lists them. A call that did not get through writes nothing (the next run asks
       // again); after an unusable answer the XML's lines are stored as "Sonstiges", a person corrects them.
-      const answer = await ask(row, fields.text, gross);
+      const answer = await ask(row, fields.text);
       if (answer === 'unavailable') return;
       if (answer === 'transient') {
         await recordFailure(row, 'transient');
@@ -215,7 +217,7 @@ export async function backfillReceiptLines(db: PrismaClient, ctx: LineItemsConte
         { lines: invoice.lines, source: 'einvoice', linesNetCents: invoice.linesNetCents, totalNetCents: invoice.totalNetCents, model: answer === 'unusable' ? null : answer.model, usage: answer === 'unusable' ? null : answer.usage },
         { onlyIfUnread: true, rowExists: stillThere(row.id) },
       );
-      if (written) tally(invoice.lines, checkLines({ lineCount: invoice.lines.length, linesSumCents: null, linesNetCents: invoice.linesNetCents, totalNetCents: invoice.totalNetCents }, gross));
+      if (written) tally(invoice.lines, checkLines({ lineCount: invoice.lines.length, linesSumCents: sumGrossCents(invoice.lines), linesNetCents: invoice.linesNetCents, totalNetCents: invoice.totalNetCents }, totals));
       return;
     }
     const fullText = textOf(row);
@@ -224,7 +226,7 @@ export async function backfillReceiptLines(db: PrismaClient, ctx: LineItemsConte
       listed.set(row.id, { rowId: row.id, name: nameOf(row) });
       return;
     }
-    const answer = await ask(row, fullText, gross);
+    const answer = await ask(row, fullText);
     if (answer === 'unavailable') return;
     if (answer === 'transient' || answer === 'unusable') {
       await recordFailure(row, answer === 'unusable' ? 'failed' : 'transient');
@@ -234,8 +236,16 @@ export async function backfillReceiptLines(db: PrismaClient, ctx: LineItemsConte
       await recordFailure(row, 'failed', answer.model);
       return;
     }
-    const written = await replaceReceiptLines(db, ctx, row.id, { lines: answer.lines, source: 'backfill', textCut: answer.textCut, model: answer.model, usage: answer.usage }, { onlyIfUnread: true, rowExists: stillThere(row.id) });
-    if (written) tally(answer.lines, checkLines({ lineCount: answer.lines.length, linesSumCents: sumGrossCents(answer.lines), linesNetCents: null, totalNetCents: null }, gross));
+    // Printed before tax or with it: the row's figures decide, the model's word where they say nothing (`priceLines`).
+    const priced = priceLines(answer.lines, totals, answer.pricesNet);
+    const written = await replaceReceiptLines(
+      db,
+      ctx,
+      row.id,
+      { lines: priced.lines, source: 'backfill', linesNetCents: priced.linesNetCents, textCut: answer.textCut, model: answer.model, usage: answer.usage },
+      { onlyIfUnread: true, rowExists: stillThere(row.id) },
+    );
+    if (written) tally(priced.lines, checkLines({ lineCount: priced.lines.length, linesSumCents: sumGrossCents(priced.lines), linesNetCents: priced.linesNetCents, totalNetCents: null }, totals));
   };
 
   let next = 0;

@@ -160,3 +160,64 @@ Decided while building, say so if you disagree:
 
 Not done here: the backfill on production (the coordinating session runs it after the deploy, with
 the button on the receipts page or `POST /api/receipts/lines` signed in as the company).
+
+## Reality (2026-10-30, branch fix/line-items-net-tip-credits): net prices, tips and credits
+
+After the backfill, 131 receipts of one company carried "Positionen prüfen". The coordinating
+session compared all 131 by hand with their stored text: three causes are in the code and fixed
+here, the remaining single misreadings it corrects in the data itself.
+
+1. **Invoices priced before tax (104 of 131).** Subscription and hosting invoices print each
+   position before tax and add the tax once at the end (a line of 22.00, 19 percent tax 4.18, total
+   26.18). The model read the printed net amounts, as it should, despite the old instruction to add
+   the tax itself, and they were stored as gross: the check compared net lines with the gross total,
+   and "Was gekauft" counted every such kind short by the tax (`buildPurchasesOverview` takes a
+   line's `grossCents` at face value, and so does the receipt view). For all 104 the lines times
+   1.19 are the gross. Now `priceLines` (`src/lib/line-items/lines.ts`) settles at write time, in the
+   reading and the backfill, whether the printed amounts are gross or net: lines that add up to the
+   row's gross are gross whatever the model says (nothing is taxed twice); lines that add up to the
+   row's net and not its gross are net; lines that match neither are net only on the model's new
+   `pricesNet` word. Net lines keep the printed amount in `netCents` and get a gross from the line's
+   rate, else the row's "Tax Rate"; a remainder of rounding (at most a cent a line) goes to the
+   largest line so the lines add up to the gross exactly. A larger gap means a wrong rate: where the
+   net lines add up to the row's net, the row's own ratio of gross to net prices them (right in sum
+   for 7 percent and for mixed rates); otherwise the gap stays visible. The reading record keeps the
+   lines' net sum (`linesNetCents`) and no net total, so `checkLines` checks them on net against the
+   row's net as it is now. A receipt in another currency is priced and checked in its currency.
+2. **Tips (2 of 131).** A restaurant bill whose lines include the tip line ("Trinkgeld 4,40") while
+   the row's gross excludes it (the meal's own "Tip" column). `checkLines` now checks against the
+   gross first and, when the row holds a tip and the lines miss the gross, against the gross plus the
+   tip. The rule is the arithmetic only, because the review list checks from the reading record,
+   which keeps no line's text. "Was gekauft" counts such a receipt with its tip, so its lines never
+   show as more than the receipt.
+3. **Credits, prepayments and discounts (reading errors, for the future).** The prompt
+   (`ITEMS_RULE` in `src/lib/receipt-classifier.ts`) now asks for each amount as printed, with the
+   description it is printed with, never shifted up or down; an amount the invoice subtracts on the
+   way to its total because it was charged before (a usage invoice's "Mid-month usage paid") as a
+   negative line of the kind it was charged for; no line for a payment, an applied credit or
+   balance, an earlier balance ("Kontostand") or interest of an earlier bill; one line at its amount
+   after a discount printed in the position's own row; lines that add up to what this invoice
+   charges; and `"pricesNet"` right before the lines (so an answer cut off inside them keeps it).
+   The lines-only reading is also given the row's net. `parseModelLines` was checked: a negative
+   amount is kept, never clamped.
+
+**Lines stored before this** are re-derived once per company with `POST /api/receipts/lines/reprice`
+(signed in as the company, permission `receipts.row.write`; `repriceCompanyLines` in
+`src/lib/line-items/reprice.ts`, `repriceStoredLines` in `store.ts`). No model is asked: per
+receipt, under the same lock as `replaceReceiptLines`, the stored lines are priced again with the
+row's figures as they are now. Only amounts and the reading's sums change, never the texts, the
+kinds, nor when or how the lines were read (a confirmation is weighed against the reading's time).
+Electronic invoices are left alone. A run again changes nothing; it answers with `lookedAt`,
+`rederived`, `unchanged` and `failed` (status 500 when a receipt failed; a run again tries it). It is
+not part of the daily run: a step that changes stored amounts by itself after a deploy is not
+wanted, and the counts of a one-off belong in the answer, not the log.
+
+Decided while building, say so if you disagree:
+
+13. **The row's figures decide whether lines are net, the model's word only where they say
+   nothing.** The flag alone would gross up a till receipt the model misjudged.
+14. **A line priced before tax shows its gross**, with "netto" and the printed amount beneath it in
+   the receipt view, so the lines add up to the receipt's total where a person reads them.
+
+Not done here: running the re-derivation on production (the coordinating session runs it once per
+company after the deploy).

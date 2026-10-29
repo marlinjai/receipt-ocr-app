@@ -259,7 +259,7 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
   }));
   const linesCheckOf = (s: (typeof snapshots)[number]) => {
     const reading = linesByRow.get(s.rowId);
-    return reading ? checkLines(reading, s.gross) : null;
+    return reading ? checkLines(reading, { gross: s.gross, net: s.net, tip: s.reading.tip }) : null;
   };
   const byId = new Map(snapshots.map((s) => [s.rowId, s]));
   const alike = await timed('review.alike', async () => lookAlikes(snapshots, distinct));

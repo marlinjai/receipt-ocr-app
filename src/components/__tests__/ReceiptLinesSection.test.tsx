@@ -26,7 +26,7 @@ const line = (id: string, text: string, grossCents: number, kind: StoredLine['ki
 const view = (extra: Partial<ReceiptLinesView> = {}): ReceiptLinesView => ({
   lines: [line('l1', 'Cappuccino', 780, 'drink_out', { quantity: 2, unitPriceCents: 390 }), line('l2', 'Croque', 950, 'meal_out')],
   reading: { outcome: 'lines', source: 'reading', textCut: false, retried: false },
-  check: { sumCents: 1730, totalCents: 1730, differenceCents: 0, addsUp: true, basis: 'gross' },
+  check: { sumCents: 1730, totalCents: 1730, differenceCents: 0, addsUp: true, basis: 'gross', tipCents: 0 },
   currency: 'EUR',
   ...extra,
 });
@@ -42,8 +42,18 @@ describe('ReceiptLinesSection', () => {
     expect(screen.queryByText(/Positionen ergeben/)).toBeNull();
   });
 
+  it('shows a line printed before tax with its gross, and names the printed net beneath it', async () => {
+    const plan = line('l1', 'Plus plan', 2618, 'software_services', { netCents: 2200, unitPriceCents: 2200 });
+    getReceiptLines.mockResolvedValue({ ok: true, value: view({ lines: [plan, line('l2', 'Croque', 950, 'meal_out')], check: { sumCents: 2200, totalCents: 2200, differenceCents: 0, addsUp: true, basis: 'net', tipCents: 0 } }) });
+    render(<ReceiptLinesSection rowId="r1" version="v1" />);
+    expect(await screen.findByText('26,18 €')).toBeTruthy();
+    expect(screen.getByText('netto 22,00 €')).toBeTruthy();
+    // A line without a net names none.
+    expect(screen.getAllByText(/^netto /)).toHaveLength(1);
+  });
+
   it('says by how much the lines miss the total', async () => {
-    getReceiptLines.mockResolvedValue({ ok: true, value: view({ check: { sumCents: 4120, totalCents: 4210, differenceCents: -90, addsUp: false, basis: 'gross' } }) });
+    getReceiptLines.mockResolvedValue({ ok: true, value: view({ check: { sumCents: 4120, totalCents: 4210, differenceCents: -90, addsUp: false, basis: 'gross', tipCents: 0 } }) });
     render(<ReceiptLinesSection rowId="r1" version="v1" />);
     expect((await screen.findByText(/Positionen ergeben 41,20 €, Beleg 42,10 €/)).textContent).toContain('nicht aufgeschlüsselt');
   });

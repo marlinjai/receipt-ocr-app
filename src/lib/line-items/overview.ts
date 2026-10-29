@@ -31,7 +31,7 @@ export interface PurchaseReceiptInput {
   /** ISO day of the receipt, or null. */
   date: string | null;
   vendor: string;
-  /** The receipt's total in its currency, in cents; null when it has none. */
+  /** The receipt's total in its currency, in cents, with a tip its lines include; null when it has none. */
   grossCents: number | null;
   currency: string;
   /** Euros per unit of the currency; 1 for euros. */

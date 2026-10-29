@@ -20,6 +20,7 @@ import { serializeTaxLines } from '@/lib/meals/rules';
 import { receiptAttention, type ReceiptAttention } from '@/lib/upload/quality';
 import { ClassifierUnavailableError, classifyReceiptText, type ReceiptReadingAnswer } from '@/lib/receipt-classifier';
 import { linesFromInvoice } from '@/lib/line-items/einvoice';
+import { priceLines } from '@/lib/line-items/lines';
 import { replaceReceiptLines, type StoreLinesInput } from '@/lib/line-items/store';
 import type { ReceiptPage } from '@/lib/receipt-page';
 import { loadReceiptSource } from '@/lib/receipt-page-source';
@@ -296,13 +297,16 @@ async function readReceipt(
   // Where the text was built from the XML, its heading is no vendor: the seller's name is, unless the model named one.
   const settled = read && structured ? withStructuredInvoice(read, structured, { textFromStructure: source?.structured?.source.kind === 'xml', modelVendor: ai?.vendor ?? null }) : read;
   // The lines: an electronic invoice's from its XML, else the model's, and only from a reading that stands.
+  // The model's are priced with the figures this reading writes on the row: printed before tax, they get their gross (`priceLines`).
   const invoiceLines = settled && structured ? linesFromInvoice(structured, ai?.items ?? null) : null;
+  const finalTaxRate = settled?.taxRate ?? 19;
+  const pricedLines = settled && !invoiceLines && ai?.items ? priceLines(ai.items, { gross: settled.gross, net: settled.net, taxRate: finalTaxRate, tip: settled.meal?.tip ?? null }, ai.pricesNet) : null;
   const lines: StoreLinesInput | null = !settled
     ? null
     : invoiceLines
       ? { lines: invoiceLines.lines, source: 'einvoice', linesNetCents: invoiceLines.linesNetCents, totalNetCents: invoiceLines.totalNetCents }
-      : ai?.items
-        ? { lines: ai.items, source: 'reading', model: ai.model, usage: ai.usage }
+      : ai && pricedLines
+        ? { lines: pricedLines.lines, source: 'reading', linesNetCents: pricedLines.linesNetCents, model: ai.model, usage: ai.usage }
         : null;
   const reviewFlags: ReadFlag[] = settled?.flags ?? [];
   // The XML's number, else the one the text labels, else the model's where the text carries it; never from the image alone.
@@ -326,7 +330,6 @@ async function readReceipt(
   const meal = settled?.meal ?? null;
   const amounts = settled?.amounts ?? null;
   const finalGross = settled?.gross ?? null;
-  const finalTaxRate = settled?.taxRate ?? 19;
   const finalNet = settled?.net ?? null;
   // A meal is named by its restaurant; what was eaten belongs to the meal register.
   // An earlier wording of the same item is taken over as it is stored, also where the vendor settled differs from the one looked up.

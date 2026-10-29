@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CLASSIFY_MODEL, getClassifyModel } from '@/lib/ai-client';
 import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
-import { classificationPrompt, classifierProvider, itemPrompt, linesPrompt, parseClassificationResponse, parseItemResponse, parseLinesResponse, textForLines, textForModel, type ClassifyInput } from '../receipt-classifier';
+import { classificationPrompt, classifierProvider, itemPrompt, linesPrompt, linesUserText, parseClassificationResponse, parseItemResponse, parseLinesResponse, textForLines, textForModel, type ClassifyInput } from '../receipt-classifier';
 
 const INPUT: ClassifyInput = {
   vendor: 'Since 2016',
@@ -218,11 +218,53 @@ describe('the lines of the receipt, read in the same call', () => {
   });
 
   it('the lines-only answer of the backfill is read just as strictly', () => {
-    expect(parseLinesResponse('{ "items": [{ "text": "Brot", "gross": 2.49, "kind": "groceries" }] }')).toEqual([
-      { text: 'Brot', quantity: null, unitPriceCents: null, grossCents: 249, netCents: null, taxRate: null, kind: 'groceries' },
-    ]);
-    expect(parseLinesResponse('{ "items": [{ "text": "Brot", "gross": 2.49 }] }')).toBeNull();
-    expect(parseLinesResponse('{ broken')).toBeNull();
+    expect(parseLinesResponse('{ "items": [{ "text": "Brot", "gross": 2.49, "kind": "groceries" }] }')).toEqual({
+      lines: [{ text: 'Brot', quantity: null, unitPriceCents: null, grossCents: 249, netCents: null, taxRate: null, kind: 'groceries' }],
+      pricesNet: null,
+    });
+    expect(parseLinesResponse('{ "items": [{ "text": "Brot", "gross": 2.49 }] }').lines).toBeNull();
+    expect(parseLinesResponse('{ broken')).toEqual({ lines: null, pricesNet: null });
+    expect(parseLinesResponse('null')).toEqual({ lines: null, pricesNet: null });
+  });
+
+  it('asks for the amounts as printed, with whether they are before tax, and never for the tax added by the model', () => {
+    for (const prompt of [classificationPrompt(INPUT, { webSearch: false }), linesPrompt()]) {
+      expect(prompt).toContain('"gross": the position\'s amount exactly as printed');
+      expect(prompt).toContain('never with the tax added, and answer "pricesNet": true');
+      expect(prompt).not.toContain('is the net amount plus its tax');
+      // The flag comes before the lines, so an answer cut off inside them still carries it.
+      expect(prompt.lastIndexOf('"pricesNet": false')).toBeGreaterThan(-1);
+      expect(prompt.lastIndexOf('"pricesNet": false')).toBeLessThan(prompt.lastIndexOf('"items": ['));
+    }
+  });
+
+  it('tells deductions, discounts inside a position, payments and earlier balances apart, and keeps each amount with its description', () => {
+    const prompt = linesPrompt();
+    expect(prompt).toContain('never shift an amount to the position above or below');
+    expect(prompt).toContain('"gross" is the amount after the discount and that discount is no position of its own');
+    expect(prompt).toContain('"Mid-month usage paid") is a position with a negative "gross"');
+    expect(prompt).toContain('a credit or balance applied to settle the invoice, an earlier balance ("Kontostand")');
+    expect(prompt).toContain('"Verzugszinsen"');
+    expect(prompt).toContain('The positions add up to what this invoice charges');
+  });
+
+  it('reads the model\'s word whether the positions are printed before tax, in both answers', () => {
+    expect(parseClassificationResponse(answer({ pricesNet: true, items: [] }), INPUT).pricesNet).toBe(true);
+    expect(parseClassificationResponse(answer({ pricesNet: false, items: [] }), INPUT).pricesNet).toBe(false);
+    expect(parseClassificationResponse(answer({ pricesNet: 'yes', items: [] }), INPUT).pricesNet).toBeNull();
+    expect(parseClassificationResponse(answer({}), INPUT).pricesNet).toBeNull();
+    expect(parseClassificationResponse('nothing', INPUT).pricesNet).toBeNull();
+    // Cut off inside the lines: the facts and the flag before them stand, the lines do not.
+    const cut = `${answer({ pricesNet: true }).slice(0, -1)}, "items": [{ "text": "Plus plan", "gross": 22`;
+    expect(parseClassificationResponse(cut, INPUT)).toMatchObject({ pricesNet: true, items: null, vendor: 'Café Beispiel' });
+    expect(parseLinesResponse('{ "pricesNet": true, "items": [{ "text": "Plus plan", "gross": 22.0, "kind": "software_services" }] }').pricesNet).toBe(true);
+  });
+
+  it('gives the lines-only reading the row\'s gross and net, in the receipt\'s currency', () => {
+    const { text } = linesUserText({ vendor: 'Beispiel Software', fullText: 'Plus plan 20.00\nVAT 19 % 3.80\nTotal 23.80', gross: 23.8, net: 20, currency: 'USD' });
+    expect(text).toContain('Total as stored: 23.8 USD');
+    expect(text).toContain('Net total as stored: 20 USD');
+    expect(linesUserText({ vendor: null, fullText: 'x', gross: null, net: null, currency: null }).text).not.toContain('as stored');
   });
 
   it('gives the backfill the whole stored text, and says when a very long one had to be cut', () => {

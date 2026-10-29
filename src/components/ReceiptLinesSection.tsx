@@ -126,6 +126,8 @@ function LinesBody({
                     {line.unitPriceCents !== null ? ` × ${money(line.unitPriceCents, currency)}` : ''}
                   </p>
                 )}
+                {/* A line printed before tax shows its gross on the right; the amount the document prints is named here. */}
+                {line.netCents !== null && line.netCents !== line.grossCents && <p className="text-xs text-gray-500">netto {money(line.netCents, currency)}</p>}
               </div>
               <span className="shrink-0 text-sm tabular-nums text-gray-200">{money(line.grossCents, currency)}</span>
               <label htmlFor={selectId} className="sr-only">

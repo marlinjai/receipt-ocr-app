@@ -14,7 +14,7 @@
 
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { isPurchaseKind, type PurchaseKind } from './kinds';
-import { sumGrossCents, textKey, vendorKey, type ReceiptLine } from './lines';
+import { priceLines, sumGrossCents, textKey, vendorKey, type PricingTotals, type ReceiptLine } from './lines';
 
 export interface LineItemsContext {
   workspaceId: string;
@@ -118,6 +118,57 @@ export async function replaceReceiptLines(db: PrismaClient, ctx: LineItemsContex
       update: data,
     });
     return true;
+  });
+}
+
+/** What `repriceStoredLines` did with one receipt. */
+export type RepriceOutcome = 'rederived' | 'unchanged' | 'skipped';
+
+/**
+ * Settle again whether a receipt's stored lines are gross or net (`priceLines`),
+ * from the stored lines and the row's figures as they are now; no model is
+ * asked. For lines stored before prices before tax were told apart (an
+ * invoice's net amounts taken as gross, which "Was gekauft" counted short by
+ * the tax), and for net lines whose row was corrected since (their gross is
+ * derived from the row's gross again). Under the receipt's lock, so it never
+ * interleaves with a reading: a receipt read again meanwhile is priced as its
+ * new lines stand. Idempotent: a second run finds nothing to change.
+ *
+ * Only the amounts and the reading's sums change: never the lines' texts or
+ * kinds, nor when and how they were read (a confirmation in the review list
+ * is weighed against the reading's time). An electronic invoice's lines are
+ * its XML's and are left alone ('skipped'), as is a receipt without lines or
+ * of another company.
+ */
+export async function repriceStoredLines(db: PrismaClient, ctx: LineItemsContext, rowId: string, totals: PricingTotals): Promise<RepriceOutcome> {
+  return db.$transaction(async (tx) => {
+    await lockRow(tx, rowId);
+    const reading = await tx.receiptItemReading.findUnique({ where: { rowId }, select: { outcome: true, source: true, authWorkspaceId: true, linesSumCents: true, linesNetCents: true } });
+    if (!reading || reading.authWorkspaceId !== ctx.workspaceId || reading.outcome !== 'lines' || reading.source === 'einvoice') return 'skipped';
+    const items = await tx.receiptItem.findMany({ where: { authWorkspaceId: ctx.workspaceId, rowId }, orderBy: { position: 'asc' } });
+    if (items.length === 0) return 'skipped';
+    // The amounts as printed: the net of lines priced before tax, else the stored amount.
+    const priorNet = items.every((i) => i.netCents !== null);
+    const printed: ReceiptLine[] = items.map((i) => ({
+      text: i.text,
+      quantity: i.quantity,
+      unitPriceCents: i.unitPriceCents,
+      grossCents: priorNet ? i.netCents! : i.grossCents,
+      netCents: null,
+      taxRate: i.taxRate,
+      kind: isPurchaseKind(i.kind) ? i.kind : 'other',
+    }));
+    // Lines settled as net once stay net where the row's figures say nothing against it.
+    const priced = priceLines(printed, totals, priorNet ? true : null);
+    const linesSumCents = sumGrossCents(priced.lines);
+    const changed = items.filter((i, k) => i.grossCents !== priced.lines[k].grossCents || i.netCents !== priced.lines[k].netCents);
+    if (changed.length === 0 && reading.linesSumCents === linesSumCents && reading.linesNetCents === priced.linesNetCents) return 'unchanged';
+    for (const item of changed) {
+      const line = priced.lines[items.indexOf(item)];
+      await tx.receiptItem.update({ where: { id: item.id }, data: { grossCents: line.grossCents, netCents: line.netCents } });
+    }
+    await tx.receiptItemReading.update({ where: { rowId }, data: { linesSumCents, linesNetCents: priced.linesNetCents } });
+    return 'rederived';
   });
 }
 

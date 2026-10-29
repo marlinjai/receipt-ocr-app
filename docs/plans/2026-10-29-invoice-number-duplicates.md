@@ -2,7 +2,7 @@
 title: The invoice number decides duplicates
 summary: Every receipt gets its invoice number (Rechnungsnummer), read at upload and backfilled from the stored text. Two receipts of the same vendor with the same number, or with the very same file, are one receipt, handled without asking anybody: at upload the second copy is not kept (its file goes to the receipt that is there), and copies that already exist are archived into the more complete one, reversibly. Only where a number is missing does the review list still ask whether two look-alike receipts are the same purchase.
 type: plan
-status: decided
+status: completed
 tags: [receipts, review, duplicates, upload]
 projects: [receipt-ocr-app]
 date: 2026-10-29
@@ -134,3 +134,42 @@ till receipts often print none.
 - **Re-entry**: a restored receipt is not archived again by the next pass (the pair is distinct now),
   but is merged with a third receipt of the same number; a merge run twice changes nothing the second
   time.
+
+## Reality (2026-10-29)
+
+Built as planned, in one pull request:
+
+- **The number**: `src/lib/extraction/invoice-number.ts` (the parser, the printed form, the compared
+  form, the settle rule), the column "Rechnungsnummer" in `src/lib/receipts-table.ts` (added to each
+  company's table on the next dashboard visit, or by the backfill itself), the `invoiceNumber` field
+  of the classification answer (`src/lib/receipt-classifier.ts`, before the lines), and the reading in
+  `readReceipt` (`src/app/app/actions.ts`). The receipt view shows it among the facts.
+- **Sameness**: `sameInvoice`, `sameFile`, `automaticDuplicate` and the narrowed `lookAlikes` in
+  `src/lib/review/reasons.ts`. The upload's look-alike warning (`findSimilarReceipt`) follows the
+  same rule.
+- **The pass and the restore**: `src/lib/review/merge.ts` and the table `receipt_merges` (migration
+  `0044_receipt_merges`, additive, plus `receipt_reviews.invoice_number_read_at`). The restore is on
+  the kept receipt's view ("Zusammengeführt", `src/components/ReceiptMergedSection.tsx`), and
+  `unarchiveRow` of the table restores a merged receipt the same way.
+- **The upload**: `processReceipt` keeps no second receipt for the same file (the stored copy is
+  removed again) or the same invoice (the file goes to the receipt that is there, as
+  "duplicate-upload"); a retake and "Seite neu lesen" run the pass for their receipt; a grid edit of
+  the number or the vendor runs it too and the table says so. The upload page and the phone capture
+  say "already there" with a link and offer no "upload anyway".
+- **The backfill**: `src/lib/review/invoice-number-backfill.ts`, `POST /api/receipts/invoice-numbers`,
+  the button "Rechnungsnummern lesen" on the receipts page (400 receipts per request, the page asks
+  again until none is left), and daily after the bank sync (`/api/internal/bank-sync`).
+
+Found while building, decided, say so if you disagree:
+
+20. **A copy archived into a receipt that is deleted later stays archived** with its record: it was
+   the receipt just deleted, so it is not brought back, and no receipt view offers it any more (it is
+   still in the database). Deleting an archived copy itself takes its record along.
+21. **Same-file pairs that exist today leave "Belege prüfen" with the deploy**, before the first pass
+   has merged them: the review list no longer asks about them, the pass (the button, or the daily run)
+   merges them. Pressing "Rechnungsnummern lesen" once after the deploy closes that gap at once.
+
+Not done here: the backfill on production. After the deploy, signed in as each company: open the
+receipts page once, then "Rechnungsnummern lesen" (or `POST /api/receipts/invoice-numbers` until it
+answers `remaining: 0`). Fewer receipts than the measured 79 percent will get a number, because order,
+till and Beleg numbers are deliberately not taken (decision 9); those keep the look-alike question.

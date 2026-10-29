@@ -424,12 +424,24 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   // path, a lost session) must not look saved: say so and show what is stored.
   const saveCell = useCallback(
     (rowId: string, columnId: string, value: CellValue) => {
-      updateCell(rowId, columnId, value).catch(() => {
-        setNotice({ tone: 'danger', text: 'Die Änderung wurde nicht gespeichert. Die Tabelle zeigt wieder den gespeicherten Stand.' });
-        void reload();
-      });
+      updateCell(rowId, columnId, value)
+        .then((row) => {
+          // A corrected invoice number made the receipt one that was there already: the app archived it into
+          // the more complete one (plan 2026-10-29-invoice-number-duplicates). The table and the list follow.
+          if (!row?.archived) return;
+          setNotice({
+            tone: 'warn',
+            text: 'Diesen Beleg gibt es schon: gleiche Rechnungsnummer vom selben Händler. Er wurde archiviert, der vollständigere bleibt; dort lässt er sich unter „Zusammengeführt“ wiederherstellen.',
+          });
+          void reload();
+          void reloadReview();
+        })
+        .catch(() => {
+          setNotice({ tone: 'danger', text: 'Die Änderung wurde nicht gespeichert. Die Tabelle zeigt wieder den gespeicherten Stand.' });
+          void reload();
+        });
     },
-    [updateCell, reload],
+    [updateCell, reload, reloadReview],
   );
 
   // Which groups are folded is kept with the view, like its folded sections, so a reload shows the same table.

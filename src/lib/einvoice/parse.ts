@@ -21,6 +21,27 @@ export interface StructuredTaxGroup {
   taxCents: number;
 }
 
+/** One invoice line (EN 16931 BG-25). Its amount is net: the tax is stated per group, not per line. */
+export interface StructuredLine {
+  name: string | null;
+  quantity: number | null;
+  /** The net price of one (BT-146), in cents; null when not stated. */
+  unitPriceCents: number | null;
+  /** The line's net amount (BT-131), in cents. */
+  netCents: number;
+  /** The rate of the line's tax category (BT-152); null when not stated. */
+  ratePercent: number | null;
+}
+
+/** A discount (allowance) or a surcharge (charge) on the whole document (BG-20, BG-21), net. */
+export interface StructuredAllowanceCharge {
+  charge: boolean;
+  reason: string | null;
+  /** Always positive as stated; `charge` says the direction. */
+  netCents: number;
+  ratePercent: number | null;
+}
+
 export interface StructuredInvoice {
   syntax: 'ubl' | 'cii';
   /** The specification the issuer names (an XRechnung or a ZUGFeRD profile), as stated. */
@@ -48,6 +69,10 @@ export interface StructuredInvoice {
   /** Rounding added to the amount due (0 when none is stated). */
   roundingCents: number;
   taxGroups: StructuredTaxGroup[];
+  /** The invoice lines, in document order. */
+  lines: StructuredLine[];
+  /** Discounts and surcharges on the document level, which are no lines but count towards the net total. */
+  allowanceCharges: StructuredAllowanceCharge[];
   /** Figures that do not add up, in plain words; empty when the invoice is consistent. */
   problems: string[];
 }
@@ -121,6 +146,47 @@ function amountInCurrency(elements: XmlElement[], currency: string | null): stri
   return value === '' ? null : value;
 }
 
+function quantityOf(text: string | null): number | null {
+  const value = percentOf(text);
+  return value !== null && value > 0 ? value : null;
+}
+
+const indicator = (text: string | null) => (text ?? '').trim().toLowerCase() === 'true';
+
+function readUblLines(root: XmlElement, creditNote: boolean): Pick<StructuredInvoice, 'lines' | 'allowanceCharges'> {
+  const lines = children(root, creditNote ? 'CreditNoteLine' : 'InvoiceLine').map((l) => ({
+    name: textAt(l, 'Item', 'Name') ?? textAt(l, 'Item', 'Description'),
+    quantity: quantityOf(textAt(l, creditNote ? 'CreditedQuantity' : 'InvoicedQuantity')),
+    unitPriceCents: centsOf(textAt(l, 'Price', 'PriceAmount')),
+    netCents: centsOf(textAt(l, 'LineExtensionAmount')) ?? 0,
+    ratePercent: percentOf(textAt(l, 'Item', 'ClassifiedTaxCategory', 'Percent')),
+  }));
+  const allowanceCharges = children(root, 'AllowanceCharge').map((a) => ({
+    charge: indicator(textAt(a, 'ChargeIndicator')),
+    reason: textAt(a, 'AllowanceChargeReason'),
+    netCents: Math.abs(centsOf(textAt(a, 'Amount')) ?? 0),
+    ratePercent: percentOf(textAt(a, 'TaxCategory', 'Percent')),
+  }));
+  return { lines, allowanceCharges };
+}
+
+function readCiiLines(transaction: XmlElement | null, settlement: XmlElement | null): Pick<StructuredInvoice, 'lines' | 'allowanceCharges'> {
+  const lines = children(transaction, 'IncludedSupplyChainTradeLineItem').map((l) => ({
+    name: textAt(l, 'SpecifiedTradeProduct', 'Name'),
+    quantity: quantityOf(textAt(l, 'SpecifiedLineTradeDelivery', 'BilledQuantity')),
+    unitPriceCents: centsOf(textAt(l, 'SpecifiedLineTradeAgreement', 'NetPriceProductTradePrice', 'ChargeAmount')),
+    netCents: centsOf(textAt(l, 'SpecifiedLineTradeSettlement', 'SpecifiedTradeSettlementLineMonetarySummation', 'LineTotalAmount')) ?? 0,
+    ratePercent: percentOf(textAt(l, 'SpecifiedLineTradeSettlement', 'ApplicableTradeTax', 'RateApplicablePercent')),
+  }));
+  const allowanceCharges = children(settlement, 'SpecifiedTradeAllowanceCharge').map((a) => ({
+    charge: indicator(textAt(a, 'ChargeIndicator', 'Indicator')),
+    reason: textAt(a, 'Reason'),
+    netCents: Math.abs(centsOf(textAt(a, 'ActualAmount')) ?? 0),
+    ratePercent: percentOf(textAt(a, 'CategoryTradeTax', 'RateApplicablePercent')),
+  }));
+  return { lines, allowanceCharges };
+}
+
 function readUbl(root: XmlElement): StructuredInvoice {
   const creditNote = root.name === 'CreditNote';
   const currency = textAt(root, 'DocumentCurrencyCode');
@@ -161,6 +227,7 @@ function readUbl(root: XmlElement): StructuredInvoice {
     prepaidCents: centsOf(textAt(totals, 'PrepaidAmount')) ?? 0,
     roundingCents: centsOf(textAt(totals, 'PayableRoundingAmount')) ?? 0,
     taxGroups: groups,
+    ...readUblLines(root, creditNote),
     problems: [],
   };
   return invoice;
@@ -200,6 +267,7 @@ function readCii(root: XmlElement): StructuredInvoice {
     prepaidCents: centsOf(textAt(summary, 'TotalPrepaidAmount')) ?? 0,
     roundingCents: centsOf(textAt(summary, 'RoundingAmount')) ?? 0,
     taxGroups: groups,
+    ...readCiiLines(transaction, settlement),
     problems: [],
   };
 }

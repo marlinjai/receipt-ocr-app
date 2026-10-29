@@ -8,18 +8,19 @@ export function spendingPath(workspaceId: string, query: Record<string, string> 
   return `/app/spending?${params.toString()}${hash ? `#${hash}` : ''}`;
 }
 
-/** The two tabs of the spending page; the name is what the address says (`ansicht`). */
-export type SpendingTab = 'ueberblick' | 'belege';
+/** The tabs of the spending page; the name is what the address says (`ansicht`). "gekauft" is what the receipts' lines say was bought. */
+export type SpendingTab = 'ueberblick' | 'gekauft' | 'belege';
 
 /** The tab an address asks for: a notification about a payment (`pruefen`) opens the receipt checks, anything else the overview. */
 export function spendingTabOf(ansicht: string | undefined, pruefen: string | undefined): SpendingTab {
-  return ansicht === 'belege' || pruefen ? 'belege' : 'ueberblick';
+  if (ansicht === 'belege' || pruefen) return 'belege';
+  return ansicht === 'gekauft' ? 'gekauft' : 'ueberblick';
 }
 
 /** The address of the spending page for a period and a tab: the overview is the default and is not named. */
 export function spendingHref(year: number, month: number | null, tab: SpendingTab): string {
   const params = new URLSearchParams({ jahr: String(year) });
   if (month !== null) params.set('monat', String(month));
-  if (tab === 'belege') params.set('ansicht', 'belege');
+  if (tab !== 'ueberblick') params.set('ansicht', tab);
   return `/app/spending?${params.toString()}`;
 }

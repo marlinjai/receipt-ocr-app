@@ -23,7 +23,7 @@
  * Env vars:
  *   ANTHROPIC_API_KEY        direct access with web search (optional)
  *   ANTHROPIC_CLASSIFY_MODEL model for the direct path (default below)
- *   ANTHROPIC_ITEM_MODEL     model that names what was bought on an already stored receipt (default below)
+ *   ANTHROPIC_ITEM_MODEL     model that names what was bought, or reads the lines of, an already stored receipt (default below)
  *   OPENROUTER_API_KEY, AI_CLASSIFY_MODEL, AI_MODEL: see src/lib/ai-client.ts
  */
 
@@ -33,6 +33,8 @@ import { getAiClient, getClassifyModel } from '@/lib/ai-client';
 import { cleanItem } from '@/lib/receipt-name';
 import type { ReceiptPage } from '@/lib/receipt-page';
 import { parseMealClassification, type MealClassification } from '@/lib/meals/classify';
+import { PURCHASE_KINDS, PURCHASE_KIND_HINTS } from '@/lib/line-items/kinds';
+import { parseModelLines, type ReceiptLine } from '@/lib/line-items/lines';
 
 /** A model identifier is used exactly as published: no date suffix. */
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5-5';
@@ -47,8 +49,8 @@ const MAX_RESUMES = 3;
 const TEXT_LIMIT = 6000;
 /** How much of that is the end of the text, where a long invoice prints its totals. */
 const TEXT_TAIL = 2000;
-/** How long one answer may take. Beyond it the receipt is stored with its text reading and says it was not classified. */
-const REQUEST_TIMEOUT_MS = 60_000;
+/** How long one answer may take: room for every line of a long receipt. Beyond it the receipt is stored with its text reading and says it was not classified. */
+const REQUEST_TIMEOUT_MS = 90_000;
 /** One more attempt after a connection error or a server error, none after a timeout of the second. */
 const MAX_RETRIES = 1;
 
@@ -127,6 +129,12 @@ export interface ReceiptClassification {
   documents: number | null;
   /** What could be read about a meal (only meaningful for category Bewirtung). */
   meal: MealClassification;
+  /**
+   * Every printed position, deposit and discounts as lines of their own; null
+   * when the answer held none or any of them was malformed (never half a list),
+   * an empty list when the document prints no positions.
+   */
+  items: ReceiptLine[] | null;
 }
 
 type ParseInput = Pick<ClassifyInput, 'categoryNames' | 'categoryToKonto' | 'zuordnungOptions'>;
@@ -163,6 +171,24 @@ function vendorName(value: unknown): string | null {
 }
 
 /**
+ * The answer as an object. The lines come last in the answer, after every
+ * fact: an answer cut off inside the lines (a very long receipt at the token
+ * limit) still gives the facts, read from everything before "items", and no
+ * lines at all (never half of them).
+ */
+function parseWithLinesLast(cleaned: string, first: number, candidate: string): Record<string, unknown> & { items?: unknown } {
+  try {
+    return JSON.parse(candidate);
+  } catch (err) {
+    const at = first >= 0 ? cleaned.indexOf('"items"', first) : -1;
+    if (at < 0) throw err;
+    const facts = JSON.parse(`${cleaned.slice(first, at).replace(/[\s,]+$/, '')}}`);
+    console.error('[receipt-classifier] the answer was cut off in its lines: the facts are kept, the lines are not');
+    return { ...facts, items: undefined };
+  }
+}
+
+/**
  * Parse the model's final text into a classification. Exported so the parser
  * can be tested on its own against recorded answers; every field is validated
  * and anything malformed degrades to null instead of reaching a cell.
@@ -174,9 +200,12 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
   const last = cleaned.lastIndexOf('}');
   const candidate = first >= 0 && last > first ? cleaned.slice(first, last + 1) : cleaned;
   try {
-    const parsed = JSON.parse(candidate);
+    const parsed = parseWithLinesLast(cleaned, first, candidate) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     const category = input.categoryNames.includes(parsed.category) ? (parsed.category as string) : null;
     const gross = amount(parsed.gross);
+    const items = parseModelLines(parsed.items);
+    // The count only, never a line's text.
+    if (items === null && Array.isArray(parsed.items)) console.error('[receipt-classifier] the lines were malformed and are not kept', { count: parsed.items.length });
     return {
       item: cleanItem(parsed.item),
       category,
@@ -195,6 +224,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
       noTotal: parsed.totalStated === false && gross === null,
       documents: documentCount(parsed.documents),
       meal: parseMealClassification(parsed),
+      items,
     };
   } catch {
     console.error('[receipt-classifier] the answer was not the expected object');
@@ -203,6 +233,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
       reasoning: 'Failed to parse classification response',
       vendor: null, gross: null, net: null, date: null, currency: null, noTotal: false, documents: null,
       meal: parseMealClassification(null),
+      items: null,
     };
   }
 }
@@ -227,6 +258,15 @@ const ASSIGNMENT_RULE =
  */
 export const ITEM_RULE =
   'what was bought, in two to four words, in German, for a list of receipts: the product or the plan by its own name where it has one ("ChatGPT Plus", "Creative Cloud Foto-Abo", "Notion Plus"), otherwise the kind of thing ("SSD-Gehäuse", "Domainverlängerung", "Mobilfunkvertrag", "Deutschlandticket"). With several different line items, the main one and how many more follow ("USB-Stick + 2"). Never the vendor\'s name alone, never an amount, a date, a quantity, an order or invoice number, a period ("Januar 2024") or the name of a person. Null for a meal in a restaurant and when the document does not show what was bought.';
+
+/**
+ * Every position of the document, for the receipt's lines (plan
+ * docs/plans/2026-10-26-receipt-line-items.md). The deposit, a returned deposit
+ * and discounts are lines of their own, so the lines add up to the total and
+ * the returned bottles are not hidden in the price of the water.
+ */
+export const ITEMS_RULE = `every position the document prints, in the order printed, as { "text": the position as printed without its amount, "quantity": how many as printed or null, "unitPrice": the price of one as printed or null, "gross": what the position cost, as printed, "taxRate": the rate printed or marked for it or null, "kind": one of the kinds below }. A deposit ("Pfand"), a returned deposit ("Leergut", "Pfandbon"), a discount, coupon or price reduction printed under an item is a position of its own, with a negative "gross" for money off: never fold it into the item. A tip printed as its own line is a position of kind "meal_out" or "drink_out" like what it was given for. Never a subtotal, a total, a tax line, a payment, change, a card or loyalty line. Where a price per weight is printed, "quantity" is the weight and "unitPrice" the price per kilogram. Where the positions are printed as net amounts and the tax is added at the end, "gross" is the net amount plus its tax, rounded to cents. The positions should add up to the total; never invent one to make them. An empty array when the document lists no positions. Kinds:
+${PURCHASE_KINDS.map((k) => `   ${k}: ${PURCHASE_KIND_HINTS[k]}`).join('\n')}`;
 
 /** What the model is told about what it is looking at. */
 function sourceParagraph(page: ReceiptPage | null | undefined, hasText = true): string {
@@ -279,10 +319,13 @@ Only when the category is "Bewirtung", also give:
 15. **tip**: a tip printed or handwritten on the receipt as a number, else null. Never estimate one.
 16. **place**: the restaurant's name and postal address as one line, as printed, else null.
 
+For every receipt, also give:
+17. **items** (always the last field of the answer): ${ITEMS_RULE}
+
 ${input.userRules || ''}
 
 Respond with ONLY a JSON object (no markdown, no explanation):
-{ "item": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "documents": 1, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "..." }`;
+{ "item": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "documents": 1, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "...", "items": [{ "text": "...", "quantity": 1, "unitPrice": 0.00, "gross": 0.00, "taxRate": 19, "kind": "..." }] }`;
 }
 
 /** Told only where the vendor's earlier receipts name what was bought; the list itself is in the user message. */
@@ -369,7 +412,8 @@ async function askOpenRouter(input: ClassifyInput): Promise<ModelAnswer> {
       : [{ type: 'image_url', image_url: { url: `data:${page.mediaType};base64,${page.base64}` } }];
   const request: OpenRouterRequest = {
     model: getClassifyModel(),
-    max_tokens: 8000,
+    // Room for every line of a long receipt next to the facts.
+    max_tokens: 16000,
     // Reading one receipt is not a hard problem; the answer is checked anyway.
     reasoning: { effort: 'low' },
     usage: { include: true },
@@ -400,6 +444,8 @@ export interface ReceiptReadingAnswer extends ReceiptClassification {
   /** True when the model was given the page; false when it read the recognized text alone. */
   sawPage: boolean;
   usage: ModelUsage;
+  /** The model that answered, as configured. */
+  model: string;
 }
 
 /**
@@ -422,7 +468,8 @@ export async function classifyReceiptText(input: ClassifyInput): Promise<Receipt
     answer = await ask({ ...input, page: null });
   }
   console.info('[receipt-classifier] read', { provider, sawPage, inputTokens: answer.usage.inputTokens, outputTokens: answer.usage.outputTokens });
-  return { ...parseClassificationResponse(answer.text, input), provider, sawPage, usage: answer.usage };
+  const model = provider === 'anthropic_web_search' ? process.env.ANTHROPIC_CLASSIFY_MODEL || DEFAULT_ANTHROPIC_MODEL : getClassifyModel();
+  return { ...parseClassificationResponse(answer.text, input), provider, sawPage, usage: answer.usage, model };
 }
 
 /** What the item-only reading is given: the stored text and what the row already holds. */
@@ -494,4 +541,126 @@ export async function readReceiptItem(input: ItemInput): Promise<string | null> 
   if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) throw new Error('The model declined to read this receipt.');
   if (choice?.finish_reason === 'length') throw new Error('The answer was cut off.');
   return parseItemResponse(choice?.message?.content ?? '');
+}
+
+/** The stored text a lines-only reading is given: far more than a reading with the page, which sees the lines on the page. */
+const LINES_TEXT_LIMIT = 24_000;
+const LINES_TEXT_TAIL = 4_000;
+/** Room for the reasoning and every line of a long receipt. */
+const LINES_MAX_TOKENS = 16_000;
+/**
+ * One try per receipt and run, within a minute: a batch of the button answers well inside a proxy's
+ * time limit, and the backfill tries a receipt again on its next run instead of within the request.
+ */
+const LINES_TIMEOUT_MS = 60_000;
+
+/** What the lines-only reading is given: the stored text, and what the row says the receipt is. */
+export interface LinesInput {
+  vendor: string | null;
+  fullText: string;
+  /** The receipt's total as stored, so the model knows what the lines should add up to. */
+  gross: number | null;
+  currency: string | null;
+}
+
+/** The lines-only answer is unusable (cut off at the token limit, or declined): asking again the same way gives the same. */
+export class UnusableAnswerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnusableAnswerError';
+  }
+}
+
+export interface LinesAnswer {
+  /** Null when the answer held no well-formed list. */
+  lines: ReceiptLine[] | null;
+  /** True when the text was longer than the limit and its middle was left out: lines may be missing. */
+  textCut: boolean;
+  model: string;
+  usage: ModelUsage;
+}
+
+/** The text for a lines-only reading, and whether it had to be cut. */
+export function textForLines(fullText: string): { text: string; cut: boolean } {
+  if (fullText.length <= LINES_TEXT_LIMIT) return { text: fullText, cut: false };
+  return { text: `${fullText.slice(0, LINES_TEXT_LIMIT - LINES_TEXT_TAIL)}\n[...]\n${fullText.slice(-LINES_TEXT_TAIL)}`, cut: true };
+}
+
+export function linesPrompt(): string {
+  return `You are given the text of one receipt or invoice, as optical character recognition read it. It can contain misread characters and lines out of order. Answer with **items**: ${ITEMS_RULE}
+
+Respond with ONLY a JSON object (no markdown, no explanation):
+{ "items": [{ "text": "...", "quantity": 1, "unitPrice": 0.00, "gross": 0.00, "taxRate": 19, "kind": "..." }] }`;
+}
+
+/** Parse the answer of the lines-only reading. Anything malformed is null: lines are never guessed from a broken answer. */
+export function parseLinesResponse(text: string): ReceiptLine[] | null {
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first < 0 || last <= first) return null;
+  try {
+    return parseModelLines((JSON.parse(text.slice(first, last + 1)) as { items?: unknown }).items);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read only the lines, from the stored text of a receipt that was read before
+ * lines were kept (the backfill). No page and nothing else is asked: the
+ * receipt's facts may have been corrected by a person and are not this call's
+ * business. The same small model as the item reading. Throws when no provider
+ * is configured or the call fails or is cut off.
+ */
+export async function readReceiptLines(input: LinesInput): Promise<LinesAnswer> {
+  const provider = classifierProvider();
+  if (!provider) throw new ClassifierUnavailableError();
+  const { text, cut } = textForLines(input.fullText);
+  const user = [
+    input.vendor && `Vendor: ${input.vendor}`,
+    input.gross !== null && `Total as stored: ${input.gross}${input.currency ? ` ${input.currency}` : ''}`,
+    `\nReceipt text:\n${text}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  if (provider === 'anthropic_web_search') {
+    const model = process.env.ANTHROPIC_ITEM_MODEL || DEFAULT_ANTHROPIC_ITEM_MODEL;
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, maxRetries: 0 });
+    const response = await client.messages.create(
+      { model, max_tokens: LINES_MAX_TOKENS, output_config: { effort: 'low' }, system: linesPrompt(), messages: [{ role: 'user', content: user }] },
+      { timeout: LINES_TIMEOUT_MS },
+    );
+    if (response.stop_reason === 'refusal') throw new UnusableAnswerError('The model declined to read this receipt.');
+    // A cut answer is no answer: half a list must not pass for the receipt's lines.
+    if (response.stop_reason === 'max_tokens') throw new UnusableAnswerError('The answer was cut off.');
+    const block = response.content.findLast((b) => b.type === 'text');
+    return {
+      lines: parseLinesResponse(block && block.type === 'text' ? block.text : ''),
+      textCut: cut,
+      model,
+      usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, cost: null },
+    };
+  }
+  const model = getClassifyModel();
+  const request: OpenRouterRequest = {
+    model,
+    max_tokens: LINES_MAX_TOKENS,
+    reasoning: { effort: 'low' },
+    usage: { include: true },
+    messages: [
+      { role: 'system', content: linesPrompt() },
+      { role: 'user', content: user },
+    ],
+  };
+  const response = await getAiClient().chat.completions.create(request, { timeout: LINES_TIMEOUT_MS, maxRetries: 0 });
+  const choice = response.choices[0];
+  if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) throw new UnusableAnswerError('The model declined to read this receipt.');
+  if (choice?.finish_reason === 'length') throw new UnusableAnswerError('The answer was cut off.');
+  const billed = (response.usage as { cost?: unknown } | undefined)?.cost;
+  return {
+    lines: parseLinesResponse(choice?.message?.content ?? ''),
+    textCut: cut,
+    model,
+    usage: { inputTokens: response.usage?.prompt_tokens ?? 0, outputTokens: response.usage?.completion_tokens ?? 0, cost: typeof billed === 'number' ? billed : null },
+  };
 }

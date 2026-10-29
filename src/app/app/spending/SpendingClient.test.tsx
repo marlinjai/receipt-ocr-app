@@ -202,6 +202,9 @@ describe('SpendingClient tabs', () => {
     expect(spendingHref(2026, null, 'ueberblick')).toBe('/app/spending?jahr=2026');
     expect(spendingHref(2025, 12, 'belege')).toBe('/app/spending?jahr=2025&monat=12&ansicht=belege');
     expect(spendingTabOf('belege', undefined)).toBe('belege');
+    expect(spendingTabOf('gekauft', undefined)).toBe('gekauft');
+    expect(spendingTabOf('gekauft', 'pay-1')).toBe('belege');
+    expect(spendingHref(2026, 10, 'gekauft')).toBe('/app/spending?jahr=2026&monat=10&ansicht=gekauft');
     expect(spendingTabOf(undefined, undefined)).toBe('ueberblick');
     expect(spendingTabOf('irgendwas', undefined)).toBe('ueberblick');
     // A notification about a payment opens the receipt checks, whatever else the address says.
@@ -218,7 +221,17 @@ describe('SpendingClient tabs', () => {
     expect(screen.getByRole('tab', { name: 'Überblick' }).getAttribute('aria-controls')).toBeNull();
     checks.focus();
     await user.keyboard('{ArrowLeft}');
+    expect(push).toHaveBeenLastCalledWith('/app/spending?jahr=2026&ansicht=gekauft', { scroll: false });
+    await user.keyboard('{Home}');
     expect(push).toHaveBeenLastCalledWith('/app/spending?jahr=2026', { scroll: false });
+  });
+
+  it('shows "Was gekauft" in its own tab, between the overview and the receipt checks', () => {
+    render(<SpendingClient today="2026-04-15" tab="gekauft" initial={view(true)} openChecks={2} checks={<p>Belegliste</p>} purchases={<p>Gekauft-Übersicht</p>} />);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Überblick', 'Was gekauft', expect.stringContaining('Belege')]);
+    expect(screen.getByRole('tab', { name: 'Was gekauft' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tabpanel').textContent).toBe('Gekauft-Übersicht');
+    expect(screen.queryByText('Belegliste')).toBeNull();
   });
 });
 

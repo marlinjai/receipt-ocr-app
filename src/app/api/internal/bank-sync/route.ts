@@ -8,6 +8,9 @@ import { serverBankDeps } from '@/lib/tax/payments/bank/server';
 import { claimDailySync, runSpendingChecksForLiveCompanies, syncAllConnections } from '@/lib/tax/payments/bank/service';
 import { sweepMerchantKeys } from '@/lib/tax/payments/rekey';
 import { receiveBankSync } from '@/lib/tax/payments/bank/sync-receiver';
+import { dailyLinesBackfill } from '@/lib/line-items/backfill';
+import { storedInvoiceFields } from '@/lib/line-items/structured-source';
+import { readReceiptLines } from '@/lib/receipt-classifier';
 
 /**
  * The daily fetch of every active bank connection of every workspace. A
@@ -37,6 +40,8 @@ export async function POST(req: NextRequest) {
       // Each company is checked once in the run, also when it holds an account and receives from another.
       const done = new Set<string>();
       after(() => runSpendingChecksForLiveCompanies(results, (ctx) => runSpendingChecksAfterNewPayments(prisma, ctx, { today }, done)));
+      // The daily part of the line backfill (plan 2026-10-26-receipt-line-items): a bounded run per company, after the answer.
+      after(() => dailyLinesBackfill(prisma, readReceiptLines, { structuredOf: storedInvoiceFields }));
       // The answer names connections and counts only, never a company.
       return results.map(({ connectionId, status, added }) => ({ connectionId, status, added }));
     },

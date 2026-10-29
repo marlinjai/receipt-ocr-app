@@ -30,7 +30,9 @@ export type ReviewReason =
   /** Another receipt of the same day and total from the same vendor. */
   | 'possible_duplicate'
   /** The current reader reads the stored text differently than what is stored. */
-  | 'reading_differs';
+  | 'reading_differs'
+  /** The receipt's lines do not add up to its total (more than two cents apart). */
+  | 'lines_differ';
 
 export function isReadFlag(value: unknown): value is ReadFlag {
   return typeof value === 'string' && (READ_FLAGS as readonly string[]).includes(value);
@@ -72,6 +74,10 @@ export interface ReviewSnapshot {
   totalPaid?: boolean;
   /** True for a credit note whose invoice is not linked among the receipts (see src/lib/receipt-references.ts). */
   creditNoteUnlinked?: boolean;
+  /** True when the receipt's lines miss its total by more than the tolerance (src/lib/line-items/lines.ts, `checkLines`). */
+  linesDiffer?: boolean;
+  /** When the lines were read: a confirmation given before that says nothing about them. */
+  linesReadAt?: Date | string | null;
 }
 
 /** No tax rate of a real receipt is above this (the highest standard rate in the European Union is 27 percent). */
@@ -199,17 +205,22 @@ export function reviewReasons(
   const kept = flags.filter((f) => !(totalDoubtEnds && (f === 'total_unconfirmed' || f === 'total_conflict')) && !(f === 'image_only' && snapshot.totalPaid));
   // A person who confirmed the receipt has seen it as it is: the offer is not repeated.
   const offer = readingDiffers && !stored?.checkedAt;
+  // Lines that miss the total are worked out on read (a corrected total ends it at once). A person who
+  // confirmed the receipt has seen them: a café bill whose tip is not printed as a line never adds up.
+  const confirmedAfterLines = Boolean(stored?.checkedAt) && (!snapshot.linesReadAt || new Date(stored!.checkedAt!).getTime() >= new Date(snapshot.linesReadAt).getTime());
+  const linesOff = Boolean(snapshot.linesDiffer) && !confirmedAfterLines && !derived.includes('amount_missing');
   return [
     ...derived,
     ...kept,
     ...(offer ? (['reading_differs'] as const) : []),
+    ...(linesOff ? (['lines_differ'] as const) : []),
     ...(duplicates.length > 0 ? (['possible_duplicate'] as const) : []),
   ];
 }
 
 /** True for the reasons "Geprüft, stimmt so" settles: a recorded doubt, or an offered new reading. */
 export function isConfirmable(reason: ReviewReason): boolean {
-  return isReadFlag(reason) || reason === 'reading_differs';
+  return isReadFlag(reason) || reason === 'reading_differs' || reason === 'lines_differ';
 }
 
 /** What a reason means, for the person who has to act on it. */
@@ -233,4 +244,5 @@ export const REASON_TEXT: Record<ReviewReason, string> = {
   category_doubt: 'Sieht nach einer Bewirtung aus, wurde aber anders eingeordnet.',
   possible_duplicate: 'Mögliches Duplikat: gleicher Tag, gleicher Betrag.',
   reading_differs: 'Der Beleg wurde mit einem älteren Leser erfasst. Die neue Lesart weicht ab.',
+  lines_differ: 'Die Positionen ergeben nicht den Gesamtbetrag: Betrag prüfen, oder den Beleg mit „Seite neu lesen“ neu lesen. Gezählt wird der Gesamtbetrag.',
 };

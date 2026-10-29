@@ -12,6 +12,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 vi.mock('@/lib/meals/pdf-render', () => ({ renderPdfPage: vi.fn(() => new Promise(() => {})) }));
 vi.mock('@/app/app/meals/actions', () => ({ saveReceiptRotation: vi.fn() }));
 vi.mock('../meals/MealPanelSection', () => ({ default: () => null }));
+vi.mock('../ReceiptLinesSection', () => ({ default: () => null }));
 
 import ReceiptDetailPanel from '../ReceiptDetailPanel';
 import { ACCEPTED_RECEIPT_TYPES } from '@/lib/presigned-file-adapter';

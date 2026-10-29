@@ -11,6 +11,7 @@ import ReceiptViewer, { type ViewerFile } from './meals/ReceiptViewer';
 import { parseRotation, type Rotation } from '@/lib/meals/viewer-state';
 import { saveReceiptRotation } from '@/app/app/meals/actions';
 import MealPanelSection from './meals/MealPanelSection';
+import ReceiptLinesSection from './ReceiptLinesSection';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 import type { RereadNote } from '@/lib/review/reread';
 
@@ -578,6 +579,9 @@ export default function ReceiptDetailPanel({
               )}
             </div>
           )}
+
+          {/* Every printed line, with its kind of purchase: loaded afresh when the receipt was saved or read again. */}
+          <ReceiptLinesSection rowId={row.id} version={String(row.updatedAt)} />
 
           {showMealSection && (
             // Keyed on the category: after a reclassification the section reloads.

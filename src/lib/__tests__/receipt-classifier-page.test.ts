@@ -78,7 +78,7 @@ describe('classifyReceiptText with the page', () => {
   it('bounds the wait: a timeout and one retry on every call', async () => {
     create.mockResolvedValue(completion(JSON.stringify(ANSWER)));
     await classifyReceiptText(input(PHOTO));
-    expect(create.mock.calls[0][1]).toEqual({ timeout: 60_000, maxRetries: 1 });
+    expect(create.mock.calls[0][1]).toEqual({ timeout: 90_000, maxRetries: 1 });
   });
 
   it('without a page it reads the text alone and says so', async () => {

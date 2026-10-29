@@ -22,6 +22,7 @@ import type { YearCounts } from '@/lib/receipt-year-counts';
 import { MIN_TEXT_SEARCH_LENGTH, listColumns } from '@/lib/receipt-text';
 import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
 import FxRecomputePanel from './FxRecomputePanel';
+import LinesBackfillPanel from './LinesBackfillPanel';
 import DashboardPhoneActions from './DashboardPhoneActions';
 import ReceiptPhoneList from './ReceiptPhoneList';
 import { AiIcon, ContactsIcon, ExportIcon, FinanceIcon, ImportIcon, MealsIcon, OverviewIcon } from './dashboard-icons';
@@ -736,6 +737,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
               Export CSV
             </button>
             <FxRecomputePanel />
+            <LinesBackfillPanel />
             <Link
               href="/app/import"
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"

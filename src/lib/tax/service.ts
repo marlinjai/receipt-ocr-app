@@ -1,4 +1,5 @@
 import 'server-only';
+import { deleteLinesForRows } from '@/lib/line-items/store';
 import { classifierProvider } from '@/lib/receipt-classifier';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { PAY_LATER_TERM_DAYS } from './payments/pay-later';
@@ -2340,6 +2341,8 @@ export async function deleteDecisionsForRows(db: PrismaClient, rowIds: string[])
   await db.taxYearBoundaryAnswer.deleteMany({ where: { subjectKind: 'receipt', subjectId: { in: rowIds } } });
   // The payments stay; they then show up again as payments without a document.
   await deletePaymentLinksForRows(db, rowIds);
+  // Last: it runs one locked transaction per row, so a failure here strands only the line records.
+  await deleteLinesForRows(db, rowIds);
 }
 
 export { AssetInputError, LinesInputError, RevenueInputError, TreatmentError };

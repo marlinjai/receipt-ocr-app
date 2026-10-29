@@ -1,5 +1,6 @@
 import { relinkCreditNotes } from '@/lib/receipt-references';
 import 'server-only';
+import { deleteLinesForRows } from '@/lib/line-items/store';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { CellValue, Column, Row } from '@marlinjai/data-table-core';
 import type { PrismaClient } from '@prisma/client';
@@ -537,6 +538,9 @@ export async function deleteReceiptRows(
       // And for links from bank payments: the payments stay and ask for a document again.
       await db.taxPaymentLink.deleteMany({ where: { rowId } });
       await deleteGuestsForRows(db, [rowId]);
+      // The printed lines and their reading go with the receipt; the kind answers belong to the shop and stay.
+      // Last: it runs one locked transaction per row, so a failure here strands only the line records.
+      await deleteLinesForRows(db, [rowId]);
       result.done.push(rowId);
     } catch (e) {
       console.error('[meals] deleting a receipt failed', { rowId }, e);

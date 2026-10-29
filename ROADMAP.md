@@ -383,6 +383,10 @@
 - [ ] Finanzen in four groups (decided by the owner on 2026-10-25): Erledigen, Auswerten, Steuer,
   Einstellungen; the tiles and "Offen" stay the entry, Ausgaben stays its own page with a link
   each way. Plan: [docs/plans/2026-10-25-finance-groups.md](docs/plans/2026-10-25-finance-groups.md). (2026-10-25)
+- [ ] Every line of every receipt (asked by the owner on 2026-10-26): the printed positions of
+  each receipt read and stored with a kind of purchase (groceries, coffee, a meal, a drink), and
+  a "Was gekauft" overview on the spending page. Plan:
+  [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-26)
 
 ## In Progress
 

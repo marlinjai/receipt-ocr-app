@@ -129,7 +129,7 @@ describe('storing the lines of a reading', () => {
 });
 
 describe('the backfill of stored receipts', () => {
-  const answer = (lines: ReceiptLine[] | null): LinesAnswer => ({ lines, textCut: false, model: 'test-small', usage: { inputTokens: 100, outputTokens: 50, cost: null } });
+  const answer = (lines: ReceiptLine[] | null): LinesAnswer => ({ lines, pricesNet: null, textCut: false, model: 'test-small', usage: { inputTokens: 100, outputTokens: 50, cost: null } });
 
   it('reads every receipt once, lists the ones without text, and reads nothing a second time (re-entry)', async () => {
     const w = await createWorkspace();
@@ -149,8 +149,8 @@ describe('the backfill of stored receipts', () => {
     expect(first).toMatchObject({ read: 2, addUp: 1, differ: 1, noLines: 1, failed: 0, remaining: 0, inputTokens: 300, outputTokens: 150 });
     expect(first.noText).toEqual([{ rowId: empty, name: 'Ohne Text' }]);
     expect(reader).toHaveBeenCalledTimes(3);
-    // The model is told the stored total, never more of the row than vendor, text, total and currency.
-    expect(reader.mock.calls.find(([i]) => i.fullText.includes('Kuchen'))![0]).toEqual({ vendor: 'Bäckerei', fullText: 'Kuchen 8,00\nSumme 10,00', gross: 10, currency: 'EUR' });
+    // The model is told the stored totals, never more of the row than vendor, text, totals and currency.
+    expect(reader.mock.calls.find(([i]) => i.fullText.includes('Kuchen'))![0]).toEqual({ vendor: 'Bäckerei', fullText: 'Kuchen 8,00\nSumme 10,00', gross: 10, net: null, currency: 'EUR' });
     expect(await db.receiptItem.count({ where: { rowId: adds } })).toBe(2);
     expect(await db.receiptItemReading.findUnique({ where: { rowId: differs } })).toMatchObject({ outcome: 'lines', source: 'backfill', linesSumCents: 800, model: 'test-small' });
     expect(await db.receiptItemReading.findUnique({ where: { rowId: none } })).toMatchObject({ outcome: 'no_lines', lineCount: 0 });
@@ -360,6 +360,25 @@ describe('the backfill of stored receipts', () => {
       ['Versand', 500, 'shipping'],
     ]);
     expect(await db.receiptItemReading.findUnique({ where: { rowId } })).toMatchObject({ source: 'einvoice', linesNetCents: 14500, totalNetCents: 14500 });
+  });
+
+  it('stores an invoice printed before tax with its gross and its printed net, and a meal whose lines include the tip as adding up', async () => {
+    const w = await createWorkspace();
+    const c = { workspaceId: w.workspaceId, tenantId: w.tenantId };
+    const base = { Date: '2026-09-01', Currency: 'EUR', 'FX Rate': 1 };
+    const invoice = await w.addReceipt({ ...base, Name: 'Abo', Vendor: 'Beispiel Software', Gross: 26.18, Net: 22, 'Tax Rate': 19, 'OCR Text': 'Plus plan 22.00\nVAT 19 % 4.18\nTotal 26.18' });
+    const meal = await w.addReceipt({ ...base, Name: 'Essen', Vendor: 'Trattoria Beispiel', Gross: 44, Net: 41.12, 'Tax Rate': 7, Tip: 4.4, 'OCR Text': 'Pasta 44,00\nTrinkgeld 4,40\nSumme 44,00' });
+    const reader = vi.fn(async (input: LinesInput) =>
+      input.fullText.includes('Plus plan')
+        ? { ...answer(parseModelLines([{ text: 'Plus plan', gross: 22, kind: 'software_services' }])), pricesNet: true }
+        : answer([line('Pasta', 4400, 'meal_out'), line('Trinkgeld', 440, 'meal_out')]),
+    );
+    expect(await backfillReceiptLines(db, c, reader)).toMatchObject({ read: 2, addUp: 2, differ: 0 });
+    expect(reader.mock.calls.find(([i]) => i.fullText.includes('Plus plan'))![0]).toMatchObject({ gross: 26.18, net: 22 });
+    expect(await db.receiptItem.findMany({ where: { rowId: invoice }, select: { grossCents: true, netCents: true } })).toEqual([{ grossCents: 2618, netCents: 2200 }]);
+    expect(await db.receiptItemReading.findUnique({ where: { rowId: invoice } })).toMatchObject({ linesSumCents: 2618, linesNetCents: 2200, totalNetCents: null });
+    // The tip line stays as printed: the lines add up to the gross plus the row's tip.
+    expect(await db.receiptItemReading.findUnique({ where: { rowId: meal } })).toMatchObject({ linesSumCents: 4840, linesNetCents: null });
   });
 
   it('never reads a receipt of another company', async () => {

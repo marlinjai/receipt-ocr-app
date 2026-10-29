@@ -28,7 +28,7 @@ describe('the lines of an electronic invoice, from its XML (forward)', () => {
     ]);
     expect(result).toMatchObject({ linesNetCents: 14500, totalNetCents: 14500 });
     // Checked on net: the lines add up to the invoice.
-    expect(checkLines({ lineCount: 4, linesSumCents: 16655, linesNetCents: result.linesNetCents, totalNetCents: result.totalNetCents }, 166.55)).toMatchObject({ basis: 'net', addsUp: true });
+    expect(checkLines({ lineCount: 4, linesSumCents: 16655, linesNetCents: result.linesNetCents, totalNetCents: result.totalNetCents }, { gross: 166.55, net: null, tip: null })).toMatchObject({ basis: 'net', addsUp: true });
   });
 
   it('reads the CII lines', () => {
@@ -56,7 +56,7 @@ describe('the lines of an electronic invoice, from its XML (forward)', () => {
   it('says when the XML lines do not reach the net total', () => {
     const partial = linesFromInvoice(fields(UBL_INVOICE), null)!;
     expect(partial).toMatchObject({ linesNetCents: 10000, totalNetCents: 15000 });
-    expect(checkLines({ lineCount: 1, linesSumCents: 10000, linesNetCents: partial.linesNetCents, totalNetCents: partial.totalNetCents }, 172.5)).toMatchObject({ addsUp: false, differenceCents: -5000 });
+    expect(checkLines({ lineCount: 1, linesSumCents: 10000, linesNetCents: partial.linesNetCents, totalNetCents: partial.totalNetCents }, { gross: 172.5, net: null, tip: null })).toMatchObject({ addsUp: false, differenceCents: -5000 });
   });
 
   it('has no lines for an invoice whose XML lists none: the reading of the page gives them', () => {

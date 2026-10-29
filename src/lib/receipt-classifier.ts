@@ -137,7 +137,12 @@ export interface ReceiptClassification {
    * an empty list when the document prints no positions.
    */
   items: ReceiptLine[] | null;
+  /** True when the model says the positions are printed before tax, the tax added once below them; null when it does not say. Weighed by `priceLines`. */
+  pricesNet: boolean | null;
 }
+
+/** The model's word on whether the positions are printed before tax: only a boolean counts. */
+const pricesNetOf = (value: unknown): boolean | null => (typeof value === 'boolean' ? value : null);
 
 type ParseInput = Pick<ClassifyInput, 'categoryNames' | 'categoryToKonto' | 'zuordnungOptions'>;
 
@@ -235,6 +240,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
       documents: documentCount(parsed.documents),
       meal: parseMealClassification(parsed),
       items,
+      pricesNet: pricesNetOf(parsed.pricesNet),
     };
   } catch {
     console.error('[receipt-classifier] the answer was not the expected object');
@@ -244,6 +250,7 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
       vendor: null, gross: null, net: null, date: null, currency: null, invoiceNumber: null, noTotal: false, documents: null,
       meal: parseMealClassification(null),
       items: null,
+      pricesNet: null,
     };
   }
 }
@@ -273,9 +280,12 @@ export const ITEM_RULE =
  * Every position of the document, for the receipt's lines (plan
  * docs/plans/2026-10-26-receipt-line-items.md). The deposit, a returned deposit
  * and discounts are lines of their own, so the lines add up to the total and
- * the returned bottles are not hidden in the price of the water.
+ * the returned bottles are not hidden in the price of the water. The amounts
+ * are taken as printed, with the model's word whether they are before tax
+ * ("pricesNet"): the code prices them (`priceLines`), because a model asked to
+ * add the tax itself gave the net amounts anyway.
  */
-export const ITEMS_RULE = `every position the document prints, in the order printed, as { "text": the position as printed without its amount, "quantity": how many as printed or null, "unitPrice": the price of one as printed or null, "gross": what the position cost, as printed, "taxRate": the rate printed or marked for it or null, "kind": one of the kinds below }. A deposit ("Pfand"), a returned deposit ("Leergut", "Pfandbon"), a discount, coupon or price reduction printed under an item is a position of its own, with a negative "gross" for money off: never fold it into the item. A tip printed as its own line is a position of kind "meal_out" or "drink_out" like what it was given for. Never a subtotal, a total, a tax line, a payment, change, a card or loyalty line. Where a price per weight is printed, "quantity" is the weight and "unitPrice" the price per kilogram. Where the positions are printed as net amounts and the tax is added at the end, "gross" is the net amount plus its tax, rounded to cents. The positions should add up to the total; never invent one to make them. An empty array when the document lists no positions. Kinds:
+export const ITEMS_RULE = `every position the document prints, in the order printed, as { "text": the position as printed without its amount, "quantity": how many as printed or null, "unitPrice": the price of one as printed or null, "gross": the position's amount exactly as printed, "taxRate": the rate printed or marked for it or null, "kind": one of the kinds below }. Each amount belongs to the description it is printed with or after: never shift an amount to the position above or below. A deposit ("Pfand"), a returned deposit ("Leergut", "Pfandbon"), a discount, coupon or price reduction printed under an item is a position of its own, with a negative "gross" for money off: never fold it into the item. Where one position prints its price, a discount and its amount after the discount (price 9.99, discount -1.00, total 8.99), "gross" is the amount after the discount and that discount is no position of its own. An amount the invoice subtracts on the way to its total because it was charged before (usage already paid earlier in the period, "Mid-month usage paid") is a position with a negative "gross", of the kind of what was charged. A tip printed as its own line is a position of kind "meal_out" or "drink_out" like what it was given for. Never a subtotal, a total, a tax line, a payment, change, a card or loyalty line, a credit or balance applied to settle the invoice, an earlier balance ("Kontostand") or interest and fees of an earlier bill carried onto the account ("Verzugszinsen"). Where a price per weight is printed, "quantity" is the weight and "unitPrice" the price per kilogram. Where the document prints its positions before tax and adds the tax once below them (a net price per position, then "VAT 19 %" and the total), give the amounts as printed, never with the tax added, and answer "pricesNet": true; otherwise "pricesNet": false. The positions add up to what this invoice charges (its total, or its net total where "pricesNet" is true, before any payment, credit or balance settles it); never invent one to make them. An empty array when the document lists no positions. Kinds:
 ${PURCHASE_KINDS.map((k) => `   ${k}: ${PURCHASE_KIND_HINTS[k]}`).join('\n')}`;
 
 /** What the model is told about what it is looking at. */
@@ -331,12 +341,12 @@ Only when the category is "Bewirtung", also give:
 16. **place**: the restaurant's name and postal address as one line, as printed, else null.
 
 For every receipt, also give:
-17. **items** (always the last field of the answer): ${ITEMS_RULE}
+17. **items** (always the last field of the answer, right after "pricesNet"): ${ITEMS_RULE}
 
 ${input.userRules || ''}
 
 Respond with ONLY a JSON object (no markdown, no explanation):
-{ "item": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "documents": 1, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "invoiceNumber": null, "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "...", "items": [{ "text": "...", "quantity": 1, "unitPrice": 0.00, "gross": 0.00, "taxRate": 19, "kind": "..." }] }`;
+{ "item": "...", "vendor": "...", "gross": 0.00, "totalStated": true, "documents": 1, "net": null, "currency": "EUR", "date": "YYYY-MM-DD", "invoiceNumber": null, "category": "...", "konto": "...", "zuordnung": null, "taxRate": 19, "taxLines": [], "mealType": null, "consumption": null, "tip": null, "place": null, "confidence": 0.0-1.0, "reasoning": "...", "pricesNet": false, "items": [{ "text": "...", "quantity": 1, "unitPrice": 0.00, "gross": 0.00, "taxRate": 19, "kind": "..." }] }`;
 }
 
 /** The document's own number: it decides whether two receipts are one invoice (plan 2026-10-29-invoice-number-duplicates). */
@@ -573,8 +583,9 @@ const LINES_TIMEOUT_MS = 60_000;
 export interface LinesInput {
   vendor: string | null;
   fullText: string;
-  /** The receipt's total as stored, so the model knows what the lines should add up to. */
+  /** The receipt's total and net total as stored, so the model knows what the lines should add up to. */
   gross: number | null;
+  net: number | null;
   currency: string | null;
 }
 
@@ -589,6 +600,8 @@ export class UnusableAnswerError extends Error {
 export interface LinesAnswer {
   /** Null when the answer held no well-formed list. */
   lines: ReceiptLine[] | null;
+  /** The model's word whether the amounts are printed before tax; null when it does not say. */
+  pricesNet: boolean | null;
   /** True when the text was longer than the limit and its middle was left out: lines may be missing. */
   textCut: boolean;
   model: string;
@@ -605,18 +618,31 @@ export function linesPrompt(): string {
   return `You are given the text of one receipt or invoice, as optical character recognition read it. It can contain misread characters and lines out of order. Answer with **items**: ${ITEMS_RULE}
 
 Respond with ONLY a JSON object (no markdown, no explanation):
-{ "items": [{ "text": "...", "quantity": 1, "unitPrice": 0.00, "gross": 0.00, "taxRate": 19, "kind": "..." }] }`;
+{ "pricesNet": false, "items": [{ "text": "...", "quantity": 1, "unitPrice": 0.00, "gross": 0.00, "taxRate": 19, "kind": "..." }] }`;
 }
 
-/** Parse the answer of the lines-only reading. Anything malformed is null: lines are never guessed from a broken answer. */
-export function parseLinesResponse(text: string): ReceiptLine[] | null {
+/** The user message of the lines-only reading: the row's figures the lines should add up to, then the stored text. */
+export function linesUserText(input: LinesInput): { text: string; cut: boolean } {
+  const { text, cut } = textForLines(input.fullText);
+  const unit = input.currency ? ` ${input.currency}` : '';
+  return {
+    text: [input.vendor && `Vendor: ${input.vendor}`, input.gross !== null && `Total as stored: ${input.gross}${unit}`, input.net !== null && `Net total as stored: ${input.net}${unit}`, `\nReceipt text:\n${text}`]
+      .filter(Boolean)
+      .join('\n'),
+    cut,
+  };
+}
+
+/** Parse the answer of the lines-only reading. Anything malformed is no lines: lines are never guessed from a broken answer. */
+export function parseLinesResponse(text: string): { lines: ReceiptLine[] | null; pricesNet: boolean | null } {
   const first = text.indexOf('{');
   const last = text.lastIndexOf('}');
-  if (first < 0 || last <= first) return null;
+  if (first < 0 || last <= first) return { lines: null, pricesNet: null };
   try {
-    return parseModelLines((JSON.parse(text.slice(first, last + 1)) as { items?: unknown }).items);
+    const parsed = JSON.parse(text.slice(first, last + 1)) as { items?: unknown; pricesNet?: unknown } | null;
+    return { lines: parseModelLines(parsed?.items), pricesNet: pricesNetOf(parsed?.pricesNet) };
   } catch {
-    return null;
+    return { lines: null, pricesNet: null };
   }
 }
 
@@ -630,14 +656,7 @@ export function parseLinesResponse(text: string): ReceiptLine[] | null {
 export async function readReceiptLines(input: LinesInput): Promise<LinesAnswer> {
   const provider = classifierProvider();
   if (!provider) throw new ClassifierUnavailableError();
-  const { text, cut } = textForLines(input.fullText);
-  const user = [
-    input.vendor && `Vendor: ${input.vendor}`,
-    input.gross !== null && `Total as stored: ${input.gross}${input.currency ? ` ${input.currency}` : ''}`,
-    `\nReceipt text:\n${text}`,
-  ]
-    .filter(Boolean)
-    .join('\n');
+  const { text: user, cut } = linesUserText(input);
   if (provider === 'anthropic_web_search') {
     const model = process.env.ANTHROPIC_ITEM_MODEL || DEFAULT_ANTHROPIC_ITEM_MODEL;
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, maxRetries: 0 });
@@ -650,7 +669,7 @@ export async function readReceiptLines(input: LinesInput): Promise<LinesAnswer> 
     if (response.stop_reason === 'max_tokens') throw new UnusableAnswerError('The answer was cut off.');
     const block = response.content.findLast((b) => b.type === 'text');
     return {
-      lines: parseLinesResponse(block && block.type === 'text' ? block.text : ''),
+      ...parseLinesResponse(block && block.type === 'text' ? block.text : ''),
       textCut: cut,
       model,
       usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, cost: null },
@@ -673,7 +692,7 @@ export async function readReceiptLines(input: LinesInput): Promise<LinesAnswer> 
   if (choice?.finish_reason === 'length') throw new UnusableAnswerError('The answer was cut off.');
   const billed = (response.usage as { cost?: unknown } | undefined)?.cost;
   return {
-    lines: parseLinesResponse(choice?.message?.content ?? ''),
+    ...parseLinesResponse(choice?.message?.content ?? ''),
     textCut: cut,
     model,
     usage: { inputTokens: response.usage?.prompt_tokens ?? 0, outputTokens: response.usage?.completion_tokens ?? 0, cost: typeof billed === 'number' ? billed : null },

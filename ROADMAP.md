@@ -387,6 +387,12 @@
   each receipt read and stored with a kind of purchase (groceries, coffee, a meal, a drink), and
   a "Was gekauft" overview on the spending page. Plan:
   [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-26)
+- [ ] Re-derive the stored lines of every company once, after the deploy of the fix for invoices
+  priced before tax, tips and credits (found on 2026-10-30: 131 receipts of one company asked
+  "Positionen prüfen", 104 of them invoices whose lines were stored before tax):
+  `POST /api/receipts/lines/reprice` signed in as each company, no model asked, a run again changes
+  nothing. Context: the Reality section of 2026-10-30 in
+  [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-30)
 - [ ] One spelling per vendor from the reader (found on 2026-10-29): the reader spells one
   subscription several ways ("Apple", "Apple iCloud", "Apple Distribution International Ltd.";
   "iCloud+ 2 TB", "iCloud+ mit 2 TB", "iCloud+ 2 TB Abo"), so a new receipt can miss the group of

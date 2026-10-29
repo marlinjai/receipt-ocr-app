@@ -10,8 +10,9 @@ import type { PrismaClient } from '@prisma/client';
 import type { Row } from '@marlinjai/data-table-core';
 import { allReceiptRows, tableContext, type TableContext } from '@/lib/meals/service';
 import { isoDay } from '@/lib/meals/record';
-import { checkLines, type LinesCheck } from './lines';
+import { checkLines, sumGrossCents, type LinesCheck } from './lines';
 import { buildPurchasesOverview, type PurchasesOverview } from './overview';
+import { pricingTotalsReader } from './reprice';
 import { MAX_ATTEMPTS, loadKindAnswers, withAnswers, type LineSource, type ReadingOutcome, type StoredLine } from './store';
 
 export interface ReceiptLinesView {
@@ -29,11 +30,12 @@ const number = (value: unknown): number | null => (typeof value === 'number' && 
 
 function cellReader(ctx: TableContext) {
   const id = (name: string) => ctx.columns.find((c) => c.name === name)?.id;
-  const [vendorId, grossId, currencyId, fxId, dateId] = [id('Vendor'), id('Gross'), id('Currency'), id('FX Rate'), id('Date')];
+  const [vendorId, currencyId, fxId, dateId] = [id('Vendor'), id('Currency'), id('FX Rate'), id('Date')];
   const currencyOptions = currencyId ? (ctx.selectOptions.get(currencyId) ?? []) : [];
+  const totalsOf = pricingTotalsReader(ctx.columns);
   return (row: Row) => ({
     vendor: vendorId ? text(row.cells[vendorId]) : '',
-    gross: grossId ? number(row.cells[grossId]) : null,
+    totals: totalsOf(row),
     currency: (currencyId && currencyOptions.find((o) => o.id === row.cells[currencyId])?.name) || 'EUR',
     fxRate: fxId ? number(row.cells[fxId]) : null,
     date: dateId ? isoDay(row.cells[dateId]) : null,
@@ -56,7 +58,7 @@ export async function loadReceiptLines(db: PrismaClient, workspaceId: string, ro
   return {
     lines: items.map((i) => withAnswers(i, cells.vendor, answers)),
     reading: own ? { outcome: own.outcome as ReadingOutcome, source: own.source as LineSource, textCut: own.textCut, retried: own.outcome === 'failed' && own.attempts < MAX_ATTEMPTS } : null,
-    check: own ? checkLines(own, cells.gross) : null,
+    check: own ? checkLines(own, cells.totals) : null,
     currency: cells.currency,
   };
 }
@@ -87,11 +89,13 @@ export async function loadPurchases(db: PrismaClient, workspaceId: string, perio
   return buildPurchasesOverview(
     inYear.map(({ row, cells }) => {
       const lines = byRow.get(row.id);
+      // A tip the lines include (a line of its own, `checkLines`) was paid too: the receipt counts with it, else it would show as less than its lines.
+      const tipCents = lines ? (checkLines({ lineCount: lines.length, linesSumCents: sumGrossCents(lines), linesNetCents: null, totalNetCents: null }, cells.totals)?.tipCents ?? 0) : 0;
       return {
         rowId: row.id,
         date: cells.date,
         vendor: cells.vendor,
-        grossCents: cells.gross === null ? null : Math.round(cells.gross * 100),
+        grossCents: cells.totals.gross === null ? null : Math.round(cells.totals.gross * 100) + tipCents,
         currency: cells.currency,
         fxRate: cells.fxRate,
         lines: lines ? lines.map((i) => withAnswers(i, cells.vendor, answers)).map((l) => ({ text: l.text, grossCents: l.grossCents, quantity: l.quantity, kind: l.kind })) : null,

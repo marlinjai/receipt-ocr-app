@@ -6,6 +6,7 @@ import { ITEM_COLUMN } from '@/lib/receipt-name';
 import { tableContext } from '@/lib/meals/service';
 import { AUTO_GROUP_OFF_COLUMN, GROUP_KIND, rowKindColumnId } from '@/lib/receipts-kind';
 import { planAutoGroups, type ExistingGroup, type GroupableReceipt } from './auto';
+import { removeEmptyGroups } from './empty';
 import { GroupError } from './rules';
 import { GROUP_MEMBERS_MAX, createGroup, moveIntoGroup } from './service';
 
@@ -26,7 +27,7 @@ export interface AutoGroupResult {
   grouped: number;
   /** Groups that could not be written, by the code of the error. */
   failed: string[];
-  /** Empty groups removed that had the name of a group that holds receipts (left by two runs at once). */
+  /** Groups removed because no receipt was left in them. */
   removedEmpty?: number;
 }
 
@@ -99,8 +100,8 @@ async function applyAutoGroups(db: PrismaClient, workspaceId: string, options: A
       if (r.name) groups.push({ id: r.id, name: r.name });
       continue;
     }
-    // A receipt a person took out of a group stays out.
-    if (r.locked) continue;
+    // A receipt a person took out of a group stays out. One they put into a group later still counts there.
+    if (r.locked && !r.parent_row_id) continue;
     const match = r.day ? /^(\d{4})-/.exec(r.day) : null;
     const year = match ? Number(match[1]) : null;
     if (years && (year === null || !years.has(year))) continue;
@@ -165,29 +166,7 @@ async function applyAutoGroups(db: PrismaClient, workspaceId: string, options: A
       );
     }
   }
-  result.removedEmpty = await removeEmptyDuplicates(db, ctx.adapter, ctx.tableId, kindId, nameId);
+  // Every move above removed the groups it emptied; this catches what other paths left behind.
+  result.removedEmpty = (await removeEmptyGroups(db, workspaceId)).length;
   return result;
-}
-
-/**
- * A group with no receipts whose name is the name of a group that has some: what two runs in two processes
- * leave behind. It is removed. An empty group with a name of its own is a person's and stays.
- */
-async function removeEmptyDuplicates(
-  db: PrismaClient,
-  adapter: { deleteRow(id: string): Promise<void> },
-  tableId: string,
-  kindId: string,
-  nameId: string,
-): Promise<number> {
-  const rows = await db.$queryRawUnsafe<Array<{ id: string; name: string | null; children: number }>>(
-    `SELECT g.id, g.${safeColumnName(nameId)} AS name,
-            (SELECT count(*)::int FROM ${safeTableName(tableId)} c WHERE c.parent_row_id = g.id AND c._archived = 0) AS children
-     FROM ${safeTableName(tableId)} g
-     WHERE g._archived = 0 AND g.${safeColumnName(kindId)} = '${GROUP_KIND}'`,
-  );
-  const populated = new Set(rows.filter((r) => r.children > 0 && r.name).map((r) => r.name!.trim().toLowerCase()));
-  const doomed = rows.filter((r) => r.children === 0 && r.name && populated.has(r.name.trim().toLowerCase()));
-  for (const g of doomed) await adapter.deleteRow(g.id);
-  return doomed.length;
 }

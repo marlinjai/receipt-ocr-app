@@ -85,14 +85,17 @@ describe('groups in the receipts table, against the database', () => {
     expect(await shownSum(groupId)).toBe(100);
     const second = await createGroup(db, ws.workspaceId, 'Kunde', [licence]);
     expect(await moveIntoGroup(db, ws.workspaceId, second, [hotel])).toBe(1);
-    expect(await shownSum(groupId)).toBe(0);
+    // The first group lost its last receipt and went by itself.
+    expect(await byId(groupId)).toBeUndefined();
     expect(await shownSum(second)).toBe(110);
     expect(await receiptTotal()).toBe(150);
 
     // Refusals write nothing.
-    expect(await code(moveIntoGroup(db, ws.workspaceId, groupId, [second]))).toBe('group_in_group');
+    expect(await code(createGroup(db, ws.workspaceId, 'Leer', []))).toBe('no_receipts');
+    expect(await code(moveIntoGroup(db, ws.workspaceId, second, [second]))).toBe('group_in_group');
     expect(await code(moveIntoGroup(db, ws.workspaceId, hotel, [dinner]))).toBe('group_not_found');
-    expect(await code(moveIntoGroup(db, ws.workspaceId, groupId, [dinner, 'no-such-row']))).toBe('row_not_found');
+    expect(await code(moveIntoGroup(db, ws.workspaceId, groupId, [dinner]))).toBe('group_not_found');
+    expect(await code(moveIntoGroup(db, ws.workspaceId, second, [dinner, 'no-such-row']))).toBe('row_not_found');
     expect((await byId(dinner))!.parentRowId ?? null).toBeNull();
 
     // After the end: the group goes, its receipts stay at the top level.
@@ -106,7 +109,7 @@ describe('groups in the receipts table, against the database', () => {
   });
 
   it('a group of one workspace takes no row of another, and cannot be reached from it', async () => {
-    const groupId = await createGroup(db, ws.workspaceId, 'Nur hier');
+    const groupId = await createGroup(db, ws.workspaceId, 'Nur hier', [dinner]);
     const foreign = await other.addReceipt({ Name: 'Fremd', Gross: 5 });
     expect(await code(moveIntoGroup(db, ws.workspaceId, groupId, [foreign]))).toBe('row_not_found');
     expect(await code(moveIntoGroup(db, other.workspaceId, groupId, [foreign]))).toBe('group_not_found');

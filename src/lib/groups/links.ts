@@ -1,7 +1,7 @@
 import 'server-only';
 import { safeColumnName, safeTableName } from '@marlinjai/data-table-adapter-shared';
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { AUTO_GROUP_OFF_COLUMN } from '@/lib/receipts-kind';
+import { AUTO_GROUP_OFF_COLUMN, GROUP_KIND } from '@/lib/receipts-kind';
 
 /**
  * Reads and writes of the link between a receipt and the group it lies in.
@@ -77,6 +77,26 @@ async function markAutoGroupOff(db: Db, tableId: string, rowIds: readonly string
     `UPDATE ${safeTableName(tableId)} SET ${safeColumnName(columnId)} = '1' WHERE id IN (${placeholders(rowIds.length, 1)}) AND parent_row_id IS NOT NULL`,
     ...rowIds,
   );
+}
+
+/**
+ * The groups of a table that hold no receipt, or only archived ones: all of
+ * them, or those among `candidates`. A group that a payment is linked to is
+ * never counted as empty, so no link is lost with it.
+ */
+export async function emptyGroupIds(db: Db, tableId: string, kindColumnId: string, candidates?: readonly string[]): Promise<string[]> {
+  const ids = candidates ? [...new Set(candidates)] : null;
+  if (ids && ids.length === 0) return [];
+  const rows = await db.$queryRawUnsafe<Array<{ id: string }>>(
+    `SELECT g.id FROM ${safeTableName(tableId)} g
+     WHERE g._archived = 0 AND g.${safeColumnName(kindColumnId)} = $1
+       ${ids ? `AND g.id IN (${placeholders(ids.length, 2)})` : ''}
+       AND NOT EXISTS (SELECT 1 FROM ${safeTableName(tableId)} c WHERE c.parent_row_id = g.id AND c._archived = 0)
+       AND NOT EXISTS (SELECT 1 FROM tax_payment_links l WHERE l.row_id = g.id)`,
+    GROUP_KIND,
+    ...(ids ?? []),
+  );
+  return rows.map((r) => r.id);
 }
 
 /**

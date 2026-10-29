@@ -80,6 +80,7 @@ const GROUP_ERROR: Record<GroupActionError, string> = {
   row_not_found: 'Ein Beleg wurde nicht gefunden. Es wurde nichts verschoben, die Ansicht wurde neu geladen.',
   group_in_group: 'Eine Gruppe kann nicht in einer Gruppe liegen. Bitte nur Belege auswählen.',
   invalid_name: 'Bitte einen Namen mit höchstens 120 Zeichen eingeben.',
+  no_receipts: 'Eine Gruppe entsteht mit ihren Belegen. Bitte zuerst Belege auswählen.',
   not_writable: 'Eine Gruppe hat nur ihren Namen und ihre Zuordnung. Beträge und Dateien stehen auf den Belegen.',
 };
 

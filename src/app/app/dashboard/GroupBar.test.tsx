@@ -27,9 +27,11 @@ function bar(overrides: Partial<Parameters<typeof GroupBar>[0]> = {}) {
 }
 
 describe('the group controls of the dashboard', () => {
-  it('without a selection offer an empty group only', () => {
+  it('without a selection offer no group: a group is made with its receipts, and the button says why', () => {
     bar();
-    expect(screen.getByRole('button', { name: 'Neue Gruppe' })).toBeTruthy();
+    const create = screen.getByRole('button', { name: 'Neue Gruppe' }) as HTMLButtonElement;
+    expect(create.disabled).toBe(true);
+    expect(create.title).toMatch(/Erst Belege auswählen/);
     expect(screen.queryByRole('combobox')).toBeNull();
     expect(screen.queryByRole('button', { name: /aus der Gruppe nehmen/ })).toBeNull();
   });
@@ -45,22 +47,36 @@ describe('the group controls of the dashboard', () => {
 
   it('keep the form and the name when the group was not created', async () => {
     const user = userEvent.setup();
-    bar({ onCreate: vi.fn(async () => false) });
-    await user.click(screen.getByRole('button', { name: 'Neue Gruppe' }));
+    bar({ receiptCount: 1, onCreate: vi.fn(async () => false) });
+    await user.click(screen.getByRole('button', { name: 'Neue Gruppe mit 1 Beleg' }));
     await user.type(screen.getByLabelText('Name der neuen Gruppe'), 'Messe');
-    await user.click(screen.getByRole('button', { name: 'Leer anlegen' }));
+    await user.click(screen.getByRole('button', { name: 'Mit 1 Beleg anlegen' }));
     expect((screen.getByLabelText('Name der neuen Gruppe') as HTMLInputElement).value).toBe('Messe');
   });
 
   it('do not create a group without a name, and Escape drops the form', async () => {
     const user = userEvent.setup();
-    const props = bar();
-    await user.click(screen.getByRole('button', { name: 'Neue Gruppe' }));
-    expect((screen.getByRole('button', { name: 'Leer anlegen' }) as HTMLButtonElement).disabled).toBe(true);
+    const props = bar({ receiptCount: 2 });
+    await user.click(screen.getByRole('button', { name: 'Neue Gruppe mit 2 Belegen' }));
+    expect((screen.getByRole('button', { name: 'Mit 2 Belegen anlegen' }) as HTMLButtonElement).disabled).toBe(true);
     await user.type(screen.getByLabelText('Name der neuen Gruppe'), '   {Enter}');
     expect(props.onCreate).not.toHaveBeenCalled();
     await user.keyboard('{Escape}');
     expect(screen.queryByLabelText('Name der neuen Gruppe')).toBeNull();
+  });
+
+  it('the open form cannot create a group once the selection is gone', async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn(async () => true);
+    const props = { groups, inGroupCount: 0, busy: false, onCreate, onMoveInto: vi.fn(), onTakeOut: vi.fn() };
+    const { rerender } = render(<GroupBar {...props} receiptCount={1} />);
+    await user.click(screen.getByRole('button', { name: 'Neue Gruppe mit 1 Beleg' }));
+    await user.type(screen.getByLabelText('Name der neuen Gruppe'), 'Messe');
+    rerender(<GroupBar {...props} receiptCount={0} />);
+    const submit = screen.getByRole('button', { name: /anlegen/ }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    await user.type(screen.getByLabelText('Name der neuen Gruppe'), '{Enter}');
+    expect(onCreate).not.toHaveBeenCalled();
   });
 
   it('put the selected receipts into the group chosen', async () => {

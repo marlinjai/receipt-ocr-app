@@ -21,8 +21,8 @@ import { isDismissedMeal, isMealRelated, serializeTaxLines } from './rules';
 import { parseRotation, type Rotation } from './viewer-state';
 import { DEFAULT_TAX_SETTINGS, type MealGuestEntry, type MealRecord, type MealTaxSettings } from './types';
 import { TAX_RATES_COLUMN, TAX_RATE_COLUMN, formatTaxRates, orderedRates } from '@/lib/tax-rates';
-import { isGroupRow, receiptsOnly } from '@/lib/receipts-kind';
-import { releaseChildRows, restoreChildRows } from '@/lib/groups/links';
+import { isGroupRow, receiptsOnly, rowKindColumnId } from '@/lib/receipts-kind';
+import { emptyGroupIds, releaseChildRows, restoreChildRows } from '@/lib/groups/links';
 import { sharedRead } from '@/lib/shared-reads';
 
 /**
@@ -468,6 +468,8 @@ export async function deleteReceiptRows(
   const ctx = await tableContext(db, mealCtx.workspaceId);
   if (!ctx) throw new MealServiceError('not_initialized');
   const result: MealBatchResult = { done: [], records: [], skipped: [] };
+  /** The groups the deleted receipts lay in: one left without a receipt goes too. */
+  const parents = new Set<string>();
   for (const rowId of [...new Set(rowIds)]) {
     let skip: MealBatchSkip | null = null;
     try {
@@ -476,6 +478,7 @@ export async function deleteReceiptRows(
         result.skipped.push({ rowId, reason: 'not_found' });
         continue;
       }
+      if (row.parentRowId) parents.add(row.parentRowId);
 
       const refs = await db.dtFile.findMany({ where: { rowId }, select: { fileId: true } });
       const fileIds = [...new Set(refs.map((r) => r.fileId))];
@@ -545,6 +548,19 @@ export async function deleteReceiptRows(
     } catch (e) {
       console.error('[meals] deleting a receipt failed', { rowId }, e);
       result.skipped.push({ rowId, reason: 'failed' });
+    }
+  }
+  // An empty group goes by itself (the owner, 2026-10-29), through this same delete. A failure leaves it
+  // to the next sweep of the automatic grouping; the receipts asked for are deleted either way.
+  const kindId = rowKindColumnId(ctx.columns);
+  const deleted = new Set(result.done);
+  const touched = [...parents].filter((id) => !deleted.has(id));
+  if (kindId && touched.length > 0) {
+    try {
+      const empty = await emptyGroupIds(db, ctx.tableId, kindId, touched);
+      if (empty.length > 0) await deleteReceiptRows(db, mealCtx, empty, deps);
+    } catch (e) {
+      console.error('[meals] removing the emptied groups failed', e instanceof Error ? e.name : 'error');
     }
   }
   // A deleted receipt can leave one carrier of a credit note's invoice number where there were two:

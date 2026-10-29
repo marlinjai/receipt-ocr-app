@@ -4,6 +4,7 @@ import type { CellValue, Column } from '@marlinjai/data-table-core';
 import type { PrismaClient } from '@prisma/client';
 import { tableContext } from '@/lib/meals/service';
 import { GROUP_KIND, rowKindColumnId } from '@/lib/receipts-kind';
+import { removeEmptyGroups } from './empty';
 import { readRowLinks, setParentRow } from './links';
 import { GroupError, assertCanJoinGroup, cleanGroupName, sharedValue } from './rules';
 
@@ -62,6 +63,8 @@ async function checkedMembers(db: PrismaClient, table: GroupTable, rowIds: reado
 export async function createGroup(db: PrismaClient, workspaceId: string, name: unknown, memberRowIds: unknown = []): Promise<string> {
   const cleanName = cleanGroupName(name);
   const ids = cleanIds(memberRowIds);
+  // A group is made with the receipts it holds: one without any would go again by itself (`removeEmptyGroups`).
+  if (ids.length === 0) throw new GroupError('no_receipts');
   const table = await groupTable(db, workspaceId);
   await checkedMembers(db, table, ids);
 
@@ -103,26 +106,40 @@ export async function moveIntoGroup(db: PrismaClient, workspaceId: string, group
   if (typeof groupId !== 'string' || !groupId) throw new GroupError('group_not_found');
   const ids = cleanIds(rowIds);
   const table = await groupTable(db, workspaceId);
-  return db.$transaction(async (tx) => {
+  const { moved, left } = await db.$transaction(async (tx) => {
     // The group and the receipts are read in the transaction that writes, so a
     // group deleted in between cannot be given rows.
     const found = await readRowLinks(tx, table.tableId, table.kindColumnId, [groupId, ...ids]);
     const group = found.get(groupId);
     if (!group || group.kind !== GROUP_KIND || group.archived) throw new GroupError('group_not_found');
     assertCanJoinGroup(ids, found, groupId);
-    return setParentRow(tx, table.tableId, ids, groupId);
+    return { moved: await setParentRow(tx, table.tableId, ids, groupId), left: formerGroups(ids, found, groupId) };
   });
+  await removeEmptyGroups(db, workspaceId, left);
+  return moved;
+}
+
+/** The groups the given rows lay in before a move, other than `target`. */
+function formerGroups(ids: readonly string[], found: ReadonlyMap<string, { parentRowId: string | null }>, target: string | null): string[] {
+  const out = new Set<string>();
+  for (const id of ids) {
+    const parent = found.get(id)?.parentRowId;
+    if (parent && parent !== target) out.add(parent);
+  }
+  return [...out];
 }
 
 /** Take receipts out of whatever group they lie in. Returns how many moved. */
 export async function removeFromGroup(db: PrismaClient, workspaceId: string, rowIds: unknown): Promise<number> {
   const ids = cleanIds(rowIds);
   const table = await groupTable(db, workspaceId);
-  return db.$transaction(async (tx) => {
+  const { moved, left } = await db.$transaction(async (tx) => {
     const found = await readRowLinks(tx, table.tableId, table.kindColumnId, ids);
     for (const id of ids) if (!found.has(id)) throw new GroupError('row_not_found');
-    return setParentRow(tx, table.tableId, ids, null);
+    return { moved: await setParentRow(tx, table.tableId, ids, null), left: formerGroups(ids, found, null) };
   });
+  await removeEmptyGroups(db, workspaceId, left);
+  return moved;
 }
 
 /** The kind of one row of a table, null on a receipt. Throws when the row is not in the table. */

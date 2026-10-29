@@ -558,13 +558,17 @@ async function keptCopyOf(ctx: { workspaceId: string; tenantId: string | null },
   try {
     const sameFile = isSha256Hex(options.sha256) ? await findFileDuplicate(prisma, ctx.workspaceId, options.sha256) : null;
     if (sameFile) {
-      if (file.id) await deleteStoredFile(file.id).catch((err) => console.error('[processReceipt] the second copy of a stored file could not be removed:', err instanceof Error ? err.name : 'error'));
+      // Only a stored file no receipt points at is removed: never the one a receipt of this company holds.
+      if (file.id && (await prisma.dtFile.count({ where: { fileId: file.id } })) === 0) {
+        await deleteStoredFile(file.id).catch((err) => console.error('[processReceipt] the second copy of a stored file could not be removed:', err instanceof Error ? err.name : 'error'));
+      }
       return { rowId: sameFile.rowId, name: sameFile.name, reason: 'same_file', invoiceNumber: read.invoiceNumber, fileAdded: false };
     }
     const sameInvoice = await findSameInvoice(prisma, ctx, { vendor: read.vendor, gross: read.gross, invoiceNumber: read.invoiceNumber });
     if (!sameInvoice) return null;
     let fileAdded = false;
-    if (read.imageColumnId && file.id) {
+    // A file the receipt holds already is not added a second time.
+    if (read.imageColumnId && file.id && (await prisma.dtFile.count({ where: { rowId: sameInvoice.rowId, fileId: file.id } })) === 0) {
       const { adapter } = await getTableId(ctx.workspaceId);
       await adapter.addFileReference({
         rowId: sameInvoice.rowId,

@@ -206,6 +206,8 @@ describe('re-entry: a restore is a person’s word, and a pass run again changes
     const v = vendor();
     const kept = await ws.addReceipt(receipt({ Vendor: v, Rechnungsnummer: 'R-600001' }));
     const copy = await ws.addReceipt(receipt({ Vendor: v, Rechnungsnummer: 'R-600001', Zuordnung: null }));
+    // Both paid: the one with assignment and category filled stays.
+    await linkPayment(kept);
     const link = await linkPayment(copy);
     const copyFile = await attach(copy);
     expect((await mergeDuplicates(db, ctx, { only: [copy] })).merged).toHaveLength(1);
@@ -230,7 +232,8 @@ describe('re-entry: a restore is a person’s word, and a pass run again changes
     // A third copy of the same invoice still goes into the more complete of the two.
     const third = await ws.addReceipt(receipt({ Vendor: v, Rechnungsnummer: 'R-600001', Zuordnung: null, Category: null }));
     const { merged } = await mergeDuplicates(db, ctx, { only: [third] });
-    expect(merged).toEqual([{ rowId: third, keptRowId: copy, reason: 'same_invoice' }]);
+    expect(merged).toEqual([{ rowId: third, keptRowId: kept, reason: 'same_invoice' }]);
+    expect(await archived(copy)).toBe(false);
   });
 
   it('"Beide behalten" said earlier holds: the pass never archives that pair', async () => {

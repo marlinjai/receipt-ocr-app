@@ -382,15 +382,24 @@ describe('processReceipt: the model is shown the page, and the upload never depe
     expect(new Date((await cellOf(ws, pdf.rowId, 'Date')) as string).toISOString().slice(0, 10)).toBe('2026-09-14');
     expect(await cellOf(ws, pdf.rowId, 'Vendor')).toBe('Muster Software');
     expect(pdf.reviewFlags).not.toContain('total_conflict');
-    // An XRechnung: no text was recognized, its figures as text are stored and read.
+    // The XML states its number: the receipt carries it (plan 2026-10-29-invoice-number-duplicates).
+    expect(await cellOf(ws, pdf.rowId, 'Rechnungsnummer')).toBe('BSP-2026-0042');
+    // The same invoice again, as its XRechnung, is that receipt and no second one.
+    const again = await upload(file(9100), null, {});
+    expect(again.alreadyThere).toMatchObject({ rowId: pdf.rowId, reason: 'same_invoice' });
+    // An XRechnung (in a company that does not hold it yet): no text was recognized, its figures as text are stored and read.
+    const second = await createWorkspace();
+    await use(second);
     const xml = await upload(file(91), null, {});
-    expect(await cellOf(ws, xml.rowId, 'Gross')).toBe(172.5);
-    expect(String(await cellOf(ws, xml.rowId, 'OCR Text'))).toContain('Rechnung (elektronisch)');
-    expect(await cellOf(ws, xml.rowId, 'Status')).toBe('Processed');
+    expect(await cellOf(second, xml.rowId, 'Gross')).toBe(172.5);
+    expect(String(await cellOf(second, xml.rowId, 'OCR Text'))).toContain('Rechnung (elektronisch)');
+    expect(await cellOf(second, xml.rowId, 'Status')).toBe('Processed');
     // Without a model answer, the vendor is the seller the XML names, never the heading of its text.
+    const third = await createWorkspace();
+    await use(third);
     classify.mockRejectedValue(new Error('provider down'));
     const unclassified = await upload(file(92), null, {});
-    expect(await cellOf(ws, unclassified.rowId, 'Vendor')).toBe('Muster Software GmbH');
+    expect(await cellOf(third, unclassified.rowId, 'Vendor')).toBe('Muster Software GmbH');
   });
 
   it('an electronic credit note is a negative receipt linked to the invoice it corrects', async () => {
@@ -941,8 +950,8 @@ describe('an upload that is a receipt already there (plan 2026-10-29-invoice-num
     expect(await cellOf(fresh, first.rowId, 'Rechnungsnummer')).toBe('RE-2026-0042');
 
     // The same invoice as a PDF with the buyer's VAT number: another file, the same number.
-    const second = await upload(file(9002), ocr(INVOICE('RE 2026 0042', 'USt-IdNr. Käufer DE123456789')), { sha256: HASH('b') });
-    expect(second).toMatchObject({ rowId: first.rowId, alreadyThere: { rowId: first.rowId, reason: 'same_invoice', invoiceNumber: 'RE 2026 0042', fileAdded: true } });
+    const second = await upload(file(9002), ocr(INVOICE('re-2026/0042', 'USt-IdNr. Käufer DE123456789')), { sha256: HASH('b') });
+    expect(second).toMatchObject({ rowId: first.rowId, alreadyThere: { rowId: first.rowId, reason: 'same_invoice', invoiceNumber: 're-2026/0042', fileAdded: true } });
     expect(await rowCount(fresh)).toBe(1);
     const attached = await files(fresh, first.rowId);
     expect(attached.map((f) => f.fileId)).toEqual([file(9001).id, file(9002).id]);

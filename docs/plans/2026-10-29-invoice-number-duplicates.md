@@ -102,8 +102,10 @@ till receipts often print none.
    each backfill run (button "Rechnungsnummern lesen" on the receipts page, `POST
    /api/receipts/invoice-numbers`) and daily after the bank sync. Loading "Belege prüfen" never
    archives anything; it simply no longer asks about pairs the pass handles.
-18. **Setting one value on many receipts at once is refused for the invoice number column**: a
-   number is one receipt's own, and the same value on twenty receipts would archive nineteen.
+18. **One value is never set on many receipts at once for the invoice number column**: a number is
+   one receipt's own, and the same value on twenty receipts would archive nineteen. "Set field" on
+   the receipts page already takes select columns only, so the text column cannot be reached there;
+   it stays that way.
 19. **Two uploads of the same invoice at the same moment** can both be kept (neither sees the other
    yet); the next pass merges them. Accepted: the window is seconds and the outcome is the same.
 

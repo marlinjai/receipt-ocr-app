@@ -811,7 +811,7 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
     // The number read now may make it a receipt that is there already: the pass keeps the more complete one.
     const mergedInto = (await mergeAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id])).get(row.id) ?? null;
-    return { ok: true, reviewFlags: read.reviewFlags, mergedInto };
+    return { ok: true, reviewFlags: read.reviewFlags, ...(mergedInto ? { mergedInto } : {}) };
   } catch (e) {
     const status = e instanceof ReceiptsAuthError ? e.status : (e as { status?: number })?.status;
     if (status === 401) return { ok: false, error: 'unauthorized' };

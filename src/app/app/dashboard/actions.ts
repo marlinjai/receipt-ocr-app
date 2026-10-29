@@ -21,6 +21,7 @@ import { GROUP_KIND, GROUP_WRITABLE_COLUMNS, ROW_KIND_COLUMN, rowKindColumnId } 
 import { EVERY_ROW_LIMIT, applyDayFilters, boundsYears, readEveryRow, splitDayFilters, yearsWithin } from './day-filters';
 import { BULK_SET_BUDGET_MS, BULK_SET_PART, storedAs, type BulkSetFailure, type BulkSetOutcome } from './bulk-set';
 import { GroupError, assertCellsWritable } from '@/lib/groups/rules';
+import { removeEmptyGroups } from '@/lib/groups/empty';
 import { rowKind } from '@/lib/groups/service';
 import { AssignmentEditError, assignmentEditContext, followTreatment, routeAssignmentEdit, type AssignmentEditContext } from '@/lib/tax/assignment-sync';
 import { readRowLinks } from '@/lib/groups/links';
@@ -726,8 +727,12 @@ export async function deleteRow(rowId: string): Promise<void> {
 }
 
 export async function archiveRow(rowId: string): Promise<void> {
-  await requireRowAccess(rowId, 'receipts.row.write');
-  return getAdapter().archiveRow(rowId);
+  const { workspaceId } = await requireRowAccess(rowId, 'receipts.row.write');
+  const adapter = getAdapter();
+  const parent = (await adapter.getRow(rowId))?.parentRowId ?? null;
+  await adapter.archiveRow(rowId);
+  // A group whose last receipt was archived goes by itself; the archived receipt is put at the top level.
+  if (parent) await removeEmptyGroups(prisma, workspaceId, [parent]);
 }
 
 export async function unarchiveRow(rowId: string): Promise<void> {

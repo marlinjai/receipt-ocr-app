@@ -46,7 +46,7 @@ export default function GroupBar({
   const [name, setName] = useState('');
 
   const submit = async () => {
-    if (!name.trim() || busy) return;
+    if (!name.trim() || busy || receiptCount === 0) return;
     if (await onCreate(name)) {
       setName('');
       setNaming(false);
@@ -80,8 +80,8 @@ export default function GroupBar({
             className="px-2 py-1 text-xs rounded-md"
             style={{ ...inputStyle, width: '12rem' }}
           />
-          <button type="submit" disabled={busy || !name.trim()} className={`${buttonClass} bg-blue-600 text-white hover:bg-blue-700`}>
-            {busy ? 'Bitte warten…' : receiptCount > 0 ? `Mit ${withReceipts(receiptCount)} anlegen` : 'Leer anlegen'}
+          <button type="submit" disabled={busy || !name.trim() || receiptCount === 0} className={`${buttonClass} bg-blue-600 text-white hover:bg-blue-700`}>
+            {busy ? 'Bitte warten…' : `Mit ${withReceipts(receiptCount)} anlegen`}
           </button>
           <button
             type="button"
@@ -99,11 +99,15 @@ export default function GroupBar({
       ) : (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || receiptCount === 0}
           className={buttonClass}
           style={buttonStyle}
           onClick={() => setNaming(true)}
-          title="Eine Gruppe fasst Belege zusammen und zeigt ihre Summe. Sie zählt selbst nie als Beleg."
+          title={
+            receiptCount > 0
+              ? 'Eine Gruppe fasst Belege zusammen und zeigt ihre Summe. Sie zählt selbst nie als Beleg.'
+              : 'Erst Belege auswählen: eine Gruppe entsteht mit ihren Belegen, und eine leere Gruppe verschwindet von selbst.'
+          }
         >
           {receiptCount > 0 ? `Neue Gruppe mit ${withReceipts(receiptCount)}` : 'Neue Gruppe'}
         </button>

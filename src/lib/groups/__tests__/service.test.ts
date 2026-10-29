@@ -65,6 +65,14 @@ function memoryTable(initial: Row[]) {
       // The column that keeps a receipt out of the automatic grouping: this table has none, nothing is marked
       // (the marking itself is proved against a real database).
       if (sql.includes('FROM dt_columns')) return [];
+      // The groups that hold no receipt (src/lib/groups/links.ts `emptyGroupIds`): this table links no payment.
+      if (sql.startsWith('SELECT g.id FROM')) {
+        const [kind, ...candidates] = ids;
+        return rows()
+          .filter((g) => g.cells[kindId] === kind && !g.archived && (candidates.length === 0 || candidates.includes(g.id)))
+          .filter((g) => !rows().some((c) => c.parentRowId === g.id && !c.archived))
+          .map((g) => ({ id: g.id }));
+      }
       if (!sql.startsWith('SELECT id, parent_row_id')) throw new Error(`unexpected query: ${sql}`);
       return ids
         .filter((id) => store.has(id))
@@ -153,9 +161,11 @@ describe('forward: create a group and put receipts in', () => {
     expect(table.row(mixed)!.cells[columnId('Category')]).toBeUndefined();
   });
 
-  it('an empty group is created empty and shows 0', async () => {
-    const groupId = await createGroup(table.db, WORKSPACE_ID, 'Leer');
-    expect(shownSum(groupId)).toBe(0);
+  it('a group is made with its receipts: one without any is refused and nothing is created', async () => {
+    const before = table.rows().length;
+    expect(await code(createGroup(table.db, WORKSPACE_ID, 'Leer'))).toBe('no_receipts');
+    expect(await code(createGroup(table.db, WORKSPACE_ID, 'Leer', []))).toBe('no_receipts');
+    expect(table.rows()).toHaveLength(before);
     expect(receiptTotal()).toBe(RECEIPT_TOTAL);
   });
 
@@ -210,19 +220,54 @@ describe('back and changed: take a receipt out, move it, change its amount', () 
   });
 
   it('a move is all or nothing: one row that does not exist moves none', async () => {
-    const groupId = await createGroup(table.db, WORKSPACE_ID, 'Messe');
+    const groupId = await createGroup(table.db, WORKSPACE_ID, 'Messe', ['licence']);
     expect(await code(moveIntoGroup(table.db, WORKSPACE_ID, groupId, ['hotel', 'elsewhere']))).toBe('row_not_found');
     expect(table.row('hotel')!.parentRowId).toBeUndefined();
   });
 
   it('a group does not go into a group, and a receipt is not a group to put rows into', async () => {
-    const first = await createGroup(table.db, WORKSPACE_ID, 'Messe');
-    const second = await createGroup(table.db, WORKSPACE_ID, 'Kunde');
+    const first = await createGroup(table.db, WORKSPACE_ID, 'Messe', ['licence']);
+    const second = await createGroup(table.db, WORKSPACE_ID, 'Kunde', ['dinner']);
     expect(await code(moveIntoGroup(table.db, WORKSPACE_ID, first, [second]))).toBe('group_in_group');
     expect(await code(moveIntoGroup(table.db, WORKSPACE_ID, first, [first]))).toBe('group_in_group');
     expect(await code(moveIntoGroup(table.db, WORKSPACE_ID, 'licence', ['hotel']))).toBe('group_not_found');
     expect(await code(moveIntoGroup(table.db, WORKSPACE_ID, 'gone', ['hotel']))).toBe('group_not_found');
     expect(table.row('hotel')!.parentRowId).toBeUndefined();
+  });
+});
+
+describe('a group left without receipts goes by itself', () => {
+  it('when its last receipt is taken out; one that keeps a receipt stays', async () => {
+    const groupId = await createGroup(table.db, WORKSPACE_ID, 'Messe', ['hotel', 'dinner']);
+    await removeFromGroup(table.db, WORKSPACE_ID, ['dinner']);
+    expect(table.row(groupId)).toBeDefined();
+    await removeFromGroup(table.db, WORKSPACE_ID, ['hotel']);
+    expect(table.row(groupId)).toBeUndefined();
+    expect(receiptIds()).toEqual([...RECEIPT_IDS].sort());
+    expect(receiptTotal()).toBe(RECEIPT_TOTAL);
+  });
+
+  it('when its last receipt moves into another group; the group it moved into stays', async () => {
+    const first = await createGroup(table.db, WORKSPACE_ID, 'Messe', ['hotel']);
+    const second = await createGroup(table.db, WORKSPACE_ID, 'Kunde', ['licence']);
+    await moveIntoGroup(table.db, WORKSPACE_ID, second, ['hotel']);
+    expect(table.row(first)).toBeUndefined();
+    expect(table.row(second)).toBeDefined();
+    expect(shownSum(second)).toBe(110);
+  });
+
+  it('when its last receipt is deleted; the other receipts are untouched', async () => {
+    const groupId = await createGroup(table.db, WORKSPACE_ID, 'Messe', ['dinner']);
+    const result = await deleteReceiptRows(table.db, ctx, ['dinner'], { deleteStoredFile: async () => {} });
+    expect(result.done).toEqual(['dinner']);
+    expect(table.row(groupId)).toBeUndefined();
+    expect(table.row('hotel')).toBeDefined();
+  });
+
+  it('a move that writes nothing leaves every group as it was', async () => {
+    const groupId = await createGroup(table.db, WORKSPACE_ID, 'Messe', ['hotel']);
+    expect(await moveIntoGroup(table.db, WORKSPACE_ID, groupId, ['hotel'])).toBe(0);
+    expect(table.row(groupId)).toBeDefined();
   });
 });
 
@@ -274,23 +319,17 @@ describe('after the end: delete the group', () => {
     expect(table.row('hotel')!.parentRowId).toBeUndefined();
   });
 
-  it('an empty group is deleted like any row', async () => {
-    const groupId = await createGroup(table.db, WORKSPACE_ID, 'Leer');
-    expect((await deleteReceiptRows(table.db, ctx, [groupId], deps)).done).toEqual([groupId]);
-    expect(receiptTotal()).toBe(RECEIPT_TOTAL);
-  });
-
-  it('a new group of the same name starts empty: nothing of the old one comes back', async () => {
+  it('a new group of the same name holds only its own receipts: nothing of the old one comes back', async () => {
     const first = await createGroup(table.db, WORKSPACE_ID, 'Messe', ['hotel', 'dinner']);
     await deleteReceiptRows(table.db, ctx, [first], deps);
-    const second = await createGroup(table.db, WORKSPACE_ID, 'Messe');
+    const second = await createGroup(table.db, WORKSPACE_ID, 'Messe', ['licence']);
     expect(second).not.toBe(first);
-    expect(shownSum(second)).toBe(0);
-    expect(receiptsInGroup(second, table.rows(), columns)).toEqual([]);
+    expect(shownSum(second)).toBe(10);
+    expect(receiptsInGroup(second, table.rows(), columns).map((r) => r.id)).toEqual(['licence']);
   });
 
   it('a receipt cannot be put into a group that was deleted meanwhile', async () => {
-    const groupId = await createGroup(table.db, WORKSPACE_ID, 'Messe');
+    const groupId = await createGroup(table.db, WORKSPACE_ID, 'Messe', ['licence']);
     await deleteReceiptRows(table.db, ctx, [groupId], deps);
     expect(await code(moveIntoGroup(table.db, WORKSPACE_ID, groupId, ['hotel']))).toBe('group_not_found');
     expect(table.row('hotel')!.parentRowId).toBeUndefined();

@@ -387,6 +387,12 @@
   each receipt read and stored with a kind of purchase (groceries, coffee, a meal, a drink), and
   a "Was gekauft" overview on the spending page. Plan:
   [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-26)
+- [ ] One spelling per vendor from the reader (found on 2026-10-29): the reader spells one
+  subscription several ways ("Apple", "Apple iCloud", "Apple Distribution International Ltd.";
+  "iCloud+ 2 TB", "iCloud+ mit 2 TB", "iCloud+ 2 TB Abo"), so a new receipt can miss the group of
+  its subscription until its spelling is corrected. Take the spelling of the vendor's earlier
+  receipts, or of the contact they link to. Context: section Open of the grouping plan of
+  2026-10-29 (Completed below). (2026-10-29)
 
 ## In Progress
 
@@ -501,6 +507,11 @@
 
 <!-- Done — move to CHANGELOG.md on release -->
 
+- [x] Every recurring receipt in its group (asked by the owner on 2026-10-29): private receipts
+  are grouped too, in groups of their own; a receipt finds the group its subscription lies in
+  whatever the group is called; a second group of one subscription merges into the larger; a
+  group left without receipts deletes itself, like in Notion. Plan:
+  [docs/plans/2026-10-29-group-every-recurring-receipt.md](docs/plans/2026-10-29-group-every-recurring-receipt.md). Done 2026-10-29.
 - [x] A fast dashboard and spending page (asked by the owner on 2026-10-26): the dashboard's
   server time went from 2.8 to 4.2 s to 0.8 to 1.0 s and its server actions per visit from 59
   to 19, the spending page from 3.1 s to 1.1 to 1.3 s (pull requests 183 to 188, the table

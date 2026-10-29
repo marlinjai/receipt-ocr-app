@@ -18,6 +18,8 @@ export type GroupErrorCode =
   | 'group_in_group'
   /** The name is empty or too long. */
   | 'invalid_name'
+  /** A group was to be made without a receipt in it. A group holds receipts; an empty one goes by itself. */
+  | 'no_receipts'
   /** A cell was written that a group cannot carry (an amount, a date, a file), or the kind itself. */
   | 'not_writable';
 

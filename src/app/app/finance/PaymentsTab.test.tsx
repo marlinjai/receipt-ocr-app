@@ -287,7 +287,7 @@ describe('PaymentsTab', () => {
   it('offers a payment for a receipt on an estimated amount; one click takes one, one click takes all unambiguous ones', async () => {
     const user = setupUser();
     const p = props();
-    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel März', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false };
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel März', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false, originalAmount: false, foreign: null };
     const estimateProposals = [proposal, { ...proposal, paymentId: 'p-2', rowId: 'r-2', receiptLabel: 'Editor Beispiel April', receiptDay: '2026-04-02', bookingDay: '2026-04-03' }, { ...proposal, paymentId: 'p-3', rowId: 'r-3', receiptLabel: 'Hosting Beispiel', unambiguous: false }];
     render(<PaymentsTab view={view({ estimateProposals })} {...p} />);
     const section = screen.getByRole('region', { name: 'Vorschläge für geschätzte Belege' });
@@ -316,7 +316,7 @@ describe('PaymentsTab', () => {
   it('while the bulk accept runs the button says so and cannot be pressed again; it comes back when the answer is in', async () => {
     const user = setupUser();
     const p = props();
-    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: '', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false };
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: '', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false, originalAmount: false, foreign: null };
     const shown = view({ estimateProposals: [proposal, { ...proposal, paymentId: 'p-2', rowId: 'r-2' }] });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const { rerender } = render(<PaymentsTab view={shown} {...p} />);
@@ -335,7 +335,7 @@ describe('PaymentsTab', () => {
   });
 
   it('one payment for two receipts is shown for both as needing a hand: no accept button, not in the bulk count', () => {
-    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Hosting Beispiel A', receiptDay: '2026-03-02', estimateCents: 1_000, bookingDay: '2026-03-03', paidCents: 1_948, counterparty: 'Hosting Beispiel', accountLabel: 'Später zahlen', unambiguous: false, severalReceipts: true };
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Hosting Beispiel A', receiptDay: '2026-03-02', estimateCents: 1_000, bookingDay: '2026-03-03', paidCents: 1_948, counterparty: 'Hosting Beispiel', accountLabel: 'Später zahlen', unambiguous: false, severalReceipts: true, originalAmount: false, foreign: null };
     render(<PaymentsTab view={view({ estimateProposals: [proposal, { ...proposal, rowId: 'r-2', receiptLabel: 'Hosting Beispiel B', estimateCents: 950 }] })} {...props()} />);
     const section = screen.getByRole('region', { name: 'Vorschläge für geschätzte Belege' });
     expect(within(section).getAllByText(/eine Zahlung für mehrere Belege\?/).length).toBe(2);
@@ -343,8 +343,18 @@ describe('PaymentsTab', () => {
     expect(within(section).queryByRole('button', { name: /eindeutigen Vorschl/ })).toBeNull();
   });
 
+  it('a payment found by its original amount says so, with that amount, although it names a payment processor', () => {
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Studio Beispiel Abo', receiptDay: '2026-03-23', estimateCents: 2_950, bookingDay: '2026-03-23', paidCents: 2_998, counterparty: 'ZAHLDIENST* STUDIOBEISPIEL', accountLabel: 'Kreditkarte', unambiguous: true, severalReceipts: false, originalAmount: true, foreign: { currency: 'USD', cents: 3_451, estimated: false } };
+    render(<PaymentsTab view={view({ estimateProposals: [proposal, { ...proposal, paymentId: 'p-2', rowId: 'r-2', receiptLabel: 'Editor Beispiel', originalAmount: false, foreign: null }] })} {...props()} />);
+    const section = screen.getByRole('region', { name: 'Vorschläge für geschätzte Belege' });
+    expect(section.textContent).toContain('Originalbetrag in der Währung des Belegs centgenau dem Beleg entspricht');
+    const found = within(section).getByText(/Studio Beispiel Abo/).closest('li') as HTMLElement;
+    expect(found.textContent).toContain('bezahlt 29,98 € (34,51 USD) am 23.03.2026 an ZAHLDIENST* STUDIOBEISPIEL · Kreditkarte · Originalbetrag stimmt centgenau mit dem Beleg überein');
+    expect((within(section).getByText(/Editor Beispiel/).closest('li') as HTMLElement).textContent).not.toContain('Originalbetrag');
+  });
+
   it('only ambiguous proposals: each can be taken, there is nothing to take in bulk; no proposals, no section', () => {
-    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: '', accountLabel: 'Später zahlen', unambiguous: false, severalReceipts: false };
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2026-03-02', estimateCents: 2_000, bookingDay: '2026-03-03', paidCents: 2_075, counterparty: '', accountLabel: 'Später zahlen', unambiguous: false, severalReceipts: false, originalAmount: false, foreign: null };
     const { unmount } = render(<PaymentsTab view={view({ estimateProposals: [proposal] })} {...props()} />);
     expect(screen.getByRole('button', { name: 'Übernehmen' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /eindeutigen Vorschl/ })).toBeNull();

@@ -1,11 +1,11 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { saveTaxSettings } from '@/lib/meals/service';
-import type { TaxContext } from '../../service';
-import { PaymentServiceError, createAccount, deleteImportBatch, importPayments } from '../service';
+import { acceptEstimateProposals, loadStatement, type TaxContext } from '../../service';
+import { PaymentServiceError, createAccount, deleteImportBatch, importPayments, unlinkPayment } from '../service';
 import { pdfText } from '../pdf-text';
 import { PaymentParseError } from '../types';
 import { newBalanceOf, statementPdf, type Statement } from './advanzia-fixture';
-import { createWorkspace, db } from '../../../../../test/db-helpers';
+import { createWorkspace, db, type TestWorkspace } from '../../../../../test/db-helpers';
 
 /**
  * Statements of the Advanzia credit card against a real database, read from
@@ -13,12 +13,12 @@ import { createWorkspace, db } from '../../../../../test/db-helpers';
  * merchant, place and amount is invented.
  */
 
-async function card(): Promise<{ ctx: TaxContext; accountId: string }> {
+async function card(): Promise<{ ws: TestWorkspace; ctx: TaxContext; accountId: string }> {
   const ws = await createWorkspace();
   const ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
   await saveTaxSettings(db, ctx, { smallBusiness: true });
   const accountId = await createAccount(db, ctx, { label: 'Kreditkarte', kind: 'card' });
-  return { ctx, accountId };
+  return { ws, ctx, accountId };
 }
 
 const MARCH: Statement = {
@@ -150,5 +150,62 @@ describe('Advanzia statements: re-entry', () => {
     expect(await codeOf(pdfText(new TextEncoder().encode('kein PDF')))).toBe('unreadable_pdf');
     expect(await db.taxImportBatch.count({ where: { accountId } })).toBe(0);
     expect(await importStatement(ctx, accountId, MARCH)).toMatchObject({ added: 8 });
+  });
+});
+
+describe('Advanzia statements: a charge in dollars finds its dollar receipt by the amount, whoever the card text names', () => {
+  // The card names the payment processor; the invoice names the studio. 34.51 USD either way.
+  const SUBSCRIPTION: Statement = {
+    from: '04.03.2026',
+    to: '03.04.2026',
+    oldBalance: '0,00',
+    rows: [
+      { day: '23.03.2026', text: 'ZAHLDIENST* STUDIOBEISPIEL - USD 34,51 (KURS 1,1511)', place: 'NEW YORK', amount: '29,98' },
+      { day: '24.03.2026', text: 'Laden Beispiel', place: 'Berlin', amount: '29,98' },
+    ],
+  };
+  /** A dollar invoice of 23 March 2026: 34.51 at 0.855, an estimate of 29.51 euro. */
+  const studioInvoice = (ws: TestWorkspace, overrides: Record<string, string | number> = {}) =>
+    ws.addReceipt({ Name: 'Studio Beispiel Abo', Vendor: 'Studio Beispiel', Gross: 34.51, Date: '2026-03-23', Category: 'Software & Lizenzen', Zuordnung: 'Geschäftlich', Currency: 'USD', 'FX Rate': 0.855, ...overrides });
+  const proposalsOf = async (workspaceId: string) => (await loadStatement(db, workspaceId, 2026)).payments.estimateProposals;
+
+  it('forward: proposed although the vendor is not named, marked as found by the amount, and linked once accepted', async () => {
+    const { ws, ctx, accountId } = await card();
+    const rowId = await studioInvoice(ws);
+    await importStatement(ctx, accountId, SUBSCRIPTION);
+    const charge = await db.taxPayment.findFirstOrThrow({ where: { accountId, originalCurrency: 'USD' } });
+
+    const shown = await proposalsOf(ws.workspaceId);
+    // Only the dollar charge: the euro one of the same euro amount names neither the vendor nor a dollar amount.
+    expect(shown).toEqual([
+      expect.objectContaining({ paymentId: charge.id, rowId, estimateCents: 2951, paidCents: 2998, counterparty: 'ZAHLDIENST* STUDIOBEISPIEL', unambiguous: true, severalReceipts: false, originalAmount: true, foreign: { currency: 'USD', cents: 3451, estimated: false } }),
+    ]);
+    expect(await acceptEstimateProposals(db, ctx, 2026, shown.map((p) => ({ paymentId: p.paymentId, rowId: p.rowId })), true)).toEqual({ linked: [{ paymentId: charge.id, rowId }], skipped: 0 });
+    const after = await loadStatement(db, ws.workspaceId, 2026);
+    // The receipt counts with what the card charged.
+    expect(after.items.find((i) => i.rowId === rowId)).toMatchObject({ amountCents: 2998, amountBasis: 'payment' });
+    expect(after.payments.estimateProposals).toEqual([]);
+
+    // Re-entry: the link taken back, the proposal is there again.
+    await unlinkPayment(db, ctx, after.payments.links[0].linkId);
+    expect(await proposalsOf(ws.workspaceId)).toEqual([expect.objectContaining({ paymentId: charge.id, rowId, unambiguous: true, originalAmount: true })]);
+  });
+
+  it('two dollar receipts of that amount near the charge: offered for both, taken for neither in bulk', async () => {
+    const { ws, ctx, accountId } = await card();
+    const first = await studioInvoice(ws);
+    const second = await studioInvoice(ws, { Name: 'Anderes Studio Abo', Vendor: 'Anderes Studio', Date: '2026-03-22' });
+    await importStatement(ctx, accountId, SUBSCRIPTION);
+    const shown = await proposalsOf(ws.workspaceId);
+    expect(shown.map((p) => [p.rowId, p.unambiguous, p.originalAmount]).sort()).toEqual([[first, false, true], [second, false, true]].sort());
+    expect(await acceptEstimateProposals(db, ctx, 2026, shown.map((p) => ({ paymentId: p.paymentId, rowId: p.rowId })), true)).toEqual({ linked: [], skipped: 2 });
+  });
+
+  it('a receipt of another currency, or of another amount, is not found by the dollar amount', async () => {
+    const { ws, ctx, accountId } = await card();
+    await studioInvoice(ws, { Currency: 'GBP', 'FX Rate': 0.87 });
+    await studioInvoice(ws, { Gross: 34.5 });
+    await importStatement(ctx, accountId, SUBSCRIPTION);
+    expect(await proposalsOf(ws.workspaceId)).toEqual([]);
   });
 });

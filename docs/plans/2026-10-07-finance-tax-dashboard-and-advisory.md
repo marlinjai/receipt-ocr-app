@@ -2206,3 +2206,29 @@ key frame built at run time).
   skipped day no longer holds the next fetch back, and only a day that is shown is remembered
   as cleared; two identical bookings without a day are two (numbered within a fetch, the
   content read with sorted keys); the run deadline is real time, as the bank client compares.
+
+## Reality: a foreign receipt found by the payment's own amount (2026-10-30)
+
+- **The rule:** the proposals for receipts on an estimated euro amount (`proposeEstimateMatches`
+  in `src/lib/tax/payments/match.ts`, the "Belege mit geschätztem Eurobetrag" section of the
+  payments tab) also take a payment that states what it cost in the receipt's currency
+  (`tax_payments.original_amount_cents` and `original_currency`, filled by the PayPal and
+  Advanzia importers and the live bank feed of a foreign-currency wallet) when that is the
+  receipt's own total to the cent, sign aside, in the same 3 days before to 10 days after.
+  No vendor is needed: a card text such as "LEMSQZY* 3DAISTUDIO" names the merchant of record
+  or the payment processor, not the vendor on the invoice. Both currencies are read as ISO
+  codes (`currencyCode`, trimmed and upper case); a euro receipt is never matched this way.
+- **Ambiguity as before:** such a fit counts like a vendor fit, so two receipts of that amount
+  and currency in the window (or two such payments for one receipt) are offered for both and
+  unambiguous for neither. A vendor fit within 8 percent stays a candidate beside it. A receipt
+  the payment's own amount names to the cent is never made part of a sum of two receipts.
+  Payments without an own amount are matched exactly as before.
+- **Shown:** the row gives the payment's own amount ("bezahlt 29,98 € (34,51 USD)") and says
+  "Originalbetrag stimmt centgenau mit dem Beleg überein"; such rows come first on the same
+  receipt day, and the section's explanation names the rule.
+- **Not changed:** the plain candidates of `proposeMatches` (the proposals of "Zahlungen ohne
+  Beleg") stay on the euro amount. They do see foreign receipts, but with the reference-rate
+  estimate as the open amount, and the estimate section is the one place a foreign receipt is
+  proposed and accepted (with its own accept path and link method); offering the same pair in
+  both would show it twice with two ways to take it. A foreign receipt without an exchange rate
+  has no estimate and is still not proposed.

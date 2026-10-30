@@ -826,7 +826,7 @@ describe('FinanceClient: assets', () => {
   it('accepting the proposals sends the pairs the dialog counted, says exactly what was linked and what was left out, and shows a failure', async () => {
     const user = setupUser();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2025-03-02', estimateCents: 2_000, bookingDay: '2025-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false };
+    const proposal = { paymentId: 'p-1', rowId: 'r-1', receiptLabel: 'Editor Beispiel', receiptDay: '2025-03-02', estimateCents: 2_000, bookingDay: '2025-03-03', paidCents: 2_075, counterparty: 'Editor Beispiel', accountLabel: 'Später zahlen', unambiguous: true, severalReceipts: false, originalAmount: false, foreign: null };
     const second = { ...proposal, paymentId: 'p-2', rowId: 'r-2', receiptLabel: 'Hosting Beispiel' };
     const payments = view([]).payments;
     const withProposals = view([], { payments: { ...payments, estimateProposals: [proposal, second] } });

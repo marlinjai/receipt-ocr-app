@@ -6,7 +6,7 @@
  * enough to link by themselves, because payment services relabel merchants and
  * add fees; they only produce a candidate a person has to confirm. The same
  * holds for the proposals for receipts on an estimated amount at the end of
- * this file.
+ * this file, those found by the amount in the receipt's own currency included.
  */
 
 export interface MatchPayment {
@@ -331,6 +331,22 @@ export function unambiguousReferenceMatches(proposals: readonly MatchProposal[])
 
 // ── Receipts whose euro amount is an estimate ────────────────────────────────
 
+/** An amount in another currency than the euro: its ISO code as stored, and cents of that currency (a payment's signed). */
+export interface ForeignCents {
+  currency: string;
+  amountCents: number;
+}
+
+/**
+ * The ISO code of a currency the way both sides store it: a receipt's
+ * "Currency" option ("USD"), a payment's original currency from its import
+ * (as the source writes it). Null for anything that is no three-letter code.
+ */
+export function currencyCode(text: string | null | undefined): string | null {
+  const code = (text ?? '').trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : null;
+}
+
 /** A receipt as the estimate proposal sees it. */
 export interface EstimateDocument {
   id: string;
@@ -341,6 +357,8 @@ export interface EstimateDocument {
   amountCents: number;
   /** True for a foreign-currency receipt converted at a reference rate. */
   estimated: boolean;
+  /** The receipt's total in its own currency, for a receipt in another currency than the euro; null or absent otherwise. */
+  own?: ForeignCents | null;
 }
 
 /** A payment out that is linked to nothing yet. Names are normalized like `vendorKey`. */
@@ -357,6 +375,12 @@ export interface EstimatePayment {
    * the invoice names the company behind it; one link by hand teaches the pairing.
    */
   vendorAliases?: readonly string[];
+  /**
+   * What the payment cost in its own currency, as its import states it (a card
+   * statement's "USD 34,51", a payment service's purchase in dollars): null or
+   * absent for a payment in euro, or when its source does not say.
+   */
+  original?: ForeignCents | null;
 }
 
 export interface EstimateProposal {
@@ -370,6 +394,13 @@ export interface EstimateProposal {
    * one sum. Never unambiguous; a person splits the payment by hand.
    */
   severalReceipts: boolean;
+  /**
+   * The payment's own amount is the receipt's to the cent, in the receipt's
+   * currency: the evidence that found it, whatever the payment names (a card
+   * text often names the payment processor or the merchant of record, not the
+   * vendor on the invoice).
+   */
+  originalAmount: boolean;
 }
 
 /** The window a payment may lie in around the receipt's day, and how far it may be from the estimate. */
@@ -392,13 +423,36 @@ export function vendorNamed(vendorKey: string | null, counterpartyKey: string, r
 }
 
 /**
+ * Is the payment's own amount the receipt's own, in the same currency, to the
+ * cent (the sign aside)? Only for a receipt in another currency than the euro
+ * and a payment whose import states what it cost in that currency.
+ */
+export function sameOwnAmount(own: ForeignCents | null | undefined, original: ForeignCents | null | undefined): boolean {
+  if (!own || !original) return false;
+  const currency = currencyCode(own.currency);
+  return currency !== null && currency !== 'EUR' && currency === currencyCode(original.currency) && Math.abs(original.amountCents) === Math.abs(own.amountCents);
+}
+
+/**
  * Proposals for receipts on an estimated euro amount: a foreign-currency
  * receipt never equals what the bank charged, so the exact-amount candidates
- * above cannot find its payment. Here the vendor has to be named, the payment
- * booked from 3 days before to 10 days after the receipt, and the amount within
- * 8 percent of the estimate. The vendor is named by its words in the payment,
- * or by a pairing a person made before (`vendorAliases`). A payment that pays
- * two receipts of the vendor in one sum is offered for both and marked.
+ * above cannot find its payment. A payment booked from 3 days before to 10
+ * days after the receipt is proposed when
+ *
+ * - it names the receipt's vendor and its amount is within 8 percent of the
+ *   estimate. The vendor is named by its words in the payment, or by a pairing
+ *   a person made before (`vendorAliases`); or
+ * - it states what it cost in the receipt's currency, and that is the
+ *   receipt's amount to the cent (`originalAmount`). No vendor is needed: a
+ *   card text often names the payment processor or the merchant of record
+ *   ("LEMSQZY* ...", "PADDLE.NET* ...") instead of the vendor on the invoice,
+ *   and the exact amount in the invoice's own currency is the stronger
+ *   evidence. It counts towards ambiguity like any other fit: two receipts of
+ *   that amount and currency in the window are unambiguous for neither.
+ *
+ * A payment that pays two receipts of the vendor in one sum is offered for both
+ * and marked; a receipt the payment's own amount names to the cent is never
+ * made part of such a sum.
  *
  * `documents` are all receipts no payment is linked to, the euro ones too:
  * they receive no proposal here, but a payment that also fits one of them
@@ -409,22 +463,29 @@ export function proposeEstimateMatches(payments: readonly EstimatePayment[], doc
   const dayNumber = (day: string) => Math.round(Date.parse(`${day}T00:00:00Z`) / 86_400_000);
   const paid = payments.map((p) => ({ p, day: dayNumber(p.bookingDay), cents: Math.abs(p.amountCents) }));
   const within = (cents: number, estimate: number) => Math.abs(cents - estimate) * 100 <= ESTIMATE_TOLERANCE_PERCENT * estimate;
-  const pairs: Array<{ paymentId: string; document: EstimateDocument }> = [];
+  const pairs: Array<{ paymentId: string; document: EstimateDocument; originalAmount: boolean }> = [];
   // Per payment, the estimated receipts of its vendor in the window, whatever their amount: the parts one sum may pay.
   const near = new Map<string, { cents: number; documents: EstimateDocument[] }>();
+  // Payment and receipt whose own amounts agree to the cent: that receipt is never part of a sum the payment pays.
+  const exactOwn = new Set<string>();
   for (const document of documents) {
-    if (document.day === null || document.vendorKey === null || document.amountCents <= 0) continue;
+    if (document.day === null || document.amountCents === 0) continue;
+    // A credit note (negative) can only be found by its own amount: vendor matching is for positive amounts.
+    const positive = document.amountCents > 0;
     const day = dayNumber(document.day);
     for (const { p, day: booked, cents } of paid) {
       const gap = booked - day;
       if (gap < -ESTIMATE_DAYS_BEFORE || gap > ESTIMATE_DAYS_AFTER) continue;
-      if (!vendorNamed(document.vendorKey, p.counterpartyKey, p.referenceKey) && !(p.vendorAliases ?? []).includes(document.vendorKey)) continue;
-      if (document.estimated) {
+      const originalAmount = sameOwnAmount(document.own, p.original);
+      if (originalAmount) exactOwn.add(`${p.id}|${document.id}`);
+      const named = positive && document.vendorKey !== null && (vendorNamed(document.vendorKey, p.counterpartyKey, p.referenceKey) || (p.vendorAliases ?? []).includes(document.vendorKey));
+      if (named && document.estimated) {
         const entry = near.get(p.id) ?? { cents, documents: [] };
         entry.documents.push(document);
         near.set(p.id, entry);
       }
-      if (document.estimated ? within(cents, document.amountCents) : cents === document.amountCents) pairs.push({ paymentId: p.id, document });
+      const fitsVendor = named && (document.estimated ? within(cents, document.amountCents) : cents === document.amountCents);
+      if (fitsVendor || originalAmount) pairs.push({ paymentId: p.id, document, originalAmount });
     }
   }
   // One payment for two receipts: the sum of two fits, and fits better than either does alone.
@@ -432,12 +493,14 @@ export function proposeEstimateMatches(payments: readonly EstimatePayment[], doc
   for (const [paymentId, { cents, documents: parts }] of near) {
     for (let a = 0; a < parts.length; a++) {
       for (let b = a + 1; b < parts.length; b++) {
+        // A receipt the payment's own amount names to the cent is paid by it alone.
+        if (exactOwn.has(`${paymentId}|${parts[a].id}`) || exactOwn.has(`${paymentId}|${parts[b].id}`)) continue;
         const sum = parts[a].amountCents + parts[b].amountCents;
         // Better than EITHER alone: a receipt that fits by itself to the cent is not made part of a sum.
         if (!within(cents, sum) || Math.abs(cents - sum) >= Math.min(Math.abs(cents - parts[a].amountCents), Math.abs(cents - parts[b].amountCents))) continue;
         for (const part of [parts[a], parts[b]]) {
           several.add(`${paymentId}|${part.id}`);
-          if (!pairs.some((pair) => pair.paymentId === paymentId && pair.document.id === part.id)) pairs.push({ paymentId, document: part });
+          if (!pairs.some((pair) => pair.paymentId === paymentId && pair.document.id === part.id)) pairs.push({ paymentId, document: part, originalAmount: false });
         }
       }
     }
@@ -455,5 +518,6 @@ export function proposeEstimateMatches(payments: readonly EstimatePayment[], doc
       documentId: pair.document.id,
       unambiguous: perPayment.get(pair.paymentId) === 1 && perDocument.get(pair.document.id) === 1 && !several.has(`${pair.paymentId}|${pair.document.id}`),
       severalReceipts: several.has(`${pair.paymentId}|${pair.document.id}`),
+      originalAmount: pair.originalAmount,
     }));
 }

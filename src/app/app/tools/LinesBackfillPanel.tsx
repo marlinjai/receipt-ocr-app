@@ -31,7 +31,6 @@ function errorText(status: number, error: unknown): string {
  * or the person stops it. The receipts are chosen on the server.
  */
 export default function LinesBackfillPanel() {
-  const [open, setOpen] = useState(false);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<Progress>(EMPTY);
   const [error, setError] = useState<string | null>(null);
@@ -87,69 +86,48 @@ export default function LinesBackfillPanel() {
   const started = progress.remaining !== null;
 
   return (
-    <div className="relative">
+    <div>
+      <p className="text-sm mb-3" style={{ color: 'var(--dt-text-secondary)' }}>
+      Liest die einzelnen Positionen der Belege dieser Firma, die noch keine haben, aus ihrem gespeicherten Text. Am Beleg selbst ändert sich nichts. Jeder Beleg wird einmal gelesen; ein Teil läuft auch jeden Tag von selbst.
+    </p>
+    <div className="flex gap-2">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 max-sm:min-h-11 max-sm:w-full max-sm:justify-start"
-        style={{
-          background: open ? 'var(--accent-muted)' : 'var(--surface)',
-          color: open ? 'var(--accent)' : 'var(--foreground)',
-          border: `1px solid ${open ? 'rgba(226, 163, 72, 0.4)' : 'var(--border)'}`,
-        }}
+        onClick={() => void run()}
+        disabled={running}
+        className="ui-btn ui-btn-primary"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
-        </svg>
-        Positionen lesen
+        {running ? 'Liest …' : started ? 'Weiter lesen' : 'Positionen lesen'}
       </button>
-
-      {open && (
-        <div className="absolute right-0 top-full mt-2 z-20 w-80 max-w-[calc(100vw-2rem)] rounded-lg p-4 shadow-xl" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-          <p className="text-xs mb-3" style={{ color: 'var(--dt-text-secondary)' }}>
-            Liest die einzelnen Positionen der Belege dieser Firma, die noch keine haben, aus ihrem gespeicherten Text. Am Beleg selbst ändert sich nichts. Jeder Beleg wird einmal gelesen; ein Teil läuft auch jeden Tag von selbst.
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => void run()}
-              disabled={running}
-              className="flex-1 px-3 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {running ? 'Liest …' : started ? 'Weiter lesen' : 'Positionen lesen'}
-            </button>
-            {running && (
-              <button type="button" onClick={() => (stop.current = true)} className="ui-btn ui-btn-sm">
-                Anhalten
-              </button>
-            )}
-          </div>
-          <div aria-live="polite">
-            {started && (
-              <p className="text-xs mt-3" style={{ color: 'var(--dt-text-secondary)' }}>
-                Gelesen: {progress.read} ({progress.addUp} stimmen mit dem Gesamtbetrag, {progress.differ} mit Differenz), ohne Positionen: {progress.noLines}, fehlgeschlagen: {progress.failed}, noch offen: {progress.remaining}.
-                {done && ' Alle Belege sind gelesen.'}
-              </p>
-            )}
-            {progress.noText.length > 0 && (
-              <div className="text-xs mt-2" style={{ color: 'var(--dt-text-secondary)' }}>
-                <p>Ohne gespeicherten Text, daher ohne Positionen ({progress.noText.length}). „Seite neu lesen“ am Beleg liest sie von der Seite:</p>
-                <ul className="mt-1 max-h-32 list-disc overflow-y-auto pl-4">
-                  {progress.noText.map((r) => (
-                    <li key={r.rowId}>{r.name}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {error && (
-              <p className="text-xs mt-2" role="alert" style={{ color: '#f87171' }}>
-                {error}
-              </p>
-            )}
-          </div>
+      {running && (
+        <button type="button" onClick={() => (stop.current = true)} className="ui-btn ui-btn-sm">
+          Anhalten
+        </button>
+      )}
+    </div>
+    <div aria-live="polite">
+      {started && (
+        <p className="text-xs mt-3" style={{ color: 'var(--dt-text-secondary)' }}>
+          Gelesen: {progress.read} ({progress.addUp} stimmen mit dem Gesamtbetrag, {progress.differ} mit Differenz), ohne Positionen: {progress.noLines}, fehlgeschlagen: {progress.failed}, noch offen: {progress.remaining}.
+          {done && ' Alle Belege sind gelesen.'}
+        </p>
+      )}
+      {progress.noText.length > 0 && (
+        <div className="text-xs mt-2" style={{ color: 'var(--dt-text-secondary)' }}>
+          <p>Ohne gespeicherten Text, daher ohne Positionen ({progress.noText.length}). „Seite neu lesen“ am Beleg liest sie von der Seite:</p>
+          <ul className="mt-1 max-h-32 list-disc overflow-y-auto pl-4">
+            {progress.noText.map((r) => (
+              <li key={r.rowId}>{r.name}</li>
+            ))}
+          </ul>
         </div>
       )}
+      {error && (
+        <p className="text-xs mt-2" role="alert" style={{ color: '#f87171' }}>
+          {error}
+        </p>
+      )}
+    </div>
     </div>
   );
 }

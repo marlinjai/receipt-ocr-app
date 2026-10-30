@@ -14,10 +14,10 @@ import { resetWorkspace, switchWorkspace } from '@/app/app/workspace-actions';
  * the local choice differs from the session's global default company, it
  * shows a hint with a reset affordance.
  */
-export default function WorkspaceSwitcher({ session }: { session: AppSession }) {
+export default function WorkspaceSwitcher({ session, hideLabel = false }: { session: AppSession; /** The sidebar's select names the company by itself. */ hideLabel?: boolean }) {
   return (
     <label className="flex min-w-0 flex-wrap items-center gap-2 text-sm" style={{ color: 'var(--muted)' }}>
-      <span className="uppercase text-xs tracking-wide">Company</span>
+      <span className={hideLabel ? 'sr-only' : 'uppercase text-xs tracking-wide'}>Firma</span>
       <SharedSwitcher
         session={session}
         switchAction={switchWorkspace}

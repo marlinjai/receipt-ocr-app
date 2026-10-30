@@ -400,6 +400,9 @@
   `POST /api/receipts/lines/reprice` signed in as each company, no model asked, a run again changes
   nothing. Context: the Reality section of 2026-10-30 in
   [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-30)
+- [x] One sidebar on every page of the wide layout: the company, upload, the places with their
+  open counts, and the maintenance jobs on a page of their own ("Werkzeuge"). Decided by Marlin
+  on 2026-10-30, plan [app sidebar](docs/plans/2026-10-30-app-sidebar.md). Done 2026-10-30.
 - [ ] One spelling per vendor from the reader (found on 2026-10-29): the reader spells one
   subscription several ways ("Apple", "Apple iCloud", "Apple Distribution International Ltd.";
   "iCloud+ 2 TB", "iCloud+ mit 2 TB", "iCloud+ 2 TB Abo"), so a new receipt can miss the group of

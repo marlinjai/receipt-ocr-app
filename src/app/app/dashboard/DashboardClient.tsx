@@ -21,12 +21,10 @@ import { useCompleteRows } from './use-complete-rows';
 import type { YearCounts } from '@/lib/receipt-year-counts';
 import { MIN_TEXT_SEARCH_LENGTH, listColumns } from '@/lib/receipt-text';
 import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
-import FxRecomputePanel from './FxRecomputePanel';
-import LinesBackfillPanel from './LinesBackfillPanel';
-import InvoiceNumbersPanel from './InvoiceNumbersPanel';
 import DashboardPhoneActions from './DashboardPhoneActions';
 import ReceiptPhoneList from './ReceiptPhoneList';
-import { AiIcon, ContactsIcon, ExportIcon, FinanceIcon, ImportIcon, MealsIcon, OverviewIcon } from './dashboard-icons';
+import { AiIcon, ExportIcon } from './dashboard-icons';
+import { useReportNavCounts } from '@/components/nav/nav-counts';
 import { usePhone } from '@/lib/use-phone';
 import BulkEditBar from './BulkEditBar';
 import GroupBar from './GroupBar';
@@ -278,6 +276,9 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     const ids = [...new Set(rowIds)];
     if (ids.length > 0) setPendingDelete(ids);
   }, []);
+
+  // The dashboard knows both counts of the sidebar already: it reports them, so nothing is asked twice.
+  useReportNavCounts({ review: review.length, meals: openMealCount });
 
   const applyReview = useCallback((result: ReviewResult<ReviewEntry[]>) => {
     if (result.ok) {
@@ -678,136 +679,37 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     >
       {/* Header */}
       <div className="px-4 pt-4 pb-2 sm:px-6 sm:pt-6" style={{ background: 'rgba(10, 10, 15, 0.4)' }}>
-        {/* On a phone the nine actions below would push the page sideways: the phone row takes this row's place. */}
+        {/* On a phone the sidebar is not shown: this row and its menu stand in for it. */}
         <DashboardPhoneActions
-          title={table.name}
+          title="Belege"
           openMealCount={openMealCount}
           onExport={() => exportCSV({ columns, rows: displayRows })}
           onToggleAi={() => setAiSidebarOpen((v) => !v)}
         />
         <div className="mb-1 hidden items-center justify-between sm:flex">
           <h1 className="text-2xl font-bold" style={{ color: 'var(--dt-text-primary)' }}>
-            {table.name}
+            Belege
           </h1>
           <div className="flex items-center gap-2">
-            <Link
-              href="/app/overview"
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
-              style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
-            >
-              <OverviewIcon />
-              Overview
-            </Link>
-            <Link
-              href="/app/finance"
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
-              style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
-              title="Einnahmenüberschussrechnung und offene Prüfungen"
-            >
-              <FinanceIcon />
-              Finanzen
-            </Link>
-            <Link
-              href="/app/meals"
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
-              style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
-              title={
-                openMealCount > 0
-                  ? `${openMealCount} Bewirtungen ohne Teilnehmer oder Anlass`
-                  : 'Bewirtungsverzeichnis'
-              }
-            >
-              <MealsIcon />
-              Bewirtung
-              {openMealCount > 0 && (
-                <span
-                  className="rounded-full px-1.5 py-0.5 text-xs font-semibold tabular-nums"
-                  style={{ background: 'var(--accent-muted)', color: 'var(--accent)' }}
-                >
-                  {openMealCount}
-                  <span className="sr-only"> offen</span>
-                </span>
-              )}
-            </Link>
-            <Link
-              href="/app/contacts"
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
-              style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
-              title="Personen und Organisationen mit Kundennummern"
-            >
-              <ContactsIcon />
-              Kontakte
-            </Link>
-            <button
-              onClick={() => exportCSV({ columns, rows: displayRows })}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
-              style={{
-                background: 'var(--surface)',
-                color: 'var(--foreground)',
-                border: '1px solid var(--border)',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = 'rgba(226, 163, 72, 0.4)';
-                e.currentTarget.style.color = 'var(--accent)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = 'var(--border)';
-                e.currentTarget.style.color = 'var(--foreground)';
-              }}
-            >
+            <button type="button" className="ui-btn" onClick={() => exportCSV({ columns, rows: displayRows })}>
               <ExportIcon />
-              Export CSV
+              Als CSV exportieren
             </button>
-            <FxRecomputePanel />
-            <LinesBackfillPanel />
-            <InvoiceNumbersPanel
-              onMerged={() => {
-                void reload();
-                void reloadReview();
-              }}
-            />
-            <Link
-              href="/app/import"
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
-              style={{ background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
-            >
-              <ImportIcon />
-              Import from Sheets
-            </Link>
             <button
+              type="button"
+              className="ui-btn"
+              aria-pressed={aiSidebarOpen}
               onClick={() => setAiSidebarOpen((v) => !v)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200"
-              style={{
-                background: aiSidebarOpen ? 'var(--accent-muted)' : 'var(--surface)',
-                color: aiSidebarOpen ? 'var(--accent)' : 'var(--foreground)',
-                border: `1px solid ${aiSidebarOpen ? 'rgba(226, 163, 72, 0.4)' : 'var(--border)'}`,
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = 'rgba(226, 163, 72, 0.4)';
-                e.currentTarget.style.color = 'var(--accent)';
-              }}
-              onMouseLeave={(e) => {
-                if (!aiSidebarOpen) {
-                  e.currentTarget.style.borderColor = 'var(--border)';
-                  e.currentTarget.style.color = 'var(--foreground)';
-                }
-              }}
+              style={aiSidebarOpen ? { background: 'var(--accent-muted)', color: 'var(--accent)' } : undefined}
             >
               <AiIcon />
-              AI
+              Assistent
             </button>
-            <Link
-              href="/app"
-              className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-              style={{ boxShadow: '0 0 16px rgba(226, 163, 72, 0.25), 0 0 4px rgba(226, 163, 72, 0.15)' }}
-            >
-              + Upload Receipt
-            </Link>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <p className="text-sm" style={{ color: 'var(--dt-text-secondary)' }}>
-            {receiptRows.length < totalReceipts ? `${receiptRows.length} von ${totalReceipts}` : receiptRows.length} items<span className="max-sm:hidden"> · {tableColumns.length} properties</span>
+            {receiptRows.length < totalReceipts ? `${receiptRows.length} von ${totalReceipts}` : receiptRows.length} Belege
           </p>
           {/* Selecting, bulk edits and groups work on the wide table; the phone list has no selection, so they stay off there. */}
           <div className="hidden items-center gap-3 sm:flex">

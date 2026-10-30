@@ -28,6 +28,10 @@ export interface ReviewPanelProps {
   onDelete: (rowId: string) => void;
   /** Take the offered new reading of a receipt, for the fields named. */
   onTakeReading: (rowId: string, fields: ReadingField[]) => void;
+  /** The choices of the Zuordnung column; empty while they load, and the receipt then only opens. */
+  assignmentOptions: Array<{ id: string; name: string }>;
+  /** Set the missing Zuordnung right here, without opening the receipt. */
+  onSetAssignment: (rowId: string, optionId: string) => void;
 }
 
 const SHORT: Record<ReviewReason, string> = {
@@ -104,7 +108,7 @@ function money(value: number | null, currency: string): string {
   return value === null ? 'ohne Betrag' : amount(value, currency);
 }
 
-export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, onKeepBoth, onDelete, onTakeReading }: ReviewPanelProps) {
+export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, onKeepBoth, onDelete, onTakeReading, assignmentOptions, onSetAssignment }: ReviewPanelProps) {
   const panelId = useId();
   const [open, setOpen] = useState(false);
   if (entries.length === 0 && !error) return null;
@@ -146,7 +150,9 @@ export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, o
 
       {open && (
         <ul id={`${panelId}-list`} className="ui-scroll m-0 max-h-[60vh] list-none space-y-2 overflow-y-auto px-4 pb-4">
-          {entries.map((entry) => (
+          {entries.map((entry) => {
+            const asksAssignment = entry.reasons.includes('assignment_missing') && assignmentOptions.length > 0;
+            return (
             <li key={entry.rowId} className="rounded-lg p-3" style={{ background: 'rgba(10, 10, 15, 0.55)', border: '1px solid var(--border)' }}>
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                 <p className="m-0 min-w-0 truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
@@ -167,6 +173,16 @@ export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, o
                   </li>
                 ))}
               </ul>
+
+              {asksAssignment && (
+                <div role="group" aria-label={`Zuordnung für ${entry.name}`} className="mt-2 flex flex-wrap gap-2">
+                  {assignmentOptions.map((option) => (
+                    <button key={option.id} type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onSetAssignment(entry.rowId, option.id)}>
+                      {option.name}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {entry.proposal.length > 0 && (
                 <div className="mt-2 rounded-md px-2.5 py-2" style={{ background: 'rgba(255, 255, 255, 0.03)' }}>
@@ -229,7 +245,7 @@ export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, o
               ))}
 
               <div className="mt-3 flex flex-wrap gap-2">
-                <button type="button" className="ui-btn ui-btn-sm ui-btn-primary" disabled={busy} onClick={() => onOpen(entry.rowId)}>
+                <button type="button" className={asksAssignment ? 'ui-btn ui-btn-sm' : 'ui-btn ui-btn-sm ui-btn-primary'} disabled={busy} onClick={() => onOpen(entry.rowId)}>
                   Beleg öffnen
                 </button>
                 {entry.canConfirm && (
@@ -242,7 +258,8 @@ export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, o
                 </button>
               </div>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </section>

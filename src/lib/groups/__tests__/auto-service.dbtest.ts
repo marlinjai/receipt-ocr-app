@@ -72,6 +72,27 @@ describe('automatic groups of recurring receipts', () => {
     expect((await groupsOf()).filter((g) => g.id === groupId)).toHaveLength(1);
   });
 
+  it('merges two groups of one vendor and year into one, named by the vendor, once', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const vendor = `Workspace ${tag}`;
+    const starter = [await ws.addReceipt(receipt(vendor, 'Starter', '2024-01-05T00:00:00.000Z')), await ws.addReceipt(receipt(vendor, 'Starter', '2024-02-05T00:00:00.000Z'))];
+    const standard = [await ws.addReceipt(receipt(vendor, 'Standard', '2024-03-05T00:00:00.000Z')), await ws.addReceipt(receipt(vendor, 'Standard', '2024-04-05T00:00:00.000Z'))];
+    const first = await createGroup(db, ws.workspaceId, `${vendor}, Starter, 2024`, starter);
+    const second = await createGroup(db, ws.workspaceId, `${vendor}, Standard, 2024`, standard);
+    const oneOff = await ws.addReceipt(receipt(vendor, 'Einmalig', '2024-05-05T00:00:00.000Z'));
+
+    await autoGroupRecurring(db, ws.workspaceId);
+    const parents = await Promise.all([...starter, ...standard].map(parentOf));
+    expect(new Set(parents).size).toBe(1);
+    expect([first, second]).toContain(parents[0]);
+    expect(await parentOf(oneOff)).toBeFalsy();
+    const left = (await groupsOf()).filter((g) => g.id === first || g.id === second);
+    expect(left).toHaveLength(1);
+    expect(await nameOf(left[0])).toBe(`${vendor}, 2024`);
+
+    expect(await autoGroupRecurring(db, ws.workspaceId)).toMatchObject({ created: 0, joined: 0, grouped: 0 });
+  });
+
   it('puts a receipt that arrives later into the group of its key', async () => {
     const tag = randomUUID().slice(0, 6);
     const a = await ws.addReceipt(receipt(`Late ${tag}`, 'Abo', '2024-01-05T00:00:00.000Z'));

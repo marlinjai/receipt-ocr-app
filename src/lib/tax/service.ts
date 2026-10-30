@@ -40,7 +40,7 @@ import { LinesInputError, itemIdOf, splitItemId, storedLineTreatment, validateLi
 import { forecastYear, type Forecast } from './forecast';
 import { overdueInvoices, type OverdueInvoice } from './overdue';
 import { loadIncomeTax, type IncomeTaxView } from './income-tax/service';
-import { proposeEstimateMatches, proposeMatches, vendorNamed, type MatchStrength } from './payments/match';
+import { currencyCode, proposeEstimateMatches, proposeMatches, vendorNamed, type ForeignCents, type MatchStrength } from './payments/match';
 import { heldService, type ServiceKind } from './payments/funding';
 import { countOrderNumbers, proposeRefunds, type RefundStrength, type RefundTarget } from './payments/refunds';
 import {
@@ -797,7 +797,15 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
     today(),
   );
   const overdueIds = new Set(overdue.map((o) => o.invoiceId));
-  const paymentsView = buildPaymentsView(loadedPayments, year, wholeReceipts, invoiceFacts, result.revenue.invoices, classifierProvider() !== null, filedOn.get(year) ?? null);
+  // What each receipt in another currency states in that currency: a payment that names the same amount there is its likely payment.
+  const ownAmounts = new Map(
+    loadedFacts.flatMap((f) => {
+      const currency = currencyCode(f.record.currency);
+      const gross = f.record.gross;
+      return currency !== null && currency !== 'EUR' && gross !== null && Number.isFinite(gross) && gross > 0 ? [[f.record.rowId, { currency, amountCents: Math.round(gross * 100) }] as const] : [];
+    }),
+  );
+  const paymentsView = buildPaymentsView(loadedPayments, year, wholeReceipts, invoiceFacts, result.revenue.invoices, classifierProvider() !== null, filedOn.get(year) ?? null, ownAmounts);
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));
 
   const items: StatementItem[] = [];
@@ -1139,6 +1147,10 @@ export interface EstimateProposalView {
   unambiguous: boolean;
   /** The payment looks like one sum for this receipt and another of the vendor: shown, not accepted in one click; a person splits it by hand. */
   severalReceipts: boolean;
+  /** The payment's own amount in the receipt's currency is the receipt's to the cent: found by that, whatever the payment names. */
+  originalAmount: boolean;
+  /** For a payment in another currency: its own amount, and whether the euro amount is an estimate. */
+  foreign: ForeignAmount | null;
 }
 
 export interface PaymentsView {
@@ -1217,6 +1229,8 @@ function buildPaymentsView(
   invoiceResults: Array<{ invoiceId: string; outstandingCents: number }>,
   classifierAvailable: boolean,
   filedOn: string | null,
+  /** Per receipt in another currency than the euro, by row: its total in that currency. */
+  ownAmounts: ReadonlyMap<string, ForeignCents>,
 ): PaymentsView {
   const inYear = loaded.payments.filter((p) => p.bookingDay.startsWith(`${year}-`));
   const accountLabel = new Map(loaded.accounts.map((a) => [a.id, a.label]));
@@ -1333,8 +1347,8 @@ function buildPaymentsView(
   // Receipts on an estimated amount. Every receipt without a link takes part
   // (a payment that also fits a euro receipt is not unambiguous), and every
   // unlinked payment out of any year that was not answered as private: the
-  // vendor on a receipt is the evidence, so this does not wait for the
-  // question about the counterparty.
+  // vendor on a receipt, or its amount in its own currency, is the evidence, so
+  // this does not wait for the question about the counterparty.
   // Which vendors a counterparty stands for, learned from the links that exist: the pay-later list names the
   // product where the invoice names the company, and one link by hand pairs the two for every later proposal.
   // Derived from the links, so nothing is stored and taking the link back takes the pairing back.
@@ -1349,10 +1363,10 @@ function buildPaymentsView(
   }
   const estimateDocuments = resolved
     .filter((r) => !r.isMeal && !linkedRows.has(r.item.id) && r.item.amountCents !== null && r.item.date !== null)
-    .map((r) => ({ id: r.item.id, vendorKey: r.vendorKey, day: r.item.date, amountCents: r.item.amountCents as number, estimated: r.item.amountBasis === 'reference_rate' }));
+    .map((r) => ({ id: r.item.id, vendorKey: r.vendorKey, day: r.item.date, amountCents: r.item.amountCents as number, estimated: r.item.amountBasis === 'reference_rate', own: ownAmounts.get(r.item.id) ?? null }));
   const estimatePayments = loaded.payments
     .filter((p) => p.amountCents < 0 && p.kind === 'spend' && p.links.length === 0 && loaded.treatments.get(p.counterpartyKey) !== 'private')
-    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: vendorKey(p.reference) ?? '', vendorAliases: [...(vendorsOfCounterparty.get(p.counterpartyKey) ?? [])] }));
+    .map((p) => ({ id: p.id, bookingDay: p.bookingDay, amountCents: p.amountCents, counterpartyKey: p.counterpartyKey, referenceKey: vendorKey(p.reference) ?? '', vendorAliases: [...(vendorsOfCounterparty.get(p.counterpartyKey) ?? [])], original: p.original }));
   const paymentById = new Map(loaded.payments.map((p) => [p.id, p]));
   const estimateProposals: EstimateProposalView[] = proposeEstimateMatches(estimatePayments, estimateDocuments)
     .flatMap((proposal) => {
@@ -1371,9 +1385,14 @@ function buildPaymentsView(
         accountLabel: accountLabel.get(payment.accountId) ?? '',
         unambiguous: proposal.unambiguous,
         severalReceipts: proposal.severalReceipts,
+        originalAmount: proposal.originalAmount,
+        foreign: foreignAmount(payment),
       }];
     })
-    .sort((a, b) => (a.receiptDay === b.receiptDay ? (a.bookingDay < b.bookingDay ? -1 : 1) : a.receiptDay < b.receiptDay ? -1 : 1));
+    // By the receipt's day; of one day's, the payments its own amount names to the cent first, then by booking day.
+    .sort((a, b) =>
+      a.receiptDay !== b.receiptDay ? (a.receiptDay < b.receiptDay ? -1 : 1) : a.originalAmount !== b.originalAmount ? (a.originalAmount ? -1 : 1) : a.bookingDay < b.bookingDay ? -1 : 1,
+    );
 
   const refundsFor = (p: PaymentRow): PaymentProposal[] =>
     refundProposals.filter((x) => x.paymentId === p.id).map((x) => ({ target: 'receipt' as const, targetId: x.rowId, label: itemById.get(x.rowId)?.label ?? 'Beleg', strength: x.strength }));

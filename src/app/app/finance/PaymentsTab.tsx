@@ -519,8 +519,10 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
           </div>
           <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
             Ein Beleg in fremder Währung zählt mit einem geschätzten Eurobetrag, bis seine Zahlung zugeordnet ist.
-            Vorgeschlagen wird eine Zahlung an denselben Lieferanten, gebucht von 3 Tagen vor bis 10 Tage nach dem
-            Belegdatum, höchstens 8 % neben der Schätzung. Zugeordnet wird nur, was du übernimmst.
+            Vorgeschlagen wird eine Zahlung, gebucht von 3 Tagen vor bis 10 Tage nach dem Belegdatum, an denselben
+            Lieferanten und höchstens 8 % neben der Schätzung, oder deren Originalbetrag in der Währung des Belegs
+            centgenau dem Beleg entspricht, auch wenn die Zahlung einen Zahlungsdienst statt des Lieferanten nennt.
+            Zugeordnet wird nur, was du übernimmst.
           </p>
           {accepting && (
             <p className="ui-note mt-3" role="status">
@@ -536,8 +538,9 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                     {proposal.receiptLabel.slice(0, 60)}
                   </Link>
                   <span className="ml-2 text-xs tabular-nums" style={{ color: 'var(--muted)' }}>
-                    geschätzt {euro(proposal.estimateCents)} · bezahlt {euro(proposal.paidCents)} am {formatDay(proposal.bookingDay)}
+                    geschätzt {euro(proposal.estimateCents)} · bezahlt {euro(proposal.paidCents)}{foreignNote(proposal.foreign)} am {formatDay(proposal.bookingDay)}
                     {proposal.counterparty ? ` an ${proposal.counterparty.slice(0, 40)}` : ''} · {proposal.accountLabel}
+                    {proposal.originalAmount ? ' · Originalbetrag stimmt centgenau mit dem Beleg überein' : ''}
                     {proposal.severalReceipts
                       ? ' · eine Zahlung für mehrere Belege? Der Betrag passt besser zu diesem und einem weiteren Beleg zusammen. Bitte unter „Zahlungen ohne Beleg“ von Hand mit Teilbetrag zuordnen.'
                       : proposal.unambiguous

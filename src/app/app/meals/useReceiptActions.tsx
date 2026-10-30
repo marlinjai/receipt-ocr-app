@@ -132,8 +132,8 @@ export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedH
       >
         <p>
           {single
-            ? `„${single}“ verlässt die offenen Bewirtungen und das Verzeichnis, bleibt aber als normaler Beleg im Dashboard.`
-            : `${receiptCount(count)} verlassen die offenen Bewirtungen und das Verzeichnis, bleiben aber als normale Belege im Dashboard.`}{' '}
+            ? `„${single}“ verlässt die offenen Bewirtungen und das Verzeichnis, bleibt aber als normaler Beleg in der Belegliste.`
+            : `${receiptCount(count)} verlassen die offenen Bewirtungen und das Verzeichnis, bleiben aber als normale Belege in der Belegliste.`}{' '}
           Bereits erfasste Angaben (Teilnehmer, Anlass, Ort) bleiben gespeichert.
         </p>
         <p className="mt-2">Das lässt sich rückgängig machen: {dismissedHint}</p>
@@ -149,8 +149,8 @@ export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedH
       >
         <p>
           {single
-            ? `„${single}“ wird mit der gespeicherten Belegdatei und allen Angaben gelöscht, auch aus dem Dashboard.`
-            : `${receiptCount(count)} werden mit den gespeicherten Belegdateien und allen Angaben gelöscht, auch aus dem Dashboard.`}{' '}
+            ? `„${single}“ wird mit der gespeicherten Belegdatei und allen Angaben gelöscht, auch aus der Belegliste.`
+            : `${receiptCount(count)} werden mit den gespeicherten Belegdateien und allen Angaben gelöscht, auch aus der Belegliste.`}{' '}
           <strong>Das kann nicht rückgängig gemacht werden.</strong>
         </p>
         <p className="mt-2">

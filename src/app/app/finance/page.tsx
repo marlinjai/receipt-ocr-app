@@ -38,7 +38,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
               Neu laden
             </Link>
             <Link href="/app/dashboard" className="ui-btn">
-              Zum Dashboard
+              Zu den Belegen
             </Link>
           </div>
         </div>

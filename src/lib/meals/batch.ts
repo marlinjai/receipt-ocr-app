@@ -79,7 +79,7 @@ export function batchOutcomeNotice(
     } else if (kind === 'not_meal') {
       parts.push(
         `${subject} ${plural ? 'werden' : 'wird'} nicht mehr als Bewirtung geführt. ` +
-          `${plural ? 'Die Belege bleiben' : 'Der Beleg bleibt'} im Dashboard; unter „Keine Bewirtung“ ` +
+          `${plural ? 'Die Belege bleiben' : 'Der Beleg bleibt'} in der Belegliste; unter „Keine Bewirtung“ ` +
           `${plural ? 'lassen sie' : 'lässt er'} sich wieder aufnehmen.`,
       );
     } else {

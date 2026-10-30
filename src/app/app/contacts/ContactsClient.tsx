@@ -494,7 +494,7 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
           </div>
           <div className="flex flex-wrap gap-2">
             <Link href="/app/dashboard" className="ui-btn">
-              Dashboard
+              Belege
             </Link>
             <Link href="/app/meals" className="ui-btn">
               Bewirtungen

@@ -24,13 +24,13 @@ export default function WorkspaceSwitcher({ session, hideLabel = false }: { sess
         resetAction={resetWorkspace}
         className="flex min-w-0 flex-wrap items-center gap-2"
         selectClassName="glass-panel max-w-full rounded-lg px-3 py-1.5 max-sm:min-h-11 text-sm font-medium outline-none text-[color:var(--foreground)] bg-[color:var(--background)]"
-        hintClassName="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-[color:var(--muted)]"
+        hintClassName="inline-flex flex-wrap items-center gap-x-1.5 text-xs text-[color:var(--muted)]"
         resetClassName="underline hover:no-underline"
         errorClassName="text-xs text-red-600"
         labels={{
           select: 'Active company workspace',
-          differs: 'Differs from your default company',
-          reset: 'Reset',
+          differs: 'Nicht deine Standardfirma',
+          reset: 'Zurücksetzen',
         }}
       />
     </label>

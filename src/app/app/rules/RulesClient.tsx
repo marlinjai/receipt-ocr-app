@@ -55,7 +55,7 @@ export default function RulesClient({ initial }: { initial: Loaded | null }) {
           <p className="mt-2 text-sm" style={{ color: 'var(--muted)' }}>Bitte die Seite neu laden oder neu anmelden.</p>
           <div className="mt-4 flex justify-center gap-2">
             <Link href="/app/rules" className="ui-btn ui-btn-primary">Neu laden</Link>
-            <Link href="/app/dashboard" className="ui-btn">Zum Dashboard</Link>
+            <Link href="/app/dashboard" className="ui-btn">Zu den Belegen</Link>
           </div>
         </div>
       </main>

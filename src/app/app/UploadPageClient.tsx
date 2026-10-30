@@ -176,7 +176,7 @@ function UploadPageContent({ targets, initialWorkspaceId }: UploadPageProps) {
               <rect x="14" y="14" width="7" height="7" />
               <rect x="3" y="14" width="7" height="7" />
             </svg>
-            View Dashboard
+            Zu den Belegen
           </Link>
         </div>
 

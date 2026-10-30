@@ -132,7 +132,7 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
       const parts: string[] = [];
       if (saved > 0) parts.push(saved === 1 ? '1 wartendes Foto wurde gesendet.' : `${saved} wartende Fotos wurden gesendet.`);
       if (known > 0) parts.push(known === 1 ? '1 Beleg war schon da und wurde nicht doppelt angelegt.' : `${known} Belege waren schon da und wurden nicht doppelt angelegt.`);
-      if (elsewhere.length > 0) parts.push(`Mindestens ein gesendetes Foto liegt genau so schon in deiner Firma ${elsewhere.join(', ')}: bitte im Dashboard prüfen.`);
+      if (elsewhere.length > 0) parts.push(`Mindestens ein gesendetes Foto liegt genau so schon in deiner Firma ${elsewhere.join(', ')}: bitte in der Belegliste prüfen.`);
       if (meals > 0) parts.push(meals === 1 ? '1 Bewirtung wartet auf Teilnehmer und Anlass.' : `${meals} Bewirtungen warten auf Teilnehmer und Anlass.`);
       if (result.stopped === 'auth') parts.push('Die Anmeldung ist abgelaufen: bitte neu anmelden, die Fotos bleiben gespeichert.');
       if (result.stopped === 'offline' && result.remaining > 0) parts.push('Keine Verbindung: der Rest wird später gesendet.');
@@ -242,7 +242,7 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
       setView({ kind: 'idle' });
       setQueueNote('Der neue Beleg wurde verworfen, der vorhandene bleibt.');
     } catch {
-      setQueueNote('Der neue Beleg konnte nicht verworfen werden. Er steht weiter im Dashboard und kann dort gelöscht werden.');
+      setQueueNote('Der neue Beleg konnte nicht verworfen werden. Er steht weiter in der Belegliste und kann dort gelöscht werden.');
     } finally {
       setDiscarding(false);
     }
@@ -323,7 +323,7 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
               <p className="font-medium">Der Beleg ist gespeichert, konnte aber nicht gelesen werden.</p>
               <p className="mt-1">
                 {saved.ocrError ? `Grund: ${captureErrorText(saved.ocrError)} ` : ''}
-                Neu aufnehmen ersetzt das Foto auf demselben Beleg. Oder die Angaben später im Dashboard von Hand
+                Neu aufnehmen ersetzt das Foto auf demselben Beleg. Oder die Angaben später in der Belegliste von Hand
                 eintragen.
               </p>
             </div>

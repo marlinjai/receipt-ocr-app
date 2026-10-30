@@ -102,6 +102,22 @@ describe('the plan', () => {
     expect(plan).toEqual({ create: [], join: [{ groupId: 'g9', memberIds: [a.id] }], rename: [] });
   });
 
+  it('keeps the plain name of a pure group when another recurring item joins it', () => {
+    const inGroup = [r({ item: 'Pro', parentRowId: 'g1' }), r({ item: 'Ultra', parentRowId: 'g1' })];
+    const joining = [r({ item: 'Max' }), r({ item: 'Max' })];
+    const plan = planAutoGroups([...inGroup, ...joining], [{ id: 'g1', name: 'OpenAI, 2024' }]);
+    expect(plan.rename).toEqual([]);
+  });
+
+  it('puts only recurring receipts into an empty group, and a one-off only when it is alone', () => {
+    const recurring = [r({ item: 'Pro' }), r({ item: 'Pro' })];
+    const oneOff = r({ item: 'Ultra' });
+    const empty = [{ id: 'g5', name: 'OpenAI, Pro, 2024' }];
+    expect(planAutoGroups([...recurring, oneOff], empty).join).toEqual([{ groupId: 'g5', memberIds: recurring.map((x) => x.id) }]);
+    const two = [r({ item: 'A' }), r({ item: 'B' })];
+    expect(planAutoGroups(two, [{ id: 'g6', name: 'OpenAI, A, 2024' }]).join).toEqual([]);
+  });
+
   it('is idempotent: receipts already in the group are not planned again', () => {
     const inGroup = [r({ parentRowId: 'g9' }), r({ parentRowId: 'g9' })];
     expect(planAutoGroups(inGroup, [{ id: 'g9', name: 'OpenAI, ChatGPT Plus, 2024' }])).toEqual({ create: [], join: [], rename: [] });

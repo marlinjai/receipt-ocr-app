@@ -158,13 +158,13 @@ export function planAutoGroups(receipts: readonly GroupableReceipt[], groups: re
   /** The one item of these receipts as the first one spells it, null when they hold several. */
   const oneItem = (key: string, list: readonly GroupableReceipt[]): string | null =>
     new Set(list.map((r) => itemOf(r, key))).size === 1 ? list[0].item : null;
-  /** The name for these receipts, or null when even the name with the assignment is taken. */
-  const freeName = (key: string, list: readonly GroupableReceipt[]): string | null => {
+  /** The name for these receipts (`own` is the name the target group carries, which stays free for it), or null when even the name with the assignment is taken. */
+  const freeName = (key: string, list: readonly GroupableReceipt[], own?: string): string | null => {
     const first = list[0];
     const item = oneItem(key, list);
     const plain = groupNameFor(first.vendor!, item, first.year!);
     const withAssignment = groupNameFor(first.vendor!, item, first.year!, first.assignment!);
-    return [plain, withAssignment].find((n) => !taken.has(norm(n))) ?? null;
+    return [plain, withAssignment].find((n) => norm(n) === own || !taken.has(norm(n))) ?? null;
   };
 
   const plan: GroupPlan = { create: [], join: [], rename: [] };
@@ -185,7 +185,7 @@ export function planAutoGroups(receipts: readonly GroupableReceipt[], groups: re
       const after = [...(contents.get(target.id)?.get(key) ?? []), ...ids].flatMap((id) => byId.get(id) ?? []);
       if (target.pure && oneItem(key, after) === null) {
         const current = groups.find((g) => g.id === target.id)!.name;
-        const name = freeName(key, after);
+        const name = freeName(key, after, norm(current));
         if (name && norm(name) !== norm(current)) {
           taken.add(norm(name));
           plan.rename.push({ groupId: target.id, name });
@@ -200,7 +200,9 @@ export function planAutoGroups(receipts: readonly GroupableReceipt[], groups: re
     const namedFor = [first.item, null].flatMap((item) => [groupNameFor(first.vendor!, item, first.year!), groupNameFor(first.vendor!, item, first.year!, first.assignment!)]);
     const empty = namedFor.map((n) => emptyByName.get(norm(n))).find(Boolean);
     if (empty) {
-      plan.join.push({ groupId: empty, memberIds: all.map((m) => m.id) });
+      // Recurring receipts join; a one-off stays loose unless it is the only receipt of its key.
+      const joining = members.length > 0 ? members : all.length === 1 ? all : [];
+      if (joining.length > 0) plan.join.push({ groupId: empty, memberIds: joining.map((m) => m.id) });
       continue;
     }
     if (members.length < 2) continue;

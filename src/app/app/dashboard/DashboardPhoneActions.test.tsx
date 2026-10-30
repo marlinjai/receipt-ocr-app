@@ -9,7 +9,7 @@ vi.mock('../actions', () => ({ recomputeFxRates: vi.fn() }));
 afterEach(cleanup);
 
 function actions(openMealCount = 3) {
-  const props = { title: 'Receipts', openMealCount, onExport: vi.fn(), onToggleAi: vi.fn() };
+  const props = { title: 'Belege', openMealCount, onExport: vi.fn(), onToggleAi: vi.fn() };
   render(<DashboardPhoneActions {...props} />);
   return props;
 }
@@ -17,20 +17,19 @@ function actions(openMealCount = 3) {
 describe('the dashboard actions on a phone', () => {
   it('keeps the heading and the upload in reach and the rest behind "Mehr"', () => {
     actions();
-    expect(screen.getByRole('heading', { name: 'Receipts' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Belege' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '+ Hochladen' }).getAttribute('href')).toBe('/app');
     expect(screen.queryByRole('link', { name: /Finanzen/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Mehr' }).getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('opens the menu with every destination of the wide row, and closes it again', async () => {
+  it('opens the menu with every place of the sidebar, and closes it again', async () => {
     const user = userEvent.setup();
     actions();
     await user.click(screen.getByRole('button', { name: 'Mehr' }));
     expect(screen.getByRole('button', { name: 'Mehr' }).getAttribute('aria-expanded')).toBe('true');
     const hrefs = screen.getAllByRole('link').map((a) => a.getAttribute('href'));
-    expect(hrefs).toEqual(['/app', '/app/overview', '/app/finance', '/app/meals', '/app/contacts', '/app/import']);
-    expect(screen.getByRole('button', { name: /Recompute FX/ })).toBeTruthy();
+    expect(hrefs).toEqual(['/app', '/app/overview', '/app/finance', '/app/meals', '/app/contacts', '/app/rules', '/app/tools']);
     await user.click(screen.getByRole('button', { name: 'Mehr' }));
     expect(screen.queryByRole('navigation')).toBeNull();
   });
@@ -46,11 +45,11 @@ describe('the dashboard actions on a phone', () => {
     const user = userEvent.setup();
     const props = actions();
     await user.click(screen.getByRole('button', { name: 'Mehr' }));
-    await user.click(screen.getByRole('button', { name: /Export CSV/ }));
+    await user.click(screen.getByRole('button', { name: /Als CSV exportieren/ }));
     expect(props.onExport).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('navigation')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Mehr' }));
-    await user.click(screen.getByRole('button', { name: /AI/ }));
+    await user.click(screen.getByRole('button', { name: /Assistent/ }));
     expect(props.onToggleAi).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('navigation')).toBeNull();
   });

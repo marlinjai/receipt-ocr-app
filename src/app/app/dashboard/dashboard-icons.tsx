@@ -1,6 +1,7 @@
 /**
- * The icons of the dashboard's actions, shared by the wide action row and the
- * phone menu so both draw the same marks. Decorative: every action names itself.
+ * The icons of the app's places and actions, shared by the sidebar, the
+ * dashboard and the phone menu so all draw the same marks. Decorative: every
+ * place and action names itself.
  */
 
 const base = {
@@ -64,21 +65,65 @@ export function ExportIcon() {
   );
 }
 
-export function ImportIcon() {
-  return (
-    <svg {...base}>
-      <path d="M14 3v4a1 1 0 0 0 1 1h4" />
-      <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
-      <path d="M9 13h6M9 17h6" />
-    </svg>
-  );
-}
-
 export function AiIcon() {
   return (
     <svg {...base}>
       <path d="M12 3l1.5 3.7 3.8.5-2.8 2.6.7 3.9L12 12l-3.2 1.7.7-3.9-2.8-2.6 3.8-.5z" />
       <path d="M12 3v0M18.4 5.6v0M21 12v0M18.4 18.4v0M12 21v0M5.6 18.4v0M3 12v0M5.6 5.6v0" />
+    </svg>
+  );
+}
+
+export function ReceiptsIcon() {
+  return (
+    <svg {...base}>
+      <path d="M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2z" />
+      <path d="M9 8h6M9 12h6" />
+    </svg>
+  );
+}
+
+export function SpendingIcon() {
+  return (
+    <svg {...base}>
+      <rect x="3" y="6" width="18" height="13" rx="2" />
+      <path d="M3 10h18M16 15h2" />
+    </svg>
+  );
+}
+
+export function RulesIcon() {
+  return (
+    <svg {...base}>
+      <path d="M4 7h10M4 17h6" />
+      <circle cx="17" cy="7" r="3" />
+      <circle cx="13" cy="17" r="3" />
+    </svg>
+  );
+}
+
+export function ToolsIcon() {
+  return (
+    <svg {...base}>
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.8-.7-.7-2.8z" />
+    </svg>
+  );
+}
+
+export function UploadIcon() {
+  return (
+    <svg {...base}>
+      <path d="M12 16V4m0 0-4 4m4-4 4 4" />
+      <path d="M20 16.7V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2.3" />
+    </svg>
+  );
+}
+
+export function FoldIcon() {
+  return (
+    <svg {...base}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
     </svg>
   );
 }

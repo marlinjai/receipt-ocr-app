@@ -153,7 +153,7 @@ export default function BulkEditBar({
         style={inputStyle}
         aria-label="Bulk edit column"
       >
-        <option value="">Set field…</option>
+        <option value="">Feld setzen…</option>
         {selectColumns.map((c) => (
           <option key={c.id} value={c.id}>{c.name}</option>
         ))}
@@ -170,7 +170,7 @@ export default function BulkEditBar({
           style={inputStyle}
           aria-label="Bulk edit value"
         >
-          <option value="">Value…</option>
+          <option value="">Wert…</option>
           {options.map((o) => (
             <option key={o.id} value={o.id}>{o.name}</option>
           ))}
@@ -183,7 +183,7 @@ export default function BulkEditBar({
           disabled={busy}
           className="px-2.5 py-1 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {busy ? 'Applying…' : `Apply to ${selectedRows.size}`}
+          {busy ? 'Wird gesetzt…' : `Auf ${selectedRows.size} anwenden`}
         </button>
       )}
       {progress && (

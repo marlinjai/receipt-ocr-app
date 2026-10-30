@@ -42,7 +42,7 @@ describe('"Set field" on a selection', () => {
     const setField = vi.fn<SetField>(async (ids) => ({ done: ids, failed: [] }));
     const { onDone } = bar(selection(2 * BULK_SET_PART + 5), setField);
     const user = await choose('biz');
-    await user.click(screen.getByRole('button', { name: `Apply to ${2 * BULK_SET_PART + 5}` }));
+    await user.click(screen.getByRole('button', { name: `Auf ${2 * BULK_SET_PART + 5} anwenden` }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe(`${2 * BULK_SET_PART + 5} von ${2 * BULK_SET_PART + 5} gesetzt.`));
     expect(setField.mock.calls.map(([ids]) => ids.length)).toEqual([BULK_SET_PART, BULK_SET_PART, 5]);
     expect(setField.mock.calls.every(([, columnId, value]) => columnId === 'zuordnung' && value === 'biz')).toBe(true);
@@ -68,7 +68,7 @@ describe('"Set field" on a selection', () => {
     });
     bar(selection(30), setField);
     const user = await choose('biz');
-    await user.click(screen.getByRole('button', { name: 'Apply to 30' }));
+    await user.click(screen.getByRole('button', { name: 'Auf 30 anwenden' }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('28 von 30 gesetzt. 2 nicht gesetzt: 1 nicht gespeichert, 1 nicht gefunden.'));
     // Only the row that may still work is tried again; the deleted one would fail again.
     await user.click(screen.getByRole('button', { name: 'Erneut versuchen für die 1 nicht gesetzten' }));
@@ -83,7 +83,7 @@ describe('"Set field" on a selection', () => {
     });
     bar(selection(BULK_SET_PART + 10), setField);
     const user = await choose('priv');
-    await user.click(screen.getByRole('button', { name: `Apply to ${BULK_SET_PART + 10}` }));
+    await user.click(screen.getByRole('button', { name: `Auf ${BULK_SET_PART + 10} anwenden` }));
     await waitFor(() =>
       expect(screen.getByRole('status').textContent).toBe(
         `10 von ${BULK_SET_PART + 10} gesetzt. ${BULK_SET_PART} nicht gesetzt: ${BULK_SET_PART} keine Antwort, Stand unklar.`,
@@ -98,7 +98,7 @@ describe('"Set field" on a selection', () => {
     });
     bar(selection(3), setField);
     const user = await choose('biz');
-    await user.click(screen.getByRole('button', { name: 'Apply to 3' }));
+    await user.click(screen.getByRole('button', { name: 'Auf 3 anwenden' }));
     await user.click(await screen.findByRole('button', { name: 'Erneut versuchen für die 3 nicht gesetzten' }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Bitte die Seite neu laden'));
     expect(screen.queryByRole('button', { name: /Erneut versuchen/ })).toBeNull();
@@ -111,7 +111,7 @@ describe('"Set field" on a selection', () => {
     const onDone = vi.fn(async () => view.current!.select(new Set()));
     view.current = bar(selection(4), setField, onDone);
     const user = await choose('biz');
-    await user.click(screen.getByRole('button', { name: 'Apply to 4' }));
+    await user.click(screen.getByRole('button', { name: 'Auf 4 anwenden' }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('3 von 4 gesetzt. 1 nicht gesetzt: 1 nicht gespeichert.'));
     expect(screen.getByRole('button', { name: 'Erneut versuchen für die 1 nicht gesetzten' })).toBeTruthy();
   });
@@ -120,7 +120,7 @@ describe('"Set field" on a selection', () => {
     const setField = vi.fn(async (ids: string[]) => ({ done: ids, failed: [] }));
     bar(selection(2), setField, vi.fn(async () => Promise.reject(new Error('offline'))));
     const user = await choose('biz');
-    await user.click(screen.getByRole('button', { name: 'Apply to 2' }));
+    await user.click(screen.getByRole('button', { name: 'Auf 2 anwenden' }));
     await waitFor(() =>
       expect(screen.getByRole('status').textContent).toBe('2 von 2 gesetzt. Die Tabelle konnte nicht neu geladen werden, bitte die Seite neu laden.'),
     );
@@ -131,7 +131,7 @@ describe('"Set field" on a selection', () => {
     const setField = vi.fn<SetField>(async (ids) => ({ done: ids.slice(0, 3), failed: [], left: ids.slice(3) }));
     bar(selection(8), setField);
     const user = await choose('biz');
-    await user.click(screen.getByRole('button', { name: 'Apply to 8' }));
+    await user.click(screen.getByRole('button', { name: 'Auf 8 anwenden' }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('8 von 8 gesetzt.'));
     expect(setField.mock.calls.map(([ids]) => ids)).toEqual([
       ['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7'],
@@ -144,7 +144,7 @@ describe('"Set field" on a selection', () => {
     const setField = vi.fn<SetField>(async (ids) => ({ done: [], failed: [], left: ids }));
     bar(selection(2), setField);
     const user = await choose('biz');
-    await user.click(screen.getByRole('button', { name: 'Apply to 2' }));
+    await user.click(screen.getByRole('button', { name: 'Auf 2 anwenden' }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('0 von 2 gesetzt. 2 nicht gesetzt: 2 keine Antwort, Stand unklar.'));
     expect(setField).toHaveBeenCalledTimes(1);
   });
@@ -153,7 +153,7 @@ describe('"Set field" on a selection', () => {
     const setField = vi.fn(async (ids: string[]) => ({ done: ids, failed: [] }));
     bar(selection(2), setField);
     const user = await choose('__clear__');
-    await user.click(screen.getByRole('button', { name: 'Apply to 2' }));
+    await user.click(screen.getByRole('button', { name: 'Auf 2 anwenden' }));
     await waitFor(() => expect(setField).toHaveBeenCalledWith(['r0', 'r1'], 'zuordnung', null));
   });
 
@@ -161,7 +161,7 @@ describe('"Set field" on a selection', () => {
     const setField = vi.fn(async (ids: string[]): Promise<BulkSetOutcome> => ({ done: [], failed: ids.map((rowId) => ({ rowId, reason: 'failed' as const })) }));
     bar(selection(3), setField);
     const user = await choose('biz');
-    await user.click(screen.getByRole('button', { name: 'Apply to 3' }));
+    await user.click(screen.getByRole('button', { name: 'Auf 3 anwenden' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Erneut versuchen für die 3 nicht gesetzten' })).toBeTruthy());
     await user.selectOptions(screen.getByLabelText('Bulk edit value'), 'priv');
     expect(screen.queryByRole('status')).toBeNull();

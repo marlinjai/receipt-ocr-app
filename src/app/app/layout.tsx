@@ -1,11 +1,15 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
+import { cookies } from 'next/headers';
 import { auth } from '@/lib/auth';
 import { initializeReceiptsTable } from './actions';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import BrowserRulesImport from '@/components/BrowserRulesImport';
 import { PushRenewal, SignOutLink } from './spending/PushSession';
-import { workspaceLabel } from '@/lib/auth-workspace';
+import { sessionWorkspaceId } from '@/lib/auth-workspace';
+import AppSidebar from '@/components/nav/AppSidebar';
+import { NavCountsProvider } from '@/components/nav/nav-counts';
+import { NAV_FOLD_COOKIE, NAV_FOLDED } from '@/components/nav/nav-fold';
 import { measurePage, timed } from '@/lib/timing';
 import AppLoading from './loading';
 
@@ -37,55 +41,50 @@ async function renderShell(children: React.ReactNode) {
   // full column/view set exists (idempotent, self-healing).
   await timed('init', () => initializeReceiptsTable());
 
-  const active = session.activeWorkspace;
+  const folded = (await cookies()).get(NAV_FOLD_COOKIE)?.value === NAV_FOLDED;
 
   return (
-    <>
+    // The counts belong to one company: another company starts with its own.
+    <NavCountsProvider key={sessionWorkspaceId(session)}>
+    <div className="sm:flex">
+      <AppSidebar session={session} logoutUrl={auth.logoutUrl()} initialFolded={folded} />
+      <div className="min-w-0 flex-1">
       {/*
-        On a phone the header wraps instead of pushing the page sideways: the
-        first row holds the title and the links, the company switcher takes a
-        row of its own below. The company chip is left out there, because the
-        switcher right below names the same company. From the small breakpoint
-        on, everything stands in one row as before. The two links are 44px tall
-        on a phone, so a thumb finds them.
+        The sidebar is the wide layout's navigation; this header is the phone's.
+        It wraps instead of pushing the page sideways: the first row holds the
+        title and the links, the company switcher a row of its own below. The
+        links are 44px tall, so a thumb finds them.
       */}
       <header
-        className="relative z-20 flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 border-b sm:px-6"
+        className="relative z-20 flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3 sm:hidden"
         style={{ borderColor: 'var(--border, rgba(128,128,128,0.2))' }}
       >
         <div className="flex min-w-0 items-center gap-3">
           <span className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
             Receipts
           </span>
-          {active && (
-            <span
-              className="hidden max-w-[16rem] truncate px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wide sm:inline-block"
-              style={{ background: 'var(--accent-muted)', color: 'var(--accent)' }}
-            >
-              {active.tenantName || workspaceLabel(active.slug)}
-            </span>
-          )}
         </div>
         <Link
           href="/app/spending"
-          className="ml-auto whitespace-nowrap text-xs transition-colors hover:underline max-sm:inline-flex max-sm:min-h-11 max-sm:items-center max-sm:px-1"
+          className="ml-auto inline-flex min-h-11 items-center whitespace-nowrap px-1 text-xs transition-colors hover:underline"
           style={{ color: 'var(--muted)' }}
         >
           Ausgaben
         </Link>
-        <div className="order-last w-full min-w-0 sm:order-none sm:w-auto">
+        <div className="order-last w-full min-w-0">
           <WorkspaceSwitcher session={session} />
         </div>
-        {/* On a phone both header links are 44px touch targets (the link itself lives with the push session code). */}
-        <span className="whitespace-nowrap max-sm:[&>a]:inline-flex max-sm:[&>a]:min-h-11 max-sm:[&>a]:items-center max-sm:[&>a]:px-1">
+                <span className="whitespace-nowrap [&>a]:inline-flex [&>a]:min-h-11 [&>a]:items-center [&>a]:px-1">
           <SignOutLink href={auth.logoutUrl()} title={session.email}>
-            Sign out
+            Abmelden
           </SignOutLink>
         </span>
       </header>
       <BrowserRulesImport />
       <PushRenewal />
       {children}
-    </>
+      </div>
+    </div>
+    </NavCountsProvider>
   );
 }

@@ -2,7 +2,7 @@
  * Shown while a page of the app is loaded on the server (the dashboard and
  * the spending page take a few seconds). Without it a click on a link changes
  * nothing on screen until the new page is there, which reads as a dead link.
- * The header of the layout stays; only the page below it is replaced. Static:
+ * The sidebar of the layout stays; only the page below it is replaced. Static:
  * nothing moves.
  */
 export default function AppLoading() {

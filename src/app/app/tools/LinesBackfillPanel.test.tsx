@@ -16,8 +16,6 @@ async function start() {
   const user = userEvent.setup();
   render(<LinesBackfillPanel />);
   await user.click(screen.getByRole('button', { name: 'Positionen lesen' }));
-  const buttons = screen.getAllByRole('button', { name: 'Positionen lesen' });
-  await user.click(buttons[buttons.length - 1]);
 }
 
 describe('LinesBackfillPanel', () => {

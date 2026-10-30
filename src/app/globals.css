@@ -1036,3 +1036,167 @@ textarea.ui-input {
 .ui-chart-hatch {
   background-image: repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.35) 0 2px, transparent 2px 5px);
 }
+
+/* The app's sidebar. Its width decides what it shows, through the container query below: folded
+   by hand, or by itself under 1024 pixels, where a table needs the room. The phone has a header instead. */
+.app-nav {
+  display: none;
+}
+@media (min-width: 640px) {
+  .app-nav {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: block;
+    flex: none;
+    width: 13.75rem;
+    height: 100vh;
+    height: 100svh;
+    container-type: inline-size;
+    border-right: 1px solid var(--border);
+    background: var(--surface-solid);
+    transition: width 160ms ease-out;
+  }
+  .app-nav[data-folded='true'] {
+    width: 4rem;
+  }
+}
+@media (min-width: 640px) and (max-width: 1023.98px) {
+  .app-nav {
+    width: 4rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-nav {
+    transition: none;
+  }
+}
+.app-nav-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  height: 100%;
+  padding: 0.75rem;
+}
+.app-nav-company select {
+  width: 100%;
+}
+.app-nav-upload {
+  width: 100%;
+}
+.app-nav-places {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+.app-nav-places ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.app-nav-tools {
+  margin-top: auto !important;
+  padding-top: 0.75rem !important;
+}
+.app-nav-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: 2.25rem;
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.5rem;
+  color: var(--dt-text-secondary, var(--muted));
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: color 150ms ease-out, background-color 150ms ease-out;
+}
+.app-nav-link:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--foreground);
+}
+.app-nav-link[aria-current='page'] {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+.app-nav-link:focus-visible,
+.app-nav-fold:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.app-nav-count {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.app-nav-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--border);
+}
+.app-nav-fold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  color: var(--dt-text-secondary, var(--muted));
+  cursor: pointer;
+}
+.app-nav-fold:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--foreground);
+}
+@media (max-width: 1023.98px) {
+  /* Too narrow to unfold: the button would do nothing. */
+  .app-nav-fold {
+    display: none;
+  }
+}
+@container (max-width: 6rem) {
+  .app-nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .app-nav-link {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  .app-nav-upload {
+    padding-inline: 0;
+  }
+  .app-nav-count {
+    position: absolute;
+    top: 0.125rem;
+    right: 0.25rem;
+    font-size: 0.6875rem;
+  }
+  .app-nav-signout {
+    display: none;
+  }
+  .app-nav-foot {
+    justify-content: center;
+  }
+  /* The select stays: narrow, it still opens the full list of companies. */
+  .app-nav-company select {
+    padding-inline: 0.25rem;
+  }
+  .app-nav-company span[class*='text-'] {
+    display: none;
+  }
+}

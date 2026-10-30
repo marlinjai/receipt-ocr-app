@@ -2,17 +2,13 @@
 
 import Link from 'next/link';
 import { useId, useState } from 'react';
-import FxRecomputePanel from './FxRecomputePanel';
-import { AiIcon, ContactsIcon, ExportIcon, FinanceIcon, ImportIcon, MealsIcon, OverviewIcon } from './dashboard-icons';
+import { AiIcon, ContactsIcon, ExportIcon, FinanceIcon, MealsIcon, OverviewIcon, RulesIcon, ToolsIcon } from './dashboard-icons';
 
 /**
- * The dashboard's actions on a phone. The wide layout lines up nine buttons in
- * one row; on a phone that row was three screens wide and pushed the whole page
- * sideways. Here upload stays in reach and everything else opens below the
- * title as a two-column menu, in the page's flow (no popover to clip or to
- * position). The wide title row is hidden on a phone; this one takes its place.
- * Same destinations as the wide row; "Import from Sheets" is shortened to
- * "Import" so it fits half the width of a phone.
+ * The dashboard's actions on a phone, where the sidebar of the wide layout is
+ * not shown. Upload stays in reach and everything else opens below the title
+ * as a two-column menu, in the page's flow (no popover to clip or to position).
+ * Same places as the sidebar; "Ausgaben" stands in the phone header.
  *
  * Plan: docs/plans/2026-10-24-phone-layout.md.
  */
@@ -64,7 +60,7 @@ export default function DashboardPhoneActions({
           <div className="grid grid-cols-2 gap-2">
             <Link href="/app/overview" className="ui-btn ui-btn-start">
               <OverviewIcon />
-              Overview
+              Überblick
             </Link>
             <Link href="/app/finance" className="ui-btn ui-btn-start">
               <FinanceIcon />
@@ -96,11 +92,15 @@ export default function DashboardPhoneActions({
               }}
             >
               <ExportIcon />
-              Export CSV
+              Als CSV exportieren
             </button>
-            <Link href="/app/import" className="ui-btn ui-btn-start">
-              <ImportIcon />
-              Import
+            <Link href="/app/rules" className="ui-btn ui-btn-start">
+              <RulesIcon />
+              Regeln
+            </Link>
+            <Link href="/app/tools" className="ui-btn ui-btn-start">
+              <ToolsIcon />
+              Werkzeuge
             </Link>
             <button
               type="button"
@@ -111,9 +111,8 @@ export default function DashboardPhoneActions({
               }}
             >
               <AiIcon />
-              AI
+              Assistent
             </button>
-            <FxRecomputePanel />
           </div>
         </nav>
       )}

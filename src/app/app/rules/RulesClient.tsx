@@ -94,7 +94,7 @@ export default function RulesClient({ initial }: { initial: Loaded | null }) {
         </h1>
         <div className="flex gap-2">
           <Link href="/app" className="ui-btn">Hochladen</Link>
-          <Link href="/app/dashboard" className="ui-btn">Dashboard</Link>
+          <Link href="/app/dashboard" className="ui-btn">Belege</Link>
         </div>
       </div>
       <p className="mb-6 text-sm" style={{ color: 'var(--muted)' }}>

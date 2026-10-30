@@ -37,7 +37,7 @@ describe('batchOutcomeNotice', () => {
     expect(many.tone).toBe('ok');
     expect(many.text).toContain('2 Belege werden nicht mehr als Bewirtung geführt.');
     expect(many.text).toContain('unter „Keine Bewirtung“');
-    expect(many.text).toContain('bleiben im Dashboard');
+    expect(many.text).toContain('bleiben in der Belegliste');
     expect(many.text).toContain('wieder aufnehmen');
     const one = batchOutcomeNotice('not_meal', result({ done: ['a'] }), 'Testlokal');
     expect(one.text).toContain('„Testlokal“ wird nicht mehr als Bewirtung geführt.');

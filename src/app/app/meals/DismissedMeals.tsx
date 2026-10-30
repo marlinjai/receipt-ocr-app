@@ -42,8 +42,8 @@ export default function DismissedMeals({ records, onRecordsSaved, onRecordsRemov
         </summary>
         <div className="border-t px-4 pb-4 pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
           <p className="mb-3 max-w-2xl text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>
-            Diese Belege sind als Bewirtung kategorisiert, wurden aber als „Keine Bewirtung“ markiert. Sie bleiben im
-            Dashboard und zählen nicht ins Verzeichnis. „Wieder aufnehmen“ führt einen Beleg mit den zuvor erfassten
+            Diese Belege sind als Bewirtung kategorisiert, wurden aber als „Keine Bewirtung“ markiert. Sie bleiben in der
+            Belegliste und zählen nicht ins Verzeichnis. „Wieder aufnehmen“ führt einen Beleg mit den zuvor erfassten
             Angaben wieder als Bewirtung.
           </p>
           <ul>

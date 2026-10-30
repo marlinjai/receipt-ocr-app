@@ -203,7 +203,7 @@ describe('QueueTab: batch "Keine Bewirtung"', () => {
     await user.click(within(screen.getByRole('group', { name: 'Aktionen für die Auswahl' })).getByRole('button', { name: 'Keine Bewirtung' }));
 
     const dialog = screen.getByRole('dialog', { name: '2 Belege als „Keine Bewirtung“ führen?' });
-    expect(within(dialog).getByText(/bleiben aber als normale Belege im Dashboard/)).toBeTruthy();
+    expect(within(dialog).getByText(/bleiben aber als normale Belege in der Belegliste/)).toBeTruthy();
     expect(within(dialog).getByText(/Das lässt sich rückgängig machen: .*unter „Keine Bewirtung“.*wieder aufnehmen/)).toBeTruthy();
     expect(markMealsNotMeal).not.toHaveBeenCalled();
 

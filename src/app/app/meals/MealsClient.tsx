@@ -114,7 +114,7 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
           </div>
           <div className="flex gap-2">
             <Link href="/app/dashboard" className="ui-btn" onClick={leaveTo('/app/dashboard')}>
-              Dashboard
+              Belege
             </Link>
             <Link href="/app" className="ui-btn ui-btn-primary" onClick={leaveTo('/app')}>
               Beleg hochladen

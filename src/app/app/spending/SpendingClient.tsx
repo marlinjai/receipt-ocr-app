@@ -266,7 +266,7 @@ export default function SpendingClient({
             Finanzen
           </Link>
           <Link href="/app/dashboard" className="ui-btn">
-            Dashboard
+            Belege
           </Link>
         </div>
       </div>

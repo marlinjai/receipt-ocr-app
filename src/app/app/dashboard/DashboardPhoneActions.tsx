@@ -92,7 +92,7 @@ export default function DashboardPhoneActions({
               }}
             >
               <ExportIcon />
-              Als CSV exportieren
+              CSV exportieren
             </button>
             <Link href="/app/rules" className="ui-btn ui-btn-start">
               <RulesIcon />

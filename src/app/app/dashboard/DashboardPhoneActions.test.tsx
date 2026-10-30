@@ -45,7 +45,7 @@ describe('the dashboard actions on a phone', () => {
     const user = userEvent.setup();
     const props = actions();
     await user.click(screen.getByRole('button', { name: 'Mehr' }));
-    await user.click(screen.getByRole('button', { name: /Als CSV exportieren/ }));
+    await user.click(screen.getByRole('button', { name: /CSV exportieren/ }));
     expect(props.onExport).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('navigation')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Mehr' }));

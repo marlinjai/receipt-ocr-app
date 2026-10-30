@@ -28,7 +28,7 @@ export default async function MealsPage() {
               Neu laden
             </Link>
             <Link href="/app/dashboard" className="ui-btn">
-              Zum Dashboard
+              Zu den Belegen
             </Link>
           </div>
         </div>

@@ -402,7 +402,7 @@ export default function FinanceClient({
               Bewirtungen
             </Link>
             <Link href="/app/dashboard" className="ui-btn">
-              Dashboard
+              Belege
             </Link>
           </div>
         </div>
@@ -410,9 +410,9 @@ export default function FinanceClient({
         <div className="mt-4 space-y-2">
           {!view.initialized && (
             <p className="ui-note ui-note-warn">
-              Für diesen Arbeitsbereich gibt es noch keine Belegtabelle. Sie wird beim ersten Öffnen des{' '}
+              Für diesen Arbeitsbereich gibt es noch keine Belegtabelle. Sie wird beim ersten Öffnen der{' '}
               <Link href="/app/dashboard" className="underline">
-                Dashboards
+                Belege
               </Link>{' '}
               angelegt.
             </p>
@@ -1321,7 +1321,7 @@ function OpenItemBody({
           <p>
             {assetCheck === 'needs_asset'
               ? `Dieser Beleg steht auf der Zeile für geringwertige Wirtschaftsgüter, kostet aber mehr als ${limit} netto. Er kann nicht sofort abgezogen werden, sondern wird als Anlage über die Nutzungsdauer abgeschrieben (Computerhardware: im Jahr der Anschaffung).`
-              : `Dieser Beleg liegt nahe an der Grenze von ${limit} netto, und der Nettobetrag fehlt. Entweder den Nettobetrag im Dashboard am Beleg ergänzen oder den Beleg als Anlage führen.`}
+              : `Dieser Beleg liegt nahe an der Grenze von ${limit} netto, und der Nettobetrag fehlt. Entweder den Nettobetrag in der Belegliste am Beleg ergänzen oder den Beleg als Anlage führen.`}
           </p>
           <button type="button" className="ui-btn ui-btn-primary ui-btn-sm mt-2" onClick={onMakeAsset}>
             Als Anlage führen
@@ -1335,11 +1335,11 @@ function OpenItemBody({
       {onReceipt.length > 0 && (
         <div className="ui-note ui-note-warn">
           <p>
-            Am Beleg selbst fehlt etwas: {onReceipt.map((k) => CHECK_LABELS[k]).join(', ')}. Das wird im Dashboard am
+            Am Beleg selbst fehlt etwas: {onReceipt.map((k) => CHECK_LABELS[k]).join(', ')}. Das wird in der Belegliste am
             Beleg ergänzt; ohne diese Angabe kann er keinem Jahr und keiner Zeile zugerechnet werden.
           </p>
           <Link href="/app/dashboard" className="ui-btn ui-btn-sm mt-2">
-            Zum Dashboard
+            Zu den Belegen
           </Link>
         </div>
       )}

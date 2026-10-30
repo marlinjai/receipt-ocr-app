@@ -154,7 +154,7 @@ describe('meal page: switching tabs with unsaved changes in a form', () => {
 
 describe('meal page: leaving the page with unsaved changes in a form', () => {
   const LINKS: Array<[RegExp, string]> = [
-    [/^Dashboard$/, '/app/dashboard'],
+    [/^Belege$/, '/app/dashboard'],
     [/^Beleg hochladen$/, '/app'],
     [/^Kontakte/, '/app/contacts'],
   ];
@@ -186,7 +186,7 @@ describe('meal page: leaving the page with unsaved changes in a form', () => {
   it('without unsaved changes the links are plain links', async () => {
     const user = userEvent.setup();
     render(<MealsClient initial={pageData()} />);
-    await user.click(screen.getByRole('link', { name: /^Dashboard$/ }));
+    await user.click(screen.getByRole('link', { name: /^Belege$/ }));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(followed).toHaveBeenCalledWith('/app/dashboard');
     expect(push).not.toHaveBeenCalled();
@@ -197,7 +197,7 @@ describe('meal page: leaving the page with unsaved changes in a form', () => {
     render(<MealsClient initial={pageData()} />);
     await user.click(screen.getByRole('button', { name: 'Im Eintrag tippen' }));
     await user.keyboard('{Meta>}');
-    await user.click(screen.getByRole('link', { name: /^Dashboard$/ }));
+    await user.click(screen.getByRole('link', { name: /^Belege$/ }));
     await user.keyboard('{/Meta}');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(followed).toHaveBeenCalledWith('/app/dashboard');

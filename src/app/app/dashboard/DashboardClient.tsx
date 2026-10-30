@@ -460,8 +460,16 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       if (!assignmentColumn || working) return false;
       setWorking(true);
       try {
-        await updateCell(rowId, assignmentColumn.id, optionId);
+        const row = await updateCell(rowId, assignmentColumn.id, optionId);
         await reloadReview();
+        // A receipt a vendor rule or an asset governs keeps its Zuordnung: the server answers with the
+        // stored value, and that is not a saved choice.
+        const stored = row?.cells?.[assignmentColumn.id] ?? null;
+        if (row && stored !== optionId) {
+          setReviewError('Die Zuordnung dieses Belegs ergibt sich aus einer Regel oder einem Anlagegut und lässt sich hier nicht ändern.');
+          await reload();
+          return false;
+        }
         return true;
       } catch {
         setReviewError('Die Zuordnung wurde nicht gespeichert. Bitte erneut versuchen.');

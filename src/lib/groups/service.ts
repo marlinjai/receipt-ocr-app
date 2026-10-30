@@ -98,6 +98,15 @@ export async function createGroup(db: PrismaClient, workspaceId: string, name: u
   return group.id;
 }
 
+/** Give a group another name. Its receipts and what it inherited stay as they are. */
+export async function renameGroup(db: PrismaClient, workspaceId: string, groupId: string, name: unknown): Promise<void> {
+  const cleanName = cleanGroupName(name);
+  const table = await groupTable(db, workspaceId);
+  const nameColumnId = table.columns.find((c) => c.name === 'Name')?.id;
+  if (!nameColumnId) throw new GroupError('not_initialized');
+  await table.adapter.updateRow(groupId, { [nameColumnId]: cleanName });
+}
+
 /**
  * Put receipts into a group. A receipt that lies in another group leaves it;
  * one that is already in this group is not written. Returns how many moved.

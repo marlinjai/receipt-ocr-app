@@ -39,6 +39,17 @@ What the data showed, on production:
 1. **Every receipt that can be grouped is grouped, for every year**, private ones included.
 2. **An empty group deletes itself automatically**, like in Notion.
 
+## Decision (the owner, 2026-10-30): one group per vendor and year
+
+Groups of one vendor still appeared twice, from another wording of one subscription (Patreon, Notion)
+or from two plans (Google Workspace Business Starter and Standard): "they can go into one group".
+The key is now vendor, year and assignment. What recurs is still decided by the item: a receipt
+joins when its vendor and item appear at least twice in the year, so a one-off purchase stays loose.
+A group that comes to hold several items is named "Vendor, Year". On the production data of
+Whiz-Art Media this took 143 groups to about 91. Decided in building, say so if you disagree:
+one rule without exceptions, so Telekom's landline and mobile, and Apple's iCloud and Microsoft 365,
+also share their vendor's group; business and private stay apart, as before.
+
 ## Decisions (taken while building, 2026-10-29, say so if you disagree)
 
 3. **The assignment is part of the key.** Business and private receipts of one vendor and item

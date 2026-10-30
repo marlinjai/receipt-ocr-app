@@ -15,9 +15,9 @@ const r = (over: Partial<GroupableReceipt> = {}): GroupableReceipt => ({
 
 describe('which receipts are grouped', () => {
   it('every assigned receipt with vendor, item and a date, outside groups and meals, private ones too', () => {
-    expect(groupKey(r())).toBe('2024|geschäftlich|openai|chatgpt plus');
+    expect(groupKey(r())).toBe('2024|geschäftlich|openai');
     expect(groupKey(r({ assignment: 'Universität' }))).not.toBeNull();
-    expect(groupKey(r({ assignment: 'Privat' }))).toBe('2024|privat|openai|chatgpt plus');
+    expect(groupKey(r({ assignment: 'Privat' }))).toBe('2024|privat|openai');
     expect(groupKey(r({ assignment: null }))).toBeNull();
     expect(groupKey(r({ category: 'Bewirtung' }))).toBeNull();
     expect(groupKey(r({ parentRowId: 'g1' }))).toBeNull();
@@ -27,36 +27,100 @@ describe('which receipts are grouped', () => {
     expect(groupKey(r({ year: null }))).toBeNull();
   });
 
-  it('is exact: case and spacing do not make two keys, another wording, year or assignment does', () => {
+  it('is exact about the vendor: case and spacing do not make two keys, another year or assignment does, the item does not', () => {
     expect(groupKey(r({ vendor: ' openai ', item: 'ChatGPT  PLUS' }))).toBe(groupKey(r()));
-    expect(groupKey(r({ item: 'ChatGPT Plus Abo' }))).not.toBe(groupKey(r()));
+    expect(groupKey(r({ item: 'ChatGPT Plus Abo' }))).toBe(groupKey(r()));
+    expect(groupKey(r({ vendor: 'OpenAI Ireland' }))).not.toBe(groupKey(r()));
     expect(groupKey(r({ year: 2025 }))).not.toBe(groupKey(r()));
     expect(groupKey(r({ assignment: 'Privat' }))).not.toBe(groupKey(r()));
   });
 });
 
 describe('the plan', () => {
-  it('creates one group per vendor, item and year from two or more receipts', () => {
-    const a = [r(), r(), r(), r({ year: 2025 }), r({ item: 'API credits' }), r({ item: 'API credits' })];
+  it('creates one group per vendor and year, named by the item while there is one', () => {
+    const a = [r(), r(), r(), r({ year: 2025 }), r({ vendor: 'Adobe', item: 'Creative Cloud' }), r({ vendor: 'Adobe', item: 'Creative Cloud' })];
     const plan = planAutoGroups(a, []);
     expect(plan.join).toEqual([]);
-    expect(plan.create.map((c) => c.name).sort()).toEqual(['OpenAI, API credits, 2024', 'OpenAI, ChatGPT Plus, 2024']);
+    expect(plan.create.map((c) => c.name).sort()).toEqual(['Adobe, Creative Cloud, 2024', 'OpenAI, ChatGPT Plus, 2024']);
     expect(plan.create.find((c) => c.name === 'OpenAI, ChatGPT Plus, 2024')!.memberIds).toEqual([a[0].id, a[1].id, a[2].id]);
   });
 
+  it('puts two recurring items of a vendor into one group, named by the vendor', () => {
+    const a = [r(), r(), r({ item: 'API credits' }), r({ item: 'API credits' })];
+    const plan = planAutoGroups(a, []);
+    expect(plan.create).toEqual([{ name: 'OpenAI, 2024', memberIds: a.map((x) => x.id) }]);
+  });
+
+  it('leaves a one-off purchase from a vendor with a subscription, and unrelated orders, loose', () => {
+    const plan = planAutoGroups([r(), r(), r({ item: 'T-Shirt' })], []);
+    expect(plan.create[0].memberIds).toHaveLength(2);
+    expect(planAutoGroups([r({ item: 'Kabel' }), r({ item: 'Tasche' })], [])).toEqual({ create: [], join: [], rename: [] });
+  });
+
+  it('merges two groups of one vendor and year whatever their wording, and names the result by the vendor', () => {
+    const big = [r({ item: 'Patreon-Mitgliedschaft', vendor: 'Patreon', parentRowId: 'g1' }), r({ item: 'Patreon-Mitgliedschaft', vendor: 'Patreon', parentRowId: 'g1' }), r({ item: 'Patreon-Mitgliedschaft', vendor: 'Patreon', parentRowId: 'g1' })];
+    const small = [r({ item: 'Patreon-Abo', vendor: 'Patreon', parentRowId: 'g2' }), r({ item: 'Patreon-Abo', vendor: 'Patreon', parentRowId: 'g2' })];
+    const plan = planAutoGroups([...big, ...small], [
+      { id: 'g1', name: 'Patreon, Patreon-Mitgliedschaft, 2026' },
+      { id: 'g2', name: 'Patreon, Patreon-Abo, 2026' },
+    ]);
+    expect(plan.create).toEqual([]);
+    expect(plan.join).toEqual([{ groupId: 'g1', memberIds: small.map((x) => x.id) }]);
+    expect(plan.rename).toEqual([{ groupId: 'g1', name: 'Patreon, 2024' }]);
+  });
+
+  it('merges groups of different plans, but never business with private or one year with another', () => {
+    const business = [r({ item: 'Starter', parentRowId: 'g1' }), r({ item: 'Standard', parentRowId: 'g2' })];
+    const other = [r({ item: 'Starter', assignment: 'Privat', parentRowId: 'g3' }), r({ item: 'Starter', year: 2025, parentRowId: 'g4' })];
+    const plan = planAutoGroups([...business, ...other], ['g1', 'g2', 'g3', 'g4'].map((id) => ({ id, name: id })));
+    expect(plan.join).toEqual([{ groupId: 'g1', memberIds: [business[1].id] }]);
+  });
+
+  it('merges once: a second run with one group finds nothing to do, also when it holds several items', () => {
+    const a = [r({ parentRowId: 'g1' }), r({ item: 'API credits', parentRowId: 'g1' })];
+    expect(planAutoGroups(a, [{ id: 'g1', name: 'OpenAI, 2024' }])).toEqual({ create: [], join: [], rename: [] });
+  });
+
+  it('renames a group a new plan joins, and keeps the name of a hand-mixed group', () => {
+    const inGroup = [r({ item: 'Pro', parentRowId: 'g1' }), r({ item: 'Pro', parentRowId: 'g1' })];
+    const newPlan = [r({ item: 'Ultra' }), r({ item: 'Ultra' })];
+    const plan = planAutoGroups([...inGroup, ...newPlan], [{ id: 'g1', name: 'OpenAI, Pro, 2024' }]);
+    expect(plan.join).toEqual([{ groupId: 'g1', memberIds: newPlan.map((x) => x.id) }]);
+    expect(plan.rename).toEqual([{ groupId: 'g1', name: 'OpenAI, 2024' }]);
+
+    const mixed = [r({ item: 'Pro', parentRowId: 'g2' }), r({ vendor: 'Adobe', item: 'CC', parentRowId: 'g2' })];
+    expect(planAutoGroups([...mixed, r({ item: 'Pro' })], [{ id: 'g2', name: 'Messe' }]).rename).toEqual([]);
+  });
+
   it('leaves a receipt alone whose key has no second receipt and no group', () => {
-    expect(planAutoGroups([r(), r({ vendor: 'Adobe' })], [])).toEqual({ create: [], join: [] });
+    expect(planAutoGroups([r(), r({ vendor: 'Adobe' })], [])).toEqual({ create: [], join: [], rename: [] });
   });
 
   it('puts a receipt into the group of its key, also a single one', () => {
     const a = r();
     const plan = planAutoGroups([a], [{ id: 'g9', name: 'openai, chatgpt plus, 2024' }]);
-    expect(plan).toEqual({ create: [], join: [{ groupId: 'g9', memberIds: [a.id] }] });
+    expect(plan).toEqual({ create: [], join: [{ groupId: 'g9', memberIds: [a.id] }], rename: [] });
+  });
+
+  it('keeps the plain name of a pure group when another recurring item joins it', () => {
+    const inGroup = [r({ item: 'Pro', parentRowId: 'g1' }), r({ item: 'Ultra', parentRowId: 'g1' })];
+    const joining = [r({ item: 'Max' }), r({ item: 'Max' })];
+    const plan = planAutoGroups([...inGroup, ...joining], [{ id: 'g1', name: 'OpenAI, 2024' }]);
+    expect(plan.rename).toEqual([]);
+  });
+
+  it('puts only recurring receipts into an empty group, and a one-off only when it is alone', () => {
+    const recurring = [r({ item: 'Pro' }), r({ item: 'Pro' })];
+    const oneOff = r({ item: 'Ultra' });
+    const empty = [{ id: 'g5', name: 'OpenAI, Pro, 2024' }];
+    expect(planAutoGroups([...recurring, oneOff], empty).join).toEqual([{ groupId: 'g5', memberIds: recurring.map((x) => x.id) }]);
+    const two = [r({ item: 'A' }), r({ item: 'B' })];
+    expect(planAutoGroups(two, [{ id: 'g6', name: 'OpenAI, A, 2024' }]).join).toEqual([]);
   });
 
   it('is idempotent: receipts already in the group are not planned again', () => {
     const inGroup = [r({ parentRowId: 'g9' }), r({ parentRowId: 'g9' })];
-    expect(planAutoGroups(inGroup, [{ id: 'g9', name: 'OpenAI, ChatGPT Plus, 2024' }])).toEqual({ create: [], join: [] });
+    expect(planAutoGroups(inGroup, [{ id: 'g9', name: 'OpenAI, ChatGPT Plus, 2024' }])).toEqual({ create: [], join: [], rename: [] });
   });
 
   it('finds the group of a key by the receipts in it, whatever the group is called', () => {
@@ -64,7 +128,7 @@ describe('the plan', () => {
     const inGroup = [r({ vendor: 'Apple', item: 'iCloud+ 2 TB', parentRowId: 'g1' }), r({ vendor: 'Apple', item: 'iCloud+ 2 TB', parentRowId: 'g1' })];
     const august = r({ vendor: 'Apple', item: 'iCloud+ 2 TB' });
     const plan = planAutoGroups([...inGroup, august], [{ id: 'g1', name: 'Apple Distribution International Ltd., iCloud+ 2 TB, 2024' }]);
-    expect(plan).toEqual({ create: [], join: [{ groupId: 'g1', memberIds: [august.id] }] });
+    expect(plan).toEqual({ create: [], join: [{ groupId: 'g1', memberIds: [august.id] }], rename: [] });
   });
 
   it('groups private receipts apart from business ones of the same vendor and item', () => {
@@ -78,7 +142,7 @@ describe('the plan', () => {
     ]);
     // With the business group there already, the private receipts never join it.
     const withGroup = planAutoGroups([...work.map((w) => ({ ...w, parentRowId: 'gw' })), ...home], [{ id: 'gw', name: 'OpenAI, ChatGPT Plus, 2024' }]);
-    expect(withGroup).toEqual({ create: [{ name: 'OpenAI, ChatGPT Plus, 2024, Privat', memberIds: home.map((h) => h.id) }], join: [] });
+    expect(withGroup).toEqual({ create: [{ name: 'OpenAI, ChatGPT Plus, 2024, Privat', memberIds: home.map((h) => h.id) }], join: [], rename: [] });
   });
 
   it('moves the receipts of a second group of only that key into the larger one', () => {
@@ -89,7 +153,7 @@ describe('the plan', () => {
       { id: 'g1', name: 'OpenAI, ChatGPT Plus, 2024' },
       { id: 'g2', name: 'OpenAI, ChatGPT Plus Abo, 2024' },
     ]);
-    expect(plan).toEqual({ create: [], join: [{ groupId: 'g1', memberIds: [loose.id, small[0].id] }] });
+    expect(plan).toEqual({ create: [], join: [{ groupId: 'g1', memberIds: [loose.id, small[0].id] }], rename: [] });
   });
 
   it('leaves a group a person filled with several keys as it is, and still puts loose receipts into the pure one', () => {
@@ -100,7 +164,7 @@ describe('the plan', () => {
       { id: 'g1', name: 'OpenAI, ChatGPT Plus, 2024' },
       { id: 'g2', name: 'Messe' },
     ]);
-    expect(plan).toEqual({ create: [], join: [{ groupId: 'g1', memberIds: [loose.id] }] });
+    expect(plan).toEqual({ create: [], join: [{ groupId: 'g1', memberIds: [loose.id] }], rename: [] });
   });
 
   it('counts a receipt without a key as making its group mixed', () => {
@@ -111,7 +175,7 @@ describe('the plan', () => {
       { id: 'g2', name: 'B' },
     ]);
     // g2 is pure and the target; g1 is a person's mixed group and gives nothing up.
-    expect(plan).toEqual({ create: [], join: [] });
+    expect(plan).toEqual({ create: [], join: [], rename: [] });
   });
 
   it('narrows to the keys of the receipts that just arrived', () => {

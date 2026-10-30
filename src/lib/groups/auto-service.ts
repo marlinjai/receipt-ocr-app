@@ -8,7 +8,7 @@ import { AUTO_GROUP_OFF_COLUMN, GROUP_KIND, rowKindColumnId } from '@/lib/receip
 import { planAutoGroups, type ExistingGroup, type GroupableReceipt } from './auto';
 import { removeEmptyGroups } from './empty';
 import { GroupError } from './rules';
-import { GROUP_MEMBERS_MAX, createGroup, moveIntoGroup } from './service';
+import { GROUP_MEMBERS_MAX, createGroup, moveIntoGroup, renameGroup } from './service';
 
 /**
  * Apply the rule of `auto.ts` to a workspace's receipts: create the groups of
@@ -165,6 +165,15 @@ async function applyAutoGroups(db: PrismaClient, workspaceId: string, options: A
         },
       );
     }
+  }
+  for (const g of plan.rename) {
+    await attempt(
+      async () => {
+        await renameGroup(db, workspaceId, g.groupId, g.name);
+        return 0;
+      },
+      () => {},
+    );
   }
   // Every move above removed the groups it emptied; this catches what other paths left behind.
   result.removedEmpty = (await removeEmptyGroups(db, workspaceId)).length;

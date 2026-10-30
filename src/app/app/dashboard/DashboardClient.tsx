@@ -651,6 +651,20 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
             subItemsConfig={subItemsConfig}
             onCollapseRow={(rowId) => setGroupFolded(rowId, true)}
             onExpandRow={(rowId) => setGroupFolded(rowId, false)}
+            onFoldAll={({ collapsedGroups, collapsedParents }) => {
+              if (!currentView) return;
+              const groupConfig = currentView.config?.groupConfig as GroupConfig | undefined;
+              // One write: sections and subgroups saved apart would overwrite each other.
+              void updateView(currentView.id, {
+                config: {
+                  ...currentView.config,
+                  ...(groupConfig ? { groupConfig: { ...groupConfig, collapsedGroups } } : {}),
+                  subItemsConfig: { enabled: true, collapsedParents },
+                },
+              }).catch(() =>
+                setNotice({ tone: 'warn', text: 'Die Ansicht konnte nicht gespeichert werden. Nach dem Neuladen sind die Gruppen wieder wie zuvor auf- oder zugeklappt.' }),
+              );
+            }}
             getSubItemSummary={groupSummary}
             getSubItemSummaryNote={groupSummaryNote}
             isCountedRow={isCountedRow}

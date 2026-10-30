@@ -24,6 +24,7 @@ import {
   decideItem,
   disposeAsset,
   importPaymentFile,
+  importPaymentPdf,
   classifyCounterpartiesNow,
   recordStatusChange,
   recordVatSettlement,
@@ -946,11 +947,17 @@ export default function FinanceClient({
               error={error}
               lastImport={lastImport}
               onAddAccount={(input, done) => run(() => addAccount(view.year, input), `Konto ${input.label} angelegt.`, done)}
-              onImport={(accountId, text, onlyThisYear, done) => {
+              onImport={(accountId, file, onlyThisYear, done) => {
                 setLastImport(null);
                 run(
                   async () => {
-                    const result = await importPaymentFile(view.year, accountId, text, onlyThisYear);
+                    let result;
+                    if ('pdf' in file) {
+                      // The PDF travels as it is; the server takes its text.
+                      const form = new FormData();
+                      form.append('file', file.pdf);
+                      result = await importPaymentPdf(view.year, accountId, form, onlyThisYear);
+                    } else result = await importPaymentFile(view.year, accountId, file.text, onlyThisYear);
                     if (!result.ok) return result;
                     setLastImport(result.value.imported);
                     return { ok: true, value: result.value.view };

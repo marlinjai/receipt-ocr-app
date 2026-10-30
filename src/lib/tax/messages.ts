@@ -210,7 +210,15 @@ export function financeActionMessage(error: string, detail?: string): string {
         case 'file_already_imported':
           return 'Genau diese Datei wurde für dieses Konto schon eingelesen. Es wurde nichts doppelt angelegt.';
         case 'unknown_layout':
-          return 'Der Aufbau dieser Datei wird nicht erkannt. Unterstützt werden die Exporte von N26, Tomorrow und PayPal (CSV), die Kaufliste von Klarna (CSV) sowie die Umsatzliste der Bankschnittstelle (JSON). Es wurde nichts eingelesen.';
+          return 'Der Aufbau dieser Datei wird nicht erkannt. Unterstützt werden die Exporte von N26, Tomorrow und PayPal (CSV), die Kaufliste von Klarna (CSV), die Umsatzliste der Bankschnittstelle (JSON) sowie die Abrechnung der Advanzia-Mastercard (PDF). Es wurde nichts eingelesen.';
+        case 'unknown_pdf':
+          return 'Diese PDF ist keine Abrechnung der Advanzia-Mastercard („Gebührenfrei Mastercard Gold“), und andere PDFs werden nicht erkannt. Von den übrigen Konten bitte den Export als CSV oder JSON einlesen. Es wurde nichts eingelesen.';
+        case 'unreadable_pdf':
+          return 'Diese PDF lässt sich nicht öffnen: sie ist beschädigt oder mit einem Passwort geschützt. Bitte die Abrechnung neu herunterladen. Es wurde nichts eingelesen.';
+        case 'pdf_without_text':
+          return 'Diese PDF enthält keinen lesbaren Text, nur Bilder (etwa ein Scan). Bitte die Abrechnung als PDF aus dem Kundenbereich der Bank herunterladen. Es wurde nichts eingelesen.';
+        case 'unbalanced_statement':
+          return 'Die gelesenen Umsätze dieser Abrechnung führen nicht vom alten zum neuen Saldo; eine Zeile ließ sich nicht sicher lesen. Es wurde nichts eingelesen, auch nicht die übrigen Zeilen.';
         case 'empty':
           return 'Die Datei enthält keine Umsätze.';
         case 'too_large':

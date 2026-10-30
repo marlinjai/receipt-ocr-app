@@ -121,6 +121,13 @@
   the reference rate marked as an estimate, and an empty account can be removed. After the
   deploy the owner connects the PayPal account once. Plan:
   [docs/plans/2026-10-23-paypal-live.md](docs/plans/2026-10-23-paypal-live.md). (2026-10-23)
+- [ ] The Advanzia credit card from its monthly statement PDF (the owner's rule of 2026-10-16:
+  live where possible, files as the fallback; the bank interface offers no Advanzia). The reader
+  is built: the PDF is uploaded in the payments import like the CSV exports, every row becomes a
+  payment, re-reading or overlapping statements store nothing twice, and a statement that does
+  not balance is refused whole. Left: after the deploy, import the card's statements into an
+  account of the kind "Kreditkarte". Plan:
+  [docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md](docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md). (2026-10-30)
 - [ ] Bring the app up to the tax session's draft for 2025. Marlin's 17 answers of 2026-10-11
   (recorded in `Entscheidungen-2025.md` in the tax folder) are carried out, the bank, PayPal and
   pay-later lists are imported, and 112 payments are linked: business expenses in the app went

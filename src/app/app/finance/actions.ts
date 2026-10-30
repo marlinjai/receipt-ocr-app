@@ -27,6 +27,7 @@ import {
   type FoundPayment,
   type ImportResult,
 } from '@/lib/tax/payments/service';
+import { pdfText } from '@/lib/tax/payments/pdf-text';
 import { PaymentParseError } from '@/lib/tax/payments/types';
 import { RULE_YEARS } from '@/lib/tax/rules';
 import {
@@ -334,9 +335,38 @@ export async function removeAccount(year: number, accountId: string): Promise<Re
  * `onlyThisYear` only the payments booked in the year on screen are read.
  */
 export async function importPaymentFile(year: number, accountId: string, text: string, onlyThisYear = false): Promise<Result<{ view: StatementView; imported: ImportResult }>> {
+  return importText(year, accountId, async () => ({ text: String(text ?? ''), pdf: false }), onlyThisYear);
+}
+
+/**
+ * Import a statement PDF (the Advanzia credit card) into an account. The file
+ * travels as form data, under `file`; its text is taken on the server and read
+ * like any export (see `pdfText`), so a PDF that cannot be opened or is no
+ * statement is refused with its own message before anything is stored.
+ */
+export async function importPaymentPdf(year: number, accountId: string, form: FormData, onlyThisYear = false): Promise<Result<{ view: StatementView; imported: ImportResult }>> {
+  return importText(
+    year,
+    accountId,
+    async () => {
+      const file = form instanceof FormData ? form.get('file') : null;
+      if (!(file instanceof Blob)) throw new PaymentParseError('unreadable_pdf');
+      return { text: await pdfText(new Uint8Array(await file.arrayBuffer())), pdf: true };
+    },
+    onlyThisYear,
+  );
+}
+
+async function importText(
+  year: number,
+  accountId: string,
+  read: () => Promise<{ text: string; pdf: boolean }>,
+  onlyThisYear: boolean,
+): Promise<Result<{ view: StatementView; imported: ImportResult }>> {
   try {
     const ctx = await writeContext();
-    const imported = await importPayments(prisma, ctx, String(accountId), String(text ?? ''), { onlyYear: onlyThisYear === true ? safeYear(year) : null });
+    const { text, pdf } = await read();
+    const imported = await importPayments(prisma, ctx, String(accountId), text, { onlyYear: onlyThisYear === true ? safeYear(year) : null, ...(pdf ? { parse: { pdf: true } } : {}) });
     // The missing-receipt loop and the budget warnings run on what was just
     // imported (plan 2026-10-14, personal spending), after the answer is sent: notifying can take a while
     // and must never hold or fail the import. A failure is logged.

@@ -400,6 +400,8 @@
   `POST /api/receipts/lines/reprice` signed in as each company, no model asked, a run again changes
   nothing. Context: the Reality section of 2026-10-30 in
   [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-30)
+- [x] "Collapse all" and "Expand all" also fold the receipt groups inside the sections
+  (reported by Marlin on 2026-10-30), with `@marlinjai/data-table-react` 0.8.0. Done 2026-10-30.
 - [x] A missing Zuordnung is set where it is asked for: three buttons on the receipt in "Belege
   prüfen", and an editable field in the opened receipt, which only showed the value before
   (reported by Marlin on 2026-10-30). Done 2026-10-30.

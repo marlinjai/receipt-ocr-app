@@ -355,6 +355,12 @@ describe('proposals for receipts on an estimated euro amount: the payment’s ow
     expect(proposeEstimateMatches([charge({ id: 'p1', amountCents: -4000 })], [invoice({ id: 'r1', vendorKey: null })])[0]).toMatchObject({ unambiguous: true, originalAmount: true });
   });
 
+  it('a credit note is found by its own amount, but never by the vendor', () => {
+    const credit = invoice({ id: 'r1', amountCents: -2950, own: { currency: 'USD', amountCents: -3451 } });
+    expect(proposeEstimateMatches([charge({ id: 'p1', amountCents: 2998, original: { currency: 'USD', amountCents: 3451 } })], [credit])).toEqual([{ paymentId: 'p1', documentId: 'r1', unambiguous: true, severalReceipts: false, originalAmount: true }]);
+    expect(proposeEstimateMatches([charge({ id: 'p1', amountCents: 2998, counterpartyKey: 'studio beispiel', original: null })], [credit])).toEqual([]);
+  });
+
   it('one cent off, or the same figure in another currency, is no match', () => {
     expect(proposeEstimateMatches([charge({ id: 'p1', original: { currency: 'USD', amountCents: -3450 } })], [invoice({ id: 'r1' })])).toEqual([]);
     expect(proposeEstimateMatches([charge({ id: 'p1', original: { currency: 'GBP', amountCents: -3451 } })], [invoice({ id: 'r1' })])).toEqual([]);

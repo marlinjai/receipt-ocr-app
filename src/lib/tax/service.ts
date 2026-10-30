@@ -802,7 +802,7 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
     loadedFacts.flatMap((f) => {
       const currency = currencyCode(f.record.currency);
       const gross = f.record.gross;
-      return currency !== null && currency !== 'EUR' && gross !== null && Number.isFinite(gross) && gross > 0 ? [[f.record.rowId, { currency, amountCents: Math.round(gross * 100) }] as const] : [];
+      return currency !== null && currency !== 'EUR' && gross !== null && Number.isFinite(gross) && gross !== 0 ? [[f.record.rowId, { currency, amountCents: Math.round(gross * 100) }] as const] : [];
     }),
   );
   const paymentsView = buildPaymentsView(loadedPayments, year, wholeReceipts, invoiceFacts, result.revenue.invoices, classifierProvider() !== null, filedOn.get(year) ?? null, ownAmounts);

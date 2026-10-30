@@ -469,14 +469,16 @@ export function proposeEstimateMatches(payments: readonly EstimatePayment[], doc
   // Payment and receipt whose own amounts agree to the cent: that receipt is never part of a sum the payment pays.
   const exactOwn = new Set<string>();
   for (const document of documents) {
-    if (document.day === null || document.amountCents <= 0) continue;
+    if (document.day === null || document.amountCents === 0) continue;
+    // A credit note (negative) can only be found by its own amount: vendor matching is for positive amounts.
+    const positive = document.amountCents > 0;
     const day = dayNumber(document.day);
     for (const { p, day: booked, cents } of paid) {
       const gap = booked - day;
       if (gap < -ESTIMATE_DAYS_BEFORE || gap > ESTIMATE_DAYS_AFTER) continue;
       const originalAmount = sameOwnAmount(document.own, p.original);
       if (originalAmount) exactOwn.add(`${p.id}|${document.id}`);
-      const named = document.vendorKey !== null && (vendorNamed(document.vendorKey, p.counterpartyKey, p.referenceKey) || (p.vendorAliases ?? []).includes(document.vendorKey));
+      const named = positive && document.vendorKey !== null && (vendorNamed(document.vendorKey, p.counterpartyKey, p.referenceKey) || (p.vendorAliases ?? []).includes(document.vendorKey));
       if (named && document.estimated) {
         const entry = near.get(p.id) ?? { cents, documents: [] };
         entry.documents.push(document);

@@ -23,9 +23,15 @@ const entry = (overrides: Partial<ReviewEntry> = {}): ReviewEntry => ({
   ...overrides,
 });
 
-function setup(entries: ReviewEntry[], extra: { busy?: boolean; error?: string | null } = {}) {
-  const handlers = { onOpen: vi.fn(), onConfirm: vi.fn(), onKeepBoth: vi.fn(), onDelete: vi.fn(), onTakeReading: vi.fn() };
-  render(<ReviewPanel entries={entries} busy={extra.busy ?? false} error={extra.error ?? null} {...handlers} />);
+const ASSIGNMENTS = [
+  { id: 'opt-business', name: 'Geschäftlich' },
+  { id: 'opt-university', name: 'Universität' },
+  { id: 'opt-private', name: 'Privat' },
+];
+
+function setup(entries: ReviewEntry[], extra: { busy?: boolean; error?: string | null; assignmentOptions?: typeof ASSIGNMENTS } = {}) {
+  const handlers = { onOpen: vi.fn(), onConfirm: vi.fn(), onKeepBoth: vi.fn(), onDelete: vi.fn(), onTakeReading: vi.fn(), onSetAssignment: vi.fn() };
+  render(<ReviewPanel entries={entries} busy={extra.busy ?? false} error={extra.error ?? null} assignmentOptions={extra.assignmentOptions ?? ASSIGNMENTS} {...handlers} />);
   return handlers;
 }
 
@@ -65,6 +71,38 @@ describe('ReviewPanel', () => {
     expect(handlers.onOpen).toHaveBeenCalledWith('r2');
     await userEvent.click(within(items[1]).getByRole('button', { name: 'Löschen' }));
     expect(handlers.onDelete).toHaveBeenCalledWith('r2');
+  });
+
+  it('a missing Zuordnung is set right in the list, without opening the receipt', async () => {
+    const handlers = setup([entry({ reasons: ['assignment_missing'], canConfirm: false })]);
+    await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));
+    const choices = screen.getByRole('group', { name: 'Zuordnung für Grillhaus Beispiel' });
+    expect(within(choices).getAllByRole('button').map((b) => b.textContent)).toEqual(['Geschäftlich', 'Universität', 'Privat']);
+
+    await userEvent.click(within(choices).getByRole('button', { name: 'Geschäftlich' }));
+    expect(handlers.onSetAssignment).toHaveBeenCalledWith('r1', 'opt-business');
+    expect(handlers.onOpen).not.toHaveBeenCalled();
+    // The choice is the main action here: opening the receipt steps back.
+    expect(screen.getByRole('button', { name: 'Beleg öffnen' }).className).not.toContain('ui-btn-primary');
+  });
+
+  it('offers the Zuordnung only where it is missing, and stays usable while the choices load', async () => {
+    setup([entry()]);
+    await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));
+    expect(screen.queryByRole('group', { name: /Zuordnung für/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Beleg öffnen' }).className).toContain('ui-btn-primary');
+    cleanup();
+
+    setup([entry({ reasons: ['assignment_missing'], canConfirm: false })], { assignmentOptions: [] });
+    await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));
+    expect(screen.queryByRole('group', { name: /Zuordnung für/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Beleg öffnen' }).className).toContain('ui-btn-primary');
+  });
+
+  it('the Zuordnung buttons wait while an action runs', async () => {
+    setup([entry({ reasons: ['assignment_missing'], canConfirm: false })], { busy: true });
+    await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));
+    expect((screen.getByRole('button', { name: 'Privat' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('a look-alike names the other receipt and offers to keep both or look at it', async () => {

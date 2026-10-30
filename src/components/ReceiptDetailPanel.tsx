@@ -32,6 +32,8 @@ interface ReceiptDetailPanelProps {
   onReread?: (rowId: string) => Promise<RereadNote>;
   /** The recognized text of the receipt: the list does not carry it, the panel asks when a receipt is opened. */
   loadText?: (rowId: string) => Promise<string>;
+  /** Save the Zuordnung (an option id, or null for none); resolves false when it was not saved. */
+  onSetAssignment?: (rowId: string, optionId: string | null) => Promise<boolean>;
 }
 
 const MAX_FILES_PER_ROW = 10;
@@ -99,8 +101,10 @@ export default function ReceiptDetailPanel({
   onMealSaved,
   onReread,
   loadText,
+  onSetAssignment,
 }: ReceiptDetailPanelProps) {
   const [ocrExpanded, setOcrExpanded] = useState(false);
+  const [assignmentState, setAssignmentState] = useState<'idle' | 'saving' | 'failed'>('idle');
   const textKey = `${row.id}:${String(row.updatedAt)}`;
   // The loaded text is kept with the receipt version it belongs to: another receipt, or a newer version of
   // this one, starts without text and without the failure note, and no effect has to reset them.
@@ -281,6 +285,12 @@ export default function ReceiptDetailPanel({
   const showMealSection = categoryName === MEAL_CATEGORY || hasMealDetails;
   const statusCol = getCol('Status');
   const zuordnungCol = getCol('Zuordnung');
+
+  const saveAssignment = async (value: string) => {
+    if (!onSetAssignment) return;
+    setAssignmentState('saving');
+    setAssignmentState((await onSetAssignment(row.id, value || null)) ? 'idle' : 'failed');
+  };
 
   const fields: Array<{
     label: string;
@@ -551,7 +561,25 @@ export default function ReceiptDetailPanel({
                 <div key={field.label}>
                   <dt className="text-xs text-gray-500">{field.label}</dt>
                   <dd className="mt-0.5 text-sm text-gray-200">
-                    {field.color ? (
+                    {field.label === 'Zuordnung' && zuordnungCol && onSetAssignment ? (
+                      <>
+                        <select
+                          className="ui-input"
+                          aria-label="Zuordnung"
+                          value={typeof zuordnung === 'string' ? zuordnung : ''}
+                          disabled={assignmentState === 'saving'}
+                          onChange={(e) => void saveAssignment(e.target.value)}
+                        >
+                          <option value="">Keine Zuordnung</option>
+                          {(selectOptions.get(zuordnungCol.id) ?? []).map((option) => (
+                            <option key={option.id} value={option.id}>{option.name}</option>
+                          ))}
+                        </select>
+                        {assignmentState === 'failed' && (
+                          <span role="alert" className="mt-1 block text-xs text-red-400">Nicht gespeichert. Bitte erneut versuchen.</span>
+                        )}
+                      </>
+                    ) : field.color ? (
                       <span className="inline-flex items-center gap-1.5">
                         <span
                           className="inline-block h-2.5 w-2.5 rounded-full"

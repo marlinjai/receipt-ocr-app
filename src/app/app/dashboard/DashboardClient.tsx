@@ -453,6 +453,36 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     [updateCell, reload, reloadReview],
   );
 
+  // The Zuordnung set from "Belege prüfen" or the opened receipt: the receipt leaves the
+  // review list as soon as it is saved, and a refused write shows the stored value again.
+  const assignmentColumn = columns.find((c) => c.name === 'Zuordnung');
+  const setAssignment = useCallback(
+    async (rowId: string, optionId: string | null): Promise<boolean> => {
+      if (!assignmentColumn || working) return false;
+      setWorking(true);
+      try {
+        const row = await updateCell(rowId, assignmentColumn.id, optionId);
+        await reloadReview();
+        // A receipt a vendor rule or an asset governs keeps its Zuordnung: the server answers with the
+        // stored value, and that is not a saved choice.
+        const stored = row?.cells?.[assignmentColumn.id] ?? null;
+        if (row && stored !== optionId) {
+          setReviewError('Die Zuordnung dieses Belegs ergibt sich aus einer Regel oder einem Anlagegut und lässt sich hier nicht ändern.');
+          await reload();
+          return false;
+        }
+        return true;
+      } catch {
+        setReviewError('Die Zuordnung wurde nicht gespeichert. Bitte erneut versuchen.');
+        await reload();
+        return false;
+      } finally {
+        setWorking(false);
+      }
+    },
+    [assignmentColumn, working, updateCell, reloadReview, reload],
+  );
+
   // Which groups are folded is kept with the view, like its folded sections, so a reload shows the same table.
   const subItemsConfig = useMemo<SubItemsConfig>(
     () => ({ enabled: true, collapsedParents: (currentView?.config?.subItemsConfig as SubItemsConfig | undefined)?.collapsedParents ?? [] }),
@@ -797,6 +827,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         onConfirm={(rowId) => void runReviewAction(() => confirmReceiptChecked(rowId))}
         onKeepBoth={(rowId, otherRowId) => void runReviewAction(() => keepBothLookAlikes(rowId, otherRowId))}
         onDelete={deleteOne}
+        assignmentOptions={assignmentColumn ? (selectOptions.get(assignmentColumn.id) ?? []) : []}
+        onSetAssignment={(rowId, optionId) => void setAssignment(rowId, optionId)}
         onTakeReading={(rowId, fields) =>
           void runReviewAction(async () => {
             const result = await takeNewReading(rowId, fields);
@@ -894,6 +926,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           selectOptions={selectOptions}
           onClose={() => setDetailRow(null)}
           loadText={getReceiptText}
+          onSetAssignment={setAssignment}
           onUploadFile={uploadFile}
           onDeleteFile={deleteFile}
           onMealSaved={() => {

@@ -403,6 +403,8 @@
 - [x] One group per vendor and year: two wordings or two plans of a vendor no longer make two
   groups (reported by Marlin on 2026-10-30), plan
   [every recurring receipt](docs/plans/2026-10-29-group-every-recurring-receipt.md). Done 2026-10-30.
+- [x] "Collapse all" and "Expand all" also fold the receipt groups inside the sections
+  (reported by Marlin on 2026-10-30), with `@marlinjai/data-table-react` 0.8.0. Done 2026-10-30.
 - [x] A missing Zuordnung is set where it is asked for: three buttons on the receipt in "Belege
   prüfen", and an editable field in the opened receipt, which only showed the value before
   (reported by Marlin on 2026-10-30). Done 2026-10-30.

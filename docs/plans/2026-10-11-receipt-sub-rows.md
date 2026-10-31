@@ -134,3 +134,16 @@ Built and tested on the branch, not tagged and not published. The receipts app p
 - **Aggregates filter on the kind and never on the link.** A broken or stale link can therefore
   never remove a receipt from a total or count it twice.
 - **The board and the calendar show receipts only.** They have no nesting.
+
+## Moving by dragging (added 2026-10-31)
+
+Marlin reported that a receipt inside a group has no handle, so two receipts of one vendor could
+only reach the other group through the bar above the table. With `@marlinjai/data-table-react`
+0.9.0 every receipt has a grip. Decided by the session, say so if you disagree:
+
+- A drop on a group or on one of its receipts puts the receipt into that group; a group is never
+  moved into a group, and the bar stays as the way that needs no mouse.
+- A drop on the section takes the receipt out, the same as the button, so it is marked as not to
+  be grouped automatically again. In another section it also takes that section's value.
+- A group of several vendors is left alone by the automatic grouping, and the receipts of both
+  vendors that arrive later join it (`planAutoGroups`: it is the only holder of both keys).

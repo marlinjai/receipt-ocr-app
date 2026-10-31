@@ -400,6 +400,10 @@
   `POST /api/receipts/lines/reprice` signed in as each company, no model asked, a run again changes
   nothing. Context: the Reality section of 2026-10-30 in
   [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-30)
+- [x] Receipts move between groups by dragging, like in Notion: every receipt has a grip, also
+  inside a group and always visible on a selected one; a drop on a group or its receipts puts it
+  there, a drop on the section takes it out, the selection comes along (reported by Marlin on
+  2026-10-31). With `@marlinjai/data-table-react` 0.9.0. Done 2026-10-31.
 - [x] One group per vendor and year: two wordings or two plans of a vendor no longer make two
   groups (reported by Marlin on 2026-10-30), plan
   [every recurring receipt](docs/plans/2026-10-29-group-every-recurring-receipt.md). Done 2026-10-30.

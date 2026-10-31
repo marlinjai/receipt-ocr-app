@@ -145,5 +145,7 @@ only reach the other group through the bar above the table. With `@marlinjai/dat
   moved into a group, and the bar stays as the way that needs no mouse.
 - A drop on the section takes the receipt out, the same as the button, so it is marked as not to
   be grouped automatically again. In another section it also takes that section's value.
-- A group of several vendors is left alone by the automatic grouping, and the receipts of both
-  vendors that arrive later join it (`planAutoGroups`: it is the only holder of both keys).
+- A group of several vendors is left alone by the automatic grouping. The receipts of both vendors
+  that arrive later join it only while no single-vendor group still holds receipts of either
+  vendor: `planAutoGroups` prefers such a single-vendor group, and the receipt joins that one
+  instead. The mixed group is the target only where it is the sole holder of the key.

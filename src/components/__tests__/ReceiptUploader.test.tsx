@@ -11,7 +11,7 @@ import type { PipelineDeps, SavedReceipt } from '@/lib/upload/pipeline';
  * company is a warning the user resolves.
  */
 
-const steps = { checkDuplicate: vi.fn() };
+const steps = { checkDuplicate: vi.fn(), uploaded: [] as File[] };
 vi.mock('@/lib/upload/browser-deps', () => ({
   createBrowserDeps: (
     save: (f: unknown, o: unknown, opts: { sha256: string; workspaceId: string }) => Promise<SavedReceipt>,
@@ -20,7 +20,10 @@ vi.mock('@/lib/upload/browser-deps', () => ({
     prepare: async (f) => f,
     hash: async () => 'a'.repeat(64),
     checkDuplicate: (sha256) => steps.checkDuplicate(sha256, workspaceId),
-    upload: async () => ({ id: 'file-1', originalName: 'rechnung.pdf', fileType: 'application/pdf' }),
+    upload: async (f: File) => {
+      steps.uploaded.push(f);
+      return { id: 'file-1', originalName: f.name, fileType: f.type };
+    },
     recognize: async () => ({ fullText: 'Rechnung 12,50', blocks: [], confidence: 0.9 }),
     save: (file, ocr, options) => save(file, ocr, { ...options, workspaceId }),
   }),
@@ -47,6 +50,7 @@ function drop(container: HTMLElement, file = pdf()) {
 
 beforeEach(() => {
   for (const fn of [steps.checkDuplicate, onProcessFile, onAllComplete, onDiscardRow]) fn.mockReset();
+  steps.uploaded = [];
   steps.checkDuplicate.mockResolvedValue({ existing: null, elsewhere: [] });
   onProcessFile.mockResolvedValue(SAVED);
 });
@@ -112,5 +116,18 @@ describe('the company a file goes into', () => {
     await user.click(screen.getByRole('button', { name: 'Keep both' }));
     expect(await screen.findByText(/this receipt stays in this company too/)).toBeTruthy();
     expect(onDiscardRow).not.toHaveBeenCalled();
+  });
+});
+
+describe('which files are taken', () => {
+  it('an e-invoice as XML is uploaded, typed as XML even when the browser gave no type; other files are left out', async () => {
+    const { container } = mount('ws-eins');
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input.accept).toContain('.xml');
+    const xml = new File(['<Invoice/>'], 'xrechnung.xml', { type: '' });
+    const text = new File(['x'], 'notiz.txt', { type: 'text/plain' });
+    fireEvent.change(input, { target: { files: [xml, text] } });
+    await waitFor(() => expect(onProcessFile).toHaveBeenCalledTimes(1));
+    expect(steps.uploaded.map((f) => [f.name, f.type])).toEqual([['xrechnung.xml', 'application/xml']]);
   });
 });

@@ -7,6 +7,7 @@ import { createBrowserDeps } from '@/lib/upload/browser-deps';
 import { runUploadPipeline, type ExistingReceiptRef, type SavedReceipt } from '@/lib/upload/pipeline';
 import { receiptHref } from '@/lib/receipt-link';
 import { SplitPdfError, splitPdfMessage, splitPdfPages } from '@/lib/upload/split-pdf';
+import { UPLOAD_ACCEPT, isAcceptedUpload, withUploadType } from '@/lib/upload/accepted-files';
 
 export interface UploadResult {
   file: FileInfo;
@@ -193,7 +194,7 @@ export default function ReceiptUploader({ workspaceId, onProcessFile, onAllCompl
   }, [processQueue, workspaceId]);
 
   const addFiles = useCallback(async (files: File[]) => {
-    const valid = files.filter(f => f.type.startsWith('image/') || f.type === 'application/pdf');
+    const valid = files.filter(isAcceptedUpload).map(withUploadType);
     if (!valid.length) return;
     if (!splitPages) {
       enqueue(valid);
@@ -302,7 +303,7 @@ export default function ReceiptUploader({ workspaceId, onProcessFile, onAllCompl
           <label className="cursor-pointer block">
             <input
               type="file"
-              accept="image/*,application/pdf"
+              accept={UPLOAD_ACCEPT}
               multiple
               onChange={handleFileInput}
               className="hidden"
@@ -323,7 +324,7 @@ export default function ReceiptUploader({ workspaceId, onProcessFile, onAllCompl
                 </p>
               </div>
               <div className="flex flex-wrap items-center justify-center gap-1.5">
-                {['JPG', 'PNG', 'WebP', 'PDF'].map(fmt => (
+                {['JPG', 'PNG', 'WebP', 'PDF', 'XML'].map(fmt => (
                   <span
                     key={fmt}
                     className="px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider"

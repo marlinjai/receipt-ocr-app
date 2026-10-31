@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { openCaptureStore } from '@/lib/capture/offline-queue';
 import { sharedNotice } from '@/lib/capture/shared-notice';
+import { isAcceptedUpload } from '@/lib/upload/accepted-files';
 import { CAPTURE_DB_NAME, CAPTURE_DB_VERSION, CAPTURE_STORE_NAME } from '@/lib/capture/offline-queue';
 import { syncServiceWorker } from '../service-worker';
 
@@ -240,6 +241,26 @@ describe('public/sw.js: share target', () => {
     const res = await worker.request('/share-target', { method: 'POST', formData: shared(text, image('beleg.jpg')) });
     expect(res!.headers.get('location')).toContain('shared=1');
     expect((await openCaptureStore(worker.idb).list()).map((e) => e.name)).toEqual(['beleg.jpg']);
+  });
+
+  it('an e-invoice shared as XML is queued, with or without a type; the worker takes exactly what an upload takes', async () => {
+    const samples = [
+      new File(['<Invoice/>'], 'rechnung.xml', { type: 'application/xml' }),
+      new File(['<Invoice/>'], 'xrechnung.xml', { type: 'text/xml' }),
+      new File(['<Invoice/>'], 'ohne-typ.XML', { type: '' }),
+      new File(['x'], 'ohne-typ.txt', { type: '' }),
+      new File(['x'], 'daten.json', { type: 'application/json' }),
+    ];
+    const worker = loadWorker();
+    await worker.request('/share-target', { method: 'POST', formData: shared(...samples) });
+    const queued = (await openCaptureStore(worker.idb).list()).map((e) => e.name);
+    expect(queued).toEqual(samples.filter(isAcceptedUpload).map((f) => f.name));
+    expect(queued).toEqual(['rechnung.xml', 'xrechnung.xml', 'ohne-typ.XML']);
+  });
+
+  it('the manifest offers XML to the share sheet', () => {
+    const manifest = JSON.parse(readFileSync(path.resolve(__dirname, '../../../../public/manifest.json'), 'utf8')) as { share_target: { params: { files: Array<{ accept: string[] }> } } };
+    expect(manifest.share_target.params.files[0].accept).toEqual(expect.arrayContaining(['image/*', 'application/pdf', 'application/xml', 'text/xml', '.xml']));
   });
 
   it('a share that cannot be read ends in the app with an error, never a blank page', async () => {

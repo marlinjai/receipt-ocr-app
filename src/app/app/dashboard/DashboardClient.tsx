@@ -230,6 +230,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   const groups = useMemo(() => groupsOf(rows, columns), [rows, columns]);
   const selection = useMemo(() => selectionKinds(selectedRows, rows, columns), [selectedRows, rows, columns]);
   const isCountedRow = useCallback((row: Row) => !isGroupRow(row, columns), [columns]);
+  const holdsReceipts = useCallback((row: Row) => isGroupRow(row, columns), [columns]);
   // A row the years hide is no longer selected: a bulk edit or a delete must only reach what the page shows.
   // Adjusted while rendering, whenever the rows shown or the years change (both are memoized, so this settles).
   const [prunedFor, setPrunedFor] = useState({ displayRows, yearSelection });
@@ -419,6 +420,12 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       );
     },
     [runGroupAction],
+  );
+
+  // A drag in the table: onto a group, or out of it (no parent).
+  const moveRows = useCallback(
+    (rowIds: string[], parentRowId: string | null) => void (parentRowId ? moveIntoGroup(parentRowId, rowIds) : takeOutOfGroup(rowIds)),
+    [moveIntoGroup, takeOutOfGroup],
   );
 
   // A cell edit the server refuses (an amount typed onto a group through another
@@ -649,6 +656,10 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
             selectOptions={selectOptions}
             onCellChange={saveCell}
             subItemsConfig={subItemsConfig}
+            // While a group action runs a second one would be refused: no grips until it is done.
+            onMoveRows={working ? undefined : moveRows}
+            canHoldRows={holdsReceipts}
+            rowGripLabel="Ziehen, um zu verschieben"
             onCollapseRow={(rowId) => setGroupFolded(rowId, true)}
             onExpandRow={(rowId) => setGroupFolded(rowId, false)}
             onFoldAll={({ collapsedGroups, collapsedParents }) => {

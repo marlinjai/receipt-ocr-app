@@ -654,10 +654,13 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
             columns={tableColumns}
             rows={displayRows}
             selectOptions={selectOptions}
+            // readOnly also closes the group-to-group drag, which writes through onCellChange and ignores moveRowsDisabled.
+            readOnly={working}
             onCellChange={saveCell}
             subItemsConfig={subItemsConfig}
-            // While a group action runs a second one would be refused: no grips until it is done.
-            onMoveRows={working ? undefined : moveRows}
+            // While a group action runs a second one would be refused: no grips until it is done, the table stays put.
+            onMoveRows={moveRows}
+            moveRowsDisabled={working}
             canHoldRows={holdsReceipts}
             rowGripLabel="Ziehen, um zu verschieben"
             onCollapseRow={(rowId) => setGroupFolded(rowId, true)}

@@ -1,14 +1,12 @@
 'use client';
 
-import { useCallback, useId, useMemo, useState, type MouseEvent } from 'react';
+import { observer } from 'mobx-react-lite';
+import { useEffect, useId, useState, type MouseEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { Contact } from '@/lib/contacts/store';
 import { contactsTabCount } from '@/lib/contacts/field-form';
-import { useReportNavCounts } from '@/components/nav/nav-counts';
-import { incompleteQueue } from '@/lib/meals/register';
-import { isDismissedMeal } from '@/lib/meals/rules';
-import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
+import { MealsStore } from '@/stores/MealsStore';
+import { useAppStore } from '@/stores/provider';
 import type { MealsPageData } from './actions';
 import DismissedMeals from './DismissedMeals';
 import QueueTab from './QueueTab';
@@ -17,13 +15,14 @@ import { useDiscardGuard } from './useDiscardGuard';
 
 type TabKey = 'queue' | 'register';
 
-export default function MealsClient({ initial }: { initial: MealsPageData }) {
+const MealsClient = observer(function MealsClient({ initial }: { initial: MealsPageData }) {
   const tabsId = useId();
-  const [records, setRecords] = useState<MealRecord[]>(initial.records);
-  const [contacts, setContacts] = useState<Contact[]>(initial.contacts);
-  const [settings, setSettings] = useState<MealTaxSettings>(initial.settings);
-  const [defaultHost, setDefaultHost] = useState(initial.defaultHost);
-  const [tab, setTab] = useState<TabKey>(() => (incompleteQueue(initial.records.filter((r) => !isDismissedMeal(r))).length > 0 ? 'queue' : 'register'));
+  // One store per visit: the server sent fresh data, and the page's numbers follow it in the navigation.
+  const [store] = useState(() => new MealsStore(initial));
+  const app = useAppStore();
+  useEffect(() => app.openMeals(store), [app, store]);
+  const { queue, dismissed, meals, contacts, settings, defaultHost, recordSaved, recordsSaved, recordsRemoved, contactUpserted, settingsChanged } = store;
+  const [tab, setTab] = useState<TabKey>(() => (store.queue.length > 0 ? 'queue' : 'register'));
 
   // The open tab says which entry has unsaved changes in its form. Switching
   // tabs takes that form away, so it asks first, like everything else that does.
@@ -50,51 +49,6 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
       router.push(href);
     });
   };
-
-  // `records` also holds the receipts marked "Keine Bewirtung"; they are listed
-  // on their own and never reach the queue, the register or the year picker.
-  const mealRecords = useMemo(() => records.filter((r) => !isDismissedMeal(r)), [records]);
-  const dismissed = useMemo(() => records.filter(isDismissedMeal), [records]);
-  const queue = useMemo(() => incompleteQueue(mealRecords), [mealRecords]);
-  // Reclassifying a meal changes the number in the navigation at once.
-  useReportNavCounts({ meals: queue.length });
-
-  const onRecordSaved = useCallback((record: MealRecord) => {
-    setRecords((list) => list.map((r) => (r.rowId === record.rowId ? record : r)));
-    if (record.host.trim()) setDefaultHost(record.host.trim());
-  }, []);
-
-  const onRecordsSaved = useCallback((saved: MealRecord[]) => {
-    const byId = new Map(saved.map((r) => [r.rowId, r]));
-    setRecords((list) => list.map((r) => byId.get(r.rowId) ?? r));
-  }, []);
-
-  const onRecordsRemoved = useCallback((rowIds: string[]) => {
-    const gone = new Set(rowIds);
-    setRecords((list) => list.filter((r) => !gone.has(r.rowId)));
-  }, []);
-
-  const onContactUpserted = useCallback((contact: Contact) => {
-    setContacts((list) => {
-      const next = list.some((c) => c.id === contact.id)
-        ? list.map((c) => (c.id === contact.id ? contact : c))
-        : [...list, contact];
-      return next.sort((a, b) => a.name.localeCompare(b.name, 'de'));
-    });
-    // A corrected contact changes how it is printed on existing meals.
-    setRecords((list) =>
-      list.map((r) =>
-        r.guests.some((g) => g.contactId === contact.id)
-          ? {
-              ...r,
-              guests: r.guests.map((g) =>
-                g.contactId === contact.id ? { ...g, name: contact.name, company: contact.companyOrRole } : g,
-              ),
-            }
-          : r,
-      ),
-    );
-  }, []);
 
   const tabs: Array<{ key: TabKey; label: string; count?: number }> = [
     { key: 'queue', label: 'Unvollständig', count: queue.length },
@@ -175,25 +129,25 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
               contacts={contacts}
               settings={settings}
               defaultHost={defaultHost}
-              onRecordSaved={onRecordSaved}
-              onRecordsSaved={onRecordsSaved}
-              onRecordsRemoved={onRecordsRemoved}
-              onContactCreated={onContactUpserted}
+              onRecordSaved={recordSaved}
+              onRecordsSaved={recordsSaved}
+              onRecordsRemoved={recordsRemoved}
+              onContactCreated={contactUpserted}
               onOpenRegister={() => openTab('register')}
               onUnsavedChange={setUnsavedSubject}
             />
           )}
           {tab === 'register' && (
             <RegisterTab
-              records={mealRecords}
+              records={meals}
               contacts={contacts}
               settings={settings}
               defaultHost={defaultHost}
-              onSettingsChanged={setSettings}
-              onRecordSaved={onRecordSaved}
-              onContactCreated={onContactUpserted}
-              onRecordsSaved={onRecordsSaved}
-              onRecordsRemoved={onRecordsRemoved}
+              onSettingsChanged={settingsChanged}
+              onRecordSaved={recordSaved}
+              onContactCreated={contactUpserted}
+              onRecordsSaved={recordsSaved}
+              onRecordsRemoved={recordsRemoved}
               onOpenQueue={() => openTab('queue')}
               onUnsavedChange={setUnsavedSubject}
             />
@@ -201,8 +155,10 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
         </div>
 
         {discardDialog}
-        <DismissedMeals records={dismissed} onRecordsSaved={onRecordsSaved} onRecordsRemoved={onRecordsRemoved} />
+        <DismissedMeals records={dismissed} onRecordsSaved={recordsSaved} onRecordsRemoved={recordsRemoved} />
       </div>
     </main>
   );
-}
+});
+
+export default MealsClient;

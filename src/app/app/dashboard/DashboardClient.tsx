@@ -24,7 +24,7 @@ import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReadi
 import DashboardPhoneActions from './DashboardPhoneActions';
 import ReceiptPhoneList from './ReceiptPhoneList';
 import { AiIcon, ExportIcon } from './dashboard-icons';
-import { useReportNavCounts } from '@/components/nav/nav-counts';
+import { useReportNavCounts } from '@/stores/provider';
 import { usePhone } from '@/lib/use-phone';
 import BulkEditBar from './BulkEditBar';
 import GroupBar from './GroupBar';

@@ -34,6 +34,8 @@
     "@marlinjai/storage-brain-sdk": "^0.9.0",
     "@prisma/client": "^6.19.2",
     "fflate": "^0.8.2",
+    "mobx": "^6.13.7",
+    "mobx-react-lite": "^4.1.0",
     "next": "^16.4.3",
     "openai": "^6.25.0",
     "pdf-lib": "^1.17.1",

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AppSidebar from '../AppSidebar';
-import { NavCountsProvider, useReportNavCounts } from '../nav-counts';
+import { AppStoreProvider, useReportNavCounts } from '@/stores/provider';
 
 const nav = vi.hoisted(() => ({ pathname: '/app/finance', getNavCounts: vi.fn() }));
 vi.mock('next/navigation', () => ({ usePathname: () => nav.pathname }));
@@ -20,10 +20,10 @@ function Reporter({ review, meals }: { review: number; meals: number }) {
 
 function sidebar(extra?: React.ReactNode, initialFolded = false) {
   return render(
-    <NavCountsProvider>
+    <AppStoreProvider>
       <AppSidebar session={session} logoutUrl="/logout" initialFolded={initialFolded} />
       {extra}
-    </NavCountsProvider>,
+    </AppStoreProvider>,
   );
 }
 
@@ -44,10 +44,10 @@ describe('a number a page holds', () => {
     let answer: (v: unknown) => void = () => {};
     nav.getNavCounts.mockReset().mockReturnValue(new Promise((resolve) => (answer = resolve)));
     const shown = (meals: number) => (
-      <NavCountsProvider>
+      <AppStoreProvider>
         <AppSidebar session={session} logoutUrl="/logout" initialFolded={false} />
         <Held meals={meals} />
-      </NavCountsProvider>
+      </AppStoreProvider>
     );
     const { rerender } = render(shown(14));
     await screen.findByText('14');
@@ -91,9 +91,9 @@ describe('the sidebar', () => {
     nav.pathname = '/app/meals';
     nav.getNavCounts.mockResolvedValue({ ok: false });
     view.rerender(
-      <NavCountsProvider>
+      <AppStoreProvider>
         <AppSidebar session={session} logoutUrl="/logout" initialFolded={false} />
-      </NavCountsProvider>,
+      </AppStoreProvider>,
     );
     await waitFor(() => expect(nav.getNavCounts).toHaveBeenCalledTimes(2));
     expect(screen.getByText('14')).toBeTruthy();

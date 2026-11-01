@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import Checkbox from '@/components/ui/Checkbox';
 import type { Contact } from '@/lib/contacts/store';
 import { receiptCount } from '@/lib/meals/batch';
@@ -54,6 +54,87 @@ function TrashIcon() {
     </svg>
   );
 }
+
+interface QueueRowActions {
+  toggle: (rowId: string) => void;
+  open: (rowId: string) => void;
+  notMeal: (record: MealRecord) => void;
+  remove: (record: MealRecord) => void;
+}
+
+/**
+ * One entry of the queue. Redraws only when its own record or state changes, so
+ * reclassifying one meal leaves the other rows alone: the actions come through a
+ * ref that always holds the latest ones, and `missing` follows from the record.
+ */
+const QueueRow = memo(
+  function QueueRow({ record, missing, isOpen, isChecked, busy, actions }: { record: MealRecord; missing: IncompleteEntry['missing']; isOpen: boolean; isChecked: boolean; busy: boolean; actions: RefObject<QueueRowActions | null> }) {
+    const name = entryLabel(record);
+    const spoken = `${name}, ${formatDay(record.date)}`;
+    return (
+      <li className="ui-row" data-open={isOpen} data-checked={isChecked}>
+        <Checkbox
+          className="ui-row-above row-span-2 self-center"
+          checked={isChecked}
+          disabled={busy}
+          onChange={() => actions.current?.toggle(record.rowId)}
+          label={`${spoken} auswählen`}
+          hideLabel
+        />
+        <button
+          type="button"
+          aria-current={isOpen ? 'true' : undefined}
+          onClick={() => {
+            if (!isOpen) actions.current?.open(record.rowId);
+          }}
+          className="ui-row-open flex min-w-0 items-baseline justify-between gap-3 pb-0.5 pr-3 pt-2.5"
+        >
+          <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+            {name}
+          </span>
+          <span className="shrink-0 text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
+            {entryAmount(record)}
+          </span>
+        </button>
+        <div className="flex min-w-0 items-center justify-between gap-2 pb-1.5 pr-1.5">
+          <span className="min-w-0 truncate text-xs" style={{ color: 'var(--muted)' }} title={`fehlt: ${missingList(missing)}`}>
+            {formatDay(record.date)} ·{' '}
+            {missing.length > 2 ? (
+              <>
+                {missing.length} fehlen
+                <span className="sr-only">: {missingList(missing)}</span>
+              </>
+            ) : (
+              missingSummary(missing)
+            )}
+          </span>
+          <span className="ui-row-above flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              className="ui-btn ui-btn-sm ui-btn-ghost px-2 text-xs"
+              disabled={busy}
+              aria-label={`Keine Bewirtung: ${spoken}`}
+              onClick={() => actions.current?.notMeal(record)}
+            >
+              Keine Bewirtung
+            </button>
+            <button
+              type="button"
+              className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-danger ui-btn-icon"
+              disabled={busy}
+              aria-label={`Löschen: ${spoken}`}
+              title="Löschen"
+              onClick={() => actions.current?.remove(record)}
+            >
+              <TrashIcon />
+            </button>
+          </span>
+        </div>
+      </li>
+    );
+  },
+  (a, b) => a.record === b.record && a.isOpen === b.isOpen && a.isChecked === b.isChecked && a.busy === b.busy,
+);
 
 /**
  * The work queue: every meal that would be a register entry but lacks facts,
@@ -113,6 +194,15 @@ export default function QueueTab({
     if (records.some((r) => r.rowId === openRowId)) afterDiscard(run);
     else run();
   };
+  const rowActions = useRef<QueueRowActions>(null);
+  useEffect(() => {
+    rowActions.current = {
+      toggle: (rowId) => setCheckedIds(toggleSelected(checked, rowId)),
+      open: (rowId) => afterDiscard(() => setOpenId(rowId)),
+      notMeal: (record) => afterDiscardIfOpen([record], () => actions.markNotMeal([record], { confirm: false })),
+      remove: (record) => afterDiscardIfOpen([record], () => actions.requestDelete([record])),
+    };
+  });
   useEffect(() => {
     onUnsavedChange?.(unsavedSubject);
   }, [unsavedSubject, onUnsavedChange]);
@@ -168,74 +258,9 @@ export default function QueueTab({
 
         <nav aria-label="Offene Bewirtungen">
           <ul className="ui-scroll max-h-[46svh] space-y-1.5 pr-1 lg:max-h-[calc(100svh-9rem)]">
-            {queue.map(({ record, missing }) => {
-              const isOpen = opened?.record.rowId === record.rowId;
-              const isChecked = checked.has(record.rowId);
-              const name = entryLabel(record);
-              const spoken = `${name}, ${formatDay(record.date)}`;
-              return (
-                <li key={record.rowId} className="ui-row" data-open={isOpen} data-checked={isChecked}>
-                  <Checkbox
-                    className="ui-row-above row-span-2 self-center"
-                    checked={isChecked}
-                    disabled={busy}
-                    onChange={() => setCheckedIds(toggleSelected(checked, record.rowId))}
-                    label={`${spoken} auswählen`}
-                    hideLabel
-                  />
-                  <button
-                    type="button"
-                    aria-current={isOpen ? 'true' : undefined}
-                    onClick={() => {
-                      if (isOpen) return;
-                      afterDiscard(() => setOpenId(record.rowId));
-                    }}
-                    className="ui-row-open flex min-w-0 items-baseline justify-between gap-3 pb-0.5 pr-3 pt-2.5"
-                  >
-                    <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
-                      {name}
-                    </span>
-                    <span className="shrink-0 text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
-                      {entryAmount(record)}
-                    </span>
-                  </button>
-                  <div className="flex min-w-0 items-center justify-between gap-2 pb-1.5 pr-1.5">
-                    <span className="min-w-0 truncate text-xs" style={{ color: 'var(--muted)' }} title={`fehlt: ${missingList(missing)}`}>
-                      {formatDay(record.date)} ·{' '}
-                      {missing.length > 2 ? (
-                        <>
-                          {missing.length} fehlen
-                          <span className="sr-only">: {missingList(missing)}</span>
-                        </>
-                      ) : (
-                        missingSummary(missing)
-                      )}
-                    </span>
-                    <span className="ui-row-above flex shrink-0 items-center gap-0.5">
-                      <button
-                        type="button"
-                        className="ui-btn ui-btn-sm ui-btn-ghost px-2 text-xs"
-                        disabled={busy}
-                        aria-label={`Keine Bewirtung: ${spoken}`}
-                        onClick={() => afterDiscardIfOpen([record], () => actions.markNotMeal([record], { confirm: false }))}
-                      >
-                        Keine Bewirtung
-                      </button>
-                      <button
-                        type="button"
-                        className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-danger ui-btn-icon"
-                        disabled={busy}
-                        aria-label={`Löschen: ${spoken}`}
-                        title="Löschen"
-                        onClick={() => afterDiscardIfOpen([record], () => actions.requestDelete([record]))}
-                      >
-                        <TrashIcon />
-                      </button>
-                    </span>
-                  </div>
-                </li>
-              );
-            })}
+            {queue.map(({ record, missing }) => (
+              <QueueRow key={record.rowId} record={record} missing={missing} isOpen={opened?.record.rowId === record.rowId} isChecked={checked.has(record.rowId)} busy={busy} actions={rowActions} />
+            ))}
           </ul>
         </nav>
 

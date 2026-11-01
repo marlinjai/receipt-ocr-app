@@ -1,14 +1,15 @@
 'use client';
 
+import { observer } from 'mobx-react-lite';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import type { AppSession } from '@marlinjai/auth-brain-nextjs';
+import { useAppStore } from '@/stores/provider';
 import BottomSheet from '@/components/ui/BottomSheet';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { SignOutLink } from '@/app/app/spending/PushSession';
 import { BellIcon, MoreIcon, UploadIcon } from '@/app/app/dashboard/dashboard-icons';
-import { useNavCounts } from './nav-counts';
 import { isCurrentPlace, NOTIFICATION_SETTINGS_HREF, PLACES, TOOLS, type Place } from './nav-places';
 
 /**
@@ -23,9 +24,9 @@ import { isCurrentPlace, NOTIFICATION_SETTINGS_HREF, PLACES, TOOLS, type Place }
 
 const BAR_HREFS = ['/app/dashboard', '/app/spending', '/app/finance'];
 
-export default function PhoneNav({ session, logoutUrl }: { session: AppSession; logoutUrl: string }) {
+const PhoneNav = observer(function PhoneNav({ session, logoutUrl }: { session: AppSession; logoutUrl: string }) {
   const pathname = usePathname();
-  const counts = useNavCounts();
+  const { counts } = useAppStore();
   const [sheetOpen, setSheetOpen] = useState(false);
 
   // The browser's way back changes the page too: the sheet goes with the old one.
@@ -132,4 +133,6 @@ export default function PhoneNav({ session, logoutUrl }: { session: AppSession; 
       </BottomSheet>
     </>
   );
-}
+});
+
+export default PhoneNav;

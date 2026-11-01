@@ -191,6 +191,13 @@ describe('backtrack and revise', () => {
     expect(await stateOf(ctx.workspaceId, ids.get('Xyz Beratung') as string)).toBe('missing');
   });
 
+  it('closing a backlog takes the app\'s own rating: a payment rated private is not called not found', async () => {
+    const { ctx } = await setup([line('2026-04-11', 'Xyz Beratung', 'Projekt', '-500')]);
+    const key = (await loadPayments(db, ctx.workspaceId)).payments[0].counterpartyKey;
+    await db.taxCounterpartyVerdict.create({ data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, counterpartyKey: key, label: 'Xyz Beratung', treatment: 'private', source: 'model', fingerprint: 'test', reason: 'test', confidence: 'low' } });
+    expect(await closeBacklog(db, ctx, '2026-05-01')).toEqual({ linked: 0, privately: 1, notFound: 0 });
+  });
+
   it('closing a backlog pairs a receipt the bank names differently, by amount and day', async () => {
     const { ws, ctx, ids } = await setup([line('2026-04-11', 'Klaudi Abo', 'Monat', '-180.00')]);
     await ws.addReceipt({ Name: 'Rechnung', Vendor: 'Zyx Handel', Gross: 180, Date: '2026-04-11', Currency: 'EUR', 'FX Rate': 1 });

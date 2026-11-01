@@ -37,7 +37,10 @@
           "name": "files",
           "accept": [
             "image/*",
-            "application/pdf"
+            "application/pdf",
+            "application/xml",
+            "text/xml",
+            ".xml"
           ]
         }
       ]

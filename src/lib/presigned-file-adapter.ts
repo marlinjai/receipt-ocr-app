@@ -1,6 +1,7 @@
 'use client';
 
 import type { FileStorageAdapter, UploadedFile } from '@marlinjai/data-table-core';
+import { acceptedKindsLabel } from './receipt-file-accept';
 
 /**
  * Client-side FileStorageAdapter for the data-table: uploads go through the
@@ -12,12 +13,15 @@ import type { FileStorageAdapter, UploadedFile } from '@marlinjai/data-table-cor
  * separately) is the meaningful delete; the object itself is never destroyed.
  */
 
-export const ACCEPTED_RECEIPT_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
+/** The one list of file types a receipt takes by hand: PDF, PNG, JPEG, and an e-invoice as pure XML (XRechnung). */
+export const ACCEPTED_RECEIPT_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'application/xml', 'text/xml'];
 export const MAX_RECEIPT_FILE_BYTES = 20 * 1024 * 1024;
 
 /** Returns a human-readable rejection reason, or null when the file is fine. */
 export function validateReceiptFile(file: File): string | null {
-  if (!ACCEPTED_RECEIPT_TYPES.includes(file.type)) return 'Only PDF, PNG, or JPEG files are supported.';
+  // A browser may give an XML file no type at all: its name says what it is.
+  const xmlByName = file.type === '' && /\.xml$/i.test(file.name.trim());
+  if (!ACCEPTED_RECEIPT_TYPES.includes(file.type) && !xmlByName) return `Only ${acceptedKindsLabel(ACCEPTED_RECEIPT_TYPES)} files are supported.`;
   if (file.size > MAX_RECEIPT_FILE_BYTES) return 'File is larger than 20 MB.';
   return null;
 }

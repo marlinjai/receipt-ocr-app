@@ -1,8 +1,8 @@
 ---
 title: One client state for the receipts app
-summary: Every page keeps its own copy of the server's data in component state, so a change on one page cannot reach anything else on screen, and numbers derived from it go stale. This plan proposes MobX stores per domain, with derived numbers as computed values and observers that redraw only what changed, moved over one page at a time. The owner decides whether it starts.
+summary: Every page keeps its own copy of the server's data in component state, so a change on one page cannot reach anything else on screen, and numbers derived from it go stale. This plan proposes MobX stores per domain, with derived numbers as computed values and observers that redraw only what changed, moved over one page at a time. The owner approved it on 2026-11-01 and asked for it to run autonomously.
 type: plan
-status: draft
+status: in-progress
 tags: [architecture, state, performance, frontend]
 projects: [receipt-ocr-app]
 date: 2026-11-01
@@ -41,8 +41,8 @@ count and a badge are all functions of the same records.
    can stay on screen. The server still loads the first paint; the store takes that in once.
 2. **Derived numbers are `computed`, never stored.** The navigation reads `meals.incomplete.length`
    and follows by itself. `useReportNavCounts` goes away.
-3. **Rows are `observer` components,** so reclassifying one meal redraws that row and its badge,
-   not the page.
+3. **Rows redraw by record:** `memo` on an immutable record, or `observer` where a row reads the
+   store itself, so reclassifying one meal redraws that row and its badge, not the page.
 4. **Writes change the store first and confirm with the server,** returning only what changed. A
    refusal rolls that record back and says so, and a late answer never overwrites a newer change.
 5. **Server actions stay the only way to write.** Permissions and company scoping stay on the server.
@@ -68,3 +68,22 @@ count and a badge are all functions of the same records.
 TanStack Query as a server cache with shared keys: less to learn and strong at refetching, but
 derived numbers stay manual selectors, and a change redraws by query, not by record. It solves
 staleness, not the redraw cost.
+
+## Reality
+
+### Slice 1, meals and the navigation (2026-11-01)
+
+- `src/stores`: `AppStore`, one per company under the layout (the layout keys the provider by
+  company), and `MealsStore`, one per visit of the page, created from what the server sent. The
+  page opens its store on the `AppStore` and closes it again, so no global object exists and a
+  server render reads a plain store.
+- The navigation's numbers are `AppStore.counts`, a structural `computed`: the same numbers mean
+  no redraw. While the meals page is open its number is `queue.length`, so a late server answer
+  cannot overwrite it; on closing, the last number stays until the server's next answer.
+- `MealsStore` holds records by id in a shallow map, replaced whole, never changed in place. That
+  is what lets a row tell by identity whether it must redraw (`QueueRow`, a test proves the other
+  rows stay untouched).
+- `useReportNavCounts` stays for the dashboard until its slice, and goes then.
+- `tab` and "unsaved form" stay component state: they belong to one view on screen, not to the
+  domain. Rule for the following slices: data from the server goes into a store, what only one
+  view cares about stays in that view.

@@ -8,7 +8,7 @@ import { PushRenewal, SignOutLink } from './spending/PushSession';
 import { sessionWorkspaceId } from '@/lib/auth-workspace';
 import AppSidebar from '@/components/nav/AppSidebar';
 import PhoneNav from '@/components/nav/PhoneNav';
-import { NavCountsProvider } from '@/components/nav/nav-counts';
+import { AppStoreProvider } from '@/stores/provider';
 import { NAV_FOLD_COOKIE, NAV_FOLDED } from '@/components/nav/nav-fold';
 import { measurePage, timed } from '@/lib/timing';
 import AppLoading from './loading';
@@ -45,7 +45,7 @@ async function renderShell(children: React.ReactNode) {
 
   return (
     // The counts belong to one company: another company starts with its own.
-    <NavCountsProvider key={sessionWorkspaceId(session)}>
+    <AppStoreProvider key={sessionWorkspaceId(session)}>
     <div className="sm:flex">
       <AppSidebar session={session} logoutUrl={auth.logoutUrl()} initialFolded={folded} />
       <div className="min-w-0 flex-1">
@@ -62,6 +62,6 @@ async function renderShell(children: React.ReactNode) {
       <PhoneNav session={session} logoutUrl={auth.logoutUrl()} />
       </div>
     </div>
-    </NavCountsProvider>
+    </AppStoreProvider>
   );
 }

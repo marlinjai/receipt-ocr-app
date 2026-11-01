@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PhoneNav from '../PhoneNav';
-import { NavCountsProvider } from '../nav-counts';
+import { AppStoreProvider } from '@/stores/provider';
 
 const nav = vi.hoisted(() => ({ pathname: '/app/finance', getNavCounts: vi.fn() }));
 vi.mock('next/navigation', () => ({ usePathname: () => nav.pathname }));
@@ -14,9 +14,9 @@ vi.mock('@/app/app/spending/PushSession', () => ({ SignOutLink: ({ children, hre
 const session = { email: 'owner@example.test' } as never;
 const phoneNav = () =>
   render(
-    <NavCountsProvider>
+    <AppStoreProvider>
       <PhoneNav session={session} logoutUrl="/logout" />
-    </NavCountsProvider>,
+    </AppStoreProvider>,
   );
 const bar = () => within(screen.getByRole('navigation', { name: 'Hauptbereiche' }));
 

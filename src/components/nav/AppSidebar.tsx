@@ -1,13 +1,14 @@
 'use client';
 
+import { observer } from 'mobx-react-lite';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import type { AppSession } from '@marlinjai/auth-brain-nextjs';
+import { useAppStore } from '@/stores/provider';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { SignOutLink } from '@/app/app/spending/PushSession';
 import { FoldIcon, UploadIcon } from '@/app/app/dashboard/dashboard-icons';
-import { useNavCounts } from './nav-counts';
 import { NAV_FOLD_COOKIE, NAV_FOLDED } from './nav-fold';
 import { isCurrentPlace, PLACES, TOOLS, type Place } from './nav-places';
 
@@ -20,9 +21,9 @@ import { isCurrentPlace, PLACES, TOOLS, type Place } from './nav-places';
  * Plan: docs/plans/2026-10-30-app-sidebar.md.
  */
 
-export default function AppSidebar({ session, logoutUrl, initialFolded }: { session: AppSession; logoutUrl: string; initialFolded: boolean }) {
+const AppSidebar = observer(function AppSidebar({ session, logoutUrl, initialFolded }: { session: AppSession; logoutUrl: string; initialFolded: boolean }) {
   const pathname = usePathname();
-  const counts = useNavCounts();
+  const { counts } = useAppStore();
   const [folded, setFolded] = useState(initialFolded);
 
   const toggle = () => {
@@ -76,4 +77,6 @@ export default function AppSidebar({ session, logoutUrl, initialFolded }: { sess
       </div>
     </aside>
   );
-}
+});
+
+export default AppSidebar;

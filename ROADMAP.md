@@ -381,8 +381,8 @@
   `receipts-before-workspace-move-20261010T122443Z.dmp` on the server as the way back.
   (2026-10-10)
 - [ ] One client state for the app (asked by the owner on 2026-11-01): stores per domain, derived
-  numbers as computed values, redraws per record, moved over one page at a time. Waits for his
-  decision to start. Plan: [docs/plans/2026-11-01-client-state.md](docs/plans/2026-11-01-client-state.md). (2026-11-01)
+  numbers as computed values, redraws per record, moved over one page at a time. Approved and
+  running: meals and the navigation first. Plan: [docs/plans/2026-11-01-client-state.md](docs/plans/2026-11-01-client-state.md). (2026-11-01)
 - [ ] The app on a phone: no page scrolls sideways at 360 or 390 pixels, the receipts show as a
   card list that opens the detail panel, the dashboard's actions fold into "Mehr", tab rows
   scroll inside themselves, every control is a 44 pixel touch target, the wide layout unchanged.

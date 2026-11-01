@@ -675,7 +675,9 @@ export default function ReceiptChecks({
   const [settingsShown, setSettingsShown] = useState(openSettings);
   const years = useMemo(() => checkYears(loop.open), [loop.open]);
   const proposedCount = useMemo(() => loop.open.filter((c) => c.state.state === 'proposed').length, [loop.open]);
-  const { shown, matching } = useMemo(() => chooseChecks(loop.open, { year: yearChoice, onlyProposed, limit }, focusPaymentId), [loop.open, yearChoice, onlyProposed, limit, focusPaymentId]);
+  // A chosen year that no longer has open payments counts as "all years", so the list never filters on an option the select no longer offers.
+  const activeYear = yearChoice !== null && years.some((y) => String(y.year) === yearChoice) ? yearChoice : null;
+  const { shown, matching } = useMemo(() => chooseChecks(loop.open, { year: activeYear, onlyProposed, limit }, focusPaymentId), [loop.open, activeYear, onlyProposed, limit, focusPaymentId]);
 
   // The address asked for the settings: open them, also when the panel is on screen already.
   const [settingsAsked, setSettingsAsked] = useState(false);
@@ -935,7 +937,7 @@ export default function ReceiptChecks({
               id={`${id}-check-year`}
               className="ui-input"
               style={{ width: 'auto' }}
-              value={yearChoice ?? ''}
+              value={activeYear ?? ''}
               onChange={(e) => {
                 setYearChoice(e.target.value || null);
                 setLimit(CHECKS_PAGE);
@@ -948,7 +950,7 @@ export default function ReceiptChecks({
                 </option>
               ))}
             </select>
-            {proposedCount > 0 && (
+            {(proposedCount > 0 || onlyProposed) && (
               <button
                 type="button"
                 className="ui-btn ui-btn-sm"

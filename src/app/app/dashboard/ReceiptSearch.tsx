@@ -44,8 +44,8 @@ export default function ReceiptSearch({
 
   return (
     <div
-      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg max-sm:min-w-0 max-sm:flex-1 max-sm:py-0"
-      style={{ background: 'var(--surface)', border: '1px solid var(--border)', minWidth: '16rem' }}
+      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg min-w-[16rem] max-sm:min-w-0 max-sm:flex-1 max-sm:py-0"
+      style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden style={{ color: 'var(--dt-text-secondary)' }}>
         <circle cx="11" cy="11" r="7" />

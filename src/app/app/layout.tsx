@@ -1,5 +1,4 @@
 import { Suspense } from 'react';
-import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { auth } from '@/lib/auth';
 import { initializeReceiptsTable } from './actions';
@@ -8,6 +7,7 @@ import BrowserRulesImport from '@/components/BrowserRulesImport';
 import { PushRenewal, SignOutLink } from './spending/PushSession';
 import { sessionWorkspaceId } from '@/lib/auth-workspace';
 import AppSidebar from '@/components/nav/AppSidebar';
+import PhoneNav from '@/components/nav/PhoneNav';
 import { NavCountsProvider } from '@/components/nav/nav-counts';
 import { NAV_FOLD_COOKIE, NAV_FOLDED } from '@/components/nav/nav-fold';
 import { measurePage, timed } from '@/lib/timing';
@@ -50,39 +50,16 @@ async function renderShell(children: React.ReactNode) {
       <AppSidebar session={session} logoutUrl={auth.logoutUrl()} initialFolded={folded} />
       <div className="min-w-0 flex-1">
       {/*
-        The sidebar is the wide layout's navigation; this header is the phone's.
-        It wraps instead of pushing the page sideways: the first row holds the
-        title and the links, the company switcher a row of its own below. The
-        links are 44px tall, so a thumb finds them.
+        The sidebar is the wide layout's navigation; the phone's is the bar along the bottom (`PhoneNav`). Up here the
+        phone keeps only whose books are on screen, so the page starts in the first thumb's reach.
       */}
-      <header
-        className="relative z-20 flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3 sm:hidden"
-        style={{ borderColor: 'var(--border, rgba(128,128,128,0.2))' }}
-      >
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-            Receipts
-          </span>
-        </div>
-        <Link
-          href="/app/spending"
-          className="ml-auto inline-flex min-h-11 items-center whitespace-nowrap px-1 text-xs transition-colors hover:underline"
-          style={{ color: 'var(--muted)' }}
-        >
-          Ausgaben
-        </Link>
-        <div className="order-last w-full min-w-0">
-          <WorkspaceSwitcher session={session} />
-        </div>
-                <span className="whitespace-nowrap [&>a]:inline-flex [&>a]:min-h-11 [&>a]:items-center [&>a]:px-1">
-          <SignOutLink href={auth.logoutUrl()} title={session.email}>
-            Abmelden
-          </SignOutLink>
-        </span>
+      <header className="app-phone-header relative z-20 border-b px-4 py-2 sm:hidden" style={{ borderColor: 'var(--border, rgba(128,128,128,0.2))' }}>
+        <WorkspaceSwitcher session={session} hideLabel />
       </header>
       <BrowserRulesImport />
       <PushRenewal />
       {children}
+      <PhoneNav session={session} logoutUrl={auth.logoutUrl()} />
       </div>
     </div>
     </NavCountsProvider>

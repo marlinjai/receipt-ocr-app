@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useRef, useState, useTransition } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { formatDay } from '@/lib/meals/messages';
 import { receiptHref } from '@/lib/receipt-link';
@@ -9,6 +9,7 @@ import { createBrowserDeps, type SaveReceipt } from '@/lib/upload/browser-deps';
 import { processReceipt } from '../actions';
 import { switchWorkspace } from '../workspace-actions';
 import { takeOverMail, takeOverMessage } from './take-over-mail';
+import { CHECKS_PAGE, checkYears, chooseChecks } from './open-checks';
 import { browserPushEnvironment, currentSubscription, pushSwitchMessage, switchPushOff, switchPushOn, type PushEnvironment } from './push-device';
 import type { PaymentCheck } from '@/lib/spending/loop-service';
 import type { ChecksRun } from '@/lib/spending/checks';
@@ -41,6 +42,15 @@ import type { ReceiptChoice } from '@/lib/spending/loop';
  * receipt exists" answers, the in-app notifications, and how the owner wants
  * to be told.
  */
+
+/** The notification setting in a few words, on the closed section: what reaches the owner, without opening it. */
+export function settingsSummary(channel: ChannelSetting, pushDevices: number, hasEmail: boolean): string {
+  if (channel === 'in_app') return 'nur hier in der App';
+  const mail = hasEmail ? 'E-Mail eingetragen' : 'keine E-Mail-Adresse';
+  if (channel === 'email') return mail;
+  const push = pushDevices === 0 ? 'Push aus' : pushDevices === 1 ? 'Push auf 1 Gerät' : `Push auf ${pushDevices} Geräten`;
+  return `${push}, ${mail}`;
+}
 
 function euro(cents: number): string {
   return `${formatCents(cents)} €`;
@@ -630,11 +640,14 @@ export default function ReceiptChecks({
   initial,
   focusPaymentId,
   forCompany = null,
+  openSettings = false,
 }: {
   initial: ChecksView;
   focusPaymentId: string | null;
   /** The company a notification was about (`firma` in its link); the page offers to switch when another one is active. */
   forCompany?: string | null;
+  /** The address asks for the notification settings (the phone's "Mehr" sheet links here). */
+  openSettings?: boolean;
 }) {
   const id = useId();
   const [view, setView] = useState(initial);
@@ -656,6 +669,25 @@ export default function ReceiptChecks({
   const [channel, setChannel] = useState<ChannelSetting>(initial.settings.channel);
   const [email, setEmail] = useState(initial.settings.notifyEmail ?? '');
   const { loop } = view;
+  const [yearChoice, setYearChoice] = useState<string | null>(null);
+  const [onlyProposed, setOnlyProposed] = useState(false);
+  const [limit, setLimit] = useState(CHECKS_PAGE);
+  const [settingsShown, setSettingsShown] = useState(openSettings);
+  const years = useMemo(() => checkYears(loop.open), [loop.open]);
+  const proposedCount = useMemo(() => loop.open.filter((c) => c.state.state === 'proposed').length, [loop.open]);
+  // A chosen year that no longer has open payments counts as "all years", so the list never filters on an option the select no longer offers.
+  const activeYear = yearChoice !== null && years.some((y) => String(y.year) === yearChoice) ? yearChoice : null;
+  const { shown, matching } = useMemo(() => chooseChecks(loop.open, { year: activeYear, onlyProposed, limit }, focusPaymentId), [loop.open, activeYear, onlyProposed, limit, focusPaymentId]);
+
+  // The address asked for the settings: open them, also when the panel is on screen already.
+  const [settingsAsked, setSettingsAsked] = useState(false);
+  if (settingsAsked !== openSettings) {
+    setSettingsAsked(openSettings);
+    if (openSettings) setSettingsShown(true);
+  }
+  useEffect(() => {
+    if (openSettings) document.getElementById(`${id}-settings`)?.scrollIntoView({ block: 'start' });
+  }, [openSettings, id]);
 
   // A notification links here with the payment: bring it into view and give it the focus.
   useEffect(() => {
@@ -811,107 +843,14 @@ export default function ReceiptChecks({
         </p>
       )}
 
-      {view.canWrite && view.notifications.length > 0 && (
-        <div className="mt-3">
-          <h3 className="text-xs font-semibold" style={{ color: 'var(--foreground)' }}>
-            Benachrichtigungen
-          </h3>
-          <ul className="mt-1 divide-y">
-            {view.notifications.map((n) => (
-              <li key={n.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                <span>
-                  <Link href={n.path} className="underline">
-                    {n.title}
-                  </Link>
-                  <span className="ml-2 text-xs" style={{ color: n.failed ? 'var(--danger, var(--foreground))' : 'var(--muted)' }}>
-                    {n.channel === 'push' ? 'aufs Telefon geschickt' : n.channel === 'email' ? 'per E-Mail geschickt' : n.failed ? 'Zustellung fehlgeschlagen, nur hier' : 'nur hier'}
-                  </span>
-                </span>
-                {view.canWrite && (
-                  <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => run(`note:${n.id}`, () => readNotification(n.id), undefined, false)} aria-label={`${n.title} als gelesen markieren`}>
-                    Gelesen
-                  </button>
-                )}
-                {errorAt(`note:${n.id}`) && (
-                  <p className="ui-note ui-note-danger w-full" role="alert">
-                    {errorAt(`note:${n.id}`)}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {loop.open.length === 0 ? (
-        <p className="mt-3 text-sm" style={{ color: 'var(--muted)' }}>
-          Für jede Zahlung, die einen Beleg braucht, ist einer da oder gesagt, warum es keinen gibt.
-        </p>
-      ) : (
-        <ul className="mt-3 divide-y">
-          {loop.open.map((c) => (
-            <OpenCheck
-              key={c.paymentId}
-              check={c}
-              focused={c.paymentId === focusPaymentId}
-              canWrite={view.canWrite}
-              pending={pending}
-              error={errorAt(`check:${c.paymentId}`)}
-              dataVersion={dataVersion}
-              onConfirm={(rowId) => run(`check:${c.paymentId}`, () => confirmReceipt(c.paymentId, rowId), `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.`)}
-              onNoReceipt={(reason) => run(`check:${c.paymentId}`, () => sayNoReceipt(c.paymentId, reason))}
-              onTakeOver={(mailId) => takeOver(c.paymentId, mailId)}
-              onDismiss={(mailId) => run(`check:${c.paymentId}`, () => dismissMail(mailId))}
-              takingOver={takingOver}
-              onLinkByHand={(rowId) => run(`check:${c.paymentId}`, () => linkChosenReceipt(c.paymentId, rowId), `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.`)}
-              onSearchReceipts={(text) => findReceiptChoices(c.paymentId, text)}
-            />
-          ))}
-        </ul>
-      )}
-
-      {loop.answered.length > 0 && (
-        <details className="ui-disclosure mt-3">
-          <summary className="cursor-pointer text-xs font-semibold">Ohne Beleg beantwortet ({loop.answered.length})</summary>
-          <ul className="mt-2 divide-y">
-            {loop.answered.map((c) => (
-              <li key={c.paymentId} className="py-2 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>
-                    {c.counterparty || 'ohne Namen'}, {formatDay(c.bookingDay)}, {euro(c.cents)}
-                    {c.state.state === 'no_receipt' && (
-                      <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                        {c.state.reason}
-                        {c.state.movedAway && ' (die Zahlung steht jetzt in der Firma, an die die privaten Zahlungen dieses Kontos gehen)'}
-                      </span>
-                    )}
-                  </span>
-                  {c.state.state === 'no_receipt' && c.state.fromHolder ? (
-                    <span className="text-xs" style={{ color: 'var(--muted)' }}>
-                      beantwortet in der Firma, die das Konto führt; dort zurücknehmen
-                    </span>
-                  ) : (
-                    view.canWrite && (
-                      <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => run(`answered:${c.paymentId}`, () => takeBackNoReceipt(c.paymentId))} aria-label={`Antwort für ${c.counterparty || 'diese Zahlung'} zurücknehmen`}>
-                        Zurücknehmen
-                      </button>
-                    )
-                  )}
-                </div>
-                {errorAt(`answered:${c.paymentId}`) && (
-                  <p className="ui-note ui-note-danger mt-2" role="alert">
-                    {errorAt(`answered:${c.paymentId}`)}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-
       {view.canWrite && (
-        <details className="ui-disclosure mt-3">
-          <summary className="cursor-pointer text-xs font-semibold">Wie benachrichtigt wird</summary>
+        <details id={`${id}-settings`} className="ui-disclosure mt-3 scroll-mt-4" open={settingsShown} onToggle={(e) => setSettingsShown(e.currentTarget.open)}>
+          <summary className="cursor-pointer text-xs font-semibold">
+            Wie benachrichtigt wird
+            <span className="ml-2 font-normal" style={{ color: 'var(--muted)' }}>
+              {settingsSummary(view.settings.channel, view.pushDevices, view.settings.notifyEmail !== null)}
+            </span>
+          </summary>
           <form
             className="mt-2 space-y-2 text-sm"
             onSubmit={(e) => {
@@ -954,6 +893,149 @@ export default function ReceiptChecks({
           </form>
         </details>
       )}
+      {view.canWrite && view.notifications.length > 0 && (
+        <details className="ui-disclosure mt-3">
+          <summary className="cursor-pointer text-xs font-semibold">Benachrichtigungen ({view.notifications.length})</summary>
+          <ul className="mt-1 divide-y">
+            {view.notifications.map((n) => (
+              <li key={n.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                <span>
+                  <Link href={n.path} className="underline">
+                    {n.title}
+                  </Link>
+                  <span className="ml-2 text-xs" style={{ color: n.failed ? 'var(--danger, var(--foreground))' : 'var(--muted)' }}>
+                    {n.channel === 'push' ? 'aufs Telefon geschickt' : n.channel === 'email' ? 'per E-Mail geschickt' : n.failed ? 'Zustellung fehlgeschlagen, nur hier' : 'nur hier'}
+                  </span>
+                </span>
+                {view.canWrite && (
+                  <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => run(`note:${n.id}`, () => readNotification(n.id), undefined, false)} aria-label={`${n.title} als gelesen markieren`}>
+                    Gelesen
+                  </button>
+                )}
+                {errorAt(`note:${n.id}`) && (
+                  <p className="ui-note ui-note-danger w-full" role="alert">
+                    {errorAt(`note:${n.id}`)}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {loop.open.length === 0 ? (
+        <p className="mt-3 text-sm" style={{ color: 'var(--muted)' }}>
+          Für jede Zahlung, die einen Beleg braucht, ist einer da oder gesagt, warum es keinen gibt.
+        </p>
+      ) : (
+        <>
+          <div className="mt-3 flex flex-wrap items-center gap-2" role="group" aria-label="Offene Zahlungen eingrenzen">
+            <label className="sr-only" htmlFor={`${id}-check-year`}>
+              Jahr der Zahlung
+            </label>
+            <select
+              id={`${id}-check-year`}
+              className="ui-input"
+              style={{ width: 'auto' }}
+              value={activeYear ?? ''}
+              onChange={(e) => {
+                setYearChoice(e.target.value || null);
+                setLimit(CHECKS_PAGE);
+              }}
+            >
+              <option value="">Alle Jahre ({loop.open.length})</option>
+              {years.map((y) => (
+                <option key={y.year} value={y.year}>
+                  {y.year} ({y.count})
+                </option>
+              ))}
+            </select>
+            {(proposedCount > 0 || onlyProposed) && (
+              <button
+                type="button"
+                className="ui-btn ui-btn-sm"
+                aria-pressed={onlyProposed}
+                onClick={() => {
+                  setOnlyProposed((v) => !v);
+                  setLimit(CHECKS_PAGE);
+                }}
+              >
+                Mit Vorschlag ({proposedCount})
+              </button>
+            )}
+          </div>
+          {matching === 0 && (
+            <p className="mt-3 text-sm" style={{ color: 'var(--muted)' }}>
+              In dieser Auswahl ist keine Zahlung offen.
+            </p>
+          )}
+          <ul className="mt-3 divide-y">
+            {shown.map((c) => (
+              <OpenCheck
+              key={c.paymentId}
+              check={c}
+              focused={c.paymentId === focusPaymentId}
+              canWrite={view.canWrite}
+              pending={pending}
+              error={errorAt(`check:${c.paymentId}`)}
+              dataVersion={dataVersion}
+              onConfirm={(rowId) => run(`check:${c.paymentId}`, () => confirmReceipt(c.paymentId, rowId), `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.`)}
+              onNoReceipt={(reason) => run(`check:${c.paymentId}`, () => sayNoReceipt(c.paymentId, reason))}
+              onTakeOver={(mailId) => takeOver(c.paymentId, mailId)}
+              onDismiss={(mailId) => run(`check:${c.paymentId}`, () => dismissMail(mailId))}
+              takingOver={takingOver}
+              onLinkByHand={(rowId) => run(`check:${c.paymentId}`, () => linkChosenReceipt(c.paymentId, rowId), `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.`)}
+              onSearchReceipts={(text) => findReceiptChoices(c.paymentId, text)}
+              />
+            ))}
+          </ul>
+          {matching > limit && (
+            <button type="button" className="ui-btn mt-3 w-full" onClick={() => setLimit((n) => n + CHECKS_PAGE)}>
+              Weitere {Math.min(CHECKS_PAGE, matching - limit)} zeigen (noch {matching - limit})
+            </button>
+          )}
+        </>
+      )}
+
+      {loop.answered.length > 0 && (
+        <details className="ui-disclosure mt-3">
+          <summary className="cursor-pointer text-xs font-semibold">Ohne Beleg beantwortet ({loop.answered.length})</summary>
+          <ul className="mt-2 divide-y">
+            {loop.answered.map((c) => (
+              <li key={c.paymentId} className="py-2 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {c.counterparty || 'ohne Namen'}, {formatDay(c.bookingDay)}, {euro(c.cents)}
+                    {c.state.state === 'no_receipt' && (
+                      <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                        {c.state.reason}
+                        {c.state.movedAway && ' (die Zahlung steht jetzt in der Firma, an die die privaten Zahlungen dieses Kontos gehen)'}
+                      </span>
+                    )}
+                  </span>
+                  {c.state.state === 'no_receipt' && c.state.fromHolder ? (
+                    <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                      beantwortet in der Firma, die das Konto führt; dort zurücknehmen
+                    </span>
+                  ) : (
+                    view.canWrite && (
+                      <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => run(`answered:${c.paymentId}`, () => takeBackNoReceipt(c.paymentId))} aria-label={`Antwort für ${c.counterparty || 'diese Zahlung'} zurücknehmen`}>
+                        Zurücknehmen
+                      </button>
+                    )
+                  )}
+                </div>
+                {errorAt(`answered:${c.paymentId}`) && (
+                  <p className="ui-note ui-note-danger mt-2" role="alert">
+                    {errorAt(`answered:${c.paymentId}`)}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
     </section>
   );
 }

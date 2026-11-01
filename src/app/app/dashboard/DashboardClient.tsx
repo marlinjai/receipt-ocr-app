@@ -753,10 +753,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     >
       {/* Header */}
       <div className="px-4 pt-4 pb-2 sm:px-6 sm:pt-6" style={{ background: 'rgba(10, 10, 15, 0.4)' }}>
-        {/* On a phone the sidebar is not shown: this row and its menu stand in for it. */}
         <DashboardPhoneActions
           title="Belege"
-          openMealCount={openMealCount}
           onExport={() => exportCSV({ columns, rows: displayRows })}
           onToggleAi={() => setAiSidebarOpen((v) => !v)}
         />

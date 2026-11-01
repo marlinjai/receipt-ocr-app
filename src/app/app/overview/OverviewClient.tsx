@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import Link from 'next/link';
 import ScrollBox from '@/components/ui/ScrollBox';
 import { formatDay } from '@/lib/meals/messages';
@@ -199,6 +199,8 @@ export default function OverviewClient({
   const [pickMode, setPickMode] = useState<'exclude' | 'include'>('exclude');
   const [checked, setChecked] = useState<Set<string>>(() => new Set(invoices.map((i) => i.id)));
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersId = useId();
   const [vendorsExpanded, setVendorsExpanded] = useState(false);
   const [vendorQuery, setVendorQuery] = useState('');
 
@@ -368,11 +370,16 @@ export default function OverviewClient({
             {totals.firstDate ? ` · ${overviewDay(totals.firstDate)} bis ${overviewDay(totals.lastDate)}` : ''}
           </p>
         </div>
-        <Link href="/app/dashboard" className="shrink-0 text-sm underline max-sm:inline-flex max-sm:min-h-11 max-sm:items-center" style={{ color: 'var(--accent)' }}>← Belege</Link>
+        <Link href="/app/dashboard" className="shrink-0 text-sm underline max-sm:hidden" style={{ color: 'var(--accent)' }}>← Belege</Link>
       </div>
 
       {/* Controls: time frame, saved selections, filters, picker */}
-      <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+      {/* On a phone the numbers come first: the controls fill a whole screen, so they wait behind one button. */}
+      <button type="button" className="ui-btn mb-4 w-full justify-between sm:hidden" aria-expanded={filtersOpen} aria-controls={filtersId} onClick={() => setFiltersOpen((v) => !v)}>
+        <span>Zeitraum und Filter</span>
+        <span className="truncate text-xs font-normal" style={{ color: 'var(--muted)' }}>{filtersOpen ? 'Ausblenden' : preset === 'custom' ? 'Eigener Zeitraum' : PRESETS.find((p) => p.key === preset)?.label}</span>
+      </button>
+      <div id={filtersId} className={`rounded-xl p-4 mb-4 ${filtersOpen ? '' : 'max-sm:hidden'}`} style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
         <div className="flex flex-wrap items-center gap-2 mb-3">
           {PRESETS.map((p) => (
             <Chip key={p.key} active={preset === p.key} onClick={() => setPreset(p.key)}>{p.label}</Chip>

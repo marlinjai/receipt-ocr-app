@@ -2,53 +2,23 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState, type ComponentType } from 'react';
+import { useState } from 'react';
 import type { AppSession } from '@marlinjai/auth-brain-nextjs';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { SignOutLink } from '@/app/app/spending/PushSession';
-import {
-  ContactsIcon,
-  FinanceIcon,
-  FoldIcon,
-  MealsIcon,
-  OverviewIcon,
-  ReceiptsIcon,
-  RulesIcon,
-  SpendingIcon,
-  ToolsIcon,
-  UploadIcon,
-} from '@/app/app/dashboard/dashboard-icons';
+import { FoldIcon, UploadIcon } from '@/app/app/dashboard/dashboard-icons';
 import { useNavCounts } from './nav-counts';
 import { NAV_FOLD_COOKIE, NAV_FOLDED } from './nav-fold';
+import { isCurrentPlace, PLACES, TOOLS, type Place } from './nav-places';
 
 /**
  * The app's navigation on every page of the wide layout: the company, the one
  * main action, the places with what is open in them, and the tools apart from
  * them. Folds to icons by hand, and by itself where a table needs the width
- * (the stylesheet decides that, under `.app-nav`). The phone has its own header.
+ * (the stylesheet decides that, under `.app-nav`). The phone has `PhoneNav`.
  *
  * Plan: docs/plans/2026-10-30-app-sidebar.md.
  */
-
-interface Place {
-  href: string;
-  label: string;
-  Icon: ComponentType;
-  /** Which number stands on the place, and what it counts. */
-  count?: { of: 'review' | 'meals'; what: string };
-}
-
-const PLACES: Place[] = [
-  { href: '/app/overview', label: 'Überblick', Icon: OverviewIcon },
-  { href: '/app/dashboard', label: 'Belege', Icon: ReceiptsIcon, count: { of: 'review', what: 'zu prüfen' } },
-  { href: '/app/spending', label: 'Ausgaben', Icon: SpendingIcon },
-  { href: '/app/finance', label: 'Finanzen', Icon: FinanceIcon },
-  { href: '/app/meals', label: 'Bewirtung', Icon: MealsIcon, count: { of: 'meals', what: 'offen' } },
-  { href: '/app/contacts', label: 'Kontakte', Icon: ContactsIcon },
-  { href: '/app/rules', label: 'Regeln', Icon: RulesIcon },
-];
-
-const TOOLS: Place = { href: '/app/tools', label: 'Werkzeuge', Icon: ToolsIcon };
 
 export default function AppSidebar({ session, logoutUrl, initialFolded }: { session: AppSession; logoutUrl: string; initialFolded: boolean }) {
   const pathname = usePathname();
@@ -65,7 +35,7 @@ export default function AppSidebar({ session, logoutUrl, initialFolded }: { sess
     const number = count && counts ? counts[count.of] : 0;
     return (
       <li key={href}>
-        <Link href={href} className="app-nav-link" aria-current={pathname === href || pathname.startsWith(`${href}/`) ? 'page' : undefined} title={label}>
+        <Link href={href} className="app-nav-link" aria-current={isCurrentPlace(pathname, href) ? 'page' : undefined} title={label}>
           <Icon />
           <span className="app-nav-label">{label}</span>
           {count && number > 0 && (

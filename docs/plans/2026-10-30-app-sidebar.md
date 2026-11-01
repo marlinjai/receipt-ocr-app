@@ -28,7 +28,8 @@ top app bar and a slim icon rail on a page with mockups of all three.
 - **Counts sit on the places.** The dashboard reports what it already loaded; other pages ask once
   when they open, so a completed meal is counted on the way out. A failed answer keeps the last
   numbers: a count is help, not a condition.
-- **The phone keeps its header and "Mehr" menu,** with the same places.
+- **The phone keeps its header and "Mehr" menu,** with the same places. Replaced on 2026-11-01 by
+  a bottom bar: `docs/plans/2026-10-24-phone-layout.md`, section "The phone's navigation".
 
 ## Not changed
 

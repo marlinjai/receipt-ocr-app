@@ -6,7 +6,7 @@ import { NO_YEARS, hasYearFilter, selectYearRange, toggleUndated, toggleYear, ty
 const receiptsWord = (n: number) => (n === 1 ? '1 Beleg' : `${n} Belege`);
 
 // On a phone each chip is a 44px touch target; the wide layout keeps the compact chips.
-const chipClass = 'px-2.5 py-1 text-xs font-medium rounded-md transition-colors duration-150 tabular-nums max-sm:min-h-11 max-sm:px-3.5';
+const chipClass = 'px-2.5 py-1 text-xs font-medium rounded-md transition-colors duration-150 tabular-nums max-sm:min-h-11 max-sm:shrink-0 max-sm:px-3.5';
 
 function chipStyle(pressed: boolean) {
   return pressed
@@ -58,8 +58,9 @@ export default function YearFilter({
   if (chips.length === 0 && undated === 0) return null;
 
   return (
-    <div className="inline-flex flex-wrap items-center gap-1.5" role="group" aria-label="Nach Jahr filtern">
-      <span className="text-xs mr-0.5" style={{ color: 'var(--dt-text-secondary)' }}>
+    // On a phone one row that scrolls inside itself, so the years never push the receipts a screen down.
+    <div className="ui-scroll-bare inline-flex flex-wrap items-center gap-1.5 max-sm:w-full max-sm:flex-nowrap max-sm:overflow-x-auto" role="group" aria-label="Nach Jahr filtern">
+      <span className="text-xs mr-0.5 max-sm:sr-only" style={{ color: 'var(--dt-text-secondary)' }}>
         Jahr
       </span>
       <button
@@ -106,7 +107,7 @@ export default function YearFilter({
         </button>
       )}
       {active && (
-        <span className="text-xs ml-1" style={{ color: 'var(--dt-text-secondary)' }} role="status">
+        <span className="text-xs ml-1 max-sm:sr-only" style={{ color: 'var(--dt-text-secondary)' }} role="status">
           {shown} von {total} Belegen. Gruppen zeigen die Summe der Belege dieser Jahre.
         </span>
       )}

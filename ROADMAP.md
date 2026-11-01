@@ -383,8 +383,9 @@
 - [ ] The app on a phone: no page scrolls sideways at 360 or 390 pixels, the receipts show as a
   card list that opens the detail panel, the dashboard's actions fold into "Mehr", tab rows
   scroll inside themselves, every control is a 44 pixel touch target, the wide layout unchanged.
-  Built on `feat/mobile-rework`; last step: a look at the finance tabs with real payments on
-  the owner's phone. Plan: [docs/plans/2026-10-24-phone-layout.md](docs/plans/2026-10-24-phone-layout.md). (2026-10-24)
+  Since 2026-11-01 a bottom bar and a sheet with every place give the phone the sidebar's overview.
+  Last step: a look at the finance tabs with real payments on the owner's phone. Plan:
+  [docs/plans/2026-10-24-phone-layout.md](docs/plans/2026-10-24-phone-layout.md). (2026-11-01)
 - [ ] The filed return decides the counterparties (asked by the owner on 2026-10-25): receipts
   that match a payment count as evidence without a link, split receipts make "Teils, teils",
   payment-service prefixes no longer split one merchant, invoice links make income business, and

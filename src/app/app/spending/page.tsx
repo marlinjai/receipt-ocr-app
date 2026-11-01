@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic';
 
 export const metadata = { title: 'Ausgaben' };
 
-type SpendingParams = Promise<{ jahr?: string; monat?: string; pruefen?: string; firma?: string; ansicht?: string }>;
+type SpendingParams = Promise<{ jahr?: string; monat?: string; pruefen?: string; firma?: string; ansicht?: string; einstellung?: string }>;
 
 export default async function SpendingPage({ searchParams }: { searchParams: SpendingParams }) {
   return measurePage('/app/spending', () => renderSpending(searchParams));
@@ -24,7 +24,7 @@ export default async function SpendingPage({ searchParams }: { searchParams: Spe
 
 async function renderSpending(searchParams: SpendingParams) {
   await timed('auth.session', () => auth.requireSession('/app/spending'));
-  const { jahr, monat, pruefen, firma, ansicht } = await searchParams;
+  const { jahr, monat, pruefen, firma, ansicht, einstellung } = await searchParams;
   const tab = spendingTabOf(ansicht, pruefen);
   // The overview, the receipt checks and the budgets all start from the company's payments: read once for all
   // three (`withSharedReads`), the page only reads.
@@ -82,7 +82,7 @@ async function renderSpending(searchParams: SpendingParams) {
       checks={
         checks.ok ? (
           // Keyed by company: after a switch nothing of the other company (a summary, a notice, the settings form) stays.
-          <ReceiptChecks key={checks.value.workspaceId} initial={checks.value} focusPaymentId={pruefen ?? null} forCompany={firma ?? null} />
+          <ReceiptChecks key={checks.value.workspaceId} initial={checks.value} focusPaymentId={pruefen ?? null} forCompany={firma ?? null} openSettings={einstellung === 'benachrichtigung'} />
         ) : (
           <p key="checks" className="ui-note ui-note-danger mt-4">Die offenen Belege konnten nicht geladen werden. Bitte die Seite neu laden.</p>
         )

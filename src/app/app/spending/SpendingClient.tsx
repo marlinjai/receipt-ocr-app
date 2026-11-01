@@ -230,7 +230,7 @@ export default function SpendingClient({
           <h1 className="text-2xl font-bold" style={{ color: 'var(--foreground)' }}>
             Ausgaben
           </h1>
-          <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
+          <p className="mt-1 text-sm max-sm:hidden" style={{ color: 'var(--muted)' }}>
             Wohin das Geld geht, aus den Zahlungen dieses Arbeitsbereichs.
           </p>
         </div>
@@ -262,10 +262,10 @@ export default function SpendingClient({
               </option>
             ))}
           </select>
-          <Link href="/app/finance" className="ui-btn">
+          <Link href="/app/finance" className="ui-btn max-sm:hidden">
             Finanzen
           </Link>
-          <Link href="/app/dashboard" className="ui-btn">
+          <Link href="/app/dashboard" className="ui-btn max-sm:hidden">
             Belege
           </Link>
         </div>

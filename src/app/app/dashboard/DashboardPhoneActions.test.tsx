@@ -4,53 +4,20 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import DashboardPhoneActions from './DashboardPhoneActions';
 
-vi.mock('../actions', () => ({ recomputeFxRates: vi.fn() }));
-
 afterEach(cleanup);
 
-function actions(openMealCount = 3) {
-  const props = { title: 'Belege', openMealCount, onExport: vi.fn(), onToggleAi: vi.fn() };
-  render(<DashboardPhoneActions {...props} />);
-  return props;
-}
-
-describe('the dashboard actions on a phone', () => {
-  it('keeps the heading and the upload in reach and the rest behind "Mehr"', () => {
-    actions();
+describe('the dashboard on a phone', () => {
+  it('names the page and offers only what works on it: the places are in the bottom bar', async () => {
+    const onExport = vi.fn();
+    const onToggleAi = vi.fn();
+    const user = userEvent.setup();
+    render(<DashboardPhoneActions title="Belege" onExport={onExport} onToggleAi={onToggleAi} />);
     expect(screen.getByRole('heading', { name: 'Belege' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: '+ Hochladen' }).getAttribute('href')).toBe('/app');
-    expect(screen.queryByRole('link', { name: /Finanzen/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Mehr' }).getAttribute('aria-expanded')).toBe('false');
-  });
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
 
-  it('opens the menu with every place of the sidebar, and closes it again', async () => {
-    const user = userEvent.setup();
-    actions();
-    await user.click(screen.getByRole('button', { name: 'Mehr' }));
-    expect(screen.getByRole('button', { name: 'Mehr' }).getAttribute('aria-expanded')).toBe('true');
-    const hrefs = screen.getAllByRole('link').map((a) => a.getAttribute('href'));
-    expect(hrefs).toEqual(['/app', '/app/overview', '/app/finance', '/app/meals', '/app/contacts', '/app/rules', '/app/tools']);
-    await user.click(screen.getByRole('button', { name: 'Mehr' }));
-    expect(screen.queryByRole('navigation')).toBeNull();
-  });
-
-  it('counts the open business meals on their entry', async () => {
-    const user = userEvent.setup();
-    actions(4);
-    await user.click(screen.getByRole('button', { name: 'Mehr' }));
-    expect(screen.getByRole('link', { name: /Bewirtung/ }).textContent).toBe('Bewirtung4 offen');
-  });
-
-  it('exports and opens the assistant, closing the menu each time', async () => {
-    const user = userEvent.setup();
-    const props = actions();
-    await user.click(screen.getByRole('button', { name: 'Mehr' }));
-    await user.click(screen.getByRole('button', { name: /CSV exportieren/ }));
-    expect(props.onExport).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('navigation')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Mehr' }));
-    await user.click(screen.getByRole('button', { name: /Assistent/ }));
-    expect(props.onToggleAi).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('navigation')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Als CSV exportieren' }));
+    expect(onExport).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole('button', { name: 'Assistent' }));
+    expect(onToggleAi).toHaveBeenCalledOnce();
   });
 });

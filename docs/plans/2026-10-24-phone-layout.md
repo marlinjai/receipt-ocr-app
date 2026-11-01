@@ -208,3 +208,35 @@ clear). Checked in the browser at 390 and 1280 with 35 vendors.
   periods in the local database; the three wide tables there are contained by construction
   (sideways scroll boxes), not by a measurement with rows. Checking them on production with
   real data on a phone is the roadmap line's last step.
+
+## The phone's navigation (added 2026-11-01)
+
+The owner, on 2026-11-01: on a phone the app is still all over the place, while the sidebar on the
+wide layout gives a good overview; the phone needs the same, and a setting must not sit under the
+whole list of open payments. Measured on production at 390 pixels: the header took 168 pixels and
+offered only "Ausgaben" and "Abmelden", every other place was reachable only from a menu on the
+dashboard, the overview's first screen was entirely filter chips, the year chips took three rows,
+and the open payments made the spending page 717,292 pixels tall (2,672 payments, all drawn).
+
+Decided by the coordinating session, say so if you disagree. This replaces "the phone keeps its
+header and Mehr menu" of the sidebar plan and decision 4 above:
+
+1. **A bar along the bottom edge on every page** (`src/components/nav/PhoneNav.tsx`): Belege,
+   Ausgaben, Hochladen, Finanzen, Mehr. Always in the thumb's reach, with the numbers of what is
+   open; what waits behind "Mehr" shows on "Mehr". A drawer behind a button would have matched the
+   sidebar too, but would show nothing until it is opened.
+2. **"Mehr" is the sidebar as a sheet:** every place in the sidebar's order (from one list,
+   `nav-places.ts`), the company with its reset, the notification settings and signing out.
+3. **The header keeps only whose books are on screen,** the company select. A finance tool must
+   never be ambiguous about that.
+4. **Pages stop carrying their own navigation on a phone:** the dashboard's "Mehr" menu and upload
+   button, the spending page's links to Finanzen and Belege, the overview's "Belege" link. The
+   dashboard keeps its two own actions, CSV and the assistant.
+5. **Numbers before controls:** the overview's filters wait behind one button that says the chosen
+   period, the year chips are one row that scrolls inside itself, search and "Add filter" share a row.
+6. **The open payments are a list you can get through:** 30 at a time, narrowed by year and to
+   those with a proposal; the payment a notification points at is always shown. The notification
+   settings stand above the list and say what is on while closed; the read messages fold away.
+
+Everything fixed to the bottom edge (the dock, the batch bar) stands above the bar through
+`--phone-nav-room`, and the page ends above it.

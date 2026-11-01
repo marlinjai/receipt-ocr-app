@@ -150,3 +150,57 @@ staleness, not the redraw cost.
   `AppStore` away, and a refusal still out goes with it: nothing of one company stays on screen in another.
 - A refused "no receipt" brings its row back fresh, without the reason typed: the row left the list, and
   with it its form. Refusals there are rare (the button needs a reason, the rest is another tab).
+
+### Slice 3, receipts on the dashboard (2026-11-02)
+
+Measured before building, with the real `TableView` under a counting cell, 267 rows by 20 columns:
+
+- **A redraw.** One record changing draws 5,340 cells, and so does a reload that changes nothing.
+  The cause is in the package: `renderDataRow` is a closure over the table's state, so no row can
+  skip a redraw, and every load hands in new objects anyway.
+- **A reload.** Every action reloads all pages (one request per 200 rows) and the columns. The
+  list falls back to its first 200 rows and grows again while the pages arrive.
+- **Three holders of one thing.** The package's `useRows` holds the rows and races itself (a late
+  page lands on a fresh list), which is the only reason `use-complete-rows.ts` exists, with its
+  queue, its dedupe and its repairs. The years the list asks for sit in a module-level variable
+  (`year-scope.ts`), because the package builds its own query. `placedOrder` and the review list
+  are page state, and the navigation's numbers are reported by hand.
+
+Decided:
+
+- **`ReceiptsStore`, one per visit, owns what comes from the server and what is asked of it:** the
+  rows by id, loading and failure, the query (years, filters, sorts), `placedOrder`, the year
+  counts, the review list and the open meal count. Computed: `rows`, `receipts`, `groups`,
+  `totalReceipts`, `reviewCount`. With one loader there is one list: a load replaced by a newer one
+  drops its late answers, so the queue and `year-scope.ts`'s variable go, and with them
+  `use-complete-rows.ts`. A row twice or a count that does not add up is still read again, at most
+  twice, because a receipt added while pages arrive moves the rest by one.
+- **The table takes rows from outside without a package change.** `TableView`, `BoardView` and
+  `CalendarView` already take `rows` as a prop; only `useTable` holds them. The provider's existing
+  `initialData` with an empty list keeps `useRows` from loading, and `useTable` stays for the
+  table, columns, select options and views. Two of its functions read its own rows and would go
+  wrong on an empty list (`uploadFile` would overwrite a cell's files, `deleteFile` would do
+  nothing), so the store does those two, in the same order as the package. A `rows` option on
+  `useTable` would be the nicer interface, but this app would then wait for a version that is not
+  published, and CI would stay red until then.
+- **A reload keeps the objects of rows that did not change,** so the page only redraws what
+  changed. It swaps the list when all pages are in, so a reload no longer shrinks the table. A
+  change of years, filters or sorts still fills the list page by page, because waiting for
+  thousands of rows on an empty table would be worse.
+- **Rows redraw by record** takes one package change, internal and without a new prop: a memoized
+  row in `TableView` (branch `feat/rows-redraw-by-record`, version 0.12.0, not published). The app
+  works on 0.11.0 and gains the wide table's redraw with the version bump; the phone list and
+  the store prove theirs here.
+- **Stays with the page, because only that view cares:** the search term and its hits, selection,
+  the focused row, the open panels, the delete question, notices, `working`, the review list's
+  error text, and the way a linked receipt is opened.
+- **Numbers of the navigation:** `AppStore.counts` reads `reviewCount` and the open meal count while
+  the page is open. The review list and the meal queue need every year and every meal, which the
+  page does not load, so neither can be computed from its rows: the review list stays the
+  server's, and the meal count is asked again a moment after a row changed, together with the year
+  chips. That closes the same stale number on this page that slice 1 closed on the meals page.
+  `useReportNavCounts`, `AppStore.report` and `stopReporting` go.
+- **Not optimistic yet.** Cells keep waiting for the server's answer, as they do today and as the
+  meals do: rule 4 of the proposal needs server actions that return only what changed, which the
+  group and review actions do not. A row saved while a load is on its way is kept over that load's
+  older copy, so a late read never overwrites a newer write.

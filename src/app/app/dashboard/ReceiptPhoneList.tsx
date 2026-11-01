@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo } from 'react';
-import type { Column, Row, SelectOption } from '@marlinjai/data-table-core';
+import { memo, useMemo } from 'react';
+import type { CellValue, Column, Row, SelectOption } from '@marlinjai/data-table-core';
 import { isGroupRow } from '@/lib/receipts-kind';
 import { groupCellValue, receiptsInGroup } from '@/lib/groups/view';
 
@@ -72,21 +72,77 @@ export interface ReceiptPhoneListProps {
   onOpenGroup: (row: Row) => void;
 }
 
-export default function ReceiptPhoneList({ rows, loadedRows, columns, selectOptions, loading, failed, narrowed, onOpenReceipt, onOpenGroup }: ReceiptPhoneListProps) {
-  const id = (name: string) => columns.find((c) => c.name === name)?.id ?? '';
-  const nameId = id('Name');
-  const vendorId = id('Vendor');
-  const dateId = id('Date');
-  const grossId = id('Gross');
-  const euroId = id('EUR Equivalent');
-  const categoryId = id('Category');
-  const statusId = id('Status');
-  const currencyId = id('Currency');
+/** The columns a card reads, by what it reads them for. */
+interface CardColumns {
+  nameId: string;
+  vendorId: string;
+  dateId: string;
+  grossId: string;
+  categoryId: string;
+  statusId: string;
+  currencyId: string;
+}
 
+/** A receipt's card. It redraws by its record, so a change to one receipt leaves the other cards alone. */
+const ReceiptCard = memo(function ReceiptCard({ row, ids, selectOptions, onOpen }: { row: Row; ids: CardColumns; selectOptions: Map<string, SelectOption[]>; onOpen: (row: Row) => void }) {
   const optionName = (columnId: string, value: unknown): string => {
     if (!columnId || typeof value !== 'string' || !value) return '';
     return selectOptions.get(columnId)?.find((o) => o.id === value)?.name ?? '';
   };
+  const vendor = text(row.cells[ids.vendorId]) || text(row.cells[ids.nameId]) || 'Beleg ohne Namen';
+  const currency = optionName(ids.currencyId, row.cells[ids.currencyId]);
+  const amount = phoneAmount(row.cells[ids.grossId], currency);
+  const category = optionName(ids.categoryId, row.cells[ids.categoryId]);
+  const status = optionName(ids.statusId, row.cells[ids.statusId]);
+  const date = phoneDay(row.cells[ids.dateId]);
+  return (
+    <li className="ui-phone-card">
+      <button type="button" className="ui-phone-card-button" onClick={() => onOpen(row)} aria-label={`Beleg ${vendor}${date ? ` vom ${date}` : ''} öffnen`}>
+        <span className="flex min-w-0 items-baseline justify-between gap-3">
+          <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+            {vendor}
+          </span>
+          <span className="shrink-0 text-right text-sm font-semibold tabular-nums" style={{ color: 'var(--foreground)' }}>
+            {amount || <span className="font-normal" style={{ color: 'var(--muted)' }}>kein Betrag</span>}
+          </span>
+        </span>
+        <span className="mt-1 flex min-w-0 items-center justify-between gap-3 text-xs" style={{ color: 'var(--muted)' }}>
+          <span className="truncate">{[date || 'ohne Datum', category].filter(Boolean).join(' · ')}</span>
+          {status && <span className="ui-phone-chip shrink-0">{status}</span>}
+        </span>
+      </button>
+    </li>
+  );
+});
+
+/** A group's card: what it shows is worked out by the list, so it redraws when its sum or its count does. */
+const GroupCard = memo(function GroupCard({ row, name, sum, shown, all, onOpen }: { row: Row; name: string; sum: CellValue | undefined; shown: number; all: number; onOpen: (row: Row) => void }) {
+  return (
+    <li className="ui-phone-card">
+      <button type="button" className="ui-phone-card-button" onClick={() => onOpen(row)} aria-label={`Gruppe ${name} öffnen`}>
+        <span className="flex min-w-0 items-baseline justify-between gap-3">
+          <span className="truncate text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+            {name}
+          </span>
+          <span className="shrink-0 text-right text-sm font-semibold tabular-nums" style={{ color: 'var(--foreground)' }}>
+            {phoneAmount(sum, 'EUR') || <span className="font-normal" style={{ color: 'var(--muted)' }}>kein Betrag</span>}
+          </span>
+        </span>
+        <span className="mt-1 block text-xs" style={{ color: 'var(--muted)' }}>
+          Gruppe · {all > shown ? `${shown} von ${all} Belegen` : shown === 1 ? '1 Beleg' : `${shown} Belege`}
+        </span>
+      </button>
+    </li>
+  );
+});
+
+export default function ReceiptPhoneList({ rows, loadedRows, columns, selectOptions, loading, failed, narrowed, onOpenReceipt, onOpenGroup }: ReceiptPhoneListProps) {
+  const ids = useMemo<CardColumns>(() => {
+    const id = (name: string) => columns.find((c) => c.name === name)?.id ?? '';
+    return { nameId: id('Name'), vendorId: id('Vendor'), dateId: id('Date'), grossId: id('Gross'), categoryId: id('Category'), statusId: id('Status'), currencyId: id('Currency') };
+  }, [columns]);
+  const { nameId, dateId } = ids;
+  const euroColumn = columns.find((c) => c.name === 'EUR Equivalent');
 
   // Top level: every group, and every receipt that does not lie in a group shown here. Newest first, undated last.
   const items = useMemo(() => {
@@ -138,51 +194,11 @@ export default function ReceiptPhoneList({ rows, loadedRows, columns, selectOpti
           // loaded are not counted: the server sends only the chosen years, and the wide table counts the same.
           const children = receiptsInGroup(row.id, rows, columns);
           const all = receiptsInGroup(row.id, loadedRows, columns).length;
-          const euroColumn = columns.find((c) => c.id === euroId);
           const sum = euroColumn ? groupCellValue(row, children, euroColumn, columns) : null;
           const name = text(row.cells[nameId]) || 'Gruppe ohne Namen';
-          return (
-            <li key={row.id} className="ui-phone-card">
-              <button type="button" className="ui-phone-card-button" onClick={() => onOpenGroup(row)} aria-label={`Gruppe ${name} öffnen`}>
-                <span className="flex min-w-0 items-baseline justify-between gap-3">
-                  <span className="truncate text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-                    {name}
-                  </span>
-                  <span className="shrink-0 text-right text-sm font-semibold tabular-nums" style={{ color: 'var(--foreground)' }}>
-                    {phoneAmount(sum, 'EUR') || <span className="font-normal" style={{ color: 'var(--muted)' }}>kein Betrag</span>}
-                  </span>
-                </span>
-                <span className="mt-1 block text-xs" style={{ color: 'var(--muted)' }}>
-                  Gruppe · {all > children.length ? `${children.length} von ${all} Belegen` : children.length === 1 ? '1 Beleg' : `${children.length} Belege`}
-                </span>
-              </button>
-            </li>
-          );
+          return <GroupCard key={row.id} row={row} name={name} sum={sum} shown={children.length} all={all} onOpen={onOpenGroup} />;
         }
-        const vendor = text(row.cells[vendorId]) || text(row.cells[nameId]) || 'Beleg ohne Namen';
-        const currency = optionName(currencyId, row.cells[currencyId]);
-        const amount = phoneAmount(row.cells[grossId], currency);
-        const category = optionName(categoryId, row.cells[categoryId]);
-        const status = optionName(statusId, row.cells[statusId]);
-        const date = phoneDay(row.cells[dateId]);
-        return (
-          <li key={row.id} className="ui-phone-card">
-            <button type="button" className="ui-phone-card-button" onClick={() => onOpenReceipt(row)} aria-label={`Beleg ${vendor}${date ? ` vom ${date}` : ''} öffnen`}>
-              <span className="flex min-w-0 items-baseline justify-between gap-3">
-                <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
-                  {vendor}
-                </span>
-                <span className="shrink-0 text-right text-sm font-semibold tabular-nums" style={{ color: 'var(--foreground)' }}>
-                  {amount || <span className="font-normal" style={{ color: 'var(--muted)' }}>kein Betrag</span>}
-                </span>
-              </span>
-              <span className="mt-1 flex min-w-0 items-center justify-between gap-3 text-xs" style={{ color: 'var(--muted)' }}>
-                <span className="truncate">{[date || 'ohne Datum', category].filter(Boolean).join(' · ')}</span>
-                {status && <span className="ui-phone-chip shrink-0">{status}</span>}
-              </span>
-            </button>
-          </li>
-        );
+        return <ReceiptCard key={row.id} row={row} ids={ids} selectOptions={selectOptions} onOpen={onOpenReceipt} />;
       })}
     </ul>
   );

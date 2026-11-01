@@ -35,6 +35,15 @@ export function hasYearFilter(selection: YearSelection): boolean {
   return selection.years.size > 0 || selection.undated;
 }
 
+/**
+ * The years a choice asks the server for. Receipts without a date can only be
+ * had with everything, so choosing them (or nothing) loads every receipt.
+ */
+export function scopeOf(selection: YearSelection): number[] | null {
+  if (selection.undated || selection.years.size === 0) return null;
+  return [...selection.years].sort((a, b) => a - b);
+}
+
 /** The year of a date cell, or null when the cell holds no usable date. */
 export function yearOfDate(value: CellValue | undefined): number | null {
   if (value === null || value === undefined || value === '') return null;

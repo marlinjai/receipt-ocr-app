@@ -212,6 +212,10 @@ every private purchase") for the past. Decided by the coordinating session, say 
   (`sameAmountPairs`, from 3 euros, link method `same_amount`). The mail sweep showed why: the
   Anthropic invoices were in the app all along, the bank says "Claude". Measured: 222 pairs worth
   11,364 euros; a sample of those whose names share no word was right throughout.
+- Run on production on 2026-11-01: 259 linked, 2 left for the notifications. The first run called
+  632 payments "Nicht auffindbar" that the app itself rates private or own account, because
+  `treatments` leaves out what the app only proposes. Those 632 answers were corrected on the
+  database the same night, and closing now reads the rating too.
 - Answers are the ordinary "no receipt" answers: taken back one by one, or all at once on the
   database by deleting the rows with these two reasons.
 - Notion is not a source: its expense table ends in 2024 (one row of 2025) and those documents are

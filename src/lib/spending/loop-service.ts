@@ -536,9 +536,14 @@ export async function closeBacklog(db: PrismaClient, ctx: NotifyContext, before:
   if (byAmount.length > 0) linked.push(...(await linkProposals(db, ctx, byAmount, 'same_amount')));
 
   const after = await computeStates(db, ctx.workspaceId);
+  // `treatments` leaves out what the app only proposes; for a closing answer the app's own rating counts too, or a
+  // payment it rates private would be called a possible business expense.
+  const rated = await db.taxCounterpartyVerdict.findMany({ where: { authWorkspaceId: ctx.workspaceId }, select: { counterpartyKey: true, treatment: true } });
+  const ratingOf = new Map(rated.map((v) => [v.counterpartyKey, v.treatment as string]));
   const rest = inBacklog(after).map(({ payment }) => {
     const { category } = categorise(payment, { answer: after.categoryAnswers.get(payment.counterpartyKey) });
-    return { paymentId: payment.id, reason: backlogAnswer(after.treatments.get(payment.counterpartyKey), category) };
+    const key = payment.counterpartyKey;
+    return { paymentId: payment.id, reason: backlogAnswer(after.treatments.get(key) ?? ratingOf.get(key), category) };
   });
   if (rest.length > 0) {
     await db.spendingReceiptAnswer.createMany({

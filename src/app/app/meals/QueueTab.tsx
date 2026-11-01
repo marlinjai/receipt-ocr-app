@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import Checkbox from '@/components/ui/Checkbox';
 import type { Contact } from '@/lib/contacts/store';
 import { receiptCount } from '@/lib/meals/batch';
@@ -195,7 +195,8 @@ export default function QueueTab({
     else run();
   };
   const rowActions = useRef<QueueRowActions>(null);
-  useEffect(() => {
+  // Before the browser paints, so no click can arrive ahead of it.
+  useLayoutEffect(() => {
     rowActions.current = {
       toggle: (rowId) => setCheckedIds(toggleSelected(checked, rowId)),
       open: (rowId) => afterDiscard(() => setOpenId(rowId)),

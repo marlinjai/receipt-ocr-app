@@ -21,6 +21,7 @@ describe('the meals store', () => {
   it('keeps a saved record out when the page no longer has it, and removes what is gone', () => {
     const meals = store(record('a'), record('b'));
     meals.recordsSaved([record('z')]);
+    meals.recordSaved(record('y'));
     meals.recordsRemoved(['a']);
     expect(meals.records.map((r) => r.rowId)).toEqual(['b']);
   });

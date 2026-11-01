@@ -47,8 +47,9 @@ export class MealsStore {
     return incompleteQueue(this.meals);
   }
 
+  /** A record the page no longer has stays out: a save can arrive after its delete. */
   recordSaved(record: MealRecord): void {
-    this.byId.set(record.rowId, record);
+    if (this.byId.has(record.rowId)) this.byId.set(record.rowId, record);
     if (record.host.trim()) this.defaultHost = record.host.trim();
   }
 

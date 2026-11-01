@@ -2,8 +2,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useEffect } from 'react';
+import { SMALL_BUSINESS, meal } from '@/lib/meals/__tests__/fixtures';
+import { MealsStore } from '@/stores/MealsStore';
 import AppSidebar from '../AppSidebar';
-import { AppStoreProvider, useReportNavCounts } from '@/stores/provider';
+import { AppStoreProvider, useAppStore, useReportNavCounts } from '@/stores/provider';
 
 const nav = vi.hoisted(() => ({ pathname: '/app/finance', getNavCounts: vi.fn() }));
 vi.mock('next/navigation', () => ({ usePathname: () => nav.pathname }));
@@ -57,6 +60,26 @@ describe('a number a page holds', () => {
     expect(screen.getByText('13')).toBeTruthy();
     // The number the page does not hold comes from the answer.
     expect(screen.getByText('2')).toBeTruthy();
+  });
+});
+
+describe('a page with a store', () => {
+  it('moves the number with the store, without a report by hand', async () => {
+    const store = new MealsStore({ records: [meal({ rowId: 'a', occasion: '' }), meal({ rowId: 'b', occasion: '' })], contacts: [], settings: SMALL_BUSINESS, defaultHost: '' });
+    function Open() {
+      const app = useAppStore();
+      useEffect(() => app.openMeals(store), [app]);
+      return null;
+    }
+    render(
+      <AppStoreProvider>
+        <AppSidebar session={session} logoutUrl="/logout" initialFolded={false} />
+        <Open />
+      </AppStoreProvider>,
+    );
+    await screen.findByText('2');
+    act(() => store.recordsRemoved(['a']));
+    await screen.findByText('1');
   });
 });
 

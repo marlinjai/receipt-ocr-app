@@ -41,8 +41,8 @@ count and a badge are all functions of the same records.
    can stay on screen. The server still loads the first paint; the store takes that in once.
 2. **Derived numbers are `computed`, never stored.** The navigation reads `meals.incomplete.length`
    and follows by itself. `useReportNavCounts` goes away.
-3. **Rows are `observer` components,** so reclassifying one meal redraws that row and its badge,
-   not the page.
+3. **Rows redraw by record:** `memo` on an immutable record, or `observer` where a row reads the
+   store itself, so reclassifying one meal redraws that row and its badge, not the page.
 4. **Writes change the store first and confirm with the server,** returning only what changed. A
    refusal rolls that record back and says so, and a late answer never overwrites a newer change.
 5. **Server actions stay the only way to write.** Permissions and company scoping stay on the server.

@@ -245,6 +245,45 @@ export function closestPairs(open: ReadonlyArray<{ paymentId: string; bookingDay
   return pairs;
 }
 
+/** How far a receipt's day may lie from the payment when only the amount ties them, and the least amount that says anything. */
+export const SAME_AMOUNT_DAYS = 5;
+export const SAME_AMOUNT_MIN_CENTS = 300;
+
+/**
+ * Receipts paired with payments by the exact euro amount and a close day alone,
+ * for closing a backlog. The bank and the receipt often name the same purchase
+ * differently (Claude and Anthropic, PayPal and Apple), so the vendor proposals
+ * of `receiptCandidates` miss them. Measured on production on 2026-11-01: 222
+ * pairs, and the sampled ones whose names share no word were all right. Closest
+ * day first, each payment and receipt once. Small amounts stay out: they repeat.
+ */
+export function sameAmountPairs(
+  payments: ReadonlyArray<{ paymentId: string; bookingDay: string; cents: number }>,
+  receipts: readonly LoopReceipt[],
+): Array<{ paymentId: string; rowId: string }> {
+  const free = new Map<number, LoopReceipt[]>();
+  for (const r of receipts) {
+    if (r.linked || r.estimated || r.day === null || r.amountCents === null || r.amountCents < SAME_AMOUNT_MIN_CENTS) continue;
+    free.set(r.amountCents, [...(free.get(r.amountCents) ?? []), r]);
+  }
+  const wishes = payments
+    .flatMap(({ paymentId, bookingDay, cents }) =>
+      (free.get(cents) ?? []).map((r) => ({ paymentId, rowId: r.rowId, gap: Math.abs(dayNumber(bookingDay) - dayNumber(r.day as string)) })),
+    )
+    .filter((w) => w.gap <= SAME_AMOUNT_DAYS)
+    .sort((a, b) => a.gap - b.gap || a.paymentId.localeCompare(b.paymentId) || a.rowId.localeCompare(b.rowId));
+  const paymentsTaken = new Set<string>();
+  const rowsTaken = new Set<string>();
+  const pairs: Array<{ paymentId: string; rowId: string }> = [];
+  for (const { paymentId, rowId } of wishes) {
+    if (paymentsTaken.has(paymentId) || rowsTaken.has(rowId)) continue;
+    paymentsTaken.add(paymentId);
+    rowsTaken.add(rowId);
+    pairs.push({ paymentId, rowId });
+  }
+  return pairs;
+}
+
 /**
  * The answer closing a backlog gives a payment still without a receipt. Private
  * only where that is known or plain: the counterparty is called private (or an

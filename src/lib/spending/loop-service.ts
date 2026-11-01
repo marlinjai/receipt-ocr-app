@@ -11,7 +11,7 @@ import { timed } from '@/lib/timing';
 import { receiptForLink } from '@/lib/tax/service';
 import { categorise } from './rules';
 import { categoryAnswerMap, spendingTreatments } from './service';
-import { PRIVATE_NO_RECEIPT, backlogAnswer, certainPairs, closestPairs, loopState, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
+import { PRIVATE_NO_RECEIPT, backlogAnswer, certainPairs, closestPairs, loopState, sameAmountPairs, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
 import { notify, retryFailedDeliveries, serverChannels, settleAllBut, settleNotifications, type NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
 import { mailboxWithOwner } from './mailbox/server';
@@ -510,7 +510,8 @@ export interface BacklogClosed {
 
 /**
  * Close what is still open from before `before`, on a person's word: pair up
- * every receipt that fits (`closestPairs`), then answer the rest, private or
+ * every receipt that fits (`closestPairs`, then by amount and day alone,
+ * `sameAmountPairs`), then answer the rest, private or
  * "not found" (`backlogAnswer`). A mail attachment waiting to be taken over
  * stays open: the invoice is there. Only this company's own payments, and an
  * answer is only ever added, so pressing again changes nothing already said and
@@ -524,6 +525,13 @@ export async function closeBacklog(db: PrismaClient, ctx: NotifyContext, before:
     });
   const pairs = closestPairs(inBacklog(await computeStates(db, ctx.workspaceId)));
   const linked = pairs.length > 0 ? await linkProposals(db, ctx, pairs, 'closest') : [];
+
+  const paired = await computeStates(db, ctx.workspaceId);
+  const byAmount = sameAmountPairs(
+    inBacklog(paired).map(({ paymentId, bookingDay, payment }) => ({ paymentId, bookingDay, cents: -payment.amountCents })),
+    paired.receipts,
+  );
+  if (byAmount.length > 0) linked.push(...(await linkProposals(db, ctx, byAmount, 'same_amount')));
 
   const after = await computeStates(db, ctx.workspaceId);
   const rest = inBacklog(after).map(({ payment }) => {

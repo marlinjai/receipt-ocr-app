@@ -208,6 +208,10 @@ every private purchase") for the past. Decided by the coordinating session, say 
   expense, so it stays visible in red instead of quietly becoming private.
 - The months before the running one are the backlog; the running month stays open for the
   notifications. A mail attachment waiting to be taken over stays open.
+- After the vendor proposals, closing pairs by exact euro amount and a day within five days alone
+  (`sameAmountPairs`, from 3 euros, link method `same_amount`). The mail sweep showed why: the
+  Anthropic invoices were in the app all along, the bank says "Claude". Measured: 222 pairs worth
+  11,364 euros; a sample of those whose names share no word was right throughout.
 - Answers are the ordinary "no receipt" answers: taken back one by one, or all at once on the
   database by deleting the rows with these two reasons.
 - Notion is not a source: its expense table ends in 2024 (one row of 2025) and those documents are

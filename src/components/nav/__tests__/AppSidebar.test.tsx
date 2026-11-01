@@ -34,6 +34,32 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+describe('a number a page holds', () => {
+  function Held({ meals }: { meals: number }) {
+    useReportNavCounts({ meals });
+    return null;
+  }
+
+  it('changes at once, and a late answer of the server leaves it alone', async () => {
+    let answer: (v: unknown) => void = () => {};
+    nav.getNavCounts.mockReset().mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const shown = (meals: number) => (
+      <NavCountsProvider>
+        <AppSidebar session={session} logoutUrl="/logout" initialFolded={false} />
+        <Held meals={meals} />
+      </NavCountsProvider>
+    );
+    const { rerender } = render(shown(14));
+    await screen.findByText('14');
+    rerender(shown(13));
+    await screen.findByText('13');
+    await act(async () => answer({ ok: true, value: { review: 2, meals: 14 } }));
+    expect(screen.getByText('13')).toBeTruthy();
+    // The number the page does not hold comes from the answer.
+    expect(screen.getByText('2')).toBeTruthy();
+  });
+});
+
 describe('the sidebar', () => {
   it('lists every place, the tools and the upload, on any page', async () => {
     sidebar();

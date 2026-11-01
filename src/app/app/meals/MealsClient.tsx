@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { Contact } from '@/lib/contacts/store';
 import { contactsTabCount } from '@/lib/contacts/field-form';
+import { useReportNavCounts } from '@/components/nav/nav-counts';
 import { incompleteQueue } from '@/lib/meals/register';
 import { isDismissedMeal } from '@/lib/meals/rules';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
@@ -55,6 +56,8 @@ export default function MealsClient({ initial }: { initial: MealsPageData }) {
   const mealRecords = useMemo(() => records.filter((r) => !isDismissedMeal(r)), [records]);
   const dismissed = useMemo(() => records.filter(isDismissedMeal), [records]);
   const queue = useMemo(() => incompleteQueue(mealRecords), [mealRecords]);
+  // Reclassifying a meal changes the number in the navigation at once.
+  useReportNavCounts({ meals: queue.length });
 
   const onRecordSaved = useCallback((record: MealRecord) => {
     setRecords((list) => list.map((r) => (r.rowId === record.rowId ? record : r)));

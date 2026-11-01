@@ -1,25 +1,34 @@
 'use client';
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { getNavCounts, type NavCounts } from '@/app/app/nav-actions';
 
 /**
- * The numbers on the sidebar's places. The layout, and with it this provider,
- * stays while pages change, so the numbers stay on screen. The dashboard has
- * both numbers anyway and reports them; every other page asks once when it
- * opens, so a meal completed on its page is counted on the way out.
+ * The numbers on the places of the navigation. The layout, and with it this
+ * provider, stays while pages change, so the numbers stay on screen. A page that
+ * holds a number itself reports it (`useReportNavCounts`), so it changes the
+ * moment the page does; every other number is asked for when a page opens, so a
+ * change elsewhere is counted on the way out. An answer of the server never
+ * touches a number a page on screen holds: it may have left before that change.
  */
 
 const DASHBOARD = '/app/dashboard';
 
-const NavCountsContext = createContext<{ counts: NavCounts | null; report: (counts: NavCounts) => void }>({
-  counts: null,
-  report: () => {},
-});
+interface NavCountsApi {
+  counts: NavCounts | null;
+  report: (counts: Partial<NavCounts>) => void;
+  /** A page takes these numbers over while it is on screen; the return gives them back. */
+  hold: (keys: ReadonlyArray<keyof NavCounts>) => () => void;
+}
+
+const NavCountsContext = createContext<NavCountsApi>({ counts: null, report: () => {}, hold: () => () => {} });
+
+const NOTHING: NavCounts = { review: 0, meals: 0 };
 
 export function NavCountsProvider({ children }: { children: ReactNode }) {
   const [counts, setCounts] = useState<NavCounts | null>(null);
+  const held = useRef(new Set<keyof NavCounts>());
   const pathname = usePathname();
 
   useEffect(() => {
@@ -28,7 +37,9 @@ export function NavCountsProvider({ children }: { children: ReactNode }) {
     getNavCounts()
       .then((result) => {
         // The numbers are help, not a condition for anything: without an answer the last ones stay.
-        if (!left && result.ok) setCounts(result.value);
+        if (left || !result.ok) return;
+        const fresh = result.value;
+        setCounts((current) => ({ review: held.current.has('review') && current ? current.review : fresh.review, meals: held.current.has('meals') && current ? current.meals : fresh.meals }));
       })
       .catch(() => {});
     return () => {
@@ -36,7 +47,14 @@ export function NavCountsProvider({ children }: { children: ReactNode }) {
     };
   }, [pathname]);
 
-  const value = useMemo(() => ({ counts, report: setCounts }), [counts]);
+  const report = useCallback((next: Partial<NavCounts>) => setCounts((current) => ({ ...NOTHING, ...current, ...next })), []);
+  const hold = useCallback((keys: ReadonlyArray<keyof NavCounts>) => {
+    for (const key of keys) held.current.add(key);
+    return () => {
+      for (const key of keys) held.current.delete(key);
+    };
+  }, []);
+  const value = useMemo(() => ({ counts, report, hold }), [counts, report, hold]);
   return <NavCountsContext.Provider value={value}>{children}</NavCountsContext.Provider>;
 }
 
@@ -44,10 +62,14 @@ export function useNavCounts(): NavCounts | null {
   return useContext(NavCountsContext).counts;
 }
 
-/** For the page that holds the numbers itself: the sidebar shows them as they change. */
-export function useReportNavCounts({ review, meals }: NavCounts): void {
-  const { report } = useContext(NavCountsContext);
+/** For a page that holds numbers itself: the navigation shows them as they change, and the server's answer leaves them alone. */
+export function useReportNavCounts(numbers: Partial<NavCounts>): void {
+  const { report, hold } = useContext(NavCountsContext);
+  const { review, meals } = numbers;
+  const hasReview = review !== undefined;
+  const hasMeals = meals !== undefined;
+  useEffect(() => hold([...(hasReview ? (['review'] as const) : []), ...(hasMeals ? (['meals'] as const) : [])]), [hold, hasReview, hasMeals]);
   useEffect(() => {
-    report({ review, meals });
+    report({ ...(review !== undefined ? { review } : {}), ...(meals !== undefined ? { meals } : {}) });
   }, [report, review, meals]);
 }

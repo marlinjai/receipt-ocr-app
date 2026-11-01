@@ -360,7 +360,8 @@ describe('answers about payments that moved', () => {
     await shareAccount(db, w.hctx, w.accountId, w.rctx, 'user-owner');
     const listed = (await loadLoopOverview(db, w.hctx.workspaceId)).answered.find((c) => c.paymentId === id);
     expect(listed?.state).toEqual({ state: 'no_receipt', reason: 'Automat ohne Beleg', movedAway: true });
-    await withdrawNoReceipt(db, w.hctx, id);
+    // It stands in the other company now: the answer was all that listed it here.
+    expect(await withdrawNoReceipt(db, w.hctx, id)).toBeNull();
     expect((await loadLoopOverview(db, w.hctx.workspaceId)).answered.find((c) => c.paymentId === id)).toBeUndefined();
     expect(await stateOf(w.rctx.workspaceId, id)).toBe('missing');
   });

@@ -1,7 +1,9 @@
 'use client';
 
+import { observer } from 'mobx-react-lite';
 import { useId, useState, useTransition, type ReactNode } from 'react';
 import Link from 'next/link';
+import { useAppStore } from '@/stores/provider';
 import { useRouter } from 'next/navigation';
 import { formatDay } from '@/lib/meals/messages';
 import { formatCents } from '@/lib/tax/money';
@@ -130,6 +132,21 @@ function UnclearRow({
   );
 }
 
+/**
+ * The count on the "Belege" tab: follows the checks while they are open (an answer no longer reads the page
+ * afresh), otherwise what the page read. On its own, so an answer redraws this number and not the whole page.
+ */
+const OpenChecksCount = observer(function OpenChecksCount({ fromServer }: { fromServer: number | null }) {
+  const count = useAppStore().checks?.openCount ?? fromServer;
+  if (count === null) return null;
+  return (
+    <span className="ml-2 rounded-full px-1.5 py-0.5 text-xs tabular-nums" style={{ background: 'rgba(255,255,255,0.07)', color: 'var(--foreground)' }}>
+      {count}
+      <span className="sr-only"> offen</span>
+    </span>
+  );
+});
+
 export default function SpendingClient({
   initial,
   tab = 'ueberblick',
@@ -177,10 +194,10 @@ export default function SpendingClient({
   const showTab = (next: SpendingTab) => {
     if (next !== tab) router.push(spendingHref(overview.year, overview.month, next), { scroll: false });
   };
-  const tabs: Array<{ key: SpendingTab; label: string; count: number | null }> = [
-    { key: 'ueberblick', label: 'Überblick', count: null },
-    { key: 'gekauft', label: 'Was gekauft', count: null },
-    { key: 'belege', label: 'Belege', count: openChecks },
+  const tabs: Array<{ key: SpendingTab; label: string }> = [
+    { key: 'ueberblick', label: 'Überblick' },
+    { key: 'gekauft', label: 'Was gekauft' },
+    { key: 'belege', label: 'Belege' },
   ];
 
   const run = (at: string, action: () => Promise<Result<SpendingPageView>>) => {
@@ -336,12 +353,7 @@ export default function SpendingClient({
             style={{ borderColor: tab === t.key ? 'var(--accent)' : 'transparent', color: tab === t.key ? 'var(--accent)' : 'var(--muted)' }}
           >
             {t.label}
-            {t.count !== null && (
-              <span className="ml-2 rounded-full px-1.5 py-0.5 text-xs tabular-nums" style={{ background: 'rgba(255,255,255,0.07)', color: 'var(--foreground)' }}>
-                {t.count}
-                <span className="sr-only"> offen</span>
-              </span>
-            )}
+            {t.key === 'belege' && <OpenChecksCount fromServer={openChecks} />}
           </button>
         ))}
       </div>

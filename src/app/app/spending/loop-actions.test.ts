@@ -14,6 +14,9 @@ const runReceiptLoop = vi.fn();
 const confirmCandidate = vi.fn();
 const answerNoReceipt = vi.fn();
 const withdrawNoReceipt = vi.fn();
+const paymentState = vi.fn();
+const linkReceiptToPayment = vi.fn();
+const dismissMailCandidate = vi.fn();
 const listUnreadNotifications = vi.fn();
 const getNotifySettings = vi.fn();
 const saveNotifySettings = vi.fn();
@@ -46,6 +49,8 @@ vi.mock('@/lib/spending/loop-service', () => {
     confirmCandidate: (...a: unknown[]) => confirmCandidate(...a),
     answerNoReceipt: (...a: unknown[]) => answerNoReceipt(...a),
     withdrawNoReceipt: (...a: unknown[]) => withdrawNoReceipt(...a),
+    paymentState: (...a: unknown[]) => paymentState(...a),
+    linkReceiptToPayment: (...a: unknown[]) => linkReceiptToPayment(...a),
   };
 });
 const runSpendingChecks = vi.fn();
@@ -82,16 +87,19 @@ vi.mock('@/lib/tax/payments/service', () => {
 });
 
 import { ReceiptsAuthError } from '@/lib/auth-guards';
+import { withSharedReads } from '@/lib/shared-reads';
 import { LoopServiceError } from '@/lib/spending/loop-service';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
-import { checkNow, confirmReceipt, disablePush, enablePush, pushStateOfDevice, getReceiptChecks, readNotification, saveNotificationSettings, sayNoReceipt, takeBackNoReceipt } from './loop-actions';
+vi.mock('@/lib/spending/mailbox/service', () => ({ MailCandidateError: class extends Error {}, dismissMailCandidate: (...a: unknown[]) => dismissMailCandidate(...a) }));
+
+import { checkNow, confirmReceipt, disablePush, dismissMail, linkChosenReceipt, linkTakenOver, enablePush, pushStateOfDevice, getReceiptChecks, readNotification, saveNotificationSettings, sayNoReceipt, takeBackNoReceipt } from './loop-actions';
 
 const WS = { id: 'ws-a', slug: 'beispiel', role: 'member', tenantId: 't-a' };
 const SESSION = { memberships: [WS], activeWorkspace: WS, userId: 'user-a' };
 const CTX = { workspaceId: 'ws-a', tenantId: 't-a' };
 
 beforeEach(() => {
-  for (const f of [requireAction, requireReceiptsSession, loadLoopOverview, runReceiptLoop, runSpendingChecks, confirmCandidate, answerNoReceipt, withdrawNoReceipt, listUnreadNotifications, getNotifySettings, saveNotifySettings, markNotificationRead, savePushSubscription, removePushSubscription, pushDeviceCount]) f.mockReset();
+  for (const f of [requireAction, requireReceiptsSession, loadLoopOverview, runReceiptLoop, runSpendingChecks, confirmCandidate, answerNoReceipt, withdrawNoReceipt, paymentState, linkReceiptToPayment, dismissMailCandidate, listUnreadNotifications, getNotifySettings, saveNotifySettings, markNotificationRead, savePushSubscription, removePushSubscription, pushDeviceCount]) f.mockReset();
   pushDeviceCount.mockResolvedValue(0);
   loadLoopOverview.mockResolvedValue({ open: [], answered: [], counts: {} });
   listUnreadNotifications.mockResolvedValue([]);
@@ -147,6 +155,57 @@ describe('writes', () => {
     expect(markNotificationRead).toHaveBeenCalledWith({ marker: 'prisma' }, CTX, 'n1');
     await saveNotificationSettings({ channel: 'email' });
     expect(saveNotifySettings).toHaveBeenCalledWith({ marker: 'prisma' }, CTX, { channel: 'email' });
+  });
+
+  it('answer about one payment with what changed for it, and read nothing else', async () => {
+    requireAction.mockResolvedValue(SESSION);
+    const before = Date.now();
+    const confirmed = await confirmReceipt('p1', 'r1');
+    expect(confirmed).toMatchObject({ ok: true, value: { paymentId: 'p1', state: { state: 'has_receipt' }, rowId: 'r1', settled: ['missing_receipt:p1'] } });
+    expect((confirmed as { value: { at: number } }).value.at).toBeGreaterThanOrEqual(before);
+    answerNoReceipt.mockResolvedValue({ state: 'no_receipt', reason: 'Automat' });
+    expect(await sayNoReceipt('p1', ' Automat ')).toMatchObject({ ok: true, value: { paymentId: 'p1', state: { state: 'no_receipt', reason: 'Automat' }, rowId: null, settled: ['missing_receipt:p1'] } });
+    withdrawNoReceipt.mockResolvedValue(null);
+    expect(await takeBackNoReceipt('p1')).toMatchObject({ ok: true, value: { paymentId: 'p1', state: null, settled: [] } });
+    const both = { state: { state: 'has_receipt' }, rowId: 'r1', settled: ['missing_receipt:p1', 'mail_found:p1'] };
+    expect(await linkChosenReceipt('p1', 'r1')).toMatchObject({ ok: true, value: both });
+    expect(linkReceiptToPayment).toHaveBeenLastCalledWith({ marker: 'prisma' }, CTX, 'p1', 'r1', { byHand: true });
+    expect(await linkTakenOver('p1', 'r1')).toMatchObject({ ok: true, value: both });
+    expect(linkReceiptToPayment).toHaveBeenLastCalledWith({ marker: 'prisma' }, CTX, 'p1', 'r1', {});
+    dismissMailCandidate.mockResolvedValue('p7');
+    paymentState.mockResolvedValue({ state: 'missing' });
+    expect(await dismissMail('m1')).toMatchObject({ ok: true, value: { paymentId: 'p7', state: { state: 'missing' }, rowId: null } });
+    expect(await readNotification('n1')).toEqual({ ok: true, value: { at: expect.any(Number) } });
+    expect(loadLoopOverview).not.toHaveBeenCalled();
+    expect(listUnreadNotifications).not.toHaveBeenCalled();
+  });
+
+  it('a whole read says when it started, before anything was read', async () => {
+    requireReceiptsSession.mockResolvedValue(SESSION);
+    requireAction.mockResolvedValue(SESSION);
+    let startedBy = 0;
+    loadLoopOverview.mockImplementation(async () => {
+      startedBy = Date.now();
+      return { open: [], answered: [], counts: {} };
+    });
+    const read = await getReceiptChecks();
+    expect((read as { value: { readAt: number } }).value.readAt).toBeLessThanOrEqual(startedBy);
+  });
+
+  it('in a page\'s shared reads, the read counts from when they began', async () => {
+    requireReceiptsSession.mockResolvedValue(SESSION);
+    requireAction.mockResolvedValue(SESSION);
+    vi.useFakeTimers({ now: 1000, toFake: ['Date'] });
+    try {
+      const read = await withSharedReads(async () => {
+        // Another part of the page started the shared read; the checks ask for it later.
+        vi.setSystemTime(5000);
+        return getReceiptChecks();
+      });
+      expect((read as { value: { readAt: number } }).value.readAt).toBe(1000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('pass refusals on with their code', async () => {

@@ -9,7 +9,7 @@ import { AppStore } from './AppStore';
 // On the server a store is only read for one render: nothing should subscribe.
 enableStaticRendering(typeof window === 'undefined');
 
-const AppStoreContext = createContext<AppStore | null>(null);
+export const AppStoreContext = createContext<AppStore | null>(null);
 
 const DASHBOARD = '/app/dashboard';
 
@@ -35,6 +35,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       left = true;
     };
   }, [pathname, store]);
+
+  // An answer of the receipt checks shows at once and is sent after that: closing the page now would lose what is queued.
+  useEffect(() => {
+    const askFirst = (e: BeforeUnloadEvent) => {
+      if (store.checkOutbox.writes.length > 0) e.preventDefault();
+    };
+    window.addEventListener('beforeunload', askFirst);
+    return () => window.removeEventListener('beforeunload', askFirst);
+  }, [store]);
 
   return <AppStoreContext.Provider value={store}>{children}</AppStoreContext.Provider>;
 }

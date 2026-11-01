@@ -87,3 +87,66 @@ staleness, not the redraw cost.
 - `tab` and "unsaved form" stay component state: they belong to one view on screen, not to the
   domain. Rule for the following slices: data from the server goes into a store, what only one
   view cares about stays in that view.
+
+### Slice 2, the receipt checks (2026-11-01)
+
+- `ChecksStore`, one per visit, opened on the `AppStore` like `MealsStore` and thrown away with the
+  company (`page.tsx` keys the panel by company). It holds open and answered payments in one map by
+  id, a check replaced whole, plus the notifications and the settings. The open list, the years, the
+  proposal, certain and backlog counts and the lost/answered split are computed, so `certain` left
+  `ChecksView`: the server no longer states what follows from the list. Year, "mit Vorschlag", limits,
+  the picker's input and open forms stay in the view: they belong to one view on screen.
+- **One answer, one payment.** Confirm, no receipt, take back, link by hand, take over, dismiss mail
+  and mark read return what changed (`CheckChange`: state, the receipt taken, the messages settled, a
+  server time) instead of a whole view. Check now, link certain, close backlog, settings and push still
+  return everything. Cost on the server: an answer's state is worked out for that payment alone
+  (`paymentState`, `onePayment`), and its answer no longer loads the notifications, the mailbox status and
+  the device count. Confirm, link and take back still read what a state is worked out from (all
+  payments for the links, all receipts), once where it was twice, because whether a receipt is proposed
+  depends on them. "No receipt" and a link return their state without a further read. Take back
+  now always reads, to say what the payment's state is; it used to read only when nothing was deleted.
+- **What is on screen is worked out, not patched.** The store keeps what the server last said and a
+  pile of writes on their way, and draws the one over the other. A snapshot would be wrong here: with
+  two links out and a third payment proposed both receipts, rolling one back must return one receipt, not
+  the state from before either. Refusing just takes the write off the pile. A link holds its receipt
+  back from every other proposal meanwhile, and a payment left with none falls to its mails (`proposed`
+  now carries them, `withoutReceipt`) or to missing, as `loopState` would say.
+- **Late answers.** Writes are numbered per store: an answer to a write older than the newest one
+  answered for that payment changes nothing about it, though its receipt still counts as linked. A read
+  says when it started (`readAt`, for a page render the start of its shared reads, as another part of
+  the page may have begun them earlier), a change when it was made (`at`): a read older than the last is
+  dropped, and what was confirmed after a read started is laid over it again, so a slow `router.refresh`
+  brings nothing back. Both times come from the same server; with several instances a change within
+  the clock's difference could show wrongly until the next read.
+- **Refreshing the page: only on leaving.** The overview, the budgets and "Was gekauft" are other tabs,
+  only the open tab's panel is on the page, and a tab is read from the server when it opens. So nothing
+  beside the checks can go stale, and `router.refresh()` after every answer would have sent all
+  payments back each time, which is what this slice removes. A change that touched payments owes the page
+  one read when the panel closes: for what the next tab's read could not know yet, and for the back
+  button, which the router serves from its cache. It fires wherever the person lands, so switching tabs
+  after an answer costs two reads, once. An answer arriving after that reads at once. Marking
+  read and the settings owe nothing. The count on the tab is the one number that is on screen: it reads
+  the store (`OpenChecksCount`), on its own, so an answer does not redraw the page.
+- **What a link cannot know on the client.** A link teaches that a counterparty stands for a vendor
+  (`vendorAliases`), which can give other payments new proposals. They appear with the next read, as
+  they would have after a whole view only because that view was sent. A "no receipt" given in a second
+  tab to a payment that got a link in the first shows as answered until the next read.
+- **The focus.** Every answer moves it to the list's heading at once, as the row goes with its buttons.
+- **Take over.** The upload can take seconds and fail on its own, and its receipt is not known before it
+  ends, so the row stays and shows what it does. What applies at once is the link that follows. The picker
+  moved into `PickReceipt`, which reads `dataVersion` itself, so closed rows do not redraw on it.
+- `OpenCheck` is memoized by its check, its actions come through a ref as in `QueueRow`, and other rows
+  stay usable while an answer is out: only bulk actions lock them.
+- **What outlives the panel.** A person can leave while an answer is out, so the pile of writes and the
+  refusals live in a `ChecksOutbox` on the `AppStore`, not in the `ChecksStore`. A new store starts with the
+  writes still out, so coming back shows the payment as answered and offers no second click, and a write begun
+  on the last visit ends on the store open now. While writes are out, closing the page asks first
+  (`beforeunload`, in the provider).
+- **A refusal always reaches the person.** They are kept per payment, plus one per message and one per page
+  action, and leave only by acting on that thing again or by closing them. A page read does not touch them. A
+  refusal stands at its row, and a row with one stays in the list whatever the filter says. With no row to
+  stand at, because the panel closed or a whole read took the payment away, `CheckRefusals` in the shell says it
+  through the dock, naming the payment. That includes "receipt made, not linked". A company switch throws the
+  `AppStore` away, and a refusal still out goes with it: nothing of one company stays on screen in another.
+- A refused "no receipt" brings its row back fresh, without the reason typed: the row left the list, and
+  with it its form. Refusals there are rare (the button needs a reason, the rest is another tab).

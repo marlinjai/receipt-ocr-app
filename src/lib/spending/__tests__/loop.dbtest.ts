@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { createAccount, deleteImportBatch, importPayments, loadPayments, setPaymentKind, unlinkPayment } from '@/lib/tax/payments/service';
-import { LoopServiceError, MAX_SENDS_PER_RUN, answerNoReceipt, closeBacklog, confirmCandidate, linkCertainReceipts, loadLoopOverview, runReceiptLoop, withdrawNoReceipt } from '../loop-service';
+import { LoopServiceError, MAX_SENDS_PER_RUN, answerNoReceipt, closeBacklog, confirmCandidate, linkCertainReceipts, loadLoopOverview, paymentState, runReceiptLoop, withdrawNoReceipt } from '../loop-service';
 import { listUnreadNotifications, markNotificationRead, saveNotifySettings, getNotifySettings, NotifyServiceError } from '../notify/service';
 import type { NotificationChannel, NotificationMessage } from '../notify/port';
 import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
@@ -111,11 +111,13 @@ describe('backtrack and revise', () => {
     const push = recorder('push');
     await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] });
     expect(await code(answerNoReceipt(db, ctx, id, '   '))).toBe('reason_required');
-    await answerNoReceipt(db, ctx, id, 'Parkautomat ohne Beleg');
+    // Each says what the whole read says afterwards, without one.
+    expect(await answerNoReceipt(db, ctx, id, ' Parkautomat ohne Beleg ')).toEqual({ state: 'no_receipt', reason: 'Parkautomat ohne Beleg' });
     expect(await stateOf(ctx.workspaceId, id)).toBe('no_receipt');
+    expect(await paymentState(db, ctx.workspaceId, id)).toEqual({ state: 'no_receipt', reason: 'Parkautomat ohne Beleg' });
     expect(await listUnreadNotifications(db, ctx.workspaceId)).toEqual([]);
 
-    await withdrawNoReceipt(db, ctx, id);
+    expect(await withdrawNoReceipt(db, ctx, id)).toEqual({ state: 'missing' });
     expect(await stateOf(ctx.workspaceId, id)).toBe('missing');
     await runReceiptLoop(db, ctx, { today: TODAY, channels: [push.channel] });
     expect(push.sent).toHaveLength(1);

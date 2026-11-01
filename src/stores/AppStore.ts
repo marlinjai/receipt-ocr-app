@@ -1,5 +1,7 @@
 import { computed, makeAutoObservable, observable } from 'mobx';
 import type { NavCounts } from '@/app/app/nav-actions';
+import { ChecksOutbox, type Refusal } from './ChecksOutbox';
+import type { ChecksStore } from './ChecksStore';
 import type { MealsStore } from './MealsStore';
 
 /**
@@ -13,12 +15,15 @@ import type { MealsStore } from './MealsStore';
  */
 export class AppStore {
   meals: MealsStore | null = null;
+  checks: ChecksStore | null = null;
+  /** The writes and refusals of the receipt checks: they outlive a visit of the panel. */
+  readonly checkOutbox = new ChecksOutbox();
   private fromServer: NavCounts | null = null;
   /** Numbers a page reports while it is open, for domains without a store yet. */
   private reported: Partial<NavCounts> = {};
 
   constructor() {
-    makeAutoObservable<AppStore, 'fromServer' | 'reported'>(this, { meals: observable.ref, fromServer: observable.ref, reported: observable.ref, counts: computed.struct }, { autoBind: true });
+    makeAutoObservable<AppStore, 'fromServer' | 'reported'>(this, { meals: observable.ref, checks: observable.ref, checkOutbox: false, fromServer: observable.ref, reported: observable.ref, counts: computed.struct }, { autoBind: true });
   }
 
   get counts(): NavCounts | null {
@@ -44,6 +49,25 @@ export class AppStore {
     if (this.meals !== meals) return;
     this.fromServer = { review: this.counts?.review ?? 0, meals: meals.queue.length };
     this.meals = null;
+  }
+
+  /** The refusals nothing on screen shows: the shell says them (`CheckRefusals`). */
+  get looseRefusals(): Refusal[] {
+    return [...this.checkOutbox.refusals.values()].filter((r) => !this.checks?.shows(r.key));
+  }
+
+  /** The receipt checks opened. Unlike the meals they have no number in the navigation: only the spending page's tab reads them. */
+  openChecks(checks: ChecksStore): () => void {
+    this.checks = checks;
+    this.checkOutbox.open = checks;
+    checks.catchUp();
+    return () => this.closeChecks(checks);
+  }
+
+  private closeChecks(checks: ChecksStore): void {
+    if (this.checks !== checks) return;
+    this.checks = null;
+    this.checkOutbox.open = null;
   }
 
   report(numbers: Partial<NavCounts>): void {

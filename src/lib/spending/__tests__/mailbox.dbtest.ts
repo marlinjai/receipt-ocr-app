@@ -165,7 +165,7 @@ describe('backtrack and revise', () => {
     let answer = [mail()];
     const box = mailbox(() => answer);
     await runReceiptLoop(db, ctx, { today: TODAY, mailbox: box.port, channels: [] });
-    await dismissMailCandidate(db, ctx, await candidateOf(ctx.workspaceId, id));
+    expect(await dismissMailCandidate(db, ctx, await candidateOf(ctx.workspaceId, id))).toBe(id);
     expect((await stateOf(ctx.workspaceId, id))?.state).toBe('missing');
     // The same mail found again stays aside; a new one is offered.
     await runReceiptLoop(db, ctx, { today: TODAY, mailbox: box.port, channels: [], now: hoursLater(25) });

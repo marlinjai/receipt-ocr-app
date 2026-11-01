@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHOICES_SHOWN, PRIVATE_NO_RECEIPT, RECEIPT_NOT_FOUND, backlogAnswer, certainPairs, closestPairs, loopState, sameAmountPairs, notNeededReason, notifiable, receiptCandidates, receiptChoices, type LoopContext, type LoopPayment, type LoopReceipt } from '../loop';
+import { CHOICES_SHOWN, PRIVATE_NO_RECEIPT, RECEIPT_NOT_FOUND, backlogAnswer, certainPairs, closestPairs, loopState, sameAmountPairs, notNeededReason, notifiable, receiptCandidates, receiptChoices, withoutReceipt, type LoopContext, type LoopPayment, type LoopReceipt, type LoopState } from '../loop';
 
 /** Every name here is a brand or invented. */
 const payment = (o: Partial<LoopPayment> = {}): LoopPayment => ({
@@ -104,13 +104,34 @@ describe('loopState', () => {
     const mail = { id: 'mc1', fileName: 'Rechnung.pdf', receivedDay: '2026-05-09', subject: 'Rechnung', sender: 'billing@zyx.example' };
     const mails = new Map([['p1', [mail]]]);
     expect(loopState(payment(), ctx({ mailCandidates: mails }))).toEqual({ state: 'in_mailbox', mails: [mail] });
-    expect(loopState(payment(), ctx({ mailCandidates: mails, receipts: [receipt()] })).state).toBe('proposed');
+    const proposed = loopState(payment(), ctx({ mailCandidates: mails, receipts: [receipt()] }));
+    expect(proposed.state).toBe('proposed');
+    // The client falls to the same state as a fresh read once the proposed receipt is linked elsewhere.
+    expect(withoutReceipt(proposed, receipt().rowId)).toEqual(loopState(payment(), ctx({ mailCandidates: mails, receipts: [{ ...receipt(), linked: true }] })));
     expect(loopState(payment(), ctx({ mailCandidates: mails, noReceipt: new Map([['p1', 'x']]) })).state).toBe('no_receipt');
   });
 
   it('proposes when a receipt fits, and reports the receipt missing otherwise', () => {
     expect(loopState(payment(), ctx({ receipts: [receipt()] })).state).toBe('proposed');
     expect(loopState(payment(), ctx())).toEqual({ state: 'missing' });
+  });
+});
+
+describe('withoutReceipt', () => {
+  const candidate = (rowId: string) => ({ rowId, label: rowId, day: '2026-05-01', amountCents: 100, estimated: false });
+  const mail = { id: 'm1', fileName: 'R.pdf', receivedDay: '2026-05-01', subject: '', sender: '' };
+
+  it('takes the receipt out of the proposals, and is the same state where it was not proposed', () => {
+    const state: LoopState = { state: 'proposed', candidates: [candidate('a'), candidate('b')] };
+    expect(withoutReceipt(state, 'a')).toEqual({ state: 'proposed', candidates: [candidate('b')] });
+    expect(withoutReceipt(state, 'z')).toBe(state);
+    const missing: LoopState = { state: 'missing' };
+    expect(withoutReceipt(missing, 'a')).toBe(missing);
+  });
+
+  it('falls to what the loop says next: a mail found for the payment, or missing', () => {
+    expect(withoutReceipt({ state: 'proposed', candidates: [candidate('a')] }, 'a')).toEqual({ state: 'missing' });
+    expect(withoutReceipt({ state: 'proposed', candidates: [candidate('a')], mails: [mail] }, 'a')).toEqual({ state: 'in_mailbox', mails: [mail] });
   });
 });
 

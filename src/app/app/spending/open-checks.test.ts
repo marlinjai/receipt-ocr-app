@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { RECEIPT_NOT_FOUND } from '@/lib/spending/loop';
-import { CHECKS_PAGE, checkYears, chooseChecks, splitAnswered, type OpenCheckItem } from './open-checks';
+import { CHECKS_PAGE, answerTakenBack, answeredNoReceipt, mailSetAside, receiptLinked, checkYears, chooseChecks, splitAnswered, type OpenCheckItem } from './open-checks';
+import type { PaymentCheck } from '@/lib/spending/loop-service';
 
 const check = (paymentId: string, bookingDay: string, proposed = false): OpenCheckItem => ({
   paymentId,
@@ -47,5 +48,30 @@ describe('the answered payments', () => {
     const lost = { state: { state: 'no_receipt' as const, reason: RECEIPT_NOT_FOUND } };
     const said = { state: { state: 'no_receipt' as const, reason: 'Automat' } };
     expect(splitAnswered([lost, said])).toEqual({ lost: [lost], answered: [said] });
+  });
+});
+
+describe('what an action shows until the server has answered', () => {
+  const check = (state: PaymentCheck['state']): PaymentCheck => ({ paymentId: 'p', bookingDay: '2026-05-01', cents: 100, counterparty: 'X', reference: '', state });
+  const mail = (id: string) => ({ id, fileName: `${id}.pdf`, receivedDay: '2026-05-01', subject: '', sender: '' });
+
+  it('an answer carries the reason as the server will keep it', () => {
+    expect(answeredNoReceipt(' Automat ')(check({ state: 'missing' }))?.state).toEqual({ state: 'no_receipt', reason: 'Automat' });
+  });
+
+  it('a link settles the payment', () => {
+    expect(receiptLinked(check({ state: 'missing' }))?.state).toEqual({ state: 'has_receipt' });
+  });
+
+  it('a taken back answer opens the payment, unless it stands in another company by now', () => {
+    expect(answerTakenBack(check({ state: 'no_receipt', reason: 'x' }))?.state).toEqual({ state: 'missing' });
+    expect(answerTakenBack(check({ state: 'no_receipt', reason: 'x', movedAway: true }))).toBeNull();
+  });
+
+  it('a mail set aside leaves the others, and a payment that holds none is left as it is', () => {
+    expect(mailSetAside('a')(check({ state: 'in_mailbox', mails: [mail('a'), mail('b')] }))?.state).toEqual({ state: 'in_mailbox', mails: [mail('b')] });
+    expect(mailSetAside('a')(check({ state: 'in_mailbox', mails: [mail('a')] }))?.state).toEqual({ state: 'missing' });
+    const other = check({ state: 'missing' });
+    expect(mailSetAside('a')(other)).toBe(other);
   });
 });

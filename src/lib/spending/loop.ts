@@ -78,7 +78,8 @@ export type LoopState =
    * listed here so it can be taken back, counted nowhere.
    */
   | { state: 'no_receipt'; reason: string; fromHolder?: boolean; movedAway?: boolean }
-  | { state: 'proposed'; candidates: ReceiptCandidate[] }
+  /** `mails`: found for it as well, and what is left once no proposal is (`withoutReceipt`). */
+  | { state: 'proposed'; candidates: ReceiptCandidate[]; mails?: MailCandidateView[] }
   | { state: 'in_mailbox'; mails: MailCandidateView[] }
   | { state: 'missing' };
 
@@ -303,10 +304,23 @@ export function loopState(payment: LoopPayment, ctx: LoopContext): LoopState {
   const answered = ctx.noReceipt.get(payment.id);
   if (answered !== undefined) return ctx.noReceiptFromHolder?.has(payment.id) ? { state: 'no_receipt', reason: answered, fromHolder: true } : { state: 'no_receipt', reason: answered };
   const candidates = receiptCandidates(payment, ctx);
-  if (candidates.length > 0) return { state: 'proposed', candidates };
   const mails = ctx.mailCandidates?.get(payment.id) ?? [];
+  if (candidates.length > 0) return mails.length > 0 ? { state: 'proposed', candidates, mails: [...mails] } : { state: 'proposed', candidates };
   if (mails.length > 0) return { state: 'in_mailbox', mails: [...mails] };
   return { state: 'missing' };
+}
+
+/**
+ * A payment's state once `rowId` is linked elsewhere: a linked receipt is
+ * proposed to nobody, and with no proposal left the state falls to what
+ * `loopState` says next. The same object when the receipt was not proposed
+ * here, so a row can tell by it that nothing changed.
+ */
+export function withoutReceipt(state: LoopState, rowId: string): LoopState {
+  if (state.state !== 'proposed' || !state.candidates.some((c) => c.rowId === rowId)) return state;
+  const candidates = state.candidates.filter((c) => c.rowId !== rowId);
+  if (candidates.length > 0) return { ...state, candidates };
+  return state.mails?.length ? { state: 'in_mailbox', mails: state.mails } : { state: 'missing' };
 }
 
 /** Payments booked at most this many days ago are notified about; older ones only wait in the open checks. */

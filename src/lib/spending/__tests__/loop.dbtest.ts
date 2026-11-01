@@ -199,6 +199,14 @@ describe('backtrack and revise', () => {
     expect((await loadPayments(db, ctx.workspaceId)).payments[0].links[0].method).toBe('same_amount');
   });
 
+  it('closing a backlog never pairs an estimated payment by amount: its euro figure is a guess', async () => {
+    const { ws, ctx, ids } = await setup([line('2026-04-11', 'Klaudi Abo', 'Monat', '-180.00')]);
+    await ws.addReceipt({ Name: 'Rechnung', Vendor: 'Zyx Handel', Gross: 180, Date: '2026-04-11', Currency: 'EUR', 'FX Rate': 1 });
+    await db.taxPayment.updateMany({ where: { id: ids.get('Klaudi Abo') as string }, data: { amountEstimated: true } });
+    expect(await closeBacklog(db, ctx, '2026-05-01')).toMatchObject({ linked: 0 });
+    expect((await loadPayments(db, ctx.workspaceId)).payments[0].links).toEqual([]);
+  });
+
   it('refuses to confirm a receipt that is not proposed for the payment', async () => {
     const { ws, ctx, ids } = await setup([line('2026-05-10', 'Zyx Handel', 'Bestellung', '-29.99')]);
     const other = await ws.addReceipt({ Name: 'Anderes', Vendor: 'Ganz Anders', Gross: 29.99, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });

@@ -528,7 +528,9 @@ export async function closeBacklog(db: PrismaClient, ctx: NotifyContext, before:
 
   const paired = await computeStates(db, ctx.workspaceId);
   const byAmount = sameAmountPairs(
-    inBacklog(paired).map(({ paymentId, bookingDay, payment }) => ({ paymentId, bookingDay, cents: -payment.amountCents })),
+    inBacklog(paired)
+      .filter(({ payment }) => !payment.estimated)
+      .map(({ paymentId, bookingDay, payment }) => ({ paymentId, bookingDay, cents: -payment.amountCents })),
     paired.receipts,
   );
   if (byAmount.length > 0) linked.push(...(await linkProposals(db, ctx, byAmount, 'same_amount')));

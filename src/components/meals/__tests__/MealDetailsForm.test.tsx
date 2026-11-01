@@ -188,6 +188,8 @@ describe('resume', () => {
     await user.type(screen.getByLabelText('Anlass'), 'Halb getippt');
     rerender(<MealDetailsForm record={{ ...record, confidence: 50 }} {...props} />);
     expect(screen.getByLabelText('Anlass')).toHaveProperty('value', 'Halb getippt');
+    // Still unsaved: the refresh must not become the new baseline.
+    expect(screen.getByText('Ungespeicherte Änderungen')).toBeTruthy();
     rerender(<MealDetailsForm record={meal({ rowId: 'row-2', occasion: 'Anderer Beleg, anderes Thema' })} {...props} />);
     expect(screen.getByLabelText('Anlass')).toHaveProperty('value', 'Anderer Beleg, anderes Thema');
   });

@@ -16,7 +16,7 @@ export function useTabInView(scroller: RefObject<HTMLElement | null>, activeKey:
   useEffect(() => {
     const row = scroller.current;
     if (!row) return;
-    const tab = row.querySelector<HTMLElement>('[aria-selected="true"]');
+    const tab = row.querySelector<HTMLElement>('[aria-selected="true"], [aria-pressed="true"]');
     if (!tab) return;
     const bounds = row.getBoundingClientRect();
     const box = tab.getBoundingClientRect();

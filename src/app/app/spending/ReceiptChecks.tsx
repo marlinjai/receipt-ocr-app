@@ -854,9 +854,12 @@ export default function ReceiptChecks({
       {view.canWrite && (
         <details id={`${id}-settings`} className="ui-disclosure mt-3 scroll-mt-4" open={settingsShown} onToggle={(e) => setSettingsShown(e.currentTarget.open)}>
           <summary className="cursor-pointer text-xs font-semibold">
-            Wie benachrichtigt wird
-            <span className="ml-2 font-normal" style={{ color: 'var(--muted)' }}>
-              {settingsSummary(view.settings.channel, view.pushDevices, view.settings.notifyEmail !== null)}
+            <svg className="ui-disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"> <path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /> </svg>
+            <span>
+              Wie benachrichtigt wird
+              <span className="block font-normal" style={{ color: 'var(--muted)' }}>
+                {settingsSummary(view.settings.channel, view.pushDevices, view.settings.notifyEmail !== null)}
+              </span>
             </span>
           </summary>
           <form
@@ -903,7 +906,10 @@ export default function ReceiptChecks({
       )}
       {view.canWrite && view.notifications.length > 0 && (
         <details className="ui-disclosure mt-3">
-          <summary className="cursor-pointer text-xs font-semibold">Benachrichtigungen ({view.notifications.length})</summary>
+          <summary className="cursor-pointer text-xs font-semibold">
+            <svg className="ui-disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"> <path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /> </svg>
+            Benachrichtigungen ({view.notifications.length})
+          </summary>
           <ul className="mt-1 divide-y">
             {view.notifications.map((n) => (
               <li key={n.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">

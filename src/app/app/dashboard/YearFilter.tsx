@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef } from 'react';
+import { useTabInView } from '@/lib/use-tab-in-view';
 import { NO_YEARS, hasYearFilter, selectYearRange, toggleUndated, toggleYear, type YearCount, type YearSelection } from '@/lib/receipt-years';
 
 const receiptsWord = (n: number) => (n === 1 ? '1 Beleg' : `${n} Belege`);
@@ -49,6 +50,9 @@ export default function YearFilter({
     (a, b) => a.year - b.year,
   );
   const available = chips.map((c) => c.year);
+  // The years run oldest first: on a phone the row brings the chosen one into view, also when the years arrive later.
+  const row = useRef<HTMLDivElement>(null);
+  useTabInView(row, `${[...selection.years].join(',')}|${available.length}`);
 
   const click = (year: number, shift: boolean) => {
     onChange(shift ? selectYearRange(selection, anchor.current, year, available) : toggleYear(selection, year));
@@ -59,7 +63,7 @@ export default function YearFilter({
 
   return (
     // On a phone one row that scrolls inside itself, so the years never push the receipts a screen down.
-    <div className="ui-scroll-bare inline-flex flex-wrap items-center gap-1.5 max-sm:w-full max-sm:flex-nowrap max-sm:overflow-x-auto" role="group" aria-label="Nach Jahr filtern">
+    <div ref={row} className="ui-scroll-bare inline-flex flex-wrap items-center gap-1.5 max-sm:w-full max-sm:flex-nowrap max-sm:overflow-x-auto" role="group" aria-label="Nach Jahr filtern">
       <span className="text-xs mr-0.5 max-sm:sr-only" style={{ color: 'var(--dt-text-secondary)' }}>
         Jahr
       </span>

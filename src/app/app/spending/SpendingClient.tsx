@@ -262,12 +262,15 @@ export default function SpendingClient({
               </option>
             ))}
           </select>
-          <Link href="/app/finance" className="ui-btn max-sm:hidden">
-            Finanzen
-          </Link>
-          <Link href="/app/dashboard" className="ui-btn max-sm:hidden">
-            Belege
-          </Link>
+          {/* The phone's bottom bar has these. On a wrapper: `.ui-btn` sets its own display, which a utility on it would lose to. */}
+          <span className="flex gap-2 max-sm:hidden">
+            <Link href="/app/finance" className="ui-btn">
+              Finanzen
+            </Link>
+            <Link href="/app/dashboard" className="ui-btn">
+              Belege
+            </Link>
+          </span>
         </div>
       </div>
 

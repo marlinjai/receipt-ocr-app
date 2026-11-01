@@ -194,6 +194,27 @@ stay with a person, because each fits the other's receipt. A person still gives 
 loop has always asked, but once for all. Links carry the method `certain` and are taken back like
 any other. No model is involved: where the vendor, amount and day settle it, a model adds risk.
 
+### Closing the backlog (2026-11-01)
+
+The owner, the same day: reconcile what can be found, mark what cannot, and from now on work from
+the notifications; everything before 2025 no longer matters. Replaces decision 3 ("a document for
+every private purchase") for the past. Decided by the coordinating session, say so if you disagree:
+
+- Payments before 2025 are never asked about (`RECEIPTS_ASKED_FROM`, state "not needed, old").
+- "Alles vor ... abschließen" pairs every proposal by the closest day, each payment and receipt
+  once (`closestPairs`, link method `closest`), then answers the rest (`backlogAnswer`). Private
+  only where the counterparty is called private or an own account, or nobody said and it is
+  groceries or a meal. Anything else, even unanswered, is "Nicht auffindbar": it could be a business
+  expense, so it stays visible in red instead of quietly becoming private.
+- The months before the running one are the backlog; the running month stays open for the
+  notifications. A mail attachment waiting to be taken over stays open.
+- Answers are the ordinary "no receipt" answers: taken back one by one, or all at once on the
+  database by deleting the rows with these two reasons.
+- Notion is not a source: its expense table ends in 2024 (one row of 2025) and those documents are
+  in the app since the import of 2026-10-11. The mailboxes are searched instead.
+- Repayments, overdraft interest and account fees of the banks count as loans and fees, so they
+  stop asking for a receipt.
+
 ### Build order 2, step 3: the expenses mailbox (2026-10-16)
 
 - A mailbox port (`src/lib/spending/mailbox/port.ts`) with a Gmail adapter (`gmail.ts`), read-only,

@@ -14,6 +14,7 @@ const linkTakenOver = vi.fn();
 const getReceiptChecks = vi.fn();
 const linkChosenReceipt = vi.fn();
 const linkCertain = vi.fn();
+const closeReceiptBacklog = vi.fn();
 const findReceiptChoices = vi.fn();
 const takeOverMail = vi.fn();
 const refresh = vi.fn();
@@ -29,6 +30,7 @@ vi.mock('./loop-actions', () => ({
   linkTakenOver: (...a: unknown[]) => linkTakenOver(...a),
   linkChosenReceipt: (...a: unknown[]) => linkChosenReceipt(...a),
   linkCertain: (...a: unknown[]) => linkCertain(...a),
+  closeReceiptBacklog: (...a: unknown[]) => closeReceiptBacklog(...a),
   findReceiptChoices: (...a: unknown[]) => findReceiptChoices(...a),
   getReceiptChecks: (...a: unknown[]) => getReceiptChecks(...a),
 }));
@@ -45,13 +47,14 @@ afterEach(cleanup);
 
 const view = (canWrite = true): ChecksView => ({
   certain: 0,
+  backlogBefore: '2026-05-01',
   loop: {
     open: [
       { paymentId: 'p1', bookingDay: '2026-05-10', cents: 2999, counterparty: 'Zyx Handel', reference: '', state: { state: 'proposed', candidates: [{ rowId: 'r1', label: 'Zyx Rechnung', day: '2026-05-09', amountCents: 2999, estimated: false }] } },
       { paymentId: 'p2', bookingDay: '2026-05-12', cents: 1250, counterparty: 'Abc Laden', reference: '', state: { state: 'missing' } },
     ],
     answered: [{ paymentId: 'p3', bookingDay: '2026-05-01', cents: 300, counterparty: 'Parkhaus', reference: '', state: { state: 'no_receipt', reason: 'Automat' } }],
-    counts: { hasReceipt: 4, notNeeded: { own_transfer: 1, income: 0, refund: 0, fee: 0, loan: 1, cash: 0, transfer: 0 }, noReceipt: 1, proposed: 1, in_mailbox: 0, missing: 1 },
+    counts: { hasReceipt: 4, notNeeded: { old: 0, own_transfer: 1, income: 0, refund: 0, fee: 0, loan: 1, cash: 0, transfer: 0 }, noReceipt: 1, proposed: 1, in_mailbox: 0, missing: 1 },
   },
   notifications: [{ id: 'n1', subjectKey: 'missing_receipt:p2', kind: 'missing_receipt', title: 'Beleg fehlt: Abc Laden', body: '', path: '/app/spending?pruefen=p2', channel: null, failed: false, createdAt: '2026-05-12T10:00:00Z' }],
   settings: { channel: 'push', notifyEmail: null },
@@ -66,7 +69,7 @@ const view = (canWrite = true): ChecksView => ({
 beforeEach(() => {
   refresh.mockReset();
   takeOverMail.mockClear();
-  for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings, dismissMail, linkTakenOver, linkChosenReceipt, linkCertain, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
+  for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings, dismissMail, linkTakenOver, linkChosenReceipt, linkCertain, closeReceiptBacklog, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
   findReceiptChoices.mockReset();
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -119,6 +122,32 @@ describe('ReceiptChecks', () => {
     await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
     expect(linkCertain).toHaveBeenCalledOnce();
     expect(await screen.findByText('1 Beleg zugeordnet.')).toBeTruthy();
+  });
+
+  it('closes the backlog only after asking, and says what went where', async () => {
+    const base = { ...view(), backlogBefore: '2026-06-01' };
+    closeReceiptBacklog.mockResolvedValue({ ok: true, value: { ...base, closed: { linked: 1, privately: 2, notFound: 3 } } });
+    render(<ReceiptChecks initial={base} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /abschließen \(2\)/ }));
+    expect(closeReceiptBacklog).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Abschließen' }));
+    expect(closeReceiptBacklog).toHaveBeenCalledOnce();
+    expect(await screen.findByText('Abgeschlossen: 1 zugeordnet, 2 privat ohne Beleg, 3 nicht auffindbar.')).toBeTruthy();
+  });
+
+  it('offers no closing while nothing older than the running month is open', () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    expect(screen.queryByRole('button', { name: /abschließen/ })).toBeNull();
+  });
+
+  it('shows what could not be found apart, with the way back', () => {
+    const base = view();
+    const lost = { paymentId: 'p9', bookingDay: '2026-03-01', cents: 5000, counterparty: 'Xyz Beratung', reference: '', state: { state: 'no_receipt' as const, reason: 'Nicht auffindbar' } };
+    render(<ReceiptChecks initial={{ ...base, loop: { ...base.loop, answered: [...base.loop.answered, lost] } }} focusPaymentId={null} />);
+    expect(screen.getByText('Nicht auffindbar (1)')).toBeTruthy();
+    expect(screen.getByText('Ohne Beleg beantwortet (1)')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Antwort für Xyz Beratung zurücknehmen' })).toBeTruthy();
   });
 
   it('offers no certain link while none exists, nor to someone who may only read', () => {

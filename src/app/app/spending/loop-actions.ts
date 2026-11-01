@@ -4,7 +4,7 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
-import { LoopServiceError, answerNoReceipt, confirmCandidate, linkCertainReceipts, loadLoopOverview, withdrawNoReceipt, type LoopOverview } from '@/lib/spending/loop-service';
+import { LoopServiceError, answerNoReceipt, closeBacklog, confirmCandidate, linkCertainReceipts, loadLoopOverview, withdrawNoReceipt, type BacklogClosed, type LoopOverview } from '@/lib/spending/loop-service';
 import { runSpendingChecks, type ChecksRun, INTERACTIVE_CLASSIFY_LIMIT } from '@/lib/spending/checks';
 import { NotifyServiceError, devicePushState, forgetDeviceEverywhere, validVapidConfig, getNotifySettings, pushDeviceCount, removePushSubscription, savePushSubscription, type PushContext, listUnreadNotifications, markNotificationRead, saveNotifySettings, type NotificationView, type NotifySettings, type NotifyContext } from '@/lib/spending/notify/service';
 import { berlinToday } from '@/lib/spending/period';
@@ -29,6 +29,8 @@ export interface ChecksView {
   loop: LoopOverview;
   /** How many open payments have one certain receipt, linked in one go by `linkCertain`. */
   certain: number;
+  /** Closing the backlog takes what is open from before this day: the first of the running month, whose payments still count as new. */
+  backlogBefore: string;
   /** The in-app queue; empty for a person who may not write (it is the owner's to act on and dismiss). */
   notifications: NotificationView[];
   settings: NotifySettings;
@@ -76,6 +78,7 @@ async function view(workspaceId: string, canWrite: boolean, lastRun: ChecksView[
   return {
     loop,
     certain: certainPairs(loop.open).length,
+    backlogBefore: `${berlinToday().slice(0, 7)}-01`,
     notifications,
     settings,
     canWrite,
@@ -127,6 +130,17 @@ export async function linkCertain(): Promise<ChecksResult<ChecksView>> {
     const ctx = await writeContext();
     await linkCertainReceipts(prisma, ctx);
     return { ok: true, value: await view(ctx.workspaceId, true) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Closes what is open from before this month, and says what went where. */
+export async function closeReceiptBacklog(): Promise<ChecksResult<ChecksView & { closed: BacklogClosed }>> {
+  try {
+    const ctx = await writeContext();
+    const closed = await closeBacklog(prisma, ctx, `${berlinToday().slice(0, 7)}-01`);
+    return { ok: true, value: { ...(await view(ctx.workspaceId, true)), closed } };
   } catch (e) {
     return failure(e);
   }

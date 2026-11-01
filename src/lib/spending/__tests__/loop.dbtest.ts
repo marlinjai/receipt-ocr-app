@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { createAccount, deleteImportBatch, importPayments, loadPayments, setPaymentKind, unlinkPayment } from '@/lib/tax/payments/service';
-import { LoopServiceError, MAX_SENDS_PER_RUN, answerNoReceipt, confirmCandidate, linkCertainReceipts, loadLoopOverview, runReceiptLoop, withdrawNoReceipt } from '../loop-service';
+import { LoopServiceError, MAX_SENDS_PER_RUN, answerNoReceipt, closeBacklog, confirmCandidate, linkCertainReceipts, loadLoopOverview, runReceiptLoop, withdrawNoReceipt } from '../loop-service';
 import { listUnreadNotifications, markNotificationRead, saveNotifySettings, getNotifySettings, NotifyServiceError } from '../notify/service';
 import type { NotificationChannel, NotificationMessage } from '../notify/port';
 import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
@@ -166,6 +166,29 @@ describe('backtrack and revise', () => {
     expect(ids.size).toBeGreaterThan(0);
     expect(await linkCertainReceipts(db, ctx)).toBe(0);
     expect((await loadPayments(db, ctx.workspaceId)).payments.flatMap((p) => p.links)).toEqual([]);
+  });
+
+  it('closes a backlog: pairs what fits, answers the rest, leaves the new month, and can be taken back', async () => {
+    const { ws, ctx, ids } = await setup([
+      line('2026-03-10', 'Zyx Handel', 'Rate Maerz', '-39.95'),
+      line('2026-04-10', 'Zyx Handel', 'Rate April', '-39.95'),
+      line('2026-04-11', 'Xyz Beratung', 'Projekt', '-500'),
+      line('2026-04-12', 'Lidl sagt Danke', 'Einkauf', '-12.50'),
+      line('2026-05-11', 'Abc Laden', 'Einkauf', '-5'),
+    ]);
+    await ws.addReceipt({ Name: 'Maerz', Vendor: 'Zyx Handel', Gross: 39.95, Date: '2026-03-09', Currency: 'EUR', 'FX Rate': 1 });
+    await ws.addReceipt({ Name: 'April', Vendor: 'Zyx Handel', Gross: 39.95, Date: '2026-04-09', Currency: 'EUR', 'FX Rate': 1 });
+
+    expect(await closeBacklog(db, ctx, '2026-05-01')).toEqual({ linked: 2, privately: 1, notFound: 1 });
+    const overview = await loadLoopOverview(db, ctx.workspaceId);
+    expect(overview.open.map((c) => c.counterparty)).toEqual(['Abc Laden']);
+    const lost = overview.answered.find((c) => c.counterparty === 'Xyz Beratung');
+    expect(lost?.state).toMatchObject({ state: 'no_receipt', reason: 'Nicht auffindbar' });
+
+    // Pressed again, nothing changes; a taken-back answer is open again.
+    expect(await closeBacklog(db, ctx, '2026-05-01')).toEqual({ linked: 0, privately: 0, notFound: 0 });
+    await withdrawNoReceipt(db, ctx, ids.get('Xyz Beratung') as string);
+    expect(await stateOf(ctx.workspaceId, ids.get('Xyz Beratung') as string)).toBe('missing');
   });
 
   it('refuses to confirm a receipt that is not proposed for the payment', async () => {

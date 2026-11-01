@@ -26,7 +26,14 @@ import { amountQuery } from '@/lib/tax/payments/search';
  * - step 5, otherwise the receipt is missing and the owner is asked.
  */
 
-export type NotNeededReason = 'own_transfer' | 'income' | 'refund' | 'fee' | 'loan' | 'cash' | 'transfer';
+export type NotNeededReason = 'old' | 'own_transfer' | 'income' | 'refund' | 'fee' | 'loan' | 'cash' | 'transfer';
+
+/** The owner, 2026-11-01: everything before 2025 no longer matters. A payment booked earlier is never asked about. */
+export const RECEIPTS_ASKED_FROM = '2025-01-01';
+
+/** What closing the backlog says about a payment nothing was found for. The second shows in red and stays visible. */
+export const PRIVATE_NO_RECEIPT = 'Privat, kein Beleg nötig';
+export const RECEIPT_NOT_FOUND = 'Nicht auffindbar';
 
 export interface LoopPayment {
   id: string;
@@ -108,6 +115,7 @@ const dayNumber = (day: string) => Math.round(Date.parse(`${day}T00:00:00Z`) / 8
 
 /** Step 1: why a payment needs no receipt, or null when it needs one. */
 export function notNeededReason(payment: LoopPayment, ctx: Pick<LoopContext, 'treatments' | 'categoryAnswers'>): NotNeededReason | null {
+  if (payment.bookingDay < RECEIPTS_ASKED_FROM) return 'old';
   const treatment = payment.counterpartyKey ? ctx.treatments.get(payment.counterpartyKey) : undefined;
   if (treatment === 'own_account' || payment.kind === 'own_transfer') return 'own_transfer';
   if (payment.kind === 'income') return 'income';
@@ -211,6 +219,42 @@ export function certainPairs(open: ReadonlyArray<{ paymentId: string; state: Loo
     const [only] = state.candidates;
     return !only.estimated && proposedFor.get(only.rowId) === 1 ? [{ paymentId, rowId: only.rowId }] : [];
   });
+}
+
+/**
+ * Every proposal paired up for closing a backlog: the closest day first, each
+ * payment and each receipt once. Equal monthly bills fall into place this way;
+ * should two swap, the amount and the vendor are the same, so what counts stays
+ * right.
+ */
+export function closestPairs(open: ReadonlyArray<{ paymentId: string; bookingDay: string; state: LoopState }>): Array<{ paymentId: string; rowId: string }> {
+  const wishes = open
+    .flatMap(({ paymentId, bookingDay, state }) =>
+      state.state === 'proposed' ? state.candidates.map((c) => ({ paymentId, rowId: c.rowId, gap: Math.abs(dayNumber(bookingDay) - dayNumber(c.day)) })) : [],
+    )
+    .sort((a, b) => a.gap - b.gap || a.paymentId.localeCompare(b.paymentId) || a.rowId.localeCompare(b.rowId));
+  const payments = new Set<string>();
+  const rows = new Set<string>();
+  const pairs: Array<{ paymentId: string; rowId: string }> = [];
+  for (const { paymentId, rowId } of wishes) {
+    if (payments.has(paymentId) || rows.has(rowId)) continue;
+    payments.add(paymentId);
+    rows.add(rowId);
+    pairs.push({ paymentId, rowId });
+  }
+  return pairs;
+}
+
+/**
+ * The answer closing a backlog gives a payment still without a receipt. Private
+ * only where that is known or plain: the counterparty is called private (or an
+ * own account), or nobody said and it is the household's shopping. Anything that
+ * could be a business expense is "not found", never quietly private.
+ */
+export function backlogAnswer(treatment: string | undefined, category: SpendingCategory): string {
+  if (treatment === 'private' || treatment === 'own_account') return PRIVATE_NO_RECEIPT;
+  if (treatment === undefined && (category === 'groceries_drugstore' || category === 'eating_out_coffee')) return PRIVATE_NO_RECEIPT;
+  return RECEIPT_NOT_FOUND;
 }
 
 export function loopState(payment: LoopPayment, ctx: LoopContext): LoopState {

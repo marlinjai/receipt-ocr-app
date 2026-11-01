@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CHECKS_PAGE, checkYears, chooseChecks, type OpenCheckItem } from './open-checks';
+import { RECEIPT_NOT_FOUND } from '@/lib/spending/loop';
+import { CHECKS_PAGE, checkYears, chooseChecks, splitAnswered, type OpenCheckItem } from './open-checks';
 
 const check = (paymentId: string, bookingDay: string, proposed = false): OpenCheckItem => ({
   paymentId,
@@ -38,5 +39,13 @@ describe('the open payments list', () => {
 
   it('shows nothing for a choice nothing matches, and ignores a payment that is settled', () => {
     expect(chooseChecks(many, { ...everything, year: '2019' }, 'gone')).toEqual({ shown: [], matching: 0 });
+  });
+});
+
+describe('the answered payments', () => {
+  it('sets apart those whose receipt could not be found', () => {
+    const lost = { state: { state: 'no_receipt' as const, reason: RECEIPT_NOT_FOUND } };
+    const said = { state: { state: 'no_receipt' as const, reason: 'Automat' } };
+    expect(splitAnswered([lost, said])).toEqual({ lost: [lost], answered: [said] });
   });
 });

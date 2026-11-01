@@ -4,18 +4,7 @@ import { checkYears, chooseChecks, splitAnswered, type CheckEdit, type ChecksCho
 import { certainPairs, withoutReceipt } from '@/lib/spending/loop';
 import type { PaymentCheck } from '@/lib/spending/loop-service';
 import type { NotificationView } from '@/lib/spending/notify/service';
-
-/** A change on screen whose answer from the server is still out. */
-export interface LocalWrite {
-  id: number;
-  paymentId: string;
-  edit: CheckEdit;
-  /** The receipt it links: held back from the proposals of every other payment meanwhile. */
-  rowId: string | null;
-}
-
-/** A change the server made. `state` is left out when a newer write on the same payment had its answer first. */
-type Confirmed = Omit<CheckChange, 'state'> & { state?: CheckChange['state'] };
+import { ChecksOutbox, checkKey, type Confirmed, type LocalWrite } from './ChecksOutbox';
 
 const newest = (a: PaymentCheck, b: PaymentCheck) => (a.bookingDay < b.bookingDay ? 1 : a.bookingDay > b.bookingDay ? -1 : 0);
 
@@ -33,7 +22,8 @@ const isOpen = ({ state }: PaymentCheck) => state.state === 'proposed' || state.
  * back as they are by now, whatever else happened to them meanwhile. A fresh read
  * slides in underneath without undoing a write. And what the server confirmed
  * after a read started is laid over that read again, so a late read brings
- * nothing back (`CheckChange.at`, `ChecksView.readAt`).
+ * nothing back (`CheckChange.at`, `ChecksView.readAt`). The pile and the refusals
+ * live in the `ChecksOutbox`, which outlives a visit of the panel.
  */
 export class ChecksStore {
   private byId = observable.map<string, PaymentCheck>([], { deep: false });
@@ -41,11 +31,7 @@ export class ChecksStore {
   private page: ChecksView;
   /** What the server last said about each payment. A receipt linked since stands here with `has_receipt`, so a payment keeps its place. */
   private known: Map<string, PaymentCheck>;
-  private writes: LocalWrite[] = [];
-  private confirmed: Confirmed[] = [];
-  private lastWrite = 0;
-  /** Per payment, the newest write the server has answered: an answer to an older one comes too late. */
-  private answeredUpTo = new Map<string, number>();
+  private outbox: ChecksOutbox;
   /** Messages marked read: null while the answer is out, then when it happened. */
   private readNotes = observable.map<string, number | null>();
   private settledSubjects = observable.set<string>();
@@ -54,21 +40,20 @@ export class ChecksStore {
   /** Counts what changed about the receipts: a list open for linking by hand is asked again when it changes. */
   dataVersion = 0;
 
-  constructor(seed: ChecksView) {
+  constructor(seed: ChecksView, outbox = new ChecksOutbox()) {
+    this.outbox = outbox;
     this.page = seed;
     this.lastRun = seed.lastRun;
     this.known = ChecksStore.byPayment(seed);
+    this.absorbConfirmed();
     this.draw();
-    makeAutoObservable<ChecksStore, 'byId' | 'page' | 'known' | 'writes' | 'confirmed' | 'lastWrite' | 'answeredUpTo' | 'readNotes' | 'settledSubjects'>(
+    makeAutoObservable<ChecksStore, 'byId' | 'page' | 'known' | 'outbox' | 'readNotes' | 'settledSubjects'>(
       this,
       {
         byId: false,
         page: observable.ref,
         known: false,
-        writes: false,
-        confirmed: false,
-        lastWrite: false,
-        answeredUpTo: false,
+        outbox: false,
         readNotes: false,
         settledSubjects: false,
         lastRun: observable.ref,
@@ -159,9 +144,41 @@ export class ChecksStore {
     return this.page.backlogBefore;
   }
 
-  /** What the list shows for a choice made in the view (the choice itself stays there). */
+  /**
+   * What the list shows for a choice made in the view (the choice itself stays there). A payment with a refusal
+   * is there whatever the choice: its message stands at its row, and the row must be on screen to say it.
+   */
   filtered(choice: ChecksChoice, focusPaymentId: string | null): { shown: PaymentCheck[]; matching: number } {
-    return chooseChecks(this.open, choice, focusPaymentId);
+    const { shown, matching } = chooseChecks(this.open, choice, focusPaymentId);
+    const refused = this.open.filter((c) => this.outbox.refusals.has(checkKey(c.paymentId)) && !shown.includes(c));
+    return { shown: [...refused, ...shown], matching };
+  }
+
+  /** For the name of a payment in a message. */
+  find(paymentId: string): PaymentCheck | undefined {
+    return this.byId.get(paymentId);
+  }
+
+  errorAt(key: string): string | null {
+    return this.outbox.refusals.get(key)?.message ?? null;
+  }
+
+  say(key: string, who: string | null, message: string): void {
+    this.outbox.say(key, who, message);
+  }
+
+  clearError(key: string): void {
+    this.outbox.clear(key);
+  }
+
+  /** Does the panel have a place for this refusal? A payment that left the lists has none; the page as a whole always does. */
+  shows(key: string): boolean {
+    const colon = key.indexOf(':');
+    if (colon < 0) return true;
+    const [kind, id] = [key.slice(0, colon), key.slice(colon + 1)];
+    if (kind === 'note') return this.notifications.some((n) => n.id === id);
+    const check = this.byId.get(id);
+    return check !== undefined && (isOpen(check) || check.state.state === 'no_receipt');
   }
 
   /** The page read the checks afresh after a change elsewhere on it. The summary of "Jetzt prüfen" stays: the page's read carries none. */
@@ -180,39 +197,52 @@ export class ChecksStore {
     if (view.readAt < this.page.readAt) return;
     this.page = view;
     this.known = ChecksStore.byPayment(view);
-    this.confirmed = this.confirmed.filter((c) => c.at >= view.readAt);
+    this.outbox.forget(view.readAt);
     this.settledSubjects.clear();
     for (const [id, at] of [...this.readNotes]) if (at !== null && at < view.readAt) this.readNotes.delete(id);
-    for (const change of this.confirmed) this.absorb(change);
+    this.absorbConfirmed();
     this.dataVersion += 1;
     this.draw();
   }
 
   /** The write shows at once; `confirm` or `refuse` end it. */
   begin(paymentId: string, edit: CheckEdit, rowId: string | null = null): LocalWrite {
-    const write = { id: ++this.lastWrite, paymentId, edit, rowId };
-    this.writes.push(write);
+    const write = this.outbox.begin(paymentId, edit, rowId);
     this.lastRun = null;
     this.draw();
     return write;
   }
 
   confirm(write: LocalWrite, change: CheckChange): void {
-    this.writes = this.writes.filter((w) => w !== write);
-    // The answer to an older write coming after a newer one's says nothing about the payment any more. Its receipt is linked all the same.
-    const late = (this.answeredUpTo.get(write.paymentId) ?? 0) > write.id;
-    if (!late) this.answeredUpTo.set(write.paymentId, write.id);
-    const confirmed: Confirmed = late ? { paymentId: change.paymentId, rowId: change.rowId, settled: change.settled, at: change.at } : change;
-    this.confirmed.push(confirmed);
-    this.absorb(confirmed);
-    if (change.rowId !== null) this.dataVersion += 1;
-    this.draw();
+    const confirmed = this.outbox.confirm(write, change);
+    for (const store of this.openStores()) store.tookConfirmed(confirmed);
   }
 
   /** Refused, or no answer at all: this write leaves the pile, and nothing else does. */
   refuse(write: LocalWrite): void {
-    this.writes = this.writes.filter((w) => w !== write);
+    this.outbox.refuse(write);
+    for (const store of this.openStores()) store.draw();
+  }
+
+  /** The panel opened: what was confirmed between reading this store's seed and now. */
+  catchUp(): void {
+    this.absorbConfirmed();
     this.draw();
+  }
+
+  /** A write can end after the panel it began in closed: the store on screen by now has to hear of it. */
+  private openStores(): Set<ChecksStore> {
+    return new Set(this.outbox.open ? [this, this.outbox.open] : [this]);
+  }
+
+  private tookConfirmed(confirmed: Confirmed): void {
+    this.absorb(confirmed);
+    if (confirmed.rowId !== null) this.dataVersion += 1;
+    this.draw();
+  }
+
+  private absorbConfirmed(): void {
+    for (const change of this.outbox.confirmed) if (change.at >= this.page.readAt) this.absorb(change);
   }
 
   markRead(id: string): void {
@@ -246,10 +276,10 @@ export class ChecksStore {
 
   private shown(known: PaymentCheck): PaymentCheck | null {
     let check: PaymentCheck | null = known;
-    for (const write of this.writes) if (check && write.paymentId === known.paymentId) check = write.edit(check);
+    for (const write of this.outbox.writes) if (check && write.paymentId === known.paymentId) check = write.edit(check);
     if (!check) return null;
     let { state } = check;
-    for (const { rowId } of this.writes) if (rowId !== null) state = withoutReceipt(state, rowId);
+    for (const { rowId } of this.outbox.writes) if (rowId !== null) state = withoutReceipt(state, rowId);
     return state === check.state ? check : { ...check, state };
   }
 

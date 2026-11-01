@@ -1,5 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
-import { sharedRead, withSharedReads } from '../shared-reads';
+import { readsStartedAt, sharedRead, withSharedReads } from '../shared-reads';
+
+describe('readsStartedAt', () => {
+  it('is the start of the scope, however late it is asked, and now outside one', async () => {
+    vi.useFakeTimers({ now: 1000, toFake: ['Date'] });
+    try {
+      await withSharedReads(async () => {
+        vi.setSystemTime(5000);
+        expect(readsStartedAt()).toBe(1000);
+      });
+      expect(readsStartedAt()).toBe(5000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe('sharedRead', () => {
   it('reads each key once inside a scope, also for callers side by side', async () => {

@@ -87,6 +87,7 @@ vi.mock('@/lib/tax/payments/service', () => {
 });
 
 import { ReceiptsAuthError } from '@/lib/auth-guards';
+import { withSharedReads } from '@/lib/shared-reads';
 import { LoopServiceError } from '@/lib/spending/loop-service';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
 vi.mock('@/lib/spending/mailbox/service', () => ({ MailCandidateError: class extends Error {}, dismissMailCandidate: (...a: unknown[]) => dismissMailCandidate(...a) }));
@@ -189,6 +190,22 @@ describe('writes', () => {
     });
     const read = await getReceiptChecks();
     expect((read as { value: { readAt: number } }).value.readAt).toBeLessThanOrEqual(startedBy);
+  });
+
+  it('in a page\'s shared reads, the read counts from when they began', async () => {
+    requireReceiptsSession.mockResolvedValue(SESSION);
+    requireAction.mockResolvedValue(SESSION);
+    vi.useFakeTimers({ now: 1000, toFake: ['Date'] });
+    try {
+      const read = await withSharedReads(async () => {
+        // Another part of the page started the shared read; the checks ask for it later.
+        vi.setSystemTime(5000);
+        return getReceiptChecks();
+      });
+      expect((read as { value: { readAt: number } }).value.readAt).toBe(1000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('pass refusals on with their code', async () => {

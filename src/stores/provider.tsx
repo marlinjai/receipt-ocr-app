@@ -36,6 +36,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     };
   }, [pathname, store]);
 
+  // An answer of the receipt checks shows at once and is sent after that: closing the page now would lose what is queued.
+  useEffect(() => {
+    const askFirst = (e: BeforeUnloadEvent) => {
+      if (store.checkOutbox.writes.length > 0) e.preventDefault();
+    };
+    window.addEventListener('beforeunload', askFirst);
+    return () => window.removeEventListener('beforeunload', askFirst);
+  }, [store]);
+
   return <AppStoreContext.Provider value={store}>{children}</AppStoreContext.Provider>;
 }
 

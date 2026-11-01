@@ -5,6 +5,7 @@ import { answerTakenBack, answeredNoReceipt, mailSetAside, receiptLinked } from 
 import { RECEIPT_NOT_FOUND, type LoopState } from '@/lib/spending/loop';
 import type { PaymentCheck } from '@/lib/spending/loop-service';
 import { AppStore } from '../AppStore';
+import { ChecksOutbox, checkKey } from '../ChecksOutbox';
 import { ChecksStore } from '../ChecksStore';
 
 const candidate = (rowId: string, estimated = false) => ({ rowId, label: rowId, day: '2026-05-01', amountCents: 1000, estimated });
@@ -394,5 +395,110 @@ describe('the count on the tab', () => {
     app.openChecks(newer);
     closeOld();
     expect(app.checks).toBe(newer);
+  });
+});
+
+describe('what outlives a visit of the panel', () => {
+  it('a new store starts with the writes on their way', () => {
+    const outbox = new ChecksOutbox();
+    const seed = view([check('a', proposed('r1')), check('b', proposed('r1'))]);
+    const first = new ChecksStore(seed, outbox);
+    link(first, 'a', 'r1');
+    const second = new ChecksStore(seed, outbox);
+    expect(ids(second.open)).toEqual(['b']);
+    expect(stateOf(second, 'b')).toEqual({ state: 'missing' });
+  });
+
+  it('a new store knows what was confirmed after its seed was read', () => {
+    const outbox = new ChecksOutbox();
+    const seed = view([check('a', proposed('r1'))]);
+    const first = new ChecksStore(seed, outbox);
+    first.confirm(link(first, 'a', 'r1'), linkConfirmed('a', 'r1', 200));
+    expect(new ChecksStore(seed, outbox).openCount).toBe(0);
+  });
+
+  it('a write begun on the last visit ends on the store open now', () => {
+    const app = new AppStore();
+    const seed = view([check('a', proposed('r1'))]);
+    const first = new ChecksStore(seed, app.checkOutbox);
+    const close = app.openChecks(first);
+    const write = link(first, 'a', 'r1');
+    close();
+    const second = new ChecksStore(seed, app.checkOutbox);
+    app.openChecks(second);
+    first.refuse(write);
+    expect(ids(second.open)).toEqual(['a']);
+    const again = link(second, 'a', 'r1');
+    first.confirm(again, linkConfirmed('a', 'r1'));
+    expect(second.openCount).toBe(0);
+    expect(second.counts.hasReceipt).toBe(5);
+  });
+
+  it('confirmed between the seed and the panel opening is caught up on', () => {
+    const app = new AppStore();
+    const seed = view([check('a', proposed('r1'))]);
+    const first = new ChecksStore(seed, app.checkOutbox);
+    const write = link(first, 'a', 'r1');
+    const second = new ChecksStore(seed, app.checkOutbox);
+    first.confirm(write, linkConfirmed('a', 'r1'));
+    app.openChecks(second);
+    expect(second.openCount).toBe(0);
+  });
+});
+
+describe('refusals', () => {
+  it('stand by payment, and only that payment\'s are cleared', () => {
+    const store = new ChecksStore(view([check('a', { state: 'missing' }), check('b', { state: 'missing' })]));
+    store.say(checkKey('a'), 'A', 'eins');
+    store.say(checkKey('b'), 'B', 'zwei');
+    store.clearError(checkKey('a'));
+    expect(store.errorAt(checkKey('a'))).toBeNull();
+    expect(store.errorAt(checkKey('b'))).toBe('zwei');
+  });
+
+  it('survive a whole read, and go loose when their payment left the lists', () => {
+    const app = new AppStore();
+    const store = new ChecksStore(view([check('a', { state: 'missing' })]), app.checkOutbox);
+    app.openChecks(store);
+    store.say(checkKey('a'), 'A', 'eins');
+    expect(app.looseRefusals).toEqual([]);
+    store.replaced(view([], [], { readAt: 150 }));
+    expect(store.errorAt(checkKey('a'))).toBe('eins');
+    expect(app.looseRefusals.map((r) => r.who)).toEqual(['A']);
+  });
+
+  it('are all loose with no panel open, also those about the page', () => {
+    const app = new AppStore();
+    const store = new ChecksStore(view([check('a', { state: 'missing' })]), app.checkOutbox);
+    store.say('run', null, 'nicht geprüft');
+    store.say(checkKey('a'), 'A', 'eins');
+    expect(app.looseRefusals).toHaveLength(2);
+    const close = app.openChecks(store);
+    expect(app.looseRefusals).toEqual([]);
+    close();
+    expect(app.looseRefusals).toHaveLength(2);
+  });
+
+  it('about an answered payment and about a message have their place too', () => {
+    const notifications = [{ subjectKey: 's', id: 'n1' }] as ChecksView['notifications'];
+    const store = new ChecksStore(view([], [check('a', { state: 'no_receipt', reason: 'x' })], { notifications }));
+    expect(store.shows(checkKey('a'))).toBe(true);
+    expect(store.shows('note:n1')).toBe(true);
+    expect(store.shows('note:gone')).toBe(false);
+    expect(store.shows(checkKey('gone'))).toBe(false);
+  });
+
+  it('a linked payment has no row left to say it at', () => {
+    const store = new ChecksStore(view([check('a', proposed('r1'))]));
+    link(store, 'a', 'r1');
+    expect(store.shows(checkKey('a'))).toBe(false);
+  });
+
+  it('keep their row in the list whatever the filter says', () => {
+    const store = new ChecksStore(view([check('a', { state: 'missing' }, '2026-05-10'), check('b', { state: 'missing' }, '2025-05-10')]));
+    store.say(checkKey('b'), 'B', 'zwei');
+    const { shown, matching } = store.filtered({ year: '2026', onlyProposed: false, limit: 30 }, null);
+    expect(ids(shown)).toEqual(['b', 'a']);
+    expect(matching).toBe(1);
   });
 });

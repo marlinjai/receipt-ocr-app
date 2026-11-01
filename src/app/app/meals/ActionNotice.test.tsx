@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 
 vi.mock('./actions', () => ({ markMealsNotMeal: vi.fn(), deleteMealReceipts: vi.fn(), restoreMeals: vi.fn() }));
 
-import { ActionNotice } from './useReceiptActions';
+import ActionNotice from '@/components/ui/ActionNotice';
 
 /**
  * The outcome notice floats in the dock, so it cannot move the page. These

@@ -40,6 +40,9 @@ vi.mock('../workspace-actions', () => ({ switchWorkspace: (...a: unknown[]) => s
 vi.mock('@/lib/upload/browser-deps', () => ({ createBrowserDeps: () => ({}) }));
 vi.mock('./take-over-mail', async (orig) => ({ ...(await orig<typeof import('./take-over-mail')>()), takeOverMail: (...a: unknown[]) => takeOverMail(...a) }));
 
+import CheckRefusals from '@/components/CheckRefusals';
+import { AppStore } from '@/stores/AppStore';
+import { AppStoreContext } from '@/stores/provider';
 import ReceiptChecks, { checksActionMessage, runSummary } from './ReceiptChecks';
 import type { CheckChange, ChecksView } from './loop-actions';
 
@@ -193,7 +196,7 @@ describe('ReceiptChecks', () => {
     expect((screen.getByLabelText('Belege durchsuchen (Name, Lieferant oder Betrag)') as HTMLInputElement).value).toBe('Kas');
   });
 
-  it('keeps an error about a payment still open when the page reads afresh, and drops one about a payment that left', async () => {
+  it('keeps an error about a payment still open when the page reads afresh', async () => {
     findReceiptChoices.mockResolvedValue({ ok: true, value: [{ rowId: 'r9', label: 'Kassenbon', vendor: null, day: null, amountCents: 1250, estimated: false, openCents: 1250 }] });
     linkChosenReceipt.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'already_has_receipt' });
     const base = view();
@@ -205,30 +208,6 @@ describe('ReceiptChecks', () => {
     expect((await screen.findByRole('alert')).textContent).toMatch(/inzwischen schon ein Beleg/);
     rerender(<ReceiptChecks initial={{ ...base }} focusPaymentId={null} />);
     expect(screen.getByRole('alert').textContent).toMatch(/inzwischen schon ein Beleg/);
-    rerender(<ReceiptChecks initial={{ ...base, loop: { ...base.loop, open: base.loop.open.slice(0, 1) } }} focusPaymentId={null} />);
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('a mail whose link failed keeps its message at the row while the payment is open, and at the page when it left', async () => {
-    const base = view();
-    const withMail = { ...base, loop: { ...base.loop, open: [{ ...base.loop.open[1], state: { state: 'in_mailbox' as const, mails: [{ id: 'm1', fileName: 'Rechnung.pdf', receivedDay: '2026-05-12', subject: 'Rechnung', sender: 'laden@example.com' }] } }] } };
-    takeOverMail.mockResolvedValue({ kind: 'done', rowId: 'r-new' });
-    linkTakenOver.mockResolvedValue({ ok: false, error: 'not_found', detail: 'payment_not_found' });
-    getReceiptChecks.mockResolvedValue({ ok: true, value: withMail });
-    const { unmount } = render(<ReceiptChecks initial={withMail} focusPaymentId={null} />);
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Rechnung.pdf als Beleg übernehmen' }));
-    const atRow = await screen.findByRole('alert');
-    expect(atRow.textContent).toMatch(/noch nicht mit der Zahlung verknüpft/);
-    expect(atRow.closest('li')).not.toBeNull();
-    expect(refresh).not.toHaveBeenCalled();
-    unmount();
-
-    getReceiptChecks.mockResolvedValue({ ok: true, value: { ...withMail, loop: { ...withMail.loop, open: [] } } });
-    render(<ReceiptChecks initial={withMail} focusPaymentId={null} />);
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Rechnung.pdf als Beleg übernehmen' }));
-    const atPage = await screen.findByRole('alert');
-    expect(atPage.textContent).toMatch(/noch nicht mit der Zahlung verknüpft/);
-    expect(atPage.closest('li')).toBeNull();
   });
 
   it('asks an open list again quietly after a fresh read: no searching message, the status stays', async () => {
@@ -477,6 +456,179 @@ describe('an answer about one payment', () => {
     expect(screen.getByText('Belege prüfen (1 offen)')).toBeTruthy();
     rerender(<ReceiptChecks initial={{ ...stale, readAt: 3 }} focusPaymentId={null} />);
     expect(screen.getByText('Belege prüfen (2 offen)')).toBeTruthy();
+  });
+});
+
+describe('a refusal reaches the person', () => {
+  const app = () => new AppStore();
+  /** The panel in the shell, with the real stores: what `layout.tsx` draws around it. */
+  const shell = (store: AppStore, initial: ChecksView | null) => (
+    <AppStoreContext.Provider value={store}>
+      {initial && <ReceiptChecks initial={initial} focusPaymentId={null} />}
+      <CheckRefusals />
+    </AppStoreContext.Provider>
+  );
+  const later = <T,>() => {
+    let resolve: (value: T) => void = () => {};
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  };
+  const refused = { ok: false, error: 'invalid_input', detail: 'not_a_candidate' };
+  const confirmButton = 'Zyx Rechnung als Beleg für diese Zahlung bestätigen';
+
+  it('after the panel closed: the shell says it, naming the payment, until it is closed', async () => {
+    const answer = later<unknown>();
+    confirmReceipt.mockReturnValue(answer.promise);
+    const store = app();
+    const { rerender } = render(shell(store, view()));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: confirmButton }));
+    // "Überblick": the panel is gone, the person believes it linked.
+    rerender(shell(store, null));
+    expect(screen.queryByRole('alert')).toBeNull();
+    answer.resolve(refused);
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/^Zyx Handel, 10\.05\.2026, 29,99.*passt nicht mehr/);
+    await user.click(screen.getByRole('button', { name: 'Hinweis schließen' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('after the panel closed: a receipt made and not linked says so in the shell', async () => {
+    const base = view();
+    const withMail = { ...base, loop: { ...base.loop, open: [{ ...base.loop.open[1], state: { state: 'in_mailbox' as const, mails: [{ id: 'm1', fileName: 'Rechnung.pdf', receivedDay: '2026-05-12', subject: 'Rechnung', sender: 'laden@example.com' }] } }] } };
+    const link = later<unknown>();
+    takeOverMail.mockResolvedValue({ kind: 'done', rowId: 'r-new' });
+    linkTakenOver.mockReturnValue(link.promise);
+    const store = app();
+    const { rerender } = render(shell(store, withMail));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Rechnung.pdf als Beleg übernehmen' }));
+    await waitFor(() => expect(linkTakenOver).toHaveBeenCalled());
+    rerender(shell(store, null));
+    link.resolve({ ok: false, error: 'not_found', detail: 'payment_not_found' });
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/^Abc Laden.*noch nicht mit der Zahlung verknüpft/);
+  });
+
+  it('a mail whose link failed keeps its message at the row while the payment is open', async () => {
+    const base = view();
+    const withMail = { ...base, loop: { ...base.loop, open: [{ ...base.loop.open[1], state: { state: 'in_mailbox' as const, mails: [{ id: 'm1', fileName: 'Rechnung.pdf', receivedDay: '2026-05-12', subject: 'Rechnung', sender: 'laden@example.com' }] } }] } };
+    takeOverMail.mockResolvedValue({ kind: 'done', rowId: 'r-new' });
+    linkTakenOver.mockResolvedValue({ ok: false, error: 'not_found', detail: 'payment_not_found' });
+    getReceiptChecks.mockResolvedValue({ ok: true, value: withMail });
+    render(shell(app(), withMail));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Rechnung.pdf als Beleg übernehmen' }));
+    const atRow = await screen.findByRole('alert');
+    expect(atRow.textContent).toMatch(/noch nicht mit der Zahlung verknüpft/);
+    expect(atRow.closest('li')).not.toBeNull();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('two refusals both stay, each at its row, and answering a third leaves them', async () => {
+    const base = view();
+    confirmReceipt.mockResolvedValue(refused);
+    sayNoReceipt.mockImplementation(async (paymentId: string) => (paymentId === 'p2' ? { ok: false, error: 'not_found', detail: 'payment_not_found' } : { ok: true, value: change(paymentId, { state: 'no_receipt', reason: 'x' }) }));
+    const third = { paymentId: 'p4', bookingDay: '2026-05-08', cents: 500, counterparty: 'Drei', reference: '', state: { state: 'missing' as const } };
+    render(shell(app(), { ...base, loop: { ...base.loop, open: [...base.loop.open, third] } }));
+    const user = userEvent.setup();
+    const say = async (index: number, name: string) => {
+      await user.click(screen.getAllByRole('button', { name: 'Es gibt keinen Beleg' })[index]);
+      await user.type(screen.getByLabelText('Warum es keinen Beleg gibt'), 'x');
+      await user.click(screen.getByRole('button', { name: `Antwort ohne Beleg für ${name} speichern` }));
+    };
+    await user.click(screen.getByRole('button', { name: confirmButton }));
+    await screen.findByRole('alert');
+    await say(1, 'Abc Laden');
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2));
+    await say(2, 'Drei');
+    await waitFor(() => expect(screen.getByText('Belege prüfen (2 offen)')).toBeTruthy());
+    expect(screen.getAllByRole('alert').map((a) => a.closest('li')?.id)).toEqual(['pruefen-p1', 'pruefen-p2']);
+  });
+
+  it('goes by trying the same payment again, or by closing it', async () => {
+    confirmReceipt.mockResolvedValueOnce(refused);
+    render(shell(app(), view()));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: confirmButton }));
+    await screen.findByRole('alert');
+    await user.click(screen.getByRole('button', { name: 'Meldung schließen' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    confirmReceipt.mockResolvedValueOnce(refused);
+    await user.click(screen.getByRole('button', { name: confirmButton }));
+    await screen.findByRole('alert');
+    await user.click(screen.getByRole('button', { name: confirmButton }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('a row a whole read took away keeps its message, in the shell', async () => {
+    confirmReceipt.mockResolvedValueOnce(refused);
+    const base = view();
+    const store = app();
+    const { rerender } = render(shell(store, base));
+    await userEvent.setup().click(screen.getByRole('button', { name: confirmButton }));
+    expect((await screen.findByRole('alert')).closest('li')?.id).toBe('pruefen-p1');
+    rerender(shell(store, { ...base, readAt: 5, loop: { ...base.loop, open: base.loop.open.slice(1) } }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.closest('li')).toBeNull();
+    expect(alert.textContent).toMatch(/^Zyx Handel/);
+  });
+
+  it('a row the filter would hide stays on screen with its message', async () => {
+    confirmReceipt.mockResolvedValueOnce(refused);
+    const base = view();
+    const older = { paymentId: 'p7', bookingDay: '2025-02-01', cents: 100, counterparty: 'Alt', reference: '', state: { state: 'missing' as const } };
+    render(shell(app(), { ...base, loop: { ...base.loop, open: [...base.loop.open, older] } }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: confirmButton }));
+    await screen.findByRole('alert');
+    await user.selectOptions(screen.getByLabelText('Jahr der Zahlung'), '2025');
+    expect(screen.getByRole('alert').closest('li')?.id).toBe('pruefen-p1');
+  });
+
+  it('coming back with an answer on its way: the new panel knows it, and no second click is offered', async () => {
+    const answer = later<unknown>();
+    confirmReceipt.mockReturnValue(answer.promise);
+    const store = app();
+    const { rerender } = render(shell(store, view()));
+    await userEvent.setup().click(screen.getByRole('button', { name: confirmButton }));
+    rerender(shell(store, null));
+    // Read while the answer was out: the page still lists the payment.
+    rerender(shell(store, view()));
+    expect(screen.getByText('Belege prüfen (1 offen)')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: confirmButton })).toBeNull();
+    answer.resolve({ ok: true, value: change('p1', { state: 'has_receipt' }, 'r1') });
+    await waitFor(() => expect(store.checkOutbox.writes).toHaveLength(0));
+    expect(screen.getByText('Belege prüfen (1 offen)')).toBeTruthy();
+  });
+
+  it('coming back, a refusal brings the row back in the new panel, with its message', async () => {
+    const answer = later<unknown>();
+    confirmReceipt.mockReturnValue(answer.promise);
+    const store = app();
+    const { rerender } = render(shell(store, view()));
+    await userEvent.setup().click(screen.getByRole('button', { name: confirmButton }));
+    rerender(shell(store, null));
+    rerender(shell(store, view()));
+    answer.resolve(refused);
+    expect((await screen.findByRole('alert')).closest('li')?.id).toBe('pruefen-p1');
+  });
+});
+
+describe('the focus after an answer', () => {
+  it('goes to the heading after "no receipt", as the row goes with its buttons', async () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Es gibt keinen Beleg' })[1]);
+    await user.type(screen.getByLabelText('Warum es keinen Beleg gibt'), 'Automat');
+    await user.click(screen.getByRole('button', { name: 'Antwort ohne Beleg für Abc Laden speichern' }));
+    expect(document.activeElement?.tagName).toBe('H2');
+  });
+
+  it('goes to the heading after taking an answer back', async () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByText(/Ohne Beleg beantwortet/));
+    await user.click(screen.getByRole('button', { name: 'Antwort für Parkhaus zurücknehmen' }));
+    expect(document.activeElement?.tagName).toBe('H2');
   });
 });
 

@@ -113,7 +113,8 @@ staleness, not the redraw cost.
   now carries them, `withoutReceipt`) or to missing, as `loopState` would say.
 - **Late answers.** Writes are numbered per store: an answer to a write older than the newest one
   answered for that payment changes nothing about it, though its receipt still counts as linked. A read
-  says when it started (`readAt`), a change when it was made (`at`): a read older than the last is
+  says when it started (`readAt`, for a page render the start of its shared reads, as another part of
+  the page may have begun them earlier), a change when it was made (`at`): a read older than the last is
   dropped, and what was confirmed after a read started is laid over it again, so a slow `router.refresh`
   brings nothing back. Both times come from the same server; with several instances a change within
   the clock's difference could show wrongly until the next read.
@@ -130,10 +131,22 @@ staleness, not the redraw cost.
   (`vendorAliases`), which can give other payments new proposals. They appear with the next read, as
   they would have after a whole view only because that view was sent. A "no receipt" given in a second
   tab to a payment that got a link in the first shows as answered until the next read.
+- **The focus.** Every answer moves it to the list's heading at once, as the row goes with its buttons.
 - **Take over.** The upload can take seconds and fail on its own, and its receipt is not known before it
   ends, so the row stays and shows what it does. What applies at once is the link that follows. The picker
   moved into `PickReceipt`, which reads `dataVersion` itself, so closed rows do not redraw on it.
 - `OpenCheck` is memoized by its check, its actions come through a ref as in `QueueRow`, and other rows
   stay usable while an answer is out: only bulk actions lock them.
+- **What outlives the panel.** A person can leave while an answer is out, so the pile of writes and the
+  refusals live in a `ChecksOutbox` on the `AppStore`, not in the `ChecksStore`. A new store starts with the
+  writes still out, so coming back shows the payment as answered and offers no second click, and a write begun
+  on the last visit ends on the store open now. While writes are out, closing the page asks first
+  (`beforeunload`, in the provider).
+- **A refusal always reaches the person.** They are kept per payment, plus one per message and one per page
+  action, and leave only by acting on that thing again or by closing them. A page read does not touch them. A
+  refusal stands at its row, and a row with one stays in the list whatever the filter says. With no row to
+  stand at, because the panel closed or a whole read took the payment away, `CheckRefusals` in the shell says it
+  through the dock, naming the payment. That includes "receipt made, not linked". A company switch throws the
+  `AppStore` away, and a refusal still out goes with it: nothing of one company stays on screen in another.
 - A refused "no receipt" brings its row back fresh, without the reason typed: the row left the list, and
   with it its form. Refusals there are rare (the button needs a reason, the rest is another tab).

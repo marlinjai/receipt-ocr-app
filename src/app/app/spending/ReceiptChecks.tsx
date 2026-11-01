@@ -18,7 +18,8 @@ import type { ChecksRun } from '@/lib/spending/checks';
 import { classifySummary } from '@/lib/tax/payments/classify-summary';
 import { useRouter } from 'next/navigation';
 import type { ChannelSetting } from '@/lib/spending/notify/port';
-import { ChecksStore, type LocalWrite } from '@/stores/ChecksStore';
+import { checkKey, type LocalWrite } from '@/stores/ChecksOutbox';
+import { ChecksStore } from '@/stores/ChecksStore';
 import { useAppStore } from '@/stores/provider';
 import {
   checkNow,
@@ -290,21 +291,6 @@ export function choiceLabel(r: ReceiptChoice): string {
 }
 
 /**
- * Is the row an error belongs to still listed in this view? An error about a payment, an answer or a
- * notification goes with its row; one about the page as a whole (a check run, the settings, push) stays.
- */
-export function errorRowListed(at: string, view: ChecksView): boolean {
-  const colon = at.indexOf(':');
-  // A key without a row (`run`, `push`, `settings`) belongs to the page as a whole.
-  if (colon < 0) return true;
-  const [kind, key] = [at.slice(0, colon), at.slice(colon + 1)];
-  if (kind === 'check') return view.loop.open.some((c) => c.paymentId === key);
-  if (kind === 'answered') return view.loop.answered.some((c) => c.paymentId === key);
-  if (kind === 'note') return view.notifications.some((n) => n.id === key);
-  return true;
-}
-
-/**
  * The rest of the spending page after a change here. The overview, the budgets and what was bought are other tabs,
  * never on screen beside the checks, and a tab is read from the server when it opens, so nothing is read while a
  * person works down the list: one answer must not bring every payment back to the browser. The page is owed one read
@@ -355,6 +341,18 @@ export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok:
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
 
+/** A refusal in its place. Stays until it is closed, or the same thing is tried again. */
+function RefusalNote({ message, onClose, className = 'mt-2' }: { message: string; onClose: () => void; className?: string }) {
+  return (
+    <div className={`ui-note ui-note-danger flex items-start justify-between gap-2 ${className}`} role="alert">
+      <span>{message}</span>
+      <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost shrink-0" aria-label="Meldung schließen" onClick={onClose}>
+        Schließen
+      </button>
+    </div>
+  );
+}
+
 /** What a row asks of the page. Through a ref that always holds the latest ones, so a row's props say only what it shows. */
 interface RowActions {
   confirm: (check: PaymentCheck, rowId: string) => void;
@@ -364,6 +362,7 @@ interface RowActions {
   linkByHand: (check: PaymentCheck, rowId: string) => void;
   /** Search this company's receipts for this payment by name, vendor or amount. */
   search: (paymentId: string, text: string) => Promise<ChecksResult<ReceiptChoice[]>>;
+  closeError: (paymentId: string) => void;
 }
 
 /**
@@ -690,11 +689,7 @@ const OpenCheck = memo(function OpenCheck({
           )}
         </div>
       )}
-      {error && (
-        <p className="ui-note ui-note-danger mt-2" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <RefusalNote message={error} onClose={() => actions.current?.closeError(check.paymentId)} />}
     </li>
   );
 });
@@ -714,19 +709,12 @@ const ReceiptChecks = observer(function ReceiptChecks({
 }) {
   const id = useId();
   // One store per visit and company (`page.tsx` keys this panel by company); the tab's count follows it.
-  const [store] = useState(() => new ChecksStore(initial));
   const app = useAppStore();
+  const [store] = useState(() => new ChecksStore(initial, app.checkOutbox));
   useEffect(() => app.openChecks(store), [app, store]);
-  const [error, setError] = useState<{ at: string; message: string } | null>(null);
   // The page reads the checks afresh after a change elsewhere on it (a receipt taken back in the payment list): take
   // that over, keeping the summary of the last "Jetzt prüfen" (the page's own read carries none; the next action of
-  // this panel ends it, as a notice belongs to the action that set it). An error stays while its payment is still
-  // open here; one about a payment that left the list goes with it. (Another company remounts the panel: page.tsx.)
-  const [shownInitial, setShownInitial] = useState(initial);
-  if (shownInitial !== initial) {
-    setShownInitial(initial);
-    setError((current) => (current && !errorRowListed(current.at, initial) ? null : current));
-  }
+  // this panel ends it, as a notice belongs to the action that set it). (Another company remounts the panel: page.tsx.)
   useEffect(() => store.pageRead(initial), [store, initial]);
   const [pending, startTransition] = useTransition();
   const [channel, setChannel] = useState<ChannelSetting>(initial.settings.channel);
@@ -769,9 +757,14 @@ const ReceiptChecks = observer(function ReceiptChecks({
   const router = useRouter();
   const pageChanged = useReadOnLeaving();
   const focusHeading = () => document.getElementById(`${id}-title`)?.focus();
+  /** A payment as a message names it where its row is not there to say which. */
+  const nameOf = (paymentId: string) => {
+    const c = store.find(paymentId);
+    return c ? `${c.counterparty || c.reference || 'Zahlung ohne Namen'}, ${formatDay(c.bookingDay)}, ${euro(c.cents)}` : 'Zahlung';
+  };
   /** A bulk action: everything is read anew. `changes`: it changed payments or links, not only how the owner is told. */
   const run = <T extends ChecksView>(at: string, action: () => Promise<ChecksResult<T>>, success?: (next: T) => string, changes = true) => {
-    setError(null);
+    store.clearError(at);
     // A notice belongs to the action that set it: the next one starts without it.
     setPageNotice(null);
     startTransition(async () => {
@@ -783,11 +776,11 @@ const ReceiptChecks = observer(function ReceiptChecks({
           setPageNotice(success(result.value));
           focusHeading();
         }
-      } else setError({ at, message: checksActionMessage(result) });
+      } else store.say(at, null, checksActionMessage(result));
     });
   };
 
-  /** The server's word on a write already on screen. A refusal, or no answer at all, takes that one write back and says so at its row. */
+  /** The server's word on a write already on screen. A refusal, or no answer at all, takes that one write back. */
   const settle = async (write: LocalWrite, action: () => Promise<ChecksResult<CheckChange>>): Promise<ChecksResult<CheckChange>> => {
     const result = await action().catch((): ChecksResult<CheckChange> => ({ ok: false, error: 'failed' }));
     if (result.ok) {
@@ -797,33 +790,39 @@ const ReceiptChecks = observer(function ReceiptChecks({
     return result;
   };
 
-  /** An answer about one payment: on screen at once, the server's word follows. Other rows stay usable meanwhile. */
-  const answer = (at: string, paymentId: string, edit: CheckEdit, action: () => Promise<ChecksResult<CheckChange>>, linked: { rowId: string; notice: string } | null = null) => {
-    setError(null);
+  /**
+   * An answer about one payment: on screen at once, the server's word follows. Other rows stay usable meanwhile.
+   * A refusal goes to the outbox, not to this panel: the person may have left it by then, believing it went through.
+   */
+  const answer = (paymentId: string, edit: CheckEdit, action: () => Promise<ChecksResult<CheckChange>>, linked: { rowId: string; notice: string } | null = null) => {
+    const key = checkKey(paymentId);
+    const who = nameOf(paymentId);
+    store.clearError(key);
     setPageNotice(null);
     const write = store.begin(paymentId, edit, linked?.rowId ?? null);
     // The payment left the list with its buttons: the focus goes to the list's heading.
-    if (linked) focusHeading();
+    focusHeading();
     void settle(write, action).then((result) => {
-      if (!result.ok) setError({ at, message: checksActionMessage(result) });
+      if (!result.ok) store.say(key, who, checksActionMessage(result));
       else if (linked) setPageNotice(linked.notice);
     });
   };
 
-  const errorAt = (at: string) => (error?.at === at ? error.message : null);
+  const errorAt = (at: string) => store.errorAt(at);
+  const closeError = (at: string) => store.clearError(at);
 
   /** The push switch's calls to the server; each says whether the server took it, and a refusal shows at the switch. */
   const pushActions: PushActions = {
     enable: async (subscription) => {
       const result = await enablePush(subscription);
       if (result.ok) store.replaced(result.value);
-      else setError({ at: 'push', message: checksActionMessage(result) });
+      else store.say('push', null, checksActionMessage(result));
       return result.ok;
     },
     disable: async (endpoint) => {
       const result = await disablePush(endpoint);
       if (result.ok) store.replaced(result.value);
-      else setError({ at: 'push', message: checksActionMessage(result) });
+      else store.say('push', null, checksActionMessage(result));
       return result.ok;
     },
     stateOf: async (endpoint) => {
@@ -839,7 +838,9 @@ const ReceiptChecks = observer(function ReceiptChecks({
    * and can fail for reasons of its own, so the row stays and says what it is doing; the link is what shows at once.
    */
   const takeOver = async (paymentId: string, mailId: string) => {
-    setError(null);
+    const key = checkKey(paymentId);
+    const who = nameOf(paymentId);
+    store.clearError(key);
     setPageNotice(null);
     setTakingOver((current) => new Set(current).add(mailId));
     try {
@@ -847,7 +848,7 @@ const ReceiptChecks = observer(function ReceiptChecks({
         processReceipt({ id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, options);
       const outcome = await takeOverMail(mailId, { fetchImpl: fetch, pipeline: createBrowserDeps(save, store.workspaceId) });
       if (outcome.kind === 'failed') {
-        setError({ at: `check:${paymentId}`, message: takeOverMessage(outcome) });
+        store.say(key, who, takeOverMessage(outcome));
         return;
       }
       const write = store.begin(paymentId, receiptLinked, outcome.rowId);
@@ -859,13 +860,13 @@ const ReceiptChecks = observer(function ReceiptChecks({
         setPageNotice(takeOverMessage(outcome, true));
         return;
       }
-      const message = `${takeOverMessage(outcome, false)} ${checksActionMessage(linked)}`;
-      const fresh = await getReceiptChecks();
-      if (fresh.ok) store.pageRead(fresh.value);
-      // The payment may have left the list (answered, moved, its import undone): then the message is said at the page,
-      // as it is the only word that a receipt was made and is not linked.
-      const stillOpen = !fresh.ok || fresh.value.loop.open.some((c) => c.paymentId === paymentId);
-      setError({ at: stillOpen ? `check:${paymentId}` : 'run', message });
+      // The only word that a receipt was made and is not linked: it stays until closed, at the row or, when the
+      // payment left the list (answered, moved, its import undone) or the panel closed, in the shell.
+      store.say(key, who, `${takeOverMessage(outcome, false)} ${checksActionMessage(linked)}`);
+      const fresh = await getReceiptChecks().catch(() => null);
+      if (fresh?.ok) (app.checks ?? store).pageRead(fresh.value);
+    } catch {
+      store.say(key, who, checksActionMessage({ ok: false, error: 'failed' }));
     } finally {
       setTakingOver((current) => {
         const left = new Set(current);
@@ -878,24 +879,26 @@ const ReceiptChecks = observer(function ReceiptChecks({
   const rowActions = useRef<RowActions>(null);
   useEffect(() => {
     rowActions.current = {
-      confirm: (c, rowId) => answer(`check:${c.paymentId}`, c.paymentId, receiptLinked, () => confirmReceipt(c.paymentId, rowId), { rowId, notice: `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.` }),
-      noReceipt: (c, reason) => answer(`check:${c.paymentId}`, c.paymentId, answeredNoReceipt(reason), () => sayNoReceipt(c.paymentId, reason)),
+      confirm: (c, rowId) => answer(c.paymentId, receiptLinked, () => confirmReceipt(c.paymentId, rowId), { rowId, notice: `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.` }),
+      noReceipt: (c, reason) => answer(c.paymentId, answeredNoReceipt(reason), () => sayNoReceipt(c.paymentId, reason)),
       takeOver: (paymentId, mailId) => void takeOver(paymentId, mailId),
-      dismiss: (paymentId, mailId) => answer(`check:${paymentId}`, paymentId, mailSetAside(mailId), () => dismissMail(mailId)),
-      linkByHand: (c, rowId) => answer(`check:${c.paymentId}`, c.paymentId, receiptLinked, () => linkChosenReceipt(c.paymentId, rowId), { rowId, notice: `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.` }),
+      dismiss: (paymentId, mailId) => answer(paymentId, mailSetAside(mailId), () => dismissMail(mailId)),
+      linkByHand: (c, rowId) => answer(c.paymentId, receiptLinked, () => linkChosenReceipt(c.paymentId, rowId), { rowId, notice: `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.` }),
       search: (paymentId, text) => findReceiptChoices(paymentId, text),
+      closeError: (paymentId) => closeError(checkKey(paymentId)),
     };
   });
 
-  const markRead = async (noteId: string) => {
-    setError(null);
+  const markRead = async (noteId: string, who: string) => {
+    const key = `note:${noteId}`;
+    store.clearError(key);
     setPageNotice(null);
     store.markRead(noteId);
     const result = await readNotification(noteId).catch((): ChecksResult<{ at: number }> => ({ ok: false, error: 'failed' }));
     if (result.ok) store.readConfirmed(noteId, result.value.at);
     else {
       store.readRefused(noteId);
-      setError({ at: `note:${noteId}`, message: checksActionMessage(result) });
+      store.say(key, who, checksActionMessage(result));
     }
   };
 
@@ -917,17 +920,13 @@ const ReceiptChecks = observer(function ReceiptChecks({
                     </span>
                   ) : (
                     canWrite && (
-                      <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => answer(`answered:${c.paymentId}`, c.paymentId, answerTakenBack, () => takeBackNoReceipt(c.paymentId))} aria-label={`Antwort für ${c.counterparty || 'diese Zahlung'} zurücknehmen`}>
+                      <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => answer(c.paymentId, answerTakenBack, () => takeBackNoReceipt(c.paymentId))} aria-label={`Antwort für ${c.counterparty || 'diese Zahlung'} zurücknehmen`}>
                         Zurücknehmen
                       </button>
                     )
                   )}
                 </div>
-                {errorAt(`answered:${c.paymentId}`) && (
-                  <p className="ui-note ui-note-danger mt-2" role="alert">
-                    {errorAt(`answered:${c.paymentId}`)}
-                  </p>
-                )}
+                {errorAt(checkKey(c.paymentId)) && <RefusalNote message={errorAt(checkKey(c.paymentId)) as string} onClose={() => closeError(checkKey(c.paymentId))} />}
               </li>
   );
 
@@ -969,7 +968,7 @@ const ReceiptChecks = observer(function ReceiptChecks({
               startTransition(async () => {
                 const switched = await switchWorkspace(forCompany as string).catch(() => ({ ok: false }));
                 if (switched.ok) router.refresh();
-                else setError({ at: 'run', message: 'Der Wechsel hat nicht geklappt; vielleicht fehlt der Zugang zu dieser Firma.' });
+                else store.say('run', null, 'Der Wechsel hat nicht geklappt; vielleicht fehlt der Zugang zu dieser Firma.');
               })
             }
           >
@@ -984,11 +983,7 @@ const ReceiptChecks = observer(function ReceiptChecks({
       <p className={lastRun ? 'ui-note ui-note-ok mt-2' : 'sr-only'} role="status">
         {lastRun ? runSummary(lastRun) : ''}
       </p>
-      {errorAt('run') && (
-        <p className="ui-note ui-note-danger mt-2" role="alert">
-          {errorAt('run')}
-        </p>
-      )}
+      {errorAt('run') && <RefusalNote message={errorAt('run') as string} onClose={() => closeError('run')} />}
 
       {canWrite && (
         <details id={`${id}-settings`} className="ui-disclosure mt-3 scroll-mt-4" open={settingsShown} onToggle={(e) => setSettingsShown(e.currentTarget.open)}>
@@ -1035,11 +1030,7 @@ const ReceiptChecks = observer(function ReceiptChecks({
               actions={pushActions}
               error={errorAt('push')}
             />
-            {errorAt('settings') && (
-              <p className="ui-note ui-note-danger" role="alert">
-                {errorAt('settings')}
-              </p>
-            )}
+            {errorAt('settings') && <RefusalNote message={errorAt('settings') as string} onClose={() => closeError('settings')} className="" />}
           </form>
         </details>
       )}
@@ -1061,15 +1052,11 @@ const ReceiptChecks = observer(function ReceiptChecks({
                   </span>
                 </span>
                 {canWrite && (
-                  <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => void markRead(n.id)} aria-label={`${n.title} als gelesen markieren`}>
+                  <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => void markRead(n.id, n.title)} aria-label={`${n.title} als gelesen markieren`}>
                     Gelesen
                   </button>
                 )}
-                {errorAt(`note:${n.id}`) && (
-                  <p className="ui-note ui-note-danger w-full" role="alert">
-                    {errorAt(`note:${n.id}`)}
-                  </p>
-                )}
+                {errorAt(`note:${n.id}`) && <RefusalNote message={errorAt(`note:${n.id}`) as string} onClose={() => closeError(`note:${n.id}`)} className="w-full" />}
               </li>
             ))}
           </ul>
@@ -1170,7 +1157,7 @@ const ReceiptChecks = observer(function ReceiptChecks({
                   focused={c.paymentId === focusPaymentId}
                   canWrite={canWrite}
                   busy={pending || mail !== null}
-                  error={errorAt(`check:${c.paymentId}`)}
+                  error={errorAt(checkKey(c.paymentId))}
                   takingOver={mail}
                   actions={rowActions}
                 />

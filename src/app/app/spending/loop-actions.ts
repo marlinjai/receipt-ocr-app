@@ -13,6 +13,7 @@ import { MailCandidateError, dismissMailCandidate } from '@/lib/spending/mailbox
 import { linkReceiptToPayment, searchReceiptChoices } from '@/lib/spending/loop-service';
 import { mailFoundSubject, missingReceiptSubject, type LoopState, type ReceiptChoice } from '@/lib/spending/loop';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
+import { readsStartedAt } from '@/lib/shared-reads';
 import { timed } from '@/lib/timing';
 
 /**
@@ -84,7 +85,7 @@ async function writeContext(): Promise<NotifyContext> {
 const changed = (paymentId: string, state: LoopState | null, settled: string[] = [], rowId: string | null = null): CheckChange => ({ paymentId, state, rowId, settled, at: Date.now() });
 
 async function view(workspaceId: string, canWrite: boolean, lastRun: ChecksView['lastRun'] = null): Promise<ChecksView> {
-  const readAt = Date.now();
+  const readAt = readsStartedAt();
   const [loop, notifications, settings] = await Promise.all([
     timed('checks.loop', () => loadLoopOverview(prisma, workspaceId)),
     canWrite ? timed('checks.notifications', () => listUnreadNotifications(prisma, workspaceId)) : Promise.resolve([]),

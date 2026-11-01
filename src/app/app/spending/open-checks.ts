@@ -1,3 +1,4 @@
+import { RECEIPT_NOT_FOUND } from '@/lib/spending/loop';
 import type { PaymentCheck } from '@/lib/spending/loop-service';
 
 /** How many open payments the list adds at a time: a phone cannot carry thousands of rows with their buttons. */
@@ -33,4 +34,10 @@ export function chooseChecks<T extends OpenCheckItem>(open: readonly T[], choice
   const shown = matches.slice(0, choice.limit);
   const focused = focusPaymentId === null ? undefined : open.find((c) => c.paymentId === focusPaymentId);
   return { shown: focused && !shown.includes(focused) ? [focused, ...shown] : shown, matching: matches.length };
+}
+
+/** The answered payments: those whose receipt could not be found stand apart, in red, because they may be business expenses. */
+export function splitAnswered<T extends Pick<PaymentCheck, 'state'>>(answered: readonly T[]): { lost: T[]; answered: T[] } {
+  const isLost = (c: T) => c.state.state === 'no_receipt' && c.state.reason === RECEIPT_NOT_FOUND;
+  return { lost: answered.filter(isLost), answered: answered.filter((c) => !isLost(c)) };
 }

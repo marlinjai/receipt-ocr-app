@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHOICES_SHOWN, certainPairs, loopState, notNeededReason, notifiable, receiptCandidates, receiptChoices, type LoopContext, type LoopPayment, type LoopReceipt } from '../loop';
+import { CHOICES_SHOWN, PRIVATE_NO_RECEIPT, RECEIPT_NOT_FOUND, backlogAnswer, certainPairs, closestPairs, loopState, notNeededReason, notifiable, receiptCandidates, receiptChoices, type LoopContext, type LoopPayment, type LoopReceipt } from '../loop';
 
 /** Every name here is a brand or invented. */
 const payment = (o: Partial<LoopPayment> = {}): LoopPayment => ({
@@ -133,6 +133,42 @@ describe('certainPairs', () => {
 
   it('never takes a foreign-currency estimate', () => {
     expect(certainPairs([proposed('p1', candidate('r1', true))])).toEqual([]);
+  });
+});
+
+describe('closing a backlog', () => {
+  const candidate = (rowId: string, day: string) => ({ rowId, label: rowId, day, amountCents: 3995, estimated: false });
+  const bill = (paymentId: string, bookingDay: string, ...candidates: ReturnType<typeof candidate>[]) => ({ paymentId, bookingDay, state: { state: 'proposed' as const, candidates } });
+
+  it('pairs equal monthly bills by the closest day, each receipt once', () => {
+    const april = candidate('april', '2026-04-08');
+    const may = candidate('may', '2026-05-08');
+    expect(closestPairs([bill('p-may', '2026-05-10', may, april), bill('p-april', '2026-04-10', april, may)])).toEqual([
+      { paymentId: 'p-april', rowId: 'april' },
+      { paymentId: 'p-may', rowId: 'may' },
+    ]);
+  });
+
+  it('leaves the payment without a receipt when there are fewer receipts than payments', () => {
+    const only = candidate('only', '2026-04-08');
+    expect(closestPairs([bill('p1', '2026-04-10', only), bill('p2', '2026-05-10', only)])).toEqual([{ paymentId: 'p1', rowId: 'only' }]);
+  });
+
+  it('calls private only what is known or plain, and never a possible business expense', () => {
+    expect(backlogAnswer('private', 'unclear')).toBe(PRIVATE_NO_RECEIPT);
+    expect(backlogAnswer('own_account', 'unclear')).toBe(PRIVATE_NO_RECEIPT);
+    expect(backlogAnswer(undefined, 'groceries_drugstore')).toBe(PRIVATE_NO_RECEIPT);
+    expect(backlogAnswer(undefined, 'unclear')).toBe(RECEIPT_NOT_FOUND);
+    expect(backlogAnswer('business', 'groceries_drugstore')).toBe(RECEIPT_NOT_FOUND);
+    expect(backlogAnswer('mixed', 'shopping_household')).toBe(RECEIPT_NOT_FOUND);
+  });
+});
+
+describe('payments before 2025', () => {
+  it('are not asked about, and repayments and bank fees need no receipt', () => {
+    expect(notNeededReason(payment({ bookingDay: '2024-12-31' }), { treatments: new Map(), categoryAnswers: new Map() })).toBe('old');
+    expect(notNeededReason(payment({ bookingDay: '2025-01-01', counterparty: '', counterpartyKey: '', reference: 'N26 Credit repayment' }), { treatments: new Map(), categoryAnswers: new Map() })).toBe('loan');
+    expect(notNeededReason(payment({ bookingDay: '2025-01-01', counterparty: '', counterpartyKey: '', reference: 'Overdraft interest charge' }), { treatments: new Map(), categoryAnswers: new Map() })).toBe('fee');
   });
 });
 

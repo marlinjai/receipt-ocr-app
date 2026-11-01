@@ -773,7 +773,7 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
  * a database a network away, 44 links took half a minute the other way.
  * Returns exactly the pairs that were linked.
  */
-export async function linkProposals(db: PrismaClient, ctx: PaymentContext, pairs: ReadonlyArray<{ paymentId: string; rowId: string }>, method: 'estimate' | 'certain' = 'estimate'): Promise<Array<{ paymentId: string; rowId: string }>> {
+export async function linkProposals(db: PrismaClient, ctx: PaymentContext, pairs: ReadonlyArray<{ paymentId: string; rowId: string }>, method: 'estimate' | 'certain' | 'closest' = 'estimate'): Promise<Array<{ paymentId: string; rowId: string }>> {
   if (pairs.length === 0) return [];
   await ensureMerchantKeys(db);
   return db.$transaction(async (tx) => {

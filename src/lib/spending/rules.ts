@@ -89,11 +89,11 @@ export const PRIORITY_RULES: readonly KeywordRule[] = [
   },
   {
     category: 'loans_leasing_credit',
-    words: ['darlehen', 'tilgung', 'kredit', 'kreditrate', 'ratenkredit', 'leasing', 'leasingrate', 'finanzierung', 'ratenzahlung'],
+    words: ['darlehen', 'tilgung', 'kredit', 'kreditrate', 'ratenkredit', 'leasing', 'leasingrate', 'finanzierung', 'ratenzahlung', 'repayment', 'installments repayment'],
   },
   {
     category: 'fees_interest',
-    words: ['entgelt', 'kontofuehrung', 'kontofuehrungsgebuehr', 'gebuehr', 'gebuehren', 'zinsen', 'sollzinsen', 'kartengebuehr', 'jahresgebuehr'],
+    words: ['entgelt', 'kontofuehrung', 'kontofuehrungsgebuehr', 'gebuehr', 'gebuehren', 'zinsen', 'sollzinsen', 'kartengebuehr', 'jahresgebuehr', 'overdraft', 'interest charge', 'deposit fee', 'fee due', 'smart membership'],
   },
 ];
 

@@ -10,9 +10,9 @@ import { createBrowserDeps, type SaveReceipt } from '@/lib/upload/browser-deps';
 import { processReceipt } from '../actions';
 import { switchWorkspace } from '../workspace-actions';
 import { takeOverMail, takeOverMessage } from './take-over-mail';
-import { CHECKS_PAGE, checkYears, chooseChecks } from './open-checks';
+import { CHECKS_PAGE, checkYears, chooseChecks, splitAnswered } from './open-checks';
 import { browserPushEnvironment, currentSubscription, pushSwitchMessage, switchPushOff, switchPushOn, type PushEnvironment } from './push-device';
-import type { PaymentCheck } from '@/lib/spending/loop-service';
+import type { BacklogClosed, PaymentCheck } from '@/lib/spending/loop-service';
 import type { ChecksRun } from '@/lib/spending/checks';
 import { classifySummary } from '@/lib/tax/payments/classify-summary';
 import { useRouter } from 'next/navigation';
@@ -25,6 +25,7 @@ import {
   enablePush,
   pushStateOfDevice,
   findReceiptChoices,
+  closeReceiptBacklog,
   getReceiptChecks,
   linkCertain,
   linkChosenReceipt,
@@ -44,6 +45,10 @@ import type { ReceiptChoice } from '@/lib/spending/loop';
  * receipt exists" answers, the in-app notifications, and how the owner wants
  * to be told.
  */
+
+export function backlogNotice({ linked, privately, notFound }: BacklogClosed): string {
+  return `Abgeschlossen: ${linked} zugeordnet, ${privately} privat ohne Beleg, ${notFound} nicht auffindbar.`;
+}
 
 export function certainNotice(linked: number): string {
   if (linked === 0) return 'Nichts zugeordnet: die Vorschläge sind inzwischen erledigt oder nicht mehr eindeutig.';
@@ -681,6 +686,11 @@ export default function ReceiptChecks({
   const [limit, setLimit] = useState(CHECKS_PAGE);
   const [settingsShown, setSettingsShown] = useState(openSettings);
   const [askCertain, setAskCertain] = useState(false);
+  const [askBacklog, setAskBacklog] = useState(false);
+  const [answeredLimit, setAnsweredLimit] = useState(CHECKS_PAGE);
+  const [lostLimit, setLostLimit] = useState(CHECKS_PAGE);
+  const { lost, answered } = useMemo(() => splitAnswered(loop.answered), [loop.answered]);
+  const backlogCount = useMemo(() => loop.open.filter((c) => c.bookingDay < view.backlogBefore && c.state.state !== 'in_mailbox').length, [loop.open, view.backlogBefore]);
   const years = useMemo(() => checkYears(loop.open), [loop.open]);
   const proposedCount = useMemo(() => loop.open.filter((c) => c.state.state === 'proposed').length, [loop.open]);
   // A chosen year that no longer has open payments counts as "all years", so the list never filters on an option the select no longer offers.
@@ -790,6 +800,37 @@ export default function ReceiptChecks({
       }
     });
   };
+  const answeredItem = (c: PaymentCheck) => (
+              <li key={c.paymentId} className="py-2 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {c.counterparty || c.reference || 'ohne Namen'}, {formatDay(c.bookingDay)}, {euro(c.cents)}
+                    {c.state.state === 'no_receipt' && (
+                      <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                        {c.state.reason}
+                        {c.state.movedAway && ' (die Zahlung steht jetzt in der Firma, an die die privaten Zahlungen dieses Kontos gehen)'}
+                      </span>
+                    )}
+                  </span>
+                  {c.state.state === 'no_receipt' && c.state.fromHolder ? (
+                    <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                      beantwortet in der Firma, die das Konto führt; dort zurücknehmen
+                    </span>
+                  ) : (
+                    view.canWrite && (
+                      <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => run(`answered:${c.paymentId}`, () => takeBackNoReceipt(c.paymentId))} aria-label={`Antwort für ${c.counterparty || 'diese Zahlung'} zurücknehmen`}>
+                        Zurücknehmen
+                      </button>
+                    )
+                  )}
+                </div>
+                {errorAt(`answered:${c.paymentId}`) && (
+                  <p className="ui-note ui-note-danger mt-2" role="alert">
+                    {errorAt(`answered:${c.paymentId}`)}
+                  </p>
+                )}
+              </li>
+  );
   const notNeeded = Object.values(loop.counts.notNeeded).reduce((s, n) => s + n, 0);
 
   return (
@@ -806,7 +847,7 @@ export default function ReceiptChecks({
       </div>
       <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
         {loop.counts.hasReceipt} mit Beleg, {loop.counts.in_mailbox} mit Rechnung im Postfach, {notNeeded} brauchen keinen (Umbuchungen, Einnahmen, Erstattungen, Gebühren, Raten, Bargeld, Geld an Personen),{' '}
-        {loop.answered.length} ohne Beleg beantwortet.
+        {answered.length} ohne Beleg beantwortet{lost.length > 0 ? `, ${lost.length} nicht auffindbar` : ''}. Zahlungen vor 2025 werden nicht mehr geprüft.
       </p>
       {view.mailbox !== 'other_company' && (
         <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
@@ -982,6 +1023,11 @@ export default function ReceiptChecks({
                 {view.certain} sichere Belege zuordnen
               </button>
             )}
+            {view.canWrite && backlogCount > 0 && (
+              <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => setAskBacklog(true)}>
+                Alles vor {formatDay(view.backlogBefore)} abschließen ({backlogCount})
+              </button>
+            )}
           </div>
           <ConfirmDialog
             open={askCertain}
@@ -996,6 +1042,19 @@ export default function ReceiptChecks({
             onCancel={() => setAskCertain(false)}
           >
             Bei diesen Zahlungen stimmt der Betrag genau, der Anbieter ist genannt, und es passt nur dieser eine Beleg. Jede Zuordnung lässt sich unter Finanzen wieder lösen.
+          </ConfirmDialog>
+          <ConfirmDialog
+            open={askBacklog}
+            title={`${backlogCount} Zahlungen abschließen?`}
+            confirmLabel="Abschließen"
+            busy={pending}
+            onConfirm={() => {
+              setAskBacklog(false);
+              run('run', closeReceiptBacklog, (next) => backlogNotice((next as ChecksView & { closed: BacklogClosed }).closed));
+            }}
+            onCancel={() => setAskBacklog(false)}
+          >
+            Passende Belege werden zugeordnet. Der Rest gilt als privat ohne Beleg oder, wenn es geschäftlich sein kann, als nicht auffindbar und bleibt rot in der Liste darunter. Offen bleibt nur, was im Postfach liegt. Jede Antwort lässt sich einzeln zurücknehmen.
           </ConfirmDialog>
           {matching === 0 && (
             <p className="mt-3 text-sm" style={{ color: 'var(--muted)' }}>
@@ -1030,42 +1089,32 @@ export default function ReceiptChecks({
         </>
       )}
 
-      {loop.answered.length > 0 && (
+      {lost.length > 0 && (
         <details className="ui-disclosure mt-3">
-          <summary className="cursor-pointer text-xs font-semibold">Ohne Beleg beantwortet ({loop.answered.length})</summary>
-          <ul className="mt-2 divide-y">
-            {loop.answered.map((c) => (
-              <li key={c.paymentId} className="py-2 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>
-                    {c.counterparty || 'ohne Namen'}, {formatDay(c.bookingDay)}, {euro(c.cents)}
-                    {c.state.state === 'no_receipt' && (
-                      <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                        {c.state.reason}
-                        {c.state.movedAway && ' (die Zahlung steht jetzt in der Firma, an die die privaten Zahlungen dieses Kontos gehen)'}
-                      </span>
-                    )}
-                  </span>
-                  {c.state.state === 'no_receipt' && c.state.fromHolder ? (
-                    <span className="text-xs" style={{ color: 'var(--muted)' }}>
-                      beantwortet in der Firma, die das Konto führt; dort zurücknehmen
-                    </span>
-                  ) : (
-                    view.canWrite && (
-                      <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => run(`answered:${c.paymentId}`, () => takeBackNoReceipt(c.paymentId))} aria-label={`Antwort für ${c.counterparty || 'diese Zahlung'} zurücknehmen`}>
-                        Zurücknehmen
-                      </button>
-                    )
-                  )}
-                </div>
-                {errorAt(`answered:${c.paymentId}`) && (
-                  <p className="ui-note ui-note-danger mt-2" role="alert">
-                    {errorAt(`answered:${c.paymentId}`)}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
+          <summary className="cursor-pointer text-xs font-semibold" style={{ color: 'var(--danger, #f87171)' }}>
+            Nicht auffindbar ({lost.length})
+          </summary>
+          <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+            Könnte geschäftlich sein, und kein Beleg wurde gefunden. Taucht einer auf, die Antwort zurücknehmen und zuordnen.
+          </p>
+          <ul className="mt-2 divide-y">{lost.slice(0, lostLimit).map(answeredItem)}</ul>
+          {lost.length > lostLimit && (
+            <button type="button" className="ui-btn mt-2 w-full" onClick={() => setLostLimit((n) => n + CHECKS_PAGE)}>
+              Weitere zeigen (noch {lost.length - lostLimit})
+            </button>
+          )}
+        </details>
+      )}
+
+      {answered.length > 0 && (
+        <details className="ui-disclosure mt-3">
+          <summary className="cursor-pointer text-xs font-semibold">Ohne Beleg beantwortet ({answered.length})</summary>
+          <ul className="mt-2 divide-y">{answered.slice(0, answeredLimit).map(answeredItem)}</ul>
+          {answered.length > answeredLimit && (
+            <button type="button" className="ui-btn mt-2 w-full" onClick={() => setAnsweredLimit((n) => n + CHECKS_PAGE)}>
+              Weitere zeigen (noch {answered.length - answeredLimit})
+            </button>
+          )}
         </details>
       )}
 

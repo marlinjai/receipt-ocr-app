@@ -9,8 +9,9 @@ import { linkPayment, linkProposals, paidByReceipt, type PaymentRow } from '@/li
 import { linkRoutedPayment, loadRoutedPayments, paymentOnSpendingSide, receiversOf, type RoutedPaymentRow } from '@/lib/tax/payments/routing';
 import { timed } from '@/lib/timing';
 import { receiptForLink } from '@/lib/tax/service';
+import { categorise } from './rules';
 import { categoryAnswerMap, spendingTreatments } from './service';
-import { certainPairs, loopState, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
+import { PRIVATE_NO_RECEIPT, backlogAnswer, certainPairs, closestPairs, loopState, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
 import { notify, retryFailedDeliveries, serverChannels, settleAllBut, settleNotifications, type NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
 import { mailboxWithOwner } from './mailbox/server';
@@ -123,6 +124,8 @@ interface Loaded {
   aliases: Map<string, Set<string>>;
   /** Counterparties that are own accounts only by the owner's own names. */
   byName: ReadonlySet<string>;
+  treatments: LoopContext['treatments'];
+  categoryAnswers: LoopContext['categoryAnswers'];
 }
 
 async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loaded> {
@@ -166,7 +169,7 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
   });
   const ownReasons = new Map(noReceipt.map((a) => [a.paymentId, a.reason]));
   const routedAwayAnswered = loaded.routedAway.flatMap((p) => (ownReasons.has(p.id) ? [{ payment: p, reason: ownReasons.get(p.id) as string }] : []));
-  return { payments: loaded.payments, states, aliases, byName, routedAwayAnswered, receipts, ownPayments: loaded.payments.filter((p) => p.routedFrom === null), linkedElsewhere: loaded.linkedElsewhere };
+  return { payments: loaded.payments, states, aliases, byName, treatments, categoryAnswers: ctx.categoryAnswers, routedAwayAnswered, receipts, ownPayments: loaded.payments.filter((p) => p.routedFrom === null), linkedElsewhere: loaded.linkedElsewhere };
 }
 
 /** The subjects of the payments still waiting for their receipt: what keeps its messages in the in-app queue. */
@@ -291,7 +294,7 @@ export async function loadLoopOverview(db: PrismaClient, workspaceId: string): P
   const { payments, states, routedAwayAnswered } = await computeStates(db, workspaceId);
   const counts: LoopOverview['counts'] = {
     hasReceipt: 0,
-    notNeeded: { own_transfer: 0, income: 0, refund: 0, fee: 0, loan: 0, cash: 0, transfer: 0 },
+    notNeeded: { old: 0, own_transfer: 0, income: 0, refund: 0, fee: 0, loan: 0, cash: 0, transfer: 0 },
     noReceipt: 0,
     proposed: 0,
     // Named like the state it counts (`counts[state.state]`), hence not camel case.
@@ -497,6 +500,45 @@ export async function linkCertainReceipts(db: PrismaClient, ctx: NotifyContext):
   const linked = await linkProposals(db, ctx, pairs, 'certain');
   await settleNotifications(db, ctx.workspaceId, linked.map((pair) => missingReceiptSubject(pair.paymentId)));
   return linked.length;
+}
+
+export interface BacklogClosed {
+  linked: number;
+  privately: number;
+  notFound: number;
+}
+
+/**
+ * Close what is still open from before `before`, on a person's word: pair up
+ * every receipt that fits (`closestPairs`), then answer the rest, private or
+ * "not found" (`backlogAnswer`). A mail attachment waiting to be taken over
+ * stays open: the invoice is there. Only this company's own payments, and an
+ * answer is only ever added, so pressing again changes nothing already said and
+ * every answer can be taken back one by one.
+ */
+export async function closeBacklog(db: PrismaClient, ctx: NotifyContext, before: string): Promise<BacklogClosed> {
+  const inBacklog = (loaded: Loaded) =>
+    loaded.payments.filter((p) => p.routedFrom === null && p.bookingDay < before).flatMap((p) => {
+      const state = loaded.states.get(p.id) as LoopState;
+      return state.state === 'proposed' || state.state === 'missing' ? [{ payment: p, paymentId: p.id, bookingDay: p.bookingDay, state }] : [];
+    });
+  const pairs = closestPairs(inBacklog(await computeStates(db, ctx.workspaceId)));
+  const linked = pairs.length > 0 ? await linkProposals(db, ctx, pairs, 'closest') : [];
+
+  const after = await computeStates(db, ctx.workspaceId);
+  const rest = inBacklog(after).map(({ payment }) => {
+    const { category } = categorise(payment, { answer: after.categoryAnswers.get(payment.counterpartyKey) });
+    return { paymentId: payment.id, reason: backlogAnswer(after.treatments.get(payment.counterpartyKey), category) };
+  });
+  if (rest.length > 0) {
+    await db.spendingReceiptAnswer.createMany({
+      data: rest.map(({ paymentId, reason }) => ({ authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, paymentId, reason })),
+      skipDuplicates: true,
+    });
+  }
+  await settleNotifications(db, ctx.workspaceId, [...linked.map((p) => p.paymentId), ...rest.map((r) => r.paymentId)].map(missingReceiptSubject));
+  const privately = rest.filter((r) => r.reason === PRIVATE_NO_RECEIPT).length;
+  return { linked: linked.length, privately, notFound: rest.length - privately };
 }
 
 /**

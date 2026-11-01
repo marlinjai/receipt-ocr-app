@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHOICES_SHOWN, PRIVATE_NO_RECEIPT, RECEIPT_NOT_FOUND, backlogAnswer, certainPairs, closestPairs, loopState, notNeededReason, notifiable, receiptCandidates, receiptChoices, type LoopContext, type LoopPayment, type LoopReceipt } from '../loop';
+import { CHOICES_SHOWN, PRIVATE_NO_RECEIPT, RECEIPT_NOT_FOUND, backlogAnswer, certainPairs, closestPairs, loopState, sameAmountPairs, notNeededReason, notifiable, receiptCandidates, receiptChoices, type LoopContext, type LoopPayment, type LoopReceipt } from '../loop';
 
 /** Every name here is a brand or invented. */
 const payment = (o: Partial<LoopPayment> = {}): LoopPayment => ({
@@ -161,6 +161,27 @@ describe('closing a backlog', () => {
     expect(backlogAnswer(undefined, 'unclear')).toBe(RECEIPT_NOT_FOUND);
     expect(backlogAnswer('business', 'groceries_drugstore')).toBe(RECEIPT_NOT_FOUND);
     expect(backlogAnswer('mixed', 'shopping_household')).toBe(RECEIPT_NOT_FOUND);
+  });
+});
+
+describe('pairing by amount and day alone', () => {
+  const rowAt = (rowId: string, day: string, amountCents: number, o: Partial<LoopReceipt> = {}) => receipt({ rowId, day, amountCents, ...o });
+  const paid = (paymentId: string, bookingDay: string, cents: number) => ({ paymentId, bookingDay, cents });
+
+  it('pairs what the names would not, the closest day first, each once', () => {
+    expect(sameAmountPairs([paid('p1', '2026-05-10', 18000), paid('p2', '2026-05-12', 18000)], [rowAt('r2', '2026-05-12', 18000), rowAt('r1', '2026-05-10', 18000)])).toEqual([
+      { paymentId: 'p1', rowId: 'r1' },
+      { paymentId: 'p2', rowId: 'r2' },
+    ]);
+  });
+
+  it('leaves another amount, a far day, a linked receipt, an estimate and a small amount alone', () => {
+    const payment = [paid('p1', '2026-05-10', 18000), paid('small', '2026-05-10', 299)];
+    expect(sameAmountPairs(payment, [rowAt('other', '2026-05-10', 18001), rowAt('far', '2026-05-16', 18000), rowAt('linked', '2026-05-10', 18000, { linked: true }), rowAt('fx', '2026-05-10', 18000, { estimated: true }), rowAt('tiny', '2026-05-10', 299)])).toEqual([]);
+  });
+
+  it('counts five days either way', () => {
+    expect(sameAmountPairs([paid('p1', '2026-05-10', 18000)], [rowAt('r1', '2026-05-15', 18000)])).toEqual([{ paymentId: 'p1', rowId: 'r1' }]);
   });
 });
 

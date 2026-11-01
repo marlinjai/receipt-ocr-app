@@ -6,7 +6,7 @@ import { CONSUMPTION_TYPES, MEAL_CATEGORY, MEAL_TYPES } from '@/lib/receipts-con
 import {
   draftFromRecord,
   draftToInput,
-  isDraftDirty,
+  isDraftChanged,
   previewRecord,
   type DraftField,
   type MealDraft,
@@ -118,7 +118,10 @@ function MealDetailsFormInner({
   const preview = useMemo(() => previewRecord(record, draft), [record, draft]);
   const status = mealStatus(preview);
   const deduction = mealDeduction(preview, settings);
-  const dirty = isDraftDirty(record, draft);
+  // Compared with what the form showed for this record, so a saved record is the new starting point.
+  const [opened, setOpened] = useState({ record, draft });
+  if (opened.record !== record) setOpened({ record, draft });
+  const dirty = isDraftChanged(opened.draft, draft);
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);

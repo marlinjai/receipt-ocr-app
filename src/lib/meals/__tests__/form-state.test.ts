@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { draftFromRecord, draftToInput, isDraftDirty, parseAmount, previewRecord } from '../form-state';
+import { draftFromRecord, draftToInput, isDraftChanged, parseAmount, previewRecord } from '../form-state';
 import { mealDeduction, mealStatus } from '../rules';
 import { GUEST_A, GUEST_B, SMALL_BUSINESS, meal } from './fixtures';
 
@@ -44,8 +44,8 @@ describe('forward: an untouched meal receipt', () => {
       guests: [],
       tip: '',
     });
-    // The prefills are a pending change: saving would store them.
-    expect(isDraftDirty(untouched, draft)).toBe(true);
+    // Filled in by the form, not by a person: leaving it loses nothing.
+    expect(isDraftChanged(draft, draft)).toBe(false);
   });
 
   it('previews as complete once guests and occasion are filled, before anything is saved', () => {
@@ -100,7 +100,7 @@ describe('backtrack and revise', () => {
     expect(away.guests).toEqual(complete.guests);
     const back = { ...away, mealType: 'business_meal_external' as const };
     expect(mealStatus(previewRecord(complete, back))).toEqual({ kind: 'complete' });
-    expect(isDraftDirty(complete, back)).toBe(false);
+    expect(isDraftChanged(draftFromRecord(complete, DEFAULTS), back)).toBe(false);
   });
 
   it('changing the tip changes the previewed deductible amount', () => {
@@ -114,14 +114,14 @@ describe('backtrack and revise', () => {
 
   it('reopening a saved entry without touching it is not dirty (no gratuitous save)', () => {
     const complete = meal({ taxLines: [{ rate: 19, net: 100, tax: 19 }] });
-    expect(isDraftDirty(complete, draftFromRecord(complete, DEFAULTS))).toBe(false);
+    expect(isDraftChanged(draftFromRecord(complete, DEFAULTS), draftFromRecord(complete, DEFAULTS))).toBe(false);
   });
 
   it('removing the last guest makes the preview incomplete again', () => {
     const complete = meal();
     const draft = { ...draftFromRecord(complete, DEFAULTS), guests: [] };
     expect(mealStatus(previewRecord(complete, draft))).toEqual({ kind: 'incomplete', missing: ['guests'] });
-    expect(isDraftDirty(complete, draft)).toBe(true);
+    expect(isDraftChanged(draftFromRecord(complete, DEFAULTS), draft)).toBe(true);
   });
 });
 
@@ -130,7 +130,7 @@ describe('resume', () => {
     const partial = meal({ occasion: '', host: 'Andere Gastgeberin', guests: [], place: 'Eigener Ort 5' });
     const draft = draftFromRecord(partial, DEFAULTS);
     expect(draft).toMatchObject({ host: 'Andere Gastgeberin', place: 'Eigener Ort 5', occasion: '', tip: '11,00' });
-    expect(isDraftDirty(partial, draft)).toBe(false);
+    expect(isDraftChanged(draftFromRecord(partial, DEFAULTS), draft)).toBe(false);
     expect(mealStatus(previewRecord(partial, draft))).toEqual({
       kind: 'incomplete',
       missing: ['occasion', 'guests'],
@@ -168,5 +168,25 @@ describe('unreadable input', () => {
     expect(good.ok && good.input.taxLines).toEqual([{ rate: 7, net: 50, tax: 3.5 }]);
     const bad = draftToInput({ ...base, taxLines: [{ rate: '19', net: '', tax: '1,90' }] });
     expect(bad.ok).toBe(false);
+  });
+});
+
+describe('isDraftChanged', () => {
+  const open = (host: string) => draftFromRecord(meal({ host: '', place: '', placeSuggestion: 'Vorschlag', mealType: null }), { ...DEFAULTS, host });
+
+  it('asks nothing for what the form filled in by itself', () => {
+    expect(isDraftChanged(open('Gastgeber'), open('Gastgeber'))).toBe(false);
+  });
+
+  it('counts what a person changed, and taking it back again', () => {
+    const opened = open('Gastgeber');
+    const typed = { ...opened, occasion: 'Projekt' };
+    expect(isDraftChanged(opened, typed)).toBe(true);
+    expect(isDraftChanged(opened, { ...typed, occasion: opened.occasion })).toBe(false);
+  });
+
+  it('counts an unreadable amount as a change', () => {
+    const opened = open('Gastgeber');
+    expect(isDraftChanged(opened, { ...opened, tip: 'abc' })).toBe(true);
   });
 });

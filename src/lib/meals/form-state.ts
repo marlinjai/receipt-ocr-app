@@ -1,5 +1,5 @@
 import type { ConsumptionKey, MealTypeKey } from '@/lib/receipts-constants';
-import { inputFromRecord, sameMealInput, type MealDetailsInput } from './input';
+import { sameMealInput, type MealDetailsInput } from './input';
 import type { MealGuestEntry, MealRecord, TaxLine } from './types';
 
 /**
@@ -162,15 +162,14 @@ export function previewRecord(record: MealRecord, draft: MealDraft): MealRecord 
   };
 }
 
-/** True when saving the draft would change what is stored. */
-export function isDraftDirty(record: MealRecord, draft: MealDraft): boolean {
-  const parsed = draftToInput(draft);
-  if (!parsed.ok) return true;
-  const stored = inputFromRecord(record);
-  const merged = {
-    ...parsed.input,
-    date: parsed.input.date ?? stored.date,
-    gross: parsed.input.gross ?? stored.gross,
-  };
-  return !sameMealInput(merged, stored);
+/**
+ * True when a person changed something since the form showed `opened`. What the
+ * form filled in by itself (the usual host, the place from the receipt) is not
+ * a change: leaving such a form loses nothing, so it asks nothing.
+ */
+export function isDraftChanged(opened: MealDraft, draft: MealDraft): boolean {
+  const before = draftToInput(opened);
+  const now = draftToInput(draft);
+  if (before.ok && now.ok) return !sameMealInput(before.input, now.input);
+  return JSON.stringify(opened) !== JSON.stringify(draft);
 }

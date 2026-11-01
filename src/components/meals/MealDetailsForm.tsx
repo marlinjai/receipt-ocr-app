@@ -6,7 +6,7 @@ import { CONSUMPTION_TYPES, MEAL_CATEGORY, MEAL_TYPES } from '@/lib/receipts-con
 import {
   draftFromRecord,
   draftToInput,
-  isDraftDirty,
+  isDraftChanged,
   previewRecord,
   type DraftField,
   type MealDraft,
@@ -118,7 +118,10 @@ function MealDetailsFormInner({
   const preview = useMemo(() => previewRecord(record, draft), [record, draft]);
   const status = mealStatus(preview);
   const deduction = mealDeduction(preview, settings);
-  const dirty = isDraftDirty(record, draft);
+  // The baseline is what the form opened with, and moves only when a save succeeds
+  // (to the draft that save submitted). A refreshed copy of the row never resets it.
+  const [baseline, setBaseline] = useState(draft);
+  const dirty = isDraftChanged(baseline, draft);
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
@@ -135,6 +138,7 @@ function MealDetailsFormInner({
       setError('Bitte die markierten Felder korrigieren.');
       return;
     }
+    const submittedDraft = draft;
     setFieldErrors({});
     setError(null);
     setSaving(true);
@@ -144,6 +148,7 @@ function MealDetailsFormInner({
         setError(mealActionMessage(result.error, result.detail));
         return;
       }
+      setBaseline(submittedDraft);
       setSavedNote(result.value.changed ? 'Gespeichert.' : 'Keine Änderungen, nichts gespeichert.');
       onSaved?.(result.value.record, result.value.changed);
     } catch {

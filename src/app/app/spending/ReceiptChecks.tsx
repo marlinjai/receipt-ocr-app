@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatDay } from '@/lib/meals/messages';
 import { receiptHref } from '@/lib/receipt-link';
 import { formatCents } from '@/lib/tax/money';
@@ -25,6 +26,7 @@ import {
   pushStateOfDevice,
   findReceiptChoices,
   getReceiptChecks,
+  linkCertain,
   linkChosenReceipt,
   linkTakenOver,
   readNotification,
@@ -42,6 +44,11 @@ import type { ReceiptChoice } from '@/lib/spending/loop';
  * receipt exists" answers, the in-app notifications, and how the owner wants
  * to be told.
  */
+
+export function certainNotice(linked: number): string {
+  if (linked === 0) return 'Nichts zugeordnet: die Vorschläge sind inzwischen erledigt oder nicht mehr eindeutig.';
+  return linked === 1 ? '1 Beleg zugeordnet.' : `${linked} Belege zugeordnet.`;
+}
 
 /** The notification setting in a few words, on the closed section: what reaches the owner, without opening it. */
 export function settingsSummary(channel: ChannelSetting, pushDevices: number, hasEmail: boolean): string {
@@ -673,6 +680,7 @@ export default function ReceiptChecks({
   const [onlyProposed, setOnlyProposed] = useState(false);
   const [limit, setLimit] = useState(CHECKS_PAGE);
   const [settingsShown, setSettingsShown] = useState(openSettings);
+  const [askCertain, setAskCertain] = useState(false);
   const years = useMemo(() => checkYears(loop.open), [loop.open]);
   const proposedCount = useMemo(() => loop.open.filter((c) => c.state.state === 'proposed').length, [loop.open]);
   // A chosen year that no longer has open payments counts as "all years", so the list never filters on an option the select no longer offers.
@@ -701,7 +709,7 @@ export default function ReceiptChecks({
 
   const router = useRouter();
   /** `refresh`: the action changed payments or links, so the rest of the page reads them afresh. */
-  const run = (at: string, action: () => Promise<ChecksResult<ChecksView>>, success?: string, refresh = true) => {
+  const run = (at: string, action: () => Promise<ChecksResult<ChecksView>>, success?: string | ((next: ChecksView) => string), refresh = true) => {
     setError(null);
     // A notice belongs to the action that set it: the next one starts without it.
     setPageNotice(null);
@@ -713,7 +721,7 @@ export default function ReceiptChecks({
         if (refresh) router.refresh();
         if (success) {
           // The payment left the list with its buttons: say what happened, and give the focus to the list's heading.
-          setPageNotice(success);
+          setPageNotice(typeof success === 'function' ? success(result.value) : success);
           document.getElementById(`${id}-title`)?.focus();
         }
       } else setError({ at, message: checksActionMessage(result) });
@@ -963,7 +971,26 @@ export default function ReceiptChecks({
                 Mit Vorschlag ({proposedCount})
               </button>
             )}
+            {view.canWrite && view.certain > 0 && (
+              <button type="button" className="ui-btn ui-btn-sm ui-btn-primary" disabled={pending} onClick={() => setAskCertain(true)}>
+                {view.certain} sichere Belege zuordnen
+              </button>
+            )}
           </div>
+          <ConfirmDialog
+            open={askCertain}
+            title={`${view.certain} sichere Belege zuordnen?`}
+            confirmLabel="Zuordnen"
+            busy={pending}
+            onConfirm={() => {
+              setAskCertain(false);
+              const before = loop.open.length;
+              run('run', linkCertain, (next) => certainNotice(before - next.loop.open.length));
+            }}
+            onCancel={() => setAskCertain(false)}
+          >
+            Bei diesen Zahlungen stimmt der Betrag genau, der Anbieter ist genannt, und es passt nur dieser eine Beleg. Jede Zuordnung lässt sich unter Finanzen wieder lösen.
+          </ConfirmDialog>
           {matching === 0 && (
             <p className="mt-3 text-sm" style={{ color: 'var(--muted)' }}>
               In dieser Auswahl ist keine Zahlung offen.

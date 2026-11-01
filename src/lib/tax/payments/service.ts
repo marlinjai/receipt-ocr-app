@@ -773,7 +773,7 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
  * a database a network away, 44 links took half a minute the other way.
  * Returns exactly the pairs that were linked.
  */
-export async function linkProposals(db: PrismaClient, ctx: PaymentContext, pairs: ReadonlyArray<{ paymentId: string; rowId: string }>): Promise<Array<{ paymentId: string; rowId: string }>> {
+export async function linkProposals(db: PrismaClient, ctx: PaymentContext, pairs: ReadonlyArray<{ paymentId: string; rowId: string }>, method: 'estimate' | 'certain' = 'estimate'): Promise<Array<{ paymentId: string; rowId: string }>> {
   if (pairs.length === 0) return [];
   await ensureMerchantKeys(db);
   return db.$transaction(async (tx) => {
@@ -797,7 +797,7 @@ export async function linkProposals(db: PrismaClient, ctx: PaymentContext, pairs
     if (linked.length > 0) {
       const amount = new Map(loaded.payments.map((p) => [p.id, -p.amountCents]));
       await tx.taxPaymentLink.createMany({
-        data: linked.map((pair) => ({ authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, paymentId: pair.paymentId, rowId: pair.rowId, cents: amount.get(pair.paymentId) as number, method: 'estimate' })),
+        data: linked.map((pair) => ({ authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, paymentId: pair.paymentId, rowId: pair.rowId, cents: amount.get(pair.paymentId) as number, method })),
       });
     }
     return linked;

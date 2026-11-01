@@ -5,12 +5,12 @@ import { rowToMealRecord } from '@/lib/meals/record';
 import type { MealRecord } from '@/lib/meals/types';
 import { vendorKey } from '@/lib/tax/decisions';
 import { eurosToCents, formatCents } from '@/lib/tax/money';
-import { linkPayment, paidByReceipt, type PaymentRow } from '@/lib/tax/payments/service';
+import { linkPayment, linkProposals, paidByReceipt, type PaymentRow } from '@/lib/tax/payments/service';
 import { linkRoutedPayment, loadRoutedPayments, paymentOnSpendingSide, receiversOf, type RoutedPaymentRow } from '@/lib/tax/payments/routing';
 import { timed } from '@/lib/timing';
 import { receiptForLink } from '@/lib/tax/service';
 import { categoryAnswerMap, spendingTreatments } from './service';
-import { loopState, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
+import { certainPairs, loopState, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
 import { notify, retryFailedDeliveries, serverChannels, settleAllBut, settleNotifications, type NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
 import { mailboxWithOwner } from './mailbox/server';
@@ -479,6 +479,24 @@ export async function confirmCandidate(db: PrismaClient, ctx: NotifyContext, pay
   if (!candidates.some((c) => c.rowId === rowId)) throw new LoopServiceError('not_a_candidate');
   await linkOnSpendingSide(db, ctx, payment, rowId);
   await settleNotifications(db, ctx.workspaceId, [missingReceiptSubject(paymentId)]);
+}
+
+/**
+ * Link every proposal that is certain (`certainPairs`) in one go, on a person's
+ * word. Reads the states afresh, and `linkProposals` skips what got a link in
+ * the meantime, so a second tab or a second press is harmless. Only this
+ * company's own payments: a routed one is linked on its own page. Each link
+ * can be taken back like any other.
+ */
+export async function linkCertainReceipts(db: PrismaClient, ctx: NotifyContext): Promise<number> {
+  const { states, payments } = await computeStates(db, ctx.workspaceId);
+  const routed = new Set(payments.filter((p) => p.routedFrom !== null).map((p) => p.id));
+  // Uniqueness is judged over every open payment here, routed ones too: a receipt one of them could have is not certain.
+  const pairs = certainPairs([...states].map(([paymentId, state]) => ({ paymentId, state }))).filter((pair) => !routed.has(pair.paymentId));
+  if (pairs.length === 0) return 0;
+  const linked = await linkProposals(db, ctx, pairs, 'certain');
+  await settleNotifications(db, ctx.workspaceId, linked.map((pair) => missingReceiptSubject(pair.paymentId)));
+  return linked.length;
 }
 
 /**

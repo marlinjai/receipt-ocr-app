@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHOICES_SHOWN, loopState, notNeededReason, notifiable, receiptCandidates, receiptChoices, type LoopContext, type LoopPayment, type LoopReceipt } from '../loop';
+import { CHOICES_SHOWN, certainPairs, loopState, notNeededReason, notifiable, receiptCandidates, receiptChoices, type LoopContext, type LoopPayment, type LoopReceipt } from '../loop';
 
 /** Every name here is a brand or invented. */
 const payment = (o: Partial<LoopPayment> = {}): LoopPayment => ({
@@ -111,6 +111,28 @@ describe('loopState', () => {
   it('proposes when a receipt fits, and reports the receipt missing otherwise', () => {
     expect(loopState(payment(), ctx({ receipts: [receipt()] })).state).toBe('proposed');
     expect(loopState(payment(), ctx())).toEqual({ state: 'missing' });
+  });
+});
+
+describe('certainPairs', () => {
+  const candidate = (rowId: string, estimated = false) => ({ rowId, label: rowId, day: '2026-05-01', amountCents: 1000, estimated });
+  const proposed = (paymentId: string, ...candidates: ReturnType<typeof candidate>[]) => ({ paymentId, state: { state: 'proposed' as const, candidates } });
+
+  it('takes one exact receipt that no other payment could have', () => {
+    expect(certainPairs([proposed('p1', candidate('r1')), { paymentId: 'p2', state: { state: 'missing' as const } }])).toEqual([{ paymentId: 'p1', rowId: 'r1' }]);
+  });
+
+  it('leaves a payment with two receipts to a person', () => {
+    expect(certainPairs([proposed('p1', candidate('r1'), candidate('r2'))])).toEqual([]);
+  });
+
+  it('leaves two payments that want the same receipt to a person', () => {
+    expect(certainPairs([proposed('p1', candidate('r1')), proposed('p2', candidate('r1'))])).toEqual([]);
+    expect(certainPairs([proposed('p1', candidate('r1')), proposed('p2', candidate('r1'), candidate('r2'))])).toEqual([]);
+  });
+
+  it('never takes a foreign-currency estimate', () => {
+    expect(certainPairs([proposed('p1', candidate('r1', true))])).toEqual([]);
   });
 });
 

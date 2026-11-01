@@ -24,6 +24,12 @@ export const ROW_KIND_COLUMN = 'Row Kind';
  * Text, hidden in the grid, written only by `setParentRow`.
  */
 export const AUTO_GROUP_OFF_COLUMN = 'Auto Group Off';
+/**
+ * A receipt's place in its group, from 0, once a person put the group in order.
+ * Number, hidden in the grid, written only through the group moves. A receipt
+ * without one comes after those that have one, newest first.
+ */
+export const GROUP_POSITION_COLUMN = 'Group Position';
 /** The kind of a group. A receipt has no kind. */
 export const GROUP_KIND = 'group';
 
@@ -55,7 +61,7 @@ export function receiptsOnly<T extends KindRow>(rows: readonly T[], columns: rea
   return rows.filter((row) => row.cells[columnId] !== GROUP_KIND);
 }
 
-/** The columns a person sees and edits: everything except the kind and the automatic-grouping columns. */
+/** The columns a person sees and edits: everything except the kind and the columns of the group bookkeeping. */
 export function visibleColumns<T extends NamedColumn>(columns: readonly T[]): T[] {
-  return columns.filter((c) => c.name !== ROW_KIND_COLUMN && c.name !== AUTO_GROUP_OFF_COLUMN);
+  return columns.filter((c) => c.name !== ROW_KIND_COLUMN && c.name !== AUTO_GROUP_OFF_COLUMN && c.name !== GROUP_POSITION_COLUMN);
 }

@@ -40,6 +40,7 @@ import type { ReviewEntry } from '@/lib/review/service';
 import { PresignedStorageBrainAdapter } from '@/lib/presigned-file-adapter';
 import { exportCSV } from '@/lib/export-csv';
 import { isGroupRow, receiptsOnly, visibleColumns } from '@/lib/receipts-kind';
+import { inGroupOrder, type PlacedOrder } from '@/lib/groups/order';
 import { deleteWording, deletedWording, groupCellNote, groupCellValue, groupsOf, receiptsInGroup, searchWithGroupReceipts, selectionKinds } from '@/lib/groups/view';
 import YearFilter from './YearFilter';
 import ReceiptSearch from './ReceiptSearch';
@@ -208,7 +209,12 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     },
     [reload],
   );
-  const displayRows = useMemo(() => filterByYears(searchedRows, columns, yearSelection), [searchedRows, columns, yearSelection]);
+  // A group's order as just placed, until the rows have been loaded again. A sort by a column decides over the places.
+  const [placedOrder, setPlacedOrder] = useState<PlacedOrder | null>(null);
+  const displayRows = useMemo(() => {
+    const shown = filterByYears(searchedRows, columns, yearSelection);
+    return sorts.length > 0 ? shown : inGroupOrder(shown, columns, placedOrder);
+  }, [searchedRows, columns, yearSelection, sorts.length, placedOrder]);
   // The chips follow the table: a receipt deleted, added or re-dated changes the rows, and the counts are asked
   // again a moment after the rows settle (one cheap query, no row is loaded).
   useEffect(() => {
@@ -368,14 +374,16 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   // What a group action did is said in the page; the rows are loaded again
   // either way, because a refusal usually means the view was out of date.
   const runGroupAction = useCallback(
-    async <T,>(action: () => Promise<GroupResult<T>>, done: (value: T) => string): Promise<boolean> => {
+    async <T,>(action: () => Promise<GroupResult<T>>, done: (value: T) => string | null): Promise<boolean> => {
       if (working) return false;
       setWorking(true);
       let ok = false;
       try {
         const result = await action();
         ok = result.ok;
-        setNotice(result.ok ? { tone: 'ok', text: done(result.value) } : { tone: 'danger', text: GROUP_ERROR[result.error] });
+        const text = result.ok ? done(result.value) : GROUP_ERROR[result.error];
+        // Receipts put in order within their group speak for themselves.
+        if (text !== null) setNotice({ tone: result.ok ? 'ok' : 'danger', text });
       } catch {
         setNotice({ tone: 'danger', text: GROUP_ERROR.failed });
       } finally {
@@ -402,12 +410,20 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   );
 
   const moveIntoGroup = useCallback(
-    async (groupId: string, rowIds: string[]) => {
+    async (groupId: string, rowIds: string[], order?: string[]) => {
+      if (order) setPlacedOrder({ groupId, order });
+      let joined = 0;
       const ok = await runGroupAction(
-        () => moveReceiptsIntoGroup(groupId, rowIds),
-        ({ moved }) => (moved === 0 ? 'Die Belege liegen schon in dieser Gruppe.' : `${receipts(moved)} in die Gruppe gelegt.`),
+        () => moveReceiptsIntoGroup(groupId, rowIds, order),
+        ({ moved }) => {
+          joined = moved;
+          if (moved > 0) return `${receipts(moved)} in die Gruppe gelegt.`;
+          return order ? null : 'Die Belege liegen schon in dieser Gruppe.';
+        },
       );
-      if (ok) setSelectedRows(new Set());
+      setPlacedOrder(null);
+      // Receipts that only changed places stay selected, so they can be moved again.
+      if (ok && (joined > 0 || !order)) setSelectedRows(new Set());
     },
     [runGroupAction],
   );
@@ -424,7 +440,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
 
   // A drag in the table: onto a group, or out of it (no parent).
   const moveRows = useCallback(
-    (rowIds: string[], parentRowId: string | null) => void (parentRowId ? moveIntoGroup(parentRowId, rowIds) : takeOutOfGroup(rowIds)),
+    (rowIds: string[], parentRowId: string | null, order?: string[]) =>
+      void (parentRowId ? moveIntoGroup(parentRowId, rowIds, order) : takeOutOfGroup(rowIds)),
     [moveIntoGroup, takeOutOfGroup],
   );
 
@@ -654,13 +671,12 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
             columns={tableColumns}
             rows={displayRows}
             selectOptions={selectOptions}
-            // readOnly also closes the group-to-group drag, which writes through onCellChange and ignores moveRowsDisabled.
-            readOnly={working}
             onCellChange={saveCell}
             subItemsConfig={subItemsConfig}
             // While a group action runs a second one would be refused: no grips until it is done, the table stays put.
             onMoveRows={moveRows}
             moveRowsDisabled={working}
+            reorderSubItems
             canHoldRows={holdsReceipts}
             rowGripLabel="Ziehen, um zu verschieben"
             onCollapseRow={(rowId) => setGroupFolded(rowId, true)}

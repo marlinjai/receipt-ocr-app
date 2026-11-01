@@ -149,3 +149,29 @@ only reach the other group through the bar above the table. With `@marlinjai/dat
   that arrive later join it only while no single-vendor group still holds receipts of either
   vendor: `planAutoGroups` prefers such a single-vendor group, and the receipt joins that one
   instead. The mixed group is the target only where it is the sole holder of the key.
+
+## Order inside a group (added 2026-11-01)
+
+A receipt dropped on the upper half of a receipt in a group lands above it, on the lower half
+below it, shown by a line. It works from inside the group and from outside, so one gesture both
+moves and places. Alt+Arrow up and down does the same on the focused row, so the order does not
+depend on a mouse. Decided by the session, say so if you disagree:
+
+- **Stored as a hidden number column, `Group Position`, on the receipt.** The same pattern as
+  `Row Kind` and `Auto Group Off`: no schema change in the table package, and each company's table
+  receives the column on its next load. A cell write to it is refused; only the group moves write it.
+- **Every drop renumbers the whole group from 0, in the transaction of the move.** Groups are small,
+  so there is no need for fractional places. The browser sends the receipts as it shows them; one a
+  filter or a search hid keeps its slot.
+- **Places count within one group.** A receipt that changes parent loses its place, in
+  `setParentRow`. Dissolving a group leaves the places on the released receipts, because a failed
+  delete puts them back; they mean nothing at the top level and the next move clears them.
+- **A receipt without a place comes after those with one, newest first.** A group nobody put in
+  order therefore looks as before, and a new receipt joins an ordered group at the end.
+- **A sort by a column decides while it is on.** No line then, and a drop only moves the receipt
+  in; the places come back when the sort is removed. The same rule as Notion.
+- **A drop on the group's own row names no place**, it puts the receipt in. The top and the end of a
+  group are reached on its first and last receipt.
+- **Only receipts inside a group.** The top level (loose receipts and whole groups) stays in the order
+  of the list: it is paged and split by years, so a manual order there is a different feature.
+- **No message after a pure reorder**: the row moving is the feedback, and the selection stays.

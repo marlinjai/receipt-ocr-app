@@ -1,5 +1,5 @@
 import type { Column } from '@marlinjai/data-table-core';
-import { GROUP_KIND, GROUP_WRITABLE_COLUMNS, ROW_KIND_COLUMN } from '@/lib/receipts-kind';
+import { GROUP_KIND, GROUP_POSITION_COLUMN, GROUP_WRITABLE_COLUMNS, ROW_KIND_COLUMN } from '@/lib/receipts-kind';
 
 /**
  * The rules of groups in the receipts table, as pure functions: what may lie in
@@ -73,6 +73,7 @@ export function assertCanJoinGroup(
  *
  * - The kind column is never written through a cell edit, on any row: turning a
  *   receipt into a group by an edit would silently take it out of every total.
+ * - A receipt's place in its group moves through the group moves only.
  * - A group takes its name and the columns the views sort by, nothing else. No
  *   amount can therefore ever be stored on a group.
  */
@@ -80,7 +81,7 @@ export function assertCellsWritable(columns: readonly Pick<Column, 'id' | 'name'
   const nameById = new Map(columns.map((c) => [c.id, c.name]));
   for (const columnId of Object.keys(cells)) {
     const name = nameById.get(columnId);
-    if (name === ROW_KIND_COLUMN) throw new GroupError('not_writable');
+    if (name === ROW_KIND_COLUMN || name === GROUP_POSITION_COLUMN) throw new GroupError('not_writable');
     if (rowKind === GROUP_KIND && name !== undefined && !GROUP_WRITABLE_COLUMNS.includes(name)) throw new GroupError('not_writable');
   }
 }

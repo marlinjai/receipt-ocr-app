@@ -5,7 +5,7 @@ import type { PrismaClient } from '@prisma/client';
 import { tableContext } from '@/lib/meals/service';
 import { GROUP_KIND, rowKindColumnId } from '@/lib/receipts-kind';
 import { removeEmptyGroups } from './empty';
-import { readRowLinks, setParentRow } from './links';
+import { readRowLinks, setParentRow, writeGroupOrder } from './links';
 import { GroupError, assertCanJoinGroup, cleanGroupName, sharedValue } from './rules';
 
 /**
@@ -109,11 +109,14 @@ export async function renameGroup(db: PrismaClient, workspaceId: string, groupId
 
 /**
  * Put receipts into a group. A receipt that lies in another group leaves it;
- * one that is already in this group is not written. Returns how many moved.
+ * one that is already in this group is not written. With `order`, the group's
+ * receipts as the person placed them, the group is put in that order in the
+ * same step. Returns how many moved.
  */
-export async function moveIntoGroup(db: PrismaClient, workspaceId: string, groupId: unknown, rowIds: unknown): Promise<number> {
+export async function moveIntoGroup(db: PrismaClient, workspaceId: string, groupId: unknown, rowIds: unknown, order?: unknown): Promise<number> {
   if (typeof groupId !== 'string' || !groupId) throw new GroupError('group_not_found');
   const ids = cleanIds(rowIds);
+  const wanted = order === undefined ? null : cleanIds(order);
   const table = await groupTable(db, workspaceId);
   const { moved, left } = await db.$transaction(async (tx) => {
     // The group and the receipts are read in the transaction that writes, so a
@@ -122,7 +125,9 @@ export async function moveIntoGroup(db: PrismaClient, workspaceId: string, group
     const group = found.get(groupId);
     if (!group || group.kind !== GROUP_KIND || group.archived) throw new GroupError('group_not_found');
     assertCanJoinGroup(ids, found, groupId);
-    return { moved: await setParentRow(tx, table.tableId, ids, groupId), left: formerGroups(ids, found, groupId) };
+    const written = await setParentRow(tx, table.tableId, ids, groupId);
+    if (wanted) await writeGroupOrder(tx, table.tableId, groupId, wanted);
+    return { moved: written, left: formerGroups(ids, found, groupId) };
   });
   await removeEmptyGroups(db, workspaceId, left);
   return moved;

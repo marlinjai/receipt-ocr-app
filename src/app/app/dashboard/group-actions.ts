@@ -45,10 +45,10 @@ export async function createReceiptGroup(name: string, memberRowIds: string[]): 
   }
 }
 
-/** Put receipts into a group. Returns how many were moved. */
-export async function moveReceiptsIntoGroup(groupId: string, rowIds: string[]): Promise<GroupResult<{ moved: number }>> {
+/** Put receipts into a group, and with `order` the group in that order. Returns how many were moved. */
+export async function moveReceiptsIntoGroup(groupId: string, rowIds: string[], order?: string[]): Promise<GroupResult<{ moved: number }>> {
   try {
-    return { ok: true, value: { moved: await moveIntoGroup(prisma, await writeWorkspace(), groupId, rowIds) } };
+    return { ok: true, value: { moved: await moveIntoGroup(prisma, await writeWorkspace(), groupId, rowIds, order) } };
   } catch (e) {
     return failure(e);
   }

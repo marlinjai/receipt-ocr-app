@@ -13,6 +13,7 @@ const dismissMail = vi.fn();
 const linkTakenOver = vi.fn();
 const getReceiptChecks = vi.fn();
 const linkChosenReceipt = vi.fn();
+const linkCertain = vi.fn();
 const findReceiptChoices = vi.fn();
 const takeOverMail = vi.fn();
 const refresh = vi.fn();
@@ -27,6 +28,7 @@ vi.mock('./loop-actions', () => ({
   dismissMail: (...a: unknown[]) => dismissMail(...a),
   linkTakenOver: (...a: unknown[]) => linkTakenOver(...a),
   linkChosenReceipt: (...a: unknown[]) => linkChosenReceipt(...a),
+  linkCertain: (...a: unknown[]) => linkCertain(...a),
   findReceiptChoices: (...a: unknown[]) => findReceiptChoices(...a),
   getReceiptChecks: (...a: unknown[]) => getReceiptChecks(...a),
 }));
@@ -42,6 +44,7 @@ import type { ChecksView } from './loop-actions';
 afterEach(cleanup);
 
 const view = (canWrite = true): ChecksView => ({
+  certain: 0,
   loop: {
     open: [
       { paymentId: 'p1', bookingDay: '2026-05-10', cents: 2999, counterparty: 'Zyx Handel', reference: '', state: { state: 'proposed', candidates: [{ rowId: 'r1', label: 'Zyx Rechnung', day: '2026-05-09', amountCents: 2999, estimated: false }] } },
@@ -63,7 +66,7 @@ const view = (canWrite = true): ChecksView => ({
 beforeEach(() => {
   refresh.mockReset();
   takeOverMail.mockClear();
-  for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings, dismissMail, linkTakenOver, linkChosenReceipt, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
+  for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings, dismissMail, linkTakenOver, linkChosenReceipt, linkCertain, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
   findReceiptChoices.mockReset();
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -104,6 +107,26 @@ describe('ReceiptChecks', () => {
     expect(await screen.findByText('Beleg zugeordnet: Abc Laden.')).toBeTruthy();
     // The payment list and the budgets read the same payments: the page reads them afresh.
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it('links the certain receipts only after asking, and says how many went', async () => {
+    const base = { ...view(), certain: 1 };
+    linkCertain.mockResolvedValue({ ok: true, value: { ...base, certain: 0, loop: { ...base.loop, open: base.loop.open.slice(1) } } });
+    render(<ReceiptChecks initial={base} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '1 sichere Belege zuordnen' }));
+    expect(linkCertain).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Zuordnen' }));
+    expect(linkCertain).toHaveBeenCalledOnce();
+    expect(await screen.findByText('1 Beleg zugeordnet.')).toBeTruthy();
+  });
+
+  it('offers no certain link while none exists, nor to someone who may only read', () => {
+    render(<ReceiptChecks initial={{ ...view(false), certain: 3 }} focusPaymentId={null} />);
+    expect(screen.queryByRole('button', { name: /sichere Belege/ })).toBeNull();
+    cleanup();
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    expect(screen.queryByRole('button', { name: /sichere Belege/ })).toBeNull();
   });
 
   it('keeps the summary of "Jetzt prüfen" when the page reads the checks afresh', async () => {

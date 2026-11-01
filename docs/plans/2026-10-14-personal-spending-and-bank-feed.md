@@ -183,6 +183,17 @@ warning goes through the same channel as the missing-receipt notification.
   and from "Jetzt prüfen" on the page; the live bank feed should call it the same way.
 - Step 3 (the mailbox): see below.
 
+### Certain receipts in one go (2026-11-01)
+
+The owner asked whether receipts still have to be linked by hand. Measured on production that
+day: 2,672 open payments, 244 with a proposal, about 90 of them one to one. Decided by the
+coordinating session, say so if you disagree: "n sichere Belege zuordnen" links, after one
+question, every proposal with exactly one receipt, at its exact amount (never a foreign-currency
+estimate), that no other open payment could have (`certainPairs`). Twelve equal monthly bills
+stay with a person, because each fits the other's receipt. A person still gives the word, as the
+loop has always asked, but once for all. Links carry the method `certain` and are taken back like
+any other. No model is involved: where the vendor, amount and day settle it, a model adds risk.
+
 ### Build order 2, step 3: the expenses mailbox (2026-10-16)
 
 - A mailbox port (`src/lib/spending/mailbox/port.ts`) with a Gmail adapter (`gmail.ts`), read-only,

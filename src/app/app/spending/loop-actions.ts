@@ -4,14 +4,14 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
-import { LoopServiceError, answerNoReceipt, confirmCandidate, loadLoopOverview, withdrawNoReceipt, type LoopOverview } from '@/lib/spending/loop-service';
+import { LoopServiceError, answerNoReceipt, confirmCandidate, linkCertainReceipts, loadLoopOverview, withdrawNoReceipt, type LoopOverview } from '@/lib/spending/loop-service';
 import { runSpendingChecks, type ChecksRun, INTERACTIVE_CLASSIFY_LIMIT } from '@/lib/spending/checks';
 import { NotifyServiceError, devicePushState, forgetDeviceEverywhere, validVapidConfig, getNotifySettings, pushDeviceCount, removePushSubscription, savePushSubscription, type PushContext, listUnreadNotifications, markNotificationRead, saveNotifySettings, type NotificationView, type NotifySettings, type NotifyContext } from '@/lib/spending/notify/service';
 import { berlinToday } from '@/lib/spending/period';
 import { mailboxFor } from '@/lib/spending/mailbox/server';
 import { MailCandidateError, dismissMailCandidate } from '@/lib/spending/mailbox/service';
 import { linkReceiptToPayment, searchReceiptChoices } from '@/lib/spending/loop-service';
-import type { ReceiptChoice } from '@/lib/spending/loop';
+import { certainPairs, type ReceiptChoice } from '@/lib/spending/loop';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
 import { timed } from '@/lib/timing';
 
@@ -27,6 +27,8 @@ export type ChecksResult<T> = { ok: true; value: T } | { ok: false; error: Check
 
 export interface ChecksView {
   loop: LoopOverview;
+  /** How many open payments have one certain receipt, linked in one go by `linkCertain`. */
+  certain: number;
   /** The in-app queue; empty for a person who may not write (it is the owner's to act on and dismiss). */
   notifications: NotificationView[];
   settings: NotifySettings;
@@ -73,6 +75,7 @@ async function view(workspaceId: string, canWrite: boolean, lastRun: ChecksView[
   const mailbox = status.configured ? 'on' : status.reason === 'other_company' ? 'other_company' : 'off';
   return {
     loop,
+    certain: certainPairs(loop.open).length,
     notifications,
     settings,
     canWrite,
@@ -112,6 +115,17 @@ export async function confirmReceipt(paymentId: unknown, rowId: unknown): Promis
   try {
     const ctx = await writeContext();
     await confirmCandidate(prisma, ctx, String(paymentId ?? ''), String(rowId ?? ''));
+    return { ok: true, value: await view(ctx.workspaceId, true) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Links every certain proposal; the view's lists say what is left. */
+export async function linkCertain(): Promise<ChecksResult<ChecksView>> {
+  try {
+    const ctx = await writeContext();
+    await linkCertainReceipts(prisma, ctx);
     return { ok: true, value: await view(ctx.workspaceId, true) };
   } catch (e) {
     return failure(e);

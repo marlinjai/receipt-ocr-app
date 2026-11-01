@@ -193,6 +193,26 @@ function receiptIndex(receipts: readonly LoopReceipt[]): { byAmount: Map<number,
   return index;
 }
 
+/**
+ * The proposals certain enough to link in one go, without looking at each: the
+ * payment has exactly this one receipt, at its exact amount (never a
+ * foreign-currency estimate), and no other open payment could have the same
+ * receipt. Twelve equal monthly bills fit each other's receipts, so they stay
+ * with a person.
+ */
+export function certainPairs(open: ReadonlyArray<{ paymentId: string; state: LoopState }>): Array<{ paymentId: string; rowId: string }> {
+  const proposedFor = new Map<string, number>();
+  for (const { state } of open) {
+    if (state.state !== 'proposed') continue;
+    for (const c of state.candidates) proposedFor.set(c.rowId, (proposedFor.get(c.rowId) ?? 0) + 1);
+  }
+  return open.flatMap(({ paymentId, state }) => {
+    if (state.state !== 'proposed' || state.candidates.length !== 1) return [];
+    const [only] = state.candidates;
+    return !only.estimated && proposedFor.get(only.rowId) === 1 ? [{ paymentId, rowId: only.rowId }] : [];
+  });
+}
+
 export function loopState(payment: LoopPayment, ctx: LoopContext): LoopState {
   if (payment.linkCount > 0) return { state: 'has_receipt' };
   const notNeeded = notNeededReason(payment, ctx);

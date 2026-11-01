@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { createAccount, deleteImportBatch, importPayments, loadPayments, setPaymentKind, unlinkPayment } from '@/lib/tax/payments/service';
-import { LoopServiceError, MAX_SENDS_PER_RUN, answerNoReceipt, confirmCandidate, loadLoopOverview, runReceiptLoop, withdrawNoReceipt } from '../loop-service';
+import { LoopServiceError, MAX_SENDS_PER_RUN, answerNoReceipt, confirmCandidate, linkCertainReceipts, loadLoopOverview, runReceiptLoop, withdrawNoReceipt } from '../loop-service';
 import { listUnreadNotifications, markNotificationRead, saveNotifySettings, getNotifySettings, NotifyServiceError } from '../notify/service';
 import type { NotificationChannel, NotificationMessage } from '../notify/port';
 import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
@@ -138,6 +138,34 @@ describe('backtrack and revise', () => {
     const { payments } = await loadPayments(db, ctx.workspaceId);
     await unlinkPayment(db, ctx, payments[0].links[0].id);
     expect(await stateOf(ctx.workspaceId, id)).toBe('proposed');
+  });
+
+  it('links the certain proposals in one go, once, and a removed link can be linked again', async () => {
+    const { ws, ctx, ids } = await setup([line('2026-05-10', 'Zyx Handel', 'Bestellung', '-29.99'), line('2026-05-11', 'Abc Laden', 'Einkauf', '-12.50')]);
+    await ws.addReceipt({ Name: 'Zyx Rechnung', Vendor: 'Zyx Handel', Gross: 29.99, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });
+    const id = ids.get('Zyx Handel') as string;
+
+    expect(await linkCertainReceipts(db, ctx)).toBe(1);
+    expect(await stateOf(ctx.workspaceId, id)).toBe('settled_or_not_needed');
+    expect(await stateOf(ctx.workspaceId, ids.get('Abc Laden') as string)).toBe('missing');
+    const { payments } = await loadPayments(db, ctx.workspaceId);
+    const link = payments.flatMap((p) => p.links)[0];
+    expect(link.method).toBe('certain');
+    // A second press finds nothing left to do.
+    expect(await linkCertainReceipts(db, ctx)).toBe(0);
+
+    await unlinkPayment(db, ctx, link.id);
+    expect(await stateOf(ctx.workspaceId, id)).toBe('proposed');
+    expect(await linkCertainReceipts(db, ctx)).toBe(1);
+  });
+
+  it('leaves equal monthly bills to a person: each could be the other receipt', async () => {
+    const { ws, ctx, ids } = await setup([line('2026-04-10', 'Zyx Handel', 'Rate April', '-39.95'), line('2026-05-10', 'Zyx Handel', 'Rate Mai', '-39.95')]);
+    await ws.addReceipt({ Name: 'April', Vendor: 'Zyx Handel', Gross: 39.95, Date: '2026-04-09', Currency: 'EUR', 'FX Rate': 1 });
+    await ws.addReceipt({ Name: 'Mai', Vendor: 'Zyx Handel', Gross: 39.95, Date: '2026-05-09', Currency: 'EUR', 'FX Rate': 1 });
+    expect(ids.size).toBeGreaterThan(0);
+    expect(await linkCertainReceipts(db, ctx)).toBe(0);
+    expect((await loadPayments(db, ctx.workspaceId)).payments.flatMap((p) => p.links)).toEqual([]);
   });
 
   it('refuses to confirm a receipt that is not proposed for the payment', async () => {

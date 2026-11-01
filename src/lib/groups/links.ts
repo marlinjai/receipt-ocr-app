@@ -1,7 +1,9 @@
 import 'server-only';
 import { safeColumnName, safeTableName } from '@marlinjai/data-table-adapter-shared';
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { AUTO_GROUP_OFF_COLUMN, GROUP_KIND } from '@/lib/receipts-kind';
+import { orderWithin } from './order';
+import { GroupError } from './rules';
+import { AUTO_GROUP_OFF_COLUMN, GROUP_KIND, GROUP_POSITION_COLUMN } from '@/lib/receipts-kind';
 
 /**
  * Reads and writes of the link between a receipt and the group it lies in.
@@ -44,7 +46,8 @@ export async function readRowLinks(db: Db, tableId: string, kindColumnId: string
 
 /**
  * Put the rows under `parentRowId`, or at the top level with null. A row that
- * is already there is not written, so repeating a move changes nothing.
+ * is already there is not written, so repeating a move changes nothing. A row
+ * that changes parent loses its place: places count within one group.
  * Returns how many rows were written.
  */
 export async function setParentRow(db: Db, tableId: string, rowIds: readonly string[], parentRowId: string | null): Promise<number> {
@@ -52,22 +55,50 @@ export async function setParentRow(db: Db, tableId: string, rowIds: readonly str
   if (ids.length === 0) return 0;
   // A receipt a person puts back at the top level is not grouped automatically again.
   if (parentRowId === null) await markAutoGroupOff(db, tableId, ids);
+  const positionId = await columnNamed(db, tableId, GROUP_POSITION_COLUMN);
+  const clearPlace = positionId ? `, ${safeColumnName(positionId)} = NULL` : '';
   return db.$executeRawUnsafe(
-    `UPDATE ${safeTableName(tableId)} SET parent_row_id = $1::text, _updated_at = $2 WHERE id IN (${placeholders(ids.length, 3)}) AND parent_row_id IS DISTINCT FROM $1::text`,
+    `UPDATE ${safeTableName(tableId)} SET parent_row_id = $1::text, _updated_at = $2${clearPlace} WHERE id IN (${placeholders(ids.length, 3)}) AND parent_row_id IS DISTINCT FROM $1::text`,
     parentRowId,
     new Date().toISOString(),
     ...ids,
   );
 }
 
-/** Mark the given rows, those of them that lie in a group, as not to be grouped automatically. Needs the column; without it nothing is marked. */
-async function autoGroupOffColumn(db: Db, tableId: string): Promise<string | null> {
+async function columnNamed(db: Db, tableId: string, name: string): Promise<string | null> {
   const column = await db.$queryRawUnsafe<Array<{ id: string }>>(
     'SELECT id FROM dt_columns WHERE table_id = $1 AND name = $2 LIMIT 1',
     tableId,
-    AUTO_GROUP_OFF_COLUMN,
+    name,
   );
   return column[0]?.id ?? null;
+}
+
+/** Mark the given rows, those of them that lie in a group, as not to be grouped automatically. Needs the column; without it nothing is marked. */
+function autoGroupOffColumn(db: Db, tableId: string): Promise<string | null> {
+  return columnNamed(db, tableId, AUTO_GROUP_OFF_COLUMN);
+}
+
+/**
+ * Write the order of a group: `wanted` is the receipts as the person sees them,
+ * and every receipt of the group gets its place, those a filter hid as well.
+ * Rows that no longer lie in the group are passed over.
+ */
+export async function writeGroupOrder(db: Db, tableId: string, groupId: string, wanted: readonly string[]): Promise<void> {
+  const positionId = await columnNamed(db, tableId, GROUP_POSITION_COLUMN);
+  if (!positionId) throw new GroupError('not_initialized');
+  const position = safeColumnName(positionId);
+  const table = safeTableName(tableId);
+  const current = await db.$queryRawUnsafe<Array<{ id: string }>>(
+    `SELECT id FROM ${table} WHERE parent_row_id = $1 AND _archived = 0 ORDER BY (${position})::NUMERIC ASC NULLS LAST, _created_at DESC, id`,
+    groupId,
+  );
+  const next = orderWithin(current.map((r) => r.id), wanted);
+  await db.$executeRawUnsafe(
+    `UPDATE ${table} AS t SET ${position} = v.place::text FROM unnest($1::text[], $2::int[]) AS v(id, place) WHERE t.id = v.id AND t.${position} IS DISTINCT FROM v.place::text`,
+    next,
+    next.map((_, place) => place),
+  );
 }
 
 async function markAutoGroupOff(db: Db, tableId: string, rowIds: readonly string[]): Promise<void> {

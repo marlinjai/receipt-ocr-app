@@ -2,9 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Column, Row } from '@marlinjai/data-table-core';
 import { deleteReceiptRows, loadMealRecords } from '@/lib/meals/service';
 import { loadReviewQueue } from '@/lib/review/service';
-import { GROUP_KIND, ROW_KIND_COLUMN, isGroupRow, receiptsOnly } from '@/lib/receipts-kind';
+import { GROUP_KIND, GROUP_POSITION_COLUMN, ROW_KIND_COLUMN, isGroupRow, receiptsOnly } from '@/lib/receipts-kind';
 import { GroupError } from '../rules';
 import { createGroup, moveIntoGroup, removeFromGroup, rowKind } from '../service';
+import { inGroupOrder } from '../order';
 import { groupCellValue, receiptsInGroup, sumOf } from '../view';
 import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../../../../test/db-helpers';
 
@@ -114,5 +115,70 @@ describe('groups in the receipts table, against the database', () => {
     expect(await code(moveIntoGroup(db, ws.workspaceId, groupId, [foreign]))).toBe('row_not_found');
     expect(await code(moveIntoGroup(db, other.workspaceId, groupId, [foreign]))).toBe('group_not_found');
     expect(await code(removeFromGroup(db, other.workspaceId, [hotel]))).toBe('row_not_found');
+  });
+});
+
+describe('the order of the receipts in a group', () => {
+  let groupId: string;
+  let first: string;
+  let second: string;
+  let third: string;
+  let outside: string;
+
+  const shownOrder = async () => inGroupOrder(await rows(), columns).filter((r) => r.parentRowId === groupId).map((r) => r.id);
+  const receipt = (Name: string) => ws.addReceipt({ Name, Vendor: 'Ordnung GmbH', Gross: 1, Date: '2026-05-01', Category: 'Reisekosten', Currency: 'EUR', 'FX Rate': 1 });
+
+  beforeAll(async () => {
+    first = await receipt('Erster');
+    second = await receipt('Zweiter');
+    third = await receipt('Dritter');
+    outside = await receipt('Draussen');
+    groupId = await createGroup(db, ws.workspaceId, 'Ordnung', [first, second, third]);
+    await moveIntoGroup(db, ws.workspaceId, groupId, [first], [third, first, second]);
+  });
+
+  it('forward: the group is shown in the order placed, and that is what a new read gives', async () => {
+    expect(await shownOrder()).toEqual([third, first, second]);
+    const position = columnId(GROUP_POSITION_COLUMN);
+    expect((await byId(third))!.cells[position]).toBe(0);
+    expect((await byId(second))!.cells[position]).toBe(2);
+  });
+
+  it('backtrack: placing again replaces the order, and back to the start leaves no trace of the detour', async () => {
+    await moveIntoGroup(db, ws.workspaceId, groupId, [second], [second, third, first]);
+    expect(await shownOrder()).toEqual([second, third, first]);
+    await moveIntoGroup(db, ws.workspaceId, groupId, [second], [third, first, second]);
+    expect(await shownOrder()).toEqual([third, first, second]);
+  });
+
+  it('a row a filter hid keeps its place when the rows shown change places', async () => {
+    await moveIntoGroup(db, ws.workspaceId, groupId, [second], [second, third]);
+    expect(await shownOrder()).toEqual([second, first, third]);
+    await moveIntoGroup(db, ws.workspaceId, groupId, [third], [third, first, second]);
+  });
+
+  it('a receipt comes in where it is dropped; without a place it comes after those that have one', async () => {
+    expect(await moveIntoGroup(db, ws.workspaceId, groupId, [outside], [third, outside, first, second])).toBe(1);
+    expect(await shownOrder()).toEqual([third, outside, first, second]);
+    await removeFromGroup(db, ws.workspaceId, [outside]);
+    expect(await shownOrder()).toEqual([third, first, second]);
+    await moveIntoGroup(db, ws.workspaceId, groupId, [outside]);
+    expect(await shownOrder()).toEqual([third, first, second, outside]);
+  });
+
+  it('re-entry: a receipt that left and came back has lost its old place', async () => {
+    await moveIntoGroup(db, ws.workspaceId, groupId, [outside], [outside, third, first, second]);
+    await removeFromGroup(db, ws.workspaceId, [outside]);
+    expect((await byId(outside))!.cells[columnId(GROUP_POSITION_COLUMN)] ?? null).toBeNull();
+  });
+
+  it('an id that does not lie in the group is passed over', async () => {
+    await moveIntoGroup(db, ws.workspaceId, groupId, [first], [first, outside, third, second]);
+    expect(await shownOrder()).toEqual([first, third, second]);
+    expect((await byId(outside))!.parentRowId ?? null).toBeNull();
+  });
+
+  it('a group of another workspace is not found', async () => {
+    expect(await code(moveIntoGroup(db, other.workspaceId, groupId, [first], [first]))).toBe('group_not_found');
   });
 });

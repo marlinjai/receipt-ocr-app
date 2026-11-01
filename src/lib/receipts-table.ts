@@ -16,7 +16,7 @@ import { mergeDuplicateColumns } from '@/lib/receipts-duplicate-columns';
 import { readAmounts } from '@/lib/extraction/amounts';
 import { parseTaxLines, serializeTaxLines } from '@/lib/meals/rules';
 import { TAX_RATE_COLUMN, TAX_RATES_COLUMN, formatTaxRates, orderedRates } from '@/lib/tax-rates';
-import { AUTO_GROUP_OFF_COLUMN, ROW_KIND_COLUMN } from '@/lib/receipts-kind';
+import { AUTO_GROUP_OFF_COLUMN, GROUP_POSITION_COLUMN, ROW_KIND_COLUMN } from '@/lib/receipts-kind';
 import { ITEM_COLUMN } from '@/lib/receipt-name';
 import { INVOICE_NUMBER_COLUMN } from '@/lib/extraction/invoice-number';
 
@@ -102,6 +102,8 @@ const COLUMNS: ColumnDef[] = [
   { name: ROW_KIND_COLUMN, type: 'text' },
   // Set when a person took a receipt out of a group: it is not put into one automatically again.
   { name: AUTO_GROUP_OFF_COLUMN, type: 'text' },
+  // A receipt's place in its group, once a person put the group in order.
+  { name: GROUP_POSITION_COLUMN, type: 'number' },
 ];
 
 /** Record the owning company on a table that was just created. Never overwrites an existing owner. */

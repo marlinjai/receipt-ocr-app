@@ -21,6 +21,9 @@
   how many of its receipts the sum covers ("(1 von 2)"), decided by Marlin on 2026-10-11. With
   `@marlinjai/data-table-react` 0.7.0, which also brings folding all sections at once and a
   filter bar without its own frame. Done 2026-10-11.
+- [x] The receipts inside a group can be put in order: drop one above or below another, or Alt+Arrow
+  on the focused row. Stored per receipt, a sort by a column decides while it is on. Decisions in
+  [the plan](docs/plans/2026-10-11-receipt-sub-rows.md). Done 2026-11-01.
 - [ ] Dragging a group from one section into another is not yet proven on production.
   (2026-10-11)
 - [ ] A receipt with its parts as sub rows, the second use of sub rows (further values of the

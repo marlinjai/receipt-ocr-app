@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState, useTransition } from 'react';
+import { observer } from 'mobx-react-lite';
+import { memo, useEffect, useId, useRef, useState, useTransition, type RefObject } from 'react';
 import Link from 'next/link';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatDay } from '@/lib/meals/messages';
@@ -10,13 +11,15 @@ import { createBrowserDeps, type SaveReceipt } from '@/lib/upload/browser-deps';
 import { processReceipt } from '../actions';
 import { switchWorkspace } from '../workspace-actions';
 import { takeOverMail, takeOverMessage } from './take-over-mail';
-import { CHECKS_PAGE, checkYears, chooseChecks, splitAnswered } from './open-checks';
+import { CHECKS_PAGE, answerTakenBack, answeredNoReceipt, mailSetAside, receiptLinked, type CheckEdit } from './open-checks';
 import { browserPushEnvironment, currentSubscription, pushSwitchMessage, switchPushOff, switchPushOn, type PushEnvironment } from './push-device';
 import type { BacklogClosed, PaymentCheck } from '@/lib/spending/loop-service';
 import type { ChecksRun } from '@/lib/spending/checks';
 import { classifySummary } from '@/lib/tax/payments/classify-summary';
 import { useRouter } from 'next/navigation';
 import type { ChannelSetting } from '@/lib/spending/notify/port';
+import { ChecksStore, type LocalWrite } from '@/stores/ChecksStore';
+import { useAppStore } from '@/stores/provider';
 import {
   checkNow,
   confirmReceipt,
@@ -34,6 +37,7 @@ import {
   saveNotificationSettings,
   sayNoReceipt,
   takeBackNoReceipt,
+  type CheckChange,
   type ChecksResult,
   type ChecksView,
 } from './loop-actions';
@@ -300,6 +304,35 @@ export function errorRowListed(at: string, view: ChecksView): boolean {
   return true;
 }
 
+/**
+ * The rest of the spending page after a change here. The overview, the budgets and what was bought are other tabs,
+ * never on screen beside the checks, and a tab is read from the server when it opens, so nothing is read while a
+ * person works down the list: one answer must not bring every payment back to the browser. The page is owed one read
+ * on leaving, for what that tab's read could not know yet (an answer still on its way) and for the way back, which
+ * is served from the router's cache. An answer arriving after that reads at once.
+ */
+function useReadOnLeaving(): () => void {
+  const router = useRouter();
+  const latest = useRef(router);
+  const owed = useRef(false);
+  const left = useRef(false);
+  useEffect(() => {
+    latest.current = router;
+  });
+  useEffect(() => {
+    left.current = false;
+    return () => {
+      left.current = true;
+      if (owed.current) latest.current.refresh();
+      owed.current = false;
+    };
+  }, []);
+  return () => {
+    if (left.current) latest.current.refresh();
+    else owed.current = true;
+  };
+}
+
 /** What went wrong, in words a person can act on. */
 export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok: false }>): string {
   if (result.error === 'unauthorized') return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und neu anmelden.';
@@ -322,39 +355,24 @@ export function checksActionMessage(result: Extract<ChecksResult<unknown>, { ok:
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
 
-function OpenCheck({
-  check,
-  focused,
-  canWrite,
-  pending,
-  error,
-  onConfirm,
-  onNoReceipt,
-  onTakeOver,
-  onDismiss,
-  takingOver,
-  onLinkByHand,
-  onSearchReceipts,
-  dataVersion,
-}: {
-  check: PaymentCheck;
-  focused: boolean;
-  canWrite: boolean;
-  pending: boolean;
-  error: string | null;
-  onConfirm: (rowId: string) => void;
-  onNoReceipt: (reason: string) => void;
-  onTakeOver: (mailId: string) => void;
-  onDismiss: (mailId: string) => void;
-  /** The mail being taken over right now, if any. */
-  takingOver: string | null;
-  onLinkByHand: (rowId: string) => void;
+/** What a row asks of the page. Through a ref that always holds the latest ones, so a row's props say only what it shows. */
+interface RowActions {
+  confirm: (check: PaymentCheck, rowId: string) => void;
+  noReceipt: (check: PaymentCheck, reason: string) => void;
+  takeOver: (paymentId: string, mailId: string) => void;
+  dismiss: (paymentId: string, mailId: string) => void;
+  linkByHand: (check: PaymentCheck, rowId: string) => void;
   /** Search this company's receipts for this payment by name, vendor or amount. */
-  onSearchReceipts: (text: string) => Promise<ChecksResult<ReceiptChoice[]>>;
-  /** Counts the fresh views of the page's payments: an open list is asked again when it changes. */
-  dataVersion: number;
-}) {
+  search: (paymentId: string, text: string) => Promise<ChecksResult<ReceiptChoice[]>>;
+}
+
+/**
+ * Linking a receipt by hand. Reads `dataVersion` on its own: an open list is asked again when the
+ * receipts change, and that must not redraw the rows whose list is closed.
+ */
+const PickReceipt = observer(function PickReceipt({ check, store, busy, actions }: { check: PaymentCheck; store: ChecksStore; busy: boolean; actions: RefObject<RowActions | null> }) {
   const id = useId();
+  const { dataVersion } = store;
   // Linking by hand opens on request: the receipts are asked from the server only for the payment a person works on.
   const [picking, setPicking] = useState(false);
   const [chosen, setChosen] = useState('');
@@ -379,7 +397,7 @@ function OpenCheck({
     if (!quiet) setSearching(true);
     setSearchError(null);
     try {
-      const result = await onSearchReceipts(text);
+      const result = await (actions.current as RowActions).search(check.paymentId, text);
       if (mine !== request.current) return;
       if (result.ok) {
         setFound({ choices: result.value, searched: text.trim() !== '' });
@@ -430,93 +448,15 @@ function OpenCheck({
           : found.choices.length === 1
             ? '1 Beleg zur Auswahl.'
             : `${found.choices.length} Belege zur Auswahl, die nächstliegenden zuerst.`;
-  const [asking, setAsking] = useState(false);
-  const [reason, setReason] = useState('');
-  const opener = useRef<HTMLButtonElement>(null);
-  const reopened = useRef(false);
-  // "Abbrechen" gives the focus back to the button that opened the form.
-  useEffect(() => {
-    if (!asking && reopened.current) opener.current?.focus();
-  }, [asking]);
   return (
-    <li
-      id={`pruefen-${check.paymentId}`}
-      tabIndex={focused ? -1 : undefined}
-      aria-current={focused ? 'true' : undefined}
-      className="py-3 text-sm"
-      style={focused ? { outline: '2px solid var(--accent)', outlineOffset: 4, borderRadius: 6 } : undefined}
-    >
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span style={{ color: 'var(--foreground)' }}>
-          {check.counterparty || 'ohne Namen'}
-          <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-            {formatDay(check.bookingDay)}
-            {check.reference ? `, ${check.reference}` : ''}
-          </span>
-        </span>
-        <span className="tabular-nums">{euro(check.cents)}</span>
-      </div>
-      {check.state.state === 'proposed' && (
-        <ul className="mt-2 space-y-1">
-          {check.state.candidates.map((c) => (
-            <li key={c.rowId} className="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <span>
-                Passender Beleg:{' '}
-                <Link href={receiptHref(c.rowId)} className="underline">
-                  {c.label}
-                </Link>{' '}
-                vom {formatDay(c.day)}, {euro(c.amountCents)}
-                {c.estimated ? ' (umgerechnet)' : ''}
-              </span>
-              {canWrite && (
-                <button type="button" className="ui-btn ui-btn-sm ui-btn-primary" disabled={pending} onClick={() => onConfirm(c.rowId)} aria-label={`${c.label} als Beleg für diese Zahlung bestätigen`}>
-                  Das ist der Beleg
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {check.state.state === 'in_mailbox' && (
-        <ul className="mt-2 space-y-1">
-          {check.state.mails.map((m) => (
-            <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <span>
-                Im Postfach: {m.fileName}, „{m.subject || 'ohne Betreff'}“ von {m.sender || 'unbekannt'}, {formatDay(m.receivedDay)}
-              </span>
-              {canWrite && (
-                <span className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="ui-btn ui-btn-sm ui-btn-primary"
-                    disabled={pending}
-                    aria-busy={takingOver === m.id}
-                    onClick={() => onTakeOver(m.id)}
-                    aria-label={`${m.fileName} ${takingOver === m.id ? 'wird übernommen' : 'als Beleg übernehmen'}`}
-                  >
-                    {takingOver === m.id ? 'Wird übernommen …' : 'Als Beleg übernehmen'}
-                  </button>
-                  <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => onDismiss(m.id)} aria-label={`${m.fileName} ist nicht die Rechnung`}>
-                    Nicht die Rechnung
-                  </button>
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {check.state.state === 'missing' && (
-        <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-          Kein Beleg gefunden.
-        </p>
-      )}
-      {canWrite && !picking && (
+    <>
+      {!picking && (
         <div className="mt-2">
           <button
             ref={pickOpener}
             type="button"
             className="ui-btn ui-btn-sm ui-btn-ghost"
-            disabled={pending}
+            disabled={busy}
             onClick={() => {
               pickReopened.current = true;
               setPicking(true);
@@ -526,7 +466,7 @@ function OpenCheck({
           </button>
         </div>
       )}
-      {canWrite && picking && (
+      {picking && (
         <div className="mt-2 space-y-2">
           <form
             className="flex flex-wrap items-center gap-2"
@@ -569,7 +509,7 @@ function OpenCheck({
               <label className="sr-only" htmlFor={`${id}-receipt`}>
                 Vorhandenen Beleg für {check.counterparty || 'diese Zahlung'} wählen
               </label>
-              <select id={`${id}-receipt`} className="ui-input" style={{ width: 'auto', maxWidth: '100%' }} value={chosen} disabled={pending} onChange={(e) => setChosen(e.target.value)}>
+              <select id={`${id}-receipt`} className="ui-input" style={{ width: 'auto', maxWidth: '100%' }} value={chosen} disabled={busy} onChange={(e) => setChosen(e.target.value)}>
                 <option value="">Beleg wählen</option>
                 {choices.map((r) => (
                   <option key={r.rowId} value={r.rowId}>
@@ -580,9 +520,9 @@ function OpenCheck({
               <button
                 type="button"
                 className="ui-btn ui-btn-sm"
-                disabled={pending || !chosen}
+                disabled={busy || !chosen}
                 aria-label={`Zuordnen: gewählten Beleg zu ${check.counterparty || 'dieser Zahlung'}`}
-                onClick={() => onLinkByHand(chosen)}
+                onClick={() => actions.current?.linkByHand(check, chosen)}
               >
                 Zuordnen
               </button>
@@ -590,6 +530,117 @@ function OpenCheck({
           )}
         </div>
       )}
+    </>
+  );
+});
+
+/**
+ * One open payment. Redraws only when its own check or state changes, so an
+ * answer about one payment leaves the other rows alone (as `QueueRow` does).
+ */
+const OpenCheck = memo(function OpenCheck({
+  check,
+  store,
+  focused,
+  canWrite,
+  busy,
+  error,
+  takingOver,
+  actions,
+}: {
+  check: PaymentCheck;
+  store: ChecksStore;
+  focused: boolean;
+  canWrite: boolean;
+  /** A bulk action is running, or this payment's mail is being taken over. */
+  busy: boolean;
+  error: string | null;
+  /** The mail of this payment being taken over right now, if any. */
+  takingOver: string | null;
+  actions: RefObject<RowActions | null>;
+}) {
+  const id = useId();
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState('');
+  const opener = useRef<HTMLButtonElement>(null);
+  const reopened = useRef(false);
+  // "Abbrechen" gives the focus back to the button that opened the form.
+  useEffect(() => {
+    if (!asking && reopened.current) opener.current?.focus();
+  }, [asking]);
+  return (
+    <li
+      id={`pruefen-${check.paymentId}`}
+      tabIndex={focused ? -1 : undefined}
+      aria-current={focused ? 'true' : undefined}
+      className="py-3 text-sm"
+      style={focused ? { outline: '2px solid var(--accent)', outlineOffset: 4, borderRadius: 6 } : undefined}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span style={{ color: 'var(--foreground)' }}>
+          {check.counterparty || 'ohne Namen'}
+          <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+            {formatDay(check.bookingDay)}
+            {check.reference ? `, ${check.reference}` : ''}
+          </span>
+        </span>
+        <span className="tabular-nums">{euro(check.cents)}</span>
+      </div>
+      {check.state.state === 'proposed' && (
+        <ul className="mt-2 space-y-1">
+          {check.state.candidates.map((c) => (
+            <li key={c.rowId} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span>
+                Passender Beleg:{' '}
+                <Link href={receiptHref(c.rowId)} className="underline">
+                  {c.label}
+                </Link>{' '}
+                vom {formatDay(c.day)}, {euro(c.amountCents)}
+                {c.estimated ? ' (umgerechnet)' : ''}
+              </span>
+              {canWrite && (
+                <button type="button" className="ui-btn ui-btn-sm ui-btn-primary" disabled={busy} onClick={() => actions.current?.confirm(check, c.rowId)} aria-label={`${c.label} als Beleg für diese Zahlung bestätigen`}>
+                  Das ist der Beleg
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {check.state.state === 'in_mailbox' && (
+        <ul className="mt-2 space-y-1">
+          {check.state.mails.map((m) => (
+            <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span>
+                Im Postfach: {m.fileName}, „{m.subject || 'ohne Betreff'}“ von {m.sender || 'unbekannt'}, {formatDay(m.receivedDay)}
+              </span>
+              {canWrite && (
+                <span className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="ui-btn ui-btn-sm ui-btn-primary"
+                    disabled={busy}
+                    aria-busy={takingOver === m.id}
+                    onClick={() => actions.current?.takeOver(check.paymentId, m.id)}
+                    aria-label={`${m.fileName} ${takingOver === m.id ? 'wird übernommen' : 'als Beleg übernehmen'}`}
+                  >
+                    {takingOver === m.id ? 'Wird übernommen …' : 'Als Beleg übernehmen'}
+                  </button>
+                  <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={busy} onClick={() => actions.current?.dismiss(check.paymentId, m.id)} aria-label={`${m.fileName} ist nicht die Rechnung`}>
+                    Nicht die Rechnung
+                  </button>
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {check.state.state === 'missing' && (
+        <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+          Kein Beleg gefunden.
+        </p>
+      )}
+      {canWrite && <PickReceipt check={check} store={store} busy={busy} actions={actions} />}
       {canWrite && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <Link href="/app" className="ui-btn ui-btn-sm">
@@ -600,7 +651,7 @@ function OpenCheck({
               ref={opener}
               type="button"
               className="ui-btn ui-btn-sm ui-btn-ghost"
-              disabled={pending}
+              disabled={busy}
               onClick={() => {
                 reopened.current = true;
                 setAsking(true);
@@ -613,7 +664,7 @@ function OpenCheck({
               className="flex flex-wrap items-center gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
-                onNoReceipt(reason);
+                actions.current?.noReceipt(check, reason);
               }}
             >
               <label className="sr-only" htmlFor={`${id}-reason`}>
@@ -629,7 +680,7 @@ function OpenCheck({
                 autoFocus
                 onChange={(e) => setReason(e.target.value)}
               />
-              <button type="submit" className="ui-btn ui-btn-sm" disabled={pending || !reason.trim()} aria-label={`Antwort ohne Beleg für ${check.counterparty || 'diese Zahlung'} speichern`}>
+              <button type="submit" className="ui-btn ui-btn-sm" disabled={busy || !reason.trim()} aria-label={`Antwort ohne Beleg für ${check.counterparty || 'diese Zahlung'} speichern`}>
                 Speichern
               </button>
               <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" aria-label="Abbrechen: kein Beleg" onClick={() => setAsking(false)}>
@@ -646,9 +697,9 @@ function OpenCheck({
       )}
     </li>
   );
-}
+});
 
-export default function ReceiptChecks({
+const ReceiptChecks = observer(function ReceiptChecks({
   initial,
   focusPaymentId,
   forCompany = null,
@@ -662,10 +713,11 @@ export default function ReceiptChecks({
   openSettings?: boolean;
 }) {
   const id = useId();
-  const [view, setView] = useState(initial);
+  // One store per visit and company (`page.tsx` keys this panel by company); the tab's count follows it.
+  const [store] = useState(() => new ChecksStore(initial));
+  const app = useAppStore();
+  useEffect(() => app.openChecks(store), [app, store]);
   const [error, setError] = useState<{ at: string; message: string } | null>(null);
-  // Counts the fresh views of the payments, so an open list for linking by hand is asked again once.
-  const [dataVersion, setDataVersion] = useState(0);
   // The page reads the checks afresh after a change elsewhere on it (a receipt taken back in the payment list): take
   // that over, keeping the summary of the last "Jetzt prüfen" (the page's own read carries none; the next action of
   // this panel ends it, as a notice belongs to the action that set it). An error stays while its payment is still
@@ -673,14 +725,15 @@ export default function ReceiptChecks({
   const [shownInitial, setShownInitial] = useState(initial);
   if (shownInitial !== initial) {
     setShownInitial(initial);
-    setView((current) => ({ ...initial, lastRun: current.lastRun }));
     setError((current) => (current && !errorRowListed(current.at, initial) ? null : current));
-    setDataVersion((n) => n + 1);
   }
+  useEffect(() => store.pageRead(initial), [store, initial]);
   const [pending, startTransition] = useTransition();
   const [channel, setChannel] = useState<ChannelSetting>(initial.settings.channel);
   const [email, setEmail] = useState(initial.settings.notifyEmail ?? '');
-  const { loop } = view;
+  const { open, years, proposedCount, backlogCount, canWrite, notifications, lastRun, counts, backlogBefore } = store;
+  const certainCount = store.certainCount;
+  const { lost, answered } = store.answers;
   const [yearChoice, setYearChoice] = useState<string | null>(null);
   const [onlyProposed, setOnlyProposed] = useState(false);
   const [limit, setLimit] = useState(CHECKS_PAGE);
@@ -689,13 +742,9 @@ export default function ReceiptChecks({
   const [askBacklog, setAskBacklog] = useState(false);
   const [answeredLimit, setAnsweredLimit] = useState(CHECKS_PAGE);
   const [lostLimit, setLostLimit] = useState(CHECKS_PAGE);
-  const { lost, answered } = useMemo(() => splitAnswered(loop.answered), [loop.answered]);
-  const backlogCount = useMemo(() => loop.open.filter((c) => c.bookingDay < view.backlogBefore && c.state.state !== 'in_mailbox').length, [loop.open, view.backlogBefore]);
-  const years = useMemo(() => checkYears(loop.open), [loop.open]);
-  const proposedCount = useMemo(() => loop.open.filter((c) => c.state.state === 'proposed').length, [loop.open]);
   // A chosen year that no longer has open payments counts as "all years", so the list never filters on an option the select no longer offers.
   const activeYear = yearChoice !== null && years.some((y) => String(y.year) === yearChoice) ? yearChoice : null;
-  const { shown, matching } = useMemo(() => chooseChecks(loop.open, { year: activeYear, onlyProposed, limit }, focusPaymentId), [loop.open, activeYear, onlyProposed, limit, focusPaymentId]);
+  const { shown, matching } = store.filtered({ year: activeYear, onlyProposed, limit }, focusPaymentId);
 
   // The address asked for the settings: open them, also when the panel is on screen already.
   const [settingsAsked, setSettingsAsked] = useState(false);
@@ -714,27 +763,50 @@ export default function ReceiptChecks({
     item?.scrollIntoView({ block: 'center' });
     item?.focus();
   }, [focusPaymentId]);
-  const otherCompany = forCompany !== null && forCompany !== view.workspaceId;
-  const focusSettled = !otherCompany && focusPaymentId !== null && !loop.open.some((c) => c.paymentId === focusPaymentId);
+  const otherCompany = forCompany !== null && forCompany !== store.workspaceId;
+  const focusSettled = !otherCompany && focusPaymentId !== null && !open.some((c) => c.paymentId === focusPaymentId);
 
   const router = useRouter();
-  /** `refresh`: the action changed payments or links, so the rest of the page reads them afresh. */
-  const run = (at: string, action: () => Promise<ChecksResult<ChecksView>>, success?: string | ((next: ChecksView) => string), refresh = true) => {
+  const pageChanged = useReadOnLeaving();
+  const focusHeading = () => document.getElementById(`${id}-title`)?.focus();
+  /** A bulk action: everything is read anew. `changes`: it changed payments or links, not only how the owner is told. */
+  const run = <T extends ChecksView>(at: string, action: () => Promise<ChecksResult<T>>, success?: (next: T) => string, changes = true) => {
     setError(null);
     // A notice belongs to the action that set it: the next one starts without it.
     setPageNotice(null);
     startTransition(async () => {
       const result = await action();
       if (result.ok) {
-        setView(result.value);
-        // A link, an answer or a check changes the payment list, the overview and the budgets too: the page reads them afresh.
-        if (refresh) router.refresh();
+        store.replaced(result.value);
+        if (changes) pageChanged();
         if (success) {
-          // The payment left the list with its buttons: say what happened, and give the focus to the list's heading.
-          setPageNotice(typeof success === 'function' ? success(result.value) : success);
-          document.getElementById(`${id}-title`)?.focus();
+          setPageNotice(success(result.value));
+          focusHeading();
         }
       } else setError({ at, message: checksActionMessage(result) });
+    });
+  };
+
+  /** The server's word on a write already on screen. A refusal, or no answer at all, takes that one write back and says so at its row. */
+  const settle = async (write: LocalWrite, action: () => Promise<ChecksResult<CheckChange>>): Promise<ChecksResult<CheckChange>> => {
+    const result = await action().catch((): ChecksResult<CheckChange> => ({ ok: false, error: 'failed' }));
+    if (result.ok) {
+      store.confirm(write, result.value);
+      pageChanged();
+    } else store.refuse(write);
+    return result;
+  };
+
+  /** An answer about one payment: on screen at once, the server's word follows. Other rows stay usable meanwhile. */
+  const answer = (at: string, paymentId: string, edit: CheckEdit, action: () => Promise<ChecksResult<CheckChange>>, linked: { rowId: string; notice: string } | null = null) => {
+    setError(null);
+    setPageNotice(null);
+    const write = store.begin(paymentId, edit, linked?.rowId ?? null);
+    // The payment left the list with its buttons: the focus goes to the list's heading.
+    if (linked) focusHeading();
+    void settle(write, action).then((result) => {
+      if (!result.ok) setError({ at, message: checksActionMessage(result) });
+      else if (linked) setPageNotice(linked.notice);
     });
   };
 
@@ -744,13 +816,13 @@ export default function ReceiptChecks({
   const pushActions: PushActions = {
     enable: async (subscription) => {
       const result = await enablePush(subscription);
-      if (result.ok) setView(result.value);
+      if (result.ok) store.replaced(result.value);
       else setError({ at: 'push', message: checksActionMessage(result) });
       return result.ok;
     },
     disable: async (endpoint) => {
       const result = await disablePush(endpoint);
-      if (result.ok) setView(result.value);
+      if (result.ok) store.replaced(result.value);
       else setError({ at: 'push', message: checksActionMessage(result) });
       return result.ok;
     },
@@ -759,47 +831,74 @@ export default function ReceiptChecks({
       return result.ok ? result.value : null;
     },
   };
-  const [takingOver, setTakingOver] = useState<string | null>(null);
+  const [takingOver, setTakingOver] = useState<ReadonlySet<string>>(new Set());
   const [pageNotice, setPageNotice] = useState<string | null>(null);
 
-  /** A found mail attachment goes through the normal upload path, then the checks are read afresh. */
-  const takeOver = (paymentId: string, mailId: string) => {
+  /**
+   * A found mail attachment goes through the normal upload path, then the receipt is linked. The upload takes its time
+   * and can fail for reasons of its own, so the row stays and says what it is doing; the link is what shows at once.
+   */
+  const takeOver = async (paymentId: string, mailId: string) => {
     setError(null);
     setPageNotice(null);
-    setTakingOver(mailId);
-    startTransition(async () => {
-      try {
-        const save: SaveReceipt = (file, ocr, options) =>
-          processReceipt({ id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, options);
-        const outcome = await takeOverMail(mailId, { fetchImpl: fetch, pipeline: createBrowserDeps(save, view.workspaceId) });
-        if (outcome.kind === 'failed') {
-          setError({ at: `check:${paymentId}`, message: takeOverMessage(outcome) });
-          return;
-        }
-        // The owner chose this mail for this payment: the receipt is linked to it right away.
-        const linked = await linkTakenOver(paymentId, outcome.rowId);
-        if (linked.ok) {
-          setView(linked.value);
-          setPageNotice(takeOverMessage(outcome, true));
-          // The row is gone with its button: the focus goes to the list's heading.
-          document.getElementById(`${id}-title`)?.focus();
-        } else {
-          const message = `${takeOverMessage(outcome, false)} ${checksActionMessage(linked)}`;
-          const fresh = await getReceiptChecks();
-          if (fresh.ok) setView(fresh.value);
-          // The payment may have left the list (answered, moved, its import undone): then the message is said at the page,
-          // as it is the only word that a receipt was made and is not linked.
-          const stillOpen = !fresh.ok || fresh.value.loop.open.some((c) => c.paymentId === paymentId);
-          setError({ at: stillOpen ? `check:${paymentId}` : 'run', message });
-          // No link was made: nothing else on the page changed, and a fresh read would only hide this message.
-          return;
-        }
-        router.refresh();
-      } finally {
-        setTakingOver(null);
+    setTakingOver((current) => new Set(current).add(mailId));
+    try {
+      const save: SaveReceipt = (file, ocr, options) =>
+        processReceipt({ id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, options);
+      const outcome = await takeOverMail(mailId, { fetchImpl: fetch, pipeline: createBrowserDeps(save, store.workspaceId) });
+      if (outcome.kind === 'failed') {
+        setError({ at: `check:${paymentId}`, message: takeOverMessage(outcome) });
+        return;
       }
-    });
+      const write = store.begin(paymentId, receiptLinked, outcome.rowId);
+      // The row is gone with its button: the focus goes to the list's heading.
+      focusHeading();
+      // The owner chose this mail for this payment: the receipt is linked to it right away.
+      const linked = await settle(write, () => linkTakenOver(paymentId, outcome.rowId));
+      if (linked.ok) {
+        setPageNotice(takeOverMessage(outcome, true));
+        return;
+      }
+      const message = `${takeOverMessage(outcome, false)} ${checksActionMessage(linked)}`;
+      const fresh = await getReceiptChecks();
+      if (fresh.ok) store.pageRead(fresh.value);
+      // The payment may have left the list (answered, moved, its import undone): then the message is said at the page,
+      // as it is the only word that a receipt was made and is not linked.
+      const stillOpen = !fresh.ok || fresh.value.loop.open.some((c) => c.paymentId === paymentId);
+      setError({ at: stillOpen ? `check:${paymentId}` : 'run', message });
+    } finally {
+      setTakingOver((current) => {
+        const left = new Set(current);
+        left.delete(mailId);
+        return left;
+      });
+    }
   };
+
+  const rowActions = useRef<RowActions>(null);
+  useEffect(() => {
+    rowActions.current = {
+      confirm: (c, rowId) => answer(`check:${c.paymentId}`, c.paymentId, receiptLinked, () => confirmReceipt(c.paymentId, rowId), { rowId, notice: `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.` }),
+      noReceipt: (c, reason) => answer(`check:${c.paymentId}`, c.paymentId, answeredNoReceipt(reason), () => sayNoReceipt(c.paymentId, reason)),
+      takeOver: (paymentId, mailId) => void takeOver(paymentId, mailId),
+      dismiss: (paymentId, mailId) => answer(`check:${paymentId}`, paymentId, mailSetAside(mailId), () => dismissMail(mailId)),
+      linkByHand: (c, rowId) => answer(`check:${c.paymentId}`, c.paymentId, receiptLinked, () => linkChosenReceipt(c.paymentId, rowId), { rowId, notice: `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.` }),
+      search: (paymentId, text) => findReceiptChoices(paymentId, text),
+    };
+  });
+
+  const markRead = async (noteId: string) => {
+    setError(null);
+    setPageNotice(null);
+    store.markRead(noteId);
+    const result = await readNotification(noteId).catch((): ChecksResult<{ at: number }> => ({ ok: false, error: 'failed' }));
+    if (result.ok) store.readConfirmed(noteId, result.value.at);
+    else {
+      store.readRefused(noteId);
+      setError({ at: `note:${noteId}`, message: checksActionMessage(result) });
+    }
+  };
+
   const answeredItem = (c: PaymentCheck) => (
               <li key={c.paymentId} className="py-2 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -817,8 +916,8 @@ export default function ReceiptChecks({
                       beantwortet in der Firma, die das Konto führt; dort zurücknehmen
                     </span>
                   ) : (
-                    view.canWrite && (
-                      <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => run(`answered:${c.paymentId}`, () => takeBackNoReceipt(c.paymentId))} aria-label={`Antwort für ${c.counterparty || 'diese Zahlung'} zurücknehmen`}>
+                    canWrite && (
+                      <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => answer(`answered:${c.paymentId}`, c.paymentId, answerTakenBack, () => takeBackNoReceipt(c.paymentId))} aria-label={`Antwort für ${c.counterparty || 'diese Zahlung'} zurücknehmen`}>
                         Zurücknehmen
                       </button>
                     )
@@ -831,27 +930,26 @@ export default function ReceiptChecks({
                 )}
               </li>
   );
-  const notNeeded = Object.values(loop.counts.notNeeded).reduce((s, n) => s + n, 0);
 
   return (
     <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-title`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id={`${id}-title`} tabIndex={-1} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-          Belege prüfen ({loop.open.length} offen)
+          Belege prüfen ({open.length} offen)
         </h2>
-        {view.canWrite && (
+        {canWrite && (
           <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => run('run', checkNow)}>
             Jetzt prüfen
           </button>
         )}
       </div>
       <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-        {loop.counts.hasReceipt} mit Beleg, {loop.counts.in_mailbox} mit Rechnung im Postfach, {notNeeded} brauchen keinen (Umbuchungen, Einnahmen, Erstattungen, Gebühren, Raten, Bargeld, Geld an Personen),{' '}
+        {counts.hasReceipt} mit Beleg, {counts.inMailbox} mit Rechnung im Postfach, {counts.notNeeded} brauchen keinen (Umbuchungen, Einnahmen, Erstattungen, Gebühren, Raten, Bargeld, Geld an Personen),{' '}
         {answered.length} ohne Beleg beantwortet{lost.length > 0 ? `, ${lost.length} nicht auffindbar` : ''}. Zahlungen vor 2025 werden nicht mehr geprüft.
       </p>
-      {view.mailbox !== 'other_company' && (
+      {store.mailbox !== 'other_company' && (
         <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-          {view.mailbox === 'on'
+          {store.mailbox === 'on'
             ? 'Fehlende Rechnungen werden zuerst im Ausgaben-Postfach gesucht.'
             : 'Das Ausgaben-Postfach ist noch nicht verbunden; fehlende Rechnungen werden dort noch nicht gesucht.'}
         </p>
@@ -883,8 +981,8 @@ export default function ReceiptChecks({
         <p className="ui-note mt-2">Die Zahlung aus der Benachrichtigung ist inzwischen erledigt: sie hat einen Beleg, braucht keinen oder wurde beantwortet.</p>
       )}
       {/* Always rendered, so a screen reader announces what is filled in later. */}
-      <p className={view.lastRun ? 'ui-note ui-note-ok mt-2' : 'sr-only'} role="status">
-        {view.lastRun ? runSummary(view.lastRun) : ''}
+      <p className={lastRun ? 'ui-note ui-note-ok mt-2' : 'sr-only'} role="status">
+        {lastRun ? runSummary(lastRun) : ''}
       </p>
       {errorAt('run') && (
         <p className="ui-note ui-note-danger mt-2" role="alert">
@@ -892,14 +990,14 @@ export default function ReceiptChecks({
         </p>
       )}
 
-      {view.canWrite && (
+      {canWrite && (
         <details id={`${id}-settings`} className="ui-disclosure mt-3 scroll-mt-4" open={settingsShown} onToggle={(e) => setSettingsShown(e.currentTarget.open)}>
           <summary className="cursor-pointer text-xs font-semibold">
             <svg className="ui-disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"> <path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /> </svg>
             <span>
               Wie benachrichtigt wird
               <span className="block font-normal" style={{ color: 'var(--muted)' }}>
-                {settingsSummary(view.settings.channel, view.pushDevices, view.settings.notifyEmail !== null)}
+                {settingsSummary(store.settings.channel, store.pushDevices, store.settings.notifyEmail !== null)}
               </span>
             </span>
           </summary>
@@ -931,9 +1029,9 @@ export default function ReceiptChecks({
               Speichern
             </button>
             <PushSwitch
-              publicKey={view.pushPublicKey}
-              devices={view.pushDevices}
-              channel={view.settings.channel}
+              publicKey={store.pushPublicKey}
+              devices={store.pushDevices}
+              channel={store.settings.channel}
               actions={pushActions}
               error={errorAt('push')}
             />
@@ -945,14 +1043,14 @@ export default function ReceiptChecks({
           </form>
         </details>
       )}
-      {view.canWrite && view.notifications.length > 0 && (
+      {canWrite && notifications.length > 0 && (
         <details className="ui-disclosure mt-3">
           <summary className="cursor-pointer text-xs font-semibold">
             <svg className="ui-disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"> <path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /> </svg>
-            Benachrichtigungen ({view.notifications.length})
+            Benachrichtigungen ({notifications.length})
           </summary>
           <ul className="mt-1 divide-y">
-            {view.notifications.map((n) => (
+            {notifications.map((n) => (
               <li key={n.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
                 <span>
                   <Link href={n.path} className="underline">
@@ -962,8 +1060,8 @@ export default function ReceiptChecks({
                     {n.channel === 'push' ? 'aufs Telefon geschickt' : n.channel === 'email' ? 'per E-Mail geschickt' : n.failed ? 'Zustellung fehlgeschlagen, nur hier' : 'nur hier'}
                   </span>
                 </span>
-                {view.canWrite && (
-                  <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => run(`note:${n.id}`, () => readNotification(n.id), undefined, false)} aria-label={`${n.title} als gelesen markieren`}>
+                {canWrite && (
+                  <button type="button" className="ui-btn ui-btn-sm ui-btn-ghost" disabled={pending} onClick={() => void markRead(n.id)} aria-label={`${n.title} als gelesen markieren`}>
                     Gelesen
                   </button>
                 )}
@@ -978,7 +1076,7 @@ export default function ReceiptChecks({
         </details>
       )}
 
-      {loop.open.length === 0 ? (
+      {open.length === 0 ? (
         <p className="mt-3 text-sm" style={{ color: 'var(--muted)' }}>
           Für jede Zahlung, die einen Beleg braucht, ist einer da oder gesagt, warum es keinen gibt.
         </p>
@@ -998,7 +1096,7 @@ export default function ReceiptChecks({
                 setLimit(CHECKS_PAGE);
               }}
             >
-              <option value="">Alle Jahre ({loop.open.length})</option>
+              <option value="">Alle Jahre ({open.length})</option>
               {years.map((y) => (
                 <option key={y.year} value={y.year}>
                   {y.year} ({y.count})
@@ -1018,25 +1116,25 @@ export default function ReceiptChecks({
                 Mit Vorschlag ({proposedCount})
               </button>
             )}
-            {view.canWrite && view.certain > 0 && (
+            {canWrite && certainCount > 0 && (
               <button type="button" className="ui-btn ui-btn-sm ui-btn-primary" disabled={pending} onClick={() => setAskCertain(true)}>
-                {view.certain} sichere Belege zuordnen
+                {certainCount} sichere Belege zuordnen
               </button>
             )}
-            {view.canWrite && backlogCount > 0 && (
+            {canWrite && backlogCount > 0 && (
               <button type="button" className="ui-btn ui-btn-sm" disabled={pending} onClick={() => setAskBacklog(true)}>
-                Alles vor {formatDay(view.backlogBefore)} abschließen ({backlogCount})
+                Alles vor {formatDay(backlogBefore)} abschließen ({backlogCount})
               </button>
             )}
           </div>
           <ConfirmDialog
             open={askCertain}
-            title={`${view.certain} sichere Belege zuordnen?`}
+            title={`${certainCount} sichere Belege zuordnen?`}
             confirmLabel="Zuordnen"
             busy={pending}
             onConfirm={() => {
               setAskCertain(false);
-              const before = loop.open.length;
+              const before = open.length;
               run('run', linkCertain, (next) => certainNotice(before - next.loop.open.length));
             }}
             onCancel={() => setAskCertain(false)}
@@ -1050,7 +1148,7 @@ export default function ReceiptChecks({
             busy={pending}
             onConfirm={() => {
               setAskBacklog(false);
-              run('run', closeReceiptBacklog, (next) => backlogNotice((next as ChecksView & { closed: BacklogClosed }).closed));
+              run('run', closeReceiptBacklog, (next) => backlogNotice(next.closed));
             }}
             onCancel={() => setAskBacklog(false)}
           >
@@ -1062,24 +1160,22 @@ export default function ReceiptChecks({
             </p>
           )}
           <ul className="mt-3 divide-y">
-            {shown.map((c) => (
-              <OpenCheck
-              key={c.paymentId}
-              check={c}
-              focused={c.paymentId === focusPaymentId}
-              canWrite={view.canWrite}
-              pending={pending}
-              error={errorAt(`check:${c.paymentId}`)}
-              dataVersion={dataVersion}
-              onConfirm={(rowId) => run(`check:${c.paymentId}`, () => confirmReceipt(c.paymentId, rowId), `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.`)}
-              onNoReceipt={(reason) => run(`check:${c.paymentId}`, () => sayNoReceipt(c.paymentId, reason))}
-              onTakeOver={(mailId) => takeOver(c.paymentId, mailId)}
-              onDismiss={(mailId) => run(`check:${c.paymentId}`, () => dismissMail(mailId))}
-              takingOver={takingOver}
-              onLinkByHand={(rowId) => run(`check:${c.paymentId}`, () => linkChosenReceipt(c.paymentId, rowId), `Beleg zugeordnet: ${c.counterparty || 'Zahlung ohne Namen'}.`)}
-              onSearchReceipts={(text) => findReceiptChoices(c.paymentId, text)}
-              />
-            ))}
+            {shown.map((c) => {
+              const mail = c.state.state === 'in_mailbox' ? (c.state.mails.find((m) => takingOver.has(m.id))?.id ?? null) : null;
+              return (
+                <OpenCheck
+                  key={c.paymentId}
+                  check={c}
+                  store={store}
+                  focused={c.paymentId === focusPaymentId}
+                  canWrite={canWrite}
+                  busy={pending || mail !== null}
+                  error={errorAt(`check:${c.paymentId}`)}
+                  takingOver={mail}
+                  actions={rowActions}
+                />
+              );
+            })}
           </ul>
           {matching > limit && (
             <button type="button" className="ui-btn mt-3 w-full" onClick={() => setLimit((n) => n + CHECKS_PAGE)}>
@@ -1120,4 +1216,6 @@ export default function ReceiptChecks({
 
     </section>
   );
-}
+});
+
+export default ReceiptChecks;

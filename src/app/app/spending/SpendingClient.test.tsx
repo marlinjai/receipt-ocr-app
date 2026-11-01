@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { buildOverview } from '@/lib/spending/overview';
+import { AppStore } from '@/stores/AppStore';
+import { ChecksStore } from '@/stores/ChecksStore';
+import { AppStoreContext } from '@/stores/provider';
+import type { ChecksView } from './loop-actions';
 
 const answerCategory = vi.fn();
 const markOwnAccount = vi.fn();
@@ -23,6 +27,7 @@ vi.mock('./actions', () => ({
 }));
 
 vi.mock('./budget-actions', () => ({ setBudget: vi.fn() }));
+vi.mock('@/app/app/nav-actions', () => ({ getNavCounts: vi.fn() }));
 
 import SpendingClient, { spendingActionMessage } from './SpendingClient';
 import type { BudgetsView } from './budget-actions';
@@ -360,5 +365,37 @@ describe('spendingActionMessage', () => {
     expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'too_many_names' })).toMatch(/höchstens 20/);
     expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'name_listed' })).toMatch(/schon in der Liste/);
     expect(spendingActionMessage({ ok: false, error: 'invalid_input', detail: 'name_not_listed' })).toMatch(/nicht mehr in der Liste/);
+  });
+});
+
+describe('the count on the "Belege" tab', () => {
+  const tabCount = () => screen.getByRole('tab', { name: /Belege/ }).textContent;
+
+  it('is what the page read while the checks are closed, and follows them while they are open', () => {
+    const app = new AppStore();
+    const seen = { open: [{ paymentId: 'p', bookingDay: '2026-04-01', cents: 1, counterparty: '', reference: '', state: { state: 'missing' as const } }], answered: [], counts: { hasReceipt: 0, notNeeded: {}, noReceipt: 0, proposed: 0, in_mailbox: 0, missing: 1 } };
+    const checks = new ChecksStore({ readAt: 1, backlogBefore: '2026-04-01', loop: seen, notifications: [], settings: {}, canWrite: true, lastRun: null, workspaceId: 'ws', mailbox: 'off', pushPublicKey: null, pushDevices: 0 } as unknown as ChecksView);
+    render(
+      <AppStoreContext.Provider value={app}>
+        <SpendingClient today="2026-04-15" tab="belege" initial={view(true)} openChecks={7} checks={<p>Belegliste</p>} />
+      </AppStoreContext.Provider>,
+    );
+    expect(tabCount()).toContain('7');
+    let close = () => {};
+    act(() => {
+      close = app.openChecks(checks);
+    });
+    expect(tabCount()).toContain('1');
+    act(() => {
+      checks.begin('p', (c) => ({ ...c, state: { state: 'has_receipt' } }));
+    });
+    expect(tabCount()).toContain('0');
+    act(() => close());
+    expect(tabCount()).toContain('7');
+  });
+
+  it('shows nothing when the page could not read them', () => {
+    render(<SpendingClient today="2026-04-15" tab="belege" initial={view(true)} openChecks={null} checks={<p>Belegliste</p>} />);
+    expect(screen.getByRole('tab', { name: /Belege/ }).querySelector('span')).toBeNull();
   });
 });

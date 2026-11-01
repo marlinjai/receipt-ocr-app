@@ -41,17 +41,17 @@ vi.mock('@/lib/upload/browser-deps', () => ({ createBrowserDeps: () => ({}) }));
 vi.mock('./take-over-mail', async (orig) => ({ ...(await orig<typeof import('./take-over-mail')>()), takeOverMail: (...a: unknown[]) => takeOverMail(...a) }));
 
 import ReceiptChecks, { checksActionMessage, runSummary } from './ReceiptChecks';
-import type { ChecksView } from './loop-actions';
+import type { CheckChange, ChecksView } from './loop-actions';
 
 afterEach(cleanup);
 
 const view = (canWrite = true): ChecksView => ({
-  certain: 0,
+  readAt: 1,
   backlogBefore: '2026-05-01',
   loop: {
     open: [
       { paymentId: 'p1', bookingDay: '2026-05-10', cents: 2999, counterparty: 'Zyx Handel', reference: '', state: { state: 'proposed', candidates: [{ rowId: 'r1', label: 'Zyx Rechnung', day: '2026-05-09', amountCents: 2999, estimated: false }] } },
-      { paymentId: 'p2', bookingDay: '2026-05-12', cents: 1250, counterparty: 'Abc Laden', reference: '', state: { state: 'missing' } },
+      { paymentId: 'p2', bookingDay: '2026-05-09', cents: 1250, counterparty: 'Abc Laden', reference: '', state: { state: 'missing' } },
     ],
     answered: [{ paymentId: 'p3', bookingDay: '2026-05-01', cents: 300, counterparty: 'Parkhaus', reference: '', state: { state: 'no_receipt', reason: 'Automat' } }],
     counts: { hasReceipt: 4, notNeeded: { old: 0, own_transfer: 1, income: 0, refund: 0, fee: 0, loan: 1, cash: 0, transfer: 0 }, noReceipt: 1, proposed: 1, in_mailbox: 0, missing: 1 },
@@ -66,10 +66,18 @@ const view = (canWrite = true): ChecksView => ({
   pushDevices: 0,
 });
 
+const change = (paymentId: string, state: CheckChange['state'], rowId: string | null = null, settled: string[] = []): CheckChange => ({ paymentId, state, rowId, settled, at: 2 });
+
 beforeEach(() => {
   refresh.mockReset();
   takeOverMail.mockClear();
-  for (const f of [checkNow, confirmReceipt, sayNoReceipt, takeBackNoReceipt, readNotification, saveNotificationSettings, dismissMail, linkTakenOver, linkChosenReceipt, linkCertain, closeReceiptBacklog, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
+  for (const f of [checkNow, saveNotificationSettings, linkCertain, closeReceiptBacklog, getReceiptChecks]) f.mockReset().mockResolvedValue({ ok: true, value: view() });
+  const linked = async (paymentId: string, rowId: string) => ({ ok: true, value: change(paymentId, { state: 'has_receipt' }, rowId) });
+  for (const f of [confirmReceipt, linkTakenOver, linkChosenReceipt]) f.mockReset().mockImplementation(linked);
+  sayNoReceipt.mockReset().mockImplementation(async (paymentId: string, reason: string) => ({ ok: true, value: change(paymentId, { state: 'no_receipt', reason }) }));
+  takeBackNoReceipt.mockReset().mockImplementation(async (paymentId: string) => ({ ok: true, value: change(paymentId, { state: 'missing' }) }));
+  dismissMail.mockReset().mockResolvedValue({ ok: true, value: change('p5', { state: 'missing' }) });
+  readNotification.mockReset().mockResolvedValue({ ok: true, value: { at: 2 } });
   findReceiptChoices.mockReset();
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -94,7 +102,7 @@ describe('ReceiptChecks', () => {
 
   it('links a receipt chosen by hand when no proposal fits, only after one is chosen, and says so at the page', async () => {
     findReceiptChoices.mockResolvedValue({ ok: true, value: [{ rowId: 'r9', label: 'Kassenbon', vendor: 'Abc Laden', day: '2026-05-11', amountCents: 1250, estimated: false, openCents: 1250 }] });
-    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const { unmount } = render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
     const user = userEvent.setup();
     // Asked from the server only on request, for the payment a person works on; the focus goes to the search.
     expect(findReceiptChoices).not.toHaveBeenCalled();
@@ -108,13 +116,15 @@ describe('ReceiptChecks', () => {
     await user.click(link);
     expect(linkChosenReceipt).toHaveBeenCalledWith('p2', 'r9');
     expect(await screen.findByText('Beleg zugeordnet: Abc Laden.')).toBeTruthy();
-    // The payment list and the budgets read the same payments: the page reads them afresh.
-    expect(refresh).toHaveBeenCalled();
+    // The overview and the budgets are other tabs: no read while the list is worked on, one on leaving.
+    expect(refresh).not.toHaveBeenCalled();
+    unmount();
+    expect(refresh).toHaveBeenCalledOnce();
   });
 
   it('links the certain receipts only after asking, and says how many went', async () => {
-    const base = { ...view(), certain: 1 };
-    linkCertain.mockResolvedValue({ ok: true, value: { ...base, certain: 0, loop: { ...base.loop, open: base.loop.open.slice(1) } } });
+    const base = view();
+    linkCertain.mockResolvedValue({ ok: true, value: { ...base, loop: { ...base.loop, open: base.loop.open.slice(1) } } });
     render(<ReceiptChecks initial={base} focusPaymentId={null} />);
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: '1 sichere Belege zuordnen' }));
@@ -151,10 +161,11 @@ describe('ReceiptChecks', () => {
   });
 
   it('offers no certain link while none exists, nor to someone who may only read', () => {
-    render(<ReceiptChecks initial={{ ...view(false), certain: 3 }} focusPaymentId={null} />);
+    render(<ReceiptChecks initial={view(false)} focusPaymentId={null} />);
     expect(screen.queryByRole('button', { name: /sichere Belege/ })).toBeNull();
     cleanup();
-    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const base = view();
+    render(<ReceiptChecks initial={{ ...base, loop: { ...base.loop, open: base.loop.open.slice(1) } }} focusPaymentId={null} />);
     expect(screen.queryByRole('button', { name: /sichere Belege/ })).toBeNull();
   });
 
@@ -372,6 +383,103 @@ describe('ReceiptChecks', () => {
   });
 });
 
+describe('an answer about one payment', () => {
+  const deferred = <T,>() => {
+    let resolve: (value: T) => void = () => {};
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  };
+  const confirmButton = 'Zyx Rechnung als Beleg für diese Zahlung bestätigen';
+
+  it('shows at once, before the server has said anything, and the heading takes the focus', async () => {
+    const answer = deferred<unknown>();
+    confirmReceipt.mockReturnValue(answer.promise);
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: confirmButton }));
+    expect(screen.getByText('Belege prüfen (1 offen)')).toBeTruthy();
+    expect(screen.getByText(/^5 mit Beleg/)).toBeTruthy();
+    expect(document.activeElement?.tagName).toBe('H2');
+    // The notice says what the server did, so it waits for the server.
+    expect(screen.queryByText('Beleg zugeordnet: Zyx Handel.')).toBeNull();
+    answer.resolve({ ok: true, value: change('p1', { state: 'has_receipt' }, 'r1') });
+    expect(await screen.findByText('Beleg zugeordnet: Zyx Handel.')).toBeTruthy();
+  });
+
+  it('leaves the other rows usable while it is on its way', async () => {
+    confirmReceipt.mockReturnValue(new Promise(() => {}));
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: confirmButton }));
+    expect((screen.getByRole('button', { name: 'Es gibt keinen Beleg' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('a refusal brings the payment back with the error at its row, and the same answer can be given again', async () => {
+    confirmReceipt.mockResolvedValueOnce({ ok: false, error: 'invalid_input', detail: 'not_a_candidate' });
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: confirmButton }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.closest('li')?.id).toBe('pruefen-p1');
+    expect(screen.getByText('Belege prüfen (2 offen)')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: confirmButton }));
+    expect(await screen.findByText('Beleg zugeordnet: Zyx Handel.')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('no answer at all counts as a refusal', async () => {
+    confirmReceipt.mockRejectedValueOnce(new Error('network'));
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: confirmButton }));
+    expect((await screen.findByRole('alert')).closest('li')?.id).toBe('pruefen-p1');
+  });
+
+  it('a notification read shows at once, and comes back with the error when refused', async () => {
+    readNotification.mockResolvedValueOnce({ ok: false, error: 'failed' });
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Beleg fehlt: Abc Laden als gelesen markieren' }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Beleg fehlt: Abc Laden als gelesen markieren' })).toBeTruthy();
+  });
+
+  it('a message settled by the answer leaves the queue', async () => {
+    sayNoReceipt.mockResolvedValueOnce({ ok: true, value: change('p2', { state: 'no_receipt', reason: 'Automat' }, null, ['missing_receipt:p2']) });
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('button', { name: 'Es gibt keinen Beleg' })[1]);
+    await user.type(screen.getByLabelText('Warum es keinen Beleg gibt'), 'Automat');
+    await user.click(screen.getByRole('button', { name: 'Antwort ohne Beleg für Abc Laden speichern' }));
+    await waitFor(() => expect(screen.queryByText('Benachrichtigungen (1)')).toBeNull());
+  });
+
+  it('an answer arriving after the panel closed still reads the page', async () => {
+    const answer = deferred<unknown>();
+    confirmReceipt.mockReturnValue(answer.promise);
+    const { unmount } = render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: confirmButton }));
+    unmount();
+    expect(refresh).not.toHaveBeenCalled();
+    answer.resolve({ ok: true, value: change('p1', { state: 'has_receipt' }, 'r1') });
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  });
+
+  it('leaving without having changed anything reads nothing', () => {
+    const { unmount } = render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    unmount();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('an older page read arriving after the answer does not bring the payment back', async () => {
+    const stale = view();
+    const { rerender } = render(<ReceiptChecks initial={stale} focusPaymentId={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: confirmButton }));
+    expect(await screen.findByText('Beleg zugeordnet: Zyx Handel.')).toBeTruthy();
+    // Started before the answer (at 2), so it still lists the payment.
+    rerender(<ReceiptChecks initial={{ ...stale }} focusPaymentId={null} />);
+    expect(screen.getByText('Belege prüfen (1 offen)')).toBeTruthy();
+    rerender(<ReceiptChecks initial={{ ...stale, readAt: 3 }} focusPaymentId={null} />);
+    expect(screen.getByText('Belege prüfen (2 offen)')).toBeTruthy();
+  });
+});
+
 describe('a notification for another company', () => {
   it('offers to switch, and switches', async () => {
     switchWorkspace.mockReset().mockResolvedValue({ ok: true });
@@ -406,7 +514,6 @@ describe('a mail found in the mailbox', () => {
 
   it('takes the attachment over, links it to the payment, and says so after the row is gone', async () => {
     takeOverMail.mockResolvedValue({ kind: 'done', rowId: 'r9' });
-    linkTakenOver.mockResolvedValue({ ok: true, value: view() });
     render(<ReceiptChecks initial={withMail()} focusPaymentId={null} />);
     expect(screen.getByText(/Im Postfach: Rechnung.pdf/)).toBeTruthy();
     await userEvent.setup().click(screen.getByRole('button', { name: 'Rechnung.pdf als Beleg übernehmen' }));
@@ -433,10 +540,10 @@ describe('a mail found in the mailbox', () => {
   });
 
   it('sets a wrong mail aside', async () => {
-    dismissMail.mockResolvedValue({ ok: true, value: view() });
     render(<ReceiptChecks initial={withMail()} focusPaymentId={null} />);
     await userEvent.setup().click(screen.getByRole('button', { name: 'Rechnung.pdf ist nicht die Rechnung' }));
     expect(dismissMail).toHaveBeenCalledWith('mc1');
+    expect(await screen.findByText('Kein Beleg gefunden.')).toBeTruthy();
   });
 
   it('offers neither button without the write permission', () => {

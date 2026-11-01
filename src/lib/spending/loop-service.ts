@@ -110,7 +110,8 @@ export interface LoopOverview {
   counts: { hasReceipt: number; notNeeded: Record<NotNeededReason, number>; noReceipt: number; proposed: number; in_mailbox: number; missing: number };
 }
 
-interface Loaded {
+/** What every payment's state is worked out from. */
+interface LoopRead {
   payments: RoutedPaymentRow[];
   /** This company's own payments routed to another company, with the "no receipt" answer it gave before, if any. */
   routedAwayAnswered: Array<{ payment: PaymentRow; reason: string }>;
@@ -119,16 +120,20 @@ interface Loaded {
   /** This company's own payments (not those routed here) and its links on other companies' payments: what `paidByReceipt` reads. */
   ownPayments: PaymentRow[];
   linkedElsewhere: Map<string, number>;
-  states: Map<string, LoopState>;
   /** Vendor keys each counterparty stands for, learned from links: the names a mailbox search uses besides the counterparty's own. */
   aliases: Map<string, Set<string>>;
   /** Counterparties that are own accounts only by the owner's own names. */
   byName: ReadonlySet<string>;
   treatments: LoopContext['treatments'];
   categoryAnswers: LoopContext['categoryAnswers'];
+  context: LoopContext;
 }
 
-async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loaded> {
+interface Loaded extends LoopRead {
+  states: Map<string, LoopState>;
+}
+
+async function readLoop(db: PrismaClient, workspaceId: string): Promise<LoopRead> {
   // The receipts are read beside the payments; which of them are linked follows from the payments below.
   const [loaded, noReceipt, mailCandidates, unmarked] = await Promise.all([
     timed('loop.payments', () => loadRoutedPayments(db, workspaceId)),
@@ -163,13 +168,31 @@ async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loa
     vendorAliases: aliases,
     mailCandidates,
   };
-  const states = new Map<string, LoopState>();
-  await timed('loop.states', async () => {
-    for (const p of loaded.payments) states.set(p.id, loopState({ ...p, linkCount: p.links.length }, ctx));
-  });
   const ownReasons = new Map(noReceipt.map((a) => [a.paymentId, a.reason]));
   const routedAwayAnswered = loaded.routedAway.flatMap((p) => (ownReasons.has(p.id) ? [{ payment: p, reason: ownReasons.get(p.id) as string }] : []));
-  return { payments: loaded.payments, states, aliases, byName, treatments, categoryAnswers: ctx.categoryAnswers, routedAwayAnswered, receipts, ownPayments: loaded.payments.filter((p) => p.routedFrom === null), linkedElsewhere: loaded.linkedElsewhere };
+  return { payments: loaded.payments, aliases, byName, treatments, categoryAnswers: ctx.categoryAnswers, routedAwayAnswered, receipts, ownPayments: loaded.payments.filter((p) => p.routedFrom === null), linkedElsewhere: loaded.linkedElsewhere, context: ctx };
+}
+
+const stateOf = (p: RoutedPaymentRow, ctx: LoopContext) => loopState({ ...p, linkCount: p.links.length }, ctx);
+
+async function computeStates(db: PrismaClient, workspaceId: string): Promise<Loaded> {
+  const read = await readLoop(db, workspaceId);
+  const states = new Map<string, LoopState>();
+  await timed('loop.states', async () => {
+    for (const p of read.payments) states.set(p.id, stateOf(p, read.context));
+  });
+  return { ...read, states };
+}
+
+/** One payment out of a read, with only its state worked out: an answer about one payment asks nothing about the others. */
+function onePayment(read: LoopRead, paymentId: string): { payment: RoutedPaymentRow; state: LoopState } | null {
+  const payment = read.payments.find((p) => p.id === paymentId);
+  return payment ? { payment, state: stateOf(payment, read.context) } : null;
+}
+
+/** A payment's state right now, or null when it is not on this company's spending side. */
+export async function paymentState(db: PrismaClient, workspaceId: string, paymentId: string): Promise<LoopState | null> {
+  return onePayment(await readLoop(db, workspaceId), paymentId)?.state ?? null;
 }
 
 /** The subjects of the payments still waiting for their receipt: what keeps its messages in the in-app queue. */
@@ -437,8 +460,13 @@ async function linkOnSpendingSide(db: PrismaClient, ctx: NotifyContext, payment:
   else await linkPayment(db, ctx, { paymentId: payment.id, rowId }, receiptForLink(db, ctx.workspaceId), 'manual');
 }
 
-/** "No receipt exists for this payment", with the reason. Answered once, never asked again. */
-export async function answerNoReceipt(db: PrismaClient, ctx: NotifyContext, paymentId: string, rawReason: unknown): Promise<void> {
+/**
+ * "No receipt exists for this payment", with the reason. Answered once, never
+ * asked again. Returns the state the answer gives it, without reading the
+ * others: the checks offer this only for a payment still open, and should a
+ * link have come first (another tab), the next read says so.
+ */
+export async function answerNoReceipt(db: PrismaClient, ctx: NotifyContext, paymentId: string, rawReason: unknown): Promise<LoopState> {
   const reason = typeof rawReason === 'string' ? rawReason.trim().slice(0, 500) : '';
   if (!reason) throw new LoopServiceError('reason_required');
   await requirePayment(db, ctx.workspaceId, paymentId);
@@ -456,16 +484,20 @@ export async function answerNoReceipt(db: PrismaClient, ctx: NotifyContext, paym
     await save();
   }
   await settleNotifications(db, ctx.workspaceId, [missingReceiptSubject(paymentId)]);
+  return { state: 'no_receipt', reason };
 }
 
-/** Take the answer back: the payment is checked again (without a second notification). */
-export async function withdrawNoReceipt(db: PrismaClient, ctx: NotifyContext, paymentId: string): Promise<void> {
+/**
+ * Take the answer back: the payment is checked again (without a second
+ * notification). Returns its state now, or null when it stands in another
+ * company (the answer was all that listed it here).
+ */
+export async function withdrawNoReceipt(db: PrismaClient, ctx: NotifyContext, paymentId: string): Promise<LoopState | null> {
   const { count } = await db.spendingReceiptAnswer.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, paymentId } });
-  if (count > 0) return;
+  const state = await paymentState(db, ctx.workspaceId, paymentId);
   // Nothing of this company's to take back: an answer of the holding company still shows here, and is changed there.
-  const { states } = await computeStates(db, ctx.workspaceId);
-  const state = states.get(paymentId);
-  if (state?.state === 'no_receipt' && state.fromHolder) throw new LoopServiceError('answered_by_holder');
+  if (count === 0 && state?.state === 'no_receipt' && state.fromHolder) throw new LoopServiceError('answered_by_holder');
+  return state;
 }
 
 /**
@@ -474,10 +506,9 @@ export async function withdrawNoReceipt(db: PrismaClient, ctx: NotifyContext, pa
  * Only a receipt the loop proposes right now can be confirmed here.
  */
 export async function confirmCandidate(db: PrismaClient, ctx: NotifyContext, paymentId: string, rowId: string): Promise<void> {
-  const { states, payments } = await computeStates(db, ctx.workspaceId);
-  const state = states.get(paymentId);
-  const payment = payments.find((p) => p.id === paymentId);
-  if (!state || !payment) throw new LoopServiceError('payment_not_found');
+  const found = onePayment(await readLoop(db, ctx.workspaceId), paymentId);
+  if (!found) throw new LoopServiceError('payment_not_found');
+  const { state, payment } = found;
   const candidates: ReceiptCandidate[] = state.state === 'proposed' ? state.candidates : [];
   if (!candidates.some((c) => c.rowId === rowId)) throw new LoopServiceError('not_a_candidate');
   await linkOnSpendingSide(db, ctx, payment, rowId);
@@ -562,13 +593,14 @@ export async function closeBacklog(db: PrismaClient, ctx: NotifyContext, before:
  * closest first. Only receipts of this company.
  */
 export async function searchReceiptChoices(db: PrismaClient, workspaceId: string, paymentId: string, text: unknown): Promise<ReceiptChoice[]> {
-  const { states, payments, receipts, ownPayments, linkedElsewhere } = await computeStates(db, workspaceId);
+  const read = await readLoop(db, workspaceId);
+  const { receipts, ownPayments, linkedElsewhere } = read;
   // The guards' own sum: links on other companies' payments are all in `linkedElsewhere` (routed ones too), so only
   // this company's own payments add to it, a purchase and its funding debit once, never below nothing.
   const paidByRow = paidByReceipt(ownPayments, linkedElsewhere);
-  const state = states.get(paymentId);
-  const payment = payments.find((p) => p.id === paymentId);
-  if (!state || !payment) throw new LoopServiceError('payment_not_found');
+  const found = onePayment(read, paymentId);
+  if (!found) throw new LoopServiceError('payment_not_found');
+  const { state, payment } = found;
   if (state.state !== 'missing' && state.state !== 'in_mailbox' && state.state !== 'proposed') throw new LoopServiceError('payment_not_open');
   return receiptChoices(payment, receipts, paidByRow, typeof text === 'string' ? text : '');
 }
@@ -580,10 +612,9 @@ export async function searchReceiptChoices(db: PrismaClient, workspaceId: string
  * for its receipt.
  */
 export async function linkReceiptToPayment(db: PrismaClient, ctx: NotifyContext, paymentId: string, rowId: string, options: { byHand?: boolean } = {}): Promise<void> {
-  const { states, payments } = await computeStates(db, ctx.workspaceId);
-  const state = states.get(paymentId);
-  const payment = payments.find((p) => p.id === paymentId);
-  if (!state || !payment) throw new LoopServiceError('payment_not_found');
+  const found = onePayment(await readLoop(db, ctx.workspaceId), paymentId);
+  if (!found) throw new LoopServiceError('payment_not_found');
+  const { state, payment } = found;
   // The same receipt again (a mail taken over twice) is nothing to do; any other receipt for a payment that got one
   // in the meantime is told, so a receipt is never left unlinked under a message of success.
   if (state.state === 'has_receipt') {

@@ -1,6 +1,26 @@
 import { RECEIPT_NOT_FOUND } from '@/lib/spending/loop';
 import type { PaymentCheck } from '@/lib/spending/loop-service';
 
+/** What an action does to a payment on screen until the server has answered; null takes it off the lists. */
+export type CheckEdit = (check: PaymentCheck) => PaymentCheck | null;
+
+export const receiptLinked: CheckEdit = (c) => ({ ...c, state: { state: 'has_receipt' } });
+
+export const answeredNoReceipt =
+  (reason: string): CheckEdit =>
+  (c) => ({ ...c, state: { state: 'no_receipt', reason: reason.trim() } });
+
+/** Open again, as `missing` until the server says what fits by now. An answer about a payment gone to another company was all that listed it here. */
+export const answerTakenBack: CheckEdit = (c) => (c.state.state === 'no_receipt' && c.state.movedAway ? null : { ...c, state: { state: 'missing' } });
+
+export const mailSetAside =
+  (mailId: string): CheckEdit =>
+  (c) => {
+    if (c.state.state !== 'in_mailbox') return c;
+    const mails = c.state.mails.filter((m) => m.id !== mailId);
+    return { ...c, state: mails.length > 0 ? { state: 'in_mailbox', mails } : { state: 'missing' } };
+  };
+
 /** How many open payments the list adds at a time: a phone cannot carry thousands of rows with their buttons. */
 export const CHECKS_PAGE = 30;
 

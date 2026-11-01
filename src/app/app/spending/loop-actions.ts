@@ -4,14 +4,14 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
-import { LoopServiceError, answerNoReceipt, closeBacklog, confirmCandidate, linkCertainReceipts, loadLoopOverview, withdrawNoReceipt, type BacklogClosed, type LoopOverview } from '@/lib/spending/loop-service';
+import { LoopServiceError, answerNoReceipt, closeBacklog, confirmCandidate, linkCertainReceipts, loadLoopOverview, paymentState, withdrawNoReceipt, type BacklogClosed, type LoopOverview } from '@/lib/spending/loop-service';
 import { runSpendingChecks, type ChecksRun, INTERACTIVE_CLASSIFY_LIMIT } from '@/lib/spending/checks';
 import { NotifyServiceError, devicePushState, forgetDeviceEverywhere, validVapidConfig, getNotifySettings, pushDeviceCount, removePushSubscription, savePushSubscription, type PushContext, listUnreadNotifications, markNotificationRead, saveNotifySettings, type NotificationView, type NotifySettings, type NotifyContext } from '@/lib/spending/notify/service';
 import { berlinToday } from '@/lib/spending/period';
 import { mailboxFor } from '@/lib/spending/mailbox/server';
 import { MailCandidateError, dismissMailCandidate } from '@/lib/spending/mailbox/service';
 import { linkReceiptToPayment, searchReceiptChoices } from '@/lib/spending/loop-service';
-import { certainPairs, type ReceiptChoice } from '@/lib/spending/loop';
+import { mailFoundSubject, missingReceiptSubject, type LoopState, type ReceiptChoice } from '@/lib/spending/loop';
 import { PaymentServiceError } from '@/lib/tax/payments/service';
 import { timed } from '@/lib/timing';
 
@@ -19,7 +19,8 @@ import { timed } from '@/lib/timing';
  * Server actions of the missing-receipt loop and the notifications. Same
  * rules as every action here: the workspace is the session's active one,
  * writes pass the fail-closed `receipts.row.write` check, failures come back
- * with a stable code, and every write answers with the fresh view.
+ * with a stable code. An answer about one payment says what changed for that
+ * payment (`CheckChange`); everything else answers with the fresh view.
  */
 
 export type ChecksActionError = 'unauthorized' | 'forbidden' | 'not_found' | 'invalid_input' | 'failed';
@@ -27,8 +28,8 @@ export type ChecksResult<T> = { ok: true; value: T } | { ok: false; error: Check
 
 export interface ChecksView {
   loop: LoopOverview;
-  /** How many open payments have one certain receipt, linked in one go by `linkCertain`. */
-  certain: number;
+  /** When this read started: it does not know a change the server made after that. */
+  readAt: number;
   /** Closing the backlog takes what is open from before this day: the first of the running month, whose payments still count as new. */
   backlogBefore: string;
   /** The in-app queue; empty for a person who may not write (it is the owner's to act on and dismiss). */
@@ -45,6 +46,19 @@ export interface ChecksView {
   pushDevices: number;
   /** Set after "check now": what the run did. */
   lastRun: ChecksRun | null;
+}
+
+/** What one answer changed: that payment, instead of the whole view. */
+export interface CheckChange {
+  paymentId: string;
+  /** Its state now; null when it no longer stands on this company's spending side. */
+  state: LoopState | null;
+  /** The receipt linked to it: from now on proposed to no other payment. */
+  rowId: string | null;
+  /** The messages about it that left the in-app queue, by subject. */
+  settled: string[];
+  /** When the change was made: an older read of the checks does not know it. */
+  at: number;
 }
 
 function failure(e: unknown): { ok: false; error: ChecksActionError; detail?: string } {
@@ -67,7 +81,10 @@ async function writeContext(): Promise<NotifyContext> {
   return { workspaceId, tenantId: requireSessionTenantId(session, workspaceId) };
 }
 
+const changed = (paymentId: string, state: LoopState | null, settled: string[] = [], rowId: string | null = null): CheckChange => ({ paymentId, state, rowId, settled, at: Date.now() });
+
 async function view(workspaceId: string, canWrite: boolean, lastRun: ChecksView['lastRun'] = null): Promise<ChecksView> {
+  const readAt = Date.now();
   const [loop, notifications, settings] = await Promise.all([
     timed('checks.loop', () => loadLoopOverview(prisma, workspaceId)),
     canWrite ? timed('checks.notifications', () => listUnreadNotifications(prisma, workspaceId)) : Promise.resolve([]),
@@ -77,7 +94,7 @@ async function view(workspaceId: string, canWrite: boolean, lastRun: ChecksView[
   const mailbox = status.configured ? 'on' : status.reason === 'other_company' ? 'other_company' : 'off';
   return {
     loop,
-    certain: certainPairs(loop.open).length,
+    readAt,
     backlogBefore: `${berlinToday().slice(0, 7)}-01`,
     notifications,
     settings,
@@ -114,11 +131,12 @@ export async function checkNow(): Promise<ChecksResult<ChecksView>> {
   }
 }
 
-export async function confirmReceipt(paymentId: unknown, rowId: unknown): Promise<ChecksResult<ChecksView>> {
+export async function confirmReceipt(paymentId: unknown, rowId: unknown): Promise<ChecksResult<CheckChange>> {
   try {
     const ctx = await writeContext();
-    await confirmCandidate(prisma, ctx, String(paymentId ?? ''), String(rowId ?? ''));
-    return { ok: true, value: await view(ctx.workspaceId, true) };
+    const [payment, row] = [String(paymentId ?? ''), String(rowId ?? '')];
+    await confirmCandidate(prisma, ctx, payment, row);
+    return { ok: true, value: changed(payment, { state: 'has_receipt' }, [missingReceiptSubject(payment)], row) };
   } catch (e) {
     return failure(e);
   }
@@ -146,31 +164,32 @@ export async function closeReceiptBacklog(): Promise<ChecksResult<ChecksView & {
   }
 }
 
-export async function sayNoReceipt(paymentId: unknown, reason: unknown): Promise<ChecksResult<ChecksView>> {
+export async function sayNoReceipt(paymentId: unknown, reason: unknown): Promise<ChecksResult<CheckChange>> {
   try {
     const ctx = await writeContext();
-    await answerNoReceipt(prisma, ctx, String(paymentId ?? ''), reason);
-    return { ok: true, value: await view(ctx.workspaceId, true) };
+    const payment = String(paymentId ?? '');
+    return { ok: true, value: changed(payment, await answerNoReceipt(prisma, ctx, payment, reason), [missingReceiptSubject(payment)]) };
   } catch (e) {
     return failure(e);
   }
 }
 
-export async function takeBackNoReceipt(paymentId: unknown): Promise<ChecksResult<ChecksView>> {
+export async function takeBackNoReceipt(paymentId: unknown): Promise<ChecksResult<CheckChange>> {
   try {
     const ctx = await writeContext();
-    await withdrawNoReceipt(prisma, ctx, String(paymentId ?? ''));
-    return { ok: true, value: await view(ctx.workspaceId, true) };
+    const payment = String(paymentId ?? '');
+    return { ok: true, value: changed(payment, await withdrawNoReceipt(prisma, ctx, payment)) };
   } catch (e) {
     return failure(e);
   }
 }
 
-export async function readNotification(id: unknown): Promise<ChecksResult<ChecksView>> {
+/** The answer says when it happened: an older read of the checks still lists the message. */
+export async function readNotification(id: unknown): Promise<ChecksResult<{ at: number }>> {
   try {
     const ctx = await writeContext();
     await markNotificationRead(prisma, ctx, String(id ?? ''));
-    return { ok: true, value: await view(ctx.workspaceId, true) };
+    return { ok: true, value: { at: Date.now() } };
   } catch (e) {
     return failure(e);
   }
@@ -186,12 +205,17 @@ export async function saveNotificationSettings(input: unknown): Promise<ChecksRe
   }
 }
 
+async function linked(ctx: NotifyContext, paymentId: string, rowId: string, options: { byHand?: boolean } = {}): Promise<CheckChange> {
+  await linkReceiptToPayment(prisma, ctx, paymentId, rowId, options);
+  return changed(paymentId, { state: 'has_receipt' }, [missingReceiptSubject(paymentId), mailFoundSubject(paymentId)], rowId);
+}
+
 /** "Not the invoice": set a found mail aside for good. */
-export async function dismissMail(candidateId: unknown): Promise<ChecksResult<ChecksView>> {
+export async function dismissMail(candidateId: unknown): Promise<ChecksResult<CheckChange>> {
   try {
     const ctx = await writeContext();
-    await dismissMailCandidate(prisma, ctx, String(candidateId ?? ''));
-    return { ok: true, value: await view(ctx.workspaceId, true) };
+    const payment = await dismissMailCandidate(prisma, ctx, String(candidateId ?? ''));
+    return { ok: true, value: changed(payment, await paymentState(prisma, ctx.workspaceId, payment)) };
   } catch (e) {
     return failure(e);
   }
@@ -202,11 +226,10 @@ export async function dismissMail(candidateId: unknown): Promise<ChecksResult<Ch
  * belongs to this payment: the owner chose the mail for it, so it is linked
  * right away instead of waiting for the reading to match.
  */
-export async function linkTakenOver(paymentId: unknown, rowId: unknown): Promise<ChecksResult<ChecksView>> {
+export async function linkTakenOver(paymentId: unknown, rowId: unknown): Promise<ChecksResult<CheckChange>> {
   try {
     const ctx = await writeContext();
-    await linkReceiptToPayment(prisma, ctx, String(paymentId ?? ''), String(rowId ?? ''));
-    return { ok: true, value: await view(ctx.workspaceId, true) };
+    return { ok: true, value: await linked(ctx, String(paymentId ?? ''), String(rowId ?? '')) };
   } catch (e) {
     return failure(e);
   }
@@ -220,11 +243,10 @@ export async function linkTakenOver(paymentId: unknown, rowId: unknown): Promise
  * this company's, the payment one still waiting here. A payment that got its
  * receipt in the meantime is refused with `already_has_receipt`.
  */
-export async function linkChosenReceipt(paymentId: unknown, rowId: unknown): Promise<ChecksResult<ChecksView>> {
+export async function linkChosenReceipt(paymentId: unknown, rowId: unknown): Promise<ChecksResult<CheckChange>> {
   try {
     const ctx = await writeContext();
-    await linkReceiptToPayment(prisma, ctx, String(paymentId ?? ''), String(rowId ?? ''), { byHand: true });
-    return { ok: true, value: await view(ctx.workspaceId, true) };
+    return { ok: true, value: await linked(ctx, String(paymentId ?? ''), String(rowId ?? ''), { byHand: true }) };
   } catch (e) {
     return failure(e);
   }

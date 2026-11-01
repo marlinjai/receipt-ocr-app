@@ -9,7 +9,7 @@ import { AppStore } from './AppStore';
 // On the server a store is only read for one render: nothing should subscribe.
 enableStaticRendering(typeof window === 'undefined');
 
-const AppStoreContext = createContext<AppStore | null>(null);
+export const AppStoreContext = createContext<AppStore | null>(null);
 
 const DASHBOARD = '/app/dashboard';
 

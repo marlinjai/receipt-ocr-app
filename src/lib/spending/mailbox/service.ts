@@ -158,10 +158,11 @@ export class MailCandidateError extends Error {
  * offered again), and the payment may be searched again a day later while it
  * has tries left.
  */
-export async function dismissMailCandidate(db: PrismaClient, ctx: NotifyContext, id: string, now: Date = new Date()): Promise<void> {
+export async function dismissMailCandidate(db: PrismaClient, ctx: NotifyContext, id: string, now: Date = new Date()): Promise<string> {
   const candidate = await findMailCandidate(db, ctx.workspaceId, id);
   if (!candidate) throw new MailCandidateError();
   await db.spendingMailCandidate.updateMany({ where: { id, authWorkspaceId: ctx.workspaceId }, data: { dismissedAt: now } });
   const left = await db.spendingMailCandidate.count({ where: { authWorkspaceId: ctx.workspaceId, paymentId: candidate.paymentId, dismissedAt: null } });
   if (left === 0) await db.spendingMailSearch.updateMany({ where: { authWorkspaceId: ctx.workspaceId, paymentId: candidate.paymentId }, data: { outcome: 'none' } });
+  return candidate.paymentId;
 }

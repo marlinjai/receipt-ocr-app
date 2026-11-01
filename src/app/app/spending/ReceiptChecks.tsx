@@ -1,7 +1,7 @@
 'use client';
 
 import { observer } from 'mobx-react-lite';
-import { memo, useEffect, useId, useRef, useState, useTransition, type RefObject } from 'react';
+import { memo, useEffect, useId, useRef, useState, useSyncExternalStore, useTransition, type RefObject } from 'react';
 import Link from 'next/link';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatDay } from '@/lib/meals/messages';
@@ -124,6 +124,8 @@ export interface PushActions {
   stateOf(endpoint: string): Promise<{ here: boolean; elsewhere: boolean } | null>;
 }
 
+const noSubscribe = () => () => {};
+
 /**
  * Push on this device: switch it on (asks for permission straight from the
  * tap, subscribes, and counts as on only once the server stored it) or off.
@@ -147,7 +149,10 @@ export function PushSwitch({
   environment?: PushEnvironment | null;
 }) {
   const id = useId();
-  const [env] = useState(() => (environment === undefined ? browserPushEnvironment() : environment));
+  // Only a browser can say what it supports, and the first paint must match the server's, so that comes after it.
+  const painted = useSyncExternalStore(noSubscribe, () => true, () => false);
+  const [browser] = useState(() => (environment === undefined ? browserPushEnvironment() : environment));
+  const env = painted ? browser : null;
   const [onHere, setOnHere] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);

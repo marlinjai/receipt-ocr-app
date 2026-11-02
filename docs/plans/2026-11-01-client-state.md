@@ -2,7 +2,7 @@
 title: One client state for the receipts app
 summary: Every page keeps its own copy of the server's data in component state, so a change on one page cannot reach anything else on screen, and numbers derived from it go stale. This plan proposes MobX stores per domain, with derived numbers as computed values and observers that redraw only what changed, moved over one page at a time. The owner approved it on 2026-11-01 and asked for it to run autonomously.
 type: plan
-status: in-progress
+status: completed
 tags: [architecture, state, performance, frontend]
 projects: [receipt-ocr-app]
 date: 2026-11-01
@@ -325,3 +325,8 @@ adds them, before any store exists.
   say it. That needs a write to outlive the page, which belongs with a decision on how finance writes, not with this
   move of its state. Going back with the browser's button still serves what the router kept, as before.
 
+### Closed (2026-11-02)
+
+All slices are on production. Measured there: a meal's answer moved the navigation in 15
+milliseconds instead of 500, and drag, Alt+Arrow, year chips, search, export (352 receipts, 352 rows)
+and the phone cards work with no page error. What stays open has its own roadmap lines.

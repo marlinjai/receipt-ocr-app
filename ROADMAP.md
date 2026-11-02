@@ -380,10 +380,24 @@
   now. Removing them is a delete on production: it needs Marlin's one-line yes, with the dump
   `receipts-before-workspace-move-20261010T122443Z.dmp` on the server as the way back.
   (2026-10-10)
-- [ ] One client state for the app (asked by the owner on 2026-11-01): stores per domain, derived
-  numbers as computed values, redraws per record, moved over one page at a time. Meals, the
-  navigation, the receipt checks and the receipts on the dashboard are on stores, and the wide
-  table redraws by record on table package 0.12.0. The finance tabs are next. Plan: [docs/plans/2026-11-01-client-state.md](docs/plans/2026-11-01-client-state.md). (2026-11-02)
+- [x] One client state for the app (asked by the owner on 2026-11-01): stores per domain, computed
+  numbers, redraws per record. Meals, the navigation, the receipt checks, the Belege page and all
+  finance tabs are on stores, the table draws one row for one change (package 0.12.0), and meal
+  answers show on the next frame (500 to 15 milliseconds on production). Plan:
+  [docs/plans/2026-11-01-client-state.md](docs/plans/2026-11-01-client-state.md). (2026-11-02)
+- [ ] A finance write refused after the person left the page entirely is not shown, as before the
+  stores. The other domains keep such a refusal on `RefusalDesk`; finance writes need the same way
+  of outliving the page. (2026-11-02)
+- [ ] Database tests time out when the machine is under heavy load (load average 40 to 87 on 14
+  cores: tax-rates, bulk-set, text, assignment-sync, review service). They pass alone. Find out
+  whether it is contention or a shared-state defect, per the continuous integration standard. (2026-11-02)
+- [ ] The 566 payments marked "Nicht auffindbar" (28,395 euros, 2025 and 2026): invoices behind a
+  login are not fetched yet (Amazon, eBay, Deutsche Bahn, freenet, Lemon Squeezy, claude.ai billing).
+  They stay visible in red under Ausgaben, Belege. Backlog plan:
+  [docs/plans/2026-10-14-personal-spending-and-bank-feed.md](docs/plans/2026-10-14-personal-spending-and-bank-feed.md). (2026-11-02)
+- [ ] Two Deutsche Bahn tickets of 19.07.2026 carry the vendor "Barcode bitte nicht knicken!" from
+  the reader; the name and the links are right. The reader should take the vendor from the issuer
+  on a ticket. (2026-11-02)
 - [ ] The app on a phone: no page scrolls sideways at 360 or 390 pixels, the receipts show as a
   card list that opens the detail panel, the dashboard's actions fold into "Mehr", tab rows
   scroll inside themselves, every control is a 44 pixel touch target, the wide layout unchanged.

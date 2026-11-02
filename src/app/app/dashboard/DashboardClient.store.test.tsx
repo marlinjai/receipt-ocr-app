@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
   adapter: {} as Record<string, unknown>,
   app: null as unknown,
   exported: [] as Array<{ rows: Array<{ id: string }> }>,
+  drawn: new Set<string>(),
 }));
 const mocks = vi.hoisted(() => ({
   getYearCounts: vi.fn(),
@@ -31,6 +32,17 @@ const mocks = vi.hoisted(() => ({
   removeReceiptsFromGroup: vi.fn(),
 }));
 
+// The table asks this for every cell of a row it draws, so it tells which rows were drawn.
+vi.mock('@/lib/groups/view', async (original) => {
+  const real = await original<typeof import('@/lib/groups/view')>();
+  return {
+    ...real,
+    groupCellValue: (...args: Parameters<typeof real.groupCellValue>) => {
+      state.drawn.add(args[0].id);
+      return real.groupCellValue(...args);
+    },
+  };
+});
 vi.mock('next/navigation', () => ({ usePathname: () => '/app/dashboard' }));
 vi.mock('@/app/app/nav-actions', () => ({ getNavCounts: mocks.getNavCounts }));
 vi.mock('./server-actions-adapter', () => ({
@@ -62,6 +74,9 @@ vi.mock('@/components/review/ReviewPanel', () => ({
     </ul>
   ),
 }));
+
+// The whole page with the real table: slow to query when the machine is busy, not stuck.
+vi.setConfig({ testTimeout: 30_000 });
 
 const COUNTS: YearCounts = { years: [{ year: 2026, count: 4 }, { year: 2025, count: 1 }], undated: 0 };
 const review = (...ids: string[]) => ids.map((rowId) => ({ rowId, duplicates: [] })) as unknown as ReviewEntry[];
@@ -159,6 +174,65 @@ describe('the list', () => {
     await waitFor(() => expect(shownRowIds()).toEqual(['licence']));
     await user.click(screen.getAllByRole('button', { name: 'Als CSV exportieren' })[0]);
     expect(state.exported.at(-1)?.rows.map((r) => r.id)).toEqual(['licence']);
+  });
+});
+
+describe('the wide table, on the published package', () => {
+  it('draws the row of a saved cell and no other', async () => {
+    const user = userEvent.setup();
+    const { updateRow } = setAdapter();
+    await open();
+    await user.click(within(document.querySelector('tr[data-row-id="licence"]') as HTMLElement).getByText('Lizenz'));
+    const input = await screen.findByDisplayValue('Lizenz');
+    await user.clear(input);
+    await user.type(input, 'Neu');
+    state.drawn.clear();
+    // By leaving the field: Enter would also move the keyboard highlight, which redraws the next row, rightly.
+    fireEvent.blur(input);
+    await waitFor(() => expect(updateRow).toHaveBeenCalled());
+    await waitFor(() => expect(document.querySelector('tr[data-row-id="licence"]')?.textContent).toContain('Neu'));
+    expect(state.drawn).toEqual(new Set(['licence']));
+  });
+});
+
+describe('the export', () => {
+  it('is refused with the reason while the list fills, on both buttons, and works once it is in', async () => {
+    const user = userEvent.setup();
+    const { getRows } = setAdapter();
+    await open();
+    const answers: Array<() => void> = [];
+    const real = getRows.getMockImplementation() as NonNullable<ReturnType<typeof getRows.getMockImplementation>>;
+    getRows.mockImplementation(async (...args) => {
+      await new Promise<void>((resolve) => answers.push(resolve));
+      return real(...args);
+    });
+    await user.click(screen.getByRole('button', { name: /2025/ }));
+    for (const button of screen.getAllByRole('button', { name: 'Als CSV exportieren' })) {
+      await user.click(button);
+      expect(state.exported).toHaveLength(0);
+      expect(screen.getByRole('alert').textContent).toMatch(/noch geladen/);
+      await user.click(screen.getByRole('button', { name: 'Schließen' }));
+    }
+    getRows.mockImplementation(real);
+    await act(async () => answers.forEach((go) => go()));
+    await waitFor(() => expect(shownRowIds()).toContain('conference'));
+    await user.click(screen.getAllByRole('button', { name: 'Als CSV exportieren' })[0]);
+    expect(state.exported).toHaveLength(1);
+  });
+
+  it('is refused with the reason after a failed load, on both buttons', async () => {
+    const user = userEvent.setup();
+    const { getRows } = setAdapter();
+    await open();
+    getRows.mockRejectedValue(new Error('down'));
+    await user.click(screen.getByRole('button', { name: /2025/ }));
+    await screen.findByText(/Die Belege konnten nicht vollständig geladen werden/);
+    for (const button of screen.getAllByRole('button', { name: 'Als CSV exportieren' })) {
+      await user.click(button);
+      expect(state.exported).toHaveLength(0);
+      expect(screen.getByText(/Exportiert wird nichts/)).toBeTruthy();
+      await user.click(screen.getByRole('button', { name: 'Schließen' }));
+    }
   });
 });
 

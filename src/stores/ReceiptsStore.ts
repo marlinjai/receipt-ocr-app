@@ -25,7 +25,7 @@ export interface ReceiptsApi {
   getNavCounts(): Promise<{ ok: true; value: NavCounts } | { ok: false }>;
   uploadFile(file: File): Promise<UploadedFile>;
   deleteStoredFile(fileId: string): Promise<void>;
-  addFileReference(input: CreateFileRefInput): Promise<unknown>;
+  addFileReference(input: CreateFileRefInput): Promise<FileReference>;
   removeFileReference(fileRefId: string): Promise<void>;
 }
 
@@ -66,17 +66,19 @@ function sameRow(a: Row, b: Row): boolean {
  * question (years, filters, sorts) fills it page by page, so the first receipts
  * show at once. A list with a row twice, or with another number of rows than the
  * server counted, is read again, at most `MAX_REPAIRS` times: a receipt added
- * while the pages arrive moves the rest by one.
+ * while the pages arrive moves the rest by one. A row added or saved during a
+ * load stays over what that load read, which may be older.
  *
  * Plan: docs/plans/2026-11-01-client-state.md, slice 3.
  */
 export class ReceiptsStore {
   private byId = observable.map<string, Row>([], { deep: false });
-  /** Rows saved since the running load started: what it read of them may be older. */
+  /** Rows added or saved since the running load started: what it read of them may be older, or nothing. */
   private savedDuringLoad = new Map<string, Row>();
   private run = 0;
   private running: Promise<void> = Promise.resolve();
-  private countsAsked = 0;
+  private yearsAsked = 0;
+  private mealsAsked = 0;
   /** Goes up with every change to a row: the year chips and the meal count follow it. */
   private changes = 0;
   private columns: Column[] = [];
@@ -84,6 +86,8 @@ export class ReceiptsStore {
   private readonly api: ReceiptsApi;
   /** False while the review list could not be loaded and nothing has replaced it. */
   private reviewKnown: boolean;
+  /** False while the last list had another number of rows than the server counted. */
+  private addedUp = false;
 
   /** True until the list is all there: only then may the page conclude that a receipt is not in it. */
   loading = true;
@@ -106,14 +110,15 @@ export class ReceiptsStore {
     this.review = seed.review ?? [];
     this.reviewKnown = seed.review !== null;
     this.openMeals = seed.openMeals;
-    makeAutoObservable<ReceiptsStore, 'byId' | 'savedDuringLoad' | 'run' | 'running' | 'countsAsked' | 'columns' | 'tableId' | 'api'>(
+    makeAutoObservable<ReceiptsStore, 'byId' | 'savedDuringLoad' | 'run' | 'running' | 'yearsAsked' | 'mealsAsked' | 'columns' | 'tableId' | 'api'>(
       this,
       {
         byId: false,
         savedDuringLoad: false,
         run: false,
         running: false,
-        countsAsked: false,
+        yearsAsked: false,
+        mealsAsked: false,
         tableId: false,
         api: false,
         columns: observable.ref,
@@ -152,6 +157,11 @@ export class ReceiptsStore {
     return this.reviewKnown ? this.review.length : null;
   }
 
+  /** Every row of the question is here: only then may anything be taken from the list as a whole, like an export. */
+  get complete(): boolean {
+    return !this.loading && !this.loadFailed && this.addedUp;
+  }
+
   row(rowId: string): Row | undefined {
     return this.byId.get(rowId);
   }
@@ -162,14 +172,22 @@ export class ReceiptsStore {
 
   /** The page opened: load the list and follow it. The return is for when it closes, and drops every answer on its way. */
   open(): () => void {
-    const stop = reaction(() => this.changes, () => void this.askCounts(true), { delay: COUNTS_DELAY_MS });
+    const stop = reaction(
+      () => this.changes,
+      () => {
+        void this.askYearCounts();
+        void this.askOpenMeals();
+      },
+      { delay: COUNTS_DELAY_MS },
+    );
     // The chips were counted before the list came, and the page may have failed to count them.
-    void this.startLoad(true).then(() => this.askCounts(false));
+    void this.startLoad(true).then(() => this.askYearCounts());
     return () => {
       stop();
       this.run += 1;
       this.running = Promise.resolve();
-      this.countsAsked += 1;
+      this.yearsAsked += 1;
+      this.mealsAsked += 1;
     };
   }
 
@@ -209,7 +227,10 @@ export class ReceiptsStore {
   /** Rows that were deleted: they leave the list at once, and the review list with them. */
   rowsRemoved(rowIds: Iterable<string>): void {
     const gone = new Set(rowIds);
-    for (const id of gone) this.byId.delete(id);
+    for (const id of gone) {
+      this.byId.delete(id);
+      this.savedDuringLoad.delete(id);
+    }
     this.review = this.review.filter((entry) => !gone.has(entry.rowId)).map((entry) => ({ ...entry, duplicates: entry.duplicates.filter((d) => !gone.has(d.rowId)) }));
     this.changes += 1;
   }
@@ -224,6 +245,7 @@ export class ReceiptsStore {
 
   private rowAdded(row: Row): void {
     this.byId.replace([[row.id, row], ...this.byId.entries()]);
+    this.savedDuringLoad.set(row.id, row);
     this.changes += 1;
   }
 
@@ -239,11 +261,17 @@ export class ReceiptsStore {
     return row;
   }
 
-  /** The stored file, its place in the cell, its reference: the order the table package does them in. */
+  /**
+   * The stored file, then its reference, then a write of the cell. Files live in a
+   * table of their own and a row is answered with them, so the reference comes first:
+   * the answer then shows the upload, with the id the server gave it for deleting it.
+   */
   async uploadFile(rowId: string, columnId: string, file: File): Promise<FileReference> {
     const uploaded = await this.api.uploadFile(file);
     const files = (this.byId.get(rowId)?.cells[columnId] as FileReference[] | null) ?? [];
-    const details = {
+    const fileRef = await this.api.addFileReference({
+      rowId,
+      columnId,
       fileId: uploaded.id,
       fileUrl: uploaded.url,
       originalName: uploaded.originalName,
@@ -251,10 +279,8 @@ export class ReceiptsStore {
       sizeBytes: uploaded.sizeBytes,
       position: files.length,
       metadata: uploaded.metadata,
-    };
-    const fileRef: FileReference = { id: `${uploaded.id}-${Date.now()}`, rowId, columnId, ...details };
+    });
     await this.updateCell(rowId, columnId, [...files, fileRef]);
-    await this.api.addFileReference({ rowId, columnId, ...details });
     return fileRef;
   }
 
@@ -284,7 +310,7 @@ export class ReceiptsStore {
         if (run !== this.run) return this.running;
         const rows = uniqueRows(read.rows);
         const addsUp = rows.length === read.rows.length && rows.length === read.total;
-        if (addsUp || repairs >= MAX_REPAIRS) return this.finish(rows, pageByPage);
+        if (addsUp || repairs >= MAX_REPAIRS) return this.finish(rows, pageByPage, addsUp);
       }
     } catch {
       // Not asked again by itself, that would ask a server that is down without end. The next load starts over.
@@ -292,9 +318,10 @@ export class ReceiptsStore {
     }
   }
 
-  private finish(rows: Row[], pageByPage: boolean): void {
+  private finish(rows: Row[], pageByPage: boolean, addsUp: boolean): void {
     // A list read for a new question answers that question; only a reload can say that a row changed.
     if (this.commit(rows) && !pageByPage) this.changes += 1;
+    this.addedUp = addsUp;
     this.loading = false;
   }
 
@@ -319,24 +346,38 @@ export class ReceiptsStore {
   /** The list as read, keeping the object of every row that did not change. Says whether anything did. */
   private commit(rows: Row[]): boolean {
     const before = [...this.byId.values()];
+    const read = new Set(rows.map((row) => row.id));
+    const unread = [...this.savedDuringLoad.values()].filter((row) => !read.has(row.id));
     const next = rows.map((row) => {
       const known = this.byId.get(row.id);
       return this.savedDuringLoad.get(row.id) ?? (known && sameRow(known, row) ? known : row);
     });
+    next.unshift(...unread);
     this.byId.replace(next.map((row) => [row.id, row]));
     return next.length !== before.length || next.some((row, i) => row !== before[i]);
   }
 
-  private async askCounts(withMeals: boolean): Promise<void> {
-    this.countsAsked += 1;
-    const asked = this.countsAsked;
-    const [years, nav] = await Promise.allSettled([this.api.getYearCounts(this.tableId), withMeals ? this.api.getNavCounts() : null]);
-    if (asked === this.countsAsked) this.countsAnswered(years.status === 'fulfilled' ? years.value : null, nav.status === 'fulfilled' && nav.value?.ok ? nav.value.value.meals : null);
+  private async askYearCounts(): Promise<void> {
+    this.yearsAsked += 1;
+    const asked = this.yearsAsked;
+    const yearCounts = await this.api.getYearCounts(this.tableId).catch(() => null);
+    if (asked === this.yearsAsked && yearCounts) this.yearCountsAnswered(yearCounts);
+  }
+
+  /** Apart from the year chips: a new question for those must not drop an answer on its way for this. */
+  private async askOpenMeals(): Promise<void> {
+    this.mealsAsked += 1;
+    const asked = this.mealsAsked;
+    const nav = await this.api.getNavCounts().catch(() => null);
+    if (asked === this.mealsAsked && nav?.ok) this.openMealsAnswered(nav.value.meals);
   }
 
   /** Each is help, not a condition: without an answer the last stands. */
-  private countsAnswered(yearCounts: YearCounts | null, openMeals: number | null): void {
-    if (yearCounts) this.yearCounts = yearCounts;
-    if (openMeals !== null) this.openMeals = openMeals;
+  private yearCountsAnswered(yearCounts: YearCounts): void {
+    this.yearCounts = yearCounts;
+  }
+
+  private openMealsAnswered(openMeals: number): void {
+    this.openMeals = openMeals;
   }
 }

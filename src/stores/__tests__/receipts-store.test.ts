@@ -1,6 +1,6 @@
 import { autorun } from 'mobx';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CellValue, Column, FileReference, QueryOptions, QueryResult, Row, UploadedFile } from '@marlinjai/data-table-core';
+import type { CellValue, Column, CreateFileRefInput, FileReference, QueryOptions, QueryResult, Row, UploadedFile } from '@marlinjai/data-table-core';
 import { ROW_KIND_COLUMN, GROUP_KIND } from '@/lib/receipts-kind';
 import { NO_YEARS, type YearScope, type YearSelection } from '@/lib/receipt-years';
 import type { ReviewEntry } from '@/lib/review/service';
@@ -254,6 +254,55 @@ describe('backtracking: another choice replaces what the last one brought', () =
     expect(store.row('a')?.cells[NAME]).toBe('later');
   });
 
+  it('a row added while a load is on its way stays, and is there once when the load has it too', async () => {
+    const createRow = vi.fn(async () => row('new'));
+    const first = server([row('a')]);
+    const { store, api } = storeWith({ getRows: first.getRows, createRow });
+    await store.load();
+    const held = heldBack();
+    api.getRows = held.getRows;
+    const reload = store.load();
+    await store.addRow();
+    held.answers[0].answer({ items: [row('a')], total: 1, hasMore: false });
+    await reload;
+    expect(ids(store)).toEqual(['new', 'a']);
+
+    const again = store.load();
+    await store.addRow();
+    held.answers[1].answer({ items: [row('new'), row('a')], total: 2, hasMore: false });
+    await again;
+    expect(ids(store)).toEqual(['new', 'a']);
+  });
+
+  it('a row changed during a load stays when that load no longer brings it', async () => {
+    const updateRow = vi.fn(async () => row('a', 'saved'));
+    const first = server([row('a'), row('b')]);
+    const { store, api } = storeWith({ getRows: first.getRows, updateRow });
+    await store.load();
+    const held = heldBack();
+    api.getRows = held.getRows;
+    const reload = store.load();
+    await store.updateCell('a', NAME, 'saved');
+    held.answers[0].answer({ items: [row('b')], total: 1, hasMore: false });
+    await reload;
+    expect(store.row('a')?.cells[NAME]).toBe('saved');
+  });
+
+  it('a row added and deleted during a load does not come back with it', async () => {
+    const createRow = vi.fn(async () => row('new'));
+    const first = server([row('a')]);
+    const { store, api } = storeWith({ getRows: first.getRows, createRow });
+    await store.load();
+    const held = heldBack();
+    api.getRows = held.getRows;
+    const reload = store.load();
+    await store.addRow();
+    store.rowsRemoved(['new']);
+    held.answers[0].answer({ items: [row('a')], total: 1, hasMore: false });
+    await reload;
+    expect(ids(store)).toEqual(['a']);
+  });
+
   it('a save that arrives after the delete of its row does not bring the row back', async () => {
     let answer: (r: Row) => void = () => {};
     const updateRow = vi.fn(() => new Promise<Row>((resolve) => (answer = resolve)));
@@ -339,6 +388,34 @@ describe('re-entry after a failure or after leaving', () => {
     await flush();
     expect(ids(store)).toEqual(['a']);
     closeAgain();
+  });
+});
+
+describe('whether the whole list is there', () => {
+  it('is not while it loads, is once it is in, and not after a failure', async () => {
+    const getRows = vi.fn(async () => ({ items: [row('a')], total: 1, hasMore: false }));
+    const { store } = storeWith({ getRows });
+    expect(store.complete).toBe(false);
+    await store.load();
+    expect(store.complete).toBe(true);
+    getRows.mockRejectedValueOnce(new Error('down'));
+    await store.load();
+    expect(store.complete).toBe(false);
+  });
+
+  it('is not when a reload is on its way, though the old list still shows', async () => {
+    const { store, api } = storeWith({ getRows: server([row('a')]).getRows });
+    await store.load();
+    api.getRows = heldBack().getRows;
+    void store.load();
+    expect(store.complete).toBe(false);
+  });
+
+  it('is not for a list that never added up: what is shown is short of what the server counts', async () => {
+    const { store } = storeWith({ getRows: vi.fn(async () => ({ items: rowsOf(2), total: 5, hasMore: false })) });
+    await store.load();
+    expect(store.loading).toBe(false);
+    expect(store.complete).toBe(false);
   });
 });
 
@@ -439,6 +516,26 @@ describe('the numbers that follow a change', () => {
     close();
   });
 
+  it('take a meal answer that was on its way when the first list asked for the year chips', async () => {
+    let answerMeals: (v: { ok: true; value: { review: number; meals: number } }) => void = () => {};
+    const getNavCounts = vi.fn(() => new Promise<{ ok: true; value: { review: number; meals: number } }>((resolve) => (answerMeals = resolve)));
+    const list = heldBack();
+    const { store } = storeWith({ getRows: list.getRows, getNavCounts }, { openMeals: 1 });
+    const close = store.open();
+    // A row of a page already shown goes while the first list is still on its way.
+    list.answers[0].answer({ items: rowsOf(1), total: 2, hasMore: true });
+    await settle(0);
+    store.rowsRemoved(['r0']);
+    await settle();
+    expect(getNavCounts).toHaveBeenCalledTimes(1);
+    list.answers[1].answer({ items: [], total: 1, hasMore: false });
+    await settle(0);
+    answerMeals({ ok: true, value: { review: 0, meals: 7 } });
+    await settle(0);
+    expect(store.openMeals).toBe(7);
+    close();
+  });
+
   it('keep the last number when the answer fails, and ignore an answer after the page closed', async () => {
     const getNavCounts = vi.fn(async () => ({ ok: false as const }));
     const getYearCounts = vi.fn().mockRejectedValue(new Error('down'));
@@ -465,45 +562,77 @@ describe('files of a receipt', () => {
   const uploaded = { id: 'f2', url: '/f2', originalName: 'b.pdf', mimeType: 'application/pdf', sizeBytes: 3, metadata: {} } as unknown as UploadedFile;
   const FILES = 'col_files';
   const existing = { id: 'ref1', rowId: 'a', columnId: FILES, fileId: 'f1', fileUrl: '/f1', originalName: 'a.pdf', mimeType: 'application/pdf', position: 0 } as FileReference;
-  const withFile = () => row('a', 'a', { cells: { [FILES]: [existing] as unknown as CellValue } });
+  const shown = (store: ReceiptsStore) => (store.row('a')?.cells[FILES] as unknown as FileReference[]).map((f) => f.fileId);
 
-  it('adds an upload to the files the row has, in the place after them, in the order of the package', async () => {
+  /**
+   * Like the real adapter: files live in their own table. A row is read with them,
+   * a write of the row ignores a file cell, and a reference gets the server's id.
+   */
+  function fileServer() {
     const calls: string[] = [];
-    const updateRow = vi.fn(async (_id: string, cells: Record<string, CellValue>) => {
-      calls.push('cell');
-      return row('a', 'a', { cells });
-    });
-    const uploadFile = vi.fn(async () => {
-      calls.push('upload');
-      return uploaded;
-    });
-    const addFileReference = vi.fn(async () => {
-      calls.push('reference');
-    });
-    const { store } = storeWith({ getRows: server([withFile()]).getRows, updateRow, uploadFile, addFileReference });
+    let references = [existing];
+    const stored = () => row('a', 'a', { cells: { [FILES]: references as unknown as CellValue } });
+    const api = {
+      getRows: vi.fn(async () => ({ items: [stored()], total: 1, hasMore: false })),
+      updateRow: vi.fn(async () => {
+        calls.push('cell');
+        return stored();
+      }),
+      uploadFile: vi.fn(async () => {
+        calls.push('upload');
+        return uploaded;
+      }),
+      addFileReference: vi.fn(async (input: CreateFileRefInput) => {
+        calls.push('reference');
+        const reference = { ...input, id: `server-${input.fileId}` } as FileReference;
+        references = [...references, reference];
+        return reference;
+      }),
+      removeFileReference: vi.fn(async (id: string) => {
+        references = references.filter((f) => f.id !== id);
+      }),
+    };
+    return { api, calls };
+  }
+
+  it('shows an upload at once, after the files the row has, without a reload', async () => {
+    const { api, calls } = fileServer();
+    const { store } = storeWith(api);
     await store.load();
     const ref = await store.uploadFile('a', FILES, new File(['x'], 'b.pdf'));
-    expect(calls).toEqual(['upload', 'cell', 'reference']);
-    expect(ref.position).toBe(1);
-    expect((updateRow.mock.calls[0][1][FILES] as unknown as FileReference[]).map((f) => f.fileId)).toEqual(['f1', 'f2']);
-    expect(addFileReference).toHaveBeenCalledWith(expect.objectContaining({ rowId: 'a', columnId: FILES, fileId: 'f2', position: 1 }));
+    expect(calls).toEqual(['upload', 'reference', 'cell']);
+    expect(shown(store)).toEqual(['f1', 'f2']);
+    expect(ref).toMatchObject({ id: 'server-f2', position: 1 });
+    expect(api.addFileReference).toHaveBeenCalledWith(expect.objectContaining({ rowId: 'a', columnId: FILES, fileId: 'f2', position: 1 }));
+  });
+
+  it('deletes a fresh upload right away, by the id the server gave it', async () => {
+    const { api } = fileServer();
+    const { store, api: full } = storeWith(api);
+    await store.load();
+    await store.uploadFile('a', FILES, new File(['x'], 'b.pdf'));
+    await store.deleteFile('a', FILES, 'f2');
+    expect(full.deleteStoredFile).toHaveBeenCalledWith('f2');
+    expect(api.removeFileReference).toHaveBeenCalledWith('server-f2');
+    expect(shown(store)).toEqual(['f1']);
   });
 
   it('deletes a file of the row and leaves the others', async () => {
-    const updateRow = vi.fn(async (_id: string, cells: Record<string, CellValue>) => row('a', 'a', { cells }));
-    const { store, api } = storeWith({ getRows: server([withFile()]).getRows, updateRow });
+    const { api } = fileServer();
+    const { store, api: full } = storeWith(api);
     await store.load();
     await store.deleteFile('a', FILES, 'f1');
-    expect(api.deleteStoredFile).toHaveBeenCalledWith('f1');
+    expect(full.deleteStoredFile).toHaveBeenCalledWith('f1');
     expect(api.removeFileReference).toHaveBeenCalledWith('ref1');
-    expect(updateRow.mock.calls[0][1][FILES]).toEqual([]);
+    expect(shown(store)).toEqual([]);
   });
 
   it('does nothing for a file the row does not have', async () => {
-    const { store, api } = storeWith({ getRows: server([withFile()]).getRows });
+    const { api } = fileServer();
+    const { store, api: full } = storeWith(api);
     await store.load();
     await store.deleteFile('a', FILES, 'other');
-    expect(api.deleteStoredFile).not.toHaveBeenCalled();
+    expect(full.deleteStoredFile).not.toHaveBeenCalled();
     expect(api.updateRow).not.toHaveBeenCalled();
   });
 });

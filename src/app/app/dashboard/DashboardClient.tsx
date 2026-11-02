@@ -537,6 +537,13 @@ const DashboardContent = observer(function DashboardContent({ store, tableId, in
   const assignmentOptions = useMemo(() => (assignmentColumn ? (selectOptions.get(assignmentColumn.id) ?? []) : []), [assignmentColumn, selectOptions]);
   const openGroup = useCallback((row: Row) => setGroupPanelId(row.id), []);
 
+  // An export is taken for a whole, so it never goes out partial: it says why instead.
+  const exportShown = () => {
+    if (store.complete) exportCSV({ columns, rows: displayRows });
+    else if (loading) setNotice({ tone: 'warn', text: 'Die Belege werden noch geladen. Der Export ist möglich, sobald alle da sind.' });
+    else setNotice({ tone: 'warn', text: 'Die Belege konnten nicht vollständig geladen werden. Exportiert wird nichts, bis die Liste vollständig ist. Bitte die Seite neu laden.' });
+  };
+
   // Which groups are folded is kept with the view, like its folded sections, so a reload shows the same table.
   const subItemsConfig = useMemo<SubItemsConfig>(
     () => ({ enabled: true, collapsedParents: (currentView?.config?.subItemsConfig as SubItemsConfig | undefined)?.collapsedParents ?? [] }),
@@ -781,7 +788,7 @@ const DashboardContent = observer(function DashboardContent({ store, tableId, in
       <div className="px-4 pt-4 pb-2 sm:px-6 sm:pt-6" style={{ background: 'rgba(10, 10, 15, 0.4)' }}>
         <DashboardPhoneActions
           title="Belege"
-          onExport={() => exportCSV({ columns, rows: displayRows })}
+          onExport={exportShown}
           onToggleAi={() => setAiSidebarOpen((v) => !v)}
         />
         <div className="mb-1 hidden items-center justify-between sm:flex">
@@ -789,7 +796,7 @@ const DashboardContent = observer(function DashboardContent({ store, tableId, in
             Belege
           </h1>
           <div className="flex items-center gap-2">
-            <button type="button" className="ui-btn" onClick={() => exportCSV({ columns, rows: displayRows })}>
+            <button type="button" className="ui-btn" onClick={exportShown}>
               <ExportIcon />
               Als CSV exportieren
             </button>

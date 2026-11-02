@@ -648,7 +648,7 @@ const OpenCheck = memo(function OpenCheck({
       {canWrite && <PickReceipt check={check} store={store} busy={busy} actions={actions} />}
       {canWrite && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Link href={uploadForHref(check.paymentId)} className="ui-btn ui-btn-sm">
+          <Link href={uploadForHref(check.paymentId, store.workspaceId)} className="ui-btn ui-btn-sm">
             Beleg fotografieren oder hochladen
           </Link>
           {!asking ? (

@@ -538,7 +538,8 @@ async function linkUploadTo(paymentId: string, rowId: string, workspaceId: strin
   try {
     const { session } = await requireUploadWorkspace(workspaceId);
     await requireRowWriteIn(session, workspaceId);
-    await linkReceiptToPayment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, paymentId, rowId, { byHand: true });
+    // Not "by hand": the same receipt sent again (an answer lost on the way, a queued photo resent) is linked already, and that is a success.
+    await linkReceiptToPayment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, paymentId, rowId);
     return { paymentId, linked: true, rowId };
   } catch (e) {
     if (e instanceof LoopServiceError) return { paymentId, linked: false, reason: e.code === 'payment_not_found' || e.code === 'payment_not_open' || e.code === 'already_has_receipt' ? e.code : 'failed' };
@@ -547,6 +548,7 @@ async function linkUploadTo(paymentId: string, rowId: string, workspaceId: strin
       if (e.code === 'receipt_already_paid') return { paymentId, linked: false, reason: 'receipt_already_paid' };
       if (e.code === 'link_exceeds_payment') return { paymentId, linked: false, reason: 'already_has_receipt' };
       if (e.code === 'invalid_link' || e.code === 'link_not_found') return { paymentId, linked: false, reason: 'payment_not_open' };
+      if (e.code === 'target_not_found') return { paymentId, linked: false, reason: 'receipt_not_found' };
     }
     if (e instanceof ReceiptsAuthError || (e as { status?: number })?.status === 403 || (e as { status?: number })?.status === 401) return { paymentId, linked: false, reason: 'forbidden' };
     console.error('[processReceipt] linking the upload to its payment failed:', e instanceof Error ? `${e.name}: ${e.message}` : 'unknown error');

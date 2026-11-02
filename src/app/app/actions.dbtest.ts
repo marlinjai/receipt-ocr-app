@@ -1110,8 +1110,11 @@ describe('an upload for a payment (the check card\'s "Beleg fotografieren oder h
 
     expect(await linkExistingUpload(paymentId, first.rowId, workspace.workspaceId)).toEqual({ paymentId, linked: true, rowId: first.rowId });
     expect(await paymentAwaitingReceipt(db, workspace.workspaceId, paymentId)).toBeNull();
-    // Again, for the payment that has it now: told, never a second success.
-    expect(await linkExistingUpload(paymentId, first.rowId, workspace.workspaceId)).toEqual({ paymentId, linked: false, reason: 'already_has_receipt' });
+    // The same receipt again (an answer lost on the way, a queued photo resent): it is linked, and that is said.
+    expect(await linkExistingUpload(paymentId, first.rowId, workspace.workspaceId)).toEqual({ paymentId, linked: true, rowId: first.rowId });
+    // Another receipt for the payment that has one now: told, never a second success.
+    const other = await processReceipt(file(211), ocr(CAFE), { workspaceId: workspace.workspaceId });
+    expect(await linkExistingUpload(paymentId, other.rowId, workspace.workspaceId)).toEqual({ paymentId, linked: false, reason: 'already_has_receipt' });
   });
 
   it('a receipt that pays another payment in full is refused with that reason, not as a failure', async () => {
@@ -1134,6 +1137,11 @@ describe('an upload for a payment (the check card\'s "Beleg fotografieren oder h
     // In my company their payment does not exist.
     expect(await linkExistingUpload(paymentId, mineSaved.rowId, mine.workspaceId)).toEqual({ paymentId, linked: false, reason: 'payment_not_found' });
     expect(await paymentAwaitingReceipt(db, theirs.workspaceId, paymentId)).not.toBeNull();
+  });
+
+  it('a receipt that is gone by the time of the link is refused as gone, not as a failure', async () => {
+    const { workspace, paymentId } = await paymentWaiting();
+    expect(await linkExistingUpload(paymentId, 'row-that-is-not-there', workspace.workspaceId)).toEqual({ paymentId, linked: false, reason: 'receipt_not_found' });
   });
 
   it('answers a malformed call with a refusal, never a throw', async () => {

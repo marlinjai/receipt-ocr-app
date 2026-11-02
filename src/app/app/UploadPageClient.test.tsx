@@ -42,9 +42,10 @@ const TARGETS = [
 ];
 const OPEN: UploadFor = { state: 'open', workspaceId: 'w1', payment: { id: 'p1', counterparty: 'Zyx Mobilität', bookingDay: '2026-11-01', amountCents: 427, estimated: false } };
 const LINKED: UploadLink = { paymentId: 'p1', linked: true, rowId: 'r1' };
+const REFUSED: UploadLink = { paymentId: 'p1', linked: false, reason: 'already_has_receipt' };
 
-function mount(uploadFor: UploadFor | null) {
-  return render(<UploadPageClient targets={TARGETS} initialWorkspaceId="w1" uploadFor={uploadFor} />);
+function mount(uploadFor: UploadFor | null, initialWorkspaceId = 'w1') {
+  return render(<UploadPageClient targets={TARGETS} initialWorkspaceId={initialWorkspaceId} uploadFor={uploadFor} />);
 }
 
 beforeEach(() => {
@@ -74,6 +75,22 @@ describe('the upload page opened for a payment', () => {
     expect(seen.capture?.forPaymentId).toBeNull();
     act(() => seen.uploader!.onAllComplete({ total: 1, succeeded: 1, failed: 0 }));
     expect(push).toHaveBeenCalledWith('/app/spending?ansicht=belege&firma=w1');
+  });
+
+  it('a further file of the batch saved without a link is said, and the page stays so it can be read', () => {
+    mount(OPEN);
+    act(() => seen.uploader!.onLinked!(LINKED));
+    act(() => seen.uploader!.onLinked!(REFUSED));
+    expect(screen.getByText(/1 weiterer Beleg dieses Uploads wurde gespeichert, aber keiner Zahlung zugeordnet/)).toBeTruthy();
+    act(() => seen.uploader!.onAllComplete({ total: 2, succeeded: 2, failed: 0 }));
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("uploads into the payment's company even when another one is active (switched in another tab)", () => {
+    mount({ ...OPEN, workspaceId: 'w2' } as UploadFor, 'w1');
+    expect(seen.uploader?.workspaceId).toBe('w2');
+    expect(seen.capture?.workspaceId).toBe('w2');
+    expect(screen.getByText('Firma Zwei')).toBeTruthy();
   });
 
   it('backtrack: discarding the linked receipt opens the payment again, and the next file is for it', async () => {

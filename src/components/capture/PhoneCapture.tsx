@@ -141,6 +141,8 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
         { isOnline: () => navigator.onLine },
       );
       for (const s of result.sent) if (s.outcome.linkedTo) callbacks.current.onLinked?.(s.outcome.linkedTo);
+      // A photo taken for a payment whose link did not go through: saved, and the person is told, wherever they are now.
+      const notLinked = result.sent.filter((s) => s.outcome.linkedTo && !s.outcome.linkedTo.linked).length;
       const saved = result.sent.filter((s) => s.outcome.kind === 'done').length;
       const known = result.sent.length - saved;
       const meals = result.sent.filter((s) => s.outcome.kind === 'done' && s.outcome.isMeal).length;
@@ -149,6 +151,13 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
       if (saved > 0) parts.push(saved === 1 ? '1 wartendes Foto wurde gesendet.' : `${saved} wartende Fotos wurden gesendet.`);
       if (known > 0) parts.push(known === 1 ? '1 Beleg war schon da und wurde nicht doppelt angelegt.' : `${known} Belege waren schon da und wurden nicht doppelt angelegt.`);
       if (elsewhere.length > 0) parts.push(`Mindestens ein gesendetes Foto liegt genau so schon in deiner Firma ${elsewhere.join(', ')}: bitte in der Belegliste prüfen.`);
+      if (notLinked > 0) {
+        parts.push(
+          notLinked === 1
+            ? '1 Foto war für eine Zahlung gedacht, wurde aber nicht zugeordnet: bitte unter den offenen Belegen mit „Vorhandenen Beleg zuordnen“ wählen.'
+            : `${notLinked} Fotos waren für Zahlungen gedacht, wurden aber nicht zugeordnet: bitte unter den offenen Belegen mit „Vorhandenen Beleg zuordnen“ wählen.`,
+        );
+      }
       if (meals > 0) parts.push(meals === 1 ? '1 Bewirtung wartet auf Teilnehmer und Anlass.' : `${meals} Bewirtungen warten auf Teilnehmer und Anlass.`);
       if (result.stopped === 'auth') parts.push('Die Anmeldung ist abgelaufen: bitte neu anmelden, die Fotos bleiben gespeichert.');
       if (result.stopped === 'offline' && result.remaining > 0) parts.push('Keine Verbindung: der Rest wird später gesendet.');

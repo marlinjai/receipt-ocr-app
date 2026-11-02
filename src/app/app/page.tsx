@@ -6,7 +6,7 @@ import UploadPageClient, { type UploadFor } from './UploadPageClient';
 
 export const dynamic = 'force-dynamic';
 
-type UploadParams = Promise<{ fuer?: string | string[] }>;
+type UploadParams = Promise<{ fuer?: string | string[]; firma?: string | string[] }>;
 
 /**
  * The upload page. The company uploads go into is decided HERE, once, when the
@@ -14,19 +14,23 @@ type UploadParams = Promise<{ fuer?: string | string[] }>;
  * upload the page sends. The page never asks the session again, so switching
  * the company in another tab cannot move an upload that is under way.
  *
- * Opened from a check card (`?fuer=<payment>`), the page uploads FOR that
- * payment: into the company the payment waits in, and the saved receipt is
- * linked to it.
+ * Opened from a check card (`?fuer=<payment>&firma=<company>`), the page
+ * uploads FOR that payment: into the company the payment waits in (named by
+ * the card, not the session, so a switch in another tab does not lose it), and
+ * the saved receipt is linked to it.
  */
 export default async function UploadPage({ searchParams }: { searchParams: UploadParams }) {
   const session = await auth.requireSession('/app');
   const targets = uploadTargets(session);
   const active = sessionWorkspaceId(session);
   const initialWorkspaceId = targets.some((t) => t.workspaceId === active) ? active : (targets[0]?.workspaceId ?? '');
-  const { fuer } = await searchParams;
+  const { fuer, firma } = await searchParams;
   const asked = typeof fuer === 'string' && fuer !== '' ? fuer : null;
-  // A payment waits in the active company; when that is not one to upload into, nothing is linked, and the page says so.
-  const uploadFor = asked === null ? null : initialWorkspaceId === active ? await forPayment(initialWorkspaceId, asked) : ({ state: 'gone', workspaceId: active } as const);
+  // The payment's company: the one the card named, else the active one. Only a company this account uploads into is
+  // looked in; any other leaves nothing to link, and the page says so.
+  const company = typeof firma === 'string' && firma !== '' ? firma : active;
+  const uploadable = targets.some((t) => t.workspaceId === company);
+  const uploadFor = asked === null ? null : uploadable ? await forPayment(company, asked) : ({ state: 'gone', workspaceId: company } as const);
   return <UploadPageClient targets={targets} initialWorkspaceId={initialWorkspaceId} uploadFor={uploadFor} />;
 }
 

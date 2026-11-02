@@ -39,7 +39,7 @@ export type UploadLink =
   | { paymentId: string; linked: true; rowId: string }
   | { paymentId: string; linked: false; reason: UploadLinkRefusal };
 
-export type UploadLinkRefusal = 'payment_not_found' | 'payment_not_open' | 'already_has_receipt' | 'receipt_already_paid' | 'forbidden' | 'failed';
+export type UploadLinkRefusal = 'payment_not_found' | 'payment_not_open' | 'already_has_receipt' | 'receipt_already_paid' | 'receipt_not_found' | 'forbidden' | 'failed';
 
 export interface SavedReceipt {
   rowId: string;

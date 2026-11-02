@@ -319,6 +319,14 @@ describe('the payment a photo is for (the page opened from a check card)', () =>
     await waitFor(() => expect(onLinked).toHaveBeenCalledWith(LINKED));
   });
 
+  it("resume: a queued photo whose link is refused is still saved, and the note says it was not linked", async () => {
+    onSave.mockResolvedValue({ ...OTHER, linkedTo: { paymentId: 'p1', linked: false, reason: 'already_has_receipt' } });
+    await store.add(newQueuedCapture(photo('fuer-p1.jpg'), 'camera', 1, 'ws-eins', 'p1'));
+    render(forP(null));
+    expect(await screen.findByText(/1 Foto war für eine Zahlung gedacht, wurde aber nicht zugeordnet/)).toBeTruthy();
+    expect(onSave.mock.calls[0][2]).toMatchObject({ forPaymentId: 'p1' });
+  });
+
   it('a photo queued earlier without a payment is never linked to the payment the page is open for now', async () => {
     onSave.mockResolvedValue(OTHER);
     await store.add(newQueuedCapture(photo('von-gestern.jpg'), 'camera', 1, 'ws-eins'));

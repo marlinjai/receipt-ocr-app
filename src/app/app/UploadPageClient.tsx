@@ -12,7 +12,7 @@ import type { SaveReceipt, UploadForPayment } from '@/lib/upload/browser-deps';
 import type { UploadLink } from '@/lib/upload/pipeline';
 import UploadTargetPicker from '@/components/UploadTargetPicker';
 import { linkExistingUpload, processReceipt, retakeReceipt } from './actions';
-import { afterDiscard, afterSave, checksHref, paymentLine, paymentToLink, refusalText, type UploadFor, type UploadForProgress } from './upload-for';
+import { afterDiscard, afterSave, checksHref, paymentLine, paymentToLink, refusalText, unlinkedText, type UploadFor, type UploadForProgress } from './upload-for';
 
 export type { UploadFor } from './upload-for';
 import { deleteRow } from './dashboard/actions';
@@ -42,13 +42,15 @@ function UploadPageContent({ targets, initialWorkspaceId, uploadFor = null }: Up
   // The company every upload of THIS page goes into. It is fixed when the page
   // opens and changes only here: switching the company in another tab or
   // session does not move uploads that this page sends.
-  const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId);
+  // Opened for a payment, the uploads go into the payment's company and nowhere else.
+  const fixedTo = uploadFor?.state === 'open' ? uploadFor.workspaceId : null;
+  const [workspaceId, setWorkspaceId] = useState(fixedTo ?? initialWorkspaceId);
   // The company switcher in THIS tab's header re-renders the page with the new
   // active company: then the uploads follow it. Another tab cannot do this.
   const [shownInitial, setShownInitial] = useState(initialWorkspaceId);
   if (shownInitial !== initialWorkspaceId) {
     setShownInitial(initialWorkspaceId);
-    setWorkspaceId(initialWorkspaceId);
+    setWorkspaceId(fixedTo ?? initialWorkspaceId);
   }
   const target = targets.find((t) => t.workspaceId === workspaceId) ?? null;
 
@@ -101,12 +103,12 @@ function UploadPageContent({ targets, initialWorkspaceId, uploadFor = null }: Up
     const forWhat = uploadFor;
     const now = progressNow.current;
     // Uploaded for a payment and linked: back to the open receipts, where it is now done.
-    if (forWhat && now.step === 'linked') {
+    if (forWhat && now.step === 'linked' && now.unlinked === 0) {
       router.push(checksHref(forWhat));
       return;
     }
-    // A refused link stays on screen with its reason and the way to link by hand.
-    if (forWhat && now.step === 'refused') return;
+    // A refused link, or further files that were saved without one, stay on screen with what to do.
+    if (forWhat && now.step !== 'waiting') return;
     // The dashboard shows the ACTIVE company. When this page uploaded into
     // another one, going there would hide what was just saved.
     if (stats.succeeded > 0 && workspaceId === initialWorkspaceId) {
@@ -268,7 +270,7 @@ function UploadForBanner({ uploadFor, progress }: { uploadFor: UploadFor; progre
   if (progress.step === 'linked') {
     return (
       <div role="status" className="glass-panel rounded-lg px-4 py-3 mb-4 text-sm" style={{ color: 'var(--foreground)' }}>
-        Zugeordnet: der Beleg gehört jetzt zu {line}.{' '}
+        Zugeordnet: der Beleg gehört jetzt zu {line}.{progress.unlinked > 0 ? ` ${unlinkedText(progress.unlinked)}` : ''}{' '}
         <Link href={back} className="underline" style={{ color: 'var(--accent)' }}>
           Zurück zu den offenen Belegen
         </Link>

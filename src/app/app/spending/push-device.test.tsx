@@ -165,3 +165,13 @@ describe('PushSwitch', () => {
     expect(screen.getByText(/bietet kein Push/)).toBeTruthy();
   });
 });
+
+describe('the push switch on the server', () => {
+  it('draws the same first paint as the browser, whatever the browser supports', async () => {
+    const { renderToString } = await import('react-dom/server');
+    const props = { publicKey: 'key', devices: 0, channel: 'push' as const, actions: actions(), error: null };
+    const withBrowser = renderToString(<PushSwitch {...props} environment={{} as unknown as PushEnvironment} />);
+    const without = renderToString(<PushSwitch {...props} environment={null} />);
+    expect(withBrowser).toBe(without);
+  });
+});

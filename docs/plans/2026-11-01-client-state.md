@@ -258,4 +258,37 @@ Result, measured the same way:
   is a walk over the row list, so splitting it further would be for its own sake.
 - In development React runs effects twice, so `useRows` reads one page into its unused list.
   It is not in a production build and nothing reads that list.
+### Slice 4, the finance tabs (2026-11-01)
+
+What is there, read from the code before moving anything. The about 126 `useState` calls are nearly all form
+fields, and they stay. There is exactly one copy of the year: `view`, a whole `StatementView`, in `FinanceClient`;
+every tab reads it through a prop and every write answers with a new one. So a tab cannot be moved on its own:
+holding that `view` in a store for some tabs and in `useState` for others would be the two sources this plan
+forbids. The statement moves first, for all tabs at once, and the tabs follow with what is theirs.
+
+| Tab | Server data it reads | Worked out from it today | Stays in the view |
+|---|---|---|---|
+| Kopf, Zähler | `view` | `openQueue`, `overdue`, `openAssets`, `estimated`, `blockedBySetting`, `waitingCounts`, `groupCount`, tiles | `group`, `chosen`, `firstTab`, `notice`, `error`, `pending` |
+| Offen | `items`, `formLines`, `assetLimits`, `revenue.overdue` | `queue`, `selected` | `selectedId`, `editingId`, `splittingId`, `assetFromRow`, `TreatmentForm`, `LinesForm` fields |
+| Zahlungen klären, Zahlungen, Konten | `payments`, `BankView` (own copy in `useBankFeed`), `SharingView` (own copy, `view` and `shown`, in `AccountSharing`) | `unambiguousPairs`, `listEmpty`, `selectedAccount` | `lastImport`, form fields, `manualFor`, `browsing`, the bank's message per account, search results |
+| EÜR | `lines`, `items`, `assets`, `formSources` | `itemsById`, `assetsById`, parts per line | `openLine` |
+| Einnahmen | `revenue`, `forecast`, `limits` | nothing beyond the labels | `editing`, the invoice form, `expectation` as typed |
+| Anlagen | `assets`, `items`, `assetLimits` | `candidateReceipts` | `editing`, `disposing`, `expanded`, the forms |
+| Umsatzsteuer | `vat`, `statusChanges` | nothing beyond the labels | the forms, seeded from the view when the tab opens |
+| Einkommensteuer | `incomeTax` | nothing beyond the labels | `showProjected`, the forms, `months` and `filedOn` as typed |
+| Lieferanten | `vendorRules`, `reverseChargeVendors` | nothing | nothing |
+| Eigene Namen | `OwnNamesView` (own copy in `FinanceClient`) | nothing | `namesError`, `namesNotice` |
+
+What moves: the statement, the bank connections, the sharing and the own names into one `FinanceStore`, and
+everything in the third column that is worked out in `FinanceClient` into its `computed`s. Nothing else: no form
+field, no open row, no message.
+
+What does not move, on purpose: **no figure is worked out on the client, and finance does not write
+optimistically.** A tax number, a total and a form line come from the server's calculation, and one answer can
+change any of them, so a write here stays what it is, a wait for the whole view. The rule of this plan that numbers
+are `computed` applies to what the client counts, such as the tabs' badges, not to the tax calculation.
+
+Proof that no figure changes: `FinanceClient.figures.test.tsx` renders a realistic year (`__tests__/statement-fixture.ts`)
+tab by tab and compares the whole markup with files written by the code from before the move, in the commit that
+adds them, before any store exists.
 

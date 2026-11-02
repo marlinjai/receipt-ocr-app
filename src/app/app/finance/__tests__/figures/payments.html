@@ -1,0 +1,149 @@
+<main class="relative z-10 min-h-svh px-4 pb-16 pt-6 sm:px-6" data-theme="dark">
+<div class="mx-auto w-full max-w-[88rem]">
+<div class="flex flex-wrap items-end justify-between gap-3">
+<div>
+<h1 class="text-2xl font-bold" style="color: var(--foreground);">Finanzen</h1>
+<p class="mt-1 text-sm" style="color: var(--muted);">Einnahmenüberschussrechnung aus den Belegen, Zeile für Zeile nachvollziehbar.</p>
+</div>
+<div class="flex flex-wrap items-center gap-2">
+<label class="sr-only">Jahr</label>
+<select class="ui-input" style="width: auto;">
+<option value="2026">2026</option>
+<option value="2025">2025</option>
+<option value="2024">2024</option>
+</select>
+<a class="ui-btn" href="/app/meals">Bewirtungen</a>
+<a class="ui-btn" href="/app/dashboard">Belege</a>
+</div>
+</div>
+<div class="mt-4 space-y-2">
+<p class="ui-note">In 2025 gilt (zumindest zeitweise) die Regelbesteuerung: Belege aus dieser Zeit zählen mit ihrem Nettobetrag, die Umsatzsteuer darin ist Vorsteuer. Ein Beleg ohne Nettobetrag steht unter „Offen“.</p>
+</div>
+<dl class="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 col-span-2 lg:col-span-1">
+<dt class="ui-label">Gewinn 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">3.053,75 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Einnahmen 3.500,00 €, 5 Belege noch offen</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Betriebsausgaben 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">446,25 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">4 Belege gerechnet</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Kosten für die Anlage N</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">120,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Studium und Anstellung</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Einkommensteuer 2025 (Schätzung)</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">Nachzahlung 344,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Lohn und Gewerbe</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Offene Prüfungen</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">6</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">1 Rechnung überfällig, 1 mit geschätztem Betrag, 1 Anlagen mit offener Prüfung</dd>
+</div>
+</dl>
+<p class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style="color: var(--muted);">
+<span>Hier steht der Betrieb für die Steuererklärung. Alle Ausgaben, private eingeschlossen, mit Budgets:</span>
+<a class="ui-btn ui-btn-sm" href="/app/spending">Ausgaben</a>
+</p>
+<div role="tablist" aria-label="Bereiche der Finanzübersicht" class="mt-6 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Erledigen<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>9<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: rgba(226, 163, 72, 0.55); background: var(--accent-muted); color: var(--accent);">Auswerten<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>1<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Steuer</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Einstellungen</button>
+</div>
+<div role="tabpanel">
+<div role="tablist" aria-label="Reiter in Auswerten" class="ui-scroll-bare-phone mt-3 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style="border-color: var(--border);">
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">EÜR</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Einnahmen</button>
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: var(--accent); color: var(--accent);">Zahlungen</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Anlagen<span class="ml-2 rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>1<span class="sr-only"> offen</span>
+</span>
+</button>
+</div>
+<div role="status" aria-live="polite" class="mt-4 min-h-5 text-sm" style="color: var(--muted);">
+</div>
+<div role="tabpanel" class="mt-4">
+<div class="space-y-6">
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Von der App eingeordnet">
+<details open="">
+<summary class="cursor-pointer text-base font-semibold" style="color: var(--foreground);">Von der App eingeordnet (1)</summary>
+<p class="mt-1 text-xs" style="color: var(--muted);">Diese Gegenseiten hat die App selbst eingeordnet: aus deinen zugeordneten Belegen, deinen eigenen Namen oder weil sie eindeutig erkennbar sind. Die Einordnung zählt schon überall. „Bestätigen“ macht sie zu deiner Antwort, ein Klick auf eine andere Antwort ersetzt sie; deine Antwort gilt dann für alle Zahlungen dieser Gegenseite.</p>
+<ul class="mt-3 space-y-2">
+<li class="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" style="border-color: var(--border);">
+<span class="text-sm" style="color: var(--foreground);">Finanzamt: Betrieblich<span class="mt-0.5 block text-xs" style="color: var(--muted);">Steuerzahlung</span>
+</span>
+<span class="flex flex-wrap gap-1.5" role="group" aria-label="Antwort für Finanzamt">
+<button type="button" class="ui-btn ui-btn-sm ui-btn-primary" aria-label="Finanzamt: Betrieblich bestätigen">Bestätigen</button>
+<button type="button" class="ui-btn ui-btn-sm" aria-pressed="true" disabled="">Betrieblich</button>
+<button type="button" class="ui-btn ui-btn-sm" aria-pressed="false">Privat</button>
+<button type="button" class="ui-btn ui-btn-sm" aria-pressed="false">Eigenes Konto</button>
+<button type="button" class="ui-btn ui-btn-sm" aria-pressed="false">Teils, teils</button>
+</span>
+</li>
+</ul>
+</details>
+</section>
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Umbuchungen zwischen eigenen Konten">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Umbuchungen zwischen eigenen Konten 2025</h2>
+<p class="mt-1 text-xs" style="color: var(--muted);">Was ein Zahlungsdienst vom Bankkonto einzieht, ist dasselbe Geld wie die Käufe in seiner eigenen Liste. Solche Abbuchungen gelten deshalb als Umbuchung: keine Ausgabe, keine Frage. Das gilt nur für Tage, die die eingelesene Liste des Dienstes abdeckt. Hier steht, was so behandelt wird, damit nichts unbemerkt verschwindet.</p>
+<details class="mt-3">
+<summary class="cursor-pointer text-sm" style="color: var(--foreground);">1 Zahlung als Umbuchung behandelt, zusammen 49,99 €</summary>
+<ul class="mt-2 space-y-1.5 text-sm" style="color: var(--foreground);">
+<li class="flex flex-wrap items-baseline justify-between gap-2">
+<span>01.07.2025 PayPal bezahlt 49,99 €<span class="ml-2 text-xs" style="color: var(--muted);">Geschäftskonto · Abbuchung · der Kauf dazu steht in der Liste des Dienstes</span>
+</span>
+<button type="button" class="ui-btn ui-btn-sm">Kein Übertrag, eine eigene Zahlung</button>
+</li>
+</ul>
+</details>
+</section>
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Stornierte Käufe">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Stornierte Käufe 2025</h2>
+<p class="mt-1 text-xs" style="color: var(--muted);">Diese Käufe wurden als bezahlt eingelesen; eine später eingelesene Liste führt sie als storniert oder vollständig erstattet. Sie zählen nirgends mehr. Der Import, der das gemeldet hat, lässt sich rückgängig machen; dann zählen sie und ihre Zuordnungen wieder.</p>
+<ul class="mt-3 space-y-1.5 text-sm" style="color: var(--foreground);">
+<li>08.08.2025 Shop Beispiel 15,00 €<span class="ml-2 text-xs" style="color: var(--muted);">Kreditkarte · Zuordnung gelöst von: Rechnung x. Der Beleg zählt wieder mit seinem eigenen Betrag.</span>
+</li>
+</ul>
+</section>
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Umgewidmete Zahlungen">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Von dir umgewidmete Zahlungen</h2>
+<ul class="mt-3 space-y-1.5 text-sm" style="color: var(--foreground);">
+<li class="flex flex-wrap items-baseline justify-between gap-2">
+<span>05.05.2025 Versand Beispiel 20,00 €: Erstattung oder Umbuchung</span>
+<button type="button" class="ui-btn ui-btn-sm">Zurücksetzen</button>
+</li>
+</ul>
+</section>
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Zuordnungen">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Zuordnungen und Regeln</h2>
+<ul class="mt-3 space-y-1.5 text-sm" style="color: var(--foreground);">
+<li class="flex flex-wrap items-baseline justify-between gap-2">
+<span>20.03.2025 Kunde Beispiel AG 1.500,00 € → R-2025-1<span class="ml-2 text-xs" style="color: var(--muted);">über die Rechnungsnummer</span>
+</span>
+<button type="button" class="ui-btn ui-btn-sm">Lösen</button>
+</li>
+</ul>
+<ul class="mt-4 space-y-1.5 text-sm" style="color: var(--foreground);">
+<li class="flex flex-wrap items-baseline justify-between gap-2">
+<span>Bäckerei Beispiel: Privat</span>
+<button type="button" class="ui-btn ui-btn-sm">Antwort zurücknehmen</button>
+</li>
+</ul>
+</section>
+</div>
+</div>
+</div>
+</div>
+</main>

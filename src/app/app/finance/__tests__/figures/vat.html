@@ -1,0 +1,209 @@
+<main class="relative z-10 min-h-svh px-4 pb-16 pt-6 sm:px-6" data-theme="dark">
+<div class="mx-auto w-full max-w-[88rem]">
+<div class="flex flex-wrap items-end justify-between gap-3">
+<div>
+<h1 class="text-2xl font-bold" style="color: var(--foreground);">Finanzen</h1>
+<p class="mt-1 text-sm" style="color: var(--muted);">Einnahmenüberschussrechnung aus den Belegen, Zeile für Zeile nachvollziehbar.</p>
+</div>
+<div class="flex flex-wrap items-center gap-2">
+<label class="sr-only">Jahr</label>
+<select class="ui-input" style="width: auto;">
+<option value="2026">2026</option>
+<option value="2025">2025</option>
+<option value="2024">2024</option>
+</select>
+<a class="ui-btn" href="/app/meals">Bewirtungen</a>
+<a class="ui-btn" href="/app/dashboard">Belege</a>
+</div>
+</div>
+<div class="mt-4 space-y-2">
+<p class="ui-note">In 2025 gilt (zumindest zeitweise) die Regelbesteuerung: Belege aus dieser Zeit zählen mit ihrem Nettobetrag, die Umsatzsteuer darin ist Vorsteuer. Ein Beleg ohne Nettobetrag steht unter „Offen“.</p>
+</div>
+<dl class="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 col-span-2 lg:col-span-1">
+<dt class="ui-label">Gewinn 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">3.053,75 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Einnahmen 3.500,00 €, 5 Belege noch offen</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Betriebsausgaben 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">446,25 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">4 Belege gerechnet</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Kosten für die Anlage N</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">120,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Studium und Anstellung</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Einkommensteuer 2025 (Schätzung)</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">Nachzahlung 344,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Lohn und Gewerbe</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Offene Prüfungen</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">6</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">1 Rechnung überfällig, 1 mit geschätztem Betrag, 1 Anlagen mit offener Prüfung</dd>
+</div>
+</dl>
+<p class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style="color: var(--muted);">
+<span>Hier steht der Betrieb für die Steuererklärung. Alle Ausgaben, private eingeschlossen, mit Budgets:</span>
+<a class="ui-btn ui-btn-sm" href="/app/spending">Ausgaben</a>
+</p>
+<div role="tablist" aria-label="Bereiche der Finanzübersicht" class="mt-6 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Erledigen<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>9<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Auswerten<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>1<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: rgba(226, 163, 72, 0.55); background: var(--accent-muted); color: var(--accent);">Steuer</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Einstellungen</button>
+</div>
+<div role="tabpanel">
+<div role="tablist" aria-label="Reiter in Steuer" class="ui-scroll-bare-phone mt-3 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style="border-color: var(--border);">
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: var(--accent); color: var(--accent);">Umsatzsteuer</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Einkommensteuer</button>
+</div>
+<div role="status" aria-live="polite" class="mt-4 min-h-5 text-sm" style="color: var(--muted);">
+</div>
+<div role="tabpanel" class="mt-4">
+<div class="space-y-6">
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Status">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Umsatzsteuerlicher Status</h2>
+<ul class="mt-3 space-y-1.5 text-sm" style="color: var(--foreground);">
+<li>Von Anfang an: Regelbesteuerung</li>
+<li class="flex flex-wrap items-baseline justify-between gap-2">
+<span>Ab 01.01.2025: Regelbesteuerung</span>
+<button type="button" class="ui-btn ui-btn-sm ui-btn-danger">Löschen</button>
+</li>
+</ul>
+<p class="mt-2 text-xs" style="color: var(--muted);">Ein Beleg, eine Rechnung und eine Anlage werden nach dem Status an ihrem eigenen Datum gerechnet. Ein Wechsel verändert deshalb nichts, was vor seinem Datum liegt.</p>
+<form class="mt-4 flex flex-wrap items-end gap-2">
+<div>
+<label class="ui-label">Wechsel ab</label>
+<input class="ui-input" type="date" value="">
+</div>
+<div class="ui-seg" role="group" aria-label="Neuer Status">
+<button type="button" aria-pressed="false">Regelbesteuerung</button>
+<button type="button" aria-pressed="true">Kleinunternehmerregelung</button>
+</div>
+<button type="submit" class="ui-btn">Wechsel eintragen</button>
+</form>
+</section>
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Voranmeldungen">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Umsatzsteuer-Voranmeldungen 2025</h2>
+<form class="mt-3 flex flex-wrap items-end gap-3">
+<div>
+<span class="ui-label">Abgabe</span>
+<div class="ui-seg" role="group">
+<button type="button" aria-pressed="true">Vierteljährlich</button>
+<button type="button" aria-pressed="false">Monatlich</button>
+</div>
+</div>
+<div>
+<span class="ui-label">Steuer entsteht</span>
+<div class="ui-seg" role="group">
+<button type="button" aria-pressed="true">mit der Rechnung</button>
+<button type="button" aria-pressed="false">mit dem Zahlungseingang</button>
+</div>
+</div>
+<button type="submit" class="ui-btn">Ändern</button>
+</form>
+<p class="mt-2 text-xs" style="color: var(--muted);">Den Zeitraum legt das Finanzamt fest. Die Besteuerung nach Zahlungseingang muss beim Finanzamt beantragt sein. Ohne diese beiden Angaben wird kein Zeitraum gerechnet.</p>
+<div class="overflow-x-auto">
+<table class="mt-3 w-full text-sm tabular-nums" style="color: var(--foreground);">
+<caption class="sr-only">Voranmeldungszeiträume 2025</caption>
+<thead>
+<tr class="text-left text-xs" style="color: var(--muted);">
+<th scope="col" class="py-1 font-medium">Zeitraum</th>
+<th scope="col" class="py-1 text-right font-medium">Umsatzsteuer</th>
+<th scope="col" class="py-1 text-right font-medium">Vorsteuer</th>
+<th scope="col" class="py-1 text-right font-medium">Zahllast</th>
+</tr>
+</thead>
+<tbody>
+<tr class="border-t" style="border-color: var(--border);">
+<th scope="row" class="py-1 text-left font-normal">1. Quartal<span class="ml-2 text-xs" style="color: var(--muted);">1 Rechnung, 1 Beleg</span>
+</th>
+<td class="py-1 text-right">285,00 €</td>
+<td class="py-1 text-right">19,00 €</td>
+<td class="py-1 text-right">266,00 €</td>
+</tr>
+<tr>
+<td colspan="4" class="pb-1 text-xs" style="color: var(--muted);">zu 19 %: Umsatz 0,00 €, Steuer 285,00 €</td>
+</tr>
+<tr class="border-t" style="border-color: var(--border);">
+<th scope="row" class="py-1 text-left font-normal">2. Quartal<span class="ml-2 text-xs" style="color: var(--muted);">
+</span>
+</th>
+<td class="py-1 text-right">0,00 €</td>
+<td class="py-1 text-right">0,00 €</td>
+<td class="py-1 text-right">0,00 €</td>
+</tr>
+<tr class="border-t" style="border-color: var(--border);">
+<th scope="row" class="py-1 text-left font-normal">3. Quartal<span class="ml-2 text-xs" style="color: var(--muted);">
+</span>
+</th>
+<td class="py-1 text-right">0,00 €</td>
+<td class="py-1 text-right">0,00 €</td>
+<td class="py-1 text-right">0,00 €</td>
+</tr>
+<tr class="border-t" style="border-color: var(--border);">
+<th scope="row" class="py-1 text-left font-normal">4. Quartal<span class="ml-2 text-xs" style="color: var(--muted);">
+</span>
+</th>
+<td class="py-1 text-right">0,00 €</td>
+<td class="py-1 text-right">0,00 €</td>
+<td class="py-1 text-right">0,00 €</td>
+</tr>
+</tbody>
+<tfoot>
+<tr class="border-t font-semibold" style="border-color: var(--border);">
+<th scope="row" class="py-1 text-left">Jahr</th>
+<td class="py-1 text-right">285,00 €</td>
+<td class="py-1 text-right">19,00 €</td>
+<td class="py-1 text-right">266,00 €</td>
+</tr>
+<tr>
+<td colspan="4" class="pb-1 text-xs font-normal" style="color: var(--muted);">zu 19 %: Umsatz 0,00 €, Steuer 285,00 €</td>
+</tr>
+</tfoot>
+</table>
+</div>
+<p class="mt-3 text-xs" style="color: var(--muted);">Enthalten ist auch die Steuer, die der Betrieb als Leistungsempfänger für Leistungen aus dem Ausland schuldet (§ 13b Umsatzsteuergesetz), für Belege, die am Beleg oder für ihren Lieferanten so markiert sind. Unter der Regelbesteuerung ist sie für den betrieblichen Anteil zugleich als Vorsteuer abziehbar (§ 15 Absatz 1 Satz 1 Nummer 4). Die App ordnet sie dem Belegdatum zu, bei Zahlung vor der Leistung dem Zahltag; das ist eine Näherung: rechtlich entsteht sie mit Ablauf des Zeitraums der Leistung (§ 13b Absatz 1) oder mit der Rechnung, spätestens mit Ablauf des Folgemonats (§ 13b Absatz 2), bei Anzahlung im Zeitraum der Zahlung (§ 13b Absatz 4).</p>
+<span class="ui-note ui-note-warn mt-3 block">Ein Beleg mit § 13b ist noch nicht in diesen Zahlen: offen (siehe „Offen“) oder Teil einer Anlage. Die Steuer darauf ist trotzdem geschuldet.</span>
+<p class="ui-note ui-note-warn mt-3">Ein Beleg mit § 13b lautet auf eine fremde Währung. Gerechnet wird mit dem gebuchten Euro-Betrag; das Gesetz verlangt den monatlichen Durchschnittskurs des Bundesfinanzministeriums, sofern das Finanzamt nicht den Tageskurs gestattet hat (§ 16 Absatz 6). Den Betrag vor der Voranmeldung bitte damit prüfen.</p>
+</section>
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Zahlungen an das Finanzamt">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Zahlungen an das Finanzamt und Erstattungen</h2>
+<p class="mt-1 text-xs" style="color: var(--muted);">In der Einnahmenüberschussrechnung ist gezahlte Umsatzsteuer eine Ausgabe und erstattete eine Einnahme, jeweils im Jahr der Zahlung.</p>
+<ul class="mt-3 space-y-1.5 text-sm" style="color: var(--foreground);">
+<li class="flex flex-wrap items-baseline justify-between gap-2">
+<span>10.04.2025: gezahlt 266,00 €</span>
+<button type="button" class="ui-btn ui-btn-sm ui-btn-danger">Löschen</button>
+</li>
+</ul>
+<form class="mt-3 flex flex-wrap items-end gap-2">
+<div>
+<label class="ui-label">Datum</label>
+<input class="ui-input" type="date" value="">
+</div>
+<div>
+<label class="ui-label">Betrag in €</label>
+<input class="ui-input tabular-nums" inputmode="decimal" value="">
+</div>
+<div class="ui-seg" role="group" aria-label="Richtung">
+<button type="button" aria-pressed="true">Gezahlt</button>
+<button type="button" aria-pressed="false">Erstattet</button>
+</div>
+<button type="submit" class="ui-btn">Eintragen</button>
+</form>
+</section>
+</div>
+</div>
+</div>
+</div>
+</main>

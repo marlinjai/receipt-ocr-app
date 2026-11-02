@@ -164,6 +164,27 @@ describe('coming back: the page left while the answer is out', () => {
     expect(next.dismissed[0].place).toBe('bestätigt');
   });
 
+  it('a form save answering after leaving and returning shows on the page open now', () => {
+    const a = open('a');
+    const { app, store, close } = page([a]);
+    close();
+    const next = new MealsStore(seed([a]), app.mealOutbox);
+    app.openMeals(next);
+    store.recordSaved({ ...a, occasion: 'Gespeichert', host: 'Neuer Gastgeber' }, 10);
+    expect(next.records[0].occasion).toBe('Gespeichert');
+    expect(next.defaultHost).toBe('Neuer Gastgeber');
+  });
+
+  it('a turned receipt answering after leaving and returning does too', () => {
+    const a = open('a');
+    const { app, store, close } = page([a]);
+    close();
+    const next = new MealsStore(seed([a]), app.mealOutbox);
+    app.openMeals(next);
+    store.recordsSaved([{ ...a, place: 'Gedreht' }], 10);
+    expect(next.records[0].place).toBe('Gedreht');
+  });
+
   it('a refusal with no page open reaches the shell, naming the receipt, and rolls the new visit back', () => {
     const a = open('a');
     const { app, store, close } = page([a]);

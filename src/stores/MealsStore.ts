@@ -118,8 +118,12 @@ export class MealsStore {
 
   private settle(write: MealWrite, changes: Change[]): void {
     this.outbox.end(write);
-    // A write can end after the page it began on closed: the store on screen by now has to hear of it.
-    for (const store of new Set(this.outbox.open ? [this, this.outbox.open] : [this])) store.took(changes);
+    for (const store of this.onScreen()) store.took(changes);
+  }
+
+  /** An answer can come after the page it was asked on closed: the store on screen by now has to hear of it. */
+  private onScreen(): MealsStore[] {
+    return [...new Set(this.outbox.open ? [this, this.outbox.open] : [this])];
   }
 
   private took(changes: Change[]): void {
@@ -146,19 +150,23 @@ export class MealsStore {
   /** A saved form. An answer older than what the server confirmed since changes nothing. */
   recordSaved(record: MealRecord, at: number): void {
     if (!this.keep(record, at)) return;
-    if (record.host.trim()) this.defaultHost = record.host.trim();
-    this.draw();
+    const host = record.host.trim();
+    for (const store of this.onScreen()) {
+      if (host) store.defaultHost = host;
+      store.draw();
+    }
   }
 
   /** A turned receipt: the same, without a host to remember. */
   recordsSaved(saved: MealRecord[], at: number): void {
     for (const record of saved) this.keep(record, at);
-    this.draw();
+    for (const store of this.onScreen()) store.draw();
   }
 
   private keep(record: MealRecord, at: number): boolean {
-    if (!this.known.has(record.rowId) || !this.outbox.confirm(record.rowId, record, at)) return false;
-    this.known.set(record.rowId, record);
+    const stores = this.onScreen();
+    if (!stores.some((store) => store.known.has(record.rowId)) || !this.outbox.confirm(record.rowId, record, at)) return false;
+    for (const store of stores) store.absorb(record.rowId, record);
     return true;
   }
 

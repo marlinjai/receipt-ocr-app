@@ -292,15 +292,21 @@ Proof that no figure changes: `FinanceClient.figures.test.tsx` renders a realist
 tab by tab and compares the whole markup with files written by the code from before the move, in the commit that
 adds them, before any store exists.
 
-- **The statement and the payment tabs moved first (`FinanceStore`).** One store per visit and per year, held by the
-  page, not on the `AppStore`: nothing outside finance reads it, and the layout's key already gives each company its
-  own. A year is a new store, so an answer for the year just left lands on a store nobody reads; before this it
-  would have shown the old year under the new one. Every tab reads `store.statement`, so Einnahmen, Anlagen,
-  Umsatzsteuer, Einkommensteuer and Lieferanten have nothing left to move: they held no copy of their own.
-  `useBankFeed` and `AccountSharing` lost their copies, and take what they show as props.
-- **Late answers.** A statement says when its read began (`readAt`), and a statement older than the one on screen
-  changes nothing: a write and a bank sync can overlap. The same year sent again by the server takes its place too;
-  before, the page ignored it.
+- **The statement and the payment tabs moved first (`FinanceStore`).** One store per visit, held by the page, not on the
+  `AppStore`: nothing outside finance reads it, and the layout's key already gives each company its own. It keeps the
+  statements by year, so an answer lands in its own year whichever is open by then. A first version made a new store per
+  year: an import on 2026, then 2026 to 2025 to 2026, answered onto a store nobody read, and "done" stood beside
+  old figures until a reload. Every tab reads `store.statement`, so Einnahmen, Anlagen, Umsatzsteuer, Einkommensteuer
+  and Lieferanten have nothing left to move: they held no copy of their own. `useBankFeed` and `AccountSharing` lost
+  their copies, and take what they show as props.
+- **No figure older than a write the person was told finished.** A write can reach into other years, and the year select
+  stays usable during one. The store remembers when the newest answer was read (`writtenAt`), and the year on screen is
+  `behind` while its statement was read before that. The page then reads that year again, and if it cannot, says so.
+- **Late answers.** A statement says when its read began (`readAt`), and a read older than the statement held changes
+  nothing: a write and a bank sync can overlap. Reading the same year again takes its place too; before, the page ignored
+  it. The bank, the sharing and the names belong to the company, not to a year, so they live once, refresh with every
+  page read, and carry their own `readAt`, because a slow read must not undo a newer answer. These times come from one
+  server; with several instances a change within the clock's difference could show wrongly until the next read.
 - **By record.** A write still answers with the whole year. `reuse` keeps every part of the new statement that did
   not change as the old object, so identity tells a row what changed; it finds records in a list by id, so a list
   that lost an entry keeps the others.
@@ -310,7 +316,7 @@ adds them, before any store exists.
   button that follows `busy` must redraw when a write starts and ends, so a `memo` there saves nothing on a write,
   and the payment, invoice and asset rows stay as they are.
 
-- **Eigene Namen.** The list is the store's and arrives with a year like the rest. With it every copy of server data
+- **Eigene Namen.** The list is the store's and arrives with every page read like the rest. With it every copy of server data
   under `src/app/app/finance` is gone. What is left in `useState` there is what the table above says stays. The search
   results of `PaymentFinder` stay too: they answer one person's typed question and are asked again whenever the
   statement changes.

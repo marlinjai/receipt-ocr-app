@@ -263,6 +263,7 @@ export function afterLink(): StatementView {
 }
 
 export const bankView: BankView = {
+  readAt: 1,
   enabled: true,
   connections: [
     {
@@ -287,10 +288,11 @@ export const bankView: BankView = {
 };
 
 export const sharingView: SharingView = {
+  readAt: 1,
   outgoing: [],
   incoming: [],
   targets: [{ workspaceId: 'ws-2', label: 'Zweite Firma' }],
   canWrite: true,
 };
 
-export const ownNamesView: OwnNamesView = { names: ['Inhaber Beispiel'], canWrite: true };
+export const ownNamesView: OwnNamesView = { readAt: 1, names: ['Inhaber Beispiel'], canWrite: true };

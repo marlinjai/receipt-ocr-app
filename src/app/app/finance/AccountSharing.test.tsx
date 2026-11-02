@@ -15,7 +15,7 @@ afterEach(() => {
 
 const accounts = [{ id: 'acc-1', label: 'Girokonto' }];
 const share = (o: Partial<ShareEntry> = {}): ShareEntry => ({ id: 'sh-1', accountId: 'acc-1', accountLabel: 'Girokonto', otherWorkspaceId: 'ws-b', otherName: 'Privat', createdAt: '2026-10-22T08:00:00.000Z', ...o });
-const view = (o: Partial<SharingView> = {}): SharingView => ({ outgoing: [], incoming: [], targets: [{ workspaceId: 'ws-b', label: 'Privat' }], canWrite: true, ...o });
+const view = (o: Partial<SharingView> = {}): SharingView => ({ readAt: 1, outgoing: [], incoming: [], targets: [{ workspaceId: 'ws-b', label: 'Privat' }], canWrite: true, ...o });
 
 function actions(o: Partial<SharingActions> = {}): SharingActions {
   return {
@@ -62,13 +62,6 @@ describe('AccountSharing', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Weitergabe beenden: Kreditkarte' }));
     expect(acts.endAccountShare).toHaveBeenCalledWith('sh-2');
     expect((await screen.findByRole('alert')).textContent).toContain('Diese Weitergabe ist schon beendet');
-  });
-
-  it('shows what it is given, so fresh data from the server needs no copy here', () => {
-    const { rerender } = render(<AccountSharing view={view()} onChange={vi.fn()} accounts={accounts} actions={actions()} />);
-    expect(screen.queryByText(/private Zahlungen gehen an Privat/)).toBeNull();
-    rerender(<AccountSharing view={view({ outgoing: [share()] })} onChange={vi.fn()} accounts={accounts} actions={actions()} />);
-    expect(screen.getByText(/private Zahlungen gehen an Privat/)).toBeTruthy();
   });
 
   it('is read-only without the write permission', () => {

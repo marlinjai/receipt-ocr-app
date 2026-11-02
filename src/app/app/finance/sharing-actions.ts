@@ -5,6 +5,7 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, membershipLabel, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
+import { readsStartedAt } from '@/lib/shared-reads';
 import { runSpendingChecks, INTERACTIVE_CLASSIFY_LIMIT } from '@/lib/spending/checks';
 import { settleAcrossShares } from '@/lib/spending/loop-service';
 import { berlinToday } from '@/lib/spending/period';
@@ -32,6 +33,8 @@ export interface ShareEntry extends ShareView {
 }
 
 export interface SharingView {
+  /** When this was read, for telling a late read from a newer answer. */
+  readAt: number;
   /** This company's accounts whose private payments go to another company. */
   outgoing: ShareEntry[];
   /** Other companies' accounts whose private payments come here. */
@@ -60,6 +63,7 @@ function nameOf(session: Session, workspaceId: string): string | null {
 }
 
 async function sharingView(session: Session, workspaceId: string, canWrite: boolean): Promise<SharingView> {
+  const readAt = readsStartedAt();
   const { outgoing, incoming } = await loadShares(prisma, workspaceId);
   const entry = (s: ShareView): ShareEntry => ({ ...s, otherName: nameOf(session, s.otherWorkspaceId) });
   const seen = new Set<string>([workspaceId]);
@@ -70,7 +74,7 @@ async function sharingView(session: Session, workspaceId: string, canWrite: bool
     targets.push({ workspaceId: m.id, label: membershipLabel(m, session.memberships) });
   }
   targets.sort((a, b) => a.label.localeCompare(b.label, 'de'));
-  return { outgoing: outgoing.map(entry), incoming: incoming.map(entry), targets, canWrite };
+  return { readAt, outgoing: outgoing.map(entry), incoming: incoming.map(entry), targets, canWrite };
 }
 
 export async function getSharingView(): Promise<Result<SharingView>> {

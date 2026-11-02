@@ -7,7 +7,7 @@ import { afterLink, bankView, fullStatement, ownNamesView, sharingView } from '.
 
 /** The page on its store: what one source means when answers overlap, the year changes and the page is entered again. */
 
-const actions = vi.hoisted(() => ({ confirmPaymentLink: vi.fn(), searchPayments: vi.fn(async () => ({ ok: true, value: { payments: [], total: 0 } })) }));
+const actions = vi.hoisted(() => ({ confirmPaymentLink: vi.fn(), getStatement: vi.fn(), searchPayments: vi.fn(async () => ({ ok: true, value: { payments: [], total: 0 } })) }));
 vi.mock('./actions', async () => actions);
 vi.mock('./income-tax-actions', () => ({}));
 vi.mock('./own-names-actions', () => ({}));
@@ -38,6 +38,7 @@ const link = (user: TestUser) => user.click(screen.getAllByRole('button', { name
 
 beforeEach(() => {
   actions.confirmPaymentLink.mockReset();
+  actions.getStatement.mockReset();
   window.history.replaceState(null, '', '/app/finance');
 });
 afterEach(cleanup);
@@ -80,6 +81,120 @@ describe('going back: the year changes while an answer is out', () => {
     expect(screen.queryByText(/Live-Anbindung an Banken ist auf diesem Server nicht eingeschaltet/)).toBeNull();
     rerender(<FinanceClient initial={{ ...fullStatement(), year: 2024 }} initialTab="accounts" bank={offline} sharing={sharingView} />);
     expect(screen.getAllByText(/Live-Anbindung an Banken ist auf diesem Server nicht eingeschaltet/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('no figure older than a write the person was told finished', () => {
+  const year2024 = (readAt: number, businessExpenseCents = 100) => ({ ...fullStatement(), year: 2024, readAt, businessExpenseCents });
+
+  it('there and back while the answer is out: the answer reaches the year, whatever the read from before it says', async () => {
+    const user = setupUser();
+    let answer: (v: unknown) => void = () => {};
+    actions.confirmPaymentLink.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+    const { rerender } = render(<FinanceClient initial={fullStatement()} initialTab="questions" />);
+    await link(user);
+    rerender(<FinanceClient initial={year2024(3)} initialTab="questions" />);
+    // The way back was read before the write reached the database.
+    rerender(<FinanceClient initial={{ ...fullStatement(), readAt: 4 }} initialTab="questions" />);
+    expect(expenses()).toContain('446,25 €');
+    await act(async () => answer({ ok: true, value: { view: { ...afterLink(), readAt: 9 }, moved: false } }));
+    expect(expenses()).toContain('565,25 €');
+  });
+
+  it('a bank sync there and back too, with what it says about the connection', async () => {
+    const user = setupUser();
+    let answer: (v: unknown) => void = () => {};
+    const bankActions = { syncBankNow: vi.fn(() => new Promise((resolve) => (answer = resolve))) } as unknown as BankActions;
+    const { rerender } = render(<FinanceClient initial={fullStatement()} initialTab="accounts" bank={bankView} bankActions={bankActions} />);
+    await user.click(screen.getByRole('button', { name: 'Jetzt abholen' }));
+    rerender(<FinanceClient initial={year2024(3)} initialTab="accounts" bank={bankView} bankActions={bankActions} />);
+    rerender(<FinanceClient initial={{ ...fullStatement(), readAt: 4 }} initialTab="accounts" bank={bankView} bankActions={bankActions} />);
+    const synced = { ...bankView, readAt: 9, connections: [{ ...bankView.connections[0], lastSyncedAt: '2026-01-02T06:00:00.000Z' }] };
+    await act(async () => answer({ ok: true, value: { bank: synced, view: { ...afterLink(), readAt: 9 }, outcome: { status: 'synced', added: 2 } } }));
+    expect(expenses()).toContain('565,25 €');
+    expect(screen.getByText(/zuletzt abgeholt am 02\.01\.2026/)).toBeTruthy();
+  });
+
+  it('a write that ends while another year is open has that year read again: it can reach across years', async () => {
+    const user = setupUser();
+    let answer: (v: unknown) => void = () => {};
+    actions.confirmPaymentLink.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+    actions.getStatement.mockResolvedValue({ ok: true, value: year2024(10, 200) });
+    const { rerender } = render(<FinanceClient initial={fullStatement()} initialTab="questions" />);
+    await link(user);
+    rerender(<FinanceClient initial={year2024(3)} initialTab="questions" />);
+    await act(async () => answer({ ok: true, value: { view: { ...afterLink(), readAt: 9 }, moved: false } }));
+    expect(actions.getStatement).toHaveBeenCalledWith(2024);
+    expect(expenses()).toContain('2,00 €');
+  });
+
+  it('a year opened from a read older than the write is read again', async () => {
+    const user = setupUser();
+    actions.confirmPaymentLink.mockResolvedValue({ ok: true, value: { view: { ...afterLink(), readAt: 9 }, moved: false } });
+    actions.getStatement.mockResolvedValue({ ok: true, value: year2024(10, 200) });
+    const { rerender } = render(<FinanceClient initial={fullStatement()} initialTab="questions" />);
+    await link(user);
+    await screen.findByText('Zahlung zugeordnet.');
+    rerender(<FinanceClient initial={year2024(3)} initialTab="questions" />);
+    await vi.waitFor(() => expect(expenses()).toContain('2,00 €'));
+  });
+
+  it('a year read after the write is believed, and asks nothing', async () => {
+    const user = setupUser();
+    actions.confirmPaymentLink.mockResolvedValue({ ok: true, value: { view: { ...afterLink(), readAt: 9 }, moved: false } });
+    const { rerender } = render(<FinanceClient initial={fullStatement()} initialTab="questions" />);
+    await link(user);
+    await screen.findByText('Zahlung zugeordnet.');
+    rerender(<FinanceClient initial={year2024(12)} initialTab="questions" />);
+    expect(expenses()).toContain('1,00 €');
+    expect(actions.getStatement).not.toHaveBeenCalled();
+  });
+
+  it('when that second read fails it says so, instead of standing beside old figures', async () => {
+    const user = setupUser();
+    let answer: (v: unknown) => void = () => {};
+    actions.confirmPaymentLink.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+    actions.getStatement.mockRejectedValue(new Error('offline'));
+    const { rerender } = render(<FinanceClient initial={fullStatement()} initialTab="questions" />);
+    await link(user);
+    rerender(<FinanceClient initial={year2024(3)} initialTab="questions" />);
+    await act(async () => answer({ ok: true, value: { view: { ...afterLink(), readAt: 9 }, moved: false } }));
+    expect((await screen.findByRole('alert')).textContent).toContain('bitte die Seite neu laden');
+  });
+});
+
+describe('the same year read again', () => {
+  const unshared = { ...sharingView, targets: [], readAt: 1 };
+  const shared = { ...sharingView, readAt: 5, targets: [{ workspaceId: 'ws-3', label: 'Dritte Firma' }] };
+
+  it('refreshes the sharing, the bank connections and the own names with the statement', () => {
+    const page = (statement: ReturnType<typeof fullStatement>, o: object) => <FinanceClient initial={statement} initialTab="accounts" bank={bankView} sharing={unshared} ownNames={ownNamesView} {...o} />;
+    const { rerender } = render(page(fullStatement(), {}));
+    expect(screen.queryByText(/Dritte Firma/)).toBeNull();
+    const later = { ...bankView, readAt: 5, connections: [{ ...bankView.connections[0], aspspName: 'Neue Bank' }] };
+    rerender(page({ ...fullStatement(), readAt: 5 }, { sharing: shared, bank: later, ownNames: { ...ownNamesView, readAt: 5, names: ['Neuer Name'] } }));
+    expect(screen.getAllByText(/Dritte Firma/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Neue Bank/)).toBeTruthy();
+  });
+
+  it('shows the names it read', async () => {
+    const user = setupUser();
+    const { rerender } = render(<FinanceClient initial={fullStatement()} ownNames={ownNamesView} />);
+    await open(user, 'Einstellungen', 'Eigene Namen');
+    rerender(<FinanceClient initial={{ ...fullStatement(), readAt: 5 }} ownNames={{ ...ownNamesView, readAt: 5, names: ['Neuer Name'] }} />);
+    expect(screen.getByText('Neuer Name')).toBeTruthy();
+  });
+
+  it('an older read leaves them as they are', () => {
+    const { rerender } = render(<FinanceClient initial={fullStatement()} initialTab="accounts" sharing={shared} />);
+    rerender(<FinanceClient initial={{ ...fullStatement(), readAt: 2 }} initialTab="accounts" sharing={unshared} />);
+    expect(screen.getAllByText(/Dritte Firma/).length).toBeGreaterThan(0);
+  });
+
+  it('a read that could not get them keeps what is there', () => {
+    const { rerender } = render(<FinanceClient initial={fullStatement()} initialTab="accounts" sharing={shared} />);
+    rerender(<FinanceClient initial={{ ...fullStatement(), readAt: 8 }} initialTab="accounts" sharing={null} />);
+    expect(screen.getAllByText(/Dritte Firma/).length).toBeGreaterThan(0);
   });
 });
 

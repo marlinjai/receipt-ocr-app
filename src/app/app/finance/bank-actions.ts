@@ -6,6 +6,7 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
+import { readsStartedAt } from '@/lib/shared-reads';
 import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
 import { berlinToday } from '@/lib/spending/period';
 import { bankConfig } from '@/lib/tax/payments/bank/config';
@@ -34,6 +35,8 @@ import type { Result } from './actions';
  */
 
 export interface BankView {
+  /** When this was read, for telling a late read from a newer answer. */
+  readAt: number;
   /** False when the server has the bank feed switched off or its settings are incomplete. */
   enabled: boolean;
   connections: BankConnectionView[];
@@ -67,7 +70,8 @@ async function writeContext(): Promise<PaymentContext> {
 }
 
 async function bankView(workspaceId: string): Promise<BankView> {
-  return { enabled: bankConfig().enabled, connections: await loadBankConnections(prisma, workspaceId) };
+  const readAt = readsStartedAt();
+  return { readAt, enabled: bankConfig().enabled, connections: await loadBankConnections(prisma, workspaceId) };
 }
 
 export async function getBankView(): Promise<Result<BankView>> {

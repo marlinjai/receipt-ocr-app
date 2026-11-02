@@ -68,6 +68,7 @@ describe('getSharingView', () => {
     expect(result).toEqual({
       ok: true,
       value: {
+        readAt: expect.any(Number),
         outgoing: [expect.objectContaining({ id: 's1', otherName: null })],
         incoming: [],
         targets: [{ workspaceId: 'ws-b', label: 'Privat' }],

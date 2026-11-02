@@ -60,13 +60,13 @@ beforeEach(() => {
 
 describe('getOwnNamesView', () => {
   it('reads the names of the active company and whether the person may change them', async () => {
-    expect(await getOwnNamesView()).toEqual({ ok: true, value: { names: ['Erika Beispiel'], canWrite: true } });
+    expect(await getOwnNamesView()).toEqual({ ok: true, value: { readAt: expect.any(Number), names: ['Erika Beispiel'], canWrite: true } });
     expect(loadOwnNames).toHaveBeenCalledWith({ marker: 'prisma' }, 'ws-a');
   });
 
   it('a denied or unreachable permission check shows the list read-only', async () => {
     requireAction.mockRejectedValue(new Error('unreachable'));
-    expect(await getOwnNamesView()).toEqual({ ok: true, value: { names: ['Erika Beispiel'], canWrite: false } });
+    expect(await getOwnNamesView()).toEqual({ ok: true, value: { readAt: expect.any(Number), names: ['Erika Beispiel'], canWrite: false } });
   });
 
   it('without a session it is refused, not empty', async () => {
@@ -81,7 +81,7 @@ describe('changeOwnNames', () => {
     expect(saveOwnNames).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, { add: 'Beispiel, Erika' });
     expect(settleAfterOwnNames).toHaveBeenCalledWith({ marker: 'prisma' }, 'ws-a');
     expect(getStatement).toHaveBeenCalledWith(2026);
-    expect(result).toEqual({ ok: true, value: { names: ['Erika Beispiel', 'Beispiel, Erika'], settledOwnName: 2, view: STATEMENT } });
+    expect(result).toEqual({ ok: true, value: { readAt: expect.any(Number), names: ['Erika Beispiel', 'Beispiel, Erika'], settledOwnName: 2, view: STATEMENT } });
   });
 
   it('without the write permission nothing is saved', async () => {
@@ -102,7 +102,7 @@ describe('changeOwnNames', () => {
     getStatement.mockResolvedValue({ ok: false, error: 'failed' });
     expect(await changeOwnNames(2026, { remove: 'Erika Beispiel' })).toEqual({
       ok: true,
-      value: { names: ['Erika Beispiel', 'Beispiel, Erika'], settledOwnName: 0, view: null },
+      value: { readAt: expect.any(Number), names: ['Erika Beispiel', 'Beispiel, Erika'], settledOwnName: 0, view: null },
     });
   });
 });

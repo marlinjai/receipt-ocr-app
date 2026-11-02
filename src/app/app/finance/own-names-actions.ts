@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { prisma } from '@/lib/prisma';
+import { readsStartedAt } from '@/lib/shared-reads';
 import { settleAfterOwnNames } from '@/lib/spending/loop-service';
 import { SpendingServiceError, loadOwnNames, saveOwnNames } from '@/lib/spending/service';
 import type { StatementView } from '@/lib/tax/service';
@@ -21,6 +22,8 @@ import { getStatement, type Result } from './actions';
  */
 
 export interface OwnNamesView {
+  /** When this was read, for telling a late read from a newer answer. */
+  readAt: number;
   names: string[];
   canWrite: boolean;
 }
@@ -43,7 +46,8 @@ export async function getOwnNamesView(): Promise<Result<OwnNamesView>> {
       () => true,
       () => false,
     );
-    return { ok: true, value: { names: await loadOwnNames(prisma, sessionWorkspaceId(session)), canWrite } };
+    const readAt = readsStartedAt();
+    return { ok: true, value: { readAt, names: await loadOwnNames(prisma, sessionWorkspaceId(session)), canWrite } };
   } catch (e) {
     return failure(e);
   }
@@ -58,7 +62,7 @@ export async function getOwnNamesView(): Promise<Result<OwnNamesView>> {
 export async function changeOwnNames(
   year: number,
   change: unknown,
-): Promise<Result<{ names: string[]; settledOwnName: number; view: StatementView | null }>> {
+): Promise<Result<{ names: string[]; readAt: number; settledOwnName: number; view: StatementView | null }>> {
   let names: string[];
   let settledOwnName = 0;
   try {
@@ -76,5 +80,5 @@ export async function changeOwnNames(
   }
   // The names are saved either way: a statement that could not be read afterwards is null, never a failure of the change.
   const statement = await getStatement(year);
-  return { ok: true, value: { names, settledOwnName, view: statement.ok ? statement.value : null } };
+  return { ok: true, value: { names, readAt: Date.now(), settledOwnName, view: statement.ok ? statement.value : null } };
 }

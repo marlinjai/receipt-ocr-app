@@ -983,7 +983,7 @@ describe('FinanceClient: sharing private payments with another company', () => {
   });
 
   it('shows nothing of it when the person has no other company and nothing is shared', () => {
-    render(<FinanceClient initial={view([])} initialTab="accounts" sharing={{ outgoing: [], incoming: [], targets: [], canWrite: true }} />);
+    render(<FinanceClient initial={view([])} initialTab="accounts" sharing={{ readAt: 0, outgoing: [], incoming: [], targets: [], canWrite: true }} />);
     expect(screen.queryByText('Private Zahlungen in einer anderen Firma')).toBeNull();
   });
 });
@@ -1100,7 +1100,7 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
       disconnectBank: vi.fn(),
       clearBankConnectionNotice: vi.fn(),
     };
-    render(<FinanceClient initial={busy()} initialTab={tabFromAddress('zahlungen', true)} bank={{ enabled: true, connections: [] }} bankReturn="verbunden" bankActions={bankActions} />);
+    render(<FinanceClient initial={busy()} initialTab={tabFromAddress('zahlungen', true)} bank={{ readAt: 0, enabled: true, connections: [] }} bankReturn="verbunden" bankActions={bankActions} />);
     expect(selected('Bereiche der Finanzübersicht')).toEqual(['Einstellungen']);
     expect(selected('Reiter in Einstellungen')).toEqual(['Konten']);
     expect(screen.getByText(/Die Bank ist verbunden/)).toBeTruthy();
@@ -1116,7 +1116,7 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
     expect(screen.queryByText(/Die Bank ist verbunden/)).toBeNull();
     // A reload of that address opens the accounts again, without the message.
     cleanup();
-    render(<FinanceClient initial={busy()} initialTab={tabFromAddress(address.get('reiter'), address.has('bank'))} bank={{ enabled: true, connections: [] }} bankReturn={null} bankActions={bankActions} />);
+    render(<FinanceClient initial={busy()} initialTab={tabFromAddress(address.get('reiter'), address.has('bank'))} bank={{ readAt: 0, enabled: true, connections: [] }} bankReturn={null} bankActions={bankActions} />);
     expect(selected('Reiter in Einstellungen')).toEqual(['Konten']);
     expect(screen.queryByText(/Die Bank ist verbunden/)).toBeNull();
   });
@@ -1149,15 +1149,15 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
 
   it('changing the year keeps the tab chosen in each group and clears what the last action said', async () => {
     const user = setupUser();
-    ownNameActions.changeOwnNames.mockResolvedValue({ ok: true, value: { names: ['Erika Beispiel'], settledOwnName: 0, view: view([]) } });
-    const { rerender } = render(<FinanceClient initial={busy()} ownNames={{ names: [], canWrite: true }} />);
+    ownNameActions.changeOwnNames.mockResolvedValue({ ok: true, value: { readAt: 1, names: ['Erika Beispiel'], settledOwnName: 0, view: view([]) } });
+    const { rerender } = render(<FinanceClient initial={busy()} ownNames={{ readAt: 0, names: [], canWrite: true }} />);
     await openTab(user, 'Auswerten', 'Anlagen');
     await openTab(user, 'Einstellungen', 'Eigene Namen');
     await user.type(screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt'), 'Erika Beispiel');
     await user.click(screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
     expect(await screen.findByText('Erika Beispiel gespeichert.')).toBeTruthy();
     // The other year arrives as new props, with the names as the server reads them now.
-    rerender(<FinanceClient initial={{ ...busy(), year: 2024 }} ownNames={{ names: ['Erika Beispiel', 'Max Beispiel'], canWrite: true }} />);
+    rerender(<FinanceClient initial={{ ...busy(), year: 2024 }} ownNames={{ readAt: 2, names: ['Erika Beispiel', 'Max Beispiel'], canWrite: true }} />);
     expect(selected('Reiter in Einstellungen')).toEqual(['Eigene Namen']);
     expect(screen.queryByText('Erika Beispiel gespeichert.')).toBeNull();
     expect(screen.getByText('Eigene Namen (2)')).toBeTruthy();
@@ -1191,7 +1191,7 @@ describe('FinanceClient: four groups (plan 2026-10-25-finance-groups)', () => {
   it('the own names\' message stays with the own names: another tab and back starts without it', async () => {
     const user = setupUser();
     ownNameActions.changeOwnNames.mockResolvedValue({ ok: false, error: 'invalid_input', detail: 'name_listed' });
-    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ names: ['Erika Beispiel'], canWrite: true }} />);
+    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ readAt: 0, names: ['Erika Beispiel'], canWrite: true }} />);
     await user.type(screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt'), 'Beispiel Erika');
     await user.click(screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
     expect((await screen.findByRole('alert')).textContent).toContain('steht schon in der Liste');
@@ -1210,8 +1210,8 @@ describe('FinanceClient: the own names under Einstellungen', () => {
   it('adds a name, says what it settled and shows the statement the server computed afresh', async () => {
     const user = setupUser();
     const after = view([], { businessExpenseCents: 12_345 });
-    ownNameActions.changeOwnNames.mockResolvedValue({ ok: true, value: { names: ['Erika Beispiel'], settledOwnName: 2, view: after } });
-    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ names: [], canWrite: true }} />);
+    ownNameActions.changeOwnNames.mockResolvedValue({ ok: true, value: { readAt: 1, names: ['Erika Beispiel'], settledOwnName: 2, view: after } });
+    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ readAt: 0, names: [], canWrite: true }} />);
     expect(screen.getByText(/Noch kein eigener Name hinterlegt/)).toBeTruthy();
     await user.type(screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt'), 'Erika Beispiel');
     await user.click(screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
@@ -1225,7 +1225,7 @@ describe('FinanceClient: the own names under Einstellungen', () => {
   it('a refused name says why and stays in the field; a request that never arrives says so too', async () => {
     const user = setupUser();
     ownNameActions.changeOwnNames.mockResolvedValueOnce({ ok: false, error: 'invalid_input', detail: 'name_listed' }).mockRejectedValueOnce(new Error('offline'));
-    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ names: ['Erika Beispiel'], canWrite: true }} />);
+    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ readAt: 0, names: ['Erika Beispiel'], canWrite: true }} />);
     await user.type(screen.getByLabelText('Eigener Name, wie die Bank ihn schreibt'), 'Beispiel Erika');
     await user.click(screen.getByRole('button', { name: 'Eigenen Namen hinzufügen' }));
     expect((await screen.findByRole('alert')).textContent).toContain('steht schon in der Liste');
@@ -1236,8 +1236,8 @@ describe('FinanceClient: the own names under Einstellungen', () => {
 
   it('a change whose statement could not be read afterwards keeps the change and asks for a reload', async () => {
     const user = setupUser();
-    ownNameActions.changeOwnNames.mockResolvedValue({ ok: true, value: { names: [], settledOwnName: 0, view: null } });
-    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ names: ['Erika Beispiel'], canWrite: true }} />);
+    ownNameActions.changeOwnNames.mockResolvedValue({ ok: true, value: { readAt: 1, names: [], settledOwnName: 0, view: null } });
+    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ readAt: 0, names: ['Erika Beispiel'], canWrite: true }} />);
     await user.click(screen.getByRole('button', { name: 'Erika Beispiel aus den eigenen Namen entfernen' }));
     expect(await screen.findByText(/Erika Beispiel entfernt. Die Übersicht konnte danach nicht neu gerechnet werden/)).toBeTruthy();
   });
@@ -1246,7 +1246,7 @@ describe('FinanceClient: the own names under Einstellungen', () => {
     render(<FinanceClient initial={view([])} initialTab="names" ownNames={null} />);
     expect(screen.getByRole('alert').textContent).toContain('Die eigenen Namen konnten nicht geladen werden');
     cleanup();
-    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ names: ['Erika Beispiel'], canWrite: false }} />);
+    render(<FinanceClient initial={view([])} initialTab="names" ownNames={{ readAt: 0, names: ['Erika Beispiel'], canWrite: false }} />);
     expect(screen.queryByRole('button', { name: 'Eigenen Namen hinzufügen' })).toBeNull();
     expect(screen.getByText('Erika Beispiel')).toBeTruthy();
   });

@@ -1,7 +1,8 @@
 'use client';
 
+import { comparer, reaction } from 'mobx';
 import { observer } from 'mobx-react-lite';
-import { memo, useCallback, useEffect, useId, useRef, useState, useTransition, type KeyboardEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import { receiptHref } from '@/lib/receipt-link';
 import { useRouter } from 'next/navigation';
@@ -103,7 +104,7 @@ function incomeTaxTile(view: StatementView): { label: string; value: string; hin
 }
 
 const BANK_ACTIONS: BankActions = { listBankInstitutions, startBankConsent, chooseBankConnectionAccount, syncBankNow, disconnectBank, clearBankConnectionNotice };
-const NO_BANK: BankView = { enabled: false, connections: [] };
+const NO_BANK: BankView = { readAt: 0, enabled: false, connections: [] };
 const SHARING_ACTIONS: SharingActions = { shareAccountWith, endAccountShare };
 /** The part of the payments each of their three tabs shows. */
 const PAYMENT_PARTS = { questions: ['questions'], payments: ['list'], accounts: ['accounts'] } as const;
@@ -138,9 +139,8 @@ const FinanceClient = observer(function FinanceClient({
 }) {
   const tabsId = useId();
   const router = useRouter();
-  const seed = { statement: initial, bank: bankInitial, sharing, ownNames: ownNamesInitial };
-  // One store per visit and per year: an answer for the year just left lands on its store, where nobody reads it.
-  const [store, setStore] = useState(() => new FinanceStore(seed));
+  // One store per visit: it keeps the years, so an answer lands in its own whichever is open by then.
+  const [store] = useState(() => new FinanceStore({ statement: initial, bank: bankInitial, sharing, ownNames: ownNamesInitial }));
   const view = store.statement;
   // Two levels (plan 2026-10-25-finance-groups): a group, and the tab last chosen inside each group, so going
   // to another group and back finds the tab that was open there. Without an address the page opens on the first
@@ -175,7 +175,7 @@ const FinanceClient = observer(function FinanceClient({
   // On a phone the tab row scrolls sideways; the open tab is kept in view.
   const tabRow = useRef<HTMLDivElement>(null);
   useTabInView(tabRow, tab);
-  const bankFeed = useBankFeed(store.bank ?? NO_BANK, view.year, bankActions, store.bankChanged, store.took, (url) => window.location.assign(url));
+  const bankFeed = useBankFeed(store.bank ?? NO_BANK, view.year, bankActions, store.bankChanged, store.answered, (url) => window.location.assign(url));
   const [bankNotice, setBankNotice] = useState(() => returnMessage(bankReturn));
   // The address keeps the open tab, so a reload or a shared link opens the same place. The outcome of the
   // return from the bank is shown once: the address loses it, so a reload does not repeat it. A visit
@@ -205,10 +205,10 @@ const FinanceClient = observer(function FinanceClient({
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  // A different year arrives as new props after the navigation. With it the bank, the sharing and the names
-  // are read afresh (another page may have changed them), and old messages go.
-  if (initial.year !== store.year) {
-    setStore(new FinanceStore(seed));
+  // A different year arrives as new props after the navigation, and old messages go.
+  const [seenYear, setSeenYear] = useState(initial.year);
+  if (initial.year !== seenYear) {
+    setSeenYear(initial.year);
     setSelectedId(null);
     setEditingId(null);
     setOpenLine(null);
@@ -220,8 +220,27 @@ const FinanceClient = observer(function FinanceClient({
     setNamesNotice(null);
     setBankNotice(null);
   }
-  // The same year read again takes its place too, when it is the newer one.
-  useEffect(() => store.took(initial), [store, initial]);
+  // Before the browser paints, so the figures of the last read are never seen under the new one.
+  useLayoutEffect(() => {
+    store.pageRead({ statement: initial, bank: bankInitial, sharing, ownNames: ownNamesInitial });
+  }, [store, initial, bankInitial, sharing, ownNamesInitial]);
+  // A person told a write finished sees nothing older: a statement read before it is read again.
+  useEffect(
+    () =>
+      reaction(
+        () => [store.year, store.behind ? store.writtenAt : 0],
+        ([year, writtenAt]) => {
+          if (writtenAt === 0) return;
+          const failed = () => {
+            setNotice(null);
+            setError('Die Übersicht konnte danach nicht neu gerechnet werden; bitte die Seite neu laden.');
+          };
+          getStatement(year).then((fresh) => (fresh.ok ? store.took(fresh.value) : failed()), failed);
+        },
+        { equals: comparer.structural },
+      ),
+    [store],
+  );
 
   const { queue, counts, itemsById, assetsById, openAssets, estimated, blockedBySetting } = store;
   const selected = queue.find((i) => i.itemId === selectedId) ?? queue[0] ?? null;
@@ -254,7 +273,7 @@ const FinanceClient = observer(function FinanceClient({
         setError(message(result.error, result.detail));
         return;
       }
-      store.took(result.value);
+      store.answered(result.value);
       setNotice(done);
       after?.(result.value);
     });
@@ -350,9 +369,9 @@ const FinanceClient = observer(function FinanceClient({
           setNamesError(ownNamesMessage(result.detail) ?? financeActionMessage(result.error, result.detail));
           return resolve(false);
         }
-        const { names, settledOwnName, view: next } = result.value;
-        store.namesChanged(names);
-        if (next) store.took(next);
+        const { names, readAt, settledOwnName, view: next } = result.value;
+        store.namesChanged(names, readAt);
+        if (next) store.answered(next);
         setNamesNotice(
           ('add' in change
             ? `${change.add} gespeichert.${settledOwnName > 0 ? ` ${settledOwnName} ${settledOwnName === 1 ? 'Benachrichtigung' : 'Benachrichtigungen'} erledigt: eigenes Konto.` : ''}`

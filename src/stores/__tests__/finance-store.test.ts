@@ -54,11 +54,28 @@ describe('the statement', () => {
     expect(finance.statement.businessExpenseCents).toBe(afterLink().businessExpenseCents);
   });
 
-  it('an answer of another year changes nothing', () => {
+  it('an answer of another year keeps its place there and leaves the year on screen as it is', () => {
     const finance = store();
-    finance.took({ ...fullStatement(), year: 2024, readAt: 99, businessExpenseCents: 1 });
+    finance.answered({ ...fullStatement(), year: 2024, readAt: 99, businessExpenseCents: 1 });
     expect(finance.statement.year).toBe(2025);
     expect(finance.statement.businessExpenseCents).toBe(fullStatement().businessExpenseCents);
+    finance.pageRead({ statement: { ...fullStatement(), year: 2024, readAt: 3 }, bank: null, sharing: null, ownNames: null });
+    expect(finance.statement.businessExpenseCents).toBe(1);
+  });
+
+  it('is behind when a write was answered after its read, in any year, and not when it read after that', () => {
+    const finance = store();
+    expect(finance.behind).toBe(false);
+    finance.answered({ ...fullStatement(), year: 2024, readAt: 99 });
+    expect(finance.behind).toBe(true);
+    finance.took({ ...fullStatement(), readAt: 100 });
+    expect(finance.behind).toBe(false);
+  });
+
+  it('a plain read is no write: it asks nobody to read again', () => {
+    const finance = store();
+    finance.took({ ...fullStatement(), year: 2024, readAt: 99 });
+    expect(finance.behind).toBe(false);
   });
 
   it('the same answer twice is no change: nothing reading it redraws', () => {
@@ -89,19 +106,30 @@ describe('what stands beside the statement', () => {
   it('the bank and the sharing follow their own answers and leave the statement alone', () => {
     const finance = store();
     const before = finance.statement;
-    finance.bankChanged({ enabled: true, connections: [] });
-    finance.sharingChanged({ ...sharingView, canWrite: false });
+    finance.bankChanged({ readAt: 2, enabled: true, connections: [] });
+    finance.sharingChanged({ ...sharingView, readAt: 2, canWrite: false });
     expect(finance.bank?.connections).toEqual([]);
     expect(finance.sharing?.canWrite).toBe(false);
     expect(finance.statement).toBe(before);
   });
 
+  it('a slow read cannot undo a newer answer, for the bank, the sharing and the names alike', () => {
+    const finance = store();
+    finance.bankChanged({ readAt: 5, enabled: false, connections: [] });
+    finance.sharingChanged({ ...sharingView, readAt: 5, canWrite: false });
+    finance.namesChanged(['Neu'], 5);
+    finance.pageRead({ statement: fullStatement(), bank: bankView, sharing: sharingView, ownNames: ownNamesView });
+    expect(finance.bank?.enabled).toBe(false);
+    expect(finance.sharing?.canWrite).toBe(false);
+    expect(finance.ownNames?.names).toEqual(['Neu']);
+  });
+
   it('the own names change as a list, and a page that could not read them has none to change', () => {
     const finance = store();
-    finance.namesChanged(['Neu']);
-    expect(finance.ownNames).toEqual({ names: ['Neu'], canWrite: true });
+    finance.namesChanged(['Neu'], 2);
+    expect(finance.ownNames).toEqual({ readAt: 2, names: ['Neu'], canWrite: true });
     const without = new FinanceStore({ statement: fullStatement(), bank: null, sharing: null, ownNames: null });
-    without.namesChanged(['Neu']);
+    without.namesChanged(['Neu'], 2);
     expect(without.ownNames).toBeNull();
   });
 });

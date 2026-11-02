@@ -1,8 +1,11 @@
 import { autorun } from 'mobx';
 import { describe, expect, it } from 'vitest';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
+import { NO_YEARS } from '@/lib/receipt-years';
+import type { ReviewEntry } from '@/lib/review/service';
 import { AppStore } from '../AppStore';
 import { MealsStore } from '../MealsStore';
+import { ReceiptsStore, type ReceiptsApi } from '../ReceiptsStore';
 
 const settings = {} as MealTaxSettings;
 const record = (rowId: string, o: Partial<MealRecord> = {}): MealRecord => ({ rowId, host: '', guests: [], ...o }) as MealRecord;
@@ -77,11 +80,26 @@ describe('the numbers of the navigation', () => {
     expect(app.counts?.meals).toBe(2);
   });
 
-  it('take what a page reports, and keep it when the page closes', () => {
+  it('follow the receipts page, and keep its numbers when it closes', () => {
     const app = new AppStore();
-    app.report({ review: 5 });
-    expect(app.counts).toEqual({ review: 5, meals: 0 });
-    app.stopReporting();
-    expect(app.counts?.review).toBe(5);
+    const receipts = new ReceiptsStore({ tableId: 't', years: NO_YEARS, yearCounts: { years: [], undated: 0 }, review: [{ rowId: 'a' } as ReviewEntry], openMeals: 2 }, {} as ReceiptsApi);
+    const close = app.openReceipts(receipts);
+    expect(app.counts).toEqual({ review: 1, meals: 2 });
+    app.serverCounts({ review: 9, meals: 9 });
+    expect(app.counts).toEqual({ review: 1, meals: 2 });
+    receipts.reviewReplaced([]);
+    expect(app.counts?.review).toBe(0);
+    close();
+    expect(app.receipts).toBeNull();
+    expect(app.counts).toEqual({ review: 0, meals: 2 });
+  });
+
+  it('leave a later receipts page alone when an earlier one closes late', () => {
+    const app = new AppStore();
+    const receipts = (openMeals: number) => new ReceiptsStore({ tableId: 't', years: NO_YEARS, yearCounts: { years: [], undated: 0 }, review: [], openMeals }, {} as ReceiptsApi);
+    const close = app.openReceipts(receipts(1));
+    app.openReceipts(receipts(2));
+    close();
+    expect(app.counts?.meals).toBe(2);
   });
 });

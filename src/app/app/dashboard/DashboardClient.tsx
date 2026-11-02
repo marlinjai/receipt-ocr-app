@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import Link from 'next/link';
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
+import { observer } from 'mobx-react-lite';
 import {
   DataTableProvider,
   useTable,
@@ -13,41 +13,56 @@ import {
   useTableSearch,
   FilterBar,
 } from '@marlinjai/data-table-react';
-import type { Column, ColumnType, Row, GroupConfig, FooterConfig, SubItemsConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
+import type { Column, ColumnType, FileStorageAdapter, Row, GroupConfig, FooterConfig, SubItemsConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
 import { deleteReceiptsForGood, getReceiptText, getReceiptYear, getYearCounts, searchReceiptText, setFieldOnRows } from './actions';
-import { scopeOf, setYearScope } from './year-scope';
-import { useCompleteRows } from './use-complete-rows';
 import type { YearCounts } from '@/lib/receipt-year-counts';
 import { MIN_TEXT_SEARCH_LENGTH, listColumns } from '@/lib/receipt-text';
 import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
 import DashboardPhoneActions from './DashboardPhoneActions';
 import ReceiptPhoneList from './ReceiptPhoneList';
 import { AiIcon, ExportIcon } from './dashboard-icons';
-import { useReportNavCounts } from '@/stores/provider';
+import { ReceiptsStore, type ReceiptsApi } from '@/stores/ReceiptsStore';
+import { useAppStore } from '@/stores/provider';
 import { usePhone } from '@/lib/use-phone';
 import BulkEditBar from './BulkEditBar';
 import GroupBar from './GroupBar';
-import GroupPanel from './GroupPanel';
+import GroupPanel, { type GroupPanelProps } from './GroupPanel';
 import { createReceiptGroup, moveReceiptsIntoGroup, removeReceiptsFromGroup, type GroupActionError, type GroupResult } from './group-actions';
 import AiChatSidebar from '@/components/AiChatSidebar';
 import ReceiptDetailPanel from '@/components/ReceiptDetailPanel';
 import { rereadReceipt } from '../actions';
+import { getNavCounts } from '../nav-actions';
 import { rereadNote } from '@/lib/review/reread';
-import ReviewPanel from '@/components/review/ReviewPanel';
+import ReviewPanel, { type ReviewPanelProps } from '@/components/review/ReviewPanel';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import type { ReadingField } from '@/lib/review/reading';
 import type { ReviewEntry } from '@/lib/review/service';
 import { PresignedStorageBrainAdapter } from '@/lib/presigned-file-adapter';
 import { exportCSV } from '@/lib/export-csv';
 import { isGroupRow, receiptsOnly, visibleColumns } from '@/lib/receipts-kind';
-import { inGroupOrder, type PlacedOrder } from '@/lib/groups/order';
-import { deleteWording, deletedWording, groupCellNote, groupCellValue, groupsOf, receiptsInGroup, searchWithGroupReceipts, selectionKinds } from '@/lib/groups/view';
+import { inGroupOrder } from '@/lib/groups/order';
+import { deleteWording, deletedWording, groupCellNote, groupCellValue, receiptsInGroup, searchWithGroupReceipts, selectionKinds } from '@/lib/groups/view';
 import YearFilter from './YearFilter';
 import ReceiptSearch from './ReceiptSearch';
 import { ALL_YEARS, YEAR_PARAM, filterByYears, formatYearParam, hasYearFilter, newestYear, parseYearParam, type YearSelection } from '@/lib/receipt-years';
 
 const dbAdapter = createServerActionsAdapter();
-const fileAdapter = new PresignedStorageBrainAdapter();
+const fileAdapter: FileStorageAdapter = new PresignedStorageBrainAdapter();
+// The rows are the store's. The table package is told it has none, so it never loads any: `useTable` is for the
+// table, its columns and select options, and its row functions (they work on that empty list) are not used.
+const NO_ROWS = { rows: { items: [], total: 0, hasMore: false } };
+const api: ReceiptsApi = {
+  getRows: (tableId, query) => dbAdapter.getRows(tableId, query),
+  createRow: (input) => dbAdapter.createRow(input),
+  updateRow: (rowId, cells) => dbAdapter.updateRow(rowId, cells),
+  getYearCounts,
+  getNavCounts,
+  uploadFile: (file) => fileAdapter.upload(file),
+  deleteStoredFile: (fileId) => fileAdapter.delete(fileId),
+  addFileReference: (input) => dbAdapter.addFileReference(input),
+  removeFileReference: (fileRefId) => dbAdapter.removeFileReference(fileRefId),
+};
 
 interface DashboardClientProps {
   tableId: string;
@@ -88,39 +103,56 @@ function receipts(n: number): string {
   return n === 1 ? '1 Beleg' : `${n} Belege`;
 }
 
-function DashboardContent({ tableId, openMealCount, initialReview, openRowId, initialSelection, initialCounts }: { tableId: string; openMealCount: number; initialReview: ReviewEntry[] | null; openRowId: string | null; initialSelection: YearSelection; initialCounts: YearCounts }) {
+/** The review list reads the store itself: a change to a row that leaves the list alone does not redraw it. */
+const ReviewSection = observer(function ReviewSection({ store, ...panel }: Omit<ReviewPanelProps, 'entries'> & { store: ReceiptsStore }) {
+  return <ReviewPanel entries={store.review} {...panel} />;
+});
+
+/** The group panel follows the live rows, and closes by itself when its group is gone. */
+const OpenGroupPanel = observer(function OpenGroupPanel({ store, groupId, columns, ...panel }: Omit<GroupPanelProps, 'group' | 'receipts'> & { store: ReceiptsStore; groupId: string }) {
+  const group = store.row(groupId);
+  if (!group || !isGroupRow(group, columns)) return null;
+  return <GroupPanel group={group} receipts={store.receiptsInGroup(groupId)} columns={columns} {...panel} />;
+});
+
+const DashboardContent = observer(function DashboardContent({ store, tableId, initialReview, openRowId }: { store: ReceiptsStore; tableId: string; initialReview: ReviewEntry[] | null; openRowId: string | null }) {
   const {
     table,
     columns,
-    rows: loadedRows,
-    total,
     selectOptions,
-    updateCell,
-    addRow,
     addColumn,
     updateColumn,
-    deleteColumn,
     createSelectOption,
     updateSelectOption,
     deleteSelectOption,
-    uploadFile,
-    deleteFile,
+    loadSelectOptions,
+  } = useTable({ tableId });
+  const {
+    rows,
+    receipts: receiptRows,
+    groups,
     filters,
     sorts,
-    setFilters,
-    setSorts,
-    hasMore,
-    loadMore,
-    isRowsLoading,
-    rowsError,
-    loadSelectOptions,
-    refresh,
-  } = useTable({ tableId, pageSize: 200 });
-  // The rows complete and each once, every load one after another (see `use-complete-rows.ts`). Every reload
-  // the dashboard asks for goes through `reload`, never the package's own refresh, so it cannot cross a page on
-  // its way. (A filter or sort change loads beside it, inside the package; a list that then does not add up is
-  // loaded again, at most twice per reload the dashboard asks for.)
-  const { rows, reload, settled } = useCompleteRows({ rows: loadedRows, total, hasMore, isLoading: isRowsLoading, error: rowsError, loadMore, refresh });
+    years: yearSelection,
+    yearCounts: counts,
+    totalReceipts,
+    placedOrder,
+    loading,
+    loadFailed,
+    filtersChanged,
+    sortsChanged,
+    addRow,
+    uploadFile,
+    deleteFile,
+  } = store;
+  const settled = !loading;
+  // Before the browser paints: what the store works out by the columns is never a render behind them.
+  useLayoutEffect(() => store.columnsChanged(columns), [store, columns]);
+  // A reload brings the select options too: a receipt read again can name one that is new.
+  const selectColumns = useMemo(() => columns.filter((c) => c.type === 'select' || c.type === 'multi_select'), [columns]);
+  const reload = useCallback(async () => {
+    await Promise.all([store.load(), ...selectColumns.map((c) => loadSelectOptions(c.id).catch(() => undefined))]);
+  }, [store, selectColumns, loadSelectOptions]);
 
   const {
     views,
@@ -193,47 +225,24 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     () => (searchResults ? searchWithGroupReceipts(searchResults, rows, columns) : rows),
     [searchResults, rows, columns],
   );
-  // The years chosen above the table. They narrow what every view and the export show (see `lib/receipt-years.ts`).
-  const [yearSelection, setYearSelection] = useState<YearSelection>(initialSelection);
-  const [counts, setCounts] = useState<YearCounts>(initialCounts);
+  // The years chosen above the table narrow what every view and the export show (see `lib/receipt-years.ts`).
   const changeYears = useCallback(
     (next: YearSelection) => {
-      setYearSelection(next);
       // The server loads only these years; the list is fetched again for the new choice.
-      setYearScope(scopeOf(next));
-      void reload();
+      store.yearsChanged(next);
       // Kept in the address, so a reload or a copied link shows the same years; "alle" is a choice, not a default.
       const url = new URL(window.location.href);
       url.searchParams.set(YEAR_PARAM, formatYearParam(next) || ALL_YEARS);
       window.history.replaceState(null, '', url);
     },
-    [reload],
+    [store],
   );
-  // A group's order as just placed, until the rows have been loaded again. A sort by a column decides over the places.
-  const [placedOrder, setPlacedOrder] = useState<PlacedOrder | null>(null);
+  // A sort by a column decides over the places in a group.
   const displayRows = useMemo(() => {
     const shown = filterByYears(searchedRows, columns, yearSelection);
     return sorts.length > 0 ? shown : inGroupOrder(shown, columns, placedOrder);
   }, [searchedRows, columns, yearSelection, sorts.length, placedOrder]);
-  // The chips follow the table: a receipt deleted, added or re-dated changes the rows, and the counts are asked
-  // again a moment after the rows settle (one cheap query, no row is loaded).
-  useEffect(() => {
-    let current = true;
-    const timer = setTimeout(() => {
-      getYearCounts(tableId)
-        .then((next) => current && setCounts(next))
-        .catch(() => undefined);
-    }, 600);
-    return () => {
-      current = false;
-      clearTimeout(timer);
-    };
-  }, [rows.length, tableId]);
-  const totalReceipts = useMemo(() => counts.years.reduce((sum, y) => sum + y.count, 0) + counts.undated, [counts]);
-
-  const receiptRows = useMemo(() => receiptsOnly(rows, columns), [rows, columns]);
   const displayReceiptRows = useMemo(() => receiptsOnly(displayRows, columns), [displayRows, columns]);
-  const groups = useMemo(() => groupsOf(rows, columns), [rows, columns]);
   const selection = useMemo(() => selectionKinds(selectedRows, rows, columns), [selectedRows, rows, columns]);
   const isCountedRow = useCallback((row: Row) => !isGroupRow(row, columns), [columns]);
   const holdsReceipts = useCallback((row: Row) => isGroupRow(row, columns), [columns]);
@@ -274,7 +283,6 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   }, [pendingDelete, pendingGroupIds, rows, columns]);
   const [working, setWorking] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'danger'; text: string } | null>(null);
-  const [review, setReview] = useState<ReviewEntry[]>(initialReview ?? []);
   const [reviewError, setReviewError] = useState<string | null>(
     initialReview === null ? 'Die Prüfliste konnte nicht geladen werden. Die Belege unten sind vollständig.' : null,
   );
@@ -284,17 +292,17 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
     if (ids.length > 0) setPendingDelete(ids);
   }, []);
 
-  // The dashboard knows both counts of the sidebar already: it reports them, so nothing is asked twice.
-  useReportNavCounts({ review: review.length, meals: openMealCount });
-
-  const applyReview = useCallback((result: ReviewResult<ReviewEntry[]>) => {
-    if (result.ok) {
-      setReview(result.value);
-      setReviewError(null);
-    } else {
-      setReviewError(REVIEW_ERROR[result.error]);
-    }
-  }, []);
+  const applyReview = useCallback(
+    (result: ReviewResult<ReviewEntry[]>) => {
+      if (result.ok) {
+        store.reviewReplaced(result.value);
+        setReviewError(null);
+      } else {
+        setReviewError(REVIEW_ERROR[result.error]);
+      }
+    },
+    [store],
+  );
 
   const reloadReview = useCallback(async () => {
     try {
@@ -336,12 +344,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       const gone = new Set(outcome.deleted);
       setSelectedRows((current) => new Set([...current].filter((id) => !gone.has(id))));
       setDetailRow((current) => (current && gone.has(current.id) ? null : current));
-      // The list drops them at once; the reload below then brings what the server says.
-      setReview((list) =>
-        list
-          .filter((entry) => !gone.has(entry.rowId))
-          .map((entry) => ({ ...entry, duplicates: entry.duplicates.filter((d) => !gone.has(d.rowId)) })),
-      );
+      // The lists drop them at once; the reload below then brings what the server says.
+      store.rowsRemoved(gone);
       setGroupPanelId((current) => (current && gone.has(current) ? null : current));
       const fileKept = outcome.kept.filter((k) => k.reason === 'file_delete_failed').length;
       const failed = outcome.kept.filter((k) => k.reason === 'failed').length;
@@ -367,7 +371,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         setReviewError('Die Ansicht konnte nicht neu geladen werden. Bitte die Seite neu laden.');
       }
     }
-  }, [pendingDelete, pendingGroupIds, working, reload, reloadReview]);
+  }, [store, pendingDelete, pendingGroupIds, working, reload, reloadReview]);
 
   // --- Groups ---
 
@@ -411,7 +415,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
 
   const moveIntoGroup = useCallback(
     async (groupId: string, rowIds: string[], order?: string[]) => {
-      if (order) setPlacedOrder({ groupId, order });
+      if (order) store.orderPlaced({ groupId, order });
       let joined = 0;
       const ok = await runGroupAction(
         () => moveReceiptsIntoGroup(groupId, rowIds, order),
@@ -421,11 +425,11 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           return order ? null : 'Die Belege liegen schon in dieser Gruppe.';
         },
       );
-      setPlacedOrder(null);
+      store.orderPlaced(null);
       // Receipts that only changed places stay selected, so they can be moved again.
       if (ok && (joined > 0 || !order)) setSelectedRows(new Set());
     },
-    [runGroupAction],
+    [store, runGroupAction],
   );
 
   const takeOutOfGroup = useCallback(
@@ -449,11 +453,12 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   // path, a lost session) must not look saved: say so and show what is stored.
   const saveCell = useCallback(
     (rowId: string, columnId: string, value: CellValue) => {
-      updateCell(rowId, columnId, value)
+      store
+        .updateCell(rowId, columnId, value)
         .then((row) => {
           // A corrected invoice number made the receipt one that was there already: the app archived it into
           // the more complete one (plan 2026-10-29-invoice-number-duplicates). The table and the list follow.
-          const mergedOther = (row as { mergedOther?: boolean } | undefined)?.mergedOther === true;
+          const mergedOther = row?.mergedOther === true;
           if (!row?.archived && !mergedOther) return;
           if (mergedOther) {
             // Another receipt with the same invoice number went into this one: it left the table.
@@ -474,7 +479,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           void reload();
         });
     },
-    [updateCell, reload, reloadReview],
+    [store, reload, reloadReview],
   );
 
   // The Zuordnung set from "Belege prüfen" or the opened receipt: the receipt leaves the
@@ -485,7 +490,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       if (!assignmentColumn || working) return false;
       setWorking(true);
       try {
-        const row = await updateCell(rowId, assignmentColumn.id, optionId);
+        const row = await store.updateCell(rowId, assignmentColumn.id, optionId);
         await reloadReview();
         // A receipt a vendor rule or an asset governs keeps its Zuordnung: the server answers with the
         // stored value, and that is not a saved choice.
@@ -504,8 +509,40 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         setWorking(false);
       }
     },
-    [assignmentColumn, working, updateCell, reloadReview, reload],
+    [store, assignmentColumn, working, reloadReview, reload],
   );
+
+  const openReviewed = useCallback(
+    (rowId: string) => {
+      const row = store.row(rowId);
+      // Not among the loaded rows: its year is added to the years shown and it opens when it arrives.
+      if (row) setDetailRow(row);
+      else setPendingOpenId(rowId);
+    },
+    [store],
+  );
+  const confirmReviewed = useCallback((rowId: string) => void runReviewAction(() => confirmReceiptChecked(rowId)), [runReviewAction]);
+  const keepBothReviewed = useCallback((rowId: string, otherRowId: string) => void runReviewAction(() => keepBothLookAlikes(rowId, otherRowId)), [runReviewAction]);
+  const setReviewedAssignment = useCallback((rowId: string, optionId: string) => void setAssignment(rowId, optionId), [setAssignment]);
+  const takeReading = useCallback(
+    (rowId: string, fields: ReadingField[]) =>
+      void runReviewAction(async () => {
+        const result = await takeNewReading(rowId, fields);
+        // The table shows the receipt with its new values.
+        if (result.ok) await reload();
+        return result;
+      }),
+    [runReviewAction, reload],
+  );
+  const assignmentOptions = useMemo(() => (assignmentColumn ? (selectOptions.get(assignmentColumn.id) ?? []) : []), [assignmentColumn, selectOptions]);
+  const openGroup = useCallback((row: Row) => setGroupPanelId(row.id), []);
+
+  // An export is taken for a whole, so it never goes out partial: it says why instead.
+  const exportShown = () => {
+    if (store.complete) exportCSV({ columns, rows: displayRows });
+    else if (loading) setNotice({ tone: 'warn', text: 'Die Belege werden noch geladen. Der Export ist möglich, sobald alle da sind.' });
+    else setNotice({ tone: 'warn', text: 'Die Belege konnten nicht vollständig geladen werden. Exportiert wird nichts, bis die Liste vollständig ist. Bitte die Seite neu laden.' });
+  };
 
   // Which groups are folded is kept with the view, like its folded sections, so a reload shows the same table.
   const subItemsConfig = useMemo<SubItemsConfig>(
@@ -565,10 +602,10 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   }, []);
   // Only a list that is all there can say that a receipt is not in it. A list that failed to load says so in
   // its banner, and the link waits for the next reload instead of calling the receipt deleted.
-  const listComplete = settled && !rowsError && columns.length > 0;
+  const listComplete = settled && !loadFailed && columns.length > 0;
   // Opening the row, or saying it is gone, happens while rendering; only the year lookup is an effect.
   if (pendingOpenId) {
-    const row = rows.find((r) => r.id === pendingOpenId);
+    const row = store.row(pendingOpenId);
     if (row) {
       setPendingOpenId(null);
       if (isGroupRow(row, columns)) setGroupPanelId(row.id);
@@ -579,7 +616,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   }
   useEffect(() => {
     if (!pendingOpenId || !listComplete || widenedFor === pendingOpenId) return;
-    if (rows.some((r) => r.id === pendingOpenId)) return;
+    if (store.row(pendingOpenId)) return;
     if (yearAskedFor.current === pendingOpenId) return;
     yearAskedFor.current = pendingOpenId;
     const wanted = pendingOpenId;
@@ -600,7 +637,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         setWidenedFor(wanted);
         gone();
       });
-  }, [pendingOpenId, rows, listComplete, widenedFor, yearSelection, changeYears, gone]);
+  }, [store, pendingOpenId, rows, listComplete, widenedFor, yearSelection, changeYears, gone]);
 
   // Load select options for all select columns
   useEffect(() => {
@@ -610,10 +647,6 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
   }, [columns, loadSelectOptions]);
 
   if (!table) return <div className="p-8 text-center text-gray-500">Loading table...</div>;
-
-  // Re-resolved from the live rows: the panel closes by itself when its group is gone.
-  const groupPanelRow = groupPanelId ? rows.find((r) => r.id === groupPanelId) : undefined;
-  const groupPanel = groupPanelRow && isGroupRow(groupPanelRow, columns) ? groupPanelRow : null;
 
   const statusColumn = columns.find((c) => c.name === 'Status');
   const dateColumn = columns.find((c) => c.name === 'Date');
@@ -631,7 +664,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
               showEmptyGroups: true,
             }}
             onCellChange={saveCell}
-            onAddRow={(cells) => addRow({ cells })}
+            onAddRow={(cells) => addRow(cells)}
             onDeleteRow={deleteOne}
             onCreateSelectOption={createSelectOption}
             onUpdateSelectOption={updateSelectOption}
@@ -659,10 +692,10 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
               columns={columns}
               selectOptions={selectOptions}
               loading={!settled}
-              failed={Boolean(rowsError)}
+              failed={loadFailed}
               narrowed={Boolean(trimmedTerm) || filters.length > 0 || hasYearFilter(yearSelection)}
               onOpenReceipt={setDetailRow}
-              onOpenGroup={(row) => setGroupPanelId(row.id)}
+              onOpenGroup={openGroup}
             />
           );
         }
@@ -714,8 +747,8 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
             onSelectionChange={setSelectedRows}
             onActiveRowChange={setActiveRowId}
             sorts={sorts}
-            onSortChange={setSorts}
-            isLoading={isRowsLoading}
+            onSortChange={sortsChanged}
+            isLoading={loading}
             groupConfig={currentView?.config?.groupConfig as GroupConfig | undefined}
             onGroupConfigChange={(config) => {
               if (currentView) {
@@ -755,7 +788,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       <div className="px-4 pt-4 pb-2 sm:px-6 sm:pt-6" style={{ background: 'rgba(10, 10, 15, 0.4)' }}>
         <DashboardPhoneActions
           title="Belege"
-          onExport={() => exportCSV({ columns, rows: displayRows })}
+          onExport={exportShown}
           onToggleAi={() => setAiSidebarOpen((v) => !v)}
         />
         <div className="mb-1 hidden items-center justify-between sm:flex">
@@ -763,7 +796,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
             Belege
           </h1>
           <div className="flex items-center gap-2">
-            <button type="button" className="ui-btn" onClick={() => exportCSV({ columns, rows: displayRows })}>
+            <button type="button" className="ui-btn" onClick={exportShown}>
               <ExportIcon />
               Als CSV exportieren
             </button>
@@ -841,7 +874,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
 
       {/* A list that failed to load is said for as long as it is so: its counts and sums are of the rows shown,
           and nothing is asked again by itself. The next reload (a year chip, an action, the page) starts over. */}
-      {rowsError && (
+      {loadFailed && (
         <p role="alert" className="ui-note ui-note-danger mx-4 mt-3">
           Die Belege konnten nicht vollständig geladen werden. Anzahl und Summen gelten nur für die gezeigten Zeilen. Bitte die Seite neu laden.
         </p>
@@ -856,29 +889,17 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         </p>
       )}
 
-      <ReviewPanel
-        entries={review}
+      <ReviewSection
+        store={store}
         busy={working}
         error={reviewError}
-        onOpen={(rowId) => {
-          const row = rows.find((r) => r.id === rowId);
-          // Not among the loaded rows: its year is added to the years shown and it opens when it arrives.
-          if (row) setDetailRow(row);
-          else setPendingOpenId(rowId);
-        }}
-        onConfirm={(rowId) => void runReviewAction(() => confirmReceiptChecked(rowId))}
-        onKeepBoth={(rowId, otherRowId) => void runReviewAction(() => keepBothLookAlikes(rowId, otherRowId))}
+        onOpen={openReviewed}
+        onConfirm={confirmReviewed}
+        onKeepBoth={keepBothReviewed}
         onDelete={deleteOne}
-        assignmentOptions={assignmentColumn ? (selectOptions.get(assignmentColumn.id) ?? []) : []}
-        onSetAssignment={(rowId, optionId) => void setAssignment(rowId, optionId)}
-        onTakeReading={(rowId, fields) =>
-          void runReviewAction(async () => {
-            const result = await takeNewReading(rowId, fields);
-            // The table shows the receipt with its new values.
-            if (result.ok) await reload();
-            return result;
-          })
-        }
+        assignmentOptions={assignmentOptions}
+        onSetAssignment={setReviewedAssignment}
+        onTakeReading={takeReading}
       />
 
       <ConfirmDialog
@@ -938,7 +959,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
           columns={tableColumns}
           filters={filters}
           selectOptions={selectOptions}
-          onFiltersChange={setFilters}
+          onFiltersChange={filtersChanged}
           bare
         />
         <YearFilter
@@ -963,7 +984,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         <ReceiptDetailPanel
           // One panel per receipt: the text of the previous receipt must never show while the next one loads.
           key={detailRow.id}
-          row={rows.find((r) => r.id === detailRow.id) ?? detailRow}
+          row={store.row(detailRow.id) ?? detailRow}
           columns={columns}
           selectOptions={selectOptions}
           onClose={() => setDetailRow(null)}
@@ -993,10 +1014,10 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
       )}
 
       {/* A group opens its own small panel: its receipts, their sum, take one out, dissolve it. */}
-      {groupPanel && (
-        <GroupPanel
-          group={groupPanel}
-          receipts={receiptsInGroup(groupPanel.id, rows, columns)}
+      {groupPanelId && (
+        <OpenGroupPanel
+          store={store}
+          groupId={groupPanelId}
           columns={columns}
           busy={working}
           onClose={() => setGroupPanelId(null)}
@@ -1005,7 +1026,7 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
             setDetailRow(row);
           }}
           onTakeOut={(rowId) => void takeOutOfGroup([rowId])}
-          onDissolve={() => requestDelete([groupPanel.id])}
+          onDissolve={() => requestDelete([groupPanelId])}
         />
       )}
 
@@ -1018,29 +1039,32 @@ function DashboardContent({ tableId, openMealCount, initialReview, openRowId, in
         loadText={getReceiptText}
         selectOptions={selectOptions}
         onCellChange={saveCell}
-        onAddRow={async (cells?: Record<string, CellValue>) => { await addRow({ cells }); }}
+        onAddRow={async (cells?: Record<string, CellValue>) => { await addRow(cells); }}
         onDeleteRow={deleteOne}
         onCreateSelectOption={(params) => createSelectOption(params.columnId, params.name, params.color)}
         tableId={tableId}
       />
     </div>
   );
+});
+
+/** The table opens on the year the address names, "alle", or the newest year that has receipts. */
+function openingYears(initialYears: string | null, yearCounts: YearCounts): YearSelection {
+  const named = parseYearParam(initialYears);
+  const all = initialYears?.trim().toLowerCase() === ALL_YEARS;
+  const newest = newestYear(yearCounts.years);
+  return hasYearFilter(named) || all || newest === null ? named : { years: new Set([newest]), undated: false };
 }
 
 export default function DashboardClient({ tableId, workspaceId, openMealCount, initialReview, openRowId, initialYears, yearCounts }: DashboardClientProps) {
-  // The table opens on the year the address names, "alle", or the newest year that has receipts. The scope is
-  // set before the table first asks for rows, so the first request is already narrowed.
-  const [initialSelection] = useState<YearSelection>(() => {
-    const named = parseYearParam(initialYears);
-    const all = initialYears?.trim().toLowerCase() === ALL_YEARS;
-    const newest = newestYear(yearCounts.years);
-    const selection: YearSelection = hasYearFilter(named) || all || newest === null ? named : { years: new Set([newest]), undated: false };
-    setYearScope(scopeOf(selection));
-    return selection;
-  });
+  // One store per visit: the server sent fresh numbers, and the first request for rows is already narrowed.
+  const [store] = useState(() => new ReceiptsStore({ tableId, years: openingYears(initialYears, yearCounts), yearCounts, review: initialReview, openMeals: openMealCount }, api));
+  const app = useAppStore();
+  useEffect(() => app.openReceipts(store), [app, store]);
+  useEffect(() => store.open(), [store]);
   return (
-    <DataTableProvider dbAdapter={dbAdapter} fileAdapter={fileAdapter} workspaceId={workspaceId}>
-      <DashboardContent tableId={tableId} openMealCount={openMealCount} initialReview={initialReview} openRowId={openRowId} initialSelection={initialSelection} initialCounts={yearCounts} />
+    <DataTableProvider dbAdapter={dbAdapter} fileAdapter={fileAdapter} workspaceId={workspaceId} initialData={NO_ROWS}>
+      <DashboardContent store={store} tableId={tableId} initialReview={initialReview} openRowId={openRowId} />
     </DataTableProvider>
   );
 }

@@ -3,6 +3,7 @@ import type { NavCounts } from '@/app/app/nav-actions';
 import { ChecksOutbox, type Refusal } from './ChecksOutbox';
 import type { ChecksStore } from './ChecksStore';
 import type { MealsStore } from './MealsStore';
+import type { ReceiptsStore } from './ReceiptsStore';
 
 /**
  * What the whole app shares on the client, for one company: the store of each
@@ -16,22 +17,21 @@ import type { MealsStore } from './MealsStore';
 export class AppStore {
   meals: MealsStore | null = null;
   checks: ChecksStore | null = null;
+  receipts: ReceiptsStore | null = null;
   /** The writes and refusals of the receipt checks: they outlive a visit of the panel. */
   readonly checkOutbox = new ChecksOutbox();
   private fromServer: NavCounts | null = null;
-  /** Numbers a page reports while it is open, for domains without a store yet. */
-  private reported: Partial<NavCounts> = {};
 
   constructor() {
-    makeAutoObservable<AppStore, 'fromServer' | 'reported'>(this, { meals: observable.ref, checks: observable.ref, checkOutbox: false, fromServer: observable.ref, reported: observable.ref, counts: computed.struct }, { autoBind: true });
+    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, fromServer: observable.ref, counts: computed.struct }, { autoBind: true });
   }
 
   get counts(): NavCounts | null {
-    const known = this.fromServer !== null || this.meals !== null || Object.keys(this.reported).length > 0;
+    const known = this.fromServer !== null || this.meals !== null || this.receipts !== null;
     if (!known) return null;
     return {
-      review: this.reported.review ?? this.fromServer?.review ?? 0,
-      meals: this.meals?.queue.length ?? this.reported.meals ?? this.fromServer?.meals ?? 0,
+      review: this.receipts?.reviewCount ?? this.fromServer?.review ?? 0,
+      meals: this.meals?.queue.length ?? this.receipts?.openMeals ?? this.fromServer?.meals ?? 0,
     };
   }
 
@@ -70,13 +70,15 @@ export class AppStore {
     this.checkOutbox.open = null;
   }
 
-  report(numbers: Partial<NavCounts>): void {
-    this.reported = { ...this.reported, ...numbers };
+  /** The receipts page opened. The return is for when it closes: its last numbers stay until the server says otherwise. */
+  openReceipts(receipts: ReceiptsStore): () => void {
+    this.receipts = receipts;
+    return () => this.closeReceipts(receipts);
   }
 
-  /** The reporting page closed. What it reported stays, as the last word, until the server's next answer. */
-  stopReporting(): void {
+  private closeReceipts(receipts: ReceiptsStore): void {
+    if (this.receipts !== receipts) return;
     this.fromServer = this.counts;
-    this.reported = {};
+    this.receipts = null;
   }
 }

@@ -216,6 +216,10 @@ every private purchase") for the past. Decided by the coordinating session, say 
   632 payments "Nicht auffindbar" that the app itself rates private or own account, because
   `treatments` leaves out what the app only proposes. Those 632 answers were corrected on the
   database the same night, and closing now reads the rating too.
+- Of the 259 links, 2 cross a year: the Telekom bills of 16 December 2024 and 2025, paid on 2
+  January. A link makes the paid day count, which is how the owner said 2025 was filed, and for
+  2025 the two cancel out. Mail sweep: 17 of 20 found invoices uploaded (14 new, 3 already there);
+  3 are billed to another household member and stayed out, per the rules of the 2025 import.
 - Answers are the ordinary "no receipt" answers: taken back one by one, or all at once on the
   database by deleting the rows with these two reasons.
 - Notion is not a source: its expense table ends in 2024 (one row of 2025) and those documents are

@@ -258,7 +258,7 @@ Result, measured the same way:
   is a walk over the row list, so splitting it further would be for its own sake.
 - In development React runs effects twice, so `useRows` reads one page into its unused list.
   It is not in a production build and nothing reads that list.
-### Slice 4, the finance tabs (2026-11-01)
+### Slice 4, the finance tabs (2026-11-02)
 
 What is there, read from the code before moving anything. The about 126 `useState` calls are nearly all form
 fields, and they stay. There is exactly one copy of the year: `view`, a whole `StatementView`, in `FinanceClient`;

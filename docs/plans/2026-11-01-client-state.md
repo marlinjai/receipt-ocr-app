@@ -180,17 +180,16 @@ Decided:
   `initialData` with an empty list keeps `useRows` from loading, and `useTable` stays for the
   table, columns, select options and views. Two of its functions read its own rows and would go
   wrong on an empty list (`uploadFile` would overwrite a cell's files, `deleteFile` would do
-  nothing), so the store does those two, in the same order as the package. A `rows` option on
-  `useTable` would be the nicer interface, but this app would then wait for a version that is not
-  published, and CI would stay red until then.
+  nothing), so the store does those two. An upload stores its reference before it writes the
+  cell, the other way round from the package: the adapter ignores a file cell and answers with its
+  file table, so only this order shows the upload at once, with the server's id to delete it by.
+  A `rows` option on `useTable` would be the nicer interface, but no page needs it now.
 - **A reload keeps the objects of rows that did not change,** so the page only redraws what
   changed. It swaps the list when all pages are in, so a reload no longer shrinks the table. A
   change of years, filters or sorts still fills the list page by page, because waiting for
   thousands of rows on an empty table would be worse.
 - **Rows redraw by record** takes one package change, internal and without a new prop: a memoized
-  row in `TableView` (branch `feat/rows-redraw-by-record`, version 0.12.0, not published). The app
-  works on 0.11.0 and gains the wide table's redraw with the version bump; the phone list and
-  the store prove theirs here.
+  row in `TableView`, published as version 0.12.0, which this app now depends on.
 - **Stays with the page, because only that view cares:** the search term and its hits, selection,
   the focused row, the open panels, the delete question, notices, `working`, the review list's
   error text, and the way a linked receipt is opened.
@@ -202,14 +201,18 @@ Decided:
   `useReportNavCounts`, `AppStore.report` and `stopReporting` go.
 - **Not optimistic yet.** Cells keep waiting for the server's answer, as they do today and as the
   meals do: rule 4 of the proposal needs server actions that return only what changed, which the
-  group and review actions do not. A row saved while a load is on its way is kept over that load's
-  older copy, so a late read never overwrites a newer write.
+  group and review actions do not. A row added or saved while a load is on its way is kept over
+  what that load read, also when it did not read the row, so a late read never overwrites a newer
+  write.
+- **An export is never partial.** It goes out only when `complete` says the whole list is here:
+  nothing loading, nothing failed, and the rows add up to the server's count. Otherwise both
+  buttons say why, in the page.
 
 Result, measured the same way:
 
 - One record changing draws its 20 cells instead of 5,340, and a reload that changes nothing draws
-  none, once the app is on package 0.12.0 (test `row-redraw.test.tsx` there). Until the bump the
-  wide table draws as it did; the store already keeps the objects it needs.
+  none (test `row-redraw.test.tsx` in the package; here, a saved cell changes that row's part of
+  the page and no other, on the published package).
 - The phone list redraws by card (`ReceiptPhoneList.redraw.test.tsx`), the review list and the
   open group read the store themselves.
 - `use-complete-rows.ts`, `year-scope.ts`, `useReportNavCounts` and `AppStore.report` are gone. A

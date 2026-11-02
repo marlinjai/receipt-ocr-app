@@ -64,6 +64,7 @@ function pageData(over: Partial<MealsPageData> = {}): MealsPageData {
     records: [],
     contacts: [guest('p1', 'Beispiel Person'), guest('p2', 'Archivierte Person', true)],
     organizationCount: 2,
+    readAt: 0,
     settings: { smallBusiness: null, hostNameThreshold: 250 } as unknown as MealsPageData['settings'],
     defaultHost: '',
     ...over,

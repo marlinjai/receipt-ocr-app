@@ -9,6 +9,7 @@ import type { IncompleteEntry } from '@/lib/meals/register';
 import { mealStatus } from '@/lib/meals/rules';
 import { pruneSelection, selectAllState, toggleAll, toggleSelected } from '@/lib/meals/selection';
 import type { MealGuestEntry, MealRecord, MealTaxSettings } from '@/lib/meals/types';
+import type { MealsStore } from '@/stores/MealsStore';
 import MealEditor from './MealEditor';
 import { useDiscardGuard } from './useDiscardGuard';
 import { useReceiptActions } from './useReceiptActions';
@@ -18,11 +19,13 @@ interface QueueTabProps {
   contacts: Contact[];
   settings: MealTaxSettings;
   defaultHost: string;
-  onRecordSaved: (record: MealRecord) => void;
-  /** Records changed by a list action (now "Keine Bewirtung"). */
-  onRecordsSaved: (records: MealRecord[]) => void;
-  /** Receipts that no longer exist. */
-  onRecordsRemoved: (rowIds: string[]) => void;
+  onRecordSaved: (record: MealRecord, at: number) => void;
+  /** A stored receipt rotation changes the record too. */
+  onRecordsSaved: (records: MealRecord[], at: number) => void;
+  /** Where a list action shows at once. */
+  writes: MealsStore;
+  /** Takes the focus when a row leaves with the button that was pressed. */
+  focusHome: RefObject<HTMLElement | null>;
   onContactCreated: (contact: Contact) => void;
   onOpenRegister: () => void;
   /** Told which entry has unsaved changes in the form (as it reads in a sentence), or null. */
@@ -68,7 +71,7 @@ interface QueueRowActions {
  * ref that always holds the latest ones, and `missing` follows from the record.
  */
 const QueueRow = memo(
-  function QueueRow({ record, missing, isOpen, isChecked, busy, actions }: { record: MealRecord; missing: IncompleteEntry['missing']; isOpen: boolean; isChecked: boolean; busy: boolean; actions: RefObject<QueueRowActions | null> }) {
+  function QueueRow({ record, missing, isOpen, isChecked, actions }: { record: MealRecord; missing: IncompleteEntry['missing']; isOpen: boolean; isChecked: boolean; actions: RefObject<QueueRowActions | null> }) {
     const name = entryLabel(record);
     const spoken = `${name}, ${formatDay(record.date)}`;
     return (
@@ -76,7 +79,6 @@ const QueueRow = memo(
         <Checkbox
           className="ui-row-above row-span-2 self-center"
           checked={isChecked}
-          disabled={busy}
           onChange={() => actions.current?.toggle(record.rowId)}
           label={`${spoken} auswählen`}
           hideLabel
@@ -112,7 +114,6 @@ const QueueRow = memo(
             <button
               type="button"
               className="ui-btn ui-btn-sm ui-btn-ghost px-2 text-xs"
-              disabled={busy}
               aria-label={`Keine Bewirtung: ${spoken}`}
               onClick={() => actions.current?.notMeal(record)}
             >
@@ -121,7 +122,6 @@ const QueueRow = memo(
             <button
               type="button"
               className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-danger ui-btn-icon"
-              disabled={busy}
               aria-label={`Löschen: ${spoken}`}
               title="Löschen"
               onClick={() => actions.current?.remove(record)}
@@ -133,7 +133,7 @@ const QueueRow = memo(
       </li>
     );
   },
-  (a, b) => a.record === b.record && a.isOpen === b.isOpen && a.isChecked === b.isChecked && a.busy === b.busy,
+  (a, b) => a.record === b.record && a.isOpen === b.isOpen && a.isChecked === b.isChecked,
 );
 
 /**
@@ -158,7 +158,8 @@ export default function QueueTab({
   defaultHost,
   onRecordSaved,
   onRecordsSaved,
-  onRecordsRemoved,
+  writes,
+  focusHome,
   onContactCreated,
   onOpenRegister,
   onUnsavedChange,
@@ -169,7 +170,7 @@ export default function QueueTab({
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   // The host typed on one receipt is offered on the next, even before anything was saved.
   const [sessionHost, setSessionHost] = useState('');
-  const actions = useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint: DISMISSED_HINT });
+  const actions = useReceiptActions({ writes, focusHome, dismissedHint: DISMISSED_HINT });
 
   const queueIds = useMemo(() => queue.map((e) => e.record.rowId), [queue]);
   // Derived on every render: an entry that left the queue can never stay checked.
@@ -180,7 +181,6 @@ export default function QueueTab({
   );
   const allState = selectAllState(checked, queueIds);
   const opened = queue.find((e) => e.record.rowId === openId) ?? queue[0] ?? null;
-  const busy = actions.busy;
 
   // What was typed into the open form and not saved is never dropped without
   // asking: not by opening another entry, and not by an action on this one.
@@ -237,7 +237,6 @@ export default function QueueTab({
             className="-ml-[0.6875rem]"
             checked={allState === 'all'}
             indeterminate={allState === 'some'}
-            disabled={busy}
             onChange={() => setCheckedIds(toggleAll(checked, queueIds))}
             label="Alle auswählen"
           />
@@ -260,7 +259,7 @@ export default function QueueTab({
         <nav aria-label="Offene Bewirtungen">
           <ul className="ui-scroll max-h-[46svh] space-y-1.5 pr-1 lg:max-h-[calc(100svh-9rem)]">
             {queue.map(({ record, missing }) => (
-              <QueueRow key={record.rowId} record={record} missing={missing} isOpen={opened?.record.rowId === record.rowId} isChecked={checked.has(record.rowId)} busy={busy} actions={rowActions} />
+              <QueueRow key={record.rowId} record={record} missing={missing} isOpen={opened?.record.rowId === record.rowId} isChecked={checked.has(record.rowId)} actions={rowActions} />
             ))}
           </ul>
         </nav>
@@ -283,7 +282,6 @@ export default function QueueTab({
               <button
                 type="button"
                 className="ui-btn ui-btn-sm whitespace-nowrap"
-                disabled={busy}
                 onClick={() => afterDiscardIfOpen(checkedRecords, () => actions.markNotMeal(checkedRecords, { confirm: true }))}
               >
                 Keine Bewirtung
@@ -291,7 +289,6 @@ export default function QueueTab({
               <button
                 type="button"
                 className="ui-btn ui-btn-sm ui-btn-danger"
-                disabled={busy}
                 onClick={() => afterDiscardIfOpen(checkedRecords, () => actions.requestDelete(checkedRecords))}
               >
                 Löschen
@@ -299,7 +296,6 @@ export default function QueueTab({
               <button
                 type="button"
                 className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-icon"
-                disabled={busy}
                 aria-label="Auswahl aufheben"
                 title="Auswahl aufheben"
                 onClick={() => setCheckedIds(new Set())}
@@ -325,7 +321,7 @@ export default function QueueTab({
           onContactCreated={onContactCreated}
           onRecordsSaved={onRecordsSaved}
           onDirtyChange={onFormDirty}
-          onSaved={(record) => {
+          onSaved={(record, _changed, at) => {
             if (record.guests.length > 0) setPreviousGuests(record.guests);
             const stillOpen = mealStatus(record).kind === 'incomplete';
             const label = record.vendor || record.name || 'Beleg';
@@ -336,7 +332,7 @@ export default function QueueTab({
               const next = queue[index + 1] ?? queue.find((e) => e.record.rowId !== record.rowId) ?? null;
               setOpenId(next ? next.record.rowId : null);
             }
-            onRecordSaved(record);
+            onRecordSaved(record, at);
           }}
         />
       )}

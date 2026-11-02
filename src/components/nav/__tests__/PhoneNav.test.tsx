@@ -14,7 +14,7 @@ vi.mock('@/app/app/spending/PushSession', () => ({ SignOutLink: ({ children, hre
 const session = { email: 'owner@example.test' } as never;
 const phoneNav = () =>
   render(
-    <AppStoreProvider>
+    <AppStoreProvider company="Beispiel GmbH">
       <PhoneNav session={session} logoutUrl="/logout" />
     </AppStoreProvider>,
   );

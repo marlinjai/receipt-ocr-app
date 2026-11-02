@@ -16,11 +16,13 @@ const NOTICE_LIFETIME_MS = 8000;
  * The outcome of the last list action, shown in the dock at the bottom edge
  * so it does not move the page.
  *
- * It takes the focus when it appears: the button that started the action is
- * usually gone by then (its entry left the list, or the batch bar closed),
- * and without this the focus would fall back to the top of the page. A
- * failure is announced as an alert and stays until it is closed. Anything
- * else leaves on its own, but never while the focus is still on it.
+ * It takes the focus when nothing else holds it: the button that started the
+ * action is usually gone by then (its entry left the list, or the batch bar
+ * closed), and without this the focus would fall back to the top of the page.
+ * An answer can come while the person is on another row or typing in a form, and
+ * then the focus stays there: the notice is announced either way. A failure is
+ * announced as an alert and stays until it is closed. Anything else leaves on its
+ * own, but never while the focus is still on it.
  */
 export default function ActionNotice(props: { notice: ActionNoticeState; onDismiss: () => void }) {
   return (
@@ -30,6 +32,13 @@ export default function ActionNotice(props: { notice: ActionNoticeState; onDismi
   );
 }
 
+/** Is the person working somewhere? The body and a heading kept as a place for the focus are nobody's work. */
+function focusInUse(): boolean {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement) || active === document.body) return false;
+  return active.tabIndex !== -1 || active.matches('input, textarea, select, button, a, [contenteditable]');
+}
+
 /** Mounts only once it is inside the dock, so its focus effect finds its element in the document. */
 function NoticeCard({ notice, onDismiss }: { notice: ActionNoticeState; onDismiss: () => void }) {
   const cardRef = useRef<HTMLDivElement>(null);
@@ -37,7 +46,7 @@ function NoticeCard({ notice, onDismiss }: { notice: ActionNoticeState; onDismis
   const expired = useRef(false);
 
   useEffect(() => {
-    textRef.current?.focus();
+    if (!focusInUse()) textRef.current?.focus();
   }, []);
 
   useEffect(() => {

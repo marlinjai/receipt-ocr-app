@@ -364,8 +364,8 @@ export class ReceiptsStore {
     if (asked === this.yearsAsked && yearCounts) this.yearCountsAnswered(yearCounts);
   }
 
-  /** Apart from the year chips: a new question for those must not drop an answer on its way for this. */
-  private async askOpenMeals(): Promise<void> {
+  /** Apart from the year chips: a new question for those must not drop an answer on its way for this. Also asked when a meal write ends here. */
+  async askOpenMeals(): Promise<void> {
     this.mealsAsked += 1;
     const asked = this.mealsAsked;
     const nav = await this.api.getNavCounts().catch(() => null);

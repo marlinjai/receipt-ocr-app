@@ -40,7 +40,7 @@ vi.mock('../workspace-actions', () => ({ switchWorkspace: (...a: unknown[]) => s
 vi.mock('@/lib/upload/browser-deps', () => ({ createBrowserDeps: () => ({}) }));
 vi.mock('./take-over-mail', async (orig) => ({ ...(await orig<typeof import('./take-over-mail')>()), takeOverMail: (...a: unknown[]) => takeOverMail(...a) }));
 
-import CheckRefusals from '@/components/CheckRefusals';
+import Refusals from '@/components/Refusals';
 import { AppStore } from '@/stores/AppStore';
 import { AppStoreContext } from '@/stores/provider';
 import ReceiptChecks, { checksActionMessage, runSummary } from './ReceiptChecks';
@@ -465,7 +465,7 @@ describe('a refusal reaches the person', () => {
   const shell = (store: AppStore, initial: ChecksView | null) => (
     <AppStoreContext.Provider value={store}>
       {initial && <ReceiptChecks initial={initial} focusPaymentId={null} />}
-      <CheckRefusals />
+      <Refusals />
     </AppStoreContext.Provider>
   );
   const later = <T,>() => {

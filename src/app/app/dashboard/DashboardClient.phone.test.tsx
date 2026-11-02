@@ -94,6 +94,8 @@ const cardLabels = () => within(screen.getByRole('list', { name: 'Belege' })).ge
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/app/dashboard');
+  // The table scrolls its active cell into view a frame after it draws, and jsdom has no such method.
+  Element.prototype.scrollIntoView = vi.fn();
 });
 afterEach(() => {
   cleanup();
@@ -169,5 +171,14 @@ describe('the dashboard on a wide screen', () => {
     const row = tabRowWrapper();
     expect(row && within(row).getByRole('button', { name: /Board/ })).toBeTruthy();
     expect(screen.getByLabelText('Ansicht').parentElement?.className).toContain('sm:hidden');
+  });
+
+  it('scrolls its active cell into view a frame later, which jsdom cannot do by itself', async () => {
+    phoneWidth(false);
+    setAdapter();
+    await open(null);
+    await waitFor(() => expect(document.querySelector('[data-cell-active="true"]')).not.toBeNull());
+    await new Promise(requestAnimationFrame);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 });

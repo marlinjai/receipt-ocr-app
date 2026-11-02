@@ -114,7 +114,7 @@ const app = () => state.app as AppStore;
 async function open({ initialYears = null, initialReview = [] as ReviewEntry[] | null, openMealCount = 0 } = {}) {
   const { default: DashboardClient } = await import('./DashboardClient');
   const view = render(
-    <AppStoreProvider>
+    <AppStoreProvider company="Beispiel GmbH">
       <CaptureApp />
       <DashboardClient tableId={TABLE_ID} workspaceId="ws_1" openMealCount={openMealCount} initialReview={initialReview} openRowId={null} initialYears={initialYears} yearCounts={COUNTS} />
     </AppStoreProvider>,

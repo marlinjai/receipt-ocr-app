@@ -370,10 +370,10 @@ export async function setMealTypeForRows(
   rowIds: string[],
   mealType: MealTypeKey,
   now: () => Date = () => new Date(),
-): Promise<MealBatchResult> {
+): Promise<Omit<MealBatchResult, 'at'>> {
   const ctx = await tableContext(db, mealCtx.workspaceId);
   if (!ctx) throw new MealServiceError('not_initialized');
-  const result: MealBatchResult = { done: [], records: [], skipped: [] };
+  const result: Omit<MealBatchResult, 'at'> = { done: [], records: [], skipped: [] };
   for (const rowId of [...new Set(rowIds)]) {
     try {
       const current = await loadWithContext(db, mealCtx.workspaceId, ctx, rowId);
@@ -464,10 +464,10 @@ export async function deleteReceiptRows(
   mealCtx: MealContext,
   rowIds: string[],
   deps: DeleteReceiptsDeps,
-): Promise<MealBatchResult> {
+): Promise<Omit<MealBatchResult, 'at'>> {
   const ctx = await tableContext(db, mealCtx.workspaceId);
   if (!ctx) throw new MealServiceError('not_initialized');
-  const result: MealBatchResult = { done: [], records: [], skipped: [] };
+  const result: Omit<MealBatchResult, 'at'> = { done: [], records: [], skipped: [] };
   /** The groups the deleted receipts lay in: one left without a receipt goes too. */
   const parents = new Set<string>();
   for (const rowId of [...new Set(rowIds)]) {

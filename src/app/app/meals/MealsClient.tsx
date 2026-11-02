@@ -1,7 +1,7 @@
 'use client';
 
 import { observer } from 'mobx-react-lite';
-import { useEffect, useId, useState, type MouseEvent } from 'react';
+import { useEffect, useId, useRef, useState, type MouseEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { contactsTabCount } from '@/lib/contacts/field-form';
@@ -17,11 +17,11 @@ type TabKey = 'queue' | 'register';
 
 const MealsClient = observer(function MealsClient({ initial }: { initial: MealsPageData }) {
   const tabsId = useId();
-  // One store per visit: the server sent fresh data, and the page's numbers follow it in the navigation.
-  const [store] = useState(() => new MealsStore(initial));
   const app = useAppStore();
+  // One store per visit: the server sent fresh data, and the page's numbers follow it in the navigation.
+  const [store] = useState(() => new MealsStore(initial, app.mealOutbox));
   useEffect(() => app.openMeals(store), [app, store]);
-  const { queue, dismissed, meals, contacts, settings, defaultHost, recordSaved, recordsSaved, recordsRemoved, contactUpserted, settingsChanged } = store;
+  const { queue, dismissed, meals, contacts, settings, defaultHost, recordSaved, recordsSaved, contactUpserted, settingsChanged } = store;
   const [tab, setTab] = useState<TabKey>(() => (store.queue.length > 0 ? 'queue' : 'register'));
 
   // The open tab says which entry has unsaved changes in its form. Switching
@@ -50,6 +50,7 @@ const MealsClient = observer(function MealsClient({ initial }: { initial: MealsP
     });
   };
 
+  const heading = useRef<HTMLHeadingElement>(null);
   const tabs: Array<{ key: TabKey; label: string; count?: number }> = [
     { key: 'queue', label: 'Unvollständig', count: queue.length },
     { key: 'register', label: 'Verzeichnis' },
@@ -62,7 +63,7 @@ const MealsClient = observer(function MealsClient({ initial }: { initial: MealsP
       <div className="mx-auto w-full max-w-[88rem]">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold" style={{ color: 'var(--foreground)' }}>
+            <h1 ref={heading} tabIndex={-1} className="text-2xl font-bold outline-none" style={{ color: 'var(--foreground)' }}>
               Bewirtungsverzeichnis
             </h1>
             <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
@@ -131,7 +132,8 @@ const MealsClient = observer(function MealsClient({ initial }: { initial: MealsP
               defaultHost={defaultHost}
               onRecordSaved={recordSaved}
               onRecordsSaved={recordsSaved}
-              onRecordsRemoved={recordsRemoved}
+              writes={store}
+              focusHome={heading}
               onContactCreated={contactUpserted}
               onOpenRegister={() => openTab('register')}
               onUnsavedChange={setUnsavedSubject}
@@ -147,7 +149,8 @@ const MealsClient = observer(function MealsClient({ initial }: { initial: MealsP
               onRecordSaved={recordSaved}
               onContactCreated={contactUpserted}
               onRecordsSaved={recordsSaved}
-              onRecordsRemoved={recordsRemoved}
+              writes={store}
+              focusHome={heading}
               onOpenQueue={() => openTab('queue')}
               onUnsavedChange={setUnsavedSubject}
             />
@@ -155,7 +158,7 @@ const MealsClient = observer(function MealsClient({ initial }: { initial: MealsP
         </div>
 
         {discardDialog}
-        <DismissedMeals records={dismissed} onRecordsSaved={recordsSaved} onRecordsRemoved={recordsRemoved} />
+        <DismissedMeals records={dismissed} writes={store} focusHome={heading} />
       </div>
     </main>
   );

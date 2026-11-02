@@ -883,7 +883,7 @@ describe('FinanceClient: assets', () => {
 
     // Re-entry after the refusal: the right statement reads, and the message gives way to what was read.
     await user.upload(input, new File(['%PDF-1.7\nAbrechnung'], 'abrechnung.pdf', { type: 'application/pdf' }));
-    await user.click(screen.getByRole('button', { name: 'Einlesen' }));
+    await clickWhenEnabled(user, () => screen.getByRole('button', { name: 'Einlesen' }));
     expect((await screen.findByText(/Eingelesen: 9 neue Zahlungen/)).textContent).toContain('2 alter und neuer Saldo der Abrechnung');
     expect(screen.queryByRole('alert')).toBeNull();
   });

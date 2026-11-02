@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
-import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { meal } from '@/lib/meals/__tests__/fixtures';
+import { SMALL_BUSINESS, meal } from '@/lib/meals/__tests__/fixtures';
 import type { MealRecord } from '@/lib/meals/types';
 
 const restoreMeals = vi.fn();
@@ -13,6 +12,7 @@ vi.mock('./actions', () => ({
   deleteMealReceipts: vi.fn(),
 }));
 
+import { MealsHarness } from './__tests__/MealsHarness';
 import DismissedMeals from './DismissedMeals';
 
 const DISMISSED = [
@@ -21,13 +21,10 @@ const DISMISSED = [
 ];
 
 function Harness({ initial }: { initial: MealRecord[] }) {
-  const [list, setList] = useState(initial);
   return (
-    <DismissedMeals
-      records={list.filter((r) => r.mealType === 'not_a_meal')}
-      onRecordsSaved={(saved) => setList((l) => l.map((r) => saved.find((s) => s.rowId === r.rowId) ?? r))}
-      onRecordsRemoved={(ids) => setList((l) => l.filter((r) => !ids.includes(r.rowId)))}
-    />
+    <MealsHarness initial={initial} settings={SMALL_BUSINESS}>
+      {(store, focusHome) => <DismissedMeals records={store.dismissed} writes={store} focusHome={focusHome} />}
+    </MealsHarness>
   );
 }
 
@@ -36,8 +33,9 @@ afterEach(cleanup);
 
 describe('DismissedMeals: where "Keine Bewirtung" is undone', () => {
   it('renders nothing when no receipt is marked', () => {
-    const { container } = render(<Harness initial={[]} />);
-    expect(container.textContent).toBe('');
+    render(<Harness initial={[]} />);
+    expect(screen.queryByRole('region')).toBeNull();
+    expect(screen.queryByText(/^Keine Bewirtung/)).toBeNull();
   });
 
   it('lists the marked receipts with their count, newest first', () => {

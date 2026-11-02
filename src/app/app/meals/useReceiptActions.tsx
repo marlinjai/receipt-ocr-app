@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import ActionNotice, { type ActionNoticeState } from '@/components/ui/ActionNotice';
 import {
@@ -12,6 +12,7 @@ import {
 } from '@/lib/meals/batch';
 import { mealActionMessage } from '@/lib/meals/messages';
 import type { MealRecord } from '@/lib/meals/types';
+import type { MealsStore } from '@/stores/MealsStore';
 import { deleteMealReceipts, markMealsNotMeal, restoreMeals, type Result } from './actions';
 
 interface PendingConfirm {
@@ -20,10 +21,10 @@ interface PendingConfirm {
 }
 
 interface UseReceiptActionsOptions {
-  /** Records the server changed (now "Keine Bewirtung", or taken back). */
-  onRecordsSaved: (records: MealRecord[]) => void;
-  /** Row ids that no longer exist: deleted now, or found gone by the server. */
-  onRecordsRemoved: (rowIds: string[]) => void;
+  /** Where the action shows at once, and where its answer lands. */
+  writes: Pick<MealsStore, 'begin' | 'answered' | 'refused' | 'say'>;
+  /** Takes the focus when a row leaves with the button that was pressed, until the outcome takes it. */
+  focusHome: RefObject<HTMLElement | null>;
   /** Where "Keine Bewirtung" receipts are found again, as it reads from this tab. */
   dismissedHint: string;
   /** Whether this tab keeps a checkbox selection, so a notice may say kept receipts stay selected. */
@@ -45,16 +46,21 @@ function label(record: MealRecord): string {
  * for one receipt or many, with the confirmation dialogs and the notice that
  * reports the outcome.
  *
- * Only one action runs at a time: a second click while one is in flight is
- * dropped (the lock is a ref, so two clicks in the same tick cannot both
- * pass), and `busy` lets the caller disable its buttons meanwhile.
+ * An action shows at once in the store and is sent after that; other rows stay
+ * usable while its answer is out. A refusal rolls that record back and goes to the
+ * shell, which says it wherever the person is by then. Everything else is
+ * reported here, and leaves with this tab.
  */
-export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint, hasSelection = false }: UseReceiptActionsOptions) {
-  const [busy, setBusy] = useState(false);
+export function useReceiptActions({ writes, focusHome, dismissedHint, hasSelection = false }: UseReceiptActionsOptions) {
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
   const [notice, setNotice] = useState<ActionNoticeState | null>(null);
-  const inFlight = useRef(false);
   const seq = useRef(0);
+
+  // Runs after the render that took the row away, and after a closing dialog has handed the focus back to its button.
+  const [focusAsked, setFocusAsked] = useState(0);
+  useEffect(() => {
+    if (focusAsked > 0) focusHome.current?.focus({ preventScroll: true });
+  }, [focusAsked, focusHome]);
 
   /** Show a notice in the dock. Also for an outcome that is not a list action (an edit that moved an entry). */
   const notify = useCallback((n: MealBatchNotice) => {
@@ -64,40 +70,34 @@ export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedH
 
   const run = useCallback(
     async (kind: MealBatchKind, records: MealRecord[]) => {
-      if (inFlight.current || records.length === 0) return;
-      inFlight.current = true;
-      setBusy(true);
+      setConfirm(null);
+      const write = writes.begin(kind, records.map((r) => r.rowId));
+      if (!write) return;
+      setFocusAsked((n) => n + 1);
+      const single = records.length === 1 ? label(records[0]) : undefined;
+      const who = single ?? receiptCount(records.length);
       try {
-        const result = await ACTIONS[kind](records.map((r) => r.rowId));
+        const result = await ACTIONS[kind](write.rowIds);
         if (!result.ok) {
-          notify({ tone: 'danger', text: mealActionMessage(result.error, result.detail) });
+          writes.refused(write, who, mealActionMessage(result.error, result.detail));
           return;
         }
-        const value = result.value;
-        const gone = value.skipped.filter((s) => s.reason === 'not_found').map((s) => s.rowId);
-        if (kind === 'delete') {
-          onRecordsRemoved([...value.done, ...gone]);
-        } else {
-          if (value.records.length > 0) onRecordsSaved(value.records);
-          if (gone.length > 0) onRecordsRemoved(gone);
-        }
-        notify(batchOutcomeNotice(kind, value, records.length === 1 ? label(records[0]) : undefined, hasSelection));
+        writes.answered(write, result.value);
+        const outcome = batchOutcomeNotice(kind, result.value, single, hasSelection);
+        if (outcome.tone === 'danger') writes.say(write, who, outcome.text);
+        else notify(outcome);
       } catch {
         // A thrown action: the network is down or the server unreachable. Nothing is assumed done.
-        notify({ tone: 'danger', text: mealActionMessage('failed') });
-      } finally {
-        inFlight.current = false;
-        setBusy(false);
-        setConfirm(null);
+        writes.refused(write, who, mealActionMessage('failed'));
       }
     },
-    [onRecordsSaved, onRecordsRemoved, hasSelection, notify],
+    [writes, hasSelection, notify],
   );
 
   /** "Keine Bewirtung". With `confirm`, an in-page dialog names the count first. */
   const markNotMeal = useCallback(
     (records: MealRecord[], options: { confirm: boolean }) => {
-      if (inFlight.current || records.length === 0) return;
+      if (records.length === 0) return;
       if (options.confirm) setConfirm({ kind: 'not_meal', records });
       else void run('not_meal', records);
     },
@@ -106,7 +106,7 @@ export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedH
 
   /** Delete for good. Always asks first. */
   const requestDelete = useCallback((records: MealRecord[]) => {
-    if (inFlight.current || records.length === 0) return;
+    if (records.length === 0) return;
     setConfirm({ kind: 'delete', records });
   }, []);
 
@@ -121,7 +121,6 @@ export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedH
         open={confirm?.kind === 'not_meal'}
         title={count === 1 ? 'Beleg als „Keine Bewirtung“ führen?' : `${receiptCount(count)} als „Keine Bewirtung“ führen?`}
         confirmLabel="Keine Bewirtung"
-        busy={busy}
         onCancel={() => setConfirm(null)}
         onConfirm={() => confirm && void run('not_meal', confirm.records)}
       >
@@ -138,7 +137,6 @@ export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedH
         title={count === 1 ? 'Beleg endgültig löschen?' : `${receiptCount(count)} endgültig löschen?`}
         confirmLabel={count === 1 ? 'Beleg löschen' : `${receiptCount(count)} löschen`}
         danger
-        busy={busy}
         onCancel={() => setConfirm(null)}
         onConfirm={() => confirm && void run('delete', confirm.records)}
       >
@@ -166,5 +164,5 @@ export function useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedH
     </>
   );
 
-  return { busy, notice, notify, markNotMeal, requestDelete, restore, overlays };
+  return { notice, notify, markNotMeal, requestDelete, restore, overlays };
 }

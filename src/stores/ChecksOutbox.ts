@@ -43,9 +43,11 @@ export class ChecksOutbox {
   refusals = observable.map<string, Refusal>([], { deep: false });
   /** The store of the open panel: a write begun on an earlier visit ends there too. */
   open: ChecksStore | null = null;
+  /** Set once the company is left: what is refused from then on goes here. */
+  private leftTo: ((refusal: Refusal) => void) | null = null;
 
   constructor() {
-    makeAutoObservable<ChecksOutbox, 'lastWrite' | 'answeredUpTo'>(this, { writes: false, confirmed: false, lastWrite: false, answeredUpTo: false, refusals: false, open: false }, { autoBind: true });
+    makeAutoObservable<ChecksOutbox, 'lastWrite' | 'answeredUpTo' | 'leftTo'>(this, { writes: false, confirmed: false, lastWrite: false, answeredUpTo: false, refusals: false, open: false, leftTo: false }, { autoBind: true });
   }
 
   begin(paymentId: string, edit: CheckEdit, rowId: string | null): LocalWrite {
@@ -74,7 +76,19 @@ export class ChecksOutbox {
   }
 
   say(key: string, who: string | null, message: string): void {
-    this.refusals.set(key, { key, who, message });
+    if (this.leftTo) this.leftTo({ key, who, message });
+    else this.refusals.set(key, { key, who, message });
+  }
+
+  /** The company left the screen: what stands here goes along, and what comes later follows. */
+  leave(send: (refusal: Refusal) => void): void {
+    this.leftTo = send;
+    for (const refusal of this.refusals.values()) send(refusal);
+    this.refusals.clear();
+  }
+
+  stay(): void {
+    this.leftTo = null;
   }
 
   /** Acted on again, or read and closed. Nothing else takes a refusal away. */

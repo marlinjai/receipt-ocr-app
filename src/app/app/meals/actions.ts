@@ -29,6 +29,7 @@ import {
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { parseRotation } from '@/lib/meals/viewer-state';
 import { prisma } from '@/lib/prisma';
+import { readsStartedAt } from '@/lib/shared-reads';
 import { settleMovedPaymentsLater } from '@/lib/spending/settle-later';
 import { deleteStoredFile } from '@/lib/stored-files';
 
@@ -115,10 +116,13 @@ export interface MealsPageData {
   settings: MealTaxSettings;
   /** The host name used most recently, to prefill a new entry. */
   defaultHost: string;
+  /** When this read began: what a write confirmed from then on may be missing from it. */
+  readAt: number;
 }
 
 export async function getMealsPageData(): Promise<Result<MealsPageData>> {
   try {
+    const readAt = readsStartedAt();
     const session = await requireReceiptsSession();
     const workspaceId = readContext(session);
     const tenantId = contactReadTenant(session, workspaceId);
@@ -128,7 +132,7 @@ export async function getMealsPageData(): Promise<Result<MealsPageData>> {
       getTaxSettings(prisma, workspaceId),
       tenantId ? countDirectoryOrganizations(companyContacts(tenantId)) : Promise.resolve(0),
     ]);
-    return { ok: true, value: { records, contacts, organizationCount, settings, defaultHost: lastUsedHost(records) } };
+    return { ok: true, value: { records, contacts, organizationCount, settings, defaultHost: lastUsedHost(records), readAt } };
   } catch (e) {
     return failure(e);
   }
@@ -164,10 +168,11 @@ export async function getMealForRow(rowId: string): Promise<Result<MealForRow>> 
 export async function saveMeal(
   rowId: string,
   input: MealDetailsInput,
-): Promise<Result<{ record: MealRecord; changed: boolean }>> {
+): Promise<Result<{ record: MealRecord; changed: boolean; at: number }>> {
   try {
     const ctx = await writeContext();
-    return { ok: true, value: await saveMealDetails(prisma, ctx, String(rowId), input) };
+    const saved = await saveMealDetails(prisma, ctx, String(rowId), input);
+    return { ok: true, value: { ...saved, at: Date.now() } };
   } catch (e) {
     return failure(e);
   }
@@ -181,13 +186,13 @@ export async function saveMeal(
  */
 async function runBatch(
   rawRowIds: unknown,
-  run: (ctx: MealContext, rowIds: string[]) => Promise<MealBatchResult>,
+  run: (ctx: MealContext, rowIds: string[]) => Promise<Omit<MealBatchResult, 'at'>>,
 ): Promise<Result<MealBatchResult>> {
   try {
     const rowIds = normalizeRowIds(rawRowIds);
     if (!rowIds) return { ok: false, error: 'invalid_input', detail: 'row_ids' };
     const ctx = await writeContext();
-    return { ok: true, value: await run(ctx, rowIds) };
+    return { ok: true, value: { ...(await run(ctx, rowIds)), at: Date.now() } };
   } catch (e) {
     return failure(e);
   }
@@ -221,14 +226,14 @@ export async function saveReceiptRotation(
   rowId: string,
   fileRefId: string,
   rotation: number,
-): Promise<Result<{ record: MealRecord }>> {
+): Promise<Result<{ record: MealRecord; at: number }>> {
   try {
     const parsed = parseRotation(rotation);
     if (parsed === null || typeof rowId !== 'string' || typeof fileRefId !== 'string' || !rowId || !fileRefId) {
       return { ok: false, error: 'invalid_input', detail: 'rotation' };
     }
     const ctx = await writeContext();
-    return { ok: true, value: { record: await setReceiptFileRotation(prisma, ctx, rowId, fileRefId, parsed) } };
+    return { ok: true, value: { record: await setReceiptFileRotation(prisma, ctx, rowId, fileRefId, parsed), at: Date.now() } };
   } catch (e) {
     return failure(e);
   }

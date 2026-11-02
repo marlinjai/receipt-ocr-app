@@ -19,6 +19,7 @@ vi.mock('@/lib/meals/messages', async (original) => {
 vi.mock('./actions', () => ({ markMealsNotMeal: vi.fn(), deleteMealReceipts: vi.fn(), restoreMeals: vi.fn() }));
 vi.mock('./MealEditor', () => ({ default: () => null }));
 
+import { MealsStore } from '@/stores/MealsStore';
 import QueueTab from './QueueTab';
 
 afterEach(cleanup);
@@ -29,8 +30,9 @@ describe('reclassifying one meal', () => {
     const second = meal({ rowId: 'b', date: '2026-02-02', occasion: '' });
     const third = meal({ rowId: 'c', date: '2026-03-03', occasion: '' });
     const queue = (records: MealRecord[]) => incompleteQueue(records);
+    const writes = new MealsStore({ records: [], contacts: [], settings: SMALL_BUSINESS, defaultHost: '', readAt: 0 });
     const tab = (records: MealRecord[]) => (
-      <QueueTab queue={queue(records)} contacts={[]} settings={SMALL_BUSINESS} defaultHost="" onRecordSaved={vi.fn()} onRecordsSaved={vi.fn()} onRecordsRemoved={vi.fn()} onContactCreated={vi.fn()} onOpenRegister={vi.fn()} onUnsavedChange={vi.fn()} />
+      <QueueTab queue={queue(records)} contacts={[]} settings={SMALL_BUSINESS} defaultHost="" onRecordSaved={vi.fn()} onRecordsSaved={vi.fn()} writes={writes} focusHome={{ current: null }} onContactCreated={vi.fn()} onOpenRegister={vi.fn()} onUnsavedChange={vi.fn()} />
     );
     const { rerender } = render(tab([first, second, third]));
     drawn.days.length = 0;

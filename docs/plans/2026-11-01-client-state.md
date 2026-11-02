@@ -147,10 +147,46 @@ staleness, not the redraw cost.
   refusal stands at its row, and a row with one stays in the list whatever the filter says. With no row to
   stand at, because the panel closed or a whole read took the payment away, `CheckRefusals` in the shell says it
   through the dock, naming the payment. That includes "receipt made, not linked". A company switch throws the
-  `AppStore` away, and a refusal still out goes with it: nothing of one company stays on screen in another.
+  `AppStore` away; what it still has to say goes to the `RefusalDesk` (see the meals below).
 - A refused "no receipt" brings its row back fresh, without the reason typed: the row left the list, and
   with it its form. Refusals there are rare (the button needs a reason, the rest is another tab).
 
+### The meals write at once (2026-11-02)
+
+- "Keine Bewirtung", take back and delete apply in `MealsStore` on the click and are sent after that, as the
+  checks do: the store keeps what the server last said (`known`) and a pile of writes, and draws the one over
+  the other. A refusal takes the write off the pile, so the receipt comes back as it is by now, in its place.
+  Other rows stay usable while an answer is out (the one-at-a-time lock of `useReceiptActions` is gone), the
+  delete keeps its question, and a dialog closes on the confirmation, not on the answer.
+- **Repeated, not generalized.** `MealsOutbox` has the shape of `ChecksOutbox` in about 60 lines. The checks'
+  outbox is tied to a payment, to a receipt held back from other proposals and to `CheckChange`, and a meal
+  write is a batch whose answer speaks per receipt. Sharing them would mean opening proven code to save those
+  lines. What is shared is the place in the shell: `CheckRefusals` became `Refusals` and shows both.
+- **Per receipt, not per batch.** A batch's answer says what it did for each receipt: done takes the server's
+  record, `not_found` takes the receipt away, a receipt left alone falls back. One notice reports the batch, as
+  before. A failure is a refusal, and goes to the shell whether or not the page is open, because meal rows have
+  no place for a message. On the page it reads as it always did; away from it, it names the receipt. It leaves by
+  being closed or by acting on one of its receipts again. Plain outcomes stay in the tab and leave with it.
+- **Late answers go by the server's time.** Numbering writes as the checks do would not do here: a form save and
+  a turned receipt change the same record and are no writes on the pile. So every answer about a receipt says when
+  it was made (`at`, on batch results, `saveMeal` and `saveReceiptRotation`), and the outbox keeps the newest per
+  receipt: an older answer changes nothing, whichever kind it is. A page read says when it started (`readAt`), and
+  what was confirmed from then on is laid over it, so the back button, which the router serves from its cache,
+  brings nothing back. The kept records are one per receipt, for as long as the company is open. Both times come
+  from the same server; with several instances a change within the clock's difference could show wrongly until
+  the next read.
+- **Leaving.** The number in the navigation is `queue.length`, so it moves on the click. A write ending after the
+  page closed has the navigation ask the server again, because the number left behind took it for done. While a
+  write is out, closing the page asks first, as for the checks.
+- The focus goes to the page's heading when a row leaves with its button, and to the notice when the answer comes,
+  unless the person has moved on by then: a notice takes the focus only when nothing holds it, and is announced either
+  way. Rows stay usable while an answer is out, so it can arrive in the middle of typing.
+- **A form save reaches the page on screen too**, like a list action: it can answer after leaving and returning.
+- **A company switch.** The `AppStore` is still thrown away, so nothing of one company stays on screen in another, but a
+  refusal must reach the person who believes the change went through. `RefusalDesk`, above the provider the company keys,
+  takes what is left to say and what arrives later, for checks and meals alike. It always says the company's name, so it
+  can never read as the one on screen's, also after coming back to that company.
+- **On the dashboard** the number is the `ReceiptsStore`'s, so a meal write ending there has that store ask again.
 ### Slice 3, receipts on the dashboard (2026-11-02)
 
 Measured before building, with the real `TableView` under a counting cell, 267 rows by 20 columns:

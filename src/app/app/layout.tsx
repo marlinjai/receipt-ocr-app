@@ -4,12 +4,12 @@ import { auth } from '@/lib/auth';
 import { initializeReceiptsTable } from './actions';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import BrowserRulesImport from '@/components/BrowserRulesImport';
-import CheckRefusals from '@/components/CheckRefusals';
+import Refusals from '@/components/Refusals';
 import { PushRenewal } from './spending/PushSession';
-import { sessionWorkspaceId } from '@/lib/auth-workspace';
+import { sessionCompanyName, sessionWorkspaceId } from '@/lib/auth-workspace';
 import AppSidebar from '@/components/nav/AppSidebar';
 import PhoneNav from '@/components/nav/PhoneNav';
-import { AppStoreProvider } from '@/stores/provider';
+import { AppStoreProvider, RefusalDeskProvider } from '@/stores/provider';
 import { NAV_FOLD_COOKIE, NAV_FOLDED } from '@/components/nav/nav-fold';
 import { measurePage, timed } from '@/lib/timing';
 import AppLoading from './loading';
@@ -45,8 +45,9 @@ async function renderShell(children: React.ReactNode) {
   const folded = (await cookies()).get(NAV_FOLD_COOKIE)?.value === NAV_FOLDED;
 
   return (
-    // The counts belong to one company: another company starts with its own.
-    <AppStoreProvider key={sessionWorkspaceId(session)}>
+    // The counts belong to one company: another company starts with its own. Only a refusal outlives it, on the desk.
+    <RefusalDeskProvider>
+    <AppStoreProvider key={sessionWorkspaceId(session)} company={sessionCompanyName(session)}>
     <div className="sm:flex">
       <AppSidebar session={session} logoutUrl={auth.logoutUrl()} initialFolded={folded} />
       <div className="min-w-0 flex-1">
@@ -59,11 +60,12 @@ async function renderShell(children: React.ReactNode) {
       </header>
       <BrowserRulesImport />
       <PushRenewal />
-      <CheckRefusals />
+      <Refusals />
       {children}
       <PhoneNav session={session} logoutUrl={auth.logoutUrl()} />
       </div>
     </div>
     </AppStoreProvider>
+    </RefusalDeskProvider>
   );
 }

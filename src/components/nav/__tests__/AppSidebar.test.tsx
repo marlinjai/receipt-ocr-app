@@ -32,7 +32,7 @@ function OpenReceipts({ store }: { store: ReceiptsStore }) {
 
 function sidebar(extra?: React.ReactNode, initialFolded = false) {
   return render(
-    <AppStoreProvider>
+    <AppStoreProvider company="Beispiel GmbH">
       <AppSidebar session={session} logoutUrl="/logout" initialFolded={initialFolded} />
       {extra}
     </AppStoreProvider>,
@@ -52,7 +52,7 @@ describe('a number the receipts page holds', () => {
     nav.getNavCounts.mockReset().mockReturnValue(new Promise((resolve) => (answer = resolve)));
     const store = receiptsStore(14, 0);
     render(
-      <AppStoreProvider>
+      <AppStoreProvider company="Beispiel GmbH">
         <AppSidebar session={session} logoutUrl="/logout" initialFolded={false} />
         <OpenReceipts store={store} />
       </AppStoreProvider>,
@@ -67,20 +67,20 @@ describe('a number the receipts page holds', () => {
 
 describe('a page with a store', () => {
   it('moves the number with the store, without a report by hand', async () => {
-    const store = new MealsStore({ records: [meal({ rowId: 'a', occasion: '' }), meal({ rowId: 'b', occasion: '' })], contacts: [], settings: SMALL_BUSINESS, defaultHost: '' });
+    const store = new MealsStore({ records: [meal({ rowId: 'a', occasion: '' }), meal({ rowId: 'b', occasion: '' })], contacts: [], settings: SMALL_BUSINESS, defaultHost: '', readAt: 0 });
     function Open() {
       const app = useAppStore();
       useEffect(() => app.openMeals(store), [app]);
       return null;
     }
     render(
-      <AppStoreProvider>
+      <AppStoreProvider company="Beispiel GmbH">
         <AppSidebar session={session} logoutUrl="/logout" initialFolded={false} />
         <Open />
       </AppStoreProvider>,
     );
     await screen.findByText('2');
-    act(() => store.recordsRemoved(['a']));
+    act(() => void store.begin('delete', ['a']));
     await screen.findByText('1');
   });
 });
@@ -116,7 +116,7 @@ describe('the sidebar', () => {
     nav.pathname = '/app/meals';
     nav.getNavCounts.mockResolvedValue({ ok: false });
     view.rerender(
-      <AppStoreProvider>
+      <AppStoreProvider company="Beispiel GmbH">
         <AppSidebar session={session} logoutUrl="/logout" initialFolded={false} />
       </AppStoreProvider>,
     );

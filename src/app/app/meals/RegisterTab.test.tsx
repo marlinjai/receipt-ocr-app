@@ -6,7 +6,6 @@ import userEvent from '@testing-library/user-event';
 import type { Contact } from '@/lib/contacts/store';
 import { GUEST_A, SMALL_BUSINESS, UNANSWERED, meal } from '@/lib/meals/__tests__/fixtures';
 import type { MealDetailsInput } from '@/lib/meals/input';
-import { incompleteQueue } from '@/lib/meals/register';
 import type { MealRecord } from '@/lib/meals/types';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 
@@ -29,6 +28,8 @@ vi.mock('@/components/meals/ReceiptViewer', () => ({
   default: ({ files }: { files: unknown[] }) => <div data-testid="receipt">{files.length} Datei</div>,
 }));
 
+import { MealsStore } from '@/stores/MealsStore';
+import { MealsHarness } from './__tests__/MealsHarness';
 import RegisterTab from './RegisterTab';
 
 const fetchMock = vi.fn();
@@ -57,6 +58,8 @@ afterEach(() => {
 });
 
 /** What the editor needs; these tests do not open it. */
+const WRITES = { writes: new MealsStore({ records: [], contacts: [], settings: SMALL_BUSINESS, defaultHost: '', readAt: 0 }), focusHome: { current: null } };
+
 const EDITOR_PROPS = { contacts: [] as Contact[], defaultHost: '', onRecordSaved: vi.fn(), onContactCreated: vi.fn() };
 
 function file(headers: Record<string, string> = {}) {
@@ -66,7 +69,7 @@ function file(headers: Record<string, string> = {}) {
 describe('RegisterTab: section 19 question', () => {
   it('unanswered: asks the question, lists the entry without amounts, locks both exports', async () => {
     const onSettingsChanged = vi.fn();
-    render(<RegisterTab records={records} settings={UNANSWERED} onSettingsChanged={onSettingsChanged} onRecordsSaved={vi.fn()} onRecordsRemoved={vi.fn()} onOpenQueue={vi.fn()} {...EDITOR_PROPS} />);
+    render(<RegisterTab records={records} settings={UNANSWERED} onSettingsChanged={onSettingsChanged} onRecordsSaved={vi.fn()} {...WRITES} onOpenQueue={vi.fn()} {...EDITOR_PROPS} />);
     expect(screen.getByRole('heading', { name: /Kleinunternehmer nach § 19/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Als CSV exportieren' })).toHaveProperty('disabled', true);
     expect(screen.getByRole('button', { name: 'Als PDF exportieren' })).toHaveProperty('disabled', true);
@@ -83,7 +86,7 @@ describe('RegisterTab: section 19 question', () => {
 
   it('a failed answer is shown and nothing changes', async () => {
     const onSettingsChanged = vi.fn();
-    render(<RegisterTab records={records} settings={UNANSWERED} onSettingsChanged={onSettingsChanged} onRecordsSaved={vi.fn()} onRecordsRemoved={vi.fn()} onOpenQueue={vi.fn()} {...EDITOR_PROPS} />);
+    render(<RegisterTab records={records} settings={UNANSWERED} onSettingsChanged={onSettingsChanged} onRecordsSaved={vi.fn()} {...WRITES} onOpenQueue={vi.fn()} {...EDITOR_PROPS} />);
     saveMealTaxSettings.mockResolvedValue({ ok: false, error: 'forbidden' });
     await userEvent.setup().click(screen.getByRole('button', { name: 'Nein, mit Vorsteuerabzug' }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/Berechtigung/);
@@ -91,7 +94,7 @@ describe('RegisterTab: section 19 question', () => {
   });
 
   it('answered: shows totals, the incomplete block and the separate count', () => {
-    render(<RegisterTab records={records} settings={SMALL_BUSINESS} onSettingsChanged={vi.fn()} onRecordsSaved={vi.fn()} onRecordsRemoved={vi.fn()} onOpenQueue={vi.fn()} {...EDITOR_PROPS} />);
+    render(<RegisterTab records={records} settings={SMALL_BUSINESS} onSettingsChanged={vi.fn()} onRecordsSaved={vi.fn()} {...WRITES} onOpenQueue={vi.fn()} {...EDITOR_PROPS} />);
     expect(screen.queryByRole('heading', { name: /Kleinunternehmer nach § 19/ })).toBeNull();
     const table = screen.getByRole('table');
     expect(within(table).getByText('Summe')).toBeTruthy();
@@ -103,7 +106,7 @@ describe('RegisterTab: section 19 question', () => {
 
 describe('RegisterTab: export', () => {
   function mount() {
-    render(<RegisterTab records={records} settings={SMALL_BUSINESS} onSettingsChanged={vi.fn()} onRecordsSaved={vi.fn()} onRecordsRemoved={vi.fn()} onOpenQueue={vi.fn()} {...EDITOR_PROPS} />);
+    render(<RegisterTab records={records} settings={SMALL_BUSINESS} onSettingsChanged={vi.fn()} onRecordsSaved={vi.fn()} {...WRITES} onOpenQueue={vi.fn()} {...EDITOR_PROPS} />);
     return userEvent.setup();
   }
 
@@ -202,17 +205,21 @@ describe('ConfirmDialog', () => {
 
 describe('RegisterTab: actions on a register entry', () => {
   function Stateful() {
-    const [list, setList] = useState(records);
     return (
-      <RegisterTab
-        records={list}
-        settings={SMALL_BUSINESS}
-        onSettingsChanged={vi.fn()}
-        onRecordsSaved={(saved) => setList((l) => l.map((r) => saved.find((x) => x.rowId === r.rowId) ?? r))}
-        onRecordsRemoved={(ids) => setList((l) => l.filter((r) => !ids.includes(r.rowId)))}
-        onOpenQueue={vi.fn()}
-        {...EDITOR_PROPS}
-      />
+      <MealsHarness initial={records} settings={SMALL_BUSINESS}>
+        {(store, focusHome) => (
+          <RegisterTab
+            records={store.meals}
+            settings={SMALL_BUSINESS}
+            onSettingsChanged={vi.fn()}
+            onRecordsSaved={store.recordsSaved}
+            writes={store}
+            focusHome={focusHome}
+            onOpenQueue={vi.fn()}
+            {...EDITOR_PROPS}
+          />
+        )}
+      </MealsHarness>
     );
   }
 
@@ -306,24 +313,27 @@ describe('RegisterTab: editing a register entry', () => {
 
   /** Does with a saved record what the page does, and shows how many meals are in the queue. */
   function Page({ initial = [FIRST, SECOND] }: { initial?: MealRecord[] }) {
-    const [list, setList] = useState(initial);
-    const replace = (saved: MealRecord[]) => setList((l) => l.map((r) => saved.find((x) => x.rowId === r.rowId) ?? r));
     return (
-      <>
-        <p data-testid="queue-count">{incompleteQueue(list).length}</p>
-        <RegisterTab
-          records={list}
-          contacts={CONTACTS}
-          settings={SMALL_BUSINESS}
-          defaultHost="Inhaber Beispiel"
-          onSettingsChanged={vi.fn()}
-          onRecordSaved={(record) => replace([record])}
-          onRecordsSaved={replace}
-          onRecordsRemoved={(ids) => setList((l) => l.filter((r) => !ids.includes(r.rowId)))}
-          onContactCreated={vi.fn()}
-          onOpenQueue={vi.fn()}
-        />
-      </>
+      <MealsHarness initial={initial} settings={SMALL_BUSINESS}>
+        {(store, focusHome) => (
+          <>
+            <p data-testid="queue-count">{store.queue.length}</p>
+            <RegisterTab
+              records={store.meals}
+              contacts={CONTACTS}
+              settings={SMALL_BUSINESS}
+              defaultHost="Inhaber Beispiel"
+              onSettingsChanged={vi.fn()}
+              onRecordSaved={store.recordSaved}
+              onRecordsSaved={store.recordsSaved}
+              writes={store}
+              focusHome={focusHome}
+              onContactCreated={vi.fn()}
+              onOpenQueue={vi.fn()}
+            />
+          </>
+        )}
+      </MealsHarness>
     );
   }
 
@@ -597,7 +607,7 @@ describe('RegisterTab: editing a register entry', () => {
         settings={SMALL_BUSINESS}
         onSettingsChanged={vi.fn()}
         onRecordsSaved={vi.fn()}
-        onRecordsRemoved={vi.fn()}
+        {...WRITES}
         onOpenQueue={vi.fn()}
         onUnsavedChange={onUnsavedChange}
         {...EDITOR_PROPS}
@@ -619,7 +629,7 @@ describe('RegisterTab: editing a register entry', () => {
         <>
           <button onClick={() => setList([SECOND])}>Entfernen</button>
           <button onClick={() => setList([FIRST, SECOND])}>Wieder aufnehmen</button>
-          <RegisterTab records={list} settings={SMALL_BUSINESS} onSettingsChanged={vi.fn()} onRecordsSaved={vi.fn()} onRecordsRemoved={vi.fn()} onOpenQueue={vi.fn()} {...EDITOR_PROPS} />
+          <RegisterTab records={list} settings={SMALL_BUSINESS} onSettingsChanged={vi.fn()} onRecordsSaved={vi.fn()} {...WRITES} onOpenQueue={vi.fn()} {...EDITOR_PROPS} />
         </>
       );
     }
@@ -647,7 +657,7 @@ describe('RegisterTab: editing a register entry', () => {
         onSettingsChanged={vi.fn()}
         onRecordSaved={vi.fn()}
         onRecordsSaved={vi.fn()}
-        onRecordsRemoved={vi.fn()}
+        {...WRITES}
         onContactCreated={onContactCreated}
         onOpenQueue={vi.fn()}
       />,

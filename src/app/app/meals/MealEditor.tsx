@@ -14,9 +14,9 @@ interface MealEditorProps {
   settings: MealTaxSettings;
   defaultHost: string;
   /** Called after a successful save with the stored record. */
-  onSaved: (record: MealRecord, changed: boolean) => void;
+  onSaved: (record: MealRecord, changed: boolean, at: number) => void;
   /** A stored receipt rotation changes the record too. */
-  onRecordsSaved: (records: MealRecord[]) => void;
+  onRecordsSaved: (records: MealRecord[], at: number) => void;
   onContactCreated: (contact: Contact) => void;
   /** The line above the form. Defaults to the receipt's name. */
   title?: string;
@@ -112,7 +112,7 @@ export default function MealEditor({
           try {
             const result = await saveReceiptRotation(record.rowId, file.refId, rotation);
             if (!result.ok) return false;
-            onRecordsSaved([result.value.record]);
+            onRecordsSaved([result.value.record], result.value.at);
             return true;
           } catch {
             return false;

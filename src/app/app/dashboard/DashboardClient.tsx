@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { observer } from 'mobx-react-lite';
 import {
   DataTableProvider,
@@ -104,11 +104,9 @@ function receipts(n: number): string {
 }
 
 /** The review list reads the store itself: a change to a row that leaves the list alone does not redraw it. */
-const ReviewSection = memo(
-  observer(function ReviewSection({ store, ...panel }: Omit<ReviewPanelProps, 'entries'> & { store: ReceiptsStore }) {
-    return <ReviewPanel entries={store.review} {...panel} />;
-  }),
-);
+const ReviewSection = observer(function ReviewSection({ store, ...panel }: Omit<ReviewPanelProps, 'entries'> & { store: ReceiptsStore }) {
+  return <ReviewPanel entries={store.review} {...panel} />;
+});
 
 /** The group panel follows the live rows, and closes by itself when its group is gone. */
 const OpenGroupPanel = observer(function OpenGroupPanel({ store, groupId, columns, ...panel }: Omit<GroupPanelProps, 'group' | 'receipts'> & { store: ReceiptsStore; groupId: string }) {

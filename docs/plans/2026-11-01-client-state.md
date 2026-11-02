@@ -204,3 +204,19 @@ Decided:
   meals do: rule 4 of the proposal needs server actions that return only what changed, which the
   group and review actions do not. A row saved while a load is on its way is kept over that load's
   older copy, so a late read never overwrites a newer write.
+
+Result, measured the same way:
+
+- One record changing draws its 20 cells instead of 5,340, and a reload that changes nothing draws
+  none, once the app is on package 0.12.0 (test `row-redraw.test.tsx` there). Until the bump the
+  wide table draws as it did; the store already keeps the objects it needs.
+- The phone list redraws by card (`ReceiptPhoneList.redraw.test.tsx`), the review list and the
+  open group read the store themselves.
+- `use-complete-rows.ts`, `year-scope.ts`, `useReportNavCounts` and `AppStore.report` are gone. A
+  reload no longer asks for the columns, because no row action adds one; it still asks for the
+  select options, because a receipt read again can name a new one.
+- `DashboardContent` stays one observer: with rows that redraw by record, what is left of a change
+  is a walk over the row list, so splitting it further would be for its own sake.
+- In development React runs effects twice, so `useRows` reads one page into its unused list.
+  It is not in a production build and nothing reads that list.
+

@@ -16,9 +16,14 @@ const loadPage = vi.fn();
 const loadStructured = vi.fn();
 
 vi.mock('@/lib/prisma', async () => ({ prisma: (await import('../../../test/db-helpers')).db }));
+/** Actions the session is refused, to walk a person who may upload but not change receipts. */
+const refused = new Set<string>();
 vi.mock('@/lib/auth', () => ({
   auth: {
-    requireAction: vi.fn(async () => session.current),
+    requireAction: vi.fn(async (action: string) => {
+      if (refused.has(action)) throw Object.assign(new Error('forbidden'), { status: 403 });
+      return session.current;
+    }),
     getSession: vi.fn(async () => session.current),
   },
 }));
@@ -40,6 +45,8 @@ import { loadReviewQueue } from '@/lib/review/service';
 import { mealStatus, serializeTaxLines } from '@/lib/meals/rules';
 import { createGroup } from '@/lib/groups/service';
 import { saveRule } from '@/lib/classification-rules-store';
+import { createAccount, importPayments, loadPayments } from '@/lib/tax/payments/service';
+import { paymentAwaitingReceipt } from '@/lib/spending/loop-service';
 import { processReceipt, recomputeFxRates, rereadReceipt, retakeReceipt } from './actions';
 
 let ws: TestWorkspace;
@@ -104,6 +111,7 @@ beforeAll(async () => {
   other = await createWorkspace();
 });
 beforeEach(async () => {
+  refused.clear();
   classify.mockReset();
   classify.mockResolvedValue(MEAL_ANSWER);
   loadPage.mockReset();
@@ -1006,5 +1014,83 @@ describe('an upload that is a receipt already there (plan 2026-10-29-invoice-num
     const retaken = await retakeReceipt(blurry.rowId, file(9011), ocr(INVOICE('RE-2026-0300')), { sha256: HASH('3') });
     expect(retaken).toMatchObject({ rowId: kept.rowId, alreadyThere: { rowId: kept.rowId, reason: 'same_invoice' } });
     expect((await fresh.adapter.getRow(blurry.rowId))!.archived).toBe(true);
+  });
+});
+
+describe('an upload for a payment (the check card\'s "Beleg fotografieren oder hochladen")', () => {
+  const HEADER = '"Booking Date","Value Date","Partner Name","Partner Iban",Type,"Payment Reference","Account Name","Amount (EUR)","Original Amount","Original Currency","Exchange Rate"';
+  const csv = (day: string, partner: string, amount: string) => `${HEADER}\n${day},${day},"${partner}",,Presentment,"Einkauf",Hauptkonto,${amount},,,\n`;
+
+  /** A company of its own with one card payment that waits for its receipt. */
+  async function paymentWaiting(partner = 'Zyx Mobilität', amount = '-4.27'): Promise<{ workspace: TestWorkspace; paymentId: string }> {
+    const workspace = await createWorkspace();
+    const ctx = { workspaceId: workspace.workspaceId, tenantId: workspace.tenantId };
+    const accountId = await createAccount(db, ctx, { label: 'Karte', kind: 'bank' });
+    await importPayments(db, ctx, accountId, csv('2026-05-10', partner, amount));
+    const { payments } = await loadPayments(db, workspace.workspaceId);
+    await use(workspace);
+    return { workspace, paymentId: payments[0].id };
+  }
+
+  it('names the payment while it waits, links the saved receipt to it, and then it waits no more', async () => {
+    const { workspace, paymentId } = await paymentWaiting();
+    expect(await paymentAwaitingReceipt(db, workspace.workspaceId, paymentId)).toEqual({ id: paymentId, counterparty: 'Zyx Mobilität', bookingDay: '2026-05-10', amountCents: 427, estimated: false });
+
+    const result = await processReceipt(file(200), ocr(RESTAURANT), { workspaceId: workspace.workspaceId, forPaymentId: paymentId });
+
+    expect(result.linkedTo).toEqual({ paymentId, linked: true });
+    expect(await rowCount(workspace)).toBe(1);
+    expect(await paymentAwaitingReceipt(db, workspace.workspaceId, paymentId)).toBeNull();
+  });
+
+  it('a second upload for the same payment is saved but not linked, and says why', async () => {
+    const { workspace, paymentId } = await paymentWaiting();
+    await processReceipt(file(201), ocr(RESTAURANT), { workspaceId: workspace.workspaceId, forPaymentId: paymentId });
+
+    const again = await processReceipt(file(202), ocr(CAFE), { workspaceId: workspace.workspaceId, forPaymentId: paymentId });
+
+    expect(again.linkedTo).toEqual({ paymentId, linked: false, reason: 'already_has_receipt' });
+    expect(await rowCount(workspace)).toBe(2);
+  });
+
+  it('a receipt that is there already is the one linked: no second receipt, and the payment is done', async () => {
+    const { workspace, paymentId } = await paymentWaiting();
+    const first = await processReceipt(file(203), ocr(RESTAURANT), { workspaceId: workspace.workspaceId, sha256: HASH('d') });
+
+    const same = await processReceipt(file(204), ocr(RESTAURANT), { workspaceId: workspace.workspaceId, sha256: HASH('d'), forPaymentId: paymentId });
+
+    expect(same.alreadyThere?.rowId).toBe(first.rowId);
+    expect(same.linkedTo).toEqual({ paymentId, linked: true });
+    expect(await rowCount(workspace)).toBe(1);
+  });
+
+  it("another company's payment is not linked from here: the receipt is saved, the payment untouched", async () => {
+    const { workspace: theirs, paymentId } = await paymentWaiting();
+    const mine = await createWorkspace();
+    await use(mine);
+
+    const result = await processReceipt(file(205), ocr(RESTAURANT), { workspaceId: mine.workspaceId, forPaymentId: paymentId });
+
+    expect(result.linkedTo).toEqual({ paymentId, linked: false, reason: 'payment_not_found' });
+    expect(await rowCount(mine)).toBe(1);
+    expect(await paymentAwaitingReceipt(db, theirs.workspaceId, paymentId)).not.toBeNull();
+  });
+
+  it('a person who may upload but not change receipts gets the receipt saved and the link refused', async () => {
+    const { workspace, paymentId } = await paymentWaiting();
+    refused.add('receipts.row.write');
+
+    const result = await processReceipt(file(206), ocr(RESTAURANT), { workspaceId: workspace.workspaceId, forPaymentId: paymentId });
+
+    expect(result.linkedTo).toEqual({ paymentId, linked: false, reason: 'forbidden' });
+    expect(await rowCount(workspace)).toBe(1);
+    expect(await paymentAwaitingReceipt(db, workspace.workspaceId, paymentId)).not.toBeNull();
+  });
+
+  it('an upload that names no payment links nothing and answers no link', async () => {
+    const { workspace, paymentId } = await paymentWaiting();
+    const result = await processReceipt(file(207), ocr(RESTAURANT), { workspaceId: workspace.workspaceId });
+    expect(result.linkedTo).toBeUndefined();
+    expect(await paymentAwaitingReceipt(db, workspace.workspaceId, paymentId)).not.toBeNull();
   });
 });

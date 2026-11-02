@@ -63,6 +63,14 @@ export async function requireUploadWorkspace(requested: unknown): Promise<{ sess
 
 
 /**
+ * May this session change receipts in this workspace (link one to a payment)?
+ * Fail-closed `receipts.row.write` on the named workspace, not the active one.
+ */
+export async function requireRowWriteIn(session: AppSession, workspaceId: string): Promise<void> {
+  if (!isDevBypass(session)) await auth.requireAction('receipts.row.write', workspaceId);
+}
+
+/**
  * Authorize access to a table. Read access = membership of the owning
  * workspace; pass a `write` action to additionally run the fail-closed
  * OpenFGA check (skipped for the dev bypass, which has no real workspace).

@@ -92,6 +92,12 @@ describe('ReceiptChecks', () => {
     expect(confirmReceipt).toHaveBeenCalledWith('p1', 'r1');
   });
 
+  it("each card's upload button opens the upload page for that payment, so the receipt is linked to it", () => {
+    render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
+    const links = screen.getAllByRole('link', { name: 'Beleg fotografieren oder hochladen' }).map((l) => l.getAttribute('href'));
+    expect(links).toEqual(['/app?fuer=p1', '/app?fuer=p2']);
+  });
+
   it('asks for a reason before saying there is no receipt', async () => {
     render(<ReceiptChecks initial={view()} focusPaymentId={null} />);
     const user = userEvent.setup();

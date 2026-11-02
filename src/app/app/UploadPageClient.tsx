@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useState } from 'react';
+import { Suspense, useCallback, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import ReceiptUploader from '@/components/ReceiptUploader';
@@ -9,8 +9,12 @@ import PhoneCapture from '@/components/capture/PhoneCapture';
 import { sharedNotice } from '@/lib/capture/shared-notice';
 import type { UploadTarget } from '@/lib/auth-workspace';
 import type { SaveReceipt } from '@/lib/upload/browser-deps';
+import type { UploadedFileInfo } from '@/lib/upload/pipeline';
 import UploadTargetPicker from '@/components/UploadTargetPicker';
 import { processReceipt, retakeReceipt } from './actions';
+import { afterSave, checksHref, paymentLine, paymentToLink, refusalText, type UploadFor, type UploadForProgress } from './upload-for';
+
+export type { UploadFor } from './upload-for';
 import { deleteRow } from './dashboard/actions';
 
 interface UploadPageProps {
@@ -18,6 +22,8 @@ interface UploadPageProps {
   targets: UploadTarget[];
   /** The company active when the page was opened: the starting choice. */
   initialWorkspaceId: string;
+  /** Set when the page was opened for one payment (`?fuer=`): the first saved receipt is linked to it. */
+  uploadFor?: UploadFor | null;
 }
 
 export default function UploadPageClient(props: UploadPageProps) {
@@ -29,7 +35,7 @@ export default function UploadPageClient(props: UploadPageProps) {
   );
 }
 
-function UploadPageContent({ targets, initialWorkspaceId }: UploadPageProps) {
+function UploadPageContent({ targets, initialWorkspaceId, uploadFor = null }: UploadPageProps) {
   const router = useRouter();
   // Set by the share target after a file was shared into the app.
   const notice = sharedNotice(useSearchParams().get('shared'));
@@ -46,22 +52,41 @@ function UploadPageContent({ targets, initialWorkspaceId }: UploadPageProps) {
   }
   const target = targets.find((t) => t.workspaceId === workspaceId) ?? null;
 
+  // Opened for one payment: the first receipt saved into ITS company is linked to it, every later one is not.
+  const [progress, setProgress] = useState<UploadForProgress>({ step: 'waiting' });
+  // Read at call time: a batch saves one file after the other, and the second must see that the first linked.
+  const progressNow = useRef<UploadForProgress>({ step: 'waiting' });
+  const forPaymentOf = useCallback(
+    (target: string) => (uploadFor && uploadFor.workspaceId === target ? paymentToLink(uploadFor, progressNow.current) : undefined),
+    [uploadFor],
+  );
+  const noteSaved = useCallback(
+    (link: Parameters<typeof afterSave>[2]) => {
+      const next = afterSave(uploadFor, progressNow.current, link);
+      if (next === progressNow.current) return;
+      progressNow.current = next;
+      setProgress(next);
+    },
+    [uploadFor],
+  );
+
+  const save = useCallback(
+    async (file: UploadedFileInfo, ocr: Parameters<typeof processReceipt>[1], options: { sha256: string; workspaceId: string }) => {
+      const forPaymentId = forPaymentOf(options.workspaceId);
+      const result = await processReceipt({ id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, forPaymentId ? { ...options, forPaymentId } : options);
+      noteSaved(result.linkedTo);
+      return result;
+    },
+    [forPaymentOf, noteSaved],
+  );
+
   const processFile = useCallback(
-    (result: UploadResult, options: { sha256: string; workspaceId: string }) =>
-      processReceipt(
-        { id: result.file.id, originalName: result.file.originalName, fileType: result.file.fileType },
-        result.ocrResult,
-        options,
-      ),
-    [],
+    (result: UploadResult, options: { sha256: string; workspaceId: string }) => save(result.file, result.ocrResult, options),
+    [save],
   );
 
   // Phone capture: the same save, plus a retake that reads a new photo into an existing receipt.
-  const saveCapture = useCallback<SaveReceipt>(
-    (file, ocr, options) =>
-      processReceipt({ id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, options),
-    [],
-  );
+  const saveCapture = useCallback<SaveReceipt>((file, ocr, options) => save(file, ocr, options), [save]);
   const retakeCapture = useCallback(
     (rowId: string): SaveReceipt =>
       (file, ocr, options) =>
@@ -70,12 +95,21 @@ function UploadPageContent({ targets, initialWorkspaceId }: UploadPageProps) {
   );
 
   const handleAllComplete = useCallback((stats: BatchStats) => {
+    const forWhat = uploadFor;
+    const now = progressNow.current;
+    // Uploaded for a payment and linked: back to the open receipts, where it is now done.
+    if (forWhat && now.step === 'linked') {
+      router.push(checksHref(forWhat));
+      return;
+    }
+    // A refused link stays on screen with its reason and the way to link by hand.
+    if (forWhat && now.step === 'refused') return;
     // The dashboard shows the ACTIVE company. When this page uploaded into
     // another one, going there would hide what was just saved.
     if (stats.succeeded > 0 && workspaceId === initialWorkspaceId) {
       router.push('/app/dashboard');
     }
-  }, [router, workspaceId, initialWorkspaceId]);
+  }, [router, workspaceId, initialWorkspaceId, uploadFor]);
 
   return (
     <main className="relative z-10 min-h-svh flex flex-col items-center justify-center px-4 py-16">
@@ -122,7 +156,14 @@ function UploadPageContent({ targets, initialWorkspaceId }: UploadPageProps) {
           </p>
         </div>
 
-        <UploadTargetPicker targets={targets} workspaceId={workspaceId} onChange={setWorkspaceId} />
+        {uploadFor && <UploadForBanner uploadFor={uploadFor} progress={progress} />}
+
+        {/* For a payment the company is the payment's: no choice to make. */}
+        <UploadTargetPicker
+          targets={uploadFor?.state === 'open' ? targets.filter((t) => t.workspaceId === uploadFor.workspaceId) : targets}
+          workspaceId={workspaceId}
+          onChange={setWorkspaceId}
+        />
 
         {target ? (
           <>
@@ -199,5 +240,54 @@ function UploadPageContent({ targets, initialWorkspaceId }: UploadPageProps) {
         </footer>
       </div>
     </main>
+  );
+}
+
+/** Which payment this upload is for, and what became of the link. */
+function UploadForBanner({ uploadFor, progress }: { uploadFor: UploadFor; progress: UploadForProgress }) {
+  const back = checksHref(uploadFor);
+  if (uploadFor.state === 'gone') {
+    return (
+      <div role="status" className="glass-panel rounded-lg px-4 py-3 mb-4 text-sm" style={{ color: 'var(--foreground)' }}>
+        Diese Zahlung wartet nicht mehr auf einen Beleg: sie hat inzwischen einen, oder sie gehört zu einer anderen Firma. Was du hier hochlädst, wird keiner Zahlung zugeordnet.{' '}
+        <Link href={back} className="underline" style={{ color: 'var(--accent)' }}>
+          Zu den offenen Belegen
+        </Link>
+      </div>
+    );
+  }
+  const line = paymentLine(uploadFor.payment);
+  if (progress.step === 'linked') {
+    return (
+      <div role="status" className="glass-panel rounded-lg px-4 py-3 mb-4 text-sm" style={{ color: 'var(--foreground)' }}>
+        Zugeordnet: der Beleg gehört jetzt zu {line}.{' '}
+        <Link href={back} className="underline" style={{ color: 'var(--accent)' }}>
+          Zurück zu den offenen Belegen
+        </Link>
+      </div>
+    );
+  }
+  if (progress.step === 'refused') {
+    return (
+      <div role="alert" className="glass-panel rounded-lg px-4 py-3 mb-4 text-sm" style={{ color: 'var(--foreground)' }}>
+        Der Beleg ist gespeichert, aber nicht {line} zugeordnet: {refusalText(progress.reason)}. Unter den offenen Belegen kannst du ihn mit „Vorhandenen Beleg zuordnen“ selbst wählen.{' '}
+        <Link href={back} className="underline" style={{ color: 'var(--accent)' }}>
+          Zu den offenen Belegen
+        </Link>
+      </div>
+    );
+  }
+  return (
+    <div role="status" className="glass-panel rounded-lg px-4 py-3 mb-4 text-sm" style={{ color: 'var(--foreground)', borderColor: 'var(--accent)' }}>
+      <p>
+        <strong>Beleg für {line}</strong>
+      </p>
+      <p className="mt-1" style={{ color: 'var(--muted)' }}>
+        Das Foto oder die Datei wird dieser Zahlung zugeordnet.{' '}
+        <Link href="/app" className="underline" style={{ color: 'var(--accent)' }}>
+          Ohne Zuordnung hochladen
+        </Link>
+      </p>
+    </div>
   );
 }

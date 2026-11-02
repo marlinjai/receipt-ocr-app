@@ -38,7 +38,8 @@ import { followTreatment } from '@/lib/tax/assignment-sync';
 import { findSimilarReceipt, type ExistingReceipt } from '@/lib/upload/duplicates';
 import { isSha256Hex } from '@/lib/upload/hash';
 import { auth } from '@/lib/auth';
-import { requireReceiptsSession, requireRowAccess, requireUploadWorkspace } from '@/lib/auth-guards';
+import { requireReceiptsSession, requireRowAccess, requireRowWriteIn, requireUploadWorkspace } from '@/lib/auth-guards';
+import { LoopServiceError, linkReceiptToPayment } from '@/lib/spending/loop-service';
 import { sessionWorkspaceId, tenantIdForWorkspace } from '@/lib/auth-workspace';
 import type { CellValue } from '@marlinjai/data-table-core';
 import { sameVendor } from '@/lib/extraction/vendor';
@@ -118,7 +119,21 @@ export interface NewReceiptOptions extends ProcessReceiptOptions {
    * against the session's memberships; never replaced by the active workspace.
    */
   workspaceId: string;
+  /**
+   * The payment this upload is for, when the upload page was opened from a
+   * check card ("Beleg fotografieren oder hochladen"): the saved receipt is
+   * linked to it right away, in the same call.
+   */
+  forPaymentId?: string;
 }
+
+/**
+ * What became of the link an upload for a payment asked for. The receipt is
+ * saved either way; a refusal says why, so the person can link it by hand.
+ */
+export type UploadLink =
+  | { paymentId: string; linked: true }
+  | { paymentId: string; linked: false; reason: 'payment_not_found' | 'payment_not_open' | 'already_has_receipt' | 'forbidden' | 'failed' };
 
 /**
  * The receipt an upload turned out to be already (plan
@@ -150,6 +165,8 @@ export interface ProcessReceiptResult {
   attention: ReceiptAttention | null;
   /** What the reader could not settle; the same doubts are stored for the review list. */
   reviewFlags: ReadFlag[];
+  /** Set when the upload was for a payment (`forPaymentId`): whether the receipt is now linked to it. */
+  linkedTo?: UploadLink | null;
 }
 
 type ReceiptsAdapter = ReturnType<typeof getAdapter>;
@@ -497,6 +514,36 @@ async function similarReceipt(workspaceId: string, read: ReadReceipt, rowId: str
 }
 
 export async function processReceipt(
+  file: FileData,
+  ocrResult: OcrResult | null,
+  options: NewReceiptOptions,
+): Promise<ProcessReceiptResult> {
+  const saved = await saveUpload(file, ocrResult, options);
+  const forPaymentId = typeof options?.forPaymentId === 'string' ? options.forPaymentId : '';
+  if (!forPaymentId) return saved;
+  return { ...saved, linkedTo: await linkUploadTo(forPaymentId, saved.rowId, options.workspaceId) };
+}
+
+/**
+ * Link the receipt an upload just saved (or found already there) to the
+ * payment the upload was for. Never throws: the receipt is saved, and a
+ * refusal comes back with its reason so the page can say what to do.
+ */
+async function linkUploadTo(paymentId: string, rowId: string, workspaceId: string): Promise<UploadLink> {
+  try {
+    const { session } = await requireUploadWorkspace(workspaceId);
+    await requireRowWriteIn(session, workspaceId);
+    await linkReceiptToPayment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, paymentId, rowId, { byHand: true });
+    return { paymentId, linked: true };
+  } catch (e) {
+    if (e instanceof LoopServiceError) return { paymentId, linked: false, reason: e.code === 'payment_not_found' || e.code === 'payment_not_open' || e.code === 'already_has_receipt' ? e.code : 'failed' };
+    if (e instanceof ReceiptsAuthError || (e as { status?: number })?.status === 403 || (e as { status?: number })?.status === 401) return { paymentId, linked: false, reason: 'forbidden' };
+    console.error('[processReceipt] linking the upload to its payment failed:', e instanceof Error ? `${e.name}: ${e.message}` : 'unknown error');
+    return { paymentId, linked: false, reason: 'failed' };
+  }
+}
+
+async function saveUpload(
   file: FileData,
   ocrResult: OcrResult | null,
   options: NewReceiptOptions,

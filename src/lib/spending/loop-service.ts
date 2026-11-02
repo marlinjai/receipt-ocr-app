@@ -605,6 +605,30 @@ export async function searchReceiptChoices(db: PrismaClient, workspaceId: string
   return receiptChoices(payment, receipts, paidByRow, typeof text === 'string' ? text : '');
 }
 
+/** A payment still waiting for its receipt, as the upload page names it ("Beleg für ..."). */
+export interface PaymentAwaitingReceipt {
+  id: string;
+  counterparty: string;
+  bookingDay: string;
+  /** What was paid, as a positive number of cents. */
+  amountCents: number;
+  /** True when the amount is another currency at the reference rate. */
+  estimated: boolean;
+}
+
+/**
+ * The payment an upload is meant for (the check card's "Beleg fotografieren
+ * oder hochladen" carries it to the upload page): null when it is not on this
+ * company's spending side or no longer waits for a receipt. Read only.
+ */
+export async function paymentAwaitingReceipt(db: PrismaClient, workspaceId: string, paymentId: string): Promise<PaymentAwaitingReceipt | null> {
+  const found = onePayment(await readLoop(db, workspaceId), paymentId);
+  if (!found) return null;
+  const { state, payment } = found;
+  if (state.state !== 'missing' && state.state !== 'in_mailbox' && state.state !== 'proposed') return null;
+  return { id: payment.id, counterparty: payment.counterparty, bookingDay: payment.bookingDay, amountCents: Math.abs(payment.amountCents), estimated: payment.estimated };
+}
+
 /**
  * Link a receipt to a payment the owner chose it for (a mail attachment taken
  * over for this payment). The payments service checks that the receipt is

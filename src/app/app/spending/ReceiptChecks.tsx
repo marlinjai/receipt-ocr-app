@@ -6,6 +6,7 @@ import Link from 'next/link';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatDay } from '@/lib/meals/messages';
 import { receiptHref } from '@/lib/receipt-link';
+import { uploadForHref } from '@/lib/spending/paths';
 import { formatCents } from '@/lib/tax/money';
 import { createBrowserDeps, type SaveReceipt } from '@/lib/upload/browser-deps';
 import { processReceipt } from '../actions';
@@ -647,7 +648,7 @@ const OpenCheck = memo(function OpenCheck({
       {canWrite && <PickReceipt check={check} store={store} busy={busy} actions={actions} />}
       {canWrite && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Link href="/app" className="ui-btn ui-btn-sm">
+          <Link href={uploadForHref(check.paymentId)} className="ui-btn ui-btn-sm">
             Beleg fotografieren oder hochladen
           </Link>
           {!asking ? (

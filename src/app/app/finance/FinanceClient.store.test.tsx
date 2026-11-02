@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, within } from '@testing-library/react';
 import { setupUser, type TestUser } from '../../../../test/user';
 import type { BankActions } from './BankConnection';
-import { afterLink, bankView, fullStatement, sharingView } from './__tests__/statement-fixture';
+import { afterLink, bankView, fullStatement, ownNamesView, sharingView } from './__tests__/statement-fixture';
 
 /** The page on its store: what one source means when answers overlap, the year changes and the page is entered again. */
 
@@ -80,6 +80,16 @@ describe('going back: the year changes while an answer is out', () => {
     expect(screen.queryByText(/Live-Anbindung an Banken ist auf diesem Server nicht eingeschaltet/)).toBeNull();
     rerender(<FinanceClient initial={{ ...fullStatement(), year: 2024 }} initialTab="accounts" bank={offline} sharing={sharingView} />);
     expect(screen.getAllByText(/Live-Anbindung an Banken ist auf diesem Server nicht eingeschaltet/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('the own names of another year', () => {
+  it('are the ones the server read with it, not what the last year held', () => {
+    const { rerender } = render(<FinanceClient initial={fullStatement()} initialTab="names" ownNames={ownNamesView} />);
+    expect(screen.getByText('Inhaber Beispiel')).toBeTruthy();
+    rerender(<FinanceClient initial={{ ...fullStatement(), year: 2024 }} initialTab="names" ownNames={{ ...ownNamesView, names: ['Auf Spending geändert'] }} />);
+    expect(screen.getByText('Auf Spending geändert')).toBeTruthy();
+    expect(screen.queryByText('Inhaber Beispiel')).toBeNull();
   });
 });
 

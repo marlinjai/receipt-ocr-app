@@ -310,3 +310,12 @@ adds them, before any store exists.
   button that follows `busy` must redraw when a write starts and ends, so a `memo` there saves nothing on a write,
   and the payment, invoice and asset rows stay as they are.
 
+- **Eigene Namen.** The list is the store's and arrives with a year like the rest. With it every copy of server data
+  under `src/app/app/finance` is gone. What is left in `useState` there is what the table above says stays. The search
+  results of `PaymentFinder` stay too: they answer one person's typed question and are asked again whenever the
+  statement changes.
+- **Not moved, on purpose.** A write in finance that is refused after the page was left is lost, as it was before:
+  nothing was shown as done, so no number is wrong, but the person is not told. The dock of the checks and meals could
+  say it. That needs a write to outlive the page, which belongs with a decision on how finance writes, not with this
+  move of its state. Going back with the browser's button still serves what the router kept, as before.
+

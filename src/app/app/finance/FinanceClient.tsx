@@ -138,7 +138,7 @@ const FinanceClient = observer(function FinanceClient({
 }) {
   const tabsId = useId();
   const router = useRouter();
-  const seed = { statement: initial, bank: bankInitial, sharing };
+  const seed = { statement: initial, bank: bankInitial, sharing, ownNames: ownNamesInitial };
   // One store per visit and per year: an answer for the year just left lands on its store, where nobody reads it.
   const [store, setStore] = useState(() => new FinanceStore(seed));
   const view = store.statement;
@@ -188,7 +188,6 @@ const FinanceClient = observer(function FinanceClient({
     url.searchParams.delete('bank');
     if (url.toString() !== before) window.history.replaceState(null, '', url.toString());
   }, [tab, firstTab]);
-  const [ownNames, setOwnNames] = useState(ownNamesInitial);
   const [namesError, setNamesError] = useState<string | null>(null);
   const [namesNotice, setNamesNotice] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -206,8 +205,8 @@ const FinanceClient = observer(function FinanceClient({
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  // A different year arrives as new props after the navigation. With it the bank and the sharing are read
-  // afresh (another page may have changed them), and old messages go.
+  // A different year arrives as new props after the navigation. With it the bank, the sharing and the names
+  // are read afresh (another page may have changed them), and old messages go.
   if (initial.year !== store.year) {
     setStore(new FinanceStore(seed));
     setSelectedId(null);
@@ -217,8 +216,6 @@ const FinanceClient = observer(function FinanceClient({
     setLastImport(null);
     setError(null);
     setNotice(null);
-    // The names are read afresh with the other year (another page may have changed them); old messages go.
-    setOwnNames(ownNamesInitial);
     setNamesError(null);
     setNamesNotice(null);
     setBankNotice(null);
@@ -354,7 +351,7 @@ const FinanceClient = observer(function FinanceClient({
           return resolve(false);
         }
         const { names, settledOwnName, view: next } = result.value;
-        setOwnNames((current) => (current ? { ...current, names } : current));
+        store.namesChanged(names);
         if (next) store.took(next);
         setNamesNotice(
           ('add' in change
@@ -1103,8 +1100,8 @@ const FinanceClient = observer(function FinanceClient({
             ))}
 
           {tab === 'names' &&
-            (ownNames ? (
-              <OwnNames open names={ownNames.names} canWrite={ownNames.canWrite} pending={pending} error={namesError} notice={namesNotice} onChange={changeNames} />
+            (store.ownNames ? (
+              <OwnNames open names={store.ownNames.names} canWrite={store.ownNames.canWrite} pending={pending} error={namesError} notice={namesNotice} onChange={changeNames} />
             ) : (
               <p className="ui-note ui-note-danger" role="alert">
                 Die eigenen Namen konnten nicht geladen werden. Bitte die Seite neu laden; sie stehen auch unter{' '}

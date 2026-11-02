@@ -2,6 +2,7 @@ import { makeAutoObservable, observable } from 'mobx';
 import { WORKSPACE_CHECKS, openQueue, waitingCounts } from '@/app/app/finance/tabs';
 import type { TabKey } from '@/app/app/finance/tabs';
 import type { BankView } from '@/app/app/finance/bank-actions';
+import type { OwnNamesView } from '@/app/app/finance/own-names-actions';
 import type { SharingView } from '@/app/app/finance/sharing-actions';
 import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service';
 import { reuse } from './reuse';
@@ -10,6 +11,7 @@ export interface FinanceSeed {
   statement: StatementView;
   bank: BankView | null;
   sharing: SharingView | null;
+  ownNames: OwnNamesView | null;
 }
 
 /**
@@ -26,12 +28,14 @@ export class FinanceStore {
   statement: StatementView;
   bank: BankView | null;
   sharing: SharingView | null;
+  ownNames: OwnNamesView | null;
 
   constructor(seed: FinanceSeed) {
     this.statement = seed.statement;
     this.bank = seed.bank;
     this.sharing = seed.sharing;
-    makeAutoObservable(this, { statement: observable.ref, bank: observable.ref, sharing: observable.ref }, { autoBind: true });
+    this.ownNames = seed.ownNames;
+    makeAutoObservable(this, { statement: observable.ref, bank: observable.ref, sharing: observable.ref, ownNames: observable.ref }, { autoBind: true });
   }
 
   get year(): number {
@@ -80,5 +84,9 @@ export class FinanceStore {
 
   sharingChanged(sharing: SharingView): void {
     this.sharing = sharing;
+  }
+
+  namesChanged(names: string[]): void {
+    if (this.ownNames) this.ownNames = { ...this.ownNames, names };
   }
 }

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { afterLink, bankView, fullStatement, sharingView } from '@/app/app/finance/__tests__/statement-fixture';
+import { afterLink, bankView, fullStatement, ownNamesView, sharingView } from '@/app/app/finance/__tests__/statement-fixture';
 import { FinanceStore } from '../FinanceStore';
 import { reuse } from '../reuse';
 
-const store = () => new FinanceStore({ statement: fullStatement(), bank: bankView, sharing: sharingView });
+const store = () => new FinanceStore({ statement: fullStatement(), bank: bankView, sharing: sharingView, ownNames: ownNamesView });
 
 describe('reuse', () => {
   it('reads exactly as the new value, whatever was reused', () => {
@@ -94,5 +94,14 @@ describe('what stands beside the statement', () => {
     expect(finance.bank?.connections).toEqual([]);
     expect(finance.sharing?.canWrite).toBe(false);
     expect(finance.statement).toBe(before);
+  });
+
+  it('the own names change as a list, and a page that could not read them has none to change', () => {
+    const finance = store();
+    finance.namesChanged(['Neu']);
+    expect(finance.ownNames).toEqual({ names: ['Neu'], canWrite: true });
+    const without = new FinanceStore({ statement: fullStatement(), bank: null, sharing: null, ownNames: null });
+    without.namesChanged(['Neu']);
+    expect(without.ownNames).toBeNull();
   });
 });

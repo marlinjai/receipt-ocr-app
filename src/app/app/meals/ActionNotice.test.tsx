@@ -31,6 +31,43 @@ describe('ActionNotice', () => {
     expect(document.activeElement).toBe(notice);
   });
 
+  it.each([
+    ['a text field', <input key="f" aria-label="in Arbeit" />],
+    ['a text area', <textarea key="f" aria-label="in Arbeit" />],
+    ['a select', <select key="f" aria-label="in Arbeit" />],
+    ['a button of another row', <button key="f" type="button" aria-label="in Arbeit" />],
+  ])('leaves the focus where it is when the person is in %s, and is still announced', (_name, field) => {
+    const { rerender } = render(<>{field}</>);
+    const inUse = screen.getByLabelText('in Arbeit');
+    inUse.focus();
+    rerender(
+      <>
+        {field}
+        <ActionNotice notice={{ seq: 1, tone: 'danger', text: 'Abgelehnt' }} onDismiss={vi.fn()} />
+      </>,
+    );
+    expect(document.activeElement).toBe(inUse);
+    expect(screen.getByRole('alert').textContent).toBe('Abgelehnt');
+  });
+
+  it('takes the focus from the place the page keeps it while a row is gone', () => {
+    const { rerender } = render(
+      <h1 tabIndex={-1} data-testid="home">
+        Seite
+      </h1>,
+    );
+    screen.getByTestId('home').focus();
+    rerender(
+      <>
+        <h1 tabIndex={-1} data-testid="home">
+          Seite
+        </h1>
+        <ActionNotice notice={{ seq: 1, tone: 'ok', text: 'Erledigt' }} onDismiss={vi.fn()} />
+      </>,
+    );
+    expect(document.activeElement).toBe(screen.getByRole('status'));
+  });
+
   it('can be closed by hand', () => {
     const onDismiss = vi.fn();
     render(<ActionNotice notice={{ seq: 1, tone: 'warn', text: 'x' }} onDismiss={onDismiss} />);

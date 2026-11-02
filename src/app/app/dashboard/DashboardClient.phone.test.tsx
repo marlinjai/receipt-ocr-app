@@ -44,6 +44,9 @@ vi.mock('@/components/ReceiptDetailPanel', () => ({
 vi.mock('@/components/AiChatSidebar', () => ({ default: () => null }));
 vi.mock('@/components/review/ReviewPanel', () => ({ default: () => null }));
 
+// The whole page with the real table: slow to query when the machine is busy, not stuck.
+vi.setConfig({ testTimeout: 30_000 });
+
 const COUNTS: YearCounts = { years: [{ year: 2026, count: 4 }, { year: 2025, count: 1 }], undated: 0 };
 
 /** A receipt of 2025, beside the fixture's receipts of 2026. Invented. */

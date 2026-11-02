@@ -16,21 +16,7 @@ function day(value: unknown): string {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-/**
- * What opens for a group in place of the receipt panel: the receipts it holds,
- * their sum in euros, and the two things a person does with a group. A group
- * has no file, no amount of its own and no meal details, so none are offered.
- */
-export default function GroupPanel({
-  group,
-  receipts,
-  columns,
-  busy,
-  onClose,
-  onOpenReceipt,
-  onTakeOut,
-  onDissolve,
-}: {
+export interface GroupPanelProps {
   group: Row;
   /** The receipts that lie in the group. */
   receipts: Row[];
@@ -40,7 +26,14 @@ export default function GroupPanel({
   onOpenReceipt: (row: Row) => void;
   onTakeOut: (rowId: string) => void;
   onDissolve: () => void;
-}) {
+}
+
+/**
+ * What opens for a group in place of the receipt panel: the receipts it holds,
+ * their sum in euros, and the two things a person does with a group. A group
+ * has no file, no amount of its own and no meal details, so none are offered.
+ */
+export default function GroupPanel({ group, receipts, columns, busy, onClose, onOpenReceipt, onTakeOut, onDissolve }: GroupPanelProps) {
   const id = (name: string) => columns.find((c) => c.name === name)?.id ?? '';
   const nameId = id('Name');
   const dateId = id('Date');

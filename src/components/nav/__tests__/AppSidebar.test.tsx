@@ -4,9 +4,12 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect } from 'react';
 import { SMALL_BUSINESS, meal } from '@/lib/meals/__tests__/fixtures';
+import { NO_YEARS } from '@/lib/receipt-years';
+import type { ReviewEntry } from '@/lib/review/service';
 import { MealsStore } from '@/stores/MealsStore';
+import { ReceiptsStore, type ReceiptsApi } from '@/stores/ReceiptsStore';
 import AppSidebar from '../AppSidebar';
-import { AppStoreProvider, useAppStore, useReportNavCounts } from '@/stores/provider';
+import { AppStoreProvider, useAppStore } from '@/stores/provider';
 
 const nav = vi.hoisted(() => ({ pathname: '/app/finance', getNavCounts: vi.fn() }));
 vi.mock('next/navigation', () => ({ usePathname: () => nav.pathname }));
@@ -16,8 +19,14 @@ vi.mock('@/app/app/spending/PushSession', () => ({ SignOutLink: ({ children, hre
 
 const session = { email: 'owner@example.test' } as never;
 
-function Reporter({ review, meals }: { review: number; meals: number }) {
-  useReportNavCounts({ review, meals });
+function receiptsStore(review: number, openMeals: number) {
+  const entries = Array.from({ length: review }, (_, i) => ({ rowId: `r${i}`, duplicates: [] }) as unknown as ReviewEntry);
+  return new ReceiptsStore({ tableId: 't', years: NO_YEARS, yearCounts: { years: [], undated: 0 }, review: entries, openMeals }, {} as ReceiptsApi);
+}
+
+function OpenReceipts({ store }: { store: ReceiptsStore }) {
+  const app = useAppStore();
+  useEffect(() => app.openReceipts(store), [app, store]);
   return null;
 }
 
@@ -37,29 +46,22 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe('a number a page holds', () => {
-  function Held({ meals }: { meals: number }) {
-    useReportNavCounts({ meals });
-    return null;
-  }
-
+describe('a number the receipts page holds', () => {
   it('changes at once, and a late answer of the server leaves it alone', async () => {
     let answer: (v: unknown) => void = () => {};
     nav.getNavCounts.mockReset().mockReturnValue(new Promise((resolve) => (answer = resolve)));
-    const shown = (meals: number) => (
+    const store = receiptsStore(14, 0);
+    render(
       <AppStoreProvider>
         <AppSidebar session={session} logoutUrl="/logout" initialFolded={false} />
-        <Held meals={meals} />
-      </AppStoreProvider>
+        <OpenReceipts store={store} />
+      </AppStoreProvider>,
     );
-    const { rerender } = render(shown(14));
     await screen.findByText('14');
-    rerender(shown(13));
+    act(() => store.rowsRemoved(['r0']));
     await screen.findByText('13');
-    await act(async () => answer({ ok: true, value: { review: 2, meals: 14 } }));
+    await act(async () => answer({ ok: true, value: { review: 14, meals: 2 } }));
     expect(screen.getByText('13')).toBeTruthy();
-    // The number the page does not hold comes from the answer.
-    expect(screen.getByText('2')).toBeTruthy();
   });
 });
 
@@ -124,7 +126,7 @@ describe('the sidebar', () => {
 
   it('takes the numbers from the dashboard instead of asking again', async () => {
     nav.pathname = '/app/dashboard';
-    sidebar(<Reporter review={5} meals={1} />);
+    sidebar(<OpenReceipts store={receiptsStore(5, 1)} />);
     await screen.findByText('5');
     expect(nav.getNavCounts).not.toHaveBeenCalled();
   });

@@ -3,8 +3,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { FileInfo } from '@/lib/storage';
 import type { OcrResult } from '@/lib/ocr-types';
-import { createBrowserDeps } from '@/lib/upload/browser-deps';
-import { runUploadPipeline, type ExistingReceiptRef, type SavedReceipt } from '@/lib/upload/pipeline';
+import { createBrowserDeps, type UploadForPayment } from '@/lib/upload/browser-deps';
+import { runUploadPipeline, type ExistingReceiptRef, type SavedReceipt, type UploadLink } from '@/lib/upload/pipeline';
 import { receiptHref } from '@/lib/receipt-link';
 import { SplitPdfError, splitPdfMessage, splitPdfPages } from '@/lib/upload/split-pdf';
 
@@ -28,7 +28,7 @@ interface ReceiptUploaderProps {
    */
   workspaceId: string;
   /** Save one recognized file as a receipt row. Receives the file's content hash and its company. */
-  onProcessFile: (result: UploadResult, options: { sha256: string; workspaceId: string }) => Promise<ProcessedReceipt>;
+  onProcessFile: (result: UploadResult, options: { sha256: string; workspaceId: string; forPaymentId?: string }) => Promise<ProcessedReceipt>;
   onAllComplete: (stats: BatchStats) => void;
   /** Delete a row that was just created (the user discarded a look-alike receipt). */
   onDiscardRow: (rowId: string) => Promise<void>;
@@ -37,6 +37,13 @@ interface ReceiptUploaderProps {
    * only when it is in that company: the dashboard would not find it otherwise.
    */
   activeWorkspaceId?: string;
+  /**
+   * The payment files dropped from now on are for (the page was opened from a
+   * check card): each file keeps the one it was dropped for.
+   */
+  forPayment?: UploadForPayment | null;
+  /** What became of a file's link to its payment. */
+  onLinked?: (link: UploadLink) => void;
 }
 
 type ItemPhase = 'pending' | 'checking' | 'uploading' | 'ocr' | 'saving' | 'done' | 'duplicate' | 'error';
@@ -97,18 +104,18 @@ function listNames(names: string[]): string {
   return names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
-export default function ReceiptUploader({ workspaceId, onProcessFile, onAllComplete, onDiscardRow, activeWorkspaceId }: ReceiptUploaderProps) {
+export default function ReceiptUploader({ workspaceId, onProcessFile, onAllComplete, onDiscardRow, activeWorkspaceId, forPayment = null, onLinked }: ReceiptUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   // "One receipt per page": a multi-page scan becomes one upload per page.
   const [splitPages, setSplitPages] = useState(false);
   const [preparing, setPreparing] = useState(false);
-  const pendingRef = useRef<{ id: string; file: File; workspaceId: string }[]>([]);
+  const pendingRef = useRef<{ id: string; file: File; workspaceId: string; forPayment: UploadForPayment | null }[]>([]);
   const processingRef = useRef(false);
-  const callbackRefs = useRef({ onProcessFile, onAllComplete, onDiscardRow });
+  const callbackRefs = useRef({ onProcessFile, onAllComplete, onDiscardRow, onLinked });
   useEffect(() => {
-    callbackRefs.current = { onProcessFile, onAllComplete, onDiscardRow };
-  }, [onProcessFile, onAllComplete, onDiscardRow]);
+    callbackRefs.current = { onProcessFile, onAllComplete, onDiscardRow, onLinked };
+  }, [onProcessFile, onAllComplete, onDiscardRow, onLinked]);
 
   const updateItem = useCallback((id: string, updates: Partial<QueueItem>) => {
     setQueue(prev => prev.map(q => q.id === id ? { ...q, ...updates } : q));
@@ -118,10 +125,11 @@ export default function ReceiptUploader({ workspaceId, onProcessFile, onAllCompl
     if (processingRef.current) return;
     processingRef.current = true;
     while (pendingRef.current.length > 0) {
-      const { id, file, workspaceId: target } = pendingRef.current.shift()!;
+      const { id, file, workspaceId: target, forPayment: forWhat } = pendingRef.current.shift()!;
       const deps = createBrowserDeps(
         (uploaded, ocr, options) => callbackRefs.current.onProcessFile({ file: uploaded as FileInfo, ocrResult: ocr }, options),
         target,
+        forWhat,
       );
 
       updateItem(id, { phase: 'checking', progress: 0, error: undefined });
@@ -130,6 +138,7 @@ export default function ReceiptUploader({ workspaceId, onProcessFile, onAllCompl
           onPhase: (phase) => updateItem(id, { phase }),
           onProgress: (progress) => updateItem(id, { progress }),
         });
+        if (outcome.linkedTo) callbackRefs.current.onLinked?.(outcome.linkedTo);
         if (outcome.kind === 'duplicate') {
           updateItem(id, {
             phase: 'duplicate',
@@ -187,10 +196,10 @@ export default function ReceiptUploader({ workspaceId, onProcessFile, onAllCompl
       error: f.error,
     }));
     if (items.length + failed.length === 0) return;
-    pendingRef.current.push(...files.map((f, i) => ({ id: items[i].id, file: f, workspaceId })));
+    pendingRef.current.push(...files.map((f, i) => ({ id: items[i].id, file: f, workspaceId, forPayment })));
     setQueue(prev => [...prev, ...items, ...failed]);
     if (items.length > 0) processQueue();
-  }, [processQueue, workspaceId]);
+  }, [processQueue, workspaceId, forPayment]);
 
   const addFiles = useCallback(async (files: File[]) => {
     const valid = files.filter(f => f.type.startsWith('image/') || f.type === 'application/pdf');

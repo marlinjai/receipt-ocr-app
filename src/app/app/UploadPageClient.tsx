@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useRef, useState } from 'react';
+import { Suspense, useCallback, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import ReceiptUploader from '@/components/ReceiptUploader';
@@ -8,11 +8,11 @@ import type { UploadResult, BatchStats } from '@/components/ReceiptUploader';
 import PhoneCapture from '@/components/capture/PhoneCapture';
 import { sharedNotice } from '@/lib/capture/shared-notice';
 import type { UploadTarget } from '@/lib/auth-workspace';
-import type { SaveReceipt } from '@/lib/upload/browser-deps';
-import type { UploadedFileInfo } from '@/lib/upload/pipeline';
+import type { SaveReceipt, UploadForPayment } from '@/lib/upload/browser-deps';
+import type { UploadLink } from '@/lib/upload/pipeline';
 import UploadTargetPicker from '@/components/UploadTargetPicker';
-import { processReceipt, retakeReceipt } from './actions';
-import { afterSave, checksHref, paymentLine, paymentToLink, refusalText, type UploadFor, type UploadForProgress } from './upload-for';
+import { linkExistingUpload, processReceipt, retakeReceipt } from './actions';
+import { afterDiscard, afterSave, checksHref, paymentLine, paymentToLink, refusalText, type UploadFor, type UploadForProgress } from './upload-for';
 
 export type { UploadFor } from './upload-for';
 import { deleteRow } from './dashboard/actions';
@@ -52,41 +52,44 @@ function UploadPageContent({ targets, initialWorkspaceId, uploadFor = null }: Up
   }
   const target = targets.find((t) => t.workspaceId === workspaceId) ?? null;
 
-  // Opened for one payment: the first receipt saved into ITS company is linked to it, every later one is not.
+  // Opened for one payment: files chosen while it waits are for it, and the first link settles it.
   const [progress, setProgress] = useState<UploadForProgress>({ step: 'waiting' });
-  // Read at call time: a batch saves one file after the other, and the second must see that the first linked.
+  // Read when an answer arrives: answers come one after another, and each must see what the last one did.
   const progressNow = useRef<UploadForProgress>({ step: 'waiting' });
-  const forPaymentOf = useCallback(
-    (target: string) => (uploadFor && uploadFor.workspaceId === target ? paymentToLink(uploadFor, progressNow.current) : undefined),
-    [uploadFor],
-  );
-  const noteSaved = useCallback(
-    (link: Parameters<typeof afterSave>[2]) => {
-      const next = afterSave(uploadFor, progressNow.current, link);
-      if (next === progressNow.current) return;
-      progressNow.current = next;
-      setProgress(next);
+  const move = useCallback((next: UploadForProgress) => {
+    if (next === progressNow.current) return;
+    progressNow.current = next;
+    setProgress(next);
+  }, []);
+  const onLinked = useCallback((link: UploadLink) => move(afterSave(uploadFor, progressNow.current, link)), [uploadFor, move]);
+  // The payment a file chosen now is for: only in the payment's company, and only while the page waits.
+  const paymentId = uploadFor && uploadFor.workspaceId === workspaceId ? (paymentToLink(uploadFor, progress) ?? null) : null;
+  const forPayment = useMemo<UploadForPayment | null>(() => (paymentId ? { paymentId, claim: linkExistingUpload } : null), [paymentId]);
+  // Discarding the receipt that was linked takes its links along: the payment waits again.
+  const discardRow = useCallback(
+    async (rowId: string) => {
+      await deleteRow(rowId);
+      move(afterDiscard(progressNow.current, rowId));
     },
-    [uploadFor],
-  );
-
-  const save = useCallback(
-    async (file: UploadedFileInfo, ocr: Parameters<typeof processReceipt>[1], options: { sha256: string; workspaceId: string }) => {
-      const forPaymentId = forPaymentOf(options.workspaceId);
-      const result = await processReceipt({ id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, forPaymentId ? { ...options, forPaymentId } : options);
-      noteSaved(result.linkedTo);
-      return result;
-    },
-    [forPaymentOf, noteSaved],
+    [move],
   );
 
   const processFile = useCallback(
-    (result: UploadResult, options: { sha256: string; workspaceId: string }) => save(result.file, result.ocrResult, options),
-    [save],
+    (result: UploadResult, options: { sha256: string; workspaceId: string; forPaymentId?: string }) =>
+      processReceipt(
+        { id: result.file.id, originalName: result.file.originalName, fileType: result.file.fileType },
+        result.ocrResult,
+        options,
+      ),
+    [],
   );
 
   // Phone capture: the same save, plus a retake that reads a new photo into an existing receipt.
-  const saveCapture = useCallback<SaveReceipt>((file, ocr, options) => save(file, ocr, options), [save]);
+  const saveCapture = useCallback<SaveReceipt>(
+    (file, ocr, options) =>
+      processReceipt({ id: file.id, originalName: file.originalName, fileType: file.fileType }, ocr, options),
+    [],
+  );
   const retakeCapture = useCallback(
     (rowId: string): SaveReceipt =>
       (file, ocr, options) =>
@@ -173,9 +176,12 @@ function UploadPageContent({ targets, initialWorkspaceId, uploadFor = null }: Up
                 workspaceId={workspaceId}
                 onSave={saveCapture}
                 onRetake={retakeCapture}
-                onDiscardRow={deleteRow}
+                onDiscardRow={discardRow}
                 notice={notice}
                 activeWorkspaceId={initialWorkspaceId}
+                forPaymentId={paymentId}
+                claimExisting={linkExistingUpload}
+                onLinked={onLinked}
               />
             </div>
 
@@ -184,8 +190,10 @@ function UploadPageContent({ targets, initialWorkspaceId, uploadFor = null }: Up
               workspaceId={workspaceId}
               onProcessFile={processFile}
               onAllComplete={handleAllComplete}
-              onDiscardRow={deleteRow}
+              onDiscardRow={discardRow}
               activeWorkspaceId={initialWorkspaceId}
+              forPayment={forPayment}
+              onLinked={onLinked}
             />
           </>
         ) : (

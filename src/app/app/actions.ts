@@ -40,6 +40,8 @@ import { isSha256Hex } from '@/lib/upload/hash';
 import { auth } from '@/lib/auth';
 import { requireReceiptsSession, requireRowAccess, requireRowWriteIn, requireUploadWorkspace } from '@/lib/auth-guards';
 import { LoopServiceError, linkReceiptToPayment } from '@/lib/spending/loop-service';
+import { PaymentServiceError } from '@/lib/tax/payments/service';
+import type { UploadLink } from '@/lib/upload/pipeline';
 import { sessionWorkspaceId, tenantIdForWorkspace } from '@/lib/auth-workspace';
 import type { CellValue } from '@marlinjai/data-table-core';
 import { sameVendor } from '@/lib/extraction/vendor';
@@ -126,14 +128,6 @@ export interface NewReceiptOptions extends ProcessReceiptOptions {
    */
   forPaymentId?: string;
 }
-
-/**
- * What became of the link an upload for a payment asked for. The receipt is
- * saved either way; a refusal says why, so the person can link it by hand.
- */
-export type UploadLink =
-  | { paymentId: string; linked: true }
-  | { paymentId: string; linked: false; reason: 'payment_not_found' | 'payment_not_open' | 'already_has_receipt' | 'forbidden' | 'failed' };
 
 /**
  * The receipt an upload turned out to be already (plan
@@ -525,6 +519,17 @@ export async function processReceipt(
 }
 
 /**
+ * An upload for a payment turned out to be exactly a file this company holds
+ * already (the browser's duplicate check stops it before any save): link that
+ * receipt to the payment. Same checks and answers as the link of a save.
+ */
+export async function linkExistingUpload(paymentId: unknown, rowId: unknown, workspaceId: unknown): Promise<UploadLink> {
+  const payment = typeof paymentId === 'string' ? paymentId : '';
+  if (!payment || typeof rowId !== 'string' || !rowId || typeof workspaceId !== 'string') return { paymentId: payment, linked: false, reason: 'payment_not_found' };
+  return linkUploadTo(payment, rowId, workspaceId);
+}
+
+/**
  * Link the receipt an upload just saved (or found already there) to the
  * payment the upload was for. Never throws: the receipt is saved, and a
  * refusal comes back with its reason so the page can say what to do.
@@ -534,9 +539,15 @@ async function linkUploadTo(paymentId: string, rowId: string, workspaceId: strin
     const { session } = await requireUploadWorkspace(workspaceId);
     await requireRowWriteIn(session, workspaceId);
     await linkReceiptToPayment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, paymentId, rowId, { byHand: true });
-    return { paymentId, linked: true };
+    return { paymentId, linked: true, rowId };
   } catch (e) {
     if (e instanceof LoopServiceError) return { paymentId, linked: false, reason: e.code === 'payment_not_found' || e.code === 'payment_not_open' || e.code === 'already_has_receipt' ? e.code : 'failed' };
+    // The payments service's own refusals: the receipt pays another payment already, or the payment is covered by now.
+    if (e instanceof PaymentServiceError) {
+      if (e.code === 'receipt_already_paid') return { paymentId, linked: false, reason: 'receipt_already_paid' };
+      if (e.code === 'link_exceeds_payment') return { paymentId, linked: false, reason: 'already_has_receipt' };
+      if (e.code === 'invalid_link' || e.code === 'link_not_found') return { paymentId, linked: false, reason: 'payment_not_open' };
+    }
     if (e instanceof ReceiptsAuthError || (e as { status?: number })?.status === 403 || (e as { status?: number })?.status === 401) return { paymentId, linked: false, reason: 'forbidden' };
     console.error('[processReceipt] linking the upload to its payment failed:', e instanceof Error ? `${e.name}: ${e.message}` : 'unknown error');
     return { paymentId, linked: false, reason: 'failed' };

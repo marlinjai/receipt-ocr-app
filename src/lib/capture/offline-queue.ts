@@ -41,6 +41,12 @@ export interface QueuedCapture {
    * it is sent.
    */
   workspaceId?: string | null;
+  /**
+   * The payment the photo was taken for (the upload page opened from a check
+   * card), when there was one: the receipt is linked to it when it is sent,
+   * whatever the page asks for by then. Only the app's camera writes it.
+   */
+  forPaymentId?: string | null;
 }
 
 export interface CaptureStore {
@@ -106,6 +112,7 @@ export function openCaptureStore(factory: IDBFactory = indexedDB): CaptureStore 
           sentAt: typeof e.sentAt === 'number' ? e.sentAt : null,
           source: e.source ?? 'camera',
           workspaceId: typeof e.workspaceId === 'string' && e.workspaceId ? e.workspaceId : null,
+          forPaymentId: typeof e.forPaymentId === 'string' && e.forPaymentId ? e.forPaymentId : null,
         }))
         .sort((a, b) => a.addedAt - b.addedAt);
     },
@@ -136,6 +143,7 @@ export function newQueuedCapture(
   source: CaptureSource,
   now: number = Date.now(),
   workspaceId: string | null = null,
+  forPaymentId: string | null = null,
 ): QueuedCapture {
   const name = file instanceof File && file.name ? file.name : `foto-${now}.jpg`;
   return {
@@ -149,6 +157,7 @@ export function newQueuedCapture(
     lastError: null,
     sentAt: null,
     workspaceId,
+    forPaymentId,
   };
 }
 

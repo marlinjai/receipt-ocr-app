@@ -31,6 +31,16 @@ export interface AlreadyThereRef extends ExistingReceiptRef {
   fileAdded: boolean;
 }
 
+/**
+ * What became of the link an upload for a payment asked for (the upload page
+ * opened from a check card). The receipt is kept either way; a refusal says why.
+ */
+export type UploadLink =
+  | { paymentId: string; linked: true; rowId: string }
+  | { paymentId: string; linked: false; reason: UploadLinkRefusal };
+
+export type UploadLinkRefusal = 'payment_not_found' | 'payment_not_open' | 'already_has_receipt' | 'receipt_already_paid' | 'forbidden' | 'failed';
+
 export interface SavedReceipt {
   rowId: string;
   /** Set when the server kept no new receipt because the upload is one that is there already. */
@@ -42,6 +52,8 @@ export interface SavedReceipt {
   isMeal: boolean;
   /** The receipt was not read well; a retake is worth offering. */
   attention: 'ocr_failed' | 'low_quality' | null;
+  /** Set when the save was for a payment: whether the receipt is now linked to it. */
+  linkedTo?: UploadLink | null;
 }
 
 export interface PipelineDeps {
@@ -59,6 +71,12 @@ export interface PipelineDeps {
   recognize: (file: UploadedFileInfo) => Promise<OcrResult>;
   /** `ocr` is null when text recognition failed: the receipt is saved anyway, for manual entry. */
   save: (file: UploadedFileInfo, ocr: OcrResult | null, options: { sha256: string }) => Promise<SavedReceipt>;
+  /**
+   * Only for an upload for a payment: link the receipt that already holds
+   * exactly this file to it. That file is never uploaded or saved again, so
+   * the save cannot do the link.
+   */
+  claimExisting?: (rowId: string) => Promise<UploadLink>;
 }
 
 export type PipelinePhase = 'checking' | 'uploading' | 'ocr' | 'saving';
@@ -69,7 +87,7 @@ export type PipelineOutcome =
    * or the stored copy was removed again), or the same invoice of the same vendor (then the file was
    * added to that receipt). Never a question: the same file or invoice is the same receipt.
    */
-  | { kind: 'duplicate'; existing: ExistingReceiptRef; reason: 'same_file' | 'same_invoice'; invoiceNumber: string | null; fileAdded: boolean }
+  | { kind: 'duplicate'; existing: ExistingReceiptRef; reason: 'same_file' | 'same_invoice'; invoiceNumber: string | null; fileAdded: boolean; linkedTo?: UploadLink | null }
   | {
       kind: 'done';
       rowId: string;
@@ -85,6 +103,8 @@ export type PipelineOutcome =
        * mistake, but it was uploaded where the page said, and can be discarded.
        */
       elsewhere: string[];
+      /** Set when the upload was for a payment: whether the receipt is now linked to it. */
+      linkedTo?: UploadLink | null;
     };
 
 export interface PipelineOptions {
@@ -102,7 +122,10 @@ export async function runUploadPipeline(
   const sha256 = await deps.hash(prepared);
   // Exactly this file in this company: the same receipt, nothing is uploaded (decision 5 of the plan).
   const check = await deps.checkDuplicate(sha256);
-  if (check.existing) return { kind: 'duplicate', existing: check.existing, reason: 'same_file', invoiceNumber: null, fileAdded: false };
+  if (check.existing) {
+    const duplicate = { kind: 'duplicate', existing: check.existing, reason: 'same_file', invoiceNumber: null, fileAdded: false } as const;
+    return deps.claimExisting ? { ...duplicate, linkedTo: await deps.claimExisting(check.existing.rowId) } : duplicate;
+  }
 
   options.onPhase?.('uploading');
   const uploaded = await deps.upload(prepared, options.onProgress ?? (() => {}));
@@ -123,7 +146,7 @@ export async function runUploadPipeline(
   const saved = await deps.save(uploaded, ocr, { sha256 });
   if (saved.alreadyThere) {
     const { reason, invoiceNumber, fileAdded, rowId, name } = saved.alreadyThere;
-    return { kind: 'duplicate', existing: { rowId, name }, reason, invoiceNumber, fileAdded };
+    return { kind: 'duplicate', existing: { rowId, name }, reason, invoiceNumber, fileAdded, ...linked(saved) };
   }
   return {
     kind: 'done',
@@ -134,5 +157,11 @@ export async function runUploadPipeline(
     attention: saved.attention,
     ocrError,
     elsewhere: check.elsewhere,
+    ...linked(saved),
   };
+}
+
+/** The link a save answered, only when it was asked for one. */
+function linked(saved: SavedReceipt): { linkedTo?: UploadLink } {
+  return saved.linkedTo ? { linkedTo: saved.linkedTo } : {};
 }

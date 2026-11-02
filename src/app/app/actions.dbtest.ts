@@ -47,7 +47,7 @@ import { createGroup } from '@/lib/groups/service';
 import { saveRule } from '@/lib/classification-rules-store';
 import { createAccount, importPayments, loadPayments } from '@/lib/tax/payments/service';
 import { paymentAwaitingReceipt } from '@/lib/spending/loop-service';
-import { processReceipt, recomputeFxRates, rereadReceipt, retakeReceipt } from './actions';
+import { linkExistingUpload, processReceipt, recomputeFxRates, rereadReceipt, retakeReceipt } from './actions';
 
 let ws: TestWorkspace;
 let other: TestWorkspace;
@@ -1017,19 +1017,29 @@ describe('an upload that is a receipt already there (plan 2026-10-29-invoice-num
   });
 });
 
+/** `use` under a name the hooks rule does not take for a React hook. */
+const signInTo = use;
+
 describe('an upload for a payment (the check card\'s "Beleg fotografieren oder hochladen")', () => {
   const HEADER = '"Booking Date","Value Date","Partner Name","Partner Iban",Type,"Payment Reference","Account Name","Amount (EUR)","Original Amount","Original Currency","Exchange Rate"';
   const csv = (day: string, partner: string, amount: string) => `${HEADER}\n${day},${day},"${partner}",,Presentment,"Einkauf",Hauptkonto,${amount},,,\n`;
 
   /** A company of its own with one card payment that waits for its receipt. */
   async function paymentWaiting(partner = 'Zyx Mobilität', amount = '-4.27'): Promise<{ workspace: TestWorkspace; paymentId: string }> {
+    const { workspace, paymentIds } = await paymentsWaiting([[partner, amount]]);
+    return { workspace, paymentId: paymentIds[0] };
+  }
+
+  /** A company of its own with several card payments waiting, in the order given. */
+  async function paymentsWaiting(lines: [partner: string, amount: string][]): Promise<{ workspace: TestWorkspace; paymentIds: string[] }> {
     const workspace = await createWorkspace();
     const ctx = { workspaceId: workspace.workspaceId, tenantId: workspace.tenantId };
     const accountId = await createAccount(db, ctx, { label: 'Karte', kind: 'bank' });
-    await importPayments(db, ctx, accountId, csv('2026-05-10', partner, amount));
+    const rows = lines.map(([partner, amount]) => csv('2026-05-10', partner, amount).split('\n')[1]);
+    await importPayments(db, ctx, accountId, `${HEADER}\n${rows.join('\n')}\n`);
     const { payments } = await loadPayments(db, workspace.workspaceId);
-    await use(workspace);
-    return { workspace, paymentId: payments[0].id };
+    await signInTo(workspace);
+    return { workspace, paymentIds: lines.map(([partner]) => payments.find((p) => p.counterparty === partner)!.id) };
   }
 
   it('names the payment while it waits, links the saved receipt to it, and then it waits no more', async () => {
@@ -1038,7 +1048,7 @@ describe('an upload for a payment (the check card\'s "Beleg fotografieren oder h
 
     const result = await processReceipt(file(200), ocr(RESTAURANT), { workspaceId: workspace.workspaceId, forPaymentId: paymentId });
 
-    expect(result.linkedTo).toEqual({ paymentId, linked: true });
+    expect(result.linkedTo).toEqual({ paymentId, linked: true, rowId: result.rowId });
     expect(await rowCount(workspace)).toBe(1);
     expect(await paymentAwaitingReceipt(db, workspace.workspaceId, paymentId)).toBeNull();
   });
@@ -1060,14 +1070,14 @@ describe('an upload for a payment (the check card\'s "Beleg fotografieren oder h
     const same = await processReceipt(file(204), ocr(RESTAURANT), { workspaceId: workspace.workspaceId, sha256: HASH('d'), forPaymentId: paymentId });
 
     expect(same.alreadyThere?.rowId).toBe(first.rowId);
-    expect(same.linkedTo).toEqual({ paymentId, linked: true });
+    expect(same.linkedTo).toEqual({ paymentId, linked: true, rowId: first.rowId });
     expect(await rowCount(workspace)).toBe(1);
   });
 
   it("another company's payment is not linked from here: the receipt is saved, the payment untouched", async () => {
     const { workspace: theirs, paymentId } = await paymentWaiting();
     const mine = await createWorkspace();
-    await use(mine);
+    await signInTo(mine);
 
     const result = await processReceipt(file(205), ocr(RESTAURANT), { workspaceId: mine.workspaceId, forPaymentId: paymentId });
 
@@ -1092,5 +1102,41 @@ describe('an upload for a payment (the check card\'s "Beleg fotografieren oder h
     const result = await processReceipt(file(207), ocr(RESTAURANT), { workspaceId: workspace.workspaceId });
     expect(result.linkedTo).toBeUndefined();
     expect(await paymentAwaitingReceipt(db, workspace.workspaceId, paymentId)).not.toBeNull();
+  });
+
+  it('exactly a file the company holds already (stopped before any save) is linked by its receipt', async () => {
+    const { workspace, paymentId } = await paymentWaiting();
+    const first = await processReceipt(file(208), ocr(RESTAURANT), { workspaceId: workspace.workspaceId, sha256: HASH('e') });
+
+    expect(await linkExistingUpload(paymentId, first.rowId, workspace.workspaceId)).toEqual({ paymentId, linked: true, rowId: first.rowId });
+    expect(await paymentAwaitingReceipt(db, workspace.workspaceId, paymentId)).toBeNull();
+    // Again, for the payment that has it now: told, never a second success.
+    expect(await linkExistingUpload(paymentId, first.rowId, workspace.workspaceId)).toEqual({ paymentId, linked: false, reason: 'already_has_receipt' });
+  });
+
+  it('a receipt that pays another payment in full is refused with that reason, not as a failure', async () => {
+    const { workspace, paymentIds: [p0, p1] } = await paymentsWaiting([['Ristorante Eins', '-48.50'], ['Ristorante Zwei', '-48.50']]);
+    const saved = await processReceipt(file(209), ocr(RESTAURANT), { workspaceId: workspace.workspaceId, forPaymentId: p0 });
+    expect(saved.linkedTo).toMatchObject({ linked: true });
+
+    expect(await linkExistingUpload(p1, saved.rowId, workspace.workspaceId)).toEqual({ paymentId: p1, linked: false, reason: 'receipt_already_paid' });
+    expect(await paymentAwaitingReceipt(db, workspace.workspaceId, p1)).not.toBeNull();
+  });
+
+  it("another company's receipt or payment cannot be reached by naming it", async () => {
+    const { workspace: theirs, paymentId } = await paymentWaiting();
+    const mine = await createWorkspace();
+    await signInTo(mine);
+    const mineSaved = await processReceipt(file(210), ocr(RESTAURANT), { workspaceId: mine.workspaceId });
+
+    // Their company is not one this session may upload into.
+    expect(await linkExistingUpload(paymentId, mineSaved.rowId, theirs.workspaceId)).toEqual({ paymentId, linked: false, reason: 'forbidden' });
+    // In my company their payment does not exist.
+    expect(await linkExistingUpload(paymentId, mineSaved.rowId, mine.workspaceId)).toEqual({ paymentId, linked: false, reason: 'payment_not_found' });
+    expect(await paymentAwaitingReceipt(db, theirs.workspaceId, paymentId)).not.toBeNull();
+  });
+
+  it('answers a malformed call with a refusal, never a throw', async () => {
+    expect(await linkExistingUpload(42, 'r', ws.workspaceId)).toEqual({ paymentId: '', linked: false, reason: 'payment_not_found' });
   });
 });

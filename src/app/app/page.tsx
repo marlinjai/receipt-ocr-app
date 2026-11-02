@@ -26,7 +26,7 @@ export default async function UploadPage({ searchParams }: { searchParams: Uploa
   const { fuer } = await searchParams;
   const asked = typeof fuer === 'string' && fuer !== '' ? fuer : null;
   // A payment waits in the active company; when that is not one to upload into, nothing is linked, and the page says so.
-  const uploadFor = asked === null ? null : initialWorkspaceId === active ? await forPayment(initialWorkspaceId, asked) : ({ state: 'gone', workspaceId: initialWorkspaceId } as const);
+  const uploadFor = asked === null ? null : initialWorkspaceId === active ? await forPayment(initialWorkspaceId, asked) : ({ state: 'gone', workspaceId: active } as const);
   return <UploadPageClient targets={targets} initialWorkspaceId={initialWorkspaceId} uploadFor={uploadFor} />;
 }
 

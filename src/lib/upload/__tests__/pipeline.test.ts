@@ -65,6 +65,23 @@ describe('runUploadPipeline', () => {
     expect(d.save).not.toHaveBeenCalled();
   });
 
+  it('for a payment, exactly a file that is there already is linked by its receipt, still without any upload', async () => {
+    const claimExisting = vi.fn(async (rowId: string) => ({ paymentId: 'p1', linked: true as const, rowId }));
+    const d = deps({ checkDuplicate: vi.fn(async () => ({ existing: { rowId: 'row-0', name: 'Rechnung' }, elsewhere: [] })), claimExisting });
+    const outcome = await runUploadPipeline(file, d);
+    expect(outcome).toMatchObject({ kind: 'duplicate', existing: { rowId: 'row-0' }, linkedTo: { paymentId: 'p1', linked: true, rowId: 'row-0' } });
+    expect(claimExisting).toHaveBeenCalledWith('row-0');
+    expect(d.upload).not.toHaveBeenCalled();
+    expect(d.save).not.toHaveBeenCalled();
+  });
+
+  it("for a payment, the save's answer about the link is handed on, for a new receipt and for one that was there", async () => {
+    const link = { paymentId: 'p1', linked: false as const, reason: 'already_has_receipt' as const };
+    expect(await runUploadPipeline(file, deps({ save: vi.fn(async () => ({ ...SAVED, linkedTo: link })) }))).toMatchObject({ kind: 'done', linkedTo: link });
+    const there = { rowId: 'row-0', name: 'Rechnung', reason: 'same_invoice' as const, invoiceNumber: 'R-1', fileAdded: true };
+    expect(await runUploadPipeline(file, deps({ save: vi.fn(async () => ({ ...SAVED, alreadyThere: there, linkedTo: link })) }))).toMatchObject({ kind: 'duplicate', linkedTo: link });
+  });
+
   it('the same file is never uploaded a second time: there is no "upload anyway" (the same file is the same receipt)', async () => {
     const check = vi.fn(async () => ({ existing: { rowId: 'row-0', name: 'x' }, elsewhere: ['Firma Zwei'] }));
     const d = deps({ checkDuplicate: check });

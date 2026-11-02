@@ -2,13 +2,13 @@ import { formatDay } from '@/lib/meals/messages';
 import { spendingPath } from '@/lib/spending/paths';
 import type { PaymentAwaitingReceipt } from '@/lib/spending/loop-service';
 import { formatCents } from '@/lib/tax/money';
-import type { UploadLink } from './actions';
+import type { UploadLink, UploadLinkRefusal } from '@/lib/upload/pipeline';
 
 /**
  * The upload page opened for one payment (a check card's "Beleg fotografieren
  * oder hochladen"): what the page knows about it and what became of the link.
- * Pure, so the whole walk (waiting, linked, refused, gone) is testable without
- * a page.
+ * Pure, so the whole walk (waiting, linked, refused, discarded, gone) is
+ * testable without a page.
  */
 export type UploadFor =
   /** The payment still waits: the next saved receipt is linked to it. */
@@ -18,18 +18,36 @@ export type UploadFor =
 
 export type UploadForProgress =
   | { step: 'waiting' }
-  | { step: 'linked' }
-  | { step: 'refused'; reason: Extract<UploadLink, { linked: false }>['reason'] };
+  /** `rowId` is the receipt linked: discarding it opens the payment again. */
+  | { step: 'linked'; rowId: string }
+  | { step: 'refused'; reason: UploadLinkRefusal };
 
-/** The payment an upload should still be linked to: only while the page waits for the first saved receipt. */
+/**
+ * The payment a file chosen NOW should be linked to: only while the page waits
+ * for its receipt. The file keeps it from then on (a queued photo too), so a
+ * later change of the page never moves it to another payment.
+ */
 export function paymentToLink(uploadFor: UploadFor | null, progress: UploadForProgress): string | undefined {
-  return uploadFor?.state === 'open' && progress.step === 'waiting' ? uploadFor.payment.id : undefined;
+  // A link that failed for no reason of the payment's may be tried again with the next file.
+  const open = progress.step === 'waiting' || (progress.step === 'refused' && progress.reason === 'failed');
+  return uploadFor?.state === 'open' && open ? uploadFor.payment.id : undefined;
 }
 
-/** What one save's answer moves the page to. A save that did not ask (or answered for another payment) changes nothing. */
+/**
+ * What one upload's answer moves the page to. An answer about another payment
+ * (a photo queued for it earlier) changes nothing. A link wins over a refusal
+ * whichever arrives last: two files sent for the same payment at once, the
+ * second refused because the first linked, still leave the payment linked.
+ */
 export function afterSave(uploadFor: UploadFor | null, progress: UploadForProgress, link: UploadLink | null | undefined): UploadForProgress {
-  if (uploadFor?.state !== 'open' || progress.step !== 'waiting' || !link || link.paymentId !== uploadFor.payment.id) return progress;
-  return link.linked ? { step: 'linked' } : { step: 'refused', reason: link.reason };
+  if (uploadFor?.state !== 'open' || !link || link.paymentId !== uploadFor.payment.id) return progress;
+  if (link.linked) return progress.step === 'linked' ? progress : { step: 'linked', rowId: link.rowId };
+  return progress.step === 'waiting' ? { step: 'refused', reason: link.reason } : progress;
+}
+
+/** A receipt was discarded on this page: when it is the one linked, its links went with it and the payment waits again. */
+export function afterDiscard(progress: UploadForProgress, rowId: string): UploadForProgress {
+  return progress.step === 'linked' && progress.rowId === rowId ? { step: 'waiting' } : progress;
 }
 
 /** "NAVIT, 59,85 € vom 01.11.2026": the payment as the card shows it. */
@@ -39,6 +57,7 @@ export function paymentLine(payment: PaymentAwaitingReceipt): string {
 
 const REFUSALS: Record<Extract<UploadForProgress, { step: 'refused' }>['reason'], string> = {
   already_has_receipt: 'die Zahlung hat inzwischen einen anderen Beleg',
+  receipt_already_paid: 'der Beleg ist schon einer anderen Zahlung zugeordnet',
   payment_not_open: 'die Zahlung wartet nicht mehr auf einen Beleg',
   payment_not_found: 'die Zahlung gibt es in dieser Firma nicht mehr',
   forbidden: 'du darfst in dieser Firma keine Belege zuordnen',

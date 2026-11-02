@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afterSave, checksHref, paymentLine, paymentToLink, refusalText, type UploadFor, type UploadForProgress } from './upload-for';
+import { afterDiscard, afterSave, checksHref, paymentLine, paymentToLink, refusalText, type UploadFor, type UploadForProgress } from './upload-for';
 import { uploadForHref } from '@/lib/spending/paths';
 
 const OPEN: UploadFor = { state: 'open', workspaceId: 'w1', payment: { id: 'p1', counterparty: 'Zyx Mobilität', bookingDay: '2026-11-01', amountCents: 427, estimated: false } };
@@ -8,33 +8,53 @@ const WAITING: UploadForProgress = { step: 'waiting' };
 describe('an upload page opened for one payment', () => {
   it('forward: the first save asks for the link, and a linked answer moves the page on', () => {
     expect(paymentToLink(OPEN, WAITING)).toBe('p1');
-    expect(afterSave(OPEN, WAITING, { paymentId: 'p1', linked: true })).toEqual({ step: 'linked' });
+    expect(afterSave(OPEN, WAITING, { paymentId: 'p1', linked: true, rowId: 'r1' })).toEqual({ step: 'linked', rowId: 'r1' });
   });
 
-  it('re-entry: once linked (or refused), later saves of the same page ask for no link and change nothing', () => {
-    for (const done of [{ step: 'linked' }, { step: 'refused', reason: 'failed' }] as UploadForProgress[]) {
-      expect(paymentToLink(OPEN, done)).toBeUndefined();
-      expect(afterSave(OPEN, done, { paymentId: 'p1', linked: true })).toBe(done);
-    }
+  it('re-entry: once linked, later files ask for no link, and a later refusal (the second file of a batch) changes nothing', () => {
+    const linked: UploadForProgress = { step: 'linked', rowId: 'r1' };
+    expect(paymentToLink(OPEN, linked)).toBeUndefined();
+    expect(afterSave(OPEN, linked, { paymentId: 'p1', linked: false, reason: 'already_has_receipt' })).toBe(linked);
+    expect(afterSave(OPEN, linked, { paymentId: 'p1', linked: true, rowId: 'r9' })).toBe(linked);
+  });
+
+  it('a link wins over a refusal that arrived first (two files raced for the same payment)', () => {
+    const refused: UploadForProgress = { step: 'refused', reason: 'already_has_receipt' };
+    expect(afterSave(OPEN, refused, { paymentId: 'p1', linked: true, rowId: 'r2' })).toEqual({ step: 'linked', rowId: 'r2' });
+    expect(afterSave(OPEN, refused, { paymentId: 'p1', linked: false, reason: 'failed' })).toBe(refused);
+  });
+
+  it('after a refusal no file asks again, except after a plain failure, which the next file may retry', () => {
+    expect(paymentToLink(OPEN, { step: 'refused', reason: 'already_has_receipt' })).toBeUndefined();
+    expect(paymentToLink(OPEN, { step: 'refused', reason: 'failed' })).toBe('p1');
+  });
+
+  it('backtrack: discarding the linked receipt opens the payment again; discarding another receipt does not', () => {
+    const linked: UploadForProgress = { step: 'linked', rowId: 'r1' };
+    expect(afterDiscard(linked, 'r1')).toEqual(WAITING);
+    expect(afterDiscard(linked, 'r2')).toBe(linked);
+    expect(afterDiscard(WAITING, 'r1')).toBe(WAITING);
+    expect(paymentToLink(OPEN, afterDiscard(linked, 'r1'))).toBe('p1');
   });
 
   it('a refusal keeps its reason, said in the person\'s words', () => {
     expect(afterSave(OPEN, WAITING, { paymentId: 'p1', linked: false, reason: 'already_has_receipt' })).toEqual({ step: 'refused', reason: 'already_has_receipt' });
     expect(refusalText('already_has_receipt')).toBe('die Zahlung hat inzwischen einen anderen Beleg');
     expect(refusalText('forbidden')).toBe('du darfst in dieser Firma keine Belege zuordnen');
+    expect(refusalText('receipt_already_paid')).toBe('der Beleg ist schon einer anderen Zahlung zugeordnet');
   });
 
   it('a save that answered nothing about this payment leaves the page waiting', () => {
     expect(afterSave(OPEN, WAITING, undefined)).toBe(WAITING);
     expect(afterSave(OPEN, WAITING, null)).toBe(WAITING);
-    expect(afterSave(OPEN, WAITING, { paymentId: 'p2', linked: true })).toBe(WAITING);
+    expect(afterSave(OPEN, WAITING, { paymentId: 'p2', linked: true, rowId: 'r2' })).toBe(WAITING);
   });
 
   it('a payment that no longer waits, or no payment at all, is never linked', () => {
     const gone: UploadFor = { state: 'gone', workspaceId: 'w1' };
     expect(paymentToLink(gone, WAITING)).toBeUndefined();
     expect(paymentToLink(null, WAITING)).toBeUndefined();
-    expect(afterSave(gone, WAITING, { paymentId: 'p1', linked: true })).toBe(WAITING);
+    expect(afterSave(gone, WAITING, { paymentId: 'p1', linked: true, rowId: 'r1' })).toBe(WAITING);
   });
 
   it('names the payment as the card does, and leads back to the open receipts of its company', () => {

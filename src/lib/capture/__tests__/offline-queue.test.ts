@@ -41,6 +41,12 @@ describe('capture queue (IndexedDB)', () => {
     expect((await openCaptureStore(factory).list())[0].workspaceId).toBe('ws-eins');
   });
 
+  it('keeps the payment a photo was taken for across a "reload"; a photo without one reads back as none', async () => {
+    await store.add(newQueuedCapture(photo('fuer.jpg'), 'camera', 1000, 'ws-eins', 'p1'));
+    await store.add(newQueuedCapture(photo('ohne.jpg'), 'camera', 2000, 'ws-eins'));
+    expect((await openCaptureStore(factory).list()).map((e) => e.forPaymentId)).toEqual(['p1', null]);
+  });
+
   it('removes and updates single entries', async () => {
     const a = newQueuedCapture(photo('a.jpg'), 'camera', 1);
     const b = newQueuedCapture(photo('b.jpg'), 'share', 2);

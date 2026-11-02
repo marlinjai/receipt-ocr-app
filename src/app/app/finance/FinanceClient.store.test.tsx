@@ -11,6 +11,17 @@ const actions = vi.hoisted(() => ({ confirmPaymentLink: vi.fn(), searchPayments:
 vi.mock('./actions', async () => actions);
 vi.mock('./income-tax-actions', () => ({}));
 vi.mock('./own-names-actions', () => ({}));
+const drawn = vi.hoisted(() => ({ days: [] as string[] }));
+vi.mock('@/lib/meals/messages', async (original) => {
+  const real = await original<typeof import('@/lib/meals/messages')>();
+  return {
+    ...real,
+    formatDay: (day: string) => {
+      drawn.days.push(day);
+      return real.formatDay(day);
+    },
+  };
+});
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 
 import FinanceClient from './FinanceClient';
@@ -117,5 +128,18 @@ describe('re-entry after a failed write', () => {
     await link(user);
     await screen.findByText('Zahlung zugeordnet.');
     expect(expenses()).toContain('565,25 €');
+  });
+});
+
+describe('rows redraw by record', () => {
+  it('a new year on screen takes one receipt out of the queue and leaves the rows of the others as drawn', () => {
+    const { rerender } = render(<FinanceClient initial={fullStatement()} initialTab="open" />);
+    // The day this row alone shows: drawn again means the row was.
+    expect(drawn.days).toContain('2026-01-04');
+    drawn.days.length = 0;
+    rerender(<FinanceClient initial={afterLink()} initialTab="open" />);
+    expect(screen.queryByRole('button', { name: /Kanzlei Beispiel/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /Vermieter Beispiel/ })).toBeTruthy();
+    expect(drawn.days).not.toContain('2026-01-04');
   });
 });

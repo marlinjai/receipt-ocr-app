@@ -1,4 +1,5 @@
-import type { StatementView } from '@/lib/tax/service';
+import type { StatementItem, StatementView } from '@/lib/tax/service';
+import type { OpenCheckKind } from '@/lib/tax/types';
 
 /**
  * The groups and tabs of the Finanzen page (plan
@@ -119,6 +120,14 @@ export function tabFromAddress(reiter: string | null | undefined, bank = false):
     if (tab) return tab.key;
   }
   return undefined;
+}
+
+/** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
+export const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
+
+/** The items a person has to act on, oldest first; workspace-wide questions are left to the notice above. */
+export function openQueue(view: StatementView): StatementItem[] {
+  return view.items.filter((i) => i.checks.some((c) => c.blocking && !WORKSPACE_CHECKS.includes(c.kind)));
 }
 
 /**

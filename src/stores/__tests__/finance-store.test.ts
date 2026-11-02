@@ -69,6 +69,22 @@ describe('the statement', () => {
   });
 });
 
+describe('what is counted from the statement', () => {
+  it('follows the statement: the queue, the waiting numbers and the lookups are one source', () => {
+    const finance = store();
+    expect(finance.queue.map((i) => i.rowId)).toEqual(['open-1', 'open-2', 'open-3', 'open-4', 'year-1']);
+    expect(finance.counts).toEqual({ open: 6, questions: 3, assets: 1 });
+    expect(finance.openAssets).toBe(1);
+    expect(finance.estimated).toBe(1);
+    expect(finance.blockedBySetting).toBe(0);
+    expect(finance.itemsById.get('line-1:a')?.lineDescription).toBe('Router');
+    expect(finance.assetsById.get('asset-1')?.label).toBe('Kamera');
+    finance.took(afterLink());
+    expect(finance.queue.map((i) => i.rowId)).toEqual(['open-2', 'open-3', 'open-4', 'year-1']);
+    expect(finance.counts).toEqual({ open: 5, questions: 2, assets: 1 });
+  });
+});
+
 describe('what stands beside the statement', () => {
   it('the bank and the sharing follow their own answers and leave the statement alone', () => {
     const finance = store();

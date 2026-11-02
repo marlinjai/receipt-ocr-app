@@ -305,3 +305,8 @@ adds them, before any store exists.
   not change as the old object, so identity tells a row what changed; it finds records in a list by id, so a list
   that lost an entry keeps the others.
 
+- **Offen and EÜR.** The queue, the waiting numbers, the lookups and the counts on the tiles are `computed`s of the
+  store. Rows redraw by record where a row has nothing but its record: `QueueEntry` and `LineHeader`. A row with a
+  button that follows `busy` must redraw when a write starts and ends, so a `memo` there saves nothing on a write,
+  and the payment, invoice and asset rows stay as they are.
+

@@ -1,7 +1,9 @@
 import { makeAutoObservable, observable } from 'mobx';
+import { WORKSPACE_CHECKS, openQueue, waitingCounts } from '@/app/app/finance/tabs';
+import type { TabKey } from '@/app/app/finance/tabs';
 import type { BankView } from '@/app/app/finance/bank-actions';
 import type { SharingView } from '@/app/app/finance/sharing-actions';
-import type { StatementView } from '@/lib/tax/service';
+import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service';
 import { reuse } from './reuse';
 
 export interface FinanceSeed {
@@ -34,6 +36,37 @@ export class FinanceStore {
 
   get year(): number {
     return this.statement.year;
+  }
+
+  /** What the queue holds: the count of it is one number on the page, however many places show it. */
+  get queue(): StatementItem[] {
+    return openQueue(this.statement);
+  }
+
+  get counts(): Partial<Record<TabKey, number>> {
+    return waitingCounts(this.statement, this.queue.length);
+  }
+
+  get itemsById(): Map<string, StatementItem> {
+    return new Map(this.statement.items.map((i) => [i.itemId, i]));
+  }
+
+  get assetsById(): Map<string, AssetView> {
+    return new Map(this.statement.assets.map((a) => [a.id, a]));
+  }
+
+  get openAssets(): number {
+    return this.statement.assets.filter((a) => a.checks.length > 0).length;
+  }
+
+  /** Receipts counted on a guessed amount. */
+  get estimated(): number {
+    return this.statement.items.filter((i) => i.checks.some((c) => c.kind === 'amount_estimated')).length;
+  }
+
+  /** Receipts waiting on a setting of the whole company. */
+  get blockedBySetting(): number {
+    return this.statement.items.filter((i) => i.checks.some((c) => WORKSPACE_CHECKS.includes(c.kind))).length;
   }
 
   took(view: StatementView): void {

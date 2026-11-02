@@ -1,7 +1,7 @@
 'use client';
 
 import { observer } from 'mobx-react-lite';
-import { useEffect, useId, useMemo, useRef, useState, useTransition, type KeyboardEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import { receiptHref } from '@/lib/receipt-link';
 import { useRouter } from 'next/navigation';
@@ -9,7 +9,7 @@ import { formatDay } from '@/lib/meals/messages';
 import { CHECK_LABELS, ORIGIN_LABELS, PURPOSE_LABELS, financeActionMessage } from '@/lib/tax/messages';
 import { formatCents } from '@/lib/tax/money';
 import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service';
-import type { OpenCheckKind } from '@/lib/tax/types';
+import type { LineResult, OpenCheckKind } from '@/lib/tax/types';
 import {
   acceptPaymentProposals,
   markAccountPrivate,
@@ -66,13 +66,11 @@ import { removeTaxReturnItem, removeWage, saveTaxReturnItem, saveWage, setChurch
 import { incomeTaxActionMessage } from '@/lib/tax/income-tax/messages';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 import { useTabInView } from '@/lib/use-tab-in-view';
-import { GROUPS, addressOf, defaultTab, groupCount, groupOf, waitingCounts, type GroupKey, type TabKey } from './tabs';
+import { GROUPS, WORKSPACE_CHECKS, addressOf, defaultTab, groupCount, groupOf, openQueue, type GroupKey, type TabKey } from './tabs';
 import OwnNames, { ownNamesMessage } from '../spending/OwnNames';
 import { changeOwnNames, type OwnNamesView } from './own-names-actions';
 import { FinanceStore } from '@/stores/FinanceStore';
 
-/** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
-const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
 /** Checks that are resolved on the receipt itself or in the meal register, not with a decision here. */
 const MEAL_CHECKS: OpenCheckKind[] = ['meal_incomplete', 'meal_without_register_facts'];
 const RECEIPT_CHECKS: OpenCheckKind[] = ['no_date', 'no_amount', 'no_exchange_rate'];
@@ -102,11 +100,6 @@ function incomeTaxTile(view: StatementView): { label: string; value: string; hin
     estimate.missing.length > 0 ? `${estimate.missing.length} Angaben fehlen` : '',
   ].filter(Boolean);
   return { label, value, hint: parts.join(', ') };
-}
-
-/** The items a person has to act on, oldest first; workspace-wide questions are left to the notice above. */
-export function openQueue(view: StatementView): StatementItem[] {
-  return view.items.filter((i) => i.checks.some((c) => c.blocking && !WORKSPACE_CHECKS.includes(c.kind)));
 }
 
 const BANK_ACTIONS: BankActions = { listBankInstitutions, startBankConsent, chooseBankConnectionAccount, syncBankNow, disconnectBank, clearBankConnectionNotice };
@@ -152,7 +145,7 @@ const FinanceClient = observer(function FinanceClient({
   // Two levels (plan 2026-10-25-finance-groups): a group, and the tab last chosen inside each group, so going
   // to another group and back finds the tab that was open there. Without an address the page opens on the first
   // work that waits; an overdue invoice is an open check too (decision D6 of the invoicing plan).
-  const [firstTab] = useState<TabKey>(() => initialTab ?? defaultTab(waitingCounts(initial, openQueue(initial).length)));
+  const [firstTab] = useState<TabKey>(() => initialTab ?? defaultTab(store.counts));
   const [chosen, setChosen] = useState<Record<GroupKey, TabKey>>(() => {
     const byGroup = Object.fromEntries(GROUPS.map((g) => [g.key, g.tabs[0].key])) as Record<GroupKey, TabKey>;
     return { ...byGroup, [groupOf(firstTab).key]: firstTab };
@@ -233,16 +226,15 @@ const FinanceClient = observer(function FinanceClient({
   // The same year read again takes its place too, when it is the newer one.
   useEffect(() => store.took(initial), [store, initial]);
 
-  const queue = useMemo(() => openQueue(view), [view]);
+  const { queue, counts, itemsById, assetsById, openAssets, estimated, blockedBySetting } = store;
   const selected = queue.find((i) => i.itemId === selectedId) ?? queue[0] ?? null;
-  const itemsById = useMemo(() => new Map(view.items.map((i) => [i.itemId, i])), [view]);
-  const assetsById = useMemo(() => new Map(view.assets.map((a) => [a.id, a])), [view]);
   const overdue = view.revenue.overdue;
-  const openAssets = view.assets.filter((a) => a.checks.length > 0).length;
-  const estimated = view.items.filter((i) => i.checks.some((c) => c.kind === 'amount_estimated')).length;
-  const blockedBySetting =
-    view.items.filter((i) => i.checks.some((c) => WORKSPACE_CHECKS.includes(c.kind))).length;
-  const counts = waitingCounts(view, queue.length);
+  // Stable, so a row of the queue stays as drawn when another receipt changes.
+  const pickItem = useCallback((itemId: string) => {
+    setSelectedId(itemId);
+    setError(null);
+  }, []);
+  const toggleLine = useCallback((key: string) => setOpenLine((line) => (line === key ? null : key)), []);
 
   function run(
     action: () => Promise<Result<StatementView>>,
@@ -628,43 +620,9 @@ const FinanceClient = observer(function FinanceClient({
                     {queue.length === 1 ? 'Noch 1 Beleg offen.' : `Noch ${queue.length} Belege offen.`}
                   </p>
                   <ul className="max-h-[40svh] space-y-1.5 overflow-y-auto pr-1 lg:max-h-[75svh]">
-                    {queue.map((item) => {
-                      const isSelected = selected?.itemId === item.itemId;
-                      return (
-                        <li key={item.itemId}>
-                          <button
-                            type="button"
-                            aria-current={isSelected ? 'true' : undefined}
-                            onClick={() => {
-                              setSelectedId(item.itemId);
-                              setError(null);
-                            }}
-                            className="w-full rounded-lg border px-3 py-2.5 text-left transition-colors duration-150"
-                            style={{
-                              borderColor: isSelected ? 'rgba(226, 163, 72, 0.55)' : 'var(--border)',
-                              background: isSelected ? 'var(--accent-muted)' : 'var(--surface)',
-                            }}
-                          >
-                            <span className="flex items-baseline justify-between gap-2">
-                              <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
-                                {item.vendor || item.label}
-                                {item.lineDescription && item.vendor ? `: ${item.lineDescription}` : ''}
-                              </span>
-                              <span className="shrink-0 text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
-                                {item.amountCents !== null ? euro(item.amountCents) : ''}
-                              </span>
-                            </span>
-                            <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>
-                              {dayText(item)} ·{' '}
-                              {item.checks
-                                .filter((c) => c.blocking && !WORKSPACE_CHECKS.includes(c.kind))
-                                .map((c) => CHECK_LABELS[c.kind])
-                                .join(', ')}
-                            </span>
-                          </button>
-                        </li>
-                      );
-                    })}
+                    {queue.map((item) => (
+                      <QueueEntry key={item.itemId} item={item} isSelected={selected?.itemId === item.itemId} onPick={pickItem} />
+                    ))}
                   </ul>
                 </nav>
                 {selected && (
@@ -723,42 +681,7 @@ const FinanceClient = observer(function FinanceClient({
                           const open = openLine === line.key;
                           return (
                             <li key={line.key} className="border-t" style={{ borderColor: 'var(--border)' }}>
-                              <button
-                                type="button"
-                                aria-expanded={open}
-                                onClick={() => setOpenLine(open ? null : line.key)}
-                                className="flex w-full items-baseline justify-between gap-4 px-4 py-3 text-left"
-                              >
-                                <span className="text-sm" style={{ color: 'var(--foreground)' }}>
-                                  {line.line !== null && (
-                                    <span className="mr-2 tabular-nums" style={{ color: 'var(--muted)' }}>
-                                      Zeile {line.line}
-                                    </span>
-                                  )}
-                                  {line.label}
-                                  {line.entryNote && (
-                                    <span className="block text-xs" style={{ color: 'var(--muted)' }}>
-                                      {line.entryNote}
-                                    </span>
-                                  )}
-                                  <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                                    {[
-                                      line.itemIds.length === 1 ? '1 Beleg' : line.itemIds.length > 1 ? `${line.itemIds.length} Belege` : '',
-                                      line.assetIds.length === 1 ? '1 Anlage' : line.assetIds.length > 1 ? `${line.assetIds.length} Anlagen` : '',
-                                    ]
-                                      .filter(Boolean)
-                                      .join(', ')}
-                                  </span>
-                                </span>
-                                <span className="shrink-0 text-sm font-medium tabular-nums" style={{ color: 'var(--foreground)' }}>
-                                  {euro(line.cents)}
-                                  {line.nonDeductibleCents > 0 && (
-                                    <span className="block text-xs font-normal" style={{ color: 'var(--muted)' }}>
-                                      nicht abziehbar {euro(line.nonDeductibleCents)}
-                                    </span>
-                                  )}
-                                </span>
-                              </button>
+                              <LineHeader line={line} open={open} onToggle={toggleLine} />
                               {open && (
                                 <ul className="pb-2">
                                   {line.assetIds.map((id) => {
@@ -1220,6 +1143,78 @@ function arrowTo<K extends string>(event: KeyboardEvent<HTMLButtonElement>, keys
   // Drawn after the choice; the button exists already in the same row.
   document.getElementById(`${idPrefix}${target}`)?.focus();
 }
+
+/** One receipt of the open queue. Redraws only when its own record or choice changes: a whole new year keeps the records that stayed. */
+const QueueEntry = memo(function QueueEntry({ item, isSelected, onPick }: { item: StatementItem; isSelected: boolean; onPick: (itemId: string) => void }) {
+  return (
+    <li>
+      <button
+        type="button"
+        aria-current={isSelected ? 'true' : undefined}
+        onClick={() => onPick(item.itemId)}
+        className="w-full rounded-lg border px-3 py-2.5 text-left transition-colors duration-150"
+        style={{
+          borderColor: isSelected ? 'rgba(226, 163, 72, 0.55)' : 'var(--border)',
+          background: isSelected ? 'var(--accent-muted)' : 'var(--surface)',
+        }}
+      >
+        <span className="flex items-baseline justify-between gap-2">
+          <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+            {item.vendor || item.label}
+            {item.lineDescription && item.vendor ? `: ${item.lineDescription}` : ''}
+          </span>
+          <span className="shrink-0 text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
+            {item.amountCents !== null ? euro(item.amountCents) : ''}
+          </span>
+        </span>
+        <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>
+          {dayText(item)} ·{' '}
+          {item.checks
+            .filter((c) => c.blocking && !WORKSPACE_CHECKS.includes(c.kind))
+            .map((c) => CHECK_LABELS[c.kind])
+            .join(', ')}
+        </span>
+      </button>
+    </li>
+  );
+});
+
+/** The head of a form line: what stands on it and its sum. Redraws only when the line itself changes. */
+const LineHeader = memo(function LineHeader({ line, open, onToggle }: { line: LineResult; open: boolean; onToggle: (key: string) => void }) {
+  return (
+    <button type="button" aria-expanded={open} onClick={() => onToggle(line.key)} className="flex w-full items-baseline justify-between gap-4 px-4 py-3 text-left">
+      <span className="text-sm" style={{ color: 'var(--foreground)' }}>
+        {line.line !== null && (
+          <span className="mr-2 tabular-nums" style={{ color: 'var(--muted)' }}>
+            Zeile {line.line}
+          </span>
+        )}
+        {line.label}
+        {line.entryNote && (
+          <span className="block text-xs" style={{ color: 'var(--muted)' }}>
+            {line.entryNote}
+          </span>
+        )}
+        <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+          {[
+            line.itemIds.length === 1 ? '1 Beleg' : line.itemIds.length > 1 ? `${line.itemIds.length} Belege` : '',
+            line.assetIds.length === 1 ? '1 Anlage' : line.assetIds.length > 1 ? `${line.assetIds.length} Anlagen` : '',
+          ]
+            .filter(Boolean)
+            .join(', ')}
+        </span>
+      </span>
+      <span className="shrink-0 text-sm font-medium tabular-nums" style={{ color: 'var(--foreground)' }}>
+        {euro(line.cents)}
+        {line.nonDeductibleCents > 0 && (
+          <span className="block text-xs font-normal" style={{ color: 'var(--muted)' }}>
+            nicht abziehbar {euro(line.nonDeductibleCents)}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+});
 
 function ItemHeader({ item }: { item: StatementItem }) {
   return (

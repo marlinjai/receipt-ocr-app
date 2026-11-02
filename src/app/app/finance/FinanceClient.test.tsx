@@ -53,7 +53,8 @@ vi.mock('./own-names-actions', () => ownNameActions);
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
 
-import FinanceClient, { openQueue } from './FinanceClient';
+import FinanceClient from './FinanceClient';
+import { openQueue } from './tabs';
 
 afterEach(() => {
   cleanup();

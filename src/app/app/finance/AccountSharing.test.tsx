@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -14,7 +15,7 @@ afterEach(() => {
 
 const accounts = [{ id: 'acc-1', label: 'Girokonto' }];
 const share = (o: Partial<ShareEntry> = {}): ShareEntry => ({ id: 'sh-1', accountId: 'acc-1', accountLabel: 'Girokonto', otherWorkspaceId: 'ws-b', otherName: 'Privat', createdAt: '2026-10-22T08:00:00.000Z', ...o });
-const view = (o: Partial<SharingView> = {}): SharingView => ({ outgoing: [], incoming: [], targets: [{ workspaceId: 'ws-b', label: 'Privat' }], canWrite: true, ...o });
+const view = (o: Partial<SharingView> = {}): SharingView => ({ readAt: 1, outgoing: [], incoming: [], targets: [{ workspaceId: 'ws-b', label: 'Privat' }], canWrite: true, ...o });
 
 function actions(o: Partial<SharingActions> = {}): SharingActions {
   return {
@@ -24,16 +25,22 @@ function actions(o: Partial<SharingActions> = {}): SharingActions {
   };
 }
 
+/** Holds what the section reports, as the store does on the page. */
+function Held({ view: given, accounts: shown, actions: acts }: { view: SharingView; accounts: ReadonlyArray<{ id: string; label: string }>; actions: SharingActions }) {
+  const [held, setHeld] = useState(given);
+  return <AccountSharing view={held} onChange={setHeld} accounts={shown} actions={acts} />;
+}
+
 describe('AccountSharing', () => {
   it('shows nothing when there is nothing to share or end', () => {
-    const { container } = render(<AccountSharing initial={view({ targets: [] })} accounts={accounts} actions={actions()} />);
+    const { container } = render(<Held view={view({ targets: [] })} accounts={accounts} actions={actions()} />);
     expect(container.innerHTML).toBe('');
   });
 
   it('shares an account after a confirmation, and says where its private payments go now', async () => {
     const acts = actions();
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    render(<AccountSharing initial={view()} accounts={accounts} actions={acts} />);
+    render(<Held view={view()} accounts={accounts} actions={acts} />);
     const button = screen.getByRole('button', { name: 'Private Zahlungen weitergeben: Girokonto' });
     expect((button as HTMLButtonElement).disabled).toBe(true);
     await userEvent.selectOptions(screen.getByLabelText('Firma für die privaten Zahlungen von Girokonto'), 'ws-b');
@@ -50,28 +57,21 @@ describe('AccountSharing', () => {
   it('ends a share from either side and shows a refusal where it happened', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const acts = actions({ endAccountShare: vi.fn(async () => ({ ok: false as const, error: 'not_found' as const, detail: 'share_not_found' })) });
-    render(<AccountSharing initial={view({ incoming: [share({ id: 'sh-2', accountLabel: 'Kreditkarte', otherName: 'Firma' })] })} accounts={[]} actions={acts} />);
+    render(<Held view={view({ incoming: [share({ id: 'sh-2', accountLabel: 'Kreditkarte', otherName: 'Firma' })] })} accounts={[]} actions={acts} />);
     expect(screen.getByText(/Kreditkarte, geführt von Firma/)).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Weitergabe beenden: Kreditkarte' }));
     expect(acts.endAccountShare).toHaveBeenCalledWith('sh-2');
     expect((await screen.findByRole('alert')).textContent).toContain('Diese Weitergabe ist schon beendet');
   });
 
-  it('takes over fresh data from the server', () => {
-    const { rerender } = render(<AccountSharing initial={view()} accounts={accounts} actions={actions()} />);
-    expect(screen.queryByText(/private Zahlungen gehen an Privat/)).toBeNull();
-    rerender(<AccountSharing initial={view({ outgoing: [share()] })} accounts={accounts} actions={actions()} />);
-    expect(screen.getByText(/private Zahlungen gehen an Privat/)).toBeTruthy();
-  });
-
   it('is read-only without the write permission', () => {
-    render(<AccountSharing initial={view({ canWrite: false, outgoing: [share()] })} accounts={accounts} actions={actions()} />);
+    render(<Held view={view({ canWrite: false, outgoing: [share()] })} accounts={accounts} actions={actions()} />);
     expect(screen.getByText(/private Zahlungen gehen an Privat/)).toBeTruthy();
     expect(screen.queryByRole('button')).toBeNull();
   });
 
   it('names a company the person is no member of any more without its name', () => {
-    render(<AccountSharing initial={view({ outgoing: [share({ otherName: null })] })} accounts={accounts} actions={actions()} />);
+    render(<Held view={view({ outgoing: [share({ otherName: null })] })} accounts={accounts} actions={actions()} />);
     expect(screen.getByText(/private Zahlungen gehen an eine andere Firma/)).toBeTruthy();
   });
 

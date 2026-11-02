@@ -24,11 +24,10 @@ export interface BankActions {
 const dayOf = (iso: string | null) => (iso ? formatDay(iso.slice(0, 10)) : '');
 
 /**
- * The bank state of the payments tab: the view, one action at a time, and the
- * message of the last one (per account, so it shows where it was pressed).
+ * The bank actions of the payments tab: one at a time, each handing what the
+ * server answered to `onBank`, and the message of the last one (per account, so it shows where it was pressed).
  */
-export function useBankFeed(initial: BankView, year: number, actions: BankActions, onStatement: (view: StatementView) => void, go: (url: string) => void) {
-  const [bank, setBank] = useState(initial);
+export function useBankFeed(bank: BankView, year: number, actions: BankActions, onBank: (bank: BankView) => void, onStatement: (view: StatementView) => void, go: (url: string) => void) {
   const [message, setMessage] = useState<{ accountId: string; text: string; ok: boolean } | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -62,12 +61,12 @@ export function useBankFeed(initial: BankView, year: number, actions: BankAction
       }),
     choose: (accountId: string, connectionId: string, uid: string) =>
       act(accountId, () => actions.chooseBankConnectionAccount(connectionId, uid), (v) => {
-        setBank(v);
+        onBank(v);
         return 'Konto übernommen. „Jetzt abholen“ holt seine Zahlungen.';
       }),
     sync: (accountId: string, connectionId: string) =>
       act(accountId, () => actions.syncBankNow(year, connectionId), (v) => {
-        setBank(v.bank);
+        onBank(v.bank);
         onStatement(v.view);
         const o = v.outcome;
         if (o.status === 'synced') return `${o.added} ${o.added === 1 ? 'neue Zahlung' : 'neue Zahlungen'} abgeholt.`;
@@ -77,12 +76,12 @@ export function useBankFeed(initial: BankView, year: number, actions: BankAction
       }),
     clearNotice: (accountId: string, connectionId: string, notice: BankNotice) =>
       act(accountId, () => actions.clearBankConnectionNotice(connectionId, notice), (v) => {
-        setBank(v);
+        onBank(v);
         return 'Hinweis erledigt.';
       }),
     disconnect: (accountId: string, connectionId: string) =>
       act(accountId, () => actions.disconnectBank(connectionId), (v) => {
-        setBank(v.bank);
+        onBank(v.bank);
         return v.closedAtBank
           ? 'Verbindung getrennt. Die abgeholten Zahlungen bleiben.'
           : 'Verbindung hier getrennt; die Bank war nicht erreichbar, ihre Freigabe läuft von selbst ab. Die abgeholten Zahlungen bleiben.';

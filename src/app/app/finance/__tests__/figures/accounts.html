@@ -1,0 +1,221 @@
+<main class="relative z-10 min-h-svh px-4 pb-16 pt-6 sm:px-6" data-theme="dark">
+<div class="mx-auto w-full max-w-[88rem]">
+<div class="flex flex-wrap items-end justify-between gap-3">
+<div>
+<h1 class="text-2xl font-bold" style="color: var(--foreground);">Finanzen</h1>
+<p class="mt-1 text-sm" style="color: var(--muted);">Einnahmenüberschussrechnung aus den Belegen, Zeile für Zeile nachvollziehbar.</p>
+</div>
+<div class="flex flex-wrap items-center gap-2">
+<label class="sr-only">Jahr</label>
+<select class="ui-input" style="width: auto;">
+<option value="2026">2026</option>
+<option value="2025">2025</option>
+<option value="2024">2024</option>
+</select>
+<a class="ui-btn" href="/app/meals">Bewirtungen</a>
+<a class="ui-btn" href="/app/dashboard">Belege</a>
+</div>
+</div>
+<div class="mt-4 space-y-2">
+<p class="ui-note">In 2025 gilt (zumindest zeitweise) die Regelbesteuerung: Belege aus dieser Zeit zählen mit ihrem Nettobetrag, die Umsatzsteuer darin ist Vorsteuer. Ein Beleg ohne Nettobetrag steht unter „Offen“.</p>
+</div>
+<dl class="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 col-span-2 lg:col-span-1">
+<dt class="ui-label">Gewinn 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">3.053,75 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Einnahmen 3.500,00 €, 5 Belege noch offen</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Betriebsausgaben 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">446,25 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">4 Belege gerechnet</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Kosten für die Anlage N</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">120,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Studium und Anstellung</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Einkommensteuer 2025 (Schätzung)</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">Nachzahlung 344,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Lohn und Gewerbe</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Offene Prüfungen</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">6</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">1 Rechnung überfällig, 1 mit geschätztem Betrag, 1 Anlagen mit offener Prüfung</dd>
+</div>
+</dl>
+<p class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style="color: var(--muted);">
+<span>Hier steht der Betrieb für die Steuererklärung. Alle Ausgaben, private eingeschlossen, mit Budgets:</span>
+<a class="ui-btn ui-btn-sm" href="/app/spending">Ausgaben</a>
+</p>
+<div role="tablist" aria-label="Bereiche der Finanzübersicht" class="mt-6 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Erledigen<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>9<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Auswerten<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>1<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Steuer</button>
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: rgba(226, 163, 72, 0.55); background: var(--accent-muted); color: var(--accent);">Einstellungen</button>
+</div>
+<div role="tabpanel">
+<div role="tablist" aria-label="Reiter in Einstellungen" class="ui-scroll-bare-phone mt-3 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style="border-color: var(--border);">
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: var(--accent); color: var(--accent);">Konten</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Lieferanten</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Eigene Namen</button>
+</div>
+<div role="status" aria-live="polite" class="mt-4 min-h-5 text-sm" style="color: var(--muted);">
+</div>
+<div role="tabpanel" class="mt-4">
+<div class="space-y-6">
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Konten">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Konten und Stand</h2>
+<ul class="mt-3 space-y-3">
+<li class="rounded-lg border p-3" style="border-color: var(--border);">
+<div class="flex flex-wrap items-baseline justify-between gap-2">
+<p class="text-sm font-medium" style="color: var(--foreground);">Geschäftskonto<span class="ml-2 text-xs font-normal" style="color: var(--muted);">Bankkonto · 3 Zahlungen · vollständig bis 22.12.2025</span>
+</p>
+<span class="flex flex-wrap gap-2">
+<button type="button" class="ui-btn ui-btn-sm">Ganzes Konto ist privat</button>
+</span>
+</div>
+<div class="mt-2 text-xs" aria-label="Bankverbindung Geschäftskonto">
+<p style="color: var(--muted);">Live über die Bankschnittstelle (Beispielbank), zuletzt abgeholt am 23.12.2025</p>
+<div class="mt-2 flex flex-wrap gap-2">
+<button type="button" class="ui-btn ui-btn-sm">Jetzt abholen</button>
+<button type="button" class="ui-btn ui-btn-sm">Freigabe erneuern</button>
+<button type="button" class="ui-btn ui-btn-sm ui-btn-danger">Trennen</button>
+</div>
+<p role="status" aria-live="polite" class="mt-1 min-h-4" style="color: var(--muted);">
+</p>
+</div>
+<ul class="mt-2 space-y-1 text-xs" style="color: var(--muted);">
+<li class="flex flex-wrap items-baseline justify-between gap-2">
+<span>N26 (CSV), eingelesen am 02.01.2026: 3 neue von 3 Zahlungen (05.01.2025 bis 22.12.2025)</span>
+<button type="button" class="ui-btn ui-btn-sm ui-btn-danger">Rückgängig</button>
+</li>
+</ul>
+</li>
+<li class="rounded-lg border p-3" style="border-color: var(--border);">
+<div class="flex flex-wrap items-baseline justify-between gap-2">
+<p class="text-sm font-medium" style="color: var(--foreground);">Privatkonto<span class="ml-2 text-xs font-normal" style="color: var(--muted);">Bankkonto · 1 Zahlungen · vollständig bis 01.06.2025 · privat: nach seinen Zahlungen wird nicht gefragt</span>
+</p>
+<span class="flex flex-wrap gap-2">
+<button type="button" class="ui-btn ui-btn-sm">Wieder prüfen</button>
+</span>
+</div>
+<div class="mt-2 text-xs" aria-label="Bankverbindung Privatkonto">
+<p style="color: var(--muted);">Datei-Import</p>
+<div class="mt-2 flex flex-wrap gap-2">
+<button type="button" class="ui-btn ui-btn-sm">Live mit der Bank verbinden</button>
+</div>
+<p role="status" aria-live="polite" class="mt-1 min-h-4" style="color: var(--muted);">
+</p>
+</div>
+</li>
+<li class="rounded-lg border p-3" style="border-color: var(--border);">
+<div class="flex flex-wrap items-baseline justify-between gap-2">
+<p class="text-sm font-medium" style="color: var(--foreground);">Kreditkarte<span class="ml-2 text-xs font-normal" style="color: var(--muted);">Kreditkarte · 0 Zahlungen · noch nichts eingelesen</span>
+</p>
+<span class="flex flex-wrap gap-2">
+<button type="button" class="ui-btn ui-btn-sm ui-btn-danger">Konto entfernen</button>
+<button type="button" class="ui-btn ui-btn-sm">Ganzes Konto ist privat</button>
+</span>
+</div>
+<div class="mt-2 text-xs" aria-label="Bankverbindung Kreditkarte">
+<p style="color: var(--muted);">Datei-Import</p>
+<div class="mt-2 flex flex-wrap gap-2">
+<button type="button" class="ui-btn ui-btn-sm">Live mit der Bank verbinden</button>
+</div>
+<p role="status" aria-live="polite" class="mt-1 min-h-4" style="color: var(--muted);">
+</p>
+</div>
+</li>
+</ul>
+<form class="mt-4 flex flex-wrap items-end gap-2">
+<div>
+<label class="ui-label">Neues Konto</label>
+<input class="ui-input" placeholder="z. B. Geschäftskonto" maxlength="80" value="">
+</div>
+<div>
+<label class="ui-label">Art</label>
+<select class="ui-input">
+<option value="bank">Bankkonto</option>
+<option value="card">Kreditkarte</option>
+<option value="payment_service">Zahlungsdienst</option>
+</select>
+</div>
+<button type="submit" class="ui-btn">Konto anlegen</button>
+</form>
+</section>
+<section class="glass-panel rounded-xl p-4 sm:p-5">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Private Zahlungen in einer anderen Firma</h2>
+<p class="mt-1 text-xs" style="color: var(--muted);">Ein Konto wird nur einmal eingelesen und verbunden. Was hier als privat beantwortet ist (Gegenseite privat, Zahlung privat, ein ganz privates Konto, und Zahlungen einer Gegenseite „Teils, teils“, solange hier kein Beleg daran hängt), erscheint in der gewählten Firma unter <a class="underline" href="/app/spending">Ausgaben</a>. Geschäftliche und noch nicht beantwortete Zahlungen, Umbuchungen und hier verknüpfte Zahlungen bleiben hier; eine geänderte Antwort gilt sofort.</p>
+<ul class="mt-2 divide-y">
+<li class="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+<span style="color: var(--foreground);">Geschäftskonto</span>
+<span class="flex flex-wrap items-center gap-2">
+<label class="sr-only">Firma für die privaten Zahlungen von Geschäftskonto</label>
+<select class="ui-input" style="width: auto;">
+<option value="">Firma wählen</option>
+<option value="ws-2">Zweite Firma</option>
+</select>
+<button type="button" class="ui-btn ui-btn-sm" disabled="" aria-label="Private Zahlungen weitergeben: Geschäftskonto">Private Zahlungen weitergeben</button>
+</span>
+</li>
+<li class="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+<span style="color: var(--foreground);">Privatkonto</span>
+<span class="flex flex-wrap items-center gap-2">
+<label class="sr-only">Firma für die privaten Zahlungen von Privatkonto</label>
+<select class="ui-input" style="width: auto;">
+<option value="">Firma wählen</option>
+<option value="ws-2">Zweite Firma</option>
+</select>
+<button type="button" class="ui-btn ui-btn-sm" disabled="" aria-label="Private Zahlungen weitergeben: Privatkonto">Private Zahlungen weitergeben</button>
+</span>
+</li>
+<li class="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+<span style="color: var(--foreground);">Kreditkarte</span>
+<span class="flex flex-wrap items-center gap-2">
+<label class="sr-only">Firma für die privaten Zahlungen von Kreditkarte</label>
+<select class="ui-input" style="width: auto;">
+<option value="">Firma wählen</option>
+<option value="ws-2">Zweite Firma</option>
+</select>
+<button type="button" class="ui-btn ui-btn-sm" disabled="" aria-label="Private Zahlungen weitergeben: Kreditkarte">Private Zahlungen weitergeben</button>
+</span>
+</li>
+</ul>
+<div aria-live="polite">
+</div>
+</section>
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Import">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Kontoexport einlesen</h2>
+<div class="mt-3 flex flex-wrap items-end gap-2">
+<div>
+<label class="ui-label">Konto</label>
+<select class="ui-input">
+<option value="acc-1">Geschäftskonto</option>
+<option value="acc-2">Privatkonto</option>
+<option value="acc-3">Kreditkarte</option>
+</select>
+</div>
+<div>
+<label class="ui-label">Datei (CSV, JSON oder PDF)</label>
+<input accept=".csv,.json,.pdf,text/csv,application/json,application/pdf" class="ui-input" type="file">
+</div>
+<label class="flex items-center gap-1.5 text-sm" style="color: var(--foreground);">
+<input type="checkbox">Nur Zahlungen aus 2025</label>
+<button type="button" class="ui-btn ui-btn-primary">Einlesen</button>
+</div>
+<p class="mt-2 text-xs" style="color: var(--muted);">Unterstützt: Exporte von N26, Tomorrow und PayPal, die Kaufliste von Klarna, die Umsatzliste der Bankschnittstelle sowie die monatliche Abrechnung der Advanzia-Mastercard als PDF (in ein Konto der Art Kreditkarte). Eine Datei wird ganz oder gar nicht eingelesen; überlappende Zeiträume legen nichts doppelt an. Was ein Zahlungsdienst später vom Bankkonto einzieht, gilt als Umbuchung zwischen eigenen Konten, sobald die Liste des Dienstes eingelesen ist. Ein Konto lässt sich aus einer zweiten Quelle fortsetzen (ein Bankexport, der mitten im Jahr endet, weiter mit der Umsatzliste der Bankschnittstelle; die PayPal-Liste weiter mit der Live-Verbindung zu PayPal): ein Tag gehört der Quelle, die ihn zuerst gebracht hat, die andere Datei liest nur die übrigen Tage. Mit „Nur Zahlungen aus 2025“ bleibt der Rest der Datei draußen; er lässt sich später noch einlesen.</p>
+</section>
+</div>
+</div>
+</div>
+</div>
+</main>

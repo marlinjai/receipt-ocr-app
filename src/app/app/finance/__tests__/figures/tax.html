@@ -1,0 +1,672 @@
+<main class="relative z-10 min-h-svh px-4 pb-16 pt-6 sm:px-6" data-theme="dark">
+<div class="mx-auto w-full max-w-[88rem]">
+<div class="flex flex-wrap items-end justify-between gap-3">
+<div>
+<h1 class="text-2xl font-bold" style="color: var(--foreground);">Finanzen</h1>
+<p class="mt-1 text-sm" style="color: var(--muted);">Einnahmenüberschussrechnung aus den Belegen, Zeile für Zeile nachvollziehbar.</p>
+</div>
+<div class="flex flex-wrap items-center gap-2">
+<label class="sr-only">Jahr</label>
+<select class="ui-input" style="width: auto;">
+<option value="2026">2026</option>
+<option value="2025">2025</option>
+<option value="2024">2024</option>
+</select>
+<a class="ui-btn" href="/app/meals">Bewirtungen</a>
+<a class="ui-btn" href="/app/dashboard">Belege</a>
+</div>
+</div>
+<div class="mt-4 space-y-2">
+<p class="ui-note">In 2025 gilt (zumindest zeitweise) die Regelbesteuerung: Belege aus dieser Zeit zählen mit ihrem Nettobetrag, die Umsatzsteuer darin ist Vorsteuer. Ein Beleg ohne Nettobetrag steht unter „Offen“.</p>
+</div>
+<dl class="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 col-span-2 lg:col-span-1">
+<dt class="ui-label">Gewinn 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">3.053,75 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Einnahmen 3.500,00 €, 5 Belege noch offen</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Betriebsausgaben 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">446,25 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">4 Belege gerechnet</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Kosten für die Anlage N</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">120,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Studium und Anstellung</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Einkommensteuer 2025 (Schätzung)</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">Nachzahlung 344,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Lohn und Gewerbe</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Offene Prüfungen</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">6</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">1 Rechnung überfällig, 1 mit geschätztem Betrag, 1 Anlagen mit offener Prüfung</dd>
+</div>
+</dl>
+<p class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style="color: var(--muted);">
+<span>Hier steht der Betrieb für die Steuererklärung. Alle Ausgaben, private eingeschlossen, mit Budgets:</span>
+<a class="ui-btn ui-btn-sm" href="/app/spending">Ausgaben</a>
+</p>
+<div role="tablist" aria-label="Bereiche der Finanzübersicht" class="mt-6 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Erledigen<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>9<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Auswerten<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>1<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: rgba(226, 163, 72, 0.55); background: var(--accent-muted); color: var(--accent);">Steuer</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Einstellungen</button>
+</div>
+<div role="tabpanel">
+<div role="tablist" aria-label="Reiter in Steuer" class="ui-scroll-bare-phone mt-3 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style="border-color: var(--border);">
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Umsatzsteuer</button>
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: var(--accent); color: var(--accent);">Einkommensteuer</button>
+</div>
+<div role="status" aria-live="polite" class="mt-4 min-h-5 text-sm" style="color: var(--muted);">
+</div>
+<div role="tabpanel" class="mt-4">
+<div class="space-y-6">
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Einkommensteuer-Schätzung">
+<div class="flex flex-wrap items-baseline justify-between gap-3">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Einkommensteuer 2025: Schätzung (Lohn und Gewerbe)</h2>
+</div>
+<p class="mt-3 text-2xl font-semibold tabular-nums" style="color: var(--foreground);">Nachzahlung 344,00 €</p>
+<p class="mt-1 text-xs" style="color: var(--muted);">Eine Schätzung, kein Bescheid. Zu versteuerndes Einkommen 40.698,00 €.</p>
+<p class="mt-1 text-sm" style="color: var(--foreground);">Was das Gewerbe an deiner Steuer ändert: 966,00 € mehr</p>
+<div class="ui-table-scroll">
+<table class="mt-3 w-full text-sm tabular-nums" style="color: var(--foreground);">
+<caption class="sr-only">Steuern 2025</caption>
+<thead>
+<tr class="text-left text-xs" style="color: var(--muted);">
+<th scope="col" class="py-1 font-medium">Steuer</th>
+<th scope="col" class="py-1 text-right font-medium">festzusetzen</th>
+<th scope="col" class="py-1 text-right font-medium">einbehalten und vorausgezahlt</th>
+<th scope="col" class="py-1 text-right font-medium">Ergebnis</th>
+</tr>
+</thead>
+<tbody>
+<tr class="border-t" style="border-color: var(--border);">
+<th scope="row" class="py-1 text-left font-normal">Einkommensteuer</th>
+<td class="py-1 text-right">7.544,00 €</td>
+<td class="py-1 text-right">7.200,00 €</td>
+<td class="py-1 text-right">Nachzahlung 344,00 €</td>
+</tr>
+<tr class="border-t" style="border-color: var(--border);">
+<th scope="row" class="py-1 text-left font-normal">Solidaritätszuschlag</th>
+<td class="py-1 text-right">0,00 €</td>
+<td class="py-1 text-right">0,00 €</td>
+<td class="py-1 text-right">ausgeglichen (0,00 €)</td>
+</tr>
+<tr class="border-t" style="border-color: var(--border);">
+<th scope="row" class="py-1 text-left font-normal">Kirchensteuer</th>
+<td class="py-1 text-right">0,00 €</td>
+<td class="py-1 text-right">0,00 €</td>
+<td class="py-1 text-right">ausgeglichen (0,00 €)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="mt-3 space-y-2">
+<p class="ui-note">Keine Kirchensteuer einbehalten und keine Monate angegeben: gerechnet ohne Kirchensteuerpflicht.</p>
+</div>
+<details class="mt-4">
+<summary class="cursor-pointer text-sm font-medium" style="color: var(--foreground);">Rechenweg mit Quellen</summary>
+<div>
+<h3 class="mt-4 text-sm font-semibold" style="color: var(--foreground);">Gewerbebetrieb (Anlage G)</h3>
+<ul class="mt-1" style="color: var(--muted);">
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Gewinn laut Einnahmenüberschussrechnung</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">3.053,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>Ergebnis der Einnahmenüberschussrechnung (EÜR)</span>
+<span class="tabular-nums">3.053,75 €</span>
+</p>
+<p>In vollen Euro, zugunsten abgerundet.</p>
+</div>
+</details>
+</li>
+</ul>
+</div>
+<div>
+<h3 class="mt-4 text-sm font-semibold" style="color: var(--foreground);">Nichtselbständige Arbeit (Anlage N)</h3>
+<ul class="mt-1" style="color: var(--muted);">
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Bruttoarbeitslohn</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">48.000,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>Arbeitgeber Beispiel GmbH (Lohnsteuerbescheinigung)</span>
+<span class="tabular-nums">48.000,00 €</span>
+</p>
+<p>In vollen Euro, abgerundet.</p>
+</div>
+</details>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Tagespauschale Homeoffice</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>Tage</span>
+<span class="tabular-nums">0</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>je Tag</span>
+<span class="tabular-nums">6,00 €</span>
+</p>
+<p>Quelle: <a href="https://www.gesetze-im-internet.de/estg/__4.html" class="underline" target="_blank" rel="noreferrer">§ 4 Abs. 5 Satz 1 Nr. 6c Einkommensteuergesetz (Tagespauschale 6 Euro, höchstens 1.260 Euro im Jahr)</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Entfernungspauschale</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p>Quelle: <a href="https://www.gesetze-im-internet.de/estg/__9.html" class="underline" target="_blank" rel="noreferrer">§ 9 Abs. 1 Satz 3 Nr. 4 Einkommensteuergesetz in der bis 2025 geltenden Fassung (0,30 Euro bis 20 km, 0,38 Euro ab dem 21. km, höchstens 4.500 Euro ohne eigenen Wagen)</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Belege der Anlage N (Fortbildung, Arbeitsmittel, Sonstiges)</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>Betragszeilen der Anlage N aus den Belegen (Ansicht EÜR)</span>
+<span class="tabular-nums">0,00 €</span>
+</p>
+</div>
+</details>
+</li>
+<li class="flex items-baseline justify-between gap-3 py-1 text-sm">
+<span>Weitere Werbungskosten</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Gewerkschaftsbeiträge</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p>Quelle: <a href="https://www.gesetze-im-internet.de/estg/__9a.html" class="underline" target="_blank" rel="noreferrer">§ 9a Einkommensteuergesetz in der bis 2025 geltenden Fassung (Gewerkschaftsbeiträge sind Werbungskosten, mit dem Pauschbetrag abgegolten)</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Arbeitnehmer-Pauschbetrag (höher als die Werbungskosten)</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">-1.230,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>Werbungskosten zusammen</span>
+<span class="tabular-nums">0,00 €</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>Arbeitnehmer-Pauschbetrag</span>
+<span class="tabular-nums">1.230,00 €</span>
+</p>
+<p>Quelle: <a href="https://www.gesetze-im-internet.de/estg/__9a.html" class="underline" target="_blank" rel="noreferrer">§ 9a Satz 1 Nr. 1 Buchstabe a Einkommensteuergesetz (Arbeitnehmer-Pauschbetrag 1.230 Euro)</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Einkünfte aus nichtselbständiger Arbeit</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">46.770,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p>Lohndaten: Lohnsteuerbescheinigung.</p>
+</div>
+</details>
+</li>
+</ul>
+</div>
+<div>
+<h3 class="mt-4 text-sm font-semibold" style="color: var(--foreground);">Summe der Einkünfte</h3>
+<ul class="mt-1" style="color: var(--muted);">
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Summe der Einkünfte</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">49.823,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>Gewerbebetrieb</span>
+<span class="tabular-nums">3.053,00 €</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>Nichtselbständige Arbeit</span>
+<span class="tabular-nums">46.770,00 €</span>
+</p>
+<p>Ein Verlust aus dem Gewerbe wird mit dem Lohn desselben Jahres verrechnet.</p>
+</div>
+</details>
+</li>
+<li class="flex items-baseline justify-between gap-3 py-1 text-sm">
+<span>Gesamtbetrag der Einkünfte</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">49.823,00 €</span>
+</li>
+</ul>
+</div>
+<div>
+<h3 class="mt-4 text-sm font-semibold" style="color: var(--foreground);">Sonderausgaben</h3>
+<ul class="mt-1" style="color: var(--muted);">
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Gezahlte Kirchensteuer</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>vom Lohn einbehalten</span>
+<span class="tabular-nums">0,00 €</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>sonst gezahlt (Bescheid, Vorauszahlungen)</span>
+<span class="tabular-nums">0,00 €</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>erstattet</span>
+<span class="tabular-nums">0,00 €</span>
+</p>
+</div>
+</details>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Eigene Berufsausbildung</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p>Quelle: <a href="https://www.gesetze-im-internet.de/estg/__10.html" class="underline" target="_blank" rel="noreferrer">§ 10 Abs. 1 Nr. 7 Einkommensteuergesetz (eigene Berufsausbildung bis 6.000 Euro im Kalenderjahr)</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Spenden</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>eingetragen</span>
+<span class="tabular-nums">0,00 €</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>Höchstbetrag</span>
+<span class="tabular-nums">9.964,00 €</span>
+</p>
+<p>Quelle: <a href="https://www.gesetze-im-internet.de/estg/__10b.html" class="underline" target="_blank" rel="noreferrer">§ 10b Abs. 1 Satz 1 Nr. 1 Einkommensteuergesetz (bis 20 Prozent des Gesamtbetrags der Einkünfte)</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Sonderausgaben-Pauschbetrag (höher)</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">-36,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>Pauschbetrag</span>
+<span class="tabular-nums">36,00 €</span>
+</p>
+<p>Quelle: <a href="https://www.gesetze-im-internet.de/estg/__10c.html" class="underline" target="_blank" rel="noreferrer">§ 10c Satz 1 Einkommensteuergesetz (Sonderausgaben-Pauschbetrag 36 Euro)</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+</ul>
+</div>
+<div>
+<h3 class="mt-4 text-sm font-semibold" style="color: var(--foreground);">Vorsorgeaufwendungen</h3>
+<ul class="mt-1" style="color: var(--muted);">
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Altersvorsorge</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">4.464,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>Arbeitnehmer- und Arbeitgeberanteil, selbst gezahlt</span>
+<span class="tabular-nums">8.928,00 €</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>Höchstbetrag</span>
+<span class="tabular-nums">29.344,00 €</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>abzüglich Arbeitgeberanteil</span>
+<span class="tabular-nums">-4.464,00 €</span>
+</p>
+<p>Quelle: <a href="https://www.gesetze-im-internet.de/estg/__10.html" class="underline" target="_blank" rel="noreferrer">§ 10 Abs. 3 Einkommensteuergesetz (Höchstbeitrag knappschaftliche Rentenversicherung 2025: 29.344 Euro, ab 2023 zu 100 Prozent)</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Kranken- und Pflegeversicherung (Basis)</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">4.625,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>Krankenversicherung</span>
+<span class="tabular-nums">3.890,00 €</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>Kürzung 4 % (Anspruch auf Krankengeld)</span>
+<span class="tabular-nums">-155,00 €</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>Pflegeversicherung</span>
+<span class="tabular-nums">890,00 €</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>Beitragsrückerstattung</span>
+<span class="tabular-nums">0,00 €</span>
+</p>
+<p>Quelle: <a href="https://www.gesetze-im-internet.de/estg/__10.html" class="underline" target="_blank" rel="noreferrer">§ 10 Abs. 1 Nr. 3 Buchstabe a Satz 4 Einkommensteuergesetz (Kürzung um 4 Prozent bei Anspruch auf Krankengeld)</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Weitere Vorsorge (Arbeitslosen- und andere Versicherungen)</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>eingetragen</span>
+<span class="tabular-nums">624,00 €</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>Höchstbetrag zusammen mit den Basisbeiträgen</span>
+<span class="tabular-nums">1.900,00 €</span>
+</p>
+<p>Die Basisbeiträge übersteigen schon den Höchstbetrag: weitere Versicherungen wirken sich nicht aus.</p>
+<p>Quelle: <a href="https://www.gesetze-im-internet.de/estg/__10.html" class="underline" target="_blank" rel="noreferrer">§ 10 Abs. 4 Einkommensteuergesetz (1.900 Euro mit steuerfreiem Arbeitgeberzuschuss, sonst 2.800 Euro; Basisbeiträge mindestens in voller Höhe)</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+<li class="flex items-baseline justify-between gap-3 py-1 text-sm">
+<span>Vorsorgeaufwendungen zusammen</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">-9.089,00 €</span>
+</li>
+</ul>
+</div>
+<div>
+<h3 class="mt-4 text-sm font-semibold" style="color: var(--foreground);">Zu versteuerndes Einkommen</h3>
+<ul class="mt-1" style="color: var(--muted);">
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Zu versteuerndes Einkommen</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">40.698,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>rechnerisch</span>
+<span class="tabular-nums">40.698,00 €</span>
+</p>
+</div>
+</details>
+</li>
+</ul>
+</div>
+<div>
+<h3 class="mt-4 text-sm font-semibold" style="color: var(--foreground);">Steuer</h3>
+<ul class="mt-1" style="color: var(--muted);">
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Einkommensteuer (Grundtarif)</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">7.544,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>zu versteuerndes Einkommen</span>
+<span class="tabular-nums">40.698,00 €</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>Tarifzone</span>
+<span class="tabular-nums">3</span>
+</p>
+<p>Quelle: <a href="https://www.recht.bund.de/bgbl/1/2024/449/VO.html" class="underline" target="_blank" rel="noreferrer">§ 32a Abs. 1 Einkommensteuergesetz in der Fassung des Steuerfortentwicklungsgesetzes vom 23. Dezember 2024 (BGBl. 2024 I Nr. 449), Veranlagungszeitraum 2025</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Solidaritätszuschlag</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>Freigrenze (Einkommensteuer)</span>
+<span class="tabular-nums">19.950,00 €</span>
+</p>
+<p>Quelle: <a href="https://www.gesetze-im-internet.de/solzg_1995/" class="underline" target="_blank" rel="noreferrer">§ 3 Abs. 3 und § 4 Solidaritätszuschlaggesetz 1995 für 2025 (Freigrenze 19.950 Euro, 5,5 Prozent, höchstens 11,9 Prozent des Unterschieds)</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Kirchensteuer</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p class="flex justify-between gap-3">
+<span>pflichtige Monate</span>
+<span class="tabular-nums">0 von 12</span>
+</p>
+<p class="flex justify-between gap-3">
+<span>Satz</span>
+<span class="tabular-nums">entfällt</span>
+</p>
+<p>Quelle: <a href="https://gesetze.berlin.de/bsbe/document/jlr-KiStGBErahmen" class="underline" target="_blank" rel="noreferrer">Kirchensteuergesetze der Länder: 8 Prozent der Einkommensteuer in Bayern und Baden-Württemberg, 9 Prozent in den übrigen Ländern (Berlin: Kirchensteuergesetz Berlin; die 9 Prozent bestätigt die vorläufige Berechnung des Finanzamts für 2025)</a> (geprüft am 2026-10-15)</p>
+</div>
+</details>
+</li>
+</ul>
+</div>
+<div>
+<h3 class="mt-4 text-sm font-semibold" style="color: var(--foreground);">Angerechnet</h3>
+<ul class="mt-1" style="color: var(--muted);">
+<li class="py-1 text-sm">
+<details>
+<summary class="flex cursor-pointer items-baseline justify-between gap-3">
+<span>Lohnsteuer einbehalten</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">-7.200,00 €</span>
+</summary>
+<div class="mt-1 space-y-1 pl-4 text-xs" style="color: var(--muted);">
+<p>Auf den Cent angerechnet.</p>
+</div>
+</details>
+</li>
+<li class="flex items-baseline justify-between gap-3 py-1 text-sm">
+<span>Solidaritätszuschlag einbehalten</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</li>
+<li class="flex items-baseline justify-between gap-3 py-1 text-sm">
+<span>Kirchensteuer einbehalten</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</li>
+<li class="flex items-baseline justify-between gap-3 py-1 text-sm">
+<span>Vorauszahlungen</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</li>
+</ul>
+</div>
+<div>
+<h3 class="mt-4 text-sm font-semibold" style="color: var(--foreground);">Ergebnis</h3>
+<ul class="mt-1" style="color: var(--muted);">
+<li class="flex items-baseline justify-between gap-3 py-1 text-sm">
+<span>Einkommensteuer</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">344,00 €</span>
+</li>
+<li class="flex items-baseline justify-between gap-3 py-1 text-sm">
+<span>Solidaritätszuschlag</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</li>
+<li class="flex items-baseline justify-between gap-3 py-1 text-sm">
+<span>Kirchensteuer</span>
+<span class="shrink-0 tabular-nums" style="color: var(--foreground);">0,00 €</span>
+</li>
+</ul>
+</div>
+<ul class="mt-4 list-disc space-y-1 pl-5 text-xs" style="color: var(--muted);">
+<li>Zusammenveranlagung, Kinder, Kapitalerträge und Vermietung sind nicht abgedeckt.</li>
+<li>Die Günstigerprüfung des Finanzamts für Vorsorgeaufwendungen wird nicht nachgerechnet; gerechnet wird nach der Regel von § 10 Abs. 4 EStG.</li>
+<li>Steuerwerte zuletzt durchgesehen am 2026-10-15.</li>
+</ul>
+</details>
+</section>
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Lohn">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Lohn 2025</h2>
+<p class="mt-1 text-xs" style="color: var(--muted);">Die Lohnsteuerbescheinigung gilt, sobald sie da ist. Bis dahin zählen die monatlichen Lohnabrechnungen; im laufenden Jahr kann die letzte bis Dezember hochgerechnet werden.</p>
+<div class="ui-table-scroll">
+<table class="mt-3 w-full text-sm tabular-nums" style="color: var(--foreground);">
+<caption class="sr-only">Lohnangaben 2025</caption>
+<thead>
+<tr class="text-left text-xs" style="color: var(--muted);">
+<th scope="col" class="py-1 font-medium">Arbeitgeber und Zeitraum</th>
+<th scope="col" class="py-1 text-right font-medium">Brutto</th>
+<th scope="col" class="py-1 text-right font-medium">Lohnsteuer</th>
+<th scope="col" class="py-1 text-right font-medium">Kirchensteuer</th>
+<th scope="col" class="py-1">
+<span class="sr-only">Aktionen</span>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr class="border-t" style="border-color: var(--border);">
+<th scope="row" class="py-1 text-left font-normal">Arbeitgeber Beispiel GmbH: Lohnsteuerbescheinigung</th>
+<td class="py-1 text-right">48.000,00 €</td>
+<td class="py-1 text-right">7.200,00 €</td>
+<td class="py-1 text-right">0,00 €</td>
+<td class="py-1 text-right">
+<span class="inline-flex gap-1">
+<button type="button" class="ui-btn ui-btn-sm">Ändern</button>
+<button type="button" class="ui-btn ui-btn-sm ui-btn-danger">Löschen</button>
+</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<button type="button" class="ui-btn ui-btn-primary mt-3">Lohnabrechnung oder Bescheinigung eintragen</button>
+</section>
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Kirchensteuer">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Kirchensteuer 2025</h2>
+<div class="mt-3 flex flex-wrap items-end gap-3">
+<div>
+<label class="ui-label">Bundesland (für den Kirchensteuersatz)</label>
+<select class="ui-input" style="width: auto;">
+<option value="">nicht angegeben</option>
+<option value="BW">Baden-Württemberg</option>
+<option value="BY">Bayern</option>
+<option value="BE">Berlin</option>
+<option value="BB">Brandenburg</option>
+<option value="HB">Bremen</option>
+<option value="HH">Hamburg</option>
+<option value="HE">Hessen</option>
+<option value="MV">Mecklenburg-Vorpommern</option>
+<option value="NI">Niedersachsen</option>
+<option value="NW">Nordrhein-Westfalen</option>
+<option value="RP">Rheinland-Pfalz</option>
+<option value="SL">Saarland</option>
+<option value="SN">Sachsen</option>
+<option value="ST">Sachsen-Anhalt</option>
+<option value="SH">Schleswig-Holstein</option>
+<option value="TH">Thüringen</option>
+</select>
+</div>
+</div>
+<fieldset class="mt-3">
+<legend class="ui-label">Monate mit Kirchensteuerpflicht</legend>
+<div class="mt-1 flex flex-wrap gap-2 text-sm" style="color: var(--foreground);">
+<label class="inline-flex items-center gap-1">
+<input type="checkbox">Januar</label>
+<label class="inline-flex items-center gap-1">
+<input type="checkbox">Februar</label>
+<label class="inline-flex items-center gap-1">
+<input type="checkbox">März</label>
+<label class="inline-flex items-center gap-1">
+<input type="checkbox">April</label>
+<label class="inline-flex items-center gap-1">
+<input type="checkbox">Mai</label>
+<label class="inline-flex items-center gap-1">
+<input type="checkbox">Juni</label>
+<label class="inline-flex items-center gap-1">
+<input type="checkbox">Juli</label>
+<label class="inline-flex items-center gap-1">
+<input type="checkbox">August</label>
+<label class="inline-flex items-center gap-1">
+<input type="checkbox">September</label>
+<label class="inline-flex items-center gap-1">
+<input type="checkbox">Oktober</label>
+<label class="inline-flex items-center gap-1">
+<input type="checkbox">November</label>
+<label class="inline-flex items-center gap-1">
+<input type="checkbox">Dezember</label>
+</div>
+</fieldset>
+<p class="mt-2 text-xs" style="color: var(--muted);">Noch nicht angegeben. Nach einem Kirchenaustritt endet die Pflicht mit dem Monat des Austritts.</p>
+<div class="mt-2 flex gap-2">
+<button type="button" class="ui-btn">Monate speichern</button>
+</div>
+</section>
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Abgabe der Erklärung">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Abgabe der Erklärung 2025</h2>
+<p class="mt-2 text-sm" style="color: var(--foreground);">Noch nicht als abgegeben eingetragen.</p>
+<p class="mt-1 text-xs" style="color: var(--muted);">Ein abgegebenes Jahr legt die Zahlungen um seinen Jahreswechsel (22. Dezember bis 10. Januar) so fest, wie sie erklärt wurden: jede bleibt in dem Jahr, in dem sie bezahlt wurde.</p>
+<div class="mt-3 flex flex-wrap items-end gap-3">
+<div>
+<label class="ui-label">Erklärung 2025 abgegeben am</label>
+<input class="ui-input" style="width: auto;" min="2026-01-01" max="2026-01-02" type="date" value="">
+</div>
+<button type="button" class="ui-btn" disabled="">Abgabedatum speichern</button>
+</div>
+</section>
+<section class="glass-panel rounded-xl p-4 sm:p-5" aria-label="Weitere Angaben">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Weitere Angaben zur Steuererklärung 2025</h2>
+<p class="mt-1 text-xs" style="color: var(--muted);">Belege mit Anteil Studium oder Anstellung zählen schon über die Anlage N (Einkünfte aus nichtselbständiger Arbeit) der Ansicht „EÜR“ (120,00 €).</p>
+<button type="button" class="ui-btn mt-3">Angabe hinzufügen</button>
+</section>
+</div>
+</div>
+</div>
+</div>
+</main>

@@ -107,7 +107,8 @@ const stateOf = async (workspaceId: string, paymentId: string) => {
  */
 const statement = async (workspaceId: string) => {
   const view = await loadStatement(db, workspaceId, 2026);
-  return JSON.stringify({ ...view, payments: { ...view.payments, treatments: [...view.payments.treatments].sort((x, y) => x.key.localeCompare(y.key)) } });
+  // When it was read is no figure: everything else must stay the same.
+  return JSON.stringify({ ...view, readAt: 0, payments: { ...view.payments, treatments: [...view.payments.treatments].sort((x, y) => x.key.localeCompare(y.key)) } });
 };
 
 afterAll(async () => {

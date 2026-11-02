@@ -1,0 +1,269 @@
+<main class="relative z-10 min-h-svh px-4 pb-16 pt-6 sm:px-6" data-theme="dark">
+<div class="mx-auto w-full max-w-[88rem]">
+<div class="flex flex-wrap items-end justify-between gap-3">
+<div>
+<h1 class="text-2xl font-bold" style="color: var(--foreground);">Finanzen</h1>
+<p class="mt-1 text-sm" style="color: var(--muted);">Einnahmenüberschussrechnung aus den Belegen, Zeile für Zeile nachvollziehbar.</p>
+</div>
+<div class="flex flex-wrap items-center gap-2">
+<label class="sr-only">Jahr</label>
+<select class="ui-input" style="width: auto;">
+<option value="2026">2026</option>
+<option value="2025">2025</option>
+<option value="2024">2024</option>
+</select>
+<a class="ui-btn" href="/app/meals">Bewirtungen</a>
+<a class="ui-btn" href="/app/dashboard">Belege</a>
+</div>
+</div>
+<div class="mt-4 space-y-2">
+<p class="ui-note">In 2025 gilt (zumindest zeitweise) die Regelbesteuerung: Belege aus dieser Zeit zählen mit ihrem Nettobetrag, die Umsatzsteuer darin ist Vorsteuer. Ein Beleg ohne Nettobetrag steht unter „Offen“.</p>
+</div>
+<dl class="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 col-span-2 lg:col-span-1">
+<dt class="ui-label">Gewinn 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">3.053,75 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Einnahmen 3.500,00 €, 5 Belege noch offen</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Betriebsausgaben 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">446,25 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">4 Belege gerechnet</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Kosten für die Anlage N</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">120,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Studium und Anstellung</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Einkommensteuer 2025 (Schätzung)</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">Nachzahlung 344,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Lohn und Gewerbe</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Offene Prüfungen</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">6</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">1 Rechnung überfällig, 1 mit geschätztem Betrag, 1 Anlagen mit offener Prüfung</dd>
+</div>
+</dl>
+<p class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style="color: var(--muted);">
+<span>Hier steht der Betrieb für die Steuererklärung. Alle Ausgaben, private eingeschlossen, mit Budgets:</span>
+<a class="ui-btn ui-btn-sm" href="/app/spending">Ausgaben</a>
+</p>
+<div role="tablist" aria-label="Bereiche der Finanzübersicht" class="mt-6 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Erledigen<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>9<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: rgba(226, 163, 72, 0.55); background: var(--accent-muted); color: var(--accent);">Auswerten<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>1<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Steuer</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Einstellungen</button>
+</div>
+<div role="tabpanel">
+<div role="tablist" aria-label="Reiter in Auswerten" class="ui-scroll-bare-phone mt-3 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style="border-color: var(--border);">
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: var(--accent); color: var(--accent);">EÜR</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Einnahmen</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Zahlungen</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Anlagen<span class="ml-2 rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>1<span class="sr-only"> offen</span>
+</span>
+</button>
+</div>
+<div role="status" aria-live="polite" class="mt-4 min-h-5 text-sm" style="color: var(--muted);">
+</div>
+<div role="tabpanel" class="mt-4">
+<div class="space-y-6">
+<section class="glass-panel overflow-hidden rounded-xl">
+<h2 class="px-4 pt-4 text-base font-semibold" style="color: var(--foreground);">Anlage EÜR: Betriebseinnahmen</h2>
+<ul class="mt-2">
+<li class="border-t" style="border-color: var(--border);">
+<button type="button" aria-expanded="false" class="flex w-full items-baseline justify-between gap-4 px-4 py-3 text-left">
+<span class="text-sm" style="color: var(--foreground);">
+<span class="mr-2 tabular-nums" style="color: var(--muted);">Zeile 15</span>Umsatzsteuerpflichtige Betriebseinnahmen<span class="ml-2 text-xs" style="color: var(--muted);">
+</span>
+</span>
+<span class="shrink-0 text-sm font-medium tabular-nums" style="color: var(--foreground);">3.500,00 €</span>
+</button>
+</li>
+<li class="flex items-baseline justify-between gap-4 border-t px-4 py-3" style="border-color: var(--border);">
+<span class="text-sm font-semibold" style="color: var(--foreground);">Summe</span>
+<span class="text-sm font-semibold tabular-nums" style="color: var(--foreground);">3.500,00 €</span>
+</li>
+</ul>
+</section>
+<section class="glass-panel overflow-hidden rounded-xl">
+<h2 class="px-4 pt-4 text-base font-semibold" style="color: var(--foreground);">Anlage EÜR: Betriebsausgaben</h2>
+<ul class="mt-2">
+<li class="border-t" style="border-color: var(--border);">
+<button type="button" aria-expanded="true" class="flex w-full items-baseline justify-between gap-4 px-4 py-3 text-left">
+<span class="text-sm" style="color: var(--foreground);">
+<span class="mr-2 tabular-nums" style="color: var(--muted);">Zeile 43</span>Aufwendungen für Telekommunikation (z. B. Telefon, Internet)<span class="ml-2 text-xs" style="color: var(--muted);">4 Belege</span>
+</span>
+<span class="shrink-0 text-sm font-medium tabular-nums" style="color: var(--foreground);">302,25 €</span>
+</button>
+<ul class="pb-2">
+<li class="border-t px-4 py-2.5" style="border-color: var(--border);">
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+<span class="text-sm" style="color: var(--foreground);">
+<a class="hover:underline" title="Beleg in der Tabelle öffnen" href="/app/dashboard?beleg=tel-1">Netzwerk Nord GmbH</a>
+<span class="ml-2 text-xs" style="color: var(--muted);">14.03.2025 · 100 % Betrieb (für diesen Beleg entschieden)</span>
+</span>
+<span class="flex items-baseline gap-3">
+<span class="text-sm tabular-nums" style="color: var(--foreground);">119,00 €</span>
+<button type="button" class="ui-btn ui-btn-sm" aria-expanded="true">Schließen</button>
+</span>
+</div>
+<div class="mt-3 rounded-lg border p-3" style="border-color: var(--border);">
+<form class="space-y-4" novalidate="">
+<fieldset>
+<legend class="ui-label">Wer trägt die Kosten?</legend>
+<div class="ui-seg mb-3" role="group" aria-label="Häufige Aufteilungen">
+<button type="button" aria-pressed="true">100 % Betrieb</button>
+<button type="button" aria-pressed="false">50 % Betrieb</button>
+<button type="button" aria-pressed="false">50 % Betrieb, 30 % Studium</button>
+<button type="button" aria-pressed="false">100 % Studium</button>
+<button type="button" aria-pressed="false">Privat</button>
+</div>
+<div class="grid gap-3 sm:grid-cols-3">
+<div>
+<label class="ui-label">Betrieb in %</label>
+<input class="ui-input tabular-nums" inputmode="decimal" aria-invalid="false" placeholder="0" value="100">
+<p class="mt-1 text-xs tabular-nums" style="color: var(--muted);">119,00 €</p>
+</div>
+<div>
+<label class="ui-label">Studium in %</label>
+<input class="ui-input tabular-nums" inputmode="decimal" aria-invalid="false" placeholder="0" value="">
+<p class="mt-1 text-xs tabular-nums" style="color: var(--muted);">0,00 €</p>
+</div>
+<div>
+<label class="ui-label">Anstellung in %</label>
+<input class="ui-input tabular-nums" inputmode="decimal" aria-invalid="false" placeholder="0" value="">
+<p class="mt-1 text-xs tabular-nums" style="color: var(--muted);">0,00 €</p>
+</div>
+</div>
+<p class="mt-2 text-xs" style="color: var(--muted);" role="status">Privat bleibt 0 % (0,00 €).</p>
+</fieldset>
+<div>
+<label class="ui-label">Zeile der EÜR für den betrieblichen Anteil</label>
+<select class="ui-input">
+<option value="">Bitte wählen</option>
+<option value="euer.goods">27 · Waren, Rohstoffe und Hilfsstoffe einschließlich der Nebenkosten</option>
+<option value="euer.external_services">29 · Bezogene Fremdleistungen</option>
+<option value="euer.low_value_assets">36 · Aufwendungen für geringwertige Wirtschaftsgüter nach § 6 Abs. 2 EStG</option>
+<option value="euer.rent_business_premises">39 · Miete/Pacht für Geschäftsräume und betrieblich genutzte Grundstücke</option>
+<option value="euer.telecom">43 · Aufwendungen für Telekommunikation (z. B. Telefon, Internet)</option>
+<option value="euer.travel_lodging">44 · Übernachtungs- und Reisenebenkosten bei Geschäftsreisen des Steuerpflichtigen</option>
+<option value="euer.training">45 · Fortbildungskosten (ohne Reisekosten)</option>
+<option value="euer.legal_tax_advice">46 · Kosten für Rechts- und Steuerberatung, Buchführung</option>
+<option value="euer.leasing_movable">47 · Miete/Leasing für bewegliche Wirtschaftsgüter (ohne Kfz)</option>
+<option value="euer.maintenance">48 · Erhaltungsaufwendungen (z. B. Instandhaltung, Wartung, Reparatur; ohne solche für Gebäude und Kfz)</option>
+<option value="euer.fees_insurance">49 · Beiträge, Gebühren, Abgaben und Versicherungen (ohne solche für Gebäude und Kfz)</option>
+<option value="euer.it_running">50 · Laufende EDV-Kosten (z. B. Beratung, Wartung, Reparatur)</option>
+<option value="euer.work_equipment">51 · Arbeitsmittel (z. B. Bürobedarf, Porto, Fachliteratur)</option>
+<option value="euer.packaging_transport">53 · Kosten für Verpackung und Transport</option>
+<option value="euer.advertising">54 · Werbekosten (z. B. Inserate, Werbespots, Plakate)</option>
+<option value="euer.other_unlimited">60 · Übrige unbeschränkt abziehbare Betriebsausgaben (auch zurückgezahlte Hilfen/Zuschüsse aufgrund der Corona-Pandemie)</option>
+<option value="euer.gifts">62 · Geschenke</option>
+<option value="euer.travel_meal_allowance">64 · Verpflegungsmehraufwendungen</option>
+<option value="euer.home_office_flat">66 · Tagespauschale für die Tätigkeit in der häuslichen Wohnung</option>
+<option value="euer.other_travel">70 · Sonstige tatsächliche Fahrtkosten ohne AfA und Zinsen (z. B. Reparaturen, Wartungen, Treibstoff, Kosten für Flugstrecken, Kosten für öffentliche Verkehrsmittel)</option>
+</select>
+</div>
+<div class="ui-note">
+<label class="flex items-start gap-2 text-sm" style="color: var(--foreground);">
+<input class="mt-1" type="checkbox">
+<span>Für alle Belege von <strong>Netzwerk Nord GmbH</strong> so behandeln<span class="block text-xs" style="color: var(--muted);">Belege, für die einzeln etwas anderes entschieden wurde, behalten ihre Entscheidung.</span>
+</span>
+</label>
+</div>
+<div>
+<label class="ui-label">Notiz (optional)</label>
+<textarea class="ui-input w-full" rows="2" maxlength="1000" placeholder="Warum dieser Beleg so behandelt wird, zum Beispiel: Rechnung bis Jahresende nicht bezahlt">
+</textarea>
+</div>
+<button type="submit" class="ui-btn ui-btn-primary">Speichern</button>
+</form>
+<p class="mt-3 text-xs" style="color: var(--muted);">Enthält der Beleg Positionen, die unterschiedlich zu behandeln sind (zum Beispiel eine betrieblich, eine privat)? <button type="button" class="underline underline-offset-2" style="color: var(--accent);">In Positionen aufteilen</button>
+</p>
+<form class="mt-3 space-y-2 border-t pt-3" style="border-color: var(--border);">
+<fieldset>
+<legend class="ui-label">Steuerschuldnerschaft des Leistungsempfängers (§ 13b Umsatzsteuergesetz)</legend>
+<p class="text-xs" style="color: var(--muted);">Für sonstige Leistungen (keine Waren) eines Anbieters aus dem Ausland, deren Leistungsort in Deutschland liegt und deren Rechnung keine deutsche Umsatzsteuer ausweist, schuldet der Betrieb die Steuer selbst, auch als Kleinunternehmer: zum Beispiel Software, Cloud-Dienste, Werbung, Beratung. Nicht für Hotel, Bewirtung oder Fahrten im Ausland; Waren aus einem anderen EU-Staat sind ein innergemeinschaftlicher Erwerb (§ 1a), kein § 13b.</p>
+<div class="ui-seg mt-1" role="group" aria-label="§ 13b">
+<button type="button" aria-pressed="true">kein § 13b</button>
+<button type="button" aria-pressed="false">19 %</button>
+<button type="button" aria-pressed="false">7 %</button>
+</div>
+</fieldset>
+<div class="flex flex-wrap items-end gap-2 text-sm" style="color: var(--foreground);">
+<label class="flex items-center gap-2">
+<input type="checkbox">Angabe für alle Belege von Netzwerk Nord GmbH</label>
+</div>
+<div class="flex flex-wrap gap-2">
+<button type="submit" class="ui-btn ui-btn-sm" disabled="">§ 13b speichern</button>
+</div>
+</form>
+<button type="button" class="ui-btn ui-btn-sm mt-3">Einzelentscheidung entfernen (Regel oder Vorgabe gilt wieder)</button>
+</div>
+</li>
+<li class="border-t px-4 py-2.5" style="border-color: var(--border);">
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+<span class="text-sm" style="color: var(--foreground);">
+<a class="hover:underline" title="Beleg in der Tabelle öffnen" href="/app/dashboard?beleg=tel-2">Netzwerk Nord GmbH</a>
+<span class="ml-2 text-xs" style="color: var(--muted);">02.06.2025 · 50 % Betrieb + 50 % Privat (für diesen Beleg entschieden)</span>
+</span>
+<span class="flex items-baseline gap-3">
+<span class="text-sm tabular-nums" style="color: var(--foreground);">29,75 €<span class="ml-1 text-xs" style="color: var(--muted);">von 59,50 €</span>
+</span>
+<button type="button" class="ui-btn ui-btn-sm" aria-expanded="false">Ändern</button>
+</span>
+</div>
+</li>
+<li class="border-t px-4 py-2.5" style="border-color: var(--border);">
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+<span class="text-sm" style="color: var(--foreground);">
+<a class="hover:underline" title="Beleg in der Tabelle öffnen" href="/app/dashboard?beleg=usd-1">Cloud Example Inc.</a>
+<span class="ml-2 text-xs" style="color: var(--muted);">30.09.2025 · 100 % Betrieb (für diesen Beleg entschieden) · Betrag geschätzt</span>
+</span>
+<span class="flex items-baseline gap-3">
+<span class="text-sm tabular-nums" style="color: var(--foreground);">73,50 €</span>
+<button type="button" class="ui-btn ui-btn-sm" aria-expanded="false">Ändern</button>
+</span>
+</div>
+</li>
+<li class="border-t px-4 py-2.5" style="border-color: var(--border);">
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+<span class="text-sm" style="color: var(--foreground);">
+<a class="hover:underline" title="Beleg in der Tabelle öffnen" href="/app/dashboard?beleg=line-1">Technik Beispiel</a>: Router<span class="ml-2 text-xs" style="color: var(--muted);">14.03.2025 · 100 % Betrieb (für diese Position entschieden)</span>
+</span>
+<span class="flex items-baseline gap-3">
+<span class="text-sm tabular-nums" style="color: var(--foreground);">80,00 €</span>
+<button type="button" class="ui-btn ui-btn-sm" aria-expanded="false">Ändern</button>
+</span>
+</div>
+</li>
+</ul>
+</li>
+<li class="border-t" style="border-color: var(--border);">
+<button type="button" aria-expanded="false" class="flex w-full items-baseline justify-between gap-4 px-4 py-3 text-left">
+<span class="text-sm" style="color: var(--foreground);">
+<span class="mr-2 tabular-nums" style="color: var(--muted);">Zeile 30</span>AfA auf bewegliche Wirtschaftsgüter<span class="ml-2 text-xs" style="color: var(--muted);">1 Anlage</span>
+</span>
+<span class="shrink-0 text-sm font-medium tabular-nums" style="color: var(--foreground);">144,00 €</span>
+</button>
+</li>
+<li class="flex items-baseline justify-between gap-4 border-t px-4 py-3" style="border-color: var(--border);">
+<span class="text-sm font-semibold" style="color: var(--foreground);">Summe</span>
+<span class="text-sm font-semibold tabular-nums" style="color: var(--foreground);">446,25 €</span>
+</li>
+</ul>
+</section>
+<p class="text-xs" style="color: var(--muted);">Anlage EÜR nach: Bundesministerium der Finanzen, Schreiben vom 29. August 2025, Standardisierte Einnahmenüberschussrechnung nach § 60 Absatz 4 EStDV, Anlage EÜR 2025 (IV C 6 - S 2142/00023/010/001), abgeglichen am 10.10.2026. Anlage N nach: Bundesministerium der Finanzen, Vordruck Anlage N 2025 (Formular-Management-System der Bundesfinanzverwaltung, 034027_25); abgeglichen mit ELSTER, Hilfe zur Einkommensteuererklärung 2025, Anlage N (Werbungskosten), abgeglichen am 15.10.2026. Regeln zuletzt durchgesehen am 07.10.2026. Beträge sind Berechnungen aus den eigenen Belegen und ersetzen keine steuerliche Beratung.</p>
+</div>
+</div>
+</div>
+</div>
+</main>

@@ -258,4 +258,70 @@ Result, measured the same way:
   is a walk over the row list, so splitting it further would be for its own sake.
 - In development React runs effects twice, so `useRows` reads one page into its unused list.
   It is not in a production build and nothing reads that list.
+### Slice 4, the finance tabs (2026-11-02)
+
+What is there, read from the code before moving anything. The about 126 `useState` calls are nearly all form
+fields, and they stay. There is exactly one copy of the year: `view`, a whole `StatementView`, in `FinanceClient`;
+every tab reads it through a prop and every write answers with a new one. So a tab cannot be moved on its own:
+holding that `view` in a store for some tabs and in `useState` for others would be the two sources this plan
+forbids. The statement moves first, for all tabs at once, and the tabs follow with what is theirs.
+
+| Tab | Server data it reads | Worked out from it today | Stays in the view |
+|---|---|---|---|
+| Kopf, Zähler | `view` | `openQueue`, `overdue`, `openAssets`, `estimated`, `blockedBySetting`, `waitingCounts`, `groupCount`, tiles | `group`, `chosen`, `firstTab`, `notice`, `error`, `pending` |
+| Offen | `items`, `formLines`, `assetLimits`, `revenue.overdue` | `queue`, `selected` | `selectedId`, `editingId`, `splittingId`, `assetFromRow`, `TreatmentForm`, `LinesForm` fields |
+| Zahlungen klären, Zahlungen, Konten | `payments`, `BankView` (own copy in `useBankFeed`), `SharingView` (own copy, `view` and `shown`, in `AccountSharing`) | `unambiguousPairs`, `listEmpty`, `selectedAccount` | `lastImport`, form fields, `manualFor`, `browsing`, the bank's message per account, search results |
+| EÜR | `lines`, `items`, `assets`, `formSources` | `itemsById`, `assetsById`, parts per line | `openLine` |
+| Einnahmen | `revenue`, `forecast`, `limits` | nothing beyond the labels | `editing`, the invoice form, `expectation` as typed |
+| Anlagen | `assets`, `items`, `assetLimits` | `candidateReceipts` | `editing`, `disposing`, `expanded`, the forms |
+| Umsatzsteuer | `vat`, `statusChanges` | nothing beyond the labels | the forms, seeded from the view when the tab opens |
+| Einkommensteuer | `incomeTax` | nothing beyond the labels | `showProjected`, the forms, `months` and `filedOn` as typed |
+| Lieferanten | `vendorRules`, `reverseChargeVendors` | nothing | nothing |
+| Eigene Namen | `OwnNamesView` (own copy in `FinanceClient`) | nothing | `namesError`, `namesNotice` |
+
+What moves: the statement, the bank connections, the sharing and the own names into one `FinanceStore`, and
+everything in the third column that is worked out in `FinanceClient` into its `computed`s. Nothing else: no form
+field, no open row, no message.
+
+What does not move, on purpose: **no figure is worked out on the client, and finance does not write
+optimistically.** A tax number, a total and a form line come from the server's calculation, and one answer can
+change any of them, so a write here stays what it is, a wait for the whole view. The rule of this plan that numbers
+are `computed` applies to what the client counts, such as the tabs' badges, not to the tax calculation.
+
+Proof that no figure changes: `FinanceClient.figures.test.tsx` renders a realistic year (`__tests__/statement-fixture.ts`)
+tab by tab and compares the whole markup with files written by the code from before the move, in the commit that
+adds them, before any store exists.
+
+- **The statement and the payment tabs moved first (`FinanceStore`).** One store per visit, held by the page, not on the
+  `AppStore`: nothing outside finance reads it, and the layout's key already gives each company its own. It keeps the
+  statements by year, so an answer lands in its own year whichever is open by then. A first version made a new store per
+  year: an import on 2026, then 2026 to 2025 to 2026, answered onto a store nobody read, and "done" stood beside
+  old figures until a reload. Every tab reads `store.statement`, so Einnahmen, Anlagen, Umsatzsteuer, Einkommensteuer
+  and Lieferanten have nothing left to move: they held no copy of their own. `useBankFeed` and `AccountSharing` lost
+  their copies, and take what they show as props.
+- **No figure older than a write the person was told finished.** A write can reach into other years, and the year select
+  stays usable during one. The store remembers when the newest answer was read (`writtenAt`), and the year on screen is
+  `behind` while its statement was read before that. The page then reads that year again, and if it cannot, says so.
+- **Late answers.** A statement says when its read began (`readAt`), and a read older than the statement held changes
+  nothing: a write and a bank sync can overlap. Reading the same year again takes its place too; before, the page ignored
+  it. The bank, the sharing and the names belong to the company, not to a year, so they live once, refresh with every
+  page read, and carry their own `readAt`, because a slow read must not undo a newer answer. These times come from one
+  server; with several instances a change within the clock's difference could show wrongly until the next read.
+- **By record.** A write still answers with the whole year. `reuse` keeps every part of the new statement that did
+  not change as the old object, so identity tells a row what changed; it finds records in a list by id, so a list
+  that lost an entry keeps the others.
+
+- **Offen and EÜR.** The queue, the waiting numbers, the lookups and the counts on the tiles are `computed`s of the
+  store. Rows redraw by record where a row has nothing but its record: `QueueEntry` and `LineHeader`. A row with a
+  button that follows `busy` must redraw when a write starts and ends, so a `memo` there saves nothing on a write,
+  and the payment, invoice and asset rows stay as they are.
+
+- **Eigene Namen.** The list is the store's and arrives with every page read like the rest. With it every copy of server data
+  under `src/app/app/finance` is gone. What is left in `useState` there is what the table above says stays. The search
+  results of `PaymentFinder` stay too: they answer one person's typed question and are asked again whenever the
+  statement changes.
+- **Not moved, on purpose.** A write in finance that is refused after the page was left is lost, as it was before:
+  nothing was shown as done, so no number is wrong, but the person is not told. The dock of the checks and meals could
+  say it. That needs a write to outlive the page, which belongs with a decision on how finance writes, not with this
+  move of its state. Going back with the browser's button still serves what the router kept, as before.
 

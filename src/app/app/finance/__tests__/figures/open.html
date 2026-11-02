@@ -1,0 +1,199 @@
+<main class="relative z-10 min-h-svh px-4 pb-16 pt-6 sm:px-6" data-theme="dark">
+<div class="mx-auto w-full max-w-[88rem]">
+<div class="flex flex-wrap items-end justify-between gap-3">
+<div>
+<h1 class="text-2xl font-bold" style="color: var(--foreground);">Finanzen</h1>
+<p class="mt-1 text-sm" style="color: var(--muted);">Einnahmenüberschussrechnung aus den Belegen, Zeile für Zeile nachvollziehbar.</p>
+</div>
+<div class="flex flex-wrap items-center gap-2">
+<label class="sr-only">Jahr</label>
+<select class="ui-input" style="width: auto;">
+<option value="2026">2026</option>
+<option value="2025">2025</option>
+<option value="2024">2024</option>
+</select>
+<a class="ui-btn" href="/app/meals">Bewirtungen</a>
+<a class="ui-btn" href="/app/dashboard">Belege</a>
+</div>
+</div>
+<div class="mt-4 space-y-2">
+<p class="ui-note">In 2025 gilt (zumindest zeitweise) die Regelbesteuerung: Belege aus dieser Zeit zählen mit ihrem Nettobetrag, die Umsatzsteuer darin ist Vorsteuer. Ein Beleg ohne Nettobetrag steht unter „Offen“.</p>
+</div>
+<dl class="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 col-span-2 lg:col-span-1">
+<dt class="ui-label">Gewinn 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">3.053,75 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Einnahmen 3.500,00 €, 5 Belege noch offen</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Betriebsausgaben 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">446,25 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">4 Belege gerechnet</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Kosten für die Anlage N</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">120,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Studium und Anstellung</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Einkommensteuer 2025 (Schätzung)</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">Nachzahlung 344,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Lohn und Gewerbe</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Offene Prüfungen</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">6</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">1 Rechnung überfällig, 1 mit geschätztem Betrag, 1 Anlagen mit offener Prüfung</dd>
+</div>
+</dl>
+<p class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style="color: var(--muted);">
+<span>Hier steht der Betrieb für die Steuererklärung. Alle Ausgaben, private eingeschlossen, mit Budgets:</span>
+<a class="ui-btn ui-btn-sm" href="/app/spending">Ausgaben</a>
+</p>
+<div role="tablist" aria-label="Bereiche der Finanzübersicht" class="mt-6 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: rgba(226, 163, 72, 0.55); background: var(--accent-muted); color: var(--accent);">Erledigen<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>9<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Auswerten<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>1<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Steuer</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Einstellungen</button>
+</div>
+<div role="tabpanel">
+<div role="tablist" aria-label="Reiter in Erledigen" class="ui-scroll-bare-phone mt-3 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style="border-color: var(--border);">
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: var(--accent); color: var(--accent);">Offen<span class="ml-2 rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>6<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Zahlungen klären<span class="ml-2 rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>3<span class="sr-only"> offen</span>
+</span>
+</button>
+</div>
+<div role="status" aria-live="polite" class="mt-4 min-h-5 text-sm" style="color: var(--muted);">
+</div>
+<div role="tabpanel" class="mt-4">
+<section class="glass-panel mb-6 rounded-xl p-4 sm:p-5">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">1 Rechnung überfällig</h2>
+<p class="mt-1 text-sm" style="color: var(--muted);">Stand heute: 14 Tage oder länger nach Fälligkeit (ohne eigene Angabe: Rechnungsdatum plus 14 Tage) noch nicht ganz bezahlt. Ist das Geld schon da, die Zahlung unter „Zahlungen klären“ zuordnen oder unter „Einnahmen“ eintragen; sonst ist eine Erinnerung an den Kunden fällig.</p>
+<ul class="mt-3 divide-y" style="border-color: var(--border);">
+<li class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2 text-sm">
+<span style="color: var(--foreground);">Rechnung R-2025-3 vom 02.10.2025</span>
+<span class="tabular-nums" style="color: var(--muted);">fällig 16.10.2025, 76 Tage überfällig, offen 1.200,00 €</span>
+</li>
+</ul>
+<button type="button" class="ui-btn ui-btn-ghost ui-btn-sm mt-3">Zu den Einnahmen</button>
+</section>
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
+<nav aria-label="Offene Belege">
+<p class="mb-2 text-xs" style="color: var(--muted);">Noch 5 Belege offen.</p>
+<ul class="max-h-[40svh] space-y-1.5 overflow-y-auto pr-1 lg:max-h-[75svh]">
+<li>
+<button type="button" aria-current="true" class="w-full rounded-lg border px-3 py-2.5 text-left transition-colors duration-150" style="border-color: rgba(226, 163, 72, 0.55); background: var(--accent-muted);">
+<span class="flex items-baseline justify-between gap-2">
+<span class="truncate text-sm font-medium" style="color: var(--foreground);">Kanzlei Beispiel</span>
+<span class="shrink-0 text-sm tabular-nums" style="color: var(--foreground);">119,00 €</span>
+</span>
+<span class="mt-0.5 block text-xs" style="color: var(--muted);">11.02.2025 · Noch nicht entschieden, wer die Kosten trägt</span>
+</button>
+</li>
+<li>
+<button type="button" class="w-full rounded-lg border px-3 py-2.5 text-left transition-colors duration-150" style="border-color: var(--border); background: var(--surface);">
+<span class="flex items-baseline justify-between gap-2">
+<span class="truncate text-sm font-medium" style="color: var(--foreground);">Kamera Beispiel</span>
+<span class="shrink-0 text-sm tabular-nums" style="color: var(--foreground);">952,00 €</span>
+</span>
+<span class="mt-0.5 block text-xs" style="color: var(--muted);">14.03.2025 · Über der Grenze für geringwertige Wirtschaftsgüter: als Anlage führen</span>
+</button>
+</li>
+<li>
+<button type="button" class="w-full rounded-lg border px-3 py-2.5 text-left transition-colors duration-150" style="border-color: var(--border); background: var(--surface);">
+<span class="flex items-baseline justify-between gap-2">
+<span class="truncate text-sm font-medium" style="color: var(--foreground);">Lokal Beispiel</span>
+<span class="shrink-0 text-sm tabular-nums" style="color: var(--foreground);">119,00 €</span>
+</span>
+<span class="mt-0.5 block text-xs" style="color: var(--muted);">14.03.2025 · Bewirtung unvollständig (Teilnehmer, Anlass oder Ort fehlen)</span>
+</button>
+</li>
+<li>
+<button type="button" class="w-full rounded-lg border px-3 py-2.5 text-left transition-colors duration-150" style="border-color: var(--border); background: var(--surface);">
+<span class="flex items-baseline justify-between gap-2">
+<span class="truncate text-sm font-medium" style="color: var(--foreground);">Ohne Datum GmbH</span>
+<span class="shrink-0 text-sm tabular-nums" style="color: var(--foreground);">119,00 €</span>
+</span>
+<span class="mt-0.5 block text-xs" style="color: var(--muted);">ohne Datum · Datum fehlt</span>
+</button>
+</li>
+<li>
+<button type="button" class="w-full rounded-lg border px-3 py-2.5 text-left transition-colors duration-150" style="border-color: var(--border); background: var(--surface);">
+<span class="flex items-baseline justify-between gap-2">
+<span class="truncate text-sm font-medium" style="color: var(--foreground);">Vermieter Beispiel</span>
+<span class="shrink-0 text-sm tabular-nums" style="color: var(--foreground);">119,00 €</span>
+</span>
+<span class="mt-0.5 block text-xs" style="color: var(--muted);">gezahlt 04.01.2026, zählt für 2025 (Jahreswechsel) · Noch nicht entschieden, wer die Kosten trägt</span>
+</button>
+</li>
+</ul>
+</nav>
+<section aria-label="Beleg entscheiden" class="glass-panel rounded-xl p-4 sm:p-5">
+<h2 class="text-base font-semibold" style="color: var(--foreground);">Rechnung open-1</h2>
+<p class="mb-4 mt-1 text-xs" style="color: var(--muted);">Kanzlei Beispiel · 11.02.2025 · 119,00 € · Telefon &amp; Internet</p>
+<p class="m-0 mt-1 text-xs">
+<a class="underline" style="color: var(--dt-text-secondary);" href="/app/dashboard?beleg=open-1">Beleg in der Tabelle öffnen</a>
+</p>
+<div class="space-y-4">
+<form class="space-y-4" novalidate="">
+<fieldset>
+<legend class="ui-label">Wer trägt die Kosten?</legend>
+<div class="ui-seg mb-3" role="group" aria-label="Häufige Aufteilungen">
+<button type="button" aria-pressed="false">100 % Betrieb</button>
+<button type="button" aria-pressed="false">50 % Betrieb</button>
+<button type="button" aria-pressed="false">50 % Betrieb, 30 % Studium</button>
+<button type="button" aria-pressed="false">100 % Studium</button>
+<button type="button" aria-pressed="true">Privat</button>
+</div>
+<div class="grid gap-3 sm:grid-cols-3">
+<div>
+<label class="ui-label">Betrieb in %</label>
+<input class="ui-input tabular-nums" inputmode="decimal" aria-invalid="false" placeholder="0" value="">
+<p class="mt-1 text-xs tabular-nums" style="color: var(--muted);">0,00 €</p>
+</div>
+<div>
+<label class="ui-label">Studium in %</label>
+<input class="ui-input tabular-nums" inputmode="decimal" aria-invalid="false" placeholder="0" value="">
+<p class="mt-1 text-xs tabular-nums" style="color: var(--muted);">0,00 €</p>
+</div>
+<div>
+<label class="ui-label">Anstellung in %</label>
+<input class="ui-input tabular-nums" inputmode="decimal" aria-invalid="false" placeholder="0" value="">
+<p class="mt-1 text-xs tabular-nums" style="color: var(--muted);">0,00 €</p>
+</div>
+</div>
+<p class="mt-2 text-xs" style="color: var(--muted);" role="status">Privat bleibt 100 % (119,00 €).</p>
+</fieldset>
+<div class="ui-note">
+<label class="flex items-start gap-2 text-sm" style="color: var(--foreground);">
+<input class="mt-1" type="checkbox">
+<span>Für alle Belege von <strong>Kanzlei Beispiel</strong> so behandeln<span class="block text-xs" style="color: var(--muted);">Belege, für die einzeln etwas anderes entschieden wurde, behalten ihre Entscheidung.</span>
+</span>
+</label>
+</div>
+<div>
+<label class="ui-label">Notiz (optional)</label>
+<textarea class="ui-input w-full" rows="2" maxlength="1000" placeholder="Warum dieser Beleg so behandelt wird, zum Beispiel: Rechnung bis Jahresende nicht bezahlt">
+</textarea>
+</div>
+<button type="submit" class="ui-btn ui-btn-primary">Speichern und weiter</button>
+</form>
+<p class="mt-3 text-xs" style="color: var(--muted);">Enthält der Beleg Positionen, die unterschiedlich zu behandeln sind (zum Beispiel eine betrieblich, eine privat)? <button type="button" class="underline underline-offset-2" style="color: var(--accent);">In Positionen aufteilen</button>
+</p>
+</div>
+</section>
+</div>
+</div>
+</div>
+</div>
+</main>

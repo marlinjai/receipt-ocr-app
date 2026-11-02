@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState, useTransition, type KeyboardEvent } from 'react';
+import { comparer, reaction } from 'mobx';
+import { observer } from 'mobx-react-lite';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import { receiptHref } from '@/lib/receipt-link';
 import { useRouter } from 'next/navigation';
@@ -8,7 +10,7 @@ import { formatDay } from '@/lib/meals/messages';
 import { CHECK_LABELS, ORIGIN_LABELS, PURPOSE_LABELS, financeActionMessage } from '@/lib/tax/messages';
 import { formatCents } from '@/lib/tax/money';
 import type { AssetView, StatementItem, StatementView } from '@/lib/tax/service';
-import type { OpenCheckKind } from '@/lib/tax/types';
+import type { LineResult, OpenCheckKind } from '@/lib/tax/types';
 import {
   acceptPaymentProposals,
   markAccountPrivate,
@@ -65,12 +67,11 @@ import { removeTaxReturnItem, removeWage, saveTaxReturnItem, saveWage, setChurch
 import { incomeTaxActionMessage } from '@/lib/tax/income-tax/messages';
 import TreatmentForm, { type TreatmentSubmit } from './TreatmentForm';
 import { useTabInView } from '@/lib/use-tab-in-view';
-import { GROUPS, addressOf, defaultTab, groupCount, groupOf, waitingCounts, type GroupKey, type TabKey } from './tabs';
+import { GROUPS, WORKSPACE_CHECKS, addressOf, defaultTab, groupCount, groupOf, openQueue, type GroupKey, type TabKey } from './tabs';
 import OwnNames, { ownNamesMessage } from '../spending/OwnNames';
 import { changeOwnNames, type OwnNamesView } from './own-names-actions';
+import { FinanceStore } from '@/stores/FinanceStore';
 
-/** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
-const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
 /** Checks that are resolved on the receipt itself or in the meal register, not with a decision here. */
 const MEAL_CHECKS: OpenCheckKind[] = ['meal_incomplete', 'meal_without_register_facts'];
 const RECEIPT_CHECKS: OpenCheckKind[] = ['no_date', 'no_amount', 'no_exchange_rate'];
@@ -102,20 +103,15 @@ function incomeTaxTile(view: StatementView): { label: string; value: string; hin
   return { label, value, hint: parts.join(', ') };
 }
 
-/** The items a person has to act on, oldest first; workspace-wide questions are left to the notice above. */
-export function openQueue(view: StatementView): StatementItem[] {
-  return view.items.filter((i) => i.checks.some((c) => c.blocking && !WORKSPACE_CHECKS.includes(c.kind)));
-}
-
 const BANK_ACTIONS: BankActions = { listBankInstitutions, startBankConsent, chooseBankConnectionAccount, syncBankNow, disconnectBank, clearBankConnectionNotice };
-const NO_BANK: BankView = { enabled: false, connections: [] };
+const NO_BANK: BankView = { readAt: 0, enabled: false, connections: [] };
 const SHARING_ACTIONS: SharingActions = { shareAccountWith, endAccountShare };
 /** The part of the payments each of their three tabs shows. */
 const PAYMENT_PARTS = { questions: ['questions'], payments: ['list'], accounts: ['accounts'] } as const;
 /** Tabs whose forms show a failure next to what was typed; on every other tab it is shown above the panel. */
 const OWN_ERROR_TABS: readonly TabKey[] = ['open', 'questions', 'payments', 'accounts', 'vat', 'tax', 'names'];
 
-export default function FinanceClient({
+const FinanceClient = observer(function FinanceClient({
   initial,
   initialTab,
   bank: bankInitial = null,
@@ -143,11 +139,13 @@ export default function FinanceClient({
 }) {
   const tabsId = useId();
   const router = useRouter();
-  const [view, setView] = useState(initial);
+  // One store per visit: it keeps the years, so an answer lands in its own whichever is open by then.
+  const [store] = useState(() => new FinanceStore({ statement: initial, bank: bankInitial, sharing, ownNames: ownNamesInitial }));
+  const view = store.statement;
   // Two levels (plan 2026-10-25-finance-groups): a group, and the tab last chosen inside each group, so going
   // to another group and back finds the tab that was open there. Without an address the page opens on the first
   // work that waits; an overdue invoice is an open check too (decision D6 of the invoicing plan).
-  const [firstTab] = useState<TabKey>(() => initialTab ?? defaultTab(waitingCounts(initial, openQueue(initial).length)));
+  const [firstTab] = useState<TabKey>(() => initialTab ?? defaultTab(store.counts));
   const [chosen, setChosen] = useState<Record<GroupKey, TabKey>>(() => {
     const byGroup = Object.fromEntries(GROUPS.map((g) => [g.key, g.tabs[0].key])) as Record<GroupKey, TabKey>;
     return { ...byGroup, [groupOf(firstTab).key]: firstTab };
@@ -177,7 +175,7 @@ export default function FinanceClient({
   // On a phone the tab row scrolls sideways; the open tab is kept in view.
   const tabRow = useRef<HTMLDivElement>(null);
   useTabInView(tabRow, tab);
-  const bankFeed = useBankFeed(bankInitial ?? NO_BANK, view.year, bankActions, (next) => setView(next), (url) => window.location.assign(url));
+  const bankFeed = useBankFeed(store.bank ?? NO_BANK, view.year, bankActions, store.bankChanged, store.answered, (url) => window.location.assign(url));
   const [bankNotice, setBankNotice] = useState(() => returnMessage(bankReturn));
   // The address keeps the open tab, so a reload or a shared link opens the same place. The outcome of the
   // return from the bank is shown once: the address loses it, so a reload does not repeat it. A visit
@@ -190,7 +188,6 @@ export default function FinanceClient({
     url.searchParams.delete('bank');
     if (url.toString() !== before) window.history.replaceState(null, '', url.toString());
   }, [tab, firstTab]);
-  const [ownNames, setOwnNames] = useState(ownNamesInitial);
   const [namesError, setNamesError] = useState<string | null>(null);
   const [namesNotice, setNamesNotice] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -208,11 +205,10 @@ export default function FinanceClient({
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  // A different year arrives as new props after the navigation.
+  // A different year arrives as new props after the navigation, and old messages go.
   const [seenYear, setSeenYear] = useState(initial.year);
   if (initial.year !== seenYear) {
     setSeenYear(initial.year);
-    setView(initial);
     setSelectedId(null);
     setEditingId(null);
     setOpenLine(null);
@@ -220,23 +216,41 @@ export default function FinanceClient({
     setLastImport(null);
     setError(null);
     setNotice(null);
-    // The names are read afresh with the other year (another page may have changed them); old messages go.
-    setOwnNames(ownNamesInitial);
     setNamesError(null);
     setNamesNotice(null);
     setBankNotice(null);
   }
+  // Before the browser paints, so the figures of the last read are never seen under the new one.
+  useLayoutEffect(() => {
+    store.pageRead({ statement: initial, bank: bankInitial, sharing, ownNames: ownNamesInitial });
+  }, [store, initial, bankInitial, sharing, ownNamesInitial]);
+  // A person told a write finished sees nothing older: a statement read before it is read again.
+  useEffect(
+    () =>
+      reaction(
+        () => [store.year, store.behind ? store.writtenAt : 0],
+        ([year, writtenAt]) => {
+          if (writtenAt === 0) return;
+          const failed = () => {
+            setNotice(null);
+            setError('Die Übersicht konnte danach nicht neu gerechnet werden; bitte die Seite neu laden.');
+          };
+          getStatement(year).then((fresh) => (fresh.ok ? store.took(fresh.value) : failed()), failed);
+        },
+        { equals: comparer.structural },
+      ),
+    [store],
+  );
 
-  const queue = useMemo(() => openQueue(view), [view]);
+  const { queue, counts, itemsById, assetsById, openAssets, estimated, blockedBySetting } = store;
   const selected = queue.find((i) => i.itemId === selectedId) ?? queue[0] ?? null;
-  const itemsById = useMemo(() => new Map(view.items.map((i) => [i.itemId, i])), [view]);
-  const assetsById = useMemo(() => new Map(view.assets.map((a) => [a.id, a])), [view]);
   const overdue = view.revenue.overdue;
-  const openAssets = view.assets.filter((a) => a.checks.length > 0).length;
-  const estimated = view.items.filter((i) => i.checks.some((c) => c.kind === 'amount_estimated')).length;
-  const blockedBySetting =
-    view.items.filter((i) => i.checks.some((c) => WORKSPACE_CHECKS.includes(c.kind))).length;
-  const counts = waitingCounts(view, queue.length);
+  // Stable, so a row of the queue stays as drawn when another receipt changes.
+  const pickItem = useCallback((itemId: string) => {
+    setSelectedId(itemId);
+    setError(null);
+  }, []);
+  const toggleLine = useCallback((key: string) => setOpenLine((line) => (line === key ? null : key)), []);
 
   function run(
     action: () => Promise<Result<StatementView>>,
@@ -259,7 +273,7 @@ export default function FinanceClient({
         setError(message(result.error, result.detail));
         return;
       }
-      setView(result.value);
+      store.answered(result.value);
       setNotice(done);
       after?.(result.value);
     });
@@ -355,9 +369,9 @@ export default function FinanceClient({
           setNamesError(ownNamesMessage(result.detail) ?? financeActionMessage(result.error, result.detail));
           return resolve(false);
         }
-        const { names, settledOwnName, view: next } = result.value;
-        setOwnNames((current) => (current ? { ...current, names } : current));
-        if (next) setView(next);
+        const { names, readAt, settledOwnName, view: next } = result.value;
+        store.namesChanged(names, readAt);
+        if (next) store.answered(next);
         setNamesNotice(
           ('add' in change
             ? `${change.add} gespeichert.${settledOwnName > 0 ? ` ${settledOwnName} ${settledOwnName === 1 ? 'Benachrichtigung' : 'Benachrichtigungen'} erledigt: eigenes Konto.` : ''}`
@@ -622,43 +636,9 @@ export default function FinanceClient({
                     {queue.length === 1 ? 'Noch 1 Beleg offen.' : `Noch ${queue.length} Belege offen.`}
                   </p>
                   <ul className="max-h-[40svh] space-y-1.5 overflow-y-auto pr-1 lg:max-h-[75svh]">
-                    {queue.map((item) => {
-                      const isSelected = selected?.itemId === item.itemId;
-                      return (
-                        <li key={item.itemId}>
-                          <button
-                            type="button"
-                            aria-current={isSelected ? 'true' : undefined}
-                            onClick={() => {
-                              setSelectedId(item.itemId);
-                              setError(null);
-                            }}
-                            className="w-full rounded-lg border px-3 py-2.5 text-left transition-colors duration-150"
-                            style={{
-                              borderColor: isSelected ? 'rgba(226, 163, 72, 0.55)' : 'var(--border)',
-                              background: isSelected ? 'var(--accent-muted)' : 'var(--surface)',
-                            }}
-                          >
-                            <span className="flex items-baseline justify-between gap-2">
-                              <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
-                                {item.vendor || item.label}
-                                {item.lineDescription && item.vendor ? `: ${item.lineDescription}` : ''}
-                              </span>
-                              <span className="shrink-0 text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
-                                {item.amountCents !== null ? euro(item.amountCents) : ''}
-                              </span>
-                            </span>
-                            <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>
-                              {dayText(item)} ·{' '}
-                              {item.checks
-                                .filter((c) => c.blocking && !WORKSPACE_CHECKS.includes(c.kind))
-                                .map((c) => CHECK_LABELS[c.kind])
-                                .join(', ')}
-                            </span>
-                          </button>
-                        </li>
-                      );
-                    })}
+                    {queue.map((item) => (
+                      <QueueEntry key={item.itemId} item={item} isSelected={selected?.itemId === item.itemId} onPick={pickItem} />
+                    ))}
                   </ul>
                 </nav>
                 {selected && (
@@ -717,42 +697,7 @@ export default function FinanceClient({
                           const open = openLine === line.key;
                           return (
                             <li key={line.key} className="border-t" style={{ borderColor: 'var(--border)' }}>
-                              <button
-                                type="button"
-                                aria-expanded={open}
-                                onClick={() => setOpenLine(open ? null : line.key)}
-                                className="flex w-full items-baseline justify-between gap-4 px-4 py-3 text-left"
-                              >
-                                <span className="text-sm" style={{ color: 'var(--foreground)' }}>
-                                  {line.line !== null && (
-                                    <span className="mr-2 tabular-nums" style={{ color: 'var(--muted)' }}>
-                                      Zeile {line.line}
-                                    </span>
-                                  )}
-                                  {line.label}
-                                  {line.entryNote && (
-                                    <span className="block text-xs" style={{ color: 'var(--muted)' }}>
-                                      {line.entryNote}
-                                    </span>
-                                  )}
-                                  <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
-                                    {[
-                                      line.itemIds.length === 1 ? '1 Beleg' : line.itemIds.length > 1 ? `${line.itemIds.length} Belege` : '',
-                                      line.assetIds.length === 1 ? '1 Anlage' : line.assetIds.length > 1 ? `${line.assetIds.length} Anlagen` : '',
-                                    ]
-                                      .filter(Boolean)
-                                      .join(', ')}
-                                  </span>
-                                </span>
-                                <span className="shrink-0 text-sm font-medium tabular-nums" style={{ color: 'var(--foreground)' }}>
-                                  {euro(line.cents)}
-                                  {line.nonDeductibleCents > 0 && (
-                                    <span className="block text-xs font-normal" style={{ color: 'var(--muted)' }}>
-                                      nicht abziehbar {euro(line.nonDeductibleCents)}
-                                    </span>
-                                  )}
-                                </span>
-                              </button>
+                              <LineHeader line={line} open={open} onToggle={toggleLine} />
                               {open && (
                                 <ul className="pb-2">
                                   {line.assetIds.map((id) => {
@@ -983,7 +928,7 @@ export default function FinanceClient({
                   // gone): the screen shows what it holds now, so the button does not stay where it no longer applies.
                   if (!result.ok && (result.detail === 'account_not_empty' || result.detail === 'account_not_found')) {
                     const fresh = await getStatement(view.year).catch(() => null);
-                    if (fresh?.ok) setView(fresh.value);
+                    if (fresh?.ok) store.took(fresh.value);
                   }
                   return result;
                 }, `${account.label}: entfernt.`)
@@ -1008,10 +953,10 @@ export default function FinanceClient({
                   },
                 );
               }}
-              bank={bankInitial ? { feed: bankFeed, actions: bankActions, returnNotice: bankNotice } : null}
+              bank={store.bank ? { feed: bankFeed, actions: bankActions, returnNotice: bankNotice } : null}
               sharing={
-                sharing ? (
-                  <AccountSharing initial={sharing} accounts={view.payments.accounts} actions={sharingActions} />
+                store.sharing ? (
+                  <AccountSharing view={store.sharing} onChange={store.sharingChanged} accounts={view.payments.accounts} actions={sharingActions} />
                 ) : sharingFailed ? (
                   <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Private Zahlungen in einer anderen Firma">
                     <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>
@@ -1174,8 +1119,8 @@ export default function FinanceClient({
             ))}
 
           {tab === 'names' &&
-            (ownNames ? (
-              <OwnNames open names={ownNames.names} canWrite={ownNames.canWrite} pending={pending} error={namesError} notice={namesNotice} onChange={changeNames} />
+            (store.ownNames ? (
+              <OwnNames open names={store.ownNames.names} canWrite={store.ownNames.canWrite} pending={pending} error={namesError} notice={namesNotice} onChange={changeNames} />
             ) : (
               <p className="ui-note ui-note-danger" role="alert">
                 Die eigenen Namen konnten nicht geladen werden. Bitte die Seite neu laden; sie stehen auch unter{' '}
@@ -1190,7 +1135,9 @@ export default function FinanceClient({
       </div>
     </main>
   );
-}
+});
+
+export default FinanceClient;
 
 /**
  * The arrow keys of a tab row (the ARIA tabs pattern): left and right move to
@@ -1212,6 +1159,78 @@ function arrowTo<K extends string>(event: KeyboardEvent<HTMLButtonElement>, keys
   // Drawn after the choice; the button exists already in the same row.
   document.getElementById(`${idPrefix}${target}`)?.focus();
 }
+
+/** One receipt of the open queue. Redraws only when its own record or choice changes: a whole new year keeps the records that stayed. */
+const QueueEntry = memo(function QueueEntry({ item, isSelected, onPick }: { item: StatementItem; isSelected: boolean; onPick: (itemId: string) => void }) {
+  return (
+    <li>
+      <button
+        type="button"
+        aria-current={isSelected ? 'true' : undefined}
+        onClick={() => onPick(item.itemId)}
+        className="w-full rounded-lg border px-3 py-2.5 text-left transition-colors duration-150"
+        style={{
+          borderColor: isSelected ? 'rgba(226, 163, 72, 0.55)' : 'var(--border)',
+          background: isSelected ? 'var(--accent-muted)' : 'var(--surface)',
+        }}
+      >
+        <span className="flex items-baseline justify-between gap-2">
+          <span className="truncate text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+            {item.vendor || item.label}
+            {item.lineDescription && item.vendor ? `: ${item.lineDescription}` : ''}
+          </span>
+          <span className="shrink-0 text-sm tabular-nums" style={{ color: 'var(--foreground)' }}>
+            {item.amountCents !== null ? euro(item.amountCents) : ''}
+          </span>
+        </span>
+        <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>
+          {dayText(item)} ·{' '}
+          {item.checks
+            .filter((c) => c.blocking && !WORKSPACE_CHECKS.includes(c.kind))
+            .map((c) => CHECK_LABELS[c.kind])
+            .join(', ')}
+        </span>
+      </button>
+    </li>
+  );
+});
+
+/** The head of a form line: what stands on it and its sum. Redraws only when the line itself changes. */
+const LineHeader = memo(function LineHeader({ line, open, onToggle }: { line: LineResult; open: boolean; onToggle: (key: string) => void }) {
+  return (
+    <button type="button" aria-expanded={open} onClick={() => onToggle(line.key)} className="flex w-full items-baseline justify-between gap-4 px-4 py-3 text-left">
+      <span className="text-sm" style={{ color: 'var(--foreground)' }}>
+        {line.line !== null && (
+          <span className="mr-2 tabular-nums" style={{ color: 'var(--muted)' }}>
+            Zeile {line.line}
+          </span>
+        )}
+        {line.label}
+        {line.entryNote && (
+          <span className="block text-xs" style={{ color: 'var(--muted)' }}>
+            {line.entryNote}
+          </span>
+        )}
+        <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+          {[
+            line.itemIds.length === 1 ? '1 Beleg' : line.itemIds.length > 1 ? `${line.itemIds.length} Belege` : '',
+            line.assetIds.length === 1 ? '1 Anlage' : line.assetIds.length > 1 ? `${line.assetIds.length} Anlagen` : '',
+          ]
+            .filter(Boolean)
+            .join(', ')}
+        </span>
+      </span>
+      <span className="shrink-0 text-sm font-medium tabular-nums" style={{ color: 'var(--foreground)' }}>
+        {euro(line.cents)}
+        {line.nonDeductibleCents > 0 && (
+          <span className="block text-xs font-normal" style={{ color: 'var(--muted)' }}>
+            nicht abziehbar {euro(line.nonDeductibleCents)}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+});
 
 function ItemHeader({ item }: { item: StatementItem }) {
   return (

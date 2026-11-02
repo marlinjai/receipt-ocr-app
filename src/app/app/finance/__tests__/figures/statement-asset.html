@@ -1,0 +1,137 @@
+<main class="relative z-10 min-h-svh px-4 pb-16 pt-6 sm:px-6" data-theme="dark">
+<div class="mx-auto w-full max-w-[88rem]">
+<div class="flex flex-wrap items-end justify-between gap-3">
+<div>
+<h1 class="text-2xl font-bold" style="color: var(--foreground);">Finanzen</h1>
+<p class="mt-1 text-sm" style="color: var(--muted);">Einnahmenüberschussrechnung aus den Belegen, Zeile für Zeile nachvollziehbar.</p>
+</div>
+<div class="flex flex-wrap items-center gap-2">
+<label class="sr-only">Jahr</label>
+<select class="ui-input" style="width: auto;">
+<option value="2026">2026</option>
+<option value="2025">2025</option>
+<option value="2024">2024</option>
+</select>
+<a class="ui-btn" href="/app/meals">Bewirtungen</a>
+<a class="ui-btn" href="/app/dashboard">Belege</a>
+</div>
+</div>
+<div class="mt-4 space-y-2">
+<p class="ui-note">In 2025 gilt (zumindest zeitweise) die Regelbesteuerung: Belege aus dieser Zeit zählen mit ihrem Nettobetrag, die Umsatzsteuer darin ist Vorsteuer. Ein Beleg ohne Nettobetrag steht unter „Offen“.</p>
+</div>
+<dl class="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 col-span-2 lg:col-span-1">
+<dt class="ui-label">Gewinn 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">3.053,75 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Einnahmen 3.500,00 €, 5 Belege noch offen</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Betriebsausgaben 2025</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">446,25 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">4 Belege gerechnet</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Kosten für die Anlage N</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">120,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Studium und Anstellung</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Einkommensteuer 2025 (Schätzung)</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">Nachzahlung 344,00 €</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">Lohn und Gewerbe</dd>
+</div>
+<div class="glass-panel min-w-0 rounded-xl p-3 sm:p-4 ">
+<dt class="ui-label">Offene Prüfungen</dt>
+<dd class="text-lg font-semibold tabular-nums sm:text-2xl" style="color: var(--foreground);">6</dd>
+<dd class="mt-1 text-xs" style="color: var(--muted);">1 Rechnung überfällig, 1 mit geschätztem Betrag, 1 Anlagen mit offener Prüfung</dd>
+</div>
+</dl>
+<p class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style="color: var(--muted);">
+<span>Hier steht der Betrieb für die Steuererklärung. Alle Ausgaben, private eingeschlossen, mit Budgets:</span>
+<a class="ui-btn ui-btn-sm" href="/app/spending">Ausgaben</a>
+</p>
+<div role="tablist" aria-label="Bereiche der Finanzübersicht" class="mt-6 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Erledigen<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>9<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: rgba(226, 163, 72, 0.55); background: var(--accent-muted); color: var(--accent);">Auswerten<span class="rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>1<span class="sr-only"> offen</span>
+</span>
+</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Steuer</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="flex min-h-11 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors duration-150 sm:justify-start" style="border-color: var(--border); background: var(--surface); color: var(--foreground);">Einstellungen</button>
+</div>
+<div role="tabpanel">
+<div role="tablist" aria-label="Reiter in Auswerten" class="ui-scroll-bare-phone mt-3 flex gap-1 overflow-x-auto overflow-y-hidden border-b" style="border-color: var(--border);">
+<button role="tab" type="button" aria-selected="true" tabindex="0" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: var(--accent); color: var(--accent);">EÜR</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Einnahmen</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Zahlungen</button>
+<button role="tab" type="button" aria-selected="false" tabindex="-1" class="-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 max-sm:min-h-11" style="border-color: transparent; color: var(--muted);">Anlagen<span class="ml-2 rounded-full px-1.5 py-0.5 text-xs tabular-nums" style="background: rgba(255, 255, 255, 0.07); color: var(--foreground);">
+<span class="sr-only">, </span>1<span class="sr-only"> offen</span>
+</span>
+</button>
+</div>
+<div role="status" aria-live="polite" class="mt-4 min-h-5 text-sm" style="color: var(--muted);">
+</div>
+<div role="tabpanel" class="mt-4">
+<div class="space-y-6">
+<section class="glass-panel overflow-hidden rounded-xl">
+<h2 class="px-4 pt-4 text-base font-semibold" style="color: var(--foreground);">Anlage EÜR: Betriebseinnahmen</h2>
+<ul class="mt-2">
+<li class="border-t" style="border-color: var(--border);">
+<button type="button" aria-expanded="false" class="flex w-full items-baseline justify-between gap-4 px-4 py-3 text-left">
+<span class="text-sm" style="color: var(--foreground);">
+<span class="mr-2 tabular-nums" style="color: var(--muted);">Zeile 15</span>Umsatzsteuerpflichtige Betriebseinnahmen<span class="ml-2 text-xs" style="color: var(--muted);">
+</span>
+</span>
+<span class="shrink-0 text-sm font-medium tabular-nums" style="color: var(--foreground);">3.500,00 €</span>
+</button>
+</li>
+<li class="flex items-baseline justify-between gap-4 border-t px-4 py-3" style="border-color: var(--border);">
+<span class="text-sm font-semibold" style="color: var(--foreground);">Summe</span>
+<span class="text-sm font-semibold tabular-nums" style="color: var(--foreground);">3.500,00 €</span>
+</li>
+</ul>
+</section>
+<section class="glass-panel overflow-hidden rounded-xl">
+<h2 class="px-4 pt-4 text-base font-semibold" style="color: var(--foreground);">Anlage EÜR: Betriebsausgaben</h2>
+<ul class="mt-2">
+<li class="border-t" style="border-color: var(--border);">
+<button type="button" aria-expanded="false" class="flex w-full items-baseline justify-between gap-4 px-4 py-3 text-left">
+<span class="text-sm" style="color: var(--foreground);">
+<span class="mr-2 tabular-nums" style="color: var(--muted);">Zeile 43</span>Aufwendungen für Telekommunikation (z. B. Telefon, Internet)<span class="ml-2 text-xs" style="color: var(--muted);">4 Belege</span>
+</span>
+<span class="shrink-0 text-sm font-medium tabular-nums" style="color: var(--foreground);">302,25 €</span>
+</button>
+</li>
+<li class="border-t" style="border-color: var(--border);">
+<button type="button" aria-expanded="true" class="flex w-full items-baseline justify-between gap-4 px-4 py-3 text-left">
+<span class="text-sm" style="color: var(--foreground);">
+<span class="mr-2 tabular-nums" style="color: var(--muted);">Zeile 30</span>AfA auf bewegliche Wirtschaftsgüter<span class="ml-2 text-xs" style="color: var(--muted);">1 Anlage</span>
+</span>
+<span class="shrink-0 text-sm font-medium tabular-nums" style="color: var(--foreground);">144,00 €</span>
+</button>
+<ul class="pb-2">
+<li class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-t px-4 py-2.5" style="border-color: var(--border);">
+<span class="text-sm" style="color: var(--foreground);">Kamera<span class="ml-2 text-xs" style="color: var(--muted);">Anlage, angeschafft 01.04.2025 · 80 % betrieblich</span>
+</span>
+<span class="flex items-baseline gap-3">
+<span class="text-sm tabular-nums" style="color: var(--foreground);">144,00 €</span>
+<button type="button" class="ui-btn ui-btn-sm">Anlagen</button>
+</span>
+</li>
+</ul>
+</li>
+<li class="flex items-baseline justify-between gap-4 border-t px-4 py-3" style="border-color: var(--border);">
+<span class="text-sm font-semibold" style="color: var(--foreground);">Summe</span>
+<span class="text-sm font-semibold tabular-nums" style="color: var(--foreground);">446,25 €</span>
+</li>
+</ul>
+</section>
+<p class="text-xs" style="color: var(--muted);">Anlage EÜR nach: Bundesministerium der Finanzen, Schreiben vom 29. August 2025, Standardisierte Einnahmenüberschussrechnung nach § 60 Absatz 4 EStDV, Anlage EÜR 2025 (IV C 6 - S 2142/00023/010/001), abgeglichen am 10.10.2026. Anlage N nach: Bundesministerium der Finanzen, Vordruck Anlage N 2025 (Formular-Management-System der Bundesfinanzverwaltung, 034027_25); abgeglichen mit ELSTER, Hilfe zur Einkommensteuererklärung 2025, Anlage N (Werbungskosten), abgeglichen am 15.10.2026. Regeln zuletzt durchgesehen am 07.10.2026. Beträge sind Berechnungen aus den eigenen Belegen und ersetzen keine steuerliche Beratung.</p>
+</div>
+</div>
+</div>
+</div>
+</main>

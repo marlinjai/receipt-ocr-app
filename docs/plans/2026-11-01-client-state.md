@@ -147,7 +147,7 @@ staleness, not the redraw cost.
   refusal stands at its row, and a row with one stays in the list whatever the filter says. With no row to
   stand at, because the panel closed or a whole read took the payment away, `CheckRefusals` in the shell says it
   through the dock, naming the payment. That includes "receipt made, not linked". A company switch throws the
-  `AppStore` away, and a refusal still out goes with it: nothing of one company stays on screen in another.
+  `AppStore` away; what it still has to say goes to the `RefusalDesk` (see the meals below).
 - A refused "no receipt" brings its row back fresh, without the reason typed: the row left the list, and
   with it its form. Refusals there are rare (the button needs a reason, the rest is another tab).
 
@@ -178,7 +178,15 @@ staleness, not the redraw cost.
 - **Leaving.** The number in the navigation is `queue.length`, so it moves on the click. A write ending after the
   page closed has the navigation ask the server again, because the number left behind took it for done. While a
   write is out, closing the page asks first, as for the checks.
-- The focus goes to the page's heading when a row leaves with its button, and to the notice when the answer comes.
+- The focus goes to the page's heading when a row leaves with its button, and to the notice when the answer comes,
+  unless the person has moved on by then: a notice takes the focus only when nothing holds it, and is announced either
+  way. Rows stay usable while an answer is out, so it can arrive in the middle of typing.
+- **A form save reaches the page on screen too**, like a list action: it can answer after leaving and returning.
+- **A company switch.** The `AppStore` is still thrown away, so nothing of one company stays on screen in another, but a
+  refusal must reach the person who believes the change went through. `RefusalDesk`, above the provider the company keys,
+  takes what is left to say and what arrives later, for checks and meals alike. It always says the company's name, so it
+  can never read as the one on screen's, also after coming back to that company.
+- **On the dashboard** the number is the `ReceiptsStore`'s, so a meal write ending there has that store ask again.
 ### Slice 3, receipts on the dashboard (2026-11-02)
 
 Measured before building, with the real `TableView` under a counting cell, 267 rows by 20 columns:

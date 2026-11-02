@@ -195,6 +195,14 @@ export function membershipLabel(membership: LabelledMembership, memberships: rea
   return siblings.size > 1 && own && own !== company ? `${company} / ${own}` : company;
 }
 
+/** The name of the workspace on screen, for telling a person later which company something belonged to. */
+export function sessionCompanyName(session: { memberships: ReadonlyArray<LabelledMembership & { id: string }>; activeWorkspace: { id: string; slug: string } | null }): string {
+  const active = session.activeWorkspace;
+  if (!active) return 'Lokal';
+  const own = session.memberships.find((m) => m.id === active.id);
+  return own ? membershipLabel(own, session.memberships) : workspaceLabel(active.slug);
+}
+
 /**
  * Every workspace this session may upload into, labelled and sorted by label.
  * The development bypass has no memberships and uploads into its one local

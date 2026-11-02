@@ -9,6 +9,7 @@ import {
   requireSessionTenantId,
   companyWorkspaceIds,
   membershipLabel,
+  sessionCompanyName,
   requestedUploadWorkspace,
   uploadTargets,
   MissingTenantError,
@@ -215,5 +216,24 @@ describe('upload targets', () => {
     const dev: SessionLike = { memberships: [], activeWorkspace: null };
     expect(requestedUploadWorkspace(dev, 'receipt-ocr')).toBe('receipt-ocr');
     expect(requestedUploadWorkspace(dev, 'ws-1')).toBeNull();
+  });
+});
+
+describe('sessionCompanyName', () => {
+  const ws = (id: string, tenantId: string, tenantName = 'Beispiel GmbH') => ({ id, slug: `receipts-${id}`, role: 'member', tenantId, tenantName, name: `Bereich ${id}` });
+
+  it('is the company alone while it has one workspace here', () => {
+    const a = ws('a', 't1');
+    expect(sessionCompanyName({ memberships: [a, ws('b', 't2', 'Andere AG')], activeWorkspace: a })).toBe('Beispiel GmbH');
+  });
+
+  it('names the workspace too from a second one on, as the switcher does', () => {
+    const a = ws('a', 't1');
+    expect(sessionCompanyName({ memberships: [a, ws('b', 't1')], activeWorkspace: a })).toBe('Beispiel GmbH / Bereich a');
+  });
+
+  it('falls back on the workspace, and has a word for the local bypass', () => {
+    expect(sessionCompanyName({ memberships: [], activeWorkspace: { id: 'a', slug: 'receipts-lola-stories' } })).toBe('Lola Stories');
+    expect(sessionCompanyName({ memberships: [], activeWorkspace: null })).toBe('Lokal');
   });
 });

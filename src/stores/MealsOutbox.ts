@@ -35,9 +35,11 @@ export class MealsOutbox {
   settled = 0;
   /** The store of the open page: a write begun on an earlier visit ends there too. */
   open: MealsStore | null = null;
+  /** Set once the company is left: what is refused from then on goes here. */
+  private leftTo: ((refusal: Refusal) => void) | null = null;
 
   constructor() {
-    makeAutoObservable<MealsOutbox, 'lastWrite'>(this, { writes: false, lastWrite: false, confirmed: false, refusals: false, open: false }, { autoBind: true });
+    makeAutoObservable<MealsOutbox, 'lastWrite' | 'leftTo'>(this, { writes: false, lastWrite: false, confirmed: false, refusals: false, open: false, leftTo: false }, { autoBind: true });
   }
 
   /** Acting on a receipt again takes what was said about it away. */
@@ -63,7 +65,19 @@ export class MealsOutbox {
 
   say(write: MealWrite, who: string | null, message: string): void {
     const key = `meals:${write.id}`;
-    this.refusals.set(key, { key, who, message, rowIds: write.rowIds });
+    if (this.leftTo) this.leftTo({ key, who, message });
+    else this.refusals.set(key, { key, who, message, rowIds: write.rowIds });
+  }
+
+  /** The company left the screen: what stands here goes along, and what comes later follows. */
+  leave(send: (refusal: Refusal) => void): void {
+    this.leftTo = send;
+    for (const refusal of this.refusals.values()) send(refusal);
+    this.refusals.clear();
+  }
+
+  stay(): void {
+    this.leftTo = null;
   }
 
   /** Read and closed. Nothing but this and acting on the receipt again takes a refusal away. */

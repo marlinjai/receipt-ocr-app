@@ -68,6 +68,17 @@ export class AppStore {
     this.mealOutbox.clear(key);
   }
 
+  /** The company left the screen: this store is thrown away, and its refusals must still reach the person. */
+  leave(send: (refusal: Refusal) => void): void {
+    this.checkOutbox.leave(send);
+    this.mealOutbox.leave(send);
+  }
+
+  stay(): void {
+    this.checkOutbox.stay();
+    this.mealOutbox.stay();
+  }
+
   /** The receipt checks opened. Unlike the meals they have no number in the navigation: only the spending page's tab reads them. */
   openChecks(checks: ChecksStore): () => void {
     this.checks = checks;

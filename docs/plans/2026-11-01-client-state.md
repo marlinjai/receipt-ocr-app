@@ -292,3 +292,16 @@ Proof that no figure changes: `FinanceClient.figures.test.tsx` renders a realist
 tab by tab and compares the whole markup with files written by the code from before the move, in the commit that
 adds them, before any store exists.
 
+- **The statement and the payment tabs moved first (`FinanceStore`).** One store per visit and per year, held by the
+  page, not on the `AppStore`: nothing outside finance reads it, and the layout's key already gives each company its
+  own. A year is a new store, so an answer for the year just left lands on a store nobody reads; before this it
+  would have shown the old year under the new one. Every tab reads `store.statement`, so Einnahmen, Anlagen,
+  Umsatzsteuer, Einkommensteuer and Lieferanten have nothing left to move: they held no copy of their own.
+  `useBankFeed` and `AccountSharing` lost their copies, and take what they show as props.
+- **Late answers.** A statement says when its read began (`readAt`), and a statement older than the one on screen
+  changes nothing: a write and a bank sync can overlap. The same year sent again by the server takes its place too;
+  before, the page ignored it.
+- **By record.** A write still answers with the whole year. `reuse` keeps every part of the new statement that did
+  not change as the old object, so identity tells a row what changed; it finds records in a list by id, so a list
+  that lost an entry keeps the others.
+

@@ -8,6 +8,7 @@ import { smallBusinessOn } from '@/lib/meals/rules';
 import { allReceiptRows, getTaxSettings, guestsByRow, tableContext } from '@/lib/meals/service';
 import type { MealGuestEntry } from '@/lib/meals/types';
 import { ANNEX_ASSET_LINES, AssetInputError, validateAssetInput, validateDisposalInput, type AssetInput } from './asset-input';
+import { readsStartedAt } from '@/lib/shared-reads';
 import { assetSchedule, type AssetCheck, type AssetFact, type AssetKind, type AssetMethod, type AssetYearRow, type DisposalKind } from './assets';
 import { computeYear } from './compute';
 import {
@@ -407,6 +408,8 @@ export interface StatementItem {
 }
 
 export interface StatementView {
+  /** When the server began reading this, for telling a late answer from a newer one. */
+  readAt: number;
   year: number;
   /** Years that have at least one dated item, plus every year with a rule set, newest first. */
   years: number[];
@@ -572,6 +575,7 @@ export async function loadYearBoundaryDecisions(db: PrismaClient, workspaceId: s
 }
 
 async function computeStatement(db: PrismaClient, workspaceId: string, year: number): Promise<{ view: StatementView; yearBoundary: YearBoundaryEntry[] }> {
+  const readAt = readsStartedAt();
   const loadedPayments = await loadPayments(db, workspaceId);
   const [loaded, vendorRules, settings, storedAssets] = await Promise.all([
     loadReceipts(db, workspaceId, undefined, linkedByRow(loadedPayments.payments)),
@@ -922,6 +926,7 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
     }),
   ].sort((a, b) => (a.cashDay < b.cashDay ? -1 : a.cashDay > b.cashDay ? 1 : a.label.localeCompare(b.label, 'de')));
   const view: StatementView = {
+    readAt,
     year,
     years: [...years].sort((a, b) => b - a),
     smallBusiness: settings.smallBusiness,

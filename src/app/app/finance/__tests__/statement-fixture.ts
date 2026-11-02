@@ -155,6 +155,7 @@ export function fullStatement(): StatementView {
   const inputVat = [{ date: '2025-03-14', cents: 1_900, label: 'Rechnung tel-1' }] as unknown as Parameters<typeof vatYear>[3]['inputVat'];
   const output = [{ date: '2025-03-01', cents: 28_500, label: 'R-2025-1', rateBp: 1900, baseCents: 150_000 }] as unknown as Parameters<typeof vatYear>[3]['outputVatByIssue'];
   return {
+    readAt: 1,
     year: 2025,
     years: [2026, 2025, 2024],
     smallBusiness: false,
@@ -245,6 +246,7 @@ export function afterLink(): StatementView {
   const base = fullStatement();
   return {
     ...base,
+    readAt: 2,
     items: base.items.filter((i) => i.rowId !== 'open-1'),
     blockedItems: base.blockedItems - 1,
     countedItems: base.countedItems + 1,

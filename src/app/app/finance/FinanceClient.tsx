@@ -1,5 +1,6 @@
 'use client';
 
+import { observer } from 'mobx-react-lite';
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import { receiptHref } from '@/lib/receipt-link';
@@ -68,6 +69,7 @@ import { useTabInView } from '@/lib/use-tab-in-view';
 import { GROUPS, addressOf, defaultTab, groupCount, groupOf, waitingCounts, type GroupKey, type TabKey } from './tabs';
 import OwnNames, { ownNamesMessage } from '../spending/OwnNames';
 import { changeOwnNames, type OwnNamesView } from './own-names-actions';
+import { FinanceStore } from '@/stores/FinanceStore';
 
 /** Checks one setting answers for every item at once: shown as one notice, not once per receipt. */
 const WORKSPACE_CHECKS: OpenCheckKind[] = ['small_business_unanswered'];
@@ -115,7 +117,7 @@ const PAYMENT_PARTS = { questions: ['questions'], payments: ['list'], accounts: 
 /** Tabs whose forms show a failure next to what was typed; on every other tab it is shown above the panel. */
 const OWN_ERROR_TABS: readonly TabKey[] = ['open', 'questions', 'payments', 'accounts', 'vat', 'tax', 'names'];
 
-export default function FinanceClient({
+const FinanceClient = observer(function FinanceClient({
   initial,
   initialTab,
   bank: bankInitial = null,
@@ -143,7 +145,10 @@ export default function FinanceClient({
 }) {
   const tabsId = useId();
   const router = useRouter();
-  const [view, setView] = useState(initial);
+  const seed = { statement: initial, bank: bankInitial, sharing };
+  // One store per visit and per year: an answer for the year just left lands on its store, where nobody reads it.
+  const [store, setStore] = useState(() => new FinanceStore(seed));
+  const view = store.statement;
   // Two levels (plan 2026-10-25-finance-groups): a group, and the tab last chosen inside each group, so going
   // to another group and back finds the tab that was open there. Without an address the page opens on the first
   // work that waits; an overdue invoice is an open check too (decision D6 of the invoicing plan).
@@ -177,7 +182,7 @@ export default function FinanceClient({
   // On a phone the tab row scrolls sideways; the open tab is kept in view.
   const tabRow = useRef<HTMLDivElement>(null);
   useTabInView(tabRow, tab);
-  const bankFeed = useBankFeed(bankInitial ?? NO_BANK, view.year, bankActions, (next) => setView(next), (url) => window.location.assign(url));
+  const bankFeed = useBankFeed(store.bank ?? NO_BANK, view.year, bankActions, store.bankChanged, store.took, (url) => window.location.assign(url));
   const [bankNotice, setBankNotice] = useState(() => returnMessage(bankReturn));
   // The address keeps the open tab, so a reload or a shared link opens the same place. The outcome of the
   // return from the bank is shown once: the address loses it, so a reload does not repeat it. A visit
@@ -208,11 +213,10 @@ export default function FinanceClient({
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  // A different year arrives as new props after the navigation.
-  const [seenYear, setSeenYear] = useState(initial.year);
-  if (initial.year !== seenYear) {
-    setSeenYear(initial.year);
-    setView(initial);
+  // A different year arrives as new props after the navigation. With it the bank and the sharing are read
+  // afresh (another page may have changed them), and old messages go.
+  if (initial.year !== store.year) {
+    setStore(new FinanceStore(seed));
     setSelectedId(null);
     setEditingId(null);
     setOpenLine(null);
@@ -226,6 +230,8 @@ export default function FinanceClient({
     setNamesNotice(null);
     setBankNotice(null);
   }
+  // The same year read again takes its place too, when it is the newer one.
+  useEffect(() => store.took(initial), [store, initial]);
 
   const queue = useMemo(() => openQueue(view), [view]);
   const selected = queue.find((i) => i.itemId === selectedId) ?? queue[0] ?? null;
@@ -259,7 +265,7 @@ export default function FinanceClient({
         setError(message(result.error, result.detail));
         return;
       }
-      setView(result.value);
+      store.took(result.value);
       setNotice(done);
       after?.(result.value);
     });
@@ -357,7 +363,7 @@ export default function FinanceClient({
         }
         const { names, settledOwnName, view: next } = result.value;
         setOwnNames((current) => (current ? { ...current, names } : current));
-        if (next) setView(next);
+        if (next) store.took(next);
         setNamesNotice(
           ('add' in change
             ? `${change.add} gespeichert.${settledOwnName > 0 ? ` ${settledOwnName} ${settledOwnName === 1 ? 'Benachrichtigung' : 'Benachrichtigungen'} erledigt: eigenes Konto.` : ''}`
@@ -983,7 +989,7 @@ export default function FinanceClient({
                   // gone): the screen shows what it holds now, so the button does not stay where it no longer applies.
                   if (!result.ok && (result.detail === 'account_not_empty' || result.detail === 'account_not_found')) {
                     const fresh = await getStatement(view.year).catch(() => null);
-                    if (fresh?.ok) setView(fresh.value);
+                    if (fresh?.ok) store.took(fresh.value);
                   }
                   return result;
                 }, `${account.label}: entfernt.`)
@@ -1008,10 +1014,10 @@ export default function FinanceClient({
                   },
                 );
               }}
-              bank={bankInitial ? { feed: bankFeed, actions: bankActions, returnNotice: bankNotice } : null}
+              bank={store.bank ? { feed: bankFeed, actions: bankActions, returnNotice: bankNotice } : null}
               sharing={
-                sharing ? (
-                  <AccountSharing initial={sharing} accounts={view.payments.accounts} actions={sharingActions} />
+                store.sharing ? (
+                  <AccountSharing view={store.sharing} onChange={store.sharingChanged} accounts={view.payments.accounts} actions={sharingActions} />
                 ) : sharingFailed ? (
                   <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Private Zahlungen in einer anderen Firma">
                     <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>
@@ -1190,7 +1196,9 @@ export default function FinanceClient({
       </div>
     </main>
   );
-}
+});
+
+export default FinanceClient;
 
 /**
  * The arrow keys of a tab row (the ARIA tabs pattern): left and right move to

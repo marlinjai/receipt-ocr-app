@@ -134,6 +134,7 @@ function view(items: StatementItem[], overrides: Partial<StatementView> = {}): S
   const { rules } = rulesForYear(2025);
   const counted = items.filter((i) => i.counted);
   return {
+    readAt: 0,
     year: 2025,
     years: [2026, 2025],
     smallBusiness: true,

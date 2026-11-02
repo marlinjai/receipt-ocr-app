@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -45,7 +46,8 @@ function actions(o: Partial<BankActions> = {}): BankActions {
 }
 
 function Harness({ bank, acts, go = vi.fn(), onStatement = vi.fn() }: { bank: BankView; acts: BankActions; go?: (url: string) => void; onStatement?: (v: StatementView) => void }) {
-  const feed = useBankFeed(bank, 2026, acts, onStatement, go);
+  const [held, setHeld] = useState(bank);
+  const feed = useBankFeed(held, 2026, acts, setHeld, onStatement, go);
   return <BankAccountStatus account={account} feed={feed} actions={acts} enabled={feed.bank.enabled} />;
 }
 

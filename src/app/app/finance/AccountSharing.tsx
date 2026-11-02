@@ -98,15 +98,8 @@ function AccountRow({
  * call private shows in the other company's spending overview, budgets and
  * missing receipts. Nothing is copied, and ending it brings everything back.
  */
-export default function AccountSharing({ initial, accounts, actions }: { initial: SharingView; accounts: ReadonlyArray<{ id: string; label: string }>; actions: SharingActions }) {
+export default function AccountSharing({ view, onChange, accounts, actions }: { view: SharingView; onChange: (view: SharingView) => void; accounts: ReadonlyArray<{ id: string; label: string }>; actions: SharingActions }) {
   const headingId = useId();
-  const [view, setView] = useState(initial);
-  // Fresh data from the server (a reload of the page's data) replaces what this section holds.
-  const [shown, setShown] = useState(initial);
-  if (shown !== initial) {
-    setShown(initial);
-    setView(initial);
-  }
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -118,7 +111,7 @@ export default function AccountSharing({ initial, accounts, actions }: { initial
       try {
         const result = await action();
         if (result.ok) {
-          setView(result.value);
+          onChange(result.value);
           setDone(message);
         } else setError(sharingMessage(result));
       } catch {

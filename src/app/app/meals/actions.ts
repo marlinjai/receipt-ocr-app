@@ -29,6 +29,7 @@ import {
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
 import { parseRotation } from '@/lib/meals/viewer-state';
 import { prisma } from '@/lib/prisma';
+import { readsStartedAt } from '@/lib/shared-reads';
 import { settleMovedPaymentsLater } from '@/lib/spending/settle-later';
 import { deleteStoredFile } from '@/lib/stored-files';
 
@@ -121,7 +122,7 @@ export interface MealsPageData {
 
 export async function getMealsPageData(): Promise<Result<MealsPageData>> {
   try {
-    const readAt = Date.now();
+    const readAt = readsStartedAt();
     const session = await requireReceiptsSession();
     const workspaceId = readContext(session);
     const tenantId = contactReadTenant(session, workspaceId);

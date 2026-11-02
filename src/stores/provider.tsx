@@ -42,10 +42,13 @@ export function AppStoreProvider({ company, children }: { /** Whose books these 
 
   useEffect(() => {
     let left = false;
+    // Only the latest answer counts: an older call finishing last must not overwrite the newer number.
+    let asked = 0;
     const ask = () => {
+      const mine = ++asked;
       getNavCounts()
         .then((result) => {
-          if (!left && result.ok) store.serverCounts(result.value);
+          if (!left && mine === asked && result.ok) store.serverCounts(result.value);
         })
         .catch(() => {});
     };

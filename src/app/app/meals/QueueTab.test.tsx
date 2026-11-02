@@ -1,11 +1,9 @@
 // @vitest-environment jsdom
-import { useMemo, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SMALL_BUSINESS, meal } from '@/lib/meals/__tests__/fixtures';
 import type { MealBatchResult } from '@/lib/meals/batch';
-import { incompleteQueue } from '@/lib/meals/register';
 import type { MealRecord } from '@/lib/meals/types';
 
 /**
@@ -37,6 +35,7 @@ vi.mock('@/components/meals/MealDetailsForm', () => ({
 }));
 vi.mock('@/components/meals/ReceiptViewer', () => ({ default: () => null }));
 
+import { MealsHarness } from './__tests__/MealsHarness';
 import QueueTab from './QueueTab';
 
 function open(rowId: string, vendor: string, date: string): MealRecord {
@@ -46,25 +45,28 @@ function open(rowId: string, vendor: string, date: string): MealRecord {
 const THREE = [open('a', 'Lokal A', '2025-01-10'), open('b', 'Lokal B', '2025-02-10'), open('c', 'Lokal C', '2025-03-10')];
 
 function Harness({ initial }: { initial: MealRecord[] }) {
-  const [records, setRecords] = useState(initial);
-  const queue = useMemo(() => incompleteQueue(records), [records]);
   return (
-    <QueueTab
-      queue={queue}
-      contacts={[]}
-      settings={SMALL_BUSINESS}
-      defaultHost=""
-      onRecordSaved={vi.fn()}
-      onRecordsSaved={(saved) => setRecords((list) => list.map((r) => saved.find((s) => s.rowId === r.rowId) ?? r))}
-      onRecordsRemoved={(ids) => setRecords((list) => list.filter((r) => !ids.includes(r.rowId)))}
-      onContactCreated={vi.fn()}
-      onOpenRegister={vi.fn()}
-    />
+    <MealsHarness initial={initial} settings={SMALL_BUSINESS}>
+      {(store, focusHome) => (
+        <QueueTab
+          queue={store.queue}
+          contacts={[]}
+          settings={SMALL_BUSINESS}
+          defaultHost=""
+          onRecordSaved={vi.fn()}
+          onRecordsSaved={vi.fn()}
+          writes={store}
+          focusHome={focusHome}
+          onContactCreated={vi.fn()}
+          onOpenRegister={vi.fn()}
+        />
+      )}
+    </MealsHarness>
   );
 }
 
 function ok(value: Partial<MealBatchResult>) {
-  return { ok: true, value: { done: [], records: [], skipped: [], ...value } };
+  return { ok: true, value: { done: [], records: [], skipped: [], at: 1, ...value } };
 }
 
 /** The row id of the entry whose form is open. */
@@ -311,7 +313,7 @@ describe('QueueTab: batch delete', () => {
     expect(screen.getAllByRole('checkbox')).toHaveLength(4);
   });
 
-  it('a double click on the confirm button sends one request', async () => {
+  it('a double click on the confirm button sends one request, and the other rows stay usable while it runs', async () => {
     const user = userEvent.setup();
     let release: (v: unknown) => void = () => {};
     deleteMealReceipts.mockImplementation(() => new Promise((resolve) => (release = resolve)));
@@ -322,13 +324,14 @@ describe('QueueTab: batch delete', () => {
     await user.dblClick(confirm);
     expect(deleteMealReceipts).toHaveBeenCalledTimes(1);
 
-    // While it runs: the dialog shows it, and every other action is locked.
-    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Bitte warten…' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Keine Bewirtung: Lokal B, 10.02.2025' })).toHaveProperty('disabled', true);
-    expect(box('Lokal B, 10.02.2025 auswählen').disabled).toBe(true);
+    // It applied at once: the dialog is gone, the row with it, and nothing waits for the answer.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: /Lokal A/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Keine Bewirtung: Lokal B, 10.02.2025' })).toHaveProperty('disabled', false);
+    expect(box('Lokal B, 10.02.2025 auswählen').disabled).toBe(false);
 
     release(ok({ done: ['a'] }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await screen.findByText('„Lokal A“ gelöscht.');
     expect(deleteMealReceipts).toHaveBeenCalledTimes(1);
   });
 });
@@ -446,5 +449,46 @@ describe('QueueTab: unsaved changes in the open form', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => expect(markMealsNotMeal).toHaveBeenCalledWith(['b']));
     expect(openForm()).toBe('a');
+  });
+});
+
+describe('QueueTab: a list action writes at once', () => {
+  it('the row leaves on the click, not on the answer, and the focus stays on the page meanwhile', async () => {
+    const user = userEvent.setup();
+    markMealsNotMeal.mockImplementation(() => new Promise(() => {}));
+    render(<Harness initial={THREE} />);
+    await user.click(screen.getByRole('button', { name: 'Keine Bewirtung: Lokal B, 10.02.2025' }));
+    expect(screen.queryByRole('button', { name: 'Keine Bewirtung: Lokal B, 10.02.2025' })).toBeNull();
+    expect(screen.getByText('Noch 2 Belege offen.')).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Bewirtungsverzeichnis' })));
+  });
+
+  it('a refusal brings the row back where it was and stays until it is closed', async () => {
+    const user = userEvent.setup();
+    markMealsNotMeal.mockResolvedValue({ ok: false, error: 'forbidden' });
+    render(<Harness initial={THREE} />);
+    await user.click(screen.getByRole('button', { name: 'Keine Bewirtung: Lokal B, 10.02.2025' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('fehlt die Berechtigung');
+    expect(screen.getAllByRole('checkbox', { name: /Lokal/ }).map((c) => c.getAttribute('aria-label') ?? c.parentElement?.textContent)).toEqual([
+      'Lokal A, 10.01.2025 auswählen',
+      'Lokal B, 10.02.2025 auswählen',
+      'Lokal C, 10.03.2025 auswählen',
+    ]);
+    await user.click(within(alert.parentElement!).getByRole('button', { name: 'Hinweis schließen' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a refused batch comes back still selected, so it can be sent again', async () => {
+    const user = userEvent.setup();
+    markMealsNotMeal.mockResolvedValue({ ok: false, error: 'failed' });
+    render(<Harness initial={THREE} />);
+    await user.click(box('Lokal A, 10.01.2025 auswählen'));
+    await user.click(box('Lokal B, 10.02.2025 auswählen'));
+    await user.click(within(screen.getByRole('group', { name: 'Aktionen für die Auswahl' })).getByRole('button', { name: 'Keine Bewirtung' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Keine Bewirtung' }));
+    await screen.findByRole('alert');
+    expect(box('Lokal A, 10.01.2025 auswählen').checked).toBe(true);
+    expect(box('Lokal B, 10.02.2025 auswählen').checked).toBe(true);
   });
 });

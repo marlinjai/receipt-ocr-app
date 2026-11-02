@@ -9,20 +9,20 @@ const record = (rowId: string, o: Partial<MealRecord> = {}): MealRecord => ({ ro
 const contact = { id: 'c1', name: 'Neu', companyOrRole: 'Firma', note: null, archived: false };
 
 describe('the meals store', () => {
-  const store = (...records: MealRecord[]) => new MealsStore({ records, contacts: [], settings, defaultHost: '' });
+  const store = (...records: MealRecord[]) => new MealsStore({ records, contacts: [], settings, defaultHost: '', readAt: 0 });
 
   it('replaces a saved record and remembers its host', () => {
     const meals = store(record('a'));
-    meals.recordSaved(record('a', { host: ' Gast ' }));
+    meals.recordSaved(record('a', { host: ' Gast ' }), 1);
     expect(meals.records[0].host).toBe(' Gast ');
     expect(meals.defaultHost).toBe('Gast');
   });
 
   it('keeps a saved record out when the page no longer has it, and removes what is gone', () => {
     const meals = store(record('a'), record('b'));
-    meals.recordsSaved([record('z')]);
-    meals.recordSaved(record('y'));
-    meals.recordsRemoved(['a']);
+    meals.recordsSaved([record('z')], 1);
+    meals.recordSaved(record('y'), 1);
+    meals.answered(meals.begin('delete', ['a'])!, { done: ['a'], records: [], skipped: [], at: 1 });
     expect(meals.records.map((r) => r.rowId)).toEqual(['b']);
   });
 
@@ -37,7 +37,7 @@ describe('the meals store', () => {
 });
 
 describe('the numbers of the navigation', () => {
-  const queueOf = (n: number) => ({ queue: { length: n } }) as unknown as MealsStore;
+  const queueOf = (n: number) => ({ queue: { length: n }, catchUp: () => {} }) as unknown as MealsStore;
 
   it('know nothing until something says so', () => {
     expect(new AppStore().counts).toBeNull();
@@ -45,7 +45,7 @@ describe('the numbers of the navigation', () => {
 
   it('follow the open page, and a server answer leaves that number alone', () => {
     const app = new AppStore();
-    const meals = new MealsStore({ records: [], contacts: [], settings, defaultHost: '' });
+    const meals = new MealsStore({ records: [], contacts: [], settings, defaultHost: '', readAt: 0 });
     const seen: Array<number | undefined> = [];
     const stop = autorun(() => seen.push(app.counts?.meals));
     const close = app.openMeals(meals);

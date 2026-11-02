@@ -3,7 +3,7 @@ import { MEAL_BATCH_MAX, batchOutcomeNotice, normalizeRowIds, type MealBatchResu
 import { missingList, missingSummary } from '../messages';
 
 function result(overrides: Partial<MealBatchResult> = {}): MealBatchResult {
-  return { done: [], records: [], skipped: [], ...overrides };
+  return { done: [], records: [], skipped: [], at: 1, ...overrides };
 }
 
 describe('normalizeRowIds', () => {

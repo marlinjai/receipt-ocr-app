@@ -25,7 +25,7 @@ import type { MealGuestEntry, MealRecord, MealTaxSettings } from '@/lib/meals/ty
 import GuestPicker, { type CreateContactResult } from './GuestPicker';
 
 export type SaveMealResult =
-  | { ok: true; value: { record: MealRecord; changed: boolean } }
+  | { ok: true; value: { record: MealRecord; changed: boolean; at: number } }
   | { ok: false; error: string; detail?: string };
 
 interface MealDetailsFormProps {
@@ -37,7 +37,7 @@ interface MealDetailsFormProps {
   onCreateContact: (input: ContactInput) => Promise<CreateContactResult>;
   onContactCreated?: (contact: Contact) => void;
   /** Called after a successful save with the stored record. */
-  onSaved?: (record: MealRecord, changed: boolean) => void;
+  onSaved?: (record: MealRecord, changed: boolean, at: number) => void;
   /** Queue mode: guests of the entry saved just before, offered as one tap. */
   previousGuests?: MealGuestEntry[];
   /** Queue mode: label of the primary button, e.g. "Speichern und weiter". */
@@ -150,7 +150,7 @@ function MealDetailsFormInner({
       }
       setBaseline(submittedDraft);
       setSavedNote(result.value.changed ? 'Gespeichert.' : 'Keine Änderungen, nichts gespeichert.');
-      onSaved?.(result.value.record, result.value.changed);
+      onSaved?.(result.value.record, result.value.changed, result.value.at);
     } catch {
       // A thrown action (network down, server unreachable): say so, keep the draft.
       setError(mealActionMessage('failed'));

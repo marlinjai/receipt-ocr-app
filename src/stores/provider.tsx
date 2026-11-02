@@ -1,5 +1,6 @@
 'use client';
 
+import { reaction } from 'mobx';
 import { enableStaticRendering } from 'mobx-react-lite';
 import { usePathname } from 'next/navigation';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
@@ -26,20 +27,31 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (pathname === DASHBOARD) return;
     let left = false;
-    getNavCounts()
-      .then((result) => {
-        if (!left && result.ok) store.serverCounts(result.value);
-      })
-      .catch(() => {});
+    const ask = () => {
+      getNavCounts()
+        .then((result) => {
+          if (!left && result.ok) store.serverCounts(result.value);
+        })
+        .catch(() => {});
+    };
+    ask();
+    // A list action of the meals page that ends after the page closed: the number left behind took it for done.
+    const stop = reaction(
+      () => store.mealOutbox.settled,
+      () => {
+        if (!store.meals) ask();
+      },
+    );
     return () => {
       left = true;
+      stop();
     };
   }, [pathname, store]);
 
-  // An answer of the receipt checks shows at once and is sent after that: closing the page now would lose what is queued.
+  // An answer of the receipt checks or a list action of the meals page shows at once and is sent after that: closing the page now would lose what is queued.
   useEffect(() => {
     const askFirst = (e: BeforeUnloadEvent) => {
-      if (store.checkOutbox.writes.length > 0) e.preventDefault();
+      if (store.checkOutbox.writes.length > 0 || store.mealOutbox.writes.length > 0) e.preventDefault();
     };
     window.addEventListener('beforeunload', askFirst);
     return () => window.removeEventListener('beforeunload', askFirst);

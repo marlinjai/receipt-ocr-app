@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatGuest, type Contact } from '@/lib/contacts/store';
 import {
@@ -15,6 +15,7 @@ import {
 } from '@/lib/meals/messages';
 import { buildRegister, registerYearChoices, undatedMeals } from '@/lib/meals/register';
 import type { MealRecord, MealTaxSettings } from '@/lib/meals/types';
+import type { MealsStore } from '@/stores/MealsStore';
 import { saveMealTaxSettings } from './actions';
 import MealEditor from './MealEditor';
 import { useDiscardGuard } from './useDiscardGuard';
@@ -28,11 +29,13 @@ interface RegisterTabProps {
   defaultHost: string;
   onSettingsChanged: (settings: MealTaxSettings) => void;
   /** An entry saved from the editor. */
-  onRecordSaved: (record: MealRecord) => void;
-  /** Records changed by a list action (now "Keine Bewirtung"). */
-  onRecordsSaved: (records: MealRecord[]) => void;
-  /** Receipts that no longer exist. */
-  onRecordsRemoved: (rowIds: string[]) => void;
+  onRecordSaved: (record: MealRecord, at: number) => void;
+  /** A stored receipt rotation changes the record too. */
+  onRecordsSaved: (records: MealRecord[], at: number) => void;
+  /** Where a list action shows at once. */
+  writes: MealsStore;
+  /** Takes the focus when a row leaves with the button that was pressed. */
+  focusHome: RefObject<HTMLElement | null>;
   onContactCreated: (contact: Contact) => void;
   onOpenQueue: () => void;
   /** Told which entry has unsaved changes in the editor (as it reads in a sentence), or null. */
@@ -67,12 +70,13 @@ export default function RegisterTab({
   onSettingsChanged,
   onRecordSaved,
   onRecordsSaved,
-  onRecordsRemoved,
+  writes,
+  focusHome,
   onContactCreated,
   onOpenQueue,
   onUnsavedChange,
 }: RegisterTabProps) {
-  const actions = useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint: DISMISSED_HINT });
+  const actions = useReceiptActions({ writes, focusHome, dismissedHint: DISMISSED_HINT });
   const { years, initial } = useMemo(() => registerYearChoices(records, new Date().getFullYear()), [records]);
   const [year, setYear] = useState(() => initial);
   const activeYear = years.includes(year) ? year : initial;
@@ -148,8 +152,8 @@ export default function RegisterTab({
     });
   };
 
-  const onEditSaved = (record: MealRecord, changed: boolean) => {
-    onRecordSaved(record);
+  const onEditSaved = (record: MealRecord, changed: boolean, at: number) => {
+    onRecordSaved(record, at);
     // Nothing was written: the form says so itself, and the editor stays open.
     if (!changed) return;
     const moved = registerEditNotice(record, activeYear);
@@ -456,7 +460,6 @@ export default function RegisterTab({
                           else editButtons.current.delete(record.rowId);
                         }}
                         className="ui-btn ui-btn-sm ui-btn-ghost whitespace-nowrap"
-                        disabled={actions.busy}
                         aria-expanded={isEditing}
                         aria-controls={isEditing ? editorId : undefined}
                         aria-label={`${isEditing ? 'Wird bearbeitet' : 'Bearbeiten'}: ${spoken}`}
@@ -472,7 +475,7 @@ export default function RegisterTab({
                       <button
                         type="button"
                         className="ui-btn ui-btn-sm ui-btn-ghost whitespace-nowrap"
-                        disabled={actions.busy || isEditing}
+                        disabled={isEditing}
                         title={isEditing ? EDITING_LOCK_HINT : undefined}
                         aria-label={`Keine Bewirtung: ${spoken}`}
                         onClick={() => actions.markNotMeal([record], { confirm: true })}
@@ -482,7 +485,7 @@ export default function RegisterTab({
                       <button
                         type="button"
                         className="ui-btn ui-btn-sm ui-btn-ghost ui-btn-danger"
-                        disabled={actions.busy || isEditing}
+                        disabled={isEditing}
                         title={isEditing ? EDITING_LOCK_HINT : undefined}
                         aria-label={`Löschen: ${spoken}`}
                         onClick={() => actions.requestDelete([record])}

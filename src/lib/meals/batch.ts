@@ -30,6 +30,8 @@ export interface MealBatchResult {
   /** The receipts of `done` as they are stored now (empty after a delete). */
   records: MealRecord[];
   skipped: MealBatchSkip[];
+  /** When the server finished, for telling a late answer from a newer change. */
+  at: number;
 }
 
 export type MealBatchKind = 'not_meal' | 'restore' | 'delete';

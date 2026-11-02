@@ -65,7 +65,7 @@ describe('a number a page holds', () => {
 
 describe('a page with a store', () => {
   it('moves the number with the store, without a report by hand', async () => {
-    const store = new MealsStore({ records: [meal({ rowId: 'a', occasion: '' }), meal({ rowId: 'b', occasion: '' })], contacts: [], settings: SMALL_BUSINESS, defaultHost: '' });
+    const store = new MealsStore({ records: [meal({ rowId: 'a', occasion: '' }), meal({ rowId: 'b', occasion: '' })], contacts: [], settings: SMALL_BUSINESS, defaultHost: '', readAt: 0 });
     function Open() {
       const app = useAppStore();
       useEffect(() => app.openMeals(store), [app]);
@@ -78,7 +78,7 @@ describe('a page with a store', () => {
       </AppStoreProvider>,
     );
     await screen.findByText('2');
-    act(() => store.recordsRemoved(['a']));
+    act(() => void store.begin('delete', ['a']));
     await screen.findByText('1');
   });
 });

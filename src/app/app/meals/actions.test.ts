@@ -117,7 +117,7 @@ describe('batch actions: permission and failures', () => {
   it('passes a partial result through unchanged', async () => {
     const partial = { done: ['a'], records: [], skipped: [{ rowId: 'b', reason: 'not_found' }] };
     deleteReceiptRows.mockResolvedValue(partial);
-    expect(await deleteMealReceipts(['a', 'b'])).toEqual({ ok: true, value: partial });
+    expect(await deleteMealReceipts(['a', 'b'])).toEqual({ ok: true, value: { ...partial, at: expect.any(Number) } });
     // A deleted receipt took its payment links along: the queues of a shared account are settled after the answer.
     expect(settleMovedPaymentsLater).toHaveBeenCalledWith({ marker: 'prisma' }, 'ws-a');
   });
@@ -171,7 +171,7 @@ describe('saveReceiptRotation', () => {
 
   it('needs the write permission and works in the active workspace of the session', async () => {
     setReceiptFileRotation.mockResolvedValue({ rowId: 'row-1' });
-    expect(await saveReceiptRotation('row-1', 'ref-1', 270)).toEqual({ ok: true, value: { record: { rowId: 'row-1' } } });
+    expect(await saveReceiptRotation('row-1', 'ref-1', 270)).toEqual({ ok: true, value: { record: { rowId: 'row-1' }, at: expect.any(Number) } });
     expect(requireAction).toHaveBeenCalledWith('receipts.row.write');
     expect(setReceiptFileRotation).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, 'row-1', 'ref-1', 270);
 
@@ -205,7 +205,7 @@ describe('saveMeal: the form save, also for an entry that is already in the regi
   it('needs the write permission, works in the active workspace of the session and hands back the stored record', async () => {
     const stored = { record: { rowId: 'row-1', occasion: INPUT.occasion }, changed: true };
     saveMealDetails.mockResolvedValue(stored);
-    expect(await saveMeal('row-1', INPUT)).toEqual({ ok: true, value: stored });
+    expect(await saveMeal('row-1', INPUT)).toEqual({ ok: true, value: { ...stored, at: expect.any(Number) } });
     expect(requireAction).toHaveBeenCalledWith('receipts.row.write');
     expect(saveMealDetails).toHaveBeenCalledWith({ marker: 'prisma' }, { workspaceId: 'ws-a', tenantId: 't-a' }, 'row-1', INPUT);
   });
@@ -219,7 +219,7 @@ describe('saveMeal: the form save, also for an entry that is already in the regi
 
   it('saving what is already stored reports that nothing changed', async () => {
     saveMealDetails.mockResolvedValue({ record: { rowId: 'row-1' }, changed: false });
-    expect(await saveMeal('row-1', INPUT)).toEqual({ ok: true, value: { record: { rowId: 'row-1' }, changed: false } });
+    expect(await saveMeal('row-1', INPUT)).toEqual({ ok: true, value: { record: { rowId: 'row-1' }, changed: false, at: expect.any(Number) } });
   });
 
   it('without the write permission or with an expired session nothing is written', async () => {

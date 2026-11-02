@@ -4,10 +4,13 @@ import { cleanup, render } from '@testing-library/react';
 import { receiptLinked } from '@/app/app/spending/open-checks';
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/app/spending' }));
-vi.mock('@/app/app/nav-actions', () => ({ getNavCounts: async () => ({ ok: false }) }));
+const getNavCounts = vi.hoisted(() => vi.fn(async () => ({ ok: false })));
+vi.mock('@/app/app/nav-actions', () => ({ getNavCounts }));
 
 import { AppStoreProvider, useAppStore } from '../provider';
+import type { MealTaxSettings } from '@/lib/meals/types';
 import type { AppStore } from '../AppStore';
+import { MealsStore } from '../MealsStore';
 
 afterEach(cleanup);
 
@@ -38,5 +41,47 @@ describe('closing the page', () => {
     outbox.begin('p', receiptLinked, 'r');
     unmount();
     expect(leave()).toBe(false);
+  });
+
+  it('asks first too while a list action of the meals page is on its way', () => {
+    let app: AppStore | null = null;
+    const Seen = () => {
+      app = useAppStore();
+      return null;
+    };
+    render(
+      <AppStoreProvider>
+        <Seen />
+      </AppStoreProvider>,
+    );
+    const outbox = (app as unknown as AppStore).mealOutbox;
+    const write = outbox.begin('delete', ['a']);
+    expect(leave()).toBe(true);
+    outbox.end(write);
+    expect(leave()).toBe(false);
+  });
+});
+
+describe('a list action of the meals page that ends after the page closed', () => {
+  it('has the navigation ask the server again; with the page open its number needs no asking', async () => {
+    let app: AppStore | null = null;
+    const Seen = () => {
+      app = useAppStore();
+      return null;
+    };
+    render(
+      <AppStoreProvider>
+        <Seen />
+      </AppStoreProvider>,
+    );
+    const store = app as unknown as AppStore;
+    const asked = getNavCounts.mock.calls.length;
+    store.mealOutbox.end(store.mealOutbox.begin('delete', ['a']));
+    expect(getNavCounts.mock.calls.length).toBe(asked + 1);
+
+    const close = store.openMeals(new MealsStore({ records: [], contacts: [], settings: {} as MealTaxSettings, defaultHost: '', readAt: 0 }, store.mealOutbox));
+    store.mealOutbox.end(store.mealOutbox.begin('delete', ['a']));
+    expect(getNavCounts.mock.calls.length).toBe(asked + 1);
+    close();
   });
 });

@@ -4,7 +4,7 @@ import { auth } from '@/lib/auth';
 import { initializeReceiptsTable } from './actions';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import BrowserRulesImport from '@/components/BrowserRulesImport';
-import CheckRefusals from '@/components/CheckRefusals';
+import Refusals from '@/components/Refusals';
 import { PushRenewal } from './spending/PushSession';
 import { sessionWorkspaceId } from '@/lib/auth-workspace';
 import AppSidebar from '@/components/nav/AppSidebar';
@@ -59,7 +59,7 @@ async function renderShell(children: React.ReactNode) {
       </header>
       <BrowserRulesImport />
       <PushRenewal />
-      <CheckRefusals />
+      <Refusals />
       {children}
       <PhoneNav session={session} logoutUrl={auth.logoutUrl()} />
       </div>

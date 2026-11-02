@@ -1,14 +1,16 @@
 'use client';
 
+import type { RefObject } from 'react';
 import { formatDay, formatEuro } from '@/lib/meals/messages';
 import type { MealRecord } from '@/lib/meals/types';
+import type { MealsStore } from '@/stores/MealsStore';
 import { useReceiptActions } from './useReceiptActions';
 
 interface DismissedMealsProps {
   /** "Bewirtung" receipts marked "Keine Bewirtung", in any order. */
   records: MealRecord[];
-  onRecordsSaved: (records: MealRecord[]) => void;
-  onRecordsRemoved: (rowIds: string[]) => void;
+  writes: MealsStore;
+  focusHome: RefObject<HTMLElement | null>;
 }
 
 /**
@@ -20,8 +22,8 @@ interface DismissedMealsProps {
  * It sits below everything else on the page and opens downwards, so opening
  * it moves nothing that was on screen.
  */
-export default function DismissedMeals({ records, onRecordsSaved, onRecordsRemoved }: DismissedMealsProps) {
-  const actions = useReceiptActions({ onRecordsSaved, onRecordsRemoved, dismissedHint: '' });
+export default function DismissedMeals({ records, writes, focusHome }: DismissedMealsProps) {
+  const actions = useReceiptActions({ writes, focusHome, dismissedHint: '' });
   if (records.length === 0) return <>{actions.overlays}</>;
 
   const sorted = [...records].sort((a, b) => ((a.date ?? '') < (b.date ?? '') ? 1 : -1));
@@ -66,7 +68,6 @@ export default function DismissedMeals({ records, onRecordsSaved, onRecordsRemov
                   <button
                     type="button"
                     className="ui-btn ui-btn-sm ui-btn-ghost shrink-0 max-sm:-ml-2.5"
-                    disabled={actions.busy}
                     aria-label={`Wieder aufnehmen: ${name}, ${formatDay(record.date)}`}
                     onClick={() => actions.restore([record])}
                   >

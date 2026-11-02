@@ -31,6 +31,7 @@ function savingServer(record: MealRecord) {
       ok: true,
       value: {
         changed: true,
+        at: 1,
         record: { ...record, ...input, date: input.date ?? record.date, gross: input.gross ?? record.gross, guests },
       },
     };
@@ -90,7 +91,7 @@ describe('forward', () => {
       gross: 119,
     });
     expect(await screen.findByText('Gespeichert.')).toBeTruthy();
-    expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ occasion: 'Planung Messeauftritt 2026' }), true);
+    expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ occasion: 'Planung Messeauftritt 2026' }), true, 1);
   });
 
   it('never offers an archived contact', async () => {
@@ -198,11 +199,11 @@ describe('resume', () => {
 describe('re-entry', () => {
   it('saving a completed entry untouched reports that nothing changed', async () => {
     const record = meal();
-    const onSave = vi.fn(async (): Promise<SaveMealResult> => ({ ok: true, value: { record, changed: false } }));
+    const onSave = vi.fn(async (): Promise<SaveMealResult> => ({ ok: true, value: { record, changed: false, at: 1 } }));
     const { user, onSaved } = setup(record, { onSave });
     await user.click(screen.getByRole('button', { name: 'Speichern' }));
     expect(await screen.findByText('Keine Änderungen, nichts gespeichert.')).toBeTruthy();
-    expect(onSaved).toHaveBeenCalledWith(record, false);
+    expect(onSaved).toHaveBeenCalledWith(record, false, 1);
   });
 
   it('editing a completed entry saves the edit in place', async () => {

@@ -8,9 +8,9 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { drainQueue, singleFlight, type DrainResult } from '@/lib/capture/drain';
 import { captureErrorText } from '@/lib/capture/messages';
 import { newQueuedCapture, openCaptureStore, type CaptureStore, type QueuedCapture } from '@/lib/capture/offline-queue';
-import { createBrowserDeps, type SaveReceipt } from '@/lib/upload/browser-deps';
+import { createBrowserDeps, type ClaimExisting, type SaveReceipt, type UploadForPayment } from '@/lib/upload/browser-deps';
 import { uploadFailureKind } from '@/lib/upload/errors';
-import { runUploadPipeline, type PipelineOutcome, type PipelinePhase } from '@/lib/upload/pipeline';
+import { runUploadPipeline, type PipelineOutcome, type PipelinePhase, type UploadLink } from '@/lib/upload/pipeline';
 import { receiptHref } from '@/lib/receipt-link';
 
 type Done = Extract<PipelineOutcome, { kind: 'done' }>;
@@ -33,6 +33,15 @@ interface PhoneCaptureProps {
   notice?: { tone: 'info' | 'error'; text: string } | null;
   /** The company the dashboard shows: a receipt that is already there is linked only when it is in that one. */
   activeWorkspaceId?: string;
+  /**
+   * The payment photos taken now are for (the page was opened from a check
+   * card). A photo keeps it, also while it waits in the queue.
+   */
+  forPaymentId?: string | null;
+  /** Link a receipt that is there already to a photo's payment; without it nothing is linked. */
+  claimExisting?: ClaimExisting;
+  /** What became of a photo's link to its payment, also for a queued photo sent later. */
+  onLinked?: (link: UploadLink) => void;
 }
 
 type View =
@@ -59,7 +68,7 @@ const PHASE_LABELS: Record<PipelinePhase, string> = {
  * into a queue in the browser and is sent later, visibly counted. Every
  * failure says what happened and offers the next step.
  */
-export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardRow, store: injectedStore, notice, activeWorkspaceId }: PhoneCaptureProps) {
+export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardRow, store: injectedStore, notice, activeWorkspaceId, forPaymentId = null, claimExisting, onLinked }: PhoneCaptureProps) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const retakeRef = useRef<HTMLInputElement>(null);
   const [view, setView] = useState<View>({ kind: 'idle' });
@@ -82,10 +91,16 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
     }
   }, [injectedStore]);
 
-  const callbacks = useRef({ onSave, onRetake, onDiscardRow, workspaceId });
+  const callbacks = useRef({ onSave, onRetake, onDiscardRow, workspaceId, forPaymentId, claimExisting, onLinked });
   useEffect(() => {
-    callbacks.current = { onSave, onRetake, onDiscardRow, workspaceId };
-  }, [onSave, onRetake, onDiscardRow, workspaceId]);
+    callbacks.current = { onSave, onRetake, onDiscardRow, workspaceId, forPaymentId, claimExisting, onLinked };
+  }, [onSave, onRetake, onDiscardRow, workspaceId, forPaymentId, claimExisting, onLinked]);
+
+  /** The payment a photo is linked to: the one it was taken for, never the page's by the time it is sent. */
+  const linkFor = useCallback((paymentId: string | null | undefined): UploadForPayment | null => {
+    const claim = callbacks.current.claimExisting;
+    return paymentId && claim ? { paymentId, claim } : null;
+  }, []);
 
   const refreshWaiting = useCallback(async () => {
     if (!store) return;
@@ -98,10 +113,10 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
 
   /** Put a photo aside for later. False when the browser cannot store it. */
   const enqueue = useCallback(
-    async (file: File): Promise<boolean> => {
+    async (file: File, paymentId: string | null): Promise<boolean> => {
       if (!store) return false;
       try {
-        await store.add(newQueuedCapture(file, 'camera', Date.now(), callbacks.current.workspaceId));
+        await store.add(newQueuedCapture(file, 'camera', Date.now(), callbacks.current.workspaceId, paymentId));
         await refreshWaiting();
         return true;
       } catch {
@@ -122,9 +137,12 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
       // company this page shows now.
       const result = await drainQueue(
         store,
-        (file, entry) => runUploadPipeline(file, createBrowserDeps(save, entry.workspaceId ?? callbacks.current.workspaceId)),
+        (file, entry) => runUploadPipeline(file, createBrowserDeps(save, entry.workspaceId ?? callbacks.current.workspaceId, linkFor(entry.forPaymentId))),
         { isOnline: () => navigator.onLine },
       );
+      for (const s of result.sent) if (s.outcome.linkedTo) callbacks.current.onLinked?.(s.outcome.linkedTo);
+      // A photo taken for a payment whose link did not go through: saved, and the person is told, wherever they are now.
+      const notLinked = result.sent.filter((s) => s.outcome.linkedTo && !s.outcome.linkedTo.linked).length;
       const saved = result.sent.filter((s) => s.outcome.kind === 'done').length;
       const known = result.sent.length - saved;
       const meals = result.sent.filter((s) => s.outcome.kind === 'done' && s.outcome.isMeal).length;
@@ -133,6 +151,13 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
       if (saved > 0) parts.push(saved === 1 ? '1 wartendes Foto wurde gesendet.' : `${saved} wartende Fotos wurden gesendet.`);
       if (known > 0) parts.push(known === 1 ? '1 Beleg war schon da und wurde nicht doppelt angelegt.' : `${known} Belege waren schon da und wurden nicht doppelt angelegt.`);
       if (elsewhere.length > 0) parts.push(`Mindestens ein gesendetes Foto liegt genau so schon in deiner Firma ${elsewhere.join(', ')}: bitte in der Belegliste prüfen.`);
+      if (notLinked > 0) {
+        parts.push(
+          notLinked === 1
+            ? '1 Foto war für eine Zahlung gedacht, wurde aber nicht zugeordnet: bitte unter den offenen Belegen mit „Vorhandenen Beleg zuordnen“ wählen.'
+            : `${notLinked} Fotos waren für Zahlungen gedacht, wurden aber nicht zugeordnet: bitte unter den offenen Belegen mit „Vorhandenen Beleg zuordnen“ wählen.`,
+        );
+      }
       if (meals > 0) parts.push(meals === 1 ? '1 Bewirtung wartet auf Teilnehmer und Anlass.' : `${meals} Bewirtungen warten auf Teilnehmer und Anlass.`);
       if (result.stopped === 'auth') parts.push('Die Anmeldung ist abgelaufen: bitte neu anmelden, die Fotos bleiben gespeichert.');
       if (result.stopped === 'offline' && result.remaining > 0) parts.push('Keine Verbindung: der Rest wird später gesendet.');
@@ -153,7 +178,7 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
       setDraining(false);
       await refreshWaiting();
     }
-  }, [store, refreshWaiting]);
+  }, [store, refreshWaiting, linkFor]);
   // One drain at a time: a second call while one runs joins it instead of sending twice. The single-flight
   // wrapper is made on the first call, never while rendering, and anew when the drain itself changes.
   const drainFlight = useRef<{ work: typeof drainOnce; run: () => Promise<DrainResult | null> } | null>(null);
@@ -182,11 +207,13 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
   const run = useCallback(
     async (file: File, options: { retakeRowId?: string } = {}) => {
       const retakeRowId = options.retakeRowId ?? null;
+      // The payment this photo is for, fixed now. A retake reads into a receipt that is linked already.
+      const paymentId = retakeRowId ? null : callbacks.current.forPaymentId;
       setQueueNote(null);
 
       // No connection: do not even try. A retake needs the row and stays in memory instead.
       if (!navigator.onLine && !retakeRowId) {
-        if (await enqueue(file)) setView({ kind: 'queued', reason: 'offline' });
+        if (await enqueue(file, paymentId)) setView({ kind: 'queued', reason: 'offline' });
         else setView({ kind: 'error', file, retakeRowId, message: 'Keine Verbindung, und dieser Browser kann das Foto nicht zwischenspeichern. Bitte mit Verbindung erneut versuchen.' });
         return;
       }
@@ -196,10 +223,11 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
         ? callbacks.current.onRetake(retakeRowId)
         : (f, ocr, o) => callbacks.current.onSave(f, ocr, o);
       try {
-        const outcome = await runUploadPipeline(file, createBrowserDeps(save, callbacks.current.workspaceId), {
+        const outcome = await runUploadPipeline(file, createBrowserDeps(save, callbacks.current.workspaceId, linkFor(paymentId)), {
           onPhase: (phase) => setView((v) => (v.kind === 'working' ? { ...v, phase } : v)),
           onProgress: (progress) => setView((v) => (v.kind === 'working' ? { ...v, progress } : v)),
         });
+        if (outcome.linkedTo) callbacks.current.onLinked?.(outcome.linkedTo);
         if (outcome.kind === 'duplicate') {
           setView({ kind: 'duplicate', outcome, workspaceId: callbacks.current.workspaceId });
           return;
@@ -209,7 +237,7 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
         if (outcome.isMeal && !outcome.attention && !outcome.similar && outcome.elsewhere.length === 0) setMealRowId(outcome.rowId);
       } catch (err) {
         const kind = uploadFailureKind(err);
-        if ((kind === 'network' || kind === 'auth') && !retakeRowId && (await enqueue(file))) {
+        if ((kind === 'network' || kind === 'auth') && !retakeRowId && (await enqueue(file, paymentId))) {
           setView({ kind: 'queued', reason: kind === 'auth' ? 'auth' : 'offline' });
           return;
         }
@@ -226,7 +254,7 @@ export default function PhoneCapture({ workspaceId, onSave, onRetake, onDiscardR
         });
       }
     },
-    [enqueue],
+    [enqueue, linkFor],
   );
 
   const pick = (e: React.ChangeEvent<HTMLInputElement>, retakeRowId?: string) => {

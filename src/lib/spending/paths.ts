@@ -24,3 +24,12 @@ export function spendingHref(year: number, month: number | null, tab: SpendingTa
   if (tab !== 'ueberblick') params.set('ansicht', tab);
   return `/app/spending?${params.toString()}`;
 }
+
+/**
+ * The upload page, opened for one payment: the receipt saved there is linked
+ * to it. It names the payment's company, so a switch in another tab before the
+ * tap does not lose the payment.
+ */
+export function uploadForHref(paymentId: string, workspaceId: string): string {
+  return `/app?${new URLSearchParams({ fuer: paymentId, firma: workspaceId }).toString()}`;
+}

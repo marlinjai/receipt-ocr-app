@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { PipelineDeps, SavedReceipt } from '@/lib/upload/pipeline';
+import type { PipelineDeps, SavedReceipt, UploadLink } from '@/lib/upload/pipeline';
 
 /**
  * The batch uploader with the network replaced. What is pinned here: every file
@@ -14,15 +14,17 @@ import type { PipelineDeps, SavedReceipt } from '@/lib/upload/pipeline';
 const steps = { checkDuplicate: vi.fn() };
 vi.mock('@/lib/upload/browser-deps', () => ({
   createBrowserDeps: (
-    save: (f: unknown, o: unknown, opts: { sha256: string; workspaceId: string }) => Promise<SavedReceipt>,
+    save: (f: unknown, o: unknown, opts: { sha256: string; workspaceId: string; forPaymentId?: string }) => Promise<SavedReceipt>,
     workspaceId: string,
+    forPayment: { paymentId: string; claim: (p: string, r: string, w: string) => Promise<UploadLink> } | null = null,
   ): PipelineDeps => ({
     prepare: async (f) => f,
     hash: async () => 'a'.repeat(64),
     checkDuplicate: (sha256) => steps.checkDuplicate(sha256, workspaceId),
     upload: async () => ({ id: 'file-1', originalName: 'rechnung.pdf', fileType: 'application/pdf' }),
     recognize: async () => ({ fullText: 'Rechnung 12,50', blocks: [], confidence: 0.9 }),
-    save: (file, ocr, options) => save(file, ocr, { ...options, workspaceId }),
+    save: (file, ocr, options) => save(file, ocr, forPayment ? { ...options, workspaceId, forPaymentId: forPayment.paymentId } : { ...options, workspaceId }),
+    ...(forPayment ? { claimExisting: (rowId: string) => forPayment.claim(forPayment.paymentId, rowId, workspaceId) } : {}),
   }),
 }));
 
@@ -112,5 +114,34 @@ describe('the company a file goes into', () => {
     await user.click(screen.getByRole('button', { name: 'Keep both' }));
     expect(await screen.findByText(/this receipt stays in this company too/)).toBeTruthy();
     expect(onDiscardRow).not.toHaveBeenCalled();
+  });
+});
+
+describe('files for a payment (the page opened from a check card)', () => {
+  it('each file keeps the payment it was dropped for: a change of the page afterwards does not move it, and the answer is handed on', async () => {
+    const claim = vi.fn();
+    const onLinked = vi.fn();
+    const link: UploadLink = { paymentId: 'p1', linked: true, rowId: 'row-1' };
+    let release: () => void = () => {};
+    onProcessFile.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve({ ...SAVED, linkedTo: link }))));
+    const props = { workspaceId: 'ws-eins', onProcessFile, onAllComplete, onDiscardRow, onLinked };
+    const { container, rerender } = render(<ReceiptUploader {...props} forPayment={{ paymentId: 'p1', claim }} />);
+    drop(container);
+    await waitFor(() => expect(onProcessFile).toHaveBeenCalledTimes(1));
+    rerender(<ReceiptUploader {...props} forPayment={null} />);
+    release();
+    await waitFor(() => expect(onLinked).toHaveBeenCalledWith(link));
+    expect(onProcessFile.mock.calls[0][1]).toMatchObject({ forPaymentId: 'p1' });
+  });
+
+  it('exactly a file that is there already: its receipt is claimed for the payment, nothing is uploaded', async () => {
+    steps.checkDuplicate.mockResolvedValueOnce({ existing: { rowId: 'row-0', name: 'Hosting Oktober' }, elsewhere: [] });
+    const claim = vi.fn(async () => ({ paymentId: 'p1', linked: true as const, rowId: 'row-0' }));
+    const onLinked = vi.fn();
+    const { container } = render(<ReceiptUploader workspaceId="ws-eins" onProcessFile={onProcessFile} onAllComplete={onAllComplete} onDiscardRow={onDiscardRow} forPayment={{ paymentId: 'p1', claim }} onLinked={onLinked} />);
+    drop(container);
+    await waitFor(() => expect(onLinked).toHaveBeenCalledWith({ paymentId: 'p1', linked: true, rowId: 'row-0' }));
+    expect(claim).toHaveBeenCalledWith('p1', 'row-0', 'ws-eins');
+    expect(onProcessFile).not.toHaveBeenCalled();
   });
 });

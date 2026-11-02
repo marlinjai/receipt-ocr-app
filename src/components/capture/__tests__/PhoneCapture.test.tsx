@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import { newQueuedCapture, type CaptureStore, type QueuedCapture } from '@/lib/capture/offline-queue';
 import { UploadStepError } from '@/lib/upload/errors';
-import type { PipelineDeps, SavedReceipt } from '@/lib/upload/pipeline';
+import type { PipelineDeps, SavedReceipt, UploadLink } from '@/lib/upload/pipeline';
 
 /**
  * The capture screen with the network replaced: `createBrowserDeps` hands back
@@ -37,14 +37,19 @@ const steps = {
   recognize: vi.fn(),
 };
 vi.mock('@/lib/upload/browser-deps', () => ({
-  // Like the real one: the company travels with the check and the save.
-  createBrowserDeps: (save: (f: unknown, o: unknown, opts: { sha256: string; workspaceId: string }) => Promise<SavedReceipt>, workspaceId: string): PipelineDeps => ({
+  // Like the real one: the company, and the payment a file is for, travel with the check and the save.
+  createBrowserDeps: (
+    save: (f: unknown, o: unknown, opts: { sha256: string; workspaceId: string; forPaymentId?: string }) => Promise<SavedReceipt>,
+    workspaceId: string,
+    forPayment: { paymentId: string; claim: (p: string, r: string, w: string) => Promise<UploadLink> } | null = null,
+  ): PipelineDeps => ({
     prepare: async (f) => f,
     hash: async () => 'a'.repeat(64),
     checkDuplicate: (sha256) => steps.checkDuplicate(sha256, workspaceId),
     upload: (...a) => steps.upload(...a),
     recognize: (...a) => steps.recognize(...a),
-    save: (file, ocr, options) => save(file, ocr, { ...options, workspaceId }),
+    save: (file, ocr, options) => save(file, ocr, forPayment ? { ...options, workspaceId, forPaymentId: forPayment.paymentId } : { ...options, workspaceId }),
+    ...(forPayment ? { claimExisting: (rowId: string) => forPayment.claim(forPayment.paymentId, rowId, workspaceId) } : {}),
   }),
 }));
 vi.mock('@/components/meals/MealPanelSection', () => ({
@@ -67,6 +72,8 @@ const onSave = vi.fn();
 const retakeSave = vi.fn();
 const onRetake = vi.fn(() => retakeSave);
 const onDiscardRow = vi.fn();
+const claimExisting = vi.fn();
+const onLinked = vi.fn();
 
 function photo(name = 'foto.jpg') {
   return new File([new Uint8Array([1, 2, 3])], name, { type: 'image/jpeg' });
@@ -88,7 +95,7 @@ beforeEach(() => {
   store = memoryStore();
   online = true;
   Object.defineProperty(window.navigator, 'onLine', { configurable: true, get: () => online });
-  for (const fn of [steps.checkDuplicate, steps.upload, steps.recognize, onSave, retakeSave, onRetake, onDiscardRow]) fn.mockReset();
+  for (const fn of [steps.checkDuplicate, steps.upload, steps.recognize, onSave, retakeSave, onRetake, onDiscardRow, claimExisting, onLinked]) fn.mockReset();
   onRetake.mockImplementation(() => retakeSave);
   steps.checkDuplicate.mockResolvedValue(NO_COPY);
   steps.upload.mockResolvedValue({ id: 'file-1', originalName: 'foto.jpg', fileType: 'image/jpeg' });
@@ -269,6 +276,76 @@ describe('the company a photo goes into', () => {
     await store.add(newQueuedCapture(photo('von-gestern.jpg'), 'camera', 1, 'ws-eins'));
     mount('ws-eins');
     expect(await screen.findByText(/liegt genau so schon in deiner Firma Firma Zwei/)).toBeTruthy();
+  });
+});
+
+describe('the payment a photo is for (the page opened from a check card)', () => {
+  const LINKED: UploadLink = { paymentId: 'p1', linked: true, rowId: 'row-2' };
+  const forP = (paymentId: string | null, workspaceId = 'ws-eins') => (
+    <PhoneCapture workspaceId={workspaceId} onSave={onSave} onRetake={onRetake} onDiscardRow={onDiscardRow} store={store} forPaymentId={paymentId} claimExisting={claimExisting} onLinked={onLinked} />
+  );
+
+  it('forward: the save asks for the link and the answer reaches the page', async () => {
+    onSave.mockResolvedValue({ ...OTHER, linkedTo: LINKED });
+    const utils = render(forP('p1'));
+    take(utils.container.querySelector('input[type="file"]') as HTMLInputElement);
+    await waitFor(() => expect(onLinked).toHaveBeenCalledWith(LINKED));
+    expect(onSave.mock.calls[0][2]).toMatchObject({ workspaceId: 'ws-eins', forPaymentId: 'p1' });
+  });
+
+  it('exactly a photo that is there already: its receipt is linked, nothing is uploaded', async () => {
+    steps.checkDuplicate.mockResolvedValueOnce({ existing: { rowId: 'row-0', name: 'Fahrt' }, elsewhere: [] });
+    claimExisting.mockResolvedValue({ paymentId: 'p1', linked: true, rowId: 'row-0' });
+    const utils = render(forP('p1'));
+    take(utils.container.querySelector('input[type="file"]') as HTMLInputElement);
+    await waitFor(() => expect(onLinked).toHaveBeenCalledWith({ paymentId: 'p1', linked: true, rowId: 'row-0' }));
+    expect(claimExisting).toHaveBeenCalledWith('p1', 'row-0', 'ws-eins');
+    expect(steps.upload).not.toHaveBeenCalled();
+  });
+
+  it('resume: a photo taken offline for a payment is linked to THAT payment when it is sent, whatever the page shows by then', async () => {
+    online = false;
+    onSave.mockResolvedValue({ ...OTHER, linkedTo: LINKED });
+    const utils = render(forP('p1'));
+    take(utils.container.querySelector('input[type="file"]') as HTMLInputElement);
+    await screen.findByText('1 Foto wartet auf den Versand.');
+    expect((await store.list())[0].forPaymentId).toBe('p1');
+
+    utils.rerender(forP(null));
+    online = true;
+    window.dispatchEvent(new Event('online'));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][2]).toMatchObject({ forPaymentId: 'p1' });
+    await waitFor(() => expect(onLinked).toHaveBeenCalledWith(LINKED));
+  });
+
+  it("resume: a queued photo whose link is refused is still saved, and the note says it was not linked", async () => {
+    onSave.mockResolvedValue({ ...OTHER, linkedTo: { paymentId: 'p1', linked: false, reason: 'already_has_receipt' } });
+    await store.add(newQueuedCapture(photo('fuer-p1.jpg'), 'camera', 1, 'ws-eins', 'p1'));
+    render(forP(null));
+    expect(await screen.findByText(/1 Foto war für eine Zahlung gedacht, wurde aber nicht zugeordnet/)).toBeTruthy();
+    expect(onSave.mock.calls[0][2]).toMatchObject({ forPaymentId: 'p1' });
+  });
+
+  it('a photo queued earlier without a payment is never linked to the payment the page is open for now', async () => {
+    onSave.mockResolvedValue(OTHER);
+    await store.add(newQueuedCapture(photo('von-gestern.jpg'), 'camera', 1, 'ws-eins'));
+    render(forP('p2'));
+    expect(await screen.findByText(/1 wartendes Foto wurde gesendet/)).toBeTruthy();
+    expect(onSave.mock.calls[0][2].forPaymentId).toBeUndefined();
+    expect(onLinked).not.toHaveBeenCalled();
+  });
+
+  it('a retake reads into the receipt that is there and asks for no link', async () => {
+    onSave.mockResolvedValue({ ...MEAL, attention: 'low_quality', linkedTo: { ...LINKED, rowId: 'row-1' } });
+    retakeSave.mockResolvedValue(MEAL);
+    const utils = render(forP('p1'));
+    const [camera, retake] = utils.container.querySelectorAll('input[type="file"]') as unknown as HTMLInputElement[];
+    take(camera);
+    await screen.findByText(/schwer lesbar/);
+    take(retake, photo('scharf.jpg'));
+    await screen.findByText(/Foto ersetzt und neu gelesen/);
+    expect(retakeSave.mock.calls[0][2].forPaymentId).toBeUndefined();
   });
 });
 

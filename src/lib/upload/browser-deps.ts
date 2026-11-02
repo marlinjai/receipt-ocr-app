@@ -4,7 +4,7 @@ import type { FileInfo } from '@/lib/storage';
 import type { OcrResult } from '@/lib/ocr-types';
 import { UploadStepError } from './errors';
 import { sha256Hex } from './hash';
-import type { FileCheck, PipelineDeps, SavedReceipt, UploadedFileInfo } from './pipeline';
+import type { FileCheck, PipelineDeps, SavedReceipt, UploadLink, UploadedFileInfo } from './pipeline';
 import { prepareImage } from './prepare-image';
 
 /** The real endpoints behind the upload pipeline, shared by the batch uploader and the phone capture. */
@@ -44,8 +44,21 @@ async function request(input: string, init: RequestInit | undefined, what: strin
 export type SaveReceipt = (
   file: UploadedFileInfo,
   ocr: OcrResult | null,
-  options: { sha256: string; workspaceId: string },
+  options: { sha256: string; workspaceId: string; forPaymentId?: string },
 ) => Promise<SavedReceipt>;
+
+/** Link a receipt that is there already (exactly the uploaded file) to the payment the upload is for. */
+export type ClaimExisting = (paymentId: string, rowId: string, workspaceId: string) => Promise<UploadLink>;
+
+/**
+ * The payment an upload is for, fixed when the file was chosen or the photo
+ * taken: a file waiting in a queue keeps it, whatever the page asks for by the
+ * time it is sent.
+ */
+export interface UploadForPayment {
+  paymentId: string;
+  claim: ClaimExisting;
+}
 
 /**
  * The pipeline's network steps for an upload INTO `workspaceId`: the company
@@ -53,8 +66,9 @@ export type SaveReceipt = (
  * and the save, so a company switch elsewhere (another tab, another session)
  * cannot redirect an upload that is already under way.
  */
-export function createBrowserDeps(save: SaveReceipt, workspaceId: string): PipelineDeps {
+export function createBrowserDeps(save: SaveReceipt, workspaceId: string, forPayment: UploadForPayment | null = null): PipelineDeps {
   return {
+    ...(forPayment ? { claimExisting: (rowId: string) => forPayment.claim(forPayment.paymentId, rowId, workspaceId) } : {}),
     prepare: prepareImage,
     hash: sha256Hex,
     async checkDuplicate(sha256) {
@@ -117,6 +131,6 @@ export function createBrowserDeps(save: SaveReceipt, workspaceId: string): Pipel
       }
       return (await ocrRes.json()) as OcrResult;
     },
-    save: (file, ocr, options) => save(file, ocr, { ...options, workspaceId }),
+    save: (file, ocr, options) => save(file, ocr, forPayment ? { ...options, workspaceId, forPaymentId: forPayment.paymentId } : { ...options, workspaceId }),
   };
 }

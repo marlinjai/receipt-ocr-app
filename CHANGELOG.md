@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The database tests run four files at a time, each in its own copy of the test databases that the file empties before it starts. The data-table adapter finds a row by asking every row table of the whole database, so with all files in one database a later file paid for every workspace the earlier ones created: tax-rates and text took 109 seconds after a full run's 682 tables and 7 seconds on an empty database, on the same machine. The whole suite went from 1,440 seconds under load (423 in continuous integration) to about 80 to 120 seconds locally, and passes shuffled. Four tests that leaned on rows of the tests before them now create their own
+
 - eslint-config-next 16.4.3, matching Next.js 16.4.3. Its React hooks rules found eight effects that set state right away; each now adjusts while rendering or sets state only when an answer arrives (receipts table search, selection and linked receipt, receipt text in the detail panel, phone capture queue, Drive browser, sheet import). The Google consent outcome is read by the import page on the server and shown from the first paint, and a slow Drive folder answer no longer replaces the folder opened after it
 
 ### Security

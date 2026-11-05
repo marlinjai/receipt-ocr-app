@@ -126,9 +126,12 @@ afterAll(async () => {
 
 describe('processReceipt', () => {
   it('a restaurant receipt is filed as a meal with what the classifier read, and waits for guests and occasion', async () => {
+    // A workspace of its own: other tests upload the same restaurant receipt, which would be its look-alike.
+    const fresh = await createWorkspace();
+    await use(fresh);
     const result = await upload(file(1), ocr(RESTAURANT), { sha256: HASH('1') });
     expect(result).toMatchObject({ category: 'Bewirtung', isMeal: true, attention: null, possibleDuplicateOf: null });
-    const record = await loadMealRecord(db, ws.workspaceId, result.rowId);
+    const record = await loadMealRecord(db, fresh.workspaceId, result.rowId);
     expect(record).toMatchObject({
       mealType: 'business_meal_external',
       consumption: 'dine_in',
@@ -144,7 +147,7 @@ describe('processReceipt', () => {
       guests: [],
     });
     expect(mealStatus(record!)).toEqual({ kind: 'incomplete', missing: ['occasion', 'host', 'guests'] });
-    expect((await files(ws, result.rowId))[0].metadata).toMatchObject({ source: 'ocr-upload', sha256: HASH('1') });
+    expect((await files(fresh, result.rowId))[0].metadata).toMatchObject({ source: 'ocr-upload', sha256: HASH('1') });
   });
 
   it('text recognition failed and the page cannot be read either: there is still a row, Pending, with the file attached', async () => {
@@ -805,6 +808,32 @@ describe('the item: one subscription keeps one wording', () => {
     const result = await upload(file(82), ocr(INVOICE));
     expect(classify.mock.calls[0][0].knownItems).toEqual([]);
     expect(await cellOf(own, result.rowId, 'Item')).toBe('Example Video Abo');
+  });
+});
+
+describe('the vendor: one spelling per vendor', () => {
+  const INVOICE = 'Example Media Distribution International Ltd.\nInvoice\nInvoice date: 5 Jan 2026\nCloud+ 2 TB\nTotal 2.99 EUR';
+  const ANSWER = { ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', vendor: 'Example Media Distribution International Ltd.', gross: 2.99, currency: 'EUR', date: '2026-01-05T00:00:00.000Z', meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null, place: null } };
+
+  it("a new receipt takes the spelling of the vendor's earlier receipts, with their items", async () => {
+    const own = await createWorkspace();
+    await use(own);
+    await own.addReceipt({ Vendor: 'Example Media', Item: 'Cloud+ 2 TB' } as Parameters<TestWorkspace['addReceipt']>[0]);
+    await own.addReceipt({ Vendor: 'Example Media', Item: 'Cloud+ 2 TB' } as Parameters<TestWorkspace['addReceipt']>[0]);
+    classify.mockResolvedValue({ ...ANSWER, item: 'Cloud+ mit 2 TB' });
+    const result = await upload(file(83), ocr(INVOICE));
+    expect(await cellOf(own, result.rowId, 'Vendor')).toBe('Example Media');
+    expect(await cellOf(own, result.rowId, 'Item')).toBe('Cloud+ 2 TB');
+    expect(String(await cellOf(own, result.rowId, 'Name'))).toMatch(/^Example Media, Cloud\+ 2 TB/);
+  });
+
+  it('a vendor with no earlier receipts, or another business that starts alike, keeps the name it was read with', async () => {
+    const own = await createWorkspace();
+    await use(own);
+    await own.addReceipt({ Vendor: 'Example', Item: 'Notizen Plus' } as Parameters<TestWorkspace['addReceipt']>[0]);
+    classify.mockResolvedValue({ ...ANSWER, vendor: 'Example Media Distribution International Ltd.', item: 'Cloud+ 2 TB' });
+    const result = await upload(file(84), ocr(INVOICE));
+    expect(await cellOf(own, result.rowId, 'Vendor')).toBe('Example Media Distribution International Ltd.');
   });
 });
 

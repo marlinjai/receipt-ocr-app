@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deleteReceiptRows } from '@/lib/meals/service';
 import * as F from '@/lib/extraction/__tests__/fixtures';
 import { loadMealRecord } from '@/lib/meals/service';
@@ -239,6 +239,20 @@ describe('a new reading of a receipt stored by the old reader', () => {
   // What the old reader left behind for the cafe receipt: a receipt number as the total, the tip inside it.
   const oldCafe = () => clean({ Vendor: 'Cafe Morgenrot', 'OCR Text': F.CAFE_WITH_RECEIPT_NUMBERS, Date: '2025-02-19', Gross: 61.4, Net: 916694.18, 'Tax Rate': 0.01 });
 
+  // Every test stores the same cafe receipt (same day, total and vendor), so two of them in one workspace are
+  // look-alikes of each other and the queue adds "possible duplicate" depending on which tests ran first. Each
+  // test gets its own workspace, so it passes in any order; the shared one comes back for the describes after.
+  let shared: { ws: TestWorkspace; ctx: ReviewContext } | null = null;
+  beforeEach(async () => {
+    shared = { ws, ctx };
+    ws = await createWorkspace();
+    ctx = { workspaceId: ws.workspaceId, tenantId: ws.tenantId };
+  });
+  afterEach(() => {
+    if (shared) ({ ws, ctx } = shared);
+    shared = null;
+  });
+
   it('forward: the difference is offered field by field, and nothing is written until it is taken', async () => {
     const rowId = await ws.addReceipt(oldCafe());
     const entry = (await entryFor(rowId))!;
@@ -296,9 +310,7 @@ describe('a new reading of a receipt stored by the old reader', () => {
     await confirmReceipt(db, ctx, rowId);
     expect(await entryFor(rowId)).toBeUndefined();
 
-    // Its own day: the receipts of the tests above share day, total and vendor with
-    // `oldCafe()` and would list this one as a possible duplicate as well.
-    const wrong = await ws.addReceipt({ ...oldCafe(), Date: '2025-02-27' });
+    const wrong = await ws.addReceipt(oldCafe());
     await confirmReceipt(db, ctx, wrong);
     expect((await entryFor(wrong))!.reasons).toEqual(['tax_implausible']);
     expect((await entryFor(wrong))!.proposal).toEqual([]);

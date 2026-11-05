@@ -42,12 +42,11 @@
   net and tax lines; the invoice's arithmetic and the recognized text check its answer. On 288
   real documents no wrong date or total is stored without a flag. "Seite neu lesen" was used on
   production on one receipt (the unpaid hosting invoice: 288.59 where the old reader had 242.51;
-  assignment, share and name untouched). Open: (1) a new reading replaces a vendor that is
-  already set with the legal name on the page ("A2 Hosting" became "A2 Hosting LLC", set back by
-  hand), which splits the vendor grouping: keep a vendor that is set. (2) The measurement was
-  made on the documents the rules were written against; measure on the next import of unseen
-  documents. (3) The vendor cell is not judged by the evaluation script. Plan:
-  [docs/plans/2026-10-11-vision-reading.md](docs/plans/2026-10-11-vision-reading.md). (2026-10-11)
+  assignment, share and name untouched). A new reading keeps a vendor that is set, and the
+  evaluation script judges the vendor cell (both since 2026-10-15, PR #111). Open: the measurement
+  was made on the documents the rules were written against; measure it on the next import of
+  unseen documents. Plan:
+  [docs/plans/2026-10-11-vision-reading.md](docs/plans/2026-10-11-vision-reading.md). (2026-11-05)
 - [x] The review list no longer offers the text reader's vendor name against a stored one on an
   invoice. Measured on production on 2026-10-11: of 102 offered new readings, 76 changed the
   vendor, and about 70 of those were worse than the stored name (a heading, a field label, the
@@ -71,9 +70,11 @@
   2025 left as they are, 3 receipts where the model found nothing to name) and 24 private ones.
   The 2024 and 2025 figures were the same before and after. Plan:
   [docs/plans/2026-10-11-receipt-item-in-name.md](docs/plans/2026-10-11-receipt-item-in-name.md). Done 2026-10-11.
-- [ ] The item is worded per receipt, so the monthly invoices of one subscription can read
-  differently ("PocketTube Abo", "PocketTube-Mitgliedschaft"). The reader should be given the
-  items the same vendor already has and reuse one that fits. (2026-10-11)
+- [x] The item is worded per receipt, so the monthly invoices of one subscription can read
+  differently ("PocketTube Abo", "PocketTube-Mitgliedschaft"). The reader is given the items the
+  same vendor already has and takes a stored wording that is the same item in other words (since
+  PR #122 and #130); since 2026-11-05 the items of every spelling of the vendor count, and small
+  joining words do not tell items apart ("iCloud+ mit 2 TB" is "iCloud+ 2 TB"). Done 2026-11-05.
 - [ ] A mobile bill is read with or without the third-party charges it lists, differently from
   month to month: replaying the reader over the stored texts on 2026-11-05, 7 of 153 phone bills
   of two providers still differ from the stored total (5 of one, 3 of them read as no total and 2
@@ -115,12 +116,12 @@
 - [ ] A file that holds two invoices becomes one receipt with the second invoice's figures
   (seen on 2026-10-11 on a file with a marketplace invoice and a retailer invoice). The reader
   should say that the file holds more than one document, so it can be split. (2026-10-11)
-- [ ] Private spending in the app (decided by the owner on 2026-10-14): overview by category and
-  month, clean split private versus business, budgets and warnings, a document for every
-  purchase, a live bank connection, and the loop that finds or asks for the receipt of every
-  payment. Build order and open questions (where the notification goes, which vendors may be
-  fetched with a stored login, the budget limits) in the plan:
-  [docs/plans/2026-10-14-personal-spending-and-bank-feed.md](docs/plans/2026-10-14-personal-spending-and-bank-feed.md). (2026-10-14)
+- [ ] Private spending in the app (decided by the owner on 2026-10-14): overview, private versus
+  business, budgets and warnings, the live bank connection and the missing-receipt loop (mailbox,
+  push with e-mail fallback) are built. Left, both waiting for the owner: which vendors may be
+  fetched with a stored login (none for now), and when to build step 4b, fetching invoices through
+  his signed-in browser. Plan:
+  [docs/plans/2026-10-14-personal-spending-and-bank-feed.md](docs/plans/2026-10-14-personal-spending-and-bank-feed.md). (2026-11-05)
 - [ ] Payments across companies (decided by the owner on 2026-10-22, option 1): built and live
   since #164, nothing left to build. What remains is the owner's one step: in Whiz-Art Media,
   Finanzen, Zahlungen, share each of the five accounts (N26, Tomorrow, PayPal, Klarna, Advanzia
@@ -399,16 +400,26 @@
   meals (named "Finanzen, ..."), and on a company switch to `RefusalDesk` with the company's name.
   That covers the page's writes, own names, the bank actions and the account sharing; a link question
   that arrives after leaving is said, not asked over another page. Done 2026-11-05.
-- [ ] Database tests time out when the machine is under heavy load (load average 40 to 87 on 14
-  cores: tax-rates, bulk-set, text, assignment-sync, review service). They pass alone. Find out
-  whether it is contention or a shared-state defect, per the continuous integration standard. (2026-11-02)
+- [x] Database tests time out when the machine is under heavy load (load average 40 to 87 on 14
+  cores: tax-rates, bulk-set, text, assignment-sync, review service). It was a shared-state defect:
+  the data-table adapter looks a row up in every row table of the database, and all files shared one
+  database, so a file's time grew with every workspace the files before it created (109 seconds after
+  682 tables, 7 on an empty database). Each worker now has its own database copy that every file
+  empties first, four files run at once, the suite passes shuffled, and the 180 second limit in
+  bulk-set is gone. Done 2026-11-05.
+- [ ] `@marlinjai/data-table-adapter-prisma` (0.2.1) finds a row by asking every migrated row table of
+  the database in turn (`getRow`, and through it `updateRow` twice, `archiveRow`, `unarchiveRow`,
+  `deleteRow`, `getRelatedRows`): one query per table, across all workspaces. Production has 5 such
+  tables today, so it is cheap there, but it grows with every workspace. Fix in the data-table repo
+  (a row-to-table lookup, or the table id passed in) and take the new version here. (2026-11-05)
 - [ ] The 566 payments marked "Nicht auffindbar" (28,395 euros, 2025 and 2026): invoices behind a
   login are not fetched yet (Amazon, eBay, Deutsche Bahn, freenet, Lemon Squeezy, claude.ai billing).
   They stay visible in red under Ausgaben, Belege. Backlog plan:
   [docs/plans/2026-10-14-personal-spending-and-bank-feed.md](docs/plans/2026-10-14-personal-spending-and-bank-feed.md). (2026-11-02)
-- [ ] Two Deutsche Bahn tickets of 19.07.2026 carry the vendor "Barcode bitte nicht knicken!" from
-  the reader; the name and the links are right. The reader should take the vendor from the issuer
-  on a ticket. (2026-11-02)
+- [x] Two Deutsche Bahn tickets of 19.07.2026 carry the vendor "Barcode bitte nicht knicken!" from
+  the reader; the name and the links are right. The reader now takes a rail ticket's vendor from
+  its carrier code ("CIV 1080" is Deutsche Bahn), and neither the code nor the handling note is a
+  name: replayed on production, all five Deutsche Bahn tickets read "Deutsche Bahn". Done 2026-11-05.
 - [ ] The app on a phone: no page scrolls sideways at 360 or 390 pixels, the receipts show as a
   card list that opens the detail panel, the dashboard's actions fold into "Mehr", tab rows
   scroll inside themselves, every control is a 44 pixel touch target, the wide layout unchanged.
@@ -448,12 +459,14 @@
 - [x] One sidebar on every page of the wide layout: the company, upload, the places with their
   open counts, and the maintenance jobs on a page of their own ("Werkzeuge"). Decided by Marlin
   on 2026-10-30, plan [app sidebar](docs/plans/2026-10-30-app-sidebar.md). Done 2026-10-30.
-- [ ] One spelling per vendor from the reader (found on 2026-10-29): the reader spells one
+- [x] One spelling per vendor from the reader (found on 2026-10-29): the reader spells one
   subscription several ways ("Apple", "Apple iCloud", "Apple Distribution International Ltd.";
   "iCloud+ 2 TB", "iCloud+ mit 2 TB", "iCloud+ 2 TB Abo"), so a new receipt can miss the group of
-  its subscription until its spelling is corrected. Take the spelling of the vendor's earlier
-  receipts, or of the contact they link to. Context: section Open of the grouping plan of
-  2026-10-29 (Completed below). (2026-10-29)
+  its subscription until its spelling is corrected. A reading now takes the shortest spelling the
+  vendor's stored receipts carry, where the rest of the name only names the company behind the
+  brand or what its receipts were bought as ("Apple Distribution International Ltd." and "Apple
+  iCloud" become "Apple"; "Notion Cafe" stays); a restaurant keeps its own name. Receipts link to
+  no contact, so the earlier receipts are the only source. Done 2026-11-05.
 - [x] The invoice number decides duplicates (decided by the owner on 2026-10-29): every receipt
   gets its Rechnungsnummer, the same vendor with the same number or the very same file is one
   receipt, handled without asking (no second receipt at upload, existing copies archived into the
@@ -465,11 +478,11 @@
 
 <!-- Currently being implemented -->
 
-- [ ] A visual budget overview that shows real spending (asked by the owner on 2026-10-23): the
+- [x] A visual budget overview that shows real spending (asked by the owner on 2026-10-23): the
   spending page opens with months by category, budget against spent and the biggest
   counterparties, the receipt checks move to their own tab, transfers to the owner's own name
   count as own transfers, and a Klarna collective debit beyond its list waits for the list. Plan:
-  [docs/plans/2026-10-23-budget-overview.md](docs/plans/2026-10-23-budget-overview.md). (2026-10-23)
+  [docs/plans/2026-10-23-budget-overview.md](docs/plans/2026-10-23-budget-overview.md). Done 2026-11-05 (#172).
 - [ ] Last Klarna export once every open Klarna payment is collected (expected late November
   2026): run scripts/klarna/klarna-web-export.js and klarna-to-csv.py (see
   [docs/operations/klarna-export.md](docs/operations/klarna-export.md)), import the file under

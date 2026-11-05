@@ -220,14 +220,13 @@
   (4 stale rows, copied to the shared database under the same ids on 2026-10-09). Released on
   Marlin's own yes. The unused `CONTACTS_STORE` entry was removed from the production secret
   project the same day. Plan: `docs/plans/2026-10-10-remove-own-contacts-table.md`. (2026-10-10)
-- [ ] Invoicing and income: the finance area shows "Einnahmen 0" for 2026 because no issued
-  invoice is recorded (all of them are PDF files written in a Google Doc). Order: enter the
-  invoices of 2024 to 2026 from the list in the tax folder and link their bank payments (ends the
-  zero, no code), tighten the matcher to whole invoice numbers, then a read-only mirror of the
-  invoices framer-clone issues (the owner decided on 2026-10-14 that invoices are written there,
-  in the Books tier, numbered from 62), then reading electronic invoices (XRechnung, ZUGFeRD) that
-  arrive in the expenses mailbox. Plan:
-  [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-10-14)
+- [ ] Invoicing and income: the invoices of 2024 to 2026 are entered (28 to 61, with their
+  payments), the matcher takes invoice numbers only as whole figures (#120), overdue invoices are
+  an open check (#114) and invoices with more than one rate are reported per rate (#117). Open:
+  the read-only mirror of the invoices framer-clone's Books issue (from 62 on), which waits for
+  framer-clone's read-only machine endpoint (its roadmap line "4. Existing invoices and the
+  suite"); reading electronic invoices is another lane (#149). Plan:
+  [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-11-05)
 - [ ] Corrected invoices in the income mirror: framer-clone's Books can now correct an issued
   invoice ("Correct", framer-clone #125, migration 011): one transaction issues a credit note that
   cancels the old invoice and a replacement invoice with a new number that carries
@@ -236,11 +235,12 @@
   the payment on a cancelled invoice and the replacement unpaid. Background: framer-clone's
   composer plan of 2026-10-21 (decision 9 and the phase 1 build notes); this app's plan above,
   D6 (payments belong here). (2026-10-22)
-- [ ] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
+- [x] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
   (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax
   return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent
   lines would be misreported. Store the tax groups per invoice and report each under its own rate.
-  From the finance dashboard work. (2026-10-10)
+  From the finance dashboard work. Done 2026-10-15 in #117 (treatment "Mit Umsatzsteuer,
+  mehrere Steuersätze", one group per rate). (2026-11-05)
 - [ ] A signed-in live write pass of `/app/finance` on production, under Whiz-Art Media, which
   holds the receipts since the move of 2026-10-10: open each tab, write one
   synthetic decision, vendor rule and payment link, remove them again, and confirm the numbers

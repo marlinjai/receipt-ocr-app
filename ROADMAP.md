@@ -72,12 +72,13 @@
 - [ ] The item is worded per receipt, so the monthly invoices of one subscription can read
   differently ("PocketTube Abo", "PocketTube-Mitgliedschaft"). The reader should be given the
   items the same vendor already has and reuse one that fits. (2026-10-11)
-- [ ] The reader stores the value-added tax amount as the total on one vendor's invoices: 32
-  invoices of a mail-scanning service across 2021, 2022 and 2023 (0.64 for 3.99, 2.07 for 12.99),
-  all corrected by hand on 2026-10-11. Two more classes from the same import: a mobile bill is
-  read with or without the third-party charges it lists, differently from month to month, and an
-  amount in another currency printed next to the euro amount was taken as euros (once), a euro
-  invoice as dollars (once). (2026-10-11)
+- [ ] A mobile bill is read with or without the third-party charges it lists, differently from
+  month to month: replaying the reader over the stored texts on 2026-11-05, 7 of 153 phone bills
+  of two providers still differ from the stored total (5 of one, 3 of them read as no total and 2
+  up to 4.50 apart; 2 of the other, a few cents apart). The other classes of this line are done: the value-added
+  tax read as the total of a mail-scanning service (fixed in #142, all 41 stored invoices agree in
+  the replay), an amount in another currency taken as the total, and a euro invoice read as
+  dollars (both fixed on 2026-11-05, 4 stored receipts now agree, none worse). (2026-11-05)
 - [x] The dashboard under 780 receipts: all three steps deployed. Measured on production on
   2026-10-15 with 1,105 receipts: the table opens on the newest year in 6 to 8 seconds (was 35),
   1.8 MB of data and about 180 MB of browser memory (was 817 MB); all years load in about 30

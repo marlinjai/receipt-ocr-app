@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { extractReceiptFields } from '@/lib/extract-receipt-fields';
 import * as F from '@/lib/extraction/__tests__/fixtures';
+import * as I from '@/lib/extraction/__tests__/invoice-fixtures';
 import type { OcrResult } from '@/lib/ocr-types';
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -145,6 +146,23 @@ describe('extractCurrency (via extractReceiptFields)', () => {
     const ocr = makeOcr('REWE\nGesamt: 8,06 €');
     const result = extractReceiptFields(ocr);
     expect(result.currency).toBe('EUR');
+  });
+
+  it('a currency code in a sentence does not outweigh the currency of the amounts', () => {
+    // A euro invoice whose license terms name a limit of "$150k USD" was read as dollars.
+    const result = extractReceiptFields(makeOcr(I.EURO_INVOICE_DOLLAR_IN_THE_TERMS));
+    expect(result).toMatchObject({ currency: 'EUR', gross: 14.28, net: 12, taxRate: 19 });
+    // Signs of two currencies in the text: the page reading may still decide.
+    expect(result.currencyShown).toBe(false);
+  });
+
+  it('the currency of most amounts wins over a second currency printed next to a few', () => {
+    expect(extractReceiptFields(makeOcr(I.DOLLAR_ORDER_CHARGED_IN_EUROS))).toMatchObject({ currency: 'USD', currencyShown: true, gross: 87.58 });
+    expect(extractReceiptFields(makeOcr(I.EURO_INVOICE_WITH_ZLOTY_CONVERSION))).toMatchObject({ currency: 'EUR', currencyShown: true, gross: 5.02 });
+  });
+
+  it('a code next to no amount still decides where no amount carries a sign or code', () => {
+    expect(extractReceiptFields(makeOcr('Vendor\nPrices in USD\nTotal 42.00'))).toMatchObject({ currency: 'USD', currencyShown: true });
   });
 });
 

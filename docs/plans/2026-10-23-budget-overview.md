@@ -2,7 +2,7 @@
 title: A visual budget overview that shows real spending
 summary: The spending page becomes a picture first (months by category, budget against spent, the biggest counterparties) and a work list second, and the numbers under it are cleaned so the picture is true. Transfers to the owner's own name count as own transfers without a question, and a Klarna collective debit whose purchases are not imported yet waits for its list instead of counting as one big unknown expense.
 type: plan
-status: in-progress
+status: completed
 tags: [receipts, spending, budgets, overview, payments]
 projects: [receipt-ocr-app]
 date: 2026-10-23
@@ -92,7 +92,7 @@ So the picture is wrong before it is ugly. Both are fixed here.
 3. Waiting collective debit (after the PayPal live pull request is merged).
 4. Fresh-agent review, pull request, land-pr.
 
-## Reality (2026-10-23, branch `feat/budget-overview`)
+## Reality (2026-10-23, branch `feat/budget-overview`, landed in #172)
 
 Built so far, with what the build decided on the way (say so if you disagree):
 
@@ -169,3 +169,16 @@ Built so far, with what the build decided on the way (say so if you disagree):
 Verified in a local browser on invented data: overview and phone width (no sideways scroll of the
 page), adding a name moves its payments out of the totals and the open receipt count (120 to 100),
 the name and the tab survive a reload.
+
+### Completed (2026-11-05)
+
+Checked against main on 2026-11-05: all three build steps landed in #172 (own names in
+`spending_settings.own_names` and `src/lib/spending/own-names.ts`, the tabs `?ansicht=belege` and the
+charts in `OverviewCharts.tsx`, the waiting collective debit `awaitingList` in
+`src/lib/tax/payments/funding.ts`), with the phone and label fixes of #167, #169 and #214 after it.
+The four paths are covered by `src/lib/spending/__tests__/overview.test.ts` and `budgets.test.ts`
+(own names in and out of the totals), `src/app/app/finance/own-names-actions.test.ts` (adding and
+taking out a name), `src/lib/tax/payments/__tests__/funding.test.ts` and `payments.dbtest.ts` (a debit
+waits, the next list pairs it) and `src/app/app/spending/SpendingClient.test.tsx` (the tab in the
+address, so a reload keeps it). Nothing of this plan is open. Decision 6, the last Klarna export once
+every open Klarna payment is collected, is an owner operation with its own ROADMAP line.

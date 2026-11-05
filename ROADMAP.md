@@ -116,12 +116,12 @@
 - [ ] A file that holds two invoices becomes one receipt with the second invoice's figures
   (seen on 2026-10-11 on a file with a marketplace invoice and a retailer invoice). The reader
   should say that the file holds more than one document, so it can be split. (2026-10-11)
-- [ ] Private spending in the app (decided by the owner on 2026-10-14): overview by category and
-  month, clean split private versus business, budgets and warnings, a document for every
-  purchase, a live bank connection, and the loop that finds or asks for the receipt of every
-  payment. Build order and open questions (where the notification goes, which vendors may be
-  fetched with a stored login, the budget limits) in the plan:
-  [docs/plans/2026-10-14-personal-spending-and-bank-feed.md](docs/plans/2026-10-14-personal-spending-and-bank-feed.md). (2026-10-14)
+- [ ] Private spending in the app (decided by the owner on 2026-10-14): overview, private versus
+  business, budgets and warnings, the live bank connection and the missing-receipt loop (mailbox,
+  push with e-mail fallback) are built. Left, both waiting for the owner: which vendors may be
+  fetched with a stored login (none for now), and when to build step 4b, fetching invoices through
+  his signed-in browser. Plan:
+  [docs/plans/2026-10-14-personal-spending-and-bank-feed.md](docs/plans/2026-10-14-personal-spending-and-bank-feed.md). (2026-11-05)
 - [ ] Payments across companies (decided by the owner on 2026-10-22, option 1): an account stays
   connected once in Whiz-Art Media, and once the owner links it to "marlinjai" in the payments
   tab, every payment answered private shows in marlinjai's spending overview, budgets and
@@ -477,11 +477,11 @@
 
 <!-- Currently being implemented -->
 
-- [ ] A visual budget overview that shows real spending (asked by the owner on 2026-10-23): the
+- [x] A visual budget overview that shows real spending (asked by the owner on 2026-10-23): the
   spending page opens with months by category, budget against spent and the biggest
   counterparties, the receipt checks move to their own tab, transfers to the owner's own name
   count as own transfers, and a Klarna collective debit beyond its list waits for the list. Plan:
-  [docs/plans/2026-10-23-budget-overview.md](docs/plans/2026-10-23-budget-overview.md). (2026-10-23)
+  [docs/plans/2026-10-23-budget-overview.md](docs/plans/2026-10-23-budget-overview.md). Done 2026-11-05 (#172).
 - [ ] Last Klarna export once every open Klarna payment is collected (expected late November
   2026): run scripts/klarna/klarna-web-export.js and klarna-to-csv.py (see
   [docs/operations/klarna-export.md](docs/operations/klarna-export.md)), import the file under

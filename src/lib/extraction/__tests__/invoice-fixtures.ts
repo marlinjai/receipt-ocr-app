@@ -616,3 +616,131 @@ Total
 $5.00
 Amount due
 $5.00 USD`;
+
+/**
+ * A marketplace seller's invoice that converts its figures into a second
+ * currency: net, tax and their sum in euros, then the same three again in
+ * zloty, each zloty amount with its code. The zloty group adds up at 19
+ * percent as well and is the larger one, so it was stored as the total in
+ * euros (23.33 for 5.02).
+ */
+export const EURO_INVOICE_WITH_ZLOTY_CONVERSION = `RECHNUNG
+Erika Musterfrau
+Musterstraße 1
+12345 Musterstadt
+Deutschland
+Verkauft von
+Beispiel Baumarkt GmbH
+USt-IDNr. DE000000000
+Rechnungsdatum:
+Rechnungs-Nr.:
+Rechnungsbetrag:
+Bestellinformation
+Bestelldatum:
+Beschreibung
+15.04.2022
+000-0000000-0000000
+Doppelseitige Klebepads, beidseitig klebend
+Gesamtpreis
+15.04.2022
+0000000
+5,02 €
+Menge
+Stückpreis
+(ohne USt.)
+USt.%
+Stückpreis
+(inkl. USt.)
+Gesamtpreis
+(inkl. USt.)
+1
+4,22 €
+19,00 %
+5,02 €
+5,02 €
+Euro
+EUR
+Polnischer Zloty PLN
+Umrechnungskurs: 1 EUR/4.6478 PLN
+USt.%
+EUR
+PLN
+19,00 %
+Zwischensumme
+(ohne USt.)
+4,22 €
+5,02 €
+23,33 PLN
+USt.
+0,80 €
+19,00 %
+19,61 PLN
+3,72 PLN
+Alle Umrechnungskurse vom 14.04.2022 gem. EZB.
+Die Lieferung erfolgte als innergemeinschaftlicher Fernverkauf aus dem Land Polen in das Land Deutschland.`;
+
+/**
+ * A euro invoice whose license terms name a limit in dollars ("$150k USD").
+ * The first currency code anywhere in the text decided the currency, so the
+ * invoice was read as dollars although every amount on it carries the euro sign.
+ */
+export const EURO_INVOICE_DOLLAR_IN_THE_TERMS = `Example Textures BV, Voorbeeldstraat 1, 0000 AA Voorbeeld, The Netherlands
+INVOICE
+VAT No: NL000000000B01 Invoice Date: 6th of Apr 2023 Invoice ID: 0000000000
+Billing Information:
+Company:
+Example Media
+Country:
+Germany
+Quantity Production Description
+Starter Indie Subscription - 1,000 credits per month
+- Indie/Freelancer License (Commercial license for entities with less
+than $150k USD in funding or gross revenue per year.)
+1
+- Monthly Recurring subscription
+Amount Each
+Amount
+12.00 €
+12.00 €
+* You are located inside the EU and do not have a valid VAT number. By law we are
+required to charge 19% VAT on your purchase.
+Subtotal:
+Tax/VAT (19%)*:
+12.00 €
+2.28 €
+14.28 €
+Total:
+PAID
+Payment Method: PayPal
+Attention: This invoice has already been paid!`;
+
+/**
+ * A dollar order whose card was charged in euros: "Payment Grand Total: EUR
+ * 75,80" below the dollar total. The paid label made the euro amount the
+ * total of a dollar receipt (75.80 for 87.58).
+ */
+export const DOLLAR_ORDER_CHARGED_IN_EUROS = `amazon.com
+Final Details for Order #000-0000000-0000000
+Order Placed: July 17, 2021
+Order Total: USD 87.58
+Items Ordered
+Shipped on July 19, 2021
+1 of: Camera Battery Case
+1 of: Camera Accessory Case
+Shipping Speed:
+Standard Shipping
+Payment Method:
+MasterCard | Last digits: 0000
+Price
+$29.99
+$49.99
+Payment information
+Item(s) Subtotal: USD 79.98
+Shipping & Handling: USD 0.00
+Estimated tax to be collected:
+Total before tax: USD 79.98
+USD 7.60
+Credit Card transactions
+Grand Total: USD 87.58
+Payment Grand Total: EUR 75,80
+MasterCard ending in 0000: July 19, 2021: $87.58`;

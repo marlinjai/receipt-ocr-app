@@ -3,7 +3,7 @@ import type { OcrResult } from '@/lib/ocr-types';
 import { CATEGORY_TO_KONTO } from '@/lib/receipts-constants';
 import { defaultTaxRate } from '@/lib/meals/classify';
 import { MEAL_CATEGORY } from '@/lib/receipts-constants';
-import { readAmounts, type AmountCheck, type TaxGroup } from '@/lib/extraction/amounts';
+import { amountsWithCurrency, readAmounts, type AmountCheck, type TaxGroup } from '@/lib/extraction/amounts';
 import { readDate } from '@/lib/extraction/date';
 import { mealEvidence, type MealEvidence } from '@/lib/extraction/meal-evidence';
 import { readVendor, type VendorConfidence } from '@/lib/extraction/vendor';
@@ -48,18 +48,45 @@ export interface TextExtraction extends ExtractionResult {
 
 const CURRENCY_CODE_PATTERN = /\b(USD|EUR|GBP)\b/;
 
-// Explicit ISO codes win; otherwise pick the most frequent currency symbol in the
-// document. Defaults to EUR when no signal is found, matching prior implicit behavior.
-// `shown` says whether the text settles it (a code, or one kind of sign only):
-// only then is the currency offered over what a stored receipt holds.
-function extractCurrency(text: string): { currency: string; shown: boolean } {
-  const codeMatch = text.match(CURRENCY_CODE_PATTERN);
-  if (codeMatch) return { currency: codeMatch[1], shown: true };
+const CURRENCIES = ['EUR', 'USD', 'GBP'] as const;
 
+/**
+ * The currency of the amounts: the one whose sign or code stands next to
+ * more amounts than any other. A code in a sentence names no amount: a euro
+ * invoice whose license terms speak of "$150k USD" was read as dollars when
+ * the first code anywhere in the text decided.
+ *
+ * Where no amount carries a sign or code, or two currencies carry as many,
+ * the earlier rule decides: an ISO code anywhere, else the most frequent sign,
+ * else the euro, as before.
+ *
+ * `shown` says whether the text settles it, and only then is the currency
+ * offered over what a stored receipt holds or a page reading names. By the
+ * amounts it is settled where the winner's code is printed or its sign is the
+ * only one in the text; a majority among signs of several currencies stays a
+ * guess the page reading may overrule.
+ */
+function extractCurrency(text: string): { currency: string; shown: boolean } {
   const dollarCount = (text.match(/\$/g) ?? []).length;
   const euroCount = (text.match(/€/g) ?? []).length;
   const poundCount = (text.match(/£/g) ?? []).length;
   const kinds = [dollarCount, euroCount, poundCount].filter((count) => count > 0).length;
+
+  const byAmounts = new Map<string, number>();
+  for (const line of text.split('\n')) {
+    for (const { currency } of amountsWithCurrency(line)) {
+      if (currency) byAmounts.set(currency, (byAmounts.get(currency) ?? 0) + 1);
+    }
+  }
+  const ranked = CURRENCIES.map((code) => ({ code, count: byAmounts.get(code) ?? 0 })).sort((a, b) => b.count - a.count);
+  if (ranked[0].count > 0 && ranked[0].count > ranked[1].count) {
+    const code = ranked[0].code;
+    const codePrinted = new RegExp(`\\b${code}\\b`).test(text);
+    return { currency: code, shown: codePrinted || kinds === 1 };
+  }
+
+  const codeMatch = text.match(CURRENCY_CODE_PATTERN);
+  if (codeMatch) return { currency: codeMatch[1], shown: true };
 
   if (kinds === 0) return { currency: 'EUR', shown: false };
   if (dollarCount >= euroCount && dollarCount >= poundCount) return { currency: 'USD', shown: kinds === 1 };

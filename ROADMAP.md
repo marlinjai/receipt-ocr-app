@@ -261,13 +261,12 @@
   and public bank data access exist. After stage 2. Plan:
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
 
-- [ ] Two tax rates, two columns, one order. On a receipt with two tax rates, the number column
-  "Tax Rate" takes the first of the reader's printed tax groups ordered by gross
-  (`src/lib/extraction/amounts.ts`), while the text column "Tax Rates" follows the model's meal
-  tax lines ordered by net (`src/lib/tax-rates.ts`, written in `readReceipt`). The two can name a
-  different first rate when the two sources disagree. Decide one source of truth for the order
-  and make both columns follow it, with a test where the sources disagree. Found while landing
-  the capture queue fix. (2026-10-10)
+- [x] Two tax rates, two columns, one order. Done 2026-11-05. The printed tax groups the
+  receipt's arithmetic confirms are the source of truth, the model's lines the fallback, and both
+  columns take their first rate from one order (`src/lib/extraction/rate-order.ts`, since #144).
+  The last path that still split them, a page read by the model alone (`settleFromPageOnly`),
+  now takes its number column and its net from the meal's tax lines too, tested where the
+  model's single rate and its lines disagree. (2026-10-10)
 - [x] Extraction defects found in the first live upload (2026-10-08, a 21-page scan of
   restaurant receipts uploaded with "One receipt per page"). Done 2026-10-10. Root cause
   behind four of the seven: the language-model classifier never ran in production (no

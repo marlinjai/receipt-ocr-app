@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   getReviewQueue: vi.fn(),
   moveReceiptsIntoGroup: vi.fn(),
   removeReceiptsFromGroup: vi.fn(),
+  setFieldOnRows: vi.fn(),
 }));
 
 // The table asks this for every cell of a row it draws, so it tells which rows were drawn.
@@ -54,7 +55,7 @@ vi.mock('./actions', () => ({
   getReceiptYear: vi.fn(async () => null),
   getReceiptText: vi.fn(async () => ''),
   deleteReceiptsForGood: mocks.deleteReceiptsForGood,
-  setFieldOnRows: vi.fn(),
+  setFieldOnRows: mocks.setFieldOnRows,
 }));
 vi.mock('../actions', () => ({ rereadReceipt: vi.fn(), recomputeFxRates: vi.fn() }));
 vi.mock('./review-actions', () => ({ getReviewQueue: mocks.getReviewQueue, confirmReceiptChecked: mocks.confirmReceiptChecked, keepBothLookAlikes: vi.fn(), takeNewReading: vi.fn() }));
@@ -142,6 +143,7 @@ beforeEach(() => {
   mocks.deleteReceiptsForGood.mockReset();
   mocks.moveReceiptsIntoGroup.mockReset();
   mocks.removeReceiptsFromGroup.mockReset();
+  mocks.setFieldOnRows.mockReset();
 });
 afterEach(() => {
   cleanup();
@@ -294,6 +296,61 @@ describe('deleting', () => {
     expect(mocks.deleteReceiptsForGood).toHaveBeenCalledWith(['licence']);
     // Nothing of it is selected any more: the button that said so is gone.
     expect(screen.queryByText(/selected/)).toBeNull();
+  });
+});
+
+describe('"Set field" on a selection', () => {
+  const rowOf = (id: string) => document.querySelector(`tr[data-row-id="${id}"]`) as HTMLElement;
+
+  it('says what was set and what was not, and the table shows what is stored, each receipt once', async () => {
+    // On 2026-10-11 a selection of 30 said it was set and 14 of 81 rows kept their old value; the table
+    // was also seen drawing its rows several times after edits. Here one row lands and one does not.
+    const user = userEvent.setup();
+    const stored = [...allRows, conference];
+    const base = fakeAdapter(stored);
+    const getRows = vi.fn(base.getRows);
+    state.adapter = { ...base, getRows, getTable: async () => ({ id: TABLE_ID, name: 'Receipts' }), getViews: async () => views };
+    const category = columnId('Category');
+    mocks.setFieldOnRows.mockImplementation(async (rowIds: string[], columnId: string, value: string | null) => {
+      // The server stored licence only, and read orphan back with its old value.
+      const i = stored.findIndex((r) => r.id === 'licence');
+      stored[i] = { ...stored[i], cells: { ...stored[i].cells, [columnId]: value } } as Row;
+      return { done: rowIds.filter((id) => id === 'licence'), failed: rowIds.filter((id) => id !== 'licence').map((rowId) => ({ rowId, reason: 'not_stored' })) };
+    });
+    await open();
+    const counted = () => screen.getByText(/ Belege$/).textContent;
+    const before = counted();
+    fireEvent.click(within(rowOf('licence')).getByRole('checkbox'));
+    fireEvent.click(within(rowOf('orphan')).getByRole('checkbox'));
+    await user.selectOptions(screen.getByLabelText('Bulk edit column'), category);
+    await user.selectOptions(screen.getByLabelText('Bulk edit value'), 'opt_bewirtung');
+    const loads = getRows.mock.calls.length;
+    await user.click(screen.getByRole('button', { name: 'Auf 2 anwenden' }));
+
+    await waitFor(() => expect(screen.getByText(/von 2 gesetzt/).textContent).toBe('1 von 2 gesetzt. 1 nicht gesetzt: 1 nicht gespeichert.'));
+    expect(mocks.setFieldOnRows).toHaveBeenCalledWith(['licence', 'orphan'], category, 'opt_bewirtung');
+    expect(screen.getByRole('button', { name: 'Erneut versuchen für die 1 nicht gesetzten' })).toBeTruthy();
+    // The table was read again and shows what is stored: the set row with its new value, the other as it was.
+    expect(getRows.mock.calls.length).toBeGreaterThan(loads);
+    await waitFor(() => expect(within(rowOf('licence')).getByText('Bewirtung')).toBeTruthy());
+    expect(within(rowOf('orphan')).getByText('Reisekosten')).toBeTruthy();
+    // Every row once, and the count as before.
+    expect(new Set(shownRowIds()).size).toBe(shownRowIds().length);
+    expect(counted()).toBe(before);
+  });
+
+  it('says so when no part got an answer, and counts nothing as set', async () => {
+    const user = userEvent.setup();
+    setAdapter();
+    mocks.setFieldOnRows.mockRejectedValue(new Error('offline'));
+    await open();
+    fireEvent.click(within(rowOf('licence')).getByRole('checkbox'));
+    await user.selectOptions(screen.getByLabelText('Bulk edit column'), columnId('Category'));
+    await user.selectOptions(screen.getByLabelText('Bulk edit value'), 'opt_bewirtung');
+    await user.click(screen.getByRole('button', { name: 'Auf 1 anwenden' }));
+    await waitFor(() => expect(screen.getByText(/von 1 gesetzt/).textContent).toBe('0 von 1 gesetzt. 1 nicht gesetzt: 1 keine Antwort, Stand unklar.'));
+    expect(within(rowOf('licence')).getByText('Software')).toBeTruthy();
+    expect(within(rowOf('licence')).queryByText('Bewirtung')).toBeNull();
   });
 });
 

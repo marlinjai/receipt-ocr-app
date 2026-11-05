@@ -200,6 +200,10 @@ export default function RevenueTab({ view, busy, error, onSave, onDelete, onExpe
                         : ' · noch nicht bezahlt'}
                       {invoice.declaredInYear !== null ? ` · in der Erklärung ${invoice.declaredInYear} nach Rechnung erfasst` : ''}
                       {invoice.writtenOffCents > 0 ? ` · ausgebucht ${euro(invoice.writtenOffCents)} am ${formatDay(invoice.writtenOffOn)}` : ''}
+                      {invoice.source === 'books' ? ' · aus den Books' : ''}
+                      {invoice.dueDate ? ` · fällig ${formatDay(invoice.dueDate)}` : ''}
+                      {invoice.replacesNumber ? ` · ersetzt Rechnung ${invoice.replacesNumber}` : ''}
+                      {invoice.cancelledOn ? ` · storniert am ${formatDay(invoice.cancelledOn)}` : ''}
                     </p>
                     {invoice.taxGroups && (
                       <p className="mt-0.5 text-xs tabular-nums" style={{ color: 'var(--muted)' }}>
@@ -241,17 +245,20 @@ export default function RevenueTab({ view, busy, error, onSave, onDelete, onExpe
                   <button type="button" className="ui-btn ui-btn-sm" aria-expanded={editing === invoice.id} onClick={() => setEditing(editing === invoice.id ? null : invoice.id)}>
                     {editing === invoice.id ? 'Schließen' : 'Ändern'}
                   </button>
-                  <button
-                    type="button"
-                    className="ui-btn ui-btn-sm ui-btn-danger"
-                    disabled={busy}
-                    onClick={() => {
-                      if (!window.confirm(`Rechnung ${invoice.number} mit ihren Zahlungseingängen löschen?`)) return;
-                      onDelete(invoice);
-                    }}
-                  >
-                    Löschen
-                  </button>
+                  {/* A Books invoice is cancelled in the Books, never deleted here. */}
+                  {invoice.source !== 'books' && (
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-sm ui-btn-danger"
+                      disabled={busy}
+                      onClick={() => {
+                        if (!window.confirm(`Rechnung ${invoice.number} mit ihren Zahlungseingängen löschen?`)) return;
+                        onDelete(invoice);
+                      }}
+                    >
+                      Löschen
+                    </button>
+                  )}
                 </div>
                 {editing === invoice.id && (
                   <div className="mt-3 rounded-lg border p-3" style={{ borderColor: 'var(--border)' }}>
@@ -307,6 +314,8 @@ function InvoiceForm({
   const [localError, setLocalError] = useState<string | null>(null);
   const mixed = treatment === 'mixed';
   const taxed = treatment === 'standard' || treatment === 'reduced';
+  // A mirrored Books invoice: its figures are the document's, changed in the Books only.
+  const fromBooks = invoice?.source === 'books';
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -397,6 +406,14 @@ function InvoiceForm({
   const shown = localError ?? error;
   return (
     <form onSubmit={submit} className="space-y-4" noValidate>
+      {fromBooks && (
+        <p className="ui-note">
+          Diese Rechnung kommt aus den Books. Nummer, Datum, Betrag und Steuer werden dort geändert (storniert oder
+          korrigiert); hier werden ihre Zahlungseingänge erfasst.
+        </p>
+      )}
+      {/* A disabled fieldset disables every field of the document's figures at once; a save sends them unchanged. */}
+      <fieldset disabled={fromBooks} className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-3">
         <div>
           <label className="ui-label" htmlFor={`${id}-number`}>Rechnungsnummer</label>
@@ -470,6 +487,7 @@ function InvoiceForm({
           </ul>
         </fieldset>
       )}
+      </fieldset>
       <fieldset>
         <legend className="ui-label">Zahlungseingänge</legend>
         {linkedCents > 0 && (

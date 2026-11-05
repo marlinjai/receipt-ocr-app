@@ -36,6 +36,10 @@ const invoiceView = (overrides: Partial<InvoiceView> = {}): InvoiceView => ({
   treatment: 'small_business',
   taxGroups: null,
   declaredInYear: null,
+  source: 'register',
+  dueDate: null,
+  cancelledOn: null,
+  replacesNumber: null,
   payments: [{ date: '2026-03-20', cents: 100_000 }],
   enteredPayments: [{ date: '2026-03-20', cents: 100_000 }],
   writtenOffCents: 0,
@@ -112,6 +116,32 @@ describe('RevenueTab', () => {
     render(<RevenueTab view={view({ revenue: { recorded: false, receivedCents: 0, turnoverCents: 0, outstandingCents: 0, invoices: [], overdue: [] } })} {...revenueProps()} />);
     expect(screen.getByText(/Noch keine Rechnung erfasst/)).toBeTruthy();
     expect(screen.queryByText('0,00 €')).toBeNull();
+  });
+
+  it('a Books invoice says where it comes from, its due day, what it replaces, and offers no delete', () => {
+    const books = invoiceView({ id: 'inv-63', number: '63', source: 'books', dueDate: '2026-10-16', replacesNumber: '62' });
+    const cancelled = invoiceView({ id: 'inv-62', number: '62', source: 'books', cancelledOn: '2026-10-02', payments: [], enteredPayments: [] });
+    render(<RevenueTab view={view({ revenue: { ...view().revenue, invoices: [books, cancelled, invoiceView()] } })} {...revenueProps()} />);
+    expect(screen.getByText(/aus den Books · fällig 16\.10\.2026 · ersetzt Rechnung 62/)).toBeTruthy();
+    expect(screen.getByText(/storniert am 02\.10\.2026/)).toBeTruthy();
+    // Only the register invoice can be deleted.
+    expect(screen.getAllByRole('button', { name: 'Löschen' })).toHaveLength(1);
+  });
+
+  it('a Books invoice keeps its figures locked; its payments are still entered here and the figures go back unchanged', async () => {
+    const user = userEvent.setup();
+    const props = revenueProps();
+    const books = invoiceView({ source: 'books', payments: [], enteredPayments: [], receivedCents: 0, outstandingCents: 100_000 });
+    render(<RevenueTab view={view({ revenue: { ...view().revenue, invoices: [books] } })} {...props} />);
+    await user.click(screen.getByRole('button', { name: 'Ändern' }));
+    expect(screen.getByText(/Diese Rechnung kommt aus den Books/)).toBeTruthy();
+    for (const label of ['Rechnungsnummer', 'Rechnungsdatum', 'Rechnungsbetrag in €', 'Umsatzsteuer auf der Rechnung']) {
+      expect(screen.getByLabelText(label).matches(':disabled')).toBe(true);
+    }
+    await user.click(screen.getByRole('button', { name: 'Zahlungseingang hinzufügen' }));
+    await user.type(screen.getByLabelText('Eingang am'), '2026-03-20');
+    await user.click(screen.getByRole('button', { name: 'Rechnung speichern' }));
+    expect(props.onSave.mock.calls[0][1]).toMatchObject({ number: 'R-2026-001', issueDate: '2026-03-01', grossCents: 100_000, payments: [{ date: '2026-03-20', cents: 100_000 }] });
   });
 
   it('forward: a new invoice with one payment of the whole amount', async () => {

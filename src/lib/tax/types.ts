@@ -169,6 +169,13 @@ export interface InvoiceFact {
    */
   writtenOffCents?: number;
   writtenOffOn?: string | null;
+  /**
+   * The day a credit note cancelled the invoice (a Books document mirrored
+   * here). From that day on it is no claim; money already received stays
+   * received (a corrected invoice took it over, see `books-mirror.ts`). Absent
+   * or null: not cancelled.
+   */
+  cancelledOn?: string | null;
   /** The section 19 status on the issue date; see `LedgerItem.smallBusiness`. */
   smallBusinessOnIssue: boolean | null;
 }
@@ -291,7 +298,9 @@ export type InvoiceCheckKind =
   /** A mixed invoice whose stored groups no longer read: its tax counts, under no rate. */
   | 'invoice_tax_groups_unreadable'
   /** A mixed invoice whose stated tax of a rate differs by more than a cent from net times rate (accepted as stated). */
-  | 'invoice_tax_group_deviates';
+  | 'invoice_tax_group_deviates'
+  /** Cancelled by a credit note, yet money is booked on it: it was paid back, or belongs to another invoice. */
+  | 'invoice_cancelled_with_payments';
 
 export interface InvoiceResult {
   invoiceId: string;

@@ -2,7 +2,7 @@
 title: Finanzen in four groups
 summary: The eight tabs of the Finanzen page become four groups (Erledigen, Auswerten, Steuer, Einstellungen). The four tiles and the "Offen" checks stay the entry, there is no extra overview page, and Ausgaben stays its own page with a link each way.
 type: plan
-status: in-progress
+status: completed
 tags: [receipts, finance, navigation, ui]
 projects: [receipt-ocr-app]
 date: 2026-10-25
@@ -106,7 +106,36 @@ Decided while building, say so if you disagree:
    outcome of the bank return, which is therefore shown once; a year change also reads the names
    afresh.
 
-Still open: the phone and wide layout check in the browser on production data (build order step
-3) happens after the deploy; locally the controls were checked in code (group buttons
-`min-h-11`, tabs `max-sm:min-h-11`, buttons `ui-btn` at 44 pixels on a phone).
+Landed in #179 (2026-10-26).
+
+## Reality (2026-11-05, production check, plan completed)
+
+Build order step 3, checked on production (receipts.lumitra.co, headless automation browser, read
+only: pages opened and measured, nothing written) on the owner's real data:
+
+- **Phone, 390 by 844 pixels.** The four groups stand two to a row, each 175 by 44 pixels; the
+  tabs below are 44 pixels tall. No page scrolls sideways on any address opened (every tab, every group name, the old
+  `zahlungen`, an unknown value and none).
+  The tiles stay on top as the entry, the group row follows them.
+- **Wide, 1440 by 900 pixels.** One row of four groups at 44 pixels, the tabs at 42 (the 44 pixel
+  rule is for a phone, `max-sm:min-h-11`), no sideways scroll.
+- **Addresses.** Every tab value opens its tab; the group names `erledigen`, `auswerten`, `steuer`
+  and `einstellungen` open their first tab; the old `zahlungen` opens "Zahlungen klären"; an
+  unknown value and no value open the first work that waits ("Offen"). The bank return
+  (`?bank=`) was not replayed on production, since it would show a message for a return that
+  never happened; `tabFromAddress` and the page tests cover it.
+- **Counts.** The Erledigen count is the sum of its two tabs (Offen plus Zahlungen klären).
+- **Touch targets on a phone.** One link that stands alone was under 44 pixels: "Beleg in der
+  Tabelle öffnen" on the Offen tab (16 pixels, `min-height` does nothing on an inline link). It
+  now gets a box of its own on a phone (`max-sm:inline-flex max-sm:items-center
+  max-sm:min-h-11`), with a test. The other small controls predate the groups and live inside the
+  tab contents: names of counterparties linked inside a line of text (exempt, as running text in
+  plan 2026-10-24-phone-layout) and the fold-out headers (`<summary>`) in Zahlungen and
+  Einkommensteuer at 20 to 40 pixels. Whether a fold-out header must be 44 pixels is a question of
+  that plan, whose rule list names buttons, standalone links, fields, pickers and segmented
+  choices; the measured heights went onto its ROADMAP line, which already holds the finance tabs
+  as its last step.
+
+Decided while checking, say so if you disagree: the fold-out headers are not resized here, because
+there are 17 of them across the app's components and the rule belongs to the phone plan, not to the grouping.
 

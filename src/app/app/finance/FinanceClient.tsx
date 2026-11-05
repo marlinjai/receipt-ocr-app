@@ -664,7 +664,11 @@ const FinanceClient = observer(function FinanceClient({
                   <section aria-label="Beleg entscheiden" className="glass-panel rounded-xl p-4 sm:p-5">
                     <ItemHeader item={selected} />
                     <p className="m-0 mt-1 text-xs">
-                      <Link href={receiptHref(selected.rowId)} className="underline" style={{ color: 'var(--dt-text-secondary)' }}>
+                      <Link
+                        href={receiptHref(selected.rowId)}
+                        className="underline max-sm:inline-flex max-sm:items-center max-sm:min-h-11"
+                        style={{ color: 'var(--dt-text-secondary)' }}
+                      >
                         Beleg in der Tabelle öffnen
                       </Link>
                     </p>

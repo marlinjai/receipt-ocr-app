@@ -977,6 +977,18 @@ describe('FinanceClient: the income tax estimate', () => {
     expect(screen.getByRole('heading', { name: /Einkommensteuer 2025: Schätzung \(nur Gewerbe\)/ })).toBeTruthy();
   });
 
+  it('says in the tile when the tax values of the year are provisional', () => {
+    render(<FinanceClient initial={view([], { incomeTax: incomeTaxView({ year: 2027, profitCents: 300_000 }) })} />);
+    const tile = screen.getByText(/Einkommensteuer \d{4} \(Schätzung\)/).parentElement!;
+    expect(within(tile).getByText(/Steuerwerte vorläufig/)).toBeTruthy();
+  });
+
+  it('says nothing of provisional values for a year with enacted values', () => {
+    render(<FinanceClient initial={view([], { incomeTax: incomeTaxView({ year: 2025, profitCents: 300_000 }) })} />);
+    const tile = screen.getByText('Einkommensteuer 2025 (Schätzung)').parentElement!;
+    expect(within(tile).queryByText(/vorläufig/)).toBeNull();
+  });
+
   it('says "offen" when there is nothing to estimate', () => {
     render(<FinanceClient initial={view([])} />);
     const tile = screen.getByText('Einkommensteuer 2025 (Schätzung)').parentElement!;

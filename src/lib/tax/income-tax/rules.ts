@@ -1,4 +1,4 @@
-import type { Source, Sourced } from '../rules/types';
+import type { ProvisionalRules, Source, Sourced } from '../rules/types';
 
 /**
  * The income tax values of one year, each with its legal source.
@@ -57,6 +57,12 @@ export interface IncomeTaxRules {
   otherInsuranceCapCents: Sourced<{ employee: number; selfPaid: number }>;
   /** Church tax rate in basis points of the income tax, per federal state. */
   churchTaxRateBp: Sourced<Record<FederalState, number>>;
+  /**
+   * Set when the year's own values are not enacted yet and an earlier year's
+   * are carried. Every surface that shows an estimate of such a year says so.
+   * Absent: every value was compared with the law as it applies to this year.
+   */
+  provisional?: ProvisionalRules;
 }
 
 export const FEDERAL_STATES = ['BW', 'BY', 'BE', 'BB', 'HB', 'HH', 'HE', 'MV', 'NI', 'NW', 'RP', 'SL', 'SN', 'ST', 'SH', 'TH'] as const;
@@ -244,7 +250,44 @@ export const INCOME_TAX_RULES_2026: IncomeTaxRules = {
   churchTaxRateBp: COMMON.churchTaxRateBp,
 };
 
-const INCOME_TAX_RULE_SETS: readonly IncomeTaxRules[] = [INCOME_TAX_RULES_2025, INCOME_TAX_RULES_2026];
+/**
+ * The values of 2027, PROVISIONAL: 2026's, carried explicitly.
+ *
+ * This is the law as it stands for 2027 on the check day, not a guess: the
+ * tariff of § 32a applies "ab dem Veranlagungszeitraum 2026" until a law
+ * replaces it, and the income tax act was last amended on 15 October 2026
+ * (BGBl. 2026 I Nr. 307, child benefit without an application; no value here
+ * changes). Two changes are on their way and are not law yet:
+ *
+ * - The Einkommensteuerreformgesetz 2027 (government bill, Bundestag printed
+ *   paper 21/8235 of 28 September 2026; first reading 8 October 2026, opinion
+ *   of the federal council 16 October 2026, printed paper 507/26). It would set
+ *   for 2027 a basic allowance of 12,564 euros and a tariff of SIX zones:
+ *   (952.24 y + 1,400) y up to 17,799; (170.74 z + 2,397) z + 993.86 up to
+ *   70,600; 0.42 x - 11,241.73 up to 249,999; 0.45 x - 18,741.70 up to 279,999;
+ *   0.47 x - 24,341.68 from 280,000; and an employee flat allowance of 1,430
+ *   euros (§ 9a). `TariffZones` holds five zones, so enacting it means one
+ *   more zone in the tariff, not only new numbers.
+ * - The Sozialversicherungs-Rechengrößenverordnung 2027 (cabinet 9 October
+ *   2026, federal council printed paper 576/26, consent pending): knappschaft
+ *   contribution ceiling 130,800 euros, which moves the pension cap.
+ *
+ * The solidarity surcharge act was last amended on 23 December 2024 (its 2026
+ * exemption limit applies on). A test pins every carried value to 2026's, so
+ * the review after the two acts pass replaces this set instead of trusting it.
+ */
+export const INCOME_TAX_RULES_2027: IncomeTaxRules = {
+  ...INCOME_TAX_RULES_2026,
+  year: 2027,
+  reviewedOn: '2026-11-05',
+  provisional: {
+    carriedFromYear: 2026,
+    reason:
+      'Für 2027 gilt bis zu einer Gesetzesänderung der Tarif von 2026. Das Einkommensteuerreformgesetz 2027 (Bundestagsdrucksache 21/8235, noch nicht beschlossen) würde den Grundfreibetrag auf 12.564 Euro, den Arbeitnehmer-Pauschbetrag auf 1.430 Euro anheben und ab 280.000 Euro einen Steuersatz von 47 Prozent einführen; die Rechengrößen der Sozialversicherung 2027 (Höchstbeitrag zur Rentenversicherung) stehen noch aus. Stand: 5. November 2026.',
+  },
+};
+
+const INCOME_TAX_RULE_SETS: readonly IncomeTaxRules[] = [INCOME_TAX_RULES_2025, INCOME_TAX_RULES_2026, INCOME_TAX_RULES_2027];
 
 export const INCOME_TAX_RULE_YEARS: readonly number[] = INCOME_TAX_RULE_SETS.map((r) => r.year);
 

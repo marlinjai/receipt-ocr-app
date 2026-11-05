@@ -331,6 +331,12 @@ export default function IncomeTaxTab({ view, busy, error, onSaveWage, onRemoveWa
               Für {view.year} sind noch keine eigenen Steuerwerte hinterlegt (Tarif, Freibeträge). Gerechnet wird mit denen von {estimate.rulesYear}.
             </p>
           )}
+          {estimate.rulesProvisional && (
+            <p className="ui-note ui-note-warn">
+              Die Steuerwerte für {estimate.rulesYear} sind vorläufig: {estimate.rulesProvisional.reason} Gerechnet wird
+              mit den Werten von {estimate.rulesProvisional.carriedFromYear}.
+            </p>
+          )}
           {estimate.missing.map((m) => (
             <p key={m.code + m.text} className="ui-note ui-note-warn">
               {m.text}

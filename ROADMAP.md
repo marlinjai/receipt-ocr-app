@@ -101,15 +101,21 @@
   Checked on a read-only copy of production on 2026-11-05: each of the four years is computed with
   its own rule set and prints its own line numbers (2021 and 2022 low-value assets on 43, 2023 on
   35, 2024 on 36). Done 2026-11-05.
-- [ ] A filed year changed after filing: the Telekom invoice of 16 December 2024 (row `f924fce8`),
+- [x] A filed year changed after filing: the Telekom invoice of 16 December 2024 (row `f924fce8`),
   which the 2024 return carried, was tied on 2026-11-01 by the automatic "closest" payment match of
-  #207 to its direct debit of 2 January 2025, so the year-change rule now counts it in 2025. Line 43
-  of 2024 reads 375.08 instead of 395.06 (declared 394.95), 2025 holds 19.98 more than filed. Both
-  years are recorded as filed. Fix: a payment link made after a year's filing day must not move a
-  receipt into or out of that filed year, the same test `filedWithOf` in
-  `src/lib/tax/year-boundary.ts` makes for a person's answer. Only this one receipt crossed a
-  filed turn (the other three "closest" links booked in January 2025 are receipts of 2025).
-  (2026-11-05)
+  #207 to its direct debit of 2 January 2025, so it counted in 2025. Fixed: a filed year holds its
+  receipts against payment links made or removed after its filing day (`filedHoldOf` in
+  `src/lib/tax/year-boundary.ts`, the same test `filedWithOf` makes for a person's answer): such a
+  link moves no receipt into or out of the filed year, whatever made it. A removed link is now
+  remembered (migration 0048), so unlinking after filing cannot move a receipt either. On a
+  read-only copy of production (2026-11-05) two receipts are held: this one (2024 line 43 375.08
+  back to 395.06, declared 394.95) and the Telekom invoice of 16 December 2025 (row `3a43801c`,
+  debited 2 January 2026), which had left the filed 2025 the same way; 2025's totals are as filed
+  again and 2026 holds 19.98 (and 11.99 of study costs) less. Done 2026-11-05.
+- [ ] Other ways a filed year can still change after its filing day, each needing its own rule:
+  a late link that changes what a receipt in a filed year cost (the day is held, the amount is read
+  from the links), a purchase a later import lists as cancelled, links removed before migration
+  0048 (not recorded), and bank payments linked late to issued invoices of a filed year. (2026-11-05)
 - [ ] Asset schedules for what the returns depreciated and the app now holds as documents: camera,
   camera stabiliser and tripod of 2021 (the app counts two of them in full as low-value assets and
   holds the camera as an open check), the lens of 2022 (open check) and the laptop of 2022 (counted

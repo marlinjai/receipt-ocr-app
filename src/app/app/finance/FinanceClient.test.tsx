@@ -101,6 +101,7 @@ function item(overrides: Partial<StatementItem> & { rowId: string }): StatementI
     receiptGrossCents: 3999,
     receiptLines: [],
     paidOn: null,
+    filedYear: null,
     label: `Rechnung ${overrides.rowId}`,
     vendor: 'Netzwerk Nord GmbH',
     vendorKey: 'netzwerk nord',
@@ -606,6 +607,23 @@ describe('FinanceClient: notices and statement', () => {
     await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
     const row = screen.getByText('Netzwerk Nord GmbH').closest('li') as HTMLElement;
     expect(row.textContent).toContain('gezahlt 29.12.2024, zählt für 2025 (Jahreswechsel)');
+  });
+
+  it('an item a filed year holds against a later payment link shows the day it was really paid and why it stays', async () => {
+    const user = setupUser();
+    render(<FinanceClient initial={view([{ ...decided('a'), date: '2024-12-16', paidOn: '2025-01-02', filedYear: 2024 }])} />);
+    await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
+    const row = screen.getByText('Netzwerk Nord GmbH').closest('li') as HTMLElement;
+    expect(row.textContent).toContain('gezahlt 02.01.2025, zählt für 2024 (Erklärung 2024 abgegeben)');
+    expect(row.textContent).not.toContain('Jahreswechsel');
+  });
+
+  it('an item a filed year holds after its payment was taken off says why it stays on that day', async () => {
+    const user = setupUser();
+    render(<FinanceClient initial={view([{ ...decided('a'), date: '2024-12-30', filedYear: 2024 }])} />);
+    await user.click(screen.getByRole('button', { name: /Zeile 43/ }));
+    const row = screen.getByText('Netzwerk Nord GmbH').closest('li') as HTMLElement;
+    expect(row.textContent).toContain('30.12.2024, zählt für 2024 (Erklärung 2024 abgegeben)');
   });
 
   it('"Jetzt einordnen" says what the app did, and a run that decided nothing because the model failed is shown as an error', async () => {

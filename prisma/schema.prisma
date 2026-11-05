@@ -876,6 +876,28 @@ model TaxPaymentLink {
   @@map("tax_payment_links")
 }
 
+// A payment link taken off a receipt (by hand, by the funding rule moving it to the purchase, by an
+// estimate scaled to nothing, or by undoing the import that brought the payment). A filed year holds
+// its receipts against links made after its filing day (`filedHoldOf`), and judging that needs the
+// payments a receipt had on the filing day, so a removed link is remembered by what it was: the
+// payment's day and direction (copied, the payment can go later), when it was made and removed.
+// Written from migration 0048 on; links removed before are not known. `rowId` has no foreign key
+// (see meal_guests.row_id).
+model TaxPaymentLinkRemoval {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  rowId           String   @map("row_id")
+  bookingDay      String   @map("booking_day")
+  moneyOut        Boolean  @map("money_out")
+  cents           Int
+  linkedAt        DateTime @map("linked_at")
+  removedAt       DateTime @default(now()) @map("removed_at")
+
+  @@index([authWorkspaceId, rowId])
+  @@map("tax_payment_link_removals")
+}
+
 // One position of a receipt, when a receipt was split because its positions
 // are treated differently (one business, one private; one an asset, one not).
 // `grossCents` and `netCents` are in the receipt's own currency. The lines of

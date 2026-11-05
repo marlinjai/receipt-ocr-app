@@ -25,6 +25,7 @@ const item = (rowId: string, o: Partial<StatementItem> = {}): StatementItem => (
   receiptGrossCents: 11_900,
   receiptLines: [],
   paidOn: null,
+  filedYear: null,
   label: `Rechnung ${rowId}`,
   vendor: 'Netzwerk Nord GmbH',
   vendorKey: 'netzwerk nord',

@@ -22,7 +22,7 @@ import {
   type TreatmentInput,
   type VendorRule,
 } from './decisions';
-import { resolveItem, resolveItems, type ReceiptFacts, type ResolvedItem, type TreatmentOrigin } from './facts';
+import { cashDayOf, resolveItem, resolveItems, withFiledHold, type ReceiptFacts, type ResolvedItem, type TreatmentOrigin } from './facts';
 import {
   berlinDay,
   boundaryDay,
@@ -36,6 +36,7 @@ import {
   type BoundaryDecision,
   type BoundarySource,
   type BoundarySubjectKind,
+  type LinkedDay,
 } from './year-boundary';
 import { LinesInputError, itemIdOf, splitItemId, storedLineTreatment, validateLines, type ReceiptLine } from './lines';
 import { forecastYear, type Forecast } from './forecast';
@@ -228,6 +229,9 @@ export interface LinkedMoney {
   back: { day: string; cents: number } | null;
   /** Money out linked to the receipt, whatever came back. */
   outCents: number;
+  /** Each payment out and each payment back that counts, with its booking day and the day it was linked (`filedHoldOf`). */
+  outDays: LinkedDay[];
+  backDays: LinkedDay[];
 }
 
 /**
@@ -239,17 +243,19 @@ export function linkedByRow(payments: readonly PaymentRow[]): Map<string, Linked
   // Note for the ten-day rule (year-boundary days): it looks at money out only,
   // so a credit note refunded between 22 December and 10 January is not listed
   // there. Credit notes are not regularly recurring payments, so none is missed.
-  const sums = new Map<string, { day: string | null; backDay: string | null; outCents: number; backCents: number; estimated: boolean }>();
+  const sums = new Map<string, { day: string | null; backDay: string | null; outCents: number; backCents: number; estimated: boolean; outDays: LinkedDay[]; backDays: LinkedDay[] }>();
   // A payment and the debit that funds it are the same money and count once (`countedReceiptLinks`).
   for (const { payment, link } of countedReceiptLinks(payments)) {
-    const current = sums.get(link.rowId) ?? { day: null, backDay: null, outCents: 0, backCents: 0, estimated: false };
+    const current = sums.get(link.rowId) ?? { day: null, backDay: null, outCents: 0, backCents: 0, estimated: false, outDays: [], backDays: [] };
     if (payment.amountCents < 0) {
       current.outCents += link.cents;
       if (payment.estimated) current.estimated = true;
       if (current.day === null || payment.bookingDay < current.day) current.day = payment.bookingDay;
+      current.outDays.push({ day: payment.bookingDay, linkedOn: link.linkedOn });
     } else {
       current.backCents += link.cents;
       if (current.backDay === null || payment.bookingDay < current.backDay) current.backDay = payment.bookingDay;
+      current.backDays.push({ day: payment.bookingDay, linkedOn: link.linkedOn });
     }
     sums.set(link.rowId, current);
   }
@@ -259,11 +265,44 @@ export function linkedByRow(payments: readonly PaymentRow[]): Map<string, Linked
     out.set(
       rowId,
       s.day !== null
-        ? { paid: { day: s.day, cents: Math.max(0, s.outCents - s.backCents), ...(s.estimated ? { estimated: true as const } : {}) }, refundedCents: 0, back, outCents: s.outCents }
-        : { paid: null, refundedCents: s.backCents, back, outCents: 0 },
+        ? { paid: { day: s.day, cents: Math.max(0, s.outCents - s.backCents), ...(s.estimated ? { estimated: true as const } : {}) }, refundedCents: 0, back, outCents: s.outCents, outDays: s.outDays, backDays: s.backDays }
+        : { paid: null, refundedCents: s.backCents, back, outCents: 0, outDays: [], backDays: s.backDays },
     );
   }
   return out;
+}
+
+/**
+ * The links taken off each receipt since removals are recorded (`recordLinkRemovals`), as the days
+ * a filed year's hold reads beside the links a receipt has now (`filedHoldOf`).
+ */
+async function removedLinkDays(db: PrismaClient, workspaceId: string, rowId?: string): Promise<Map<string, { out: LinkedDay[]; back: LinkedDay[] }>> {
+  const removals = await db.taxPaymentLinkRemoval.findMany({ where: { authWorkspaceId: workspaceId, ...(rowId ? { rowId } : {}) } });
+  const out = new Map<string, { out: LinkedDay[]; back: LinkedDay[] }>();
+  for (const r of removals) {
+    const entry = out.get(r.rowId) ?? { out: [], back: [] };
+    (r.moneyOut ? entry.out : entry.back).push({ day: r.bookingDay, linkedOn: berlinDay(r.linkedAt), removedOn: berlinDay(r.removedAt) });
+    out.set(r.rowId, entry);
+  }
+  return out;
+}
+
+/** A receipt's facts with the links taken off it beside the ones it has (`removedLinkDays`). */
+function withRemovedLinks(facts: ReceiptFacts, removed: { out: LinkedDay[]; back: LinkedDay[] } | undefined): ReceiptFacts {
+  if (!removed) return facts;
+  return { ...facts, outDays: [...(facts.outDays ?? []), ...removed.out], backDays: [...(facts.backDays ?? []), ...removed.back] };
+}
+
+/** What the links of one receipt add to its facts (`ReceiptFacts`); nothing linked when undefined. */
+function linkedFacts(money: LinkedMoney | undefined): Pick<ReceiptFacts, 'paid' | 'refundedCents' | 'moneyBack' | 'moneyOutCents' | 'outDays' | 'backDays'> {
+  return {
+    paid: money?.paid ?? null,
+    refundedCents: money?.refundedCents ?? 0,
+    moneyBack: money?.back ?? null,
+    moneyOutCents: money?.outCents ?? 0,
+    outDays: money?.outDays ?? [],
+    backDays: money?.backDays ?? [],
+  };
 }
 
 export async function loadReceipts(
@@ -309,10 +348,7 @@ export async function loadReceipts(
       businessSharePercent: shareNumber !== null && Number.isFinite(shareNumber) ? shareNumber : null,
       decision: decisionByRow.get(row.id) ?? null,
       decisionNote: noteByRow.get(row.id) ?? null,
-      paid: linked?.get(row.id)?.paid ?? null,
-      refundedCents: linked?.get(row.id)?.refundedCents ?? 0,
-      moneyBack: linked?.get(row.id)?.back ?? null,
-      moneyOutCents: linked?.get(row.id)?.outCents ?? 0,
+      ...linkedFacts(linked?.get(row.id)),
       lines: linesByRow.get(row.id) ?? [],
     };
   });
@@ -330,7 +366,8 @@ export interface YearBoundaryEntry {
   label: string;
   /** The day it was paid; for a receipt without a linked payment, the receipt's own day. */
   cashDay: string;
-  dayBasis: 'payment' | 'document';
+  /** 'filed': a filed year holds the receipt on this day against a later payment link (`filedHoldOf`). */
+  dayBasis: 'payment' | 'document' | 'filed';
   cents: number | null;
   /** The year it would count in instead of the year of `cashDay`. */
   otherYear: number;
@@ -377,8 +414,13 @@ export interface StatementItem {
   vendor: string | null;
   vendorKey: string | null;
   date: string | null;
-  /** Set when the ten-day rule moved the item: the day it was really paid, while `date` is the day it counts on. */
+  /**
+   * Set when the ten-day rule moved the item, or a filed year holds it against a later payment link:
+   * the day it was really paid, while `date` is the day it counts on.
+   */
   paidOn: string | null;
+  /** Set when a filed year holds the item: that year, whose return counted it on `date`. */
+  filedYear: number | null;
   category: string | null;
   /** Document amount and currency, for display beside the euro amount. */
   gross: number | null;
@@ -536,7 +578,8 @@ function toStatementItem(
     vendor: item.vendor,
     vendorKey: resolved.vendorKey,
     date: item.date,
-    paidOn: item.dateBasis === 'year_boundary' ? (item.vatDate ?? null) : null,
+    paidOn: item.dateBasis === 'year_boundary' ? (item.vatDate ?? null) : (item.paidOn ?? null),
+    filedYear: item.filedYear ?? null,
     category: facts.record.category,
     gross: facts.record.gross,
     currency: facts.record.currency,
@@ -585,7 +628,7 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
     getTaxSettings(db, workspaceId),
     db.taxAsset.findMany({ where: { authWorkspaceId: workspaceId }, include: { parts: true }, orderBy: [{ acquisitionDate: 'asc' }, { createdAt: 'asc' }] }),
   ]);
-  const [storedInvoices, storedSettlements, storedChanges, settingsRow, storedBoundaryAnswers, storedReverseCharges, filedYears] = await Promise.all([
+  const [storedInvoices, storedSettlements, storedChanges, settingsRow, storedBoundaryAnswers, storedReverseCharges, filedYears, removedLinks] = await Promise.all([
     db.taxIssuedInvoice.findMany({ where: { authWorkspaceId: workspaceId }, include: { payments: true }, orderBy: [{ issueDate: 'asc' }, { number: 'asc' }] }),
     db.taxVatSettlement.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: { settledOn: 'asc' } }),
     db.taxStatusChange.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: { effectiveFrom: 'asc' } }),
@@ -593,6 +636,7 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
     db.taxYearBoundaryAnswer.findMany({ where: { authWorkspaceId: workspaceId } }),
     db.taxReverseCharge.findMany({ where: { authWorkspaceId: workspaceId }, orderBy: [{ subject: 'asc' }, { effectiveFrom: 'asc' }] }),
     db.taxYearSettings.findMany({ where: { authWorkspaceId: workspaceId, filedOn: { not: null } }, select: { year: true, filedOn: true } }),
+    removedLinkDays(db, workspaceId),
   ]);
   const reverseChargeEntries = storedReverseCharges.map(toReverseChargeEntry);
   // A person's answers, with the day each was last saved: an answer saved after
@@ -662,8 +706,11 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
       rowsInAssets.add(part.rowId);
     }
   }
-  const cashDayOf = (f: ReceiptFacts) => f.paid?.day ?? f.record.date;
-  const loadedFacts = loaded?.facts ?? [];
+  // A filed year holds its receipts against payment links made after its filing day (`filedHoldOf`),
+  // judged with the person's answer at the turn of the year where the ten-day rule reads one.
+  const loadedFacts = (loaded?.facts ?? []).map((f) =>
+    withFiledHold(withRemovedLinks(f, removedLinks.get(f.record.rowId)), filedOn, rowsInAssets.has(f.record.rowId) ? undefined : boundaryAnswers.get(`receipt:${f.record.rowId}`)),
+  );
   // Whole receipts, for matching payments: a payment pays a receipt, not a line of it.
   // On their real day: a payment is matched to a receipt by when it was paid, whatever year it counts in.
   const wholeReceipts = loadedFacts.map((f) => resolveItem({ ...f, countsOnDay: null }, vendorRules, settings));
@@ -736,7 +783,8 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
       // The tax arises with the invoice or the service, or earlier with a
       // payment made before it (section 13b (4) sentence 2): the earlier of the
       // document day and the payment day, with the status of that day.
-      const taxDay = earlierDay(f.record.date, f.paid?.day);
+      // A filed year holding the receipt holds this day too (`filedHoldOf`).
+      const taxDay = earlierDay(f.record.date, f.filedHold ? f.filedHold.day : f.paid?.day);
       const item = rc ? withReverseCharge(r.item, rc.rateBp, taxDay, smallBusinessOn(settings, taxDay)) : r.item;
       if (rc && f.record.currency && f.record.currency !== 'EUR' && taxDay?.startsWith(`${year}-`)) foreignCurrencyReverseCharge.add(r.rowId);
       // A whole-receipt part covers every line of that receipt.
@@ -904,7 +952,7 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
           subjectId: f.record.rowId,
           label: r.item.vendor || r.item.label,
           cashDay,
-          dayBasis: f.paid ? 'payment' : 'document',
+          dayBasis: f.filedHold ? 'filed' : f.paid ? 'payment' : 'document',
           cents: r.item.amountCents,
           otherYear,
           ...boundary.decision,
@@ -2075,7 +2123,7 @@ export async function saveLineDecision(db: PrismaClient, ctx: TaxContext, lineId
   // A line is one position: "several small items on this receipt" cannot be said about it.
   if ((raw as { severalLowValueItems?: unknown } | undefined)?.severalLowValueItems === true) throw new LinesInputError('line_cannot_hold_several_items');
   // The line counts in the year its receipt was paid, so that year's form lines apply.
-  const treatment = validateTreatment(raw, rulesFor((await paymentDayOfRow(db, ctx, line.rowId)) ?? facts.record.date));
+  const treatment = validateTreatment(raw, rulesFor(await cashDayOfRow(db, ctx, facts)));
   await db.taxReceiptLine.update({
     where: { id: lineId },
     data: { allocations: treatment.allocations as unknown as Prisma.InputJsonValue, formLineKey: treatment.formLineKey, employmentLineKey: treatment.employmentLineKey },
@@ -2083,13 +2131,24 @@ export async function saveLineDecision(db: PrismaClient, ctx: TaxContext, lineId
 }
 
 /**
- * The day a receipt was paid, exactly as the statement counts it (`linkedByRow`):
- * the same money once, a cancelled purchase not at all. Reading the links
- * directly would let the ten-day check disagree with the statement.
+ * The day a receipt counts on, exactly as the statement counts it (`linkedByRow`,
+ * `withFiledHold`, `cashDayOf`): the same money once, a cancelled purchase not at
+ * all, and a filed year held against links made after its filing day. Reading
+ * the links directly would let the check of a treatment disagree with the statement.
  */
-async function paymentDayOfRow(db: PrismaClient, ctx: TaxContext, rowId: string): Promise<string | null> {
-  if ((await db.taxPaymentLink.count({ where: { authWorkspaceId: ctx.workspaceId, rowId } })) === 0) return null;
-  return linkedByRow((await loadPayments(db, ctx.workspaceId)).payments).get(rowId)?.paid?.day ?? null;
+async function cashDayOfRow(db: PrismaClient, ctx: TaxContext, facts: ReceiptFacts): Promise<string | null> {
+  const rowId = facts.record.rowId;
+  const [links, removed] = await Promise.all([db.taxPaymentLink.count({ where: { authWorkspaceId: ctx.workspaceId, rowId } }), removedLinkDays(db, ctx.workspaceId, rowId)]);
+  if (links === 0 && removed.size === 0) return cashDayOf(facts);
+  const [loaded, filedYears, answer, inAsset] = await Promise.all([
+    loadPayments(db, ctx.workspaceId),
+    db.taxYearSettings.findMany({ where: { authWorkspaceId: ctx.workspaceId, filedOn: { not: null } }, select: { year: true, filedOn: true } }),
+    db.taxYearBoundaryAnswer.findUnique({ where: { authWorkspaceId_subjectKind_subjectId: { authWorkspaceId: ctx.workspaceId, subjectKind: 'receipt', subjectId: rowId } } }),
+    db.taxAssetPart.count({ where: { authWorkspaceId: ctx.workspaceId, rowId } }),
+  ]);
+  const filedOn = new Map(filedYears.map((y) => [y.year, y.filedOn as string]));
+  const stored = answer && inAsset === 0 ? { cashDay: answer.cashDay, belongsToOtherYear: answer.belongsToOtherYear, savedOn: berlinDay(answer.updatedAt) } : undefined;
+  return cashDayOf(withFiledHold(withRemovedLinks({ ...facts, ...linkedFacts(linkedByRow(loaded.payments).get(rowId)) }, removed.get(rowId)), filedOn, stored));
 }
 
 async function requireOrdinaryRow(

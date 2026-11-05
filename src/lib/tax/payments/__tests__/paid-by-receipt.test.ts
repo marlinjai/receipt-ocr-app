@@ -19,7 +19,7 @@ const row = (id: string, amountCents: number, links: Array<{ rowId: string; cent
   original: null,
   byRule: false,
   byPrivateAccount: false,
-  links: links.map((l, i) => ({ id: `${id}-${i}`, rowId: l.rowId, invoiceId: null, cents: l.cents, method: 'manual' })),
+  links: links.map((l, i) => ({ id: `${id}-${i}`, rowId: l.rowId, invoiceId: null, cents: l.cents, method: 'manual', linkedOn: '2026-01-01' })),
 });
 
 describe('paidByReceipt', () => {

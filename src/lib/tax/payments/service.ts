@@ -2,6 +2,7 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { vendorKey } from '../decisions';
+import { berlinDay } from '../year-boundary';
 import { merchantName } from './merchant';
 import { ensureMerchantKeys } from './rekey';
 import { resolveFunding, type Funding } from './funding';
@@ -405,7 +406,10 @@ async function settleEstimate(db: Prisma.TransactionClient, paymentId: string, e
   const links = await db.taxPaymentLink.findMany({ where: { paymentId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { id: true, cents: true } });
   if (links.length === 0) return;
   for (const { id, cents } of scaleLinks(links, from, to)) {
-    if (cents === 0) await db.taxPaymentLink.delete({ where: { id } });
+    if (cents === 0) {
+      await recordLinkRemovals(db, { id });
+      await db.taxPaymentLink.delete({ where: { id } });
+    }
     else if (cents !== links.find((l) => l.id === id)?.cents) await db.taxPaymentLink.update({ where: { id }, data: { cents } });
   }
 }
@@ -571,6 +575,8 @@ export async function deleteImportBatch(db: PrismaClient, ctx: PaymentContext, b
     const cancelledHere = await tx.taxPayment.count({ where: { batchId: batch.id, cancelledByBatchId: { not: null } } });
     const cancelledByThis = later.length > 0 ? await tx.taxPayment.count({ where: { cancelledByBatchId: batch.id } }) : 0;
     if (cancelledHere > 0 || cancelledByThis > 0) throw new PaymentServiceError('batch_has_later_cancellation');
+    // The payments go with the batch and their links with them: their receipts remember them (`recordLinkRemovals`).
+    await recordLinkRemovals(tx, { payment: { batchId: batch.id } });
     // Undone twice at the same moment: the second finds nothing left and says so.
     const { count } = await tx.taxImportBatch.deleteMany({ where: { id: batchId, authWorkspaceId: ctx.workspaceId } });
     if (count === 0) throw new PaymentServiceError('batch_not_found');
@@ -713,7 +719,9 @@ export async function linkPayment(db: PrismaClient, ctx: PaymentContext, raw: un
         const others = loaded.payments.filter((p) => p.id !== payment.id && !funders.includes(p) && onReceipt(p).length > 0);
         // The receipt's only link sits on the debit that funds this very purchase: it is the same money, so the link moves here.
         if (funders.length > 0 && others.length === 0 && payment.links.every((l) => l.rowId !== rowId)) {
-          await tx.taxPaymentLink.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, rowId, paymentId: { in: funders.map((p) => p.id) } } });
+          const moved = { authWorkspaceId: ctx.workspaceId, rowId, paymentId: { in: funders.map((p) => p.id) } };
+          await recordLinkRemovals(tx, moved);
+          await tx.taxPaymentLink.deleteMany({ where: moved });
           movedFromPaymentId = funders[0].id;
         } else if (!input.confirmed && receipt && receipt.amountCents !== null) {
           // The one paid-by sum the picker and the routed link read: this company's payments (a purchase and
@@ -836,8 +844,40 @@ export function paidByReceipt(ownPayments: readonly PaymentRow[], linkedElsewher
 }
 
 export async function unlinkPayment(db: PrismaClient, ctx: PaymentContext, linkId: string): Promise<void> {
-  const { count } = await db.taxPaymentLink.deleteMany({ where: { id: linkId, authWorkspaceId: ctx.workspaceId } });
-  if (count === 0) throw new PaymentServiceError('link_not_found');
+  await db.$transaction(async (tx) => {
+    const where = { id: linkId, authWorkspaceId: ctx.workspaceId };
+    await recordLinkRemovals(tx, where);
+    const { count } = await tx.taxPaymentLink.deleteMany({ where });
+    // Nothing removed: the record written above goes with the transaction.
+    if (count === 0) throw new PaymentServiceError('link_not_found');
+  });
+}
+
+/**
+ * Remember the receipt links `where` selects before they are removed: what each
+ * was (the payment's day and direction, its cents) and when it was made. A filed
+ * year holds its receipts against links made after its filing day, and judging
+ * that needs the payments a receipt had on the filing day, also those taken off
+ * since (`filedHoldOf`, `TaxPaymentLinkRemoval`). Call it in the transaction
+ * that removes them.
+ */
+export async function recordLinkRemovals(db: Prisma.TransactionClient, where: Prisma.TaxPaymentLinkWhereInput): Promise<void> {
+  const links = await db.taxPaymentLink.findMany({
+    where: { AND: [where, { rowId: { not: null } }] },
+    select: { authWorkspaceId: true, authTenantId: true, rowId: true, cents: true, createdAt: true, payment: { select: { bookingDay: true, amountCents: true } } },
+  });
+  if (links.length === 0) return;
+  await db.taxPaymentLinkRemoval.createMany({
+    data: links.map((l) => ({
+      authWorkspaceId: l.authWorkspaceId,
+      authTenantId: l.authTenantId,
+      rowId: l.rowId as string,
+      bookingDay: l.payment.bookingDay,
+      moneyOut: l.payment.amountCents < 0,
+      cents: l.cents,
+      linkedAt: l.createdAt,
+    })),
+  });
 }
 
 /** Called by the row delete paths: a deleted receipt takes its payment links with it; the payments stay. */
@@ -888,7 +928,12 @@ export interface PaymentRow {
    * whoever sums private spending reads the sign of `amountCents` or `sourceKind`.
    */
   byPrivateAccount: boolean;
-  links: Array<{ id: string; rowId: string | null; invoiceId: string | null; cents: number; method: string }>;
+  /**
+   * `linkedOn`: the day (Europe/Berlin) the link was made. A link made after a
+   * year's filing day may not move a receipt into or out of that filed year
+   * (`filedHoldOf` in `year-boundary.ts`).
+   */
+  links: Array<{ id: string; rowId: string | null; invoiceId: string | null; cents: number; method: string; linkedOn: string }>;
 }
 
 export interface LoadedPayments {
@@ -991,7 +1036,7 @@ async function readPayments(db: PrismaClient | Prisma.TransactionClient, workspa
       original: p.originalCurrency !== null && p.originalAmountCents !== null ? { currency: p.originalCurrency, amountCents: p.originalAmountCents } : null,
       byRule: funds !== undefined && treatment !== 'own_account' && p.kindOverride === null,
       byPrivateAccount: kind === 'private' && p.kindOverride === null && privateAccounts.has(p.accountId),
-      links: p.links.map((l) => ({ id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method })),
+      links: p.links.map((l) => ({ id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method, linkedOn: berlinDay(l.createdAt) })),
     };
   });
   return {

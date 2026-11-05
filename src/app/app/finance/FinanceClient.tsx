@@ -1278,8 +1278,15 @@ function ItemHeader({ item }: { item: StatementItem }) {
   );
 }
 
-/** The day an item counts on; for one the ten-day rule moved, the day it was really paid and the year it counts in. */
+/**
+ * The day an item counts on; for one the ten-day rule moved, or a filed year holds against a payment
+ * linked after its filing day, the day it was really paid and the year it counts in, and why.
+ */
 function dayText(item: StatementItem): string {
+  if (item.date && item.filedYear !== null) {
+    const counts = `zählt für ${item.date.slice(0, 4)} (Erklärung ${item.filedYear} abgegeben)`;
+    return item.paidOn ? `gezahlt ${formatDay(item.paidOn)}, ${counts}` : `${formatDay(item.date)}, ${counts}`;
+  }
   if (item.paidOn && item.date) return `gezahlt ${formatDay(item.paidOn)}, zählt für ${item.date.slice(0, 4)} (Jahreswechsel)`;
   return formatDay(item.date);
 }

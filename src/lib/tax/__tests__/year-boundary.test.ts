@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { REGULAR_BUSINESS, SMALL_BUSINESS, meal } from '@/lib/meals/__tests__/fixtures';
 import type { MealRecord } from '@/lib/meals/types';
 import { computeYear } from '../compute';
-import { resolveItem, resolveItems, type ReceiptFacts } from '../facts';
+import { cashDayOf, resolveItem, resolveItems, withFiledHold, type ReceiptFacts } from '../facts';
 import { rulesForYear } from '../rules';
-import { answerFor, berlinDay, boundaryDay, decideBoundary, filedWithOf, otherYearOf, recursMonthly, touchesYear, vatStatusDay, vatStatusOn, type BoundaryFacts } from '../year-boundary';
+import { answerFor, berlinDay, boundaryDay, decideBoundary, filedHoldOf, filedWithOf, otherYearOf, recursMonthly, touchesYear, vatStatusDay, vatStatusOn, type BoundaryFacts } from '../year-boundary';
 
 /** Invented: a monthly rent of 650.00. */
 function rent(overrides: Partial<MealRecord> = {}): MealRecord {
@@ -195,5 +195,96 @@ describe('the answer that applies to a payment at the turn of the year', () => {
     // Both years filed, saved between the two filing days: it departs from the return it was saved after.
     const both = new Map([[2025, '2026-10-17'], [2026, '2027-05-02']]);
     expect(decide({ cashDay: '2026-01-03', filedOn: both, stored: stored(true, '2026-11-01', '2026-01-03') })).toMatchObject({ answer: false, departsFromFiled: 2025 });
+  });
+});
+
+describe('a filed year holds a receipt against payment links made after its filing day', () => {
+  // Invented, shaped like the defect of 2026-11-05: a phone bill of 16 December paid by direct debit on 2 January.
+  const DOC = '2024-12-16';
+  const DEBIT = { day: '2025-01-02', linkedOn: '2026-11-01' };
+  const filed = new Map([
+    [2024, '2026-10-11'],
+    [2025, '2026-10-17'],
+  ]);
+
+  it('a link made before the filing day moves the receipt, as it always did', () => {
+    expect(filedHoldOf(DOC, [{ ...DEBIT, linkedOn: '2026-10-10' }], filed)).toBeNull();
+    // On the filing day itself the link counts as filed with it, as an answer saved that day does.
+    expect(filedHoldOf(DOC, [{ ...DEBIT, linkedOn: '2026-10-11' }], new Map([[2024, '2026-10-11']]))).toBeNull();
+  });
+
+  it('a link made after the filing day does not move the receipt out of the filed year', () => {
+    expect(filedHoldOf(DOC, [DEBIT], filed)).toEqual({ day: DOC, filedYear: 2024 });
+    // Only the year the receipt leaves is filed: still held.
+    expect(filedHoldOf(DOC, [DEBIT], new Map([[2024, '2026-10-11']]))).toEqual({ day: DOC, filedYear: 2024 });
+  });
+
+  it('nor into a filed year: a receipt of an open year linked late to a payment of a filed year stays', () => {
+    // A receipt of 3 January 2025 paid in advance on 20 December 2024; 2024 filed, 2025 open.
+    expect(filedHoldOf('2025-01-03', [{ day: '2024-12-20', linkedOn: '2026-11-01' }], new Map([[2024, '2026-10-11']]))).toEqual({ day: '2025-01-03', filedYear: 2024 });
+  });
+
+  it('keeps the day the return saw: an earlier link stays, a later one with an earlier day does not count', () => {
+    const links = [
+      { day: '2024-12-30', linkedOn: '2026-10-01' },
+      { day: '2025-01-02', linkedOn: '2026-11-01' },
+    ];
+    // The late link pays later: the first payment is unchanged, nothing to hold.
+    expect(filedHoldOf(DOC, links, filed)).toBeNull();
+    const earlier = [
+      { day: '2025-01-05', linkedOn: '2026-10-01' },
+      { day: '2024-12-28', linkedOn: '2026-11-01' },
+    ];
+    // Filed in 2025 by the first link; the late one would pull it back into 2024.
+    expect(filedHoldOf(DOC, earlier, filed)).toEqual({ day: '2025-01-05', filedYear: 2024 });
+  });
+
+  it('an open year moves as it always did, and a link inside one year holds nothing', () => {
+    expect(filedHoldOf(DOC, [DEBIT], new Map())).toBeNull();
+    expect(filedHoldOf(DOC, [DEBIT], new Map([[2023, '2026-10-11']]))).toBeNull();
+    expect(filedHoldOf('2024-11-03', [{ day: '2024-11-20', linkedOn: '2026-11-01' }], filed)).toBeNull();
+    expect(filedHoldOf(DOC, [], filed)).toBeNull();
+  });
+
+  it('the statement counts a held receipt on its filed day with what was paid, and says so', () => {
+    const phone = rent({ rowId: 'p', name: 'Telefon Dezember', vendor: 'Netzwerk Nord', category: 'Telefon', gross: 39.95, date: DOC });
+    const linked = facts(phone, { decision: BUSINESS, paid: { day: DEBIT.day, cents: 3_995 }, outDays: [DEBIT] });
+    expect(cashDayOf(linked)).toBe(DEBIT.day);
+    const held = withFiledHold(linked, filed);
+    expect(held.filedHold).toEqual({ day: DOC, filedYear: 2024 });
+    expect(cashDayOf(held)).toBe(DOC);
+    expect(resolveItem(held, [], SMALL_BUSINESS).item).toMatchObject({ date: DOC, dateBasis: 'filed', paidOn: DEBIT.day, filedYear: 2024, amountCents: 3_995 });
+    // An open year: the link applies and nothing is held.
+    const open = withFiledHold(linked, new Map());
+    expect(open).toBe(linked);
+    expect(resolveItem(open, [], SMALL_BUSINESS).item).toMatchObject({ date: DEBIT.day, dateBasis: 'payment' });
+  });
+
+  it('a credit note is held by its money back', () => {
+    const credit = rent({ rowId: 'c', gross: -20, date: DOC });
+    const linked = facts(credit, { decision: BUSINESS, moneyBack: { day: DEBIT.day, cents: 2_000 }, backDays: [DEBIT] });
+    expect(withFiledHold(linked, filed).filedHold).toEqual({ day: DOC, filedYear: 2024 });
+    // Money out linked to a credit note sets no day of it, so it holds nothing.
+    expect(withFiledHold(facts(credit, { moneyOutCents: 500, outDays: [DEBIT] }), filed).filedHold).toBeUndefined();
+  });
+
+  it("a person's answer at the turn of the year is decided as before, and the hold reads the year it gave", () => {
+    const filed2025 = new Map([[2025, '2026-10-17']]);
+    // Paid 30 December 2025, answered "belongs to 2026" before the filing day: the 2025 return left it out.
+    const answer = { cashDay: '2025-12-30', belongsToOtherYear: true, savedOn: '2026-10-01' };
+    const first = { day: '2025-12-30', linkedOn: '2026-10-01' };
+    // A second payment linked after filing that pays later changes no day: nothing is held, the answer applies as before.
+    expect(filedHoldOf('2025-12-15', [first, { day: '2026-01-03', linkedOn: '2026-11-01' }], filed2025, answer)).toBeNull();
+    // A late link to an earlier payment of 20 December would pull it into the filed 2025: held on the answered day.
+    const pulled = [first, { day: '2025-12-20', linkedOn: '2026-11-01' }];
+    expect(filedHoldOf('2025-12-15', pulled, filed2025, answer)).toEqual({ day: '2025-12-30', filedYear: 2025 });
+    // Without the answer both days are 2025: nothing crosses (a meal or an asset is judged so).
+    expect(filedHoldOf('2025-12-15', pulled, filed2025)).toBeNull();
+    // The held day keeps the answer applying, decided exactly as before.
+    const held = withFiledHold(facts(rent({ date: '2025-12-15' }), { decision: BUSINESS, paid: { day: '2025-12-20', cents: 65_000 }, outDays: pulled }), filed2025, answer);
+    expect(cashDayOf(held)).toBe('2025-12-30');
+    expect(decideBoundary({ kind: 'receipt', cashDay: '2025-12-30', stored: answer, filedOn: filed2025, recurring: true })).toMatchObject({ answer: true, source: 'person', filedWith: 2025 });
+    // An answer saved after the filing day is not part of the return: the hold does not follow it.
+    expect(filedHoldOf('2025-12-15', pulled, filed2025, { ...answer, savedOn: '2026-10-20' })).toBeNull();
   });
 });

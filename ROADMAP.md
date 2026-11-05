@@ -128,12 +128,14 @@
   missing-receipt loop, business and unanswered ones stay with Whiz-Art Media. Worked out on
   read, nothing copied. Plan:
   [docs/plans/2026-10-22-payments-across-companies.md](docs/plans/2026-10-22-payments-across-companies.md). (2026-10-23)
-- [ ] PayPal live through the bank interface (decided by the owner on 2026-10-23): the PayPal
+- [x] PayPal live through the bank interface (decided by the owner on 2026-10-23): the PayPal
   account continues live after the last day its CSV list covers, a movement seen by both sources
   is recognized as one, the funding rule keeps it as the PayPal wallet, dollar purchases arrive at
   the reference rate marked as an estimate, and an empty account can be removed. After the
-  deploy the owner connects the PayPal account once. Plan:
-  [docs/plans/2026-10-23-paypal-live.md](docs/plans/2026-10-23-paypal-live.md). (2026-10-23)
+  deploy the owner connects the PayPal account once. Connected on 2026-10-25 and fetched daily
+  since; the list of 01.01. to 31.08.2026 imported on 2026-11-04 overlapped without a payment
+  stored twice. Plan:
+  [docs/plans/2026-10-23-paypal-live.md](docs/plans/2026-10-23-paypal-live.md). Done 2026-11-05.
 - [ ] The Advanzia credit card from its monthly statement PDF (the owner's rule of 2026-10-16:
   live where possible, files as the fallback; the bank interface offers no Advanzia). The reader
   is built: the PDF is uploaded in the payments import like the CSV exports, every row becomes a

@@ -12,6 +12,7 @@ import { dailyLinesBackfill } from '@/lib/line-items/backfill';
 import { storedInvoiceFields } from '@/lib/line-items/structured-source';
 import { readReceiptLines } from '@/lib/receipt-classifier';
 import { dailyInvoiceNumberBackfill } from '@/lib/review/invoice-number-backfill';
+import { dailyLookAlikeSettle, serverLookAlikeDeps } from '@/lib/review/look-alikes';
 
 /**
  * The daily fetch of every active bank connection of every workspace. A
@@ -44,7 +45,12 @@ export async function POST(req: NextRequest) {
       // The daily part of the line backfill (plan 2026-10-26-receipt-line-items): a bounded run per company, after the answer.
       after(() => dailyLinesBackfill(prisma, readReceiptLines, { structuredOf: storedInvoiceFields }));
       // The daily invoice numbers and the automatic duplicate pass (plan 2026-10-29-invoice-number-duplicates): no model, after the answer.
-      after(() => dailyInvoiceNumberBackfill(prisma));
+      // Then the look-alike pairs no number decides (plan 2026-11-05-duplicates-without-asking): numbers read again, the
+      // model comparing both pages, bounded per company. In this order, so the pass sees the numbers the backfill found.
+      after(async () => {
+        await dailyInvoiceNumberBackfill(prisma);
+        await dailyLookAlikeSettle(prisma, await serverLookAlikeDeps());
+      });
       // The answer names connections and counts only, never a company.
       return results.map(({ connectionId, status, added }) => ({ connectionId, status, added }));
     },

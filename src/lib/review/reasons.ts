@@ -139,6 +139,42 @@ export function sameFile(a: Pick<ReviewSnapshot, 'fileHashes'>, b: Pick<ReviewSn
 
 export type AutomaticDuplicate = 'same_file' | 'same_invoice';
 
+/**
+ * Why a receipt was archived into another one: the rules above, or
+ * 'same_purchase', the model's word after comparing both pages of a look-alike
+ * pair (plan docs/plans/2026-11-05-duplicates-without-asking.md).
+ */
+export type MergeReason = AutomaticDuplicate | 'same_purchase';
+
+export const isMergeReason = (value: unknown): value is MergeReason => value === 'same_file' || value === 'same_invoice' || value === 'same_purchase';
+
+/** The two ids of a pair in one order, whichever receipt is named first. */
+export function orderedPair(a: string, b: string): [string, string] {
+  return a < b ? [a, b] : [b, a];
+}
+
+/** One key per pair, whichever receipt is named first. */
+export const pairKey = (a: string, b: string): string => orderedPair(a, b).join('|');
+
+type FingerprintFacts = Pick<ReviewSnapshot, 'rowId' | 'vendor' | 'date' | 'gross' | 'currency' | 'fileHashes' | 'invoiceKey'>;
+
+/** What a receipt is, as far as a decision about its look-alike pair rests on it. */
+function receiptFingerprint(s: FingerprintFacts): string {
+  const cents = s.gross === null ? '' : String(Math.round(s.gross * 100));
+  return [s.rowId, vendorKey(s.vendor), s.date ?? '', cents, s.currency, s.invoiceKey ?? '', [...s.fileHashes].sort().join(',')].join('/');
+}
+
+/**
+ * The facts a decision about a pair was taken on: both receipts' vendor, day,
+ * total, currency, compared number and file contents. A decision whose
+ * fingerprint differs from the pair's now (a person corrected the vendor, a
+ * retake brought another photo) counts for nothing: derived state is keyed to
+ * its inputs, and the pair is decided again.
+ */
+export function pairFingerprint(a: FingerprintFacts, b: FingerprintFacts): string {
+  return [receiptFingerprint(a), receiptFingerprint(b)].sort().join('||');
+}
+
 /** Why two receipts are one without anybody being asked; null when they are not, or a person said they are different. */
 export function automaticDuplicate(a: ReviewSnapshot, b: ReviewSnapshot, distinct: ReadonlyMap<string, ReadonlySet<string>>): AutomaticDuplicate | null {
   if (a.rowId === b.rowId || distinct.get(a.rowId)?.has(b.rowId) || distinct.get(b.rowId)?.has(a.rowId)) return null;
@@ -146,20 +182,60 @@ export function automaticDuplicate(a: ReviewSnapshot, b: ReviewSnapshot, distinc
   return sameInvoice(a, b) ? 'same_invoice' : null;
 }
 
+/** A decision of the look-alike pass about one pair, as stored (receipt_pair_decisions). */
+export interface StoredPairDecision {
+  rowIdA: string;
+  rowIdB: string;
+  fingerprint: string;
+  outcome: string;
+  reason: string | null;
+}
+
+/** Outcomes that end the question: the pair is two purchases. */
+const KEPT_APART = new Set(['different', 'different_numbers']);
+/** Outcomes that leave the question with the pass's reason beside it. */
+const STILL_ASKED = new Set(['unsure', 'failed']);
+
+/**
+ * The decisions of the look-alike pass that hold for the receipts as they are
+ * now (their fingerprint is the pair's current one): the pairs it kept apart,
+ * for `lookAlikes` to leave out, and for the pairs it could not settle, what
+ * it said, for the review list to show next to the question.
+ */
+export function pairDecisionsNow(
+  decisions: readonly StoredPairDecision[],
+  snapshots: ReadonlyMap<string, FingerprintFacts>,
+): { settled: Set<string>; notes: Map<string, { outcome: 'unsure' | 'failed'; reason: string | null }> } {
+  const settled = new Set<string>();
+  const notes = new Map<string, { outcome: 'unsure' | 'failed'; reason: string | null }>();
+  for (const d of decisions) {
+    const [a, b] = [snapshots.get(d.rowIdA), snapshots.get(d.rowIdB)];
+    if (!a || !b || pairFingerprint(a, b) !== d.fingerprint) continue;
+    const key = pairKey(d.rowIdA, d.rowIdB);
+    if (KEPT_APART.has(d.outcome)) settled.add(key);
+    else if (STILL_ASKED.has(d.outcome)) notes.set(key, { outcome: d.outcome as 'unsure' | 'failed', reason: d.reason });
+  }
+  return { settled, notes };
+}
+
 /**
  * For every receipt, the other receipts that MAY be the same purchase and need a person's word: the same
  * day and total from a vendor that can be the same, where at least one of the two has no invoice number.
  * Never a pair the app settles itself: the same file or the same invoice is merged automatically
  * (`src/lib/review/merge.ts`), and two different invoice numbers are two invoices. `distinct` holds the
- * pairs a person has already said are different.
+ * pairs a person has already said are different; `settled` the pairs (`pairKey`) the look-alike pass
+ * decided are two purchases on the facts the receipts hold now (`src/lib/review/look-alikes.ts`). A
+ * model's word is kept apart from a person's: it ends the question, but never stops a later rule (the
+ * same number typed on both) from merging the pair.
  */
 export function lookAlikes(
   snapshots: ReviewSnapshot[],
   distinct: ReadonlyMap<string, ReadonlySet<string>>,
+  settled: ReadonlySet<string> = new Set(),
 ): Map<string, string[]> {
   const out = new Map<string, string[]>();
   const add = (a: string, b: string) => {
-    if (a === b || distinct.get(a)?.has(b) || distinct.get(b)?.has(a)) return;
+    if (a === b || distinct.get(a)?.has(b) || distinct.get(b)?.has(a) || settled.has(pairKey(a, b))) return;
     const list = out.get(a) ?? [];
     if (!list.includes(b)) out.set(a, [...list, b]);
   };
@@ -281,7 +357,7 @@ export const REASON_TEXT: Record<ReviewReason, string> = {
   total_conflict: 'Zwei Lesarten des Gesamtbetrags widersprechen sich.',
   date_conflict: 'Das Rechnungsdatum ist nicht gesichert: Zwei Lesarten widersprechen sich, oder das Datum steht nicht im erkannten Text.',
   category_doubt: 'Sieht nach einer Bewirtung aus, wurde aber anders eingeordnet.',
-  possible_duplicate: 'Mögliches Duplikat: gleicher Tag, gleicher Betrag, und einem der beiden Belege fehlt die Rechnungsnummer. Steht sie auf dem Beleg, genügt es, sie einzutragen: Belege mit gleicher Nummer führt die App selbst zusammen.',
+  possible_duplicate: 'Mögliches Duplikat: gleicher Tag, gleicher Betrag, und einem der beiden Belege fehlt die Rechnungsnummer. Die App liest fehlende Nummern selbst nach und vergleicht beide Seiten; steht ein Paar noch hier, konnte sie es nicht klären, der Grund steht dabei. Steht die Nummer auf dem Beleg, genügt es, sie einzutragen: Belege mit gleicher Nummer führt die App selbst zusammen.',
   reading_differs: 'Der Beleg wurde mit einem älteren Leser erfasst. Die neue Lesart weicht ab.',
   lines_differ: 'Die Positionen ergeben nicht den Gesamtbetrag: Betrag prüfen, oder den Beleg mit „Seite neu lesen“ neu lesen. Gezählt wird der Gesamtbetrag.',
 };

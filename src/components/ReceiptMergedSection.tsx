@@ -15,6 +15,14 @@ function day(iso: string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+/** Why the receipt was archived into this one, and what decided it (plan 2026-11-05-duplicates-without-asking). */
+export function mergeReasonText(entry: Pick<MergedReceiptView, 'reason' | 'decidedBy' | 'decisionNote' | 'invoiceNumber'>): string {
+  if (entry.reason === 'same_file') return 'dieselbe Datei';
+  if (entry.reason === 'same_purchase') return `laut Sprachmodell derselbe Kauf, nach Vergleich beider Seiten${entry.decisionNote ? ` („${entry.decisionNote}“)` : ''}`;
+  const number = `gleiche Rechnungsnummer${entry.invoiceNumber ? ` ${entry.invoiceNumber}` : ''}`;
+  return entry.decidedBy === 'number_reread' ? `${number}, von der App nachgelesen` : number;
+}
+
 /**
  * "Zusammengeführt" in the receipt view: the receipts the app archived into
  * this one because they are the same receipt (the same file, or the same
@@ -93,7 +101,7 @@ export default function ReceiptMergedSection({
               <li key={entry.rowId} className="flex flex-wrap items-center justify-between gap-2 text-xs">
                 <span className="min-w-0" style={{ color: 'var(--foreground)' }}>
                   „{entry.name}“:{' '}
-                  {entry.reason === 'same_file' ? 'dieselbe Datei' : `gleiche Rechnungsnummer${entry.invoiceNumber ? ` ${entry.invoiceNumber}` : ''}`}
+                  {mergeReasonText(entry)}
                   {day(entry.mergedAt) ? `, am ${day(entry.mergedAt)}` : ''}
                 </span>
                 <button type="button" className="ui-btn ui-btn-sm shrink-0" disabled={busy !== null} onClick={() => void restore(entry)} aria-label={`${entry.name} wiederherstellen`}>

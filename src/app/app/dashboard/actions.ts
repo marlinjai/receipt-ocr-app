@@ -27,6 +27,8 @@ import { AssignmentEditError, assignmentEditContext, followTreatment, routeAssig
 import { readRowLinks } from '@/lib/groups/links';
 import { INVOICE_NUMBER_COLUMN } from '@/lib/extraction/invoice-number';
 import { mergeAfterChange, restoreMergedReceipt, touches } from '@/lib/review/merge';
+import { settleLookAlikesAfterChange } from '@/lib/review/look-alikes';
+import { after } from 'next/server';
 import { measurePage, timed } from '@/lib/timing';
 import {
   requireReceiptsSession,
@@ -418,6 +420,11 @@ export async function updateRow(rowId: string, edited: Record<string, CellValue>
     const merges = await mergeAfterChange(prisma, ctx, [rowId]);
     if (merges.has(rowId)) return { ...written, archived: true };
     if (touches(merges, rowId)) return { ...written, mergedOther: true };
+  }
+  // An edit of what makes two receipts look alike (vendor, day, total, number) settles the receipt's look-alikes
+  // without asking, after the answer (plan 2026-11-05-duplicates-without-asking).
+  if (columns.some((c) => [INVOICE_NUMBER_COLUMN, 'Vendor', 'Date', 'Gross'].includes(c.name) && c.id in edited)) {
+    after(() => settleLookAlikesAfterChange(prisma, ctx, [rowId]));
   }
   return written;
 }

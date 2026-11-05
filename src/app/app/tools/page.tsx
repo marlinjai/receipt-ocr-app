@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import FxRecomputePanel from './FxRecomputePanel';
 import InvoiceNumbersPanel from './InvoiceNumbersPanel';
 import LinesBackfillPanel from './LinesBackfillPanel';
+import LookAlikesPanel from './LookAlikesPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,6 +37,10 @@ export default async function ToolsPage() {
         <section className={SECTION} aria-labelledby="tool-numbers">
           <h2 id="tool-numbers" className={HEADING} style={{ color: 'var(--foreground)' }}>Rechnungsnummern lesen</h2>
           <InvoiceNumbersPanel />
+        </section>
+        <section className={SECTION} aria-labelledby="tool-look-alikes">
+          <h2 id="tool-look-alikes" className={HEADING} style={{ color: 'var(--foreground)' }}>Duplikate klären</h2>
+          <LookAlikesPanel />
         </section>
       </div>
     </main>

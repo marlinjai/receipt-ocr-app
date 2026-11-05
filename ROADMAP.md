@@ -456,6 +456,17 @@
   more complete one, restorable), and "Belege prüfen" asks only where a number is missing. Stored
   receipts get theirs with "Rechnungsnummern lesen" on the receipts page and daily. Plan:
   [docs/plans/2026-10-29-invoice-number-duplicates.md](docs/plans/2026-10-29-invoice-number-duplicates.md). Done 2026-10-29.
+- [x] Look-alike receipts are settled without asking (decided with the owner on 2026-11-05: "It should
+  never need us to do this process manually"): a missing invoice number is read again (wider text
+  layouts, the stored file name, then the upload's model with the page) and the rule merges or
+  separates the pair; where no number decides, Claude Opus 5.5 compares both pages, a confident
+  "same" merges reversibly, "different" keeps both, anything else stays in "Belege prüfen" with the
+  model's reason. After every upload and new reading, daily, and with "Duplikate klären" on the tools
+  page. The chat sidebar defaults to Sonnet 5.5. Plan:
+  [docs/plans/2026-11-05-duplicates-without-asking.md](docs/plans/2026-11-05-duplicates-without-asking.md). Done 2026-11-05.
+- [ ] Confirm on production that the Adobe receipt of 2026-01-20 (number IEN2026004022987) left
+  "Belege prüfen" after the deploy of the look-alike pass, by the daily run or "Duplikate klären" on
+  the tools page as Whiz-Art Media, and that the pairs left there show the model's reason. (2026-11-05)
 
 ## In Progress
 

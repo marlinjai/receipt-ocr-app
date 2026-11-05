@@ -47,12 +47,16 @@ GOOGLE_CLOUD_VISION_API_KEY=AIza_your_key_here
 # OpenRouter -- AI classification and chat sidebar
 OPENROUTER_API_KEY=sk-or-v1-your_key_here
 
-# Optional: the model of the chat sidebar (default anthropic/claude-sonnet-4.6)
-# AI_MODEL=anthropic/claude-sonnet-4.6
+# Optional: the model of the chat sidebar (default anthropic/claude-sonnet-5.5)
+# AI_MODEL=anthropic/claude-sonnet-5.5
 # Optional: the model that reads a receipt. It is given the page itself (an image
 # or PDF pages), so it must accept image and file input. Default
 # anthropic/claude-haiku-5.5. It does not follow AI_MODEL.
 # AI_CLASSIFY_MODEL=anthropic/claude-haiku-5.5
+# Optional: the model that compares the pages of two look-alike receipts where no
+# invoice number decides (default anthropic/claude-opus-5.5; with ANTHROPIC_API_KEY,
+# ANTHROPIC_DUPLICATE_MODEL, default claude-opus-5-5).
+# AI_DUPLICATE_MODEL=anthropic/claude-opus-5.5
 ```
 
 Database connectivity uses the Cloudflare D1 binding (`DB`) configured in `wrangler.jsonc` -- no environment variables needed for the database.

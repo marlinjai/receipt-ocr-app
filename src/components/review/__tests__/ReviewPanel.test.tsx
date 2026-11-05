@@ -105,12 +105,29 @@ describe('ReviewPanel', () => {
     expect((screen.getByRole('button', { name: 'Privat' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("a look-alike the app could not settle shows the model's reason, or why it could not compare", async () => {
+    setup([
+      entry({
+        reasons: ['possible_duplicate'],
+        canConfirm: false,
+        duplicates: [
+          { rowId: 'r9', name: 'Kassenbon', date: '2025-10-09', gross: 48.4, note: { outcome: 'unsure', reason: 'Der zweite Beleg ist unscharf.' } },
+          { rowId: 'r8', name: 'Kartenbeleg', date: '2025-10-09', gross: 48.4, note: { outcome: 'failed', reason: null } },
+        ],
+      }),
+    ]);
+    await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));
+    expect(screen.getByText(/Nicht geklärt, laut Sprachmodell: Der zweite Beleg ist unscharf\./)).toBeTruthy();
+    expect(screen.getByText(/Nicht geklärt: Die App konnte die beiden Belege nicht vergleichen\./)).toBeTruthy();
+  });
+
   it('a look-alike names the other receipt and offers to keep both or look at it', async () => {
     const handlers = setup([
-      entry({ reasons: ['possible_duplicate'], canConfirm: false, duplicates: [{ rowId: 'r9', name: 'Grillhaus Beispiel (zweiter Scan)', date: '2025-10-09', gross: 48.4 }] }),
+      entry({ reasons: ['possible_duplicate'], canConfirm: false, duplicates: [{ rowId: 'r9', name: 'Grillhaus Beispiel (zweiter Scan)', date: '2025-10-09', gross: 48.4, note: null }] }),
     ]);
     await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));
     expect(screen.getByText(/Gleicht: Grillhaus Beispiel \(zweiter Scan\) \(09\.10\.2025\)/)).toBeTruthy();
+    expect(screen.queryByText(/Nicht geklärt/)).toBeNull();
 
     await userEvent.click(screen.getByRole('button', { name: 'Beide behalten' }));
     expect(handlers.onKeepBoth).toHaveBeenCalledWith('r1', 'r9');

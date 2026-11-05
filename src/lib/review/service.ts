@@ -11,7 +11,7 @@ import { parseTaxLines, serializeTaxLines } from '@/lib/meals/rules';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 import { kontoFor, type NewReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
 import { cachedReading } from './reading-cache';
-import { isConfirmable, isReadFlag, lookAlikes, paymentsCoverTotal, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
+import { isConfirmable, isReadFlag, lookAlikes, pairDecisionsNow, pairKey, paymentsCoverTotal, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
 import { countedReceiptLinks, loadPayments, type LoadedPayments } from '@/lib/tax/payments/service';
 import { getFxRate } from '@/lib/fx-rates';
 import { orderedRates, withTaxRates } from '@/lib/tax-rates';
@@ -62,8 +62,12 @@ export interface ReviewEntry {
   reasons: ReviewReason[];
   /** True when at least one reason is a recorded doubt that "Geprüft" settles. */
   canConfirm: boolean;
-  /** The receipts this one looks like, for the "same purchase?" decision. */
-  duplicates: Array<{ rowId: string; name: string; date: string | null; gross: number | null }>;
+  /**
+   * The receipts this one looks like, for the "same purchase?" decision. `note` is what the look-alike
+   * pass said where it could not settle the pair itself (the model's sentence, or why it could not
+   * compare them); null where it has not looked yet.
+   */
+  duplicates: Array<{ rowId: string; name: string; date: string | null; gross: number | null; note: { outcome: 'unsure' | 'failed'; reason: string | null } | null }>;
   /** What a new reading of the stored text would change, field by field. Empty when nothing. */
   proposal: ReadingChange[];
   /** The receipt's lines against its total, where they were read; the review list says by how much they miss it. */
@@ -262,7 +266,15 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
     return reading ? checkLines(reading, { gross: s.gross, net: s.net, tip: s.reading.tip }) : null;
   };
   const byId = new Map(snapshots.map((s) => [s.rowId, s]));
-  const alike = await timed('review.alike', async () => lookAlikes(snapshots, distinct));
+  // What the look-alike pass decided (src/lib/review/look-alikes.ts): pairs it kept apart are not asked, the others carry its reason.
+  const pairDecisions = await db.receiptPairDecision
+    .findMany({ where: { authWorkspaceId: workspaceId }, select: { rowIdA: true, rowIdB: true, fingerprint: true, outcome: true, reason: true } })
+    .catch((err) => {
+      console.error('[review] the look-alike decisions could not be read:', err instanceof Error ? err.name : 'error');
+      return [];
+    });
+  const { settled, notes } = pairDecisionsNow(pairDecisions, byId);
+  const alike = await timed('review.alike', async () => lookAlikes(snapshots, distinct, settled));
 
   const entries: ReviewEntry[] = [];
   await timed('review.entries', async () => {
@@ -287,7 +299,7 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
         duplicates: duplicates
           .map((id) => byId.get(id))
           .filter((d): d is NonNullable<typeof d> => d !== undefined)
-          .map((d) => ({ rowId: d.rowId, name: d.name, date: d.date, gross: d.gross })),
+          .map((d) => ({ rowId: d.rowId, name: d.name, date: d.date, gross: d.gross, note: notes.get(pairKey(s.rowId, d.rowId)) ?? null })),
         proposal,
         linesCheck,
       });
@@ -297,6 +309,48 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
     if (a.date !== b.date) return (a.date ?? '9999') < (b.date ?? '9999') ? -1 : 1;
     return a.rowId < b.rowId ? -1 : 1;
   });
+}
+
+/** One receipt of a look-alike pair, as the look-alike pass works with it. */
+export type LookAlikeSnapshot = ReviewSnapshot & {
+  /** The recognized text stored with the receipt. */
+  text: string;
+  /** The "Rechnungsnummer" cell as it is, trimmed: a weak number a person typed is still theirs. */
+  printedNumber: string;
+};
+
+/**
+ * The look-alike pairs of a company as "Belege prüfen" asks them, built the
+ * same way (the same snapshots, the same `lookAlikes`, the same decisions of
+ * the look-alike pass left out), for the pass that settles them
+ * (src/lib/review/look-alikes.ts). Each pair once, its ids in order.
+ */
+export async function loadLookAlikePairs(
+  db: PrismaClient,
+  workspaceId: string,
+): Promise<{ snapshots: Map<string, LookAlikeSnapshot>; pairs: Array<[string, string]>; decisions: Map<string, { fingerprint: string; outcome: string; attempts: number }> } | null> {
+  const ctx = await tableContext(db, workspaceId);
+  if (!ctx) return null;
+  const rows = await allReceiptRows(ctx.adapter, ctx.tableId, ctx.columns);
+  const rowIds = rows.map((r) => r.id);
+  const [hashes, stored, decisions] = await Promise.all([
+    fileHashesByRow(db, rowIds),
+    db.receiptReview.findMany({ where: { authWorkspaceId: workspaceId, rowId: { in: rowIds } }, select: { rowId: true, distinctFrom: true } }),
+    db.receiptPairDecision.findMany({ where: { authWorkspaceId: workspaceId }, select: { rowIdA: true, rowIdB: true, fingerprint: true, outcome: true, reason: true, attempts: true } }),
+  ]);
+  const numberId = firstColumnIdByName(ctx.columns).get(INVOICE_NUMBER_COLUMN);
+  const snapshots = new Map<string, LookAlikeSnapshot>();
+  for (const row of rows) {
+    const s = snapshotOf(row, ctx.columns, ctx.selectOptions, hashes);
+    snapshots.set(row.id, { ...s, text: s.reading.text, printedNumber: numberId ? text(row.cells[numberId]).trim() : '' });
+  }
+  const distinct = new Map(stored.map((r) => [r.rowId, new Set(r.distinctFrom)]));
+  const { settled } = pairDecisionsNow(decisions, snapshots);
+  const pairs = new Map<string, [string, string]>();
+  for (const [a, others] of lookAlikes([...snapshots.values()], distinct, settled)) {
+    for (const b of others) pairs.set(pairKey(a, b), a < b ? [a, b] : [b, a]);
+  }
+  return { snapshots, pairs: [...pairs.values()], decisions: new Map(decisions.map((d) => [pairKey(d.rowIdA, d.rowIdB), d])) };
 }
 
 async function requireRow(db: PrismaClient, ctx: ReviewContext, rowId: string): Promise<void> {

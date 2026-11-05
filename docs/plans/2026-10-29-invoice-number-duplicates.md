@@ -173,3 +173,13 @@ Not done here: the backfill on production. After the deploy, signed in as each c
 receipts page once, then "Rechnungsnummern lesen" (or `POST /api/receipts/invoice-numbers` until it
 answers `remaining: 0`). Fewer receipts than the measured 79 percent will get a number, because order,
 till and Beleg numbers are deliberately not taken (decision 9); those keep the look-alike question.
+
+## Follow-up (2026-11-05)
+
+On production a look-alike pair stayed a question although the stored text carried the missing
+number (an Adobe invoice whose layout the patterns missed). The follow-up plan
+[2026-11-05-duplicates-without-asking](2026-11-05-duplicates-without-asking.md) settles such pairs
+without asking: the missing number is read again (wider layouts, the file name, then the upload's
+model with the page), and where no number decides, the strongest model compares both pages. It
+changes decision 12 for look-alike pairs only: the model may read a stored receipt's number when that
+receipt would otherwise be asked about.

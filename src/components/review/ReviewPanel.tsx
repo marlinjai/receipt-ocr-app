@@ -241,6 +241,12 @@ export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, o
                       Beide behalten
                     </button>
                   </span>
+                  {other.note && (
+                    <span className="w-full" style={{ color: 'var(--dt-text-secondary)' }}>
+                      {other.note.outcome === 'unsure' ? 'Nicht geklärt, laut Sprachmodell: ' : 'Nicht geklärt: '}
+                      {other.note.reason ?? 'Die App konnte die beiden Belege nicht vergleichen.'}
+                    </span>
+                  )}
                 </div>
               ))}
 

@@ -918,6 +918,15 @@ model ReceiptReview {
   // read again, so a second run reads nothing and a number a person removed
   // is not filled back.
   invoiceNumberReadAt DateTime? @map("invoice_number_read_at")
+  // When the look-alike pass read the number of this receipt again because it
+  // was one of a look-alike pair without a deciding number (plan
+  // docs/plans/2026-11-05-duplicates-without-asking.md), and where the number
+  // it found came from: 'text' | 'file_name' | 'model', null when it found none.
+  // Set once the reading had an answer, so a run cut off or a failed model call
+  // leaves the receipt for the next run, and a number a person removed since is
+  // not filled back.
+  invoiceNumberRereadAt DateTime? @map("invoice_number_reread_at")
+  invoiceNumberSource   String?   @map("invoice_number_source")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
@@ -938,8 +947,16 @@ model ReceiptMerge {
   authWorkspaceId      String   @map("auth_workspace_id")
   authTenantId         String?  @map("auth_tenant_id")
   keptRowId            String   @map("kept_row_id")
-  // 'same_file' | 'same_invoice'
+  // 'same_file' | 'same_invoice' | 'same_purchase' (the model compared both pages)
   reason               String
+  // What decided it, for the kept receipt's view: null for the rule on what was
+  // stored, 'number_reread' when the look-alike pass read a missing number
+  // again first, 'model' when the model compared the pages
+  // (plan docs/plans/2026-11-05-duplicates-without-asking.md).
+  decidedBy            String?  @map("decided_by")
+  // The model's one sentence and the model that said it, for a model's merge.
+  decisionNote         String?  @map("decision_note")
+  decisionModel        String?  @map("decision_model")
   // The number as the archived receipt printed it, for the kept receipt's view.
   invoiceNumber        String?  @map("invoice_number")
   movedPaymentLinkIds  String[] @default([]) @map("moved_payment_link_ids")
@@ -951,6 +968,42 @@ model ReceiptMerge {
   @@index([authWorkspaceId])
   @@index([keptRowId])
   @@map("receipt_merges")
+}
+
+// What the look-alike pass decided about one pair of look-alike receipts (same
+// day, same total, a vendor that can be the same, no invoice number that
+// decides), so the pair is not asked about again and the decision can be seen
+// and undone (plan docs/plans/2026-11-05-duplicates-without-asking.md).
+// `rowIdA` < `rowIdB`. `fingerprint` is the pair's facts the decision was
+// taken on (`pairFingerprint`): a decision on other facts than the receipts
+// hold now counts for nothing, and the pair is decided again.
+// `outcome`: 'same_number' (a number read again made them one invoice, merged),
+// 'different_numbers' (two different numbers read again: two invoices),
+// 'same' (the model, merged), 'different' (the model: both kept, not asked),
+// 'unsure' (the model could not tell: still asked, with its reason),
+// 'failed' (the model gave no answer, `attempts` times: still asked).
+// No foreign keys, as receipt_merges; the row delete paths remove the record.
+model ReceiptPairDecision {
+  id              String   @id @default(uuid())
+  authWorkspaceId String   @map("auth_workspace_id")
+  authTenantId    String?  @map("auth_tenant_id")
+  rowIdA          String   @map("row_id_a")
+  rowIdB          String   @map("row_id_b")
+  fingerprint     String
+  outcome         String
+  // 'number_reread' | 'model'
+  decidedBy       String   @map("decided_by")
+  model           String?
+  confidence      Float?
+  // The model's one sentence (German), or what the pass could not do.
+  reason          String?
+  attempts        Int      @default(0)
+  decidedAt       DateTime @default(now()) @map("decided_at")
+
+  @@unique([rowIdA, rowIdB])
+  @@index([authWorkspaceId])
+  @@index([rowIdB])
+  @@map("receipt_pair_decisions")
 }
 
 // ── Private spending ─────────────────────────────────────────────────────────

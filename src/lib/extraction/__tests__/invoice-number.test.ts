@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanInvoiceNumber, invoiceNumberKey, parseInvoiceNumber, settleInvoiceNumber } from '../invoice-number';
+import { cleanInvoiceNumber, invoiceNumberFromFileName, invoiceNumberKey, parseInvoiceNumber, rereadStoredInvoiceNumber, settleInvoiceNumber } from '../invoice-number';
 import { ADOBE_DATE_IN_A_COLUMN } from './invoice-fixtures';
 import * as invoices from './invoice-fixtures';
 
@@ -127,5 +127,81 @@ describe('settleInvoiceNumber', () => {
 
   it('never invents one: no text, no label, no model answer', () => {
     expect(settleInvoiceNumber(sources({ text: 'Bäckerei Beispiel\nBrötchen 0,50\nSumme 0,50' }))).toBeNull();
+  });
+
+  it("takes the file name's number after the text's label and before the model's", () => {
+    const text = 'Adobe\nIEN2026004022987\nTotal 34.99';
+    expect(settleInvoiceNumber(sources({ text, fileName: 'Adobe-Invoice-IEN2026004022987.pdf', model: 'OTHER-1' }))).toBe('IEN2026004022987');
+    expect(settleInvoiceNumber(sources({ text: 'Rechnungsnummer: R-123456\nIEN2026004022987', fileName: 'Adobe-Invoice-IEN2026004022987.pdf' }))).toBe('R-123456');
+  });
+});
+
+describe('parseInvoiceNumber: a column of values below the labels (plan 2026-11-05-duplicates-without-asking)', () => {
+  it('reads the number where the labels came out first and their values after them', () => {
+    const stacked = 'Invoice Information\nInvoice Number\nInvoice Date\nPayment Terms\nIEN2026004022987\n20-JAN-2026\nPayPal\nCurrency EUR';
+    expect(parseInvoiceNumber(stacked)).toBe('IEN2026004022987');
+  });
+
+  it('reads the number from a row of values under a row of labels', () => {
+    expect(parseInvoiceNumber('INVOICE NUMBER   INVOICE DATE   CURRENCY\nIEN2026004022987   20-JAN-2026   EUR')).toBe('IEN2026004022987');
+  });
+
+  it('gives none where the column holds two identifiers, or only short or date-like values', () => {
+    expect(parseInvoiceNumber('Invoice Number\nCustomer Number\nIEN2026004022987\nCUST778899')).toBeNull();
+    expect(parseInvoiceNumber('Invoice Number\nInvoice Date\n4711\n20-JAN-2026')).toBeNull();
+    expect(parseInvoiceNumber('Invoice Number\n20-JAN-2026\n12:45')).toBeNull();
+  });
+
+  it('keeps the value next to the label over anything in the column below', () => {
+    expect(parseInvoiceNumber('Invoice Number IEN2026004022987\nInvoice Date 20-JAN-2026\nCUST778899')).toBe('IEN2026004022987');
+  });
+
+  it('never takes a month-name date after the label', () => {
+    expect(parseInvoiceNumber('Invoice Number 20-JAN-2026')).toBeNull();
+  });
+});
+
+describe('invoiceNumberFromFileName', () => {
+  const text = 'Adobe\nInvoice Information\nInvoice Number\nInvoice Date\nIEN2026004022987 20-JAN-2026\nGRAND TOTAL (EUR) 34.99';
+
+  it('takes the number the name labels where the text carries it', () => {
+    expect(invoiceNumberFromFileName('Adobe-Invoice-2026-01-20-IEN2026004022987.pdf', text)).toBe('IEN2026004022987');
+    expect(invoiceNumberFromFileName('Rechnung_RE-2026-0042.pdf', 'Beispiel GmbH\nRE-2026-0042 vom 01.02.2026')).toBe('RE-2026-0042');
+  });
+
+  it('gives none where the text does not carry it: a name alone confirms nothing', () => {
+    expect(invoiceNumberFromFileName('Adobe-Invoice-2026-01-20-IEN2026004022988.pdf', text)).toBeNull();
+    expect(invoiceNumberFromFileName('Adobe-Invoice-IEN2026004022987.pdf', '')).toBeNull();
+  });
+
+  it('never takes the date stamp of a name, nor a name that does not say it is an invoice', () => {
+    expect(invoiceNumberFromFileName('Rechnung_20260120.pdf', 'Beispiel GmbH 20260120')).toBeNull();
+    expect(invoiceNumberFromFileName('IMG_20260120_123456.jpg', 'Beispiel 123456')).toBeNull();
+    expect(invoiceNumberFromFileName('Adobe-IEN2026004022987.pdf', text)).toBeNull();
+  });
+
+  it('gives none for an order or customer number, and none for two candidates', () => {
+    expect(invoiceNumberFromFileName('Invoice-for-order-ORD778899.pdf', 'ORD778899')).toBeNull();
+    expect(invoiceNumberFromFileName('Invoice-AB123456-CD654321.pdf', 'AB123456 CD654321')).toBeNull();
+  });
+
+  it('reads a credit note by a credit note word only', () => {
+    expect(invoiceNumberFromFileName('Invoice-G2026777.pdf', 'G2026777', { creditNote: true })).toBeNull();
+    expect(invoiceNumberFromFileName('Gutschrift-G2026777.pdf', 'G2026777', { creditNote: true })).toBe('G2026777');
+  });
+});
+
+describe('rereadStoredInvoiceNumber', () => {
+  it('takes the text first, then a file name the text bears out, and says which', () => {
+    expect(rereadStoredInvoiceNumber({ text: 'Rechnungsnummer: R-123456', fileNames: ['Invoice-X999999.pdf'], creditNote: false })).toEqual({ number: 'R-123456', source: 'text' });
+    expect(rereadStoredInvoiceNumber({ text: 'Adobe IEN2026004022987', fileNames: ['Adobe-Invoice-2026-01-20-IEN2026004022987.pdf'], creditNote: false })).toEqual({
+      number: 'IEN2026004022987',
+      source: 'file_name',
+    });
+  });
+
+  it('gives none without text, and none where two files name two numbers', () => {
+    expect(rereadStoredInvoiceNumber({ text: '', fileNames: ['Adobe-Invoice-IEN2026004022987.pdf'], creditNote: false })).toBeNull();
+    expect(rereadStoredInvoiceNumber({ text: 'AB123456 CD654321', fileNames: ['Invoice-AB123456.pdf', 'Invoice-CD654321.pdf'], creditNote: false })).toBeNull();
   });
 });

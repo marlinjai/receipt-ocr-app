@@ -6,7 +6,7 @@ import { INVOICE_NUMBER_COLUMN, cleanInvoiceNumber, invoiceNumberKey } from '@/l
 import { allReceiptRows, tableContext, type TableContext } from '@/lib/meals/service';
 import { isoDay } from '@/lib/meals/record';
 import { isGroupRow } from '@/lib/receipts-kind';
-import { automaticDuplicate, sameInvoice, type AutomaticDuplicate, type ReviewSnapshot } from './reasons';
+import { automaticDuplicate, isMergeReason, sameInvoice, type AutomaticDuplicate, type MergeReason, type ReviewSnapshot } from './reasons';
 
 /**
  * The same receipt twice, settled without asking anybody (plan
@@ -187,8 +187,22 @@ function candidateOf(row: Row, columns: readonly Column[], fileHashes: string[],
   };
 }
 
+/** What decided a merge other than the rule on what was stored: a number read again, or the model comparing both pages. */
+export interface MergeDecision {
+  decidedBy: 'number_reread' | 'model';
+  note?: string | null;
+  model?: string | null;
+}
+
 /** Archive one receipt into another, and record what changed. Null for a pair where either side is gone meanwhile. */
-async function applyMerge(db: PrismaClient, ctx: MergeContext, table: TableContext, merge: PlannedMerge, invoiceNumber: string | null): Promise<{ fileAdded: boolean } | null> {
+async function applyMerge(
+  db: PrismaClient,
+  ctx: MergeContext,
+  table: TableContext,
+  merge: { rowId: string; keptRowId: string; reason: MergeReason },
+  invoiceNumber: string | null,
+  decision: MergeDecision | null = null,
+): Promise<{ fileAdded: boolean } | null> {
   const [row, kept] = await Promise.all([table.adapter.getRow(merge.rowId), table.adapter.getRow(merge.keptRowId)]);
   const live = (r: Row | null) => r !== null && r.tableId === table.tableId && !r.archived && !isGroupRow(r, table.columns);
   if (!live(row) || !live(kept)) return null;
@@ -235,6 +249,9 @@ async function applyMerge(db: PrismaClient, ctx: MergeContext, table: TableConte
   const record = {
     keptRowId: merge.keptRowId,
     reason: merge.reason,
+    decidedBy: decision?.decidedBy ?? null,
+    decisionNote: decision?.note ?? null,
+    decisionModel: decision?.model ?? null,
     invoiceNumber,
     movedPaymentLinkIds: union(sameKeeper?.movedPaymentLinkIds, movable.map((l) => l.id)),
     addedFileRefIds: union(sameKeeper?.addedFileRefIds, added),
@@ -270,7 +287,15 @@ export interface MergeResult {
  * one. With `only`, just the merges that touch those receipts. Never throws
  * for one pair: a failed pair is logged and the others go on.
  */
-export async function mergeDuplicates(db: PrismaClient, ctx: MergeContext, options: { only?: readonly string[] } = {}): Promise<MergeResult> {
+export async function mergeDuplicates(
+  db: PrismaClient,
+  ctx: MergeContext,
+  options: {
+    only?: readonly string[];
+    /** What to record as having decided a merge beyond the rule (the look-alike pass names its re-read numbers). */
+    decisionFor?: (merge: PlannedMerge) => MergeDecision | null;
+  } = {},
+): Promise<MergeResult> {
   const table = await tableContext(db, ctx.workspaceId);
   if (!table) return { merged: [] };
   const { candidates, distinct } = await loadCandidates(db, ctx, table);
@@ -279,7 +304,7 @@ export async function mergeDuplicates(db: PrismaClient, ctx: MergeContext, optio
   const merged: AppliedMerge[] = [];
   for (const merge of plan) {
     try {
-      const applied = await applyMerge(db, ctx, table, merge, byId.get(merge.rowId)?.invoiceNumber ?? null);
+      const applied = await applyMerge(db, ctx, table, merge, byId.get(merge.rowId)?.invoiceNumber ?? null, options.decisionFor?.(merge) ?? null);
       if (applied) merged.push({ ...merge, ...applied });
     } catch (err) {
       console.error('[merge] a duplicate could not be archived:', err instanceof Error ? err.name : 'error');
@@ -304,6 +329,33 @@ export async function mergeAfterChange(db: PrismaClient, ctx: MergeContext, rowI
     console.error('[merge] the pass after a change failed:', err instanceof Error ? err.name : 'error');
     return new Map();
   }
+}
+
+/** A merge the model's word decided: which receipt went into which. */
+export interface JudgedMerge {
+  rowId: string;
+  keptRowId: string;
+  fileAdded: boolean;
+}
+
+/**
+ * Archive one of two look-alike receipts into the other because the model
+ * compared both pages and said they are one purchase (plan
+ * docs/plans/2026-11-05-duplicates-without-asking.md): the more complete one
+ * stays (`keepFirst`, as for every merge), the record says it was the model
+ * and keeps its sentence, and the restore undoes it like any other merge (and
+ * records the pair as different, the person's word). Null when either receipt
+ * is no live receipt any more, or a person said the two are different.
+ */
+export async function mergeJudgedPair(db: PrismaClient, ctx: MergeContext, rowIds: readonly [string, string], decision: { note: string; model: string }): Promise<JudgedMerge | null> {
+  const table = await tableContext(db, ctx.workspaceId);
+  if (!table) return null;
+  const { candidates, distinct } = await loadCandidates(db, ctx, table);
+  const [a, b] = rowIds.map((id) => candidates.find((c) => c.rowId === id));
+  if (!a || !b || a.rowId === b.rowId || distinct.get(a.rowId)?.has(b.rowId) || distinct.get(b.rowId)?.has(a.rowId)) return null;
+  const [kept, archived] = [a, b].sort(keepFirst);
+  const applied = await applyMerge(db, ctx, table, { rowId: archived.rowId, keptRowId: kept.rowId, reason: 'same_purchase' }, archived.invoiceNumber, { decidedBy: 'model', note: decision.note, model: decision.model });
+  return applied ? { rowId: archived.rowId, keptRowId: kept.rowId, fileAdded: applied.fileAdded } : null;
 }
 
 /** True when one of the merges archived `rowId` or archived another receipt into it. */
@@ -350,7 +402,11 @@ export async function findSameInvoice(
 export interface MergedReceipt {
   rowId: string;
   name: string;
-  reason: AutomaticDuplicate;
+  reason: MergeReason;
+  /** Null for the rule on what was stored; 'number_reread' or 'model' when the look-alike pass decided it. */
+  decidedBy: 'number_reread' | 'model' | null;
+  /** The model's one sentence, for a merge the model decided. */
+  decisionNote: string | null;
   invoiceNumber: string | null;
   mergedAt: Date;
 }
@@ -369,7 +425,15 @@ export async function mergedInto(db: PrismaClient, workspaceId: string, keptRowI
     // Only a receipt that is still archived in this table can be brought back.
     if (!row || row.tableId !== table.tableId || !row.archived) continue;
     const name = (nameId && text(row.cells[nameId])) || (vendorId && text(row.cells[vendorId])) || 'Beleg ohne Namen';
-    out.push({ rowId: record.rowId, name, reason: record.reason === 'same_file' ? 'same_file' : 'same_invoice', invoiceNumber: record.invoiceNumber, mergedAt: record.mergedAt });
+    out.push({
+      rowId: record.rowId,
+      name,
+      reason: isMergeReason(record.reason) ? record.reason : 'same_invoice',
+      decidedBy: record.decidedBy === 'number_reread' || record.decidedBy === 'model' ? record.decidedBy : null,
+      decisionNote: record.decisionNote,
+      invoiceNumber: record.invoiceNumber,
+      mergedAt: record.mergedAt,
+    });
   }
   return out;
 }
@@ -399,6 +463,8 @@ export async function restoreMergedReceipt(db: PrismaClient, ctx: MergeContext, 
   if (record.addedFileRefIds.length > 0) await db.dtFile.deleteMany({ where: { id: { in: record.addedFileRefIds }, rowId: record.keptRowId } });
   await table.adapter.unarchiveRow(rowId);
   await db.receiptMerge.deleteMany({ where: { rowId } });
+  // The look-alike pass's word on the pair is replaced by the person's (distinct, above).
+  await db.receiptPairDecision.deleteMany({ where: { authWorkspaceId: ctx.workspaceId, OR: [{ rowIdA: rowId, rowIdB: record.keptRowId }, { rowIdA: record.keptRowId, rowIdB: rowId }] } });
   return record.keptRowId;
 }
 

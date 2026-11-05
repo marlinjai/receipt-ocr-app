@@ -41,12 +41,11 @@
   net and tax lines; the invoice's arithmetic and the recognized text check its answer. On 288
   real documents no wrong date or total is stored without a flag. "Seite neu lesen" was used on
   production on one receipt (the unpaid hosting invoice: 288.59 where the old reader had 242.51;
-  assignment, share and name untouched). Open: (1) a new reading replaces a vendor that is
-  already set with the legal name on the page ("A2 Hosting" became "A2 Hosting LLC", set back by
-  hand), which splits the vendor grouping: keep a vendor that is set. (2) The measurement was
-  made on the documents the rules were written against; measure on the next import of unseen
-  documents. (3) The vendor cell is not judged by the evaluation script. Plan:
-  [docs/plans/2026-10-11-vision-reading.md](docs/plans/2026-10-11-vision-reading.md). (2026-10-11)
+  assignment, share and name untouched). A new reading keeps a vendor that is set, and the
+  evaluation script judges the vendor cell (both since 2026-10-15, PR #111). Open: the measurement
+  was made on the documents the rules were written against; measure it on the next import of
+  unseen documents. Plan:
+  [docs/plans/2026-10-11-vision-reading.md](docs/plans/2026-10-11-vision-reading.md). (2026-11-05)
 - [x] The review list no longer offers the text reader's vendor name against a stored one on an
   invoice. Measured on production on 2026-10-11: of 102 offered new readings, 76 changed the
   vendor, and about 70 of those were worse than the stored name (a heading, a field label, the
@@ -69,9 +68,11 @@
   2025 left as they are, 3 receipts where the model found nothing to name) and 24 private ones.
   The 2024 and 2025 figures were the same before and after. Plan:
   [docs/plans/2026-10-11-receipt-item-in-name.md](docs/plans/2026-10-11-receipt-item-in-name.md). Done 2026-10-11.
-- [ ] The item is worded per receipt, so the monthly invoices of one subscription can read
-  differently ("PocketTube Abo", "PocketTube-Mitgliedschaft"). The reader should be given the
-  items the same vendor already has and reuse one that fits. (2026-10-11)
+- [x] The item is worded per receipt, so the monthly invoices of one subscription can read
+  differently ("PocketTube Abo", "PocketTube-Mitgliedschaft"). The reader is given the items the
+  same vendor already has and takes a stored wording that is the same item in other words (since
+  PR #122 and #130); since 2026-11-05 the items of every spelling of the vendor count, and small
+  joining words do not tell items apart ("iCloud+ mit 2 TB" is "iCloud+ 2 TB"). Done 2026-11-05.
 - [ ] The reader stores the value-added tax amount as the total on one vendor's invoices: 32
   invoices of a mail-scanning service across 2021, 2022 and 2023 (0.64 for 3.99, 2.07 for 12.99),
   all corrected by hand on 2026-10-11. Two more classes from the same import: a mobile bill is
@@ -395,9 +396,10 @@
   login are not fetched yet (Amazon, eBay, Deutsche Bahn, freenet, Lemon Squeezy, claude.ai billing).
   They stay visible in red under Ausgaben, Belege. Backlog plan:
   [docs/plans/2026-10-14-personal-spending-and-bank-feed.md](docs/plans/2026-10-14-personal-spending-and-bank-feed.md). (2026-11-02)
-- [ ] Two Deutsche Bahn tickets of 19.07.2026 carry the vendor "Barcode bitte nicht knicken!" from
-  the reader; the name and the links are right. The reader should take the vendor from the issuer
-  on a ticket. (2026-11-02)
+- [x] Two Deutsche Bahn tickets of 19.07.2026 carry the vendor "Barcode bitte nicht knicken!" from
+  the reader; the name and the links are right. The reader now takes a rail ticket's vendor from
+  its carrier code ("CIV 1080" is Deutsche Bahn), and neither the code nor the handling note is a
+  name: replayed on production, all five Deutsche Bahn tickets read "Deutsche Bahn". Done 2026-11-05.
 - [ ] The app on a phone: no page scrolls sideways at 360 or 390 pixels, the receipts show as a
   card list that opens the detail panel, the dashboard's actions fold into "Mehr", tab rows
   scroll inside themselves, every control is a 44 pixel touch target, the wide layout unchanged.
@@ -437,12 +439,14 @@
 - [x] One sidebar on every page of the wide layout: the company, upload, the places with their
   open counts, and the maintenance jobs on a page of their own ("Werkzeuge"). Decided by Marlin
   on 2026-10-30, plan [app sidebar](docs/plans/2026-10-30-app-sidebar.md). Done 2026-10-30.
-- [ ] One spelling per vendor from the reader (found on 2026-10-29): the reader spells one
+- [x] One spelling per vendor from the reader (found on 2026-10-29): the reader spells one
   subscription several ways ("Apple", "Apple iCloud", "Apple Distribution International Ltd.";
   "iCloud+ 2 TB", "iCloud+ mit 2 TB", "iCloud+ 2 TB Abo"), so a new receipt can miss the group of
-  its subscription until its spelling is corrected. Take the spelling of the vendor's earlier
-  receipts, or of the contact they link to. Context: section Open of the grouping plan of
-  2026-10-29 (Completed below). (2026-10-29)
+  its subscription until its spelling is corrected. A reading now takes the shortest spelling the
+  vendor's stored receipts carry, where the rest of the name only names the company behind the
+  brand or what its receipts were bought as ("Apple Distribution International Ltd." and "Apple
+  iCloud" become "Apple"; "Notion Cafe" stays); a restaurant keeps its own name. Receipts link to
+  no contact, so the earlier receipts are the only source. Done 2026-11-05.
 - [x] The invoice number decides duplicates (decided by the owner on 2026-10-29): every receipt
   gets its Rechnungsnummer, the same vendor with the same number or the very same file is one
   receipt, handled without asking (no second receipt at upload, existing copies archived into the

@@ -133,6 +133,8 @@ function labelled(text: string, label: string): string[] {
 
 /** How many lines below a label its column of values is looked for. */
 const COLUMN_LOOKAHEAD = 6;
+/** A label of another document's or party's number: a column that holds one cannot tell which value is the invoice's. */
+const OTHER_ID_LABEL = /(?:^|[^\p{L}])(?:customer|kunden|client|order|bestell|auftrag|account|konto|contract|vertrag|member)/iu;
 
 /**
  * The values of a label that ends its line without one, read from the column
@@ -151,9 +153,11 @@ function columnar(text: string, label: string): string[] {
   for (let i = 0; i < lines.length; i++) {
     const match = atStart.exec(lines[i]);
     // The rest of the line holds other labels at most ("INVOICE NUMBER   INVOICE DATE"), never a value.
-    if (!match || /\p{N}/u.test(match[2] ?? '')) continue;
+    if (!match || /\p{N}/u.test(match[2] ?? '') || OTHER_ID_LABEL.test(match[2] ?? '')) continue;
     const window: string[] = [];
     for (let j = i + 1; j < lines.length && window.length < COLUMN_LOOKAHEAD; j++) if (lines[j].trim()) window.push(lines[j]);
+    // Another identifier's label in the block: which value stands under which label cannot be told.
+    if (window.some((line) => OTHER_ID_LABEL.test(line))) continue;
     const found = new Map<string, string>();
     for (const line of window) for (const token of tokensOf(line)) if (strongToken(token)) found.set(invoiceNumberKey(token)!, token);
     if (found.size === 1) out.push([...found.values()][0]);

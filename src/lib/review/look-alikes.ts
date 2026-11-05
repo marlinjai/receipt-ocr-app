@@ -222,6 +222,8 @@ export async function settleLookAlikes(
     });
   };
   const written = new Set<string>();
+  // Receipts whose number could not be read this run (budget, provider down): their pairs wait for the number, never go to the model.
+  const pending = new Set<string>();
   // Read again just before the write: a number a person typed meanwhile stays, and an archived receipt gets none.
   const write = async (rowId: string, number: string): Promise<boolean> => {
     const fresh = await table.adapter.getRow(rowId);
@@ -247,6 +249,7 @@ export async function settleLookAlikes(
         continue;
       }
       if (result.unavailable || numberBudget <= 0) {
+        pending.add(rowId);
         result.remaining++;
         continue;
       }
@@ -259,6 +262,7 @@ export async function settleLookAlikes(
     } catch (err) {
       if (err instanceof ClassifierUnavailableError) {
         result.unavailable = true;
+        pending.add(rowId);
         result.remaining++;
       } else if (err instanceof UnusableAnswerError) {
         // The answer said nothing usable: asking the same way again gives the same.
@@ -266,6 +270,7 @@ export async function settleLookAlikes(
       } else {
         // Did not get through (the provider down, a timeout): left unmarked for the next run.
         result.failed++;
+        pending.add(rowId);
         result.remaining++;
         console.error('[look-alikes] the number of a receipt could not be read:', err instanceof Error ? err.name : 'error');
       }
@@ -305,6 +310,11 @@ export async function settleLookAlikes(
   for (const pair of toJudge) {
     const [a, b] = pair;
     if (archivedNow.has(a) || archivedNow.has(b)) continue;
+    // A number still to be read may decide this pair: not the model's to settle before.
+    if (pending.has(a) || pending.has(b)) {
+      result.remaining++;
+      continue;
+    }
     const [sa, sb] = [after.snapshots.get(a)!, after.snapshots.get(b)!];
     const fingerprint = pairFingerprint(sa, sb);
     const prior = after.decisions.get(pairKey(a, b));

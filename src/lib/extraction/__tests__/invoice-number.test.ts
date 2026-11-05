@@ -152,6 +152,11 @@ describe('parseInvoiceNumber: a column of values below the labels (plan 2026-11-
     expect(parseInvoiceNumber('Invoice Number\n20-JAN-2026\n12:45')).toBeNull();
   });
 
+  it('gives none where the block also labels a customer or an order number', () => {
+    expect(parseInvoiceNumber('Invoice Number\nCustomer ID\n12345\nCUST4711X')).toBeNull();
+    expect(parseInvoiceNumber('Invoice Number\nOrder Number\nORD778899')).toBeNull();
+  });
+
   it('keeps the value next to the label over anything in the column below', () => {
     expect(parseInvoiceNumber('Invoice Number IEN2026004022987\nInvoice Date 20-JAN-2026\nCUST778899')).toBe('IEN2026004022987');
   });

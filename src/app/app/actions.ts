@@ -18,7 +18,7 @@ import { listRules } from '@/lib/classification-rules-store';
 import { ReceiptsAuthError } from '@/lib/auth-guards';
 import { serializeTaxLines } from '@/lib/meals/rules';
 import { receiptAttention, type ReceiptAttention } from '@/lib/upload/quality';
-import { ClassifierUnavailableError, classifyReceiptText, type ReceiptReadingAnswer } from '@/lib/receipt-classifier';
+import { ClassifierUnavailableError, classifyReceiptText, hasUsableFacts, type ReceiptReadingAnswer } from '@/lib/receipt-classifier';
 import { linesFromInvoice } from '@/lib/line-items/einvoice';
 import { priceLines } from '@/lib/line-items/lines';
 import { replaceReceiptLines, type StoreLinesInput } from '@/lib/line-items/store';
@@ -96,11 +96,13 @@ async function classifyReceipt(
       zuordnungOptions: ZUORDNUNG_OPTIONS,
       page,
     });
-    // An answer without a category is no classification (the model's text could not be parsed).
-    if (!result.category) {
-      console.error('[classifyReceipt] the classifier answered without a usable category', { provider: result.provider });
+    // An answer with nothing usable is no classification (the model's text could not be parsed). One that only
+    // names a category the app does not keep is kept: its category stays empty and the text reader's is used.
+    if (!hasUsableFacts(result)) {
+      console.error('[classifyReceipt] the classifier answered without anything usable', { provider: result.provider });
       return null;
     }
+    if (!result.category) console.error('[classifyReceipt] kept the answer without its category', { provider: result.provider });
     return result;
   } catch (err) {
     // The message only: an error object of the client library can carry the request, and with it the page.

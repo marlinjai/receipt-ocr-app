@@ -94,19 +94,36 @@
   text match, and `day-filters.dbtest.ts` proves it against Postgres in every verify run; the line
   was only left open. The shared adapter should still bind a text value as a timestamp, which
   belongs to the data-table repository. Done 2026-11-05.
-- [ ] Rule sets for the tax years 2021 to 2024, so the finance area shows those years on their own
-  forms. Today they are computed with the 2025 form, which the page says. 2024 uses the same line
-  numbers as 2025 for every line that was declared; 2023 is shifted, 2022 and 2021 use the older,
-  longer form. (2026-10-11)
+- [x] Rule sets for the tax years 2021 to 2024, so the finance area shows those years on their own
+  forms instead of the 2025 form. Built by #123 on 2026-10-15 (`src/lib/tax/rules/2021.ts` to
+  `2024.ts`, every line number read off the official form of its year and cited there), described
+  in the finance plan's section "Reality: rule sets for 2021 to 2024"; the line was only left open.
+  Checked on a read-only copy of production on 2026-11-05: each of the four years is computed with
+  its own rule set and prints its own line numbers (2021 and 2022 low-value assets on 43, 2023 on
+  35, 2024 on 36). Done 2026-11-05.
+- [ ] A filed year changed after filing: the Telekom invoice of 16 December 2024 (row `f924fce8`),
+  which the 2024 return carried, was tied on 2026-11-01 by the automatic "closest" payment match of
+  #207 to its direct debit of 2 January 2025, so the year-change rule now counts it in 2025. Line 43
+  of 2024 reads 375.08 instead of 395.06 (declared 394.95), 2025 holds 19.98 more than filed. Both
+  years are recorded as filed. Fix: a payment link made after a year's filing day must not move a
+  receipt into or out of that filed year, the same test `filedWithOf` in
+  `src/lib/tax/year-boundary.ts` makes for a person's answer. Only this one receipt crossed a
+  filed turn (the other three "closest" links booked in January 2025 are receipts of 2025).
+  (2026-11-05)
 - [ ] Asset schedules for what the returns depreciated and the app now holds as documents: camera,
   camera stabiliser and tripod of 2021 (the app counts two of them in full as low-value assets and
   holds the camera as an open check), the lens of 2022 (open check) and the laptop of 2022 (counted
   at full price times the study share). Until then 2021 and 2022 differ from the returns by the
   amounts in the plan of the import. (2026-10-11)
-- [ ] A share on both forms cannot be recorded for a year without its own rule set: subscriptions
-  the returns of 2022 and 2023 split between business and study carry only the business share,
-  because the split is a finance-area decision and those were made for 2024 only. About 687 of
-  study cost in 2022 is not counted for that reason. (2026-10-11)
+- [ ] The study shares of 2022 and 2023 are not recorded yet: the code no longer stands in the way
+  (the rule sets of #123 let the finance area record a share on both forms for every year from
+  2021), but on production no receipt of 2021 to 2023 carries one (2024: 34, 2025: 24, checked on
+  2026-11-05). Still to enter, per receipt in the finance area, as the returns split them: 2022
+  study part of Adobe 107, LastPass 17, Finanzguru 9, landline 144, mobile and Caya post 364,
+  storage 46 (687 in all, section D of `Steuern/2022/import-log-2022.md`); 2023 study part of 30
+  percent beside the business 50 on mobile 144, landline 54, Notion 57, Caya 45 and LastPass 17
+  (317, `Steuern/2023/import-log-2023.md`). A write on production data, so not done by an agent
+  run. (2026-11-05)
 - [x] "Set field" on a selection loses writes: on 2026-10-11, setting the assignment on 30
   selected rows reported success and left 14 of 81 rows unchanged; selections of 7 went through
   completely. Fixed by #129 and #155: the server writes the selection in parts, reads every row

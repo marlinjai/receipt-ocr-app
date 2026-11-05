@@ -1822,6 +1822,30 @@ like everything else; nothing derived is stored.
 - **Not built here:** the depreciation of an asset's study share onto the employment
   annex (the laptop of 2022): that is part of the asset schedules line.
 
+### Checked against production (2026-11-05)
+
+On a read-only copy of production (dump of 2026-11-05, restored locally, statement computed by
+`loadStatement`), Whiz-Art Media: 2021 to 2024 each report `rulesExact` and their own line numbers.
+2024 against the filed return (section D of `Steuern/2024/import-log-2024.md`):
+
+| Line of 2024 | Declared | App on 2026-11-05 | Difference |
+|---|---|---|---|
+| 36 low-value assets | 697.23 | 697.23 | 0.00 |
+| 43 telecommunication | 394.95 | 375.08 | -19.87 |
+| 45 training | 257.98 | 258.20 | +0.22 |
+| 51 work equipment | 1,398.62 | 1,454.33 | +55.71 |
+| 33 depreciation | 650.22 | none | asset schedules, its own roadmap line |
+
+- Line 51 is the known difference of 2026-10-12 (the Linode invoice of 29 October 2024 corrected
+  from 0.89 to 59.57 dollars, which made 1,453.77) plus 0.56 of exchange rates on dollar
+  invoices. Not a defect.
+- Line 43 is a regression in another area: the Telekom invoice of 16 December 2024, carried by the
+  2024 return, was tied by the automatic "closest" payment match (#207) on 2026-11-01 to its
+  debit of 2 January 2025, and the year-change rule for filed years ("a payment stays in the year
+  paid") then moved it to 2025. A filed year changed after filing, so it has its own roadmap line.
+- No receipt of 2021, 2022 or 2023 carries a share on both forms, so the step "the coordinator
+  records the shares" above did not happen. The roadmap line lists what is to be entered.
+
 ## Reality: assets with a study or employment share (2026-10-15)
 
 - **What was missing for the asset schedules of 2021 and 2022.** The register could

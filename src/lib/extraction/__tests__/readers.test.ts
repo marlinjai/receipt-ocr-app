@@ -421,6 +421,34 @@ describe('defect 5: the first printed line taken as the vendor', () => {
     expect(readVendor(F.BILL_TO_COMPANY).vendor).toBe('Kleiner Laden');
   });
 
+  it('rejects a labelled web address without a prefix', () => {
+    expect(readVendor('Web: example.com\nKleiner Laden\nSumme 12,00').vendor).toBe('Kleiner Laden');
+  });
+
+  it('finds the issuer by its domain under a compound suffix or with a short name', () => {
+    const uk = 'Hello,\nBeispiel Holding GmbH\nMusterallee 4\n10115 Musterstadt\nInvoice\nAcme Services Ltd\nhttps://acmeservices.co.uk';
+    expect(readVendor(uk).vendor).toBe('Acme Services Ltd');
+    const short = 'Hello,\nBeispiel Holding GmbH\nMusterallee 4\n10115 Musterstadt\nInvoice\nACME GmbH\nwww.acme.com';
+    expect(readVendor(short).vendor).toBe('ACME GmbH');
+  });
+
+  it("does not let the customer's own mail address confirm the customer as the issuer", () => {
+    const text = 'Kleiner Laden\nRechnung\nRechnung an\nBeispiel Holding GmbH\ninfo@beispielholding.de\nSumme 12,00';
+    expect(readVendor(text).vendor).toBe('Kleiner Laden');
+  });
+
+  it('prefers the confirmed issuer below the heading over a customer company in the head', () => {
+    const text = 'THANKS FOR\nYOUR RIDE!\nBeispiel Holding GmbH\nBeispielweg 3\n10115 Musterstadt\nInvoice\nMILES Mobility GmbH\nhttps://miles-mobility.com\nTotal 1,00 €';
+    expect(readVendor(text)).toEqual({ vendor: 'MILES Mobility GmbH', confidence: 'confirmed' });
+  });
+
+  it('keeps an issuer its address confirms against a model that names the customer', () => {
+    expect(chooseVendor(readVendor(F.RIDE_GREETING_HEAD), 'Erika Mustermann', F.RIDE_GREETING_HEAD)).toEqual({
+      vendor: 'MILES Mobility GmbH',
+      confidence: 'confirmed',
+    });
+  });
+
   it("takes the model's name when the receipt text contains it", () => {
     const reading = readVendor(F.FOODBAR_TWO_RATES);
     expect(chooseVendor(reading, 'Fantastic Foodbar', F.FOODBAR_TWO_RATES).vendor).toBe('Fantastic Foodbar');

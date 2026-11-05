@@ -48,7 +48,7 @@ const NEVER_A_NAME: RegExp[] = [
   /^(?:laufkunde|kunde|customer|gast|duplikat|kopie|\d+\.\s*kopie|original|details|to|from|items?)$/i,
   /^(?:\*+\s*)?(?:rechnung|quittung|kassenbon|bon|beleg|bewirtungsbeleg|invoice|receipt|tax\s+invoice|kundenbeleg|h(?:ä|ae)ndlerbeleg)(?:\s*\*+)?$/i,
   /^(?:tel|telefon|fon|fax|mobil|e-?mail)\s*[.:]/i, // a contact line, not "Telekom"
-  /^(?:(?:web(?:site)?|internet|url)\s*:\s*)?(?:www\.|https?:)/i,
+  /^(?:(?:web(?:site)?|internet|url)\s*:|www\.|https?:)/i, // a web address, labelled or not
   /^(?:ust|st|steuer)[\s.-]*(?:id|nr|nummer)/i,
   /^(?:vat|tax|gst)[\s.-]*(?:id|no|nr|number|reg)/i,
   /\d[.,]\d{2}(?!\d)/, // a line with a price on it
@@ -93,16 +93,46 @@ function backedByText(name: string, lines: string[], ownIndex: number, fullText:
   return addresses.some((a) => normalized(a).includes(key) || key.includes(normalized(a.replace(/^(?:www\.|https?:\/\/|@)/i, '').split('.')[0])));
 }
 
-/** True when a web or mail address on the receipt carries the name ("MILES Mobility GmbH" and miles-mobility.com). */
-function backedByAddress(name: string, fullText: string): boolean {
+/** The start of a block that names the customer, not the issuer. */
+const BILL_TO_MARK = /^(?:rechnung\s+an|rechnungsempf(?:ä|ae)nger|rechnungsadresse|invoice\s+to|bill(?:ed)?[\s-]+to|billing\s+address|sold\s+to|ship(?:ped)?\s+to|lieferung\s+an|lieferadresse|kunde|customer)\b/i;
+const BILL_TO_LINES = 4;
+
+/** Web and mail addresses on the receipt that do not sit in a bill-to block: only those can name the issuer. */
+function issuerAddresses(lines: string[]): string[] {
+  const addresses: string[] = [];
+  let skip = 0;
+  for (const line of lines) {
+    if (BILL_TO_MARK.test(line)) skip = BILL_TO_LINES + 1;
+    else if (skip > 0 && (line === '' || BODY_START.test(line))) skip = 0;
+    if (skip > 0) {
+      skip--;
+      continue;
+    }
+    addresses.push(...(line.match(/(?:www\.|https?:\/\/|@)[\w.-]+/gi) ?? []));
+  }
+  return addresses;
+}
+
+/** Second-level labels that belong to the country suffix ("co" in acme.co.uk). */
+const COMPOUND_SUFFIX_LABELS = new Set(['co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'ltd', 'plc']);
+
+/** The label that names the owner of an address: "miles-mobility" in hello@miles-mobility.com, "acme" in acme.co.uk. */
+function registrableLabel(address: string): string {
+  const labels = address.replace(/^(?:www\.|https?:\/\/|@)/i, '').split('.').filter(Boolean);
+  if (labels.length > 2 && labels[labels.length - 1].length === 2 && COMPOUND_SUFFIX_LABELS.has(labels[labels.length - 2].toLowerCase())) {
+    return normalized(labels[labels.length - 3]);
+  }
+  return normalized(labels.length > 1 ? labels[labels.length - 2] : (labels[0] ?? ''));
+}
+
+/** True when an issuer's web or mail address carries the name ("MILES Mobility GmbH" and miles-mobility.com). */
+function backedByAddress(name: string, addresses: string[]): boolean {
   const key = vendorKey(name);
   if (key.length < 4) return false;
-  const addresses = fullText.match(/(?:www\.|https?:\/\/|@)[\w.-]+/gi) ?? [];
   return addresses.some((a) => {
-    // The label before the top-level domain: "miles-mobility" in hello@miles-mobility.com.
-    const labels = a.replace(/^(?:www\.|https?:\/\/|@)/i, '').split('.').filter(Boolean);
-    const domain = normalized(labels.length > 1 ? labels[labels.length - 2] : (labels[0] ?? ''));
-    return domain.length >= 5 && (domain.includes(key) || key.includes(domain));
+    const domain = registrableLabel(a);
+    // A short domain must match the name exactly; only a longer one may match as part of it.
+    return domain === key || (domain.length >= 5 && (domain.includes(key) || key.includes(domain)));
   });
 }
 
@@ -114,11 +144,11 @@ function backedByAddress(name: string, fullText: string): boolean {
  * "MILES Mobility GmbH" and miles-mobility.com). The address is required so a
  * company in the bill-to block does not pass for the issuer.
  */
-function issuerOutsideHead(lines: string[], fullText: string): string | null {
+function issuerOutsideHead(lines: string[], addresses: string[]): string | null {
   for (const line of lines) {
     if (!LEGAL_FORM.test(line)) continue;
     const name = companyName(line);
-    if (canBeName(name) && backedByAddress(name, fullText)) return name;
+    if (canBeName(name) && backedByAddress(name, addresses)) return name;
   }
   return null;
 }
@@ -169,6 +199,15 @@ export function readVendor(fullText: string): VendorReading {
   const end = all.findIndex((l, i) => i > 0 && BODY_START.test(l));
   const head = all.slice(0, Math.min(end === -1 ? HEAD_LINES : end, HEAD_LINES)).filter((l) => l.length > 0);
 
+  const addresses = issuerAddresses(all);
+  // A company in the head that is followed by an address and that no issuer address names is the customer's block,
+  // when the receipt confirms another company further down.
+  const customerBlock = (name: string, index: number) => {
+    if (!addressFollows(head, index) || backedByAddress(name, addresses)) return null;
+    const issuer = issuerOutsideHead(all, addresses);
+    return issuer && !sameVendor(issuer, name) ? issuer : null;
+  };
+
   // 1. A line that names the legal form or the owner is the business itself.
   for (let i = 0; i < head.length; i++) {
     const line = head[i];
@@ -178,6 +217,8 @@ export function readVendor(fullText: string): VendorReading {
       if (canBeName(name)) return { vendor: name, confidence: 'confirmed' };
     }
     if (LEGAL_FORM.test(line) && canBeName(line)) {
+      const issuer = customerBlock(line, i);
+      if (issuer) return { vendor: issuer, confidence: 'confirmed' };
       // Prefer the trading name printed above a company line when there is one ("the breakfast story" above "... UG").
       // Only within the company's own block: above an address line sits someone else's block, often the customer's
       // name under a greeting ("THANKS FOR / YOUR RIDE! / <customer> / <street> / <town>").
@@ -192,7 +233,7 @@ export function readVendor(fullText: string): VendorReading {
   // 2. The first line that can be a name; a name broken across several short lines is joined.
   const start = head.findIndex(canBeName);
   if (start === -1) {
-    const issuer = issuerOutsideHead(all, fullText);
+    const issuer = issuerOutsideHead(all, addresses);
     return issuer ? { vendor: issuer, confidence: 'confirmed' } : { vendor: null, confidence: 'none' };
   }
   const parts = [head[start]];
@@ -211,8 +252,8 @@ export function readVendor(fullText: string): VendorReading {
   // A confirmed issuer below the heading wins over a head line nothing backs, and over one that is the customer:
   // a name followed by an address and printed twice (on the address block and in the greeting) counts as backed,
   // but no web or mail address on the receipt names it.
-  const issuer = issuerOutsideHead(all, fullText);
-  if (issuer && (!confirmed || (addressFollows(head, start + parts.length - 1) && !backedByAddress(name, fullText)))) {
+  const issuer = issuerOutsideHead(all, addresses);
+  if (issuer && (!confirmed || (addressFollows(head, start + parts.length - 1) && !backedByAddress(name, addresses)))) {
     return { vendor: issuer, confidence: 'confirmed' };
   }
   return { vendor: name, confidence: confirmed ? 'confirmed' : 'likely' };
@@ -229,6 +270,10 @@ export function readVendor(fullText: string): VendorReading {
 export function chooseVendor(reading: VendorReading, modelVendor: string | null | undefined, fullText: string): VendorReading {
   const model = modelVendor ? clean(modelVendor) : '';
   if (!model || !canBeName(model)) return reading;
+  // An issuer the receipt's own address names is not replaced by a name from the receipt text, which may be the customer's.
+  if (reading.vendor && reading.confidence === 'confirmed' && backedByAddress(reading.vendor, issuerAddresses(fullText.split('\n').map(clean)))) {
+    return reading;
+  }
   const text = normalized(fullText);
   const tokens = model.split(/\s+/).map(normalized).filter((t) => t.length >= 3);
   const inText = tokens.length > 0 && tokens.filter((t) => text.includes(t)).length >= Math.ceil(tokens.length / 2);

@@ -1,6 +1,7 @@
 import postgres from 'postgres';
 import { assertThrowawayUrl, type ThrowawayDatabase } from './db-guard';
 import { ensureContactsLayout } from './contacts-db';
+import { cloneForWorkers } from './db-workers';
 
 /**
  * Global setup of `pnpm test:db`: every run starts on empty databases. The tests create their own workspaces
@@ -12,6 +13,9 @@ import { ensureContactsLayout } from './contacts-db';
  * (`tbl_*`) are dropped, in batches (one transaction for thousands of tables would run out of locks on a
  * database that grew for weeks). The layout stays, so no migration runs again: a reset after a normal run
  * takes about a second, and in continuous integration it truncates tables that are already empty.
+ *
+ * Then it copies both, emptied and migrated, once per test worker (test/db-workers.ts): the files run side by
+ * side, each worker in its own copy, and every file empties its worker's copy before it starts (test/db-setup.ts).
  *
  * It only ever touches a database that passes `assertThrowawayUrl` (local host, name ending in `_test`), and
  * then asks the server itself which database it is connected to before it deletes anything. (The server's
@@ -32,7 +36,7 @@ async function confirmServer(sql: postgres.Sql, target: ThrowawayDatabase, varia
   }
 }
 
-interface EmptyOptions {
+export interface EmptyOptions {
   /** Drop the per-workspace `tbl_*` tables (receipts database). */
   dropWorkspaceTables: boolean;
   /** A table that must exist, or the database was never migrated and the tests could not run anyway. */
@@ -41,7 +45,7 @@ interface EmptyOptions {
   prepare?: () => Promise<void>;
 }
 
-async function emptyDatabase(target: ThrowawayDatabase, variable: string, options: EmptyOptions) {
+export async function emptyDatabase(target: ThrowawayDatabase, variable: string, options: EmptyOptions) {
   const sql = postgres(target.url, { max: 1, onnotice: () => {} });
   try {
     await confirmServer(sql, target, variable);
@@ -81,8 +85,10 @@ export default async function resetTestDatabases(): Promise<void> {
     requireMigrations: null,
     prepare: ensureContactsLayout,
   });
+  // Copied only now: every connection to the originals is closed, which Postgres requires of a template.
+  const copies = [...(await cloneForWorkers('TEST_DATABASE_URL', receipts)), ...(await cloneForWorkers('CONTACTS_TEST_DATABASE_URL', contacts))];
   console.log(
-    `test databases emptied in ${Date.now() - started} ms: ${receipts.database} (${r.dropped} workspace tables dropped, ${r.emptied} tables emptied), ` +
-      `${contacts.database} (${c.emptied} tables emptied)`,
+    `test databases emptied and copied in ${Date.now() - started} ms: ${receipts.database} (${r.dropped} workspace tables dropped, ` +
+      `${r.emptied} tables emptied), ${contacts.database} (${c.emptied} tables emptied); worker copies ${copies.join(', ')}`,
   );
 }

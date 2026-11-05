@@ -87,6 +87,10 @@ describe('a list narrowed to years', () => {
   });
 
   it('is not narrowed when it is asked for every receipt', async () => {
+    // Receipts of its own in two years, so the test does not lean on what the tests before it stored.
+    const tag = randomUUID().slice(0, 6);
+    await ws.addReceipt({ ...base, Name: `all24 ${tag}`, Date: '2024-03-01T00:00:00.000Z' });
+    await ws.addReceipt({ ...base, Name: `all22 ${tag}`, Date: '2022-03-01T00:00:00.000Z' });
     const all = await getRows(ws.tableId, { limit: 500 });
     expect(all.items.length).toBeGreaterThan(0);
     const none = await getRows(ws.tableId, { years: [], limit: 500 } as never);

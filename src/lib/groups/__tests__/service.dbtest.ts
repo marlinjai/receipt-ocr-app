@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Column, Row } from '@marlinjai/data-table-core';
 import { deleteReceiptRows, loadMealRecords } from '@/lib/meals/service';
 import { loadReviewQueue } from '@/lib/review/service';
@@ -128,13 +128,23 @@ describe('the order of the receipts in a group', () => {
   const shownOrder = async () => inGroupOrder(await rows(), columns).filter((r) => r.parentRowId === groupId).map((r) => r.id);
   const receipt = (Name: string) => ws.addReceipt({ Name, Vendor: 'Ordnung GmbH', Gross: 1, Date: '2026-05-01', Category: 'Reisekosten', Currency: 'EUR', 'FX Rate': 1 });
 
-  beforeAll(async () => {
+  // Every test starts from the same placed group in a workspace of its own: a test that moves receipts around
+  // would otherwise hand its order to the next one, and the receipts would count in the describe above.
+  let shared: { ws: TestWorkspace; columns: Column[] } | null = null;
+  beforeEach(async () => {
+    shared = { ws, columns };
+    ws = await createWorkspace();
+    columns = await ws.adapter.getColumns(ws.tableId);
     first = await receipt('Erster');
     second = await receipt('Zweiter');
     third = await receipt('Dritter');
     outside = await receipt('Draussen');
     groupId = await createGroup(db, ws.workspaceId, 'Ordnung', [first, second, third]);
     await moveIntoGroup(db, ws.workspaceId, groupId, [first], [third, first, second]);
+  });
+  afterEach(() => {
+    if (shared) ({ ws, columns } = shared);
+    shared = null;
   });
 
   it('forward: the group is shown in the order placed, and that is what a new read gives', async () => {

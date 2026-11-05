@@ -69,9 +69,7 @@ describe('"Set field" on a selection', () => {
     expect(pending).toEqual([]);
     expect(done.sort()).toEqual([...ids].sort());
     for (const id of ids) expect(await stored(id)).toBe(business);
-    // The adapter finds a row by looking through every table of the database, which a long-used test database
-    // has many of: a generous limit, so the time of that lookup does not fail the test.
-  }, 180_000);
+  });
 
   it('a row that already holds the value is done without a write, so a retry never writes twice', async () => {
     const ids = await receipts(3, 'already');

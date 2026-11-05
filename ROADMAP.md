@@ -399,9 +399,18 @@
   meals (named "Finanzen, ..."), and on a company switch to `RefusalDesk` with the company's name.
   That covers the page's writes, own names, the bank actions and the account sharing; a link question
   that arrives after leaving is said, not asked over another page. Done 2026-11-05.
-- [ ] Database tests time out when the machine is under heavy load (load average 40 to 87 on 14
-  cores: tax-rates, bulk-set, text, assignment-sync, review service). They pass alone. Find out
-  whether it is contention or a shared-state defect, per the continuous integration standard. (2026-11-02)
+- [x] Database tests time out when the machine is under heavy load (load average 40 to 87 on 14
+  cores: tax-rates, bulk-set, text, assignment-sync, review service). It was a shared-state defect:
+  the data-table adapter looks a row up in every row table of the database, and all files shared one
+  database, so a file's time grew with every workspace the files before it created (109 seconds after
+  682 tables, 7 on an empty database). Each worker now has its own database copy that every file
+  empties first, four files run at once, the suite passes shuffled, and the 180 second limit in
+  bulk-set is gone. Done 2026-11-05.
+- [ ] `@marlinjai/data-table-adapter-prisma` (0.2.1) finds a row by asking every migrated row table of
+  the database in turn (`getRow`, and through it `updateRow` twice, `archiveRow`, `unarchiveRow`,
+  `deleteRow`, `getRelatedRows`): one query per table, across all workspaces. Production has 5 such
+  tables today, so it is cheap there, but it grows with every workspace. Fix in the data-table repo
+  (a row-to-table lookup, or the table id passed in) and take the new version here. (2026-11-05)
 - [ ] The 566 payments marked "Nicht auffindbar" (28,395 euros, 2025 and 2026): invoices behind a
   login are not fetched yet (Amazon, eBay, Deutsche Bahn, freenet, Lemon Squeezy, claude.ai billing).
   They stay visible in red under Ausgaben, Belege. Backlog plan:

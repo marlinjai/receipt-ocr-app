@@ -83,10 +83,13 @@
   1.8 MB of data and about 180 MB of browser memory (was 817 MB); all years load in about 30
   seconds. Groups, taking a receipt out, the year links and the 2025 figures checked. Plan:
   [docs/plans/2026-10-13-dashboard-load-and-grouping.md](docs/plans/2026-10-13-dashboard-load-and-grouping.md). Done 2026-10-15.
-- [ ] The filter bar's date operators ("after", "before", "equals") fail on the database: the
-  adapter casts the date column to a timestamp and compares it with a text parameter. Found on
-  2026-10-14 through the adapter's list query; the year scope avoids them. Fix in the table
-  adapter or in the app's server action. (2026-10-14)
+- [x] The filter bar's date operators ("after", "before", "equals") fail on the database: the
+  adapter casts the date column to a timestamp and compares it with a text parameter. Fixed in the
+  app's list action by #119 on 2026-10-15 (`src/app/app/dashboard/day-filters.ts`): those
+  comparisons are answered on the day each date names, "is" also narrows the database read with a
+  text match, and `day-filters.dbtest.ts` proves it against Postgres in every verify run; the line
+  was only left open. The shared adapter should still bind a text value as a timestamp, which
+  belongs to the data-table repository. Done 2026-11-05.
 - [ ] Rule sets for the tax years 2021 to 2024, so the finance area shows those years on their own
   forms. Today they are computed with the 2025 form, which the page says. 2024 uses the same line
   numbers as 2025 for every line that was declared; 2023 is shifted, 2022 and 2021 use the older,

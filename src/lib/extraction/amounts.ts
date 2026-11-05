@@ -100,12 +100,87 @@ const AMOUNT = /(?<![\p{L}\p{N}.,:/#-])(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d{1,6}[.
 /** The same pattern without the global flag, for a yes or no on one line. */
 const AMOUNT_TEST = new RegExp(AMOUNT.source, 'u');
 
+/**
+ * What the digits of an amount in another currency become (see
+ * withoutForeignAmounts). A character of the private use area: no receipt
+ * prints it, and no pattern here reads it as a number.
+ */
+const SET_ASIDE = '\uE000';
+
+/** True when a line carries an amount, also one set aside as another currency's: its label is then not alone on the line. */
+const holdsAmount = (line: string) => AMOUNT_TEST.test(line) || line.includes(SET_ASIDE);
+
 function toCents(raw: string): number | null {
   const lastSeparator = Math.max(raw.lastIndexOf(','), raw.lastIndexOf('.'));
   const whole = raw.slice(0, lastSeparator).replace(/[.,]/g, '');
   const fraction = raw.slice(lastSeparator + 1);
   const value = Number(whole) * 100 + Number(fraction);
   return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/**
+ * A currency sign or code as it stands next to an amount. Codes are taken in
+ * capitals only and never inside a word, so "Europa" or "eurer" name none.
+ */
+const MONEY_MARK = '(?:US\\$|[$€£]|(?<![\\p{L}])(?:EUR|USD|GBP|CHF|DKK|SEK|NOK|PLN|CZK|HUF|JPY|CAD|AUD|TRY|RON|BGN)(?![\\p{L}]))';
+const MARK_GLUED_BEFORE = new RegExp(`${MONEY_MARK}$`, 'u');
+const MARK_SPACED_BEFORE = new RegExp(`${MONEY_MARK}[ \\t\\u00a0]+$`, 'u');
+const MARK_GLUED_AFTER = new RegExp(`^${MONEY_MARK}`, 'u');
+const MARK_SPACED_AFTER = new RegExp(`^[ \\t\\u00a0]+${MONEY_MARK}`, 'u');
+const SIGN_CODES: Record<string, string> = { '€': 'EUR', $: 'USD', US$: 'USD', '£': 'GBP' };
+const markCode = (match: RegExpExecArray | null) => (match ? (SIGN_CODES[match[0].trim()] ?? match[0].trim()) : null);
+
+/**
+ * Every amount on a line with the currency that stands next to it, or null
+ * where none does. A sign or code glued to the amount ("$29.99", "12,00€")
+ * is its own; where one stands on each side, apart from it, the line's habit
+ * decides: a line that opens with a code before its first amount ("Grand
+ * Total: USD 87.58") puts the code first, a row of amounts with signs behind
+ * them ("12,00 € 3,00 €") puts it after.
+ */
+export function amountsWithCurrency(line: string): Array<{ index: number; length: number; currency: string | null }> {
+  const matches = [...line.matchAll(AMOUNT)];
+  const opening = matches.length > 0 ? line.slice(0, matches[0].index) : '';
+  const firstLeads = MARK_SPACED_BEFORE.test(opening) || MARK_GLUED_BEFORE.test(opening);
+  return matches.map((match) => {
+    const before = line.slice(0, match.index);
+    const after = line.slice((match.index ?? 0) + match[0].length);
+    const currency =
+      markCode(MARK_GLUED_BEFORE.exec(before)) ??
+      markCode(MARK_GLUED_AFTER.exec(after)) ??
+      (firstLeads
+        ? (markCode(MARK_SPACED_BEFORE.exec(before)) ?? markCode(MARK_SPACED_AFTER.exec(after)))
+        : (markCode(MARK_SPACED_AFTER.exec(after)) ?? markCode(MARK_SPACED_BEFORE.exec(before))));
+    return { index: match.index ?? 0, length: match[0].length, currency };
+  });
+}
+
+/**
+ * The text with every amount that stands next to another currency than the
+ * receipt's blanked out (its digits become SET_ASIDE), line for line. An invoice
+ * that converts its figures ("23,33 PLN" under "5,02 €"), or a dollar order
+ * charged to a card in euros ("Payment Grand Total: EUR 75,80"), prints a
+ * second set of figures that add up just as well; read as the receipt's
+ * own, the converted total was stored as euros.
+ *
+ * Nothing is set aside where no amount carries the receipt's own currency:
+ * the currency handed in can then be the wrong one, and blanking every
+ * amount would leave nothing to read.
+ */
+function withoutForeignAmounts(text: string, currency: string): string {
+  const lines = text.split('\n');
+  const marked = lines.map(amountsWithCurrency);
+  if (!marked.some((amounts) => amounts.some((a) => a.currency === currency))) return text;
+  return lines
+    .map((line, i) => {
+      let out = line;
+      for (const amount of marked[i]) {
+        if (amount.currency === null || amount.currency === currency) continue;
+        out = out.slice(0, amount.index) + out.slice(amount.index, amount.index + amount.length).replace(/\d/g, SET_ASIDE) + out.slice(amount.index + amount.length);
+      }
+      return out;
+    })
+    .join('\n');
 }
 
 /** Lines that carry identifiers, not money, even where a number in them has two decimals. */
@@ -283,7 +358,7 @@ function labelledTotals(text: string): LabelledTotal[] {
   const out: LabelledTotal[] = [];
   const amountsOn = (line: string) => [...line.matchAll(AMOUNT)].map((m) => toCents(m[1])).filter((v): v is number => v !== null);
   const bareLabel = (line: string | undefined) =>
-    line !== undefined && !AMOUNT_TEST.test(line) && (TOTAL_LABEL.test(line) || NOT_A_TOTAL.test(line) || TAX_LABEL.test(line) || BLOCK_LABEL.test(line));
+    line !== undefined && !holdsAmount(line) && (TOTAL_LABEL.test(line) || NOT_A_TOTAL.test(line) || TAX_LABEL.test(line) || BLOCK_LABEL.test(line));
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const headline = DUE_HEADLINE.exec(line);
@@ -299,6 +374,8 @@ function labelledTotals(text: string): LabelledTotal[] {
       out.push({ cents: own[own.length - 1], due, invoice: INVOICE_TOTAL_LABEL.test(line) });
       continue;
     }
+    // The label's own amount is another currency's ("Payment Grand Total: EUR 66,32"): the line below is not its value.
+    if (line.includes(SET_ASIDE)) continue;
     const next = lines[i + 1] ?? '';
     if (NOT_A_TOTAL.test(next) || TOTAL_LABEL.test(next) || bareLabel(lines[i - 1])) continue;
     const following = amountsOn(next);
@@ -329,7 +406,7 @@ function deductionsIn(text: string): Array<{ cents: number; line: number }> {
   lines.forEach((line, i) => {
     // On the line itself, or on a label that stands alone above a bare amount.
     const above = lines[i - 1];
-    const labelAbove = above !== undefined && !AMOUNT_TEST.test(above) && BARE_AMOUNT_LINE.test(line.trim()) ? above : null;
+    const labelAbove = above !== undefined && !holdsAmount(above) && BARE_AMOUNT_LINE.test(line.trim()) ? above : null;
     if (!isNamedDeduction(line) && !(labelAbove !== null && isNamedDeduction(labelAbove))) {
       if (NOT_A_DEDUCTION.test(line)) return;
       if (labelAbove !== null && NOT_A_DEDUCTION.test(labelAbove)) return;
@@ -385,7 +462,7 @@ const TAX_LABEL_MAX = 60;
 function namesATax(line: string): boolean {
   const trimmed = line.trim();
   if (TAX_IDENTIFIER.test(trimmed)) return false;
-  if (trimmed.length > TAX_LABEL_MAX && !AMOUNT_TEST.test(trimmed) && !/\d\s?%/.test(trimmed)) return false;
+  if (trimmed.length > TAX_LABEL_MAX && !holdsAmount(trimmed) && !/\d\s?%/.test(trimmed)) return false;
   return TAX_LABEL.test(trimmed) || GERMAN_TAX_WORD.test(trimmed);
 }
 
@@ -438,7 +515,7 @@ function namedAmounts(text: string, label: RegExp, exclude?: RegExp): number[] {
     if (!label.test(line) || (exclude && exclude.test(line))) continue;
     const own = line.trim().replace(TRAILING_MINUS, '');
     const below = (lines[i + 1] ?? '').trim().replace(TRAILING_MINUS, '');
-    const amount = lineEndAmount(own) ?? (!AMOUNT_TEST.test(line) && BARE_AMOUNT_LINE.test(below) ? lineEndAmount(below) : null);
+    const amount = lineEndAmount(own) ?? (!holdsAmount(line) && BARE_AMOUNT_LINE.test(below) ? lineEndAmount(below) : null);
     if (amount !== null) out.push(amount);
   }
   return out;
@@ -554,7 +631,10 @@ export interface AmountHints {
  * another amount), then a labelled total alone (reported as unconfirmed), then
  * nothing.
  */
-export function readAmounts(text: string, hints: AmountHints = {}): AmountReading {
+export function readAmounts(receiptText: string, hints: AmountHints = {}): AmountReading {
+  // Only a currency the caller names sets amounts aside: without one, the euro
+  // is assumed, and that is no reading of the receipt.
+  const text = hints.currency ? withoutForeignAmounts(receiptText, hints.currency.toUpperCase()) : receiptText;
   const found = amountsInText(text);
   const values = new Set(found.map((a) => a.cents));
   const checks: AmountCheck[] = [];
@@ -580,13 +660,13 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
   const hasTipWord = lines.some(tipLine);
   // On the tip line itself, or on the line after it when the label stands alone
   // and is not part of a block of labels whose values follow in another order.
-  const bareLabel = (l: string | undefined) => l !== undefined && !AMOUNT_TEST.test(l) && (TOTAL_LABEL.test(l) || NOT_A_TOTAL.test(l));
+  const bareLabel = (l: string | undefined) => l !== undefined && !holdsAmount(l) && (TOTAL_LABEL.test(l) || NOT_A_TOTAL.test(l));
   const namedOn = (isLabel: (l: string) => boolean) =>
     found
       .filter(
         (a) =>
           isLabel(lines[a.line]) ||
-          (a.line > 0 && isLabel(lines[a.line - 1]) && !AMOUNT_TEST.test(lines[a.line - 1]) && !bareLabel(lines[a.line - 2])),
+          (a.line > 0 && isLabel(lines[a.line - 1]) && !holdsAmount(lines[a.line - 1]) && !bareLabel(lines[a.line - 2])),
       )
       .map((a) => a.cents);
   const tipOnLine = namedOn(tipLine);
@@ -620,8 +700,9 @@ export function readAmounts(text: string, hints: AmountHints = {}): AmountReadin
       const billLine = billLines.filter((line) => line < i).pop() as number;
       const own = [...lines[i].matchAll(AMOUNT)].map((m) => toCents(m[1])).filter((v): v is number => v !== null);
       const next = (lines[i + 1] ?? '').trim();
-      const fromNext = own.length === 0;
-      const paid = own[own.length - 1] ?? (BARE_AMOUNT_LINE.test(next) ? (lineEndAmount(next) ?? undefined) : undefined);
+      // A paid amount set aside as another currency's is not looked for on the next line.
+      const fromNext = own.length === 0 && !lines[i].includes(SET_ASIDE);
+      const paid = own[own.length - 1] ?? (fromNext && BARE_AMOUNT_LINE.test(next) ? (lineEndAmount(next) ?? undefined) : undefined);
       if (paid === undefined || paid <= billCents || paid - billCents > billCents * 0.3) return null;
       // Another figure between the bill and the paid amount is a charge or a deposit, never part of a tip.
       // The paid amount itself may stand between (paid by card, "Kartenzahlung 20,00").

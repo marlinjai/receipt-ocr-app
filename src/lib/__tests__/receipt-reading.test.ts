@@ -257,4 +257,27 @@ describe('settleFromPageOnly: a page without text, read by the model alone', () 
     const settled = settleFromPageOnly(answer({ category: 'Bewirtung', gross: 30, currency: 'EUR', vendor: 'Trattoria Beispiel', date: day('2026-03-02'), meal: { ...EMPTY_MEAL_CLASSIFICATION, mealType: 'business_meal_external' } }));
     expect(settled.meal?.mealType).toBe('business_meal_external');
   });
+
+  it('a meal\'s rate follows its tax lines, also where the model\'s single rate names another', () => {
+    // The model's lines and its one rate disagree: the 19 percent drinks carry more of the bill
+    // (117.81 against 107.00), the model's single rate says 7. Both columns take the lines' order.
+    const meal = { ...EMPTY_MEAL_CLASSIFICATION, taxLines: [{ rate: 7, net: 100, tax: 7 }, { rate: 19, net: 99, tax: 18.81 }] };
+    const settled = settleFromPageOnly(answer({ category: 'Bewirtung', gross: 224.81, currency: 'EUR', taxRate: 7, meal }));
+    expect(settled.taxRate).toBe(19);
+    expect(formatTaxRates(settled.meal?.taxLines, settled.taxRate)).toBe('19 % + 7 %');
+    // Where the lines add up to the bill, the net is theirs, not the bill worked back at one rate.
+    expect(settled.net).toBe(199);
+  });
+
+  it('a meal without usable tax lines keeps the model\'s single rate', () => {
+    const meal = { ...EMPTY_MEAL_CLASSIFICATION, taxLines: [] };
+    expect(settleFromPageOnly(answer({ category: 'Bewirtung', gross: 10.7, currency: 'EUR', taxRate: 7, meal }))).toMatchObject({ taxRate: 7, net: 10 });
+  });
+
+  it('lines that do not add up to the bill set the rate but not the net', () => {
+    const meal = { ...EMPTY_MEAL_CLASSIFICATION, taxLines: [{ rate: 7, net: 10, tax: 0.7 }, { rate: 19, net: 20, tax: 3.8 }] };
+    const settled = settleFromPageOnly(answer({ category: 'Bewirtung', gross: 50, currency: 'EUR', taxRate: 7, meal }));
+    expect(settled.taxRate).toBe(19);
+    expect(settled.net).toBe(42.02);
+  });
 });

@@ -28,14 +28,15 @@
   (2026-10-11)
 - [ ] A receipt with its parts as sub rows, the second use of sub rows (further values of the
   hidden `Row Kind` column). Not built; the group design leaves room for it. (2026-10-11)
-- [ ] The text reader takes two line items for net and tax. Seen in the review list on 2026-10-11:
+- [x] The text reader takes two line items for net and tax. Seen in the review list on 2026-10-11:
   a Cursor invoice of 20.06 US dollars with two usage lines (18.76 and 1.30) and no tax was
-  offered a new reading of net 18.76 at 7 percent, because 1.30 is about 7 percent of 18.76. A
-  tax needs a line that names it; two item amounts that happen to fit a rate are no tax. The
-  same pass showed the stored-total flags of older readings never clear by themselves once the
-  amount was corrected or tied to a payment: 68 such "Betrag prüfen" entries were confirmed by
-  hand against the tax table and the documents. A corrected or payment-linked total should
-  clear its flag. (2026-10-11)
+  offered a new reading of net 18.76 at 7 percent. Both halves landed: since #121 (the rule that
+  a tax needs a line that names it) two item amounts that fit a rate are no tax, tested on the
+  Cursor case in `src/lib/review/__tests__/reading.test.ts`; since #143 a "Betrag prüfen" flag ends
+  by itself once the stored total differs from the one the reader doubted or linked payments cover
+  it (`totalSettled` in `src/lib/review/reasons.ts`). Flags recorded before #143 keep no read total
+  and clear by a covering payment or by "Geprüft" only (11 such stored flags open on production on
+  2026-11-05). Done 2026-11-05.
 - [ ] Read receipts with a model that sees the page, not only the recognized text. Live since
   2026-10-11: the classification call gets the page itself and also reads date, total, currency,
   net and tax lines; the invoice's arithmetic and the recognized text check its answer. On 288

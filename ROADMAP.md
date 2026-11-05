@@ -55,12 +55,13 @@
   of a restaurant or bar, or where none is stored, and never for the legal form alone. The
   amount offers stay: there the new reading was the better one (the printed 19 percent on dollar
   invoices that were stored with 0). Done 2026-10-11.
-- [ ] The dashboard table doubles its rows after cell edits. Seen on production on 2026-10-11
+- [x] The dashboard table doubles its rows after cell edits. Seen on production on 2026-10-11
   while renaming receipts through the table: after a few dozen edits in one page load the
   header read "917 items" for 267 receipts and every row was drawn several times (917 rows,
-  267 distinct ids). The stored data was intact and a reload showed 267 again. Probably the
-  loader that fetches all pages appends them again after an edit. Until fixed, counts and
-  sums on a page that was edited a lot cannot be trusted without a reload. (2026-10-11)
+  267 distinct ids). Fixed by #125 (one load at a time) and, since 2026-11-02, by design in the
+  `ReceiptsStore`: rows are held by id, and a load that a newer one replaced drops its late
+  pages. Checked on that store with 267 receipts, 36 edits each followed by a reload and the
+  answers arriving in the worst order: every receipt once, every edit kept. Done 2026-11-05.
 - [x] What was bought is part of a receipt's name: a cell "Item" the reader fills, the name as
   "vendor, item, total, date", and the name following its cells when vendor, item, total,
   currency or date is corrected (a typed name stays). Decided by the owner on 2026-10-11 for
@@ -100,9 +101,12 @@
   the returns of 2022 and 2023 split between business and study carry only the business share,
   because the split is a finance-area decision and those were made for 2024 only. About 687 of
   study cost in 2022 is not counted for that reason. (2026-10-11)
-- [ ] "Set field" on a selection loses writes: on 2026-10-11, setting the assignment on 30
+- [x] "Set field" on a selection loses writes: on 2026-10-11, setting the assignment on 30
   selected rows reported success and left 14 of 81 rows unchanged; selections of 7 went through
-  completely. The writes run side by side through the guarded cell update. (2026-10-11)
+  completely. Fixed by #129 and #155: the server writes the selection in parts, reads every row
+  back and counts only what is stored; the bar says "n von m gesetzt" with the reason for the
+  rest and offers another try. Checked on the store-backed page of 2026-11-02: a row that did not
+  land is never counted, and the table shows what is stored afterwards. Done 2026-11-05.
 - [ ] A file that holds two invoices becomes one receipt with the second invoice's figures
   (seen on 2026-10-11 on a file with a marketplace invoice and a retailer invoice). The reader
   should say that the file holds more than one document, so it can be split. (2026-10-11)

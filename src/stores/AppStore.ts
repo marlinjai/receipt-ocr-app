@@ -2,6 +2,7 @@ import { computed, makeAutoObservable, observable } from 'mobx';
 import type { NavCounts } from '@/app/app/nav-actions';
 import { ChecksOutbox, type Refusal } from './ChecksOutbox';
 import type { ChecksStore } from './ChecksStore';
+import { FinanceOutbox } from './FinanceOutbox';
 import { MealsOutbox } from './MealsOutbox';
 import type { MealsStore } from './MealsStore';
 import type { ReceiptsStore } from './ReceiptsStore';
@@ -23,10 +24,12 @@ export class AppStore {
   readonly checkOutbox = new ChecksOutbox();
   /** The same for the list actions of the meals page. */
   readonly mealOutbox = new MealsOutbox();
+  /** The refusals of finance writes answered after the finance page closed. */
+  readonly financeOutbox = new FinanceOutbox();
   private fromServer: NavCounts | null = null;
 
   constructor() {
-    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, mealOutbox: false, fromServer: observable.ref, counts: computed.struct }, { autoBind: true });
+    makeAutoObservable<AppStore, 'fromServer'>(this, { meals: observable.ref, checks: observable.ref, receipts: observable.ref, checkOutbox: false, mealOutbox: false, financeOutbox: false, fromServer: observable.ref, counts: computed.struct }, { autoBind: true });
   }
 
   get counts(): NavCounts | null {
@@ -57,26 +60,29 @@ export class AppStore {
     this.mealOutbox.open = null;
   }
 
-  /** The refusals nothing on screen shows: the shell says them (`Refusals`). On the meals page a meal's needs no name: its row just came back. */
+  /** The refusals nothing on screen shows: the shell says them (`Refusals`). On the meals page a meal's needs no name: its row just came back. A finance refusal is here only once its page closed. */
   get looseRefusals(): Refusal[] {
     const meals = [...this.mealOutbox.refusals.values()].map((r) => (this.meals ? { ...r, who: null } : r));
-    return [...[...this.checkOutbox.refusals.values()].filter((r) => !this.checks?.shows(r.key)), ...meals];
+    return [...[...this.checkOutbox.refusals.values()].filter((r) => !this.checks?.shows(r.key)), ...meals, ...this.financeOutbox.refusals.values()];
   }
 
   closeRefusal(key: string): void {
     this.checkOutbox.clear(key);
     this.mealOutbox.clear(key);
+    this.financeOutbox.clear(key);
   }
 
   /** The company left the screen: this store is thrown away, and its refusals must still reach the person. */
   leave(send: (refusal: Refusal) => void): void {
     this.checkOutbox.leave(send);
     this.mealOutbox.leave(send);
+    this.financeOutbox.leave(send);
   }
 
   stay(): void {
     this.checkOutbox.stay();
     this.mealOutbox.stay();
+    this.financeOutbox.stay();
   }
 
   /** The receipt checks opened. Unlike the meals they have no number in the navigation: only the spending page's tab reads them. */

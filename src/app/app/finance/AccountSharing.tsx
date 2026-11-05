@@ -3,6 +3,7 @@
 import { useId, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { formatDay } from '@/lib/meals/messages';
+import { useFinanceRefusal } from '@/stores/provider';
 import type { Result } from './actions';
 import type { ShareEntry, SharingView } from './sharing-actions';
 
@@ -23,6 +24,9 @@ export function sharingMessage(result: Extract<Result<unknown>, { ok: false }>):
   if (result.detail === 'share_not_found') return 'Diese Weitergabe ist schon beendet. Bitte die Seite neu laden.';
   return 'Das hat nicht geklappt. Bitte noch einmal versuchen; wenn es wieder scheitert, die Seite neu laden.';
 }
+
+/** How a refusal of this section is named in the shell. */
+const WHO = 'Finanzen, private Zahlungen in einer anderen Firma';
 
 const other = (s: ShareEntry) => s.otherName ?? 'eine andere Firma';
 
@@ -103,6 +107,8 @@ export default function AccountSharing({ view, onChange, accounts, actions }: { 
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Its own, not the page's: the section closes with its tab too, and a refusal must not be lost with it.
+  const refuse = useFinanceRefusal();
 
   const run = (action: () => Promise<Result<SharingView>>, message: string) => {
     setError(null);
@@ -113,9 +119,9 @@ export default function AccountSharing({ view, onChange, accounts, actions }: { 
         if (result.ok) {
           onChange(result.value);
           setDone(message);
-        } else setError(sharingMessage(result));
+        } else refuse(WHO, sharingMessage(result), setError);
       } catch {
-        setError(sharingMessage({ ok: false, error: 'failed' }));
+        refuse(WHO, sharingMessage({ ok: false, error: 'failed' }), setError);
       }
     });
   };

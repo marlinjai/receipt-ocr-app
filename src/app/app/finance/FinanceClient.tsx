@@ -71,6 +71,7 @@ import { GROUPS, WORKSPACE_CHECKS, addressOf, defaultTab, groupCount, groupOf, o
 import OwnNames, { ownNamesMessage } from '../spending/OwnNames';
 import { changeOwnNames, type OwnNamesView } from './own-names-actions';
 import { FinanceStore } from '@/stores/FinanceStore';
+import { useFinanceRefusal } from '@/stores/provider';
 
 /** Checks that are resolved on the receipt itself or in the meal register, not with a decision here. */
 const MEAL_CHECKS: OpenCheckKind[] = ['meal_incomplete', 'meal_without_register_facts'];
@@ -141,6 +142,8 @@ const FinanceClient = observer(function FinanceClient({
   const router = useRouter();
   // One store per visit: it keeps the years, so an answer lands in its own whichever is open by then.
   const [store] = useState(() => new FinanceStore({ statement: initial, bank: bankInitial, sharing, ownNames: ownNamesInitial }));
+  // A refusal that arrives after the person left the page is said in the shell instead of being lost with it.
+  const refuse = useFinanceRefusal();
   const view = store.statement;
   // Two levels (plan 2026-10-25-finance-groups): a group, and the tab last chosen inside each group, so going
   // to another group and back finds the tab that was open there. Without an address the page opens on the first
@@ -175,7 +178,7 @@ const FinanceClient = observer(function FinanceClient({
   // On a phone the tab row scrolls sideways; the open tab is kept in view.
   const tabRow = useRef<HTMLDivElement>(null);
   useTabInView(tabRow, tab);
-  const bankFeed = useBankFeed(store.bank ?? NO_BANK, view.year, bankActions, store.bankChanged, store.answered, (url) => window.location.assign(url));
+  const bankFeed = useBankFeed(store.bank ?? NO_BANK, view.year, bankActions, store.bankChanged, store.answered, (url) => window.location.assign(url), refuse);
   const [bankNotice, setBankNotice] = useState(() => returnMessage(bankReturn));
   // The address keeps the open tab, so a reload or a shared link opens the same place. The outcome of the
   // return from the bank is shown once: the address loses it, so a reload does not repeat it. A visit
@@ -252,11 +255,15 @@ const FinanceClient = observer(function FinanceClient({
   }, []);
   const toggleLine = useCallback((key: string) => setOpenLine((line) => (line === key ? null : key)), []);
 
+  /** What a refusal of finance says in the shell about where it came from: there no row stands beside it. */
+  const whoOf = (subject?: string) => (subject ? `Finanzen, ${subject}` : 'Finanzen');
+
   function run(
     action: () => Promise<Result<StatementView>>,
     done: string,
     after?: (next: StatementView) => void,
     message: (error: string, detail?: string) => string = financeActionMessage,
+    subject?: string,
   ) {
     setError(null);
     setNotice(null);
@@ -266,11 +273,11 @@ const FinanceClient = observer(function FinanceClient({
         result = await action();
       } catch {
         // The request itself failed (offline, server restart): say so instead of looking saved.
-        setError(financeActionMessage('failed'));
+        refuse(whoOf(subject), financeActionMessage('failed'), setError);
         return;
       }
       if (!result.ok) {
-        setError(message(result.error, result.detail));
+        refuse(whoOf(subject), message(result.error, result.detail), setError);
         return;
       }
       store.answered(result.value);
@@ -309,8 +316,16 @@ const FinanceClient = observer(function FinanceClient({
       'Zahlung zugeordnet.',
       () => {
         if (question !== null) {
-          setNotice(question.startsWith('Diese Erstattung') ? 'Nichts zugeordnet: die Erstattung ist größer als der Rest des Belegs.' : 'Nichts zugeordnet: der Beleg hat schon eine Zahlung.');
-          if (window.confirm(question)) linkWithQuestion(input, true);
+          const asked = question;
+          // Nothing was linked. With the page closed this is said in the shell, and no question pops up over another page.
+          refuse(
+            whoOf(),
+            asked.startsWith('Diese Erstattung') ? 'Nichts zugeordnet: die Erstattung ist größer als der Rest des Belegs.' : 'Nichts zugeordnet: der Beleg hat schon eine Zahlung.',
+            (said) => {
+              setNotice(said);
+              if (window.confirm(asked)) linkWithQuestion(input, true);
+            },
+          );
         } else if (moved) {
           setNotice('Zahlung zugeordnet. Die bisherige Zuordnung dieses Belegs zur Abbuchung auf dem Bankkonto wurde hierher verschoben: es ist dasselbe Geld.');
         }
@@ -338,17 +353,21 @@ const FinanceClient = observer(function FinanceClient({
         const following = queue.slice(before + 1).find((i) => nextQueue.some((n) => n.itemId === i.itemId));
         setSelectedId(following?.itemId ?? nextQueue[0]?.itemId ?? null);
       },
+      undefined,
+      label,
     );
   }
 
   const saveAssetDraft = (assetId: string | null, draft: AssetDraft, done: () => void) =>
-    run(() => saveAsset(view.year, assetId, draft), `${draft.label}: Anlage gespeichert.`, done);
-  const deleteAssetView = (asset: AssetView) => run(() => removeAsset(view.year, asset.id), `${asset.label}: Anlage gelöscht.`);
+    run(() => saveAsset(view.year, assetId, draft), `${draft.label}: Anlage gespeichert.`, done, undefined, draft.label);
+  const deleteAssetView = (asset: AssetView) => run(() => removeAsset(view.year, asset.id), `${asset.label}: Anlage gelöscht.`, undefined, undefined, asset.label);
   const disposeAssetView = (asset: AssetView, disposal: DisposalDraft | null, done: () => void) =>
     run(
       () => disposeAsset(view.year, asset.id, disposal),
       disposal ? `${asset.label}: Abgang gespeichert.` : `${asset.label}: Abgang zurückgenommen.`,
       done,
+      undefined,
+      asset.label,
     );
 
   /** Add or take out an own name; resolves true when the server took it (the field is then emptied). */
@@ -362,11 +381,11 @@ const FinanceClient = observer(function FinanceClient({
           result = await changeOwnNames(view.year, change);
         } catch {
           // The request itself failed (offline, server restart): say so instead of looking saved.
-          setNamesError(financeActionMessage('failed'));
+          refuse(whoOf('Eigene Namen'), financeActionMessage('failed'), setNamesError);
           return resolve(false);
         }
         if (!result.ok) {
-          setNamesError(ownNamesMessage(result.detail) ?? financeActionMessage(result.error, result.detail));
+          refuse(whoOf('Eigene Namen'), ownNamesMessage(result.detail) ?? financeActionMessage(result.error, result.detail), setNamesError);
           return resolve(false);
         }
         const { names, readAt, settledOwnName, view: next } = result.value;
@@ -891,7 +910,7 @@ const FinanceClient = observer(function FinanceClient({
               busy={pending}
               error={error}
               lastImport={lastImport}
-              onAddAccount={(input, done) => run(() => addAccount(view.year, input), `Konto ${input.label} angelegt.`, done)}
+              onAddAccount={(input, done) => run(() => addAccount(view.year, input), `Konto ${input.label} angelegt.`, done, undefined, input.label)}
               onImport={(accountId, file, onlyThisYear, done) => {
                 setLastImport(null);
                 run(
@@ -919,6 +938,9 @@ const FinanceClient = observer(function FinanceClient({
                 run(
                   () => markAccountPrivate(view.year, account.id, isPrivate),
                   isPrivate ? `${account.label}: als privat vermerkt; nach seinen Zahlungen wird nicht mehr gefragt.` : `${account.label}: wird wieder geprüft.`,
+                  undefined,
+                  undefined,
+                  account.label,
                 )
               }
               onRemoveAccount={(account) =>
@@ -931,7 +953,7 @@ const FinanceClient = observer(function FinanceClient({
                     if (fresh?.ok) store.took(fresh.value);
                   }
                   return result;
-                }, `${account.label}: entfernt.`)
+                }, `${account.label}: entfernt.`, undefined, undefined, account.label)
               }
               onSearch={(query) => searchPayments(view.year, query)}
               onClassify={() => {
@@ -948,7 +970,7 @@ const FinanceClient = observer(function FinanceClient({
                     // Nothing decided because the model failed: said as a failure, never as a quiet notice.
                     if (outcome.failed) {
                       setNotice(null);
-                      setError(outcome.summary);
+                      refuse(whoOf(), outcome.summary, setError);
                     } else setNotice(outcome.summary);
                   },
                 );
@@ -968,7 +990,9 @@ const FinanceClient = observer(function FinanceClient({
                   </section>
                 ) : null
               }
-              onTreat={(counterparty, treatment) => run(() => treatCounterparty(view.year, { counterparty, treatment }), `${counterparty}: ${treatment === null ? 'Antwort zurückgenommen' : 'gespeichert'}.`)}
+              onTreat={(counterparty, treatment) =>
+                run(() => treatCounterparty(view.year, { counterparty, treatment }), `${counterparty}: ${treatment === null ? 'Antwort zurückgenommen' : 'gespeichert'}.`, undefined, undefined, counterparty)
+              }
               onLink={linkWithQuestion}
               onAcceptProposals={(pairs, onlyUnambiguous) => {
                 let outcome = { linked: 0, skipped: 0 };

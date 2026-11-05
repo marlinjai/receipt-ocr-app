@@ -146,7 +146,8 @@ export function planAutoGroups(receipts: readonly GroupableReceipt[], groups: re
   /** Names a group holding receipts already carries, and names planned in this run. */
   const taken = new Set(groups.filter((g) => contents.has(g.id)).map((g) => norm(g.name)));
 
-  const keys = new Set([...loose.keys(), ...holders.keys()]);
+  // Sorted, so which of two keys that come to one name keeps the plain name never depends on the order the database returned the receipts in.
+  const keys = [...new Set([...loose.keys(), ...holders.keys()])].sort();
   const wanted = (key: string) => {
     if (!only) return true;
     const ids = [...(loose.get(key) ?? []).map((r) => r.id), ...(holders.get(key) ?? []).flatMap((h) => contents.get(h.id)?.get(key) ?? [])];

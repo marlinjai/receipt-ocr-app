@@ -324,6 +324,7 @@ adds them, before any store exists.
   nothing was shown as done, so no number is wrong, but the person is not told. The dock of the checks and meals could
   say it. That needs a write to outlive the page, which belongs with a decision on how finance writes, not with this
   move of its state. Going back with the browser's button still serves what the router kept, as before.
+  Since 2026-11-05 such a refusal is said in the shell: the `FinanceOutbox` on the `AppStore` keeps it (ROADMAP).
 
 ### Closed (2026-11-02)
 

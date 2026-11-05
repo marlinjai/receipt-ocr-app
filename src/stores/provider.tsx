@@ -3,7 +3,7 @@
 import { reaction } from 'mobx';
 import { enableStaticRendering } from 'mobx-react-lite';
 import { usePathname } from 'next/navigation';
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { getNavCounts } from '@/app/app/nav-actions';
 import { AppStore } from './AppStore';
 import { RefusalDesk } from './RefusalDesk';
@@ -86,4 +86,24 @@ export function useAppStore(): AppStore {
   const store = useContext(AppStoreContext);
   const [alone] = useState(() => (store ? null : new AppStore()));
   return store ?? (alone as AppStore);
+}
+
+/**
+ * For a finance write whose answer can come after the part of the page that asked
+ * for it closed. The returned `refuse` says a refusal there while it is open
+ * (`onPage`), and in the shell once it closed (the `FinanceOutbox`), because the
+ * person who went elsewhere believes the change went through. `who` names it for
+ * the shell, where no row stands beside it.
+ */
+export function useFinanceRefusal(): (who: string, message: string, onPage: (message: string) => void) => void {
+  const app = useAppStore();
+  const open = useRef(false);
+  useEffect(() => {
+    // Set on every mount, so the second mount of the development double run counts as open again.
+    open.current = true;
+    return () => {
+      open.current = false;
+    };
+  }, []);
+  return useCallback((who, message, onPage) => (open.current ? onPage(message) : app.financeOutbox.say(who, message)), [app]);
 }

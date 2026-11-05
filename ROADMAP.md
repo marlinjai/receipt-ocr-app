@@ -393,9 +393,11 @@
   finance tabs are on stores, the table draws one row for one change (package 0.12.0), and meal
   answers show on the next frame (500 to 15 milliseconds on production). Plan:
   [docs/plans/2026-11-01-client-state.md](docs/plans/2026-11-01-client-state.md). (2026-11-02)
-- [ ] A finance write refused after the person left the page entirely is not shown, as before the
-  stores. The other domains keep such a refusal on `RefusalDesk`; finance writes need the same way
-  of outliving the page. (2026-11-02)
+- [x] A finance write refused after the person left the page entirely is now shown. Its refusal goes
+  to a `FinanceOutbox` on the company's `AppStore`, which the shell shows like those of the checks and
+  meals (named "Finanzen, ..."), and on a company switch to `RefusalDesk` with the company's name.
+  That covers the page's writes, own names, the bank actions and the account sharing; a link question
+  that arrives after leaving is said, not asked over another page. Done 2026-11-05.
 - [ ] Database tests time out when the machine is under heavy load (load average 40 to 87 on 14
   cores: tax-rates, bulk-set, text, assignment-sync, review service). They pass alone. Find out
   whether it is contention or a shared-state defect, per the continuous integration standard. (2026-11-02)

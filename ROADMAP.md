@@ -436,16 +436,19 @@
 - [ ] Finanzen in four groups (decided by the owner on 2026-10-25): Erledigen, Auswerten, Steuer,
   Einstellungen; the tiles and "Offen" stay the entry, Ausgaben stays its own page with a link
   each way. Plan: [docs/plans/2026-10-25-finance-groups.md](docs/plans/2026-10-25-finance-groups.md). (2026-10-25)
-- [ ] Every line of every receipt (asked by the owner on 2026-10-26): the printed positions of
+- [x] Every line of every receipt (asked by the owner on 2026-10-26): the printed positions of
   each receipt read and stored with a kind of purchase (groceries, coffee, a meal, a drink), and
-  a "Was gekauft" overview on the spending page. Plan:
-  [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-26)
-- [ ] Re-derive the stored lines of every company once, after the deploy of the fix for invoices
+  a "Was gekauft" overview on the spending page; read for the stored receipts of both companies.
+  Plan: [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md).
+  Done 2026-11-05.
+- [x] Re-derive the stored lines of every company once, after the deploy of the fix for invoices
   priced before tax, tips and credits (found on 2026-10-30: 131 receipts of one company asked
   "Positionen prüfen", 104 of them invoices whose lines were stored before tax):
   `POST /api/receipts/lines/reprice` signed in as each company, no model asked, a run again changes
   nothing. Context: the Reality section of 2026-10-30 in
-  [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-30)
+  [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md).
+  Done 2026-11-05: ran on 2026-10-30 for the one company with lines read before the fix (108
+  receipts); the other's lines were all read after it.
 - [x] Receipts move between groups by dragging, like in Notion: every receipt has a grip, also
   inside a group and always visible on a selected one; a drop on a group or its receipts puts it
   there, a drop on the section takes it out, the selection comes along (reported by Marlin on

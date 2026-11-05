@@ -178,6 +178,11 @@ of the runs before them and a local test database stays small. It only ever touc
 `localhost` or `127.0.0.1` whose name ends in `_test`, and asks the server which database it is connected to
 before deleting anything (`test/db-guard.ts`, `test/db-reset.ts`); any other URL is refused with the reason.
 
+The files run four at a time, each worker in its own copy of both databases (`receipts_w1_test` and so on,
+`test/db-workers.ts`), and every file empties its copy before it starts, so a file meets only what it creates
+and the suite passes in any order (`pnpm test:db --sequence.shuffle`). The database user needs the right to
+create databases; the copies are replaced at the start of every run.
+
 ## License
 
 MIT

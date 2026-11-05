@@ -126,9 +126,12 @@ afterAll(async () => {
 
 describe('processReceipt', () => {
   it('a restaurant receipt is filed as a meal with what the classifier read, and waits for guests and occasion', async () => {
+    // A workspace of its own: other tests upload the same restaurant receipt, which would be its look-alike.
+    const fresh = await createWorkspace();
+    await use(fresh);
     const result = await upload(file(1), ocr(RESTAURANT), { sha256: HASH('1') });
     expect(result).toMatchObject({ category: 'Bewirtung', isMeal: true, attention: null, possibleDuplicateOf: null });
-    const record = await loadMealRecord(db, ws.workspaceId, result.rowId);
+    const record = await loadMealRecord(db, fresh.workspaceId, result.rowId);
     expect(record).toMatchObject({
       mealType: 'business_meal_external',
       consumption: 'dine_in',
@@ -144,7 +147,7 @@ describe('processReceipt', () => {
       guests: [],
     });
     expect(mealStatus(record!)).toEqual({ kind: 'incomplete', missing: ['occasion', 'host', 'guests'] });
-    expect((await files(ws, result.rowId))[0].metadata).toMatchObject({ source: 'ocr-upload', sha256: HASH('1') });
+    expect((await files(fresh, result.rowId))[0].metadata).toMatchObject({ source: 'ocr-upload', sha256: HASH('1') });
   });
 
   it('text recognition failed and the page cannot be read either: there is still a row, Pending, with the file attached', async () => {

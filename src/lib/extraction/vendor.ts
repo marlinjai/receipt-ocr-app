@@ -34,6 +34,12 @@ const OWNER_MARK = /\b(?:inh(?:aber(?:in)?)?\.?|gesch(?:ä|ae)ftsf(?:ü|ue)hrer(
 
 const STREET = /(?:stra(?:ß|ss)e|str\.?|allee|platz|weg|gasse|ufer|damm|chaussee|ring|markt|street|road|avenue|square)\b.*\d|\b\d{1,4}[a-z]?\s*,?\s*\d{5}\b/i;
 const POSTCODE_TOWN = /\b\d{5}\s+\p{L}/u;
+/** A town line with the postcode at its end ("BERLIN, BERLIN, 13156"). */
+const TOWN_POSTCODE = /^\p{L}[\p{L}\s.,-]*[\s,]\d{5}$/u;
+
+function isAddressLine(line: string): boolean {
+  return STREET.test(line) || POSTCODE_TOWN.test(line) || TOWN_POSTCODE.test(line);
+}
 
 const NEVER_A_NAME: RegExp[] = [
   /^(?:since|seit|est\.?|established|gegr(?:ü|ue)ndet)\s*\.?\s*\d{4}\b/i, // slogan
@@ -42,11 +48,15 @@ const NEVER_A_NAME: RegExp[] = [
   /^(?:laufkunde|kunde|customer|gast|duplikat|kopie|\d+\.\s*kopie|original|details|to|from|items?)$/i,
   /^(?:\*+\s*)?(?:rechnung|quittung|kassenbon|bon|beleg|bewirtungsbeleg|invoice|receipt|tax\s+invoice|kundenbeleg|h(?:ä|ae)ndlerbeleg)(?:\s*\*+)?$/i,
   /^(?:tel|telefon|fon|fax|mobil|e-?mail)\s*[.:]/i, // a contact line, not "Telekom"
-  /^(?:www\.|https?:)/i,
+  /^(?:(?:web(?:site)?|internet|url)\s*:\s*)?(?:www\.|https?:)/i,
   /^(?:ust|st|steuer)[\s.-]*(?:id|nr|nummer)/i,
+  /^(?:vat|tax|gst)[\s.-]*(?:id|no|nr|number|reg)/i,
   /\d[.,]\d{2}(?!\d)/, // a line with a price on it
   /^(?:total|summe|gesamt|netto|brutto|mwst|subtotal|date|datum)\b/i,
   /@/, // an e-mail address
+  /^(?:thanks?|thank\s+you|many\s+thanks|vielen\s+dank|danke)\b/i, // a greeting set as a headline ("THANKS FOR / YOUR RIDE!")
+  /^(?:germany|deutschland|austria|(?:ö|oe)sterreich|switzerland|schweiz|suisse|united\s+states|usa|united\s+kingdom|ireland|netherlands|niederlande|france|frankreich|luxembourg|luxemburg|czech\s+republic|poland|polen|spain|spanien|italy|italien|sweden|schweden|singapore|india|china)$/i, // a country line of an address
+  /^your\s+(?:ride|trip|order|purchase|booking|receipt|invoice)\b/i,
   /^[\p{P}\p{S}\s\d]+$/u, // no letters at all
 ];
 
@@ -68,7 +78,7 @@ function looksGarbled(line: string): boolean {
 function canBeName(line: string): boolean {
   if (line.length < 3 || line.length > 60) return false;
   if (looksGarbled(line)) return false;
-  if (STREET.test(line) || POSTCODE_TOWN.test(line)) return false;
+  if (isAddressLine(line)) return false;
   return !NEVER_A_NAME.some((p) => p.test(line));
 }
 
@@ -81,6 +91,56 @@ function backedByText(name: string, lines: string[], ownIndex: number, fullText:
   if (lines.some((l, i) => i !== ownIndex && normalized(l).includes(key))) return true;
   const addresses = fullText.match(/(?:www\.|https?:\/\/|@)[\w.-]+/gi) ?? [];
   return addresses.some((a) => normalized(a).includes(key) || key.includes(normalized(a.replace(/^(?:www\.|https?:\/\/|@)/i, '').split('.')[0])));
+}
+
+/** True when a web or mail address on the receipt carries the name ("MILES Mobility GmbH" and miles-mobility.com). */
+function backedByAddress(name: string, fullText: string): boolean {
+  const key = vendorKey(name);
+  if (key.length < 4) return false;
+  const addresses = fullText.match(/(?:www\.|https?:\/\/|@)[\w.-]+/gi) ?? [];
+  return addresses.some((a) => {
+    // The label before the top-level domain: "miles-mobility" in hello@miles-mobility.com.
+    const labels = a.replace(/^(?:www\.|https?:\/\/|@)/i, '').split('.').filter(Boolean);
+    const domain = normalized(labels.length > 1 ? labels[labels.length - 2] : (labels[0] ?? ''));
+    return domain.length >= 5 && (domain.includes(key) || key.includes(domain));
+  });
+}
+
+/**
+ * A company line anywhere on the receipt, with its legal form, that the
+ * receipt's own web or mail address confirms. Some invoices open with a
+ * greeting and the customer's address, and print the issuer only below the
+ * heading ("THANKS FOR / YOUR RIDE!", then the customer, then "Invoice", then
+ * "MILES Mobility GmbH" and miles-mobility.com). The address is required so a
+ * company in the bill-to block does not pass for the issuer.
+ */
+function issuerOutsideHead(lines: string[], fullText: string): string | null {
+  for (const line of lines) {
+    if (!LEGAL_FORM.test(line)) continue;
+    const name = companyName(line);
+    if (canBeName(name) && backedByAddress(name, fullText)) return name;
+  }
+  return null;
+}
+
+/**
+ * The company out of a line that carries more than its name: a copyright
+ * notice ("Copyright © 2024 Apple Distribution International Ltd.") or a
+ * sentence that ends in it ("Leistungen der Telekom Deutschland GmbH",
+ * "Umsatzsteuer erklärt durch Amazon Services Europe S.a.r.L.").
+ */
+function companyName(line: string): string {
+  let name = line.replace(/^(?:copyright\s*)?(?:©|\(c\))?\s*(?:\d{4}(?:\s*[-–]\s*\d{4})?\s*)?(?=\p{L})/iu, '');
+  const lead = /^.*\s(?:der|des|durch|bei|via|by|through)\s+(?=\p{Lu})/u.exec(name);
+  if (lead) name = name.slice(lead[0].length);
+  // A former or second name after the company ("Link, LLC f/k/a Lemon Squeezy") is not part of it.
+  name = name.replace(/\s+(?:f\/k\/a|formerly|vormals)\s.*$/i, '');
+  return clean(name);
+}
+
+/** True when an address line follows the given line, allowing one filler line between ("n/a"). */
+function addressFollows(head: string[], index: number): boolean {
+  return head.slice(index + 1, index + 3).some(isAddressLine);
 }
 
 /** A vendor name without its legal form, in lower case, letters and digits only. */
@@ -119,15 +179,22 @@ export function readVendor(fullText: string): VendorReading {
     }
     if (LEGAL_FORM.test(line) && canBeName(line)) {
       // Prefer the trading name printed above a company line when there is one ("the breakfast story" above "... UG").
-      const above = head.slice(0, i).filter(canBeName);
-      const trading = above.find((l) => !/^\d/.test(l));
-      return { vendor: trading ?? line, confidence: 'confirmed' };
+      // Only within the company's own block: above an address line sits someone else's block, often the customer's
+      // name under a greeting ("THANKS FOR / YOUR RIDE! / <customer> / <street> / <town>").
+      let from = i;
+      while (from > 0 && !isAddressLine(head[from - 1])) from--;
+      const trading = head.slice(from, i).find((l) => canBeName(l) && !/^\d/.test(l));
+      if (trading) return { vendor: trading, confidence: 'confirmed' };
+      return { vendor: line, confidence: 'confirmed' };
     }
   }
 
   // 2. The first line that can be a name; a name broken across several short lines is joined.
   const start = head.findIndex(canBeName);
-  if (start === -1) return { vendor: null, confidence: 'none' };
+  if (start === -1) {
+    const issuer = issuerOutsideHead(all, fullText);
+    return issuer ? { vendor: issuer, confidence: 'confirmed' } : { vendor: null, confidence: 'none' };
+  }
   const parts = [head[start]];
   if (words(head[start]).length === 1) {
     for (let i = start + 1; i < head.length && parts.length < 3; i++) {
@@ -141,6 +208,13 @@ export function readVendor(fullText: string): VendorReading {
   const name = parts.join(' ');
   const index = all.indexOf(head[start]);
   const confirmed = parts.length > 1 || backedByText(name, all, index, fullText);
+  // A confirmed issuer below the heading wins over a head line nothing backs, and over one that is the customer:
+  // a name followed by an address and printed twice (on the address block and in the greeting) counts as backed,
+  // but no web or mail address on the receipt names it.
+  const issuer = issuerOutsideHead(all, fullText);
+  if (issuer && (!confirmed || (addressFollows(head, start + parts.length - 1) && !backedByAddress(name, fullText)))) {
+    return { vendor: issuer, confidence: 'confirmed' };
+  }
   return { vendor: name, confidence: confirmed ? 'confirmed' : 'likely' };
 }
 

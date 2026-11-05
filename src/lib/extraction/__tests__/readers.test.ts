@@ -395,6 +395,32 @@ describe('defect 5: the first printed line taken as the vendor', () => {
     expect(readVendor('Telekom\nMobilfunk Rechnung').vendor).toBe('Telekom');
   });
 
+  it('skips a greeting headline and the customer address for the issuer the receipt confirms', () => {
+    expect(readVendor(F.RIDE_GREETING_HEAD)).toEqual({ vendor: 'MILES Mobility GmbH', confidence: 'confirmed' });
+    // A model that echoes the greeting is not believed either.
+    expect(chooseVendor(readVendor(F.RIDE_GREETING_HEAD), 'THANKS FOR', F.RIDE_GREETING_HEAD).vendor).toBe('MILES Mobility GmbH');
+  });
+
+  it("keeps the trading name inside the company's own block, never the customer's name above it", () => {
+    expect(readVendor(F.RIDE_GREETING_COMPANY_IN_HEAD)).toEqual({ vendor: 'MILES', confidence: 'confirmed' });
+  });
+
+  it('skips address lines with the postcode last and web or VAT labels', () => {
+    expect(readVendor('BERLIN, BERLIN, 13156\nKleiner Laden\nSumme 12,00').vendor).toBe('Kleiner Laden');
+    expect(readVendor('Web: https://example.org\nVAT ID: CZ00000000\nKleiner Laden\nSumme 12,00').vendor).toBe('Kleiner Laden');
+  });
+
+  it('takes the company out of a copyright notice or a sentence that ends in it', () => {
+    const text = 'Page 1 of 1\nRechnung\nCopyright © 2024 Beispiel Cloud International Ltd.\nwww.beispiel-cloud.com';
+    expect(readVendor(text).vendor).toBe('Beispiel Cloud International Ltd.');
+    const sentence = 'Seite 1\nRechnung\nLeistungen der Beispielnetz Deutschland GmbH\nwww.beispielnetz.de';
+    expect(readVendor(sentence).vendor).toBe('Beispielnetz Deutschland GmbH');
+  });
+
+  it('does not take a company from the bill-to block that no address on the receipt confirms', () => {
+    expect(readVendor(F.BILL_TO_COMPANY).vendor).toBe('Kleiner Laden');
+  });
+
   it("takes the model's name when the receipt text contains it", () => {
     const reading = readVendor(F.FOODBAR_TWO_RATES);
     expect(chooseVendor(reading, 'Fantastic Foodbar', F.FOODBAR_TWO_RATES).vendor).toBe('Fantastic Foodbar');

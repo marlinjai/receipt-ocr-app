@@ -2232,3 +2232,56 @@ key frame built at run time).
   proposed and accepted (with its own accept path and link method); offering the same pair in
   both would show it twice with two ways to take it. A foreign receipt without an exchange rate
   has no estimate and is still not proposed.
+
+## Reality: the income tax values of 2027, and the yearly review of 5 November 2026 (2026-11-05)
+
+- **2027 has its own income tax values, marked provisional.** `INCOME_TAX_RULES_2027` in
+  `src/lib/tax/income-tax/rules.ts` carries every value of 2026 (tariff, solidarity
+  surcharge, employee flat allowance, union dues, special expenses, commute, home-office
+  day, vocational training, donations, pension cap, sick-pay reduction, insurance cap,
+  church tax) and says why in `provisional`. This is the law as it stands for 2027, not a
+  placeholder: § 32a applies "ab dem Veranlagungszeitraum 2026" until a law replaces it.
+  Before, an estimate of 2027 fell back to 2026's values with the warning "no values for
+  this year"; now it is its own year and says the values are provisional.
+- **What is on its way and not law on 5 November 2026:**
+  - the Einkommensteuerreformgesetz 2027 (government bill, Bundestag printed paper
+    21/8235 of 28 September 2026; first reading 8 October, opinion of the federal council
+    16 October 2026, printed paper 507/26). For 2027 it would set the basic allowance to
+    12,564 euros, the employee flat allowance to 1,430 euros, and a tariff of six zones:
+    (952.24 y + 1,400) y up to 17,799; (170.74 z + 2,397) z + 993.86 up to 70,600;
+    0.42 x - 11,241.73 up to 249,999; 0.45 x - 18,741.70 up to 279,999; 0.47 x - 24,341.68
+    from 280,000. For 2028 a basic allowance of 12,900 euros.
+  - the Sozialversicherungs-Rechengrößenverordnung 2027 (cabinet 9 October 2026, federal
+    council printed paper 576/26): knappschaft contribution ceiling 130,800 euros, which
+    moves the pension cap to 130,800 x 24.7 percent once the rate is confirmed.
+  - the annual tax act 2026 (printed paper 21/8283): the low-value limit of 1,200 euros and
+    the end of the pool for purchases after 31 December 2026 proposed by the federal
+    council; final vote in the Bundestag expected in mid-November 2026.
+- **Checked against the statutes on 5 November 2026:** the income tax act was last amended
+  on 15 October 2026 (BGBl. 2026 I Nr. 307, child benefit without an application; no value
+  of the app changes), the value-added tax act on 29 June 2026 and the solidarity surcharge
+  act on 23 December 2024. The year rule set of 2027 (`src/lib/tax/rules/2027.ts`) is
+  reviewed again and stays as it was, with the new check date.
+- **Shown:** the income tax tab says "Die Steuerwerte für 2027 sind vorläufig: ..." with
+  the reason and the year carried from, and the headline tile adds "Steuerwerte
+  vorläufig". A test pins every carried value by name, so the review after the acts pass
+  replaces exactly those, and a test fails from 1 December of a year in which the coming
+  year has no income tax values, as for the year rule sets.
+- **The employment annex of 2026 still cannot be compared.** The line for further
+  employment costs exists since pull request 113 (`employment.further_costs`, line 64 on
+  the 2025 annex). On 5 November 2026 the federal form portal opened the Anlage N 2025
+  (`est25/034027_25`) but answered "Cannot open form" for the 2026 path
+  (`est26/034027_26`), no 2026 income tax forms page exists at the state tax office of
+  Lower Saxony, and the copy of the ministry's letter of August 2026 to software vendors
+  is still taken down. The 2026 annex lines keep showing without numbers.
+- **Decided, say so if you disagree:**
+  - The draft values are not adopted for 2027. A bill can still change (the federal
+    council has already asked for changes), and the year rule set of 2027 set the
+    precedent of following enacted law only. The estimate of a 2027 income therefore
+    shows the tax under today's law, with the note naming what the bill would change.
+  - The tariff is not pre-built for six zones against a draft. When the reform act is
+    enacted, the review adds the 47 percent zone to `TariffZones` and `tariffTaxEuros`
+    (one more upper bound and one more subtrahend) together with the enacted numbers, and
+    deletes the carried-values test with `provisional`.
+- **Computed figures of 2025 and 2026 do not change**; a 2027 estimate computes the same
+  tax as before, now as its own year.

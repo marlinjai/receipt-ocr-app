@@ -99,6 +99,7 @@ function incomeTaxTile(view: StatementView): { label: string; value: string; hin
   const parts = [
     estimate.scope === 'business_only' ? 'nur Gewerbe, ohne Lohn' : estimate.scope === 'without_business' ? 'ohne Gewerbe' : 'Lohn und Gewerbe',
     tax.projected ? 'Lohn hochgerechnet' : '',
+    estimate.rulesProvisional ? 'Steuerwerte vorläufig' : '',
     estimate.missing.length > 0 ? `${estimate.missing.length} Angaben fehlen` : '',
   ].filter(Boolean);
   return { label, value, hint: parts.join(', ') };

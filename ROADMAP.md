@@ -520,8 +520,11 @@
   finished entering the 2025 meals and the session preparing the 2025 return has
   been told; (2) the line numbers of the employment annex of 2026 are not yet
   compared with an official source, so those two lines show without numbers;
-  (3) the 2027 rule set is due before 1 December 2026, when a test starts failing
-  without it; (4) tax the buyer owes on services from abroad is not computed;
+  (3) the 2027 rule set and the 2027 income tax values exist but are provisional,
+  carried from 2026 (reviewed 2026-11-05): they are replaced once the
+  Einkommensteuerreformgesetz 2027 (printed paper 21/8235, six tariff zones), the
+  social insurance ceilings of 2027 and the annual tax act 2026 (low-value limit, the
+  pool) are enacted; (4) tax the buyer owes on services from abroad is not computed;
   (5) invoices carry no link to a contact yet. Plan:
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-10)
 - [x] The 2026 purchase documents up to 2026-10-14 are in the app: 325 receipts under Whiz-Art
@@ -534,10 +537,12 @@
   restaurant receipts (566.08 euros) in the meal register; the 2026 bank and PayPal export files are
   not imported (the app holds the 446 N26 payments only); the freenet payment reminder of 23 June.
   Details in section H of `Steuern/2026/import-log-2026.md`. (2026-10-15)
-- [ ] The employment annex in the finance area has no line for further employment costs
-  ("weitere Werbungskosten", for example job-search costs): the three LinkedIn Premium Career
-  receipts of 2026 had to go on "Fortbildungskosten". Add the line when the annex is compared with
-  the official 2026 form. (2026-10-15)
+- [ ] The further employment costs line ("weitere Werbungskosten", for example job-search costs)
+  exists since pull request 113 (`employment.further_costs`, line 64 on the 2025 annex), so the
+  three LinkedIn Premium Career receipts of 2026 can move off "Fortbildungskosten". Open: its
+  2026 number, with the other annex lines of 2026, once the official Anlage N 2026 is published;
+  on 2026-11-05 the federal form portal still had no 2026 annex (the 2025 one opens, the 2026
+  path fails). (2026-11-05)
 - [x] The purchase documents of the tax years 2024, 2023, 2022 and 2021 are in the app: 514
   receipts under Whiz-Art Media (2024: 155 and one ticket dated 2023, 2023: 148, 2022: 119, 2021:
   91), each year a record of its filed return, with a log, a file table and a snapshot per year in

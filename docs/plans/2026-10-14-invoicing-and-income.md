@@ -1,7 +1,7 @@
 ---
 title: "Invoicing and income: one record per issued invoice, from creation to the money arriving"
 type: plan
-status: decided
+status: in-progress
 date: 2026-10-14
 summary: "Why the finance area shows no income for 2026, where an issued invoice is created and stored so it is entered once, how it reaches the income side on the day the money arrives, the numbering, what the small-business rule (section 19 of the value-added tax act) and the German electronic invoice duties mean here (checked against the finance ministry's letters), and the migration of the invoices of 2024 to 2026 that exist only as PDF files."
 tags: [invoices, revenue, income, cash-basis, small-business, section-19, e-invoice, xrechnung, zugferd, numbering, payments, migration, books]
@@ -344,3 +344,35 @@ From the decision page `~/software-dev/decision-pages/2026-10-14-invoicing-and-i
 - **Finance and tax area (this repo)**: this plan fills its income side; its "InvoiceSource"
   seam is the record of D2.
 - **Shared contacts (this repo, 2026-10-09)**: the recipient of D3.
+
+## 9. Reality (2026-11-05)
+
+What the code on main and the production data show, read on 2026-11-05 (production read only):
+
+- **Migration of section 5: done as data.** The receipts database holds 34 issued invoices for
+  Whiz-Art Media, numbers 28 to 61 (11 per year 2024, 2025 and 2026; the eleven of 2024 carry
+  `declaredInYear`; one row has no issue date, which is the image-only invoice 34 of section 5
+  and a data entry, not code), 24 bank payments linked to them and 5 typed payment days.
+- **Step 2 of section 6: built.** D5's matcher tightening landed in #120 (an invoice number counts
+  only as a whole figure next to an invoice word, the long and lettered forms as whole tokens,
+  never inside a date, an amount or an account number; `src/lib/tax/payments/match.ts`). D6's
+  overdue check landed in #114 (`src/lib/tax/overdue.ts`, the "Rechnung überfällig" panel in
+  the open checks).
+- **Invoices with more than one tax rate: built** in #117 (migration
+  `0020_tax_invoice_tax_groups`): treatment `mixed` keeps one group per rate
+  (`taxGroups`), validated in `src/lib/tax/revenue-input.ts`, reported per rate in the advance
+  return (`src/lib/tax/invoice-tax.ts`, `compute.ts`), entered and shown in the "Einnahmen" tab.
+  This closes the roadmap line of 2026-10-10 and the corresponding part of D2.
+- **Step 3 of section 6 (framer-clone): built there.** The Books tier issues, cancels and corrects
+  invoices (`sales_document`, tenant migrations `007_books` to `019`; a correction is a credit
+  note plus a replacement carrying `corrects_document_id`, migration `011_books_replacement`).
+  Deviating from D1's decided block, framer-clone imported the whole series 1 to 61 on
+  2026-10-20 (by the owner's later decision), so the register rows 28 to 61 here and the
+  documents 28 to 61 there share their numbers; 62 and 63 were issued there by upload on
+  2026-10-28. framer-clone's shop also issues receipts for paid orders.
+- **Step 4 (the mirror here): open, blocked on framer-clone.** framer-clone has no read-only
+  machine endpoint for issued documents yet (its routes under `api/books` are the editor's,
+  behind a person's session); its own roadmap (line "4. Existing invoices and the suite") owns
+  that endpoint and its contract. The receipts side is built against that contract once it
+  exists.
+- **Step 5 (reading electronic invoices): another lane** (#149 takes XML files on upload).

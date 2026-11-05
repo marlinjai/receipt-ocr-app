@@ -808,6 +808,32 @@ describe('the item: one subscription keeps one wording', () => {
   });
 });
 
+describe('the vendor: one spelling per vendor', () => {
+  const INVOICE = 'Example Media Distribution International Ltd.\nInvoice\nInvoice date: 5 Jan 2026\nCloud+ 2 TB\nTotal 2.99 EUR';
+  const ANSWER = { ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', vendor: 'Example Media Distribution International Ltd.', gross: 2.99, currency: 'EUR', date: '2026-01-05T00:00:00.000Z', meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null, place: null } };
+
+  it("a new receipt takes the spelling of the vendor's earlier receipts, with their items", async () => {
+    const own = await createWorkspace();
+    await use(own);
+    await own.addReceipt({ Vendor: 'Example Media', Item: 'Cloud+ 2 TB' } as Parameters<TestWorkspace['addReceipt']>[0]);
+    await own.addReceipt({ Vendor: 'Example Media', Item: 'Cloud+ 2 TB' } as Parameters<TestWorkspace['addReceipt']>[0]);
+    classify.mockResolvedValue({ ...ANSWER, item: 'Cloud+ mit 2 TB' });
+    const result = await upload(file(83), ocr(INVOICE));
+    expect(await cellOf(own, result.rowId, 'Vendor')).toBe('Example Media');
+    expect(await cellOf(own, result.rowId, 'Item')).toBe('Cloud+ 2 TB');
+    expect(String(await cellOf(own, result.rowId, 'Name'))).toMatch(/^Example Media, Cloud\+ 2 TB/);
+  });
+
+  it('a vendor with no earlier receipts, or another business that starts alike, keeps the name it was read with', async () => {
+    const own = await createWorkspace();
+    await use(own);
+    await own.addReceipt({ Vendor: 'Example', Item: 'Notizen Plus' } as Parameters<TestWorkspace['addReceipt']>[0]);
+    classify.mockResolvedValue({ ...ANSWER, vendor: 'Example Media Distribution International Ltd.', item: 'Cloud+ 2 TB' });
+    const result = await upload(file(84), ocr(INVOICE));
+    expect(await cellOf(own, result.rowId, 'Vendor')).toBe('Example Media Distribution International Ltd.');
+  });
+});
+
 describe('a page without any recognized text is read by the model alone, unverified', () => {
   const FROM_IMAGE = { ...MEAL_ANSWER, category: 'Software & Lizenzen', konto: '4806', vendor: 'Example Media', gross: 5, net: null, currency: 'USD', date: '2026-03-02T00:00:00.000Z', taxRate: 0, meal: { ...MEAL_ANSWER.meal, taxLines: null, tip: null, place: null } };
 

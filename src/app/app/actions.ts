@@ -46,7 +46,7 @@ import { sessionWorkspaceId, tenantIdForWorkspace } from '@/lib/auth-workspace';
 import type { CellValue } from '@marlinjai/data-table-core';
 import { sameVendor } from '@/lib/extraction/vendor';
 import { pickKnownItem } from '@/lib/extraction/known-items';
-import { knownItemsOfVendor } from '@/lib/receipt-known-items';
+import { knownVendor } from '@/lib/receipt-known-items';
 import { ITEM_COLUMN, receiptName } from '@/lib/receipt-name';
 import { nameFromCells } from '@/lib/receipt-name-cells';
 import type { OcrResult } from '@/lib/ocr-types';
@@ -299,8 +299,8 @@ async function readReceipt(
   const imageOnly = !extracted && page !== null;
   // What the vendor's earlier receipts name as bought: the model reuses a wording that fits.
   const lookupVendor = stored?.vendor?.trim() || extracted?.vendor || null;
-  const knownItems = extracted ? await knownItemsOfVendor(adapter, tableId, lookupVendor, stored?.rowId) : [];
-  const ai = extracted || imageOnly ? await classifyReceipt(extracted, fullText, page, knownItems) : null;
+  const known = extracted ? await knownVendor(adapter, tableId, lookupVendor, stored?.rowId) : null;
+  const ai = extracted || imageOnly ? await classifyReceipt(extracted, fullText, page, known?.items ?? []) : null;
   const classificationFailed = extracted !== null && ai === null;
   // A model answer from the image alone that names neither a total nor a date is no reading.
   const fromImage = imageOnly && ai !== null && (ai.gross !== null || ai.date !== null) ? ai : null;
@@ -333,7 +333,19 @@ async function readReceipt(
       })
     : null;
   const date = settled?.date ?? null;
-  const vendor = settled?.vendor ?? null;
+  // One spelling per vendor: a reading takes the spelling the vendor's stored receipts carry ("Apple", not
+  // "Apple Distribution International Ltd." one month and "Apple iCloud" the next), so a new receipt finds
+  // its group. A restaurant keeps the name its till receipt prints. A vendor that is set on a row read again
+  // stands anyway (storedVendorStands).
+  const readVendorName = settled?.vendor ?? null;
+  const isMealReading = settled?.category === MEAL_CATEGORY;
+  const settledKnown =
+    readVendorName && !isMealReading
+      ? lookupVendor && known && readVendorName === lookupVendor
+        ? known
+        : await knownVendor(adapter, tableId, readVendorName, stored?.rowId)
+      : null;
+  const vendor = settledKnown?.spelling ?? readVendorName;
   // A rule the company wrote ("this vendor is private") is the person's word:
   // it wins over what the model guessed for the assignment and the category.
   const ruleMatch = matchRules(rules, { vendor, fullText });
@@ -345,9 +357,8 @@ async function readReceipt(
   const finalGross = settled?.gross ?? null;
   const finalNet = settled?.net ?? null;
   // A meal is named by its restaurant; what was eaten belongs to the meal register.
-  // An earlier wording of the same item is taken over as it is stored, also where the vendor settled differs from the one looked up.
-  const settledKnown = vendor && !(lookupVendor && sameVendor(vendor, lookupVendor)) ? await knownItemsOfVendor(adapter, tableId, vendor, stored?.rowId) : knownItems;
-  const item = finalCategory === MEAL_CATEGORY ? null : pickKnownItem(ai?.item ?? null, settledKnown);
+  // An earlier wording of the same item is taken over as it is stored: the items of the vendor as it is spelled now.
+  const item = finalCategory === MEAL_CATEGORY ? null : pickKnownItem(ai?.item ?? null, settledKnown?.items ?? known?.items ?? []);
 
   // Multi-currency: detected currency, historical FX rate (looked up live, on save).
   const currency = settled?.currency ?? 'EUR';

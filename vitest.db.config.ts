@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import path from 'path';
+import { DB_TEST_WORKERS } from './test/db-workers';
 
 /**
  * Database-backed tests (`pnpm test:db`). They run the real Prisma queries and
@@ -8,10 +9,11 @@ import path from 'path';
  * is missing, so this suite can never "pass" by silently skipping.
  *
  * Point it at throwaway databases only: local, with names ending in `_test`
- * (test/db-guard.ts refuses anything else). Each test works in freshly generated
- * workspace ids and cleans nothing up; instead the global setup empties both
- * databases before every run (test/db-reset.ts), so a run never inherits the
- * rows of the runs before it.
+ * (test/db-guard.ts refuses anything else). The global setup empties both
+ * databases and copies them once per worker (test/db-reset.ts, test/db-workers.ts);
+ * every file then runs in its worker's copy and empties it first (test/db-setup.ts).
+ * So the files run side by side, a file meets only what it creates, and the suite
+ * passes in any order (`pnpm test:db --sequence.shuffle`).
  */
 export default defineConfig({
   resolve: {
@@ -26,7 +28,9 @@ export default defineConfig({
     server: { deps: { inline: ['@marlinjai/auth-brain-nextjs'] } },
     globalSetup: ['test/db-reset.ts'],
     setupFiles: ['test/db-setup.ts'],
-    fileParallelism: false,
+    pool: 'forks',
+    // One database copy per worker: the number is bounded by Postgres connections (see test/db-workers.ts).
+    maxWorkers: DB_TEST_WORKERS,
     testTimeout: 30_000,
     hookTimeout: 60_000,
   },

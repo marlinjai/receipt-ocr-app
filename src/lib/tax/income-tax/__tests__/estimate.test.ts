@@ -195,9 +195,25 @@ describe('estimateIncomeTax: incomplete data (the unhappy paths)', () => {
   });
 
   it('marks a year without its own rules', () => {
-    const e = estimateIncomeTax(case2025({ year: 2027 }));
+    const e = estimateIncomeTax(case2025({ year: 2028 }));
     expect(e.rulesExact).toBe(false);
-    expect(e.rulesYear).toBe(2026);
+    expect(e.rulesYear).toBe(2027);
+  });
+
+  it('computes 2027 with its own provisional values and passes the reason on', () => {
+    const e = estimateIncomeTax(case2025({ year: 2027 }));
+    expect(e.rulesExact).toBe(true);
+    expect(e.rulesYear).toBe(2027);
+    expect(e.rulesProvisional).toMatchObject({ carriedFromYear: 2026 });
+    // The carried values compute exactly what 2026 computes.
+    const e2026 = estimateIncomeTax(case2025({ year: 2026 }));
+    expect(e.taxableIncomeEuros).toBe(e2026.taxableIncomeEuros);
+    expect(e.incomeTax.assessedCents).toBe(e2026.incomeTax.assessedCents);
+  });
+
+  it('a year with enacted values carries no provisional note', () => {
+    expect(estimateIncomeTax(case2025()).rulesProvisional).toBeNull();
+    expect(estimateIncomeTax(case2025({ year: 2026 })).rulesProvisional).toBeNull();
   });
 });
 

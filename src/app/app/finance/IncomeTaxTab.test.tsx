@@ -51,6 +51,20 @@ describe('IncomeTaxTab', () => {
     expect(screen.queryByText(/Erstattung/)).toBeNull();
   });
 
+  it('says the 2027 values are provisional, why, and which year they are carried from', () => {
+    render(<IncomeTaxTab view={view(incomeTaxView({ year: 2027, profitCents: 500_000 }))} {...props()} />);
+    const note = screen.getByText(/Die Steuerwerte für 2027 sind vorläufig/);
+    expect(note.textContent).toMatch(/Einkommensteuerreformgesetz 2027/);
+    expect(note.textContent).toMatch(/Gerechnet wird\s+mit den Werten von 2026/);
+    // Its own year, so no "no values for this year" warning on top.
+    expect(screen.queryByText(/noch keine eigenen Steuerwerte hinterlegt/)).toBeNull();
+  });
+
+  it('shows no provisional note for a year with enacted values', () => {
+    render(<IncomeTaxTab view={view(incomeTaxView({ year: 2026, profitCents: 500_000 }))} {...props()} />);
+    expect(screen.queryByText(/sind vorläufig/)).toBeNull();
+  });
+
   it('with a business result and no wages is labelled business only and asks for one pay slip', () => {
     render(<IncomeTaxTab view={view(incomeTaxView({ profitCents: 500_000 }))} {...props()} />);
     expect(screen.getByRole('heading', { name: /Schätzung \(nur Gewerbe\)/ })).toBeTruthy();

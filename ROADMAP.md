@@ -42,12 +42,11 @@
   net and tax lines; the invoice's arithmetic and the recognized text check its answer. On 288
   real documents no wrong date or total is stored without a flag. "Seite neu lesen" was used on
   production on one receipt (the unpaid hosting invoice: 288.59 where the old reader had 242.51;
-  assignment, share and name untouched). Open: (1) a new reading replaces a vendor that is
-  already set with the legal name on the page ("A2 Hosting" became "A2 Hosting LLC", set back by
-  hand), which splits the vendor grouping: keep a vendor that is set. (2) The measurement was
-  made on the documents the rules were written against; measure on the next import of unseen
-  documents. (3) The vendor cell is not judged by the evaluation script. Plan:
-  [docs/plans/2026-10-11-vision-reading.md](docs/plans/2026-10-11-vision-reading.md). (2026-10-11)
+  assignment, share and name untouched). A new reading keeps a vendor that is set, and the
+  evaluation script judges the vendor cell (both since 2026-10-15, PR #111). Open: the measurement
+  was made on the documents the rules were written against; measure it on the next import of
+  unseen documents. Plan:
+  [docs/plans/2026-10-11-vision-reading.md](docs/plans/2026-10-11-vision-reading.md). (2026-11-05)
 - [x] The review list no longer offers the text reader's vendor name against a stored one on an
   invoice. Measured on production on 2026-10-11: of 102 offered new readings, 76 changed the
   vendor, and about 70 of those were worse than the stored name (a heading, a field label, the
@@ -71,15 +70,18 @@
   2025 left as they are, 3 receipts where the model found nothing to name) and 24 private ones.
   The 2024 and 2025 figures were the same before and after. Plan:
   [docs/plans/2026-10-11-receipt-item-in-name.md](docs/plans/2026-10-11-receipt-item-in-name.md). Done 2026-10-11.
-- [ ] The item is worded per receipt, so the monthly invoices of one subscription can read
-  differently ("PocketTube Abo", "PocketTube-Mitgliedschaft"). The reader should be given the
-  items the same vendor already has and reuse one that fits. (2026-10-11)
-- [ ] The reader stores the value-added tax amount as the total on one vendor's invoices: 32
-  invoices of a mail-scanning service across 2021, 2022 and 2023 (0.64 for 3.99, 2.07 for 12.99),
-  all corrected by hand on 2026-10-11. Two more classes from the same import: a mobile bill is
-  read with or without the third-party charges it lists, differently from month to month, and an
-  amount in another currency printed next to the euro amount was taken as euros (once), a euro
-  invoice as dollars (once). (2026-10-11)
+- [x] The item is worded per receipt, so the monthly invoices of one subscription can read
+  differently ("PocketTube Abo", "PocketTube-Mitgliedschaft"). The reader is given the items the
+  same vendor already has and takes a stored wording that is the same item in other words (since
+  PR #122 and #130); since 2026-11-05 the items of every spelling of the vendor count, and small
+  joining words do not tell items apart ("iCloud+ mit 2 TB" is "iCloud+ 2 TB"). Done 2026-11-05.
+- [ ] A mobile bill is read with or without the third-party charges it lists, differently from
+  month to month: replaying the reader over the stored texts on 2026-11-05, 7 of 153 phone bills
+  of two providers still differ from the stored total (5 of one, 3 of them read as no total and 2
+  up to 4.50 apart; 2 of the other, a few cents apart). The other classes of this line are done: the value-added
+  tax read as the total of a mail-scanning service (fixed in #142, all 41 stored invoices agree in
+  the replay), an amount in another currency taken as the total, and a euro invoice read as
+  dollars (both fixed on 2026-11-05, 4 stored receipts now agree, none worse). (2026-11-05)
 - [x] The dashboard under 780 receipts: all three steps deployed. Measured on production on
   2026-10-15 with 1,105 receipts: the table opens on the newest year in 6 to 8 seconds (was 35),
   1.8 MB of data and about 180 MB of browser memory (was 817 MB); all years load in about 30
@@ -92,19 +94,36 @@
   text match, and `day-filters.dbtest.ts` proves it against Postgres in every verify run; the line
   was only left open. The shared adapter should still bind a text value as a timestamp, which
   belongs to the data-table repository. Done 2026-11-05.
-- [ ] Rule sets for the tax years 2021 to 2024, so the finance area shows those years on their own
-  forms. Today they are computed with the 2025 form, which the page says. 2024 uses the same line
-  numbers as 2025 for every line that was declared; 2023 is shifted, 2022 and 2021 use the older,
-  longer form. (2026-10-11)
+- [x] Rule sets for the tax years 2021 to 2024, so the finance area shows those years on their own
+  forms instead of the 2025 form. Built by #123 on 2026-10-15 (`src/lib/tax/rules/2021.ts` to
+  `2024.ts`, every line number read off the official form of its year and cited there), described
+  in the finance plan's section "Reality: rule sets for 2021 to 2024"; the line was only left open.
+  Checked on a read-only copy of production on 2026-11-05: each of the four years is computed with
+  its own rule set and prints its own line numbers (2021 and 2022 low-value assets on 43, 2023 on
+  35, 2024 on 36). Done 2026-11-05.
+- [ ] A filed year changed after filing: the Telekom invoice of 16 December 2024 (row `f924fce8`),
+  which the 2024 return carried, was tied on 2026-11-01 by the automatic "closest" payment match of
+  #207 to its direct debit of 2 January 2025, so the year-change rule now counts it in 2025. Line 43
+  of 2024 reads 375.08 instead of 395.06 (declared 394.95), 2025 holds 19.98 more than filed. Both
+  years are recorded as filed. Fix: a payment link made after a year's filing day must not move a
+  receipt into or out of that filed year, the same test `filedWithOf` in
+  `src/lib/tax/year-boundary.ts` makes for a person's answer. Only this one receipt crossed a
+  filed turn (the other three "closest" links booked in January 2025 are receipts of 2025).
+  (2026-11-05)
 - [ ] Asset schedules for what the returns depreciated and the app now holds as documents: camera,
   camera stabiliser and tripod of 2021 (the app counts two of them in full as low-value assets and
   holds the camera as an open check), the lens of 2022 (open check) and the laptop of 2022 (counted
   at full price times the study share). Until then 2021 and 2022 differ from the returns by the
   amounts in the plan of the import. (2026-10-11)
-- [ ] A share on both forms cannot be recorded for a year without its own rule set: subscriptions
-  the returns of 2022 and 2023 split between business and study carry only the business share,
-  because the split is a finance-area decision and those were made for 2024 only. About 687 of
-  study cost in 2022 is not counted for that reason. (2026-10-11)
+- [ ] The study shares of 2022 and 2023 are not recorded yet: the code no longer stands in the way
+  (the rule sets of #123 let the finance area record a share on both forms for every year from
+  2021), but on production no receipt of 2021 to 2023 carries one (2024: 34, 2025: 24, checked on
+  2026-11-05). Still to enter, per receipt in the finance area, as the returns split them: 2022
+  study part of Adobe 107, LastPass 17, Finanzguru 9, landline 144, mobile and Caya post 364,
+  storage 46 (687 in all, section D of `Steuern/2022/import-log-2022.md`); 2023 study part of 30
+  percent beside the business 50 on mobile 144, landline 54, Notion 57, Caya 45 and LastPass 17
+  (317, `Steuern/2023/import-log-2023.md`). A write on production data, so not done by an agent
+  run. (2026-11-05)
 - [x] "Set field" on a selection loses writes: on 2026-10-11, setting the assignment on 30
   selected rows reported success and left 14 of 81 rows unchanged; selections of 7 went through
   completely. Fixed by #129 and #155: the server writes the selection in parts, reads every row
@@ -114,24 +133,27 @@
 - [ ] A file that holds two invoices becomes one receipt with the second invoice's figures
   (seen on 2026-10-11 on a file with a marketplace invoice and a retailer invoice). The reader
   should say that the file holds more than one document, so it can be split. (2026-10-11)
-- [ ] Private spending in the app (decided by the owner on 2026-10-14): overview by category and
-  month, clean split private versus business, budgets and warnings, a document for every
-  purchase, a live bank connection, and the loop that finds or asks for the receipt of every
-  payment. Build order and open questions (where the notification goes, which vendors may be
-  fetched with a stored login, the budget limits) in the plan:
-  [docs/plans/2026-10-14-personal-spending-and-bank-feed.md](docs/plans/2026-10-14-personal-spending-and-bank-feed.md). (2026-10-14)
-- [ ] Payments across companies (decided by the owner on 2026-10-22, option 1): an account stays
-  connected once in Whiz-Art Media, and once the owner links it to "marlinjai" in the payments
-  tab, every payment answered private shows in marlinjai's spending overview, budgets and
-  missing-receipt loop, business and unanswered ones stay with Whiz-Art Media. Worked out on
-  read, nothing copied. Plan:
-  [docs/plans/2026-10-22-payments-across-companies.md](docs/plans/2026-10-22-payments-across-companies.md). (2026-10-23)
-- [ ] PayPal live through the bank interface (decided by the owner on 2026-10-23): the PayPal
+- [ ] Private spending in the app (decided by the owner on 2026-10-14): overview, private versus
+  business, budgets and warnings, the live bank connection and the missing-receipt loop (mailbox,
+  push with e-mail fallback) are built. Left, both waiting for the owner: which vendors may be
+  fetched with a stored login (none for now), and when to build step 4b, fetching invoices through
+  his signed-in browser. Plan:
+  [docs/plans/2026-10-14-personal-spending-and-bank-feed.md](docs/plans/2026-10-14-personal-spending-and-bank-feed.md). (2026-11-05)
+- [ ] Payments across companies (decided by the owner on 2026-10-22, option 1): built and live
+  since #164, nothing left to build. What remains is the owner's one step: in Whiz-Art Media,
+  Finanzen, Zahlungen, share each of the five accounts (N26, Tomorrow, PayPal, Klarna, Advanzia
+  Mastercard) with "marlinjai" ("Private Zahlungen weitergeben"); production holds no share yet
+  (checked 2026-11-05). Then every payment answered private shows in marlinjai's spending
+  overview, budgets and missing-receipt loop. Plan:
+  [docs/plans/2026-10-22-payments-across-companies.md](docs/plans/2026-10-22-payments-across-companies.md). (2026-11-05)
+- [x] PayPal live through the bank interface (decided by the owner on 2026-10-23): the PayPal
   account continues live after the last day its CSV list covers, a movement seen by both sources
   is recognized as one, the funding rule keeps it as the PayPal wallet, dollar purchases arrive at
   the reference rate marked as an estimate, and an empty account can be removed. After the
-  deploy the owner connects the PayPal account once. Plan:
-  [docs/plans/2026-10-23-paypal-live.md](docs/plans/2026-10-23-paypal-live.md). (2026-10-23)
+  deploy the owner connects the PayPal account once. Connected on 2026-10-25 and fetched daily
+  since; the list of 01.01. to 31.08.2026 imported on 2026-11-04 overlapped without a payment
+  stored twice. Plan:
+  [docs/plans/2026-10-23-paypal-live.md](docs/plans/2026-10-23-paypal-live.md). Done 2026-11-05.
 - [ ] The Advanzia credit card from its monthly statement PDF (the owner's rule of 2026-10-16:
   live where possible, files as the fallback; the bank interface offers no Advanzia). The reader
   is built: the PDF is uploaded in the payments import like the CSV exports, every row becomes a
@@ -218,14 +240,13 @@
   (4 stale rows, copied to the shared database under the same ids on 2026-10-09). Released on
   Marlin's own yes. The unused `CONTACTS_STORE` entry was removed from the production secret
   project the same day. Plan: `docs/plans/2026-10-10-remove-own-contacts-table.md`. (2026-10-10)
-- [ ] Invoicing and income: the finance area shows "Einnahmen 0" for 2026 because no issued
-  invoice is recorded (all of them are PDF files written in a Google Doc). Order: enter the
-  invoices of 2024 to 2026 from the list in the tax folder and link their bank payments (ends the
-  zero, no code), tighten the matcher to whole invoice numbers, then a read-only mirror of the
-  invoices framer-clone issues (the owner decided on 2026-10-14 that invoices are written there,
-  in the Books tier, numbered from 62), then reading electronic invoices (XRechnung, ZUGFeRD) that
-  arrive in the expenses mailbox. Plan:
-  [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-10-14)
+- [ ] Invoicing and income: the invoices of 2024 to 2026 are entered (28 to 61, with their
+  payments), the matcher takes invoice numbers only as whole figures (#120), overdue invoices are
+  an open check (#114) and invoices with more than one rate are reported per rate (#117). Open:
+  the read-only mirror of the invoices framer-clone's Books issue (from 62 on), which waits for
+  framer-clone's read-only machine endpoint (its roadmap line "4. Existing invoices and the
+  suite"); reading electronic invoices is another lane (#149). Plan:
+  [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-11-05)
 - [ ] Corrected invoices in the income mirror: framer-clone's Books can now correct an issued
   invoice ("Correct", framer-clone #125, migration 011): one transaction issues a credit note that
   cancels the old invoice and a replacement invoice with a new number that carries
@@ -234,11 +255,12 @@
   the payment on a cancelled invoice and the replacement unpaid. Background: framer-clone's
   composer plan of 2026-10-21 (decision 9 and the phase 1 build notes); this app's plan above,
   D6 (payments belong here). (2026-10-22)
-- [ ] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
+- [x] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
   (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax
   return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent
   lines would be misreported. Store the tax groups per invoice and report each under its own rate.
-  From the finance dashboard work. (2026-10-10)
+  From the finance dashboard work. Done 2026-10-15 in #117 (treatment "Mit Umsatzsteuer,
+  mehrere Steuersätze", one group per rate). (2026-11-05)
 - [ ] A signed-in live write pass of `/app/finance` on production, under Whiz-Art Media, which
   holds the receipts since the move of 2026-10-10: open each tab, write one
   synthetic decision, vendor rule and payment link, remove them again, and confirm the numbers
@@ -392,43 +414,63 @@
   finance tabs are on stores, the table draws one row for one change (package 0.12.0), and meal
   answers show on the next frame (500 to 15 milliseconds on production). Plan:
   [docs/plans/2026-11-01-client-state.md](docs/plans/2026-11-01-client-state.md). (2026-11-02)
-- [ ] A finance write refused after the person left the page entirely is not shown, as before the
-  stores. The other domains keep such a refusal on `RefusalDesk`; finance writes need the same way
-  of outliving the page. (2026-11-02)
-- [ ] Database tests time out when the machine is under heavy load (load average 40 to 87 on 14
-  cores: tax-rates, bulk-set, text, assignment-sync, review service). They pass alone. Find out
-  whether it is contention or a shared-state defect, per the continuous integration standard. (2026-11-02)
+- [x] A finance write refused after the person left the page entirely is now shown. Its refusal goes
+  to a `FinanceOutbox` on the company's `AppStore`, which the shell shows like those of the checks and
+  meals (named "Finanzen, ..."), and on a company switch to `RefusalDesk` with the company's name.
+  That covers the page's writes, own names, the bank actions and the account sharing; a link question
+  that arrives after leaving is said, not asked over another page. Done 2026-11-05.
+- [x] Database tests time out when the machine is under heavy load (load average 40 to 87 on 14
+  cores: tax-rates, bulk-set, text, assignment-sync, review service). It was a shared-state defect:
+  the data-table adapter looks a row up in every row table of the database, and all files shared one
+  database, so a file's time grew with every workspace the files before it created (109 seconds after
+  682 tables, 7 on an empty database). Each worker now has its own database copy that every file
+  empties first, four files run at once, the suite passes shuffled, and the 180 second limit in
+  bulk-set is gone. Done 2026-11-05.
+- [ ] `@marlinjai/data-table-adapter-prisma` (0.2.1) finds a row by asking every migrated row table of
+  the database in turn (`getRow`, and through it `updateRow` twice, `archiveRow`, `unarchiveRow`,
+  `deleteRow`, `getRelatedRows`): one query per table, across all workspaces. Production has 5 such
+  tables today, so it is cheap there, but it grows with every workspace. Fix in the data-table repo
+  (a row-to-table lookup, or the table id passed in) and take the new version here. (2026-11-05)
 - [ ] The 566 payments marked "Nicht auffindbar" (28,395 euros, 2025 and 2026): invoices behind a
   login are not fetched yet (Amazon, eBay, Deutsche Bahn, freenet, Lemon Squeezy, claude.ai billing).
   They stay visible in red under Ausgaben, Belege. Backlog plan:
   [docs/plans/2026-10-14-personal-spending-and-bank-feed.md](docs/plans/2026-10-14-personal-spending-and-bank-feed.md). (2026-11-02)
-- [ ] Two Deutsche Bahn tickets of 19.07.2026 carry the vendor "Barcode bitte nicht knicken!" from
-  the reader; the name and the links are right. The reader should take the vendor from the issuer
-  on a ticket. (2026-11-02)
+- [x] Two Deutsche Bahn tickets of 19.07.2026 carry the vendor "Barcode bitte nicht knicken!" from
+  the reader; the name and the links are right. The reader now takes a rail ticket's vendor from
+  its carrier code ("CIV 1080" is Deutsche Bahn), and neither the code nor the handling note is a
+  name: replayed on production, all five Deutsche Bahn tickets read "Deutsche Bahn". Done 2026-11-05.
 - [ ] The app on a phone: no page scrolls sideways at 360 or 390 pixels, the receipts show as a
   card list that opens the detail panel, the dashboard's actions fold into "Mehr", tab rows
   scroll inside themselves, every control is a 44 pixel touch target, the wide layout unchanged.
   Since 2026-11-01 a bottom bar and a sheet with every place give the phone the sidebar's overview.
-  Last step: a look at the finance tabs with real payments on the owner's phone. Plan:
-  [docs/plans/2026-10-24-phone-layout.md](docs/plans/2026-10-24-phone-layout.md). (2026-11-01)
-- [ ] The filed return decides the counterparties (asked by the owner on 2026-10-25): receipts
+  Last step: a look at the finance tabs with real payments on the owner's phone. Measured on
+  production at 390 pixels on 2026-11-05: the fold-out headers (`<summary>`) of Finanzen are below
+  44 pixels (Zahlungen 20 to 40, Einkommensteuer 20 to 40), which the plan's rule list does not
+  name yet; decide them with that look. Plan:
+  [docs/plans/2026-10-24-phone-layout.md](docs/plans/2026-10-24-phone-layout.md). (2026-11-05)
+- [x] The filed return decides the counterparties (asked by the owner on 2026-10-25): receipts
   that match a payment count as evidence without a link, split receipts make "Teils, teils",
   payment-service prefixes no longer split one merchant, invoice links make income business, and
-  a filed year asks nothing. Plan:
-  [docs/plans/2026-10-25-filed-year-decides-counterparties.md](docs/plans/2026-10-25-filed-year-decides-counterparties.md). (2026-10-25)
-- [ ] Finanzen in four groups (decided by the owner on 2026-10-25): Erledigen, Auswerten, Steuer,
+  a filed year asks nothing. Landed in #181, measured on production on 2026-11-05 (270
+  counterparties private by the filed return, 8 "Teils, teils" from split receipts). Plan:
+  [docs/plans/2026-10-25-filed-year-decides-counterparties.md](docs/plans/2026-10-25-filed-year-decides-counterparties.md). Done 2026-11-05.
+- [x] Finanzen in four groups (decided by the owner on 2026-10-25): Erledigen, Auswerten, Steuer,
   Einstellungen; the tiles and "Offen" stay the entry, Ausgaben stays its own page with a link
-  each way. Plan: [docs/plans/2026-10-25-finance-groups.md](docs/plans/2026-10-25-finance-groups.md). (2026-10-25)
-- [ ] Every line of every receipt (asked by the owner on 2026-10-26): the printed positions of
+  each way. Built in #179, checked on production at 390 and 1440 pixels on 2026-11-05. Plan:
+  [docs/plans/2026-10-25-finance-groups.md](docs/plans/2026-10-25-finance-groups.md). Done 2026-11-05.
+- [x] Every line of every receipt (asked by the owner on 2026-10-26): the printed positions of
   each receipt read and stored with a kind of purchase (groceries, coffee, a meal, a drink), and
-  a "Was gekauft" overview on the spending page. Plan:
-  [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-26)
-- [ ] Re-derive the stored lines of every company once, after the deploy of the fix for invoices
+  a "Was gekauft" overview on the spending page; read for the stored receipts of both companies.
+  Plan: [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md).
+  Done 2026-11-05.
+- [x] Re-derive the stored lines of every company once, after the deploy of the fix for invoices
   priced before tax, tips and credits (found on 2026-10-30: 131 receipts of one company asked
   "Positionen prüfen", 104 of them invoices whose lines were stored before tax):
   `POST /api/receipts/lines/reprice` signed in as each company, no model asked, a run again changes
   nothing. Context: the Reality section of 2026-10-30 in
-  [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-30)
+  [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md).
+  Done 2026-11-05: ran on 2026-10-30 for the one company with lines read before the fix (108
+  receipts); the other's lines were all read after it.
 - [x] Receipts move between groups by dragging, like in Notion: every receipt has a grip, also
   inside a group and always visible on a selected one; a drop on a group or its receipts puts it
   there, a drop on the section takes it out, the selection comes along (reported by Marlin on
@@ -444,12 +486,14 @@
 - [x] One sidebar on every page of the wide layout: the company, upload, the places with their
   open counts, and the maintenance jobs on a page of their own ("Werkzeuge"). Decided by Marlin
   on 2026-10-30, plan [app sidebar](docs/plans/2026-10-30-app-sidebar.md). Done 2026-10-30.
-- [ ] One spelling per vendor from the reader (found on 2026-10-29): the reader spells one
+- [x] One spelling per vendor from the reader (found on 2026-10-29): the reader spells one
   subscription several ways ("Apple", "Apple iCloud", "Apple Distribution International Ltd.";
   "iCloud+ 2 TB", "iCloud+ mit 2 TB", "iCloud+ 2 TB Abo"), so a new receipt can miss the group of
-  its subscription until its spelling is corrected. Take the spelling of the vendor's earlier
-  receipts, or of the contact they link to. Context: section Open of the grouping plan of
-  2026-10-29 (Completed below). (2026-10-29)
+  its subscription until its spelling is corrected. A reading now takes the shortest spelling the
+  vendor's stored receipts carry, where the rest of the name only names the company behind the
+  brand or what its receipts were bought as ("Apple Distribution International Ltd." and "Apple
+  iCloud" become "Apple"; "Notion Cafe" stays); a restaurant keeps its own name. Receipts link to
+  no contact, so the earlier receipts are the only source. Done 2026-11-05.
 - [x] The invoice number decides duplicates (decided by the owner on 2026-10-29): every receipt
   gets its Rechnungsnummer, the same vendor with the same number or the very same file is one
   receipt, handled without asking (no second receipt at upload, existing copies archived into the
@@ -472,11 +516,11 @@
 
 <!-- Currently being implemented -->
 
-- [ ] A visual budget overview that shows real spending (asked by the owner on 2026-10-23): the
+- [x] A visual budget overview that shows real spending (asked by the owner on 2026-10-23): the
   spending page opens with months by category, budget against spent and the biggest
   counterparties, the receipt checks move to their own tab, transfers to the owner's own name
   count as own transfers, and a Klarna collective debit beyond its list waits for the list. Plan:
-  [docs/plans/2026-10-23-budget-overview.md](docs/plans/2026-10-23-budget-overview.md). (2026-10-23)
+  [docs/plans/2026-10-23-budget-overview.md](docs/plans/2026-10-23-budget-overview.md). Done 2026-11-05 (#172).
 - [ ] Last Klarna export once every open Klarna payment is collected (expected late November
   2026): run scripts/klarna/klarna-web-export.js and klarna-to-csv.py (see
   [docs/operations/klarna-export.md](docs/operations/klarna-export.md)), import the file under
@@ -509,8 +553,11 @@
   finished entering the 2025 meals and the session preparing the 2025 return has
   been told; (2) the line numbers of the employment annex of 2026 are not yet
   compared with an official source, so those two lines show without numbers;
-  (3) the 2027 rule set is due before 1 December 2026, when a test starts failing
-  without it; (4) tax the buyer owes on services from abroad is not computed;
+  (3) the 2027 rule set and the 2027 income tax values exist but are provisional,
+  carried from 2026 (reviewed 2026-11-05): they are replaced once the
+  Einkommensteuerreformgesetz 2027 (printed paper 21/8235, six tariff zones), the
+  social insurance ceilings of 2027 and the annual tax act 2026 (low-value limit, the
+  pool) are enacted; (4) tax the buyer owes on services from abroad is not computed;
   (5) invoices carry no link to a contact yet. Plan:
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-10)
 - [x] The 2026 purchase documents up to 2026-10-14 are in the app: 325 receipts under Whiz-Art
@@ -523,10 +570,12 @@
   restaurant receipts (566.08 euros) in the meal register; the 2026 bank and PayPal export files are
   not imported (the app holds the 446 N26 payments only); the freenet payment reminder of 23 June.
   Details in section H of `Steuern/2026/import-log-2026.md`. (2026-10-15)
-- [ ] The employment annex in the finance area has no line for further employment costs
-  ("weitere Werbungskosten", for example job-search costs): the three LinkedIn Premium Career
-  receipts of 2026 had to go on "Fortbildungskosten". Add the line when the annex is compared with
-  the official 2026 form. (2026-10-15)
+- [ ] The further employment costs line ("weitere Werbungskosten", for example job-search costs)
+  exists since pull request 113 (`employment.further_costs`, line 64 on the 2025 annex), so the
+  three LinkedIn Premium Career receipts of 2026 can move off "Fortbildungskosten". Open: its
+  2026 number, with the other annex lines of 2026, once the official Anlage N 2026 is published;
+  on 2026-11-05 the federal form portal still had no 2026 annex (the 2025 one opens, the 2026
+  path fails). (2026-11-05)
 - [x] The purchase documents of the tax years 2024, 2023, 2022 and 2021 are in the app: 514
   receipts under Whiz-Art Media (2024: 155 and one ticket dated 2023, 2023: 148, 2022: 119, 2021:
   91), each year a record of its filed return, with a log, a file table and a snapshot per year in

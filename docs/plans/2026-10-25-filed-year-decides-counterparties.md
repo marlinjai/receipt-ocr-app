@@ -2,7 +2,7 @@
 title: The filed return decides the counterparties
 summary: The app classifies counterparties from what the company already knows for sure before it asks a model or a person. A receipt that matches a payment by vendor, amount and day counts as evidence even when nobody linked them; receipts split between business and private make a counterparty "Teils, teils"; payment-service prefixes no longer split one merchant into dozens of counterparties; a payment linked to one of the company's own invoices is business income; and in a year whose return is filed, nothing is asked any more, because the return already says what was business.
 type: plan
-status: in-progress
+status: completed
 tags: [receipts, payments, classification, tax]
 projects: [receipt-ocr-app]
 date: 2026-10-25
@@ -184,3 +184,46 @@ build reports the before and after counts on production.
 - **Accepted:** a budget warning already sent for a coded shop name is sent once more after its
   budget is carried to the merchant (its subject contains the key). It happens at most once, only
   where a budget was set on a coded name.
+- **Evidence under half the payments is a proposal.** Linked or matched receipts decide "certain"
+  only when they pay at least half of a counterparty's payments; below that the same verdict is
+  stored as "likely" (`evidenceVerdict`). Amazon on production: 3 business receipts among 42
+  payments give "betrieblich, wahrscheinlich", a proposal, not a decision for all 42.
+- **Money in keeps the filed-year rule out.** A counterparty that also sent money (a refund, a
+  person paying back) is not called private by the filed return (`filedVerdict`), because the
+  return says nothing about money received that is not an invoice. Its filed-year payments still
+  ask nothing in Finanzen; the model's proposal stays as it is.
+- **Receipt cards are untouched.** Nothing in this plan removes or hides a receipt: the app's
+  "Teils, teils" is a verdict on a counterparty, the receipts (groceries included, whose cards
+  carry the line items) stay as they are, and the spending page keeps its receipt checks.
+
+## Measured on production (2026-11-05, read only)
+
+Build step 4's run needed no button: the daily spending check runs the same classification
+(`runSpendingChecks` calls `classifyCounterparties`), and verdicts were made again on most days from
+2026-10-26 to 2026-11-05. Counted in the database, for the company with the filed years (2021 to
+2025 filed):
+
+| Rule (decision) | Decided "certain" | Proposal ("likely") |
+| --- | --- | --- |
+| Filed year, not claimed: private (5) | 270 | 0 |
+| Split receipts: "Teils, teils" (2), Telekom (22 receipts) and freenet DLS (31) among them | 8 | 1 |
+| Money in pays own invoices: business (4) | 5 | 1 |
+| Linked or matched receipts of one kind (1) | 80 | 8 |
+
+| Year | Counterparties with payments | Answered by a person | Decided "certain" by the app (by evidence) | Proposal or not yet decided |
+| --- | --- | --- | --- | --- |
+| 2024 | 104 | 7 | 80 (74) | 17 |
+| 2025 | 454 | 30 | 282 (256) | 142 |
+| 2026 | 531 | 25 | 203 (71) | 303 |
+
+These are raw counts per counterparty key, without the payments tab's filter (own transfers, fees,
+the funding rule's PayPal and Klarna debits, private accounts), so the last column includes keys
+the tab never asks about: of the 46 never-decided 2025 keys, 44 are PayPal or Klarna debits and
+the other two card movements. They are not comparable to the 211 and 222 open proposals counted on
+2026-10-25 under a different import set. What matters for 2025: every year up to 2025 is filed, so
+"Wer ist das?" lists nothing for it. Its remaining proposals are counterparties that also sent
+money in (30) or have a business receipt in a filed year (4), both kept out of the rule on
+purpose, and Finanzen asks nothing about them. One merchant, one key: no stored key holds a
+payment-service star any more (it was 29 Amazon keys for 2025 alone), Amazon is now "amazon" and
+"amazon prime".
+

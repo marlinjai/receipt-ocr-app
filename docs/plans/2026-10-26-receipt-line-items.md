@@ -2,7 +2,7 @@
 title: Every line of every receipt
 summary: Each receipt's printed positions (what, how many, what it cost, at which tax rate) are read and stored, and each line gets a kind of purchase finer than the twelve spending categories (groceries, drinks, alcohol, coffee and tea, sweets, drugstore, a meal, a drink in a café). The spending overview shows what the money bought, month by month, across business and private receipts. Receipts already in the app get their lines from their stored text.
 type: plan
-status: in-progress
+status: completed
 tags: [receipts, spending, line-items, ai]
 projects: [receipt-ocr-app]
 date: 2026-10-26
@@ -221,3 +221,25 @@ Decided while building, say so if you disagree:
 
 Not done here: running the re-derivation on production (the coordinating session runs it once per
 company after the deploy).
+
+## Reality (2026-11-05): done, both production steps ran
+
+Checked against main and, read-only, against the production database on 2026-11-05. Every step of
+the build order is on main: the tables (`0043_receipt_items`, applied 2026-10-29), the reading in
+the classification call and from electronic invoices (#180), the backfill on the receipts page and
+on the daily run, the receipt view's lines with the kind correction, "Was gekauft" on the spending
+page, and the pricing of net invoices, tips and credits with the re-derivation route (#195).
+
+- **The backfill ran in both companies** and the daily run keeps reading new receipts. The larger
+  company: 1,344 receipts with lines (1,140 from the backfill, 204 read with their upload since), 3
+  without lines, 7 without stored text, 15 given up after 3 unusable answers (as decision 5 of
+  2026-10-26 says: their view points to "Seite neu lesen"). The second company: 53 receipts with
+  lines.
+- **The re-derivation ran where it was needed.** Before #195 a line read from a page or text never
+  held a net amount; in the larger company 108 receipts read before the fix were rewritten together
+  on 2026-10-30 at 00:06 UTC, eighteen minutes after #195 merged, and 107 of them now hold net
+  lines: the run of `POST /api/receipts/lines/reprice` the 2026-10-30 section asked for. The second
+  company's first lines were read at 04:30 UTC that morning, after the deploy, so `priceLines`
+  priced them on write and there was nothing to re-derive. A run again changes nothing either way.
+
+Nothing of this plan is left open.

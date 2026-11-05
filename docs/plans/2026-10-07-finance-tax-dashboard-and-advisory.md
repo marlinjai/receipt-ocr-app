@@ -1822,6 +1822,30 @@ like everything else; nothing derived is stored.
 - **Not built here:** the depreciation of an asset's study share onto the employment
   annex (the laptop of 2022): that is part of the asset schedules line.
 
+### Checked against production (2026-11-05)
+
+On a read-only copy of production (dump of 2026-11-05, restored locally, statement computed by
+`loadStatement`), Whiz-Art Media: 2021 to 2024 each report `rulesExact` and their own line numbers.
+2024 against the filed return (section D of `Steuern/2024/import-log-2024.md`):
+
+| Line of 2024 | Declared | App on 2026-11-05 | Difference |
+|---|---|---|---|
+| 36 low-value assets | 697.23 | 697.23 | 0.00 |
+| 43 telecommunication | 394.95 | 375.08 | -19.87 |
+| 45 training | 257.98 | 258.20 | +0.22 |
+| 51 work equipment | 1,398.62 | 1,454.33 | +55.71 |
+| 33 depreciation | 650.22 | none | asset schedules, its own roadmap line |
+
+- Line 51 is the known difference of 2026-10-12 (the Linode invoice of 29 October 2024 corrected
+  from 0.89 to 59.57 dollars, which made 1,453.77) plus 0.56 of exchange rates on dollar
+  invoices. Not a defect.
+- Line 43 is a regression in another area: the Telekom invoice of 16 December 2024, carried by the
+  2024 return, was tied by the automatic "closest" payment match (#207) on 2026-11-01 to its
+  debit of 2 January 2025, and the year-change rule for filed years ("a payment stays in the year
+  paid") then moved it to 2025. A filed year changed after filing, so it has its own roadmap line.
+- No receipt of 2021, 2022 or 2023 carries a share on both forms, so the step "the coordinator
+  records the shares" above did not happen. The roadmap line lists what is to be entered.
+
 ## Reality: assets with a study or employment share (2026-10-15)
 
 - **What was missing for the asset schedules of 2021 and 2022.** The register could
@@ -2232,3 +2256,56 @@ key frame built at run time).
   proposed and accepted (with its own accept path and link method); offering the same pair in
   both would show it twice with two ways to take it. A foreign receipt without an exchange rate
   has no estimate and is still not proposed.
+
+## Reality: the income tax values of 2027, and the yearly review of 5 November 2026 (2026-11-05)
+
+- **2027 has its own income tax values, marked provisional.** `INCOME_TAX_RULES_2027` in
+  `src/lib/tax/income-tax/rules.ts` carries every value of 2026 (tariff, solidarity
+  surcharge, employee flat allowance, union dues, special expenses, commute, home-office
+  day, vocational training, donations, pension cap, sick-pay reduction, insurance cap,
+  church tax) and says why in `provisional`. This is the law as it stands for 2027, not a
+  placeholder: § 32a applies "ab dem Veranlagungszeitraum 2026" until a law replaces it.
+  Before, an estimate of 2027 fell back to 2026's values with the warning "no values for
+  this year"; now it is its own year and says the values are provisional.
+- **What is on its way and not law on 5 November 2026:**
+  - the Einkommensteuerreformgesetz 2027 (government bill, Bundestag printed paper
+    21/8235 of 28 September 2026; first reading 8 October, opinion of the federal council
+    16 October 2026, printed paper 507/26). For 2027 it would set the basic allowance to
+    12,564 euros, the employee flat allowance to 1,430 euros, and a tariff of six zones:
+    (952.24 y + 1,400) y up to 17,799; (170.74 z + 2,397) z + 993.86 up to 70,600;
+    0.42 x - 11,241.73 up to 249,999; 0.45 x - 18,741.70 up to 279,999; 0.47 x - 24,341.68
+    from 280,000. For 2028 a basic allowance of 12,900 euros.
+  - the Sozialversicherungs-Rechengrößenverordnung 2027 (cabinet 9 October 2026, federal
+    council printed paper 576/26): knappschaft contribution ceiling 130,800 euros, which
+    moves the pension cap to 130,800 x 24.7 percent once the rate is confirmed.
+  - the annual tax act 2026 (printed paper 21/8283): the low-value limit of 1,200 euros and
+    the end of the pool for purchases after 31 December 2026 proposed by the federal
+    council; final vote in the Bundestag expected in mid-November 2026.
+- **Checked against the statutes on 5 November 2026:** the income tax act was last amended
+  on 15 October 2026 (BGBl. 2026 I Nr. 307, child benefit without an application; no value
+  of the app changes), the value-added tax act on 29 June 2026 and the solidarity surcharge
+  act on 23 December 2024. The year rule set of 2027 (`src/lib/tax/rules/2027.ts`) is
+  reviewed again and stays as it was, with the new check date.
+- **Shown:** the income tax tab says "Die Steuerwerte für 2027 sind vorläufig: ..." with
+  the reason and the year carried from, and the headline tile adds "Steuerwerte
+  vorläufig". A test pins every carried value by name, so the review after the acts pass
+  replaces exactly those, and a test fails from 1 December of a year in which the coming
+  year has no income tax values, as for the year rule sets.
+- **The employment annex of 2026 still cannot be compared.** The line for further
+  employment costs exists since pull request 113 (`employment.further_costs`, line 64 on
+  the 2025 annex). On 5 November 2026 the federal form portal opened the Anlage N 2025
+  (`est25/034027_25`) but answered "Cannot open form" for the 2026 path
+  (`est26/034027_26`), no 2026 income tax forms page exists at the state tax office of
+  Lower Saxony, and the copy of the ministry's letter of August 2026 to software vendors
+  is still taken down. The 2026 annex lines keep showing without numbers.
+- **Decided, say so if you disagree:**
+  - The draft values are not adopted for 2027. A bill can still change (the federal
+    council has already asked for changes), and the year rule set of 2027 set the
+    precedent of following enacted law only. The estimate of a 2027 income therefore
+    shows the tax under today's law, with the note naming what the bill would change.
+  - The tariff is not pre-built for six zones against a draft. When the reform act is
+    enacted, the review adds the 47 percent zone to `TariffZones` and `tariffTaxEuros`
+    (one more upper bound and one more subtrahend) together with the enacted numbers, and
+    deletes the carried-values test with `provisional`.
+- **Computed figures of 2025 and 2026 do not change**; a 2027 estimate computes the same
+  tax as before, now as its own year.

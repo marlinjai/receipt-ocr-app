@@ -1,4 +1,4 @@
-import type { Source } from '../rules/types';
+import type { ProvisionalRules, Source } from '../rules/types';
 import { itemsOf, sumAmount, sumDays, type ReturnItemFact } from './return-items';
 import { incomeTaxRulesForYear, type FederalState, type IncomeTaxRules } from './rules';
 import { tariffTaxEuros, tariffZone } from './tariff';
@@ -100,6 +100,8 @@ export interface IncomeTaxEstimate {
   rulesYear: number;
   rulesExact: boolean;
   rulesReviewedOn: string;
+  /** Set when the year's own values are not enacted yet and an earlier year's are carried; the screen says so. */
+  rulesProvisional: ProvisionalRules | null;
   /**
    * What the estimate covers. `business_only`: no wage data, so the
    * employment part is left out (the edge case of the plan: prompt to enter
@@ -145,10 +147,10 @@ export function estimateIncomeTax(input: EstimateInput): IncomeTaxEstimate {
     const total = (e: Computed) => e.totalBalanceCents ?? e.totalWithoutChurchCents;
     businessEffectCents = total(full) - total(without);
   }
-  return { ...full, year: input.year, rulesYear: rules.year, rulesExact: exact, rulesReviewedOn: rules.reviewedOn, businessEffectCents };
+  return { ...full, year: input.year, rulesYear: rules.year, rulesExact: exact, rulesReviewedOn: rules.reviewedOn, rulesProvisional: rules.provisional ?? null, businessEffectCents };
 }
 
-type Computed = Omit<IncomeTaxEstimate, 'year' | 'rulesYear' | 'rulesExact' | 'rulesReviewedOn' | 'businessEffectCents'>;
+type Computed = Omit<IncomeTaxEstimate, 'year' | 'rulesYear' | 'rulesExact' | 'rulesReviewedOn' | 'rulesProvisional' | 'businessEffectCents'>;
 
 function wageOrigin(wages: YearWages): FigureOrigin {
   return wages.employers.every((e) => e.basis === 'annual_statement') ? 'wage_statement' : 'pay_slips';

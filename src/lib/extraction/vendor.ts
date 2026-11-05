@@ -57,6 +57,8 @@ const NEVER_A_NAME: RegExp[] = [
   /^(?:thanks?|thank\s+you|many\s+thanks|vielen\s+dank|danke)\b/i, // a greeting set as a headline ("THANKS FOR / YOUR RIDE!")
   /^(?:germany|deutschland|austria|(?:ö|oe)sterreich|switzerland|schweiz|suisse|united\s+states|usa|united\s+kingdom|ireland|netherlands|niederlande|france|frankreich|luxembourg|luxemburg|czech\s+republic|poland|polen|spain|spanien|italy|italien|sweden|schweden|singapore|india|china)$/i, // a country line of an address
   /^your\s+(?:ride|trip|order|purchase|booking|receipt|invoice)\b/i,
+  /^barcode\s+bitte\b/i, // a ticket's handling note ("Barcode bitte nicht knicken!")
+  /^civ\s*\d{4}$/i, // a ticket's carrier code: the carrier is read from it (TICKET_CARRIERS), the code is no name
   /^[\p{P}\p{S}\s\d]+$/u, // no letters at all
 ];
 
@@ -193,11 +195,42 @@ export function sameVendor(a: string, b: string): boolean {
   return keyA !== '' && keyA === vendorKey(b);
 }
 
-/** Read the business name from the recognized text. Never invents one. */
-export function readVendor(fullText: string): VendorReading {
+/**
+ * The carriers a rail ticket names by its code under the CIV (the uniform rules
+ * for international rail passenger contracts). A Deutsche Bahn online ticket
+ * prints its logo "DB" (too short to count as a name), then "CIV 1080", and the
+ * handling note "Barcode bitte nicht knicken!": the code is the only line that
+ * names the issuer. The spelling is the one the stored receipts use.
+ */
+const TICKET_CARRIERS: Record<string, string> = {
+  '1080': 'Deutsche Bahn',
+  '1181': 'ÖBB',
+  '1185': 'SBB',
+};
+
+/** The carrier a ticket names by its CIV code in the head, or null. Only a line of the code alone counts, not a route ("<1080>M*N"). */
+function ticketCarrier(head: string[]): string | null {
+  for (const line of head) {
+    const code = /^civ\s*(\d{4})$/i.exec(line)?.[1];
+    if (code && TICKET_CARRIERS[code]) return TICKET_CARRIERS[code];
+  }
+  return null;
+}
+
+function headOf(fullText: string): { all: string[]; head: string[] } {
   const all = fullText.split('\n').map(clean);
   const end = all.findIndex((l, i) => i > 0 && BODY_START.test(l));
   const head = all.slice(0, Math.min(end === -1 ? HEAD_LINES : end, HEAD_LINES)).filter((l) => l.length > 0);
+  return { all, head };
+}
+
+/** Read the business name from the recognized text. Never invents one. */
+export function readVendor(fullText: string): VendorReading {
+  const { all, head } = headOf(fullText);
+
+  // 0. A rail ticket is issued by the carrier its code names.
+  const carrier = ticketCarrier(head);
+  if (carrier) return { vendor: carrier, confidence: 'confirmed' };
 
   const addresses = issuerAddresses(all);
   // A company in the head that is followed by an address and that no issuer address names is the customer's block,
@@ -270,6 +303,8 @@ export function readVendor(fullText: string): VendorReading {
 export function chooseVendor(reading: VendorReading, modelVendor: string | null | undefined, fullText: string): VendorReading {
   const model = modelVendor ? clean(modelVendor) : '';
   if (!model || !canBeName(model)) return reading;
+  // A ticket's carrier is read from its code; the model may name the operating company instead ("DB Fernverkehr AG").
+  if (reading.vendor && ticketCarrier(headOf(fullText).head) === reading.vendor) return reading;
   // An issuer the receipt's own address names is not replaced by a name from the receipt text, which may be the customer's.
   if (reading.vendor && reading.confidence === 'confirmed' && backedByAddress(reading.vendor, issuerAddresses(fullText.split('\n').map(clean)))) {
     return reading;

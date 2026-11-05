@@ -415,8 +415,22 @@ Approved as is; its one point, fixed: a mail taken over for a payment answered i
 names that cause (`payment_not_open`), and the check whether an error's row is still listed says
 explicitly that a key without a row belongs to the page.
 
+### Live (checked 2026-11-05)
+
+Everything above is on `main` (pull request #164, "payments across companies") and deployed: the
+migration `0035_tax_account_shares` is applied in production, and the sharing section is rendered
+in the payments tab (`AccountSharing` in `src/app/app/finance/FinanceClient.tsx`, kept through the
+move of the finance tabs onto one store in #217). Read-only check of production on 2026-11-05: the
+table `tax_account_shares` holds no row, so no account is shared yet and marlinjai's spending side
+still sees nothing. Since the plan was written a fifth account arrived in Whiz-Art Media, the
+Advanzia Mastercard (#194, about 220 payments); the sharing works per account, so it is shared the
+same way. Nothing is left to build; what remains is the owner's step below, and then this plan is
+completed.
+
 ### What the owner does after the deploy
 
 In Whiz-Art Media, Finanzen, Zahlungen, section "Private Zahlungen in einer anderen Firma": for
-each of the four accounts choose "marlinjai" and press "Private Zahlungen weitergeben". The
-answers already given apply at once. Nothing else: no setting, no import, no second bank consent.
+each of the five accounts (N26, Tomorrow, PayPal, Klarna, Advanzia Mastercard) choose "marlinjai"
+and press "Private Zahlungen weitergeben". The answers already given apply at once. Nothing else:
+no setting, no import, no second bank consent. Afterwards marlinjai's spending page names the
+shared accounts with their holder, and the line on the roadmap is ticked.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { INCOME_TAX_RULES_2025, INCOME_TAX_RULES_2026, incomeTaxRulesForYear } from '../rules';
+import { INCOME_TAX_RULE_YEARS, INCOME_TAX_RULES_2025, INCOME_TAX_RULES_2026, INCOME_TAX_RULES_2027, incomeTaxRulesForYear } from '../rules';
 import { tariffTaxEuros, tariffZone } from '../tariff';
 
 const z25 = INCOME_TAX_RULES_2025.tariff.value;
@@ -64,12 +64,22 @@ describe('incomeTaxRulesForYear', () => {
   });
 
   it('falls back to the nearest year and says so', () => {
-    expect(incomeTaxRulesForYear(2027)).toEqual({ rules: INCOME_TAX_RULES_2026, exact: false });
+    expect(incomeTaxRulesForYear(2028)).toEqual({ rules: INCOME_TAX_RULES_2027, exact: false });
     expect(incomeTaxRulesForYear(2024)).toEqual({ rules: INCOME_TAX_RULES_2025, exact: false });
   });
 
+  // The forcing function for the yearly review, as for the year rule sets:
+  // from 1 December the values of the coming year have to exist.
+  it('has the coming year by 1 December', () => {
+    const now = new Date();
+    if (now.getUTCMonth() === 11) {
+      expect(INCOME_TAX_RULE_YEARS, `add INCOME_TAX_RULES_${now.getUTCFullYear() + 1} to src/lib/tax/income-tax/rules.ts`).toContain(now.getUTCFullYear() + 1);
+    }
+    expect(INCOME_TAX_RULE_YEARS).toContain(now.getUTCFullYear());
+  });
+
   it('gives every value a source with a check date', () => {
-    for (const r of [INCOME_TAX_RULES_2025, INCOME_TAX_RULES_2026]) {
+    for (const r of INCOME_TAX_RULE_YEARS.map((y) => incomeTaxRulesForYear(y).rules)) {
       for (const [key, value] of Object.entries(r)) {
         if (typeof value === 'object' && value !== null && 'value' in value) {
           const source = (value as { source: { citation: string; url: string; checkedOn: string } }).source;
@@ -79,5 +89,54 @@ describe('incomeTaxRulesForYear', () => {
         }
       }
     }
+  });
+});
+
+describe('the provisional income tax values of 2027', () => {
+  const r2027 = INCOME_TAX_RULES_2027;
+  const r2026 = INCOME_TAX_RULES_2026;
+
+  it('exist as their own year and say they are provisional, carried from 2026', () => {
+    expect(incomeTaxRulesForYear(2027)).toEqual({ rules: r2027, exact: true });
+    expect(r2027.year).toBe(2027);
+    expect(r2027.provisional).toMatchObject({ carriedFromYear: 2026 });
+  });
+
+  it('name the pending acts a reader would check', () => {
+    expect(r2027.provisional?.reason).toMatch(/Einkommensteuerreformgesetz 2027/);
+    expect(r2027.provisional?.reason).toMatch(/21\/8235/);
+    expect(r2027.provisional?.reason).toMatch(/Rechengrößen der Sozialversicherung 2027/);
+  });
+
+  // This test fails on purpose once the review replaces a 2027 value with an
+  // enacted one: then delete it together with `provisional`.
+  it('carry every value of 2026 unchanged, each named, so the review knows exactly what to replace', () => {
+    expect(r2027.tariff).toEqual(r2026.tariff);
+    expect(r2027.solidarity).toEqual(r2026.solidarity);
+    expect(r2027.employeeFlatAllowanceCents).toEqual(r2026.employeeFlatAllowanceCents);
+    expect(r2027.unionDuesBesideFlatAllowance).toEqual(r2026.unionDuesBesideFlatAllowance);
+    expect(r2027.specialExpensesFlatCents).toEqual(r2026.specialExpensesFlatCents);
+    expect(r2027.commute).toEqual(r2026.commute);
+    expect(r2027.homeOfficeDay).toEqual(r2026.homeOfficeDay);
+    expect(r2027.vocationalTrainingCapCents).toEqual(r2026.vocationalTrainingCapCents);
+    expect(r2027.donationsCapBp).toEqual(r2026.donationsCapBp);
+    expect(r2027.pension).toEqual(r2026.pension);
+    expect(r2027.sickPayReductionBp).toEqual(r2026.sickPayReductionBp);
+    expect(r2027.otherInsuranceCapCents).toEqual(r2026.otherInsuranceCapCents);
+    expect(r2027.churchTaxRateBp).toEqual(r2026.churchTaxRateBp);
+  });
+
+  it('cover every value field, so a new field cannot be carried silently', () => {
+    const named = [
+      'tariff', 'solidarity', 'employeeFlatAllowanceCents', 'unionDuesBesideFlatAllowance', 'specialExpensesFlatCents', 'commute',
+      'homeOfficeDay', 'vocationalTrainingCapCents', 'donationsCapBp', 'pension', 'sickPayReductionBp', 'otherInsuranceCapCents', 'churchTaxRateBp',
+    ];
+    const sourced = Object.entries(r2027).filter(([, v]) => typeof v === 'object' && v !== null && 'source' in v).map(([k]) => k);
+    expect(sourced.sort()).toEqual([...named].sort());
+  });
+
+  it('the years with enacted values are not provisional', () => {
+    expect(INCOME_TAX_RULES_2025.provisional).toBeUndefined();
+    expect(r2026.provisional).toBeUndefined();
   });
 });

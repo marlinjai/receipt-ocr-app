@@ -83,4 +83,8 @@ jobs:
       # name Postgres truncated differently), which no test would notice.
       - name: Check that the migrations produce the schema
         run: pnpm prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+      # The database tests run DB_TEST_WORKERS files at once (test/db-workers.ts): print what the runner has,
+      # so a slower run can be told apart from a smaller runner (the continuous integration standard, 2.3).
+      - name: Runner capacity
+        run: echo "cores $(nproc), memory $(free -m | awk '/Mem:/ {print $2}') MB"
       - run: pnpm test:db

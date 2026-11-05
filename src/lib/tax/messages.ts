@@ -71,6 +71,8 @@ export const INVOICE_CHECK_LABELS: Record<InvoiceCheckKind, string> = {
   invoice_tax_groups_unreadable:
     'Die Beträge je Steuersatz sind nicht mehr lesbar; die Steuer zählt, wird aber keinem Satz zugeordnet. Bitte die Rechnung öffnen und die Sätze neu eintragen',
   invoice_tax_group_deviates: 'Die ausgewiesene Steuer eines Satzes weicht um mehr als einen Cent von Netto mal Satz ab; gerechnet wird mit dem Betrag der Rechnung',
+  invoice_cancelled_with_payments:
+    'Storniert, aber Zahlungen sind ihr zugeordnet: wurde das Geld zurückgezahlt, oder gehört die Zahlung zu einer anderen Rechnung?',
 };
 
 export const INVOICE_TREATMENT_LABELS: Record<InvoiceTreatment, string> = {
@@ -163,6 +165,8 @@ export function financeActionMessage(error: string, detail?: string): string {
           return 'Die Rechnungsnummer ist zu lang.';
         case 'invoice_number_taken':
           return 'Diese Rechnungsnummer gibt es bereits.';
+        case 'invoice_from_books':
+          return 'Diese Rechnung kommt aus den Books: Nummer, Datum, Betrag und Steuer werden dort geändert (storniert oder korrigiert), und sie wird hier nicht gelöscht. Zahlungen lassen sich hier eintragen.';
         case 'invalid_amount':
           return 'Bitte den Rechnungsbetrag als Betrag größer als null eingeben.';
         case 'invalid_vat':

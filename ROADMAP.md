@@ -242,19 +242,19 @@
   project the same day. Plan: `docs/plans/2026-10-10-remove-own-contacts-table.md`. (2026-10-10)
 - [ ] Invoicing and income: the invoices of 2024 to 2026 are entered (28 to 61, with their
   payments), the matcher takes invoice numbers only as whole figures (#120), overdue invoices are
-  an open check (#114) and invoices with more than one rate are reported per rate (#117). Open:
-  the read-only mirror of the invoices framer-clone's Books issue (from 62 on), which waits for
-  framer-clone's read-only machine endpoint (its roadmap line "4. Existing invoices and the
-  suite"); reading electronic invoices is another lane (#149). Plan:
+  an open check (#114), invoices with more than one rate are reported per rate (#117), and the
+  receipts side of the Books mirror is built (migration `0047`, `applyBooksDocuments`: attach by
+  number, credit notes, corrections, read-only in "Einnahmen"). Open: the call that fetches the
+  issued documents, which waits for framer-clone's read-only machine endpoint (its roadmap line
+  "4. Existing invoices and the suite"), and its schedule; reading electronic invoices is another
+  lane (#149). Plan:
   [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-11-05)
-- [ ] Corrected invoices in the income mirror: framer-clone's Books can now correct an issued
-  invoice ("Correct", framer-clone #125, migration 011): one transaction issues a credit note that
-  cancels the old invoice and a replacement invoice with a new number that carries
-  `replacesDocumentId`. When the mirror pulls issued documents, it should record that link and
-  move a payment already matched to the replaced invoice onto its replacement, instead of leaving
-  the payment on a cancelled invoice and the replacement unpaid. Background: framer-clone's
-  composer plan of 2026-10-21 (decision 9 and the phase 1 build notes); this app's plan above,
-  D6 (payments belong here). (2026-10-22)
+- [ ] Corrected invoices in the income mirror: built on the receipts side (decision D10 of the
+  invoicing plan): a replacement invoice from framer-clone's Books (`replaces_document_id`,
+  framer-clone #125, migration 011) takes over the bank links and typed-in payments of the
+  invoice it replaces, once, and the credit note cancels the old invoice on its own day. Open:
+  it runs once the mirror's pull exists (framer-clone's read-only machine endpoint, see the line
+  above). (2026-11-05)
 - [x] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
   (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax
   return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent

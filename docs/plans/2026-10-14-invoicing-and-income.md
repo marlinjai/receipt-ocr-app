@@ -268,6 +268,35 @@ and the same day the invoice is entered in "Einnahmen" (number, date, amount, sm
 That is double entry on purpose and is what the Books tier removes; it lasts until the Books
 phases 0 to 3 are built.
 
+**D10. The mirror, decided on 2026-11-05 while building it** (all reversible, none needs the
+owner):
+
+- **Same number, same invoice.** framer-clone imported the whole series 1 to 61 (not only from
+  62, as the decided block under D1 expected), so its documents 28 to 61 carry the numbers of the
+  register rows here. A document whose number a register row holds is that row when total, tax
+  treatment and issue day agree (a row without an issue day, invoice 34, takes the document's):
+  the row is attached (`source = books`, the document id set) and keeps its payments, links,
+  `declaredInYear` and write-off. When a figure differs nothing is touched and the number is
+  reported (`register_differs`), because which figure is right is a person's call.
+- **What is not mirrored**: documents issued before the first year of the register (invoices 1
+  to 27, as section 5 left them out) and documents in another currency than the euro (invoice 23
+  is in Swiss francs); both are reported, never dropped silently. Offers and drafts are not
+  issued invoices. A company with no invoice here yet takes everything.
+- **A credit note cancels on its own day** (`cancelled_on`): from then on the invoice is no claim
+  and never overdue; tax charged on issue goes back in the credit note's period, rate by rate
+  (section 17 of the value-added tax act). Money still booked on a cancelled invoice stays
+  received and raises the check "Storniert, aber Zahlungen sind ihr zugeordnet". Only a credit
+  note over the whole invoice is taken (the Books issue no other); a partial one is reported.
+- **A correction moves the payments once.** When a replacement (`replaces_document_id`) first
+  arrives, the bank links and typed-in payments of the replaced invoice move to it in the same
+  transaction, so income stays where it was and the replacement is not shown unpaid. A payment a
+  person links to the old invoice later stays where the person put it.
+- **A Books invoice is read-only here for its figures** (number, day, amounts, tax), never
+  deleted here (the next pull would bring it back without its payments); its payments,
+  `declaredInYear` and write-off stay this app's (D6).
+- **One pull at a time per company** (a transaction lock), and the same documents again change
+  nothing, so the trigger can be a schedule or a button without a double write.
+
 ## 5. Migration of the invoices on disk
 
 Source: the list in the tax folder (`Steuern/2026/ausgangsrechnungen-2024-2026.md`), read from
@@ -370,9 +399,28 @@ What the code on main and the production data show, read on 2026-11-05 (producti
   2026-10-20 (by the owner's later decision), so the register rows 28 to 61 here and the
   documents 28 to 61 there share their numbers; 62 and 63 were issued there by upload on
   2026-10-28. framer-clone's shop also issues receipts for paid orders.
-- **Step 4 (the mirror here): open, blocked on framer-clone.** framer-clone has no read-only
-  machine endpoint for issued documents yet (its routes under `api/books` are the editor's,
-  behind a person's session); its own roadmap (line "4. Existing invoices and the suite") owns
-  that endpoint and its contract. The receipts side is built against that contract once it
-  exists.
+- **Step 4 (the mirror here): the receipts side is built, the pull is not.** Migration
+  `0047_tax_invoice_books_mirror` (additive) gives `TaxIssuedInvoice` its `source`
+  (`register` or `books`), `books_document_id` (unique per company), `due_date`, `cancelled_on`
+  and `replaces_invoice_id`. `src/lib/tax/books-mirror.ts` plans the mirror from the issued
+  documents (pure), `src/lib/tax/books-mirror-service.ts` (`applyBooksDocuments`) writes it in one
+  transaction per company. The "Einnahmen" tab marks a Books invoice ("aus den Books", its due
+  day, "ersetzt Rechnung", "storniert am"), locks its figures and offers no delete; the service
+  refuses both (`invoice_from_books`). What does not exist yet is the call that fetches the
+  documents: framer-clone has no read-only machine endpoint for issued documents (its routes under
+  `api/books` are the editor's, behind a person's session), and its own roadmap (line "4.
+  Existing invoices and the suite") owns that endpoint. The input `applyBooksDocuments` takes
+  (`BooksDocument` in `books-mirror.ts`) is the fields of framer-clone's `sales_document` this app
+  needs, named as there (`document_number`, `issue_date`, `due_date`, `currency_code`,
+  `kleinunternehmer`, `reverse_charge`, `total`, `tax_amount`, `tax_summary`,
+  `corrects_document_id`, `replaces_document_id`), so the endpoint can hand them over as they are.
+- **Corrections (roadmap line "Corrected invoices in the income mirror"): built on the receipts
+  side** with the mirror: a credit note cancels its invoice on its own day, and a replacement
+  takes over the bank links and typed-in payments of the invoice it replaces (D10 below). It
+  runs once the pull exists.
+- **Books documents marked `paid` (the shop's receipts for orders paid through Stripe):** the
+  mirror takes them like any issued invoice, so once the pull runs they stand here as open
+  claims until a payment is linked, and the money arrives as a Stripe payout that sums several
+  orders. How a payout is split onto its receipts is a matching question for the pull slice,
+  not solved here.
 - **Step 5 (reading electronic invoices): another lane** (#149 takes XML files on upload).

@@ -113,6 +113,8 @@ export type TaxServiceErrorCode =
   | 'row_in_other_asset'
   | 'invoice_not_found'
   | 'invoice_number_taken'
+  /** The invoice is mirrored from the Books: its number, day, amounts and tax are changed there, and it is not deleted here. */
+  | 'invoice_from_books'
   | 'invalid_write_off'
   | 'status_not_found'
   | 'status_unanswered'
@@ -639,6 +641,7 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
     declaredInYear: i.declaredInYear,
     writtenOffCents: i.writtenOffCents,
     writtenOffOn: i.writtenOffOn,
+    cancelledOn: i.cancelledOn,
     smallBusinessOnIssue: smallBusinessOn(settings, i.issueDate),
   }));
   const settlementFacts: VatSettlementFact[] = storedSettlements.map((s) => ({
@@ -794,10 +797,13 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
     if (businessBp > 0) undeductedInputVatCents += Math.round(((item.amountCents - item.netCents) * businessBp) / 10_000);
   }
   const invoiceResults = new Map(result.revenue.invoices.map((i) => [i.invoiceId, i]));
+  const invoiceNumberById = new Map(storedInvoices.map((i) => [i.id, i.number]));
   // Overdue as of today (decision D6 of the invoicing plan): a reminder is about now. Only invoices issued up to the
   // viewed year, because those are the ones its "Einnahmen" tab lists (unpaid, so outstanding at its end).
+  // A mirrored Books invoice states its own due day; the others take the default term.
+  const dueDateOf = new Map(storedInvoices.map((i) => [i.id, i.dueDate]));
   const overdue = overdueInvoices(
-    invoiceFacts.filter((i) => i.issueDate !== null && Number(i.issueDate.slice(0, 4)) <= year),
+    invoiceFacts.filter((i) => i.issueDate !== null && Number(i.issueDate.slice(0, 4)) <= year).map((i) => ({ ...i, dueDate: dueDateOf.get(i.id) ?? null })),
     today(),
   );
   const overdueIds = new Set(overdue.map((o) => o.invoiceId));
@@ -950,6 +956,7 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
       turnoverCents: result.revenue.turnoverCents,
       outstandingCents: result.revenue.outstandingCents,
       invoices: storedInvoices.flatMap((stored, index): InvoiceView[] => {
+        const numberById = invoiceNumberById;
         const r = invoiceResults.get(stored.id);
         if (!r) return [];
         const fact = invoiceFacts[index];
@@ -967,6 +974,10 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
             enteredPayments: stored.payments.map((p) => ({ date: p.paidOn, cents: p.cents })).sort((a, b) => (a.date < b.date ? -1 : 1)),
             writtenOffCents: stored.writtenOffCents,
             writtenOffOn: stored.writtenOffOn,
+            source: stored.source === 'books' ? 'books' : 'register',
+            dueDate: stored.dueDate,
+            cancelledOn: stored.cancelledOn,
+            replacesNumber: stored.replacesInvoiceId ? (numberById.get(stored.replacesInvoiceId) ?? null) : null,
             receivedCents: r.receivedCents,
             excludedCents: r.excludedCents,
             declaredCents: r.declaredCents,
@@ -1647,6 +1658,14 @@ export interface InvoiceView {
   /** Booked out as never to be paid, and its day. */
   writtenOffCents: number;
   writtenOffOn: string | null;
+  /** 'books': mirrored from framer-clone's Books; its document figures are changed there, not here. */
+  source: 'register' | 'books';
+  /** The due day the Books document states; null: the default term. */
+  dueDate: string | null;
+  /** The day a credit note cancelled the invoice. */
+  cancelledOn: string | null;
+  /** A corrected invoice: the number of the invoice it replaces. */
+  replacesNumber: string | null;
   /** Received in the viewed year, and what of that a return declared by invoice already counted. */
   receivedCents: number;
   excludedCents: number;
@@ -1682,6 +1701,9 @@ export async function saveInvoice(db: PrismaClient, ctx: TaxContext, invoiceId: 
   }
   const existing = await db.taxIssuedInvoice.findFirst({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId } });
   if (!existing) throw new TaxServiceError('invoice_not_found');
+  // A mirrored Books invoice keeps the figures of its document; only what is this app's own (payments, what a return
+  // declared, what was booked out) is changed here.
+  if (existing.source === 'books' && !sameDocumentFigures(existing, data)) throw new TaxServiceError('invoice_from_books');
   // The payments of an invoice are few and have no identity of their own, so a
   // save replaces them as one set, together with the invoice or not at all. The
   // invoice row is locked as linking a bank payment locks it, so a link made at
@@ -1702,8 +1724,33 @@ export async function saveInvoice(db: PrismaClient, ctx: TaxContext, invoiceId: 
 }
 
 export async function deleteInvoice(db: PrismaClient, ctx: TaxContext, invoiceId: string): Promise<void> {
-  const { count } = await db.taxIssuedInvoice.deleteMany({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId } });
-  if (count === 0) throw new TaxServiceError('invoice_not_found');
+  // A mirrored Books invoice is never deleted here: the next pull would bring it back, and its payments would be lost.
+  const { count } = await db.taxIssuedInvoice.deleteMany({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId, source: { not: 'books' } } });
+  if (count > 0) return;
+  const books = await db.taxIssuedInvoice.findFirst({ where: { id: invoiceId, authWorkspaceId: ctx.workspaceId }, select: { id: true } });
+  throw new TaxServiceError(books ? 'invoice_from_books' : 'invoice_not_found');
+}
+
+/** The same groups, whatever order they were written in. */
+function sameTaxGroups(a: TaxGroup[] | null, b: TaxGroup[] | null): boolean {
+  const key = (groups: TaxGroup[] | null) => JSON.stringify(groups === null ? null : [...groups].sort((x, y) => y.rateBp - x.rateBp).map((g) => [g.rateBp, g.netCents, g.vatCents]));
+  return key(a) === key(b);
+}
+
+/** Do the stored invoice and a save agree on what the Books document states? */
+function sameDocumentFigures(
+  stored: { number: string; issueDate: string | null; grossCents: number; vatCents: number; treatment: string; taxGroups: Prisma.JsonValue },
+  data: { number: string; issueDate: string | null; grossCents: number; vatCents: number; treatment: string; taxGroups: unknown },
+): boolean {
+  const groups = data.taxGroups === Prisma.DbNull ? null : data.taxGroups;
+  return (
+    stored.number === data.number &&
+    stored.issueDate === data.issueDate &&
+    stored.grossCents === data.grossCents &&
+    stored.vatCents === data.vatCents &&
+    stored.treatment === data.treatment &&
+    sameTaxGroups(storedTaxGroups(stored.taxGroups), (groups ?? null) as TaxGroup[] | null)
+  );
 }
 
 /**

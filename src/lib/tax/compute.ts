@@ -436,6 +436,15 @@ function computeRevenue(
           outputVatByIssue.push({ date: invoice.issueDate, cents: group.vatCents, source: 'invoice', id: invoice.id, ...rateOf(group.rateBp), netCents: group.netCents });
         }
       }
+      // A credit note over the whole invoice takes its tax back in the period of the credit note (section 17 of the
+      // value-added tax act), rate by rate, where the tax was owed on issue.
+      const cancelledOn = invoice.cancelledOn ?? null;
+      if (vat > 0 && cancelledOn !== null && yearOf(cancelledOn) === facts.year) {
+        for (const group of groups) {
+          if (group.vatCents === 0 && group.netCents === 0) continue;
+          outputVatByIssue.push({ date: cancelledOn, cents: -group.vatCents, source: 'invoice', id: invoice.id, ...rateOf(group.rateBp), netCents: -group.netCents });
+        }
+      }
     }
 
     const netLine: FormLineKey =
@@ -476,11 +485,14 @@ function computeRevenue(
       if (vat !== 0) partsByLine.set('euer.vat_received', (partsByLine.get('euer.vat_received') ?? 0) + vat);
     }
     if (paidBefore > invoice.grossCents) result.checks.push('invoice_overpaid');
+    const cancelledByYearEnd = invoice.cancelledOn != null && invoice.cancelledOn <= yearEnd;
+    if (cancelledByYearEnd && paidUntilYearEnd > 0) result.checks.push('invoice_cancelled_with_payments');
     // Outstanding at the end of this year; an invoice issued later is not this year's business. A part booked out
     // as never to be paid (a fee the client deducted) is no claim any more from its day on.
     const writtenOff = invoice.writtenOffCents ?? 0;
     const writtenOffByYearEnd = writtenOff > 0 && invoice.writtenOffOn != null && invoice.writtenOffOn <= yearEnd ? writtenOff : 0;
-    if (invoice.issueDate === null || invoice.issueDate <= yearEnd) {
+    // A cancelled invoice is no claim from the day of its credit note on.
+    if (!cancelledByYearEnd && (invoice.issueDate === null || invoice.issueDate <= yearEnd)) {
       result.outstandingCents = Math.max(0, invoice.grossCents - paidUntilYearEnd - writtenOffByYearEnd);
     }
     for (const [lineKey, cents] of partsByLine) {
@@ -493,8 +505,9 @@ function computeRevenue(
     // The tax share of what is still open, in the invoice's own proportion.
     outstandingTurnoverCents +=
       result.outstandingCents - (invoice.grossCents > 0 ? Math.round((vat * result.outstandingCents) / invoice.grossCents) : 0);
-    // Only invoices that touch the year are listed.
-    if (result.receivedCents !== 0 || result.declaredCents !== 0 || result.outstandingCents !== 0 || result.checks.length > 0 || (invoice.issueDate !== null && yearOf(invoice.issueDate) === facts.year)) {
+    // Only invoices that touch the year are listed; a cancellation in the year touches it (its tax goes back then).
+    const cancelledInYear = invoice.cancelledOn != null && yearOf(invoice.cancelledOn) === facts.year;
+    if (result.receivedCents !== 0 || result.declaredCents !== 0 || result.outstandingCents !== 0 || result.checks.length > 0 || cancelledInYear || (invoice.issueDate !== null && yearOf(invoice.issueDate) === facts.year)) {
       invoices.push(result);
     }
   }

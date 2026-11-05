@@ -515,7 +515,7 @@ model TaxStatusChange {
 }
 
 // An invoice the business issued: a list entry, not a document (no template,
-// no numbering, no rendering; that tier is the Books plan's). It holds no
+// no numbering, no rendering; that tier is framer-clone's Books, mirrored here). It holds no
 // client name: names of clients are personal data and belong to the contact
 // store. Revenue counts on the days of its payments.
 model TaxIssuedInvoice {
@@ -533,6 +533,17 @@ model TaxIssuedInvoice {
   // Booked out as never to be paid (a fee the client deducted, a remainder not collectable); never income.
   writtenOffCents Int      @default(0) @map("written_off_cents")
   writtenOffOn    String?  @map("written_off_on")
+  // 'register': entered here from its PDF. 'books': mirrored from framer-clone's Books and
+  // written only by the mirror; its document figures cannot be edited here (payments can).
+  source          String   @default("register")
+  // The Books document (framer-clone sales_document.id) this row mirrors.
+  booksDocumentId String?  @map("books_document_id")
+  // The due day the Books document states; without one the default term applies.
+  dueDate         String?  @map("due_date")
+  // The day a credit note cancelled the invoice: no claim from that day on.
+  cancelledOn     String?  @map("cancelled_on")
+  // A corrected invoice: the invoice it replaces (its payments moved here).
+  replacesInvoiceId String? @map("replaces_invoice_id")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
@@ -540,6 +551,7 @@ model TaxIssuedInvoice {
   paymentLinks TaxPaymentLink[]
 
   @@unique([authWorkspaceId, number])
+  @@unique([authWorkspaceId, booksDocumentId])
   @@map("tax_issued_invoices")
 }
 

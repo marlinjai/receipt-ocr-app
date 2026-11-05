@@ -133,9 +133,16 @@ export function settleFromPageOnly(ai: ModelReading): SettledReading {
   const gross = known ? ai.gross : null;
   const currency = known ? (ai.currency as string) : 'EUR';
   const meal = category === MEAL_CATEGORY ? mealFactsFromClassification(ai, '', vendor) : null;
+  // The two rate columns follow one set of lines, as in `settleReading`: a meal's tax lines decide the
+  // number column too, else the model's single rate could name another first rate than the text column.
   // No German rate is assumed for another currency (as the text reader does): the bill is then the net.
-  const taxRate = ai.taxRate ?? (currency !== 'EUR' ? 0 : defaultTaxRate(category, ai.date, meal?.consumption ?? null));
-  const net = gross === null ? null : (ai.net !== null && ai.net <= gross ? ai.net : Math.round((gross / (1 + taxRate / 100)) * 100) / 100);
+  const lines = meal?.taxLines ?? [];
+  const taxRate = orderedRates(lines)[0] ?? ai.taxRate ?? (currency !== 'EUR' ? 0 : defaultTaxRate(category, ai.date, meal?.consumption ?? null));
+  // Where the lines add up to the bill, the net is theirs: a mixed bill worked back at one rate is wrong.
+  const linesSum = lines.reduce((sum, l) => sum + l.net + l.tax, 0);
+  const linesNet = gross !== null && lines.length > 0 && Math.abs(linesSum - gross) <= 0.02 ? Math.round(lines.reduce((sum, l) => sum + l.net, 0) * 100) / 100 : null;
+  const net =
+    gross === null ? null : ai.net !== null && ai.net <= gross ? ai.net : (linesNet ?? Math.round((gross / (1 + taxRate / 100)) * 100) / 100);
   const amounts: AmountReading = { gross, basis: gross === null ? 'none' : 'model_alone', net, taxRate, taxPrinted: false, taxGroups: [], tip: null, checks: [] };
   return { category, vendor, date: ai.date, currency, amounts, gross, net, taxRate, meal, flags: ['image_only'] };
 }

@@ -298,8 +298,9 @@ describe('resume: bounded runs go on where they stopped, a finished pass asks no
     const marked = async () => db.receiptReview.count({ where: { rowId: { in: [a, b] }, invoiceNumberRereadAt: { not: null } } });
     readNumber.mockRejectedValueOnce(Object.assign(new Error('timeout'), { status: 408 }));
     judgePair.mockResolvedValue(verdict('unsure', 0.3, 'Unklar.'));
-    // One model call allowed: it does not get through, and the other receipt waits for the limit. Both remain.
-    expect(await run({ numberLimit: 1 })).toMatchObject({ failed: 1, remaining: 2 });
+    // One model call allowed: it does not get through, and the other receipt waits for the limit. Both numbers remain,
+    // and so does the pair that waits for them (it never goes to the model before).
+    expect(await run({ numberLimit: 1 })).toMatchObject({ failed: 1, remaining: 3 });
     expect(readNumber).toHaveBeenCalledTimes(1);
     expect(await marked()).toBe(0);
     readNumber.mockClear();

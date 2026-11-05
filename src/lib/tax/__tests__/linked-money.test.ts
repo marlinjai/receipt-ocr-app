@@ -20,7 +20,7 @@ function payment(id: string, bookingDay: string, amountCents: number, links: Arr
     original: null,
     byRule: false,
     byPrivateAccount: false,
-    links: links.map((l, i) => ({ id: `${id}-${i}`, rowId: l.rowId, invoiceId: null, cents: l.cents, method: 'manual' })),
+    links: links.map((l, i) => ({ id: `${id}-${i}`, rowId: l.rowId, invoiceId: null, cents: l.cents, method: 'manual', linkedOn: '2026-01-01' })),
     ...extra,
   };
 }
@@ -28,12 +28,30 @@ function payment(id: string, bookingDay: string, amountCents: number, links: Arr
 describe('linkedByRow: money out and money back per receipt', () => {
   it('money back only: no payment, the refund as before, and the money back with its first day', () => {
     const linked = linkedByRow([payment('p2', '2026-01-20', 4_000, [{ rowId: 'cn', cents: 4_000 }]), payment('p1', '2026-01-08', 7_900, [{ rowId: 'cn', cents: 7_900 }])]);
-    expect(linked.get('cn')).toEqual({ paid: null, refundedCents: 11_900, back: { day: '2026-01-08', cents: 11_900 }, outCents: 0 });
+    expect(linked.get('cn')).toEqual({
+      paid: null,
+      refundedCents: 11_900,
+      back: { day: '2026-01-08', cents: 11_900 },
+      outCents: 0,
+      outDays: [],
+      backDays: [
+        { day: '2026-01-20', linkedOn: '2026-01-01' },
+        { day: '2026-01-08', linkedOn: '2026-01-01' },
+      ],
+    });
   });
 
   it('money out and money back: the payment as before, money out gross, money back beside it', () => {
     const linked = linkedByRow([payment('out', '2026-03-05', -11_900, [{ rowId: 'r', cents: 11_900 }]), payment('back', '2026-03-20', 1_900, [{ rowId: 'r', cents: 1_900 }])]);
-    expect(linked.get('r')).toEqual({ paid: { day: '2026-03-05', cents: 10_000 }, refundedCents: 0, back: { day: '2026-03-20', cents: 1_900 }, outCents: 11_900 });
+    expect(linked.get('r')).toEqual({
+      paid: { day: '2026-03-05', cents: 10_000 },
+      refundedCents: 0,
+      back: { day: '2026-03-20', cents: 1_900 },
+      outCents: 11_900,
+      // Each payment with the day its link was made, for a filed year's hold (`filedHoldOf`).
+      outDays: [{ day: '2026-03-05', linkedOn: '2026-01-01' }],
+      backDays: [{ day: '2026-03-20', linkedOn: '2026-01-01' }],
+    });
   });
 
   it('a payment and the debit that funds it count once', () => {

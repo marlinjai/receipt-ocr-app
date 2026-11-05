@@ -4,6 +4,7 @@ import { counterpartyKey, loadPayments, paidByReceipt, PaymentServiceError, type
 import { OVERPAID_TOLERANCE_PERCENT } from './types';
 import { ensureMerchantKeys } from './rekey';
 import { routesToReceiver } from './route';
+import { berlinDay } from '../year-boundary';
 import type { SpendingCategory } from '@/lib/spending/categories';
 import type { TreatmentSource } from './verdicts';
 import { sharedRead } from '@/lib/shared-reads';
@@ -137,7 +138,7 @@ async function readRoutedPayments(db: Db, workspaceId: string): Promise<RoutedPa
   const linksOf = new Map<string, PaymentRow['links']>();
   const dormant = new Map<string, RoutedPayments['dormantLinks'][number]>();
   for (const l of links) {
-    if (routedIds.has(l.paymentId)) linksOf.set(l.paymentId, [...(linksOf.get(l.paymentId) ?? []), { id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method }]);
+    if (routedIds.has(l.paymentId)) linksOf.set(l.paymentId, [...(linksOf.get(l.paymentId) ?? []), { id: l.id, rowId: l.rowId, invoiceId: l.invoiceId, cents: l.cents, method: l.method, linkedOn: berlinDay(l.createdAt) }]);
     else {
       // One entry per payment: "Lösen" takes all of this company's links on it back together.
       const day = l.createdAt.toISOString().slice(0, 10);

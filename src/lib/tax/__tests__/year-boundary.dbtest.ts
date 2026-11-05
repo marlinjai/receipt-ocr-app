@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { saveTaxSettings } from '@/lib/meals/service';
 import { saveChurchMonths, saveFiledOn } from '../income-tax/service';
 import { IncomeTaxInputError } from '../income-tax/input';
-import { createAccount, importPayments, linkPayment, unlinkPayment } from '../payments/service';
+import { createAccount, deleteImportBatch, importPayments, linkPayment, unlinkPayment } from '../payments/service';
 import {
   TaxServiceError,
   createAsset,
@@ -364,6 +364,8 @@ describe('the ten-day rule: filed years', () => {
   };
   const backdate = (ws: TestWorkspace, subjectId: string, day: string) =>
     db.taxYearBoundaryAnswer.updateMany({ where: { authWorkspaceId: ws.workspaceId, subjectId }, data: { updatedAt: new Date(`${day}T12:00:00Z`) } });
+  /** The links of a receipt as if made on `day` (the tests run after every filing day they use). */
+  const backdateLinks = (rowId: string, day: string) => db.taxPaymentLink.updateMany({ where: { rowId }, data: { createdAt: new Date(`${day}T12:00:00Z`) } });
 
   it('a filed year fixes its turn; an answer after the filing day is never applied, and the filed totals do not change', async () => {
     const { ws, ctx } = await workspace();
@@ -483,6 +485,8 @@ describe('the ten-day rule: filed years', () => {
     const [first, second] = await db.taxPayment.findMany({ where: { accountId }, orderBy: { bookingDay: 'asc' } });
     const check = receiptForLink(db, ctx.workspaceId);
     const { linkId } = await linkPayment(db, ctx, { paymentId: first.id, rowId }, check);
+    // Linked and answered before the filing day: the 2025 return left the receipt out (it counted in 2026).
+    await backdateLinks(rowId, '2026-10-01');
     await storeAnswer(ctx, { kind: 'receipt', subjectId: rowId, cashDay: '2025-12-30', belongsToOtherYear: true });
     await backdate(ws, rowId, '2026-10-01');
     await saveFiledOn(db, ctx, { year: 2025, filedOn: '2026-10-17' });
@@ -548,5 +552,126 @@ describe('the ten-day rule: filed years', () => {
     expect(view.incomeTax.churchMonths).toEqual(months.map((m) => !m));
     // Another company's filing is not this one's.
     expect((await loadStatement(db, other.workspaceId, 2025)).incomeTax.filedOn).toBeNull();
+  });
+});
+
+describe('a filed year holds its receipts against payment links made after its filing day', () => {
+  // Shaped like the defect of 2026-11-05: a phone bill of 16 December 2024, debited on 2 January 2025, both years filed.
+  const backdateLinks = (rowId: string, day: string) => db.taxPaymentLink.updateMany({ where: { rowId }, data: { createdAt: new Date(`${day}T12:00:00Z`) } });
+  const phoneBill = (ws: TestWorkspace, date = '2024-12-16') => ws.addReceipt(rent({ Name: 'Telefon Dezember', Date: date }));
+  const debitFor = async (ctx: TaxContext, ...rows: Array<[string, string]>) => {
+    const accountId = await createAccount(db, ctx, { label: 'Geschäftskonto', kind: 'bank' });
+    await importPayments(db, ctx, accountId, bankFile(...rows));
+    return db.taxPayment.findMany({ where: { accountId }, orderBy: { bookingDay: 'asc' } });
+  };
+  const fileBoth = async (ctx: TaxContext) => {
+    await saveFiledOn(db, ctx, { year: 2024, filedOn: '2026-10-11' });
+    await saveFiledOn(db, ctx, { year: 2025, filedOn: '2026-10-17' });
+  };
+  const itemOf = async (ws: TestWorkspace, year: number, rowId: string) => (await loadStatement(db, ws.workspaceId, year)).items.find((i) => i.rowId === rowId);
+
+  it('forward: a link made before the filing day moves the receipt to the year it was paid, as it always did', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await phoneBill(ws);
+    const [debit] = await debitFor(ctx, ['2025-01-02', '-650']);
+    await linkPayment(db, ctx, { paymentId: debit.id, rowId }, receiptForLink(db, ctx.workspaceId));
+    await backdateLinks(rowId, '2026-10-10');
+    await fileBoth(ctx);
+    expect([await expense(ws, 2024), await expense(ws, 2025)]).toEqual([0, 65_000]);
+    expect(await itemOf(ws, 2025, rowId)).toMatchObject({ date: '2025-01-02', paidOn: null, filedYear: null });
+  });
+
+  it('a link made after the filing day neither takes the receipt out of the filed year nor gives it to the next', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await phoneBill(ws);
+    await fileBoth(ctx);
+    expect([await expense(ws, 2024), await expense(ws, 2025)]).toEqual([65_000, 0]);
+    const [debit] = await debitFor(ctx, ['2025-01-02', '-650']);
+    await linkPayment(db, ctx, { paymentId: debit.id, rowId }, receiptForLink(db, ctx.workspaceId));
+    expect([await expense(ws, 2024), await expense(ws, 2025)]).toEqual([65_000, 0]);
+    // It still says when it was really paid, and why it stays.
+    expect(await itemOf(ws, 2024, rowId)).toMatchObject({ date: '2024-12-16', paidOn: '2025-01-02', filedYear: 2024, amountCents: 65_000, counted: true });
+    // The payment is linked all the same: it is not proposed again.
+    expect(await db.taxPaymentLink.count({ where: { rowId } })).toBe(1);
+
+    // Backtrack: with the filing days taken out both years are open, and the link applies.
+    await saveFiledOn(db, ctx, { year: 2024, filedOn: null });
+    await saveFiledOn(db, ctx, { year: 2025, filedOn: null });
+    expect([await expense(ws, 2024), await expense(ws, 2025)]).toEqual([0, 65_000]);
+    // Re-entry: filed again on the same days, the hold returns, and a reload reads the same.
+    await fileBoth(ctx);
+    expect([await expense(ws, 2024), await expense(ws, 2025)]).toEqual([65_000, 0]);
+    expect([await expense(ws, 2024), await expense(ws, 2025)]).toEqual([65_000, 0]);
+  });
+
+  it('nor into a filed year: a receipt of an open year linked late to a payment of the filed year stays where it is', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await phoneBill(ws, '2025-01-03');
+    await saveFiledOn(db, ctx, { year: 2024, filedOn: '2026-10-11' });
+    const [prepaid] = await debitFor(ctx, ['2024-12-20', '-650']);
+    await linkPayment(db, ctx, { paymentId: prepaid.id, rowId }, receiptForLink(db, ctx.workspaceId));
+    expect([await expense(ws, 2024), await expense(ws, 2025)]).toEqual([0, 65_000]);
+    expect(await itemOf(ws, 2025, rowId)).toMatchObject({ date: '2025-01-03', paidOn: '2024-12-20', filedYear: 2024 });
+  });
+
+  it('an open year moves as it always did', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await phoneBill(ws);
+    // Only an earlier year is filed: neither year of this receipt is.
+    await saveFiledOn(db, ctx, { year: 2023, filedOn: '2026-10-11' });
+    const [debit] = await debitFor(ctx, ['2025-01-02', '-650']);
+    await linkPayment(db, ctx, { paymentId: debit.id, rowId }, receiptForLink(db, ctx.workspaceId));
+    expect([await expense(ws, 2024), await expense(ws, 2025)]).toEqual([0, 65_000]);
+    expect(await itemOf(ws, 2025, rowId)).toMatchObject({ date: '2025-01-02', filedYear: null });
+  });
+
+  it('a link taken off after the filing day does not move the receipt either: its removal is remembered', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await phoneBill(ws, '2026-01-05');
+    const [early] = await debitFor(ctx, ['2025-12-30', '-650']);
+    const { linkId } = await linkPayment(db, ctx, { paymentId: early.id, rowId }, receiptForLink(db, ctx.workspaceId));
+    await backdateLinks(rowId, '2026-10-01');
+    await saveFiledOn(db, ctx, { year: 2025, filedOn: '2026-10-17' });
+    expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([65_000, 0]);
+    await unlinkPayment(db, ctx, linkId);
+    expect(await db.taxPaymentLinkRemoval.count({ where: { authWorkspaceId: ws.workspaceId, rowId } })).toBe(1);
+    // The 2025 return counted it on the payment of 30 December; that stays so.
+    expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([65_000, 0]);
+    expect(await itemOf(ws, 2025, rowId)).toMatchObject({ date: '2025-12-30', filedYear: 2025 });
+    // Linked to that same payment again: the day is the filed one, nothing is held any more.
+    await linkPayment(db, ctx, { paymentId: early.id, rowId }, receiptForLink(db, ctx.workspaceId));
+    expect(await itemOf(ws, 2025, rowId)).toMatchObject({ date: '2025-12-30', filedYear: null });
+    // A link that does not exist is refused and remembers nothing.
+    await expect(unlinkPayment(db, ctx, linkId)).rejects.toThrow();
+    expect(await db.taxPaymentLinkRemoval.count({ where: { authWorkspaceId: ws.workspaceId, rowId } })).toBe(1);
+  });
+
+  it('undoing the import of a payment linked before filing keeps the receipt in the filed year', async () => {
+    const { ws, ctx } = await workspace();
+    const rowId = await phoneBill(ws, '2026-01-05');
+    const [early] = await debitFor(ctx, ['2025-12-30', '-650']);
+    await linkPayment(db, ctx, { paymentId: early.id, rowId }, receiptForLink(db, ctx.workspaceId));
+    await backdateLinks(rowId, '2026-10-01');
+    await saveFiledOn(db, ctx, { year: 2025, filedOn: '2026-10-17' });
+    await deleteImportBatch(db, ctx, early.batchId);
+    expect(await db.taxPaymentLink.count({ where: { rowId } })).toBe(0);
+    expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([65_000, 0]);
+  });
+
+  it("a person's answer at the turn of the year decides as before on the day the filed return saw", async () => {
+    const { ws, ctx } = await workspace();
+    // Paid 30 December 2025 and answered "belongs to 2026" before filing: the 2025 return left it out.
+    const rowId = await phoneBill(ws, '2025-12-15');
+    const [late, early] = await debitFor(ctx, ['2025-12-20', '-650'], ['2025-12-30', '-650']).then((p) => [p[0], p[1]]);
+    await linkPayment(db, ctx, { paymentId: early.id, rowId }, receiptForLink(db, ctx.workspaceId));
+    await backdateLinks(rowId, '2026-10-01');
+    await storeAnswer(ctx, { kind: 'receipt', subjectId: rowId, cashDay: '2025-12-30', belongsToOtherYear: true });
+    await db.taxYearBoundaryAnswer.updateMany({ where: { authWorkspaceId: ws.workspaceId, subjectId: rowId }, data: { updatedAt: new Date('2026-10-01T12:00:00Z') } });
+    await saveFiledOn(db, ctx, { year: 2025, filedOn: '2026-10-17' });
+    expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([0, 65_000]);
+    // A second payment of 20 December linked after filing would pull it into the filed 2025 (the answer is for the 30th).
+    await linkPayment(db, ctx, { paymentId: late.id, rowId, confirmed: true }, receiptForLink(db, ctx.workspaceId));
+    expect([await expense(ws, 2025), await expense(ws, 2026)]).toEqual([0, 130_000]);
+    expect(await entryOf(ws, 2026, rowId)).toMatchObject({ cashDay: '2025-12-30', dayBasis: 'filed', answer: true, source: 'person', filedWith: 2025 });
   });
 });

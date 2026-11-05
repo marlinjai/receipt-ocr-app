@@ -55,8 +55,15 @@ export interface LedgerItem {
    * until then the document day (cash basis, section 11 of the income tax act).
    */
   date: string | null;
-  /** 'year_boundary': a recurring payment at the turn of the year, counted in the year it belongs to. */
-  dateBasis: 'payment' | 'document' | 'year_boundary';
+  /**
+   * 'year_boundary': a recurring payment at the turn of the year, counted in the year it belongs to.
+   * 'filed': a filed year holds the item on the day its return saw, against a payment linked after
+   * the filing day that would move it into or out of that year (`filedHoldOf` in `year-boundary.ts`).
+   */
+  dateBasis: 'payment' | 'document' | 'year_boundary' | 'filed';
+  /** Set when a filed year holds the item ('filed'): that filed year, and the day it is paid on now (none when its payment was taken off since). */
+  paidOn?: string;
+  filedYear?: number;
   /**
    * The day the item was really paid, when the ten-day rule moved `date`. The
    * rule is one of income tax only: for the advance returns of value-added

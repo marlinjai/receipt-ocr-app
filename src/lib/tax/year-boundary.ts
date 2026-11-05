@@ -167,6 +167,87 @@ export function filedWithOf(cashDay: string, savedOn: string, filedOn: ReadonlyM
   return filed[0];
 }
 
+/**
+ * One payment linked to a receipt: the day it was booked and the day (Europe/Berlin) the link was
+ * made; `removedOn` for a link taken off since (`TaxPaymentLinkRemoval`), the day it was removed.
+ */
+export interface LinkedDay {
+  day: string;
+  linkedOn: string;
+  removedOn?: string;
+}
+
+/**
+ * Whether a link was on the receipt at the end of `upTo`, or now when null. A link made or removed
+ * on a filing day counts as part of that return, as an answer saved that day does.
+ */
+const aliveAt = (l: LinkedDay, upTo: string | null) => (upTo === null ? l.removedOn === undefined : l.linkedOn <= upTo && (l.removedOn === undefined || l.removedOn > upTo));
+
+/** The day a receipt is paid on by the links it had at `upTo` (now when null): the first booking day, else its own day. */
+function cashDayFrom(documentDay: string | null, links: readonly LinkedDay[], upTo: string | null): string | null {
+  let first: string | null = null;
+  for (const l of links) if (aliveAt(l, upTo) && (first === null || l.day < first)) first = l.day;
+  return first ?? documentDay;
+}
+
+const yearOfDay = (day: string | null): number | null => (day && ISO_DAY.test(day) ? Number(day.slice(0, 4)) : null);
+
+/** The day a receipt keeps because a filed year holds it, and that year. */
+export interface FiledHold {
+  /** The day the receipt counts on, as the filed return saw it: the first payment linked by then, else its own day. */
+  day: string | null;
+  /** The filed year the later links would have changed. */
+  filedYear: number;
+}
+
+/**
+ * The year a receipt paid on `day` counts in. No rule moves a receipt at the
+ * turn of the year (see `decideBoundary`), only a person's answer does, and
+ * whether it applies is decided as for the statement: so the recurrence of the
+ * vendor is not needed here.
+ */
+function countingYearOf(day: string | null, answer: StoredBoundaryAnswer | undefined, filedOn: ReadonlyMap<number, string>): number | null {
+  const year = yearOfDay(day);
+  const other = otherYearOf(day);
+  if (year === null || other === null || !answer) return year;
+  return decideBoundary({ kind: 'receipt', cashDay: day as string, stored: answer, filedOn, recurring: null }).answer === true ? other : year;
+}
+
+/**
+ * A filed year holds a receipt against later payment links: a link made after
+ * a year's filing day may not move the receipt into or out of that year, the
+ * same test `filedWithOf` makes for a person's answer, and neither may a link
+ * removed after it. The receipt then keeps the day the filed return saw: the
+ * first payment it had on the filing day, else its own day. A link made on the
+ * filing day itself counts as filed with it, as an answer saved that day does.
+ * Only the day is held; what was paid is still read from the links it has now.
+ * Links removed before removals were recorded (migration 0048) are not known.
+ *
+ * "Into or out of" is the year the receipt counts in, so a person's answer at
+ * the turn of the year (`answer`; leave it out for a meal or an asset, which
+ * it never moves) is taken into account as the statement takes it. The filed
+ * years are tried by filing day, earliest first, so a receipt that crosses two
+ * filed years keeps the oldest state any of them saw. Null when no filed year
+ * is crossed: the links apply as they are (an open year moves).
+ */
+export function filedHoldOf(
+  documentDay: string | null,
+  links: readonly LinkedDay[],
+  filedOn: ReadonlyMap<number, string>,
+  answer?: StoredBoundaryAnswer,
+): FiledHold | null {
+  if (links.length === 0 || filedOn.size === 0) return null;
+  const now = cashDayFrom(documentDay, links, null);
+  const yearNow = countingYearOf(now, answer, filedOn);
+  const byFilingDay = [...filedOn].sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : a[0] - b[0]));
+  for (const [year, filingDay] of byFilingDay) {
+    const filed = cashDayFrom(documentDay, links, filingDay);
+    if (filed === now) continue;
+    if ((countingYearOf(filed, answer, filedOn) === year) !== (yearNow === year)) return { day: filed, filedYear: year };
+  }
+  return null;
+}
+
 /** At least this many months with a payment or receipt of a counterparty in the twelve before make it recurring. */
 export const RECURRING_MIN_MONTHS = 3;
 

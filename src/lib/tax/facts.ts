@@ -5,6 +5,7 @@ import { CATEGORY_FORM_LINE, DEFAULT_EMPLOYMENT_LINE, DEFAULT_STUDY_LINE, legacy
 import { itemIdOf, linesMatchTotal, spreadOverLines, type ReceiptLine } from './lines';
 import type { FormLineKey } from './rules/types';
 import type { Allocation, LedgerItem, MealFact } from './types';
+import { filedHoldOf, type FiledHold, type LinkedDay, type StoredBoundaryAnswer } from './year-boundary';
 
 /**
  * The ONE mapper from a receipt row (already normalized by the meal module's
@@ -53,6 +54,57 @@ export interface ReceiptFacts {
   countsOnDay?: string | null;
   /** The receipt's lines, when it was split. */
   lines?: ReceiptLine[];
+  /** Each payment out and back linked to the receipt, with the day the link was made (see `withFiledHold`). */
+  outDays?: LinkedDay[];
+  backDays?: LinkedDay[];
+  /**
+   * Set when a filed year holds the receipt against links made after its
+   * filing day (`filedHoldOf`): the receipt counts on `day`, the day the filed
+   * return saw, whatever the later links say.
+   */
+  filedHold?: FiledHold | null;
+}
+
+/** A credit note: a negative total on the document. */
+const isCreditNote = (record: MealRecord) => record.gross !== null && Number.isFinite(record.gross) && record.gross < 0;
+
+/**
+ * The receipt with the hold of a filed year applied, when its links would move
+ * it into or out of a filed year after that year's filing day (see
+ * `filedHoldOf`). The links that set its day are those `resolveItem` reads: money
+ * back for a credit note without money out, money out otherwise. `answer` is a
+ * person's stored answer at the turn of the year for the receipt; the caller
+ * leaves it out for a receipt in an asset, and a meal never reads it, since the
+ * ten-day rule moves neither.
+ */
+export function withFiledHold(facts: ReceiptFacts, filedOn: ReadonlyMap<number, string>, answer?: StoredBoundaryAnswer): ReceiptFacts {
+  const creditNote = isCreditNote(facts.record);
+  const links = creditNote ? ((facts.moneyOutCents ?? 0) === 0 ? (facts.backDays ?? []) : []) : (facts.outDays ?? []);
+  const meal = !creditNote && mealStatus(facts.record).kind !== 'not_a_meal';
+  const filedHold = filedHoldOf(facts.record.date, links, filedOn, meal ? undefined : answer);
+  return filedHold ? { ...facts, filedHold } : facts;
+}
+
+/**
+ * The day a receipt counts on before the ten-day rule: the day a filed year
+ * holds it on, else the payment's day once one is linked, else its own day.
+ * The one place this is derived, so the statement, the ten-day rule and the
+ * checks of a treatment can never disagree on a receipt's year.
+ */
+export function cashDayOf(facts: ReceiptFacts): string | null {
+  if (facts.filedHold) return facts.filedHold.day;
+  const { paid } = paymentOf(facts);
+  return paid ? paid.day : facts.record.date;
+}
+
+/** What pays the receipt: for a credit note the first money back, for anything else the payments out. */
+function paymentOf(facts: ReceiptFacts) {
+  const creditNote = isCreditNote(facts.record);
+  // A credit note is paid by money coming back, on the day of the first; money
+  // out linked to it is a question for a person (see `creditNotePaymentOut`).
+  const creditNoteBack = creditNote && (facts.moneyOutCents ?? 0) === 0 && facts.moneyBack ? facts.moneyBack : null;
+  const paid = creditNote ? (creditNoteBack ? { day: creditNoteBack.day, cents: -creditNoteBack.cents } : null) : (facts.paid ?? null);
+  return { creditNote, creditNoteBack, paid };
 }
 
 export interface ResolvedItem {
@@ -172,11 +224,7 @@ export function resolveItem(
   const { record, decision } = facts;
   const stated = amountOf(record);
   // Decided from the document, so a credit note in another currency without a rate is still one.
-  const creditNote = record.gross !== null && Number.isFinite(record.gross) && record.gross < 0;
-  // A credit note is paid by money coming back, on the day of the first; money
-  // out linked to it is a question for a person (see `creditNotePaymentOut`).
-  const creditNoteBack = creditNote && (facts.moneyOutCents ?? 0) === 0 && facts.moneyBack ? facts.moneyBack : null;
-  const paid = creditNote ? (creditNoteBack ? { day: creditNoteBack.day, cents: -creditNoteBack.cents } : null) : (facts.paid ?? null);
+  const { creditNote, paid } = paymentOf(facts);
   // A payment whose euro amount is an estimate (another currency at the reference rate, plan 2026-10-23) is
   // no amount charged: the receipt keeps its own amount (and its own estimate), only the day is the payment's.
   // Without an amount of its own, the payment's estimate is the best one there is, and stays an estimate.
@@ -189,7 +237,9 @@ export function resolveItem(
   const rule = ruleInForce(vendorRules, key, record.date);
   // The meal register holds what was spent on a meal; a credit note is no meal of its own.
   const meal = creditNote ? null : mealFact(record, settings);
-  const cashDay = paid ? paid.day : record.date;
+  // A filed year may hold the day against links made after its filing day; the amount paid still counts.
+  const cashDay = cashDayOf(facts);
+  const held = facts.filedHold ?? null;
   // The ten-day rule moves the year a recurring payment counts in, nothing
   // else. A meal is never moved: the meal register lists it by its own day.
   const countsOn = meal === null && cashDay !== null ? (facts.countsOnDay ?? null) : null;
@@ -202,8 +252,10 @@ export function resolveItem(
     // receipt for good); until then on its own day and amount. A payment that is
     // itself an estimate gives the day only (see `paidAmount`).
     date: countsOn ?? cashDay,
-    dateBasis: countsOn ? ('year_boundary' as const) : paid ? ('payment' as const) : ('document' as const),
+    dateBasis: countsOn ? ('year_boundary' as const) : held ? ('filed' as const) : paid ? ('payment' as const) : ('document' as const),
     ...(countsOn ? { vatDate: cashDay } : {}),
+    // Held: the held day always differs from what the links say now (`filedHoldOf`), so a payment linked now is the real one.
+    ...(held ? { filedYear: held.filedYear, ...(paid ? { paidOn: paid.day } : {}) } : {}),
     ...(paidAmount ? { amountCents: paidAmount.cents, amountBasis: paidAmount.estimated ? ('reference_rate' as const) : ('payment' as const) } : document),
     netCents: paidAmount ? netOfPaid(record, paidAmount.cents) : refunded > 0 && document.amountCents !== null ? netOfPaid(record, document.amountCents) : netOf(record),
     // A net amount the receipt states but that cannot be its net (larger than the total, or the other sign).

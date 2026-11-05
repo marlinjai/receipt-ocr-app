@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CLASSIFY_MODEL, getClassifyModel } from '@/lib/ai-client';
 import { CATEGORY_TO_KONTO, ZUORDNUNG_OPTIONS } from '@/lib/receipts-constants';
-import { classificationPrompt, classifierProvider, itemPrompt, linesPrompt, linesUserText, parseClassificationResponse, parseItemResponse, parseLinesResponse, textForLines, textForModel, type ClassifyInput } from '../receipt-classifier';
+import { classificationPrompt, classifierProvider, hasUsableFacts, itemPrompt, linesPrompt, linesUserText, parseClassificationResponse, parseItemResponse, parseLinesResponse, textForLines, textForModel, type ClassifyInput } from '../receipt-classifier';
 
 const INPUT: ClassifyInput = {
   vendor: 'Since 2016',
@@ -103,6 +103,13 @@ describe('parseClassificationResponse: vendor and total as a second opinion', ()
   it('the account always follows the category: a number the model made up never reaches a cell', () => {
     expect(parseClassificationResponse(answer({ konto: '9999' }), INPUT).konto).toBe('4650');
     expect(parseClassificationResponse(answer({ category: 'Erfunden', konto: '9999' }), INPUT)).toMatchObject({ category: null, konto: null });
+  });
+
+  it('a category the app does not keep loses only the category: vendor, date and total are still usable', () => {
+    const result = parseClassificationResponse(answer({ category: 'Fahrtkosten', vendor: 'Beispiel Mobility GmbH', gross: 1, date: '2026-09-01' }), INPUT);
+    expect(result).toMatchObject({ category: null, konto: null, vendor: 'Beispiel Mobility GmbH', gross: 1 });
+    expect(hasUsableFacts(result)).toBe(true);
+    expect(hasUsableFacts(parseClassificationResponse('I could not read this.', INPUT))).toBe(false);
   });
 
   it('an answer that is not the expected object yields nothing, not a guess', () => {

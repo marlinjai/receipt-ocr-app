@@ -203,6 +203,15 @@ function parseWithLinesLast(cleaned: string, first: number, candidate: string): 
 }
 
 /**
+ * True when the answer carries anything the receipt can use. A category the
+ * app does not keep loses only the category: the vendor, the date and the
+ * amounts the model read are still a second opinion worth having.
+ */
+export function hasUsableFacts(r: Pick<ReceiptClassification, 'category' | 'vendor' | 'gross' | 'date' | 'invoiceNumber'>): boolean {
+  return r.category !== null || r.vendor !== null || r.gross !== null || r.date !== null || r.invoiceNumber !== null;
+}
+
+/**
  * Parse the model's final text into a classification. Exported so the parser
  * can be tested on its own against recorded answers; every field is validated
  * and anything malformed degrades to null instead of reaching a cell.
@@ -216,6 +225,10 @@ export function parseClassificationResponse(text: string, input: ParseInput): Re
   try {
     const parsed = parseWithLinesLast(cleaned, first, candidate) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     const category = input.categoryNames.includes(parsed.category) ? (parsed.category as string) : null;
+    // The label only (one of a fixed list, or the model's own word for it), never text from the receipt.
+    if (category === null && typeof parsed.category === 'string' && parsed.category.trim() !== '') {
+      console.error('[receipt-classifier] the category is not one the app keeps', { category: parsed.category.slice(0, 40) });
+    }
     const gross = amount(parsed.gross);
     const items = parseModelLines(parsed.items);
     // The count only, never a line's text.

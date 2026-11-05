@@ -319,6 +319,14 @@ describe('FinanceClient: the queue', () => {
     expect(screen.getByText('20,00 €')).toBeTruthy();
   });
 
+  it('the link to the receipt stands alone under its heading and is a 44 pixel touch target on a phone', () => {
+    render(<FinanceClient initial={view([item({ rowId: 'a' })])} />);
+    const link = screen.getByRole('link', { name: 'Beleg in der Tabelle öffnen' });
+    // jsdom lays nothing out, so the size is read from the classes the phone rule of plan 2026-10-24-phone-layout prescribes:
+    // min-height alone does nothing on an inline link, it needs a box of its own.
+    expect(link.className.split(' ')).toEqual(expect.arrayContaining(['max-sm:inline-flex', 'max-sm:items-center', 'max-sm:min-h-11']));
+  });
+
   it('refuses shares above the whole before anything is sent', async () => {
     const user = setupUser();
     render(<FinanceClient initial={view([item({ rowId: 'a' })])} />);

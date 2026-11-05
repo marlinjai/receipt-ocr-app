@@ -442,17 +442,21 @@
   card list that opens the detail panel, the dashboard's actions fold into "Mehr", tab rows
   scroll inside themselves, every control is a 44 pixel touch target, the wide layout unchanged.
   Since 2026-11-01 a bottom bar and a sheet with every place give the phone the sidebar's overview.
-  Last step: a look at the finance tabs with real payments on the owner's phone. Plan:
-  [docs/plans/2026-10-24-phone-layout.md](docs/plans/2026-10-24-phone-layout.md). (2026-11-01)
+  Last step: a look at the finance tabs with real payments on the owner's phone. Measured on
+  production at 390 pixels on 2026-11-05: the fold-out headers (`<summary>`) of Finanzen are below
+  44 pixels (Zahlungen 20 to 40, Einkommensteuer 20 to 40), which the plan's rule list does not
+  name yet; decide them with that look. Plan:
+  [docs/plans/2026-10-24-phone-layout.md](docs/plans/2026-10-24-phone-layout.md). (2026-11-05)
 - [x] The filed return decides the counterparties (asked by the owner on 2026-10-25): receipts
   that match a payment count as evidence without a link, split receipts make "Teils, teils",
   payment-service prefixes no longer split one merchant, invoice links make income business, and
   a filed year asks nothing. Landed in #181, measured on production on 2026-11-05 (270
   counterparties private by the filed return, 8 "Teils, teils" from split receipts). Plan:
   [docs/plans/2026-10-25-filed-year-decides-counterparties.md](docs/plans/2026-10-25-filed-year-decides-counterparties.md). Done 2026-11-05.
-- [ ] Finanzen in four groups (decided by the owner on 2026-10-25): Erledigen, Auswerten, Steuer,
+- [x] Finanzen in four groups (decided by the owner on 2026-10-25): Erledigen, Auswerten, Steuer,
   Einstellungen; the tiles and "Offen" stay the entry, Ausgaben stays its own page with a link
-  each way. Plan: [docs/plans/2026-10-25-finance-groups.md](docs/plans/2026-10-25-finance-groups.md). (2026-10-25)
+  each way. Built in #179, checked on production at 390 and 1440 pixels on 2026-11-05. Plan:
+  [docs/plans/2026-10-25-finance-groups.md](docs/plans/2026-10-25-finance-groups.md). Done 2026-11-05.
 - [x] Every line of every receipt (asked by the owner on 2026-10-26): the printed positions of
   each receipt read and stored with a kind of purchase (groceries, coffee, a meal, a drink), and
   a "Was gekauft" overview on the spending page; read for the stored receipts of both companies.

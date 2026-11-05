@@ -6,7 +6,7 @@ import { INVOICE_NUMBER_COLUMN, cleanInvoiceNumber, invoiceNumberKey } from '@/l
 import { allReceiptRows, tableContext, type TableContext } from '@/lib/meals/service';
 import { isoDay } from '@/lib/meals/record';
 import { isGroupRow } from '@/lib/receipts-kind';
-import { automaticDuplicate, isMergeReason, sameInvoice, type AutomaticDuplicate, type MergeReason, type ReviewSnapshot } from './reasons';
+import { automaticDuplicate, invoiceTextKey, isMergeReason, sameInvoice, type AutomaticDuplicate, type MergeReason, type ReviewSnapshot } from './reasons';
 
 /**
  * The same receipt twice, settled without asking anybody (plan
@@ -177,6 +177,7 @@ function candidateOf(row: Row, columns: readonly Column[], fileHashes: string[],
     hasFile: Array.isArray(files) && files.length > 0,
     fileHashes,
     invoiceKey: invoiceNumberKey(printed),
+    textKey: invoiceTextKey(text(cell('OCR Text'))),
     invoiceNumber: printed,
     createdAt: new Date(row.createdAt),
     payments,

@@ -11,7 +11,7 @@ import { parseTaxLines, serializeTaxLines } from '@/lib/meals/rules';
 import { MEAL_CATEGORY, MEAL_COLUMNS } from '@/lib/receipts-constants';
 import { kontoFor, type NewReading, type ReadingChange, type ReadingField, type StoredReading } from './reading';
 import { cachedReading } from './reading-cache';
-import { isConfirmable, isReadFlag, lookAlikes, pairDecisionsNow, pairKey, paymentsCoverTotal, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
+import { invoiceTextKey, isConfirmable, isReadFlag, lookAlikes, pairDecisionsNow, pairKey, paymentsCoverTotal, reviewReasons, type ReadFlag, type ReviewReason, type ReviewSnapshot } from './reasons';
 import { countedReceiptLinks, loadPayments, type LoadedPayments } from '@/lib/tax/payments/service';
 import { getFxRate } from '@/lib/fx-rates';
 import { orderedRates, withTaxRates } from '@/lib/tax-rates';
@@ -118,6 +118,7 @@ function snapshotOf(
     hasFile: Array.isArray(files) && files.length > 0,
     fileHashes: hashes.get(row.id) ?? [],
     invoiceKey: invoiceNumberKey(cell(INVOICE_NUMBER_COLUMN)),
+    textKey: invoiceTextKey(text(cell('OCR Text'))),
     // A table without the column has nothing to answer: the field is left out.
     ...(byName.has('Zuordnung') ? { assignment: optionName('Zuordnung') } : {}),
     isMeal: category === MEAL_CATEGORY,

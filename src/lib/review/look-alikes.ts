@@ -9,7 +9,7 @@ import { carriesInvoiceNumber } from '@/lib/receipt-references';
 import { ClassifierUnavailableError, UnusableAnswerError, judgeSamePurchase, readInvoiceNumberOnly, type NumberAnswer, type NumberInput, type PairAnswer, type PairSide } from '@/lib/receipt-classifier';
 import type { PreparedPage } from '@/lib/receipt-page';
 import { mergeDuplicates, mergeJudgedPair, type MergeContext } from './merge';
-import { orderedPair, pairFingerprint, pairKey } from './reasons';
+import { numbersCrossPrinted, orderedPair, pairFingerprint, pairKey } from './reasons';
 import { loadLookAlikePairs, type LookAlikeSnapshot } from './service';
 
 /**
@@ -299,7 +299,7 @@ export async function settleLookAlikes(
   for (const [a, b] of firstPairs) {
     if (stillAsked.has(pairKey(a, b)) || !(written.has(a) || written.has(b))) continue;
     const [sa, sb] = [after.snapshots.get(a), after.snapshots.get(b)];
-    if (!sa || !sb || !sa.invoiceKey || !sb.invoiceKey || sa.invoiceKey === sb.invoiceKey) continue;
+    if (!sa || !sb || !sa.invoiceKey || !sb.invoiceKey || sa.invoiceKey === sb.invoiceKey || numbersCrossPrinted(sa, sb)) continue;
     result.keptApartByNumber++;
     await recordDecision(db, ctx, [a, b], { fingerprint: pairFingerprint(sa, sb), outcome: 'different_numbers', decidedBy: 'number_reread' });
   }

@@ -504,3 +504,53 @@ Gegeben Bar: 48,50 €
 Zurück: 0,00 €
 Bewirtungsaufwand - Angaben nach
 Par. 4, Abs. 5, Ziffer 2, EStG`;
+
+/** A ride invoice that opens with a greeting and the customer's address, and names the issuer only below the heading. */
+export const RIDE_GREETING_HEAD = `THANKS FOR
+YOUR RIDE!
+Erika Mustermann
+Beispielweg 3
+10115 Musterstadt
+Germany
+Invoice
+Invoice number: 893570040738
+Invoice date: September 1, 2026
+Start Date Vehicle Type License Plate
+MILES
+MILES Mobility GmbH
+Leibnizstraße 49
+10629 Berlin
+Germany
+email: hello@miles-mobility.com
+https://miles-mobility.com
+01.09 12:17
+VW Taigo
+Total 1,00 €`;
+
+/** A bill-to company with a legal form, and an issuer whose address does not name it: the company is not taken. */
+export const BILL_TO_COMPANY = `Kleiner Laden
+Rechnung
+Rechnung an
+Beispiel Holding GmbH
+Musterallee 4
+10115 Musterstadt
+Kontakt: info@kleiner-laden.de
+Summe 12,00`;
+
+/** The same issuer in a later layout: the company block follows the customer's address in the head. */
+export const RIDE_GREETING_COMPANY_IN_HEAD = `THANKS FOR
+YOUR RIDE!
+Erika Mustermann
+Beispielweg 3
+10115 Musterstadt
+Germany
+MILES
+MILES Mobility GmbH
+Leibnizstraße 49
+10629 Berlin
+Germany
+email: hello@miles-mobility.com
+https://miles-mobility.com
+Invoice
+Invoice number: 910458030977
+Total 7,54 €`;

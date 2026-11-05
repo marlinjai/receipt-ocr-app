@@ -166,6 +166,56 @@ describe('a load that a newer one replaced', () => {
     expect(ids(store)).toEqual(['r0', 'r1']);
   });
 
+  it('a few dozen cell edits, each with a reload on its way, leave every receipt once', async () => {
+    // The scene of 2026-10-11 on this store: 267 receipts in two pages, renamed one after another, every edit
+    // followed by a reload, and the servers answering late and in the reverse order. The table then said
+    // "917 items" for 267 receipts, because a late page was appended to a fresh list.
+    const stored = server(rowsOf(267));
+    const pending: Array<() => void> = [];
+    const getRows = vi.fn(
+      (tableId: string, query: Query) =>
+        new Promise<QueryResult<Row>>((resolve) => {
+          // Read when asked, answered later: a late answer says what was stored back then.
+          const read = stored.getRows(tableId, query);
+          pending.push(() => void read.then(resolve));
+        }),
+    );
+    const updateRow = vi.fn(async (rowId: string, cells: Record<string, CellValue>) => {
+      const renamed = row(rowId, String(cells[NAME]));
+      stored.held.rows = stored.held.rows.map((r) => (r.id === rowId ? renamed : r));
+      return renamed;
+    });
+    const { store } = storeWith({ getRows, updateRow });
+    const opened = store.load();
+    for (const answer of pending.splice(0)) answer();
+    await flush();
+    for (const answer of pending.splice(0)) answer();
+    await opened;
+    expect(store.rows).toHaveLength(267);
+
+    const reloads: Array<Promise<void>> = [];
+    for (let i = 0; i < 36; i += 1) {
+      await store.updateCell(`r${i * 7}`, NAME, `umbenannt ${i}`);
+      reloads.push(store.load());
+    }
+    // The first pages, each read right after its edit, answer newest first; each load then asks for its second
+    // page, newest first again, and those answer in that order. So the oldest load, which read before most of
+    // the edits, is the last to answer.
+    for (const answer of pending.splice(0).reverse()) answer();
+    await flush();
+    while (pending.length > 0) {
+      for (const answer of pending.splice(0)) answer();
+      await flush();
+    }
+    await Promise.all(reloads);
+
+    expect(store.rows).toHaveLength(267);
+    expect(new Set(ids(store)).size).toBe(267);
+    expect(store.receipts).toHaveLength(267);
+    expect(store.complete).toBe(true);
+    for (let i = 0; i < 36; i += 1) expect(store.row(`r${i * 7}`)?.cells[NAME]).toBe(`umbenannt ${i}`);
+  });
+
   it('lets whoever waits for it wait for the newer one', async () => {
     const { answers, getRows } = heldBack();
     const { store } = storeWith({ getRows });

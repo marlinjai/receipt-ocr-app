@@ -26,23 +26,33 @@ const dayOf = (iso: string | null) => (iso ? formatDay(iso.slice(0, 10)) : '');
 /**
  * The bank actions of the payments tab: one at a time, each handing what the
  * server answered to `onBank`, and the message of the last one (per account, so it shows where it was pressed).
+ * A refusal goes through `refuse`, which says it in the shell when the page closed before the answer came.
  */
-export function useBankFeed(bank: BankView, year: number, actions: BankActions, onBank: (bank: BankView) => void, onStatement: (view: StatementView) => void, go: (url: string) => void) {
+export function useBankFeed(
+  bank: BankView,
+  year: number,
+  actions: BankActions,
+  onBank: (bank: BankView) => void,
+  onStatement: (view: StatementView) => void,
+  go: (url: string) => void,
+  refuse: (who: string, message: string, onPage: (message: string) => void) => void = (_who, message, onPage) => onPage(message),
+) {
   const [message, setMessage] = useState<{ accountId: string; text: string; ok: boolean } | null>(null);
   const [pending, startTransition] = useTransition();
 
   function act<T>(accountId: string, call: () => Promise<Result<T>>, onOk: (value: T) => string | null) {
     setMessage(null);
+    const failed = (text: string) => refuse('Finanzen, Bankverbindung', text, (said) => setMessage({ accountId, text: said, ok: false }));
     startTransition(async () => {
       let result: Result<T>;
       try {
         result = await call();
       } catch {
-        setMessage({ accountId, text: bankMessage('failed'), ok: false });
+        failed(bankMessage('failed'));
         return;
       }
       if (!result.ok) {
-        setMessage({ accountId, text: bankMessage(result.detail ?? result.error), ok: false });
+        failed(bankMessage(result.detail ?? result.error));
         return;
       }
       const text = onOk(result.value);

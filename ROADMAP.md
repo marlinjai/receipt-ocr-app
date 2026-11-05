@@ -28,14 +28,15 @@
   (2026-10-11)
 - [ ] A receipt with its parts as sub rows, the second use of sub rows (further values of the
   hidden `Row Kind` column). Not built; the group design leaves room for it. (2026-10-11)
-- [ ] The text reader takes two line items for net and tax. Seen in the review list on 2026-10-11:
+- [x] The text reader takes two line items for net and tax. Seen in the review list on 2026-10-11:
   a Cursor invoice of 20.06 US dollars with two usage lines (18.76 and 1.30) and no tax was
-  offered a new reading of net 18.76 at 7 percent, because 1.30 is about 7 percent of 18.76. A
-  tax needs a line that names it; two item amounts that happen to fit a rate are no tax. The
-  same pass showed the stored-total flags of older readings never clear by themselves once the
-  amount was corrected or tied to a payment: 68 such "Betrag prüfen" entries were confirmed by
-  hand against the tax table and the documents. A corrected or payment-linked total should
-  clear its flag. (2026-10-11)
+  offered a new reading of net 18.76 at 7 percent. Both halves landed: since #121 (the rule that
+  a tax needs a line that names it) two item amounts that fit a rate are no tax, tested on the
+  Cursor case in `src/lib/review/__tests__/reading.test.ts`; since #143 a "Betrag prüfen" flag ends
+  by itself once the stored total differs from the one the reader doubted or linked payments cover
+  it (`totalSettled` in `src/lib/review/reasons.ts`). Flags recorded before #143 keep no read total
+  and clear by a covering payment or by "Geprüft" only (11 such stored flags open on production on
+  2026-11-05). Done 2026-11-05.
 - [ ] Read receipts with a model that sees the page, not only the recognized text. Live since
   2026-10-11: the classification call gets the page itself and also reads date, total, currency,
   net and tax lines; the invoice's arithmetic and the recognized text check its answer. On 288
@@ -55,12 +56,13 @@
   of a restaurant or bar, or where none is stored, and never for the legal form alone. The
   amount offers stay: there the new reading was the better one (the printed 19 percent on dollar
   invoices that were stored with 0). Done 2026-10-11.
-- [ ] The dashboard table doubles its rows after cell edits. Seen on production on 2026-10-11
+- [x] The dashboard table doubles its rows after cell edits. Seen on production on 2026-10-11
   while renaming receipts through the table: after a few dozen edits in one page load the
   header read "917 items" for 267 receipts and every row was drawn several times (917 rows,
-  267 distinct ids). The stored data was intact and a reload showed 267 again. Probably the
-  loader that fetches all pages appends them again after an edit. Until fixed, counts and
-  sums on a page that was edited a lot cannot be trusted without a reload. (2026-10-11)
+  267 distinct ids). Fixed by #125 (one load at a time) and, since 2026-11-02, by design in the
+  `ReceiptsStore`: rows are held by id, and a load that a newer one replaced drops its late
+  pages. Checked on that store with 267 receipts, 36 edits each followed by a reload and the
+  answers arriving in the worst order: every receipt once, every edit kept. Done 2026-11-05.
 - [x] What was bought is part of a receipt's name: a cell "Item" the reader fills, the name as
   "vendor, item, total, date", and the name following its cells when vendor, item, total,
   currency or date is corrected (a typed name stays). Decided by the owner on 2026-10-11 for
@@ -72,21 +74,25 @@
 - [ ] The item is worded per receipt, so the monthly invoices of one subscription can read
   differently ("PocketTube Abo", "PocketTube-Mitgliedschaft"). The reader should be given the
   items the same vendor already has and reuse one that fits. (2026-10-11)
-- [ ] The reader stores the value-added tax amount as the total on one vendor's invoices: 32
-  invoices of a mail-scanning service across 2021, 2022 and 2023 (0.64 for 3.99, 2.07 for 12.99),
-  all corrected by hand on 2026-10-11. Two more classes from the same import: a mobile bill is
-  read with or without the third-party charges it lists, differently from month to month, and an
-  amount in another currency printed next to the euro amount was taken as euros (once), a euro
-  invoice as dollars (once). (2026-10-11)
+- [ ] A mobile bill is read with or without the third-party charges it lists, differently from
+  month to month: replaying the reader over the stored texts on 2026-11-05, 7 of 153 phone bills
+  of two providers still differ from the stored total (5 of one, 3 of them read as no total and 2
+  up to 4.50 apart; 2 of the other, a few cents apart). The other classes of this line are done: the value-added
+  tax read as the total of a mail-scanning service (fixed in #142, all 41 stored invoices agree in
+  the replay), an amount in another currency taken as the total, and a euro invoice read as
+  dollars (both fixed on 2026-11-05, 4 stored receipts now agree, none worse). (2026-11-05)
 - [x] The dashboard under 780 receipts: all three steps deployed. Measured on production on
   2026-10-15 with 1,105 receipts: the table opens on the newest year in 6 to 8 seconds (was 35),
   1.8 MB of data and about 180 MB of browser memory (was 817 MB); all years load in about 30
   seconds. Groups, taking a receipt out, the year links and the 2025 figures checked. Plan:
   [docs/plans/2026-10-13-dashboard-load-and-grouping.md](docs/plans/2026-10-13-dashboard-load-and-grouping.md). Done 2026-10-15.
-- [ ] The filter bar's date operators ("after", "before", "equals") fail on the database: the
-  adapter casts the date column to a timestamp and compares it with a text parameter. Found on
-  2026-10-14 through the adapter's list query; the year scope avoids them. Fix in the table
-  adapter or in the app's server action. (2026-10-14)
+- [x] The filter bar's date operators ("after", "before", "equals") fail on the database: the
+  adapter casts the date column to a timestamp and compares it with a text parameter. Fixed in the
+  app's list action by #119 on 2026-10-15 (`src/app/app/dashboard/day-filters.ts`): those
+  comparisons are answered on the day each date names, "is" also narrows the database read with a
+  text match, and `day-filters.dbtest.ts` proves it against Postgres in every verify run; the line
+  was only left open. The shared adapter should still bind a text value as a timestamp, which
+  belongs to the data-table repository. Done 2026-11-05.
 - [ ] Rule sets for the tax years 2021 to 2024, so the finance area shows those years on their own
   forms. Today they are computed with the 2025 form, which the page says. 2024 uses the same line
   numbers as 2025 for every line that was declared; 2023 is shifted, 2022 and 2021 use the older,
@@ -100,9 +106,12 @@
   the returns of 2022 and 2023 split between business and study carry only the business share,
   because the split is a finance-area decision and those were made for 2024 only. About 687 of
   study cost in 2022 is not counted for that reason. (2026-10-11)
-- [ ] "Set field" on a selection loses writes: on 2026-10-11, setting the assignment on 30
+- [x] "Set field" on a selection loses writes: on 2026-10-11, setting the assignment on 30
   selected rows reported success and left 14 of 81 rows unchanged; selections of 7 went through
-  completely. The writes run side by side through the guarded cell update. (2026-10-11)
+  completely. Fixed by #129 and #155: the server writes the selection in parts, reads every row
+  back and counts only what is stored; the bar says "n von m gesetzt" with the reason for the
+  rest and offers another try. Checked on the store-backed page of 2026-11-02: a row that did not
+  land is never counted, and the table shows what is stored afterwards. Done 2026-11-05.
 - [ ] A file that holds two invoices becomes one receipt with the second invoice's figures
   (seen on 2026-10-11 on a file with a marketplace invoice and a retailer invoice). The reader
   should say that the file holds more than one document, so it can be split. (2026-10-11)
@@ -261,13 +270,12 @@
   and public bank data access exist. After stage 2. Plan:
   `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
 
-- [ ] Two tax rates, two columns, one order. On a receipt with two tax rates, the number column
-  "Tax Rate" takes the first of the reader's printed tax groups ordered by gross
-  (`src/lib/extraction/amounts.ts`), while the text column "Tax Rates" follows the model's meal
-  tax lines ordered by net (`src/lib/tax-rates.ts`, written in `readReceipt`). The two can name a
-  different first rate when the two sources disagree. Decide one source of truth for the order
-  and make both columns follow it, with a test where the sources disagree. Found while landing
-  the capture queue fix. (2026-10-10)
+- [x] Two tax rates, two columns, one order. Done 2026-11-05. The printed tax groups the
+  receipt's arithmetic confirms are the source of truth, the model's lines the fallback, and both
+  columns take their first rate from one order (`src/lib/extraction/rate-order.ts`, since #144).
+  The last path that still split them, a page read by the model alone (`settleFromPageOnly`),
+  now takes its number column and its net from the meal's tax lines too, tested where the
+  model's single rate and its lines disagree. (2026-10-10)
 - [x] Extraction defects found in the first live upload (2026-10-08, a 21-page scan of
   restaurant receipts uploaded with "One receipt per page"). Done 2026-10-10. Root cause
   behind four of the seven: the language-model classifier never ran in production (no
@@ -385,9 +393,11 @@
   finance tabs are on stores, the table draws one row for one change (package 0.12.0), and meal
   answers show on the next frame (500 to 15 milliseconds on production). Plan:
   [docs/plans/2026-11-01-client-state.md](docs/plans/2026-11-01-client-state.md). (2026-11-02)
-- [ ] A finance write refused after the person left the page entirely is not shown, as before the
-  stores. The other domains keep such a refusal on `RefusalDesk`; finance writes need the same way
-  of outliving the page. (2026-11-02)
+- [x] A finance write refused after the person left the page entirely is now shown. Its refusal goes
+  to a `FinanceOutbox` on the company's `AppStore`, which the shell shows like those of the checks and
+  meals (named "Finanzen, ..."), and on a company switch to `RefusalDesk` with the company's name.
+  That covers the page's writes, own names, the bank actions and the account sharing; a link question
+  that arrives after leaving is said, not asked over another page. Done 2026-11-05.
 - [x] Database tests time out when the machine is under heavy load (load average 40 to 87 on 14
   cores: tax-rates, bulk-set, text, assignment-sync, review service). It was a shared-state defect:
   the data-table adapter looks a row up in every row table of the database, and all files shared one

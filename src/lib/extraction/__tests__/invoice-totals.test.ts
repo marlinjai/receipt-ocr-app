@@ -500,3 +500,53 @@ describe('an unnamed tip, third round', () => {
     expect(readAmounts(slip, { date: '2026-03-01' }).tip).toBe(2);
   });
 });
+
+describe('an amount in another currency is no amount of the bill', () => {
+  // The 2021 to 2023 import (roadmap, 2026-10-11): a conversion into zloty, and a card charged in euros for a dollar order.
+  it('the zloty conversion below a euro invoice is not its total', () => {
+    expect(readAmounts(F.EURO_INVOICE_WITH_ZLOTY_CONVERSION, { date: '2022-04-15', currency: 'EUR' })).toMatchObject({
+      gross: 5.02,
+      net: 4.22,
+      taxRate: 19,
+      taxGroups: [{ rate: 19, net: 4.22, tax: 0.8, gross: 5.02 }],
+      checks: [],
+    });
+  });
+
+  it('the euro charge of a dollar order is not its total', () => {
+    // The tax stands torn from its label, so the labelled total stays one for a look; it is the dollar one.
+    expect(readAmounts(F.DOLLAR_ORDER_CHARGED_IN_EUROS, { date: '2021-07-17', currency: 'USD' })).toMatchObject({ gross: 87.58, basis: 'label_alone' });
+  });
+
+  it('a label whose amount is another currency does not take the amount on the next line', () => {
+    // An order paid in two charges: the first card line below "Payment Grand Total: EUR 66,32" is one charge, not the total.
+    const twoCharges = [
+      'Item(s) Subtotal: USD 69.98',
+      'Shipping & Handling: USD 7.31',
+      'Free Shipping: -USD 7.31',
+      'Total before tax: USD 69.98',
+      'Estimated tax to be collected: USD 6.65',
+      'Grand Total: USD 76.63',
+      'Payment Grand Total: EUR 66,32',
+      'MasterCard ending in 0000: July 22, 2021: $43.79',
+      'MasterCard ending in 0000: July 17, 2021: $32.84',
+    ].join('\n');
+    expect(readAmounts(twoCharges, { date: '2021-07-17', currency: 'USD' })).toMatchObject({ gross: 76.63, net: 69.98, checks: [] });
+  });
+
+  it('a page reading of the foreign amount does not move the total', () => {
+    expect(readAmounts(F.EURO_INVOICE_WITH_ZLOTY_CONVERSION, { date: '2022-04-15', currency: 'EUR', modelGross: 23.33, modelSawPage: true })).toMatchObject({
+      gross: 5.02,
+      checks: ['total_conflict'],
+    });
+  });
+
+  it('amounts are kept where no amount carries the receipt currency: the currency itself may be wrong', () => {
+    // A dollar receipt handed the euro: dropping every dollar amount would leave nothing to read.
+    expect(readAmounts('Shop Inc\nSubtotal $10.00\nTax $1.90\nTotal $11.90', { currency: 'EUR' }).gross).toBe(11.9);
+  });
+
+  it('without a currency nothing is set aside', () => {
+    expect(readAmounts('Summe 12,00 €\nUmrechnung 51,00 PLN', { date: '2022-01-01' }).gross).toBe(12);
+  });
+});

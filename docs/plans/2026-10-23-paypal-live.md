@@ -2,7 +2,7 @@
 title: PayPal live through the bank interface, foreign currency, and removing an empty account
 summary: The PayPal account, fed from PayPal's CSV export so far, can now be continued live through Enable Banking. The list keeps the days it covers, the live feed continues after them, a movement seen by both sources is recognized as one by PayPal's transaction code, the account stays "the PayPal wallet" for the funding rule after the switch, dollar purchases are imported at the reference exchange rate and marked as an estimate until a file supplies the real euro amount, and an account without payments, imports or connection can be removed.
 type: plan
-status: in-progress
+status: completed
 tags: [finance, payments, bank, paypal, enable-banking, currency]
 projects: [receipt-ocr-app]
 date: 2026-10-23
@@ -234,3 +234,28 @@ paths plus gates, removal, links, partial days) and `src/lib/tax/payments/__test
 (reader, funding rule, edge days), not in `payments.dbtest.ts`. Two tests in `bank.dbtest.ts`
 follow the changed expectations (the new `unrated` notice; `institution_mismatch` for a bank on the
 PayPal list account).
+
+## Reality (2026-11-05): live on production, plan completed
+
+Everything above shipped in #170 (the PayPal live feed, the foreign currency estimates and
+"Konto entfernen", migration 0036). Checked read-only against the production database on
+2026-11-05:
+
+- **Connected.** The owner connected the PayPal account of Whiz-Art Media on 2026-10-25
+  (institution PayPal, the session account "PAYPAL_BUSINESS_ACCOUNT", consent valid until
+  23.04.2027). The first fetch reached back to 28.07.2026 and brought 36 movements; the daily
+  run has fetched every morning since (last on 05.11.2026, booked through 04.11.2026), each
+  import tagged with the service `paypal`. No notice is open (no gap, no skipped day, no missing
+  rate).
+- **The overlap rule held.** The lists of August (01.08. to 30.08.) and September (01.09. to
+  29.09.) were imported before the connection, so the live feed kept only what goes beyond them:
+  its rows on 28.07. and from 29.09. on. The list for 01.01. to 31.08.2026 imported on 2026-11-04
+  read 367 rows and added 308; the 59 it did not add are as many as the August list already held.
+  On 28.07., the live feed's first day, it added one row, a top-up of 140.72 euros from the bank,
+  beside the live feed's two purchases of that day. No live payment shares a
+  PayPal transaction code with a list payment, and no day holds a list and a live payment of the
+  same amount.
+- **Estimates waiting for their list.** Five payments in another currency from 01.10. to
+  01.11.2026 carry the reference-rate estimate. They take the real euro amount from the next
+  PayPal list that covers October, as point 6 describes; that is the account's normal routine,
+  not open work of this plan (see `docs/operations/bank-sync.md`, section "PayPal").

@@ -133,6 +133,28 @@ others.
 | Rate limit | stays `active`, the error is shown, the next run tries again. |
 | Bank down, time-out, unreadable answer | stays `active`, the error is shown, the next run tries again. |
 
+## PayPal
+
+PayPal is offered by the interface like a bank (institution "PayPal", one session account
+"PAYPAL_BUSINESS_ACCOUNT" in several currencies). Plan: `docs/plans/2026-10-23-paypal-live.md`.
+
+- **One account, two sources.** The PayPal account may hold the CSV export (`paypal_csv`) and
+  the live feed; every fetch tags its import with the service `paypal`, so the funding rule keeps
+  the account as the PayPal wallet even after "Trennen". A bank on the PayPal account, or PayPal
+  on a bank account, is refused (`institution_mismatch`). Klarna offers only its current account,
+  not the pay-later purchases, so a Klarna account stays on its list import
+  (`account_source_unsupported`).
+- **Overlap.** A day belongs to the source that brought it first; a movement both sources hold is
+  recognized by PayPal's transaction code, so a list imported after the live feed adds only what
+  the feed does not carry (for example a top-up from the bank).
+- **Other currencies** arrive at the European Central Bank (ECB) reference rate of their day,
+  marked "geschätzt". The next PayPal list covering that day replaces the estimate with the real
+  euro amount and scales the links. Importing the list for the past month is therefore the
+  routine that settles the estimates. A day without a rate stays out of the fetch with the notice
+  that the reference rate is missing, and every fetch tries again.
+- **"Konto entfernen"** removes an account only when it holds no payment, no import and no
+  live connection (end the connection with "Trennen" first).
+
 ## Stopping it
 
 Remove `BANK_FEED_ENABLED` (or set it to anything but `true`) and restart: the route answers

@@ -128,12 +128,14 @@
   missing-receipt loop, business and unanswered ones stay with Whiz-Art Media. Worked out on
   read, nothing copied. Plan:
   [docs/plans/2026-10-22-payments-across-companies.md](docs/plans/2026-10-22-payments-across-companies.md). (2026-10-23)
-- [ ] PayPal live through the bank interface (decided by the owner on 2026-10-23): the PayPal
+- [x] PayPal live through the bank interface (decided by the owner on 2026-10-23): the PayPal
   account continues live after the last day its CSV list covers, a movement seen by both sources
   is recognized as one, the funding rule keeps it as the PayPal wallet, dollar purchases arrive at
   the reference rate marked as an estimate, and an empty account can be removed. After the
-  deploy the owner connects the PayPal account once. Plan:
-  [docs/plans/2026-10-23-paypal-live.md](docs/plans/2026-10-23-paypal-live.md). (2026-10-23)
+  deploy the owner connects the PayPal account once. Connected on 2026-10-25 and fetched daily
+  since; the list of 01.01. to 31.08.2026 imported on 2026-11-04 overlapped without a payment
+  stored twice. Plan:
+  [docs/plans/2026-10-23-paypal-live.md](docs/plans/2026-10-23-paypal-live.md). Done 2026-11-05.
 - [ ] The Advanzia credit card from its monthly statement PDF (the owner's rule of 2026-10-16:
   live where possible, files as the fallback; the bank interface offers no Advanzia). The reader
   is built: the PDF is uploaded in the payments import like the CSV exports, every row becomes a
@@ -220,14 +222,13 @@
   (4 stale rows, copied to the shared database under the same ids on 2026-10-09). Released on
   Marlin's own yes. The unused `CONTACTS_STORE` entry was removed from the production secret
   project the same day. Plan: `docs/plans/2026-10-10-remove-own-contacts-table.md`. (2026-10-10)
-- [ ] Invoicing and income: the finance area shows "Einnahmen 0" for 2026 because no issued
-  invoice is recorded (all of them are PDF files written in a Google Doc). Order: enter the
-  invoices of 2024 to 2026 from the list in the tax folder and link their bank payments (ends the
-  zero, no code), tighten the matcher to whole invoice numbers, then a read-only mirror of the
-  invoices framer-clone issues (the owner decided on 2026-10-14 that invoices are written there,
-  in the Books tier, numbered from 62), then reading electronic invoices (XRechnung, ZUGFeRD) that
-  arrive in the expenses mailbox. Plan:
-  [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-10-14)
+- [ ] Invoicing and income: the invoices of 2024 to 2026 are entered (28 to 61, with their
+  payments), the matcher takes invoice numbers only as whole figures (#120), overdue invoices are
+  an open check (#114) and invoices with more than one rate are reported per rate (#117). Open:
+  the read-only mirror of the invoices framer-clone's Books issue (from 62 on), which waits for
+  framer-clone's read-only machine endpoint (its roadmap line "4. Existing invoices and the
+  suite"); reading electronic invoices is another lane (#149). Plan:
+  [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-11-05)
 - [ ] Corrected invoices in the income mirror: framer-clone's Books can now correct an issued
   invoice ("Correct", framer-clone #125, migration 011): one transaction issues a credit note that
   cancels the old invoice and a replacement invoice with a new number that carries
@@ -236,11 +237,12 @@
   the payment on a cancelled invoice and the replacement unpaid. Background: framer-clone's
   composer plan of 2026-10-21 (decision 9 and the phase 1 build notes); this app's plan above,
   D6 (payments belong here). (2026-10-22)
-- [ ] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
+- [x] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
   (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax
   return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent
   lines would be misreported. Store the tax groups per invoice and report each under its own rate.
-  From the finance dashboard work. (2026-10-10)
+  From the finance dashboard work. Done 2026-10-15 in #117 (treatment "Mit Umsatzsteuer,
+  mehrere Steuersätze", one group per rate). (2026-11-05)
 - [ ] A signed-in live write pass of `/app/finance` on production, under Whiz-Art Media, which
   holds the receipts since the move of 2026-10-10: open each tab, write one
   synthetic decision, vendor rule and payment link, remove them again, and confirm the numbers
@@ -438,16 +440,19 @@
   Einstellungen; the tiles and "Offen" stay the entry, Ausgaben stays its own page with a link
   each way. Built in #179, checked on production at 390 and 1440 pixels on 2026-11-05. Plan:
   [docs/plans/2026-10-25-finance-groups.md](docs/plans/2026-10-25-finance-groups.md). Done 2026-11-05.
-- [ ] Every line of every receipt (asked by the owner on 2026-10-26): the printed positions of
+- [x] Every line of every receipt (asked by the owner on 2026-10-26): the printed positions of
   each receipt read and stored with a kind of purchase (groceries, coffee, a meal, a drink), and
-  a "Was gekauft" overview on the spending page. Plan:
-  [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-26)
-- [ ] Re-derive the stored lines of every company once, after the deploy of the fix for invoices
+  a "Was gekauft" overview on the spending page; read for the stored receipts of both companies.
+  Plan: [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md).
+  Done 2026-11-05.
+- [x] Re-derive the stored lines of every company once, after the deploy of the fix for invoices
   priced before tax, tips and credits (found on 2026-10-30: 131 receipts of one company asked
   "Positionen prüfen", 104 of them invoices whose lines were stored before tax):
   `POST /api/receipts/lines/reprice` signed in as each company, no model asked, a run again changes
   nothing. Context: the Reality section of 2026-10-30 in
-  [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md). (2026-10-30)
+  [docs/plans/2026-10-26-receipt-line-items.md](docs/plans/2026-10-26-receipt-line-items.md).
+  Done 2026-11-05: ran on 2026-10-30 for the one company with lines read before the fix (108
+  receipts); the other's lines were all read after it.
 - [x] Receipts move between groups by dragging, like in Notion: every receipt has a grip, also
   inside a group and always visible on a selected one; a drop on a group or its receipts puts it
   there, a drop on the section takes it out, the selection comes along (reported by Marlin on

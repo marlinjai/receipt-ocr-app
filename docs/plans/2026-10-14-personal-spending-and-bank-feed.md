@@ -115,11 +115,15 @@ warning goes through the same channel as the missing-receipt notification.
 
 ## Open
 
-- **Where the notification goes.** The app is installed on the phone (the capture screen), so a
-  push message there is the natural channel; the owner's chat or e-mail are the alternatives.
-  The owner's choice.
+- **Where the notification goes.** Answered by the owner on 2026-10-15 (see "Owner's answers"):
+  push to the installed phone app, e-mail as the fallback. Built (in-app queue, push, e-mail). Not
+  open any more.
 - **Which vendors may be fetched with a stored login.** Each one is a secret held by the system
-  and a legal and safety decision of the owner. None until he names them.
+  and a legal and safety decision of the owner. None until he names them (his answer of
+  2026-10-15: none for now). Still open.
+- **When step 4b is built.** Designed above, "to be built later" in the owner's words. Building it
+  means a worker on his machine that drives his signed-in browser at vendors such as Amazon, eBay or
+  Deutsche Bahn, so when (and for which vendors) is his call. Still open.
 - **Budget limits.** Decided by the coordinator on 2026-10-15: the default of a category is the
   owner's own twelve-month average from the payments, and he edits every number in the app.
 - **The bank connection needs the owner's consent at each bank, repeated periodically.** Which
@@ -317,3 +321,15 @@ every private purchase") for the past. Decided by the coordinating session, say 
   Advanzia; the application's own list, read in the tab at run time, decides. An account already
   fed from the PayPal or Klarna list is not continued live (it would store purchases twice): such
   an account gets a new account of its own for the live connection.
+
+### What is left (2026-11-05)
+
+Checked against main on 2026-11-05: build orders 1 to 4 are built, together with the vendor
+matching of step 2 (`proposeMatches` in `src/lib/tax/payments/match.ts` ranks a receipt whose vendor
+the payment names first), the backlog closing and the visual overview of plan
+`2026-10-23-budget-overview` (completed). Two things remain, both waiting for the owner:
+
+- Step 4 (stored vendor logins): none until he names vendors.
+- Step 4b (fetch through his signed-in browser): designed, not built, until he says when. Until
+  then the payments marked "Nicht auffindbar" whose invoices sit behind a login stay visible in red
+  under Ausgaben, Belege (ROADMAP line of 2026-11-02).

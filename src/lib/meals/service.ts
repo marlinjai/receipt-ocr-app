@@ -534,6 +534,8 @@ export async function deleteReceiptRows(
       // A receipt archived as a duplicate takes its merge record with it. Copies archived INTO this one keep
       // theirs: they stay archived (they are the receipt just deleted) and no receipt view offers them any more.
       await db.receiptMerge.deleteMany({ where: { rowId } });
+      // What the look-alike pass decided about its pairs: the pair is gone with the receipt.
+      await db.receiptPairDecision.deleteMany({ where: { OR: [{ rowIdA: rowId }, { rowIdB: rowId }] } });
       // A credit note's reference to its invoice goes with it; one pointing at this row forgets the row, keeps the number.
       await db.receiptReference.deleteMany({ where: { rowId } });
       await db.receiptReference.updateMany({ where: { referencedRowId: rowId }, data: { referencedRowId: null } });

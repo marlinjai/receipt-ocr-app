@@ -23,13 +23,14 @@
  * Env vars:
  *   ANTHROPIC_API_KEY        direct access with web search (optional)
  *   ANTHROPIC_CLASSIFY_MODEL model for the direct path (default below)
- *   ANTHROPIC_ITEM_MODEL     model that names what was bought, or reads the lines of, an already stored receipt (default below)
- *   OPENROUTER_API_KEY, AI_CLASSIFY_MODEL, AI_MODEL: see src/lib/ai-client.ts
+ *   ANTHROPIC_ITEM_MODEL     model that names what was bought, reads the lines or the invoice number of, an already stored receipt (default below)
+ *   ANTHROPIC_DUPLICATE_MODEL model that compares two look-alike receipts on the direct path (default below)
+ *   OPENROUTER_API_KEY, AI_CLASSIFY_MODEL, AI_DUPLICATE_MODEL, AI_MODEL: see src/lib/ai-client.ts
  */
 
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
-import { getAiClient, getClassifyModel } from '@/lib/ai-client';
+import { getAiClient, getClassifyModel, getDuplicateModel } from '@/lib/ai-client';
 import { cleanItem } from '@/lib/receipt-name';
 import type { ReceiptPage } from '@/lib/receipt-page';
 import { parseMealClassification, type MealClassification } from '@/lib/meals/classify';
@@ -40,6 +41,8 @@ import { parseModelLines, type ReceiptLine } from '@/lib/line-items/lines';
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5-5';
 /** Naming what was bought from a stored text is a small task: the small model. */
 const DEFAULT_ANTHROPIC_ITEM_MODEL = 'claude-haiku-5-5';
+/** Whether two receipts are one purchase decides an archive: the strongest model (plan 2026-11-05-duplicates-without-asking). */
+export const DEFAULT_ANTHROPIC_DUPLICATE_MODEL = 'claude-opus-5-5';
 const ITEM_MAX_TOKENS = 4000;
 /** One item is asked for in a request that answers for several receipts: it may not take as long as a full reading. */
 const ITEM_TIMEOUT_MS = 30_000;
@@ -398,15 +401,25 @@ interface ModelAnswer {
   usage: ModelUsage;
 }
 
+/** The page as a content block of the Anthropic API; none without a page. */
+function anthropicPage(page: ReceiptPage | null | undefined): Anthropic.ContentBlockParam[] {
+  if (!page) return [];
+  return page.mediaType === 'application/pdf'
+    ? [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: page.base64 } }]
+    : [{ type: 'image', source: { type: 'base64', media_type: page.mediaType, data: page.base64 } }];
+}
+
+/** The page as a content part of an OpenRouter chat completion; none without a page. */
+function openRouterPage(page: ReceiptPage | null | undefined, filename = 'receipt.pdf'): OpenAI.Chat.Completions.ChatCompletionContentPart[] {
+  if (!page) return [];
+  return page.mediaType === 'application/pdf'
+    ? [{ type: 'file', file: { filename, file_data: `data:application/pdf;base64,${page.base64}` } }]
+    : [{ type: 'image_url', image_url: { url: `data:${page.mediaType};base64,${page.base64}` } }];
+}
+
 async function askAnthropic(apiKey: string, input: ClassifyInput): Promise<ModelAnswer> {
   const client = new Anthropic({ apiKey, maxRetries: MAX_RETRIES });
-  const page = input.page;
-  const pageBlock: Anthropic.ContentBlockParam[] = !page
-    ? []
-    : page.mediaType === 'application/pdf'
-      ? [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: page.base64 } }]
-      : [{ type: 'image', source: { type: 'base64', media_type: page.mediaType, data: page.base64 } }];
-  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: [...pageBlock, { type: 'text', text: userText(input) }] }];
+  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: [...anthropicPage(input.page), { type: 'text', text: userText(input) }] }];
   const usage: ModelUsage = { inputTokens: 0, outputTokens: 0, cost: null };
   let text = '';
   for (let attempt = 0; attempt <= MAX_RESUMES; attempt++) {
@@ -443,11 +456,7 @@ type OpenRouterRequest = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonSt
 
 async function askOpenRouter(input: ClassifyInput): Promise<ModelAnswer> {
   const page = input.page;
-  const pagePart: OpenAI.Chat.Completions.ChatCompletionContentPart[] = !page
-    ? []
-    : page.mediaType === 'application/pdf'
-      ? [{ type: 'file', file: { filename: 'receipt.pdf', file_data: `data:application/pdf;base64,${page.base64}` } }]
-      : [{ type: 'image_url', image_url: { url: `data:${page.mediaType};base64,${page.base64}` } }];
+  const pagePart = openRouterPage(page);
   const request: OpenRouterRequest = {
     model: getClassifyModel(),
     // Room for every line of a long receipt next to the facts.
@@ -707,6 +716,225 @@ export async function readReceiptLines(input: LinesInput): Promise<LinesAnswer> 
   return {
     ...parseLinesResponse(choice?.message?.content ?? ''),
     textCut: cut,
+    model,
+    usage: { inputTokens: response.usage?.prompt_tokens ?? 0, outputTokens: response.usage?.completion_tokens ?? 0, cost: typeof billed === 'number' ? billed : null },
+  };
+}
+
+// ── Look-alike receipts (plan docs/plans/2026-11-05-duplicates-without-asking.md) ──────────────────────
+
+/** One model call of the look-alike pass may take this long; the pass tries the receipt or the pair again on a later run. */
+const LOOK_ALIKE_TIMEOUT_MS = 120_000;
+const NUMBER_MAX_TOKENS = 2000;
+const PAIR_MAX_TOKENS = 4000;
+
+/** What the number-only reading is given: a stored receipt's text and, where it could be fetched, its page. */
+export interface NumberInput {
+  vendor: string | null;
+  fullText: string;
+  page: ReceiptPage | null;
+}
+
+export interface NumberAnswer {
+  /** The number as the model read it, unchecked: the caller takes it only where the stored text carries it. */
+  invoiceNumber: string | null;
+  sawPage: boolean;
+  model: string;
+  usage: ModelUsage;
+}
+
+export function invoiceNumberPrompt(page: boolean): string {
+  return `You are given ${page ? 'one receipt or invoice itself and, below, the text optical character recognition read from it' : 'the text optical character recognition read from one receipt or invoice'}. It can contain misread characters and lines out of order. Answer only with **invoiceNumber**: ${INVOICE_NUMBER_RULE}
+
+Respond with ONLY a JSON object (no markdown, no explanation):
+{ "invoiceNumber": null }`;
+}
+
+/** Parse the number-only answer: a short string with a digit, else null. Anything malformed throws: it is no answer. */
+export function parseInvoiceNumberResponse(text: string): string | null {
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first < 0 || last <= first) throw new UnusableAnswerError('The answer was not the expected object.');
+  try {
+    return invoiceNumberOf((JSON.parse(text.slice(first, last + 1)) as { invoiceNumber?: unknown } | null)?.invoiceNumber);
+  } catch {
+    throw new UnusableAnswerError('The answer was not the expected object.');
+  }
+}
+
+/**
+ * Read only the invoice number of a stored receipt, page and text, with the
+ * small model the upload reads with (plan 2026-11-05-duplicates-without-asking):
+ * asked only for receipts of a look-alike pair whose number the stored text and
+ * file name did not settle. Throws when no provider is configured, the call
+ * fails, or the answer is unusable. A page the provider will not take is
+ * read again from the text alone.
+ */
+export async function readInvoiceNumberOnly(input: NumberInput): Promise<NumberAnswer> {
+  const provider = classifierProvider();
+  if (!provider) throw new ClassifierUnavailableError();
+  const user = [input.vendor && `Vendor as stored: ${input.vendor}`, `\nRecognized text:\n${textForModel(input.fullText)}`].filter(Boolean).join('\n');
+  const ask = async (page: ReceiptPage | null): Promise<NumberAnswer> => {
+    if (provider === 'anthropic_web_search') {
+      const model = process.env.ANTHROPIC_ITEM_MODEL || DEFAULT_ANTHROPIC_ITEM_MODEL;
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, maxRetries: MAX_RETRIES });
+      const response = await client.messages.create(
+        { model, max_tokens: NUMBER_MAX_TOKENS, output_config: { effort: 'low' }, system: invoiceNumberPrompt(Boolean(page)), messages: [{ role: 'user', content: [...anthropicPage(page), { type: 'text', text: user }] }] },
+        { timeout: LOOK_ALIKE_TIMEOUT_MS },
+      );
+      if (response.stop_reason === 'refusal') throw new UnusableAnswerError('The model declined to read this receipt.');
+      if (response.stop_reason === 'max_tokens') throw new UnusableAnswerError('The answer was cut off.');
+      const block = response.content.findLast((b) => b.type === 'text');
+      return { invoiceNumber: parseInvoiceNumberResponse(block && block.type === 'text' ? block.text : ''), sawPage: Boolean(page), model, usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, cost: null } };
+    }
+    const model = getClassifyModel();
+    const request: OpenRouterRequest = {
+      model,
+      max_tokens: NUMBER_MAX_TOKENS,
+      reasoning: { effort: 'low' },
+      usage: { include: true },
+      messages: [
+        { role: 'system', content: invoiceNumberPrompt(Boolean(page)) },
+        { role: 'user', content: [...openRouterPage(page), { type: 'text', text: user }] },
+      ],
+      ...(page?.mediaType === 'application/pdf' ? { plugins: [{ id: 'file-parser' as const, pdf: { engine: 'native' as const } }] } : {}),
+    };
+    const response = await getAiClient().chat.completions.create(request, { timeout: LOOK_ALIKE_TIMEOUT_MS, maxRetries: MAX_RETRIES });
+    const choice = response.choices[0];
+    if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) throw new UnusableAnswerError('The model declined to read this receipt.');
+    if (choice?.finish_reason === 'length') throw new UnusableAnswerError('The answer was cut off.');
+    const billed = (response.usage as { cost?: unknown } | undefined)?.cost;
+    return {
+      invoiceNumber: parseInvoiceNumberResponse(choice?.message?.content ?? ''),
+      sawPage: Boolean(page),
+      model,
+      usage: { inputTokens: response.usage?.prompt_tokens ?? 0, outputTokens: response.usage?.completion_tokens ?? 0, cost: typeof billed === 'number' ? billed : null },
+    };
+  };
+  try {
+    return await ask(input.page);
+  } catch (err) {
+    if (!input.page || !rejectedTheRequest(err)) throw err;
+    console.error('[receipt-classifier] the provider did not take the page for the number; reading the text alone', { provider, status: (err as { status?: number }).status });
+    return ask(null);
+  }
+}
+
+/** One receipt of a look-alike pair as the comparison is given it: what is stored, and its page. */
+export interface PairSide {
+  vendor: string;
+  /** ISO day, or null. */
+  date: string | null;
+  gross: number | null;
+  currency: string;
+  /** The number stored for it, where one is (a weak one, or the other receipt's only). */
+  invoiceNumber: string | null;
+  fullText: string;
+  page: ReceiptPage;
+}
+
+export type PairVerdict = 'same' | 'different' | 'unsure';
+
+export interface PairAnswer {
+  verdict: PairVerdict;
+  /** 0 to 1, as the model rates its own verdict. */
+  confidence: number;
+  /** One sentence, in German, for the person who may look at the pair. */
+  reason: string;
+  model: string;
+  usage: ModelUsage;
+}
+
+export function samePurchasePrompt(): string {
+  return `You are given two documents from the receipts of one company (document A first, then document B), each with the text optical character recognition read from it and the facts stored for it. Both show the same day, the same total and a vendor that can be the same business, and no invoice number settles whether they are one purchase. Decide whether they document ONE purchase or TWO.
+
+ONE purchase ("same"): the same invoice or receipt twice (a photo and a PDF of it, a scan and an e-mail copy, the invoice and its payment confirmation or order confirmation for exactly the same items, the till receipt and the card slip of the same payment).
+TWO purchases ("different"): different items or quantities, different invoice, receipt or order numbers printed on the documents, different times on two till receipts, two subscriptions or two seats billed separately, a credit note and its invoice, two separate visits.
+"unsure": the documents do not show enough to tell (a blurred page, a slip that names nothing but the total).
+
+Answer "same" only when the documents themselves show it; equal totals and dates alone are no proof, they are why you are asked. Give "confidence" from 0 to 1 for your verdict, and "reason": one sentence in German naming what on the documents decides it (for example "Beide zeigen dieselbe Bestellnummer und dieselben zwei Positionen." or "A ist der Kassenbon um 12:04, B ein zweiter Besuch um 18:30.").
+
+Respond with ONLY a JSON object (no markdown, no explanation):
+{ "verdict": "same" | "different" | "unsure", "confidence": 0.0, "reason": "..." }`;
+}
+
+function sideText(label: string, side: PairSide): string {
+  return [
+    `Document ${label} as stored: vendor ${side.vendor || 'unknown'}, day ${side.date ?? 'unknown'}, total ${side.gross ?? 'unknown'} ${side.currency}${side.invoiceNumber ? `, invoice number ${side.invoiceNumber}` : ''}.`,
+    `Recognized text of document ${label}:\n${side.fullText.trim() ? textForModel(side.fullText) : '(none)'}`,
+  ].join('\n');
+}
+
+const PAIR_VERDICTS: readonly PairVerdict[] = ['same', 'different', 'unsure'];
+
+/** Parse the comparison's answer. Anything malformed throws: it is no answer, and nothing is decided on it. */
+export function parseSamePurchaseResponse(text: string): Pick<PairAnswer, 'verdict' | 'confidence' | 'reason'> {
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first < 0 || last <= first) throw new UnusableAnswerError('The answer was not the expected object.');
+  let parsed: { verdict?: unknown; confidence?: unknown; reason?: unknown } | null;
+  try {
+    parsed = JSON.parse(text.slice(first, last + 1));
+  } catch {
+    throw new UnusableAnswerError('The answer was not the expected object.');
+  }
+  const verdict = PAIR_VERDICTS.find((v) => v === parsed?.verdict);
+  if (!verdict) throw new UnusableAnswerError('The answer named no verdict.');
+  const confidence = typeof parsed?.confidence === 'number' && Number.isFinite(parsed.confidence) ? Math.min(1, Math.max(0, parsed.confidence)) : 0;
+  const reason = typeof parsed?.reason === 'string' ? parsed.reason.replace(/\s+/g, ' ').trim().slice(0, 400) : '';
+  return { verdict, confidence, reason };
+}
+
+/**
+ * Whether two look-alike receipts are one purchase, from both pages, with the
+ * strongest model (`AI_DUPLICATE_MODEL`, or `ANTHROPIC_DUPLICATE_MODEL` on the
+ * direct path). Throws when no provider is configured, the call fails, or the
+ * answer is unusable; never returns a verdict for a failure.
+ */
+export async function judgeSamePurchase(a: PairSide, b: PairSide): Promise<PairAnswer> {
+  const provider = classifierProvider();
+  if (!provider) throw new ClassifierUnavailableError();
+  if (provider === 'anthropic_web_search') {
+    const model = process.env.ANTHROPIC_DUPLICATE_MODEL || DEFAULT_ANTHROPIC_DUPLICATE_MODEL;
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, maxRetries: MAX_RETRIES });
+    const response = await client.messages.create(
+      {
+        model,
+        max_tokens: PAIR_MAX_TOKENS,
+        output_config: { effort: 'medium' },
+        system: samePurchasePrompt(),
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'Document A:' }, ...anthropicPage(a.page), { type: 'text', text: 'Document B:' }, ...anthropicPage(b.page), { type: 'text', text: `${sideText('A', a)}\n\n${sideText('B', b)}` }] }],
+      },
+      { timeout: LOOK_ALIKE_TIMEOUT_MS },
+    );
+    if (response.stop_reason === 'refusal') throw new UnusableAnswerError('The model declined to compare these receipts.');
+    if (response.stop_reason === 'max_tokens') throw new UnusableAnswerError('The answer was cut off.');
+    const block = response.content.findLast((x) => x.type === 'text');
+    return { ...parseSamePurchaseResponse(block && block.type === 'text' ? block.text : ''), model, usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, cost: null } };
+  }
+  const model = getDuplicateModel();
+  const anyPdf = a.page.mediaType === 'application/pdf' || b.page.mediaType === 'application/pdf';
+  const request: OpenRouterRequest = {
+    model,
+    max_tokens: PAIR_MAX_TOKENS,
+    reasoning: { effort: 'medium' },
+    usage: { include: true },
+    messages: [
+      { role: 'system', content: samePurchasePrompt() },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Document A:' }, ...openRouterPage(a.page, 'document-a.pdf'), { type: 'text', text: 'Document B:' }, ...openRouterPage(b.page, 'document-b.pdf'), { type: 'text', text: `${sideText('A', a)}\n\n${sideText('B', b)}` }],
+      },
+    ],
+    ...(anyPdf ? { plugins: [{ id: 'file-parser' as const, pdf: { engine: 'native' as const } }] } : {}),
+  };
+  const response = await getAiClient().chat.completions.create(request, { timeout: LOOK_ALIKE_TIMEOUT_MS, maxRetries: MAX_RETRIES });
+  const choice = response.choices[0];
+  if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) throw new UnusableAnswerError('The model declined to compare these receipts.');
+  if (choice?.finish_reason === 'length') throw new UnusableAnswerError('The answer was cut off.');
+  const billed = (response.usage as { cost?: unknown } | undefined)?.cost;
+  return {
+    ...parseSamePurchaseResponse(choice?.message?.content ?? ''),
     model,
     usage: { inputTokens: response.usage?.prompt_tokens ?? 0, outputTokens: response.usage?.completion_tokens ?? 0, cost: typeof billed === 'number' ? billed : null },
   };

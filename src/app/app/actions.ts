@@ -1,5 +1,6 @@
 'use server';
 
+import { after } from 'next/server';
 import { TAX_RATES_COLUMN, formatTaxRates, withTaxRates } from '@/lib/tax-rates';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { prisma } from '@/lib/prisma';
@@ -53,6 +54,7 @@ import type { OcrResult } from '@/lib/ocr-types';
 import { INVOICE_NUMBER_COLUMN, settleInvoiceNumber } from '@/lib/extraction/invoice-number';
 import { findFileDuplicate } from '@/lib/upload/duplicates';
 import { findSameInvoice, mergeAfterChange } from '@/lib/review/merge';
+import { settleLookAlikesAfterChange } from '@/lib/review/look-alikes';
 import { deleteStoredFile } from '@/lib/stored-files';
 
 const TABLE_NAME = 'Receipts';
@@ -322,11 +324,12 @@ async function readReceipt(
         ? { lines: pricedLines.lines, source: 'reading', linesNetCents: pricedLines.linesNetCents, model: ai.model, usage: ai.usage }
         : null;
   const reviewFlags: ReadFlag[] = settled?.flags ?? [];
-  // The XML's number, else the one the text labels, else the model's where the text carries it; never from the image alone.
+  // The XML's number, else the one the text labels, else the file name's or the model's where the text carries it; never from the image alone.
   const invoiceNumber = settled
     ? settleInvoiceNumber({
         structured: structured?.invoiceNumber ?? null,
         text: fullText,
+        fileName: file.originalName,
         model: ai?.invoiceNumber ?? null,
         fromImageOnly: !extracted,
         creditNote: Boolean(structured?.creditNote) || (settled.gross !== null && settled.gross < 0),
@@ -608,6 +611,8 @@ async function saveUpload(
   await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read, adapter, tableId);
   // A receipt just read may fall under a vendor rule, or leave one: its assignment cells show that.
   await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
+  // A look-alike of a receipt already there is settled without asking, after the answer (plan 2026-11-05-duplicates-without-asking).
+  after(() => settleLookAlikesAfterChange(prisma, ctx, [row.id]));
 
   return {
     rowId: row.id,
@@ -734,6 +739,8 @@ export async function retakeReceipt(
   await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
   // The new photo may show it is a receipt that is there already: the pass keeps the more complete one.
   const merge = (await mergeAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id])).get(row.id);
+  // Its look-alikes are settled without asking, after the answer: the new photo is new facts for each pair.
+  if (!merge) after(() => settleLookAlikesAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id]));
   if (merge) {
     const mergedInto = merge.keptRowId;
     const kept = await adapter.getRow(mergedInto);
@@ -892,6 +899,8 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
     // The number read now may make it a receipt that is there already: the pass keeps the more complete one.
     const mergedInto = (await mergeAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id])).get(row.id)?.keptRowId ?? null;
+    // Its look-alikes are settled without asking, after the answer (plan 2026-11-05-duplicates-without-asking).
+    if (!mergedInto) after(() => settleLookAlikesAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id]));
     return { ok: true, reviewFlags: read.reviewFlags, ...(mergedInto ? { mergedInto } : {}) };
   } catch (e) {
     const status = e instanceof ReceiptsAuthError ? e.status : (e as { status?: number })?.status;

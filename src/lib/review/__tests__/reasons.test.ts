@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REASON_TEXT, automaticDuplicate, derivedReasons, isConfirmable, lookAlikes, paymentsCoverTotal, reviewReasons, sameInvoice, totalSettled, type ReviewSnapshot } from '../reasons';
+import { REASON_TEXT, automaticDuplicate, derivedReasons, isConfirmable, lookAlikes, pairDecisionsNow, pairFingerprint, pairKey, paymentsCoverTotal, reviewReasons, sameInvoice, totalSettled, type ReviewSnapshot } from '../reasons';
 
 const receipt = (overrides: Partial<ReviewSnapshot> = {}): ReviewSnapshot => ({
   rowId: 'r1',
@@ -151,6 +151,47 @@ describe('lookAlikes', () => {
     const b = receipt({ rowId: 'b' });
     expect(lookAlikes([a, b], new Map([['a', new Set(['b'])]])).size).toBe(0);
     expect(lookAlikes([a, b], new Map([['b', new Set(['a'])]])).size).toBe(0);
+  });
+
+  it('a pair the look-alike pass kept apart is not asked, whichever id comes first', () => {
+    const a = receipt({ rowId: 'a' });
+    const b = receipt({ rowId: 'b' });
+    expect(lookAlikes([a, b], none, new Set([pairKey('b', 'a')])).size).toBe(0);
+    expect(lookAlikes([a, b, receipt({ rowId: 'c' })], none, new Set([pairKey('a', 'b')])).get('a')).toEqual(['c']);
+  });
+});
+
+describe('the decisions of the look-alike pass (plan 2026-11-05-duplicates-without-asking)', () => {
+  const a = receipt({ rowId: 'a', fileHashes: ['h1'] });
+  const b = receipt({ rowId: 'b', fileHashes: ['h2'] });
+  const now = new Map([
+    ['a', a],
+    ['b', b],
+  ]);
+  const decision = (outcome: string, fingerprint = pairFingerprint(a, b), reason: string | null = 'Ein Satz.') => ({ rowIdA: 'a', rowIdB: 'b', fingerprint, outcome, reason });
+
+  it('a fingerprint is the same from either side, and changes with what the decision rests on', () => {
+    expect(pairFingerprint(a, b)).toBe(pairFingerprint(b, a));
+    for (const changed of [{ vendor: 'Anderes Lokal' }, { date: '2025-03-15' }, { gross: 120 }, { currency: 'USD' }, { invoiceKey: 'R123456' }, { fileHashes: ['h3'] }]) {
+      expect(pairFingerprint({ ...a, ...changed }, b)).not.toBe(pairFingerprint(a, b));
+    }
+    // Not what the receipt is called: a new name changes nothing about the purchase.
+    const renamed: ReviewSnapshot = { ...a, name: 'Neu benannt' };
+    expect(pairFingerprint(renamed, b)).toBe(pairFingerprint(a, b));
+  });
+
+  it('kept apart (by the model or by two numbers) ends the question; unsure and failed carry their reason', () => {
+    expect(pairDecisionsNow([decision('different')], now).settled.has(pairKey('a', 'b'))).toBe(true);
+    expect(pairDecisionsNow([decision('different_numbers')], now).settled.has(pairKey('a', 'b'))).toBe(true);
+    expect(pairDecisionsNow([decision('unsure')], now).notes.get(pairKey('a', 'b'))).toEqual({ outcome: 'unsure', reason: 'Ein Satz.' });
+    expect(pairDecisionsNow([decision('failed', undefined, null)], now).notes.get(pairKey('a', 'b'))).toEqual({ outcome: 'failed', reason: null });
+    expect(pairDecisionsNow([decision('same')], now)).toEqual({ settled: new Set(), notes: new Map() });
+  });
+
+  it('a decision on other facts than the receipts hold now counts for nothing (backtrack)', () => {
+    const stale = decision('different', pairFingerprint({ ...a, vendor: 'Vorher' }, b));
+    expect(pairDecisionsNow([stale], now)).toEqual({ settled: new Set(), notes: new Map() });
+    expect(pairDecisionsNow([decision('different')], new Map([['a', a]]))).toEqual({ settled: new Set(), notes: new Map() });
   });
 });
 

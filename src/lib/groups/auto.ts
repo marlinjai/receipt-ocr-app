@@ -146,8 +146,10 @@ export function planAutoGroups(receipts: readonly GroupableReceipt[], groups: re
   /** Names a group holding receipts already carries, and names planned in this run. */
   const taken = new Set(groups.filter((g) => contents.has(g.id)).map((g) => norm(g.name)));
 
-  // Sorted, so which of two keys that come to one name keeps the plain name never depends on the order the database returned the receipts in.
-  const keys = [...new Set([...loose.keys(), ...holders.keys()])].sort();
+  // The order decides who gets the plain name when two keys come to the same one, so it is fixed and does not
+  // follow the order the database returns rows in: business first, then university, then private.
+  const rank = (key: string) => [...GROUPED_ASSIGNMENTS].findIndex((a) => norm(a) === key.split('|')[1]);
+  const keys = [...new Set([...loose.keys(), ...holders.keys()])].sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0));
   const wanted = (key: string) => {
     if (!only) return true;
     const ids = [...(loose.get(key) ?? []).map((r) => r.id), ...(holders.get(key) ?? []).flatMap((h) => contents.get(h.id)?.get(key) ?? [])];

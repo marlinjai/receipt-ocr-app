@@ -19,7 +19,7 @@ afterEach(() => {
   restoreMerged.mockReset();
 });
 
-const COPY: MergedReceiptView = { rowId: 'r2', name: 'Hosting März (PDF)', reason: 'same_invoice', invoiceNumber: 'RE-2026-0042', mergedAt: '2026-10-29T10:00:00.000Z' };
+const COPY: MergedReceiptView = { rowId: 'r2', name: 'Hosting März (PDF)', reason: 'same_invoice', decidedBy: null, decisionNote: null, invoiceNumber: 'RE-2026-0042', mergedAt: '2026-10-29T10:00:00.000Z' };
 
 describe('ReceiptMergedSection', () => {
   it('shows nothing while nothing was merged into the receipt', async () => {
@@ -52,6 +52,20 @@ describe('ReceiptMergedSection', () => {
     expect((await screen.findByRole('alert')).textContent).toMatch(/nicht mehr zusammengeführt/);
     expect(screen.getByText(/gleiche Rechnungsnummer RE-2026-0042/)).toBeTruthy();
     expect(onRestored).not.toHaveBeenCalled();
+  });
+
+  it('says what decided a merge of the look-alike pass: a number read again, or the model with its sentence', async () => {
+    getMergedReceipts.mockResolvedValue({
+      ok: true,
+      value: [
+        { ...COPY, decidedBy: 'number_reread' },
+        { ...COPY, rowId: 'r4', name: 'Kassenbon', reason: 'same_purchase', decidedBy: 'model', decisionNote: 'Beide zeigen dieselben zwei Positionen.', invoiceNumber: null },
+      ],
+    });
+    render(<ReceiptMergedSection rowId="r1" version="v1" />);
+    expect(await screen.findByText(/gleiche Rechnungsnummer RE-2026-0042, von der App nachgelesen/)).toBeTruthy();
+    expect(screen.getByText(/„Kassenbon“: laut Sprachmodell derselbe Kauf, nach Vergleich beider Seiten \(„Beide zeigen dieselben zwei Positionen\.“\)/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Kassenbon wiederherstellen' })).toBeTruthy();
   });
 
   it('a list that could not be loaded says so', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REASON_TEXT, automaticDuplicate, derivedReasons, isConfirmable, lookAlikes, pairDecisionsNow, pairFingerprint, pairKey, paymentsCoverTotal, reviewReasons, sameInvoice, totalSettled, type ReviewSnapshot } from '../reasons';
+import { REASON_TEXT, automaticDuplicate, derivedReasons, isConfirmable, lookAlikes, pairDecisionsNow, pairFingerprint, pairKey, paymentsCoverTotal, reviewReasons, invoiceTextKey, sameInvoice, totalSettled, type ReviewSnapshot } from '../reasons';
 
 const receipt = (overrides: Partial<ReviewSnapshot> = {}): ReviewSnapshot => ({
   rowId: 'r1',
@@ -283,6 +283,29 @@ describe('sameInvoice and automaticDuplicate', () => {
     const invoice = receipt({ rowId: 'a', invoiceKey: 'R100200', gross: 119 });
     const credit = receipt({ rowId: 'b', invoiceKey: 'R100200', gross: -119 });
     expect(sameInvoice(invoice, credit)).toBe(false);
+  });
+
+  it('two numbers that each copy prints are two names of one invoice (order ID and document number)', () => {
+    const page = 'APPLE ACCOUNT / INVOICE DATE / 31 Jan 2026 / ORDER ID / MQZF893G2H / DOCUMENT NO. / 712084955873 / Jump Desktop';
+    const a = receipt({ rowId: 'a', vendor: 'Apple', invoiceKey: 'MQZF893G2H', textKey: invoiceTextKey(page) });
+    const b = receipt({ rowId: 'b', vendor: 'Apple Account', invoiceKey: '712084955873', textKey: invoiceTextKey(page) });
+    expect(sameInvoice(a, b)).toBe(true);
+    expect(automaticDuplicate(a, b, none)).toBe('same_invoice');
+    // A person's "keep both" still holds.
+    expect(automaticDuplicate(a, b, new Map([['a', new Set(['b'])]]))).toBeNull();
+  });
+
+  it('a number printed on only one of the two copies keeps them apart', () => {
+    // A credit note names the invoice it corrects; the invoice does not name the credit note.
+    const invoice = receipt({ rowId: 'a', invoiceKey: 'RE20260001234', textKey: invoiceTextKey('Rechnung RE-2026-0001234 Summe 119,00') });
+    const credit = receipt({ rowId: 'b', invoiceKey: 'GS20260000077', textKey: invoiceTextKey('Gutschrift GS-2026-0000077 zu Rechnung RE-2026-0001234 Summe 119,00') });
+    expect(sameInvoice(invoice, credit)).toBe(false);
+  });
+
+  it('short numbers are never looked for in a text, and without text the numbers alone decide', () => {
+    const page = 'Order 4711 Rechnung 1234';
+    expect(sameInvoice(receipt({ rowId: 'a', invoiceKey: 'R4711', textKey: invoiceTextKey(page) }), receipt({ rowId: 'b', invoiceKey: 'R1234', textKey: invoiceTextKey(page) }))).toBe(false);
+    expect(sameInvoice(receipt({ rowId: 'a', invoiceKey: 'MQZF893G2H' }), receipt({ rowId: 'b', invoiceKey: '712084955873' }))).toBe(false);
   });
 
   it('no number on either side, or only one, is never the same invoice', () => {

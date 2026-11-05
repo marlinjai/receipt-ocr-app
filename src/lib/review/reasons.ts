@@ -61,6 +61,11 @@ export interface ReviewSnapshot {
    */
   invoiceKey?: string | null;
   /**
+   * The receipt's recognized text in the compared form of invoice numbers (`invoiceTextKey`), so a number
+   * read off another receipt can be looked for in it. Left out where the caller does not have the text.
+   */
+  textKey?: string;
+  /**
    * The assignment ("Zuordnung") as stored, null when its cell is empty.
    * Left out when the table has no such column: there is nothing to answer.
    */
@@ -118,16 +123,38 @@ export function sameVendor(a: string, b: string): boolean {
   return x === y || (x.length >= 4 && y.includes(x)) || (y.length >= 4 && x.includes(y));
 }
 
-type InvoiceFacts = Pick<ReviewSnapshot, 'vendor' | 'gross' | 'invoiceKey'>;
+type InvoiceFacts = Pick<ReviewSnapshot, 'vendor' | 'gross' | 'invoiceKey' | 'textKey'>;
+
+/** A text in the compared form of invoice numbers: upper case, letters and digits only (as `invoiceNumberKey`). */
+export function invoiceTextKey(text: string): string {
+  return text.toLocaleUpperCase('de-DE').replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/** Shorter numbers can turn up inside an unrelated run of digits: only a long one is looked for in a text. */
+const CROSS_KEY_MIN = 8;
+
+/**
+ * True when two different numbers are two names of one document: each receipt's text prints the number read
+ * off the other. An Apple invoice carries an order ID, a document number and a sequence number, and two copies
+ * of it were read with different ones (2026-11-05: 16 pairs kept apart that were one invoice each). Both ways
+ * are required: a credit note prints the number of the invoice it corrects, but that invoice never prints the
+ * credit note's number.
+ */
+export function numbersCrossPrinted(a: Pick<InvoiceFacts, 'invoiceKey' | 'textKey'>, b: Pick<InvoiceFacts, 'invoiceKey' | 'textKey'>): boolean {
+  if (!a.invoiceKey || !b.invoiceKey || !a.textKey || !b.textKey) return false;
+  if (a.invoiceKey.length < CROSS_KEY_MIN || b.invoiceKey.length < CROSS_KEY_MIN) return false;
+  return a.textKey.includes(b.invoiceKey) && b.textKey.includes(a.invoiceKey);
+}
 
 /**
  * True when two receipts are the same invoice (plan docs/plans/2026-10-29-invoice-number-duplicates.md,
- * decision 2): both carry an invoice number, the numbers are equal in their compared form, and the vendors
- * can be the same business. A credit note is never the same invoice as the invoice it corrects (its text
+ * decision 2): both carry an invoice number, the numbers are equal in their compared form (or each receipt
+ * prints the other's, `numbersCrossPrinted`), and the vendors can be the same business. A credit note is never the same invoice as the invoice it corrects (its text
  * names that invoice's number): totals of opposite sign are two documents.
  */
 export function sameInvoice(a: InvoiceFacts, b: InvoiceFacts): boolean {
-  if (!a.invoiceKey || !b.invoiceKey || a.invoiceKey !== b.invoiceKey) return false;
+  if (!a.invoiceKey || !b.invoiceKey) return false;
+  if (a.invoiceKey !== b.invoiceKey && !numbersCrossPrinted(a, b)) return false;
   if (a.gross !== null && b.gross !== null && a.gross !== 0 && b.gross !== 0 && Math.sign(a.gross) !== Math.sign(b.gross)) return false;
   return sameVendor(a.vendor, b.vendor);
 }

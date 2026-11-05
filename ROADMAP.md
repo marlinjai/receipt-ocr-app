@@ -121,12 +121,13 @@
   payment. Build order and open questions (where the notification goes, which vendors may be
   fetched with a stored login, the budget limits) in the plan:
   [docs/plans/2026-10-14-personal-spending-and-bank-feed.md](docs/plans/2026-10-14-personal-spending-and-bank-feed.md). (2026-10-14)
-- [ ] Payments across companies (decided by the owner on 2026-10-22, option 1): an account stays
-  connected once in Whiz-Art Media, and once the owner links it to "marlinjai" in the payments
-  tab, every payment answered private shows in marlinjai's spending overview, budgets and
-  missing-receipt loop, business and unanswered ones stay with Whiz-Art Media. Worked out on
-  read, nothing copied. Plan:
-  [docs/plans/2026-10-22-payments-across-companies.md](docs/plans/2026-10-22-payments-across-companies.md). (2026-10-23)
+- [ ] Payments across companies (decided by the owner on 2026-10-22, option 1): built and live
+  since #164, nothing left to build. What remains is the owner's one step: in Whiz-Art Media,
+  Finanzen, Zahlungen, share each of the five accounts (N26, Tomorrow, PayPal, Klarna, Advanzia
+  Mastercard) with "marlinjai" ("Private Zahlungen weitergeben"); production holds no share yet
+  (checked 2026-11-05). Then every payment answered private shows in marlinjai's spending
+  overview, budgets and missing-receipt loop. Plan:
+  [docs/plans/2026-10-22-payments-across-companies.md](docs/plans/2026-10-22-payments-across-companies.md). (2026-11-05)
 - [ ] PayPal live through the bank interface (decided by the owner on 2026-10-23): the PayPal
   account continues live after the last day its CSV list covers, a movement seen by both sources
   is recognized as one, the funding rule keeps it as the PayPal wallet, dollar purchases arrive at

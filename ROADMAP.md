@@ -425,11 +425,12 @@
   Since 2026-11-01 a bottom bar and a sheet with every place give the phone the sidebar's overview.
   Last step: a look at the finance tabs with real payments on the owner's phone. Plan:
   [docs/plans/2026-10-24-phone-layout.md](docs/plans/2026-10-24-phone-layout.md). (2026-11-01)
-- [ ] The filed return decides the counterparties (asked by the owner on 2026-10-25): receipts
+- [x] The filed return decides the counterparties (asked by the owner on 2026-10-25): receipts
   that match a payment count as evidence without a link, split receipts make "Teils, teils",
   payment-service prefixes no longer split one merchant, invoice links make income business, and
-  a filed year asks nothing. Plan:
-  [docs/plans/2026-10-25-filed-year-decides-counterparties.md](docs/plans/2026-10-25-filed-year-decides-counterparties.md). (2026-10-25)
+  a filed year asks nothing. Landed in #181, measured on production on 2026-11-05 (270
+  counterparties private by the filed return, 8 "Teils, teils" from split receipts). Plan:
+  [docs/plans/2026-10-25-filed-year-decides-counterparties.md](docs/plans/2026-10-25-filed-year-decides-counterparties.md). Done 2026-11-05.
 - [ ] Finanzen in four groups (decided by the owner on 2026-10-25): Erledigen, Auswerten, Steuer,
   Einstellungen; the tiles and "Offen" stay the entry, Ausgaben stays its own page with a link
   each way. Plan: [docs/plans/2026-10-25-finance-groups.md](docs/plans/2026-10-25-finance-groups.md). (2026-10-25)

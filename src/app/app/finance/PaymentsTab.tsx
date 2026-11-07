@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { receiptHref } from '@/lib/receipt-link';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { formatDay } from '@/lib/meals/messages';
+import { RECEIPTS_ASKED_FROM } from '@/lib/spending/loop';
+import { uploadForHref } from '@/lib/spending/paths';
 import type { MatchStrength } from '@/lib/tax/payments/match';
 import type { AccountKind, CounterpartyTreatment, FoundPayment, ImportResult } from '@/lib/tax/payments/service';
 import type { RefundStrength } from '@/lib/tax/payments/refunds';
@@ -65,6 +67,13 @@ interface Props {
    * Einstellungen). All three when absent.
    */
   parts?: ReadonlyArray<PaymentsPart>;
+  /**
+   * The company this statement is of. With it, an outgoing payment still
+   * waiting for its receipt offers "Beleg hochladen": the upload page, opened
+   * for that payment in this company, saves the receipt and links it. Absent:
+   * only "Beleg wählen".
+   */
+  workspaceId?: string;
 }
 
 export type PaymentsPart = 'questions' | 'list' | 'accounts';
@@ -120,7 +129,7 @@ const LINK_METHOD_LABELS: Record<string, string> = {
  * a counterparty is treated, and linking payments to receipts and invoices.
  * A link is only made on a reference or by a person's confirmation.
  */
-export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onRemoveAccount, onSearch, bank, sharing, onClassify, parts = ALL_PARTS }: Props) {
+export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onRemoveAccount, onSearch, bank, sharing, onClassify, parts = ALL_PARTS, workspaceId }: Props) {
   const id = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState('');
@@ -437,7 +446,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                   </button>
                 </span>
                 {browsing === c.key && (
-                  <PaymentFinder id={`${id}-browse`} query={{ counterpartyKey: c.key }} view={view} busy={busy} onSearch={onSearch} onLink={onLink} />
+                  <PaymentFinder id={`${id}-browse`} query={{ counterpartyKey: c.key }} view={view} busy={busy} onSearch={onSearch} onLink={onLink} workspaceId={workspaceId} />
                 )}
               </li>
             ))}
@@ -655,7 +664,7 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
             ))}
           </ul>
         )}
-        {p.yearCount > 0 && <PaymentSearch view={view} busy={busy} onSearch={onSearch} onLink={onLink} />}
+        {p.yearCount > 0 && <PaymentSearch view={view} busy={busy} onSearch={onSearch} onLink={onLink} workspaceId={workspaceId} />}
       </section>
       )}
 
@@ -905,7 +914,19 @@ function ManualLink({
  * yet or answered as mixed, and one on an account said to be private (a
  * business expense paid privately).
  */
-function PaymentSearch({ view, busy, onSearch, onLink }: { view: StatementView; busy: boolean; onSearch: Props['onSearch']; onLink: Props['onLink'] }) {
+function PaymentSearch({
+  view,
+  busy,
+  onSearch,
+  onLink,
+  workspaceId,
+}: {
+  view: StatementView;
+  busy: boolean;
+  onSearch: Props['onSearch'];
+  onLink: Props['onLink'];
+  workspaceId?: string;
+}) {
   const id = useId();
   const [draft, setDraft] = useState('');
   // Each press on "Suchen" is a new search, also with the same words.
@@ -938,12 +959,32 @@ function PaymentSearch({ view, busy, onSearch, onLink }: { view: StatementView; 
         <button type="submit" className="ui-btn ui-btn-sm">Suchen</button>
       </form>
       {tooShort && <p id={`${id}-hint`} className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>Bitte mindestens zwei Zeichen.</p>}
-      {search !== null && <PaymentFinder query={{ text: search.text }} round={search.round} view={view} busy={busy} onSearch={onSearch} onLink={onLink} />}
+      {search !== null && <PaymentFinder query={{ text: search.text }} round={search.round} view={view} busy={busy} onSearch={onSearch} onLink={onLink} workspaceId={workspaceId} />}
     </div>
   );
 }
 
 type Found = { payments: FoundPayment[]; total: number };
+
+/**
+ * Whether a found payment can take a receipt uploaded for it: the upload page
+ * links its receipt only to money out still waiting for one (see
+ * `paymentAwaitingReceipt`). So not money in, not a payment on a receipt or an
+ * invoice already (a partly linked one has its receipt), not a transfer between
+ * own accounts, not one booked before receipts are asked for. What the client
+ * cannot see (a counterparty answered as an own account, "there is no
+ * receipt") the upload page itself says, before anything is uploaded.
+ */
+function awaitsUpload(payment: Pick<FoundPayment, 'amountCents' | 'target' | 'linkedTo' | 'kind' | 'bookingDay'>): boolean {
+  return (
+    payment.amountCents < 0 &&
+    payment.target === 'receipt' &&
+    payment.linkedTo === null &&
+    payment.kind !== 'own_transfer' &&
+    payment.kind !== 'fee' &&
+    payment.bookingDay >= RECEIPTS_ASKED_FROM
+  );
+}
 
 /**
  * The payments of a search, each with a picker for linking by hand. Searched
@@ -960,6 +1001,7 @@ function PaymentFinder({
   busy,
   onSearch,
   onLink,
+  workspaceId,
 }: {
   id?: string;
   query: PaymentQuery;
@@ -968,6 +1010,7 @@ function PaymentFinder({
   busy: boolean;
   onSearch: Props['onSearch'];
   onLink: Props['onLink'];
+  workspaceId?: string;
 }) {
   const [found, setFound] = useState<Found | null>(null);
   const [failed, setFailed] = useState(false);
@@ -1053,16 +1096,23 @@ function PaymentFinder({
                     {payment.amountCents < 0 ? 'bezahlt' : 'erhalten'} {euro(Math.abs(payment.amountCents))}
                     {foreignNote(payment.foreign)}
                     {payment.freeCents !== Math.abs(payment.amountCents) ? `, davon offen ${euro(payment.freeCents)}` : ''}
-                    <button
-                      type="button"
-                      className="ui-btn ui-btn-sm ml-2"
-                      aria-expanded={open === payment.id}
-                      aria-label={`${payment.target === 'invoice' ? 'Rechnung' : 'Beleg'} wählen für ${what}`}
-                      onClick={() => setOpen(open === payment.id ? null : payment.id)}
-                    >
-                      {payment.target === 'invoice' ? 'Rechnung wählen' : 'Beleg wählen'}
-                    </button>
                   </span>
+                </div>
+                <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
+                  <button
+                    type="button"
+                    className="ui-btn ui-btn-sm"
+                    aria-expanded={open === payment.id}
+                    aria-label={`${payment.target === 'invoice' ? 'Rechnung' : 'Beleg'} wählen für ${what}`}
+                    onClick={() => setOpen(open === payment.id ? null : payment.id)}
+                  >
+                    {payment.target === 'invoice' ? 'Rechnung wählen' : 'Beleg wählen'}
+                  </button>
+                  {workspaceId && awaitsUpload(payment) && (
+                    <Link href={uploadForHref(payment.id, workspaceId)} className="ui-btn ui-btn-sm" aria-label={`Beleg hochladen für ${what}`}>
+                      Beleg hochladen
+                    </Link>
+                  )}
                 </div>
                 {open === payment.id &&
                   (targets > 0 ? (

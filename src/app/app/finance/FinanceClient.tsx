@@ -123,6 +123,7 @@ const FinanceClient = observer(function FinanceClient({
   sharingFailed = false,
   sharingActions = SHARING_ACTIONS,
   ownNames: ownNamesInitial = null,
+  workspaceId,
 }: {
   initial: StatementView;
   initialTab?: TabKey;
@@ -138,6 +139,8 @@ const FinanceClient = observer(function FinanceClient({
   sharingActions?: SharingActions;
   /** The owner's own names, the same list as on Ausgaben; null when they could not be read (the tab then says so). */
   ownNames?: OwnNamesView | null;
+  /** The company the statement was read for: a payment's "Beleg hochladen" opens the upload page for it in this company. */
+  workspaceId?: string;
 }) {
   const tabsId = useId();
   const router = useRouter();
@@ -911,6 +914,7 @@ const FinanceClient = observer(function FinanceClient({
               // A fresh part per tab: a draft or a check of a form in one part does not show up in another.
               key={tab}
               parts={PAYMENT_PARTS[tab]}
+              workspaceId={workspaceId}
               view={view}
               busy={pending}
               error={error}

@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { auth } from '@/lib/auth';
+import { sessionWorkspaceId } from '@/lib/auth-workspace';
 import { getStatement } from './actions';
 import { getBankView } from './bank-actions';
 import { getSharingView } from './sharing-actions';
@@ -12,7 +13,7 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Finanzen' };
 
 export default async function FinancePage({ searchParams }: { searchParams: Promise<{ jahr?: string; reiter?: string; bank?: string }> }) {
-  await auth.requireSession('/app/finance');
+  const session = await auth.requireSession('/app/finance');
   const { jahr, reiter, bank } = await searchParams;
   const [data, bankView, sharing, ownNames] = await Promise.all([
     getStatement(jahr ? Number(jahr) : new Date().getFullYear()),
@@ -57,6 +58,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
       sharing={sharing.ok ? sharing.value : null}
       sharingFailed={!sharing.ok}
       ownNames={ownNames.ok ? ownNames.value : null}
+      workspaceId={sessionWorkspaceId(session)}
     />
   );
 }

@@ -47,7 +47,7 @@ scheduled run exits non-zero, so the task's execution history shows it.
 
 | Name | Needed for | What it is |
 |---|---|---|
-| `BOOKS_PULL_KEY` | both ways | The auth-brain API key of a service account scoped to the company whose invoices are mirrored. A secret. |
+| `BOOKS_PULL_KEY` | both ways | The auth-brain API key of a service account scoped to the company whose invoices are mirrored. A secret. A value starting with `PLACEHOLDER` counts as not set (the tab then says the connection is not set up). |
 | `BOOKS_PULL_SECRET` | the schedule only | The shared secret of the Hash-based Message Authentication Code (HMAC) the scheduled task signs with. Machine-minted (the secrets proxy's `copy_secret` with `op=generate`). |
 | `BOOKS_URL` | optional | The Books' base address; `https://app.lumitra.co` when unset. Not a secret. Plain `http` is refused except for `localhost`. |
 

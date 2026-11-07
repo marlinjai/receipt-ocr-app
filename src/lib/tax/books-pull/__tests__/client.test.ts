@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BOOKS_MAX_PAGES, BooksPullError, fetchIssuedDocuments, type FetchLike } from '../client';
-import { booksPullConfig } from '../config';
+import { booksPullConfig, booksPullSecret } from '../config';
 
 const COMPANY = '0190a000-0000-7000-8000-000000000001';
 const KEY = 'test-key-built-at-run-time-' + Math.random().toString(36).slice(2);
@@ -68,6 +68,8 @@ describe('fetchIssuedDocuments', () => {
 describe('booksPullConfig', () => {
   it('needs the key, defaults the address, and refuses plain http outside localhost', () => {
     expect(booksPullConfig({})).toEqual({ configured: false, missing: ['BOOKS_PULL_KEY'] });
+    expect(booksPullConfig({ BOOKS_PULL_KEY: 'PLACEHOLDER_REPLACE_ME' })).toEqual({ configured: false, missing: ['BOOKS_PULL_KEY'] });
+    expect(booksPullSecret({ BOOKS_PULL_SECRET: 'PLACEHOLDER_REPLACE_ME' })).toBeUndefined();
     expect(booksPullConfig({ BOOKS_PULL_KEY: KEY })).toEqual({ configured: true, baseUrl: 'https://app.lumitra.co', key: KEY });
     expect(booksPullConfig({ BOOKS_PULL_KEY: KEY, BOOKS_URL: 'http://books.example' })).toEqual({ configured: false, missing: ['BOOKS_URL'] });
     expect(booksPullConfig({ BOOKS_PULL_KEY: KEY, BOOKS_URL: 'http://localhost:3001/x' })).toMatchObject({ configured: true, baseUrl: 'http://localhost:3001' });

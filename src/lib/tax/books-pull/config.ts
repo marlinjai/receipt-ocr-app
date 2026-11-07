@@ -25,8 +25,12 @@ export type BooksPullConfig = { configured: true; baseUrl: string; key: string }
 
 type Env = Record<string, string | undefined>;
 
+/** A value scaffolded into the secret store before the real one exists counts as not set. */
+const isPlaceholder = (v: string | undefined) => v === undefined || v === '' || v.startsWith('PLACEHOLDER');
+
 export function booksPullConfig(env: Env = process.env): BooksPullConfig {
-  const key = env[BOOKS_PULL_ENV.key]?.trim();
+  const rawKey = env[BOOKS_PULL_ENV.key]?.trim();
+  const key = isPlaceholder(rawKey) ? undefined : rawKey;
   const rawUrl = env[BOOKS_PULL_ENV.url]?.trim() || DEFAULT_BOOKS_URL;
   let baseUrl: string | null = null;
   try {
@@ -47,5 +51,5 @@ export function booksPullConfig(env: Env = process.env): BooksPullConfig {
 
 export function booksPullSecret(env: Env = process.env): string | undefined {
   const v = env[BOOKS_PULL_ENV.secret];
-  return typeof v === 'string' && v.trim() !== '' ? v : undefined;
+  return typeof v === 'string' && !isPlaceholder(v.trim()) ? v : undefined;
 }

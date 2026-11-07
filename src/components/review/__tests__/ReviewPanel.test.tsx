@@ -10,6 +10,7 @@ afterEach(cleanup);
 const entry = (overrides: Partial<ReviewEntry> = {}): ReviewEntry => ({
   rowId: 'r1',
   linesCheck: null,
+  assignmentSuggestion: null,
   name: 'Grillhaus Beispiel',
   vendor: 'Grillhaus Beispiel',
   date: '2025-10-09',

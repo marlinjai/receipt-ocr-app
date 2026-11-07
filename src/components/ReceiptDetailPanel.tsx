@@ -34,6 +34,11 @@ interface ReceiptDetailPanelProps {
   loadText?: (rowId: string) => Promise<string>;
   /** Save the Zuordnung (an option id, or null for none); resolves false when it was not saved. */
   onSetAssignment?: (rowId: string, optionId: string | null) => Promise<boolean>;
+  /**
+   * Why the Zuordnung was set automatically, when it was (plan 2026-11-07-learned-assignment): the model's
+   * answer the cell still holds, with its reason. Null when a person or a rule set it.
+   */
+  loadAssignmentNote?: (rowId: string) => Promise<{ assignment: string | null; reason: string | null } | null>;
 }
 
 const MAX_FILES_PER_ROW = 10;
@@ -102,6 +107,7 @@ export default function ReceiptDetailPanel({
   onReread,
   loadText,
   onSetAssignment,
+  loadAssignmentNote,
 }: ReceiptDetailPanelProps) {
   const [ocrExpanded, setOcrExpanded] = useState(false);
   const [assignmentState, setAssignmentState] = useState<'idle' | 'saving' | 'failed'>('idle');
@@ -123,6 +129,20 @@ export default function ReceiptDetailPanel({
     // `row` is read through its id and update stamp: a new object with the same content must not ask again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadText, textKey]);
+  // Like the text: kept with the receipt version it was loaded for, so a changed assignment never shows an old note.
+  const [assignmentNote, setAssignmentNote] = useState<{ key: string; assignment: string | null; reason: string | null } | null>(null);
+  useEffect(() => {
+    if (!loadAssignmentNote) return;
+    let current = true;
+    loadAssignmentNote(row.id)
+      .then((note) => current && setAssignmentNote(note ? { key: textKey, ...note } : null))
+      // Only the hint is missing: the assignment itself shows and can be changed.
+      .catch(() => current && setAssignmentNote(null));
+    return () => {
+      current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadAssignmentNote, textKey]);
   const [rereadBusy, setRereadBusy] = useState(false);
   const [rereadNote, setRereadNote] = useState<RereadNote | null>(null);
   const reread = async () => {
@@ -578,6 +598,25 @@ export default function ReceiptDetailPanel({
                         {assignmentState === 'failed' && (
                           <span role="alert" className="mt-1 block text-xs text-red-400">Nicht gespeichert. Bitte erneut versuchen.</span>
                         )}
+                        {(() => {
+                          const options = selectOptions.get(zuordnungCol.id) ?? [];
+                          const shown = options.find((o) => o.id === zuordnung)?.name ?? null;
+                          if (!assignmentNote || assignmentNote.key !== textKey || !shown || assignmentNote.assignment !== shown) return null;
+                          return (
+                            <span className="mt-1.5 block text-xs text-gray-400">
+                              Automatisch zugeordnet{assignmentNote.reason ? `: ${assignmentNote.reason}` : '.'}
+                              <span role="group" aria-label="Zuordnung ändern" className="mt-1.5 flex flex-wrap gap-1.5">
+                                {options
+                                  .filter((o) => o.id !== zuordnung)
+                                  .map((option) => (
+                                    <button key={option.id} type="button" className="ui-btn ui-btn-sm" disabled={assignmentState === 'saving'} onClick={() => void saveAssignment(option.id)}>
+                                      Doch {option.name}
+                                    </button>
+                                  ))}
+                              </span>
+                            </span>
+                          );
+                        })()}
                       </>
                     ) : field.color ? (
                       <span className="inline-flex items-center gap-1.5">

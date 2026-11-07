@@ -19,6 +19,7 @@ import { rowsWithOwnTreatment } from '@/lib/tax/service';
 import { timed } from '@/lib/timing';
 import { INVOICE_NUMBER_COLUMN, invoiceNumberKey } from '@/lib/extraction/invoice-number';
 import { markDistinct } from './merge';
+import { assignmentNotes, type AssignmentNote } from '@/lib/assignment/pass';
 
 /**
  * The review queue of a workspace: every receipt that needs a person's eye,
@@ -72,6 +73,11 @@ export interface ReviewEntry {
   proposal: ReadingChange[];
   /** The receipt's lines against its total, where they were read; the review list says by how much they miss it. */
   linesCheck: LinesCheck | null;
+  /**
+   * For "Zuordnung fehlt": what the assignment model suggested and why, below the confidence it sets at
+   * (plan 2026-11-07-learned-assignment). Null where it has not answered or named no option.
+   */
+  assignmentSuggestion: Pick<AssignmentNote, 'assignment' | 'confidence' | 'reason'> | null;
 }
 
 function text(value: unknown): string {
@@ -303,9 +309,22 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
           .map((d) => ({ rowId: d.rowId, name: d.name, date: d.date, gross: d.gross, note: notes.get(pairKey(s.rowId, d.rowId)) ?? null })),
         proposal,
         linesCheck,
+        assignmentSuggestion: null,
       });
     }
   });
+  // The model's suggestions for the receipts still asked who bears them. A failure hides no reason, only the hint.
+  const asked = entries.filter((e) => e.reasons.includes('assignment_missing'));
+  if (asked.length > 0) {
+    const suggested = await assignmentNotes(db, workspaceId, asked.map((e) => ({ rowId: e.rowId, assignment: null }))).catch((err) => {
+      console.error('[review] the assignment suggestions could not be read:', err instanceof Error ? err.name : 'error');
+      return new Map<string, AssignmentNote>();
+    });
+    for (const e of asked) {
+      const note = suggested.get(e.rowId);
+      if (note?.kind === 'suggested') e.assignmentSuggestion = { assignment: note.assignment, confidence: note.confidence, reason: note.reason };
+    }
+  }
   return entries.sort((a, b) => {
     if (a.date !== b.date) return (a.date ?? '9999') < (b.date ?? '9999') ? -1 : 1;
     return a.rowId < b.rowId ? -1 : 1;

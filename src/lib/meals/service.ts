@@ -13,7 +13,7 @@ import {
   consumptionLabel,
   mealTypeLabel,
 } from '@/lib/receipts-constants';
-import type { MealTypeKey } from '@/lib/receipts-constants';
+import { BUSINESS_ZUORDNUNG, type MealTypeKey } from '@/lib/receipts-constants';
 import type { MealBatchResult, MealBatchSkip } from './batch';
 import { inputFromRecord, normalizeMealInput, sameMealInput, type MealDetailsInput } from './input';
 import { rowToMealRecord, type SelectOptionsByColumn } from './record';
@@ -312,6 +312,12 @@ async function writeMealInput(
     const rateColumn = ctx.columns.find((c) => c.name === TAX_RATE_COLUMN);
     if (rateColumn && leading !== undefined) cells[rateColumn.id] = leading;
     cells[ratesColumn.id] = formatTaxRates(merged.taxLines, leading ?? current.taxRate);
+  }
+  // Marking a meal as a business meal with its occasion is the person's word that the business bears it
+  // (plan docs/plans/2026-11-07-learned-assignment.md, decision 5): the assignment follows, whatever it was.
+  const business = ctx.selectOptions.get(ctx.columns.find((c) => c.name === 'Zuordnung')?.id ?? '')?.find((o) => o.name === BUSINESS_ZUORDNUNG)?.id;
+  if (business && merged.mealType === 'business_meal_external' && merged.occasion.trim() && current.zuordnung !== BUSINESS_ZUORDNUNG) {
+    cells[columnId('Zuordnung')] = business;
   }
   if (merged.date !== stored.date) cells[columnId('Date')] = merged.date;
   if (merged.gross !== null && merged.gross !== stored.gross) cells[columnId('Gross')] = merged.gross;

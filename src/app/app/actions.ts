@@ -56,6 +56,7 @@ import { findFileDuplicate } from '@/lib/upload/duplicates';
 import { findSameInvoice, mergeAfterChange } from '@/lib/review/merge';
 import { settleLookAlikesAfterChange } from '@/lib/review/look-alikes';
 import { deleteStoredFile } from '@/lib/stored-files';
+import { decideAssignmentsAfterChange, recordReaderAssignment } from '@/lib/assignment/pass';
 
 const TABLE_NAME = 'Receipts';
 const CATEGORY_NAMES = Object.keys(CATEGORY_TO_KONTO);
@@ -250,6 +251,12 @@ interface ReadReceipt {
   lines: StoreLinesInput | null;
   /** The document's own invoice number as printed (see `settleInvoiceNumber`); null when none is known. */
   invoiceNumber: string | null;
+  /**
+   * The assignment the reader took from the document itself (#75: addressed to a company, a VAT number, reverse
+   * charge), with the model that read it; null where a rule decided or the document shows none. Recorded as an
+   * automatic answer, so it is never taken for a person's (plan 2026-11-07-learned-assignment).
+   */
+  readerAssignment: { assignment: string; model: string } | null;
 }
 
 /**
@@ -452,6 +459,7 @@ async function readReceipt(
     fullText,
     lines,
     invoiceNumber,
+    readerAssignment: !ruleMatch && ai?.zuordnung && zuordnung === ai.zuordnung ? { assignment: ai.zuordnung, model: ai.model } : null,
   };
 }
 
@@ -611,8 +619,12 @@ async function saveUpload(
   await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read, adapter, tableId);
   // A receipt just read may fall under a vendor rule, or leave one: its assignment cells show that.
   await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
+  // What the reader took from the document is an automatic answer, never a person's.
+  if (read.readerAssignment) await recordReaderAssignment(prisma, ctx, row.id, read.readerAssignment);
   // A look-alike of a receipt already there is settled without asking, after the answer (plan 2026-11-05-duplicates-without-asking).
   after(() => settleLookAlikesAfterChange(prisma, ctx, [row.id]));
+  // Who bears it, where neither a rule nor the document says: the model that learns the person (plan 2026-11-07-learned-assignment).
+  after(() => decideAssignmentsAfterChange(prisma, ctx, [row.id]));
 
   return {
     rowId: row.id,
@@ -705,6 +717,8 @@ export async function retakeReceipt(
   keepWhereFilled(read.cells, row, columns, [...MEAL_READ_COLUMNS, ...WORDED_COLUMNS, 'Zuordnung', INVOICE_NUMBER_COLUMN]);
   // A share that is set stays: it is the full share or somebody's decision.
   keepWhereFilled(read.cells, row, columns, ['Business Share %']);
+  const zuordnungColumnId = columns.find((c) => c.name === 'Zuordnung')?.id;
+  const readerWrote = Boolean(read.readerAssignment && zuordnungColumnId && zuordnungColumnId in read.cells);
   // The rates text is derived again from what the row holds after this write:
   // tax lines that were kept above must not be contradicted by the new reading's.
   const ratesColumnId = columns.find((c) => c.name === TAX_RATES_COLUMN)?.id;
@@ -737,10 +751,13 @@ export async function retakeReceipt(
   await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read, adapter, tableId);
   // A receipt just read may fall under a vendor rule, or leave one: its assignment cells show that.
   await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
+  if (readerWrote) await recordReaderAssignment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, row.id, read.readerAssignment!);
   // The new photo may show it is a receipt that is there already: the pass keeps the more complete one.
   const merge = (await mergeAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id])).get(row.id);
   // Its look-alikes are settled without asking, after the answer: the new photo is new facts for each pair.
   if (!merge) after(() => settleLookAlikesAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id]));
+  // A new photo is new facts: an automatic assignment on the old ones is decided again, never a person's (plan 2026-11-07-learned-assignment).
+  if (!merge) after(() => decideAssignmentsAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id]));
   if (merge) {
     const mergedInto = merge.keptRowId;
     const kept = await adapter.getRow(mergedInto);
@@ -894,6 +911,8 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     if (linesId && !isMeal && !amountsHeld) cells[linesId] = read.cells[linesId] ?? serializeTaxLines(null);
     // The rates text is derived from what the row holds after this write.
     await adapter.updateRow(row.id, withTaxRates(columns, cells, row.cells) as typeof cells);
+    const zuordnungId = columnId('Zuordnung');
+    if (read.readerAssignment && zuordnungId && zuordnungId in cells) await recordReaderAssignment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, row.id, read.readerAssignment);
     await storeReviewFlags(workspaceId, tenantIdForWorkspace(session, workspaceId), row.id, read, adapter, tableId);
     // A receipt just read may fall under a vendor rule, or leave one: its assignment cells show that.
     await followTreatment(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, { rowIds: [row.id] });
@@ -901,6 +920,8 @@ export async function rereadReceipt(rowId: string): Promise<RereadResult> {
     const mergedInto = (await mergeAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id])).get(row.id)?.keptRowId ?? null;
     // Its look-alikes are settled without asking, after the answer (plan 2026-11-05-duplicates-without-asking).
     if (!mergedInto) after(() => settleLookAlikesAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id]));
+    // "Seite neu lesen" is new facts: an automatic assignment on the old ones is decided again, never a person's.
+    if (!mergedInto) after(() => decideAssignmentsAfterChange(prisma, { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) }, [row.id]));
     return { ok: true, reviewFlags: read.reviewFlags, ...(mergedInto ? { mergedInto } : {}) };
   } catch (e) {
     const status = e instanceof ReceiptsAuthError ? e.status : (e as { status?: number })?.status;

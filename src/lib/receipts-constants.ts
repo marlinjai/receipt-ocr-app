@@ -34,6 +34,7 @@ export const PROJECT_OPTIONS = ['Lola Stories'];
 
 export const MEAL_CATEGORY = 'Bewirtung';
 export const PRIVATE_ZUORDNUNG = 'Privat';
+export const BUSINESS_ZUORDNUNG = 'Geschäftlich';
 
 /**
  * Meal types. `key` is the stable value used in code and in the export (it

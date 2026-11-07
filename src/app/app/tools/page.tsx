@@ -4,6 +4,7 @@ import FxRecomputePanel from './FxRecomputePanel';
 import InvoiceNumbersPanel from './InvoiceNumbersPanel';
 import LinesBackfillPanel from './LinesBackfillPanel';
 import LookAlikesPanel from './LookAlikesPanel';
+import AssignmentsPanel from './AssignmentsPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +42,10 @@ export default async function ToolsPage() {
         <section className={SECTION} aria-labelledby="tool-look-alikes">
           <h2 id="tool-look-alikes" className={HEADING} style={{ color: 'var(--foreground)' }}>Duplikate klären</h2>
           <LookAlikesPanel />
+        </section>
+        <section className={SECTION} aria-labelledby="tool-assignments">
+          <h2 id="tool-assignments" className={HEADING} style={{ color: 'var(--foreground)' }}>Zuordnungen entscheiden</h2>
+          <AssignmentsPanel />
         </section>
       </div>
     </main>

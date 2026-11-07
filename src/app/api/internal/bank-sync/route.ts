@@ -13,6 +13,7 @@ import { storedInvoiceFields } from '@/lib/line-items/structured-source';
 import { readReceiptLines } from '@/lib/receipt-classifier';
 import { dailyInvoiceNumberBackfill } from '@/lib/review/invoice-number-backfill';
 import { dailyLookAlikeSettle, serverLookAlikeDeps } from '@/lib/review/look-alikes';
+import { dailyAssignmentRetry, serverAssignmentDeps } from '@/lib/assignment/pass';
 
 /**
  * The daily fetch of every active bank connection of every workspace. A
@@ -50,6 +51,8 @@ export async function POST(req: NextRequest) {
       after(async () => {
         await dailyInvoiceNumberBackfill(prisma);
         await dailyLookAlikeSettle(prisma, await serverLookAlikeDeps());
+        // Receipts whose assignment decision failed are tried again (plan 2026-11-07-learned-assignment, the resume path).
+        await dailyAssignmentRetry(prisma, serverAssignmentDeps());
       });
       // The answer names connections and counts only, never a company.
       return results.map(({ connectionId, status, added }) => ({ connectionId, status, added }));

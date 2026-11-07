@@ -15,7 +15,7 @@ import {
 } from '@marlinjai/data-table-react';
 import type { Column, ColumnType, FileStorageAdapter, Row, GroupConfig, FooterConfig, SubItemsConfig, TextAlignment, CellValue } from '@marlinjai/data-table-core';
 import { createServerActionsAdapter } from './server-actions-adapter';
-import { deleteReceiptsForGood, getReceiptText, getReceiptYear, getYearCounts, searchReceiptText, setFieldOnRows } from './actions';
+import { deleteReceiptsForGood, getAssignmentNote, getReceiptText, getReceiptYear, getYearCounts, searchReceiptText, setFieldOnRows } from './actions';
 import type { YearCounts } from '@/lib/receipt-year-counts';
 import { MIN_TEXT_SEARCH_LENGTH, listColumns } from '@/lib/receipt-text';
 import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
@@ -990,6 +990,7 @@ const DashboardContent = observer(function DashboardContent({ store, tableId, in
           onClose={() => setDetailRow(null)}
           loadText={getReceiptText}
           onSetAssignment={setAssignment}
+          loadAssignmentNote={getAssignmentNote}
           onUploadFile={uploadFile}
           onDeleteFile={deleteFile}
           onMealSaved={() => {

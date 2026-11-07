@@ -53,7 +53,8 @@ ${tableContext.userRules || ''}
 - When updating Konto, use the SKR03 mapping above based on the Category.
 - Explain what you plan to do before calling update/delete tools.
 - Be concise in your responses. Use German column names when referencing them.
-- If the user asks you to classify receipts, read the rows first, then use update_cells or bulk_update to set Category, Konto, and optionally Zuordnung.`;
+- If the user asks you to classify receipts, read the rows first, then use update_cells or bulk_update to set Category, Konto, and optionally Zuordnung.
+- When the user says something about their own situation that decides who bears receipts' costs (a study that ended, a vendor that is always private, a shop where it depends on what was bought), offer to remember it with remember_statement.`;
 }
 
 async function companyRulesText(): Promise<string> {

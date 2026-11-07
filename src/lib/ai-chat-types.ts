@@ -12,7 +12,8 @@ export interface PendingToolCall {
   toolName: string;
   input: Record<string, unknown>;
   preview: string;
-  status: 'pending' | 'approved' | 'rejected';
+  /** 'failed': approved, but the change could not be saved (a statement the server refused). */
+  status: 'pending' | 'approved' | 'rejected' | 'failed';
 }
 
 export interface AppliedToolCall {

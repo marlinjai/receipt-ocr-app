@@ -135,6 +135,22 @@ export const TABLE_TOOLS: OpenAI.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'remember_statement',
+      description:
+        'Remember something the user states about their own situation that decides who bears the cost of receipts, as one short sentence in German ("Seit Mai 2026 studiere ich nicht mehr.", "Bei Amazon entscheidet, was gekauft wurde."). It is saved as a statement on the rules page, and the model that assigns new receipts (Geschäftlich, Universität, Privat) is given it. Use it only for what the user said about themselves, never for a guess of yours.',
+      parameters: {
+        type: 'object',
+        properties: {
+          statement: { type: 'string', description: 'The statement, one sentence in German, at most 300 characters.' },
+          zuordnung: { type: 'string', description: 'The assignment the statement names, if it names exactly one (Geschäftlich, Universität or Privat); leave out otherwise.' },
+        },
+        required: ['statement'],
+      },
+    },
+  },
 ];
 
 const READ_ONLY_TOOLS = new Set(['get_rows', 'get_columns', 'get_select_options']);

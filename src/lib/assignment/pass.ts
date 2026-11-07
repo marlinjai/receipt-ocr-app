@@ -260,18 +260,19 @@ export async function decideAssignments(
   for (const s of scoped) {
     const d = decisions.get(s.rowId);
     if (d?.answeredAt) continue;
-    if (s.receipt.category === MEAL_CATEGORY || settled.has(s.rowId)) continue;
     const auto = isAutomatic(d, s.assignment);
     if (s.assignment !== null && !auto) continue;
     const fingerprint = assignmentFingerprint(s.receipt);
+    // The reader's answer from the document: keyed to the facts now stored, never decided again on them.
+    // Also on a meal or a settled receipt, so no record stays pending for good.
+    if (auto && d?.fingerprint === READER_PENDING) {
+      await db.receiptAssignmentDecision.updateMany({ where: { rowId: s.rowId, fingerprint: READER_PENDING }, data: { fingerprint } }).catch((err) => console.error('[assignment] a reader answer could not be keyed:', err instanceof Error ? err.name : 'error'));
+      continue;
+    }
+    if (s.receipt.category === MEAL_CATEGORY || settled.has(s.rowId)) continue;
     if (ruleMatched(s)) {
       // A reading rule decides it (decision 3); an automatic answer it contradicts gives way to the rule.
       if (auto) await giveWayToRule(db, ctx, table.tableId, zuordnungId, s, rules, optionIdOf, result);
-      continue;
-    }
-    // The reader's answer from the document: keyed to the facts now stored, never decided again on them.
-    if (auto && d?.fingerprint === READER_PENDING) {
-      await db.receiptAssignmentDecision.updateMany({ where: { rowId: s.rowId, fingerprint: READER_PENDING }, data: { fingerprint } }).catch((err) => console.error('[assignment] a reader answer could not be keyed:', err instanceof Error ? err.name : 'error'));
       continue;
     }
     const current = d && d.fingerprint === fingerprint ? d : null;

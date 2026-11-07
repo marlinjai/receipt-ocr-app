@@ -335,6 +335,14 @@ describe('Bewirtung: the meal register keeps its receipts', () => {
     expect(await assignmentOf(meal)).toBe('Geschäftlich');
   });
 
+  it("the reader's answer on a meal is keyed too, and the meal is still never decided", async () => {
+    const meal = await ws.addReceipt({ Name: 'Testlokal', Vendor: 'Testlokal', Gross: 80, Date: '2026-10-09', Category: 'Bewirtung', Currency: 'EUR', 'FX Rate': 1, Zuordnung: 'Geschäftlich' });
+    await recordReaderAssignment(db, ctx, meal, { assignment: 'Geschäftlich', model: 'test/reader' });
+    await run();
+    expect((await decisionOf(meal))!.fingerprint).not.toBe(READER_PENDING);
+    expect(decide).not.toHaveBeenCalled();
+  });
+
   it('an unmarked meal is never decided, so no automatic "Privat" takes it out of the list', async () => {
     const meal = await ws.addReceipt({ Name: 'Testlokal', Vendor: 'Testlokal', Gross: 80, Date: '2026-10-09', Category: 'Bewirtung', Currency: 'EUR', 'FX Rate': 1 });
     await run();

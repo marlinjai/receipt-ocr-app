@@ -250,17 +250,20 @@
   payments), the matcher takes invoice numbers only as whole figures (#120), overdue invoices are
   an open check (#114), invoices with more than one rate are reported per rate (#117), and the
   receipts side of the Books mirror is built (migration `0047`, `applyBooksDocuments`: attach by
-  number, credit notes, corrections, read-only in "Einnahmen"). Open: the call that fetches the
-  issued documents, which waits for framer-clone's read-only machine endpoint (its roadmap line
-  "4. Existing invoices and the suite"), and its schedule; reading electronic invoices is another
-  lane (#149). Plan:
-  [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-11-05)
+  number, credit notes, corrections, read-only in "Einnahmen"), and the pull is built (2026-11-08):
+  `pullBooksMirror` fetches the issued documents from framer-clone's read-only machine endpoint
+  with a company API key, by the hour (`/api/internal/books-pull`) or the button "Aus den Books
+  abholen", and the "Einnahmen" tab shows every pull's outcome and conflicts (migration `0050`,
+  [docs/operations/books-mirror.md](docs/operations/books-mirror.md)). Open: in production, the
+  key (`BOOKS_PULL_KEY`), the first pull by hand and the hourly Coolify task, the steps in that
+  page; reading electronic invoices is another lane (#149). Plan:
+  [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-11-08)
 - [ ] Corrected invoices in the income mirror: built on the receipts side (decision D10 of the
   invoicing plan): a replacement invoice from framer-clone's Books (`replaces_document_id`,
   framer-clone #125, migration 011) takes over the bank links and typed-in payments of the
-  invoice it replaces, once, and the credit note cancels the old invoice on its own day. Open:
-  it runs once the mirror's pull exists (framer-clone's read-only machine endpoint, see the line
-  above). (2026-11-05)
+  invoice it replaces, once, and the credit note cancels the old invoice on its own day. The pull
+  that carries them is built (line above); open: its first production run, with the line above.
+  (2026-11-08)
 - [x] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
   (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax
   return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent
@@ -288,14 +291,14 @@
 - [ ] Finance and tax dashboard, stage 2 (scenario engine): "what if I buy X on date
   Z at share S" and "what if revenue is R", computed by the same tax module as the
   dashboard, saved as inputs and never as results. After stage 1. Plan:
-  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
+  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-11-08)
 - [ ] Finance and tax dashboard, stage 3 (advisory layer): deterministic hints that
   each show inputs, rule, source and euro effect, the legal form comparison (sole
   proprietor against a company with limited liability or a partnership) with a
   hand-off to a tax advisor, and last an optional language model that may only quote
   computed figures. Operator only until a lawyer's opinion on the tax advisory act
   and public bank data access exist. After stage 2. Plan:
-  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
+  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-11-08)
 
 - [x] Two tax rates, two columns, one order. Done 2026-11-05. The printed tax groups the
   receipt's arithmetic confirms are the source of truth, the model's lines the fallback, and both
@@ -606,7 +609,7 @@
   only works on Android (it is the last commit of the second pull request and can
   be reverted on its own); (3) confirm with the tax advisor the amount above which
   the receipt must name the host (set to 250 euros). Plan:
-  `docs/plans/2026-10-06-meal-register-and-phone-capture.md`. (2026-10-07)
+  `docs/plans/2026-10-06-meal-register-and-phone-capture.md`. (2026-11-08)
   - [x] Batch actions on the meals page, asked for after the first real use with 17
     open entries: a checkbox per entry and "select all" in the queue, a batch bar with
     "Keine Bewirtung" (out of queue and register, kept as a receipt, taken back from

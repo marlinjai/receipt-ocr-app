@@ -49,6 +49,10 @@ vi.mock('./income-tax-actions', () => ({
 }));
 // The own names under Einstellungen: never the real actions (they reach the database).
 const ownNameActions = vi.hoisted(() => ({ changeOwnNames: vi.fn(), getOwnNamesView: vi.fn() }));
+vi.mock('./books-actions', () => ({
+  getBooksMirrorView: vi.fn(async () => ({ ok: true, value: { configured: true, last: null } })),
+  pullBooksNow: vi.fn(async () => ({ ok: false, error: 'failed' })),
+}));
 vi.mock('./own-names-actions', () => ownNameActions);
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));

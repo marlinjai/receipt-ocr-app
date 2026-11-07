@@ -10,6 +10,10 @@ import { afterLink, bankView, fullStatement, ownNamesView, sharingView } from '.
 const actions = vi.hoisted(() => ({ confirmPaymentLink: vi.fn(), getStatement: vi.fn(), searchPayments: vi.fn(async () => ({ ok: true, value: { payments: [], total: 0 } })) }));
 vi.mock('./actions', async () => actions);
 vi.mock('./income-tax-actions', () => ({}));
+vi.mock('./books-actions', () => ({
+  getBooksMirrorView: vi.fn(async () => ({ ok: true, value: { configured: true, last: null } })),
+  pullBooksNow: vi.fn(async () => ({ ok: false, error: 'failed' })),
+}));
 vi.mock('./own-names-actions', () => ({}));
 const drawn = vi.hoisted(() => ({ days: [] as string[] }));
 vi.mock('@/lib/meals/messages', async (original) => {

@@ -12,7 +12,8 @@
  * that authenticates by HMAC over the raw body (see src/lib/erasure.ts). The
  * retention purge and the workspace move (src/lib/workspace-move.ts) are machine
  * callers of the same kind, each with its own secret, each refusing without it,
- * and so is the daily bank fetch (/api/internal/bank-sync, BANK_SYNC_SECRET).
+ * and so are the daily bank fetch (/api/internal/bank-sync, BANK_SYNC_SECRET) and
+ * the scheduled pull from the Books (/api/internal/books-pull, BOOKS_PULL_SECRET).
  * /api/banking/callback is where the bank sends the person back: it checks the
  * session itself, so a session that ran out during the bank's sign-in leads to
  * the login and back to the callback instead of a bare 401 (the consent's
@@ -23,6 +24,7 @@ export const PUBLIC_PATHS: readonly string[] = [
   '/api/internal/erasure',
   '/api/internal/retention/purge',
   '/api/internal/bank-sync',
+  '/api/internal/books-pull',
   '/api/banking/callback',
   '/api/internal/workspace-move',
   '/manifest.json',

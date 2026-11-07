@@ -40,7 +40,7 @@ export default function BooksMirrorPanel({ mirror, busy, onPull }: Props) {
       {mirror !== null && !mirror.configured && <p className="ui-note mt-3">{booksPullFailureMessage('not_configured')}</p>}
       {mirror !== null && mirror.configured && last === null && (
         <p className="ui-note mt-3">
-          Noch nicht aus den Books abgeholt. Rechnungen, die in den Books gestellt werden, kommen regelmäßig von selbst hierher.
+          Noch nicht aus den Books abgeholt. Ist diese Firma mit den Books verbunden, kommen ihre dort gestellten Rechnungen jede Stunde von selbst hierher.
         </p>
       )}
 

@@ -15,7 +15,7 @@ import {
 } from '../routing';
 import { notify } from '@/lib/spending/notify/service';
 import { receiptForLink, loadStatement } from '@/lib/tax/service';
-import { LoopServiceError, answerNoReceipt, confirmCandidate, linkReceiptToPayment, loadLoopOverview, runReceiptLoop, searchReceiptChoices, settleAcrossShares, withdrawNoReceipt } from '@/lib/spending/loop-service';
+import { LoopServiceError, answerNoReceipt, confirmCandidate, linkReceiptToPayment, loadLoopOverview, paymentAwaitingReceipt, paymentsAwaitingReceipt, runReceiptLoop, searchReceiptChoices, settleAcrossShares, withdrawNoReceipt } from '@/lib/spending/loop-service';
 import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
 import { loadSpending, setCounterpartyCategory } from '@/lib/spending/service';
 import { loadBudgets } from '@/lib/spending/budget-service';
@@ -304,6 +304,61 @@ describe('backtrack and revise', () => {
     await linkPayment(db, w.hctx, { paymentId: id, rowId }, receiptForLink(db, w.hctx.workspaceId));
     expect(await names(w.rctx.workspaceId)).toEqual(['Privat Laden']);
     expect(await names(w.hctx.workspaceId)).toContain('Teils Markt');
+  });
+
+  it('a receipt uploaded in the holder for an unlinked "Teils, teils" payment is linked to it and brings it back; a private one is refused', async () => {
+    const w = await world();
+    const mixed = w.ids.get('Teils Markt') as string;
+    const privat = w.ids.get('Privat Laden') as string;
+    // The upload page and the search agree: the mixed payment waits for a receipt in the holder, the private one does not.
+    expect(await paymentAwaitingReceipt(db, w.hctx.workspaceId, mixed)).toEqual(expect.objectContaining({ id: mixed, counterparty: 'Teils Markt', amountCents: 3_000 }));
+    expect(await paymentAwaitingReceipt(db, w.hctx.workspaceId, privat)).toBeNull();
+    const all = [...w.ids.values()];
+    expect([...(await paymentsAwaitingReceipt(db, w.hctx.workspaceId, all))].sort()).toEqual([w.ids.get('Firma Software'), mixed, w.ids.get('Unklar Laden')].sort());
+    // Not in the holder's checks: it waits in the receiver as a private payment until a receipt makes it business.
+    expect(await names(w.hctx.workspaceId)).not.toContain('Teils Markt');
+
+    // The upload links it (the same call the upload page makes) and the payment comes back to the holder whole.
+    const rowId = await w.holder.addReceipt({ Name: 'Teils Markt Rechnung', Vendor: 'Teils Markt', Gross: 30, Date: '2026-05-13', Currency: 'EUR', 'FX Rate': 1 });
+    await linkReceiptToPayment(db, w.hctx, mixed, rowId);
+    expect(await names(w.rctx.workspaceId)).toEqual(['Privat Laden']);
+    expect(await names(w.hctx.workspaceId)).toContain('Teils Markt');
+    expect(await stateOf(w.hctx.workspaceId, mixed)).toBe('settled_or_not_needed');
+    // Re-entry: it waits for nothing any more, and the same receipt sent again is linked already.
+    expect(await paymentAwaitingReceipt(db, w.hctx.workspaceId, mixed)).toBeNull();
+    await linkReceiptToPayment(db, w.hctx, mixed, rowId);
+    expect(await db.taxPaymentLink.count({ where: { paymentId: mixed } })).toBe(1);
+
+    // A counterparty answered private stays private: the holder cannot take it back by an upload.
+    const other = await w.holder.addReceipt({ Name: 'Laden', Vendor: 'Privat Laden', Gross: 20, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });
+    expect(await code(linkReceiptToPayment(db, w.hctx, privat, other))).toBe('payment_not_found');
+    expect(await db.taxPaymentLink.count({ where: { paymentId: privat } })).toBe(0);
+  });
+
+  it('an upload for a payment a whole private account sent over is linked too; one re-labelled private is not', async () => {
+    const w = await world();
+    const unklar = w.ids.get('Unklar Laden') as string;
+    await setPaymentKind(db, w.hctx, unklar, 'private');
+    expect(await paymentAwaitingReceipt(db, w.hctx.workspaceId, unklar)).toBeNull();
+    await setPaymentKind(db, w.hctx, unklar, null);
+    await setAccountPrivate(db, w.hctx, w.accountId, true);
+    expect(await names(w.rctx.workspaceId)).toContain('Unklar Laden');
+    expect(await paymentAwaitingReceipt(db, w.hctx.workspaceId, unklar)).toEqual(expect.objectContaining({ id: unklar }));
+    const rowId = await w.holder.addReceipt({ Name: 'Kabel', Vendor: 'Unklar Laden', Gross: 10, Date: '2026-05-12', Currency: 'EUR', 'FX Rate': 1 });
+    await linkReceiptToPayment(db, w.hctx, unklar, rowId);
+    expect(await names(w.rctx.workspaceId)).not.toContain('Unklar Laden');
+  });
+
+  it('"no receipt exists" said in the holder before the payment went over keeps the upload from linking it', async () => {
+    const w = await world();
+    const mixed = w.ids.get('Teils Markt') as string;
+    await setCounterpartyTreatment(db, w.hctx, { counterparty: 'Teils Markt', treatment: 'business' });
+    await answerNoReceipt(db, w.hctx, mixed, 'Barzahlung ohne Beleg');
+    await setCounterpartyTreatment(db, w.hctx, { counterparty: 'Teils Markt', treatment: 'mixed' });
+    expect(await paymentAwaitingReceipt(db, w.hctx.workspaceId, mixed)).toBeNull();
+    expect(await paymentsAwaitingReceipt(db, w.hctx.workspaceId, [mixed])).toEqual(new Set());
+    const rowId = await w.holder.addReceipt({ Name: 'Teils Markt Rechnung', Vendor: 'Teils Markt', Gross: 30, Date: '2026-05-13', Currency: 'EUR', 'FX Rate': 1 });
+    expect(await code(linkReceiptToPayment(db, w.hctx, mixed, rowId))).toBe('payment_not_open');
   });
 
   it('one payment re-labelled private goes over; a whole private account sends what is not business', async () => {

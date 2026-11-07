@@ -4,15 +4,14 @@ import Link from 'next/link';
 import { receiptHref } from '@/lib/receipt-link';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { formatDay } from '@/lib/meals/messages';
-import { RECEIPTS_ASKED_FROM } from '@/lib/spending/loop';
 import { uploadForHref } from '@/lib/spending/paths';
 import type { MatchStrength } from '@/lib/tax/payments/match';
-import type { AccountKind, CounterpartyTreatment, FoundPayment, ImportResult } from '@/lib/tax/payments/service';
+import type { AccountKind, CounterpartyTreatment, ImportResult } from '@/lib/tax/payments/service';
 import type { RefundStrength } from '@/lib/tax/payments/refunds';
 import { PAYMENT_FORMAT_LABELS } from '@/lib/tax/payments/types';
 import type { OpenPayment, StatementView } from '@/lib/tax/service';
 import { PAY_LATER_TERM_DAYS } from '@/lib/tax/payments/pay-later';
-import type { Result } from './actions';
+import type { Result, SearchedPayment } from './actions';
 import { euro, foreignNote, parseEuro } from './amounts';
 import { BankAccountStatus, type BankActions, type BankFeed } from './BankConnection';
 
@@ -53,7 +52,7 @@ interface Props {
   /** Remove an account that holds nothing (no payments, imports or live connection). */
   onRemoveAccount?: (account: { id: string; label: string }) => void;
   /** Find payments of the year that still have something to link, whatever was answered about them. Read only. */
-  onSearch: (query: PaymentQuery) => Promise<Result<{ payments: FoundPayment[]; total: number }>>;
+  onSearch: (query: PaymentQuery) => Promise<Result<{ payments: SearchedPayment[]; total: number }>>;
   /** The live bank connection per account; absent where the screen is shown without it. */
   bank?: { feed: BankFeed; actions: BankActions; returnNotice: { text: string; ok: boolean } | null } | null;
   /** The section for sharing an account's private payments with another company, shown below the accounts. */
@@ -68,10 +67,10 @@ interface Props {
    */
   parts?: ReadonlyArray<PaymentsPart>;
   /**
-   * The company this statement is of. With it, an outgoing payment still
-   * waiting for its receipt offers "Beleg hochladen": the upload page, opened
-   * for that payment in this company, saves the receipt and links it. Absent:
-   * only "Beleg wählen".
+   * The company this statement is of. With it, a found payment the upload
+   * page links a receipt to (`awaitsReceipt`) offers "Beleg hochladen": that
+   * page, opened for the payment in this company, saves the receipt and links
+   * it. Absent: only "Beleg wählen".
    */
   workspaceId?: string;
 }
@@ -964,27 +963,7 @@ function PaymentSearch({
   );
 }
 
-type Found = { payments: FoundPayment[]; total: number };
-
-/**
- * Whether a found payment can take a receipt uploaded for it: the upload page
- * links its receipt only to money out still waiting for one (see
- * `paymentAwaitingReceipt`). So not money in, not a payment on a receipt or an
- * invoice already (a partly linked one has its receipt), not a transfer between
- * own accounts, not one booked before receipts are asked for. What the client
- * cannot see (a counterparty answered as an own account, "there is no
- * receipt") the upload page itself says, before anything is uploaded.
- */
-function awaitsUpload(payment: Pick<FoundPayment, 'amountCents' | 'target' | 'linkedTo' | 'kind' | 'bookingDay'>): boolean {
-  return (
-    payment.amountCents < 0 &&
-    payment.target === 'receipt' &&
-    payment.linkedTo === null &&
-    payment.kind !== 'own_transfer' &&
-    payment.kind !== 'fee' &&
-    payment.bookingDay >= RECEIPTS_ASKED_FROM
-  );
-}
+type Found = { payments: SearchedPayment[]; total: number };
 
 /**
  * The payments of a search, each with a picker for linking by hand. Searched
@@ -1108,7 +1087,8 @@ function PaymentFinder({
                   >
                     {payment.target === 'invoice' ? 'Rechnung wählen' : 'Beleg wählen'}
                   </button>
-                  {workspaceId && awaitsUpload(payment) && (
+                  {/* Only where the upload page links the receipt: its own check, done by the search (`awaitsReceipt`). */}
+                  {workspaceId && payment.awaitsReceipt && (
                     <Link href={uploadForHref(payment.id, workspaceId)} className="ui-btn ui-btn-sm" aria-label={`Beleg hochladen für ${what}`}>
                       Beleg hochladen
                     </Link>

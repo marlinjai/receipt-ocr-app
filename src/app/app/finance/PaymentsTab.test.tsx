@@ -3,7 +3,7 @@ import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { setupUser } from '../../../../test/user';
-import type { FoundPayment } from '@/lib/tax/payments/service';
+import type { SearchedPayment } from './actions';
 import type { OpenPayment, PaymentsView, StatementView } from '@/lib/tax/service';
 import PaymentsTab from './PaymentsTab';
 
@@ -55,7 +55,7 @@ const props = () => ({
   onSearch: vi.fn<ComponentProps<typeof PaymentsTab>['onSearch']>(async () => ({ ok: true, value: { payments: [], total: 0 } })),
 });
 
-const found = (o: Partial<FoundPayment> = {}): FoundPayment => ({
+const found = (o: Partial<SearchedPayment> = {}): SearchedPayment => ({
   id: 'f-1',
   bookingDay: '2026-02-03',
   amountCents: -4_999,
@@ -66,6 +66,7 @@ const found = (o: Partial<FoundPayment> = {}): FoundPayment => ({
   accountLabel: 'Geschäftskonto',
   target: 'receipt',
   linkedTo: null,
+  awaitsReceipt: true,
   ...o,
 });
 
@@ -662,37 +663,35 @@ describe('PaymentsTab', () => {
     await user.click(choosers[1]);
     expect(screen.getByLabelText('Rechnung von Hand wählen')).toBeTruthy();
   });
-  it('money out still waiting for its receipt offers an upload for it, in the statement\'s company; anything else only the picker', async () => {
+  it('offers an upload exactly where the upload page links the receipt (the server\'s answer), in the statement\'s company', async () => {
     const user = setupUser();
     const p = props();
-    const unclassified = [{ key: 'versand beispiel', label: 'Versand Beispiel', count: 7, outCents: 9_998, inCents: 0, proposal: null }];
+    const unclassified = [{ key: 'ebay', label: 'eBay S.a.r.l.', count: 4, outCents: 9_998, inCents: 0, proposal: null }];
     p.onSearch.mockResolvedValueOnce({
       ok: true,
       value: {
         payments: [
-          found(),
-          // Partly on a receipt already: that receipt is its receipt, an upload could not be linked.
-          found({ id: 'f-part', bookingDay: '2026-02-04', freeCents: 1_000, linkedTo: 'receipt' }),
-          found({ id: 'f-in', bookingDay: '2026-02-05', amountCents: 2_000, freeCents: 2_000, kind: 'income', target: 'invoice' }),
-          found({ id: 'f-back', bookingDay: '2026-02-06', amountCents: 1_500, freeCents: 1_500, kind: 'refund', target: 'receipt' }),
-          found({ id: 'f-own', bookingDay: '2026-02-07', kind: 'own_transfer' }),
-          found({ id: 'f-old', bookingDay: '2024-12-30' }),
+          // Money out of a "Teils, teils" counterparty on a shared account, nothing linked: the upload brings it back as business.
+          found({ counterparty: 'eBay S.a.r.l.', amountCents: -862, freeCents: 862, kind: 'private' }),
+          // The page would not link these (already has its receipt, money in, "no receipt" answered): no button.
+          found({ id: 'f-part', bookingDay: '2026-02-04', freeCents: 1_000, linkedTo: 'receipt', awaitsReceipt: false }),
+          found({ id: 'f-in', bookingDay: '2026-02-05', amountCents: 2_000, freeCents: 2_000, kind: 'income', target: 'invoice', awaitsReceipt: false }),
           found({ id: 'f-a&b', bookingDay: '2026-02-08', counterparty: '' }),
         ],
-        total: 7,
+        total: 4,
       },
     });
     render(<PaymentsTab view={view({ unclassified })} {...p} workspaceId="w 1" />);
     await user.click(screen.getByRole('button', { name: 'Zahlungen ansehen' }));
     const list = within(await screen.findByRole('list', { name: 'Gefundene Zahlungen' }));
     const uploads = list.getAllByRole('link', { name: /^Beleg hochladen für/ });
-    expect(uploads.map((a) => a.getAttribute('aria-label'))).toEqual(['Beleg hochladen für 03.02.2026 Versand Beispiel 49,99 €', 'Beleg hochladen für 08.02.2026 ohne Namen 49,99 €']);
+    expect(uploads.map((a) => a.getAttribute('aria-label'))).toEqual(['Beleg hochladen für 03.02.2026 eBay S.a.r.l. 8,62 €', 'Beleg hochladen für 08.02.2026 ohne Namen 49,99 €']);
     expect(uploads.map((a) => a.textContent)).toEqual(['Beleg hochladen', 'Beleg hochladen']);
     // The upload page for that payment, in the company the statement is of, the ids encoded.
     expect(uploads[0].getAttribute('href')).toBe('/app?fuer=f-1&firma=w+1');
     expect(uploads[1].getAttribute('href')).toBe('/app?fuer=f-a%26b&firma=w+1');
     // Every payment keeps its picker.
-    expect(list.getAllByRole('button', { name: /^(Beleg|Rechnung) wählen für/ })).toHaveLength(7);
+    expect(list.getAllByRole('button', { name: /^(Beleg|Rechnung) wählen für/ })).toHaveLength(4);
   });
 
   it('the payment search offers the upload too; without the company no upload is offered', async () => {

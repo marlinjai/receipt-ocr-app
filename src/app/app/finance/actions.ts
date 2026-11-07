@@ -11,6 +11,7 @@ import { classifyCounterparties } from '@/lib/tax/payments/classify-service';
 import { serverCounterpartyClassifier } from '@/lib/tax/payments/counterparty-classifier';
 import { settleMovedPaymentsLater } from '@/lib/spending/settle-later';
 import { berlinToday } from '@/lib/spending/period';
+import { paymentsAwaitingReceipt } from '@/lib/spending/loop-service';
 import {
   PaymentServiceError,
   createAccount,
@@ -426,15 +427,25 @@ export async function markAccountPrivate(year: number, accountId: string, isPriv
 }
 
 /**
+ * A payment found by the search, and whether a receipt uploaded for it is
+ * linked to it (`paymentsAwaitingReceipt`, the upload page's own check).
+ */
+export type SearchedPayment = FoundPayment & { awaitsReceipt: boolean };
+
+/**
  * Find payments of the year that still have something to link, by
  * counterparty or by text, whatever was answered about them. Read only: the
  * link itself goes through `confirmPaymentLink`.
  */
-export async function searchPayments(year: number, query: unknown): Promise<Result<{ payments: FoundPayment[]; total: number }>> {
+export async function searchPayments(year: number, query: unknown): Promise<Result<{ payments: SearchedPayment[]; total: number }>> {
   try {
     const session = await requireReceiptsSession();
+    const workspaceId = sessionWorkspaceId(session);
     const q = (query ?? {}) as { counterpartyKey?: unknown; text?: unknown };
-    return { ok: true, value: await findPayments(prisma, sessionWorkspaceId(session), { year: safeYear(year), counterpartyKey: q.counterpartyKey, text: q.text }) };
+    const found = await findPayments(prisma, workspaceId, { year: safeYear(year), counterpartyKey: q.counterpartyKey, text: q.text });
+    // The upload page's own rule, so "Beleg hochladen" is offered exactly where that page links the receipt.
+    const awaiting = await paymentsAwaitingReceipt(prisma, workspaceId, found.payments.map((p) => p.id));
+    return { ok: true, value: { total: found.total, payments: found.payments.map((p) => ({ ...p, awaitsReceipt: awaiting.has(p.id) })) } };
   } catch (e) {
     return failure(e);
   }

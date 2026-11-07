@@ -6,10 +6,10 @@ import type { MealRecord } from '@/lib/meals/types';
 import { vendorKey } from '@/lib/tax/decisions';
 import { eurosToCents, formatCents } from '@/lib/tax/money';
 import { linkPayment, linkProposals, paidByReceipt, type PaymentRow } from '@/lib/tax/payments/service';
-import { linkRoutedPayment, loadRoutedPayments, paymentOnSpendingSide, receiversOf, type RoutedPaymentRow } from '@/lib/tax/payments/routing';
+import { linkRoutedPayment, loadRoutedPayments, paymentOnSpendingSide, receiversOf, routingTreatments, type RoutedPaymentRow } from '@/lib/tax/payments/routing';
 import { timed } from '@/lib/timing';
 import { receiptForLink } from '@/lib/tax/service';
-import { categorise } from './rules';
+import { categorise, purposeOf } from './rules';
 import { categoryAnswerMap, spendingTreatments } from './service';
 import { PRIVATE_NO_RECEIPT, backlogAnswer, certainPairs, closestPairs, loopState, sameAmountPairs, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
 import { notify, retryFailedDeliveries, serverChannels, settleAllBut, settleNotifications, type NotifyContext } from './notify/service';
@@ -115,6 +115,14 @@ interface LoopRead {
   payments: RoutedPaymentRow[];
   /** This company's own payments routed to another company, with the "no receipt" answer it gave before, if any. */
   routedAwayAnswered: Array<{ payment: PaymentRow; reason: string }>;
+  /**
+   * This company's own money out routed to another company only because nothing
+   * of it is linked yet (a counterparty a person answered "Teils, teils", an
+   * account said to be private as a whole): a receipt linked here makes it
+   * business and brings it back (`purposeOf`). Not in the checks, but a receipt
+   * uploaded or chosen for one of them is linked (`linkTarget`).
+   */
+  reclaimable: RoutedPaymentRow[];
   /** This company's receipts as the loop sees them. */
   receipts: LoopReceipt[];
   /** This company's own payments (not those routed here) and its links on other companies' payments: what `paidByReceipt` reads. */
@@ -170,7 +178,52 @@ async function readLoop(db: PrismaClient, workspaceId: string): Promise<LoopRead
   };
   const ownReasons = new Map(noReceipt.map((a) => [a.paymentId, a.reason]));
   const routedAwayAnswered = loaded.routedAway.flatMap((p) => (ownReasons.has(p.id) ? [{ payment: p, reason: ownReasons.get(p.id) as string }] : []));
-  return { payments: loaded.payments, aliases, byName, treatments, categoryAnswers: ctx.categoryAnswers, routedAwayAnswered, receipts, ownPayments: loaded.payments.filter((p) => p.routedFrom === null), linkedElsewhere: loaded.linkedElsewhere, context: ctx };
+  return { payments: loaded.payments, aliases, byName, treatments, categoryAnswers: ctx.categoryAnswers, routedAwayAnswered, reclaimable: reclaimable(loaded), receipts, ownPayments: loaded.payments.filter((p) => p.routedFrom === null), linkedElsewhere: loaded.linkedElsewhere, context: ctx };
+}
+
+/**
+ * Own payments routed away that one link here would bring back: money out with
+ * nothing linked, private only because of a "Teils, teils" a person gave its
+ * counterparty or because its account is private as a whole. A counterparty
+ * answered private, or a payment re-labelled private, stays with the receiver.
+ */
+function reclaimable(loaded: Pick<Awaited<ReturnType<typeof loadRoutedPayments>>, 'routedAway' | 'treatments' | 'treatmentSources'>): RoutedPaymentRow[] {
+  const routing = routingTreatments(loaded);
+  return loaded.routedAway
+    .filter((p) => {
+      if (p.amountCents >= 0 || p.links.length > 0 || p.kind === 'own_transfer') return false;
+      const treatment = p.counterpartyKey ? routing.get(p.counterpartyKey) : undefined;
+      return purposeOf({ kind: p.kind, linkCount: 1, byPrivateAccount: p.byPrivateAccount }, treatment) === 'business';
+    })
+    .map((p) => ({ ...p, routedFrom: null }));
+}
+
+/**
+ * The payment a receipt chosen for it (an upload, a mail taken over) is linked
+ * to: one on this company's spending side, or one of its own that a link here
+ * brings back (`reclaimable`). Its state decides whether it still waits.
+ */
+function linkTarget(read: LoopRead, paymentId: string): { payment: RoutedPaymentRow; state: LoopState } | null {
+  const found = onePayment(read, paymentId);
+  if (found) return found;
+  const payment = read.reclaimable.find((p) => p.id === paymentId);
+  return payment ? { payment, state: stateOf(payment, read.context) } : null;
+}
+
+const awaits = (state: LoopState) => state.state === 'missing' || state.state === 'in_mailbox' || state.state === 'proposed';
+
+/**
+ * Which of these payments a receipt uploaded for it would be linked to right
+ * now: the same rule as `paymentAwaitingReceipt`, so a screen offers an upload
+ * only where the upload page takes it. Read only.
+ */
+export async function paymentsAwaitingReceipt(db: PrismaClient, workspaceId: string, paymentIds: readonly string[]): Promise<Set<string>> {
+  if (paymentIds.length === 0) return new Set();
+  const read = await readLoop(db, workspaceId);
+  return new Set(paymentIds.filter((id) => {
+    const found = linkTarget(read, id);
+    return found !== null && awaits(found.state);
+  }));
 }
 
 const stateOf = (p: RoutedPaymentRow, ctx: LoopContext) => loopState({ ...p, linkCount: p.links.length }, ctx);
@@ -622,10 +675,10 @@ export interface PaymentAwaitingReceipt {
  * company's spending side or no longer waits for a receipt. Read only.
  */
 export async function paymentAwaitingReceipt(db: PrismaClient, workspaceId: string, paymentId: string): Promise<PaymentAwaitingReceipt | null> {
-  const found = onePayment(await readLoop(db, workspaceId), paymentId);
+  const found = linkTarget(await readLoop(db, workspaceId), paymentId);
   if (!found) return null;
   const { state, payment } = found;
-  if (state.state !== 'missing' && state.state !== 'in_mailbox' && state.state !== 'proposed') return null;
+  if (!awaits(state)) return null;
   return { id: payment.id, counterparty: payment.counterparty, bookingDay: payment.bookingDay, amountCents: Math.abs(payment.amountCents), estimated: payment.estimated };
 }
 
@@ -636,7 +689,7 @@ export async function paymentAwaitingReceipt(db: PrismaClient, workspaceId: stri
  * for its receipt.
  */
 export async function linkReceiptToPayment(db: PrismaClient, ctx: NotifyContext, paymentId: string, rowId: string, options: { byHand?: boolean } = {}): Promise<void> {
-  const found = onePayment(await readLoop(db, ctx.workspaceId), paymentId);
+  const found = linkTarget(await readLoop(db, ctx.workspaceId), paymentId);
   if (!found) throw new LoopServiceError('payment_not_found');
   const { state, payment } = found;
   // The same receipt again (a mail taken over twice) is nothing to do; any other receipt for a payment that got one
@@ -645,7 +698,7 @@ export async function linkReceiptToPayment(db: PrismaClient, ctx: NotifyContext,
     if (!options.byHand && payment.links.some((l) => l.rowId === rowId)) return;
     throw new LoopServiceError('already_has_receipt');
   }
-  if (state.state !== 'missing' && state.state !== 'in_mailbox' && state.state !== 'proposed') throw new LoopServiceError('payment_not_open');
+  if (!awaits(state)) throw new LoopServiceError('payment_not_open');
   await linkOnSpendingSide(db, ctx, payment, rowId);
   await settleNotifications(db, ctx.workspaceId, [missingReceiptSubject(paymentId), mailFoundSubject(paymentId)]);
 }

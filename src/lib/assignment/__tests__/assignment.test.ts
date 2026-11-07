@@ -56,7 +56,7 @@ describe('the prompt', () => {
   });
   it('carries no long dash', () => {
     const all = assignmentPrompt(OPTIONS) + assignmentUserText(receipt(), { statements: [], vendorHistory: null, similar: [], corrections: [] }) + OWNER_STATEMENTS.map((s) => s.text).join('');
-    expect(all).not.toMatch(/[–—]/);
+    expect(all).not.toMatch(/[\u2013\u2014]/);
   });
 });
 

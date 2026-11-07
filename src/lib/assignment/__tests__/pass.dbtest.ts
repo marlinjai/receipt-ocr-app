@@ -349,7 +349,7 @@ describe('a deleted receipt takes its decision with it', () => {
     decide.mockResolvedValueOnce(answer('Privat', 0.99));
     await run();
     expect(await decisionOf(open)).not.toBeNull();
-    await deleteReceiptRows(db, ctx, [open]);
+    await deleteReceiptRows(db, ctx, [open], { deleteStoredFile: async () => {} });
     expect(await decisionOf(open)).toBeNull();
   });
 });

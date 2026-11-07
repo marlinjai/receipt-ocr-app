@@ -9,11 +9,12 @@ import { SharedContactStore } from '@/lib/contacts/shared-store';
 import { MissingTenantError } from '@/lib/auth-workspace';
 import type { ContactStore } from '@/lib/contacts/store';
 import {
+  BUSINESS_ZUORDNUNG,
   MEAL_COLUMNS,
   consumptionLabel,
   mealTypeLabel,
+  type MealTypeKey,
 } from '@/lib/receipts-constants';
-import { BUSINESS_ZUORDNUNG, type MealTypeKey } from '@/lib/receipts-constants';
 import type { MealBatchResult, MealBatchSkip } from './batch';
 import { inputFromRecord, normalizeMealInput, sameMealInput, type MealDetailsInput } from './input';
 import { rowToMealRecord, type SelectOptionsByColumn } from './record';
@@ -542,6 +543,8 @@ export async function deleteReceiptRows(
       await db.receiptMerge.deleteMany({ where: { rowId } });
       // What the look-alike pass decided about its pairs: the pair is gone with the receipt.
       await db.receiptPairDecision.deleteMany({ where: { OR: [{ rowIdA: rowId }, { rowIdB: rowId }] } });
+      // What the assignment model decided about it (plan 2026-11-07-learned-assignment) goes with it too.
+      await db.receiptAssignmentDecision.deleteMany({ where: { rowId } });
       // A credit note's reference to its invoice goes with it; one pointing at this row forgets the row, keeps the number.
       await db.receiptReference.deleteMany({ where: { rowId } });
       await db.receiptReference.updateMany({ where: { referencedRowId: rowId }, data: { referencedRowId: null } });

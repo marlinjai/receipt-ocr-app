@@ -18,7 +18,7 @@ vi.mock('@/lib/auth', () => ({
   },
 }));
 
-import { getRow, setFieldOnRows } from './actions';
+import { getRow, setFieldOnRows, updateRow } from './actions';
 import { createGroup } from '@/lib/groups/service';
 import { BULK_SET_PART } from './bulk-set';
 import { loadStatement, saveItemDecision } from '@/lib/tax/service';
@@ -248,5 +248,25 @@ describe('"Set field" on a selection', () => {
     const [id] = await receipts(1, 'noaccess');
     session.current = { memberships: [{ id: 'another-ws', tenantId: 't' }], activeWorkspace: { id: 'another-ws' } };
     await expect(setFieldOnRows([id], assignmentId, business)).rejects.toThrow();
+  });
+});
+
+describe('a person\'s assignment answer reaches the assignment model (plan 2026-11-07-learned-assignment)', () => {
+  const automatic = async (rowId: string, assignment: string, outcome = 'set') =>
+    db.receiptAssignmentDecision.create({ data: { rowId, authWorkspaceId: ws.workspaceId, authTenantId: ws.tenantId, fingerprint: 'f', outcome, assignment, confidence: 0.95, reason: 'r', model: 'm' } });
+
+  it('a cell edit over an automatic answer is recorded as a correction', async () => {
+    const [id] = await receipts(1, 'corrected');
+    await automatic(id, 'Privat');
+    await updateRow(id, { [assignmentId]: business });
+    expect(await db.receiptAssignmentDecision.findUnique({ where: { rowId: id } })).toMatchObject({ answeredAs: 'Geschäftlich' });
+  });
+
+  it('"Set field" over suggestions records the answer for every row it set', async () => {
+    const ids = await receipts(2, 'suggested');
+    for (const id of ids) await automatic(id, 'Geschäftlich', 'suggested');
+    let pending = ids;
+    for (let round = 0; pending.length > 0 && round < 5; round++) pending = (await setFieldOnRows(pending, assignmentId, personal)).left ?? [];
+    for (const id of ids) expect(await db.receiptAssignmentDecision.findUnique({ where: { rowId: id } })).toMatchObject({ answeredAs: 'Privat' });
   });
 });

@@ -574,6 +574,8 @@ describe('classification rules of the company apply when a receipt is read', () 
     expect(await cellOf(fresh, result.rowId, 'Category')).toBe('Sonstige Ausgaben');
     expect(await cellOf(fresh, result.rowId, 'Konto')).toBe('4900');
     expect(result).toMatchObject({ category: 'Sonstige Ausgaben', isMeal: false });
+    // A rule's answer is no automatic one of the model (plan 2026-11-07-learned-assignment).
+    expect(await db.receiptAssignmentDecision.findUnique({ where: { rowId: result.rowId } })).toBeNull();
   });
 
   it('a rule of another company does not apply (company isolation)', async () => {
@@ -592,6 +594,8 @@ describe('classification rules of the company apply when a receipt is read', () 
     const result = await upload(file(72), ocr('Anthropic, PBC\nClaude Pro\nTotal 18,00\n03.03.2026'));
     expect(await cellOf(fresh, result.rowId, 'Zuordnung')).toBe('Geschäftlich');
     expect(await cellOf(fresh, result.rowId, 'Business Share %')).toBe(100);
+    // What the reader took from the document is recorded as automatic, so it never counts as the person's answer.
+    expect(await db.receiptAssignmentDecision.findUnique({ where: { rowId: result.rowId } })).toMatchObject({ outcome: 'set', assignment: 'Geschäftlich', fingerprint: 'reader-pending', answeredAt: null });
   });
 });
 
@@ -607,6 +611,9 @@ describe('retakeReceipt: what a person decided stays', () => {
     await retakeReceipt(first.rowId, file(51), ocr(CAFE), {});
     expect(await cellOf(ws, first.rowId, 'Zuordnung')).toBe('Privat');
     expect(await cellOf(ws, first.rowId, 'Business Share %')).toBe(40);
+    // The reader's answer of the first upload stays on record as what it was; the cell differs from it, so the
+    // cell is the person's answer, and the retake recorded no new automatic one over it.
+    expect(await db.receiptAssignmentDecision.findUnique({ where: { rowId: first.rowId } })).toMatchObject({ outcome: 'set', assignment: 'Geschäftlich' });
   });
 
   it('an assignment nobody gave is filled by the retake, and the share stays the full one', async () => {
@@ -617,6 +624,7 @@ describe('retakeReceipt: what a person decided stays', () => {
     await retakeReceipt(first.rowId, file(53), ocr(CAFE), {});
     expect(await cellOf(ws, first.rowId, 'Zuordnung')).toBe('Geschäftlich');
     expect(await cellOf(ws, first.rowId, 'Business Share %')).toBe(100);
+    expect(await db.receiptAssignmentDecision.findUnique({ where: { rowId: first.rowId } })).toMatchObject({ outcome: 'set', assignment: 'Geschäftlich' });
   });
 });
 

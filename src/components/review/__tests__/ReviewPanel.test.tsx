@@ -100,6 +100,24 @@ describe('ReviewPanel', () => {
     expect(screen.getByRole('button', { name: 'Beleg öffnen' }).className).toContain('ui-btn-primary');
   });
 
+  it("the model's suggestion is marked on its button, with its reason; the choice stays the person's", async () => {
+    const handlers = setup([entry({ reasons: ['assignment_missing'], canConfirm: false, assignmentSuggestion: { assignment: 'Privat', confidence: 0.7, reason: 'Drogerie: bisher privat.' } })]);
+    await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));
+    const choices = screen.getByRole('group', { name: 'Zuordnung für Grillhaus Beispiel' });
+    const marked = within(choices).getByRole('button', { name: 'Privat (Vorschlag)' });
+    expect(marked.className).toContain('ui-btn-primary');
+    expect(within(choices).getByRole('button', { name: 'Geschäftlich' }).className).not.toContain('ui-btn-primary');
+    expect(document.getElementById(marked.getAttribute('aria-describedby')!)?.textContent).toBe('Vorschlag: Privat. Drogerie: bisher privat.');
+    await userEvent.click(within(choices).getByRole('button', { name: 'Geschäftlich' }));
+    expect(handlers.onSetAssignment).toHaveBeenCalledWith('r1', 'opt-business');
+  });
+
+  it('without a suggestion no button is marked and no reason shows', async () => {
+    setup([entry({ reasons: ['assignment_missing'], canConfirm: false })]);
+    await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));
+    expect(screen.queryByText(/Vorschlag/)).toBeNull();
+  });
+
   it('the Zuordnung buttons wait while an action runs', async () => {
     setup([entry({ reasons: ['assignment_missing'], canConfirm: false })], { busy: true });
     await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));

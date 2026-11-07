@@ -250,17 +250,20 @@
   payments), the matcher takes invoice numbers only as whole figures (#120), overdue invoices are
   an open check (#114), invoices with more than one rate are reported per rate (#117), and the
   receipts side of the Books mirror is built (migration `0047`, `applyBooksDocuments`: attach by
-  number, credit notes, corrections, read-only in "Einnahmen"). Open: the call that fetches the
-  issued documents, which waits for framer-clone's read-only machine endpoint (its roadmap line
-  "4. Existing invoices and the suite"), and its schedule; reading electronic invoices is another
-  lane (#149). Plan:
-  [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-11-05)
+  number, credit notes, corrections, read-only in "Einnahmen"), and the pull is built (2026-11-08):
+  `pullBooksMirror` fetches the issued documents from framer-clone's read-only machine endpoint
+  with a company API key, by the hour (`/api/internal/books-pull`) or the button "Aus den Books
+  abholen", and the "Einnahmen" tab shows every pull's outcome and conflicts (migration `0050`,
+  [docs/operations/books-mirror.md](docs/operations/books-mirror.md)). Open: in production, the
+  key (`BOOKS_PULL_KEY`), the first pull by hand and the hourly Coolify task, the steps in that
+  page; reading electronic invoices is another lane (#149). Plan:
+  [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-11-08)
 - [ ] Corrected invoices in the income mirror: built on the receipts side (decision D10 of the
   invoicing plan): a replacement invoice from framer-clone's Books (`replaces_document_id`,
   framer-clone #125, migration 011) takes over the bank links and typed-in payments of the
-  invoice it replaces, once, and the credit note cancels the old invoice on its own day. Open:
-  it runs once the mirror's pull exists (framer-clone's read-only machine endpoint, see the line
-  above). (2026-11-05)
+  invoice it replaces, once, and the credit note cancels the old invoice on its own day. The pull
+  that carries them is built (line above); open: its first production run, with the line above.
+  (2026-11-08)
 - [x] Issued invoices with more than one tax rate. An issued invoice carries one tax treatment
   (standard or reduced rate). Its stored tax amount is right, but the advance value-added tax
   return would report the whole turnover under that one rate, so an invoice with 7 and 19 percent

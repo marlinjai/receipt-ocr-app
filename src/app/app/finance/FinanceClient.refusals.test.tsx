@@ -17,6 +17,10 @@ import type { Result } from './actions';
 const actions = vi.hoisted(() => ({ confirmPaymentLink: vi.fn(), getStatement: vi.fn(), searchPayments: vi.fn(async () => ({ ok: true, value: { payments: [], total: 0 } })) }));
 vi.mock('./actions', async () => actions);
 vi.mock('./income-tax-actions', () => ({}));
+vi.mock('./books-actions', () => ({
+  getBooksMirrorView: vi.fn(async () => ({ ok: true, value: { configured: true, last: null } })),
+  pullBooksNow: vi.fn(async () => ({ ok: false, error: 'failed' })),
+}));
 vi.mock('./own-names-actions', () => ({}));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }), usePathname: () => '/app/finance' }));
 vi.mock('@/app/app/nav-actions', () => ({ getNavCounts: vi.fn(async () => ({ ok: false })) }));

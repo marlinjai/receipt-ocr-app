@@ -58,6 +58,10 @@ import { endAccountShare, shareAccountWith, type SharingView } from './sharing-a
 import { returnMessage } from '@/lib/tax/payments/bank/messages';
 import type { ImportResult } from '@/lib/tax/payments/service';
 import RevenueTab from './RevenueTab';
+import BooksMirrorPanel from './BooksMirrorPanel';
+import { getBooksMirrorView, pullBooksNow } from './books-actions';
+import type { BooksMirrorView } from '@/lib/tax/books-pull/service';
+import { booksPullFailureMessage } from '@/lib/tax/books-pull/messages';
 import OverdueInvoices from './OverdueInvoices';
 import VatTab from './VatTab';
 import ReverseChargeForm from './ReverseChargeForm';
@@ -197,6 +201,18 @@ const FinanceClient = observer(function FinanceClient({
   }, [tab, firstTab]);
   const [namesError, setNamesError] = useState<string | null>(null);
   const [namesNotice, setNamesNotice] = useState<string | null>(null);
+  // The Books mirror of the "Einnahmen" tab, read when the tab opens: null while reading, 'unreadable' when that failed.
+  const [booksMirror, setBooksMirror] = useState<BooksMirrorView | 'unreadable' | null>(null);
+  useEffect(() => {
+    if (tab !== 'revenue') return;
+    let live = true;
+    getBooksMirrorView()
+      .then((result) => live && setBooksMirror(result.ok ? result.value : 'unreadable'))
+      .catch(() => live && setBooksMirror('unreadable'));
+    return () => {
+      live = false;
+    };
+  }, [tab]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   // The item of the statement tab whose receipt is being split (its lines change the item ids, so both close together).
@@ -890,6 +906,42 @@ const FinanceClient = observer(function FinanceClient({
             </div>
           )}
 
+          {tab === 'revenue' && booksMirror === 'unreadable' && (
+            <p className="ui-note ui-note-danger mb-4" role="alert">
+              Der Stand der Rechnungen aus den Books konnte nicht gelesen werden. Bitte die Seite neu laden.
+            </p>
+          )}
+          {tab === 'revenue' && booksMirror !== 'unreadable' && (
+            <div className="mb-6">
+              <BooksMirrorPanel
+                mirror={booksMirror}
+                busy={pending}
+                onPull={() => {
+                  let mirror: BooksMirrorView | null = null;
+                  run(
+                    async () => {
+                      const result = await pullBooksNow(view.year);
+                      if (!result.ok) {
+                        // A failed pull is recorded on the server: show the recorded state, then the refusal.
+                        const fresh = await getBooksMirrorView().catch(() => null);
+                        if (fresh?.ok) setBooksMirror(fresh.value);
+                        return result;
+                      }
+                      mirror = result.value.mirror;
+                      return { ok: true, value: result.value.view };
+                    },
+                    'Aus den Books abgeholt.',
+                    () => {
+                      if (mirror) setBooksMirror(mirror);
+                    },
+                    (error, detail) =>
+                      detail?.startsWith('books_pull:') ? booksPullFailureMessage(detail.slice('books_pull:'.length)) : financeActionMessage(error, detail),
+                    'Rechnungen aus den Books',
+                  );
+                }}
+              />
+            </div>
+          )}
           {tab === 'revenue' && (
             <RevenueTab
               view={view}

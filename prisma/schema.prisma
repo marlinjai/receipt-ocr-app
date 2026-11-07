@@ -555,6 +555,30 @@ model TaxIssuedInvoice {
   @@map("tax_issued_invoices")
 }
 
+// The last pull of a company's issued documents from framer-clone's Books into
+// the invoices above (src/lib/tax/books-pull): when it ran, how (the schedule or
+// the button), whether it landed, and its report (counts and invoice numbers
+// only: what was created, attached, skipped, and every conflict a person must
+// settle). One row per workspace, rewritten by each pull, so the "Einnahmen"
+// tab shows a failed or conflicted pull instead of it passing unseen.
+model TaxBooksMirrorState {
+  id              String    @id @default(uuid())
+  authWorkspaceId String    @unique @map("auth_workspace_id")
+  authTenantId    String?   @map("auth_tenant_id")
+  // 'schedule' or 'manual'.
+  lastTrigger     String    @map("last_trigger")
+  lastRunAt       DateTime  @map("last_run_at")
+  lastOk          Boolean   @map("last_ok")
+  // A stable code when the last pull failed (src/lib/tax/books-pull/service.ts).
+  lastError       String?   @map("last_error")
+  // The MirrorReport of the last pull that landed.
+  lastReport      Json?     @map("last_report")
+  lastSuccessAt   DateTime? @map("last_success_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@map("tax_books_mirror_state")
+}
+
 // Money received for an issued invoice, with its day.
 model TaxInvoicePayment {
   id              String   @id @default(uuid())

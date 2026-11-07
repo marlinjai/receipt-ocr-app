@@ -406,14 +406,27 @@ What the code on main and the production data show, read on 2026-11-05 (producti
   documents (pure), `src/lib/tax/books-mirror-service.ts` (`applyBooksDocuments`) writes it in one
   transaction per company. The "Einnahmen" tab marks a Books invoice ("aus den Books", its due
   day, "ersetzt Rechnung", "storniert am"), locks its figures and offers no delete; the service
-  refuses both (`invoice_from_books`). What does not exist yet is the call that fetches the
-  documents: framer-clone has no read-only machine endpoint for issued documents (its routes under
-  `api/books` are the editor's, behind a person's session), and its own roadmap (line "4.
-  Existing invoices and the suite") owns that endpoint. The input `applyBooksDocuments` takes
-  (`BooksDocument` in `books-mirror.ts`) is the fields of framer-clone's `sales_document` this app
-  needs, named as there (`document_number`, `issue_date`, `due_date`, `currency_code`,
-  `kleinunternehmer`, `reverse_charge`, `total`, `tax_amount`, `tax_summary`,
-  `corrects_document_id`, `replaces_document_id`), so the endpoint can hand them over as they are.
+  refuses both (`invoice_from_books`). The input `applyBooksDocuments` takes (`BooksDocument` in
+  `books-mirror.ts`) is the fields of framer-clone's `sales_document` this app needs, in the
+  parser's own camelCase names (`number` for `document_number`, `totalCents` for `total`,
+  `taxCents` for `tax_amount`, `taxSummary[{rateBp, netCents, taxCents}]` for `tax_summary`, and
+  so on): the endpoint maps them, it does not hand over the columns as they are.
+- **Step 4, the pull: built on 2026-11-08** (both repositories). framer-clone serves
+  `GET /api/machine/books/documents` behind its machine door (a company API key, the `books` app
+  grant and a workspace admin role; issued invoices and credit notes only, figures only, never a
+  recipient). Here `pullBooksMirror` (`src/lib/tax/books-pull/service.ts`) fetches every page with
+  `BOOKS_PULL_KEY` and runs `applyBooksDocuments`, in two ways: by the hour through
+  `/api/internal/books-pull` (HMAC with `BOOKS_PULL_SECRET`, a replay refused, the company's one
+  workspace found by its tax settings or invoices, none or several refused), and by the button
+  "Aus den Books abholen" in the "Einnahmen" tab (the active company only). Every pull whose
+  workspace is known leaves its outcome in `tax_books_mirror_state` (migration `0050`), shown
+  above the invoices: counts, the conflicts by number, the documents skipped on purpose, or the
+  failure and the last pull that worked. Decided while building it (reversible, none needs the
+  owner): a plain JSON route rather than an MCP tool (the caller is a job, not an agent); hourly
+  rather than daily (an invoice should be there within the hour, a pull of unchanged documents
+  writes nothing); the scheduled task is described in `docs/operations/books-mirror.md` and not
+  created by the change, as with the bank fetch. Open: the production key, the first pull, the
+  task.
 - **Corrections (roadmap line "Corrected invoices in the income mirror"): built on the receipts
   side** with the mirror: a credit note cancels its invoice on its own day, and a replacement
   takes over the bank links and typed-in payments of the invoice it replaces (D10 below). It

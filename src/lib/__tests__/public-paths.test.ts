@@ -5,6 +5,7 @@ describe('the paths reachable without a session', () => {
   it('include the bank return, which checks the session itself, and the signed daily run', () => {
     expect(PUBLIC_PATHS).toContain('/api/banking/callback');
     expect(PUBLIC_PATHS).toContain('/api/internal/bank-sync');
+    expect(PUBLIC_PATHS).toContain('/api/internal/books-pull');
   });
 
   it('never include a page of the app or a data route', () => {

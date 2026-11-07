@@ -9,7 +9,7 @@ import type { ReactElement } from 'react';
  * props are read.
  */
 
-vi.mock('@/lib/auth', () => ({ auth: { requireSession: vi.fn(async () => ({})) } }));
+vi.mock('@/lib/auth', () => ({ auth: { requireSession: vi.fn(async () => ({ activeWorkspace: { id: 'w-1' } })) } }));
 vi.mock('./actions', () => ({ getStatement: vi.fn(async () => ({ ok: true, value: { year: 2025 } })) }));
 vi.mock('./bank-actions', () => ({ getBankView: vi.fn(async () => ({ ok: true, value: { enabled: true, connections: [] } })) }));
 vi.mock('./sharing-actions', () => ({ getSharingView: vi.fn(async () => ({ ok: false, error: 'failed' })) }));
@@ -18,7 +18,7 @@ vi.mock('./FinanceClient', () => ({ default: () => null }));
 
 import FinancePage from './page';
 
-type Props = { initialTab?: string; bankReturn: string | null; ownNames: unknown; sharingFailed: boolean };
+type Props = { initialTab?: string; bankReturn: string | null; ownNames: unknown; sharingFailed: boolean; workspaceId?: string };
 
 async function propsFor(params: { jahr?: string; reiter?: string; bank?: string }): Promise<Props> {
   const element = (await FinancePage({ searchParams: Promise.resolve(params) })) as ReactElement<Props>;
@@ -47,5 +47,9 @@ describe('the Finanzen server page', () => {
     const props = await propsFor({});
     expect(props.ownNames).toEqual({ names: ['Erika Beispiel'], canWrite: true });
     expect(props.sharingFailed).toBe(true);
+  });
+
+  it('names the company the statement is read for, so an upload for a payment goes into that company', async () => {
+    expect((await propsFor({})).workspaceId).toBe('w-1');
   });
 });

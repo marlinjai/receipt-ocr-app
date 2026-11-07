@@ -288,14 +288,14 @@
 - [ ] Finance and tax dashboard, stage 2 (scenario engine): "what if I buy X on date
   Z at share S" and "what if revenue is R", computed by the same tax module as the
   dashboard, saved as inputs and never as results. After stage 1. Plan:
-  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
+  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-11-08)
 - [ ] Finance and tax dashboard, stage 3 (advisory layer): deterministic hints that
   each show inputs, rule, source and euro effect, the legal form comparison (sole
   proprietor against a company with limited liability or a partnership) with a
   hand-off to a tax advisor, and last an optional language model that may only quote
   computed figures. Operator only until a lawyer's opinion on the tax advisory act
   and public bank data access exist. After stage 2. Plan:
-  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-07)
+  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-11-08)
 
 - [x] Two tax rates, two columns, one order. Done 2026-11-05. The printed tax groups the
   receipt's arithmetic confirms are the source of truth, the model's lines the fallback, and both
@@ -517,6 +517,11 @@
 - [ ] Confirm on production that the Adobe receipt of 2026-01-20 (number IEN2026004022987) left
   "Belege prüfen" after the deploy of the look-alike pass, by the daily run or "Duplikate klären" on
   the tools page as Whiz-Art Media, and that the pairs left there show the model's reason. (2026-11-05)
+- [ ] An MCP endpoint (Model Context Protocol) for agents: search payments, upload a receipt for a
+  payment, link a receipt or invoice to a payment, set a receipt's assignment and a counterparty's
+  treatment; authenticated per company like framer-clone's machine door (#316, /api/mcp). Asked for
+  by Marlin on 2026-11-08 so an agent can fetch missing receipts (eBay, Amazon) and attach them
+  without clicking through the app. (2026-11-08)
 
 ## In Progress
 
@@ -606,7 +611,7 @@
   only works on Android (it is the last commit of the second pull request and can
   be reverted on its own); (3) confirm with the tax advisor the amount above which
   the receipt must name the host (set to 250 euros). Plan:
-  `docs/plans/2026-10-06-meal-register-and-phone-capture.md`. (2026-10-07)
+  `docs/plans/2026-10-06-meal-register-and-phone-capture.md`. (2026-11-08)
   - [x] Batch actions on the meals page, asked for after the first real use with 17
     open entries: a checkbox per entry and "select all" in the queue, a batch bar with
     "Keine Bewirtung" (out of queue and register, kept as a receipt, taken back from

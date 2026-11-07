@@ -662,6 +662,57 @@ describe('PaymentsTab', () => {
     await user.click(choosers[1]);
     expect(screen.getByLabelText('Rechnung von Hand wählen')).toBeTruthy();
   });
+  it('money out still waiting for its receipt offers an upload for it, in the statement\'s company; anything else only the picker', async () => {
+    const user = setupUser();
+    const p = props();
+    const unclassified = [{ key: 'versand beispiel', label: 'Versand Beispiel', count: 7, outCents: 9_998, inCents: 0, proposal: null }];
+    p.onSearch.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        payments: [
+          found(),
+          // Partly on a receipt already: that receipt is its receipt, an upload could not be linked.
+          found({ id: 'f-part', bookingDay: '2026-02-04', freeCents: 1_000, linkedTo: 'receipt' }),
+          found({ id: 'f-in', bookingDay: '2026-02-05', amountCents: 2_000, freeCents: 2_000, kind: 'income', target: 'invoice' }),
+          found({ id: 'f-back', bookingDay: '2026-02-06', amountCents: 1_500, freeCents: 1_500, kind: 'refund', target: 'receipt' }),
+          found({ id: 'f-own', bookingDay: '2026-02-07', kind: 'own_transfer' }),
+          found({ id: 'f-old', bookingDay: '2024-12-30' }),
+          found({ id: 'f-a&b', bookingDay: '2026-02-08', counterparty: '' }),
+        ],
+        total: 7,
+      },
+    });
+    render(<PaymentsTab view={view({ unclassified })} {...p} workspaceId="w 1" />);
+    await user.click(screen.getByRole('button', { name: 'Zahlungen ansehen' }));
+    const list = within(await screen.findByRole('list', { name: 'Gefundene Zahlungen' }));
+    const uploads = list.getAllByRole('link', { name: /^Beleg hochladen für/ });
+    expect(uploads.map((a) => a.getAttribute('aria-label'))).toEqual(['Beleg hochladen für 03.02.2026 Versand Beispiel 49,99 €', 'Beleg hochladen für 08.02.2026 ohne Namen 49,99 €']);
+    expect(uploads.map((a) => a.textContent)).toEqual(['Beleg hochladen', 'Beleg hochladen']);
+    // The upload page for that payment, in the company the statement is of, the ids encoded.
+    expect(uploads[0].getAttribute('href')).toBe('/app?fuer=f-1&firma=w+1');
+    expect(uploads[1].getAttribute('href')).toBe('/app?fuer=f-a%26b&firma=w+1');
+    // Every payment keeps its picker.
+    expect(list.getAllByRole('button', { name: /^(Beleg|Rechnung) wählen für/ })).toHaveLength(7);
+  });
+
+  it('the payment search offers the upload too; without the company no upload is offered', async () => {
+    const user = setupUser();
+    const p = props();
+    p.onSearch.mockResolvedValue({ ok: true, value: { payments: [found()], total: 1 } });
+    const { unmount } = render(<PaymentsTab view={view()} {...p} workspaceId="w-1" />);
+    await user.type(screen.getByLabelText('Andere Zahlung suchen und von Hand zuordnen'), 'Versand');
+    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    const link = await screen.findByRole('link', { name: 'Beleg hochladen für 03.02.2026 Versand Beispiel 49,99 €' });
+    expect(link.getAttribute('href')).toBe('/app?fuer=f-1&firma=w-1');
+    unmount();
+
+    render(<PaymentsTab view={view()} {...p} />);
+    await user.type(screen.getByLabelText('Andere Zahlung suchen und von Hand zuordnen'), 'Versand');
+    await user.click(screen.getByRole('button', { name: 'Suchen' }));
+    expect(await screen.findByRole('button', { name: 'Beleg wählen für 03.02.2026 Versand Beispiel 49,99 €' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /^Beleg hochladen/ })).toBeNull();
+  });
+
   it('an account without payments, imports and connection can be removed after a confirmation; others offer no such button', async () => {
     const user = setupUser();
     const p = { ...props(), onRemoveAccount: vi.fn() };

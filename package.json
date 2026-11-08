@@ -24,7 +24,7 @@
     }
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.80.0",
+    "@anthropic-ai/sdk": "^0.91.1",
     "@marlinjai/auth-brain-nextjs": "^0.13.0",
     "@marlinjai/contacts-core": "^0.3.0",
     "@marlinjai/data-table-adapter-prisma": "^0.2.1",

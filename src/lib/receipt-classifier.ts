@@ -25,12 +25,14 @@
  *   ANTHROPIC_CLASSIFY_MODEL model for the direct path (default below)
  *   ANTHROPIC_ITEM_MODEL     model that names what was bought, reads the lines or the invoice number of, an already stored receipt (default below)
  *   ANTHROPIC_DUPLICATE_MODEL model that compares two look-alike receipts on the direct path (default below)
- *   OPENROUTER_API_KEY, AI_CLASSIFY_MODEL, AI_DUPLICATE_MODEL, AI_MODEL: see src/lib/ai-client.ts
+ *   ANTHROPIC_ASSIGNMENT_MODEL model that decides who bears a receipt's cost on the direct path (default below)
+ *   OPENROUTER_API_KEY, AI_CLASSIFY_MODEL, AI_DUPLICATE_MODEL, AI_ASSIGNMENT_MODEL, AI_MODEL: see src/lib/ai-client.ts
  */
 
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
-import { getAiClient, getClassifyModel, getDuplicateModel } from '@/lib/ai-client';
+import { getAiClient, getAssignmentModel, getClassifyModel, getDuplicateModel } from '@/lib/ai-client';
+import { assignmentPrompt, assignmentUserText, parseAssignmentResponse, type AssignmentAnswerCore, type AssignmentContext, type AssignmentReceipt } from '@/lib/assignment/prompt';
 import { cleanItem } from '@/lib/receipt-name';
 import type { ReceiptPage } from '@/lib/receipt-page';
 import { parseMealClassification, type MealClassification } from '@/lib/meals/classify';
@@ -938,4 +940,79 @@ export async function judgeSamePurchase(a: PairSide, b: PairSide): Promise<PairA
     model,
     usage: { inputTokens: response.usage?.prompt_tokens ?? 0, outputTokens: response.usage?.completion_tokens ?? 0, cost: typeof billed === 'number' ? billed : null },
   };
+}
+
+// ── Who bears a receipt (plan docs/plans/2026-11-07-learned-assignment.md) ─────────────────────────────
+
+/** One assignment decision is a short answer about text: it may not hold up an upload's after-work for long. */
+const ASSIGNMENT_TIMEOUT_MS = 45_000;
+const ASSIGNMENT_MAX_TOKENS = 2000;
+
+export interface AssignmentAnswer extends AssignmentAnswerCore {
+  model: string;
+  usage: ModelUsage;
+}
+
+/** Who bears a receipt, on the direct path: the model the replay chose (see DEFAULT_ASSIGNMENT_MODEL in src/lib/ai-client.ts). */
+export const DEFAULT_ANTHROPIC_ASSIGNMENT_MODEL = 'claude-sonnet-5-5';
+
+/** The direct path's model: `ANTHROPIC_ASSIGNMENT_MODEL`, else the measured default; never the reading model's setting. */
+export function directAssignmentModel(env: Record<string, string | undefined> = process.env): string {
+  return env.ANTHROPIC_ASSIGNMENT_MODEL || DEFAULT_ANTHROPIC_ASSIGNMENT_MODEL;
+}
+
+/**
+ * Who bears a receipt's cost, from the receipt and what the app learned about
+ * the person (src/lib/assignment). Text only, no page: the assignment rests on
+ * what was bought and on the person, not on figures. Throws when no provider is
+ * configured, the call fails or the answer is unusable; never an answer for a
+ * failure, so nothing is ever set on one.
+ */
+export async function decideAssignment(receipt: AssignmentReceipt, context: AssignmentContext, options: readonly string[]): Promise<AssignmentAnswer> {
+  const provider = classifierProvider();
+  if (!provider) throw new ClassifierUnavailableError();
+  const system = assignmentPrompt(options);
+  const user = assignmentUserText(receipt, context);
+  if (provider === 'anthropic_web_search') {
+    const model = directAssignmentModel();
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, maxRetries: MAX_RETRIES });
+    const response = await client.messages.create(
+      { model, max_tokens: ASSIGNMENT_MAX_TOKENS, output_config: { effort: 'low' }, system, messages: [{ role: 'user', content: user }] },
+      { timeout: ASSIGNMENT_TIMEOUT_MS },
+    );
+    if (response.stop_reason === 'refusal') throw new UnusableAnswerError('The model declined to assign this receipt.');
+    if (response.stop_reason === 'max_tokens') throw new UnusableAnswerError('The answer was cut off.');
+    const block = response.content.findLast((b) => b.type === 'text');
+    return { ...parseAssignmentAnswer(block && block.type === 'text' ? block.text : '', options), model, usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, cost: null } };
+  }
+  const model = getAssignmentModel();
+  const request: OpenRouterRequest = {
+    model,
+    max_tokens: ASSIGNMENT_MAX_TOKENS,
+    reasoning: { effort: 'low' },
+    usage: { include: true },
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+  };
+  const response = await getAiClient().chat.completions.create(request, { timeout: ASSIGNMENT_TIMEOUT_MS, maxRetries: MAX_RETRIES });
+  const choice = response.choices[0];
+  if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) throw new UnusableAnswerError('The model declined to assign this receipt.');
+  if (choice?.finish_reason === 'length') throw new UnusableAnswerError('The answer was cut off.');
+  const billed = (response.usage as { cost?: unknown } | undefined)?.cost;
+  return {
+    ...parseAssignmentAnswer(choice?.message?.content ?? '', options),
+    model,
+    usage: { inputTokens: response.usage?.prompt_tokens ?? 0, outputTokens: response.usage?.completion_tokens ?? 0, cost: typeof billed === 'number' ? billed : null },
+  };
+}
+
+/** The shared parser, its refusal as the classifier's: an unusable answer is no answer. */
+function parseAssignmentAnswer(text: string, options: readonly string[]): AssignmentAnswerCore {
+  try {
+    return parseAssignmentResponse(text, options);
+  } catch (err) {
+    throw new UnusableAnswerError(err instanceof Error ? err.message : 'The answer was not the expected object.');
+  }
 }

@@ -7,8 +7,11 @@ import { CATEGORY_OPTIONS, ZUORDNUNG_OPTIONS } from './receipts-constants';
  *
  *  - a `vendor` rule matches the receipt's vendor by case-insensitive substring;
  *  - a `keyword` rule matches the recognized text by case-insensitive substring;
- *  - a `freetext` rule is never applied by the app itself: it is an instruction
- *    for the chat assistant.
+ *  - a `freetext` rule is never applied by the app itself: it is what the person
+ *    states about themselves ("since May 2026 no university"), given to the chat
+ *    assistant and to the model that decides who bears a receipt's cost (plan
+ *    docs/plans/2026-11-07-learned-assignment.md). It may name no single
+ *    assignment ("Amazon is mixed: decide by what was bought"): `zuordnung` null.
  *
  * A match sets the assignment ("Zuordnung") and, when the rule names one, the
  * category. These are READING rules. How a vendor's receipts are taxed is a
@@ -26,7 +29,8 @@ export interface ClassificationRule {
   label: string;
   type: RuleType;
   matchValue: string;
-  zuordnung: string;
+  /** Null only for a freetext statement that names no single assignment. */
+  zuordnung: string | null;
   categoryOverride?: string | null;
 }
 
@@ -53,7 +57,10 @@ export function validateRuleInput(raw: unknown): RuleInput {
   const matchValue = typeof input.matchValue === 'string' ? input.matchValue.trim().replace(/\s+/g, ' ') : '';
   if (!matchValue) throw new RuleInputError('match_value_required');
   if (matchValue.length > MAX_MATCH_LENGTH) throw new RuleInputError('match_value_too_long');
-  if (typeof input.zuordnung !== 'string' || !ZUORDNUNG_OPTIONS.includes(input.zuordnung)) throw new RuleInputError('invalid_zuordnung');
+  // A statement may name no single assignment; a vendor or keyword rule exists to set one.
+  const noAssignment = input.zuordnung === null || input.zuordnung === undefined || input.zuordnung === '';
+  if (noAssignment && input.type !== 'freetext') throw new RuleInputError('invalid_zuordnung');
+  if (!noAssignment && (typeof input.zuordnung !== 'string' || !ZUORDNUNG_OPTIONS.includes(input.zuordnung))) throw new RuleInputError('invalid_zuordnung');
   const rawCategory = input.categoryOverride;
   let categoryOverride: string | null = null;
   if (rawCategory !== undefined && rawCategory !== null && rawCategory !== '') {
@@ -61,7 +68,12 @@ export function validateRuleInput(raw: unknown): RuleInput {
     categoryOverride = rawCategory;
   }
   const label = typeof input.label === 'string' ? input.label.trim().slice(0, MAX_LABEL_LENGTH) : '';
-  return { type: input.type as RuleType, matchValue, zuordnung: input.zuordnung, categoryOverride, label };
+  return { type: input.type as RuleType, matchValue, zuordnung: noAssignment ? null : (input.zuordnung as string), categoryOverride, label };
+}
+
+/** The person's statements about themselves: the freetext rules, in the order given. */
+export function statementsOf(rules: readonly ClassificationRule[]): ClassificationRule[] {
+  return rules.filter((r) => r.type === 'freetext' && r.matchValue.trim() !== '');
 }
 
 export interface RuleMatch {
@@ -82,9 +94,9 @@ export function matchRules(rules: readonly ClassificationRule[], receipt: { vend
   const text = fold(receipt.fullText ?? '');
   const byLength = (a: ClassificationRule, b: ClassificationRule) => b.matchValue.length - a.matchValue.length;
   const hit =
-    (vendor ? rules.filter((r) => r.type === 'vendor' && vendor.includes(fold(r.matchValue))).sort(byLength)[0] : undefined) ??
-    (text ? rules.filter((r) => r.type === 'keyword' && text.includes(fold(r.matchValue))).sort(byLength)[0] : undefined);
-  if (!hit || !hit.matchValue.trim()) return null;
+    (vendor ? rules.filter((r) => r.type === 'vendor' && r.zuordnung && vendor.includes(fold(r.matchValue))).sort(byLength)[0] : undefined) ??
+    (text ? rules.filter((r) => r.type === 'keyword' && r.zuordnung && text.includes(fold(r.matchValue))).sort(byLength)[0] : undefined);
+  if (!hit || !hit.matchValue.trim() || !hit.zuordnung) return null;
   return { rule: hit, zuordnung: hit.zuordnung, category: hit.categoryOverride || null };
 }
 
@@ -100,7 +112,7 @@ export function rulesToPromptText(rules: readonly ClassificationRule[]): string 
         desc = `When receipt contains keyword "${r.matchValue}" → Zuordnung: ${r.zuordnung}`;
         break;
       case 'freetext':
-        desc = `Rule: ${r.matchValue} → Zuordnung: ${r.zuordnung}`;
+        desc = r.zuordnung ? `Rule: ${r.matchValue} → Zuordnung: ${r.zuordnung}` : `Statement: ${r.matchValue}`;
         break;
     }
     if (r.categoryOverride) desc += `, Category: ${r.categoryOverride}`;

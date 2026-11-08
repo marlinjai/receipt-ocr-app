@@ -175,13 +175,33 @@ export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, o
               </ul>
 
               {asksAssignment && (
-                <div role="group" aria-label={`Zuordnung für ${entry.name}`} className="mt-2 flex flex-wrap gap-2">
-                  {assignmentOptions.map((option) => (
-                    <button key={option.id} type="button" className="ui-btn ui-btn-sm" disabled={busy} onClick={() => onSetAssignment(entry.rowId, option.id)}>
-                      {option.name}
-                    </button>
-                  ))}
-                </div>
+                <>
+                  <div role="group" aria-label={`Zuordnung für ${entry.name}`} className="mt-2 flex flex-wrap gap-2">
+                    {assignmentOptions.map((option) => {
+                      // The model's suggestion is marked on its button; the choice stays the person's.
+                      const suggested = entry.assignmentSuggestion?.assignment === option.name;
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          className={suggested ? 'ui-btn ui-btn-sm ui-btn-primary' : 'ui-btn ui-btn-sm'}
+                          disabled={busy}
+                          aria-describedby={suggested ? `${panelId}-${entry.rowId}-suggestion` : undefined}
+                          onClick={() => onSetAssignment(entry.rowId, option.id)}
+                        >
+                          {option.name}
+                          {suggested ? ' (Vorschlag)' : ''}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {entry.assignmentSuggestion?.assignment && (
+                    <p id={`${panelId}-${entry.rowId}-suggestion`} className="m-0 mt-1.5 text-xs" style={{ color: 'var(--dt-text-secondary)' }}>
+                      Vorschlag: {entry.assignmentSuggestion.assignment}
+                      {entry.assignmentSuggestion.reason ? `. ${entry.assignmentSuggestion.reason}` : ''}
+                    </p>
+                  )}
+                </>
               )}
 
               {entry.proposal.length > 0 && (

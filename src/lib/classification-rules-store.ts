@@ -18,7 +18,7 @@ type StoredRule = {
   id: string;
   type: string;
   matchValue: string;
-  zuordnung: string;
+  zuordnung: string | null;
   categoryOverride: string | null;
   label: string;
 };

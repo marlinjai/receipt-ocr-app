@@ -27,6 +27,7 @@ vi.mock('./actions', () => ({
   searchReceiptText: vi.fn(async () => ({ ids: [], truncated: false })),
   getReceiptYear: vi.fn(async () => null),
   getReceiptText: vi.fn(async () => ''),
+  getAssignmentNote: vi.fn(async () => null),
   deleteReceiptsForGood: vi.fn(),
   setFieldOnRows: vi.fn(),
 }));

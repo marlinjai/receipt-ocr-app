@@ -15,9 +15,11 @@ const options = new Map([[ASSIGNMENT_COL, [
   { id: 'opt-private', columnId: ASSIGNMENT_COL, name: 'Privat', position: 1 },
 ]]]);
 
-function renderPanel(value: string | null, onSetAssignment?: (rowId: string, optionId: string | null) => Promise<boolean>) {
+type NoteLoader = (rowId: string) => Promise<{ assignment: string | null; reason: string | null } | null>;
+
+function renderPanel(value: string | null, onSetAssignment?: (rowId: string, optionId: string | null) => Promise<boolean>, loadAssignmentNote?: NoteLoader) {
   const row = { id: 'row-1', tableId: 't-1', cells: { [ASSIGNMENT_COL]: value }, createdAt: new Date(), updatedAt: new Date() };
-  render(<ReceiptDetailPanel row={row as never} columns={[column] as never} selectOptions={options as never} onClose={vi.fn()} onSetAssignment={onSetAssignment} />);
+  render(<ReceiptDetailPanel row={row as never} columns={[column] as never} selectOptions={options as never} onClose={vi.fn()} onSetAssignment={onSetAssignment} loadAssignmentNote={loadAssignmentNote} />);
 }
 
 const field = () => screen.getByRole('combobox', { name: 'Zuordnung' }) as HTMLSelectElement;
@@ -56,5 +58,32 @@ describe('ReceiptDetailPanel Zuordnung', () => {
     renderPanel('opt-private');
     expect(screen.queryByRole('combobox', { name: 'Zuordnung' })).toBeNull();
     expect(screen.getByText('Privat')).toBeTruthy();
+  });
+
+  it('an automatic answer says so with its reason, and one click changes it', async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    const load = vi.fn<NoteLoader>().mockResolvedValue({ assignment: 'Privat', reason: 'Drogerie: bisher immer privat.' });
+    renderPanel('opt-private', save, load);
+    expect(await screen.findByText('Automatisch zugeordnet: Drogerie: bisher immer privat.', { exact: false })).toBeTruthy();
+    expect(load).toHaveBeenCalledWith('row-1');
+    await userEvent.click(screen.getByRole('button', { name: 'Doch Geschäftlich' }));
+    expect(save).toHaveBeenCalledWith('row-1', 'opt-business');
+  });
+
+  it('no note where a person or a rule set it, or the cell no longer holds the automatic answer', async () => {
+    const load = vi.fn<NoteLoader>().mockResolvedValueOnce(null).mockResolvedValueOnce({ assignment: 'Privat', reason: 'x' });
+    renderPanel('opt-private', vi.fn().mockResolvedValue(true), load);
+    await waitFor(() => expect(load).toHaveBeenCalled());
+    expect(screen.queryByText(/Automatisch zugeordnet/)).toBeNull();
+    cleanup();
+    renderPanel('opt-business', vi.fn().mockResolvedValue(true), load);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/Automatisch zugeordnet/)).toBeNull();
+  });
+
+  it('a note that cannot be loaded hides only the hint', async () => {
+    renderPanel('opt-private', vi.fn().mockResolvedValue(true), vi.fn<NoteLoader>().mockRejectedValue(new Error('down')));
+    expect(field().value).toBe('opt-private');
+    await waitFor(() => expect(screen.queryByText(/Automatisch zugeordnet/)).toBeNull());
   });
 });

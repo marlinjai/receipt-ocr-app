@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { Column, Row, CellValue } from '@marlinjai/data-table-core';
 import type { ChatMessage, PendingToolCall, AppliedToolCall, ChatStreamEvent } from '@/lib/ai-chat-types';
 import { isReadOnlyTool } from '@/lib/ai-chat-tools';
+import { saveClassificationRule } from '@/app/app/rules-actions';
 
 interface SelectOption {
   id: string;
@@ -163,6 +164,10 @@ function generatePreview(
       const names = rowIds.map(getRowName);
       return `Delete ${rowIds.length} row(s): ${names.join(', ')}`;
     }
+    case 'remember_statement': {
+      const zuordnung = typeof input.zuordnung === 'string' && input.zuordnung ? ` (${input.zuordnung})` : '';
+      return `Als Aussage merken: "${String(input.statement ?? '')}"${zuordnung}`;
+    }
     default:
       return `Execute ${toolName}`;
   }
@@ -286,6 +291,17 @@ export default function AiChatSidebar({
           const rowIds = toolInput.rowIds as string[];
           for (const rowId of rowIds) {
             onDeleteRow(rowId);
+          }
+          break;
+        }
+        case 'remember_statement': {
+          // A statement about the person: saved like one typed on the rules page (plan 2026-11-07-learned-assignment).
+          const zuordnung = typeof toolInput.zuordnung === 'string' && toolInput.zuordnung ? toolInput.zuordnung : null;
+          const result = await saveClassificationRule({ type: 'freetext', matchValue: String(toolInput.statement ?? ''), zuordnung, categoryOverride: null }).catch(() => null);
+          if (!result?.ok) {
+            // Never shown as applied when it was not saved.
+            console.error('[chat] the statement was not saved:', result && !result.ok ? result.error : 'failed');
+            setMessages((prev) => prev.map((msg) => (msg.toolCalls?.some((t) => t.id === toolCall.id) ? { ...msg, toolCalls: msg.toolCalls.map((t) => (t.id === toolCall.id ? { ...t, status: 'failed' as const } : t)) } : msg)));
           }
           break;
         }
@@ -941,7 +957,7 @@ export default function AiChatSidebar({
                                       : '#ef4444',
                                 }}
                               >
-                                {tc.status === 'approved' ? 'Applied' : 'Rejected'}
+                                {tc.status === 'approved' ? 'Applied' : tc.status === 'failed' ? 'Nicht gespeichert' : 'Rejected'}
                               </span>
                             )}
                           </div>

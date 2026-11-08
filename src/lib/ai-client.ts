@@ -9,6 +9,7 @@ import OpenAI from 'openai';
  *   AI_MODEL            : model for chat and tool use (default: anthropic/claude-sonnet-5.5)
  *   AI_CLASSIFY_MODEL   : model that reads one receipt, page and text (default below; it does not follow AI_MODEL)
  *   AI_DUPLICATE_MODEL  : model that compares the pages of two look-alike receipts (default below)
+ *   AI_ASSIGNMENT_MODEL : model that decides who bears a receipt's cost (default below)
  *   AI_BASE_URL         : override base URL (default: https://openrouter.ai/api/v1)
  */
 
@@ -26,6 +27,13 @@ export const DEFAULT_DUPLICATE_MODEL = 'anthropic/claude-opus-5.5';
  * pages), so it must accept image and file input. Chosen by measurement on
  * the 2025 documents: docs/plans/2026-10-11-vision-reading.md, "Measured".
  */
+/**
+ * The model that decides who bears a receipt's cost (plan docs/plans/2026-11-07-learned-assignment.md). The plan
+ * starts from the upload model and lets the replay pick a stronger one: on the 1,053 receipts a person had answered,
+ * Haiku 5.5 reached the bar only at a confidence of 0.95 (45 percent set automatically), Sonnet 5.5 at 0.9 with 69
+ * percent set. Numbers in the plan's "Measured" section.
+ */
+export const DEFAULT_ASSIGNMENT_MODEL = 'anthropic/claude-sonnet-5.5';
 export const DEFAULT_CLASSIFY_MODEL = 'anthropic/claude-haiku-5.5';
 
 export function getAiClient(): OpenAI {
@@ -56,4 +64,10 @@ export function getClassifyModel(): string {
 export function getDuplicateModel(): string {
   // Not AI_MODEL either: it must take two pages (images and PDF files), and a cheaper chat model must not decide merges.
   return process.env.AI_DUPLICATE_MODEL || DEFAULT_DUPLICATE_MODEL;
+}
+
+export function getAssignmentModel(): string {
+  // Not AI_MODEL and not the reading model: the replay measured this one (see DEFAULT_ASSIGNMENT_MODEL), and a
+  // model chosen for the sidebar or for reading must not change who bears a receipt.
+  return process.env.AI_ASSIGNMENT_MODEL || DEFAULT_ASSIGNMENT_MODEL;
 }

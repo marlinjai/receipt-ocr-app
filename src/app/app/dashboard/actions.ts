@@ -28,6 +28,8 @@ import { readRowLinks } from '@/lib/groups/links';
 import { INVOICE_NUMBER_COLUMN } from '@/lib/extraction/invoice-number';
 import { mergeAfterChange, restoreMergedReceipt, touches } from '@/lib/review/merge';
 import { settleLookAlikesAfterChange } from '@/lib/review/look-alikes';
+import { assignmentNotes, decideAssignmentsAfterChange, recordAssignmentAnswers } from '@/lib/assignment/pass';
+import { ITEM_COLUMN } from '@/lib/receipt-name';
 import { after } from 'next/server';
 import { measurePage, timed } from '@/lib/timing';
 import {
@@ -370,6 +372,22 @@ export async function getReceiptText(rowId: string): Promise<string> {
   return typeof value === 'string' ? value : '';
 }
 
+/**
+ * Why a receipt's Zuordnung was set automatically, for the detail panel: the answer the cell still holds
+ * and its reason (plan 2026-11-07-learned-assignment). Null when a person or a rule set it.
+ */
+export async function getAssignmentNote(rowId: string): Promise<{ assignment: string | null; reason: string | null } | null> {
+  const { workspaceId } = await requireRowAccess(rowId);
+  const adapter = getAdapter();
+  const row = await adapter.getRow(rowId);
+  if (!row) return null;
+  const zuordnung = (await adapter.getColumns(row.tableId)).find((c) => c.name === 'Zuordnung');
+  if (!zuordnung) return null;
+  const assignment = await optionNameOf(adapter, zuordnung.id, row.cells[zuordnung.id]);
+  const note = (await assignmentNotes(prisma, workspaceId, [{ rowId, assignment }])).get(rowId);
+  return note?.kind === 'set' ? { assignment: note.assignment, reason: note.reason } : null;
+}
+
 export interface TextSearchResult {
   ids: string[];
   /** True when more receipts match than are returned: the term should be made more specific. */
@@ -414,6 +432,12 @@ export async function updateRow(rowId: string, edited: Record<string, CellValue>
   const columns = await adapter.getColumns(tableId);
   const ctx = { workspaceId, tenantId: tenantIdForWorkspace(session, workspaceId) };
   const written = await writeCells(adapter, tableId, columns, rowId, edited, ctx);
+  // An assignment a person set is their answer: a correction where the model had set or suggested another
+  // (plan 2026-11-07-learned-assignment). Read from what was stored, which a finance decision may have shaped.
+  const zuordnung = columns.find((c) => c.name === 'Zuordnung');
+  if (zuordnung && zuordnung.id in edited) {
+    await recordAssignmentAnswers(prisma, ctx, [{ rowId, assignment: await optionNameOf(adapter, zuordnung.id, written.cells[zuordnung.id]) }]);
+  }
   // A corrected invoice number or vendor can make the receipt one that is there already, or end that: the
   // automatic pass decides at once (plan 2026-10-29-invoice-number-duplicates). Archived into another one, the row says so.
   if (columns.some((c) => (c.name === INVOICE_NUMBER_COLUMN || c.name === 'Vendor') && c.id in edited)) {
@@ -426,7 +450,18 @@ export async function updateRow(rowId: string, edited: Record<string, CellValue>
   if (columns.some((c) => [INVOICE_NUMBER_COLUMN, 'Vendor', 'Date', 'Gross'].includes(c.name) && c.id in edited)) {
     after(() => settleLookAlikesAfterChange(prisma, ctx, [rowId]));
   }
+  // A corrected vendor, category or item is new facts for who bears the receipt: an automatic answer is decided
+  // again, an open receipt is decided now, a person's answer stays (plan 2026-11-07-learned-assignment).
+  if (columns.some((c) => ['Vendor', 'Category', ITEM_COLUMN].includes(c.name) && c.id in edited)) {
+    after(() => decideAssignmentsAfterChange(prisma, ctx, [rowId]));
+  }
   return written;
+}
+
+/** The name of a select option by its id, null for an empty cell or an id no option has. */
+async function optionNameOf(adapter: PrismaAdapter, columnId: string, value: unknown): Promise<string | null> {
+  if (typeof value !== 'string' || !value) return null;
+  return (await adapter.getSelectOptions(columnId)).find((o) => o.id === value)?.name ?? null;
 }
 
 /**
@@ -635,6 +670,11 @@ export async function setFieldOnRows(rowIds: string[], columnId: string, value: 
       if (row && storedAs(row.value, value)) done.push(rowId);
       else failed.push({ rowId, reason: row ? 'failed' : 'not_found' });
     }
+  }
+  // "Set field" on the assignment is the person's answer for every row it set (plan 2026-11-07-learned-assignment).
+  if (column.name === 'Zuordnung' && done.length > 0) {
+    const name = await optionNameOf(adapter, columnId, value);
+    await recordAssignmentAnswers(prisma, ctx, done.map((rowId) => ({ rowId, assignment: name })));
   }
   return { done, failed, left };
 }

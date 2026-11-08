@@ -14,7 +14,7 @@ interface Loaded {
 const TYPE_LABELS: Record<RuleType, string> = {
   vendor: 'Anbieter enthält',
   keyword: 'Belegtext enthält',
-  freetext: 'Hinweis für den Assistenten',
+  freetext: 'Aussage über mich',
 };
 
 const ERROR_TEXT: Record<RuleErrorCode | 'failed', string> = {
@@ -29,7 +29,10 @@ const ERROR_TEXT: Record<RuleErrorCode | 'failed', string> = {
 /**
  * The classification rules of the active company. A vendor or text rule sets
  * the assignment (and the category, when given) of every receipt read from now
- * on; a hint only reaches the chat assistant. Receipts already stored are not
+ * on. A statement ("Aussage über mich") is what the person says about
+ * themselves: the model that decides who bears a receipt's cost and the chat
+ * assistant are given it, and it may name no single assignment (plan
+ * docs/plans/2026-11-07-learned-assignment.md). Receipts already stored are not
  * changed by a new rule.
  */
 export default function RulesClient({ initial }: { initial: Loaded | null }) {
@@ -62,11 +65,15 @@ export default function RulesClient({ initial }: { initial: Loaded | null }) {
     );
   }
 
+  // "keine bestimmte" exists for a statement only: a rule shows, and saves, the default instead.
+  const shownZuordnung = type !== 'freetext' && zuordnung === '' ? (ZUORDNUNG_OPTIONS[1] ?? '') : zuordnung;
+
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const res = await saveClassificationRule({ type, matchValue, zuordnung, categoryOverride: category || null });
+    // A statement may leave the assignment open ("Amazon ist gemischt"); a rule always names one.
+    const res = await saveClassificationRule({ type, matchValue, zuordnung: shownZuordnung === '' ? null : shownZuordnung, categoryOverride: category || null });
     setBusy(false);
     if (!res.ok) {
       setError(ERROR_TEXT[res.error]);
@@ -74,6 +81,7 @@ export default function RulesClient({ initial }: { initial: Loaded | null }) {
     }
     setMatchValue('');
     setCategory('');
+    if (zuordnung === '') setZuordnung(ZUORDNUNG_OPTIONS[1] ?? '');
     await reload();
   };
 
@@ -99,7 +107,8 @@ export default function RulesClient({ initial }: { initial: Loaded | null }) {
       </div>
       <p className="mb-6 text-sm" style={{ color: 'var(--muted)' }}>
         Eine Regel gilt für jeden Beleg, der ab jetzt in dieser Firma gelesen wird (Hochladen, Foto ersetzen, Seite neu lesen),
-        und geht der Einschätzung des Modells vor. Bereits gespeicherte Belege ändert sie nicht. Wie ein Anbieter steuerlich
+        und geht der Einschätzung des Modells vor. Eine Aussage über dich (etwa „Seit Mai 2026 keine Uni mehr“) bekommt das Modell,
+        das ohne Regel entscheidet, wer einen Beleg trägt. Bereits gespeicherte Belege ändert eine Regel nicht. Wie ein Anbieter steuerlich
         behandelt wird, steht in den Anbieterregeln unter Finanzen.
       </p>
 
@@ -118,7 +127,8 @@ export default function RulesClient({ initial }: { initial: Loaded | null }) {
         </label>
         <label className="flex flex-col gap-1 text-sm" style={{ color: 'var(--muted)' }}>
           Zuordnung
-          <select className="ui-input" value={zuordnung} onChange={(e) => setZuordnung(e.target.value)}>
+          <select className="ui-input" value={shownZuordnung} onChange={(e) => setZuordnung(e.target.value)}>
+            {type === 'freetext' && <option value="">keine bestimmte</option>}
             {ZUORDNUNG_OPTIONS.map((z) => (
               <option key={z} value={z}>{z}</option>
             ))}
@@ -146,7 +156,7 @@ export default function RulesClient({ initial }: { initial: Loaded | null }) {
           {loaded.rules.map((rule) => (
             <li key={rule.id} className="glass-panel flex flex-wrap items-center justify-between gap-2 rounded-lg px-4 py-3 text-sm">
               <span style={{ color: 'var(--foreground)' }}>
-                {TYPE_LABELS[rule.type]} „{rule.matchValue}“: {rule.zuordnung}
+                {TYPE_LABELS[rule.type]} „{rule.matchValue}“{rule.zuordnung ? `: ${rule.zuordnung}` : ''}
                 {rule.categoryOverride ? `, ${rule.categoryOverride}` : ''}
               </span>
               <button type="button" className="ui-btn ui-btn-sm ui-btn-danger" disabled={busy} onClick={() => void remove(rule)} aria-label={`Regel „${rule.matchValue}“ löschen`}>

@@ -60,8 +60,9 @@ export default function AssignmentsPanel() {
           setDone(true);
           break;
         }
-        // A run that left as many as before made no progress: the page stops asking, the next run tries again.
-        if (before !== null && r.remaining >= before) {
+        // A run that decided nothing and left as many as before made no progress: the page stops asking, the next
+        // run tries again. One that decided receipts goes on, also when cleared or failed ones keep the count up.
+        if (before !== null && r.remaining >= before && r.decided === 0) {
           setError('Die letzten Belege konnten gerade nicht entschieden werden. Ein neuer Lauf, später oder morgen der tägliche, versucht es erneut.');
           break;
         }

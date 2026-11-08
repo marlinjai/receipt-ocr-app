@@ -4,7 +4,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AssignmentsPanel from './AssignmentsPanel';
 
-const result = (extra: Record<string, unknown>) => ({ candidates: 0, decided: 0, set: 0, suggested: 0, cleared: 0, failed: 0, remaining: 0, answersRecorded: 0, unavailable: false, ...extra });
+const result = (extra: Record<string, unknown>) => ({ candidates: 0, decided: 0, set: 0, suggested: 0, cleared: 0, failed: 0, remaining: 0, answersRecorded: 0, superseded: 0, unavailable: false, ...extra });
 const reply = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body }) as Response;
 
 afterEach(() => {
@@ -35,6 +35,18 @@ describe('AssignmentsPanel', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(reply(200, { result: result({ remaining: 2, failed: 2 }) })));
     await start();
     expect((await screen.findByRole('alert')).textContent).toContain('versucht es erneut');
+  });
+
+  it('goes on after a run that decided receipts but left the count where it was (cleared or failed ones)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(reply(200, { result: result({ decided: 3, suggested: 3, remaining: 4 }) }))
+      .mockResolvedValueOnce(reply(200, { result: result({ decided: 2, set: 1, failed: 1, remaining: 4 }) }))
+      .mockResolvedValueOnce(reply(200, { result: result({ decided: 4, set: 4, remaining: 0 }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    await start();
+    expect(await screen.findByText(/Alle offenen Belege sind angesehen/)).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('says when no language model can be reached, and that nothing was set', async () => {

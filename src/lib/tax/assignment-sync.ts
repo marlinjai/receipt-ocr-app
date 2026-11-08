@@ -295,6 +295,30 @@ export async function syncAssignmentCells(db: PrismaClient, ctx: TaxContext, sco
  * The receipt is brought in step by the next write that touches it, or by a run
  * of `scripts/sync-assignment-cells.ts`.
  */
+/**
+ * A receipt whose assignment left "Privat" without a person typing a share (the assignment model replaced its
+ * own outdated "Privat", or a reading rule took over; plan 2026-11-07-learned-assignment): the share comes
+ * back as a manual edit brings it back, the one kept from before it became private, else the whole. Only
+ * where the share is still 0, so a share a person typed since stays.
+ */
+export async function restoreShareLeavingPrivate(db: PrismaClient, ctx: TaxContext, rowIds: readonly string[]): Promise<void> {
+  if (rowIds.length === 0) return;
+  const cols = await assignmentColumns(db, ctx.workspaceId);
+  if (!cols || cols.problem) return;
+  const kept = await db.taxAssignmentOrigin.findMany({ where: { authWorkspaceId: ctx.workspaceId, rowId: { in: [...rowIds] }, reason: 'private_share' } });
+  const keptBy = new Map(kept.map((k) => [k.rowId, k]));
+  for (const rowId of rowIds) {
+    const row = await cols.adapter.getRow(rowId);
+    if (!row) continue;
+    const zuordnung = cols.optionName(row.cells[cols.zuordnungId]);
+    const share = row.cells[cols.shareId];
+    if (!zuordnung || zuordnung === PRIVATE || (share !== 0 && share !== '0')) continue;
+    const k = keptBy.get(rowId);
+    await cols.adapter.updateRow(rowId, { [cols.shareId]: k && k.sharePercent !== null && k.sharePercent !== 0 ? k.sharePercent : 100 });
+    if (k) await db.taxAssignmentOrigin.deleteMany({ where: { rowId, reason: 'private_share' } });
+  }
+}
+
 export async function followTreatment(db: PrismaClient, ctx: TaxContext, scope: PlanScope = {}): Promise<void> {
   try {
     const { failed } = await syncAssignmentCells(db, ctx, scope);

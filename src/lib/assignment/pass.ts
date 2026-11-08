@@ -11,7 +11,7 @@ import { isoDay } from '@/lib/meals/record';
 import { allReceiptRows, tableContext } from '@/lib/meals/service';
 import { ClassifierUnavailableError, UnusableAnswerError, decideAssignment, type AssignmentAnswer } from '@/lib/receipt-classifier';
 import { ITEM_COLUMN } from '@/lib/receipt-name';
-import { MEAL_CATEGORY } from '@/lib/receipts-constants';
+import { MEAL_CATEGORY, PRIVATE_ZUORDNUNG } from '@/lib/receipts-constants';
 import { rowsWithOwnTreatment } from '@/lib/tax/service';
 import { buildAssignmentContext, contextFacts, type CorrectionEntry } from './context';
 import { assignmentFingerprint } from './fingerprint';
@@ -107,11 +107,13 @@ export interface AssignmentRunResult {
   remaining: number;
   /** A person's answers recorded against an earlier decision (corrections or confirmations). */
   answersRecorded: number;
+  /** Answers dropped because a person answered, or another run decided, while the model was asked. */
+  superseded: number;
   /** True when no language model is configured: nothing was counted against a receipt. */
   unavailable: boolean;
 }
 
-const emptyResult = (): AssignmentRunResult => ({ candidates: 0, decided: 0, set: 0, suggested: 0, cleared: 0, failed: 0, remaining: 0, answersRecorded: 0, unavailable: false });
+const emptyResult = (): AssignmentRunResult => ({ candidates: 0, decided: 0, set: 0, suggested: 0, cleared: 0, failed: 0, remaining: 0, answersRecorded: 0, superseded: 0, unavailable: false });
 
 /** One receipt as the pass looks at it. */
 interface Snapshot {
@@ -154,7 +156,8 @@ export async function decideAssignments(
   db: PrismaClient,
   ctx: AssignmentContextIds,
   deps: AssignmentDeps,
-  options: { only?: readonly string[]; limit?: number; failedOnly?: boolean; now?: () => Date } = {},
+  /** `deadline` (milliseconds since the epoch): a run asks no more model calls after it, the rest is `remaining`. */
+  options: { only?: readonly string[]; limit?: number; failedOnly?: boolean; deadline?: number; now?: () => Date } = {},
 ): Promise<AssignmentRunResult> {
   const result = emptyResult();
   const now = options.now ?? (() => new Date());
@@ -257,6 +260,9 @@ export async function decideAssignments(
   const scoped = [...snapshots.values()].filter((s) => !only || only.has(s.rowId));
   const settled = await rowsWithOwnTreatment(db, ctx.workspaceId, scoped.map((s) => ({ rowId: s.rowId, vendor: s.receipt.vendor ?? '', date: s.receipt.date })));
   const candidates: Array<{ s: Snapshot; fingerprint: string; staleAuto: boolean }> = [];
+  // Rows whose cell this run wrote, for the share to follow; and those of them that left "Privat".
+  const written: string[] = [];
+  const leftPrivate: string[] = [];
   for (const s of scoped) {
     const d = decisions.get(s.rowId);
     if (d?.answeredAt) continue;
@@ -272,7 +278,10 @@ export async function decideAssignments(
     if (s.receipt.category === MEAL_CATEGORY || settled.has(s.rowId)) continue;
     if (ruleMatched(s)) {
       // A reading rule decides it (decision 3); an automatic answer it contradicts gives way to the rule.
-      if (auto) await giveWayToRule(db, ctx, table.tableId, zuordnungId, s, rules, optionIdOf, result);
+      if (auto && (await giveWayToRule(db, ctx, table.tableId, zuordnungId, s, rules, optionIdOf, result))) {
+        written.push(s.rowId);
+        if (s.assignment === PRIVATE_ZUORDNUNG) leftPrivate.push(s.rowId);
+      }
       continue;
     }
     const current = d && d.fingerprint === fingerprint ? d : null;
@@ -286,9 +295,8 @@ export async function decideAssignments(
   candidates.sort((a, b) => (a.s.receipt.date ?? '9999').localeCompare(b.s.receipt.date ?? '9999'));
   result.candidates = candidates.length;
 
-  const written: string[] = [];
   for (const { s, fingerprint, staleAuto } of candidates) {
-    if (result.unavailable || budget <= 0) {
+    if (result.unavailable || budget <= 0 || (options.deadline !== undefined && now().getTime() > options.deadline)) {
       result.remaining++;
       continue;
     }
@@ -302,28 +310,34 @@ export async function decideAssignments(
       const answer = await deps.decide(s.receipt, context, assignmentOptions.map((o) => o.name));
       result.decided++;
       const optionId = answer.assignment ? optionIdOf(answer.assignment) : null;
-      let outcome: 'set' | 'suggested' = optionId && answer.confidence >= AUTO_ASSIGN_CONFIDENCE ? 'set' : 'suggested';
-      if (outcome === 'set') {
+      const decided = { fingerprint, assignment: answer.assignment, confidence: answer.confidence, reason: answer.reason || null, model: answer.model, facts: contextFacts(context) as Prisma.InputJsonValue, attempts: 0 };
+      const settingIt = Boolean(optionId) && answer.confidence >= AUTO_ASSIGN_CONFIDENCE;
+      // The decision is claimed first, and only over the record this run read: a person who answered during the
+      // model call, or another run that decided meanwhile, keeps what they wrote and this answer is dropped.
+      const claim = await recordDecision(db, ctx, s.rowId, { ...decided, outcome: settingIt ? 'set' : 'suggested' }, prior ?? null);
+      if (!claim) {
+        result.superseded++;
+        continue;
+      }
+      if (settingIt) {
         // Only over an empty cell or the outdated automatic answer: a person who answered meanwhile wins.
-        if (await writeCell(db, table.tableId, zuordnungId, s.rowId, optionId, replaceable)) written.push(s.rowId);
-        else outcome = 'suggested';
-      } else if (staleAuto && (await writeCell(db, table.tableId, zuordnungId, s.rowId, null, replaceable))) {
-        // The automatic answer rested on facts that changed, and the new one is not sure: it is asked.
+        if (await writeCell(db, table.tableId, zuordnungId, s.rowId, optionId, replaceable)) {
+          result.set++;
+          written.push(s.rowId);
+          if (staleAuto && s.assignment === PRIVATE_ZUORDNUNG && answer.assignment !== PRIVATE_ZUORDNUNG) leftPrivate.push(s.rowId);
+        } else {
+          // The cell changed under it: the claim is no set answer, only what was suggested.
+          await db.receiptAssignmentDecision.updateMany({ where: { rowId: s.rowId, decidedAt: claim }, data: { outcome: 'suggested' } });
+          result.suggested++;
+        }
+        continue;
+      }
+      result.suggested++;
+      // The automatic answer rested on facts that changed, and the new one is not sure: it is asked.
+      if (staleAuto && (await writeCell(db, table.tableId, zuordnungId, s.rowId, null, replaceable))) {
         result.cleared++;
         written.push(s.rowId);
       }
-      if (outcome === 'set') result.set++;
-      else result.suggested++;
-      await recordDecision(db, ctx, s.rowId, {
-        fingerprint,
-        outcome,
-        assignment: answer.assignment,
-        confidence: answer.confidence,
-        reason: answer.reason || null,
-        model: answer.model,
-        facts: contextFacts(context) as Prisma.InputJsonValue,
-        attempts: 0,
-      });
     } catch (err) {
       if (err instanceof ClassifierUnavailableError) {
         result.unavailable = true;
@@ -336,11 +350,11 @@ export async function decideAssignments(
       console.error('[assignment] a receipt could not be decided:', err instanceof Error ? `${err.name}${err instanceof UnusableAnswerError ? `: ${err.message}` : ''}` : 'error');
       try {
         // A failure never sets anything; an automatic answer on outdated facts is taken back, so the receipt is asked.
-        if (staleAuto && (await writeCell(db, table.tableId, zuordnungId, s.rowId, null, replaceable))) {
+        const claim = await recordDecision(db, ctx, s.rowId, { fingerprint, outcome: 'failed', assignment: null, confidence: null, reason: null, model: null, facts: null, attempts: priorAttempts + 1 }, prior ?? null);
+        if (claim && staleAuto && (await writeCell(db, table.tableId, zuordnungId, s.rowId, null, replaceable))) {
           result.cleared++;
           written.push(s.rowId);
         }
-        await recordDecision(db, ctx, s.rowId, { fingerprint, outcome: 'failed', assignment: null, confidence: null, reason: null, model: null, facts: null, attempts: priorAttempts + 1 });
       } catch (e) {
         console.error('[assignment] the failure could not be recorded:', e instanceof Error ? e.name : 'error');
       }
@@ -349,25 +363,41 @@ export async function decideAssignments(
 
   // A private receipt shows share 0, a business one its default: the cells follow (src/lib/tax/assignment-sync.ts).
   if (written.length > 0) {
-    const { followTreatment } = await import('@/lib/tax/assignment-sync');
+    const { followTreatment, restoreShareLeavingPrivate } = await import('@/lib/tax/assignment-sync');
+    // Leaving "Privat" brings back the share it held before, as a manual edit does.
+    await restoreShareLeavingPrivate(db, ctx, leftPrivate);
     await followTreatment(db, ctx, { rowIds: written });
   }
   if (result.candidates > 0 || result.answersRecorded > 0) console.info('[assignment] run', result);
   return result;
 }
 
+/**
+ * Record a decision, only over the record the run read (`prior`, matched by its `decidedAt`, and only while no
+ * person's answer is on it); a new record only where there is none. Returns the new record's `decidedAt`,
+ * or null when somebody else wrote one meanwhile: then nothing is recorded.
+ */
 async function recordDecision(
   db: PrismaClient,
   ctx: AssignmentContextIds,
   rowId: string,
   d: { fingerprint: string; outcome: 'set' | 'suggested' | 'failed'; assignment: string | null; confidence: number | null; reason: string | null; model: string | null; facts: Prisma.InputJsonValue | null; attempts: number },
-): Promise<void> {
-  const data = { ...d, facts: d.facts ?? undefined, decidedAt: new Date(), answeredAs: null, answeredAt: null };
-  await db.receiptAssignmentDecision.upsert({
-    where: { rowId },
-    create: { rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, ...data },
-    update: data,
-  });
+  prior: Pick<Decision, 'decidedAt'> | null,
+): Promise<Date | null> {
+  const decidedAt = new Date();
+  const data = { ...d, facts: d.facts ?? undefined, decidedAt, answeredAs: null, answeredAt: null };
+  if (prior) {
+    const { count } = await db.receiptAssignmentDecision.updateMany({ where: { rowId, decidedAt: prior.decidedAt, answeredAt: null }, data });
+    return count > 0 ? decidedAt : null;
+  }
+  try {
+    await db.receiptAssignmentDecision.create({ data: { rowId, authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, ...data } });
+    return decidedAt;
+  } catch (err) {
+    // Another run created it first.
+    if ((err as { code?: string }).code === 'P2002') return null;
+    throw err;
+  }
 }
 
 /**
@@ -395,15 +425,18 @@ async function giveWayToRule(
   rules: readonly ClassificationRule[],
   optionIdOf: (name: string) => string | null,
   result: AssignmentRunResult,
-): Promise<void> {
+): Promise<boolean> {
   const match = matchRules(rules, { vendor: s.receipt.vendor, fullText: s.receipt.text });
   const optionId = match ? optionIdOf(match.zuordnung) : null;
   try {
-    if (optionId && optionId !== s.cell) await writeCell(db, tableId, columnId, s.rowId, optionId, s.cell);
-    await db.receiptAssignmentDecision.deleteMany({ where: { rowId: s.rowId, authWorkspaceId: ctx.workspaceId } });
+    // Only over the automatic answer the run saw; a person's answer since stays, and so does its record.
+    const wrote = optionId !== null && optionId !== s.cell && (await writeCell(db, tableId, columnId, s.rowId, optionId, s.cell));
+    if (wrote || optionId === s.cell) await db.receiptAssignmentDecision.deleteMany({ where: { rowId: s.rowId, authWorkspaceId: ctx.workspaceId, answeredAt: null } });
+    return wrote;
   } catch (err) {
     result.failed++;
     console.error('[assignment] a rule could not take over a receipt:', err instanceof Error ? err.name : 'error');
+    return false;
   }
 }
 
@@ -416,7 +449,8 @@ export async function recordReaderAssignment(db: PrismaClient, ctx: AssignmentCo
   try {
     const existing = await db.receiptAssignmentDecision.findUnique({ where: { rowId } });
     if (existing?.answeredAt) return;
-    await recordDecision(db, ctx, rowId, { fingerprint: READER_PENDING, outcome: 'set', assignment: read.assignment, confidence: null, reason: READER_REASON, model: read.model, facts: { source: 'reader' }, attempts: 0 });
+    // Over the record just read, or a new one: never over an answer a person gave in between.
+    await recordDecision(db, ctx, rowId, { fingerprint: READER_PENDING, outcome: 'set', assignment: read.assignment, confidence: null, reason: READER_REASON, model: read.model, facts: { source: 'reader' }, attempts: 0 }, existing);
   } catch (err) {
     console.error('[assignment] the reader\'s answer could not be recorded:', err instanceof Error ? err.name : 'error');
   }

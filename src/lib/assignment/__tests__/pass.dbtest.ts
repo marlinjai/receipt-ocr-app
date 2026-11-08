@@ -361,3 +361,76 @@ describe('a deleted receipt takes its decision with it', () => {
     expect(await decisionOf(open)).toBeNull();
   });
 });
+
+describe('review findings of #246: races, the share, the time budget', () => {
+  it('a person who empties the cell while the model is asked keeps their answer: the run records nothing over it', async () => {
+    const open = await receipt();
+    decide.mockResolvedValueOnce(answer('Privat', 0.99));
+    await run();
+    await ws.adapter.updateRow(open, { [col('Vendor')]: 'Müller' });
+    decide.mockImplementationOnce(async () => {
+      await personSets(open, null);
+      return answer('Geschäftlich', 0.99);
+    });
+    expect(await run()).toMatchObject({ superseded: 1, set: 0 });
+    expect(await assignmentOf(open)).toBeNull();
+    expect(await decisionOf(open)).toMatchObject({ answeredAt: expect.any(Date), answeredAs: null });
+    // Never decided again.
+    expect(await run()).toMatchObject({ candidates: 0 });
+  });
+
+  it('two runs on the same receipt: the second answer is dropped, so the model\'s value never passes for the person\'s', async () => {
+    const open = await receipt();
+    decide.mockImplementationOnce(async (r, c, o) => {
+      // Another run decides the same receipt while this one waits for its answer.
+      const inner = vi.fn(async () => answer('Privat', 0.99));
+      await decideAssignments(db, ctx, { decide: inner }, { limit: 1 });
+      void r; void c; void o;
+      return answer('Geschäftlich', 0.5);
+    });
+    const result = await run();
+    expect(result.superseded).toBe(1);
+    expect(await assignmentOf(open)).toBe('Privat');
+    expect(await decisionOf(open)).toMatchObject({ outcome: 'set', assignment: 'Privat', answeredAt: null });
+    // The next run sees the automatic answer as automatic, not as a person's.
+    expect(await run()).toMatchObject({ answersRecorded: 0, candidates: 0 });
+  });
+
+  it('replacing its own outdated "Privat" with a business answer brings the share back', async () => {
+    const open = await receipt({ 'Business Share %': 60 });
+    decide.mockResolvedValueOnce(answer('Privat', 0.99));
+    await run();
+    expect((await ws.adapter.getRow(open))!.cells[col('Business Share %')]).toBe(0);
+    await ws.adapter.updateRow(open, { [col('Item')]: 'Druckerpatrone' });
+    decide.mockResolvedValueOnce(answer('Geschäftlich', 0.99));
+    await run();
+    expect(await assignmentOf(open)).toBe('Geschäftlich');
+    expect((await ws.adapter.getRow(open))!.cells[col('Business Share %')]).toBe(60);
+  });
+
+  it('a rule taking over an automatic answer brings the share in step: "Privat" to business restores it, business to "Privat" makes it 0', async () => {
+    const priv = await receipt({ 'Business Share %': 100 });
+    const biz = await receipt({ Vendor: 'Hetzner', 'Business Share %': 100 });
+    decide.mockImplementation(async (r) => answer(r.vendor === 'Hetzner' ? 'Geschäftlich' : 'Privat', 0.99));
+    await run();
+    await db.classificationRule.create({ data: { authWorkspaceId: ws.workspaceId, type: 'vendor', matchValue: 'Rossmann', zuordnung: 'Geschäftlich' } });
+    await db.classificationRule.create({ data: { authWorkspaceId: ws.workspaceId, type: 'vendor', matchValue: 'Hetzner', zuordnung: 'Privat' } });
+    await run();
+    expect(await assignmentOf(priv)).toBe('Geschäftlich');
+    expect((await ws.adapter.getRow(priv))!.cells[col('Business Share %')]).toBe(100);
+    expect(await assignmentOf(biz)).toBe('Privat');
+    expect((await ws.adapter.getRow(biz))!.cells[col('Business Share %')]).toBe(0);
+  });
+
+  it('no model call starts after the deadline: the rest is left for the next request', async () => {
+    await receipt({ Date: '2026-11-01' });
+    await receipt({ Vendor: 'dm', Date: '2026-11-02' });
+    let t = 1_000;
+    decide.mockImplementation(async () => {
+      t += 10_000;
+      return answer(null, 0);
+    });
+    const result = await decideAssignments(db, ctx, deps, { limit: 10, deadline: 5_000, now: () => new Date(t) });
+    expect(result).toMatchObject({ decided: 1, remaining: 1 });
+  });
+});

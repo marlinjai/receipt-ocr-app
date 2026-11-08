@@ -7,6 +7,8 @@ import { ASSIGNMENT_LIMITS, decideAssignments, serverAssignmentDeps } from '@/li
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
+/** No model call starts after this much of a request: one call (45 seconds, one retry) still ends before maxDuration. */
+const REQUEST_BUDGET_MS = 200_000;
 
 /**
  * POST /api/receipts/assignments  ("Zuordnungen entscheiden" on the tools page)
@@ -30,7 +32,11 @@ export async function POST() {
   }
   try {
     const workspaceId = sessionWorkspaceId(principal);
-    const result = await decideAssignments(prisma, { workspaceId, tenantId: tenantIdForWorkspace(principal, workspaceId) }, serverAssignmentDeps(), { limit: ASSIGNMENT_LIMITS.request });
+    const result = await decideAssignments(prisma, { workspaceId, tenantId: tenantIdForWorkspace(principal, workspaceId) }, serverAssignmentDeps(), {
+      limit: ASSIGNMENT_LIMITS.request,
+      // Well inside maxDuration: a slow provider leaves the rest for the page's next request.
+      deadline: Date.now() + REQUEST_BUDGET_MS,
+    });
     return NextResponse.json({ result });
   } catch (e) {
     console.error('[receipts/assignments] failed:', e instanceof Error ? `${e.name}: ${e.message}` : 'unknown error');

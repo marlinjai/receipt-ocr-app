@@ -4,6 +4,9 @@ import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
 import { after } from 'next/server';
+import { decideAssignmentsAfterChange, decideVendorAfterStatement } from '@/lib/assignment/pass';
+import { saveSubjectStatement } from '@/lib/classification-rules-store';
+import { RuleInputError } from '@/lib/classification-rules';
 import { prisma } from '@/lib/prisma';
 import { runSpendingChecksAfterNewPayments } from '@/lib/spending/checks';
 import { classifyFailed, classifySummary } from '@/lib/tax/payments/classify-summary';
@@ -100,6 +103,7 @@ function failure(e: unknown): { ok: false; error: FinanceActionError; detail?: s
   if (e instanceof AssetInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof RevenueInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof LinesInputError) return { ok: false, error: 'invalid_input', detail: e.code };
+  if (e instanceof RuleInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof ReverseChargeInputError) return { ok: false, error: 'invalid_input', detail: e.code };
   if (e instanceof PaymentParseError) return { ok: false, error: 'invalid_input', detail: e.row === null ? e.code : `${e.code}:${e.row}` };
   if (e instanceof PaymentServiceError) {
@@ -482,10 +486,37 @@ export async function confirmPaymentLink(year: number, input: unknown): Promise<
     const result = await linkPayment(prisma, ctx, input, receiptForLink(prisma, ctx.workspaceId));
     const linkedPayment = ((input ?? {}) as { paymentId?: unknown }).paymentId;
     settleMovedLater(ctx, typeof linkedPayment === 'string' ? { paymentId: linkedPayment } : {});
+    // A receipt now paying a payment ("Teils, teils": the receipt decides it) is decided if its assignment is open.
+    const linkedRow = ((input ?? {}) as { rowId?: unknown }).rowId;
+    if (typeof linkedRow === 'string' && linkedRow) after(() => decideAssignmentsAfterChange(prisma, ctx, [linkedRow]));
     return { ok: true, value: { view: await loadStatement(prisma, ctx.workspaceId, safeYear(year)), moved: result.movedFromPaymentId !== null } };
   } catch (e) {
     return failure(e);
   }
+}
+
+/**
+ * "Was ist das?" on a counterparty card (plan 2026-11-07-learned-assignment, decision 8): the person's short
+ * answer is saved as their statement about it; an empty answer removes it. After the answer the counterparty
+ * is decided again (only where no person answered it: a person's treatment never changes here) and its open
+ * receipts too, both with the answer.
+ */
+export async function saveCounterpartyWhat(year: number, counterpartyKey: unknown, label: unknown, answer: unknown): Promise<Result<StatementView>> {
+  return write(year, async (ctx) => {
+    if (typeof label !== 'string' || !label.trim()) throw new TaxServiceError('no_vendor');
+    await saveSubjectStatement(prisma, ctx, { name: label, answer });
+    const key = typeof counterpartyKey === 'string' ? counterpartyKey : '';
+    after(async () => {
+      if (key) {
+        const run = await classifyCounterparties(prisma, ctx, serverCounterpartyClassifier(), { only: [key] }).catch((err) => {
+          console.error('[payments] deciding a described counterparty failed:', err instanceof Error ? err.name : 'error');
+          return null;
+        });
+        if (run && run.byEvidence + run.byModel + run.removed > 0) settleMovedLater(ctx);
+      }
+      await decideVendorAfterStatement(prisma, ctx, label);
+    });
+  });
 }
 
 /** Say that one payment is a transfer between own accounts (true) or a payment of its own (false). */

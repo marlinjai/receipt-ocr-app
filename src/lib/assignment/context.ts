@@ -1,3 +1,4 @@
+import { sameSubject as sameVendorName } from '@/lib/classification-rules';
 import type { AssignmentContext, Correction, PastAnswer, Statement, VendorHistory } from './prompt';
 
 /**
@@ -20,23 +21,13 @@ const SAME_VENDOR_SIMILAR = 4;
 /** Corrections shown: of the same vendor first, then the latest. */
 export const CORRECTION_LIMIT = 8;
 
-/** A vendor as compared: lower case, letters and digits only. */
-export function vendorKey(vendor: string | null | undefined): string {
-  return (vendor ?? '').toLocaleLowerCase('de-DE').replace(/[^\p{L}\p{N}]+/gu, '');
-}
-
-/** Two vendor names that are the same business: equal, or one inside the other where it is long enough. Never two empty ones. */
-export function sameVendorName(a: string | null | undefined, b: string | null | undefined): boolean {
-  const x = vendorKey(a);
-  const y = vendorKey(b);
-  if (!x || !y) return false;
-  return x === y || (x.length >= 4 && y.includes(x)) || (y.length >= 4 && x.includes(y));
-}
+/** A vendor as compared, and two names that are one business: the same as for a statement's subject. */
+export { subjectKey as vendorKey, sameSubject as sameVendorName } from '@/lib/classification-rules';
 
 const byDayDesc = (a: { date: string | null }, b: { date: string | null }) => (b.date ?? '').localeCompare(a.date ?? '');
 
 export function vendorHistoryOf(vendor: string | null, answered: readonly PastAnswer[]): VendorHistory | null {
-  if (!vendorKey(vendor)) return null;
+  if (!vendor || !vendor.trim()) return null;
   const same = answered.filter((p) => sameVendorName(vendor, p.vendor));
   if (same.length === 0) return null;
   const by = new Map<string, { count: number; latest: string | null }>();
@@ -70,7 +61,8 @@ export function buildAssignmentContext(
     ...ownCorrections.filter((c) => !sameVendorName(target.vendor, c.vendor)).sort(byDayDesc),
   ].slice(0, CORRECTION_LIMIT);
   return {
-    statements,
+    // A statement about the person goes to every receipt; one about a vendor ("Was ist das?") only to that vendor's.
+    statements: statements.filter((st) => !st.subject || sameVendorName(st.subject, target.vendor)),
     vendorHistory: vendorHistoryOf(target.vendor, others),
     similar: [...sameVendor, ...sameCategory],
     corrections: correctionsShown.map((c) => ({ vendor: c.vendor, date: c.date, category: c.category, item: c.item, modelSaid: c.modelSaid, how: c.how, personSaid: c.personSaid })),

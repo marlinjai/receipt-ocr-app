@@ -1,6 +1,6 @@
 import 'server-only';
 import type { PrismaClient } from '@prisma/client';
-import { RuleInputError, validateRuleInput, type ClassificationRule, type RuleType } from './classification-rules';
+import { RuleInputError, WHAT_MAX_LENGTH, subjectKey, validateRuleInput, type ClassificationRule, type RuleType } from './classification-rules';
 
 /**
  * The classification rules of one workspace (company), stored in
@@ -21,6 +21,7 @@ type StoredRule = {
   zuordnung: string | null;
   categoryOverride: string | null;
   label: string;
+  subject: string | null;
 };
 
 function toRule(row: StoredRule): ClassificationRule {
@@ -31,6 +32,7 @@ function toRule(row: StoredRule): ClassificationRule {
     zuordnung: row.zuordnung,
     categoryOverride: row.categoryOverride,
     label: row.label,
+    subject: row.subject,
   };
 }
 
@@ -100,4 +102,31 @@ export async function importRules(db: PrismaClient, ctx: RuleContext, raw: unkno
     else result.alreadyThere += 1;
   }
   return result;
+}
+
+/**
+ * "Was ist das?" (plan docs/plans/2026-11-07-learned-assignment.md, decision 8): the person's short answer
+ * about one vendor or counterparty ("Getränkelieferdienst, Wasser"), stored as one of their statements, so
+ * the assignment model and the counterparty classifier are both given it, and the rules page lists it. One
+ * statement per subject: a new answer replaces it, an empty one deletes it. Returns the statement, or null
+ * once it is deleted.
+ */
+export async function saveSubjectStatement(db: PrismaClient, ctx: RuleContext, raw: { name: unknown; answer: unknown }): Promise<ClassificationRule | null> {
+  const name = typeof raw.name === 'string' ? raw.name.replace(/\s+/g, ' ').trim() : '';
+  const subject = subjectKey(name);
+  if (!subject) throw new RuleInputError('match_value_required');
+  const answer = typeof raw.answer === 'string' ? raw.answer.replace(/\s+/g, ' ').trim() : '';
+  if (answer.length > WHAT_MAX_LENGTH) throw new RuleInputError('match_value_too_long');
+  const existing = await db.classificationRule.findFirst({ where: { authWorkspaceId: ctx.workspaceId, type: 'freetext', subject } });
+  if (!answer) {
+    if (existing) await db.classificationRule.deleteMany({ where: { id: existing.id, authWorkspaceId: ctx.workspaceId } });
+    return null;
+  }
+  // The same checks a statement typed on the rules page passes.
+  const input = validateRuleInput({ type: 'freetext', matchValue: `${name}: ${answer}`, zuordnung: null, label: answer });
+  const data = { matchValue: input.matchValue, label: answer, zuordnung: null, categoryOverride: null };
+  const row = existing
+    ? await db.classificationRule.update({ where: { id: existing.id }, data })
+    : await db.classificationRule.create({ data: { authWorkspaceId: ctx.workspaceId, authTenantId: ctx.tenantId, type: 'freetext', subject, ...data } });
+  return toRule(row);
 }

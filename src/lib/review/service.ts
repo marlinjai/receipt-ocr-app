@@ -20,6 +20,8 @@ import { timed } from '@/lib/timing';
 import { INVOICE_NUMBER_COLUMN, invoiceNumberKey } from '@/lib/extraction/invoice-number';
 import { markDistinct } from './merge';
 import { assignmentNotes, type AssignmentNote } from '@/lib/assignment/pass';
+import { listRules } from '@/lib/classification-rules-store';
+import { whatOf } from '@/lib/classification-rules';
 
 /**
  * The review queue of a workspace: every receipt that needs a person's eye,
@@ -78,6 +80,8 @@ export interface ReviewEntry {
    * (plan 2026-11-07-learned-assignment). Null where it has not answered or named no option.
    */
   assignmentSuggestion: Pick<AssignmentNote, 'assignment' | 'confidence' | 'reason'> | null;
+  /** For "Zuordnung fehlt": what the person said the vendor is ("Was ist das?"), or null (decision 8 of that plan). */
+  vendorWhat?: string | null;
 }
 
 function text(value: unknown): string {
@@ -320,7 +324,12 @@ export async function loadReviewQueue(db: PrismaClient, workspaceId: string): Pr
       console.error('[review] the assignment suggestions could not be read:', err instanceof Error ? err.name : 'error');
       return new Map<string, AssignmentNote>();
     });
+    const statements = await listRules(db, workspaceId).catch((err) => {
+      console.error('[review] the statements could not be read:', err instanceof Error ? err.name : 'error');
+      return [];
+    });
     for (const e of asked) {
+      e.vendorWhat = whatOf(statements, e.vendor);
       const note = suggested.get(e.rowId);
       if (note?.kind === 'suggested') e.assignmentSuggestion = { assignment: note.assignment, confidence: note.confidence, reason: note.reason };
     }

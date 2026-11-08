@@ -10,6 +10,8 @@ import { capModelVerdict, evidenceFingerprint, evidenceVerdict, filedVerdict, ma
 import type { ClassifyRunCounts } from './classify-summary';
 import type { CounterpartyClassifierPort } from './counterparty-classifier';
 import { loadPayments, type LoadedPayments } from './service';
+import { listRules } from '@/lib/classification-rules-store';
+import { whatOf } from '@/lib/classification-rules';
 
 /**
  * Deciding the counterparties of one company without a person (plan
@@ -180,6 +182,7 @@ async function store(db: PrismaClient, ctx: ClassifyContext, evidence: Counterpa
     category: verdict.category,
     confidence: verdict.confidence,
     reason: verdict.reason,
+    what: verdict.what ?? null,
     source,
     model,
     fingerprint: evidenceFingerprint(evidence),
@@ -213,11 +216,24 @@ export async function classifyCounterparties(
   db: PrismaClient,
   ctx: ClassifyContext,
   port: CounterpartyClassifierPort | null,
-  options: { limit?: number; batch?: number; deadline?: number } = {},
+  /** `only`: just these counterparties (by key), e.g. the one a person just described. */
+  options: { limit?: number; batch?: number; deadline?: number; only?: readonly string[] } = {},
 ): Promise<ClassifyRun> {
   const loaded = await loadPayments(db, ctx.workspaceId);
+  // What the person said each counterparty is ("Was ist das?"): given to the model, part of the evidence.
+  const rules = await listRules(db, ctx.workspaceId).catch((err) => {
+    console.error('[payments] loading the statements failed:', err instanceof Error ? err.name : 'error');
+    return [];
+  });
+  const only = options.only ? new Set(options.only) : null;
   const stored = await db.taxCounterpartyVerdict.findMany({ where: { authWorkspaceId: ctx.workspaceId }, select: { counterpartyKey: true, fingerprint: true, source: true, treatment: true } });
-  const pending = pendingCounterparties(await counterpartyEvidence(db, ctx.workspaceId, loaded), loaded, new Map(stored.map((s) => [s.counterpartyKey, s.fingerprint])));
+  const evidence = (await counterpartyEvidence(db, ctx.workspaceId, loaded))
+    .filter((e) => !only || only.has(e.key))
+    .map((e) => {
+      const statement = whatOf(rules, e.label);
+      return statement ? { ...e, statement } : e;
+    });
+  const pending = pendingCounterparties(evidence, loaded, new Map(stored.map((s) => [s.counterpartyKey, s.fingerprint])));
   const storedSource = new Map(stored.map((s) => [s.counterpartyKey, s.source]));
   // What the model said before, where it said something: the filed-year rule asks it only about the rest.
   const modelSaid = new Map(stored.filter((s) => s.source === 'model' && s.treatment !== null).map((s) => [s.counterpartyKey, s.treatment]));

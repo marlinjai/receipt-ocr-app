@@ -38,6 +38,8 @@ export interface Statement {
   text: string;
   /** The assignment it names, if exactly one. */
   assignment: string | null;
+  /** Set for a statement about one vendor ("Was ist das?"): it is given only for that vendor's receipts. */
+  subject?: string | null;
 }
 
 /** An earlier receipt with a person's answer. */

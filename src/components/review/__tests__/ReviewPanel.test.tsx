@@ -30,9 +30,9 @@ const ASSIGNMENTS = [
   { id: 'opt-private', name: 'Privat' },
 ];
 
-function setup(entries: ReviewEntry[], extra: { busy?: boolean; error?: string | null; assignmentOptions?: typeof ASSIGNMENTS } = {}) {
+function setup(entries: ReviewEntry[], extra: { busy?: boolean; error?: string | null; assignmentOptions?: typeof ASSIGNMENTS; onSaveWhat?: (vendor: string, answer: string) => void } = {}) {
   const handlers = { onOpen: vi.fn(), onConfirm: vi.fn(), onKeepBoth: vi.fn(), onDelete: vi.fn(), onTakeReading: vi.fn(), onSetAssignment: vi.fn() };
-  render(<ReviewPanel entries={entries} busy={extra.busy ?? false} error={extra.error ?? null} assignmentOptions={extra.assignmentOptions ?? ASSIGNMENTS} {...handlers} />);
+  render(<ReviewPanel entries={entries} busy={extra.busy ?? false} error={extra.error ?? null} assignmentOptions={extra.assignmentOptions ?? ASSIGNMENTS} onSaveWhat={extra.onSaveWhat} {...handlers} />);
   return handlers;
 }
 
@@ -110,6 +110,15 @@ describe('ReviewPanel', () => {
     expect(document.getElementById(marked.getAttribute('aria-describedby')!)?.textContent).toBe('Vorschlag: Privat. Drogerie: bisher privat.');
     await userEvent.click(within(choices).getByRole('button', { name: 'Geschäftlich' }));
     expect(handlers.onSetAssignment).toHaveBeenCalledWith('r1', 'opt-business');
+  });
+
+  it('"Was ist das?" about the vendor is saved from the card', async () => {
+    const onSaveWhat = vi.fn();
+    setup([entry({ reasons: ['assignment_missing'], canConfirm: false, vendor: 'Flaschenpost' })], { onSaveWhat });
+    await userEvent.click(screen.getByRole('button', { name: /Belege prüfen/ }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Was ist Flaschenpost?' }), 'Getränkelieferdienst');
+    await userEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+    expect(onSaveWhat).toHaveBeenCalledWith('Flaschenpost', 'Getränkelieferdienst');
   });
 
   it('without a suggestion no button is marked and no reason shows', async () => {

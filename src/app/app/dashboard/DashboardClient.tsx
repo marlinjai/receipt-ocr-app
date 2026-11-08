@@ -18,7 +18,7 @@ import { createServerActionsAdapter } from './server-actions-adapter';
 import { deleteReceiptsForGood, getAssignmentNote, getReceiptText, getReceiptYear, getYearCounts, searchReceiptText, setFieldOnRows } from './actions';
 import type { YearCounts } from '@/lib/receipt-year-counts';
 import { MIN_TEXT_SEARCH_LENGTH, listColumns } from '@/lib/receipt-text';
-import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
+import { confirmReceiptChecked, getReviewQueue, keepBothLookAlikes, saveVendorWhat, takeNewReading, type ReviewActionError, type ReviewResult } from './review-actions';
 import DashboardPhoneActions from './DashboardPhoneActions';
 import ReceiptPhoneList from './ReceiptPhoneList';
 import { AiIcon, ExportIcon } from './dashboard-icons';
@@ -522,6 +522,7 @@ const DashboardContent = observer(function DashboardContent({ store, tableId, in
     [store],
   );
   const confirmReviewed = useCallback((rowId: string) => void runReviewAction(() => confirmReceiptChecked(rowId)), [runReviewAction]);
+  const saveVendorWhatReviewed = useCallback((vendor: string, answer: string) => void runReviewAction(() => saveVendorWhat(vendor, answer)), [runReviewAction]);
   const keepBothReviewed = useCallback((rowId: string, otherRowId: string) => void runReviewAction(() => keepBothLookAlikes(rowId, otherRowId)), [runReviewAction]);
   const setReviewedAssignment = useCallback((rowId: string, optionId: string) => void setAssignment(rowId, optionId), [setAssignment]);
   const takeReading = useCallback(
@@ -899,6 +900,7 @@ const DashboardContent = observer(function DashboardContent({ store, tableId, in
         onDelete={deleteOne}
         assignmentOptions={assignmentOptions}
         onSetAssignment={setReviewedAssignment}
+        onSaveWhat={saveVendorWhatReviewed}
         onTakeReading={takeReading}
       />
 

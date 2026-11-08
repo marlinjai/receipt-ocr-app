@@ -71,52 +71,101 @@ the app the context has to be built over time, learned from the user.
    says so.
 7. **After release, the open receipts are decided once** (the unassigned ones of every workspace),
    through the same path, so confident ones are set and marked and the rest stay asked.
+8. **"Was ist das?", and "Teils, teils" decided per payment (added by the owner on 2026-11-08).** The
+   payments page "Wer ist das? Was die App nicht sicher einordnen konnte" asked only business or private,
+   never what a counterparty is. The owner: "Flaschenpost ist zum Beispiel Wasser"; "eBay kommt voll drauf
+   an, da müsste man wirklich nach den Belegen schauen."
+   - Each counterparty card and each receipt assignment card gets an optional short answer "Was ist das?"
+     (free text, e.g. "Getränkelieferdienst, Wasser"). It is stored as one of the person's statements
+     (decision 2), keyed to the vendor or counterparty, and given to both the receipt assignment model and
+     the counterparty classifier that writes the "Vorschlag der App". The classifier also says what it
+     takes the counterparty to be, so the person corrects the "what" as well as the "who".
+   - For "Teils, teils" counterparties (eBay, Amazon, Apple, MediaMarkt) the decision is per payment, from
+     the linked receipt's line items, by the learned assignment model (decision 1). A mixed payment without
+     a receipt stays a question with "Beleg wählen". Where line items are missing, the reason says so.
+   - Set by hand on production on 2026-11-08 and left as they are: flaschenpost SE private, eBay S.a.r.l.
+     mixed.
 
-## Decisions taken while building (by the implementing session, 2026-11-07, say so if you disagree)
+## Decisions taken while building (by the implementing session, 2026-11-07 and 2026-11-08, say so if you disagree)
 
-8. **The model is Sonnet 5.5, not the upload model** (`AI_ASSIGNMENT_MODEL`, default
+9. **The model is Sonnet 5.5, not the upload model** (`AI_ASSIGNMENT_MODEL`, default
    `anthropic/claude-sonnet-5.5` on OpenRouter; `ANTHROPIC_ASSIGNMENT_MODEL`, default `claude-sonnet-5-5`
    on the direct path). Decision 1 allowed the replay to pick a stronger one: Haiku 5.5 reached the bar
    only at a confidence of 0.95 and would have set 45 percent of the receipts automatically, Sonnet 5.5
    reaches it at 0.9 with 69 percent (see "Measured"). The price is about 0.6 cents per decision against
    0.04 for Haiku; a person's receipts are few, the mistakes are what costs.
-9. **The threshold is 0.9** (`AUTO_ASSIGN_CONFIDENCE` in `src/lib/assignment/pass.ts`). With Sonnet 5.5 the
+10. **The threshold is 0.9** (`AUTO_ASSIGN_CONFIDENCE` in `src/lib/assignment/pass.ts`). With Sonnet 5.5 the
    lowest threshold at which both wrong-way rates stay below 1 in 100 is 0.75, but only by a hair (9 of 909,
    0.99 percent): one more mistake fails it. At 0.9 both are well under (2 and 3 of 725), and all other
    mistakes drop from 47 to 11. Decision 6 asks for "below 1 in 100", not for the lowest threshold.
-10. **A freetext rule may name no assignment.** Two of the five statements of decision 5 ("studies ended",
+11. **A freetext rule may name no assignment.** Two of the five statements of decision 5 ("studies ended",
    "Amazon, Apple and MediaMarkt are mixed") name no single option, and the rules required one. The column
    `classification_rules.zuordnung` takes null, for freetext only (migration 0051); a vendor or keyword
    rule still needs one. On the rules page the kind is now called "Aussage über mich" and offers "keine
    bestimmte". The chat assistant can save a statement too (`remember_statement`, approved by the person
    like every change it proposes).
-11. **The reader's own answer counts as automatic.** Since #75 the reader still sets "Geschäftlich" or
+12. **The reader's own answer counts as automatic.** Since #75 the reader still sets "Geschäftlich" or
    "Universität" where the document itself shows it (a company addressee, a VAT number, reverse charge).
    Without a record, the pass would take such a cell for the person's answer and learn from it. The upload,
    the retake and "Seite neu lesen" now record it as an automatic decision with the reason "Auf dem Beleg
    selbst zu sehen ..."; a person's change of it is a correction like any other.
-12. **Who said what is derived, not flagged.** A cell holds an automatic answer exactly while a decision
+13. **Who said what is derived, not flagged.** A cell holds an automatic answer exactly while a decision
    with outcome "set" exists for it, no person's answer is recorded and the cell still holds that value.
    Everything else is a person's answer, whichever path wrote it (table edit, "Set field", a review card,
    the chat, a meal marked as business meal, a finance decision). The pass also finds such answers itself,
    so no write path can slip past it; the table edit and "Set field" record them at once. A person who
    empties an automatic answer has answered too: the receipt is asked and never decided again.
-13. **What the pass does not decide.** A meal (the meal register judges it, and an automatic "Privat"
+14. **What the pass does not decide.** A meal (the meal register judges it, and an automatic "Privat"
    would take it out of the Bewirtung list), a receipt a finance decision or a finance vendor rule settles
    (the finance area writes its cells), and a receipt a reading rule matches (decision 3; an automatic
    answer a new rule contradicts gives way to the rule). Their answers are still the person's evidence for
    other receipts, except the ones a reading rule set.
-14. **A business meal sets "Geschäftlich" when it is saved as "Geschäftsessen (extern)" with an occasion**,
+15. **A business meal sets "Geschäftlich" when it is saved as "Geschäftsessen (extern)" with an occasion**,
    whatever the cell held; that is the person's newest word on that receipt.
-15. **Where it runs.** After an upload, a retake, "Seite neu lesen" and an edit of the vendor, category or
+16. **Where it runs.** After an upload, a retake, "Seite neu lesen" and an edit of the vendor, category or
    item (bounded to 3 model calls), from the tools page ("Zuordnungen entscheiden", 20 per request, the
    page asks again until none is left), and daily for the receipts whose decision failed (the resume path).
    The daily run deliberately does not take every open receipt: that is decision 7's one pass, which waits
    for the owner's go.
-16. **Kept with the receipt, gone with it.** The decisions live in `receipt_assignment_decisions` (one row
+17. **Kept with the receipt, gone with it.** The decisions live in `receipt_assignment_decisions` (one row
    per receipt, keyed to `assignmentFingerprint`: vendor, day, category, item, lines and a hash of the
    text, never the person's context, so a new answer elsewhere does not undo every decision). Deleting a
    receipt deletes its decision.
+
+18. **A decision is claimed before the cell is written, and only over the record the run read** (review of
+   #246). A person who answers while the model is asked, or a second run on the same receipt (an upload and
+   "Zuordnungen entscheiden" at once, two quick edits), keeps what they wrote; the late answer is dropped
+   and counted as `superseded`. The match is on the record's `decidedAt`, a millisecond stamp
+   (`TIMESTAMP(3)`) that round-trips exactly; it is the version of the record, not an id to be swapped
+   for one. Leaving "Privat" (the model replacing its own outdated "Privat", or a rule taking over) brings
+   back the share kept from before, else the whole, as a manual edit does. A tools-page request starts no
+   model call after 200 seconds.
+19. **"Was ist das?" is a statement with a subject** (decision 8): `classification_rules.subject` (migration
+   0052) holds the vendor's compared key, the text reads "<name>: <answer>", `label` holds the answer alone,
+   one statement per subject (a new answer replaces it, an empty one deletes it). It reaches the assignment
+   model only for that vendor's receipts; a statement about the person reaches all. The prompt text is
+   unchanged, so what the replay measured still holds. Saving it decides the vendor's open receipts again,
+   also those whose suggestion rests on the same facts; set and answered ones stay.
+20. **The counterparty classifier** gets the answer as `personSays` and answers `what` (stored in
+   `tax_counterparty_verdicts.what`, shown as "Die App hält es für: ..."). The answer joins the verdict's
+   fingerprint only when given, so no stored verdict is redone on deploy; a new answer decides that
+   counterparty again at once. A counterparty a person answered is never decided again: an answer about it
+   changes the note, never the treatment (flaschenpost SE and eBay S.a.r.l. stay as set by hand).
+21. **"Teils, teils" per payment.** In the spending overview a payment of a mixed counterparty follows the
+   receipts linked to it: business where one is business (Universität counts on the business side of that
+   split, as any link did before), private where all are private, unanswered while one is open; only the
+   cents linked to a business receipt are business. One without a receipt is a question. The tax figures
+   do not change: they count the receipts, which already carry their own assignment. Moving private
+   payments between companies does not change either (`route.ts` keeps an unlinked mixed payment private).
+   Linking a receipt by hand starts its assignment decision, and where no positions were read the stored
+   reason starts with "Ohne gelesene Positionen, nur nach Anbieter und Text entschieden."
+22. **The questions are grouped per counterparty.** Production on 2026-11-08 (read only), open year 2026:
+   281 payments out without a receipt of counterparties the owner answered "Teils, teils" (PayPal Europe
+   256, Amazon 22, eBay 2, Riverty 1), and more of counterparties the app itself filed as mixed (Apple,
+   MILES, Telekom, freenet). One card each would bury the page, so "Teils, teils: welcher Beleg gehört zu
+   welcher Zahlung?" lists each counterparty with its count, and "Zahlungen ansehen" opens its payments
+   with "Beleg wählen" and "Beleg hochladen". PayPal is a payment service rather than a shop; whether it
+   should stay "Teils, teils" is the owner's answer on the page.
 
 ## Paths (stateful-flow standard)
 
@@ -172,7 +221,7 @@ The same for Haiku 5.5 (of 1,054):
 | 0.95 | 472 | 465 | 0 (of 415) | 1 (of 51) | 7 |
 | 0.97 | 90 | 90 | 0 | 0 | 0 |
 
-Chosen: Sonnet 5.5 at 0.9 (decisions 8 and 9). Among the 725 it sets, "Privat" on a business receipt is
+Chosen: Sonnet 5.5 at 0.9 (decisions 9 and 10). Among the 725 it sets, "Privat" on a business receipt is
 2 in 725 (0.28 percent) and "Geschäftlich" on a private one 3 in 725 (0.41 percent), both below the bar of
 1 in 100. Read with care: the private receipts are few, so among the 88 private receipts it sets, 3 are
 filed as business (3.4 percent of those); a single mistake more or less moves that share a lot. The cost of

@@ -15,6 +15,7 @@ const counterparty = (name: string, mayLookUp: boolean): ModelCounterparty => ({
   texts: ['Abo'],
   linkedReceipts: 'none',
   mayLookUp,
+  personSays: null,
 });
 
 const answer = (keys: string[], stop = 'end_turn') => ({

@@ -1,4 +1,5 @@
 import 'server-only';
+import { loadReceipts } from '@/lib/tax/service';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { counterpartyKey, loadPayments, setCounterpartyTreatment, type PaymentRow } from '@/lib/tax/payments/service';
 import { loadRoutedPayments, type RoutedPaymentRow, type RoutedPayments } from '@/lib/tax/payments/routing';
@@ -89,8 +90,37 @@ export async function loadCategoryAnswers(db: PrismaClient, workspaceId: string)
  * The one mapper for both, so the private and business parts are worked out
  * from the same facts everywhere (links, a private account).
  */
-export function toOverviewInput(p: PaymentRow | RoutedPaymentRow): OverviewPaymentInput {
+/** Who bears a receipt, as the spending side counts it: Universität stays on the business side, as any link did before. */
+export type ReceiptPurpose = 'business' | 'private' | 'open';
+
+/**
+ * Who bears each receipt of the company, by row, from its assignment cell (which the finance decisions and the
+ * assignment model keep in step): "Privat" or a share of 0 is private, any other assignment business, an empty
+ * one open. A failure to read them is logged and every "Teils, teils" payment then counts as before (linked is
+ * business): the overview still shows, only less exactly.
+ */
+export async function receiptPurposes(db: PrismaClient, workspaceId: string): Promise<Map<string, ReceiptPurpose> | undefined> {
+  try {
+    const loaded = await loadReceipts(db, workspaceId);
+    if (!loaded) return undefined;
+    return new Map(
+      loaded.facts.map((f) => {
+        const zuordnung = f.record.zuordnung;
+        const purpose: ReceiptPurpose = zuordnung === null ? 'open' : zuordnung === 'Privat' || f.businessSharePercent === 0 ? 'private' : 'business';
+        return [f.record.rowId, purpose];
+      }),
+    );
+  } catch (err) {
+    console.error('[spending] who bears the linked receipts could not be read:', err instanceof Error ? err.name : 'error');
+    return undefined;
+  }
+}
+
+export function toOverviewInput(p: PaymentRow | RoutedPaymentRow, receiptPurposes?: ReadonlyMap<string, ReceiptPurpose>): OverviewPaymentInput {
+  const linkedRows = p.links.flatMap((l) => (l.rowId ? [{ rowId: l.rowId, cents: l.cents }] : []));
+  const purposes = receiptPurposes ? linkedRows.map((l) => receiptPurposes.get(l.rowId) ?? 'open') : undefined;
   return {
+    ...(purposes ? { linkedPurposes: purposes, linkedBusinessCents: linkedRows.reduce((sum, l) => sum + (receiptPurposes!.get(l.rowId) === 'business' ? l.cents : 0), 0) } : {}),
     id: p.id,
     accountId: p.accountId,
     bookingDay: p.bookingDay,
@@ -216,8 +246,9 @@ export async function loadSpending(db: PrismaClient, workspaceId: string, year: 
   ]);
   const { treatments, byName } = await timed('spending.treatments', () => spendingTreatments(db, workspaceId, loaded, ownNames));
   const answerMap = await timed('spending.answerMap', () => categoryAnswerMap(db, workspaceId, loaded, answers));
+  const purposes = await timed('spending.receiptPurposes', () => receiptPurposes(db, workspaceId));
   const overview = await timed('spending.overview', async () =>
-    buildOverview(loaded.payments.map(toOverviewInput), { treatments, byName, answers: answerMap, appCategories: loaded.appCategories, holderAppCategories: loaded.holderAppCategories }, year, month),
+    buildOverview(loaded.payments.map((p) => toOverviewInput(p, purposes)), { treatments, byName, answers: answerMap, appCategories: loaded.appCategories, holderAppCategories: loaded.holderAppCategories }, year, month),
   );
   return {
     overview,

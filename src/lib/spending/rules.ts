@@ -202,12 +202,36 @@ export type SpendingPurpose = 'private' | 'business' | 'unanswered';
  * private (src/lib/tax/payments/route.ts), and this company's own answers
  * never change that.
  */
-export function purposeOf(payment: { kind: PaymentKind; linkCount?: number; byPrivateAccount?: boolean; routed?: boolean }, treatment: CounterpartyTreatmentAnswer | undefined): SpendingPurpose {
+export function purposeOf(
+  payment: {
+    kind: PaymentKind;
+    linkCount?: number;
+    byPrivateAccount?: boolean;
+    routed?: boolean;
+    /**
+     * Who bears each receipt linked to the payment, where the caller knows it (plan
+     * 2026-11-07-learned-assignment, decision 8). For a "Teils, teils" counterparty the receipt decides each
+     * payment: business when a linked receipt is, private when all are private, unanswered while one is open.
+     */
+    linkedPurposes?: ReadonlyArray<'business' | 'private' | 'open'>;
+    /** For a "Teils, teils" counterparty, a payment no receipt pays is a question (unanswered), not private. */
+    unlinkedMixedAsks?: boolean;
+  },
+  treatment: CounterpartyTreatmentAnswer | undefined,
+): SpendingPurpose {
   if (payment.routed) return 'private';
   if (treatment === 'private' || (payment.kind === 'private' && !payment.byPrivateAccount)) return 'private';
+  const linked = (payment.linkCount ?? 0) > 0;
+  if (treatment === 'mixed' && !payment.byPrivateAccount) {
+    if (!linked) return payment.unlinkedMixedAsks ? 'unanswered' : 'private';
+    const purposes = payment.linkedPurposes;
+    if (!purposes || purposes.length === 0) return 'business';
+    if (purposes.includes('business')) return 'business';
+    return purposes.every((p) => p === 'private') ? 'private' : 'unanswered';
+  }
   // Still private by its account: only a person's business answer lifts that, and then the payment is no
   // longer marked so (`loadPayments`), so a business treatment here is the app's and does not count.
-  if (treatment === 'mixed' || payment.byPrivateAccount) return (payment.linkCount ?? 0) > 0 ? 'business' : 'private';
+  if (treatment === 'mixed' || payment.byPrivateAccount) return linked ? 'business' : 'private';
   if (treatment === 'business') return 'business';
   return 'unanswered';
 }

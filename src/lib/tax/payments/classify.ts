@@ -48,6 +48,11 @@ export interface CounterpartyEvidence {
    * have claimed it, so the filed year decides nothing.
    */
   filedBusinessReceipts: number;
+  /**
+   * What the person said the counterparty is ("Was ist das?", plan 2026-11-07-learned-assignment,
+   * decision 8), or absent. It is given to the model and is part of the fingerprint only when present.
+   */
+  statement?: string | null;
 }
 
 export interface DecidedVerdict {
@@ -55,6 +60,8 @@ export interface DecidedVerdict {
   category: SpendingCategory | null;
   confidence: VerdictConfidence;
   reason: string;
+  /** What the app takes the counterparty to be, in a few German words; null where it did not say (a verdict from receipts). */
+  what?: string | null;
 }
 
 /**
@@ -65,7 +72,7 @@ export interface DecidedVerdict {
  */
 export function evidenceFingerprint(
   evidence: Pick<CounterpartyEvidence, 'receipts' | 'linkedPayments' | 'inCents'> &
-    Partial<Pick<CounterpartyEvidence, 'paymentCount' | 'outCents' | 'matchedPayments' | 'invoicePayments' | 'incomingPayments' | 'filedYears' | 'openYearPayments' | 'filedBusinessReceipts'>>,
+    Partial<Pick<CounterpartyEvidence, 'paymentCount' | 'outCents' | 'matchedPayments' | 'invoicePayments' | 'incomingPayments' | 'filedYears' | 'openYearPayments' | 'filedBusinessReceipts' | 'statement'>>,
 ): string {
   const { business, private: priv, mixed, categories } = evidence.receipts;
   // Money coming in changes what the app may decide alone (`capModelVerdict`): its first arrival is new evidence.
@@ -82,6 +89,8 @@ export function evidenceFingerprint(
     const invoiceClass = invoices === 0 ? '' : invoices >= (evidence.incomingPayments ?? 0) ? 'all' : 'some';
     parts.push(matched > 0 ? paidByReceipts : '', invoiceClass, invoices > 0 && (evidence.outCents ?? 0) > 0 ? 'out' : '', [...filed].sort().join(','), (evidence.openYearPayments ?? 0) > 0 ? 'open' : '', (evidence.filedBusinessReceipts ?? 0) > 0 ? 'claimable' : '');
   }
+  // The person's own description joins only when given, so every counterparty without one keeps its fingerprint.
+  if (evidence.statement) parts.push(`says:${evidence.statement}`);
   const text = parts.join('|');
   return createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
@@ -231,6 +240,8 @@ export interface ModelCounterparty {
   /** What the filed returns say about it: the person's own decision for those years. */
   filedReturns: string;
   mayLookUp: boolean;
+  /** What the person said the counterparty is, in their own words; null where they said nothing. */
+  personSays: string | null;
 }
 
 const euroText = (cents: number) => (cents / 100).toFixed(2);
@@ -258,6 +269,7 @@ export function toModelCounterparty(evidence: CounterpartyEvidence, requestKey: 
         ? 'none'
         : `${evidence.filedYears.join(', ')} filed; ${evidence.filedBusinessReceipts > 0 ? `${evidence.filedBusinessReceipts} business or split receipts of it in those years` : 'no business receipt of it found in those years'}; ${evidence.openYearPayments} payments in open years`,
     mayLookUp: lookUp,
+    personSays: evidence.statement ? evidence.statement.slice(0, 140) : null,
   };
 }
 
@@ -270,11 +282,14 @@ For every counterparty decide:
 - category: one of
 ${categories}
 - confidence: "certain" only when the name or texts leave no reasonable doubt (a well-known software or AI vendor is business; a supermarket or a restaurant chain is private); "likely" when it is the probable answer but someone could reasonably answer otherwise; "unsure" when you cannot tell, for example a person's name or an unknown shop.
+- what: what the counterparty is, in two to five German words (for example "Supermarktkette", "Getränkelieferdienst", "Online-Marktplatz", "Privatperson"), so the person can correct it.
 - reason: one short German sentence a non-expert understands, without dashes, naming what the counterparty is (for example "Supermarktkette, Einkauf für den Haushalt").
+
+"personSays", where given, is the person's own description of the counterparty: it is true and wins over what the name suggests ("Getränkelieferdienst, Wasser" for a delivery service means private groceries; "kommt drauf an" means mixed).
 
 A transfer to or from a private person is "private" with category "transfers", at most "likely" unless the texts make the purpose clear. Linked receipts are strong evidence: receipts that are all business mean business. "invoices" says how much of the money received pays the person's own invoices: a client, for whom money paid out to them may still be private (buying in their shop). "filedReturns" tells what the filed tax returns hold for it: without a business receipt there it was most likely not claimed, which points to private for the open years too unless the name or texts say otherwise. ${options.webSearch ? 'You have web search. Use it only for counterparties marked mayLookUp true, and only when the name alone does not tell you what the business is. Never search for a counterparty marked mayLookUp false.' : 'You have no web search; judge from the name and texts.'}
 
-Answer with JSON only, no prose: {"verdicts":[{"key":"...","treatment":"...","category":"...","confidence":"...","reason":"..."}]} with exactly one entry per counterparty, using the given key.`;
+Answer with JSON only, no prose: {"verdicts":[{"key":"...","treatment":"...","category":"...","confidence":"...","what":"...","reason":"..."}]} with exactly one entry per counterparty, using the given key.`;
 }
 
 export function classificationRequest(counterparties: readonly ModelCounterparty[]): string {
@@ -318,11 +333,13 @@ export function parseModelVerdicts(text: string, askedKeys: readonly string[]): 
     if (!(VERDICT_CONFIDENCES as readonly string[]).includes(entry.confidence as string)) continue;
     const reason = cleanReason(entry.reason);
     const category = isSpendingCategory(entry.category) && entry.category !== 'unclear' ? entry.category : null;
+    const what = cleanReason(entry.what).slice(0, 80);
     out.set(key, {
       treatment: entry.treatment,
       category,
       confidence: reason ? (entry.confidence as VerdictConfidence) : 'unsure',
       reason: reason || 'Ohne Begründung geantwortet.',
+      what: what || null,
     });
   }
   return out;

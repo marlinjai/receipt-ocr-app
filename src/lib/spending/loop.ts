@@ -311,6 +311,21 @@ export function loopState(payment: LoopPayment, ctx: LoopContext): LoopState {
 }
 
 /**
+ * Does a receipt chosen for this payment (an upload for it, a mail taken over)
+ * get linked to it? Yes while it waits for one, and also when it was answered
+ * "Nicht auffindbar": that answer means "no receipt found so far", and a
+ * receipt found later replaces it (decided 2026-11-08). The answer is not
+ * deleted: a link ranks above it (`loopState` says `has_receipt` first), so
+ * taking the link back brings the answer back. Any other answer says no
+ * receipt is needed at all ("Privat, kein Beleg nötig", a person's own
+ * reason) and keeps refusing; linking by hand stays possible there.
+ */
+export function takesReceipt(state: LoopState): boolean {
+  if (state.state === 'missing' || state.state === 'in_mailbox' || state.state === 'proposed') return true;
+  return state.state === 'no_receipt' && state.reason === RECEIPT_NOT_FOUND;
+}
+
+/**
  * A payment's state once `rowId` is linked elsewhere: a linked receipt is
  * proposed to nobody, and with no proposal left the state falls to what
  * `loopState` says next. The same object when the receipt was not proposed

@@ -226,6 +226,14 @@ every private purchase") for the past. Decided by the coordinating session, say 
   3 are billed to another household member and stayed out, per the rules of the 2025 import.
 - Answers are the ordinary "no receipt" answers: taken back one by one, or all at once on the
   database by deleting the rows with these two reasons.
+- Decided 2026-11-08 by the coordinating session: "Nicht auffindbar" means "no receipt found so
+  far", and a receipt found later replaces it. An upload for the payment ("Beleg hochladen" in the
+  payments area, the upload page, a mail taken over) is linked to it like to one still waiting
+  (`takesReceipt`), and the search offers that upload (`awaitsReceipt`). The answer row stays: a
+  link ranks above it, so taking the link back brings "Nicht auffindbar" back. Every other answer
+  says no receipt is needed ("Privat, kein Beleg nötig", a person's own reason) and keeps refusing
+  the upload; linking by hand ("Beleg wählen") stays possible there. Checked on production first:
+  the 36 unlinked Amazon payments of 2026 in Whiz-Art Media all carry "Nicht auffindbar".
 - Notion is not a source: its expense table ends in 2024 (one row of 2025) and those documents are
   in the app since the import of 2026-10-11. The mailboxes are searched instead.
 - Repayments, overdraft interest and account fees of the banks count as loans and fees, so they

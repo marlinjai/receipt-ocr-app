@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHOICES_SHOWN, PRIVATE_NO_RECEIPT, RECEIPT_NOT_FOUND, backlogAnswer, certainPairs, closestPairs, loopState, sameAmountPairs, notNeededReason, notifiable, receiptCandidates, receiptChoices, withoutReceipt, type LoopContext, type LoopPayment, type LoopReceipt, type LoopState } from '../loop';
+import { CHOICES_SHOWN, PRIVATE_NO_RECEIPT, RECEIPT_NOT_FOUND, backlogAnswer, takesReceipt, certainPairs, closestPairs, loopState, sameAmountPairs, notNeededReason, notifiable, receiptCandidates, receiptChoices, withoutReceipt, type LoopContext, type LoopPayment, type LoopReceipt, type LoopState } from '../loop';
 
 /** Every name here is a brand or invented. */
 const payment = (o: Partial<LoopPayment> = {}): LoopPayment => ({
@@ -251,5 +251,21 @@ describe('receiptChoices', () => {
   it('offers at most the limit', () => {
     const receipts = Array.from({ length: 40 }, (_, i) => r(`r${String(i).padStart(2, '0')}`));
     expect(receiptChoices(pay, receipts, new Map())).toHaveLength(CHOICES_SHOWN);
+  });
+});
+
+describe('takesReceipt', () => {
+  it('a waiting payment and one answered "Nicht auffindbar" take a receipt; one with a receipt or one that needs none does not', () => {
+    expect(takesReceipt({ state: 'missing' })).toBe(true);
+    expect(takesReceipt({ state: 'in_mailbox', mails: [] })).toBe(true);
+    expect(takesReceipt({ state: 'proposed', candidates: [] })).toBe(true);
+    expect(takesReceipt({ state: 'no_receipt', reason: RECEIPT_NOT_FOUND })).toBe(true);
+    expect(takesReceipt({ state: 'no_receipt', reason: RECEIPT_NOT_FOUND, fromHolder: true })).toBe(true);
+    expect(takesReceipt({ state: 'no_receipt', reason: PRIVATE_NO_RECEIPT })).toBe(false);
+    expect(takesReceipt({ state: 'no_receipt', reason: 'Fahrt einer anderen Person' })).toBe(false);
+    // Only the exact answer: a person's own words that merely mention it are their own reason.
+    expect(takesReceipt({ state: 'no_receipt', reason: 'nicht auffindbar, Bar bezahlt' })).toBe(false);
+    expect(takesReceipt({ state: 'has_receipt' })).toBe(false);
+    expect(takesReceipt({ state: 'not_needed', reason: 'fee' })).toBe(false);
   });
 });

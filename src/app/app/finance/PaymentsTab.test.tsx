@@ -169,6 +169,56 @@ describe('PaymentsTab', () => {
     expect(p.onTreat).toHaveBeenCalledWith('Vermieter Beispiel', 'private');
   });
 
+  it('"Was ist das?": the person describes a counterparty, the app says what it takes it to be', async () => {
+    const user = setupUser();
+    const p = { ...props(), onSaveWhat: vi.fn() };
+    render(
+      <PaymentsTab
+        view={view({
+          unclassified: [
+            { key: 'flaschenpost se', label: 'flaschenpost SE', count: 4, outCents: 12_000, inCents: 0, proposal: { treatment: 'business', confidence: 'unsure', reason: 'Lieferdienst.', what: 'Lieferdienst' }, personWhat: null },
+          ],
+        })}
+        {...p}
+      />,
+    );
+    const row = screen.getByText('flaschenpost SE').closest('li') as HTMLElement;
+    expect(row.textContent).toContain('Die App hält es für: Lieferdienst.');
+    const field = within(row).getByRole('textbox', { name: 'Was ist flaschenpost SE?' });
+    expect((within(row).getByRole('button', { name: 'Speichern' }) as HTMLButtonElement).disabled).toBe(true);
+    await user.type(field, 'Getränkelieferdienst, Wasser');
+    await user.click(within(row).getByRole('button', { name: 'Speichern' }));
+    expect(p.onSaveWhat).toHaveBeenCalledWith('flaschenpost se', 'flaschenpost SE', 'Getränkelieferdienst, Wasser');
+  });
+
+  it('a saved description can be removed by emptying it', async () => {
+    const user = setupUser();
+    const p = { ...props(), onSaveWhat: vi.fn() };
+    render(<PaymentsTab view={view({ unclassified: [{ key: 'ebay', label: 'eBay', count: 2, outCents: 4_000, inCents: 0, proposal: null, personWhat: 'kommt drauf an' }] })} {...p} />);
+    const row = screen.getByText('eBay').closest('li') as HTMLElement;
+    await user.clear(within(row).getByRole('textbox', { name: 'Was ist eBay?' }));
+    await user.click(within(row).getByRole('button', { name: 'Entfernen' }));
+    expect(p.onSaveWhat).toHaveBeenCalledWith('ebay', 'eBay', '');
+  });
+
+  it('"Teils, teils" counterparties list their payments without a receipt, to choose one per payment', async () => {
+    const user = setupUser();
+    const p = props();
+    p.onSearch.mockResolvedValue({ ok: true, value: { payments: [found({ counterparty: 'eBay S.a.r.l.' })], total: 1 } });
+    render(<PaymentsTab view={view({ mixedOpen: [{ key: 'ebay', label: 'eBay S.a.r.l.', count: 2, outCents: 4_000, personWhat: null }] })} {...p} />);
+    const section = screen.getByRole('region', { name: 'Teils, teils' });
+    expect(section.textContent).toContain('2 Zahlungen ohne Beleg');
+    await user.click(within(section).getByRole('button', { name: 'Zahlungen ansehen' }));
+    expect(p.onSearch).toHaveBeenCalledWith({ counterpartyKey: 'ebay' });
+    expect(await within(section).findByRole('button', { name: /Beleg wählen/ })).toBeTruthy();
+  });
+
+  it('without the save action no field shows, and no "Teils, teils" section without such payments', () => {
+    render(<PaymentsTab view={view({ unclassified: [{ key: 'x', label: 'X Beispiel', count: 1, outCents: 100, inCents: 0, proposal: null }] })} {...props()} />);
+    expect(screen.queryByRole('textbox', { name: /Was ist/ })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Teils, teils' })).toBeNull();
+  });
+
   it('offers proposals with how sure they are, and links only when a person clicks', async () => {
     const user = setupUser();
     const p = props();

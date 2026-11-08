@@ -233,6 +233,8 @@ describe('what the model sees', () => {
       invoices: 'none',
       filedReturns: 'none',
       mayLookUp: true,
+      // Nothing the person said: no description is sent.
+      personSays: null,
     });
     // Any other name goes to a call without search, with up to three texts, numbers and addresses masked.
     const person = toModelCounterparty(evidence({ label: 'Max Beispiel', samples: ['Miete DE89 3704 0044 0532 0130 00', 'x@beispiel.de schickt', 'c', 'd'] }), 'c2');
@@ -281,7 +283,7 @@ describe("reading the model's answer", () => {
     ]}`;
     const verdicts = parseModelVerdicts(text, asked);
     expect([...verdicts.keys()]).toEqual(['werkzeug abo beispiel', 'laden beispiel']);
-    expect(verdicts.get('werkzeug abo beispiel')).toEqual({ treatment: 'business', category: 'software_ai_hosting', confidence: 'certain', reason: 'Software-Abo' });
+    expect(verdicts.get('werkzeug abo beispiel')).toEqual({ treatment: 'business', category: 'software_ai_hosting', confidence: 'certain', reason: 'Software-Abo', what: null });
     expect(verdicts.get('laden beispiel')).toMatchObject({ category: null, confidence: 'likely' });
   });
 

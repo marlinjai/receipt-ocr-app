@@ -47,6 +47,7 @@ import {
   setVatSettings,
   treatCounterparty,
   undoImport,
+  saveCounterpartyWhat,
   type Result,
 } from './actions';
 import LinesForm, { type LineDraft } from './LinesForm';
@@ -1053,6 +1054,9 @@ const FinanceClient = observer(function FinanceClient({
               }
               onTreat={(counterparty, treatment) =>
                 run(() => treatCounterparty(view.year, { counterparty, treatment }), `${counterparty}: ${treatment === null ? 'Antwort zurückgenommen' : 'gespeichert'}.`, undefined, undefined, counterparty)
+              }
+              onSaveWhat={(key, label, answer) =>
+                run(() => saveCounterpartyWhat(view.year, key, label, answer), answer.trim() ? `${label}: Beschreibung gespeichert.` : `${label}: Beschreibung entfernt.`, undefined, undefined, label)
               }
               onLink={linkWithQuestion}
               onAcceptProposals={(pairs, onlyUnambiguous) => {

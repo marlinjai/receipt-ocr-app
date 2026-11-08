@@ -59,7 +59,7 @@ vi.mock('./actions', () => ({
   setFieldOnRows: mocks.setFieldOnRows,
 }));
 vi.mock('../actions', () => ({ rereadReceipt: vi.fn(), recomputeFxRates: vi.fn() }));
-vi.mock('./review-actions', () => ({ getReviewQueue: mocks.getReviewQueue, confirmReceiptChecked: mocks.confirmReceiptChecked, keepBothLookAlikes: vi.fn(), takeNewReading: vi.fn() }));
+vi.mock('./review-actions', () => ({ getReviewQueue: mocks.getReviewQueue, confirmReceiptChecked: mocks.confirmReceiptChecked, keepBothLookAlikes: vi.fn(), takeNewReading: vi.fn(), saveVendorWhat: vi.fn() }));
 vi.mock('./group-actions', () => ({ createReceiptGroup: vi.fn(), moveReceiptsIntoGroup: mocks.moveReceiptsIntoGroup, removeReceiptsFromGroup: mocks.removeReceiptsFromGroup }));
 vi.mock('@/lib/presigned-file-adapter', () => ({ PresignedStorageBrainAdapter: class {} }));
 vi.mock('@/lib/export-csv', () => ({ exportCSV: (args: { rows: Array<{ id: string }> }) => state.exported.push(args) }));

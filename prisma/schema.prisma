@@ -212,12 +212,17 @@ model ClassificationRule {
   matchValue       String   @map("match_value")
   // Null only for a freetext statement that names no single assignment ("Amazon is mixed").
   zuordnung        String?
+  // A freetext statement about one vendor or counterparty ("Was ist das?"): its key as compared
+  // (letters and digits, lower case; src/lib/assignment/context.ts `vendorKey`). Null for a statement
+  // about the person in general. Plan docs/plans/2026-11-07-learned-assignment.md, decision 8.
+  subject          String?
   categoryOverride String?  @map("category_override")
   label            String   @default("")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@unique([authWorkspaceId, type, matchValue])
+  @@index([authWorkspaceId, subject])
   @@map("classification_rules")
 }
 
@@ -863,6 +868,9 @@ model TaxCounterpartyVerdict {
   category        String?
   confidence      String
   reason          String
+  // What the app takes the counterparty to be, in a few German words ("Getränkelieferdienst"); null where it
+  // did not say (plan 2026-11-07-learned-assignment, decision 8).
+  what            String?
   source          String
   model           String?
   fingerprint     String

@@ -42,6 +42,8 @@ export interface Verdict {
   category: SpendingCategory | null;
   confidence: VerdictConfidence;
   reason: string;
+  /** What the app takes the counterparty to be; null or absent where it did not say. */
+  what?: string | null;
   source: VerdictSource;
 }
 
@@ -63,6 +65,7 @@ export function storedVerdict(row: {
   category: string | null;
   confidence: string;
   reason: string;
+  what?: string | null;
   source: string;
 }): Verdict | null {
   if (!(VERDICT_CONFIDENCES as readonly string[]).includes(row.confidence)) return null;
@@ -73,6 +76,7 @@ export function storedVerdict(row: {
     category: isSpendingCategory(row.category) && row.category !== 'unclear' ? row.category : null,
     confidence: row.confidence as VerdictConfidence,
     reason: row.reason,
+    what: row.what ?? null,
     source: row.source === 'evidence' ? 'evidence' : 'model',
   };
 }

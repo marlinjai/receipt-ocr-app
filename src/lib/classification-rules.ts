@@ -32,9 +32,37 @@ export interface ClassificationRule {
   /** Null only for a freetext statement that names no single assignment. */
   zuordnung: string | null;
   categoryOverride?: string | null;
+  /**
+   * For a freetext statement about one vendor or counterparty ("Was ist das?"), its compared key
+   * (`subjectKey`); the statement's text then reads "<name>: <answer>" and `label` holds the answer alone.
+   * Absent or null for a statement about the person in general and for every other rule.
+   */
+  subject?: string | null;
 }
 
-export type RuleInput = Omit<ClassificationRule, 'id'>;
+export type RuleInput = Omit<ClassificationRule, 'id' | 'subject'>;
+
+/** A "Was ist das?" answer: a few words, like a label. */
+export const WHAT_MAX_LENGTH = 120;
+
+/** The key a vendor or counterparty is compared by: lower case, letters and digits only. */
+export function subjectKey(name: string | null | undefined): string {
+  return (name ?? '').toLocaleLowerCase('de-DE').replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/** Two subjects that are the same business: equal, or one inside the other where it is long enough. Never two empty ones. */
+export function sameSubject(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = subjectKey(a);
+  const y = subjectKey(b);
+  if (!x || !y) return false;
+  return x === y || (x.length >= 4 && y.includes(x)) || (y.length >= 4 && x.includes(y));
+}
+
+/** The answer of a statement about a subject, from the statements: the one whose subject is the same business. */
+export function whatOf(rules: readonly ClassificationRule[], name: string | null | undefined): string | null {
+  const own = rules.find((r) => r.type === 'freetext' && r.subject && sameSubject(r.subject, name));
+  return own ? own.label || null : null;
+}
 
 export type RuleErrorCode = 'invalid_type' | 'match_value_required' | 'match_value_too_long' | 'invalid_zuordnung' | 'invalid_category';
 

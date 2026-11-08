@@ -4,7 +4,7 @@ import type { Row } from '@marlinjai/data-table-core';
 import { ensureRealTable } from '@marlinjai/data-table-adapter-prisma';
 import { safeColumnName, safeTableName } from '@marlinjai/data-table-adapter-shared';
 import { firstColumnIdByName } from '@/lib/column-lookup';
-import { matchRules, statementsOf, type ClassificationRule } from '@/lib/classification-rules';
+import { matchRules, sameSubject, statementsOf, type ClassificationRule } from '@/lib/classification-rules';
 import { listRules } from '@/lib/classification-rules-store';
 import { companiesWithReceipts } from '@/lib/line-items/backfill';
 import { isoDay } from '@/lib/meals/record';
@@ -79,6 +79,8 @@ export const READER_REASON = 'Auf dem Beleg selbst zu sehen (an eine Firma oder 
 export const CLAIMING = 'claiming';
 /** A claim older than this was left by a run that stopped between claim and write: it is settled from the cell. */
 export const CLAIM_TTL_MS = 10 * 60_000;
+/** What a decision's reason starts with where the receipt has no positions read. German: shown as it is. */
+export const NO_LINES_NOTE = 'Ohne gelesene Positionen, nur nach Anbieter und Text entschieden.';
 /** A receipt the model failed to answer this often is asked about no more until its facts change. */
 export const MAX_ASSIGNMENT_ATTEMPTS = 3;
 
@@ -165,7 +167,11 @@ export async function decideAssignments(
   ctx: AssignmentContextIds,
   deps: AssignmentDeps,
   /** `deadline` (milliseconds since the epoch): a run asks no more model calls after it, the rest is `remaining`. */
-  options: { only?: readonly string[]; limit?: number; failedOnly?: boolean; deadline?: number; now?: () => Date } = {},
+  /**
+   * `again`: receipts to decide again although their decision rests on the same facts (a suggestion or a
+   * failure only, never a set or answered one): the person just said something new about their vendor.
+   */
+  options: { only?: readonly string[]; limit?: number; failedOnly?: boolean; deadline?: number; again?: readonly string[]; now?: () => Date } = {},
 ): Promise<AssignmentRunResult> {
   const result = emptyResult();
   const now = options.now ?? (() => new Date());
@@ -233,7 +239,7 @@ export async function decideAssignments(
     console.error('[assignment] loading the rules failed:', err instanceof Error ? err.name : 'error');
     return result;
   }
-  const statements: Statement[] = statementsOf(rules).map((r) => ({ id: r.id, text: r.matchValue, assignment: r.zuordnung }));
+  const statements: Statement[] = statementsOf(rules).map((r) => ({ id: r.id, text: r.matchValue, assignment: r.zuordnung, subject: r.subject ?? null }));
   const ruleMatched = (s: Snapshot) => matchRules(rules, { vendor: s.receipt.vendor, fullText: s.receipt.text }) !== null;
 
 
@@ -284,6 +290,7 @@ export async function decideAssignments(
 
   // ── 3. The receipts to decide ───────────────────────────────────────────────────────────────────────
   const only = options.only ? new Set(options.only) : null;
+  const again = new Set(options.again ?? []);
   const scoped = [...snapshots.values()].filter((s) => !only || only.has(s.rowId));
   const settled = await rowsWithOwnTreatment(db, ctx.workspaceId, scoped.map((s) => ({ rowId: s.rowId, vendor: s.receipt.vendor ?? '', date: s.receipt.date })));
   const candidates: Array<{ s: Snapshot; fingerprint: string; staleAuto: boolean }> = [];
@@ -316,7 +323,8 @@ export async function decideAssignments(
     const current = d && d.fingerprint === fingerprint ? d : null;
     if (auto && current) continue;
     // Decided on these very facts already: a suggestion and a receipt the model kept failing on are not asked again.
-    if (current && (current.outcome === 'suggested' || (current.outcome === 'failed' && current.attempts >= MAX_ASSIGNMENT_ATTEMPTS))) continue;
+    const askAgain = again.has(s.rowId) && current !== null && (current.outcome === 'suggested' || current.outcome === 'failed');
+    if (!askAgain && current && (current.outcome === 'suggested' || (current.outcome === 'failed' && current.attempts >= MAX_ASSIGNMENT_ATTEMPTS))) continue;
     if (options.failedOnly && d?.outcome !== 'failed') continue;
     candidates.push({ s, fingerprint, staleAuto: auto });
   }
@@ -342,7 +350,9 @@ export async function decideAssignments(
       const answer = await deps.decide(s.receipt, context, assignmentOptions.map((o) => o.name));
       result.decided++;
       const optionId = answer.assignment ? optionIdOf(answer.assignment) : null;
-      const decided = { fingerprint, assignment: answer.assignment, confidence: answer.confidence, reason: answer.reason || null, model: answer.model, facts: contextFacts(context) as Prisma.InputJsonValue, attempts: 0 };
+      // Where no positions were read, the reason says so: the answer then rests on the vendor and the text alone.
+      const reason = s.receipt.lines.length === 0 ? `${NO_LINES_NOTE}${answer.reason ? ` ${answer.reason}` : ''}` : answer.reason || null;
+      const decided = { fingerprint, assignment: answer.assignment, confidence: answer.confidence, reason, model: answer.model, facts: contextFacts(context) as Prisma.InputJsonValue, attempts: 0 };
       const settingIt = Boolean(optionId) && answer.confidence >= AUTO_ASSIGN_CONFIDENCE;
       // The decision is claimed first, and only over the record this run read: a person who answered during the
       // model call, or another run that decided meanwhile, keeps what they wrote and this answer is dropped.
@@ -511,11 +521,37 @@ export function serverAssignmentDeps(): AssignmentDeps {
  * reading, an edit of the vendor), without failing what changed them: run
  * after the answer, a failure is logged and the next run catches up.
  */
-export async function decideAssignmentsAfterChange(db: PrismaClient, ctx: AssignmentContextIds, rowIds: readonly string[], deps?: AssignmentDeps): Promise<AssignmentRunResult | null> {
+export async function decideAssignmentsAfterChange(db: PrismaClient, ctx: AssignmentContextIds, rowIds: readonly string[], deps?: AssignmentDeps, options: { again?: boolean } = {}): Promise<AssignmentRunResult | null> {
   try {
-    return await decideAssignments(db, ctx, deps ?? serverAssignmentDeps(), { only: rowIds, limit: ASSIGNMENT_LIMITS.afterChange });
+    return await decideAssignments(db, ctx, deps ?? serverAssignmentDeps(), { only: rowIds, limit: ASSIGNMENT_LIMITS.afterChange, ...(options.again ? { again: rowIds } : {}) });
   } catch (err) {
     console.error('[assignment] the pass after a change failed:', err instanceof Error ? err.name : 'error');
+    return null;
+  }
+}
+
+/**
+ * After a person described a vendor ("Was ist das?", plan 2026-11-07-learned-assignment, decision 8): its
+ * receipts still open are decided again with the new statement, also those whose suggestion rests on the
+ * same facts. A receipt set automatically or answered by a person is left as it is.
+ */
+export async function decideVendorAfterStatement(db: PrismaClient, ctx: AssignmentContextIds, vendor: string, deps?: AssignmentDeps): Promise<AssignmentRunResult | null> {
+  try {
+    const table = await tableContext(db, ctx.workspaceId);
+    if (!table) return null;
+    const byName = firstColumnIdByName(table.columns);
+    const vendorId = byName.get('Vendor');
+    const zuordnungId = byName.get('Zuordnung');
+    if (!vendorId || !zuordnungId) return null;
+    const rows = (await allReceiptRows(table.adapter, table.tableId, table.columns)).filter((r) => {
+      const held = r.cells[zuordnungId];
+      return (held === null || held === undefined || held === '') && sameSubject(text(r.cells[vendorId]), vendor);
+    });
+    if (rows.length === 0) return null;
+    const ids = rows.map((r) => r.id);
+    return await decideAssignments(db, ctx, deps ?? serverAssignmentDeps(), { only: ids, again: ids, limit: ASSIGNMENT_LIMITS.request });
+  } catch (err) {
+    console.error('[assignment] the pass after a statement failed:', err instanceof Error ? err.name : 'error');
     return null;
   }
 }

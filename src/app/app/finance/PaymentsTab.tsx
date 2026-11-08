@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import WhatField from '@/components/WhatField';
 import { receiptHref } from '@/lib/receipt-link';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { formatDay } from '@/lib/meals/messages';
@@ -34,6 +35,11 @@ interface Props {
   onImport: (accountId: string, file: ImportFile, onlyThisYear: boolean, done: () => void) => void;
   onUndoImport: (batchId: string) => void;
   onTreat: (counterparty: string, treatment: CounterpartyTreatment | null) => void;
+  /**
+   * "Was ist das?": save the person's short description of a counterparty (empty removes it). Absent where the
+   * screen is shown without it; the field then does not show (plan 2026-11-07-learned-assignment, decision 8).
+   */
+  onSaveWhat?: (counterpartyKey: string, label: string, answer: string) => void;
   onLink: (input: { paymentId: string; rowId?: string; invoiceId?: string; cents?: number }) => void;
   onUnlink: (linkId: string) => void;
   /**
@@ -128,7 +134,7 @@ const LINK_METHOD_LABELS: Record<string, string> = {
  * a counterparty is treated, and linking payments to receipts and invoices.
  * A link is only made on a reference or by a person's confirmation.
  */
-export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onRemoveAccount, onSearch, bank, sharing, onClassify, parts = ALL_PARTS, workspaceId }: Props) {
+export default function PaymentsTab({ view, busy, error, lastImport, onAddAccount, onImport, onUndoImport, onTreat, onLink, onUnlink, onAcceptProposals, onTransfer, onNotIncome, onKind, onAccountPrivate, onRemoveAccount, onSearch, bank, sharing, onClassify, parts = ALL_PARTS, workspaceId, onSaveWhat }: Props) {
   const id = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState('');
@@ -416,8 +422,10 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                   {c.proposal && (
                     <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>
                       Vorschlag der App: {TREATMENT_LABELS[c.proposal.treatment]} ({c.proposal.confidence === 'likely' ? 'wahrscheinlich' : 'unsicher'}). {c.proposal.reason}
+                      {c.proposal.what ? ` Die App hält es für: ${c.proposal.what}.` : ''}
                     </span>
                   )}
+                  {onSaveWhat && <WhatField key={`${c.key}:${c.personWhat ?? ''}`} label={c.label} value={c.personWhat ?? null} busy={busy} onSave={(answer) => onSaveWhat(c.key, c.label, answer)} />}
                 </span>
                 <span className="flex flex-wrap gap-1.5" role="group" aria-label={`Antwort für ${c.label}`}>
                   {c.proposal && (
@@ -453,6 +461,41 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
         </section>
       )}
 
+      {show.questions && (p.mixedOpen?.length ?? 0) > 0 && (
+        <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Teils, teils">
+          <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Teils, teils: welcher Beleg gehört zu welcher Zahlung?</h2>
+          <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+            Bei diesen Gegenseiten entscheidet jede Zahlung ihr Beleg: was darauf gekauft wurde, ordnet die App als betrieblich oder
+            privat ein (ohne gelesene Positionen sagt sie das dazu). Zahlungen ohne Beleg bleiben offen, bis du einen wählst oder hochlädst.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {p.mixedOpen!.map((c) => (
+              <li key={c.key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+                <span className="text-sm" style={{ color: 'var(--foreground)' }}>
+                  {c.label}
+                  <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                    {c.count} {c.count === 1 ? 'Zahlung' : 'Zahlungen'} ohne Beleg · {euro(c.outCents)}
+                  </span>
+                  {onSaveWhat && <WhatField key={`${c.key}:${c.personWhat ?? ''}`} label={c.label} value={c.personWhat} busy={busy} onSave={(answer) => onSaveWhat(c.key, c.label, answer)} />}
+                </span>
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-sm"
+                  aria-expanded={browsing === `mixed:${c.key}`}
+                  aria-controls={browsing === `mixed:${c.key}` ? `${id}-mixed` : undefined}
+                  onClick={() => setBrowsing(browsing === `mixed:${c.key}` ? null : `mixed:${c.key}`)}
+                >
+                  Zahlungen ansehen
+                </button>
+                {browsing === `mixed:${c.key}` && (
+                  <PaymentFinder id={`${id}-mixed`} query={{ counterpartyKey: c.key }} view={view} busy={busy} onSearch={onSearch} onLink={onLink} workspaceId={workspaceId} />
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {show.list && p.appTreatments.length > 0 && (
         <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Von der App eingeordnet">
           <details open>
@@ -469,7 +512,11 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
                 <li key={c.key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
                   <span className="text-sm" style={{ color: 'var(--foreground)' }}>
                     {c.label}: {TREATMENT_LABELS[c.treatment]}
-                    <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>{c.reason}</span>
+                    <span className="mt-0.5 block text-xs" style={{ color: 'var(--muted)' }}>
+                      {c.reason}
+                      {c.what ? ` Die App hält es für: ${c.what}.` : ''}
+                    </span>
+                    {onSaveWhat && c.source === 'app' && <WhatField key={`${c.key}:${c.personWhat ?? ''}`} label={c.label} value={c.personWhat ?? null} busy={busy} onSave={(answer) => onSaveWhat(c.key, c.label, answer)} />}
                   </span>
                   <span className="flex flex-wrap gap-1.5" role="group" aria-label={`Antwort für ${c.label}`}>
                     <button
@@ -1116,3 +1163,4 @@ function PaymentFinder({
     </div>
   );
 }
+

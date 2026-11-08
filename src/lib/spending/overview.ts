@@ -22,6 +22,10 @@ export interface OverviewPaymentInput {
   linkCount: number;
   /** Cents of the payment linked to receipts or invoices; with a mixed answer or on a private account that is its business part. */
   linkedCents?: number;
+  /** Of `linkedCents`, what is linked to receipts a business bears (plan 2026-11-07-learned-assignment, decision 8). */
+  linkedBusinessCents?: number;
+  /** Who bears each linked receipt, where known: a "Teils, teils" payment follows its receipt. */
+  linkedPurposes?: ReadonlyArray<'business' | 'private' | 'open'>;
   /** True when the payment is private only because its whole account was said to be private. */
   byPrivateAccount?: boolean;
   /** True when the payment is here because the company holding its account calls it private (src/lib/tax/payments/route.ts). */
@@ -116,7 +120,8 @@ export function classifyPayment(p: OverviewPaymentInput, ctx: OverviewContext): 
   // already turns such payments into own transfers; this is a deliberate second guard, so the overview
   // stays right should that read ever change.
   const cents = treatment === 'own_account' ? null : spendingCents(p);
-  const purpose = purposeOf(p, treatment);
+  // In the overview a "Teils, teils" payment without a receipt is a question, and with one it follows the receipt.
+  const purpose = purposeOf({ ...p, unlinkedMixedAsks: p.linkedPurposes !== undefined }, treatment);
   return {
     id: p.id,
     accountId: p.accountId,
@@ -130,7 +135,7 @@ export function classifyPayment(p: OverviewPaymentInput, ctx: OverviewContext): 
     basis,
     purpose,
     spendingCents: cents,
-    businessCents: cents === null ? 0 : businessShare(cents, purpose, treatment === 'mixed' || p.byPrivateAccount === true, p.linkedCents ?? 0),
+    businessCents: cents === null ? 0 : businessShare(cents, purpose, treatment === 'mixed' || p.byPrivateAccount === true, (treatment === 'mixed' ? p.linkedBusinessCents : undefined) ?? p.linkedCents ?? 0),
     hasReceipt: p.linkCount > 0,
     routed: p.routed === true,
     awaitingList: p.awaitingList ?? null,

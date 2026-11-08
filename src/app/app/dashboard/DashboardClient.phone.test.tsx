@@ -32,7 +32,7 @@ vi.mock('./actions', () => ({
   setFieldOnRows: vi.fn(),
 }));
 vi.mock('../actions', () => ({ rereadReceipt: vi.fn(), recomputeFxRates: vi.fn() }));
-vi.mock('./review-actions', () => ({ getReviewQueue: vi.fn(), confirmReceiptChecked: vi.fn(), keepBothLookAlikes: vi.fn(), takeNewReading: vi.fn() }));
+vi.mock('./review-actions', () => ({ getReviewQueue: vi.fn(), confirmReceiptChecked: vi.fn(), keepBothLookAlikes: vi.fn(), takeNewReading: vi.fn(), saveVendorWhat: vi.fn() }));
 vi.mock('./group-actions', () => ({ createReceiptGroup: vi.fn(), moveReceiptsIntoGroup: vi.fn(), removeReceiptsFromGroup: vi.fn() }));
 vi.mock('@/lib/presigned-file-adapter', () => ({ PresignedStorageBrainAdapter: class {} }));
 vi.mock('@/components/ReceiptDetailPanel', () => ({

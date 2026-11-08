@@ -4,7 +4,7 @@ import { ClassifierUnavailableError, type AssignmentAnswer } from '@/lib/receipt
 import { loadReviewQueue } from '@/lib/review/service';
 import { deleteReceiptRows, saveMealDetails } from '@/lib/meals/service';
 import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
-import { AUTO_ASSIGN_CONFIDENCE, CLAIMING, CLAIM_TTL_MS, MAX_ASSIGNMENT_ATTEMPTS, READER_PENDING, assignmentNotes, decideAssignments, recordAssignmentAnswers, recordReaderAssignment, type AssignmentDeps } from '../pass';
+import { AUTO_ASSIGN_CONFIDENCE, CLAIMING, CLAIM_TTL_MS, MAX_ASSIGNMENT_ATTEMPTS, NO_LINES_NOTE, READER_PENDING, assignmentNotes, decideAssignments, recordAssignmentAnswers, recordReaderAssignment, type AssignmentDeps } from '../pass';
 import type { AssignmentContext, AssignmentReceipt } from '../prompt';
 
 /**
@@ -80,7 +80,8 @@ describe('forward: an open receipt is decided by the model that knows the person
     // It is no longer asked, and the panel says why it was set.
     expect((await entryFor(open))?.reasons ?? []).not.toContain('assignment_missing');
     const notes = await assignmentNotes(db, ws.workspaceId, [{ rowId: open, assignment: 'Privat' }]);
-    expect(notes.get(open)).toMatchObject({ kind: 'set', assignment: 'Privat', reason: 'Drogerie: bisher immer privat.' });
+    // The receipt has no positions read, and its reason says so.
+    expect(notes.get(open)).toMatchObject({ kind: 'set', assignment: 'Privat', reason: `${NO_LINES_NOTE} Drogerie: bisher immer privat.` });
   });
 
   it('an unsure answer sets nothing: the review card asks, with the suggestion and its reason', async () => {
@@ -91,7 +92,7 @@ describe('forward: an open receipt is decided by the model that knows the person
     expect(await assignmentOf(open)).toBeNull();
     const entry = await entryFor(open);
     expect(entry?.reasons).toContain('assignment_missing');
-    expect(entry?.assignmentSuggestion).toEqual({ assignment: 'Geschäftlich', confidence: AUTO_ASSIGN_CONFIDENCE - 0.2, reason: 'Technik bei Amazon, wie frühere Käufe geschäftlich.' });
+    expect(entry?.assignmentSuggestion).toEqual({ assignment: 'Geschäftlich', confidence: AUTO_ASSIGN_CONFIDENCE - 0.2, reason: `${NO_LINES_NOTE} Technik bei Amazon, wie frühere Käufe geschäftlich.` });
   });
 
   it('a new workspace has no context: the model is asked from the document alone', async () => {

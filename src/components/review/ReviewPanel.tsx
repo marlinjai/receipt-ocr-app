@@ -5,6 +5,7 @@ import type { ReviewEntry } from '@/lib/review/service';
 import type { ReadingChange, ReadingField } from '@/lib/review/reading';
 import { REASON_TEXT, type ReviewReason } from '@/lib/review/reasons';
 import { differenceText } from '@/lib/line-items/format';
+import WhatField from '@/components/WhatField';
 
 /**
  * "Belege prüfen": the receipts that need a person's eye, each with the
@@ -32,6 +33,11 @@ export interface ReviewPanelProps {
   assignmentOptions: Array<{ id: string; name: string }>;
   /** Set the missing Zuordnung right here, without opening the receipt. */
   onSetAssignment: (rowId: string, optionId: string) => void;
+  /**
+   * "Was ist das?" about the receipt's vendor: saved as the person's statement, the vendor's open receipts are
+   * decided again with it. Absent: the field does not show (plan 2026-11-07-learned-assignment, decision 8).
+   */
+  onSaveWhat?: (vendor: string, answer: string) => void;
 }
 
 const SHORT: Record<ReviewReason, string> = {
@@ -108,7 +114,7 @@ function money(value: number | null, currency: string): string {
   return value === null ? 'ohne Betrag' : amount(value, currency);
 }
 
-export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, onKeepBoth, onDelete, onTakeReading, assignmentOptions, onSetAssignment }: ReviewPanelProps) {
+export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, onKeepBoth, onDelete, onTakeReading, assignmentOptions, onSetAssignment, onSaveWhat }: ReviewPanelProps) {
   const panelId = useId();
   const [open, setOpen] = useState(false);
   if (entries.length === 0 && !error) return null;
@@ -200,6 +206,9 @@ export default function ReviewPanel({ entries, busy, error, onOpen, onConfirm, o
                       Vorschlag: {entry.assignmentSuggestion.assignment}
                       {entry.assignmentSuggestion.reason ? `. ${entry.assignmentSuggestion.reason}` : ''}
                     </p>
+                  )}
+                  {onSaveWhat && entry.vendor.trim() && (
+                    <WhatField key={`${entry.rowId}:${entry.vendorWhat ?? ''}`} label={entry.vendor} value={entry.vendorWhat ?? null} busy={busy} onSave={(answer) => onSaveWhat(entry.vendor, answer)} />
                   )}
                 </>
               )}

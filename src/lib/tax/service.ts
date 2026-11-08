@@ -1,4 +1,6 @@
 import 'server-only';
+import { listRules } from '@/lib/classification-rules-store';
+import { whatOf, type ClassificationRule } from '@/lib/classification-rules';
 import { deleteLinesForRows } from '@/lib/line-items/store';
 import { classifierProvider } from '@/lib/receipt-classifier';
 import { Prisma, type PrismaClient } from '@prisma/client';
@@ -863,7 +865,12 @@ async function computeStatement(db: PrismaClient, workspaceId: string, year: num
       return currency !== null && currency !== 'EUR' && gross !== null && Number.isFinite(gross) && gross !== 0 ? [[f.record.rowId, { currency, amountCents: Math.round(gross * 100) }] as const] : [];
     }),
   );
-  const paymentsView = buildPaymentsView(loadedPayments, year, wholeReceipts, invoiceFacts, result.revenue.invoices, classifierProvider() !== null, filedOn.get(year) ?? null, ownAmounts);
+  // The person's statements about counterparties ("Was ist das?"): shown on the cards. A failure only hides them.
+  const statements = await listRules(db, workspaceId).catch((err) => {
+    console.error('[tax] loading the statements failed:', err instanceof Error ? err.name : 'error');
+    return [] as ClassificationRule[];
+  });
+  const paymentsView = buildPaymentsView(loadedPayments, year, wholeReceipts, invoiceFacts, result.revenue.invoices, classifierProvider() !== null, filedOn.get(year) ?? null, ownAmounts, statements);
   const resultById = new Map(result.items.map((i) => [i.itemId, i]));
 
   const items: StatementItem[] = [];
@@ -1229,7 +1236,13 @@ export interface PaymentsView {
    * person's answer, no own name, no certain verdict of the app. `proposal`
    * is the app's likely or unsure verdict, offered for one-click confirming.
    */
-  unclassified: Array<{ key: string; label: string; count: number; outCents: number; inCents: number; proposal: CounterpartyProposal | null }>;
+  unclassified: Array<{ key: string; label: string; count: number; outCents: number; inCents: number; proposal: CounterpartyProposal | null; personWhat?: string | null }>;
+  /**
+   * "Teils, teils" counterparties of the year with payments out that no receipt pays yet (plan
+   * 2026-11-07-learned-assignment, decision 8): each payment is decided by the receipt linked to it, so each
+   * is a question ("Beleg wählen"), grouped under its counterparty. Empty in a filed year.
+   */
+  mixedOpen?: Array<{ key: string; label: string; count: number; outCents: number; personWhat: string | null }>;
   /** What a person answered per counterparty. */
   treatments: Array<{ key: string; label: string; treatment: CounterpartyTreatment }>;
   /** False when no language model is configured on the server: the app then decides only from receipts, and the tab says so. */
@@ -1237,7 +1250,7 @@ export interface PaymentsView {
   /** The day the year's return was filed, or null: a filed year asks nothing, its return already answered. */
   filedOn: string | null;
   /** What the app decided per counterparty (an own name or a certain verdict), each changeable by a person's answer. */
-  appTreatments: Array<{ key: string; label: string; treatment: CounterpartyTreatment; source: 'own_name' | 'app'; reason: string }>;
+  appTreatments: Array<{ key: string; label: string; treatment: CounterpartyTreatment; source: 'own_name' | 'app'; reason: string; what?: string | null; personWhat?: string | null }>;
   /** Business payments without a document and money received without an invoice. */
   open: OpenPayment[];
   /** Receipts of the year on an estimated euro amount, with the payment that looks like theirs. */
@@ -1280,6 +1293,8 @@ export interface CounterpartyProposal {
   treatment: CounterpartyTreatment;
   confidence: 'likely' | 'unsure';
   reason: string;
+  /** What the app takes the counterparty to be, for the person to correct; null or absent where it did not say. */
+  what?: string | null;
 }
 
 /** Payment providers that stand for many shops: money back from them names its shop only by a number. */
@@ -1295,6 +1310,8 @@ function buildPaymentsView(
   filedOn: string | null,
   /** Per receipt in another currency than the euro, by row: its total in that currency. */
   ownAmounts: ReadonlyMap<string, ForeignCents>,
+  /** The person's statements: a "Was ist das?" answer shows on its counterparty's card. */
+  statements: readonly ClassificationRule[] = [],
 ): PaymentsView {
   const inYear = loaded.payments.filter((p) => p.bookingDay.startsWith(`${year}-`));
   const accountLabel = new Map(loaded.accounts.map((a) => [a.id, a.label]));
@@ -1367,12 +1384,24 @@ function buildPaymentsView(
     return false;
   });
 
+  // "Teils, teils": each payment out is decided by the receipt linked to it, so one without a receipt is a question.
+  // Grouped by counterparty (a marketplace has hundreds of them); in a filed year nothing is asked.
+  const mixedOpen = new Map<string, { key: string; label: string; count: number; outCents: number; personWhat: string | null }>();
+  for (const p of filedOn === null ? inYear : []) {
+    if (p.kind !== 'spend' || !p.counterpartyKey || loaded.treatments.get(p.counterpartyKey) !== 'mixed' || p.links.length > 0) continue;
+    const label = merchantName(p.counterparty);
+    const entry = mixedOpen.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label, count: 0, outCents: 0, personWhat: whatOf(statements, label) };
+    entry.count += 1;
+    entry.outCents += -p.amountCents;
+    mixedOpen.set(p.counterpartyKey, entry);
+  }
+
   // Counterparties without an answer, by what moved (own transfers and fees ask nothing).
-  const unclassified = new Map<string, { key: string; label: string; count: number; outCents: number; inCents: number; proposal: CounterpartyProposal | null }>();
+  const unclassified = new Map<string, { key: string; label: string; count: number; outCents: number; inCents: number; proposal: CounterpartyProposal | null; personWhat: string | null }>();
   const proposalOf = (key: string): CounterpartyProposal | null => {
     const verdict = loaded.verdicts.get(key);
     if (!verdict || verdict.treatment === null || verdict.confidence === 'certain') return null;
-    return { treatment: verdict.treatment, confidence: verdict.confidence, reason: verdict.reason };
+    return { treatment: verdict.treatment, confidence: verdict.confidence, reason: verdict.reason, what: verdict.what ?? null };
   };
   // A payment already asked about on its own (an invoice's payment, money back with a proposal) is not counted here too.
   const askedAlone = new Set(needing.map((p) => p.id));
@@ -1380,7 +1409,7 @@ function buildPaymentsView(
     if (askedAlone.has(p.id)) continue;
     // Money back from a pay-later service is asked about payment by payment, not once for the service.
     if (p.kind === 'own_transfer' || p.kind === 'fee' || p.kind === 'private' || p.byRule || !p.counterpartyKey || loaded.treatments.has(p.counterpartyKey) || free(p) === 0) continue;
-    const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: merchantName(p.counterparty), count: 0, outCents: 0, inCents: 0, proposal: proposalOf(p.counterpartyKey) };
+    const entry = unclassified.get(p.counterpartyKey) ?? { key: p.counterpartyKey, label: merchantName(p.counterparty), count: 0, outCents: 0, inCents: 0, proposal: proposalOf(p.counterpartyKey), personWhat: whatOf(statements, merchantName(p.counterparty)) };
     entry.count += 1;
     if (p.amountCents < 0) entry.outCents += -p.amountCents;
     else entry.inCents += p.amountCents;
@@ -1581,6 +1610,7 @@ function buildPaymentsView(
     linkedCount: inYear.filter((p) => p.links.length > 0).length,
     transferCount: inYear.filter((p) => p.kind === 'own_transfer').length,
     unclassified: [...unclassified.values()].sort((a, b) => b.outCents + b.inCents - (a.outCents + a.inCents)),
+    mixedOpen: [...mixedOpen.values()].sort((a, b) => b.outCents - a.outCents),
     filedOn,
     treatments: [...loaded.treatments.entries()]
       .filter(([key]) => loaded.treatmentSources.get(key) === 'person')
@@ -1591,7 +1621,8 @@ function buildPaymentsView(
       const source = loaded.treatmentSources.get(key);
       if ((source !== 'own_name' && source !== 'app') || !inYearKeys.has(key)) return [];
       const reason = source === 'own_name' ? 'Eigener Name: Geld zwischen deinen eigenen Konten' : (loaded.verdicts.get(key)?.reason ?? '');
-      return [{ key, label: labelByCounterparty.get(key) ?? key, treatment, source, reason }];
+      const label = labelByCounterparty.get(key) ?? key;
+      return [{ key, label, treatment, source, reason, what: source === 'app' ? (loaded.verdicts.get(key)?.what ?? null) : null, personWhat: whatOf(statements, label) }];
     }).sort((a, b) => a.label.localeCompare(b.label, 'de')),
     open,
     estimateProposals,

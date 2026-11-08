@@ -1,5 +1,8 @@
 'use server';
 
+import { after } from 'next/server';
+import { decideAssignmentsAfterChange } from '@/lib/assignment/pass';
+
 import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { MissingTenantError, requireSessionTenantId, sessionWorkspaceId } from '@/lib/auth-workspace';
@@ -208,6 +211,8 @@ export async function saveNotificationSettings(input: unknown): Promise<ChecksRe
 
 async function linked(ctx: NotifyContext, paymentId: string, rowId: string, options: { byHand?: boolean } = {}): Promise<CheckChange> {
   await linkReceiptToPayment(prisma, ctx, paymentId, rowId, options);
+  // A receipt now paying a payment is decided if its assignment is open (plan 2026-11-07-learned-assignment).
+  after(() => decideAssignmentsAfterChange(prisma, ctx, [rowId]));
   return changed(paymentId, { state: 'has_receipt' }, [missingReceiptSubject(paymentId), mailFoundSubject(paymentId)], rowId);
 }
 

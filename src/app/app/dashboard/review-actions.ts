@@ -1,5 +1,9 @@
 'use server';
 
+import { after } from 'next/server';
+import { decideVendorAfterStatement } from '@/lib/assignment/pass';
+import { RuleInputError } from '@/lib/classification-rules';
+import { saveSubjectStatement } from '@/lib/classification-rules-store';
 import { auth } from '@/lib/auth';
 import { ReceiptsAuthError, requireReceiptsSession } from '@/lib/auth-guards';
 import { sessionWorkspaceId, tenantIdForWorkspace } from '@/lib/auth-workspace';
@@ -91,6 +95,28 @@ export async function takeNewReading(rowId: string, fields: string[]): Promise<R
     if (wanted.length === 0) return { ok: false, error: 'not_found' };
     const ctx = await writeContext();
     await applyNewReading(prisma, ctx, rowId, wanted);
+    return { ok: true, value: await loadReviewQueue(prisma, ctx.workspaceId) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/**
+ * "Was ist das?" on a review card (plan 2026-11-07-learned-assignment, decision 8): the person's short answer
+ * about the receipt's vendor is saved as their statement (an empty one removes it), and the vendor's open
+ * receipts are decided again with it, after the answer. The list comes back as it stands.
+ */
+export async function saveVendorWhat(vendor: unknown, answer: unknown): Promise<ReviewResult<ReviewEntry[]>> {
+  try {
+    const ctx = await writeContext();
+    if (typeof vendor !== 'string' || !vendor.trim()) return { ok: false, error: 'not_found' };
+    try {
+      await saveSubjectStatement(prisma, ctx, { name: vendor, answer });
+    } catch (e) {
+      if (e instanceof RuleInputError) return { ok: false, error: 'failed' };
+      throw e;
+    }
+    after(() => decideVendorAfterStatement(prisma, ctx, vendor));
     return { ok: true, value: await loadReviewQueue(prisma, ctx.workspaceId) };
   } catch (e) {
     return failure(e);

@@ -534,10 +534,11 @@
   2026-11-07): the person's statements, their earlier answers per vendor and the corrections of the
   model's own answers are its context; a confident answer (0.9 or more, Sonnet 5.5, chosen by the
   replay over 1,053 answered receipts) is set and marked "Automatisch zugeordnet", the rest is asked
-  with the suggestion. Built; left after release: seeding the owner's five statements
-  (scripts/seed-assignment-statements.ts) and the one pass over the open receipts ("Zuordnungen
-  entscheiden" on the tools page), both waiting for the owner's go. Plan:
-  [docs/plans/2026-11-07-learned-assignment.md](docs/plans/2026-11-07-learned-assignment.md). (2026-11-07)
+  with the suggestion. Since 2026-11-08 also "Was ist das?" on counterparty and receipt cards (given
+  to both models) and "Teils, teils" decided per payment by its receipt. Built; left after release:
+  seeding the owner's five statements (scripts/seed-assignment-statements.ts) and the one pass over the
+  open receipts ("Zuordnungen entscheiden" on the tools page), both waiting for the owner's go. Plan:
+  [docs/plans/2026-11-07-learned-assignment.md](docs/plans/2026-11-07-learned-assignment.md). (2026-11-08)
 - [x] A visual budget overview that shows real spending (asked by the owner on 2026-10-23): the
   spending page opens with months by category, budget against spent and the biggest
   counterparties, the receipt checks move to their own tab, transfers to the owner's own name

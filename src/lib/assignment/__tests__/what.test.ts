@@ -61,7 +61,7 @@ describe('the counterparty classifier and the person\'s description', () => {
     const prompt = classificationPrompt({ webSearch: false });
     expect(prompt).toContain('personSays');
     expect(prompt).toContain('"what"');
-    expect(prompt).not.toMatch(/[–—]/);
+    expect(prompt).not.toMatch(/[\u2013\u2014]/);
   });
 
   it('reads the model\'s "what", and a verdict without one still counts', () => {

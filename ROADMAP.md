@@ -530,9 +530,11 @@
 - [ ] "Seite neu lesen" on a receipt reads the document again but leaves the receipt's name as it
   was, so a corrected item never reaches the name column (seen by Marlin on 2026-11-08). The name
   should follow the new reading unless a person edited it. (2026-11-08)
-- [ ] PayPal as a counterparty under Finanzen: 256 payments wait on one answer, whether PayPal is
-  "Teils, teils" (each payment decided by its receipt, like Amazon and eBay) or something else.
-  Goes to Marlin on a decision page. (2026-11-08)
+- [x] PayPal as a counterparty under Finanzen needs no answer: the 256 PayPal debits of 2026 on the
+  Tomorrow account fall on days the PayPal account's own list covers, so the funding rule counts
+  them as transfers between own accounts (the purchases are asked about once, on the PayPal
+  account), and "PayPal Europe" has stood on "Teils, teils" since 2026-10-25. Checked on
+  production on 2026-11-08: no PayPal Europe card among the open counterparties. Done 2026-11-08.
 
 ## In Progress
 

@@ -1,6 +1,8 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { createAccount, deleteImportBatch, importPayments, loadPayments, setPaymentKind, unlinkPayment } from '@/lib/tax/payments/service';
-import { LoopServiceError, MAX_SENDS_PER_RUN, answerNoReceipt, closeBacklog, confirmCandidate, linkCertainReceipts, loadLoopOverview, paymentState, runReceiptLoop, withdrawNoReceipt } from '../loop-service';
+import { createAccount, deleteImportBatch, importPayments, linkPayment, loadPayments, setPaymentKind, unlinkPayment } from '@/lib/tax/payments/service';
+import { receiptForLink } from '@/lib/tax/service';
+import { PRIVATE_NO_RECEIPT, RECEIPT_NOT_FOUND } from '../loop';
+import { LoopServiceError, MAX_SENDS_PER_RUN, answerNoReceipt, closeBacklog, confirmCandidate, linkCertainReceipts, linkReceiptToPayment, loadLoopOverview, paymentAwaitingReceipt, paymentState, paymentsAwaitingReceipt, runReceiptLoop, withdrawNoReceipt } from '../loop-service';
 import { listUnreadNotifications, markNotificationRead, saveNotifySettings, getNotifySettings, NotifyServiceError } from '../notify/service';
 import type { NotificationChannel, NotificationMessage } from '../notify/port';
 import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
@@ -220,6 +222,64 @@ describe('backtrack and revise', () => {
     const { ws, ctx, ids } = await setup([line('2026-05-10', 'Zyx Handel', 'Bestellung', '-29.99')]);
     const other = await ws.addReceipt({ Name: 'Anderes', Vendor: 'Ganz Anders', Gross: 29.99, Date: '2026-05-10', Currency: 'EUR', 'FX Rate': 1 });
     expect(await code(confirmCandidate(db, ctx, ids.get('Zyx Handel') as string, other))).toBe('not_a_candidate');
+  });
+});
+
+describe('a receipt found later replaces "Nicht auffindbar" (decided 2026-11-08)', () => {
+  const lines = [line('2026-02-22', 'Versand Beispiel', 'Bestellung 1', '-8.00'), line('2026-02-23', 'Laden Beispiel', 'Einkauf', '-12.00'), line('2026-02-24', 'Fahrt Beispiel', 'Ticket', '-5.00')];
+  const answer = async (o: { workspaceId: string }, paymentId: string) =>
+    (await loadLoopOverview(db, o.workspaceId)).answered.find((c) => c.paymentId === paymentId)?.state;
+
+  it('forward: an upload for a payment answered "Nicht auffindbar" is linked, and the answer stays stored beneath the link', async () => {
+    const { ws, ctx, ids } = await setup(lines);
+    const id = ids.get('Versand Beispiel') as string;
+    await answerNoReceipt(db, ctx, id, RECEIPT_NOT_FOUND);
+    // The upload page, the search and the link agree that it takes a receipt.
+    expect(await paymentAwaitingReceipt(db, ctx.workspaceId, id)).toEqual(expect.objectContaining({ id, counterparty: 'Versand Beispiel', amountCents: 800 }));
+    expect(await paymentsAwaitingReceipt(db, ctx.workspaceId, [id])).toEqual(new Set([id]));
+    const rowId = await ws.addReceipt({ Name: 'Versand Rechnung', Vendor: 'Versand Beispiel', Gross: 8, Date: '2026-02-21', Currency: 'EUR', 'FX Rate': 1 });
+    await linkReceiptToPayment(db, ctx, id, rowId);
+    expect(await paymentState(db, ctx.workspaceId, id)).toEqual({ state: 'has_receipt' });
+    expect(await answer(ctx, id)).toBeUndefined();
+    // Recorded, not deleted: the answer is what an unlink comes back to.
+    expect(await db.spendingReceiptAnswer.count({ where: { authWorkspaceId: ctx.workspaceId, paymentId: id, reason: RECEIPT_NOT_FOUND } })).toBe(1);
+    // Re-entry: it takes nothing more, and the same receipt sent again is linked already.
+    expect(await paymentAwaitingReceipt(db, ctx.workspaceId, id)).toBeNull();
+    await linkReceiptToPayment(db, ctx, id, rowId);
+    expect(await db.taxPaymentLink.count({ where: { paymentId: id } })).toBe(1);
+    const other = await ws.addReceipt({ Name: 'Andere', Vendor: 'Versand Beispiel', Gross: 8, Date: '2026-02-21', Currency: 'EUR', 'FX Rate': 1 });
+    expect(await code(linkReceiptToPayment(db, ctx, id, other))).toBe('already_has_receipt');
+  });
+
+  it('backtrack: taking the link back brings "Nicht auffindbar" back, and the payment takes a receipt again', async () => {
+    const { ws, ctx, ids } = await setup(lines);
+    const id = ids.get('Versand Beispiel') as string;
+    await answerNoReceipt(db, ctx, id, RECEIPT_NOT_FOUND);
+    const rowId = await ws.addReceipt({ Name: 'Versand Rechnung', Vendor: 'Versand Beispiel', Gross: 8, Date: '2026-02-21', Currency: 'EUR', 'FX Rate': 1 });
+    await linkReceiptToPayment(db, ctx, id, rowId);
+    const link = (await loadPayments(db, ctx.workspaceId)).payments.find((p) => p.id === id)?.links[0];
+    await unlinkPayment(db, ctx, link?.id as string);
+    expect(await answer(ctx, id)).toEqual({ state: 'no_receipt', reason: RECEIPT_NOT_FOUND });
+    expect(await paymentAwaitingReceipt(db, ctx.workspaceId, id)).toEqual(expect.objectContaining({ id }));
+  });
+
+  it('an answer that no receipt is needed keeps refusing the upload; linking by hand stays possible', async () => {
+    const { ws, ctx, ids } = await setup(lines);
+    const privat = ids.get('Laden Beispiel') as string;
+    const own = ids.get('Fahrt Beispiel') as string;
+    await answerNoReceipt(db, ctx, privat, PRIVATE_NO_RECEIPT);
+    await answerNoReceipt(db, ctx, own, 'Fahrt einer anderen Person');
+    expect(await paymentAwaitingReceipt(db, ctx.workspaceId, privat)).toBeNull();
+    expect(await paymentAwaitingReceipt(db, ctx.workspaceId, own)).toBeNull();
+    expect(await paymentsAwaitingReceipt(db, ctx.workspaceId, [privat, own])).toEqual(new Set());
+    const rowId = await ws.addReceipt({ Name: 'Kassenbon', Vendor: 'Laden Beispiel', Gross: 12, Date: '2026-02-23', Currency: 'EUR', 'FX Rate': 1 });
+    expect(await code(linkReceiptToPayment(db, ctx, privat, rowId))).toBe('payment_not_open');
+    expect(await code(linkReceiptToPayment(db, ctx, own, rowId))).toBe('payment_not_open');
+    expect(await db.taxPaymentLink.count({ where: { paymentId: { in: [privat, own] } } })).toBe(0);
+    expect(await answer(ctx, privat)).toEqual({ state: 'no_receipt', reason: PRIVATE_NO_RECEIPT });
+    // "Beleg wählen" in the payments area links by hand, whatever was answered.
+    await linkPayment(db, ctx, { paymentId: privat, rowId }, receiptForLink(db, ctx.workspaceId));
+    expect(await paymentState(db, ctx.workspaceId, privat)).toEqual({ state: 'has_receipt' });
   });
 });
 

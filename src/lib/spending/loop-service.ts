@@ -11,7 +11,7 @@ import { timed } from '@/lib/timing';
 import { receiptForLink } from '@/lib/tax/service';
 import { categorise, purposeOf } from './rules';
 import { categoryAnswerMap, spendingTreatments } from './service';
-import { PRIVATE_NO_RECEIPT, backlogAnswer, certainPairs, closestPairs, loopState, sameAmountPairs, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
+import { PRIVATE_NO_RECEIPT, backlogAnswer, takesReceipt, certainPairs, closestPairs, loopState, sameAmountPairs, mailFoundSubject, missingReceiptSubject, notifiable, receiptChoices, type LoopContext, type LoopReceipt, type LoopState, type NotNeededReason, type ReceiptCandidate, type ReceiptChoice } from './loop';
 import { notify, retryFailedDeliveries, serverChannels, settleAllBut, settleNotifications, type NotifyContext } from './notify/service';
 import type { NotificationChannel } from './notify/port';
 import { mailboxWithOwner } from './mailbox/server';
@@ -210,7 +210,6 @@ function linkTarget(read: LoopRead, paymentId: string): { payment: RoutedPayment
   return payment ? { payment, state: stateOf(payment, read.context) } : null;
 }
 
-const awaits = (state: LoopState) => state.state === 'missing' || state.state === 'in_mailbox' || state.state === 'proposed';
 
 /**
  * Which of these payments a receipt uploaded for it would be linked to right
@@ -222,7 +221,7 @@ export async function paymentsAwaitingReceipt(db: PrismaClient, workspaceId: str
   const read = await readLoop(db, workspaceId);
   return new Set(paymentIds.filter((id) => {
     const found = linkTarget(read, id);
-    return found !== null && awaits(found.state);
+    return found !== null && takesReceipt(found.state);
   }));
 }
 
@@ -672,13 +671,14 @@ export interface PaymentAwaitingReceipt {
 /**
  * The payment an upload is meant for (the check card's "Beleg fotografieren
  * oder hochladen" carries it to the upload page): null when it is not on this
- * company's spending side or no longer waits for a receipt. Read only.
+ * company's spending side or takes no receipt any more (`takesReceipt`:
+ * waiting, or answered "Nicht auffindbar"). Read only.
  */
 export async function paymentAwaitingReceipt(db: PrismaClient, workspaceId: string, paymentId: string): Promise<PaymentAwaitingReceipt | null> {
   const found = linkTarget(await readLoop(db, workspaceId), paymentId);
   if (!found) return null;
   const { state, payment } = found;
-  if (!awaits(state)) return null;
+  if (!takesReceipt(state)) return null;
   return { id: payment.id, counterparty: payment.counterparty, bookingDay: payment.bookingDay, amountCents: Math.abs(payment.amountCents), estimated: payment.estimated };
 }
 
@@ -698,7 +698,7 @@ export async function linkReceiptToPayment(db: PrismaClient, ctx: NotifyContext,
     if (!options.byHand && payment.links.some((l) => l.rowId === rowId)) return;
     throw new LoopServiceError('already_has_receipt');
   }
-  if (!awaits(state)) throw new LoopServiceError('payment_not_open');
+  if (!takesReceipt(state)) throw new LoopServiceError('payment_not_open');
   await linkOnSpendingSide(db, ctx, payment, rowId);
   await settleNotifications(db, ctx.workspaceId, [missingReceiptSubject(paymentId), mailFoundSubject(paymentId)]);
 }

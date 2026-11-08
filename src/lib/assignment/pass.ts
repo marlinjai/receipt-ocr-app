@@ -72,6 +72,13 @@ export const AUTO_ASSIGN_CONFIDENCE = 0.9;
 export const READER_PENDING = 'reader-pending';
 /** What the receipt panel says about an answer the reader took from the document. German: shown as it is. */
 export const READER_REASON = 'Auf dem Beleg selbst zu sehen (an eine Firma oder Universität adressiert, mit Umsatzsteuer-ID oder Reverse Charge).';
+/**
+ * The outcome of a decision while its run writes the cell: claimed before the write, "set" once the cell
+ * holds it. Another run leaves such a receipt alone, and never takes its cell for a person's answer.
+ */
+export const CLAIMING = 'claiming';
+/** A claim older than this was left by a run that stopped between claim and write: it is settled from the cell. */
+export const CLAIM_TTL_MS = 10 * 60_000;
 /** A receipt the model failed to answer this often is asked about no more until its facts change. */
 export const MAX_ASSIGNMENT_ATTEMPTS = 3;
 
@@ -136,7 +143,8 @@ const num = (v: unknown) => {
 
 /** True when the cell holds what an applied decision wrote, and no person has answered since. */
 export function isAutomatic(decision: Pick<Decision, 'outcome' | 'assignment' | 'answeredAt'> | undefined, assignment: string | null): boolean {
-  return Boolean(decision && decision.outcome === 'set' && !decision.answeredAt && decision.assignment && decision.assignment === assignment);
+  // A claim in flight counts too: the cell may hold its value a moment before the claim becomes "set".
+  return Boolean(decision && (decision.outcome === 'set' || decision.outcome === CLAIMING) && !decision.answeredAt && decision.assignment && decision.assignment === assignment);
 }
 
 /** The corrections the model is shown: a person's answer that differs from the model's. */
@@ -228,8 +236,23 @@ export async function decideAssignments(
 
   // ── 1. The answers persons gave since a decision: recorded once, never decided again ──────────────
   for (const s of snapshots.values()) {
-    const d = decisions.get(s.rowId);
+    let d = decisions.get(s.rowId);
     if (!d || d.answeredAt) continue;
+    if (d.outcome === CLAIMING) {
+      // In flight in another run: not an answer, not decided here.
+      if (now().getTime() - d.decidedAt.getTime() < CLAIM_TTL_MS) continue;
+      // Left behind by a run that stopped: the cell says whether the write happened.
+      const settledAs = s.assignment !== null && s.assignment === d.assignment ? 'set' : 'failed';
+      try {
+        const { count } = await db.receiptAssignmentDecision.updateMany({ where: { rowId: s.rowId, decidedAt: d.decidedAt, outcome: CLAIMING }, data: { outcome: settledAs, ...(settledAs === 'failed' ? { attempts: d.attempts + 1 } : {}) } });
+        if (count === 0) continue;
+        d = { ...d, outcome: settledAs, attempts: settledAs === 'failed' ? d.attempts + 1 : d.attempts };
+        decisions.set(s.rowId, d);
+      } catch (err) {
+        console.error('[assignment] a claim left behind could not be settled:', err instanceof Error ? err.name : 'error');
+        continue;
+      }
+    }
     const answered =
       // An automatic answer that the cell no longer holds: changed or emptied by a person.
       (d.outcome === 'set' && s.assignment !== d.assignment) ||
@@ -266,6 +289,8 @@ export async function decideAssignments(
   for (const s of scoped) {
     const d = decisions.get(s.rowId);
     if (d?.answeredAt) continue;
+    // Another run is writing this receipt's cell right now.
+    if (d?.outcome === CLAIMING) continue;
     const auto = isAutomatic(d, s.assignment);
     if (s.assignment !== null && !auto) continue;
     const fingerprint = assignmentFingerprint(s.receipt);
@@ -305,6 +330,9 @@ export async function decideAssignments(
     // What the cell may hold for this write: empty, or the automatic answer that is now outdated.
     const replaceable = staleAuto ? s.cell : null;
     budget--;
+    // What this run claimed and wrote, for the failure path to build on and take back.
+    let claimed: Date | null = null;
+    let wroteValue: string | null = null;
     try {
       const context = buildAssignmentContext({ rowId: s.rowId, vendor: s.receipt.vendor, category: s.receipt.category }, history, statements, corrections);
       const answer = await deps.decide(s.receipt, context, assignmentOptions.map((o) => o.name));
@@ -314,20 +342,29 @@ export async function decideAssignments(
       const settingIt = Boolean(optionId) && answer.confidence >= AUTO_ASSIGN_CONFIDENCE;
       // The decision is claimed first, and only over the record this run read: a person who answered during the
       // model call, or another run that decided meanwhile, keeps what they wrote and this answer is dropped.
-      const claim = await recordDecision(db, ctx, s.rowId, { ...decided, outcome: settingIt ? 'set' : 'suggested' }, prior ?? null);
-      if (!claim) {
+      // An answer to set is claimed as in flight; it is "set" only once the cell holds it.
+      claimed = await recordDecision(db, ctx, s.rowId, { ...decided, outcome: settingIt ? CLAIMING : 'suggested' }, prior ?? null);
+      if (!claimed) {
         result.superseded++;
         continue;
       }
       if (settingIt) {
         // Only over an empty cell or the outdated automatic answer: a person who answered meanwhile wins.
         if (await writeCell(db, table.tableId, zuordnungId, s.rowId, optionId, replaceable)) {
+          wroteValue = optionId;
+          const { count } = await db.receiptAssignmentDecision.updateMany({ where: { rowId: s.rowId, decidedAt: claimed, answeredAt: null }, data: { outcome: 'set' } });
+          if (count === 0) {
+            // A person answered between the write and here: their answer stands, the write is taken back.
+            await writeCell(db, table.tableId, zuordnungId, s.rowId, replaceable, optionId);
+            result.superseded++;
+            continue;
+          }
           result.set++;
           written.push(s.rowId);
           if (staleAuto && s.assignment === PRIVATE_ZUORDNUNG && answer.assignment !== PRIVATE_ZUORDNUNG) leftPrivate.push(s.rowId);
         } else {
           // The cell changed under it: the claim is no set answer, only what was suggested.
-          await db.receiptAssignmentDecision.updateMany({ where: { rowId: s.rowId, decidedAt: claim }, data: { outcome: 'suggested' } });
+          await db.receiptAssignmentDecision.updateMany({ where: { rowId: s.rowId, decidedAt: claimed }, data: { outcome: 'suggested' } });
           result.suggested++;
         }
         continue;
@@ -349,9 +386,12 @@ export async function decideAssignments(
       // The message only: an error of the client library can carry the request, and with it the receipt.
       console.error('[assignment] a receipt could not be decided:', err instanceof Error ? `${err.name}${err instanceof UnusableAnswerError ? `: ${err.message}` : ''}` : 'error');
       try {
-        // A failure never sets anything; an automatic answer on outdated facts is taken back, so the receipt is asked.
-        const claim = await recordDecision(db, ctx, s.rowId, { fingerprint, outcome: 'failed', assignment: null, confidence: null, reason: null, model: null, facts: null, attempts: priorAttempts + 1 }, prior ?? null);
-        if (claim && staleAuto && (await writeCell(db, table.tableId, zuordnungId, s.rowId, null, replaceable))) {
+        // A failure never sets anything: over this run's own claim where it made one, else over what it read. A value
+        // it wrote is taken back, and an automatic answer on outdated facts too, so the receipt is asked.
+        const base = claimed ? { decidedAt: claimed } : (prior ?? null);
+        const failed = await recordDecision(db, ctx, s.rowId, { fingerprint, outcome: 'failed', assignment: null, confidence: null, reason: null, model: null, facts: null, attempts: priorAttempts + 1 }, base);
+        if (failed && wroteValue !== null) await writeCell(db, table.tableId, zuordnungId, s.rowId, null, wroteValue);
+        if (failed && staleAuto && (await writeCell(db, table.tableId, zuordnungId, s.rowId, null, replaceable))) {
           result.cleared++;
           written.push(s.rowId);
         }
@@ -365,8 +405,9 @@ export async function decideAssignments(
   if (written.length > 0) {
     const { followTreatment, restoreShareLeavingPrivate } = await import('@/lib/tax/assignment-sync');
     // Leaving "Privat" brings back the share it held before, as a manual edit does.
-    await restoreShareLeavingPrivate(db, ctx, leftPrivate);
-    await followTreatment(db, ctx, { rowIds: written });
+    // Each on its own: the cells and decisions are written, a failure here only leaves a share to the next sync.
+    await restoreShareLeavingPrivate(db, ctx, leftPrivate).catch((err) => console.error('[assignment] the share could not be restored:', err instanceof Error ? err.name : 'error'));
+    await followTreatment(db, ctx, { rowIds: written }).catch((err) => console.error('[assignment] the treatment could not follow:', err instanceof Error ? err.name : 'error'));
   }
   if (result.candidates > 0 || result.answersRecorded > 0) console.info('[assignment] run', result);
   return result;
@@ -381,7 +422,7 @@ async function recordDecision(
   db: PrismaClient,
   ctx: AssignmentContextIds,
   rowId: string,
-  d: { fingerprint: string; outcome: 'set' | 'suggested' | 'failed'; assignment: string | null; confidence: number | null; reason: string | null; model: string | null; facts: Prisma.InputJsonValue | null; attempts: number },
+  d: { fingerprint: string; outcome: 'set' | 'suggested' | 'failed' | typeof CLAIMING; assignment: string | null; confidence: number | null; reason: string | null; model: string | null; facts: Prisma.InputJsonValue | null; attempts: number },
   prior: Pick<Decision, 'decidedAt'> | null,
 ): Promise<Date | null> {
   const decidedAt = new Date();
@@ -487,7 +528,7 @@ export async function recordAssignmentAnswers(db: PrismaClient, ctx: AssignmentC
     for (const d of open) {
       const given = answers.find((a) => a.rowId === d.rowId)!.assignment;
       // The automatic answer written again is no answer of the person; anything else is.
-      if (d.outcome === 'set' && given === d.assignment) continue;
+      if ((d.outcome === 'set' || d.outcome === CLAIMING) && given === d.assignment) continue;
       if (d.outcome !== 'set' && given === null) continue;
       await db.receiptAssignmentDecision.updateMany({ where: { rowId: d.rowId, answeredAt: null }, data: { answeredAs: given, answeredAt: now() } });
     }

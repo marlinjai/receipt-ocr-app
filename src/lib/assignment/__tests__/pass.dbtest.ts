@@ -4,7 +4,7 @@ import { ClassifierUnavailableError, type AssignmentAnswer } from '@/lib/receipt
 import { loadReviewQueue } from '@/lib/review/service';
 import { deleteReceiptRows, saveMealDetails } from '@/lib/meals/service';
 import { createWorkspace, db, type TestWorkspace } from '../../../../test/db-helpers';
-import { AUTO_ASSIGN_CONFIDENCE, MAX_ASSIGNMENT_ATTEMPTS, READER_PENDING, assignmentNotes, decideAssignments, recordAssignmentAnswers, recordReaderAssignment, type AssignmentDeps } from '../pass';
+import { AUTO_ASSIGN_CONFIDENCE, CLAIMING, CLAIM_TTL_MS, MAX_ASSIGNMENT_ATTEMPTS, READER_PENDING, assignmentNotes, decideAssignments, recordAssignmentAnswers, recordReaderAssignment, type AssignmentDeps } from '../pass';
 import type { AssignmentContext, AssignmentReceipt } from '../prompt';
 
 /**
@@ -432,5 +432,59 @@ describe('review findings of #246: races, the share, the time budget', () => {
     });
     const result = await decideAssignments(db, ctx, deps, { limit: 10, deadline: 5_000, now: () => new Date(t) });
     expect(result).toMatchObject({ decided: 1, remaining: 1 });
+  });
+});
+
+describe('second review of #246: a claim in flight, and one left behind', () => {
+  const claimOf = (rowId: string, decidedAt: Date) =>
+    db.receiptAssignmentDecision.create({ data: { rowId, authWorkspaceId: ws.workspaceId, authTenantId: ws.tenantId, fingerprint: 'f', outcome: CLAIMING, assignment: 'Privat', confidence: 0.99, reason: 'r', model: 'm', decidedAt } });
+
+  it('a cell write that throws after the claim leaves the receipt asked, and the next run records no answer', async () => {
+    const open = await receipt();
+    const original = db.$executeRawUnsafe.bind(db);
+    const spy = vi.spyOn(db, '$executeRawUnsafe').mockImplementationOnce((async (query: string, ...values: unknown[]) => {
+      if (query.startsWith('UPDATE')) throw new Error('connection reset');
+      return original(query, ...values);
+    }) as typeof db.$executeRawUnsafe);
+    decide.mockResolvedValueOnce(answer('Privat', 0.99));
+    expect(await run()).toMatchObject({ failed: 1, set: 0 });
+    spy.mockRestore();
+    expect(await assignmentOf(open)).toBeNull();
+    expect(await decisionOf(open)).toMatchObject({ outcome: 'failed', attempts: 1, answeredAt: null });
+    decide.mockResolvedValueOnce(answer('Privat', 0.99));
+    expect(await run()).toMatchObject({ answersRecorded: 0, set: 1 });
+    expect(await decisionOf(open)).toMatchObject({ outcome: 'set', answeredAt: null });
+  });
+
+  it('another run\'s claim in flight is left alone: not an answer, not decided, its cell no evidence', async () => {
+    const claimed = await receipt();
+    await claimOf(claimed, new Date());
+    // The claiming run has written the cell but not yet marked the claim "set".
+    await ws.adapter.updateRow(claimed, { [col('Zuordnung')]: await optionId('Privat') });
+    const other = await receipt({ Date: '2026-12-01' });
+    decide.mockResolvedValueOnce(answer(null, 0));
+    const result = await run();
+    expect(result).toMatchObject({ answersRecorded: 0, candidates: 1 });
+    expect(decide.mock.calls[0][0].date).toBe('2026-12-01');
+    expect(decide.mock.calls[0][1].vendorHistory).toBeNull();
+    expect(await decisionOf(claimed)).toMatchObject({ outcome: CLAIMING, answeredAt: null });
+    void other;
+  });
+
+  it('a claim left behind is settled from the cell: written is set, not written is asked again', async () => {
+    const old = new Date(Date.now() - CLAIM_TTL_MS - 60_000);
+    const written = await receipt();
+    await claimOf(written, old);
+    await ws.adapter.updateRow(written, { [col('Zuordnung')]: await optionId('Privat') });
+    const notWritten = await receipt({ Vendor: 'dm' });
+    await claimOf(notWritten, old);
+    // The test's claims rest on a made-up fingerprint, so the written one is decided again too: as automatic, never as an answer.
+    decide.mockResolvedValue(answer('Privat', 0.99));
+    const result = await run();
+    expect(result.answersRecorded).toBe(0);
+    expect(await decisionOf(written)).toMatchObject({ outcome: 'set', answeredAt: null });
+    expect(await assignmentOf(written)).toBe('Privat');
+    expect(await decisionOf(notWritten)).toMatchObject({ outcome: 'set', assignment: 'Privat' });
+    expect(await assignmentOf(notWritten)).toBe('Privat');
   });
 });

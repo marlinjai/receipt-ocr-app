@@ -175,7 +175,7 @@ describe('"Teils, teils": each payment is decided by its receipt', () => {
     await linkPayment(db, ctx, { paymentId: ids.get('eBay S.a.r.l.|2026-10-04'), rowId: businessReceipt }, receiptForLink(db, ctx.workspaceId));
 
     const view = (await loadStatement(db, ctx.workspaceId, 2026)).payments;
-    expect(view.mixedOpen).toEqual([expect.objectContaining({ label: 'eBay', count: 1, outCents: 1000 })]);
+    expect(view.mixedOpen).toEqual([expect.objectContaining({ label: 'eBay S.a.r.l.', count: 1, outCents: 1000 })]);
 
     const spending = await loadSpending(db, ctx.workspaceId, 2026, null);
     // 40 private by its receipt, 25 business by its receipt, 10 without a receipt still a question.

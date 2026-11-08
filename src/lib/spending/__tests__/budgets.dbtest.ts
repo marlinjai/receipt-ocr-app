@@ -143,7 +143,8 @@ describe('private and business parts', () => {
   it('counts only the private part of a mixed counterparty, like the overview', async () => {
     const ctx = await company([line('2026-03-03', 'REWE Markt', '-250')]);
     await setCounterpartyTreatment(db, ctx, { counterparty: 'REWE Markt', treatment: 'mixed' });
-    const rowId = await ctx.ws.addReceipt({ Name: 'Bürobedarf', Vendor: 'REWE Markt', Gross: 100, Date: '2026-03-03', Currency: 'EUR', 'FX Rate': 1 });
+    // The receipt decides the payment of a "Teils, teils" counterparty: a business receipt makes its part business.
+    const rowId = await ctx.ws.addReceipt({ Name: 'Bürobedarf', Vendor: 'REWE Markt', Gross: 100, Date: '2026-03-03', Currency: 'EUR', 'FX Rate': 1, Zuordnung: 'Geschäftlich' });
     const march = (await loadPayments(db, ctx.workspaceId)).payments.find((p) => p.bookingDay === '2026-03-03');
     await linkPayment(db, ctx, { paymentId: march!.id, rowId, cents: 10_000 }, receiptForLink(db, ctx.workspaceId));
     const budget = await groceries(ctx.workspaceId, '2026-03-05');

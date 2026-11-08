@@ -83,6 +83,11 @@
 <ul class="mt-3 space-y-2">
 <li class="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" style="border-color: var(--border);">
 <span class="text-sm" style="color: var(--foreground);">Finanzamt: Betrieblich<span class="mt-0.5 block text-xs" style="color: var(--muted);">Steuerzahlung</span>
+<form class="mt-1.5 flex flex-wrap items-center gap-1.5">
+<label class="text-xs" style="color: var(--muted);">Was ist das?</label>
+<input class="ui-input w-56 max-w-full text-xs" maxlength="120" placeholder="z. B. Getränkelieferdienst, Wasser" aria-label="Was ist Finanzamt?" value="">
+<button type="submit" class="ui-btn ui-btn-sm" disabled="">Speichern</button>
+</form>
 </span>
 <span class="flex flex-wrap gap-1.5" role="group" aria-label="Antwort für Finanzamt">
 <button type="button" class="ui-btn ui-btn-sm ui-btn-primary" aria-label="Finanzamt: Betrieblich bestätigen">Bestätigen</button>

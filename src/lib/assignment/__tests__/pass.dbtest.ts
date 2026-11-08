@@ -487,4 +487,28 @@ describe('second review of #246: a claim in flight, and one left behind', () => 
     expect(await decisionOf(notWritten)).toMatchObject({ outcome: 'set', assignment: 'Privat' });
     expect(await assignmentOf(notWritten)).toBe('Privat');
   });
+
+  it('a run that read before another run set its answer never takes that answer for a person\'s', async () => {
+    const open = await receipt();
+    const original = db.receiptAssignmentDecision.findMany.bind(db.receiptAssignmentDecision);
+    let paused = false;
+    const spy = vi.spyOn(db.receiptAssignmentDecision, 'findMany').mockImplementation((async (args: Parameters<typeof original>[0]) => {
+      const read = await original(args);
+      if (!paused) {
+        paused = true;
+        // Run B has read the decisions; run A claims, writes and finalizes before B reads the cells.
+        await decideAssignments(db, ctx, { decide: async () => answer('Privat', 0.99) }, { limit: 1 });
+      }
+      return read;
+    }) as unknown as typeof db.receiptAssignmentDecision.findMany);
+    decide.mockResolvedValue(answer('Geschäftlich', 0.99));
+    const b = await run();
+    spy.mockRestore();
+    expect(b.answersRecorded).toBe(0);
+    expect(await assignmentOf(open)).toBe('Privat');
+    expect(await decisionOf(open)).toMatchObject({ outcome: 'set', assignment: 'Privat', answeredAt: null });
+    // Later runs see the model's own answer as automatic.
+    decide.mockClear();
+    expect(await run()).toMatchObject({ answersRecorded: 0, candidates: 0 });
+  });
 });

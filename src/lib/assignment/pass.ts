@@ -189,6 +189,11 @@ export async function decideAssignments(
     return id ? row.cells[id] : undefined;
   };
 
+  // The decisions are read BEFORE the cells. A run writes its cell before it marks its decision "set", so a "set"
+  // seen here was written before the cells below are read: an empty cell next to it is never another run's write
+  // still on its way, which this run would otherwise take for a person emptying it.
+  const decisionList = await db.receiptAssignmentDecision.findMany({ where: { authWorkspaceId: ctx.workspaceId } });
+  const decisions = new Map(decisionList.map((d) => [d.rowId, d]));
   const rows = await allReceiptRows(table.adapter, table.tableId, table.columns);
   if (rows.length === 0) return result;
   const items = await db.receiptItem.findMany({
@@ -231,8 +236,6 @@ export async function decideAssignments(
   const statements: Statement[] = statementsOf(rules).map((r) => ({ id: r.id, text: r.matchValue, assignment: r.zuordnung }));
   const ruleMatched = (s: Snapshot) => matchRules(rules, { vendor: s.receipt.vendor, fullText: s.receipt.text }) !== null;
 
-  const decisionList = await db.receiptAssignmentDecision.findMany({ where: { authWorkspaceId: ctx.workspaceId } });
-  const decisions = new Map(decisionList.map((d) => [d.rowId, d]));
 
   // ── 1. The answers persons gave since a decision: recorded once, never decided again ──────────────
   for (const s of snapshots.values()) {
@@ -260,7 +263,8 @@ export async function decideAssignments(
       (d.outcome !== 'set' && s.assignment !== null);
     if (!answered) continue;
     try {
-      const updated = await db.receiptAssignmentDecision.updateMany({ where: { rowId: s.rowId, answeredAt: null }, data: { answeredAs: s.assignment, answeredAt: now() } });
+      // Only over the very record read: one another run wrote since rests on facts this snapshot does not show.
+      const updated = await db.receiptAssignmentDecision.updateMany({ where: { rowId: s.rowId, answeredAt: null, decidedAt: d.decidedAt }, data: { answeredAs: s.assignment, answeredAt: now() } });
       if (updated.count > 0) {
         result.answersRecorded++;
         decisions.set(s.rowId, { ...d, answeredAs: s.assignment, answeredAt: now() });

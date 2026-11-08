@@ -46,7 +46,7 @@ RUN apk add --no-cache curl
 # `prisma migrate deploy` at boot — engines are fetched at BUILD time here,
 # not at container start. Without this, schema migrations silently never ran
 # in prod (the P2021 missing-table incident of 2026-07-24).
-RUN npm install -g prisma@6.19.2
+RUN npm install -g prisma@6.19.3
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs

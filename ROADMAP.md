@@ -254,9 +254,11 @@
   `pullBooksMirror` fetches the issued documents from framer-clone's read-only machine endpoint
   with a company API key, by the hour (`/api/internal/books-pull`) or the button "Aus den Books
   abholen", and the "Einnahmen" tab shows every pull's outcome and conflicts (migration `0050`,
-  [docs/operations/books-mirror.md](docs/operations/books-mirror.md)). Open: in production, the
-  key (`BOOKS_PULL_KEY`), the first pull by hand and the hourly Coolify task, the steps in that
-  page; reading electronic invoices is another lane (#149). Plan:
+  [docs/operations/books-mirror.md](docs/operations/books-mirror.md)). Live in production since
+  2026-11-08: service account `receipts-books-pull` (Whiz-Art Media, admin) with its key in
+  `BOOKS_PULL_KEY`, the first pull created 62 and 63 and attached 28 to 61 (34) with no conflicts,
+  and the Coolify task `books-pull-hourly` runs at five past every hour. Open: reading electronic
+  invoices is another lane (#149). Plan:
   [docs/plans/2026-10-14-invoicing-and-income.md](docs/plans/2026-10-14-invoicing-and-income.md). (2026-11-08)
 - [ ] Corrected invoices in the income mirror: built on the receipts side (decision D10 of the
   invoicing plan): a replacement invoice from framer-clone's Books (`replaces_document_id`,
@@ -525,6 +527,12 @@
   treatment; authenticated per company like framer-clone's machine door (#316, /api/mcp). Asked for
   by Marlin on 2026-11-08 so an agent can fetch missing receipts (eBay, Amazon) and attach them
   without clicking through the app. (2026-11-08)
+- [ ] "Seite neu lesen" on a receipt reads the document again but leaves the receipt's name as it
+  was, so a corrected item never reaches the name column (seen by Marlin on 2026-11-08). The name
+  should follow the new reading unless a person edited it. (2026-11-08)
+- [ ] PayPal as a counterparty under Finanzen: 256 payments wait on one answer, whether PayPal is
+  "Teils, teils" (each payment decided by its receipt, like Amazon and eBay) or something else.
+  Goes to Marlin on a decision page. (2026-11-08)
 
 ## In Progress
 

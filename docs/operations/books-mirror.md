@@ -1,6 +1,6 @@
 ---
 title: The Books mirror and its scheduled pull
-summary: How the invoices issued in framer-clone's Books reach the "Einnahmen" tab by themselves, which settings the pull reads, how the key is set up, and the scheduled task that is described here but not created.
+summary: How the invoices issued in framer-clone's Books reach the "Einnahmen" tab by themselves, which settings the pull reads, how the key is set up, and the scheduled task that runs it every hour (created 2026-11-08).
 type: documentation
 tags: [operations, books, invoices, income, framer-clone]
 projects: [receipt-ocr-app, framer-clone]
@@ -99,6 +99,12 @@ print it.
    It prints the status and the answer (counts and invoice numbers, never a company or a
    figure) and exits non-zero on anything but a landed pull. Confirm the next run and
    the execution history.
+
+**Done on 2026-11-08** for Whiz-Art Media: the service account `receipts-books-pull`
+(company scope, role `admin`) was made and its key piped into `BOOKS_PULL_KEY` without
+being shown; the receipts app was restarted; the scheduled route ran once (200, 2 created,
+34 attached, no conflicts, 27 skipped as older than the register or not in euro); the
+task `books-pull-hourly` exists on the receipts application.
 
 Hourly is the promise: an invoice issued in the Books is in the "Einnahmen" tab within
 the hour, or at once with the button.

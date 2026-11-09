@@ -286,7 +286,7 @@
   The production `RETENTION_PURGE_SECRET` was generated securely in Infisical on 2026-10-09;
   no schedule was enabled. The backup and scratch restoration prerequisite is complete.
   Once the legal policy is confirmed, run the signed purge verification and enable its daily
-  Coolify schedule. Preparation: `docs/operations/retention-purge.md`. (2026-10-09)
+  Coolify schedule. Preparation: `docs/operations/retention-purge.md`. (2026-11-09)
 
 <!-- Decided features, ready to be worked on -->
 
@@ -357,16 +357,20 @@
   No new fixed hosting cost; normal existing object-storage usage applies.
   Plan: `docs/plans/2026-10-09-production-backups.md`.
   Recovery: `docs/operations/production-recovery.md`. (2026-10-09)
-- [ ] Three defects in the shared table adapter (`@marlinjai/data-table-adapter-prisma`
-  0.2.1) that this app now works around and that belong fixed there: (1) nothing stops
-  two columns of one table from carrying the same name, so a check-then-create race
-  doubles a column (here: a per-workspace lock in `ensureReceiptsTable`; there: a unique
-  index on table and name, or a lock in `createColumn`); (2) `getRow` reads with a
-  prepared `SELECT *` and swallows every error, so after any column was added or
-  dropped Postgres answers "cached plan must not change result type" and the adapter
-  reports "Row not found" (here: `statement_cache_size=0` in `src/lib/prisma-url.ts`;
-  there: list the columns, and let the error through); (3) `updateRow` silently skips a
-  cell whose column it does not know and still reports success. (2026-10-09)
+- [ ] Adopt `@marlinjai/data-table-adapter-prisma` 0.2.3 (the app pins 0.2.2 exactly) and drop the
+  workarounds it makes unnecessary. Checked against the code on 2026-11-09: the three defects
+  this line recorded for 0.2.1 are all still present in the installed 0.2.2 and all fixed in
+  0.2.3 on npm. (1) Two columns of one table could carry the same name, so a check-then-create
+  race doubled a column: 0.2.3 creates and renames columns inside a transaction under a table
+  lock and refuses a taken name; here the workaround is the per-workspace lock in
+  `ensureReceiptsTable` (`src/lib/receipts-table.ts`). (2) `getRow` read with a prepared
+  `SELECT *` and swallowed every error, so after a column was added or dropped Postgres
+  answered "cached plan must not change result type" and the adapter reported "Row not found":
+  0.2.3 lists the columns and lets the error through; here the workaround is
+  `statement_cache_size=0` in `src/lib/prisma-url.ts`. (3) `updateRow` silently skipped a cell
+  whose column it did not know: 0.2.3 throws "Unknown column in row cells", so callers must be
+  checked for that new error. Next: bump the pin, run `pnpm test:db`, then remove each
+  workaround the tests show is no longer needed. (2026-11-09)
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a

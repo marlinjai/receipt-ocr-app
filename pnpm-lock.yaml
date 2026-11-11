@@ -18,8 +18,8 @@ importers:
         specifier: ^0.13.0
         version: 0.13.0(next@16.4.3(@babel/core@7.29.13)(@types/node@20.19.33)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9)(zod@4.6.7)
       '@marlinjai/contacts-core':
-        specifier: ^0.4.0
-        version: 0.4.0(postgres@3.4.9)
+        specifier: ^0.5.0
+        version: 0.5.0(postgres@3.4.9)
       '@marlinjai/data-table-adapter-prisma':
         specifier: 0.2.2
         version: 0.2.2(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
@@ -902,8 +902,8 @@ packages:
       puppeteer:
         optional: true
 
-  '@marlinjai/contacts-core@0.4.0':
-    resolution: {integrity: sha512-/v6N0FBl7qzo8+QeuBi9H3UYiALaubKpDk0TjFQFURPYk/09mBRu8QeYVv06KMSXG+Z3axoC7MrtchDHh5Mzwg==}
+  '@marlinjai/contacts-core@0.5.0':
+    resolution: {integrity: sha512-JYFq2vnpeRZmC1qBOGabVVIKRretQnsmqhO73m3GYiEb83XEXzSFqwnsVnpclk5OszACipnLABrSCGm5M9fJ5A==}
     hasBin: true
     peerDependencies:
       postgres: '>=3.4.5'
@@ -5495,7 +5495,7 @@ snapshots:
       - tsx
       - yaml
 
-  '@marlinjai/contacts-core@0.4.0(postgres@3.4.9)':
+  '@marlinjai/contacts-core@0.5.0(postgres@3.4.9)':
     dependencies:
       kysely: 0.28.19
       kysely-postgres-js: 2.0.0(kysely@0.28.19)(postgres@3.4.9)

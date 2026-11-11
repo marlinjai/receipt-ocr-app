@@ -6,7 +6,7 @@ import { companyContacts, contactsDb } from '../db';
 import { SharedContactStore } from '../shared-store';
 import {
   createDirectoryContact,
-  linkPerson,
+  addDirectoryAffiliation,
   listDirectory,
   mergeDirectoryContacts,
 } from '../directory';
@@ -29,14 +29,14 @@ afterAll(async () => {
 });
 
 describe('directory against the real databases', () => {
-  it('links a person to an organization and merges a duplicate without changing printed names', async () => {
+  it('affiliates a person with an organization and merges a duplicate without changing printed names', async () => {
     const tenant = company();
     const contacts = companyContacts(tenant);
     const store = new SharedContactStore(contacts, db);
     const org = await createDirectoryContact(contacts, { kind: 'organization', name: 'Acme GmbH', legalForm: 'GmbH', city: 'Berlin', country: 'DE' });
     const kept = await store.create({ name: 'Edsger Directory', companyOrRole: 'TU' });
     const dup = await store.create({ name: 'Edsger D.', companyOrRole: 'TU' });
-    await linkPerson(contacts, kept.id, org.id);
+    await addDirectoryAffiliation(contacts, { personId: kept.id, organizationId: org.id });
 
     const ws = workspace();
     const meal = `row-${randomUUID()}`;

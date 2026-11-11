@@ -2,6 +2,13 @@
 
 ## Planned
 
+- [ ] Contact affiliations in the contacts screen: a person belongs to several businesses with a role
+  ("Funktion") and dates at each, a business has several people (contacts-core 0.5.0). Built on branch
+  `feat/contact-affiliations`; **merging deploys, and the start applies migration 0003 to the live
+  contacts database**, so it waits for a same-day verified backup, a restored-copy dry run
+  (`contacts-affiliations-report`) and Marlin's explicit yes. The old "Firma oder Funktion" text is kept as
+  "Zusatz zur Unterscheidung" and offered per link as "Als Funktion übernehmen", never copied by itself.
+  [plan](https://github.com/marlinjai/contacts/blob/main/docs/plans/2026-11-11-contact-affiliations.md) (2026-11-11)
 - [x] The 2025 purchase documents from the tax folder are in the app: 221 under Whiz-Art Media
   (241 receipts with the 20 that were there), 12 private ones under "marlinjai". Two files were
   already present and were not added again. Missing dates were filled from the tax session's

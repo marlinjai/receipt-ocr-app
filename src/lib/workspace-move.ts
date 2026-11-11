@@ -329,18 +329,18 @@ async function planMove(db: PrismaClient, req: WorkspaceMoveRequest): Promise<Pl
   const notFound = elsewhere.filter((id) => !atTarget.has(id)).length;
   if (notFound > 0) blocked.add('contacts_not_found');
 
-  // 3. A person and its organization move only together, so take the links along until nothing is added.
+  // 3. A person and the organizations it is affiliated with move only together (ended affiliations count: the
+  //    package refuses to split them), so take the links along until nothing is added.
   const scope = new Set(wantedInSource);
+  const edges = (await source.listAffiliations({ includeEnded: true })).filter(
+    (a) => inSourceById.has(a.personId) && inSourceById.has(a.organizationId),
+  );
   for (let grew = true; grew; ) {
     grew = false;
-    for (const contact of sourceAll) {
-      const organizationId = contact.organizationId;
-      if (!organizationId || !inSourceById.has(organizationId)) continue;
-      if (scope.has(contact.id) && !scope.has(organizationId)) {
+    for (const { personId, organizationId } of edges) {
+      if (scope.has(personId) !== scope.has(organizationId)) {
+        scope.add(personId);
         scope.add(organizationId);
-        grew = true;
-      } else if (!scope.has(contact.id) && scope.has(organizationId)) {
-        scope.add(contact.id);
         grew = true;
       }
     }

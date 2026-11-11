@@ -12,8 +12,12 @@ import { PREFERRED_CONTACT_LABELS, fieldFormFrom, type FieldFormState, type Fiel
 
 export interface ContactFormValues {
   name: string;
-  /** Persons only: the label printed next to the name on meals. */
+  /** Persons only: the label printed next to the name on meals (a distinguishing addition, not a role). */
   companyOrRole: string;
+  /** Create only, persons only: the first organization, optional. */
+  organizationId: string;
+  /** Create only: the role at that organization, optional. */
+  role: string;
   legalForm: string;
   addressLine1: string;
   addressLine2: string;
@@ -31,6 +35,8 @@ export interface ContactFormValues {
 const EMPTY_VALUES: Omit<ContactFormValues, 'fields'> = {
   name: '',
   companyOrRole: '',
+  organizationId: '',
+  role: '',
   legalForm: '',
   addressLine1: '',
   addressLine2: '',
@@ -52,6 +58,8 @@ export function formValuesFrom(c: DirectoryContact, fields: readonly DirectoryFi
   return {
     name: c.name,
     companyOrRole: c.companyOrRole,
+    organizationId: '',
+    role: '',
     legalForm: c.legalForm ?? '',
     addressLine1: c.addressLine1 ?? '',
     addressLine2: c.addressLine2 ?? '',
@@ -107,6 +115,8 @@ interface ContactFormProps {
   initial: ContactFormValues;
   /** The company's active custom fields. */
   fields: readonly DirectoryField[];
+  /** Create only: the organizations a new person can be affiliated with right away. */
+  organizations?: readonly DirectoryContact[];
   /** Accessible name of the form, for example "Neue Person". */
   label: string;
   saving: boolean;
@@ -171,7 +181,26 @@ export default function ContactForm(props: ContactFormProps) {
         </label>
 
         {kind === 'person' && (
-          <TextField id={`${id}-company`} label="Firma oder Funktion" value={values.companyOrRole} wide onChange={(v) => change({ companyOrRole: v })} />
+          <TextField id={`${id}-company`} label="Zusatz zur Unterscheidung" value={values.companyOrRole} wide onChange={(v) => change({ companyOrRole: v })} />
+        )}
+
+        {kind === 'person' && mode === 'create' && (props.organizations?.length ?? 0) > 0 && (
+          <>
+            <label className="block">
+              <span className="ui-label">Organisation (optional)</span>
+              <select className="ui-input" value={values.organizationId} onChange={(e) => change({ organizationId: e.target.value })}>
+                <option value="">Keine Organisation</option>
+                {props.organizations!.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {values.organizationId !== '' && (
+              <TextField id={`${id}-role`} label="Funktion dort (optional)" value={values.role} onChange={(v) => change({ role: v })} />
+            )}
+          </>
         )}
 
         {kind === 'organization' && (

@@ -397,10 +397,13 @@
   the schema lock kept on purpose (without it the request that loses a race now fails with "already
   exists"; it also guards the table, views and backfills), the legacy duplicate-column repair kept for
   tables that still carry one. Pull request 254 is open and held. Merging it deploys production and needs
-  Marlin's explicit approval (coordinator inbox entry 20261112-021436-receipt-ocr-prisma-023). Before merge:
-  a secret-safe check, through the secrets proxy printing booleans only, that production's database
-  connection has no pgbouncer or transaction pooling in front and whether it already sets
-  `statement_cache_size`. Rollback: revert the squash commit on main (restores pin 0.2.2 and the
+  Marlin's explicit approval (coordinator inbox entry 20261112-021436-receipt-ocr-prisma-023). The
+  secret-safe production check was run read-only through the secrets proxy on 2026-11-12 (booleans only):
+  the production database connection sets none of `statement_cache_size`, `pgbouncer`, `connection_limit`
+  or `sslmode`, uses no port 6543 and names no pooler, so the app's default prepared-statement caching
+  meets the same plain connection the tests use; the app's own `statement_cache_size=0` was added in code
+  only, so removing it is the one behaviour change in production. Branch merged with main (after #253)
+  and the full database suite passes 969 of 969 on it. Rollback: revert the squash commit on main (restores pin 0.2.2 and the
   workaround); no data or schema change is involved. Limitation: one UI test timed out in the full unit
   run at load average 60 and passed alone; wait for CI on the PR instead of trusting that run. Tick this
   line when merged. (2026-11-12)

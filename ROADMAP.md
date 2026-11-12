@@ -32,7 +32,8 @@
   on the focused row. Stored per receipt, a sort by a column decides while it is on. Decisions in
   [the plan](docs/plans/2026-10-11-receipt-sub-rows.md). Done 2026-11-01.
 - [ ] Dragging a group from one section into another is not yet proven on production.
-  (2026-10-11)
+  Reviewed 2026-11-12, still listed as open; status NOT verified in this review (no production test was run; no later commit or plan records one; missing evidence: a
+  browser pass on production). (2026-11-12)
 - [ ] A receipt with its parts as sub rows, the second use of sub rows (further values of the
   hidden `Row Kind` column). Not built; the group design leaves room for it. Since then the
   positions of a receipt are stored as line items instead (plan receipt line items, #180), so decide
@@ -129,7 +130,8 @@
   camera stabiliser and tripod of 2021 (the app counts two of them in full as low-value assets and
   holds the camera as an open check), the lens of 2022 (open check) and the laptop of 2022 (counted
   at full price times the study share). Until then 2021 and 2022 differ from the returns by the
-  amounts in the plan of the import. (2026-10-11)
+  amounts in the plan of the import. Reviewed 2026-11-12, still listed as open; status NOT verified in this review (the asset
+  code exists; missing evidence: whether these assets are entered on production, which is data). (2026-11-12)
 - [ ] The study shares of 2022 and 2023 are not recorded yet: the code no longer stands in the way
   (the rule sets of #123 let the finance area record a share on both forms for every year from
   2021), but on production no receipt of 2021 to 2023 carries one (2024: 34, 2025: 24, checked on
@@ -237,7 +239,9 @@
   with its label once the two are torn apart, which needs the word positions the text
   recognition returns; four documents without a total when the model gives none (three
   Namecheap, one order page); two totals that came from the model and could not be reproduced
-  (one Cursor, one Namecheap). (2026-10-11)
+  (one Cursor, one Namecheap). Reviewed 2026-11-12, still listed as open; status NOT verified in this review (the
+  rerun script `scripts/rerun-stored-readings.ts`, #140, exists; no record of a run; missing
+  evidence: a run against production text, not done here). (2026-11-12)
 - [x] Classification rules a user writes live in browser storage and never reach the upload
   path, so a rule such as "this vendor is private" cannot apply when a receipt is uploaded.
   Since 2026-10-11 the model leaves the assignment empty unless the document shows it, and an
@@ -292,7 +296,8 @@
   holds the receipts since the move of 2026-10-10: open each tab, write one
   synthetic decision, vendor rule and payment link, remove them again, and confirm the numbers
   return. Only a read-only pass was done (2026-10-10 08:53). From the finance dashboard work.
-  (2026-10-10)
+  Reviewed 2026-11-12, still listed as open; status NOT verified in this review (no synthetic production write was made; missing
+  evidence: that pass). (2026-11-12)
 - [x] Company erasure hands over an export first: the company's register and contacts go into a
   zip (GET /api/export/company), and printed guest names are removed at once when an export was
   taken, otherwise held for ten years (German tax law, the Abgabenordnung, AO) and removed by the
@@ -356,7 +361,9 @@
 - [ ] Direct model access with web search for the classifier is optional and not set up:
   it needs an Anthropic key in the receipts production settings (`ANTHROPIC_API_KEY`, a
   credential only the owner can issue). Without it the classifier decides from the
-  receipt text alone through OpenRouter, which is what runs today. (2026-10-10)
+  receipt text alone through OpenRouter, which is what runs today. Reviewed 2026-11-12, still listed as open; status NOT verified in this review (the key is not in the
+  Coolify environment of the app, but secrets also come from Infisical and no value was inspected;
+  missing evidence: whether the key is set there). (2026-11-12)
 - [x] Deleting a receipt in the dashboard table left its stored file behind. Done
   2026-10-10, decided by the owner's standing goal: the dashboard deletes for good, the
   same way the meals page does. `deleteRow` and `bulkDeleteRows` in
@@ -405,7 +412,9 @@
   single-workspace company by its company name instead of a bare "Main"); what
   remains is hiding or deleting the drained legacy workspace membership, which is
   a production data change/audit in the auth-brain multi-tenant service, not a
-  code fix in this repo. Needs Marlin or a data audit before touching it. Still open: the dropdown was not rechecked since. (2026-10-11)
+  code fix in this repo. Needs Marlin or a data audit before touching it. Still open: the dropdown was not rechecked since. Reviewed 2026-11-12, still listed as open; status NOT verified in this review: a read-only look on
+  2026-11-12 saw the company selector of receipts.lumitra.co list a Lola Stories entry; missing evidence:
+  whether that is the drained legacy membership or a legitimate company. (2026-11-12)
 
 - [x] Contact screen, wave 3: the Kontakte tab manages organizations with address, legal form and
   VAT ID, links people to organizations, merges duplicates, assigns customer numbers and exports one
@@ -440,7 +449,8 @@
   created a Receipts table with 0 receipts and one tax settings row for it; nothing reads them
   now. Removing them is a delete on production: it needs Marlin's one-line yes, with the dump
   `receipts-before-workspace-move-20261010T122443Z.dmp` on the server as the way back.
-  (2026-10-10)
+  Reviewed 2026-11-12, still listed as open; status NOT verified in this review (no delete was made; the receipts database was
+  not queried; missing evidence: whether the rows still exist). (2026-11-12)
 - [x] One client state for the app (asked by the owner on 2026-11-01): stores per domain, computed
   numbers, redraws per record. Meals, the navigation, the receipt checks, the Belege page and all
   finance tabs are on stores, the table draws one row for one change (package 0.12.0), and meal
@@ -613,7 +623,8 @@
   social insurance ceilings of 2027 and the annual tax act 2026 (low-value limit, the
   pool) are enacted; (4) tax the buyer owes on services from abroad is not computed;
   (5) invoices carry no link to a contact yet. Plan:
-  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. (2026-10-10)
+  `docs/plans/2026-10-07-finance-tax-dashboard-and-advisory.md`. Reviewed 2026-11-12, still listed as open; status NOT verified in this review (the five open points were not re-checked one by one;
+  missing evidence: a check of each against the plan's Reality sections). (2026-11-12)
 - [x] The 2026 purchase documents up to 2026-10-14 are in the app: 325 receipts under Whiz-Art
   Media (the purchase folder, 17 invoices saved from the expenses mailbox, 21 paper receipts
   from the scan of 5 October) and 29 private ones under "marlinjai", assignment and share as in

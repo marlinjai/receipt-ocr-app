@@ -373,7 +373,14 @@
   not yet merged): pin bumped, `statement_cache_size=0` removed (the tests show it is no longer needed),
   the schema lock kept on purpose (without it the request that loses a race now fails with "already
   exists"; it also guards the table, views and backfills), the legacy duplicate-column repair kept for
-  tables that still carry one. Tick this line when the pull request is merged. (2026-11-12)
+  tables that still carry one. Pull request 254 is open and held. Merging it deploys production and needs
+  Marlin's explicit approval (coordinator inbox entry 20261112-021436-receipt-ocr-prisma-023). Before merge:
+  a secret-safe check, through the secrets proxy printing booleans only, that production's database
+  connection has no pgbouncer or transaction pooling in front and whether it already sets
+  `statement_cache_size`. Rollback: revert the squash commit on main (restores pin 0.2.2 and the
+  workaround); no data or schema change is involved. Limitation: one UI test timed out in the full unit
+  run at load average 60 and passed alone; wait for CI on the PR instead of trusting that run. Tick this
+  line when merged. (2026-11-12)
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a

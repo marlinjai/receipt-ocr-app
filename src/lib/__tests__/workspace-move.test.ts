@@ -238,7 +238,7 @@ describe('moveWorkspace (the write order, with the contacts package and the data
     const transferTo = vi.fn(async (_to: string, _ids: string[], options?: { dryRun?: boolean }) =>
       options?.dryRun ? preview : transfer(),
     );
-    const source = { list: vi.fn(list ?? (async () => [{ id: 'c1', organizationId: null }])), getMany: vi.fn(async () => []), transferTo };
+    const source = { list: vi.fn(list ?? (async () => [{ id: 'c1', organizationId: null }])), getMany: vi.fn(async () => []), listAffiliations: vi.fn(async () => []), transferTo };
     const target = { list: vi.fn(list ?? (async () => [])), getMany: vi.fn(async () => []), transferTo: vi.fn() };
     companyContactsMock.mockImplementation((tenantId: string) => (tenantId === 'tnt_a' ? source : target));
     return { transferTo };
@@ -246,6 +246,29 @@ describe('moveWorkspace (the write order, with the contacts package and the data
 
   beforeEach(() => {
     companyContactsMock.mockReset();
+  });
+
+  it('takes the businesses a guest is affiliated with along, an ended affiliation included, and the people of those businesses', async () => {
+    const { db } = fakeDb();
+    const preview = { written: false, moved: 3, refused: 0, held: 0, items: ['c1', 'o1', 'p9'].map((id) => ({ id, status: 'moved' })) };
+    const transferTo = vi.fn(async () => preview);
+    const rows = [{ id: 'c1' }, { id: 'o1' }, { id: 'p9' }, { id: 'z' }];
+    const source = {
+      list: vi.fn(async () => rows),
+      getMany: vi.fn(async () => []),
+      // c1's only affiliation with o1 has ended: the package still refuses to split them, so they travel together.
+      listAffiliations: vi.fn(async () => [
+        { personId: 'c1', organizationId: 'o1', endedOn: '2025-01-01' },
+        { personId: 'p9', organizationId: 'o1', endedOn: null },
+      ]),
+      transferTo,
+    };
+    const target = { list: vi.fn(async () => []), getMany: vi.fn(async () => []), transferTo: vi.fn() };
+    companyContactsMock.mockImplementation((tenantId: string) => (tenantId === 'tnt_a' ? source : target));
+    await moveWorkspace(db, REQ, { apply: false });
+    expect(source.listAffiliations).toHaveBeenCalledWith({ includeEnded: true });
+    const [, ids] = transferTo.mock.calls[0] as unknown as [string, string[]];
+    expect([...ids].sort()).toEqual(['c1', 'o1', 'p9']);
   });
 
   it('writes the contacts first, then the rows, and reports both', async () => {

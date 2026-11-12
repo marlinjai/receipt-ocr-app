@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { DirectoryContact, DirectoryField } from '@/lib/contacts/directory';
+import type { DirectoryAffiliation, DirectoryContact, DirectoryField } from '@/lib/contacts/directory';
 
 /**
  * The contacts page: one list, one panel for the selected contact, the rare
@@ -13,7 +13,7 @@ import type { DirectoryContact, DirectoryField } from '@/lib/contacts/directory'
  * reloads its list from it after every change.
  */
 
-const server: { contacts: DirectoryContact[]; fields: DirectoryField[] } = { contacts: [], fields: [] };
+const server: { contacts: DirectoryContact[]; fields: DirectoryField[]; affiliations: DirectoryAffiliation[] } = { contacts: [], fields: [], affiliations: [] };
 
 const contact = (over: Partial<DirectoryContact> & { id: string; kind: 'person' | 'organization'; name: string }): DirectoryContact => ({
   companyOrRole: '',
@@ -42,7 +42,12 @@ const actions = {
   listFieldsAction: vi.fn(),
   createDirectoryAction: vi.fn(),
   updateDirectoryAction: vi.fn(),
-  linkPersonAction: vi.fn(),
+  listAffiliationsAction: vi.fn(),
+  addAffiliationAction: vi.fn(),
+  updateAffiliationAction: vi.fn(),
+  endAffiliationAction: vi.fn(),
+  removeAffiliationAction: vi.fn(),
+  setPrimaryAffiliationAction: vi.fn(),
   assignCustomerNumberAction: vi.fn(),
   mergeDirectoryAction: vi.fn(),
   exportDirectoryAction: vi.fn(),
@@ -56,7 +61,12 @@ vi.mock('./actions', () => ({
   listFieldsAction: (...a: unknown[]) => actions.listFieldsAction(...a),
   createDirectoryAction: (...a: unknown[]) => actions.createDirectoryAction(...a),
   updateDirectoryAction: (...a: unknown[]) => actions.updateDirectoryAction(...a),
-  linkPersonAction: (...a: unknown[]) => actions.linkPersonAction(...a),
+  listAffiliationsAction: (...a: unknown[]) => actions.listAffiliationsAction(...a),
+  addAffiliationAction: (...a: unknown[]) => actions.addAffiliationAction(...a),
+  updateAffiliationAction: (...a: unknown[]) => actions.updateAffiliationAction(...a),
+  endAffiliationAction: (...a: unknown[]) => actions.endAffiliationAction(...a),
+  removeAffiliationAction: (...a: unknown[]) => actions.removeAffiliationAction(...a),
+  setPrimaryAffiliationAction: (...a: unknown[]) => actions.setPrimaryAffiliationAction(...a),
   assignCustomerNumberAction: (...a: unknown[]) => actions.assignCustomerNumberAction(...a),
   mergeDirectoryAction: (...a: unknown[]) => actions.mergeDirectoryAction(...a),
   exportDirectoryAction: (...a: unknown[]) => actions.exportDirectoryAction(...a),
@@ -84,6 +94,14 @@ const ORGANIZATION = contact({ id: 'o1', kind: 'organization', name: 'Musterwerk
 const PERSON = contact({ id: 'p1', kind: 'person', name: 'Beispiel Person', companyOrRole: 'Einkauf', customFields: { seats: 2 }, preferredContact: 'phone' });
 const LINKED = contact({ id: 'p2', kind: 'person', name: 'Anna Verknüpft', organizationId: 'o1', organizationName: 'Musterwerk' });
 const ARCHIVED = contact({ id: 'p3', kind: 'person', name: 'Zoe Archiviert', archived: true });
+const AFFILIATION: DirectoryAffiliation = {
+  id: 'a1', personId: 'p2', personName: 'Anna Verknüpft', organizationId: 'o1', organizationName: 'Musterwerk',
+  role: 'Leitung', startedOn: '2024-01-15', endedOn: null, primary: true, version: 5,
+};
+const touchAffiliation = (id: string, patch: Partial<DirectoryAffiliation>) => {
+  server.affiliations = server.affiliations.map((a) => (a.id === id ? { ...a, ...patch, version: a.version + 1 } : a));
+  return server.affiliations.find((a) => a.id === id)!;
+};
 
 const guestOf = (c: DirectoryContact) => ({ id: c.id, name: c.name, companyOrRole: c.companyOrRole, note: c.note, archived: c.archived });
 const patchServer = (id: string, patch: Partial<DirectoryContact>) => {
@@ -93,7 +111,7 @@ const patchServer = (id: string, patch: Partial<DirectoryContact>) => {
 
 function renderPage() {
   const user = userEvent.setup();
-  render(<ContactsClient initial={{ contacts: server.contacts, fields: server.fields }} />);
+  render(<ContactsClient initial={{ contacts: server.contacts, fields: server.fields, affiliations: server.affiliations }} />);
   return user;
 }
 
@@ -112,9 +130,11 @@ async function openPanel(user: ReturnType<typeof userEvent.setup>, name: string)
 beforeEach(() => {
   server.contacts = [PERSON, ORGANIZATION, ARCHIVED, LINKED];
   server.fields = [SEATS];
+  server.affiliations = [AFFILIATION];
   for (const fn of [...Object.values(actions), ...Object.values(guestActions)]) fn.mockReset();
   actions.listDirectoryAction.mockImplementation(async () => ({ ok: true, value: server.contacts }));
   actions.listFieldsAction.mockImplementation(async () => ({ ok: true, value: server.fields }));
+  actions.listAffiliationsAction.mockImplementation(async () => ({ ok: true, value: server.affiliations }));
 });
 afterEach(cleanup);
 
@@ -324,39 +344,156 @@ describe('contacts page: the panel of one contact', () => {
     expect(within(list()).getAllByRole('button', { current: true })).toHaveLength(1);
   });
 
-  it('an organization lists its persons, and a person leads to its organization', async () => {
+  it('an organization lists its persons with their role, and a person leads to its organization', async () => {
     const user = renderPage();
     const org = await openPanel(user, 'Musterwerk');
     expect(within(org).getByRole('heading', { name: 'Personen (1)' })).toBeTruthy();
     expect(within(org).queryByRole('button', { name: 'Archivieren' })).toBeNull();
+    expect((within(org).getByRole('textbox', { name: 'Funktion bei Anna Verknüpft' }) as HTMLInputElement).value).toBe('Leitung');
     await user.click(within(org).getByRole('button', { name: 'Anna Verknüpft' }));
 
     const person = panel('Anna Verknüpft');
-    expect((within(person).getByRole('combobox', { name: 'Organisation' }) as HTMLSelectElement).value).toBe('o1');
-    await user.click(within(person).getByRole('button', { name: 'Organisation öffnen' }));
+    expect(within(person).getByRole('heading', { name: 'Zugehörigkeiten' })).toBeTruthy();
+    expect((within(person).getByRole('textbox', { name: 'Funktion bei Musterwerk' }) as HTMLInputElement).value).toBe('Leitung');
+    await user.click(within(person).getByRole('button', { name: 'Musterwerk' }));
     expect(panel('Musterwerk')).toBeTruthy();
   });
 
-  it('links a person to an organization with the version it read', async () => {
-    actions.linkPersonAction.mockImplementation(async (id: string, organizationId: string | null) => ({
-      ok: true,
-      value: patchServer(id, { organizationId, organizationName: organizationId ? 'Musterwerk' : null }),
-    }));
+  it('affiliates a person with an organization, with a role and a start date', async () => {
+    actions.addAffiliationAction.mockImplementation(async (input: { personId: string; organizationId: string; role: string | null; startedOn: string | null }) => {
+      const a: DirectoryAffiliation = { id: 'a2', personId: input.personId, personName: 'Beispiel Person', organizationId: input.organizationId, organizationName: 'Musterwerk', role: input.role ?? '', startedOn: input.startedOn, endedOn: null, primary: true, version: 1 };
+      server.affiliations = [...server.affiliations, a];
+      return { ok: true, value: a };
+    });
     const user = renderPage();
     const region = await openPanel(user, 'Beispiel Person');
-    const save = within(region).getByRole('button', { name: 'Verknüpfen' }) as HTMLButtonElement;
-    expect(save.disabled).toBe(true);
-    await user.selectOptions(within(region).getByRole('combobox', { name: 'Organisation' }), 'o1');
-    await user.click(save);
+    const form = within(region).getByRole('group', { name: 'Zuordnen' });
+    const submit = within(form).getByRole('button', { name: 'Zuordnen' }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    await user.selectOptions(within(form).getByRole('combobox', { name: 'Organisation wählen' }), 'o1');
+    await user.type(within(form).getByRole('textbox', { name: 'Funktion' }), 'Einkauf');
+    await user.type(within(form).getByLabelText('Seit (optional)'), '2025-03-01');
+    await user.click(submit);
 
-    await waitFor(() => expect(actions.linkPersonAction).toHaveBeenCalledWith('p1', 'o1', 3));
-    expect(await screen.findByText('Verknüpfung gespeichert.')).toBeTruthy();
-    await waitFor(() => expect(row('Beispiel Person').textContent).toBe('Beispiel PersonPersonMusterwerk'));
+    await waitFor(() => expect(actions.addAffiliationAction).toHaveBeenCalledWith({ personId: 'p1', organizationId: 'o1', role: 'Einkauf', startedOn: '2025-03-01' }));
+    expect(await screen.findByText('Zuordnung gespeichert.')).toBeTruthy();
+    expect((await within(panel('Beispiel Person')).findByRole('textbox', { name: 'Funktion bei Musterwerk' }) as HTMLInputElement).value).toBe('Einkauf');
+    // The business is no longer offered twice.
+    expect(within(panel('Beispiel Person')).queryByRole('group', { name: 'Zuordnen' })).toBeNull();
+  });
 
-    // The next change uses the version of the reloaded contact, never the one the panel opened with.
-    await user.selectOptions(within(panel('Beispiel Person')).getByRole('combobox', { name: 'Organisation' }), '');
-    await user.click(within(panel('Beispiel Person')).getByRole('button', { name: 'Verknüpfen' }));
-    await waitFor(() => expect(actions.linkPersonAction).toHaveBeenLastCalledWith('p1', null, 4));
+  it('changes the role with the version it read, and the next change uses the reloaded version', async () => {
+    actions.updateAffiliationAction.mockImplementation(async (id: string, patch: { role?: string | null }) => ({ ok: true, value: touchAffiliation(id, { role: patch.role ?? '' }) }));
+    const user = renderPage();
+    const region = await openPanel(user, 'Anna Verknüpft');
+    const input = within(region).getByRole('textbox', { name: 'Funktion bei Musterwerk' });
+    await user.clear(input);
+    await user.type(input, 'Geschäftsführung');
+    await user.click(within(region).getByRole('button', { name: 'Funktion speichern' }));
+    await waitFor(() => expect(actions.updateAffiliationAction).toHaveBeenCalledWith('a1', { role: 'Geschäftsführung' }, 5));
+    expect(await screen.findByText('Funktion gespeichert.')).toBeTruthy();
+
+    const again = within(panel('Anna Verknüpft')).getByRole('textbox', { name: 'Funktion bei Musterwerk' });
+    await user.clear(again);
+    await user.type(again, 'Beirat');
+    await user.click(within(panel('Anna Verknüpft')).getByRole('button', { name: 'Funktion speichern' }));
+    await waitFor(() => expect(actions.updateAffiliationAction).toHaveBeenLastCalledWith('a1', { role: 'Beirat' }, 6));
+  });
+
+  it('a stale save says so, reloads, and nothing was overwritten', async () => {
+    actions.updateAffiliationAction.mockImplementation(async () => {
+      touchAffiliation('a1', { role: 'Von jemand anderem' });
+      return { ok: false, error: 'stale' };
+    });
+    const user = renderPage();
+    const region = await openPanel(user, 'Anna Verknüpft');
+    const input = within(region).getByRole('textbox', { name: 'Funktion bei Musterwerk' });
+    await user.clear(input);
+    await user.type(input, 'Meine Änderung');
+    await user.click(within(region).getByRole('button', { name: 'Funktion speichern' }));
+    expect(await screen.findByText(/inzwischen geändert/)).toBeTruthy();
+    await waitFor(() => expect((within(panel('Anna Verknüpft')).getByRole('textbox', { name: 'Funktion bei Musterwerk' }) as HTMLInputElement).value).toBe('Von jemand anderem'));
+  });
+
+  it('shows the person\'s old free text next to an empty role and adopts it only on an explicit click', async () => {
+    server.contacts = server.contacts.map((c) => (c.id === 'p2' ? { ...c, companyOrRole: 'Muster GmbH' } : c));
+    server.affiliations = [{ ...AFFILIATION, role: '' }];
+    actions.updateAffiliationAction.mockImplementation(async (id: string, patch: { role?: string | null }) => ({ ok: true, value: touchAffiliation(id, { role: patch.role ?? '' }) }));
+    const user = renderPage();
+    const region = await openPanel(user, 'Anna Verknüpft');
+    expect(within(region).getByText('Früher erfasst: Muster GmbH')).toBeTruthy();
+    expect((within(region).getByRole('textbox', { name: 'Funktion bei Musterwerk' }) as HTMLInputElement).value).toBe('');
+    expect(actions.updateAffiliationAction).not.toHaveBeenCalled();
+    await user.click(within(region).getByRole('button', { name: 'Als Funktion übernehmen' }));
+    await waitFor(() => expect(actions.updateAffiliationAction).toHaveBeenCalledWith('a1', { role: 'Muster GmbH' }, 5));
+    await waitFor(() => expect(within(panel('Anna Verknüpft')).queryByText(/Früher erfasst/)).toBeNull());
+  });
+
+  it('ends an affiliation, keeps it as history, and offers the same business again', async () => {
+    actions.endAffiliationAction.mockImplementation(async (id: string) => ({ ok: true, value: touchAffiliation(id, { endedOn: '2026-11-11', primary: false }) }));
+    const user = renderPage();
+    const region = await openPanel(user, 'Anna Verknüpft');
+    expect(within(region).queryByRole('group', { name: 'Zuordnen' })).toBeNull();
+    await user.click(within(region).getByRole('button', { name: 'Zuordnung beenden' }));
+    await waitFor(() => expect(actions.endAffiliationAction).toHaveBeenCalledWith('a1', 5));
+    const after = panel('Anna Verknüpft');
+    expect(await within(after).findByText('Beendete Zuordnungen (1)')).toBeTruthy();
+    expect(within(after).getByText('Keiner Organisation zugeordnet.')).toBeTruthy();
+    const form = within(after).getByRole('group', { name: 'Zuordnen' });
+    expect((within(form).getByRole('combobox', { name: 'Organisation wählen' }) as HTMLSelectElement).textContent).toContain('Musterwerk');
+  });
+
+  it('removes a wrong entry, and marks another affiliation as the main one', async () => {
+    const second: DirectoryAffiliation = { ...AFFILIATION, id: 'a2', organizationId: 'o2', organizationName: 'Zweitwerk', role: 'Beirat', primary: false, version: 2 };
+    server.contacts = [...server.contacts, contact({ id: 'o2', kind: 'organization', name: 'Zweitwerk' })];
+    server.affiliations = [AFFILIATION, second];
+    actions.setPrimaryAffiliationAction.mockImplementation(async (id: string) => ({ ok: true, value: touchAffiliation(id, { primary: true }) }));
+    actions.removeAffiliationAction.mockImplementation(async (id: string) => {
+      server.affiliations = server.affiliations.filter((a) => a.id !== id);
+      return { ok: true, value: true };
+    });
+    const user = renderPage();
+    const region = await openPanel(user, 'Anna Verknüpft');
+    await user.click(within(region).getByRole('button', { name: 'Als Hauptzuordnung' }));
+    await waitFor(() => expect(actions.setPrimaryAffiliationAction).toHaveBeenCalledWith('a2', 2));
+    await user.click(within(panel('Anna Verknüpft')).getAllByRole('button', { name: 'Fehleintrag entfernen' })[1]);
+    await waitFor(() => expect(actions.removeAffiliationAction).toHaveBeenCalledWith('a2', 3));
+    await waitFor(() => expect(within(panel('Anna Verknüpft')).queryByRole('textbox', { name: 'Funktion bei Zweitwerk' })).toBeNull());
+  });
+
+  it('a duplicate pair and a missing right are explained with a next step', async () => {
+    actions.addAffiliationAction.mockResolvedValueOnce({ ok: false, error: 'duplicate_affiliation' });
+    const user = renderPage();
+    const region = await openPanel(user, 'Beispiel Person');
+    const form = within(region).getByRole('group', { name: 'Zuordnen' });
+    await user.selectOptions(within(form).getByRole('combobox', { name: 'Organisation wählen' }), 'o1');
+    await user.click(within(form).getByRole('button', { name: 'Zuordnen' }));
+    expect(await screen.findByText(/bereits zugeordnet/)).toBeTruthy();
+
+    actions.addAffiliationAction.mockResolvedValueOnce({ ok: false, error: 'forbidden' });
+    await user.selectOptions(within(panel('Beispiel Person')).getByRole('combobox', { name: 'Organisation wählen' }), 'o1');
+    await user.click(within(panel('Beispiel Person')).getByRole('button', { name: 'Zuordnen' }));
+    expect(await screen.findByText(/Berechtigung/)).toBeTruthy();
+  });
+
+  it('a new person can be affiliated right away; if the affiliation fails the person is still there and says what to do', async () => {
+    actions.createDirectoryAction.mockImplementation(async (input: { name: string }) => {
+      const created = contact({ id: 'new-1', kind: 'person', name: input.name, version: 1 });
+      server.contacts = [...server.contacts, created];
+      return { ok: true, value: created };
+    });
+    actions.addAffiliationAction.mockResolvedValueOnce({ ok: false, error: 'invalid_affiliation' });
+    const user = renderPage();
+    await user.click(screen.getByRole('button', { name: 'Kontakt anlegen' }));
+    await user.click(screen.getByRole('button', { name: 'Person' }));
+    const form = screen.getByRole('form', { name: 'Neue Person' });
+    await user.type(within(form).getByLabelText('Name'), 'Neue Testperson');
+    await user.selectOptions(within(form).getByRole('combobox', { name: 'Organisation (optional)' }), 'o1');
+    await user.type(within(form).getByLabelText('Funktion dort (optional)'), 'Leitung');
+    await user.click(within(form).getByRole('button', { name: /speichern|anlegen/i }));
+    await waitFor(() => expect(actions.addAffiliationAction).toHaveBeenCalledWith({ personId: 'new-1', organizationId: 'o1', role: 'Leitung' }));
+    expect(await screen.findByText(/Die Person wurde angelegt, die Zuordnung zur Organisation aber nicht/)).toBeTruthy();
+    expect(panel('Neue Testperson')).toBeTruthy();
   });
 
   it('assigns a customer number', async () => {
@@ -489,7 +626,7 @@ describe('contacts page: one edit action', () => {
     const user = renderPage();
     const form = await startEdit(user, 'Beispiel Person', 'Person bearbeiten');
     expect((within(form).getByLabelText('Name') as HTMLInputElement).value).toBe('Beispiel Person');
-    expect((within(form).getByLabelText('Firma oder Funktion') as HTMLInputElement).value).toBe('Einkauf');
+    expect((within(form).getByLabelText('Zusatz zur Unterscheidung') as HTMLInputElement).value).toBe('Einkauf');
     for (const label of ['E-Mail', 'Telefon', 'Bevorzugter Kontaktweg', 'Plätze', 'Notiz (wird nicht gedruckt)']) {
       expect(within(form).getByLabelText(label)).toBeTruthy();
     }
@@ -617,7 +754,7 @@ describe('contacts page: one edit action', () => {
     actions.updateDirectoryAction.mockImplementation(async (id: string, patch: Partial<DirectoryContact>) => ({ ok: true, value: patchServer(id, patch) }));
     const user = renderPage();
     const form = await startEdit(user, 'Musterwerk', 'Organisation bearbeiten');
-    expect(within(form).queryByLabelText('Firma oder Funktion')).toBeNull();
+    expect(within(form).queryByLabelText('Zusatz zur Unterscheidung')).toBeNull();
     await user.type(within(form).getByLabelText('Umsatzsteuer-ID'), 'DE000000000');
     await user.type(within(form).getByLabelText('Land (Zwei-Buchstaben-Code, z. B. DE)'), 'de');
     await user.click(within(form).getByRole('button', { name: 'Speichern' }));
@@ -672,7 +809,7 @@ describe('contacts page: creating', () => {
 
     await user.click(within(choice).getByRole('button', { name: 'Person' }));
     const form = screen.getByRole('form', { name: 'Neue Person' });
-    expect(within(form).getByLabelText('Firma oder Funktion')).toBeTruthy();
+    expect(within(form).getByLabelText('Zusatz zur Unterscheidung')).toBeTruthy();
     expect(within(form).queryByLabelText('Umsatzsteuer-ID')).toBeNull();
   });
 
@@ -683,7 +820,7 @@ describe('contacts page: creating', () => {
     await user.click(within(region).getByRole('button', { name: 'Person' }));
     const form = screen.getByRole('form', { name: 'Neue Person' });
     await user.type(within(form).getByLabelText('Name'), 'Neue Testperson');
-    await user.type(within(form).getByLabelText('Firma oder Funktion'), 'Beispiel');
+    await user.type(within(form).getByLabelText('Zusatz zur Unterscheidung'), 'Beispiel');
     await user.type(within(form).getByLabelText('E-Mail'), 'person@example.test');
     await user.selectOptions(within(form).getByLabelText('Bevorzugter Kontaktweg'), 'email');
     await user.type(within(form).getByLabelText('Plätze'), '3');
@@ -735,7 +872,7 @@ describe('contacts page: creating', () => {
     const region = await startCreate(user);
     await user.click(within(region).getByRole('button', { name: 'Person' }));
     await user.type(within(screen.getByRole('form', { name: 'Neue Person' })).getByLabelText('Name'), 'Doch eine Firma');
-    await user.type(within(screen.getByRole('form', { name: 'Neue Person' })).getByLabelText('Firma oder Funktion'), 'Nur für Personen');
+    await user.type(within(screen.getByRole('form', { name: 'Neue Person' })).getByLabelText('Zusatz zur Unterscheidung'), 'Nur für Personen');
 
     await user.click(within(region).getByRole('button', { name: 'Organisation' }));
     const form = screen.getByRole('form', { name: 'Neue Organisation' });

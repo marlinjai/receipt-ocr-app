@@ -62,7 +62,7 @@ jobs:
       # directly, in raw SQL, would bypass that scope, so it fails the job.
       - name: Guard against raw SQL on the contact tables
         run: |
-          if git grep -nIE '(FROM|INTO|UPDATE|JOIN|TABLE)[[:space:]]+"?(contacts|tenant_counters)"?([^[:alnum:]_]|$)' -- src scripts test; then
+          if git grep -nIE '(FROM|INTO|UPDATE|JOIN|TABLE)[[:space:]]+"?(contacts|contact_affiliations|tenant_counters)"?([^[:alnum:]_]|$)' -- src scripts test; then
             echo "Raw SQL on the shared contact tables found. Go through @marlinjai/contacts-core instead."
             exit 1
           fi

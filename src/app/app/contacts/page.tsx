@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { auth } from '@/lib/auth';
-import { listDirectoryAction, listFieldsAction } from './actions';
+import { listAffiliationsAction, listDirectoryAction, listFieldsAction } from './actions';
 import ContactsClient from './ContactsClient';
 
 export const dynamic = 'force-dynamic';
@@ -10,10 +10,10 @@ export const metadata = { title: 'Kontakte' };
 export default async function ContactsPage() {
   await auth.requireSession('/app/contacts');
   // Archived contacts are loaded too: the page filters one list, it never loads a second one.
-  const [contacts, fields] = await Promise.all([listDirectoryAction(true), listFieldsAction()]);
+  const [contacts, fields, affiliations] = await Promise.all([listDirectoryAction(true), listFieldsAction(), listAffiliationsAction()]);
 
-  if (!contacts.ok || !fields.ok) {
-    const error = !contacts.ok ? contacts.error : !fields.ok ? fields.error : 'failed';
+  if (!contacts.ok || !fields.ok || !affiliations.ok) {
+    const error = !contacts.ok ? contacts.error : !fields.ok ? fields.error : !affiliations.ok ? affiliations.error : 'failed';
     return (
       <main className="relative z-10 flex min-h-svh items-center justify-center px-4 py-16">
         <div className="glass-panel max-w-md rounded-xl p-6 text-center">
@@ -38,5 +38,5 @@ export default async function ContactsPage() {
     );
   }
 
-  return <ContactsClient initial={{ contacts: contacts.value, fields: fields.value }} />;
+  return <ContactsClient initial={{ contacts: contacts.value, fields: fields.value, affiliations: affiliations.value }} />;
 }

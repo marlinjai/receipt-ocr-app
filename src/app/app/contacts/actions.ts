@@ -7,13 +7,19 @@ import { MissingTenantError, companyWorkspaceIds, requireSessionTenantId, sessio
 import { companyContacts } from '@/lib/contacts/db';
 import {
   DirectoryError,
+  addDirectoryAffiliation,
   archiveDirectoryField,
+  endDirectoryAffiliation,
+  listDirectoryAffiliations,
+  removeDirectoryAffiliation,
+  setPrimaryDirectoryAffiliation,
+  updateDirectoryAffiliation,
+  type DirectoryAffiliation,
   assignDirectoryCustomerNumber,
   createDirectoryContact,
   createDirectoryField,
   eraseDirectoryContact,
   exportDirectoryContact,
-  linkPerson,
   listDirectory,
   listDirectoryFields,
   mergeDirectoryContacts,
@@ -115,13 +121,76 @@ export async function updateDirectoryAction(
   }
 }
 
-export async function linkPersonAction(
-  personId: string,
-  organizationId: string | null,
-  expectedVersion: number,
-): Promise<DirectoryResult<DirectoryContact>> {
+/** Every affiliation of the company (person, business, role, dates), ended ones included. Needs a receipts session. */
+export async function listAffiliationsAction(): Promise<DirectoryResult<DirectoryAffiliation[]>> {
   try {
-    return { ok: true, value: await linkPerson(await writeContacts(), String(personId), organizationId, expectedVersion) };
+    return { ok: true, value: await listDirectoryAffiliations(await readContacts()) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Affiliate a person with an organization, with an optional role and start date. Needs the receipts write right. */
+export async function addAffiliationAction(input: {
+  personId: string;
+  organizationId: string;
+  role?: string | null;
+  startedOn?: string | null;
+}): Promise<DirectoryResult<DirectoryAffiliation>> {
+  try {
+    return {
+      ok: true,
+      value: await addDirectoryAffiliation(await writeContacts(), {
+        personId: String(input?.personId ?? ''),
+        organizationId: String(input?.organizationId ?? ''),
+        role: input?.role === undefined ? undefined : input.role === null ? null : String(input.role),
+        startedOn: input?.startedOn ? String(input.startedOn) : null,
+      }),
+    };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Change an affiliation's role or dates. `expectedVersion` is the version the screen read. */
+export async function updateAffiliationAction(
+  id: string,
+  patch: { role?: string | null; startedOn?: string | null; endedOn?: string | null },
+  expectedVersion: number,
+): Promise<DirectoryResult<DirectoryAffiliation>> {
+  try {
+    const clean: { role?: string | null; startedOn?: string | null; endedOn?: string | null } = {};
+    if (patch?.role !== undefined) clean.role = patch.role === null ? null : String(patch.role);
+    if (patch?.startedOn !== undefined) clean.startedOn = patch.startedOn ? String(patch.startedOn) : null;
+    if (patch?.endedOn !== undefined) clean.endedOn = patch.endedOn ? String(patch.endedOn) : null;
+    return { ok: true, value: await updateDirectoryAffiliation(await writeContacts(), String(id), clean, expectedVersion) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** End an affiliation today (the row stays as history). */
+export async function endAffiliationAction(id: string, expectedVersion: number): Promise<DirectoryResult<DirectoryAffiliation>> {
+  try {
+    return { ok: true, value: await endDirectoryAffiliation(await writeContacts(), String(id), { expectedVersion }) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Delete an affiliation that was entered by mistake. */
+export async function removeAffiliationAction(id: string, expectedVersion: number): Promise<DirectoryResult<boolean>> {
+  try {
+    return { ok: true, value: await removeDirectoryAffiliation(await writeContacts(), String(id), expectedVersion) };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+/** Make an open affiliation the person's primary one. */
+export async function setPrimaryAffiliationAction(id: string, expectedVersion: number): Promise<DirectoryResult<DirectoryAffiliation>> {
+  try {
+    return { ok: true, value: await setPrimaryDirectoryAffiliation(await writeContacts(), String(id), expectedVersion) };
   } catch (e) {
     return failure(e);
   }

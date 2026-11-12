@@ -121,7 +121,6 @@ export class SharedContactStore implements ContactStore {
           name: data.name,
           companyOrRole: data.companyOrRole,
           note: data.note,
-          organizationId: current.organizationId,
           email: current.email,
           phone: current.phone,
           legalForm: current.legalForm,

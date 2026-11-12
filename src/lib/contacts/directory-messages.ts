@@ -13,7 +13,7 @@ export function directoryMessage(error: string): string {
     case 'invalid':
       return 'Eine Angabe ist ungültig. Bitte Namen, Postleitzahl und Land prüfen.';
     case 'not_organization':
-      return 'Eine Person kann nur mit einer Organisation verknüpft werden.';
+      return 'Eine Person kann nur einer Organisation zugeordnet werden.';
     case 'same_contact':
       return 'Zum Zusammenführen bitte zwei verschiedene Kontakte wählen.';
     case 'kind_mismatch':
@@ -30,6 +30,10 @@ export function directoryMessage(error: string): string {
       return 'Ein Feld mit diesem Namen gibt es bereits (auch archivierte Felder behalten ihren Namen).';
     case 'field_not_found':
       return 'Dieses Feld wurde nicht gefunden. Bitte die Seite neu laden.';
+    case 'invalid_affiliation':
+      return 'Diese Zuordnung ist nicht möglich. Eine Person lässt sich nur einer Organisation zuordnen, und ein Ende kann nicht vor dem Beginn liegen. Bitte die Angaben prüfen.';
+    case 'duplicate_affiliation':
+      return 'Diese Person ist dieser Organisation bereits zugeordnet. Die bestehende Zuordnung lässt sich ändern oder beenden; für eine neue Funktion zuerst die alte beenden.';
     case 'unauthorized':
       return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und erneut anmelden.';
     case 'forbidden':

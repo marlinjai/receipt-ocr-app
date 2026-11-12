@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import Link from 'next/link';
-import type { DirectoryContact, DirectoryField, DirectoryKind, ErasePreview } from '@/lib/contacts/directory';
+import type { DirectoryAffiliation, DirectoryContact, DirectoryField, DirectoryKind, ErasePreview } from '@/lib/contacts/directory';
 import { KIND_LABELS, contactContext, contactCountLabel, visibleContacts, type KindFilter } from '@/lib/contacts/contact-list';
 import { directoryMessage, fieldErrorMessage } from '@/lib/contacts/directory-messages';
 import { customFieldPatch, fieldKeyFromLabel } from '@/lib/contacts/field-form';
@@ -15,7 +15,12 @@ import {
   createFieldAction,
   eraseDirectoryAction,
   exportDirectoryAction,
-  linkPersonAction,
+  addAffiliationAction,
+  endAffiliationAction,
+  listAffiliationsAction,
+  removeAffiliationAction,
+  setPrimaryAffiliationAction,
+  updateAffiliationAction,
   listDirectoryAction,
   listFieldsAction,
   mergeDirectoryAction,
@@ -30,6 +35,7 @@ import ContactForm, {
   personDetailsInput,
   type ContactFormValues,
 } from './ContactForm';
+import { type AffiliationHandlers } from './Affiliations';
 import ContactPanel from './ContactPanel';
 import ContactTools, { type NewFieldInput } from './ContactTools';
 
@@ -49,6 +55,8 @@ export interface ContactsPageData {
   contacts: DirectoryContact[];
   /** Every custom field, archived ones included. */
   fields: DirectoryField[];
+  /** Every affiliation (person, business, role, dates), ended ones included. */
+  affiliations: DirectoryAffiliation[];
 }
 
 type TabKey = 'contacts' | 'tools';
@@ -71,6 +79,7 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
   const uid = useId();
   const [contacts, setContacts] = useState<DirectoryContact[]>(initial.contacts);
   const [fields, setFields] = useState<DirectoryField[]>(initial.fields);
+  const [affiliations, setAffiliations] = useState<DirectoryAffiliation[]>(initial.affiliations);
   const [tab, setTab] = useState<TabKey>('contacts');
 
   const [query, setQuery] = useState('');
@@ -98,10 +107,11 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
     () => activeContacts.filter((c) => c.kind === 'organization').sort((a, b) => a.name.localeCompare(b.name, 'de')),
     [activeContacts],
   );
-  const members = useMemo(
-    () => (selected?.kind === 'organization' ? contacts.filter((c) => c.kind === 'person' && c.organizationId === selected.id) : []),
-    [contacts, selected],
+  const persons = useMemo(
+    () => activeContacts.filter((c) => c.kind === 'person').sort((a, b) => a.name.localeCompare(b.name, 'de')),
+    [activeContacts],
   );
+  const legacyTextOf = useCallback((personId: string) => contacts.find((c) => c.id === personId)?.companyOrRole ?? '', [contacts]);
   const archivedCount = contacts.length - activeContacts.length;
   const panelOpen = creating !== null || selected !== null;
 
@@ -139,14 +149,15 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
     const seq = ++loadSeq.current;
     setReloading(true);
     try {
-      const [list, defs] = await Promise.all([listDirectoryAction(true), listFieldsAction()]);
+      const [list, defs, affs] = await Promise.all([listDirectoryAction(true), listFieldsAction(), listAffiliationsAction()]);
       if (seq !== loadSeq.current) return;
-      if (!list.ok || !defs.ok) {
-        setLoadError(directoryMessage(!list.ok ? list.error : !defs.ok ? defs.error : 'failed'));
+      if (!list.ok || !defs.ok || !affs.ok) {
+        setLoadError(directoryMessage(!list.ok ? list.error : !defs.ok ? defs.error : !affs.ok ? affs.error : 'failed'));
         return;
       }
       setContacts(list.value);
       setFields(defs.value);
+      setAffiliations(affs.value);
       setLoadError(null);
     } catch {
       if (seq === loadSeq.current) setLoadError(directoryMessage('failed'));
@@ -293,6 +304,15 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
           setSelectedId(r.value.id);
           formDirty.current = false;
           focusPanel();
+          if (newKind === 'person' && values.organizationId) {
+            // The person exists now; a failure here must not look like the person was not saved.
+            const a = await addAffiliationAction({ personId: r.value.id, organizationId: values.organizationId, role: values.role.trim() || null });
+            if (!a.ok) {
+              await reload();
+              setError(`Die Person wurde angelegt, die Zuordnung zur Organisation aber nicht. ${directoryMessage(a.error)} Sie lässt sich unten unter „Zugehörigkeiten“ erneut setzen.`);
+              return { ok: false, error: SHOWN } as const;
+            }
+          }
         }
         return r;
       },
@@ -368,6 +388,25 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
       },
       'Änderungen gespeichert.',
     );
+  };
+
+  // ---- Affiliations ------------------------------------------------------
+  // Every write carries the version of the row the screen showed; a row changed meanwhile is refused as
+  // `stale`, and `act` then reloads so the next try works on the current state.
+  const affiliationHandlers: AffiliationHandlers = {
+    busy,
+    onAdd: (input) =>
+      void act(
+        'affiliation',
+        () => addAffiliationAction({ ...input, role: input.role || null, startedOn: input.startedOn || null }),
+        'Zuordnung gespeichert.',
+      ),
+    onChangeRole: (a, role) =>
+      void act('affiliation', () => updateAffiliationAction(a.id, { role: role || null }, a.version), 'Funktion gespeichert.'),
+    onEnd: (a) => void act('affiliation', () => endAffiliationAction(a.id, a.version), 'Zuordnung beendet. Sie bleibt unter „Beendete Zuordnungen“ sichtbar.'),
+    onRemove: (a) => void act('affiliation', () => removeAffiliationAction(a.id, a.version), 'Eintrag entfernt.'),
+    onSetPrimary: (a) => void act('affiliation', () => setPrimaryAffiliationAction(a.id, a.version), 'Hauptzuordnung geändert.'),
+    onOpenContact: (id) => openContact(id),
   };
 
   const toggleArchived = () => {
@@ -741,6 +780,7 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
                           mode="create"
                           initial={emptyFormValues(activeFields)}
                           fields={activeFields}
+                          organizations={organizations}
                           label={creating.kind === 'organization' ? 'Neue Organisation' : 'Neue Person'}
                           saving={busy === 'save'}
                           disabled={busy !== null}
@@ -787,7 +827,10 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
                         contact={selected}
                         fields={activeFields}
                         organizations={organizations}
-                        members={members}
+                        persons={persons}
+                        affiliations={affiliations}
+                        legacyTextOf={legacyTextOf}
+                        affiliationHandlers={affiliationHandlers}
                         busy={busy}
                         erasePreview={erasing?.id === selected.id ? erasing.preview : null}
                         onEdit={() => {
@@ -797,7 +840,6 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
                           clearMessages();
                           focusPanel();
                         }}
-                        onLink={(organizationId) => void act('link', () => linkPersonAction(selected.id, organizationId, selected.version), 'Verknüpfung gespeichert.')}
                         onAssignNumber={() => void act('number', () => assignCustomerNumberAction(selected.id), 'Kundennummer vergeben.')}
                         onExport={() => void exportOne()}
                         onToggleArchived={toggleArchived}

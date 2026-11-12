@@ -6,8 +6,6 @@ import {
   assignDirectoryCustomerNumber,
   createDirectoryContact,
   exportDirectoryContact,
-  linkPerson,
-  listDirectory,
   mergeDirectoryContacts,
   updateDirectoryContact,
 } from '../directory';
@@ -67,7 +65,8 @@ function fakeContacts(initial: SharedContact[]) {
         ...current,
         name: input.name,
         companyOrRole: input.companyOrRole ?? '',
-        organizationId: input.organizationId ?? null,
+        // Since contacts-core 0.5.0 an update that does not mention organizationId keeps the link.
+        organizationId: input.organizationId === undefined ? current.organizationId : input.organizationId,
         email: input.email ?? null,
         phone: input.phone ?? null,
         note: input.note ?? null,
@@ -123,48 +122,6 @@ function fakeDb(guests: Array<{ id: string; rowId: string; contactId: string; di
   };
   return { db: { mealGuest } as unknown as PrismaClient, mealGuest };
 }
-
-describe('pick: linking a person to an organization', () => {
-  it('forward: links the person and shows the organization name', async () => {
-    const c = fakeContacts([row({ id: 'o1', kind: 'organization', name: 'Acme GmbH' }), row({ id: 'p1', kind: 'person', name: 'Ada' })]);
-    const linked = await linkPerson(c as unknown as Contacts, 'p1', 'o1');
-    expect(linked).toMatchObject({ organizationId: 'o1', organizationName: 'Acme GmbH' });
-  });
-
-  it('change an earlier input: renaming the organization shows on its linked people', async () => {
-    const c = fakeContacts([row({ id: 'o1', kind: 'organization', name: 'Acme GmbH' }), row({ id: 'p1', kind: 'person', name: 'Ada' })]);
-    await linkPerson(c as unknown as Contacts, 'p1', 'o1');
-    await updateDirectoryContact(c as unknown as Contacts, 'o1', { name: 'Acme Holding GmbH' });
-    const [person] = (await listDirectory(c as unknown as Contacts)).filter((x) => x.id === 'p1');
-    expect(person.organizationName).toBe('Acme Holding GmbH');
-  });
-
-  it('several persons may share one organization', async () => {
-    const c = fakeContacts([row({ id: 'o1', kind: 'organization', name: 'Acme' }), row({ id: 'p1', kind: 'person', name: 'Ada' }), row({ id: 'p2', kind: 'person', name: 'Grace' })]);
-    await linkPerson(c as unknown as Contacts, 'p1', 'o1');
-    await linkPerson(c as unknown as Contacts, 'p2', 'o1');
-    const people = (await listDirectory(c as unknown as Contacts)).filter((x) => x.kind === 'person');
-    expect(people.map((p) => p.organizationId)).toEqual(['o1', 'o1']);
-  });
-
-  it('resume: a link to a missing organization changes nothing, and linking again succeeds', async () => {
-    const c = fakeContacts([row({ id: 'p1', kind: 'person', name: 'Ada' }), row({ id: 'o1', kind: 'organization', name: 'Acme' })]);
-    await expect(linkPerson(c as unknown as Contacts, 'p1', 'missing')).rejects.toMatchObject({ code: 'not_found' });
-    expect(c.rows.get('p1')!.organizationId).toBeNull();
-    await expect(linkPerson(c as unknown as Contacts, 'p1', 'o1')).resolves.toMatchObject({ organizationId: 'o1' });
-  });
-
-  it('re-entry: linking the same pair again leaves the link as it was', async () => {
-    const c = fakeContacts([row({ id: 'o1', kind: 'organization', name: 'Acme' }), row({ id: 'p1', kind: 'person', name: 'Ada' })]);
-    await linkPerson(c as unknown as Contacts, 'p1', 'o1');
-    await expect(linkPerson(c as unknown as Contacts, 'p1', 'o1')).resolves.toMatchObject({ organizationId: 'o1' });
-  });
-
-  it('refuses to link a person to another person', async () => {
-    const c = fakeContacts([row({ id: 'p1', kind: 'person', name: 'Ada' }), row({ id: 'p2', kind: 'person', name: 'Grace' })]);
-    await expect(linkPerson(c as unknown as Contacts, 'p1', 'p2')).rejects.toMatchObject({ code: 'not_organization' });
-  });
-});
 
 describe('create: organizations with address and tax details', () => {
   it('forward: stores legal form, address, VAT ID and country', async () => {

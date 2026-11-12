@@ -34,7 +34,9 @@
 - [ ] Dragging a group from one section into another is not yet proven on production.
   (2026-10-11)
 - [ ] A receipt with its parts as sub rows, the second use of sub rows (further values of the
-  hidden `Row Kind` column). Not built; the group design leaves room for it. (2026-10-11)
+  hidden `Row Kind` column). Not built; the group design leaves room for it. Since then the
+  positions of a receipt are stored as line items instead (plan receipt line items, #180), so decide
+  whether sub rows are still wanted. (2026-11-12)
 - [x] The text reader takes two line items for net and tax. Seen in the review list on 2026-10-11:
   a Cursor invoice of 20.06 US dollars with two usage lines (18.76 and 1.30) and no tax was
   offered a new reading of net 18.76 at 7 percent. Both halves landed: since #121 (the rule that
@@ -145,7 +147,8 @@
   land is never counted, and the table shows what is stored afterwards. Done 2026-11-05.
 - [ ] A file that holds two invoices becomes one receipt with the second invoice's figures
   (seen on 2026-10-11 on a file with a marketplace invoice and a retailer invoice). The reader
-  should say that the file holds more than one document, so it can be split. (2026-10-11)
+  now says that the file holds more than one document (#138, the review reason "several
+  documents"). Still open: splitting the file into one receipt per document. (2026-11-12)
 - [ ] Private spending in the app (decided by the owner on 2026-10-14): overview, private versus
   business, budgets and warnings, the live bank connection and the missing-receipt loop (mailbox,
   push with e-mail fallback) are built. Left, both waiting for the owner: which vendors may be
@@ -200,27 +203,32 @@
   document by nature), and the business form misses 56.00. Design entries without a receipt:
   what evidence each needs, which form line it lands on. Same question for an expense that
   exists only as a bank payment and for a recurring contract rate, which on 2026-10-11 only
-  worked because one lease confirmation could carry eleven payments. (2026-10-11)
-- [ ] The payments tab asks too much and offers too little after a real import (2026-10-11,
+  worked because one lease confirmation could carry eleven payments. Design done 2026-10-15 (plan
+  finance and tax dashboard, "Design: entries without a receipt"); nothing of it is built. (2026-11-12)
+- [x] The payments tab asks too much and offers too little after a real import (2026-10-11,
   2,150 payments): 586 open payments and 237 unanswered counterparties. Money in is always
   asked about, with no answer for "this whole account is private"; a payment to an unanswered
   counterparty cannot be linked until the counterparty is answered as business, which turns all
   its other payments into questions; an account takes one source, so a bank export that ends
   mid-year cannot be continued from another list; an import cannot be limited to a year (the
-  bank-interface list brought 454 payments outside 2025). (2026-10-11)
-- [ ] The assignment cell and the finance decision are two sources for who bears a receipt: a
+  bank-interface list brought 454 payments outside 2025). Done 2026-10-16 (#132, #141).
+- [x] The assignment cell and the finance decision are two sources for who bears a receipt: a
   decision in the finance area does not update "Zuordnung" or the share in the table, so the
   dashboard and the finance area can disagree until both are set, and a decision has no note
   field (the note for the unpaid hosting invoice of 2025 stands in the receipt's name). Private
   receipts also carry share 100 in some rows and 0 in others. Decide which one is the source
-  and derive the other. (2026-10-11)
+  and derive the other. Done 2026-10-16 (#148): the finance decision is the one source, and the decision form
+  has a note field.
 - [ ] A refunded purchase has no representation: three Amazon orders of 2025 were refunded in
   full and were kept out by hand. Importing invoice and credit note as a pair should net to
-  zero by itself. (2026-10-11)
+  zero by itself. Done for electronic credit notes (a negative receipt linked to its invoice, #156) and
+  for refund payments (proposed for the purchase they refund, #154), 2026-10-16. Still open: a refund
+  without a credit note file, as the Amazon orders were. (2026-11-12)
 - [ ] The same invoice can be imported into two companies without a warning (the duplicate
   check is per company and per file hash), and the active company is a session-wide switch, so
   importing into another company means switching the whole signed-in session, a risk when
-  several sessions work at once. An upload should name its company itself. (2026-10-11)
+  several sessions work at once. An upload should name its company itself. Checked 2026-11-12: an upload still takes the company from
+  the session only. (2026-11-12)
 - [ ] Check the reader's new date and total reading against the text production actually stores.
   The fixes of 2026-10-11 were measured on local text extraction of the 2025 purchase documents,
   with the labels torn from their amounts to imitate the text recognition, because the stored
@@ -230,11 +238,12 @@
   recognition returns; four documents without a total when the model gives none (three
   Namecheap, one order page); two totals that came from the model and could not be reproduced
   (one Cursor, one Namecheap). (2026-10-11)
-- [ ] Classification rules a user writes live in browser storage and never reach the upload
+- [x] Classification rules a user writes live in browser storage and never reach the upload
   path, so a rule such as "this vendor is private" cannot apply when a receipt is uploaded.
   Since 2026-10-11 the model leaves the assignment empty unless the document shows it, and an
   empty assignment is asked for in the review list. Decide whether the rules move to the
-  server. (2026-10-11)
+  server. Done 2026-10-16 (#124): rules live on the server per company and apply on upload; the old
+  browser rules are imported once.
 - [x] The reader finds the invoice date on Google, Adobe, Apple and Microsoft invoices: every
   date is ranked by the label in front of it, a due, renewal or debit date is never taken (58
   of 302 documents without a date before, none after, on local text). Totals: net, tax and
@@ -381,7 +390,8 @@
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a
-  tenant-scoped key so their access is entitlement-checked like browser sessions. Still open and still wanted: the machine path is unchanged. (2026-10-11)
+  tenant-scoped key so their access is entitlement-checked like browser sessions. Still open and still wanted: the machine path is unchanged. Checked 2026-11-12: `src/middleware.ts` still gates `/api/*` on the
+  `SERVICE_TOKEN` bearer. (2026-11-12)
 - [x] Deploy Docs GitHub Actions workflow failed on every run from at least 2026-08-03.
   Resolved, this line was stale: the Infisical credentials were provisioned on the
   repository and the workflow was repaired in pull request 27 (action pin, project slug,

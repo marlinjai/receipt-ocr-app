@@ -21,8 +21,8 @@ importers:
         specifier: ^0.4.0
         version: 0.4.0(postgres@3.4.9)
       '@marlinjai/data-table-adapter-prisma':
-        specifier: 0.2.2
-        version: 0.2.2(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+        specifier: 0.2.3
+        version: 0.2.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
       '@marlinjai/data-table-adapter-shared':
         specifier: ^0.2.2
         version: 0.2.2
@@ -908,8 +908,8 @@ packages:
     peerDependencies:
       postgres: '>=3.4.5'
 
-  '@marlinjai/data-table-adapter-prisma@0.2.2':
-    resolution: {integrity: sha512-0dTxCjlE+Y9dN6JYEzRweEPR6zWFkCqHlJaxgUexwSb/WOL8p2xo65IFIQQJfmJXfugFOuKCDJawz4NfN8Y1Xg==}
+  '@marlinjai/data-table-adapter-prisma@0.2.3':
+    resolution: {integrity: sha512-adPxhDo02w4Ey5N6psVY0p+YuT/TV6YWOoL1uM63D7agRbpGlV59CtSkTArdHzEA0Xm2dzOeu/sbH7/QZ0lggg==}
 
   '@marlinjai/data-table-adapter-shared@0.2.2':
     resolution: {integrity: sha512-boXa6JjjyLaup7fjivF/j9PygCmA3vYQZpju2XMulEbUR1VT5chIuCxL5Tx0HC6aXl9y2onKqTl0KV7NBb5d0w==}
@@ -5501,7 +5501,7 @@ snapshots:
       kysely-postgres-js: 2.0.0(kysely@0.28.19)(postgres@3.4.9)
       postgres: 3.4.9
 
-  '@marlinjai/data-table-adapter-prisma@0.2.2(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)':
+  '@marlinjai/data-table-adapter-prisma@0.2.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)':
     dependencies:
       '@marlinjai/data-table-adapter-shared': 0.2.2
       '@marlinjai/data-table-core': 0.3.1

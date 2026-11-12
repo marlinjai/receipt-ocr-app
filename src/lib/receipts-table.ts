@@ -156,6 +156,10 @@ const SCHEMA_WORK_MS = 120_000;
  * holds it: then wait until `isCurrent` says that request has finished.
  *
  * Two page loads that both find a column missing must not both create it. The
+ * adapter refuses a second column under a taken name (it creates columns under
+ * a table lock), but the request that loses that race would fail with
+ * "already exists" instead of simply finding the work done, and the table, the
+ * views and the backfills below have no such guard of their own. The
  * one that gets the lock keeps it on a single connection for the length of the
  * transaction, while `work` itself runs on the pool as usual. The others do
  * NOT queue on the lock: a waiter parked inside a transaction would hold a
@@ -196,9 +200,11 @@ async function underSchemaLock(
  * Safe to call on every page load, including against an already-live production
  * table that predates a given column/view (self-heals schema drift), and safe to
  * call from several requests at once: whatever has to be created is created under
- * the workspace's schema lock, and a column that an earlier race created twice is
- * folded back into one (see `mergeDuplicateColumns`). That repair is the one step
- * that is not additive: it removes a doubled column once its values are moved.
+ * the workspace's schema lock, and a column that an earlier race created twice
+ * (before the adapter refused a taken name, 0.2.3) is folded back into one (see
+ * `mergeDuplicateColumns`). That repair is the one step that is not additive: it
+ * removes a doubled column once its values are moved. It stays for tables that
+ * still carry such a column.
  */
 export async function ensureReceiptsTable(
   adapter: PrismaAdapter,

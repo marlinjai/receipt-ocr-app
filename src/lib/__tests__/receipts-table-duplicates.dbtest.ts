@@ -3,7 +3,6 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { Column } from '@marlinjai/data-table-core';
-import { withoutStatementCache } from '../prisma-url';
 import { ensureReceiptsTable, receiptsSchemaIsCurrent } from '../receipts-table';
 import { loadMealRecord, saveMealDetails, type MealContext } from '../meals/service';
 import type { MealDetailsInput } from '../meals/input';
@@ -40,10 +39,21 @@ function details(overrides: Partial<MealDetailsInput> = {}): MealDetailsInput {
   };
 }
 
+/**
+ * A column under a name the table already has. The adapter refuses that since 0.2.3, but a table the race
+ * made before still holds such columns, so the state is made the way the race made it: the column is created
+ * under a free name, with its physical column, and then given the taken name directly in the database.
+ */
+async function legacyColumn(ws: TestWorkspace, name: string, type: Column['type'], config?: Column['config']): Promise<Column> {
+  const created = await ws.adapter.createColumn({ tableId: ws.tableId, name: `${name} (legacy ${randomUUID()})`, type, config });
+  await db.dtColumn.update({ where: { id: created.id }, data: { name } });
+  return { ...created, name };
+}
+
 /** A second column under an existing name, as the race left it: same type, own select options. */
 async function duplicate(ws: TestWorkspace, name: string): Promise<Column> {
   const original = named(await ws.adapter.getColumns(ws.tableId), name)[0];
-  const copy = await ws.adapter.createColumn({ tableId: ws.tableId, name, type: original.type, config: original.config });
+  const copy = await legacyColumn(ws, name, original.type, original.config);
   if (original.type === 'select') {
     for (const option of await ws.adapter.getSelectOptions(original.id)) {
       await ws.adapter.createSelectOption({ columnId: copy.id, name: option.name, color: option.color });
@@ -146,7 +156,7 @@ describe('a table that holds a meal column twice', () => {
   it("a person's own columns that share a name are left alone", async () => {
     const ws = await createWorkspace();
     await ws.adapter.createColumn({ tableId: ws.tableId, name: 'Notiz', type: 'text' });
-    await ws.adapter.createColumn({ tableId: ws.tableId, name: 'Notiz', type: 'text' });
+    await legacyColumn(ws, 'Notiz', 'text');
     // Force the repair path to run by also duplicating a column the app owns.
     await duplicate(ws, 'Occasion');
 
@@ -184,7 +194,7 @@ describe('ensureReceiptsTable called by several requests at once', () => {
     // connection, and the one doing the work ran out of them.
     const address = new URL(process.env.TEST_DATABASE_URL!);
     address.searchParams.set('connection_limit', '3');
-    const small = new PrismaClient({ datasourceUrl: withoutStatementCache(address.toString()) });
+    const small = new PrismaClient({ datasourceUrl: address.toString() });
     try {
       const workspaceId = `test-ws-${randomUUID()}`;
       await Promise.all(
@@ -218,9 +228,9 @@ describe('ensureReceiptsTable called by several requests at once', () => {
 });
 
 describe('a table whose shape changes while the app is running', () => {
-  // Postgres refuses a prepared `SELECT *` once the table gained or lost a
-  // column, and the adapter reports that as "row not found". The app's client
-  // therefore keeps no prepared statements (src/lib/prisma-url.ts).
+  // The adapter lists a table's columns before it reads a row, so a column added
+  // or dropped while the app runs does not make a prepared statement stale. The
+  // app's client keeps its prepared statements (Prisma's default), exactly as here.
   const readOnManyConnections = (ws: TestWorkspace, rowId: string) =>
     Promise.all(Array.from({ length: 30 }, () => ws.adapter.getRow(rowId)));
 

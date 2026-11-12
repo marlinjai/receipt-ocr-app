@@ -369,8 +369,11 @@
   0.2.3 lists the columns and lets the error through; here the workaround is
   `statement_cache_size=0` in `src/lib/prisma-url.ts`. (3) `updateRow` silently skipped a cell
   whose column it did not know: 0.2.3 throws "Unknown column in row cells", so callers must be
-  checked for that new error. Next: bump the pin, run `pnpm test:db`, then remove each
-  workaround the tests show is no longer needed. (2026-11-09)
+  checked for that new error. Done on a held branch 2026-11-12 (`chore/data-table-adapter-prisma-0.2.3`,
+  not yet merged): pin bumped, `statement_cache_size=0` removed (the tests show it is no longer needed),
+  the schema lock kept on purpose (without it the request that loses a race now fails with "already
+  exists"; it also guards the table, views and backfills), the legacy duplicate-column repair kept for
+  tables that still carry one. Tick this line when the pull request is merged. (2026-11-12)
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a

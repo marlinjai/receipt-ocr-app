@@ -1,14 +1,15 @@
 'use client';
 
-import { useId, useState, type ReactNode } from 'react';
-import type { DirectoryContact, DirectoryField, ErasePreview } from '@/lib/contacts/directory';
+import { useId, type ReactNode } from 'react';
+import { OrganizationPeople, PersonAffiliations, type AffiliationHandlers } from './Affiliations';
+import type { DirectoryAffiliation, DirectoryContact, DirectoryField, ErasePreview } from '@/lib/contacts/directory';
 import { contactPlace } from '@/lib/contacts/contact-list';
 import { eraseConfirmation } from '@/lib/contacts/directory-messages';
 import { PREFERRED_CONTACT_LABELS } from '@/lib/contacts/field-form';
 
 /**
- * Everything about one contact in one place: what is recorded, the link between
- * a person and its organization, the customer number, and at the bottom the
+ * Everything about one contact in one place: what is recorded, the affiliations
+ * between persons and organizations (with the role on each), the customer number, and at the bottom the
  * actions that are needed less often. It shows and asks; the page saves.
  */
 
@@ -16,16 +17,20 @@ interface ContactPanelProps {
   contact: DirectoryContact;
   /** The company's active custom fields, for the labels of their values. */
   fields: readonly DirectoryField[];
-  /** Active organizations a person can be linked to. */
+  /** Active organizations a person can be affiliated with. */
   organizations: readonly DirectoryContact[];
-  /** For an organization: the persons linked to it. */
-  members: readonly DirectoryContact[];
+  /** Active persons an organization can take on. */
+  persons: readonly DirectoryContact[];
+  /** Every affiliation of the company (the panel picks its own), ended ones included. */
+  affiliations: readonly DirectoryAffiliation[];
+  /** Looks up a person's old free text, offered as a role suggestion next to an empty role. */
+  legacyTextOf: (personId: string) => string;
+  affiliationHandlers: AffiliationHandlers;
   /** The key of the action that is running, null when idle. */
   busy: string | null;
   /** Set while the erase confirmation is shown for this contact. */
   erasePreview: ErasePreview | null;
   onEdit: () => void;
-  onLink: (organizationId: string | null) => void;
   onAssignNumber: () => void;
   onExport: () => void;
   onToggleArchived: () => void;
@@ -51,7 +56,7 @@ function detailRows(c: DirectoryContact, fields: readonly DirectoryField[]): Arr
           ['Anschrift', [c.addressLine1, c.addressLine2, [contactPlace(c), c.country].filter(Boolean).join(', ')].filter(Boolean).join(' · ') || null],
           ['Umsatzsteuer-ID', c.vatId],
         ]
-      : [['Firma oder Funktion', c.companyOrRole || null]];
+      : [['Zusatz zur Unterscheidung', c.companyOrRole || null]];
   rows.push(
     ['E-Mail', c.email],
     ['Telefon', c.phone],
@@ -105,38 +110,20 @@ export default function ContactPanel(props: ContactPanelProps) {
       </PanelSection>
 
       {c.kind === 'person' && !c.archived && (
-        <PanelSection title="Organisation" headingId={`${id}-org`}>
-          {/* Keyed by what is stored, so the choice starts over whenever the link changed. */}
-          <OrganizationLink
-            key={`${c.id}:${c.organizationId ?? ''}:${c.version}`}
-            contact={c}
-            organizations={props.organizations}
-            labelledBy={`${id}-org`}
-            busy={busy}
-            onLink={props.onLink}
-            onOpenContact={props.onOpenContact}
-          />
+        <PanelSection title="Zugehörigkeiten" headingId={`${id}-org`}>
+          <PersonAffiliations contact={c} affiliations={props.affiliations} organizations={props.organizations} h={props.affiliationHandlers} />
         </PanelSection>
       )}
 
       {c.kind === 'organization' && (
-        <PanelSection title={`Personen (${props.members.length})`} headingId={`${id}-members`}>
-          {props.members.length === 0 ? (
-            <p className="text-sm" style={{ color: 'var(--muted)' }}>
-              Noch keine Person verknüpft. Die Verknüpfung wird bei der Person gesetzt.
-            </p>
-          ) : (
-            <ul className="space-y-1">
-              {props.members.map((m) => (
-                <li key={m.id}>
-                  <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" onClick={() => props.onOpenContact(m.id)}>
-                    {m.name}
-                    {m.archived && <span style={{ color: 'var(--muted)' }}>(archiviert)</span>}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+        <PanelSection title={`Personen (${props.affiliations.filter((a) => a.organizationId === c.id && a.endedOn === null).length})`} headingId={`${id}-members`}>
+          <OrganizationPeople
+            contact={c}
+            affiliations={props.affiliations}
+            persons={props.persons}
+            legacyTextOf={props.legacyTextOf}
+            h={props.affiliationHandlers}
+          />
         </PanelSection>
       )}
 
@@ -213,57 +200,5 @@ function PanelSection({ title, headingId, children }: { title: string; headingId
       </h3>
       {children}
     </section>
-  );
-}
-
-function OrganizationLink(props: {
-  contact: DirectoryContact;
-  organizations: readonly DirectoryContact[];
-  labelledBy: string;
-  busy: string | null;
-  onLink: (organizationId: string | null) => void;
-  onOpenContact: (id: string) => void;
-}) {
-  const { contact: c, organizations } = props;
-  const stored = c.organizationId ?? '';
-  const [target, setTarget] = useState(stored);
-  // A linked organization that is archived is not offered for new links, but must still be shown as the current one.
-  const listed = organizations.some((o) => o.id === stored) || stored === '';
-
-  if (organizations.length === 0 && stored === '') {
-    return (
-      <p className="text-sm" style={{ color: 'var(--muted)' }}>
-        Noch keine Organisation angelegt. Über „Kontakt anlegen“ entsteht eine, danach lässt sich diese Person hier verknüpfen.
-      </p>
-    );
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <select
-        className="ui-input min-w-0 flex-1"
-        style={{ flexBasis: '12rem' }}
-        aria-labelledby={props.labelledBy}
-        value={target}
-        disabled={props.busy !== null}
-        onChange={(e) => setTarget(e.target.value)}
-      >
-        <option value="">Keine Organisation</option>
-        {!listed && <option value={stored}>{c.organizationName ?? 'Verknüpfte Organisation'}</option>}
-        {organizations.map((o) => (
-          <option key={o.id} value={o.id}>
-            {o.name}
-          </option>
-        ))}
-      </select>
-      <button type="button" className="ui-btn ui-btn-sm" disabled={props.busy !== null || target === stored} onClick={() => props.onLink(target || null)}>
-        {props.busy === 'link' ? 'Bitte warten…' : 'Verknüpfen'}
-      </button>
-      {stored !== '' && (
-        <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" onClick={() => props.onOpenContact(stored)}>
-          Organisation öffnen
-        </button>
-      )}
-    </div>
   );
 }

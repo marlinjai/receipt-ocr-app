@@ -9,7 +9,7 @@ import {
   createDirectoryContact,
   createDirectoryField,
   eraseDirectoryContact,
-  linkPerson,
+  addDirectoryAffiliation,
   listDirectory,
   listDirectoryFields,
   previewEraseContact,
@@ -147,8 +147,8 @@ describe('erasing one contact against the real databases', () => {
     const store = new SharedContactStore(contacts, db);
     const a = await store.create({ name: 'Person Eins' });
     const b = await store.create({ name: 'Person Zwei' });
-    await linkPerson(contacts, a.id, org.id);
-    await linkPerson(contacts, b.id, org.id);
+    await addDirectoryAffiliation(contacts, { personId: a.id, organizationId: org.id });
+    await addDirectoryAffiliation(contacts, { personId: b.id, organizationId: org.id });
     await expect(previewEraseContact(contacts, db, org.id, [])).resolves.toMatchObject({ linkedPersons: 2 });
     await eraseDirectoryContact(contacts, db, org.id, []);
     const people = (await listDirectory(contacts)).filter((c) => c.kind === 'person');

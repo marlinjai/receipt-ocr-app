@@ -1,6 +1,7 @@
 import 'server-only';
 import {
   ContactError as SharedError,
+  type Affiliation as SharedAffiliation,
   formatCustomerNumber,
   type Contact as SharedContact,
   type ContactInput as SharedInput,
@@ -27,8 +28,9 @@ export interface DirectoryContact {
   id: string;
   kind: DirectoryKind;
   name: string;
-  /** Persons only: the free-text label printed next to the name. */
+  /** Persons only: the free-text label printed next to the name (not a role at a business, see affiliations). */
   companyOrRole: string;
+  /** The person's primary business (mirrors their primary affiliation), for the list. */
   organizationId: string | null;
   organizationName: string | null;
   email: string | null;
@@ -64,7 +66,6 @@ export interface DirectoryInput {
   kind?: DirectoryKind;
   name?: string;
   companyOrRole?: string | null;
-  organizationId?: string | null;
   email?: string | null;
   phone?: string | null;
   note?: string | null;
@@ -93,7 +94,9 @@ export type DirectoryErrorCode =
   | 'unknown_field'
   | 'field_archived'
   | 'duplicate_field'
-  | 'field_not_found';
+  | 'field_not_found'
+  | 'invalid_affiliation'
+  | 'duplicate_affiliation';
 
 export class DirectoryError extends Error {
   readonly code: DirectoryErrorCode;
@@ -126,6 +129,8 @@ const SHARED_TO_DIRECTORY: Record<string, DirectoryErrorCode> = {
   field_archived: 'field_archived',
   duplicate_field: 'duplicate_field',
   field_not_found: 'field_not_found',
+  invalid_affiliation: 'invalid_affiliation',
+  duplicate_affiliation: 'duplicate_affiliation',
 };
 
 /** Run one package call and turn its errors into directory errors. */
@@ -182,7 +187,6 @@ function carry(c: SharedContact): SharedInput {
     kind: c.kind,
     name: c.name,
     companyOrRole: c.companyOrRole,
-    organizationId: c.organizationId,
     email: c.email,
     phone: c.phone,
     note: c.note,
@@ -234,19 +238,104 @@ export async function updateDirectoryContact(
   return present(contacts, updated);
 }
 
-/** Link a person to an organization in the same company, or unlink with null. */
-export async function linkPerson(
+/** One person's membership of one business, as the screen shows it. */
+export interface DirectoryAffiliation {
+  id: string;
+  personId: string;
+  personName: string;
+  organizationId: string;
+  organizationName: string;
+  /** The role at this business. Empty when none was recorded. */
+  role: string;
+  /** 'YYYY-MM-DD' or null. */
+  startedOn: string | null;
+  /** 'YYYY-MM-DD' once ended, else null (open). */
+  endedOn: string | null;
+  primary: boolean;
+  version: number;
+}
+
+function presentAffiliation(a: SharedAffiliation, names: Map<string, string>): DirectoryAffiliation {
+  return {
+    id: a.id,
+    personId: a.personId,
+    personName: names.get(a.personId) ?? '',
+    organizationId: a.organizationId,
+    organizationName: names.get(a.organizationId) ?? '',
+    role: a.role,
+    startedOn: a.startedOn,
+    endedOn: a.endedOn,
+    primary: a.primary,
+    version: a.version,
+  };
+}
+
+async function namesFor(contacts: Contacts, rows: readonly SharedAffiliation[]): Promise<Map<string, string>> {
+  const ids = [...new Set(rows.flatMap((a) => [a.personId, a.organizationId]))];
+  return new Map((await contacts.getMany(ids)).map((c) => [c.id, c.name]));
+}
+
+/** Every affiliation of the company, ended ones (the history) included. */
+export async function listDirectoryAffiliations(contacts: Contacts): Promise<DirectoryAffiliation[]> {
+  const rows = await contacts.listAffiliations({ includeEnded: true });
+  const names = await namesFor(contacts, rows);
+  return rows.map((a) => presentAffiliation(a, names));
+}
+
+async function presentOne(contacts: Contacts, a: SharedAffiliation): Promise<DirectoryAffiliation> {
+  return presentAffiliation(a, await namesFor(contacts, [a]));
+}
+
+/** Affiliate a person with an organization of the same company. The first one of a person becomes primary. */
+export async function addDirectoryAffiliation(
   contacts: Contacts,
-  personId: string,
-  organizationId: string | null,
+  input: { personId: string; organizationId: string; role?: string | null; startedOn?: string | null },
+): Promise<DirectoryAffiliation> {
+  return presentOne(contacts, await call(() => contacts.addAffiliation(input)));
+}
+
+/** Check the version the caller read, so a change made meanwhile is refused as `stale`, never overwritten. */
+async function current(contacts: Contacts, id: string, expectedVersion?: number) {
+  const row = await contacts.getAffiliation(id);
+  if (!row) throw new DirectoryError('not_found');
+  if (expectedVersion !== undefined && expectedVersion !== row.version) throw new DirectoryError('stale');
+  return row;
+}
+
+/** Change role and dates. `expectedVersion` is the version the caller read. */
+export async function updateDirectoryAffiliation(
+  contacts: Contacts,
+  id: string,
+  patch: { role?: string | null; startedOn?: string | null; endedOn?: string | null },
   expectedVersion?: number,
-): Promise<DirectoryContact> {
-  if (organizationId !== null) {
-    const org = await contacts.get(organizationId);
-    if (!org) throw new DirectoryError('not_found');
-    if (org.kind !== 'organization') throw new DirectoryError('not_organization');
-  }
-  return updateDirectoryContact(contacts, personId, { organizationId }, expectedVersion);
+): Promise<DirectoryAffiliation> {
+  const row = await current(contacts, id, expectedVersion);
+  return presentOne(contacts, await call(() => contacts.updateAffiliation(id, patch, { expectedVersion: row.version })));
+}
+
+/** End an affiliation (default: today). The row stays as history; ending an ended one changes nothing. */
+export async function endDirectoryAffiliation(
+  contacts: Contacts,
+  id: string,
+  options: { endedOn?: string; expectedVersion?: number } = {},
+): Promise<DirectoryAffiliation> {
+  const row = await current(contacts, id, options.expectedVersion);
+  if (row.endedOn !== null) return presentOne(contacts, row);
+  return presentOne(contacts, await call(() => contacts.endAffiliation(id, options.endedOn)));
+}
+
+/** Delete an entry made by mistake. Returns false when it was already gone. */
+export async function removeDirectoryAffiliation(contacts: Contacts, id: string, expectedVersion?: number): Promise<boolean> {
+  const row = await contacts.getAffiliation(id);
+  if (!row) return false;
+  if (expectedVersion !== undefined && expectedVersion !== row.version) throw new DirectoryError('stale');
+  return contacts.removeAffiliation(id);
+}
+
+/** Make an open affiliation the person's primary one. */
+export async function setPrimaryDirectoryAffiliation(contacts: Contacts, id: string, expectedVersion?: number): Promise<DirectoryAffiliation> {
+  await current(contacts, id, expectedVersion);
+  return presentOne(contacts, await call(() => contacts.setPrimaryAffiliation(id)));
 }
 
 /** Give the contact the company's next customer number. A number is never reused. */

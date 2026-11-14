@@ -4,11 +4,13 @@
 
 - [ ] Contact affiliations in the contacts screen: a person belongs to several businesses with a role
   ("Funktion") and dates at each, a business has several people (contacts-core 0.5.0). Built on branch
-  `feat/contact-affiliations`; **merging deploys, and the start applies migration 0003 to the live
-  contacts database**, so it waits for a same-day verified backup, a restored-copy dry run
-  (`contacts-affiliations-report`) and Marlin's explicit yes. The old "Firma oder Funktion" text is kept as
+  `feat/contact-affiliations`, merged and deployed 2026-11-12 (the webhook step failed, the owner deployed
+  through the Coolify API); migration 0003 was applied to the live contacts database at 11:48Z and re-checked
+  read-only on 2026-11-14 (43 contacts, 1 affiliation). Still open: no record that the restored-copy dry run
+  (`contacts-affiliations-report`) was done before the deploy; the tab loads on production, the rest is not
+  clicked through. The old "Firma oder Funktion" text is kept as
   "Zusatz zur Unterscheidung" and offered per link as "Als Funktion übernehmen", never copied by itself.
-  [plan](https://github.com/marlinjai/contacts/blob/main/docs/plans/2026-11-11-contact-affiliations.md) (2026-11-11)
+  [plan](https://github.com/marlinjai/contacts/blob/main/docs/plans/2026-11-11-contact-affiliations.md) (2026-11-14)
 - [x] The 2025 purchase documents from the tax folder are in the app: 221 under Whiz-Art Media
   (241 receipts with the 20 that were there), 12 private ones under "marlinjai". Two files were
   already present and were not added again. Missing dates were filled from the tax session's
@@ -380,33 +382,13 @@
   No new fixed hosting cost; normal existing object-storage usage applies.
   Plan: `docs/plans/2026-10-09-production-backups.md`.
   Recovery: `docs/operations/production-recovery.md`. (2026-10-09)
-- [ ] Adopt `@marlinjai/data-table-adapter-prisma` 0.2.3 (the app pins 0.2.2 exactly) and drop the
-  workarounds it makes unnecessary. Checked against the code on 2026-11-09: the three defects
-  this line recorded for 0.2.1 are all still present in the installed 0.2.2 and all fixed in
-  0.2.3 on npm. (1) Two columns of one table could carry the same name, so a check-then-create
-  race doubled a column: 0.2.3 creates and renames columns inside a transaction under a table
-  lock and refuses a taken name; here the workaround is the per-workspace lock in
-  `ensureReceiptsTable` (`src/lib/receipts-table.ts`). (2) `getRow` read with a prepared
-  `SELECT *` and swallowed every error, so after a column was added or dropped Postgres
-  answered "cached plan must not change result type" and the adapter reported "Row not found":
-  0.2.3 lists the columns and lets the error through; here the workaround is
-  `statement_cache_size=0` in `src/lib/prisma-url.ts`. (3) `updateRow` silently skipped a cell
-  whose column it did not know: 0.2.3 throws "Unknown column in row cells", so callers must be
-  checked for that new error. Done on a held branch 2026-11-12 (`chore/data-table-adapter-prisma-0.2.3`,
-  not yet merged): pin bumped, `statement_cache_size=0` removed (the tests show it is no longer needed),
-  the schema lock kept on purpose (without it the request that loses a race now fails with "already
-  exists"; it also guards the table, views and backfills), the legacy duplicate-column repair kept for
-  tables that still carry one. Pull request 254 is open and held. Merging it deploys production and needs
-  Marlin's explicit approval (coordinator inbox entry 20261112-021436-receipt-ocr-prisma-023). The
-  secret-safe production check was run read-only through the secrets proxy on 2026-11-12 (booleans only):
-  the production database connection sets none of `statement_cache_size`, `pgbouncer`, `connection_limit`
-  or `sslmode`, uses no port 6543 and names no pooler, so the app's default prepared-statement caching
-  meets the same plain connection the tests use; the app's own `statement_cache_size=0` was added in code
-  only, so removing it is the one behaviour change in production. Branch merged with main (after #253)
-  and the full database suite passes 969 of 969 on it. Rollback: revert the squash commit on main (restores pin 0.2.2 and the
-  workaround); no data or schema change is involved. Limitation: one UI test timed out in the full unit
-  run at load average 60 and passed alone; wait for CI on the PR instead of trusting that run. Tick this
-  line when merged. (2026-11-12)
+- [x] Adopt `@marlinjai/data-table-adapter-prisma` 0.2.3 and drop the workarounds it makes unnecessary.
+  Done 2026-11-14 (pull request 254, squash `7c51071`, deployed and verified on production: container healthy
+  on image `7c51071`, `/api/health` healthy, dashboard and Kontakte tab load with no error, no error in the
+  container log). `statement_cache_size=0` removed; the per-workspace schema lock and the legacy
+  duplicate-column repair stay on purpose (see CHANGELOG). A fresh receipts dump was taken and checked before
+  the merge. The adapter still looks a row up by asking every migrated row table in turn (see the line
+  below). (2026-11-14)
 - [ ] Migrate the `/api/*` `SERVICE_TOKEN` machine path to tenant-scoped auth-brain
   API keys. Deferred out of the app-grant door flip (that slice left the shared
   `SERVICE_TOKEN` bearer unchanged); machine callers should carry a

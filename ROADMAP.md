@@ -6,9 +6,12 @@
   ("Funktion") and dates at each, a business has several people (contacts-core 0.5.0). Built on branch
   `feat/contact-affiliations`, merged and deployed 2026-11-12 (the webhook step failed, the owner deployed
   through the Coolify API); migration 0003 was applied to the live contacts database at 11:48Z and re-checked
-  read-only on 2026-11-14 (43 contacts, 1 affiliation). Still open: no record that the restored-copy dry run
-  (`contacts-affiliations-report`) was done before the deploy; the tab loads on production, the rest is not
-  clicked through. The old "Firma oder Funktion" text is kept as
+  read-only on 2026-11-14 (43 contacts, 1 affiliation). The gate was met before the deploy, recorded in the
+  contacts repository (`docs/runbooks/2026-11-12-affiliations-gate.md`, commits f661235 and c9ff094): a
+  same-day backup restored into a scratch database with equal counts and fingerprints, a dry run of the
+  published 0003 on the restore (one primary affiliation, second run a no-op), and a rollback rehearsal.
+  Still open: the affiliations screen has not been clicked through on production with writes; the tab only
+  loads. The old "Firma oder Funktion" text is kept as
   "Zusatz zur Unterscheidung" and offered per link as "Als Funktion übernehmen", never copied by itself.
   [plan](https://github.com/marlinjai/contacts/blob/main/docs/plans/2026-11-11-contact-affiliations.md) (2026-11-14)
 - [x] The 2025 purchase documents from the tax folder are in the app: 221 under Whiz-Art Media

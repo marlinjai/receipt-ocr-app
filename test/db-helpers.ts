@@ -3,14 +3,13 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import type { CellValue } from '@marlinjai/data-table-core';
 import { ensureReceiptsTable } from '@/lib/receipts-table';
-import { withoutStatementCache } from '@/lib/prisma-url';
 import { withConnectionLimit } from './db-workers';
 
 /** Helpers for the database tests: a fresh workspace with a real Receipts table. */
 
 // The same client settings as the app's own (src/lib/prisma.ts), so the tests meet what production meets, with the
 // connection ceiling of a test worker (test/db-workers.ts). TEST_DATABASE_URL is the worker's copy (test/db-setup.ts).
-export const db = new PrismaClient({ datasourceUrl: withoutStatementCache(withConnectionLimit(process.env.TEST_DATABASE_URL!)) });
+export const db = new PrismaClient({ datasourceUrl: withConnectionLimit(process.env.TEST_DATABASE_URL!) });
 
 export interface TestWorkspace {
   workspaceId: string;

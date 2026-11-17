@@ -450,7 +450,7 @@ export default function SpendingClient({
                   Eine Kategorie gilt für alle Zahlungen der Gegenseite, auch für künftige.
                   {!view.canWrite && ' Zum Zuordnen fehlt in diesem Arbeitsbereich die Berechtigung.'}
                 </p>
-                <ul className="mt-3 divide-y" style={{ borderColor: 'var(--border, rgba(128,128,128,0.2))' }}>
+                <ul data-feedback-mask className="mt-3 divide-y" style={{ borderColor: 'var(--border, rgba(128,128,128,0.2))' }}>
                   {overview.unclear.map((u) => (
                     <UnclearRow
                       key={u.counterpartyKey || `${u.counterparty}-${u.lastDay}`}
@@ -483,7 +483,7 @@ export default function SpendingClient({
                 Zahlungen an diese Gegenseiten zählen nicht als Ausgabe. Dieselbe Antwort steht unter Finanzen, Auswerten, Zahlungen; was über die eigenen Namen
                 dazukommt, ändert sich mit den Namen.
               </p>
-              <ul className="mt-2 divide-y">
+              <ul data-feedback-mask className="mt-2 divide-y">
                 {view.ownAccounts.map((o) => (
                   <li key={o.counterpartyKey} className="py-2 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -523,7 +523,7 @@ export default function SpendingClient({
               <summary className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
                 Deine Zuordnungen ({view.answers.length})
               </summary>
-              <ul className="mt-3 divide-y">
+              <ul data-feedback-mask className="mt-3 divide-y">
                 {view.answers.map((a) => (
                   <li key={a.counterpartyKey} className="py-2 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -563,7 +563,7 @@ export default function SpendingClient({
                 späterer Import hat die Zahlung storniert. Der Beleg zählt so lange nirgends; einer anderen Zahlung wird er nur bei einer
                 stornierten Zahlung vorgeschlagen. Kommt die Zahlung zurück, gilt die Verknüpfung wieder; „Lösen“ gibt den Beleg frei.
               </p>
-              <ul className="mt-2 divide-y">
+              <ul data-feedback-mask className="mt-2 divide-y">
                 {view.dormantLinks.map((l) => (
                   <li key={l.paymentId} className="py-2 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">

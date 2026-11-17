@@ -8,7 +8,8 @@ declare module 'react' {
     interface IntrinsicElements {
       'feedback-widget': DetailedHTMLProps<HTMLAttributes<HTMLElement>, HTMLElement> & {
         'publishable-key': string;
-        'api-base'?: string;
+        /** Required: without it the widget logs a configuration error and renders nothing. */
+        'api-base': string;
         locale?: 'de' | 'en';
         theme?: 'light' | 'dark' | 'auto';
         accent?: string;

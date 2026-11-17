@@ -3,11 +3,11 @@
 ## Planned
 
 - [x] Lumitra Feedback in the signed-in app: "Feedback" in the sidebar and the "Mehr" sheet opens the
-  feedback service's widget (German, the screenshot optional, contacts, meal register and payments
-  masked), sending to its "Receipts (dogfood)" project, which mails founder@. Anonymous by design while
-  only the owner and Lumitra staff hold the app. Dogfood for the feedback service's go-live stage 4; its
-  two-week "no lost delivery" gate is tracked on the feedback-service roadmap, not here. Script pinned to
-  widget 0.0.1 by its integrity hash. Done 2026-11-17.
+  feedback service's widget (German, the screenshot optional; contacts, meal register, payments,
+  counterparties and overdue invoices masked), sending to its "Receipts (dogfood)" project, which mails
+  founder@. Anonymous by design while only the owner and Lumitra staff hold the app. Dogfood for the
+  feedback service's go-live stage 4; its two-week "no lost delivery" gate is tracked on the
+  feedback-service roadmap, not here. Script pinned to widget 0.0.1 by its integrity hash. Done 2026-11-17.
 - [ ] Contact affiliations in the contacts screen: a person belongs to several businesses with a role
   ("Funktion") and dates at each, a business has several people (contacts-core 0.5.0). Built on branch
   `feat/contact-affiliations`, merged and deployed 2026-11-12 (the webhook step failed, the owner deployed

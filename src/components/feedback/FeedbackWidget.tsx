@@ -27,9 +27,10 @@ import { useSyncExternalStore } from 'react';
  *   page's `lang` says "en"; dark with the app's gold, like the app.
  * - Feedback is anonymous by design while only the owner and Lumitra staff
  *   hold this app: the sender may leave a reply address in the form.
- * - The screenshot covers form fields by itself; the pages with third
- *   parties' data (contacts, the meal register's guests, payments) are marked
- *   `data-feedback-mask` and come out black.
+ * - The screenshot covers form fields by itself; third parties' data is marked
+ *   `data-feedback-mask` and comes out black: contacts, the meal register's
+ *   guests, the payments tab, the spending page's counterparties (checks,
+ *   lists, the top counterparties chart) and overdue customer invoices.
  */
 export const FEEDBACK_ORIGIN = 'https://receipts.lumitra.co';
 export const FEEDBACK_API_BASE = 'https://api.feedback.lumitra.co';

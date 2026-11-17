@@ -37,7 +37,11 @@ export default function FeedbackMenuButton({ onOpen }: { onOpen?: () => void }) 
       title="Feedback senden"
       onClick={() => {
         onOpen?.();
-        document.querySelector<FeedbackWidgetElement>('feedback-widget')?.open();
+        // Two frames later the sheet that held this entry is gone and has given the focus back to "Mehr", so the
+        // widget remembers "Mehr" as the place to return the focus to when its form closes, not this vanished entry.
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => document.querySelector<FeedbackWidgetElement>('feedback-widget')?.open())
+        );
       }}
     >
       <FeedbackIcon />

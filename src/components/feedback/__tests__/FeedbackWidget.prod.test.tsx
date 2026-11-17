@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 // @vitest-environment-options { "url": "https://receipts.lumitra.co/app" }
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import FeedbackWidget, { FEEDBACK_WIDGET_INTEGRITY, FEEDBACK_WIDGET_SRC } from '../FeedbackWidget';
 import FeedbackMenuButton from '../FeedbackMenuButton';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('Lumitra Feedback on the production origin', () => {
   it('loads the pinned script and configures the widget without its floating button', () => {
@@ -43,8 +46,15 @@ describe('Lumitra Feedback on the production origin', () => {
       );
       await customElements.whenDefined('feedback-widget');
     });
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => frames.push(cb));
     await userEvent.click(await screen.findByRole('button', { name: /Feedback/ }));
-    expect(opened).toBe(1);
+    // The sheet closes first; the widget opens two frames later, once the sheet has gone and returned the focus.
     expect(closedSheet).toBe(1);
+    expect(opened).toBe(0);
+    frames.shift()?.(0);
+    expect(opened).toBe(0);
+    frames.shift()?.(0);
+    expect(opened).toBe(1);
   });
 });

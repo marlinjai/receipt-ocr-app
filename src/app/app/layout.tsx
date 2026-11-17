@@ -13,6 +13,7 @@ import { AppStoreProvider, RefusalDeskProvider } from '@/stores/provider';
 import { NAV_FOLD_COOKIE, NAV_FOLDED } from '@/components/nav/nav-fold';
 import { measurePage, timed } from '@/lib/timing';
 import AppLoading from './loading';
+import FeedbackWidget from '@/components/feedback/FeedbackWidget';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,6 +67,8 @@ async function renderShell(children: React.ReactNode) {
       </div>
     </div>
     </AppStoreProvider>
+    {/* Outside the per-company store: switching company must not close an open feedback form. */}
+    <FeedbackWidget />
     </RefusalDeskProvider>
   );
 }

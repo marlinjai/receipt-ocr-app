@@ -212,7 +212,7 @@ export function TopCounterpartiesChart({ items, period }: { items: readonly TopC
   const id = useId();
   const largest = Math.max(1, ...items.map((i) => i.cents));
   return (
-    <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-title`}>
+    <section data-feedback-mask className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-title`}>
       <h2 id={`${id}-title`} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
         Größte Gegenseiten {period}
       </h2>

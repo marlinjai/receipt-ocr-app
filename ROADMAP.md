@@ -2,6 +2,12 @@
 
 ## Planned
 
+- [x] Lumitra Feedback in the signed-in app: "Feedback" in the sidebar and the "Mehr" sheet opens the
+  feedback service's widget (German, the screenshot optional; contacts, meal register, payments,
+  counterparties and overdue invoices masked), sending to its "Receipts (dogfood)" project, which mails
+  founder@. Anonymous by design while only the owner and Lumitra staff hold the app. Dogfood for the
+  feedback service's go-live stage 4; its two-week "no lost delivery" gate is tracked on the
+  feedback-service roadmap, not here. Script pinned to widget 0.0.1 by its integrity hash. Done 2026-11-17.
 - [ ] Contact affiliations in the contacts screen: a person belongs to several businesses with a role
   ("Funktion") and dates at each, a business has several people (contacts-core 0.5.0). Built on branch
   `feat/contact-affiliations`, merged and deployed 2026-11-12 (the webhook step failed, the owner deployed
@@ -203,7 +209,7 @@
   split. Open from it: the reconciliation should treat financed purchases separately, or the
   notice returns every year one exists; and the draft's note for the MacBook says "paid via
   PayPal" where the money came from a pay-later loan: it counts on its purchase day either way
-  (decision 40), only the note's wording needs correcting. (2026-10-17)
+  (decision 40), only the note's wording needs correcting. Reviewed 2026-11-17, still listed as open; status NOT verified in this review (it concerns the owner's tax data and was not checked; missing evidence: a look at the owner's data or a later commit). (2026-11-17)
 - [ ] Flat rates have no place in the finance area: the meal allowance of a business trip, the
   home office flat rate, commuting days and semester fees paid by transfer. The employment annex
   therefore shows 667.75 where the 2025 draft claims 2,101.22 (1,422.14 of it without a purchase
@@ -632,7 +638,7 @@
 - [ ] 2026 receipts still open after the owner's answers of 2026-10-15: guests and occasion for 14
   restaurant receipts (566.08 euros) in the meal register; the 2026 bank and PayPal export files are
   not imported (the app holds the 446 N26 payments only); the freenet payment reminder of 23 June.
-  Details in section H of `Steuern/2026/import-log-2026.md`. (2026-10-15)
+  Details in section H of `Steuern/2026/import-log-2026.md`. Reviewed 2026-11-17, still listed as open; status NOT verified in this review (it concerns the owner's tax data and was not checked; missing evidence: a look at the owner's data or a later commit). (2026-11-17)
 - [ ] The further employment costs line ("weitere Werbungskosten", for example job-search costs)
   exists since pull request 113 (`employment.further_costs`, line 64 on the 2025 annex), so the
   three LinkedIn Premium Career receipts of 2026 can move off "Fortbildungskosten". Open: its
@@ -653,7 +659,7 @@
   purchases, the same money once per receipt) are on `fix/pay-later-review-findings`. Open until
   those are deployed and the proposals for the 51 receipts of 2025 are accepted on production.
   Decided 2026-10-17: every pay-later purchase counts on its purchase day (decision 40). Plan:
-  [docs/plans/2026-10-11-pay-later-payments.md](docs/plans/2026-10-11-pay-later-payments.md). (2026-10-17)
+  [docs/plans/2026-10-11-pay-later-payments.md](docs/plans/2026-10-11-pay-later-payments.md). Reviewed 2026-11-17, still listed as open; status NOT verified in this review (it concerns the owner's tax data and was not checked; missing evidence: a look at the owner's data or a later commit). (2026-11-17)
 - [ ] Business-meal register (Bewirtungsverzeichnis) and phone capture: all six
   slices are built (register, contact list, export, duplicate checks, page split,
   phone capture, classifier, offline queue, service worker, share target). Left

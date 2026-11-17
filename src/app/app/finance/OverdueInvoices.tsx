@@ -14,7 +14,7 @@ import { PAYMENT_TERM_DAYS, REMINDER_AFTER_DAYS, type OverdueInvoice } from '@/l
 export default function OverdueInvoices({ overdue, onOpenRevenue }: { overdue: readonly OverdueInvoice[]; onOpenRevenue: () => void }) {
   const headingId = useId();
   return (
-    <section className="glass-panel mb-6 rounded-xl p-4 sm:p-5" aria-labelledby={headingId}>
+    <section data-feedback-mask className="glass-panel mb-6 rounded-xl p-4 sm:p-5" aria-labelledby={headingId}>
       <h2 id={headingId} className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>
         {overdue.length === 1 ? '1 Rechnung überfällig' : `${overdue.length} Rechnungen überfällig`}
       </h2>

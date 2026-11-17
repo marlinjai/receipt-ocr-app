@@ -520,7 +520,8 @@ export default function ContactsClient({ initial }: { initial: ContactsPageData 
   const formError = error;
 
   return (
-    <main className="relative z-10 min-h-svh px-4 pb-24 pt-6 sm:px-6" data-theme="dark">
+    // The people, roles and businesses are third parties' data: a feedback screenshot paints this page black.
+    <main className="relative z-10 min-h-svh px-4 pb-24 pt-6 sm:px-6" data-theme="dark" data-feedback-mask>
       <div className="mx-auto w-full max-w-[88rem]">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>

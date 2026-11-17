@@ -937,7 +937,7 @@ const ReceiptChecks = observer(function ReceiptChecks({
   );
 
   return (
-    <section className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-title`}>
+    <section data-feedback-mask className="glass-panel mt-4 rounded-xl p-4" aria-labelledby={`${id}-title`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id={`${id}-title`} tabIndex={-1} className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
           Belege prüfen ({open.length} offen)

@@ -59,7 +59,8 @@ const MealsClient = observer(function MealsClient({ initial }: { initial: MealsP
   const contactCount = contactsTabCount(contacts, initial.organizationCount);
 
   return (
-    <main className="relative z-10 min-h-svh px-4 pb-40 pt-6 sm:px-6" data-theme="dark">
+    // Guests are third parties: a feedback screenshot paints the meal register black.
+    <main className="relative z-10 min-h-svh px-4 pb-40 pt-6 sm:px-6" data-theme="dark" data-feedback-mask>
       <div className="mx-auto w-full max-w-[88rem]">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>

@@ -64,10 +64,11 @@ async function renderShell(children: React.ReactNode) {
       <Refusals />
       {children}
       <PhoneNav session={session} logoutUrl={auth.logoutUrl()} />
-      <FeedbackWidget />
       </div>
     </div>
     </AppStoreProvider>
+    {/* Outside the per-company store: switching company must not close an open feedback form. */}
+    <FeedbackWidget />
     </RefusalDeskProvider>
   );
 }

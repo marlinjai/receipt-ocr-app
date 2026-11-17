@@ -10,6 +10,7 @@ import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { SignOutLink } from '@/app/app/spending/PushSession';
 import { FoldIcon, UploadIcon } from '@/app/app/dashboard/dashboard-icons';
 import { NAV_FOLD_COOKIE, NAV_FOLDED } from './nav-fold';
+import FeedbackMenuButton from '@/components/feedback/FeedbackMenuButton';
 import { isCurrentPlace, PLACES, TOOLS, type Place } from './nav-places';
 
 /**
@@ -62,7 +63,12 @@ const AppSidebar = observer(function AppSidebar({ session, logoutUrl, initialFol
         </Link>
         <nav aria-label="Bereiche" className="app-nav-places">
           <ul>{PLACES.map(placeLink)}</ul>
-          <ul className="app-nav-tools">{placeLink(TOOLS)}</ul>
+          <ul className="app-nav-tools">
+            {placeLink(TOOLS)}
+            <li>
+              <FeedbackMenuButton />
+            </li>
+          </ul>
         </nav>
         <div className="app-nav-foot">
           <span className="app-nav-signout">

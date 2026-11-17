@@ -11,6 +11,7 @@ import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { SignOutLink } from '@/app/app/spending/PushSession';
 import { BellIcon, MoreIcon, UploadIcon } from '@/app/app/dashboard/dashboard-icons';
 import { isCurrentPlace, NOTIFICATION_SETTINGS_HREF, PLACES, TOOLS, type Place } from './nav-places';
+import FeedbackMenuButton from '@/components/feedback/FeedbackMenuButton';
 
 /**
  * The app's navigation on a phone: what the sidebar is on the wide layout. The
@@ -123,6 +124,7 @@ const PhoneNav = observer(function PhoneNav({ session, logoutUrl }: { session: A
               <BellIcon />
               <span className="app-nav-label">Benachrichtigungen</span>
             </Link>
+            <FeedbackMenuButton onOpen={() => setSheetOpen(false)} />
             <span className="phone-sheet-signout">
               <SignOutLink href={logoutUrl} title={session.email}>
                 Abmelden

@@ -182,7 +182,8 @@ export default function PaymentsTab({ view, busy, error, lastImport, onAddAccoun
   }
 
   return (
-    <div className="space-y-6">
+    // Payments name other people and their accounts: a feedback screenshot paints this tab black.
+    <div className="space-y-6" data-feedback-mask>
       {show.accounts && (
       <section className="glass-panel rounded-xl p-4 sm:p-5" aria-label="Konten">
         <h2 className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Konten und Stand</h2>

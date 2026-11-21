@@ -2,7 +2,7 @@
 title: A company erasure removes the receipts, their files and every row of the company
 summary: Until now the receiver of auth-brain's company erasure removed contact data only and still answered with success, so a company erased on 2026-11-21 left receipts, readings, decisions and stored files behind. This plan says what an erasure must delete (every table and file store, one by one), keeps legal retention apart from technical retention, adds an erasure ledger, and makes the answer say what was not erased. The owner decided on 2026-11-21 that a company erasure keeps nothing, printed guest names included; only the bounded retention of database backups remains.
 type: plan
-status: in-progress
+status: completed
 tags: [receipts, erasure, gdpr, retention, storage, webhook, stateful-flow]
 projects: [receipt-ocr-app, auth-brain, storage-brain]
 date: 2026-11-21
@@ -110,8 +110,8 @@ the file store and cannot be restored by us (see below for what is known and wha
   seven days on the server and up to thirty days in two copies off the server (an object store
   in the European Union and a second machine), per `docs/plans/2026-10-09-production-backups.md`.
   Observed on the server on 2026-11-21: the seven days of local dumps (oldest of 2026-11-14).
-  The thirty days off the server are stated by that plan and were not verified against the real
-  copies. So data erased on 2026-11-21 is in backups until about 2026-11-28 on the server and,
+  The thirty days off the server were verified the same day: the pull job on the second machine
+  deletes dumps older than thirty days. So data erased on 2026-11-21 is in backups until about 2026-11-28 on the server and,
   by the plan, until about 2026-12-21 off the server. This document uses the later date, the
   conservative one. The
   data processing agreement (section 11.2) allows this: data in backups goes when the backup is
@@ -175,9 +175,9 @@ and they differ:
   company has to be built by hand with both workspace ids. The ids are kept in two places only:
   the roadmap decision line and the known-case section of `docs/operations/company-erasure.md`.
 
-The clean fix is in auth-brain: name the company's deleted workspaces in the delivery too. It is
-being built on the auth-brain branch `fix/erasure-invitations-and-coverage` and removes this
-class for future erasures. Receipts needs no change for it: a named workspace is a named
+The clean fix is in auth-brain: name the company's deleted workspaces in the delivery too. It
+went live on 2026-11-21 (auth-brain pull request #216), before this plan's change, and removes
+this class for future erasures. Receipts needs no change for it: a named workspace is a named
 workspace.
 
 The list of tables is derived from the Prisma data model, not kept by hand
@@ -474,8 +474,8 @@ route itself against the real erasure and ledger (the file store refuses, then a
    The conservative direction for something that cannot be undone: a disagreement stops the run
    and a person looks. This holds also for a delivery that names no workspace: nothing is ever
    erased on the strength of a stamp alone. The price is that a company which deleted a
-   workspace before it was erased needs a delivery sent by hand, until auth-brain names deleted
-   workspaces too (being built on its branch `fix/erasure-invitations-and-coverage`).
+   workspace before it was erased needed a delivery sent by hand, until auth-brain named deleted
+   workspaces too (live since 2026-11-21, its pull request #216).
 5. **`company_exports` is erased, the ledger is kept.** The export record is about the company;
    the ledger is the record that the erasure happened, like auth-brain keeps its erasure request.
 6. **The ledger column is `company_id`.** So that no rule that works by stamp ever deletes or
@@ -545,7 +545,7 @@ to it.**
   name that carries a date).
 - How "with a retention period" was read: as the bounded technical retention that exists
   anyway, namely database backups for seven days on the server and at most thirty days off the
-  server (the latter per the backup plan, not verified against the real copies). Stored files
+  server (verified on 2026-11-21). Stored files
   are deleted from the file store and cannot be restored by us; nothing is claimed about a
   backup of the object store. The other possible reading, a grace period before an erasure runs (the
   data stays restorable for some days after the deletion is asked for), is NOT built and not
@@ -560,10 +560,39 @@ of 2026-11-21 (roadmap decision line).
 
 ## Reality
 
-Status `in-progress`: built and reviewed on a branch, not merged. Gates still open before it is
-completed: the push and merge (after the auth-brain change that names deleted workspaces is
-live), the deploy with migration `0053_erasure_events`, and the decision on the leftovers of
-2026-11-21 (roadmap).
+Status `completed`: merged, deployed, and used once in production for the case that started it.
+What is left are follow-ups with their own roadmap lines (the dump to delete on 2026-12-21, what
+is still not verified, the data-table package's table delete); none of them is part of this plan.
+
+### In production (2026-11-21, all times Coordinated Universal Time)
+
+- **Merged and deployed.** Pull request #257 merged at 19:56; the new container was up at about
+  20:00 with migration `0053_erasure_events` applied. Auth-brain's change that names a company's
+  retired workspaces in the delivery (its pull request #216) was live before it.
+- **Checked before the erasure, read-only.** No stale company stamp exists in production: every
+  stamped workspace agrees with auth-brain. The thirty days of off-site dumps are real: the pull
+  job on the second machine deletes dumps older than thirty days. (This plan had carried the
+  thirty days as "stated by the backup plan, not verified"; it is verified now.)
+- **A dump first.** A dedicated dump of exactly the leftover rows was taken on the production
+  host under `/root/backups/2026-11-21-receipts-erasure-leftovers/` (root only, row counts
+  matching the inventory). It is to be deleted on 2026-12-21 (roadmap).
+- **The erasure of the leftovers, with the owner's approval.** At about 20:03 one delivery built
+  by hand, with a new event id and naming all five workspaces of the erased company, signed
+  through the secrets proxy, answered 200: 2 receipts tables, 6 receipts, 5 stored files (0
+  already gone, 0 kept), 6 rows each in `receipt_assignment_decisions`, `receipt_item_readings`
+  and `receipt_reviews`, 1 in `sheet_import_configs`. `notErased` listed only the database
+  backups (7 days on the server, 30 days off it) and uploads never attached to a receipt.
+- **Verified independently afterwards.** No row in Receipts names the company or its workspaces
+  except the one ledger row (status completed). The table totals moved by exactly `dt_columns`
+  65, `dt_views` 10, `dt_tables` 2, `dt_files` 5, `select_options` 53, `sheet_import_rows` 53 and
+  the counts above. Both physical row tables are gone. No table total of any other application
+  changed. Storage Brain shows the 5 files deleted and purged.
+- **What the run showed about the design.** Both receipts tables carried no company stamp and
+  one lay in a workspace retired before the company was erased; they were reached because the
+  delivery named every workspace. The counts of the answer matched the inventory taken before
+  (`select_options`, uncounted then, was 53).
+
+### How it was built
 
 - 2026-11-21: built on branch `feat/company-erasure-register`, not pushed. `src/lib/company-erasure.ts`
   (`eraseCompany`, the classification, the recount), `src/lib/erasure-ledger.ts`, the receiver in
@@ -586,11 +615,8 @@ live), the deploy with migration `0053_erasure_events`, and the decision on the 
   says when a kept test database has to be recreated.
 - 2026-11-21: the owner decided the open question. The hold on printed guest names is removed
   from the company erasure; the erasure of one contact keeps it.
-- Not done, each on the roadmap: the leftovers of the company erased on 2026-11-21 are still in
-  production (a decision of its own, nothing is deleted until the owner says yes;
-  auth-brain will not send that delivery again by itself, because it was acknowledged);
-  whether the object store behind Storage Brain keeps old versions or a backup is unverified; no
-  run against a company with many files; uploads that never became a receipt are not counted;
-  `user.erased` is not received; auth-brain naming a company's deleted workspaces is being built
-  on its branch `fix/erasure-invitations-and-coverage`. For the leftovers of 2026-11-21 the
-  stored delivery names one of the two workspaces only, so that delivery is built by hand.
+- Still open after completion, each with its own roadmap line: the dump of the leftovers is
+  deleted on 2026-12-21; whether the object store behind Storage Brain keeps old versions or a
+  backup is unverified; no run against a company with many files; uploads that never became a
+  receipt are not counted; `user.erased` is not received; the data-table package's table delete
+  swallows errors.

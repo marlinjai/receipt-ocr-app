@@ -29,8 +29,8 @@ period is the company's duty, not this app's (the owner's decision of
 2026-11-21). What survives for a while is technical only, and bounded:
 
 - **Database backups** keep the erased rows until they rotate out: seven days on
-  the server, and at most thirty days in the two copies off the server (the
-  thirty days per the backup plan).
+  the server, and at most thirty days in the two copies off the server (both
+  checked on 2026-11-21).
 - **Stored files** are deleted from the file store (Storage Brain) when the company is
   erased. A removal that fails there is tried again, and a deleted file cannot be
   restored by us. Not known: whether the object store behind it keeps old versions
@@ -144,18 +144,29 @@ without a stamp.
 The recount looks at what ties to the company: its stamp, or a workspace the delivery names. A
 receipts table without a company stamp in a workspace the delivery does not name is invisible
 to both the erasure and the recount, and the answer is still 200. This happens when the company
-deleted a workspace before it was erased and auth-brain did not name it (auth-brain is being
-changed to name deleted workspaces too, on its branch `fix/erasure-invitations-and-coverage`).
+deleted a workspace before it was erased and auth-brain did not name it (auth-brain names
+retired workspaces too since 2026-11-21).
 
-#### The known case
+#### The known case (done 2026-11-21)
 
 The company erased on 2026-11-21 (auth-brain company id
-`019f6a89-ea4a-75d4-90ff-4e809491647e`). Its stored delivery names one workspace,
-`019fa320-8e08-7ebb-8e0e-c9faa6738c68`; an empty receipts table of it lies in
-`019ee142-44af-786d-9366-a705b7607f86`, which is not named. The delivery for it must be built by
-hand with both workspace ids: the stored body plus the second id, the same event kind and
-company id, and a new event id. It waits for the owner's yes (roadmap decision line, the only
-other place these ids are written).
+`019f6a89-ea4a-75d4-90ff-4e809491647e`). Its stored delivery named one workspace,
+`019fa320-8e08-7ebb-8e0e-c9faa6738c68`; an empty receipts table of it lay in
+`019ee142-44af-786d-9366-a705b7607f86`, retired earlier and therefore not named.
+
+Done on 2026-11-21 at about 20:03 Coordinated Universal Time, with the owner's approval: one
+delivery built by hand, with a new event id and naming all five workspaces of the company,
+signed through the secrets proxy, answered 200 (2 receipts tables, 6 receipts, 5 stored files).
+A check afterwards found no row of the company or its workspaces in Receipts except the ledger
+row, and the 5 files deleted and purged in Storage Brain.
+
+Note of 2026-11-21: the dump of the leftover rows taken before that erasure,
+`/root/backups/2026-11-21-receipts-erasure-leftovers/` on the production host, is to be deleted
+on 2026-12-21 (roadmap line "Delete the dump of the erasure leftovers").
+
+Since auth-brain names a company's retired workspaces in the delivery (live on 2026-11-21,
+before this receiver's change), a new erasure no longer leaves such a table behind. The section
+above still applies to a delivery sent by hand and to erasures from before that date.
 
 An erasure is not reversible. Sending one by hand for production data needs the
 owner's yes first, with the scope stated.

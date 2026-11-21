@@ -321,78 +321,56 @@
   no schedule was enabled. The backup and scratch restoration prerequisite is complete.
   Once the legal policy is confirmed, run the signed purge verification and enable its daily
   Coolify schedule. Preparation: `docs/operations/retention-purge.md`. (2026-11-09)
-- [ ] A company erasure answers with success while the receipts and their files remain. Found
+- [x] A company erasure answered with success while the receipts and their files remained. Found
   2026-11-21: after the company erased that day, Receipts acknowledged auth-brain's `tenant.erased`
-  and still holds 6 rows in `receipt_reviews`, 6 in `receipt_item_readings`, 6 in
-  `receipt_assignment_decisions`, 2 receipts tables (`dt_tables`, two workspaces, neither carrying
-  a company stamp) with 65 columns, 10 views and 6 receipt rows, 5 file references (`dt_files`,
-  481,840 bytes of stored receipt files in Storage Brain), and 1 row in `sheet_import_configs`
-  with 53 import rows below it (read-only inventory of 2026-11-21, 14:41 Coordinated Universal
-  Time). Cause: the
-  receiver erased contact data only, on purpose, and kept no record of erasures. Built on branch
-  `feat/company-erasure-register` on 2026-11-21 and NOT pushed or deployed: the receiver now removes
-  the receipts tables, rows, stored files and every row with the company stamp, records each run in
-  a new ledger table (`erasure_events`, migration 0053), and answers 200 only after a recount, with
-  a list of what an erasure does not remove. Reviewed independently three times on 2026-11-21 (14, 7 and 5 findings,
-  all fixed on the branch). The owner decided on 2026-11-21 that a company erasure keeps nothing:
-  the printed guest names go too, and only the bounded retention of database backups remains
-  (seven days on the server, at most thirty off it). Open before it ships: the push, after the
-  auth-brain change that names deleted workspaces is live.
-  [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
-- [ ] DECISION FOR THE OWNER, nothing is deleted before a yes: erase by hand what Receipts still
-  holds in production of the company with auth-brain company id
-  `019f6a89-ea4a-75d4-90ff-4e809491647e`, erased on 2026-11-21. Exact scope, from the read-only
-  inventory of 2026-11-21, 14:41 Coordinated Universal Time: `receipt_reviews` 6,
-  `receipt_item_readings` 6,
-  `receipt_assignment_decisions` 6; `dt_tables` 2 (found only through their workspace id, their
-  company stamp is empty, so a delete by company stamp alone would miss them) with `dt_columns` 65
-  and `dt_views` 10; the two physical tables `tbl_<table id>` with 6 receipt rows in one and 0 in
-  the other (no foreign key ties them to `dt_tables`, they must be dropped explicitly; the shared
-  `dt_rows` is empty for every company); `dt_files` 5 rows, 481,840 bytes, on those 6 receipts,
-  whose 5 stored objects live in Storage Brain; `dt_relations` 0, `dt_row_select_values` 0;
-  `sheet_import_configs` 1 with `sheet_import_rows` 53 (6 of them point at receipts that still
-  exist). Not counted: the stored objects in Storage Brain behind the 5 `dt_files` rows (5
-  expected) and the `select_options` of those tables' columns. Must stay untouched: the 4 receipts
-  tables of other companies. The erasure on the branch finds the two tables although their stamp
-  is empty, through the workspace ids in the delivery (a database test covers exactly that case).
-  Precondition: a dedicated dump
-  of exactly the affected rows, taken first and stored on the production host under
-  `/root/backups/2026-11-21-receipts-erasure-leftovers/` (the place the company erasure of
-  2026-11-05 used), readable by root only, and deleted on 2026-12-21 so that it does not outlive
-  the regular backups. Those keep the rows anyway: seven days on the server (observed there on
-  2026-11-21, oldest dump of 2026-11-14) and up to thirty days in the two copies off the server
-  (stated by the backup plan, not verified against the real copies), so until about 2026-12-21,
-  the later and conservative date (technical retention, not a legal duty to keep). The stored files are another matter: once deleted in Storage Brain they cannot be restored by us.
-  Recommended way once the branch above is deployed: one delivery built by hand, which runs the
-  tested erasure and records it in the ledger, instead of statements written by hand.
-  PRECONDITION for that delivery, from a read-only look at production on 2026-11-21: the body
-  auth-brain stored for Receipts names exactly ONE workspace,
-  `019fa320-8e08-7ebb-8e0e-c9faa6738c68`, the only one that was still live. The second leftover
-  receipts table (the empty one: 0 rows, no files, with its columns and views) lies in workspace
-  `019ee142-44af-786d-9366-a705b7607f86`, which had been deleted earlier and is therefore not
-  named; it carries no company stamp. Sending the stored body as it is would erase everything in
-  the named workspace, leave that empty table behind, and answer 200, because nothing ties the
-  table to the company for the recount. The delivery must therefore name BOTH workspace ids: the
-  stored body plus the second id, the same event kind and company id, a new event id because the
-  body differs, signed with the webhook secret through the secrets proxy. Auth-brain's "send
-  again" cannot do this: it works only for a delivery that failed for good, this one was
-  acknowledged, and it cannot add a workspace. Default until the owner answers: nothing is touched.
-  [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
-- [ ] Company erasure, what is not verified yet: whether the object store behind Storage Brain
-  keeps old versions of a deleted file or has a backup of its own (its code removes the object
-  right away and retries a removal that fails, read on 2026-11-21); a run against a company with
-  many stored files (auth-brain waits ten seconds for an answer, the run goes on and the next
-  delivery finishes it: reasoned, not measured); how many stored uploads never became a receipt
-  and so belong to no company; and that Receipts does not receive a person's erasure
-  (`user.erased`), so a person's own Google connection (`google_sheets_credentials`) is removed by
-  nothing. Also missing in auth-brain, needed after a database recovery: its Erasures page cannot
-  send an acknowledged delivery again, its note on what Receipts erases (`suite-apps.ts`)
-  still describes contact data only. Its delivery named only the workspaces that still exist, so
-  a company that deleted a workspace before it was erased keeps that workspace's rows here
-  (stamped rows stop the erasure with `rows_outside_named_workspaces`, rows without a stamp are
-  not seen at all, as with the company erased on 2026-11-21): naming a company's deleted
-  workspaces in the delivery as well is being built on the auth-brain branch
-  `fix/erasure-invitations-and-coverage`, which removes this class for future erasures. [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
+  and still held its receipts, readings, decisions, two receipts tables and five stored files,
+  because the receiver erased contact data only and kept no record of erasures. Fixed in #257: the
+  receiver removes the receipts tables, rows, stored files and every row with the company stamp,
+  records each run in the ledger table `erasure_events` (migration 0053), and answers 200 only
+  after a recount, with a list of what an erasure does not remove. Reviewed independently three
+  times before the merge (14, 7 and 5 findings, all fixed). By the owner's decision of 2026-11-21
+  a company erasure keeps nothing, printed guest names included; what remains for a while is the
+  bounded retention of database backups (seven days on the server, thirty off it). Merged
+  2026-11-21 at 19:56 Coordinated Universal Time (UTC), the new container up at about 20:00 UTC
+  with migration 0053 applied. Done 2026-11-21.
+  [plan](docs/plans/2026-11-21-company-erasure-register.md)
+- [x] The leftovers of the company with auth-brain company id
+  `019f6a89-ea4a-75d4-90ff-4e809491647e`, erased on 2026-11-21, are erased in production, with the
+  owner's approval. A dedicated dump of exactly the leftover rows was taken first on the production
+  host under `/root/backups/2026-11-21-receipts-erasure-leftovers/` (root only, row counts matching
+  the inventory). At about 20:03 UTC one delivery built by hand, with a new event id and naming all
+  five workspaces of the company, signed through the secrets proxy, answered 200: 2 receipts
+  tables, 6 receipts, 5 stored files (0 already gone, 0 kept), 6 rows each in
+  `receipt_assignment_decisions`, `receipt_item_readings` and `receipt_reviews`, 1 in
+  `sheet_import_configs`; not erased only the database backups and uploads never attached to a
+  receipt. Verified independently afterwards: no row in Receipts names the company or its
+  workspaces except the one ledger row (status completed); the table totals moved by exactly
+  `dt_columns` 65, `dt_views` 10, `dt_tables` 2, `dt_files` 5, `select_options` 53,
+  `sheet_import_rows` 53 and the counts above; both physical row tables are gone; no table total
+  of any other application changed; Storage Brain shows the 5 files deleted and purged.
+  Done 2026-11-21. [plan](docs/plans/2026-11-21-company-erasure-register.md)
+- [ ] Delete the dump of the erasure leftovers on 2026-12-21:
+  `/root/backups/2026-11-21-receipts-erasure-leftovers/` on the production host. It is a copy of
+  data that was erased on 2026-11-21 and was kept only as the way back for that erasure; on
+  2026-12-21 the regular backups no longer contain the rows either, so the dump must not outlive
+  them. A deletion on the production host: one line to the owner with the path, then done.
+  (2026-11-21)
+- [ ] Company erasure, what is still not verified or missing (follow-ups of the completed
+  company erasure plan of 2026-11-21, linked on the two done lines above): whether the object store behind Storage
+  Brain keeps old versions of a deleted file or has a backup of its own (its code removes the
+  object right away and retries a removal that fails; the five files of 2026-11-21 show as deleted
+  and purged there); a run against a company with many stored files (auth-brain waits ten seconds
+  for an answer, the run goes on and the next delivery finishes it: reasoned, not measured; the
+  run of 2026-11-21 had five files); how many stored uploads never became a receipt and so belong
+  to no company; that Receipts does not receive a person's erasure (`user.erased`), so a person's
+  own Google connection (`google_sheets_credentials`) is removed by nothing; and in auth-brain,
+  that its Erasures page cannot send an acknowledged delivery again (needed after a database
+  recovery) and that its note on what Receipts erases (`suite-apps.ts`) is checked against the new
+  scope. No longer open: the thirty days of off-site database dumps are real (the pull job on the
+  second machine deletes dumps older than thirty days, checked 2026-11-21); auth-brain names a
+  company's retired workspaces in the delivery since its #216, live before #257; and no stale
+  company stamp exists in production (every stamped workspace agreed with auth-brain on
+  2026-11-21, read-only). (2026-11-21)
 - [ ] Deleting a receipts table through the data-table package loses errors and leaves stored files
   behind. `deleteTable` of `@marlinjai/data-table-adapter-prisma` 0.2.3 treats a failed read of the
   row ids as "no rows", ignores a failed delete of the file references, runs outside a transaction,
@@ -401,7 +379,8 @@
   the plan), but every ordinary table delete in Receipts inherits it. Fix in the data-table
   repository (errors surface, one transaction, the file ids handed to the caller before the
   references go), then check which paths in Receipts delete a table and let them remove the stored
-  files first. [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
+  files first. Background: decision 11 of the completed company erasure plan of 2026-11-21.
+  (2026-11-21)
 
 <!-- Decided features, ready to be worked on -->
 

@@ -233,22 +233,18 @@ more keeps nothing: the file is deleted and the stray reference with it.
 Erased, last, because the rule for guest names reads it first. That an export existed at the
 time of the erasure is not recorded any more: the erasure does not depend on it.
 
-### Printed guest names (1 table): erased, with one exception left to the purge
+### Printed guest names (1 table): erased
 
 `meal_guests`: the names of guests as printed on business meal receipts. A company erasure
 removes the company's own names outright, whatever it exported (the owner's decision of
 2026-11-21). The company's own names are the ones stamped with it and the ones without a stamp
 in a workspace the delivery names.
 
-- **The exception: a name that already carries a date.** It was held by an earlier erasure of
-  ONE contact, under the rule that still applies there. A company erasure leaves it, and the
-  purge removes it after its date. Why it is not removed: a held row looks the same whichever
-  erasure held it (no contact link, a date, nothing else), so the code cannot tell a name held
-  for a company that still owed its records from anything else, and the instruction for this
-  change was to leave what cannot be told apart to the purge. The answer counts these names
-  (`guest_copies_held_earlier`), so they are never silent. Whether a company erasure should
-  remove them too is on the roadmap; by the owner's reasoning it should, and it is one condition
-  in one statement.
+- **Also a name that an earlier erasure of ONE contact had held.** Such a name carries a date
+  and no contact link; it was held for a company that then still owed its records. A held row
+  looks the same whichever erasure held it, and it does not need telling apart: every name in
+  the company's scope is the company's data, and the company is gone. So there is no condition
+  on the date, nothing is left to the purge, and the answer has no entry for held names.
 - **A printed name elsewhere that names one of the company's contacts only loses its link.**
   Until this plan the rule took every printed name that pointed at one of the company's
   contacts, wherever it lay. Such a name can lie in another company's meal or in a workspace the
@@ -261,7 +257,8 @@ in a workspace the delivery names.
 Before the owner's decision this branch held the names on a company erasure too, and two review
 findings were about making that hold safe on a repeat. With the hold gone on a company erasure
 they are moot there; the part that still matters is kept in the rule for one contact (a name
-that is held stays held: an identical export never removes a name that carries a date).
+that is held stays held while its company exists: an identical export never removes a name that
+carries a date; the purge does after the date, or the company's erasure does).
 
 ### Kept on purpose (1 table)
 
@@ -335,7 +332,7 @@ treated as not done.
 
 | Situation | Status | Body |
 | --- | --- | --- |
-| Everything of the company is gone, or only guest names an earlier contact erasure held remain | 200 | `erased` (counts per kind and per table) and `notErased` |
+| Everything of the company is gone | 200 | `erased` (counts per kind and per table) and `notErased` |
 | The body does not say what kind of event it is | 400 | nothing is erased |
 | Another erasure (of any company) is at work | 409 | `reason: already_running`; this delivery touched nothing, the event keeps its status |
 | The run's lease ran out or was taken | 502 | `reason: lease_lost`; the run stopped at its next step |
@@ -356,8 +353,6 @@ contacts in the shared contacts database.
 
 `notErased` is part of every 200 answer, so an acknowledgement never claims more than was done:
 
-- `guest_copies_held_earlier` with the count and the date they may go (only when there are any):
-  names an earlier erasure of one contact held, left to the purge;
 - `stored_files_shown_elsewhere` with the count (only when there are any);
 - `bank_sessions_not_closed` with the count (only when there are any): the connection is removed
   here and nothing is read any more, but the session at the bank could not be closed and runs
@@ -440,8 +435,8 @@ sent the delivery), so writes during a run are unlikely. They are still handled:
 - **Resume:** a run stops at the file store. Nothing that names a file not yet removed is gone,
   the run is recorded as failed, and the next delivery finishes it without asking for the files
   already removed.
-- **Re-entry after completion:** the same delivery again answers 200, removes nothing, does not
-  move the date of a held name and never removes a held name, and adds a run to the same ledger row.
+- **Re-entry after completion:** the same delivery again answers 200, removes nothing, and adds a
+  run to the same ledger row.
 
 Each is a test in `src/lib/__tests__/company-erasure.dbtest.ts` (real database, real table
 layout, a stand-in for the file store), together with: another company keeps everything; a file
@@ -451,8 +446,9 @@ a lease that is lost, one that runs out at the very end, one nobody renewed; a f
 that lands after its table is gone; stamped rows in an unnamed workspace stop the run, also when no
 workspace is named; two companies that share an account, erasing either (in
 `src/lib/tax/payments/__tests__/erasure-shares.dbtest.ts`); two runs at
-once; a table in the older row layout; a receipt and a file that appear during a run; a held
-name surviving a repeat that reads "identical"; rows, rows below an erased receipt and contacts
+once; a table in the older row layout; a receipt and a file that appear during a run; printed
+guest names removed with no export, a changed export and an identical export, and a name an
+earlier contact erasure held removed too while another company's keeps its date; rows, rows below an erased receipt and contacts
 that remain; a bank session left open. `src/app/api/internal/erasure/route.dbtest.ts` runs the
 route itself against the real erasure and ledger (the file store refuses, then answers).
 
@@ -538,6 +534,9 @@ to it.**
   the answer's `notErased` list say what is true now.
 - What stays: the erasure of ONE contact of a company that goes on existing keeps its rule
   (identical export removes, otherwise a ten-year hold), with its screens and wording unchanged.
+- Names such an earlier erasure of one contact held go with the company too when the company is
+  erased later (confirmed the same day: "all their data is deleted" leaves no exception for a
+  name that carries a date).
 - How "with a retention period" was read: as the bounded technical retention that exists
   anyway, namely database backups for seven days on the server and at most thirty days off the
   server (the latter per the backup plan, not verified against the real copies), and no copy at
@@ -583,7 +582,7 @@ live), the deploy with migration `0053_erasure_events`, and the decision on the 
 - Not done, each on the roadmap: the leftovers of the company erased on 2026-11-21 are still in
   production (a decision of its own, nothing is deleted until the owner says yes;
   auth-brain will not send that delivery again by itself, because it was acknowledged);
-  whether a company erasure also removes names an earlier contact erasure held; Storage Brain's own delete behaviour and backups are unverified; no
+  Storage Brain's own delete behaviour and backups are unverified; no
   run against a company with many files; uploads that never became a receipt are not counted;
   `user.erased` is not received; auth-brain naming a company's deleted workspaces is being built
   on its branch `fix/erasure-invitations-and-coverage`. For the leftovers of 2026-11-21 the

@@ -202,12 +202,11 @@ describe('eraseCompany against the real databases', () => {
       receipt_reviews: 3, receipt_item_readings: 3, receipt_assignment_decisions: 3, tax_accounts: 1, tax_import_batches: 1, tax_payments: 1, workspace_notes: 1, sheet_import_configs: 1,
     });
     expect(await leftOf(c)).toEqual(NOTHING);
-    expect(await countCompanyRemainder(db, c.tenantId, c.workspaceIds)).toEqual({ remaining: {}, heldGuestCopies: 0, fileReferences: [] });
+    expect(await countCompanyRemainder(db, c.tenantId, c.workspaceIds)).toEqual({ remaining: {}, fileReferences: [] });
     expect(await companyContacts(c.tenantId).list({ includeArchived: true })).toEqual([]);
 
     // The company never took a usable export. Its printed guest name goes all the same: nothing is held.
     expect(counts).toMatchObject({ guestCopies: 1, sharedContacts: 1 });
-    expect(counts.guestCopiesHeldEarlier).toBe(0);
     expect(await db.mealGuest.count({ where: { authWorkspaceId: { in: c.workspaceIds } } })).toBe(0);
     // What the answer says is left: technical retention only, with its bounds.
     expect(counts.notErased).toEqual([{ what: 'database_backups', daysOnServer: 7, days: 30 }, { what: 'uploads_never_attached_to_a_receipt' }]);
@@ -225,7 +224,7 @@ describe('eraseCompany against the real databases', () => {
 
     expect(second.removed).toEqual([]);
     expect(counts.register).toEqual({ tables: 0, receipts: 0, storedFiles: 0, storedFilesAlreadyGone: 0, storedFilesKept: 0, records: {}, companyExports: 0 });
-    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeldEarlier: 0, sharedContacts: 0 });
+    expect(counts).toMatchObject({ guestCopies: 0, sharedContacts: 0 });
   });
 
   it('a file store that refuses surfaces: the run throws, no row is gone, and the next run finishes without asking for the removed file again', async () => {
@@ -314,7 +313,7 @@ describe('printed guest names: a company erasure keeps none', () => {
   it('with no export at all: both names are removed', async () => {
     const f = await withGuests();
     const counts = await eraseCompany(db, f.ws.tenantId, [f.ws.workspaceId], deps().all);
-    expect(counts).toMatchObject({ guestCopies: 2, guestCopiesHeldEarlier: 0 });
+    expect(counts).toMatchObject({ guestCopies: 2 });
     expect(await guestsOf(f.ws.workspaceId)).toBe(0);
   });
 
@@ -326,7 +325,7 @@ describe('printed guest names: a company erasure keeps none', () => {
 
     const counts = await eraseCompany(db, f.ws.tenantId, [f.ws.workspaceId], deps().all);
 
-    expect(counts).toMatchObject({ guestCopies: 2, guestCopiesHeldEarlier: 0 });
+    expect(counts).toMatchObject({ guestCopies: 2 });
     expect(await guestsOf(f.ws.workspaceId)).toBe(0);
   });
 
@@ -334,7 +333,7 @@ describe('printed guest names: a company erasure keeps none', () => {
     const f = await withGuests();
     await f.exportNow();
     const counts = await eraseCompany(db, f.ws.tenantId, [f.ws.workspaceId], deps().all);
-    expect(counts).toMatchObject({ guestCopies: 2, guestCopiesHeldEarlier: 0 });
+    expect(counts).toMatchObject({ guestCopies: 2 });
     expect(await guestsOf(f.ws.workspaceId)).toBe(0);
   });
 
@@ -356,25 +355,40 @@ describe('printed guest names: a company erasure keeps none', () => {
     expect(await guestsOf(f.ws.workspaceId)).toBe(0);
 
     const counts = await eraseCompany(db, f.ws.tenantId, [f.ws.workspaceId], deps().all);
-    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeldEarlier: 0, register: { tables: 1 } });
+    expect(counts).toMatchObject({ guestCopies: 0, register: { tables: 1 } });
   });
 
-  it('a name an earlier erasure of ONE contact held keeps its date: a row does not say which erasure held it, so it is left to the purge and the answer says so', async () => {
+  it('a name an earlier erasure of ONE contact had held goes with the company, date or not; the same kind of name of another company stays with its date', async () => {
     const f = await withGuests();
-    // The contact was erased earlier, while the company still existed and had no identical export:
-    // the rule for one contact held its printed name for ten years.
+    const other = await withGuests();
+    // In both companies a contact was erased earlier, while the company still existed and had no
+    // identical export: the rule for one contact held its printed name for ten years.
     const until = new Date('2036-05-01T00:00:00.000Z');
-    await db.mealGuest.updateMany({ where: { rowId: f.rowId, position: 0 }, data: { contactId: null, retainUntil: until } });
+    for (const c of [f, other]) await db.mealGuest.updateMany({ where: { rowId: c.rowId, position: 0 }, data: { contactId: null, retainUntil: until } });
 
     const counts = await eraseCompany(db, f.ws.tenantId, [f.ws.workspaceId], deps().all);
 
-    expect(counts).toMatchObject({ guestCopies: 1, guestCopiesHeldEarlier: 1 });
-    expect(counts.notErased).toContainEqual({ what: 'guest_copies_held_earlier', count: 1, until: '2036-05-01' });
-    expect(await db.mealGuest.findMany({ where: { authWorkspaceId: f.ws.workspaceId }, select: { position: true, retainUntil: true } })).toEqual([{ position: 0, retainUntil: until }]);
-    // A repeat leaves it as it is.
-    const again = await eraseCompany(db, f.ws.tenantId, [f.ws.workspaceId], deps().all);
-    expect(again).toMatchObject({ guestCopies: 0, guestCopiesHeldEarlier: 1 });
-    expect((await db.mealGuest.findFirstOrThrow({ where: { authWorkspaceId: f.ws.workspaceId } })).retainUntil).toEqual(until);
+    // Both names of the erased company are gone, the held one included, and nothing is reported as held.
+    expect(counts).toMatchObject({ guestCopies: 2 });
+    expect(counts.notErased?.map((n) => n.what)).toEqual(['database_backups', 'uploads_never_attached_to_a_receipt']);
+    expect(await guestsOf(f.ws.workspaceId)).toBe(0);
+    // The other company still exists: its held name keeps its date, its other name its place.
+    expect(await db.mealGuest.findMany({ where: { authWorkspaceId: other.ws.workspaceId }, select: { position: true, retainUntil: true }, orderBy: { position: 'asc' } })).toEqual([
+      { position: 0, retainUntil: until },
+      { position: 1, retainUntil: null },
+    ]);
+    // A repeat finds nothing.
+    expect(await eraseCompany(db, f.ws.tenantId, [f.ws.workspaceId], deps().all)).toMatchObject({ guestCopies: 0 });
+  });
+
+  it('a held name that could not be removed fails the run: nothing of the company is exempt from the recount', async () => {
+    const f = await withGuests();
+    await db.mealGuest.updateMany({ where: { rowId: f.rowId, position: 0 }, data: { contactId: null, retainUntil: new Date('2036-05-01T00:00:00.000Z') } });
+    await withTrigger('meal_guests', 'BEFORE', `IF OLD.auth_workspace_id = '${f.ws.workspaceId}' AND OLD.retain_until IS NOT NULL THEN RETURN NULL; END IF; RETURN OLD;`, async () => {
+      const error = await eraseCompany(db, f.ws.tenantId, [f.ws.workspaceId], deps().all).catch((e) => e);
+      expect(error).toBeInstanceOf(ErasureIncompleteError);
+      expect((error as ErasureIncompleteError).remaining).toEqual({ meal_guests: 1 });
+    });
   });
 });
 

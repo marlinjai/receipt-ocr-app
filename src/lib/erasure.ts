@@ -21,14 +21,13 @@ import { verifyErasureSignature } from './erasure-signature';
  * The erasure of ONE contact of a company that goes on existing is another
  * matter and keeps its rule (`exportCoversRegister`, `settleGuestCopies`): the
  * printed names on that company's meals are removed only when the company holds
- * an identical export, otherwise they are held for `RETENTION_YEARS`.
+ * an identical export, otherwise they are held for `RETENTION_YEARS`. Names held
+ * that way are removed by the purge after their date, or with the company when
+ * the company itself is erased.
  */
 
 /**
  * One thing an erasure did not remove, by code.
- * - `guest_copies_held_earlier`: printed guest names that an EARLIER erasure of one
- *   contact held until `until`. A company erasure holds none itself, but it cannot
- *   tell these apart from anything, so it leaves them to the purge.
  * - `stored_files_shown_elsewhere`: files a receipt outside this erasure (another
  *   company's, or one in a workspace the delivery did not name) still shows.
  * - `bank_sessions_not_closed`: sessions at the bank that could not be closed. The
@@ -42,21 +41,18 @@ import { verifyErasureSignature } from './erasure-signature';
  *   cannot assign to a company.
  */
 export interface NotErased {
-  what: 'guest_copies_held_earlier' | 'stored_files_shown_elsewhere' | 'bank_sessions_not_closed' | 'database_backups' | 'uploads_never_attached_to_a_receipt';
+  what: 'stored_files_shown_elsewhere' | 'bank_sessions_not_closed' | 'database_backups' | 'uploads_never_attached_to_a_receipt';
   count?: number;
-  until?: string;
   days?: number;
   daysOnServer?: number;
 }
 
 export interface ErasureCounts {
-  /** Printed guest copies of the company removed now. A company erasure holds none. */
-  guestCopies: number;
   /**
-   * Printed guest copies of the company that an earlier erasure of ONE contact had held (they carry
-   * a date). Left where they are; the purge removes them after their date. Set by `eraseCompany`.
+   * Printed guest copies of the company removed now: all of them, also the ones an earlier erasure
+   * of one contact had held. A company erasure holds none.
    */
-  guestCopiesHeldEarlier?: number;
+  guestCopies: number;
   sharedContacts: number;
   /**
    * Printed copies outside the company's own rows (another company's meal, or a workspace the
@@ -304,10 +300,9 @@ export async function settleGuestCopies(
  * 2. A copy elsewhere that names one of the company's contacts only loses that link.
  * 3. The contacts (in the shared contacts database) are removed.
  *
- * One kind of copy is left: a copy that already carries a date. It was held by an
- * earlier erasure of ONE contact, under the rule that still applies there. A row
- * does not say which erasure held it, so a company erasure does not touch dated
- * copies; the purge removes them after their date (roadmap).
+ * That includes a copy that already carries a date. It was held by an earlier
+ * erasure of ONE contact, for a company that then still owed its records. With
+ * the company erased it is the company's data like any other and goes with it.
  *
  * Repeat-safe: a second run finds nothing and removes nothing more.
  * `checkpoint`: called between the steps; it rejects when the run may not go on.
@@ -332,8 +327,9 @@ export async function eraseCompanyContacts(
   const scope = [{ authTenantId: tenantId }, ...workspaceScope];
 
   await options.checkpoint?.();
-  // `retainUntil: null`: a copy an earlier erasure of one contact held is left to the purge.
-  const guestCopies = (await db.mealGuest.deleteMany({ where: { OR: scope, retainUntil: null } })).count;
+  // Every copy in the company's scope, with or without a date: a copy an earlier erasure of one
+  // contact held was held for the company, and the company is gone.
+  const guestCopies = (await db.mealGuest.deleteMany({ where: { OR: scope } })).count;
 
   // A printed copy OUTSIDE that scope can still name one of the company's contacts: a meal of another
   // company, or of a workspace the delivery does not name (possible after a workspace changed company
@@ -386,8 +382,7 @@ export interface ErasureDelivery {
  *   the run stopped at its next step and the next delivery goes on.
  * - The event id is recorded for another company: 409 `event_of_another_company`, nothing is touched.
  * - The run cannot be recorded in the ledger: 502 as well. An erasure nobody can prove is not acknowledged.
- * - 200 only when the recount found nothing of the company but guest names an earlier erasure of
- *   one contact had held. The answer
+ * - 200 only when the recount found nothing of the company. The answer
  *   lists under `notErased` what an erasure never removes or did not remove this time.
  *
  * Auth-brain keeps only the status of an answer. The counts and `notErased` are therefore also
@@ -489,7 +484,7 @@ export async function receiveErasureDelivery(input: {
   const register = counts.register;
   const records = register ? Object.values(register.records).reduce((sum, n) => sum + n, 0) : 0;
   log(
-    `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies (${counts.guestCopiesHeldEarlier ?? 0} held by an earlier contact erasure left to the purge), ${counts.sharedContacts} contacts, ended ${counts.bankConnections ?? 0} bank connections and ${counts.accountShares ?? 0} account shares (${counts.crossCompanyLinks ?? 0} links and ${counts.crossCompanyRecords ?? 0} other records between companies removed)` +
+    `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, ${counts.sharedContacts} contacts, ended ${counts.bankConnections ?? 0} bank connections and ${counts.accountShares ?? 0} account shares (${counts.crossCompanyLinks ?? 0} links and ${counts.crossCompanyRecords ?? 0} other records between companies removed)` +
       (register
         ? `, removed ${register.tables} receipts tables with ${register.receipts} rows, ${register.storedFiles} stored files (${register.storedFilesAlreadyGone} were gone already, ${register.storedFilesKept} kept because a receipt elsewhere shows them), ${records} other rows and ${register.companyExports} export records`
         : '') +

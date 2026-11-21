@@ -27,8 +27,7 @@ import { stampedModels, type StampedModel } from './workspace-move';
  * 4. The register: every stored receipt file, then every receipts table with its
  *    rows, then every row of every table that carries the company stamp.
  * 5. A recount, also of the tables below a receipts table and of the contacts
- *    database. Anything left fails the run, except guest names an earlier
- *    erasure of one contact had held (they stay until their date)
+ *    database. Anything left fails the run
  *    (`ErasureIncompleteError`), so the delivery is answered non-2xx and sent again.
  *
  * Which rows are the company's: a row stamped with the company
@@ -52,7 +51,7 @@ export type ErasureClass =
   | 'via_table'
   /** Hangs below a stamped row by a cascading foreign key. */
   | 'via_parent'
-  /** Printed guest names: removed, except the ones an earlier erasure of one contact held (they carry a date). */
+  /** Printed guest names (`meal_guests`): removed with the contact data, all of them, held earlier or not. */
   | 'guest_rule'
   /** A record about the company itself, keyed by the company alone: deleted. */
   | 'company_record'
@@ -522,9 +521,8 @@ export async function eraseCompanyRegister(
 }
 
 /**
- * What the company still has here, by table. Guest names an earlier erasure of
- * one contact held are counted apart (`heldGuestCopies`): they are the one thing
- * an erasure leaves, for the purge.
+ * What the company still has here, by table. Nothing is exempt: a printed
+ * guest name that is still there, with or without a date, fails the run too.
  *
  * `erased` (the tables and rows this run removed) lets the count also look at
  * the tables that carry no stamp and hang below a receipts table: a file
@@ -536,21 +534,15 @@ export async function countCompanyRemainder(
   tenantId: string,
   workspaceIds: readonly string[],
   erased: ErasedHandles = { tableIds: [], rowIds: [] },
-): Promise<{ remaining: Record<string, number>; heldGuestCopies: number; fileReferences: LeftFileReference[] }> {
-  const classes = classifyModels();
+): Promise<{ remaining: Record<string, number>; fileReferences: LeftFileReference[] }> {
+  classifyModels();
   const fileReferences: LeftFileReference[] = [];
   const remaining: Record<string, number> = {};
   const add = (table: string, n: number) => {
     if (n > 0) remaining[table] = (remaining[table] ?? 0) + n;
   };
-  let heldGuestCopies = 0;
   for (const model of stampedModels()) {
     const where = companyRowsWhere(model, tenantId, workspaceIds);
-    if (classes[model.model] === 'guest_rule') {
-      heldGuestCopies = await db.mealGuest.count({ where: { AND: [where, { contactId: null, retainUntil: { not: null } }] } });
-      add(model.table, await db.mealGuest.count({ where: { AND: [where, { NOT: { contactId: null, retainUntil: { not: null } } }] } }));
-      continue;
-    }
     add(model.table, await delegateOf(db, model).count({ where }));
   }
   add('company_exports', await db.companyExport.count({ where: { authTenantId: tenantId } }));
@@ -568,7 +560,7 @@ export async function countCompanyRemainder(
     add('dt_views', await db.dtView.count({ where: { tableId: { in: erased.tableIds } } }));
     for (const tableId of erased.tableIds) add('receipt_row_tables', (await physicalTableExists(db, tableId)) ? 1 : 0);
   }
-  return { remaining, heldGuestCopies, fileReferences };
+  return { remaining, fileReferences };
 }
 
 /**
@@ -585,11 +577,8 @@ export const BACKUP_RETENTION_DAYS_ON_SERVER = 7;
  * acknowledgement is never read as "nothing of this company exists any more".
  * Codes and numbers only.
  */
-export function notErasedAfter(input: { heldGuestCopies: number; retainUntil: Date | null; storedFilesKept: number; bankSessionsLeftOpen: number }): NotErased[] {
+export function notErasedAfter(input: { storedFilesKept: number; bankSessionsLeftOpen: number }): NotErased[] {
   const out: NotErased[] = [];
-  if (input.heldGuestCopies > 0) {
-    out.push({ what: 'guest_copies_held_earlier', count: input.heldGuestCopies, ...(input.retainUntil ? { until: input.retainUntil.toISOString().slice(0, 10) } : {}) });
-  }
   if (input.storedFilesKept > 0) out.push({ what: 'stored_files_shown_elsewhere', count: input.storedFilesKept });
   if (input.bankSessionsLeftOpen > 0) out.push({ what: 'bank_sessions_not_closed', count: input.bankSessionsLeftOpen });
   // Technical retention, not a legal one: the dumps of the database rotate out by themselves.
@@ -598,8 +587,6 @@ export function notErasedAfter(input: { heldGuestCopies: number; retainUntil: Da
   out.push({ what: 'uploads_never_attached_to_a_receipt' });
   return out;
 }
-
-const guestTable = { workspaceField: 'authWorkspaceId' as const };
 
 /**
  * The whole erasure of one company. See the module comment for the order and
@@ -632,31 +619,19 @@ export async function eraseCompany(db: PrismaClient, tenantId: string, workspace
     const { counts: register, erased } = await eraseCompanyRegister(db, tenantId, workspaceIds, deps, partial.register);
 
     // No checkpoint from here on: everything is removed, and what is left is to count it and say so.
-    const { remaining, heldGuestCopies, fileReferences } = await countCompanyRemainder(db, tenantId, workspaceIds, erased);
+    const { remaining, fileReferences } = await countCompanyRemainder(db, tenantId, workspaceIds, erased);
     const contactsLeft = await (deps.countContacts ?? (async (id: string) => (await companyContacts(id).list({ includeArchived: true })).length))(tenantId);
     if (contactsLeft > 0) remaining.shared_contacts = contactsLeft;
     if (Object.keys(remaining).length > 0) throw new ErasureIncompleteError(remaining, fileReferences);
 
-    const latestHold =
-      heldGuestCopies > 0
-        ? await db.mealGuest.findFirst({
-            where: { AND: [companyRowsWhere(guestTable, tenantId, workspaceIds), { contactId: null, retainUntil: { not: null } }] },
-            orderBy: { retainUntil: 'desc' },
-            select: { retainUntil: true },
-          })
-        : null;
-
     return {
       ...contacts,
-      guestCopiesHeldEarlier: heldGuestCopies,
       bankConnections: bank.connections,
       accountShares: shares.shares,
       crossCompanyLinks: shares.links,
       crossCompanyRecords: shares.records,
       register,
       notErased: notErasedAfter({
-        heldGuestCopies,
-        retainUntil: latestHold?.retainUntil ?? null,
         storedFilesKept: register.storedFilesKept,
         bankSessionsLeftOpen: bank.sessionsLeftOpen,
       }),

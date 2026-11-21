@@ -131,9 +131,8 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
   const LEASE: ErasureLease = { token: 'lease-1', renew: vi.fn(async () => {}) };
   const FULL: ErasureCounts = {
     ...COUNTS,
-    guestCopiesHeldEarlier: 4,
     register: { tables: 2, receipts: 9, storedFiles: 7, storedFilesAlreadyGone: 0, storedFilesKept: 1, records: { receipt_reviews: 6, tax_payments: 3 }, companyExports: 1 },
-    notErased: [{ what: 'guest_copies_held_earlier', count: 4, until: '2036-11-21' }, { what: 'database_backups', daysOnServer: 7, days: 30 }],
+    notErased: [{ what: 'stored_files_shown_elsewhere', count: 4 }, { what: 'database_backups', daysOnServer: 7, days: 30 }],
   };
 
   it('answers 200 with what was removed and, apart from it, what was not', async () => {
@@ -144,8 +143,8 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
     expect(res.body.notErased).toEqual(FULL.notErased);
     const line = lines.join('\n');
     expect(line).toContain('removed 2 receipts tables with 9 rows, 7 stored files (0 were gone already, 1 kept because a receipt elsewhere shows them), 9 other rows and 1 export records');
-    expect(line).toContain('removed 2 guest copies (4 held by an earlier contact erasure left to the purge), 3 contacts');
-    expect(line).toContain('not erased: guest_copies_held_earlier 4, database_backups');
+    expect(line).toContain('removed 2 guest copies, 3 contacts');
+    expect(line).toContain('not erased: stored_files_shown_elsewhere 4, database_backups');
   });
 
   it('records the start and the completion, and erases over every workspace the ledger knows', async () => {
@@ -309,10 +308,10 @@ describe('eraseCompanyContacts (a company erasure keeps no printed guest names)'
     expect(migrateMock).toHaveBeenCalledWith('sql-handle');
     expect(companyContactsMock).toHaveBeenCalledWith('tnt_a');
     expect(counts).toEqual({ guestCopies: 3, sharedContacts: 2, guestLinksCleared: 0 });
-    // The company's own copies: its stamp, or no stamp in a named workspace. A copy an earlier
-    // erasure of one contact held (it carries a date) is left to the purge.
+    // The company's own copies: its stamp, or no stamp in a named workspace. No condition on a date:
+    // a copy an earlier erasure of one contact held goes with the company too.
     expect(db.mealGuest.deleteMany).toHaveBeenCalledWith({
-      where: { OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] }, authTenantId: null }], retainUntil: null },
+      where: { OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] }, authTenantId: null }] },
     });
     // Whether the company ever exported is not asked: keeping its records is the company's duty.
     expect(db.companyExport.findFirst).not.toHaveBeenCalled();
@@ -325,7 +324,7 @@ describe('eraseCompanyContacts (a company erasure keeps no printed guest names)'
   it('without workspace ids only the stamped copies are the company\'s', async () => {
     const db = fakeDb();
     await eraseCompanyContacts(db, 'tnt_a', []);
-    expect(db.mealGuest.deleteMany).toHaveBeenCalledWith({ where: { OR: [{ authTenantId: 'tnt_a' }], retainUntil: null } });
+    expect(db.mealGuest.deleteMany).toHaveBeenCalledWith({ where: { OR: [{ authTenantId: 'tnt_a' }] } });
   });
 
   it('repeat-safe: a second run finds nothing', async () => {

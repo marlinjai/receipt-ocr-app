@@ -147,6 +147,7 @@ export function buildReadme(now: Date, counts: { registerFiles: number; contacts
     'meals are removed only while the register is still identical to your newest export. After',
     'any later change they are kept for ten years, without the link to the contact, so that',
     'your own register stays complete; take a new export first if you want them removed.',
+    'Names kept that way are deleted with everything else when the company itself is deleted.',
     '',
   ].join('\n');
 }

@@ -35,10 +35,10 @@ period is the company's duty, not this app's (the owner's decision of
 
 A 200 always lists under `notErased` what an erasure never removes (those
 backups, with both numbers, and uploads that never became a receipt) and what it
-did not remove this time: files a receipt elsewhere still shows, bank sessions
-that could not be closed, and printed guest names that an EARLIER erasure of one
-single contact had held (`guest_copies_held_earlier`; a company erasure holds
-none itself and leaves those to the purge).
+did not remove this time: files a receipt elsewhere still shows, and bank
+sessions that could not be closed. Printed guest names are never among them: a
+company erasure removes all of the company's, also the ones an earlier erasure
+of one single contact had held for ten years.
 
 ## A delivery that keeps failing
 

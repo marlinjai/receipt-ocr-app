@@ -315,7 +315,8 @@
   retention purge. Built in this change, 2026-10-09.
 - [ ] Enable the retention purge of held guest copies only after recorded legal confirmation
   of the retention policy. Since 2026-11-21 only the erasure of ONE contact holds copies (a
-  company erasure holds none), so this concerns companies that still exist. The implementation explicitly requires that review before go-live.
+  company erasure holds none and removes the ones held earlier), so this concerns companies that
+  still exist: until the purge is scheduled, a name held that way stays past its date. The implementation explicitly requires that review before go-live.
   The production `RETENTION_PURGE_SECRET` was generated securely in Infisical on 2026-10-09;
   no schedule was enabled. The backup and scratch restoration prerequisite is complete.
   Once the legal policy is confirmed, run the signed purge verification and enable its daily
@@ -391,15 +392,6 @@
   not seen at all, as with the company erased on 2026-11-21): naming a company's deleted
   workspaces in the delivery as well is being built on the auth-brain branch
   `fix/erasure-invitations-and-coverage`, which removes this class for future erasures. [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
-- [ ] Printed guest names that an earlier erasure of ONE contact held are not removed when the
-  whole company is erased later. They carry a date and are removed by the retention purge after
-  it; a company erasure counts them in its answer (`guest_copies_held_earlier`) and leaves them.
-  Reason: a held row looks the same whichever erasure held it, so the code cannot tell them
-  apart. By the owner's decision of 2026-11-21 (a company erasure keeps nothing) they should go
-  with the company; it is one condition in one statement in `eraseCompanyContacts`. Decide and
-  build, or accept that the purge takes them. Note that the purge is not scheduled yet (line
-  above on the retention purge), so today such a name stays until it is.
-  [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
 - [ ] Deleting a receipts table through the data-table package loses errors and leaves stored files
   behind. `deleteTable` of `@marlinjai/data-table-adapter-prisma` 0.2.3 treats a failed read of the
   row ids as "no rows", ignores a failed delete of the file references, runs outside a transaction,

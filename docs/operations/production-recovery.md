@@ -105,6 +105,26 @@ Compare the copy's checksum with the tested source dump before relying on it.
    `https://receipts.lumitra.co/api/health`, and verify actual receipt, meal and
    finance reads for the intended company before resuming writes.
 
+## After a recovery: erased companies come back
+
+A recovery point taken before a company erasure contains that company's rows
+again, and the restored `erasure_events` table (the erasure ledger) does not
+know the erasure. Restoring the database does not restore stored files: the
+receipt files of an erased company were deleted in Storage Brain and stay
+deleted, so the restored rows point at files that no longer exist.
+
+After every recovery, before the app serves users again:
+
+1. On auth-brain's admin Erasures page, list every company erasure completed
+   after the time of the recovery point.
+2. Use "send again" for the Receipts delivery of each. The receiver is
+   repeat-safe and erases the restored rows again.
+3. Check that each answer was acknowledged and that `erasure_events` holds a
+   completed run for it.
+
+This is technical retention, not a legal one: backups rotate out after at most
+thirty days (plan `docs/plans/2026-11-21-company-erasure-register.md`).
+
 ## Evidence from the initial rehearsal
 
 On 2026-10-09 at 21:40:22 UTC, Coolify execution

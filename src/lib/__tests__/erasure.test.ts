@@ -8,6 +8,7 @@ import {
   receiveErasureDelivery,
   retainUntilFrom,
   type ErasureCounts,
+  type ErasureLedger,
   type RegisterHasher,
 } from '../erasure';
 
@@ -76,7 +77,7 @@ describe('receiveErasureDelivery (the decisions, before any data is touched)', (
     const body = delivery({ workspace_ids: ['ws_1', 'ws_2', 7] });
     const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, log: (l) => lines.push(l) });
     expect(erase).toHaveBeenCalledWith('tnt_a', ['ws_1', 'ws_2']);
-    expect(res).toEqual({ status: 200, body: { ok: true, erased: COUNTS } });
+    expect(res).toEqual({ status: 200, body: { ok: true, erased: COUNTS, notErased: [] } });
     expect(lines.join('\n')).toContain('evt_1');
     expect(lines.join('\n')).not.toContain('tnt_a');
   });
@@ -100,6 +101,95 @@ describe('receiveErasureDelivery (the decisions, before any data is touched)', (
     expect(res.status).toBe(502);
     expect(JSON.stringify(res.body)).not.toContain('10.0.0.5');
     expect(lines.join('\n')).not.toContain('10.0.0.5');
+  });
+});
+
+describe('receiveErasureDelivery (the answer says what was not erased, and every run is recorded)', () => {
+  function fakeLedger(over: Partial<ErasureLedger> = {}) {
+    return {
+      begin: vi.fn(async (e: { workspaceIds: readonly string[] }) => ({ workspaceIds: [...e.workspaceIds] })),
+      complete: vi.fn(async () => {}),
+      fail: vi.fn(async () => {}),
+      ...over,
+    } satisfies ErasureLedger;
+  }
+  const FULL: ErasureCounts = {
+    ...COUNTS,
+    guestCopiesHeld: 4,
+    register: { tables: 2, receipts: 9, storedFiles: 7, storedFilesKept: 1, records: { receipt_reviews: 6, tax_payments: 3 }, companyExports: 1 },
+    notErased: [{ what: 'guest_copies_held', count: 4, until: '2036-11-21' }, { what: 'database_backups', days: 30 }],
+  };
+
+  it('answers 200 with what was removed and, apart from it, what was not', async () => {
+    const lines: string[] = [];
+    const body = delivery({});
+    const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase: async () => FULL, log: (l) => lines.push(l) });
+    expect(res.status).toBe(200);
+    expect(res.body.notErased).toEqual(FULL.notErased);
+    const line = lines.join('\n');
+    expect(line).toContain('removed 2 receipts tables with 9 rows, 7 stored files (1 kept for another company), 9 other rows and 1 export records');
+    expect(line).toContain('not erased: guest_copies_held 4, database_backups');
+  });
+
+  it('records the start and the completion, and erases over every workspace the ledger knows', async () => {
+    const ledger = fakeLedger({ begin: vi.fn(async () => ({ workspaceIds: ['ws_1', 'ws_earlier'] })) });
+    const erase = vi.fn(async () => FULL);
+    const body = delivery({ workspace_ids: ['ws_1'] });
+    const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, ledger, log: () => {} });
+    expect(res.status).toBe(200);
+    expect(ledger.begin).toHaveBeenCalledWith({ eventId: 'evt_1', kind: 'tenant.erased', companyId: 'tnt_a', workspaceIds: ['ws_1'] });
+    expect(erase).toHaveBeenCalledWith('tnt_a', ['ws_1', 'ws_earlier']);
+    expect(ledger.complete).toHaveBeenCalledWith('evt_1', FULL);
+    expect(ledger.fail).not.toHaveBeenCalled();
+  });
+
+  it('a delivery without an event id is recorded under the company', async () => {
+    const ledger = fakeLedger();
+    const body = delivery({ event_id: undefined });
+    await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase: async () => COUNTS, ledger, log: () => {} });
+    expect(ledger.complete).toHaveBeenCalledWith('none:tnt_a', COUNTS);
+  });
+
+  it('a ledger that cannot record the start answers 502 and nothing is erased', async () => {
+    const ledger = fakeLedger({ begin: vi.fn(async () => { throw new Error('relation erasure_events does not exist'); }) });
+    const erase = vi.fn(async () => COUNTS);
+    const body = delivery({});
+    const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, ledger, log: () => {} });
+    expect(res).toEqual({ status: 502, body: { error: 'Erasure failed; will retry', reason: 'ledger_unavailable' } });
+    expect(erase).not.toHaveBeenCalled();
+  });
+
+  it('an erasure that could not be recorded as completed is not acknowledged', async () => {
+    const ledger = fakeLedger({ complete: vi.fn(async () => { throw new Error('database gone'); }) });
+    const body = delivery({});
+    const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase: async () => COUNTS, ledger, log: () => {} });
+    expect(res.status).toBe(502);
+  });
+
+  it.each([
+    ['StoredFileEraseError', {}, 'stored_file_not_removed', undefined],
+    ['ErasureConflictError', { tables: ['dt_tables'] }, 'rows_of_another_company', { tables: ['dt_tables'] }],
+    ['ErasureIncompleteError', { remaining: { tax_payments: 2 } }, 'rows_remain', { remaining: { tax_payments: 2 } }],
+    ['TypeError', {}, 'failed', undefined],
+  ])('a failed run (%s) answers 502 with its reason code and is recorded as failed', async (name, extra, reason, detail) => {
+    const ledger = fakeLedger();
+    const erase = vi.fn(async () => {
+      throw Object.assign(new Error('the file named secret.pdf of Somebody'), { name, ...extra });
+    });
+    const lines: string[] = [];
+    const body = delivery({});
+    const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, ledger, log: (l) => lines.push(l) });
+    expect(res).toEqual({ status: 502, body: { error: 'Erasure failed; will retry', reason } });
+    expect(ledger.fail).toHaveBeenCalledWith('evt_1', reason, detail);
+    expect(ledger.complete).not.toHaveBeenCalled();
+    expect(lines.join('\n')).not.toContain('Somebody');
+  });
+
+  it('a ledger that cannot record the failure does not turn the 502 into an exception', async () => {
+    const ledger = fakeLedger({ fail: vi.fn(async () => { throw new Error('database gone'); }) });
+    const body = delivery({});
+    const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase: async () => { throw new Error('x'); }, ledger, log: () => {} });
+    expect(res.status).toBe(502);
   });
 });
 

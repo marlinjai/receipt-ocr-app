@@ -163,6 +163,9 @@ pnpm build
 # Run production server
 pnpm start
 
+# Everything a change must pass, one line per stage (see AGENTS.md); starts its own test databases with Docker
+pnpm verify
+
 # Unit and component tests
 pnpm test
 

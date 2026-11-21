@@ -166,7 +166,11 @@ export interface RegisterErasureCounts {
   storedFilesAlreadyGone: number;
   /** Stored files kept because a receipt outside this erasure still shows them. Their references here went. */
   storedFilesKept: number;
-  /** Rows removed from the tables that carry the company stamp, by table. Rows that went with a parent are counted too. */
+  /**
+   * Rows removed from the tables that carry the company stamp, by table. A stamped row that went
+   * with its parent is counted under its own table (every table is counted before anything is
+   * deleted). Rows of a table WITHOUT a stamp that went by a foreign key (`sheet_import_rows`) are not counted.
+   */
   records: Record<string, number>;
   /** Records of exports handed to the company. */
   companyExports: number;

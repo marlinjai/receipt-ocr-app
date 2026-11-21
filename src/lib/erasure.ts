@@ -14,8 +14,9 @@ import { verifyErasureSignature } from './erasure-signature';
  *
  * What the contact rule removes, for the company (tenant) and the workspaces
  * auth-brain names:
- * - the printed guest copies on meals (`meal_guests`), by company, by workspace
- *   and by contact id (the id catches rows written before the company was filled);
+ * - the printed guest copies on meals (`meal_guests`): the ones stamped with the
+ *   company, and the ones without a stamp in a workspace auth-brain names. A copy
+ *   elsewhere that names one of the company's contacts only loses that link;
  * - the company's contacts and its customer-number counter in the suite's shared
  *   contacts database, the only contact store.
  *
@@ -52,6 +53,11 @@ export interface ErasureCounts {
    */
   guestCopiesHeld: number;
   sharedContacts: number;
+  /**
+   * Printed copies outside the company's own rows (another company's meal, or a workspace the
+   * delivery did not name) that named one of its contacts: their link was cleared, the copy stays.
+   */
+  guestLinksCleared?: number;
   /** Why the printed copies were removed or held. A code, never a name. */
   exportCoverage: ExportCoverageReason;
   /** Live bank connections ended (session closed at the bank where it could be, connection removed). */
@@ -197,7 +203,7 @@ export async function exportCoversRegister(
 /** One condition on the printed guest copies an erasure covers. Several are combined with OR. */
 export type GuestCopyScope =
   | { authTenantId: string }
-  | { authWorkspaceId: { in: string[] } }
+  | { authWorkspaceId: { in: string[] }; authTenantId?: null }
   | { contactId: string | { in: string[] } };
 
 /**
@@ -278,11 +284,20 @@ export async function eraseCompanyContacts(
   const shared = companyContacts(tenantId);
   const sharedIds = (await shared.list({ includeArchived: true })).map((c) => c.id);
 
-  const workspaceScope = workspaceIds.length > 0 ? [{ authWorkspaceId: { in: [...workspaceIds] } }] : [];
-  const scope = [{ authTenantId: tenantId }, ...workspaceScope, ...(sharedIds.length > 0 ? [{ contactId: { in: sharedIds } }] : [])];
+  // The company's own printed copies: stamped with the company, or without a stamp in a workspace
+  // auth-brain names (rows written before the stamp existed). The same rule as for every other table.
+  const workspaceScope = workspaceIds.length > 0 ? [{ authWorkspaceId: { in: [...workspaceIds] }, authTenantId: null }] : [];
+  const scope = [{ authTenantId: tenantId }, ...workspaceScope];
 
   const coverage = await exportCoversRegister(db, tenantId, workspaceIds, hasher);
   const { removed: guestCopies, held: guestCopiesHeld } = await settleGuestCopies(db, scope, coverage.covered, now, options);
+
+  // A printed copy OUTSIDE that scope can still name one of the company's contacts: a meal of another
+  // company, or of a workspace the delivery does not name (possible after a workspace changed company
+  // without its rows following). That copy is the other register's record, so it is neither removed nor
+  // held here. Only its link goes, because the contact it points at is erased below.
+  const guestLinksCleared =
+    sharedIds.length > 0 ? (await db.mealGuest.updateMany({ where: { contactId: { in: sharedIds } }, data: { contactId: null } })).count : 0;
 
   const sharedRemoved = await shared.eraseAll();
 
@@ -291,6 +306,7 @@ export async function eraseCompanyContacts(
     guestCopiesHeld,
     sharedContacts: sharedRemoved,
     exportCoverage: coverage.reason,
+    guestLinksCleared,
   };
 }
 

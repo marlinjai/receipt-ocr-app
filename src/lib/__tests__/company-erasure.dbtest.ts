@@ -342,6 +342,28 @@ describe('a name that was held stays held', () => {
   });
 });
 
+describe('a printed guest name outside the company that names one of its contacts', () => {
+  it('another company\'s meal keeps its printed name: it is neither removed nor held, only its link to the erased contact goes', async () => {
+    const c = await company();
+    const other = await bystander();
+    const contactId = (await companyContacts(c.tenantId).list({ includeArchived: true }))[0].id;
+    const foreign = await db.mealGuest.create({
+      data: { authWorkspaceId: other.ws.workspaceId, authTenantId: other.ws.tenantId, rowId: other.receipt.rowId, contactId, position: 0, displayName: 'Printed Name', displayCompany: 'Printed Co' },
+    });
+    // The same in a workspace nobody names and that carries no stamp: not provably the company's either.
+    const unnamed = await db.mealGuest.create({
+      data: { authWorkspaceId: `test-ws-${randomUUID()}`, authTenantId: null, rowId: `row-${randomUUID()}`, contactId, position: 0, displayName: 'Printed Name', displayCompany: '' },
+    });
+
+    const counts = await eraseCompany(db, c.tenantId, c.workspaceIds, deps().all);
+
+    expect(counts).toMatchObject({ guestCopiesHeld: 1, guestLinksCleared: 2, sharedContacts: 1 });
+    for (const id of [foreign.id, unnamed.id]) {
+      expect(await db.mealGuest.findUniqueOrThrow({ where: { id } })).toMatchObject({ contactId: null, retainUntil: null, displayName: 'Printed Name' });
+    }
+  });
+});
+
 describe('the stamps and the delivery must agree', () => {
   it('rows with the company\'s stamp in a workspace the delivery does not name stop the run: nothing is deleted there or anywhere', async () => {
     const c = await company();

@@ -249,7 +249,7 @@ describe('eraseCompanyContacts (what is removed, company-scoped)', () => {
   it('without an export, holds the printed copies: the contact link is cleared and a retention date is set', async () => {
     const db = fakeDb({ guestsLinked: 2 });
     const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'));
-    expect(counts).toEqual({ guestCopies: 0, guestCopiesHeld: 2, sharedContacts: 0, exportCoverage: 'no_export' });
+    expect(counts).toEqual({ guestCopies: 0, guestCopiesHeld: 2, sharedContacts: 0, exportCoverage: 'no_export', guestLinksCleared: 0 });
     expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
     const call = db.mealGuest.updateMany.mock.calls[0][0] as { where: Record<string, unknown>; data: Record<string, unknown> };
     expect(call.where).toMatchObject({ contactId: { not: null } });
@@ -321,18 +321,21 @@ describe('eraseCompanyContacts (what is removed, company-scoped)', () => {
     expect(counts.sharedContacts).toBe(2);
     expect(db.mealGuest.deleteMany).toHaveBeenCalledWith({
       // `retainUntil: null`: a name an earlier erasure held is never removed here, only by the purge.
-      where: { OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] } }, { contactId: { in: ['c1', 'c2'] } }], retainUntil: null },
+      where: { OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] }, authTenantId: null }], retainUntil: null },
     });
+    // A copy elsewhere that names one of the contacts only loses its link.
+    expect(db.mealGuest.updateMany).toHaveBeenCalledWith({ where: { contactId: { in: ['c1', 'c2'] } }, data: { contactId: null } });
+    expect(counts.guestLinksCleared).toBe(0);
     expect(shared.eraseAll).toHaveBeenCalledTimes(1);
   });
 
   it('the whole company erasure also holds printed names that never had a contact; the erasure of one contact does not', async () => {
     const db = fakeDb({});
     await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, undefined, { holdUnlinked: true });
-    expect(db.mealGuest.updateMany.mock.calls[0][0].where).toEqual({ OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] } }], retainUntil: null });
+    expect(db.mealGuest.updateMany.mock.calls[0][0].where).toEqual({ OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] }, authTenantId: null }], retainUntil: null });
     const plain = fakeDb({});
     await eraseCompanyContacts(plain, 'tnt_a', ['ws_1'], now);
-    expect(plain.mealGuest.updateMany.mock.calls[0][0].where).toEqual({ OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] } }], retainUntil: null, contactId: { not: null } });
+    expect(plain.mealGuest.updateMany.mock.calls[0][0].where).toEqual({ OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] }, authTenantId: null }], retainUntil: null, contactId: { not: null } });
   });
 
   it('fails loudly when the shared contacts database is not configured, and touches nothing', async () => {

@@ -131,7 +131,10 @@ both receipts tables of the leftovers above carry no stamp.
   too (`rows_outside_named_workspaces`). Auth-brain says that workspace is not, or no longer, the
   company's. The case this protects against: a workspace was moved to another company in
   auth-brain and the restamp in Receipts did not happen; deleting by the stale stamp would
-  destroy the new owner's receipts and files.
+  destroy the new owner's receipts and files. That is a real possibility, not a theoretical
+  one: auth-brain's move (`PATCH /api/admin/machine/workspaces`) rewrites only its own column
+  and makes no call to Receipts, so the stamp here is stale whenever the separate restamp
+  (`docs/operations/workspace-move.md`) is skipped or blocked.
 - A delivery that names NO workspace is held to the same rule: every row with the company's
   stamp then lies outside the named workspaces, and the run stops. Erasing by stamp alone would
   be the one case with no second opinion, and it is reachable: a company whose only workspace
@@ -221,6 +224,17 @@ in the direction of holding:
   then empty, and an empty register equals an export the company took before its first meal.
 - **A name that never had a contact is held too** on a company erasure, with a date. Its meal
   goes with the company, so without a date it would stay for ever.
+- **Only the company's own printed names are removed or held.** Until now the rule also took
+  every printed name that pointed at one of the company's contacts, wherever it lay. Such a name
+  can lie in another company's meal or in a workspace the delivery does not name: the normal
+  write paths do not produce it (a meal takes guests from its own company's contacts, and the
+  workspace move refuses to leave a guest pointing across companies), but it exists after a
+  workspace changed company in auth-brain while its rows here did not follow. That printed
+  name is the other register's record. It now only loses its link to the erased contact, and the
+  answer counts it (`guestLinksCleared`).
+
+All of this exists only because the hold exists. If the owner decides to drop the hold on a
+company erasure (the open question), the names are simply removed and the first two points are moot.
 
 ### Kept on purpose (1 table)
 
@@ -426,9 +440,14 @@ route itself against the real erasure and ledger (the file store refuses, then a
     for an erasure.
 16. **`pnpm verify` is the check command of this repository** (`scripts/verify.sh`, named in
     `AGENTS.md`). It checks that every database URL is a local throwaway database before it
-    applies the migrations. `AGENTS.md` had been ignored because the development server writes a
-    block into it on every start; that is switched off in `next.config.ts` (`agentRules: false`)
-    and the advice of the block is carried in the file in our own words.
+    applies the migrations. The command is also named in `README.md` and is a script in
+    `package.json`. `AGENTS.md` had been ignored on purpose: `next dev` writes into a file of
+    that name on every start. What it writes is one managed block between two markers; it keeps
+    everything outside them, and it can be switched off. It is switched off here
+    (`agentRules: false` in `next.config.ts`, the option the development server reads before it
+    writes), the ignore rule is removed, and the advice of that block is carried in the file in
+    our own words. Not kept as an ignored file with the instructions elsewhere, because every
+    agent harness looks for `AGENTS.md` first.
 
 ## Open question for the owner
 

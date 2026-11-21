@@ -348,9 +348,11 @@
   the regular backups. Those keep the rows anyway: seven days on the server and up to thirty days
   in the two copies off the server, so until about 2026-12-21 (technical retention, not a legal
   duty to keep). The stored files have no such copy: once deleted in Storage Brain they are gone.
-  Recommended way once the branch above is deployed: "send again" for the Receipts delivery on
-  auth-brain's Erasures page, which runs the tested erasure and records it in the ledger, instead
-  of statements written by hand. Default until the owner answers: nothing is touched.
+  Recommended way once the branch above is deployed: deliver the erasure to Receipts once more
+  (the body auth-brain stored for that delivery, signed with the webhook secret through the secrets
+  proxy), which runs the tested erasure and records it in the ledger, instead of statements written
+  by hand. Auth-brain's "send again" cannot do this: it works only for a delivery that failed for
+  good, and this one was acknowledged. Default until the owner answers: nothing is touched.
   [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
 - [ ] Company erasure, what is not verified yet: whether Storage Brain removes a deleted file at
   once or after a grace period, and how long its own backups keep it; a run against a company with
@@ -358,7 +360,9 @@
   delivery finishes it: reasoned, not measured); how many stored uploads never became a receipt
   and so belong to no company; and that Receipts does not receive a person's erasure
   (`user.erased`), so a person's own Google connection (`google_sheets_credentials`) is removed by
-  nothing. [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
+  nothing. Also missing in auth-brain, needed after a database recovery: its Erasures page cannot
+  send an acknowledged delivery again, and its note on what Receipts erases (`suite-apps.ts`)
+  still describes contact data only. [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
 
 <!-- Decided features, ready to be worked on -->
 

@@ -278,7 +278,8 @@ export async function eraseCompanyRegister(
         await tx.selectOption.deleteMany({ where: { columnId: { in: columns.map((c) => c.id) } } });
         await tx.dtColumn.deleteMany({ where: { tableId: table.id } });
         await tx.dtView.deleteMany({ where: { tableId: table.id } });
-        await tx.dtTable.delete({ where: { id: table.id } });
+        // deleteMany: a second delivery running at the same time may have removed it already.
+        await tx.dtTable.deleteMany({ where: { id: table.id } });
       },
       { maxWait: 10_000, timeout: 60_000 },
     );

@@ -117,10 +117,15 @@ After every recovery, before the app serves users again:
 
 1. On auth-brain's admin Erasures page, list every company erasure completed
    after the time of the recovery point.
-2. Use "send again" for the Receipts delivery of each. The receiver is
-   repeat-safe and erases the restored rows again.
-3. Check that each answer was acknowledged and that `erasure_events` holds a
-   completed run for it.
+2. Deliver the erasure to Receipts again for each. The page's "send again"
+   works only for a delivery that failed for good; one that was acknowledged
+   cannot be sent again from there (roadmap). Until it can, send the signed
+   delivery by hand: the same body auth-brain stored for it (event id, company
+   id, workspace ids), signed with `RECEIPTS_ERASURE_WEBHOOK_SECRET` through
+   the secrets proxy, so the secret is never shown. The receiver is repeat-safe
+   and erases the restored rows again.
+3. Check that each answer was 200 and that `erasure_events` holds a completed
+   run for it.
 
 This is technical retention, not a legal one: backups rotate out after at most
 thirty days (plan `docs/plans/2026-11-21-company-erasure-register.md`).

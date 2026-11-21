@@ -88,9 +88,8 @@ None of this is a legal duty to keep. It is how the systems work, and it ends by
   So data erased on 2026-11-21 is in backups until about 2026-12-21, not about 2026-11-28. The
   data processing agreement (section 11.2) allows this: data in backups goes when the backup is
   replaced in the regular rotation, at the latest 90 days after the deletion. A restore from a
-  backup taken before an erasure brings the erased rows back; "send again" on auth-brain's
-  Erasures page then erases them again, and the ledger below is what tells an operator that a
-  company in a restored database was erased.
+  backup taken before an erasure brings the erased rows back; the erasure then has to be
+  delivered again (see "The erasure ledger", point 3).
 - **Storage Brain files.** The receipt files (images and PDF documents) live in Storage Brain,
   under one workspace of the Receipts application for all companies. Storage Brain's own erasure
   receiver therefore cannot tell which file belongs to which company: only Receipts can, through
@@ -198,6 +197,11 @@ A new table `erasure_events` (migration `0053_erasure_events`), one row per deli
 - `runs`: one entry per run with its time, its outcome, and either the counts of what it removed
   and the list of what was not erased, or the reason code of the failure.
 
+The counts of a run are what that run removed. A run that fails part way records its reason
+and no counts, although it may have removed contacts or some files before it stopped, so the
+recorded counts are a lower bound; the status "completed" is what says that the recount found
+nothing of the company.
+
 Ids, counts and reason codes only, never a name. The column is called `company_id` and not
 `auth_tenant_id` on purpose: the stamp marks rows an erasure removes, and this is the one row an
 erasure leaves behind.
@@ -209,9 +213,13 @@ What it is for:
 2. **A repeat that names fewer workspaces.** A run erases over every workspace the ledger knows
    for the company, so rows without a stamp are still reached when a later delivery names none.
 3. **After a restore.** A backup restored from before an erasure contains the erased company
-   again. The ledger of the restored database does not know the erasure, auth-brain's Erasures
-   page does: "send again" there erases it again. This is a step of the recovery runbook
-   (`docs/operations/production-recovery.md`, "After a recovery: erased companies come back").
+   again, and the ledger of the restored database does not know the erasure. Auth-brain's
+   Erasures page does, but its "send again" works only for a delivery that failed for good
+   (checked in auth-brain's `requeueDeadLetteredDelivery`): an acknowledged delivery cannot be
+   sent again from there today. Until it can, an operator sends the signed delivery again by
+   hand. Both are written down: the step in the recovery runbook
+   (`docs/operations/production-recovery.md`, "After a recovery: erased companies come back"),
+   the missing button on the roadmap.
 
 A run that cannot be recorded is not acknowledged (502): an erasure nobody can prove later is
 treated as not done.
@@ -235,7 +243,8 @@ treated as not done.
 - `uploads_never_attached_to_a_receipt`: cannot be assigned to a company.
 
 A non-2xx answer makes auth-brain send the delivery again (eight times with growing pauses, then
-it is shown as failed on the Erasures page, where a person can send it again). Every run is
+it is shown as failed on the Erasures page, where a person can send it again). A delivery that
+was acknowledged cannot be sent again from that page. Every run is
 repeat-safe and goes on where the last one stopped: a stored file that is already gone counts as
 removed, and a file's references go as soon as the file is gone.
 
@@ -314,7 +323,8 @@ exists?**
   `src/lib/erasure.ts` (ledger, reason codes, `notErased`), the route, migration
   `0053_erasure_events`. Tests: unit tests of the receiver and the route, eleven database tests.
 - Not done, each on the roadmap: the leftovers of the company erased on 2026-11-21 are still in
-  production (a decision of its own, nothing is deleted until the owner says yes to an inventory);
+  production (a decision of its own, nothing is deleted until the owner says yes to an inventory;
+  auth-brain will not send that delivery again by itself, because it was acknowledged);
   the open question above; Storage Brain's own delete behaviour and backups are unverified; no
   run against a company with many files; uploads that never became a receipt are not counted;
   `user.erased` is not received.

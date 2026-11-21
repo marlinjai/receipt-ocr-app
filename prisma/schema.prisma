@@ -305,6 +305,7 @@ model MealGuest {
 // marks rows an erasure removes.
 // `status`: received (a run started and did not finish), completed, failed.
 // `runs`: one entry per run, `{ at, outcome, counts?, notErased?, reason? }`.
+// A failed run records its reason and no counts, so the counts are a lower bound.
 model ErasureEvent {
   eventId      String    @id @map("event_id")
   kind         String

@@ -11,6 +11,13 @@ import type { ErasureCounts, ErasureLedger } from './erasure';
  * status of our answer, so the counts live here. Ids, counts and reason codes
  * only. A company erasure never deletes this table's rows.
  *
+ * The counts of a run are what THAT run removed. A run that fails part way
+ * records its reason and no counts, although it may have removed something
+ * (contacts, some stored files) before it stopped; the run that completes then
+ * counts only what was left. The sum of the recorded counts is therefore a
+ * lower bound of what was removed, and "completed" is what says that nothing
+ * of the company was left.
+ *
  * Every write is one statement, so two deliveries of the same event at the same
  * time cannot lose each other's entry.
  */

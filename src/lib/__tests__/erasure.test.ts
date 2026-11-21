@@ -3,12 +3,14 @@ import { createHmac } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import {
   ErasureEventMismatchError,
+  ErasureLeaseLostError,
   eraseCompanyContacts,
   exportCoversRegister,
   purgeExpiredRetainedGuests,
   receiveErasureDelivery,
   retainUntilFrom,
   type ErasureCounts,
+  type ErasureLease,
   type ErasureLedger,
   type RegisterHasher,
 } from '../erasure';
@@ -85,7 +87,7 @@ describe('receiveErasureDelivery (the decisions, before any data is touched)', (
     const lines: string[] = [];
     const body = delivery({ workspace_ids: ['ws_1', 'ws_2', 7] });
     const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, log: (l) => lines.push(l) });
-    expect(erase).toHaveBeenCalledWith('tnt_a', ['ws_1', 'ws_2']);
+    expect(erase).toHaveBeenCalledWith('tnt_a', ['ws_1', 'ws_2'], expect.any(Function));
     expect(res).toEqual({ status: 200, body: { ok: true, erased: COUNTS, notErased: [] } });
     expect(lines.join('\n')).toContain('evt_1');
     expect(lines.join('\n')).not.toContain('tnt_a');
@@ -117,11 +119,14 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
   function fakeLedger(over: Partial<ErasureLedger> = {}) {
     return {
       begin: vi.fn(async (e: { workspaceIds: readonly string[] }) => ({ workspaceIds: [...e.workspaceIds] })),
+      acquire: vi.fn(async (): Promise<ErasureLease | null> => LEASE),
+      busy: vi.fn(async () => {}),
       complete: vi.fn(async () => {}),
       fail: vi.fn(async () => {}),
       ...over,
     } satisfies ErasureLedger;
   }
+  const LEASE: ErasureLease = { token: 'lease-1', renew: vi.fn(async () => {}) };
   const FULL: ErasureCounts = {
     ...COUNTS,
     guestCopiesHeld: 4,
@@ -147,8 +152,9 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
     const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, ledger, log: () => {} });
     expect(res.status).toBe(200);
     expect(ledger.begin).toHaveBeenCalledWith({ eventId: 'evt_1', kind: 'tenant.erased', companyId: 'tnt_a', workspaceIds: ['ws_1'] });
-    expect(erase).toHaveBeenCalledWith('tnt_a', ['ws_1', 'ws_earlier']);
-    expect(ledger.complete).toHaveBeenCalledWith('evt_1', FULL);
+    expect(erase).toHaveBeenCalledWith('tnt_a', ['ws_1', 'ws_earlier'], expect.any(Function));
+    expect(ledger.acquire).toHaveBeenCalledWith('evt_1');
+    expect(ledger.complete).toHaveBeenCalledWith('evt_1', FULL, LEASE);
     expect(ledger.fail).not.toHaveBeenCalled();
   });
 
@@ -156,7 +162,7 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
     const ledger = fakeLedger();
     const body = delivery({ event_id: undefined });
     await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase: async () => COUNTS, ledger, log: () => {} });
-    expect(ledger.complete).toHaveBeenCalledWith('none:tnt_a', COUNTS);
+    expect(ledger.complete).toHaveBeenCalledWith('none:tnt_a', COUNTS, LEASE);
   });
 
   it('a ledger that cannot record the start answers 502 and nothing is erased', async () => {
@@ -188,10 +194,10 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
     ['StoredFileEraseError', {}, 'stored_file_not_removed', undefined, 502],
     ['StoredFileEraseError', { partial: { sharedContacts: 3 } }, 'stored_file_not_removed', { partial: { sharedContacts: 3 } }, 502],
     ['ErasureConflictError', { kind: 'rows_of_another_company', tables: ['dt_tables'] }, 'rows_of_another_company', { tables: ['dt_tables'] }, 502],
-    ['ErasureConflictError', { kind: 'rows_outside_named_workspaces', tables: ['tax_payments'] }, 'rows_outside_named_workspaces', { tables: ['tax_payments'] }, 502],
+    ['ErasureConflictError', { kind: 'rows_outside_named_workspaces', tables: ['tax_payments'], workspaces: ['ws_9'] }, 'rows_outside_named_workspaces', { tables: ['tax_payments'], workspaces: ['ws_9'] }, 502],
     ['ErasureChangedError', {}, 'changed_during_run', undefined, 502],
     ['ErasureIncompleteError', { remaining: { tax_payments: 2 } }, 'rows_remain', { remaining: { tax_payments: 2 } }, 502],
-    ['ErasureBusyError', {}, 'already_running', undefined, 409],
+    ['ErasureLeaseLostError', { partial: { sharedContacts: 1 } }, 'lease_lost', { partial: { sharedContacts: 1 } }, 502],
     ['TypeError', {}, 'failed', undefined, 502],
   ])('a failed run (%s) answers non-2xx with its reason code and is recorded as failed', async (name, extra, reason, detail, status) => {
     const ledger = fakeLedger();
@@ -202,9 +208,55 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
     const body = delivery({});
     const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, ledger, log: (l) => lines.push(l) });
     expect(res).toEqual({ status, body: { error: 'Erasure failed; will retry', reason } });
-    expect(ledger.fail).toHaveBeenCalledWith('evt_1', reason, detail);
+    expect(ledger.fail).toHaveBeenCalledWith('evt_1', reason, detail, LEASE);
     expect(ledger.complete).not.toHaveBeenCalled();
     expect(lines.join('\n')).not.toContain('Somebody');
+  });
+
+  it('another erasure at work: 409, nothing erased, noted as busy and neither failed nor completed', async () => {
+    const ledger = fakeLedger({ acquire: vi.fn(async () => null) });
+    const erase = vi.fn(async () => COUNTS);
+    const body = delivery({});
+    const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, ledger, log: () => {} });
+    expect(res).toEqual({ status: 409, body: { error: 'Erasure failed; will retry', reason: 'already_running' } });
+    expect(erase).not.toHaveBeenCalled();
+    expect(ledger.busy).toHaveBeenCalledWith('evt_1');
+    expect(ledger.fail).not.toHaveBeenCalled();
+    expect(ledger.complete).not.toHaveBeenCalled();
+  });
+
+  it('the checkpoint handed to the erasure renews the lease, and a lost lease stops the run', async () => {
+    const renew = vi.fn(async () => {});
+    const ledger = fakeLedger({ acquire: vi.fn(async () => ({ token: 't', renew })) });
+    const body = delivery({});
+    await receiveErasureDelivery({
+      rawBody: body, signature: signed(body), secret: SECRET, ledger, log: () => {},
+      erase: async (_t, _w, checkpoint) => {
+        await checkpoint();
+        await checkpoint();
+        return COUNTS;
+      },
+    });
+    expect(renew).toHaveBeenCalledTimes(2);
+
+    renew.mockRejectedValue(new ErasureLeaseLostError());
+    const res = await receiveErasureDelivery({
+      rawBody: body, signature: signed(body), secret: SECRET, ledger, log: () => {},
+      erase: async (_t, _w, checkpoint) => {
+        await checkpoint();
+        return COUNTS;
+      },
+    });
+    expect(res).toEqual({ status: 502, body: { error: 'Erasure failed; will retry', reason: 'lease_lost' } });
+  });
+
+  it('a lease that cannot be taken at all answers 502 and nothing is erased', async () => {
+    const ledger = fakeLedger({ acquire: vi.fn(async () => { throw new Error('database gone'); }) });
+    const erase = vi.fn(async () => COUNTS);
+    const body = delivery({});
+    const res = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, ledger, log: () => {} });
+    expect(res).toEqual({ status: 502, body: { error: 'Erasure failed; will retry', reason: 'ledger_unavailable' } });
+    expect(erase).not.toHaveBeenCalled();
   });
 
   it('a ledger that cannot record the failure does not turn the 502 into an exception', async () => {

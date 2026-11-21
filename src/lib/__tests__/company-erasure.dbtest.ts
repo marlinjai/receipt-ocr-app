@@ -1,13 +1,12 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { safeTableName } from '@marlinjai/data-table-adapter-shared';
 import { createWorkspace, db, plainMealReceipt, type TestWorkspace } from '../../../test/db-helpers';
 import { ensureContactsLayout } from '../../../test/contacts-db';
 import { companyContacts, contactsDb } from '../contacts/db';
 import { SharedContactStore } from '../contacts/shared-store';
 import {
-  ErasureBusyError,
   ErasureChangedError,
   ErasureConflictError,
   ErasureIncompleteError,
@@ -277,7 +276,7 @@ describe('eraseCompany against the real databases', () => {
     const error = await eraseCompany(db, c.tenantId, c.workspaceIds, d.all).catch((e) => e);
 
     expect(error).toBeInstanceOf(ErasureConflictError);
-    expect(error).toMatchObject({ kind: 'rows_of_another_company', tables: ['workspace_notes'] });
+    expect(error).toMatchObject({ kind: 'rows_of_another_company', tables: ['workspace_notes'], workspaces: [c.first.workspaceId] });
     expect(d.removed).toEqual([]);
     expect(await leftOf(c)).toMatchObject({ physicalTables: 2, dtTables: 2, reviews: 3, payments: 1, notes: 1, exports: 1 });
     expect((await companyContacts(c.tenantId).list({ includeArchived: true })).length).toBe(1);
@@ -373,7 +372,8 @@ describe('the stamps and the delivery must agree', () => {
     const error = await eraseCompany(db, c.tenantId, [c.second.workspaceId], d.all).catch((e) => e);
 
     expect(error).toBeInstanceOf(ErasureConflictError);
-    expect(error).toMatchObject({ kind: 'rows_outside_named_workspaces' });
+    // The workspace the rows lie in is named, so nobody has to query for it.
+    expect(error).toMatchObject({ kind: 'rows_outside_named_workspaces', workspaces: [c.first.workspaceId] });
     expect((error as ErasureConflictError).tables).toEqual(expect.arrayContaining(['dt_tables', 'receipt_reviews', 'tax_payments', 'workspace_notes']));
     expect(d.removed).toEqual([]);
     expect(await leftOf(c)).toMatchObject({ physicalTables: 2, dtTables: 2, fileRefs: 3, reviews: 3, payments: 1, notes: 1, importConfigs: 1, exports: 1 });
@@ -407,39 +407,7 @@ describe('the stamps and the delivery must agree', () => {
   });
 });
 
-describe('one run per company at a time', () => {
-  it('a second run while the first is at work is refused and touches nothing; the first finishes and counts every file once', async () => {
-    const c = await company();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => (release = resolve));
-    let entered!: () => void;
-    const atWork = new Promise<void>((resolve) => (entered = resolve));
-    const first = deps({
-      deleteStoredFile: vi.fn(async () => {
-        entered();
-        await gate;
-      }),
-    });
-    const running = eraseCompany(db, c.tenantId, c.workspaceIds, first.all);
-    await atWork;
-
-    const second = deps();
-    await expect(eraseCompany(db, c.tenantId, c.workspaceIds, second.all)).rejects.toBeInstanceOf(ErasureBusyError);
-    expect(second.removed).toEqual([]);
-    expect(second.all.endBankConnections).not.toHaveBeenCalled();
-
-    // Another company is not held up by this company's lock.
-    const other = await company();
-    expect((await eraseCompany(db, other.tenantId, other.workspaceIds, deps().all)).register).toMatchObject({ receipts: 3 });
-
-    release();
-    const counts = await running;
-    expect(counts.register).toMatchObject({ tables: 2, receipts: 3, storedFiles: 3, storedFilesAlreadyGone: 0 });
-    expect(await leftOf(c)).toEqual(NOTHING);
-    // The lock is free again.
-    expect((await eraseCompany(db, c.tenantId, c.workspaceIds, deps().all)).register).toMatchObject({ tables: 0, storedFiles: 0 });
-  });
-
+describe('files the store no longer has', () => {
   it('a file the store no longer has is counted apart, not as removed again', async () => {
     const c = await company();
     const d = deps({ deleteStoredFile: vi.fn(async (fileId: string) => (fileId === c.files[0] ? ('already_gone' as const) : ('removed' as const))) });
@@ -486,6 +454,31 @@ describe('what changes while a run goes on', () => {
     expect(counts.register?.storedFiles).toBeGreaterThanOrEqual(1);
     expect(await leftOf(c)).toEqual(NOTHING);
     expect(await db.dtFile.count({ where: { fileId: late } })).toBe(0);
+  });
+});
+
+describe('a file reference that lands after its table is gone', () => {
+  it('a writer that waited for the table to go leaves a reference to a row that no longer exists: its stored file and the reference are removed in the same run', async () => {
+    const c = await company();
+    const late = `file-${randomUUID()}`;
+    const image = (await c.first.adapter.getColumns(c.first.tableId)).find((col) => col.name === 'Receipt Image')!;
+    let landed = false;
+    const d = deps();
+    const counts = await eraseCompany(db, c.tenantId, c.workspaceIds, {
+      ...d.all,
+      // The step boundary after the last table went: the moment such a writer gets through.
+      checkpoint: async () => {
+        if (landed || (await db.dtTable.count({ where: { id: { in: [c.first.tableId, c.second.tableId] } } })) > 0) return;
+        landed = true;
+        await db.dtFile.create({ data: { rowId: c.receipts[0].rowId, columnId: image.id, fileId: late, fileUrl: `/api/files/${late}`, originalName: 'beleg.jpg', mimeType: 'image/jpeg' } });
+      },
+    });
+
+    expect(landed).toBe(true);
+    expect(d.removed).toContain(late);
+    expect(counts.register).toMatchObject({ tables: 2, receipts: 3, storedFiles: 4 });
+    expect(await db.dtFile.count({ where: { fileId: late } })).toBe(0);
+    expect(await leftOf(c)).toEqual(NOTHING);
   });
 });
 
@@ -582,14 +575,14 @@ describe('a signed delivery, with the real ledger', () => {
   const secret = randomBytes(16).toString('hex');
   const sign = (body: string) => `sha256=${createHmac('sha256', secret).update(body, 'utf8').digest('hex')}`;
 
-  function deliver(c: { tenantId: string }, eventId: string, workspaceIds: string[], d: CompanyErasureDeps) {
+  function deliver(c: { tenantId: string }, eventId: string, workspaceIds: string[], d: CompanyErasureDeps, options: { db?: typeof db; ledger?: ReturnType<typeof erasureLedger> } = {}) {
     const rawBody = JSON.stringify({ event_id: eventId, kind: 'tenant.erased', tenant_id: c.tenantId, workspace_ids: workspaceIds, requested_at: '2026-11-21T00:00:00Z' });
     return receiveErasureDelivery({
       rawBody,
       signature: sign(rawBody),
       secret,
-      ledger: erasureLedger(db),
-      erase: (tenantId, ids) => eraseCompany(db, tenantId, ids, d),
+      ledger: options.ledger ?? erasureLedger(options.db ?? db),
+      erase: (tenantId, ids, checkpoint) => eraseCompany(options.db ?? db, tenantId, ids, { ...d, checkpoint }),
       log: () => {},
     });
   }
@@ -665,24 +658,141 @@ describe('a signed delivery, with the real ledger', () => {
     expect(await db.erasureEvent.findUniqueOrThrow({ where: { eventId } })).toMatchObject({ companyId: c.tenantId, attempts: 1, workspaceIds: [...c.workspaceIds].sort() });
   });
 
-  it('a delivery while a run for the company is at work answers 409 and is recorded; the run in progress completes', async () => {
-    const c = await company();
-    const eventId = `evt-${randomUUID()}`;
+  /** A file store that waits until it is told to go on, so a run can be caught in the middle. */
+  function gatedStore() {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     let entered!: () => void;
     const atWork = new Promise<void>((resolve) => (entered = resolve));
-    const slow = deps({ deleteStoredFile: vi.fn(async () => { entered(); await gate; }) });
-    const running = deliver(c, eventId, c.workspaceIds, slow.all);
-    await atWork;
+    const store = deps({ deleteStoredFile: vi.fn(async () => { entered(); await gate; }) });
+    return { store, atWork, release };
+  }
 
-    expect(await deliver(c, eventId, c.workspaceIds, deps().all)).toEqual({ status: 409, body: { error: 'Erasure failed; will retry', reason: 'already_running' } });
+  it('a delivery while an erasure is at work answers 409 and touches nothing; the event keeps its status, and the run in progress completes', async () => {
+    const c = await company();
+    const eventId = `evt-${randomUUID()}`;
+    const first = gatedStore();
+    const running = deliver(c, eventId, c.workspaceIds, first.store.all);
+    await first.atWork;
 
-    release();
+    const second = deps();
+    expect(await deliver(c, eventId, c.workspaceIds, second.all)).toEqual({ status: 409, body: { error: 'Erasure failed; will retry', reason: 'already_running' } });
+    expect(second.removed).toEqual([]);
+    expect(second.all.endBankConnections).not.toHaveBeenCalled();
+    // The busy answer is noted, but the event is neither failed nor completed: the first run still decides that.
+    const during = await db.erasureEvent.findUniqueOrThrow({ where: { eventId } });
+    expect(during).toMatchObject({ status: 'received', attempts: 2 });
+    expect(during.leaseToken).not.toBeNull();
+    expect((during.runs as Array<{ outcome: string }>).map((r) => r.outcome)).toEqual(['busy']);
+
+    first.release();
     expect((await running).status).toBe(200);
     const row = await db.erasureEvent.findUniqueOrThrow({ where: { eventId } });
-    expect(row).toMatchObject({ status: 'completed', attempts: 2 });
-    expect((row.runs as Array<{ outcome: string; reason?: string }>).map((r) => [r.outcome, r.reason])).toEqual([['failed', 'already_running'], ['completed', undefined]]);
+    expect(row).toMatchObject({ status: 'completed', attempts: 2, leaseToken: null, leaseUntil: null });
+    const runs = row.runs as Array<{ outcome: string; counts?: { register: { storedFiles: number; storedFilesAlreadyGone: number } } }>;
+    expect(runs.map((r) => r.outcome)).toEqual(['busy', 'completed']);
+    expect(runs[1].counts?.register).toMatchObject({ storedFiles: 3, storedFilesAlreadyGone: 0 });
+  });
+
+  it('several companies erased at once on a small connection pool: one works, the others answer 409 at once, nothing waits for a connection, and each completes on its retry', async () => {
+    // Two connections for everything: with a lock that kept one open per run, three runs could not all proceed.
+    const url = new URL(process.env.TEST_DATABASE_URL!);
+    url.searchParams.set('connection_limit', '2');
+    url.searchParams.set('pool_timeout', '5');
+    const small = new PrismaClient({ datasourceUrl: url.toString() });
+    try {
+      const companies = [await company(), await company(), await company()];
+      const events = companies.map(() => `evt-${randomUUID()}`);
+      const first = gatedStore();
+      const running = deliver(companies[0], events[0], companies[0].workspaceIds, first.store.all, { db: small });
+      await first.atWork;
+
+      const started = Date.now();
+      const others = await Promise.all([1, 2].map((i) => deliver(companies[i], events[i], companies[i].workspaceIds, deps().all, { db: small })));
+      expect(others.map((r) => [r.status, r.body.reason])).toEqual([[409, 'already_running'], [409, 'already_running']]);
+      expect(Date.now() - started).toBeLessThan(4000);
+      // The app can still be used meanwhile: an ordinary query gets a connection.
+      expect(await small.dtTable.count({ where: { id: companies[1].first.tableId } })).toBe(1);
+
+      first.release();
+      expect((await running).status).toBe(200);
+      // The retries, as auth-brain sends them later, one after the other.
+      for (const i of [1, 2]) expect((await deliver(companies[i], events[i], companies[i].workspaceIds, deps().all, { db: small })).status).toBe(200);
+      for (const c of companies) expect(await leftOf(c)).toEqual(NOTHING);
+      const rows = await db.erasureEvent.findMany({ where: { eventId: { in: events } }, select: { status: true, leaseToken: true } });
+      expect(rows).toEqual([1, 2, 3].map(() => ({ status: 'completed', leaseToken: null })));
+    } finally {
+      await small.$disconnect();
+    }
+  });
+
+  it('a lease that ran out and was taken by another run stops the first at its next step: recorded as failed with what it had removed, and the other run\'s lease is left alone', async () => {
+    const c = await company();
+    const other = await company();
+    const eventId = `evt-${randomUUID()}`;
+    const otherEvent = `evt-${randomUUID()}`;
+    const ledger = erasureLedger(db);
+    await ledger.begin({ eventId: otherEvent, kind: 'tenant.erased', companyId: other.tenantId, workspaceIds: other.workspaceIds });
+    let taken = false;
+    const d = deps({
+      deleteStoredFile: vi.fn(async () => {
+        if (taken) return;
+        taken = true;
+        // The first run stalls past its lease (set into the past here), and another delivery takes over.
+        await db.$executeRaw`UPDATE erasure_events SET lease_until = (now() AT TIME ZONE 'UTC') - interval '1 second' WHERE event_id = ${eventId}`;
+        expect(await ledger.acquire(otherEvent)).not.toBeNull();
+      }),
+    });
+
+    const res = await deliver(c, eventId, c.workspaceIds, d.all);
+
+    expect(res).toEqual({ status: 502, body: { error: 'Erasure failed; will retry', reason: 'lease_lost' } });
+    // It stopped before any table went.
+    expect(await db.dtTable.count({ where: { id: { in: [c.first.tableId, c.second.tableId] } } })).toBe(2);
+    const row = await db.erasureEvent.findUniqueOrThrow({ where: { eventId } });
+    expect(row.status).toBe('failed');
+    const runs = row.runs as Array<{ outcome: string; reason: string; detail: { partial: { sharedContacts: number; register: { storedFiles: number } } } }>;
+    expect(runs[0]).toMatchObject({ outcome: 'failed', reason: 'lease_lost' });
+    expect(runs[0].detail.partial.sharedContacts).toBe(1);
+    expect(runs[0].detail.partial.register.storedFiles).toBeGreaterThanOrEqual(1);
+    // The run that took over still holds its lease.
+    expect((await db.erasureEvent.findUniqueOrThrow({ where: { eventId: otherEvent } })).leaseToken).not.toBeNull();
+    // Give it back so later tests of this file find no lease in force.
+    await db.erasureEvent.update({ where: { eventId: otherEvent }, data: { leaseToken: null, leaseUntil: null } });
+  });
+
+  it('a lease that runs out after the last step does not lose the run: the completion and its counts are recorded', async () => {
+    const c = await company();
+    const eventId = `evt-${randomUUID()}`;
+    const ledger = erasureLedger(db);
+    // The lease runs out while the run counts what is left (after its last checkpoint).
+    const expiring = { ...deps().all, countContacts: async () => {
+      await db.$executeRaw`UPDATE erasure_events SET lease_until = (now() AT TIME ZONE 'UTC') - interval '1 second' WHERE event_id = ${eventId}`;
+      return 0;
+    } };
+
+    const res = await deliver(c, eventId, c.workspaceIds, expiring, { ledger });
+
+    expect(res.status).toBe(200);
+    const row = await db.erasureEvent.findUniqueOrThrow({ where: { eventId } });
+    expect(row).toMatchObject({ status: 'completed', leaseToken: null });
+    const runs = row.runs as Array<{ outcome: string; counts: { register: { receipts: number; storedFiles: number } } }>;
+    expect(runs).toHaveLength(1);
+    expect(runs[0].counts.register).toMatchObject({ receipts: 3, storedFiles: 3 });
+    expect(await leftOf(c)).toEqual(NOTHING);
+  });
+
+  it('a lease nobody renewed runs out by itself: a run whose process died does not block erasures for good', async () => {
+    const c = await company();
+    const dead = `evt-${randomUUID()}`;
+    const ledger = erasureLedger(db);
+    await ledger.begin({ eventId: dead, kind: 'tenant.erased', companyId: `test-tenant-${randomUUID()}`, workspaceIds: [] });
+    expect(await ledger.acquire(dead)).not.toBeNull();
+    const eventId = `evt-${randomUUID()}`;
+    expect((await deliver(c, eventId, c.workspaceIds, deps().all)).status).toBe(409);
+
+    await db.$executeRaw`UPDATE erasure_events SET lease_until = (now() AT TIME ZONE 'UTC') - interval '1 second' WHERE event_id = ${dead}`;
+    expect((await deliver(c, eventId, c.workspaceIds, deps().all)).status).toBe(200);
   });
 
   it('rows that remain answer 502 "rows_remain" with the table and count in the ledger', async () => {
@@ -706,7 +816,7 @@ describe('a signed delivery, with the real ledger', () => {
 
     expect(res).toEqual({ status: 502, body: { error: 'Erasure failed; will retry', reason: 'rows_of_another_company' } });
     const row = await db.erasureEvent.findUniqueOrThrow({ where: { eventId } });
-    expect(row.runs).toEqual([expect.objectContaining({ outcome: 'failed', reason: 'rows_of_another_company', detail: { tables: ['workspace_notes'] } })]);
+    expect(row.runs).toEqual([expect.objectContaining({ outcome: 'failed', reason: 'rows_of_another_company', detail: { tables: ['workspace_notes'], workspaces: [c.first.workspaceId] } })]);
     expect(await db.dtTable.count({ where: { id: c.second.tableId } })).toBe(1);
     expect(await db.dtTable.count({ where: { id: c.first.tableId } })).toBe(1);
   });

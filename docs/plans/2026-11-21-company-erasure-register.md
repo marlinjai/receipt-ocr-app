@@ -155,11 +155,11 @@ and they differ:
 - Rows there WITHOUT a stamp are not seen at all: nothing ties them to the company, neither for
   the erasure nor for the recount, and the answer is 200. This is exactly what production
   holds for the company erased on 2026-11-21 (read-only look, 2026-11-21): the stored delivery
-  names one workspace, `019fa320-8e08-7ebb-8e0e-c9faa6738c68`, the only one still live; the
-  second leftover receipts table (empty, with its columns and views, no stamp) lies in
-  `019ee142-44af-786d-9366-a705b7607f86`, deleted earlier and therefore not named. The stored
-  body sent again as it is would leave that table behind. The delivery for this company has to
-  be built by hand with both workspace ids (roadmap, decision line).
+  names one workspace, the only one still live; the second leftover receipts table (empty, with
+  its columns and views, no stamp) lies in a workspace deleted earlier and therefore not named.
+  The stored body sent again as it is would leave that table behind. The delivery for this
+  company has to be built by hand with both workspace ids. The ids are kept in two places only:
+  the roadmap decision line and the known-case section of `docs/operations/company-erasure.md`.
 
 The clean fix is in auth-brain: name the company's deleted workspaces in the delivery too. It is
 being built on the auth-brain branch `fix/erasure-invitations-and-coverage` and removes this
@@ -281,8 +281,8 @@ A new table `erasure_events` (migration `0053_erasure_events`), one row per deli
   and the list of what was not erased, or the reason code of the failure with what the run had
   removed before it stopped.
 
-What the counts mean. Every run records what that run removed. Only one run per company works
-at a time (see "One run at a time"), and a stored file an earlier run already removed is counted
+What the counts mean. Every run records what that run removed. Only one erasure works at a
+time (see "One erasure at a time"), and a stored file an earlier run already removed is counted
 apart (`storedFilesAlreadyGone`), so the runs of an event add up without counting anything
 twice. One case is not recorded: a run whose process died writes nothing, so the sum can be too
 low, never too high. The status "completed" is what says that the recount found nothing of the
@@ -323,11 +323,12 @@ treated as not done.
 | --- | --- | --- |
 | Everything of the company is gone, or only held guest names remain | 200 | `erased` (counts per kind and per table) and `notErased` |
 | The body does not say what kind of event it is | 400 | nothing is erased |
-| Another run for the same company is at work | 409 | `reason: already_running`; this delivery touched nothing |
+| Another erasure (of any company) is at work | 409 | `reason: already_running`; this delivery touched nothing, the event keeps its status |
+| The run's lease ran out or was taken | 502 | `reason: lease_lost`; the run stopped at its next step |
 | The event id is recorded for another company | 409 | `reason: event_of_another_company`; nothing was erased |
 | The file store refused a file | 502 | `reason: stored_file_not_removed` |
-| A named workspace holds rows stamped with another company | 502 | `reason: rows_of_another_company`; nothing was erased |
-| Rows with the company's stamp lie in a workspace the delivery does not name | 502 | `reason: rows_outside_named_workspaces`; nothing was erased |
+| A named workspace holds rows stamped with another company | 502 | `reason: rows_of_another_company`; nothing was erased; the ledger names the tables and the workspace ids |
+| Rows with the company's stamp lie in a workspace the delivery does not name | 502 | `reason: rows_outside_named_workspaces`; nothing was erased; the ledger names the tables and the workspace ids |
 | A file was attached to a receipt of the company while the run went on | 502 | `reason: changed_during_run`; the next run removes it |
 | The recount after the run still finds something of the company | 502 | `reason: rows_remain` |
 | The ledger cannot be written | 502 | `reason: ledger_unavailable` |
@@ -354,25 +355,56 @@ was acknowledged cannot be sent again from that page. Every run is
 repeat-safe and goes on where the last one stopped: a stored file that is already gone is not an
 error, and a file's references go as soon as the file is gone.
 
-### One run at a time
+### One erasure at a time
 
 Auth-brain waits ten seconds for an answer and then sends the delivery again. A company with
 many stored files takes longer, so the second delivery can arrive while the first run is still
-at work. Each run therefore holds a lock for its company (a Postgres advisory lock, held by one
-open transaction, so it ends with the run and also when the process dies). A delivery that finds
-the lock taken answers 409 and touches nothing; auth-brain tries again later, by which time the
-first run has finished and the retry finds nothing left and answers 200. That a run continues
-after auth-brain has hung up is reasoned from how the server works, not measured with a large
-company; see the roadmap.
+at work. And when an organization with several companies is deleted, one delivery per company
+arrives at the same moment.
+
+Only one erasure works at a time in the whole app. A run takes a lease before it touches
+anything: two columns on the event's row in the ledger (`lease_token`, `lease_until`), taken in
+one short step that also checks that no other event holds a lease in force. A delivery that
+finds one in force answers 409 and touches nothing; it is noted in the ledger as "busy" without
+changing the event's status. Auth-brain tries again later, by which time the run has finished.
+
+The lease is not a database lock on purpose. A lock is held by a database connection that stays
+open for the whole run, while the run's work needs further connections from the same small pool.
+Several erasures arriving together would each hold one and wait for another until the app has
+none left, and ordinary requests would fail with them. A lease costs no connection while it is held.
+
+A run renews its lease between its steps (before each batch of files, before each table, before
+each further step). A lease that is not renewed runs out after three minutes, so a run whose
+process died does not block erasures for good. A run that finds its lease gone at a step
+boundary stops there (`lease_lost`) and records what it had removed; the next delivery goes on.
+Once everything is removed there is no further boundary: the run counts what is left and records
+its completion with its counts, also when the lease ran out in that last moment.
+
+That a run continues after auth-brain has hung up is reasoned from how the server works, not
+measured with a large company; see the roadmap. The price of one at a time: when many companies
+are erased together, the later ones are retried by auth-brain with growing pauses and complete
+minutes later, not at once.
 
 ### What changes while a run goes on
 
 The erased company's members can no longer open Receipts (auth-brain revoked their access before it
-sent the delivery), so writes during a run are unlikely. They are still handled: each receipts
-table is locked and its rows are read again inside the transaction that removes it, so a
-receipt written after the first listing goes with the table; and a file reference that appears
-after the files were removed stops the run before that table is touched, because it names a
-stored file nobody has removed yet.
+sent the delivery), so writes during a run are unlikely. They are still handled:
+
+- Each receipts table is locked and its rows are read again inside the transaction that removes
+  it, so a receipt written after the first listing goes with the table.
+- File references live in a table of their own. Writers to it wait while a table's transaction
+  runs, so no reference can appear between the check and the delete. A reference that is there
+  at the check and names a file nobody removed stops the run before that table is touched
+  (`changed_during_run`); the next run removes it.
+- A writer that waited lands its reference after the table is gone. Before the recount the run
+  therefore looks once more for references to the rows it removed, and removes those stored
+  files and references too.
+- What remains open, accepted: a reference written after that last look, in the instant before
+  the recount, is found by the recount and fails the run (`rows_remain`), but the repeat no
+  longer knows the row ids and would not find it again. It needs a write by a member of a
+  company that no longer has access, in a window of milliseconds, so it is documented here and
+  not built against. The stored file would be an upload without a receipt, which the answer
+  already names as something an erasure cannot assign.
 
 ## Four paths (stateful-flow standard)
 
@@ -390,7 +422,9 @@ stored file nobody has removed yet.
 Each is a test in `src/lib/__tests__/company-erasure.dbtest.ts` (real database, real table
 layout, a stand-in for the file store), together with: another company keeps everything; a file
 a living receipt elsewhere shows is kept and a stray reference keeps nothing; rows without a
-stamp need the workspace ids; stamped rows in an unnamed workspace stop the run, also when no
+stamp need the workspace ids; several companies erased at once on a pool of two connections;
+a lease that is lost, one that runs out at the very end, one nobody renewed; a file reference
+that lands after its table is gone; stamped rows in an unnamed workspace stop the run, also when no
 workspace is named; two companies that share an account, erasing either (in
 `src/lib/tax/payments/__tests__/erasure-shares.dbtest.ts`); two runs at
 once; a table in the older row layout; a receipt and a file that appear during a run; a held
@@ -442,8 +476,11 @@ route itself against the real erasure and ledger (the file store refuses, then a
     has read which stored files they name. Here a failed read stops the run, and each table goes in
     one transaction. If the package gains a strict variant, switch to it.
 
-12. **One run per company at a time, by a database lock; a second delivery answers 409.** Simpler
-    and safer than making two runs agree on who removes which file.
+12. **One erasure at a time in the whole app, by a lease on the ledger row; a delivery that
+    finds one at work answers 409.** Simpler and safer than making two runs agree on who removes
+    which file, and a lease holds no database connection (see "One erasure at a time"). A first
+    version used a database lock per company; the second review showed that several erasures
+    arriving together could use up the app's connections that way.
 13. **A bank session that cannot be closed does not fail the erasure, it is reported.** The
     connection is removed here, so nothing reads the account any more, and the consent at the
     bank ends by itself. Failing would block the erasure on a third party being reachable.
@@ -498,6 +535,11 @@ migration `0053_erasure_events`, and the decision on the leftovers of 2026-11-21
   did not name (now: it stops). Also from the review: one run per company at a time, the rows
   read again before a table goes, a wider recount including the contacts database, bank sessions
   reported, stray file references, the event kind required, the ledger tied to one company.
+- 2026-11-21: a second look by the reviewer, 7 findings, all fixed. The lock that kept a
+  database connection open for a whole run is replaced by a lease on the ledger row (one erasure
+  at a time in the whole app); a lost lease stops a run at its next step and a completion is
+  always recorded with its counts; a conflict names the workspace ids; file references are
+  locked during a table's removal and looked for once more afterwards.
 - Not done, each on the roadmap: the leftovers of the company erased on 2026-11-21 are still in
   production (a decision of its own, nothing is deleted until the owner says yes;
   auth-brain will not send that delivery again by itself, because it was acknowledged);

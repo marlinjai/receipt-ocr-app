@@ -16,7 +16,8 @@ const eraseCompany = vi.fn();
 const endCompanyBankConnections = vi.fn();
 const endCompanyAccountShares = vi.fn();
 const eraseStoredFile = vi.fn();
-const ledger = { begin: vi.fn(), complete: vi.fn(), fail: vi.fn() };
+const ledger = { begin: vi.fn(), acquire: vi.fn(), busy: vi.fn(), complete: vi.fn(), fail: vi.fn() };
+const lease = { token: 'lease-1', renew: vi.fn() };
 
 vi.mock('next/server', () => ({ NextResponse: { json: (body: unknown, init?: ResponseInit) => Response.json(body, init) } }));
 vi.mock('@/lib/prisma', () => ({ prisma: { marker: 'prisma' } }));
@@ -38,10 +39,13 @@ beforeEach(() => {
   endCompanyAccountShares.mockResolvedValue({ shares: 1, links: 2, records: 3 });
   eraseStoredFile.mockResolvedValue('removed');
   ledger.begin.mockImplementation(async (e: { workspaceIds: string[] }) => ({ workspaceIds: e.workspaceIds }));
+  ledger.acquire.mockResolvedValue(lease);
+  lease.renew.mockResolvedValue(undefined);
   ledger.complete.mockResolvedValue(undefined);
   ledger.fail.mockResolvedValue(undefined);
   // The stand-in runs the steps the route hands in, so the test sees what the route wired.
   eraseCompany.mockImplementation(async (_db: unknown, tenantId: string, workspaceIds: string[], deps: CompanyErasureDeps) => {
+    await deps.checkpoint?.();
     const bank = await deps.endBankConnections(tenantId, workspaceIds);
     const shares = await deps.endAccountShares(tenantId, workspaceIds);
     await deps.deleteStoredFile('file-1');
@@ -84,7 +88,9 @@ describe('POST /api/internal/erasure (the wiring)', () => {
     expect(answer.erased).toMatchObject({ bankConnections: 1, accountShares: 1, crossCompanyLinks: 2, crossCompanyRecords: 3, register: { receipts: 6, storedFiles: 1 } });
     expect(answer.notErased).toEqual([{ what: 'database_backups', days: 30 }]);
     expect(ledger.begin).toHaveBeenCalledWith({ eventId: 'e1', kind: 'tenant.erased', companyId: 'tenant-x', workspaceIds: ['ws-x'] });
-    expect(ledger.complete).toHaveBeenCalledWith('e1', expect.objectContaining({ accountShares: 1 }));
+    expect(ledger.complete).toHaveBeenCalledWith('e1', expect.objectContaining({ accountShares: 1 }), lease);
+    // The route hands the erasure the checkpoint that renews the lease between its steps.
+    expect(lease.renew).toHaveBeenCalledTimes(1);
     const line = log.mock.calls.flat().join(' ');
     expect(line).toContain('1 account shares (2 links and 3 other records between companies removed)');
     expect(line).toContain('removed 1 receipts tables with 6 rows, 1 stored files');
@@ -96,7 +102,7 @@ describe('POST /api/internal/erasure (the wiring)', () => {
     endCompanyAccountShares.mockRejectedValue(new Error('database gone'));
     const res = await POST(signed(JSON.stringify({ kind: 'tenant.erased', tenant_id: 'tenant-x', workspace_ids: [], event_id: 'e2' })) as never);
     expect(res.status).toBe(502);
-    expect(ledger.fail).toHaveBeenCalledWith('e2', 'failed', undefined);
+    expect(ledger.fail).toHaveBeenCalledWith('e2', 'failed', undefined, lease);
     expect(ledger.complete).not.toHaveBeenCalled();
     log.mockRestore();
   });

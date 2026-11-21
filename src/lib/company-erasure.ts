@@ -10,8 +10,10 @@ import { stampedModels, type StampedModel } from './workspace-move';
  * auth-brain's signed `tenant.erased` (plan
  * docs/plans/2026-11-21-company-erasure-register.md).
  *
- * `eraseCompany` runs the steps in this order, under one lock per company
- * (a second run for the same company at the same time is refused, `ErasureBusyError`):
+ * `eraseCompany` runs the steps in this order. Only one erasure works at a time
+ * in the whole app: the caller holds a lease for the run (erasure-ledger.ts) and
+ * hands in `checkpoint`, which is called between the steps and stops the run
+ * when the lease is gone:
  *
  * 1. Nothing is touched while the stamps and the delivery disagree
  *    (`ErasureConflictError`): a row in a named workspace carries the stamp of
@@ -110,19 +112,14 @@ export function classifyModels(
 export class ErasureConflictError extends Error {
   readonly kind: 'rows_of_another_company' | 'rows_outside_named_workspaces';
   readonly tables: string[];
-  constructor(kind: ErasureConflictError['kind'], tables: string[]) {
+  /** The workspaces the offending rows lie in (ids only, at most `CONFLICT_WORKSPACES_NAMED`). */
+  readonly workspaces: string[];
+  constructor(kind: ErasureConflictError['kind'], tables: string[], workspaces: string[] = []) {
     super(`company erasure: ${kind}`);
     this.name = 'ErasureConflictError';
     this.kind = kind;
     this.tables = tables;
-  }
-}
-
-/** Another run for the same company is going on. Nothing was touched by this one. */
-export class ErasureBusyError extends Error {
-  constructor() {
-    super('company erasure: another run for this company is going on');
-    this.name = 'ErasureBusyError';
+    this.workspaces = workspaces;
   }
 }
 
@@ -184,6 +181,11 @@ export interface CompanyErasureDeps {
   deleteStoredFile: (fileId: string) => Promise<'removed' | 'already_gone' | void>;
   endBankConnections: (tenantId: string, workspaceIds: readonly string[]) => Promise<{ connections: number; sessionsLeftOpen: number }>;
   endAccountShares: (tenantId: string, workspaceIds: readonly string[]) => Promise<{ shares: number; links: number; records: number }>;
+  /**
+   * Called between the steps of a run. Rejects when the run may not go on (its lease is gone);
+   * the run then stops there, and what it removed so far is reported as `partial`.
+   */
+  checkpoint?: () => Promise<void>;
   /** How many contacts the company still has in the shared contacts database. Injected in tests. */
   countContacts?: (tenantId: string) => Promise<number>;
   now?: Date;
@@ -194,6 +196,7 @@ type Db = PrismaClient | Prisma.TransactionClient;
 
 interface CountDelegate {
   count(args: { where: Record<string, unknown> }): Promise<number>;
+  findMany(args: { where: Record<string, unknown>; select: Record<string, true>; distinct: string[]; take: number }): Promise<Array<Record<string, string>>>;
   deleteMany(args: { where: Record<string, unknown> }): Promise<{ count: number }>;
 }
 
@@ -234,51 +237,37 @@ export function companyRowsWhere(model: Pick<StampedModel, 'workspaceField'>, te
  */
 export async function assertStampsMatchDelivery(db: Db, tenantId: string, workspaceIds: readonly string[]): Promise<void> {
   const ids = [...workspaceIds];
-  const foreign: string[] = [];
-  const outside: string[] = [];
+  const foreign = { tables: [] as string[], workspaces: new Set<string>() };
+  const outside = { tables: [] as string[], workspaces: new Set<string>() };
   for (const model of stampedModels()) {
     const delegate = delegateOf(db, model);
-    const otherCompany = { [model.workspaceField]: { in: ids }, AND: [{ authTenantId: { not: null } }, { authTenantId: { not: tenantId } }] };
-    if ((await delegate.count({ where: otherCompany })) > 0) foreign.push(model.table);
-    if ((await delegate.count({ where: { authTenantId: tenantId, [model.workspaceField]: { notIn: ids } } })) > 0) outside.push(model.table);
+    const field = model.workspaceField;
+    /** The workspaces the rows matching `where` lie in, for the person who has to look. */
+    const note = async (into: typeof foreign, where: Record<string, unknown>) => {
+      const rows = await delegate.findMany({ where, select: { [field]: true }, distinct: [field], take: CONFLICT_WORKSPACES_NAMED });
+      if (rows.length === 0) return;
+      into.tables.push(model.table);
+      for (const row of rows) into.workspaces.add(row[field]);
+    };
+    await note(foreign, { [field]: { in: ids }, AND: [{ authTenantId: { not: null } }, { authTenantId: { not: tenantId } }] });
+    await note(outside, { authTenantId: tenantId, [field]: { notIn: ids } });
   }
-  if (foreign.length > 0) throw new ErasureConflictError('rows_of_another_company', foreign);
-  if (outside.length > 0) throw new ErasureConflictError('rows_outside_named_workspaces', outside);
+  const named = (set: Set<string>) => [...set].sort().slice(0, CONFLICT_WORKSPACES_NAMED);
+  if (foreign.tables.length > 0) throw new ErasureConflictError('rows_of_another_company', foreign.tables, named(foreign.workspaces));
+  if (outside.tables.length > 0) throw new ErasureConflictError('rows_outside_named_workspaces', outside.tables, named(outside.workspaces));
 }
+
+/** The most workspace ids a conflict names. Enough to act on; a conflict over more is a matter for a query. */
+const CONFLICT_WORKSPACES_NAMED = 50;
 
 /** Lists longer than this are split, so no statement carries more parameters than Postgres takes. */
 const ID_CHUNK = 5000;
 /** Stored files removed at the same time. */
 const FILE_DELETES_AT_ONCE = 4;
-/** How long one run may hold the company's lock. Far above any run; the request itself ends sooner. */
-const LOCK_HELD_AT_MOST_MS = 15 * 60 * 1000;
-
 function chunks<T>(items: readonly T[], size = ID_CHUNK): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
-}
-
-/**
- * Runs `work` while holding the erasure lock of one company, or throws
- * `ErasureBusyError` at once when another run holds it.
- *
- * Auth-brain waits ten seconds for an answer and then sends the delivery again,
- * while the first run may still be at work. Two runs at once would both ask the
- * file store for the same files and each record counts the other already
- * recorded. The lock is a Postgres advisory lock held by one open transaction:
- * it ends with the run, and it ends by itself when the process dies.
- */
-export async function withCompanyLock<T>(db: PrismaClient, tenantId: string, work: () => Promise<T>): Promise<T> {
-  return db.$transaction(
-    async (tx) => {
-      const [{ locked }] = await tx.$queryRaw<Array<{ locked: boolean }>>`
-        SELECT pg_try_advisory_xact_lock(hashtextextended(${`receipts-company-erasure:${tenantId}`}, 0)) AS locked`;
-      if (!locked) throw new ErasureBusyError();
-      return work();
-    },
-    { maxWait: 10_000, timeout: LOCK_HELD_AT_MOST_MS },
-  );
 }
 
 async function physicalTableExists(db: Db, tableId: string): Promise<boolean> {
@@ -329,50 +318,39 @@ function emptyRegisterCounts(): RegisterErasureCounts {
 }
 
 /**
- * Remove the company's receipts tables with their rows and stored files, every
- * row that carries its stamp, and the records of its exports. Printed guest
- * names (`meal_guests`) are left to the export rule, which ran before.
+ * Remove the stored files the given rows show, and the references to them.
  *
- * `counts` is filled in as the run goes, so a run that stops can still say what
- * it had removed.
+ * A file a living receipt outside this erasure still shows is that receipt's
+ * file too: it is kept and counted, and only the erased rows' references to it
+ * go later, with their table. A reference whose row is in no table any more is
+ * nobody's: it does not keep the file, and it goes with it.
+ *
+ * Answers the ids of the files kept, so the caller knows which references may
+ * still be there. A file store that refuses rejects with `StoredFileEraseError`;
+ * what was removed before stays removed.
  */
-export async function eraseCompanyRegister(
+async function removeStoredFilesOfRows(
   db: PrismaClient,
-  tenantId: string,
-  workspaceIds: readonly string[],
-  deps: Pick<CompanyErasureDeps, 'deleteStoredFile'>,
-  counts: RegisterErasureCounts = emptyRegisterCounts(),
-): Promise<{ counts: RegisterErasureCounts; erased: ErasedHandles }> {
-  const classes = classifyModels();
-  const models = stampedModels();
-  const tableModel = models.find((m) => m.model === 'DtTable');
-  if (!tableModel) throw new Error('company erasure: the data model has no receipts table model');
-
-  // 1. The receipts tables and every row id below them.
-  const tables = await db.dtTable.findMany({ where: companyRowsWhere(tableModel, tenantId, workspaceIds), select: { id: true }, orderBy: { id: 'asc' } });
-  const tableIds = tables.map((t) => t.id);
-  const rowIdsByTable = new Map<string, string[]>();
-  for (const table of tables) rowIdsByTable.set(table.id, await rowIdsOfTable(db, table.id));
-  const erasedRows = new Set([...rowIdsByTable.values()].flat());
-
-  // 2. The stored files, before any row goes: a file whose row is gone could never be found again.
+  rowIds: ReadonlySet<string>,
+  erasedTableIds: readonly string[],
+  deps: Pick<CompanyErasureDeps, 'deleteStoredFile' | 'checkpoint'>,
+  counts: RegisterErasureCounts,
+): Promise<Set<string>> {
   const ownRefs: Array<{ fileId: string }> = [];
-  for (const part of chunks([...erasedRows])) ownRefs.push(...(await db.dtFile.findMany({ where: { rowId: { in: part } }, select: { fileId: true } })));
+  for (const part of chunks([...rowIds])) ownRefs.push(...(await db.dtFile.findMany({ where: { rowId: { in: part } }, select: { fileId: true } })));
   const fileIds = [...new Set(ownRefs.map((r) => r.fileId))].sort();
   // Every reference to those files, also from rows outside this erasure.
   const allRefs: Array<{ id: string; fileId: string; rowId: string }> = [];
   for (const part of chunks(fileIds)) allRefs.push(...(await db.dtFile.findMany({ where: { fileId: { in: part } }, select: { id: true, fileId: true, rowId: true } })));
-  // A file a receipt outside this erasure still shows is that receipt's file too and is kept.
-  // A reference whose row is in no table any more is nobody's: it does not keep the file, and it goes with it.
-  const outsideRowIds = [...new Set(allRefs.filter((r) => !erasedRows.has(r.rowId)).map((r) => r.rowId))];
-  const living = await rowsLivingElsewhere(db, outsideRowIds, tableIds);
+  const outsideRowIds = [...new Set(allRefs.filter((r) => !rowIds.has(r.rowId)).map((r) => r.rowId))];
+  const living = await rowsLivingElsewhere(db, outsideRowIds, erasedTableIds);
   const keptFiles = new Set(allRefs.filter((r) => living.has(r.rowId)).map((r) => r.fileId));
   const refIdsByFile = new Map<string, string[]>();
   for (const ref of allRefs) refIdsByFile.set(ref.fileId, [...(refIdsByFile.get(ref.fileId) ?? []), ref.id]);
-  counts.storedFilesKept = keptFiles.size;
 
   const removable = fileIds.filter((id) => !keptFiles.has(id));
   for (const batch of chunks(removable, FILE_DELETES_AT_ONCE)) {
+    await deps.checkpoint?.();
     const results = await Promise.allSettled(
       batch.map(async (fileId) => {
         const outcome = await deps.deleteStoredFile(fileId);
@@ -389,9 +367,42 @@ export async function eraseCompanyRegister(
     const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
     if (failed) throw new StoredFileEraseError(failed.reason);
   }
+  return keptFiles;
+}
+
+/**
+ * Remove the company's receipts tables with their rows and stored files, every
+ * row that carries its stamp, and the records of its exports. Printed guest
+ * names (`meal_guests`) are left to the export rule, which ran before.
+ *
+ * `counts` is filled in as the run goes, so a run that stops can still say what
+ * it had removed.
+ */
+export async function eraseCompanyRegister(
+  db: PrismaClient,
+  tenantId: string,
+  workspaceIds: readonly string[],
+  deps: Pick<CompanyErasureDeps, 'deleteStoredFile' | 'checkpoint'>,
+  counts: RegisterErasureCounts = emptyRegisterCounts(),
+): Promise<{ counts: RegisterErasureCounts; erased: ErasedHandles }> {
+  const classes = classifyModels();
+  const models = stampedModels();
+  const tableModel = models.find((m) => m.model === 'DtTable');
+  if (!tableModel) throw new Error('company erasure: the data model has no receipts table model');
+
+  // 1. The receipts tables and every row id below them.
+  const tables = await db.dtTable.findMany({ where: companyRowsWhere(tableModel, tenantId, workspaceIds), select: { id: true }, orderBy: { id: 'asc' } });
+  const tableIds = tables.map((t) => t.id);
+  const rowIdsByTable = new Map<string, string[]>();
+  for (const table of tables) rowIdsByTable.set(table.id, await rowIdsOfTable(db, table.id));
+  const erasedRows = new Set([...rowIdsByTable.values()].flat());
+
+  // 2. The stored files, before any row goes: a file whose row is gone could never be found again.
+  const keptFiles = await removeStoredFilesOfRows(db, erasedRows, tableIds, deps, counts);
 
   // 3. Each table with what hangs below it, in one transaction per table. Its own row goes last.
   for (const table of tables) {
+    await deps.checkpoint?.();
     const listed = rowIdsByTable.get(table.id) ?? [];
     const removedRows = await db.$transaction(
       async (tx) => {
@@ -399,6 +410,10 @@ export async function eraseCompanyRegister(
         // a receipt written since the first listing is removed like the others, not left behind.
         const present = await physicalTableExists(tx, table.id);
         if (present) await tx.$executeRawUnsafe(`LOCK TABLE ${safeTableName(table.id)} IN ACCESS EXCLUSIVE MODE`);
+        // File references live in their own table, which the lock above does not cover. Writers to it
+        // wait until this transaction ends (readers do not), so no reference can appear between the
+        // check below and the delete after it.
+        await tx.$executeRawUnsafe('LOCK TABLE dt_files IN SHARE ROW EXCLUSIVE MODE');
         const rowIds = [...new Set([...listed, ...(await rowIdsOfTable(tx, table.id))])];
         // Its files were handled above. A reference that is here now and names a file not kept on purpose
         // names a stored file nobody removed: stop, the next run removes it. Nothing of this table is touched.
@@ -428,8 +443,17 @@ export async function eraseCompanyRegister(
     counts.receipts += removedRows.length;
   }
 
+  // 3b. A writer that waited for a table's transaction lands its file reference after the table is gone:
+  //     a reference to a row that no longer exists, naming a stored file nobody removed. Remove those
+  //     files and references now, so nothing of the erased receipts is left for the recount to trip over.
+  await deps.checkpoint?.();
+  const keptLate = await removeStoredFilesOfRows(db, erasedRows, tableIds, deps, counts);
+  for (const part of chunks([...erasedRows])) await db.dtFile.deleteMany({ where: { rowId: { in: part } } });
+  counts.storedFilesKept = new Set([...keptFiles, ...keptLate]).size;
+
   // 4. Every other row that carries the company stamp, in one transaction. Each table is counted
   //    before anything is deleted, so a row that goes with its parent is counted under its own table.
+  await deps.checkpoint?.();
   const byStamp = models.filter((m) => classes[m.model] === 'erased');
   const records: Record<string, number> = {};
   await db.$transaction(
@@ -532,54 +556,59 @@ export async function eraseCompany(db: PrismaClient, tenantId: string, workspace
   const now = deps.now ?? new Date();
   classifyModels();
   const partial: Partial<ErasureCounts> = {};
+  const checkpoint = async () => {
+    await deps.checkpoint?.();
+  };
 
-  return withCompanyLock(db, tenantId, async () => {
-    try {
-      await assertStampsMatchDelivery(db, tenantId, workspaceIds);
+  try {
+    await checkpoint();
+    await assertStampsMatchDelivery(db, tenantId, workspaceIds);
 
-      const contacts = await eraseCompanyContacts(db, tenantId, workspaceIds, now, deps.hasher, { holdUnlinked: true });
-      Object.assign(partial, contacts);
+    const contacts = await eraseCompanyContacts(db, tenantId, workspaceIds, now, deps.hasher, { holdUnlinked: true });
+    Object.assign(partial, contacts);
 
-      const bank = await deps.endBankConnections(tenantId, workspaceIds);
-      partial.bankConnections = bank.connections;
-      const shares = await deps.endAccountShares(tenantId, workspaceIds);
-      Object.assign(partial, { accountShares: shares.shares, crossCompanyLinks: shares.links, crossCompanyRecords: shares.records });
+    await checkpoint();
+    const bank = await deps.endBankConnections(tenantId, workspaceIds);
+    partial.bankConnections = bank.connections;
+    const shares = await deps.endAccountShares(tenantId, workspaceIds);
+    Object.assign(partial, { accountShares: shares.shares, crossCompanyLinks: shares.links, crossCompanyRecords: shares.records });
 
-      partial.register = emptyRegisterCounts();
-      const { counts: register, erased } = await eraseCompanyRegister(db, tenantId, workspaceIds, deps, partial.register);
+    await checkpoint();
+    partial.register = emptyRegisterCounts();
+    const { counts: register, erased } = await eraseCompanyRegister(db, tenantId, workspaceIds, deps, partial.register);
 
-      const { remaining, heldGuestCopies } = await countCompanyRemainder(db, tenantId, workspaceIds, erased);
-      const contactsLeft = await (deps.countContacts ?? (async (id: string) => (await companyContacts(id).list({ includeArchived: true })).length))(tenantId);
-      if (contactsLeft > 0) remaining.shared_contacts = contactsLeft;
-      if (Object.keys(remaining).length > 0) throw new ErasureIncompleteError(remaining);
+    // No checkpoint from here on: everything is removed, and what is left is to count it and say so.
+    const { remaining, heldGuestCopies } = await countCompanyRemainder(db, tenantId, workspaceIds, erased);
+    const contactsLeft = await (deps.countContacts ?? (async (id: string) => (await companyContacts(id).list({ includeArchived: true })).length))(tenantId);
+    if (contactsLeft > 0) remaining.shared_contacts = contactsLeft;
+    if (Object.keys(remaining).length > 0) throw new ErasureIncompleteError(remaining);
 
-      const latestHold =
-        heldGuestCopies > 0
-          ? await db.mealGuest.findFirst({
-              where: { AND: [companyRowsWhere(guestTable, tenantId, workspaceIds), { contactId: null, retainUntil: { not: null } }] },
-              orderBy: { retainUntil: 'desc' },
-              select: { retainUntil: true },
-            })
-          : null;
+    const latestHold =
+      heldGuestCopies > 0
+        ? await db.mealGuest.findFirst({
+            where: { AND: [companyRowsWhere(guestTable, tenantId, workspaceIds), { contactId: null, retainUntil: { not: null } }] },
+            orderBy: { retainUntil: 'desc' },
+            select: { retainUntil: true },
+          })
+        : null;
 
-      return {
-        ...contacts,
-        guestCopiesHeld: heldGuestCopies,
-        bankConnections: bank.connections,
-        accountShares: shares.shares,
-        crossCompanyLinks: shares.links,
-        crossCompanyRecords: shares.records,
-        register,
-        notErased: notErasedAfter({
-          heldGuestCopies,
-          retainUntil: latestHold?.retainUntil ?? null,
-          storedFilesKept: register.storedFilesKept,
-          bankSessionsLeftOpen: bank.sessionsLeftOpen,
-        }),
-      };
-    } catch (e) {
-      if (e instanceof Error && Object.keys(partial).length > 0) Object.assign(e, { partial });
-      throw e;
-    }
-  });
+    return {
+      ...contacts,
+      guestCopiesHeld: heldGuestCopies,
+      bankConnections: bank.connections,
+      accountShares: shares.shares,
+      crossCompanyLinks: shares.links,
+      crossCompanyRecords: shares.records,
+      register,
+      notErased: notErasedAfter({
+        heldGuestCopies,
+        retainUntil: latestHold?.retainUntil ?? null,
+        storedFilesKept: register.storedFilesKept,
+        bankSessionsLeftOpen: bank.sessionsLeftOpen,
+      }),
+    };
+  } catch (e) {
+    if (e instanceof Error && Object.keys(partial).length > 0) Object.assign(e, { partial });
+    throw e;
+  }
 }

@@ -16,8 +16,9 @@ import { endCompanyAccountShares } from '@/lib/tax/payments/routing';
  *
  * Auth-brain waits ten seconds for the answer and sends the delivery again when
  * none came. A company with many stored files can take longer: the run goes on
- * after the caller hung up, and the next delivery finds what is left (often
- * nothing) and answers. Hence the long limit here.
+ * after the caller hung up, a delivery that arrives meanwhile is answered 409
+ * (one erasure at a time, erasure-ledger.ts), and the next one after the run
+ * finds nothing left and answers 200. Hence the long limit here.
  */
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -30,8 +31,9 @@ export async function POST(req: NextRequest) {
     signature: req.headers.get(ERASURE_SIGNATURE_HEADER),
     secret: process.env.RECEIPTS_ERASURE_WEBHOOK_SECRET,
     ledger: erasureLedger(prisma),
-    erase: (tenantId, workspaceIds) =>
+    erase: (tenantId, workspaceIds, checkpoint) =>
       eraseCompany(prisma, tenantId, workspaceIds, {
+        checkpoint,
         deleteStoredFile: eraseStoredFile,
         // An erased company's bank feed ends with it: otherwise the daily run would keep reading its account until the consent runs out.
         endBankConnections: (tenant, workspaces) => endCompanyBankConnections(prisma, serverBankDeps(), tenant, workspaces),

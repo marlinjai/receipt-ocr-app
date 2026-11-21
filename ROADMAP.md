@@ -331,7 +331,7 @@
   `feat/company-erasure-register` on 2026-11-21 and NOT pushed or deployed: the receiver now removes
   the receipts tables, rows, stored files and every row with the company stamp, records each run in
   a new ledger table (`erasure_events`, migration 0053), and answers 200 only after a recount, with
-  a list of what an erasure does not remove. Reviewed independently on 2026-11-21 (14 findings,
+  a list of what an erasure does not remove. Reviewed independently twice on 2026-11-21 (14 and then 7 findings,
   all fixed on the branch). Open before it ships: the owner's answer to the one open question of
   the plan (whether a company erasure still holds printed guest names for ten years).
   [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
@@ -387,8 +387,7 @@
   (stamped rows stop the erasure with `rows_outside_named_workspaces`, rows without a stamp are
   not seen at all, as with the company erased on 2026-11-21): naming a company's deleted
   workspaces in the delivery as well is being built on the auth-brain branch
-  `fix/erasure-invitations-and-coverage`, which removes this class for future erasures. Also not known: how many database connections the
-  production app may open (an erasure holds one for the length of its run, for the company lock). [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
+  `fix/erasure-invitations-and-coverage`, which removes this class for future erasures. [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
 - [ ] Deleting a receipts table through the data-table package loses errors and leaves stored files
   behind. `deleteTable` of `@marlinjai/data-table-adapter-prisma` 0.2.3 treats a failed read of the
   row ids as "no rows", ignores a failed delete of the file references, runs outside a transaction,

@@ -79,18 +79,45 @@ export interface ErasureCounts {
  * `erasure_events`, see erasure-ledger.ts). Injected, so the rules of a delivery
  * can be tested without a database.
  */
+/** The right of one run to work on an erasure. Held by at most one run in the whole app. */
+export interface ErasureLease {
+  token: string;
+  /**
+   * Extends the lease. Rejects with an `ErasureLeaseLostError` when it is no longer this
+   * run's (it ran out, or another run holds one): the run then stops where it is.
+   */
+  renew(): Promise<void>;
+}
+
 export interface ErasureLedger {
   /**
-   * Record that a run starts. Answers the workspace ids every delivery of THIS
+   * Record that a delivery arrived. Answers the workspace ids every delivery of THIS
    * event has named so far, this one included. Auth-brain sends the same body on
-   * every retry; a person who sends the event again by hand may add a workspace.
+   * every retry; a person who sends an event by hand may send it again with one more.
    * Rejects with an `ErasureEventMismatchError` when the event id is already
    * recorded for another company: nothing is erased then.
    */
   begin(event: { eventId: string; kind: string; companyId: string; workspaceIds: readonly string[] }): Promise<{ workspaceIds: string[] }>;
-  complete(eventId: string, counts: ErasureCounts): Promise<void>;
-  /** `reason` is a code, `detail` table names and counts. Never a message text. */
-  fail(eventId: string, reason: string, detail?: Record<string, unknown>): Promise<void>;
+  /**
+   * Take the lease for a run on this event, or answer null when an erasure (of any
+   * company) is at work. One erasure at a time in the whole app: several at once
+   * would compete for the same few database connections and for the file store.
+   */
+  acquire(eventId: string): Promise<ErasureLease | null>;
+  /** Note that a delivery found an erasure at work. Changes neither the status nor the lease. */
+  busy(eventId: string): Promise<void>;
+  /** Record a completed run with its counts, and give the lease back. The counts are recorded even when the lease was lost at the very end. */
+  complete(eventId: string, counts: ErasureCounts, lease?: ErasureLease): Promise<void>;
+  /** `reason` is a code, `detail` table names, ids and counts. Never a message text. Gives the lease back. */
+  fail(eventId: string, reason: string, detail?: Record<string, unknown>, lease?: ErasureLease): Promise<void>;
+}
+
+/** The lease of a run ran out or was taken: the run stops at its next step. */
+export class ErasureLeaseLostError extends Error {
+  constructor() {
+    super('erasure ledger: the lease of this run is no longer held');
+    this.name = 'ErasureLeaseLostError';
+  }
 }
 
 /** The event id of a delivery is already recorded for another company. */
@@ -114,10 +141,15 @@ export function erasureFailureReason(e: unknown): { reason: string; status: numb
     return Object.keys(all).length > 0 ? all : undefined;
   };
   if (name === 'ErasureConflictError') {
-    const conflict = e as { kind?: string; tables?: string[] };
-    return { reason: conflict.kind ?? 'rows_of_another_company', status: 502, detail: withPartial({ tables: conflict.tables ?? [] }) };
+    const conflict = e as { kind?: string; tables?: string[]; workspaces?: string[] };
+    return {
+      reason: conflict.kind ?? 'rows_of_another_company',
+      status: 502,
+      // The workspaces the offending rows lie in: ids only, so an operator need not query for them.
+      detail: withPartial({ tables: conflict.tables ?? [], ...(conflict.workspaces ? { workspaces: conflict.workspaces } : {}) }),
+    };
   }
-  if (name === 'ErasureBusyError') return { reason: 'already_running', status: 409 };
+  if (name === 'ErasureLeaseLostError') return { reason: 'lease_lost', status: 502, detail: withPartial({}) };
   if (name === 'StoredFileEraseError') return { reason: 'stored_file_not_removed', status: 502, detail: withPartial({}) };
   if (name === 'ErasureChangedError') return { reason: 'changed_during_run', status: 502, detail: withPartial({}) };
   if (name === 'ErasureIncompleteError') {
@@ -340,7 +372,10 @@ export interface ErasureDelivery {
  *   nothing was erased), `rows_outside_named_workspaces` (rows with the company's stamp lie in a
  *   workspace the delivery does not name, nothing was erased), `changed_during_run` (a file was
  *   attached while the run went on), `rows_remain` (the recount found something of the company), `failed`.
- * - Another run for the same company is going on: 409 `already_running`, nothing is touched.
+ * - Another erasure (of any company) is at work: 409 `already_running`, nothing is touched and the
+ *   event keeps its status. Auth-brain tries again later.
+ * - The run lost its lease (it ran out, for example after the process stalled): 502 `lease_lost`;
+ *   the run stopped at its next step and the next delivery goes on.
  * - The event id is recorded for another company: 409 `event_of_another_company`, nothing is touched.
  * - The run cannot be recorded in the ledger: 502 as well. An erasure nobody can prove is not acknowledged.
  * - 200 only when the recount found nothing of the company but held guest names. The answer
@@ -355,7 +390,8 @@ export async function receiveErasureDelivery(input: {
   rawBody: string;
   signature: string | null | undefined;
   secret: string | undefined;
-  erase: (tenantId: string, workspaceIds: readonly string[]) => Promise<ErasureCounts>;
+  /** `checkpoint` is called between the steps of a run: it rejects when the run may not go on. */
+  erase: (tenantId: string, workspaceIds: readonly string[], checkpoint: () => Promise<void>) => Promise<ErasureCounts>;
   ledger?: ErasureLedger;
   log?: (line: string) => void;
 }): Promise<ErasureDelivery> {
@@ -403,14 +439,33 @@ export async function receiveErasureDelivery(input: {
     }
   }
 
+  // One erasure at a time in the whole app. A delivery that finds one at work touches nothing.
+  let lease: ErasureLease | null | undefined;
+  if (input.ledger) {
+    try {
+      lease = await input.ledger.acquire(ledgerId);
+    } catch (e) {
+      log(`[erasure] event ${eventId}: the lease could not be taken (${(e as Error)?.name ?? 'error'}), nothing was erased, auth-brain will retry`);
+      return { status: 502, body: { error: 'Erasure failed; will retry', reason: 'ledger_unavailable' } };
+    }
+    if (!lease) {
+      log(`[erasure] event ${eventId}: another erasure is at work, nothing was touched, auth-brain will retry`);
+      await input.ledger.busy(ledgerId).catch((le) => log(`[erasure] event ${eventId}: the busy answer could not be recorded (${(le as Error)?.name ?? 'error'})`));
+      return { status: 409, body: { error: 'Erasure failed; will retry', reason: 'already_running' } };
+    }
+  }
+  const held = lease ?? undefined;
+
   let counts: ErasureCounts;
   try {
-    counts = await input.erase(tenantId, workspaceIds);
+    counts = await input.erase(tenantId, workspaceIds, async () => {
+      await held?.renew();
+    });
   } catch (e) {
     const { reason, status, detail } = erasureFailureReason(e);
     log(`[erasure] event ${eventId} failed (${(e as Error)?.name ?? 'error'}, ${reason}${detail ? ` ${JSON.stringify(detail)}` : ''}), auth-brain will retry`);
     // The run failed already; a ledger that cannot take the note must not hide that behind its own error.
-    await input.ledger?.fail(ledgerId, reason, detail).catch((le) => log(`[erasure] event ${eventId}: the failure could not be recorded (${(le as Error)?.name ?? 'error'})`));
+    await input.ledger?.fail(ledgerId, reason, detail, held).catch((le) => log(`[erasure] event ${eventId}: the failure could not be recorded (${(le as Error)?.name ?? 'error'})`));
     return { status, body: { error: 'Erasure failed; will retry', reason } };
   }
 
@@ -425,7 +480,7 @@ export async function receiveErasureDelivery(input: {
   );
   if (input.ledger) {
     try {
-      await input.ledger.complete(ledgerId, counts);
+      await input.ledger.complete(ledgerId, counts, held);
     } catch (e) {
       log(`[erasure] event ${eventId} erased but could not be recorded (${(e as Error)?.name ?? 'error'}), auth-brain will retry`);
       return { status: 502, body: { error: 'Erasure failed; will retry', reason: 'ledger_unavailable' } };

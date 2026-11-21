@@ -142,16 +142,29 @@ both receipts tables of the leftovers above carry no stamp.
   stale stamp sits on the new owner's receipts. A company that has no rows here passes and is
   acknowledged.
 
-One legitimate case hits the second rule and is NOT solved in Receipts: auth-brain names only the
-workspaces that still exist (`listWorkspacesByTenant` leaves out deleted ones, read in its code).
-A company that deleted a workspace before it was erased still has that workspace's rows here,
-stamped with the company, in a workspace the delivery does not name (a company that deleted all
-of them names none). Receipts cannot tell this
-from a moved workspace, so it stops, the delivery fails for good after eight tries, and a person
-decides: either sends the delivery again by hand with that workspace added to `workspace_ids`
-(the ledger adds it to the event's list), or restamps the rows with the workspace move. The
-clean fix is in auth-brain (name the deleted workspaces of the company in the delivery too) and
-is on the roadmap.
+One legitimate case is NOT solved in Receipts: auth-brain named only the workspaces that still
+exist (`listWorkspacesByTenant` leaves out deleted ones, read in its code). A company that
+deleted a workspace before it was erased still has that workspace's rows here, in a workspace
+the delivery does not name (a company that deleted all of them names none). Two things follow,
+and they differ:
+
+- Rows there WITH the company's stamp stop the run (`rows_outside_named_workspaces`). Receipts
+  cannot tell this from a moved workspace, so the delivery fails for good after eight tries and
+  a person decides: a delivery by hand with that workspace added to `workspace_ids`, or a
+  restamp with the workspace move.
+- Rows there WITHOUT a stamp are not seen at all: nothing ties them to the company, neither for
+  the erasure nor for the recount, and the answer is 200. This is exactly what production
+  holds for the company erased on 2026-11-21 (read-only look, 2026-11-21): the stored delivery
+  names one workspace, `019fa320-8e08-7ebb-8e0e-c9faa6738c68`, the only one still live; the
+  second leftover receipts table (empty, with its columns and views, no stamp) lies in
+  `019ee142-44af-786d-9366-a705b7607f86`, deleted earlier and therefore not named. The stored
+  body sent again as it is would leave that table behind. The delivery for this company has to
+  be built by hand with both workspace ids (roadmap, decision line).
+
+The clean fix is in auth-brain: name the company's deleted workspaces in the delivery too. It is
+being built on the auth-brain branch `fix/erasure-invitations-and-coverage` and removes this
+class for future erasures. Receipts needs no change for it: a named workspace is a named
+workspace.
 
 The list of tables is derived from the Prisma data model, not kept by hand
 (`stampedModels`, already used by the workspace move). Every model without a stamp is named in
@@ -402,8 +415,8 @@ route itself against the real erasure and ledger (the file store refuses, then a
    The conservative direction for something that cannot be undone: a disagreement stops the run
    and a person looks. This holds also for a delivery that names no workspace: nothing is ever
    erased on the strength of a stamp alone. The price is that a company which deleted a
-   workspace before it was erased needs a delivery sent by hand; the fix for that is auth-brain's
-   (roadmap).
+   workspace before it was erased needs a delivery sent by hand, until auth-brain names deleted
+   workspaces too (being built on its branch `fix/erasure-invitations-and-coverage`).
 5. **`company_exports` is erased, the ledger is kept.** The export record is about the company;
    the ledger is the record that the erasure happened, like auth-brain keeps its erasure request.
 6. **The ledger column is `company_id`.** So that no rule that works by stamp ever deletes or
@@ -490,4 +503,6 @@ migration `0053_erasure_events`, and the decision on the leftovers of 2026-11-21
   auth-brain will not send that delivery again by itself, because it was acknowledged);
   the open question above; Storage Brain's own delete behaviour and backups are unverified; no
   run against a company with many files; uploads that never became a receipt are not counted;
-  `user.erased` is not received; auth-brain does not name a company's deleted workspaces.
+  `user.erased` is not received; auth-brain naming a company's deleted workspaces is being built
+  on its branch `fix/erasure-invitations-and-coverage`. For the leftovers of 2026-11-21 the
+  stored delivery names one of the two workspaces only, so that delivery is built by hand.

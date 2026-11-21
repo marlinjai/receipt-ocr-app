@@ -359,15 +359,20 @@
   2026-11-21, oldest dump of 2026-11-14) and up to thirty days in the two copies off the server
   (stated by the backup plan, not verified against the real copies), so until about 2026-12-21,
   the later and conservative date (technical retention, not a legal duty to keep). The stored files have no such copy: once deleted in Storage Brain they are gone.
-  Recommended way once the branch above is deployed: deliver the erasure to Receipts once more
-  (the body auth-brain stored for that delivery, signed with the webhook secret through the secrets
-  proxy), which runs the tested erasure and records it in the ledger, instead of statements written
-  by hand. Auth-brain's "send again" cannot do this: it works only for a delivery that failed for
-  good, and this one was acknowledged. To confirm before the yes: that the stored delivery names
-  both workspaces that hold these leftovers. The erasure stops without deleting anything
-  (`rows_outside_named_workspaces`) when rows with the company's stamp lie in a workspace the
-  delivery does not name, and the two receipts tables, which carry no stamp, are only reached
-  through a named workspace. Default until the owner answers: nothing is touched.
+  Recommended way once the branch above is deployed: one delivery built by hand, which runs the
+  tested erasure and records it in the ledger, instead of statements written by hand.
+  PRECONDITION for that delivery, from a read-only look at production on 2026-11-21: the body
+  auth-brain stored for Receipts names exactly ONE workspace,
+  `019fa320-8e08-7ebb-8e0e-c9faa6738c68`, the only one that was still live. The second leftover
+  receipts table (the empty one: 0 rows, no files, with its columns and views) lies in workspace
+  `019ee142-44af-786d-9366-a705b7607f86`, which had been deleted earlier and is therefore not
+  named; it carries no company stamp. Sending the stored body as it is would erase everything in
+  the named workspace, leave that empty table behind, and answer 200, because nothing ties the
+  table to the company for the recount. The delivery must therefore name BOTH workspace ids: the
+  stored body plus the second id, the same event kind and company id, a new event id because the
+  body differs, signed with the webhook secret through the secrets proxy. Auth-brain's "send
+  again" cannot do this: it works only for a delivery that failed for good, this one was
+  acknowledged, and it cannot add a workspace. Default until the owner answers: nothing is touched.
   [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
 - [ ] Company erasure, what is not verified yet: whether Storage Brain removes a deleted file at
   once or after a grace period, and how long its own backups keep it; a run against a company with
@@ -377,10 +382,12 @@
   (`user.erased`), so a person's own Google connection (`google_sheets_credentials`) is removed by
   nothing. Also missing in auth-brain, needed after a database recovery: its Erasures page cannot
   send an acknowledged delivery again, its note on what Receipts erases (`suite-apps.ts`)
-  still describes contact data only, and its delivery names only the workspaces that still exist:
-  a company that deleted a workspace before it was erased still has that workspace's rows here,
-  the erasure stops on them (`rows_outside_named_workspaces`) and a person has to send the
-  delivery again with that workspace named. Also not known: how many database connections the
+  still describes contact data only. Its delivery named only the workspaces that still exist, so
+  a company that deleted a workspace before it was erased keeps that workspace's rows here
+  (stamped rows stop the erasure with `rows_outside_named_workspaces`, rows without a stamp are
+  not seen at all, as with the company erased on 2026-11-21): naming a company's deleted
+  workspaces in the delivery as well is being built on the auth-brain branch
+  `fix/erasure-invitations-and-coverage`, which removes this class for future erasures. Also not known: how many database connections the
   production app may open (an erasure holds one for the length of its run, for the company lock). [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
 - [ ] Deleting a receipts table through the data-table package loses errors and leaves stored files
   behind. `deleteTable` of `@marlinjai/data-table-adapter-prisma` 0.2.3 treats a failed read of the

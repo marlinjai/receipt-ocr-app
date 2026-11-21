@@ -58,5 +58,23 @@ secrets proxy, so the secret is never shown, and sent to the endpoint with the
 signature in the `x-lumitra-erasure-signature` header. The workspace list of an
 event only grows: a workspace named once for an event stays named for it.
 
+### A 200 does not see rows without a stamp in a workspace nobody named
+
+The recount looks at what ties to the company: its stamp, or a workspace the delivery names. A
+receipts table without a company stamp in a workspace the delivery does not name is invisible
+to both the erasure and the recount, and the answer is still 200. This happens when the company
+deleted a workspace before it was erased and auth-brain did not name it (auth-brain is being
+changed to name deleted workspaces too, on its branch `fix/erasure-invitations-and-coverage`).
+
+The known case: the company erased on 2026-11-21 (auth-brain company id
+`019f6a89-ea4a-75d4-90ff-4e809491647e`). Its stored delivery names one workspace,
+`019fa320-8e08-7ebb-8e0e-c9faa6738c68`; an empty receipts table of it lies in
+`019ee142-44af-786d-9366-a705b7607f86`, which is not named. The delivery for it must be built by
+hand with both workspace ids: the stored body plus the second id, the same event kind and
+company id, and a new event id because the body differs. It waits for the owner's yes (roadmap).
+
+Before any delivery by hand, compare the workspaces it names with where the company's rows
+actually lie, including tables without a stamp.
+
 An erasure is not reversible. Sending one by hand for production data needs the
 owner's yes first, with the scope stated.

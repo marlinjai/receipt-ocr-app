@@ -16,7 +16,7 @@ import { stampedModels, type StampedModel } from './workspace-move';
  * 1. Nothing is touched while the stamps and the delivery disagree
  *    (`ErasureConflictError`): a row in a named workspace carries the stamp of
  *    ANOTHER company, or a row with THIS company's stamp lies in a workspace the
- *    delivery does not name. Either way auth-brain and the rows say different
+ *    delivery does not name (also when it names none). Either way auth-brain and the rows say different
  *    things about whose data it is, and a person looks.
  * 2. The contact data, by the existing rule (`eraseCompanyContacts`): contacts
  *    go, printed guest names go or are held.
@@ -219,13 +219,16 @@ export function companyRowsWhere(model: Pick<StampedModel, 'workspaceField'>, te
  * the restamp here did not happen. Deleting by the stale stamp would then
  * destroy the new owner's receipts and files.
  *
- * The second check needs something to compare with, so it runs only when the
- * delivery names at least one workspace. A delivery that names none (a company
- * that has no workspace left in auth-brain) is erased by its stamp: there is
- * nothing else that says which rows are the company's.
+ * A delivery that names NO workspace is held to the same rule: then every row
+ * with the company's stamp lies outside the named workspaces, and the run stops.
+ * Erasing by stamp alone would be the one case with no second opinion, and it is
+ * reachable: a company whose only workspace was moved away without a restamp and
+ * that is then deleted names no workspace, and its stale stamp sits on the new
+ * owner's receipts. A company that truly has rows here and no workspace left in
+ * auth-brain is erased by a delivery sent by hand that names its workspaces
+ * (docs/operations/company-erasure.md). A company with no rows here passes.
  */
 export async function assertStampsMatchDelivery(db: Db, tenantId: string, workspaceIds: readonly string[]): Promise<void> {
-  if (workspaceIds.length === 0) return;
   const ids = [...workspaceIds];
   const foreign: string[] = [];
   const outside: string[] = [];

@@ -283,14 +283,6 @@ describe('eraseCompany against the real databases', () => {
     expect((await companyContacts(c.tenantId).list({ includeArchived: true })).length).toBe(1);
   });
 
-  it('without workspace ids only the stamped rows go: rows without a stamp cannot be told to be the company\'s', async () => {
-    const c = await company();
-    const d = deps();
-    const counts = await eraseCompany(db, c.tenantId, [], d.all);
-    expect(counts.register).toMatchObject({ tables: 1, receipts: 2, storedFiles: 2 });
-    expect(await db.dtTable.count({ where: { id: c.second.tableId } })).toBe(1);
-    expect(await db.sheetImportConfig.count({ where: { authWorkspaceId: c.second.workspaceId } })).toBe(1);
-  });
 });
 
 /** Runs `work` with a trigger on one table, and removes the trigger and its function afterwards whatever happens. */
@@ -366,11 +358,30 @@ describe('the stamps and the delivery must agree', () => {
     expect((await companyContacts(c.tenantId).list({ includeArchived: true })).length).toBe(1);
   });
 
-  it('a delivery that names no workspace erases by stamp: there is nothing else to go by', async () => {
+  it('a delivery that names no workspace does not erase by stamp alone: rows of the company stop the run', async () => {
     const c = await company();
-    const counts = await eraseCompany(db, c.tenantId, [], deps().all);
-    expect(counts.register).toMatchObject({ tables: 1, receipts: 2 });
-    expect(await db.dtTable.count({ where: { id: c.first.tableId } })).toBe(0);
+    const d = deps();
+    const error = await eraseCompany(db, c.tenantId, [], d.all).catch((e) => e);
+    expect(error).toMatchObject({ name: 'ErasureConflictError', kind: 'rows_outside_named_workspaces' });
+    expect(d.removed).toEqual([]);
+    expect(await leftOf(c)).toMatchObject({ physicalTables: 2, dtTables: 2, reviews: 3, payments: 1, exports: 1 });
+  });
+
+  it('a company that has nothing here is acknowledged, with or without named workspaces', async () => {
+    const d = deps();
+    const none = await eraseCompany(db, `test-tenant-${randomUUID()}`, [], d.all);
+    const named = await eraseCompany(db, `test-tenant-${randomUUID()}`, [`test-ws-${randomUUID()}`], d.all);
+    for (const counts of [none, named]) expect(counts.register).toMatchObject({ tables: 0, receipts: 0, storedFiles: 0, records: {} });
+    expect(d.removed).toEqual([]);
+  });
+
+  it('rows without a stamp in a workspace the delivery does not name are not the company\'s to erase', async () => {
+    const c = await company();
+    // Only the first (stamped) workspace is named: the second carries no stamp and is left alone.
+    const counts = await eraseCompany(db, c.tenantId, [c.first.workspaceId], deps().all);
+    expect(counts.register).toMatchObject({ tables: 1, receipts: 2, storedFiles: 2 });
+    expect(await db.dtTable.count({ where: { id: c.second.tableId } })).toBe(1);
+    expect(await db.sheetImportConfig.count({ where: { authWorkspaceId: c.second.workspaceId } })).toBe(1);
   });
 });
 

@@ -325,7 +325,8 @@
   `receipt_assignment_decisions`, 2 receipts tables (`dt_tables`, two workspaces, neither carrying
   a company stamp) with 65 columns, 10 views and 6 receipt rows, 5 file references (`dt_files`,
   481,840 bytes of stored receipt files in Storage Brain), and 1 row in `sheet_import_configs`
-  with 53 import rows below it (read-only inventory of 2026-11-21 14:41 UTC). Cause: the
+  with 53 import rows below it (read-only inventory of 2026-11-21, 14:41 Coordinated Universal
+  Time). Cause: the
   receiver erased contact data only, on purpose, and kept no record of erasures. Built on branch
   `feat/company-erasure-register` on 2026-11-21 and NOT pushed or deployed: the receiver now removes
   the receipts tables, rows, stored files and every row with the company stamp, records each run in
@@ -337,7 +338,8 @@
 - [ ] DECISION FOR THE OWNER, nothing is deleted before a yes: erase by hand what Receipts still
   holds in production of the company with auth-brain company id
   `019f6a89-ea4a-75d4-90ff-4e809491647e`, erased on 2026-11-21. Exact scope, from the read-only
-  inventory of 2026-11-21 14:41 UTC: `receipt_reviews` 6, `receipt_item_readings` 6,
+  inventory of 2026-11-21, 14:41 Coordinated Universal Time: `receipt_reviews` 6,
+  `receipt_item_readings` 6,
   `receipt_assignment_decisions` 6; `dt_tables` 2 (found only through their workspace id, their
   company stamp is empty, so a delete by company stamp alone would miss them) with `dt_columns` 65
   and `dt_views` 10; the two physical tables `tbl_<table id>` with 6 receipt rows in one and 0 in
@@ -361,7 +363,11 @@
   (the body auth-brain stored for that delivery, signed with the webhook secret through the secrets
   proxy), which runs the tested erasure and records it in the ledger, instead of statements written
   by hand. Auth-brain's "send again" cannot do this: it works only for a delivery that failed for
-  good, and this one was acknowledged. Default until the owner answers: nothing is touched.
+  good, and this one was acknowledged. To confirm before the yes: that the stored delivery names
+  both workspaces that hold these leftovers. The erasure stops without deleting anything
+  (`rows_outside_named_workspaces`) when rows with the company's stamp lie in a workspace the
+  delivery does not name, and the two receipts tables, which carry no stamp, are only reached
+  through a named workspace. Default until the owner answers: nothing is touched.
   [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
 - [ ] Company erasure, what is not verified yet: whether Storage Brain removes a deleted file at
   once or after a grace period, and how long its own backups keep it; a run against a company with
@@ -374,7 +380,8 @@
   still describes contact data only, and its delivery names only the workspaces that still exist:
   a company that deleted a workspace before it was erased still has that workspace's rows here,
   the erasure stops on them (`rows_outside_named_workspaces`) and a person has to send the
-  delivery again with that workspace named. [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
+  delivery again with that workspace named. Also not known: how many database connections the
+  production app may open (an erasure holds one for the length of its run, for the company lock). [plan](docs/plans/2026-11-21-company-erasure-register.md) (2026-11-21)
 - [ ] Deleting a receipts table through the data-table package loses errors and leaves stored files
   behind. `deleteTable` of `@marlinjai/data-table-adapter-prisma` 0.2.3 treats a failed read of the
   row ids as "no rows", ignores a failed delete of the file references, runs outside a transaction,

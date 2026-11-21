@@ -132,16 +132,18 @@ both receipts tables of the leftovers above carry no stamp.
   company's. The case this protects against: a workspace was moved to another company in
   auth-brain and the restamp in Receipts did not happen; deleting by the stale stamp would
   destroy the new owner's receipts and files.
-- A delivery that names no workspace at all (a company with no workspace left in auth-brain) is
-  erased by its stamp alone: there is nothing else that says which rows are the company's, and
-  refusing would mean such a company can never be erased here. The stale-stamp risk is not
-  detectable in that case; it is the smaller one, because a moved workspace would be named by
-  nobody only if the company had no other workspace.
+- A delivery that names NO workspace is held to the same rule: every row with the company's
+  stamp then lies outside the named workspaces, and the run stops. Erasing by stamp alone would
+  be the one case with no second opinion, and it is reachable: a company whose only workspace
+  was moved away without a restamp, and that is then deleted, names no workspace, while its
+  stale stamp sits on the new owner's receipts. A company that has no rows here passes and is
+  acknowledged.
 
 One legitimate case hits the second rule and is NOT solved in Receipts: auth-brain names only the
 workspaces that still exist (`listWorkspacesByTenant` leaves out deleted ones, read in its code).
 A company that deleted a workspace before it was erased still has that workspace's rows here,
-stamped with the company, in a workspace the delivery does not name. Receipts cannot tell this
+stamped with the company, in a workspace the delivery does not name (a company that deleted all
+of them names none). Receipts cannot tell this
 from a moved workspace, so it stops, the delivery fails for good after eight tries, and a person
 decides: either sends the delivery again by hand with that workspace added to `workspace_ids`
 (the ledger adds it to the event's list), or restamps the rows with the workspace move. The
@@ -361,7 +363,9 @@ stored file nobody has removed yet.
 Each is a test in `src/lib/__tests__/company-erasure.dbtest.ts` (real database, real table
 layout, a stand-in for the file store), together with: another company keeps everything; a file
 a living receipt elsewhere shows is kept and a stray reference keeps nothing; rows without a
-stamp need the workspace ids; stamped rows in an unnamed workspace stop the run; two runs at
+stamp need the workspace ids; stamped rows in an unnamed workspace stop the run, also when no
+workspace is named; two companies that share an account, erasing either (in
+`src/lib/tax/payments/__tests__/erasure-shares.dbtest.ts`); two runs at
 once; a table in the older row layout; a receipt and a file that appear during a run; a held
 name surviving a repeat that reads "identical"; rows, rows below an erased receipt and contacts
 that remain; a bank session left open. `src/app/api/internal/erasure/route.dbtest.ts` runs the
@@ -382,7 +386,10 @@ route itself against the real erasure and ledger (the file store refuses, then a
 4. **Rows without a stamp are erased only in workspaces auth-brain names, and the stamps must
    agree with the delivery in both directions** (see "The stamps and the delivery must agree").
    The conservative direction for something that cannot be undone: a disagreement stops the run
-   and a person looks. A delivery that names no workspace is erased by stamp.
+   and a person looks. This holds also for a delivery that names no workspace: nothing is ever
+   erased on the strength of a stamp alone. The price is that a company which deleted a
+   workspace before it was erased needs a delivery sent by hand; the fix for that is auth-brain's
+   (roadmap).
 5. **`company_exports` is erased, the ledger is kept.** The export record is about the company;
    the ledger is the record that the erasure happened, like auth-brain keeps its erasure request.
 6. **The ledger column is `company_id`.** So that no rule that works by stamp ever deletes or

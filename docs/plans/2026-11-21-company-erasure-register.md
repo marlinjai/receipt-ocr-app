@@ -18,19 +18,32 @@ company and answers; auth-brain counts a 2xx answer as an acknowledgement.
 
 On 2026-11-21 an organization with one company was erased in production. Receipts answered with
 success, and auth-brain's Erasures page shows the Receipts delivery as acknowledged. Receipts
-still holds that company's data. Counted on 2026-11-21 (reported by the session that looked at
-production, not re-counted for this plan):
+still holds that company's data. Read-only inventory of production, 2026-11-21 14:41 UTC
+(reported by the session that looked at production, not re-counted for this plan):
 
-| Table | Rows | Keyed by |
+| Table or store | Rows | Found by |
 | --- | --- | --- |
 | `receipt_reviews` | 6 | company and workspace |
 | `receipt_item_readings` | 6 | workspace |
 | `receipt_assignment_decisions` | 6 | company and workspace |
-| `dt_tables` (one receipts table per workspace) | 2, in two workspaces | workspace |
-| below `dt_tables`: the receipt rows (`tbl_<id>`), `dt_columns`, `dt_views`, `dt_files`, `select_options`, `dt_row_select_values` | not counted yet | table id and row id |
-| stored receipt files in Storage Brain | not counted yet | file id on `dt_files` |
-| `sheet_import_configs` | 1 | workspace |
-| below it: `sheet_import_rows` | not counted yet | config id |
+| `dt_tables` (one receipts table per workspace) | 2, in two workspaces | workspace only: the company stamp is empty on both |
+| `dt_columns` | 65 | table id |
+| `dt_views` | 10 | table id |
+| the physical tables `tbl_<table id>` with the receipt rows | 6 rows in one, 0 in the other | table id; no foreign key to `dt_tables` |
+| `dt_rows` (the older shared layout) | 0, empty for every company | table id |
+| `dt_files` | 5 (481,840 bytes) on those 6 receipts | row id; no foreign key |
+| stored receipt files in Storage Brain | the 5 objects those rows name | file id on `dt_files` |
+| `dt_relations`, `dt_row_select_values` | 0 | row id |
+| `select_options` | not counted | column id |
+| `sheet_import_configs` | 1 (the only one in the database) | workspace |
+| `sheet_import_rows` | 53, of which 6 point at receipts that still exist | config id |
+
+Other companies own 4 receipts tables, which must stay untouched.
+
+Two things in this inventory decide the design below. The two receipts tables carry no company
+stamp, so an erasure by stamp alone misses them and everything below them: the workspace ids
+auth-brain names are needed. And neither the physical tables nor `dt_files` hang on a foreign
+key, so nothing cascades to them: they are removed explicitly, files first.
 
 The receiver's log line for that delivery was "removed 0 guest copies, held 0 (export coverage:
 no_export), 0 contacts, ended 0 bank connections and 0 account shares".
@@ -103,7 +116,7 @@ None of this is a legal duty to keep. It is how the systems work, and it ends by
 since 2026-10 also a company stamp (`auth_tenant_id`). A row is erased when it carries the stamp of
 the erased company, or when it carries no stamp and lies in a workspace auth-brain names in the
 delivery (`workspace_ids`). This is the rule the workspace move already uses. It matters here:
-several of the leftovers above could only be counted by workspace.
+both receipts tables of the leftovers above carry no stamp.
 
 The list of tables is derived from the Prisma data model, not kept by hand
 (`stampedModels`, already used by the workspace move). Every model without a stamp is named in
@@ -295,6 +308,15 @@ shared with another company is kept; rows without a stamp need the workspace ids
    A held name now always carries the date it may go. No date is ever moved.
 10. **The readme inside the export zip stays as it is.** It describes the hold, which is unchanged
     until the open question is answered.
+
+11. **The table removal is written here and does not call the data-table package's
+    `deleteTable`.** That method does the same steps (file references, links, choices, the
+    physical table, views, options, columns, the table row), and the erasure follows them one by
+    one. It was not reused because it swallows its own errors (a failed read of the row ids counts
+    as "no rows", a failed delete of file references is ignored) and runs outside a transaction: a
+    half-removed table would look like success, and it removes the file references before anyone
+    has read which stored files they name. Here a failed read stops the run, and each table goes in
+    one transaction. If the package gains a strict variant, switch to it.
 
 ## Open question for the owner
 

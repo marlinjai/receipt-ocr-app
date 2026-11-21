@@ -51,15 +51,13 @@ beforeEach(() => {
     await deps.deleteStoredFile('file-1');
     return {
       guestCopies: 0,
-      guestCopiesHeld: 0,
       sharedContacts: 0,
-      exportCoverage: 'no_export',
       bankConnections: bank.connections,
       accountShares: shares.shares,
       crossCompanyLinks: shares.links,
       crossCompanyRecords: shares.records,
       register: { tables: 1, receipts: 6, storedFiles: 1, storedFilesAlreadyGone: 0, storedFilesKept: 0, records: { receipt_reviews: 6 }, companyExports: 0 },
-      notErased: [{ what: 'database_backups', days: 30 }],
+      notErased: [{ what: 'database_backups', daysOnServer: 7, days: 30 }],
     };
   });
 });
@@ -86,7 +84,7 @@ describe('POST /api/internal/erasure (the wiring)', () => {
     expect(eraseStoredFile).toHaveBeenCalledWith('file-1');
     const answer = await res.json();
     expect(answer.erased).toMatchObject({ bankConnections: 1, accountShares: 1, crossCompanyLinks: 2, crossCompanyRecords: 3, register: { receipts: 6, storedFiles: 1 } });
-    expect(answer.notErased).toEqual([{ what: 'database_backups', days: 30 }]);
+    expect(answer.notErased).toEqual([{ what: 'database_backups', daysOnServer: 7, days: 30 }]);
     expect(ledger.begin).toHaveBeenCalledWith({ eventId: 'e1', kind: 'tenant.erased', companyId: 'tenant-x', workspaceIds: ['ws-x'] });
     expect(ledger.complete).toHaveBeenCalledWith('e1', expect.objectContaining({ accountShares: 1 }), lease);
     // The route hands the erasure the checkpoint that renews the lease between its steps.

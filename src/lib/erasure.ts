@@ -12,54 +12,57 @@ import { verifyErasureSignature } from './erasure-signature';
  * receipts, stored files and every row that carries its stamp, is
  * `eraseCompany` in company-erasure.ts, which calls the contact rule first.
  *
- * What the contact rule removes, for the company (tenant) and the workspaces
- * auth-brain names:
- * - the printed guest copies on meals (`meal_guests`): the ones stamped with the
- *   company, and the ones without a stamp in a workspace auth-brain names. A copy
- *   elsewhere that names one of the company's contacts only loses that link;
- * - the company's contacts and its customer-number counter in the suite's shared
- *   contacts database, the only contact store.
+ * A company erasure removes everything of the company, the printed guest names
+ * on its meals included. Keeping records for the tax period is the company's
+ * duty, not this app's (decided by the owner on 2026-11-21, plan
+ * docs/plans/2026-11-21-company-erasure-register.md). What survives for a while
+ * is technical only: the dumps of the database.
  *
- * It is repeat-safe: a second run finds nothing and removes nothing more.
+ * The erasure of ONE contact of a company that goes on existing is another
+ * matter and keeps its rule (`exportCoversRegister`, `settleGuestCopies`): the
+ * printed names on that company's meals are removed only when the company holds
+ * an identical export, otherwise they are held for `RETENTION_YEARS`.
  */
 
 /**
  * One thing an erasure did not remove, by code.
- * - `guest_copies_held`: printed guest names kept until `until`.
+ * - `guest_copies_held_earlier`: printed guest names that an EARLIER erasure of one
+ *   contact held until `until`. A company erasure holds none itself, but it cannot
+ *   tell these apart from anything, so it leaves them to the purge.
  * - `stored_files_shown_elsewhere`: files a receipt outside this erasure (another
  *   company's, or one in a workspace the delivery did not name) still shows.
  * - `bank_sessions_not_closed`: sessions at the bank that could not be closed. The
  *   connection is removed here and nothing is read any more; the consent at the
  *   bank runs out by itself.
- * - `database_backups`: the dumps of the database, which rotate out after `days`
- *   (technical retention, no legal one).
+ * - `database_backups`: the dumps of the database keep erased rows until they rotate
+ *   out: `daysOnServer` on the server, `days` at most in the copies off the server.
+ *   Technical retention, no legal one. Stored files have no backup copy: a file
+ *   that is erased is gone.
  * - `uploads_never_attached_to_a_receipt`: files without a row, which this app
  *   cannot assign to a company.
  */
 export interface NotErased {
-  what: 'guest_copies_held' | 'stored_files_shown_elsewhere' | 'bank_sessions_not_closed' | 'database_backups' | 'uploads_never_attached_to_a_receipt';
+  what: 'guest_copies_held_earlier' | 'stored_files_shown_elsewhere' | 'bank_sessions_not_closed' | 'database_backups' | 'uploads_never_attached_to_a_receipt';
   count?: number;
   until?: string;
   days?: number;
+  daysOnServer?: number;
 }
 
 export interface ErasureCounts {
-  /** Printed guest copies removed now (the company's last export is identical to the register). */
+  /** Printed guest copies of the company removed now. A company erasure holds none. */
   guestCopies: number;
   /**
-   * Printed guest copies kept until `RETENTION_YEARS` have passed (no export that covers them).
-   * From `eraseCompanyContacts`: the ones held by this run. From `eraseCompany`: every copy of the
-   * company that is held after the run, also the ones an earlier run held.
+   * Printed guest copies of the company that an earlier erasure of ONE contact had held (they carry
+   * a date). Left where they are; the purge removes them after their date. Set by `eraseCompany`.
    */
-  guestCopiesHeld: number;
+  guestCopiesHeldEarlier?: number;
   sharedContacts: number;
   /**
    * Printed copies outside the company's own rows (another company's meal, or a workspace the
    * delivery did not name) that named one of its contacts: their link was cleared, the copy stays.
    */
   guestLinksCleared?: number;
-  /** Why the printed copies were removed or held. A code, never a name. */
-  exportCoverage: ExportCoverageReason;
   /** Live bank connections ended (session closed at the bank where it could be, connection removed). */
   bankConnections?: number;
   /** Accounts whose private payments went to another company (or came from one), ended. */
@@ -172,7 +175,7 @@ export function erasureFailureReason(e: unknown): { reason: string; status: numb
 }
 
 /**
- * How long a printed guest copy is kept when no export has been handed over.
+ * How long a printed guest copy is kept when ONE contact is erased and no identical export exists.
  * Ten years is the usual period for business records under German tax law (the
  * Abgabenordnung, AO); a lawyer should confirm the period before go-live.
  */
@@ -252,8 +255,9 @@ export type GuestCopyScope =
   | { contactId: string | { in: string[] } };
 
 /**
- * THE rule for printed guest copies when their contact is erased. Used by the
- * company erasure and by the erasure of one contact, so both always decide alike.
+ * THE rule for printed guest copies when ONE contact of a company is erased
+ * (`eraseContact` in contacts/directory.ts). The company goes on existing and
+ * still owes its tax records, so:
  *
  * - `covered` (the company's newest export is identical to the register now, see
  *   `exportCoversRegister`): the copies are removed.
@@ -261,67 +265,58 @@ export type GuestCopyScope =
  *   `retain_until` is set `RETENTION_YEARS` ahead. Only copies that carry no date
  *   yet are given one, so a repeat never restarts a hold.
  *
- * A copy that is held stays held. `covered` never removes a copy that already
- * carries a date: only the purge does, after the date. This matters for a repeat
- * of a company erasure. The first run may have held the names and removed the
- * receipts; the register is then empty, and an empty register can equal an export
- * the company took before it recorded its first meal. Without this rule the
- * second run would read "covered" and delete what the first run held.
- *
- * `holdUnlinked` (the company erasure): a printed name that never had a contact
- * is held too. Its meal goes with the company, so without a date it would stay
- * for ever. The erasure of one contact leaves such names alone: they are not
- * that contact's.
+ * A copy that is held stays held: `covered` never removes a copy that already
+ * carries a date, only the purge does, after the date.
  *
  * Each case is one statement, so a run that stops never leaves the copies half settled.
  *
  * Removing copies changes the register, so the same export no longer covers a
  * LATER erasure: that one holds until a new export is taken. This is intended.
+ *
+ * A company erasure does not use this rule: it removes the company's copies
+ * outright (`eraseCompanyContacts`).
  */
 export async function settleGuestCopies(
   db: PrismaClient,
   scope: readonly GuestCopyScope[],
   covered: boolean,
   now: Date = new Date(),
-  options: { holdUnlinked?: boolean } = {},
 ): Promise<{ removed: number; held: number }> {
   if (scope.length === 0) return { removed: 0, held: 0 };
   if (covered) {
     return { removed: (await db.mealGuest.deleteMany({ where: { OR: [...scope], retainUntil: null } })).count, held: 0 };
   }
   const held = await db.mealGuest.updateMany({
-    where: { OR: [...scope], retainUntil: null, ...(options.holdUnlinked ? {} : { contactId: { not: null } }) },
+    where: { OR: [...scope], retainUntil: null, contactId: { not: null } },
     data: { contactId: null, retainUntil: retainUntilFrom(now) },
   });
   return { removed: 0, held: held.count };
 }
 
 /**
- * Erase one company's contact data. Order and rules:
+ * Erase one company's contact data, as part of the erasure of the whole company:
  *
- * 1. The contacts (in the shared contacts database) are removed, and so are the
- *    links from meals to them. Those links are not records the business must keep.
- * 2. The printed guest copies on meals (name and company as printed on the
- *    register) are the one tax-relevant part. They are removed only when the
- *    company's newest export is identical to the register as it is now
- *    (`exportCoversRegister`, compared over `workspaceIds`). Otherwise they are
- *    held (contact link cleared, `retain_until` set) until the retention period
- *    has passed; `purgeExpiredRetainedGuests` removes them.
+ * 1. The printed guest copies on the company's meals are removed, whatever the
+ *    company exported or did not export. Keeping its records is the company's
+ *    duty; this app keeps nothing for it (the owner's decision of 2026-11-21).
+ *    The company's own copies are the ones stamped with it and the ones without
+ *    a stamp in a workspace auth-brain names.
+ * 2. A copy elsewhere that names one of the company's contacts only loses that link.
+ * 3. The contacts (in the shared contacts database) are removed.
  *
- * Repeat-safe: a second run does not restart a hold, because only copies
- * without a date are given one, and it never removes a copy an earlier run held.
+ * One kind of copy is left: a copy that already carries a date. It was held by an
+ * earlier erasure of ONE contact, under the rule that still applies there. A row
+ * does not say which erasure held it, so a company erasure does not touch dated
+ * copies; the purge removes them after their date (roadmap).
  *
- * `holdUnlinked`: see `settleGuestCopies`. Set by the whole company erasure.
- * `checkpoint`: called between the steps (before the register is hashed, before the
- * copies are settled, before the contacts go); it rejects when the run may not go on.
+ * Repeat-safe: a second run finds nothing and removes nothing more.
+ * `checkpoint`: called between the steps; it rejects when the run may not go on.
  */
 export async function eraseCompanyContacts(
   db: PrismaClient,
   tenantId: string,
   workspaceIds: readonly string[],
-  now: Date = new Date(),
-  hasher?: RegisterHasher,
-  options: { holdUnlinked?: boolean; checkpoint?: () => Promise<void> } = {},
+  options: { checkpoint?: () => Promise<void> } = {},
 ): Promise<ErasureCounts> {
   // Start-up applies the layout, but it continues when the database is unreachable
   // then. migrate() is idempotent under a lock, so apply it here too: without it a
@@ -337,27 +332,20 @@ export async function eraseCompanyContacts(
   const scope = [{ authTenantId: tenantId }, ...workspaceScope];
 
   await options.checkpoint?.();
-  const coverage = await exportCoversRegister(db, tenantId, workspaceIds, hasher);
-  await options.checkpoint?.();
-  const { removed: guestCopies, held: guestCopiesHeld } = await settleGuestCopies(db, scope, coverage.covered, now, { holdUnlinked: options.holdUnlinked });
+  // `retainUntil: null`: a copy an earlier erasure of one contact held is left to the purge.
+  const guestCopies = (await db.mealGuest.deleteMany({ where: { OR: scope, retainUntil: null } })).count;
 
   // A printed copy OUTSIDE that scope can still name one of the company's contacts: a meal of another
   // company, or of a workspace the delivery does not name (possible after a workspace changed company
-  // without its rows following). That copy is the other register's record, so it is neither removed nor
-  // held here. Only its link goes, because the contact it points at is erased below.
+  // without its rows following). That copy is the other register's record, so it is not removed
+  // here. Only its link goes, because the contact it points at is erased below.
   const guestLinksCleared =
     sharedIds.length > 0 ? (await db.mealGuest.updateMany({ where: { contactId: { in: sharedIds } }, data: { contactId: null } })).count : 0;
 
   await options.checkpoint?.();
   const sharedRemoved = await shared.eraseAll();
 
-  return {
-    guestCopies,
-    guestCopiesHeld,
-    sharedContacts: sharedRemoved,
-    exportCoverage: coverage.reason,
-    guestLinksCleared,
-  };
+  return { guestCopies, sharedContacts: sharedRemoved, guestLinksCleared };
 }
 
 /**
@@ -398,7 +386,8 @@ export interface ErasureDelivery {
  *   the run stopped at its next step and the next delivery goes on.
  * - The event id is recorded for another company: 409 `event_of_another_company`, nothing is touched.
  * - The run cannot be recorded in the ledger: 502 as well. An erasure nobody can prove is not acknowledged.
- * - 200 only when the recount found nothing of the company but held guest names. The answer
+ * - 200 only when the recount found nothing of the company but guest names an earlier erasure of
+ *   one contact had held. The answer
  *   lists under `notErased` what an erasure never removes or did not remove this time.
  *
  * Auth-brain keeps only the status of an answer. The counts and `notErased` are therefore also
@@ -500,7 +489,7 @@ export async function receiveErasureDelivery(input: {
   const register = counts.register;
   const records = register ? Object.values(register.records).reduce((sum, n) => sum + n, 0) : 0;
   log(
-    `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies, held ${counts.guestCopiesHeld} (export coverage: ${counts.exportCoverage}), ${counts.sharedContacts} contacts, ended ${counts.bankConnections ?? 0} bank connections and ${counts.accountShares ?? 0} account shares (${counts.crossCompanyLinks ?? 0} links and ${counts.crossCompanyRecords ?? 0} other records between companies removed)` +
+    `[erasure] event ${eventId}: removed ${counts.guestCopies} guest copies (${counts.guestCopiesHeldEarlier ?? 0} held by an earlier contact erasure left to the purge), ${counts.sharedContacts} contacts, ended ${counts.bankConnections ?? 0} bank connections and ${counts.accountShares ?? 0} account shares (${counts.crossCompanyLinks ?? 0} links and ${counts.crossCompanyRecords ?? 0} other records between companies removed)` +
       (register
         ? `, removed ${register.tables} receipts tables with ${register.receipts} rows, ${register.storedFiles} stored files (${register.storedFilesAlreadyGone} were gone already, ${register.storedFilesKept} kept because a receipt elsewhere shows them), ${records} other rows and ${register.companyExports} export records`
         : '') +

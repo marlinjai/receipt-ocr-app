@@ -24,10 +24,21 @@ and answers. What it removes and why: `docs/plans/2026-11-21-company-erasure-reg
   had removed before it stopped. Ids, counts and reason codes only.
 - **The application log**, lines starting with `[erasure]`: the same, per delivery.
 
-A 200 always lists under `notErased` what an erasure never removes (database
-backups for up to thirty days, uploads that never became a receipt) and what it
-did not remove this time (held guest names, files a receipt elsewhere still shows,
-bank sessions that could not be closed).
+A company erasure keeps nothing of the company. Keeping records for the tax
+period is the company's duty, not this app's (the owner's decision of
+2026-11-21). What survives for a while is technical only, and bounded:
+
+- **Database backups** keep the erased rows until they rotate out: seven days on
+  the server, and at most thirty days in the two copies off the server (the
+  thirty days per the backup plan).
+- **Stored files** have no backup copy. A file that is erased is gone.
+
+A 200 always lists under `notErased` what an erasure never removes (those
+backups, with both numbers, and uploads that never became a receipt) and what it
+did not remove this time: files a receipt elsewhere still shows, bank sessions
+that could not be closed, and printed guest names that an EARLIER erasure of one
+single contact had held (`guest_copies_held_earlier`; a company erasure holds
+none itself and leaves those to the purge).
 
 ## A delivery that keeps failing
 

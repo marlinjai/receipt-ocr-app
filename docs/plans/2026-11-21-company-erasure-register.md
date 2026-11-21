@@ -1,6 +1,6 @@
 ---
 title: A company erasure removes the receipts, their files and every row of the company
-summary: Until now the receiver of auth-brain's company erasure removed contact data only and still answered with success, so a company erased on 2026-11-21 left receipts, readings, decisions and stored files behind. This plan says what an erasure must delete (every table and file store, one by one), keeps legal retention apart from technical retention, adds an erasure ledger, and makes the answer say what was not erased. One question stays open for the owner, the ten-year hold on printed guest names.
+summary: Until now the receiver of auth-brain's company erasure removed contact data only and still answered with success, so a company erased on 2026-11-21 left receipts, readings, decisions and stored files behind. This plan says what an erasure must delete (every table and file store, one by one), keeps legal retention apart from technical retention, adds an erasure ledger, and makes the answer say what was not erased. The owner decided on 2026-11-21 that a company erasure keeps nothing, printed guest names included; only the bounded retention of database backups remains.
 type: plan
 status: in-progress
 tags: [receipts, erasure, gdpr, retention, storage, webhook, stateful-flow]
@@ -78,16 +78,22 @@ They are kept apart in this plan, in the code and in the answer of the webhook.
   built 2026-10-09, before decision 8) is the same thought from the other side: the company can
   take its business meal register and contacts with it as a zip (`GET /api/export/company`), so
   that it can meet its own duty after the erasure.
-- **The ten-year hold on printed guest names** (`RETENTION_YEARS`, `settleGuestCopies`) is the one
-  place where Receipts itself keeps something for the tax period. A business meal receipt is only
-  deductible with the names of the guests. When a company's contacts are erased, the names as
-  printed on its meals are removed only if the company holds an export that is identical to the
-  register as it is now (`exportCoversRegister`); otherwise they are kept for ten years, with the
-  link to the contact cleared. The purge that removes them after ten years is built and not
-  scheduled, because no lawyer has confirmed the period (roadmap line "Enable the retention purge
-  of held guest copies only after recorded legal confirmation").
+- **The ten-year hold on printed guest names** (`RETENTION_YEARS`, `settleGuestCopies`) was the one
+  place where Receipts itself kept something for the tax period. A business meal receipt is only
+  deductible with the names of the guests. It applied in two cases, and since the owner's
+  decision of 2026-11-21 it applies in one:
+  - **One contact is erased, the company goes on:** unchanged. The names as printed on that
+    company's meals are removed only if the company holds an export that is identical to the
+    register as it is now (`exportCoversRegister`); otherwise they are kept for ten years, with
+    the link to the contact cleared, so that the company's own register stays complete.
+  - **The whole company is erased:** no hold any more. Its printed guest names are removed with
+    everything else, whatever it exported.
+  The purge that removes held names after ten years is built and not scheduled, because no lawyer
+  has confirmed the period (roadmap line "Enable the retention purge of held guest copies only
+  after recorded legal confirmation"). It still matters for the first case.
 
-Decision 8 settles everything except the last point for a company erasure. See "Open question".
+Decision 8 settled everything except the hold on a company erasure; the owner settled that on
+2026-11-21 (see "Decided by the owner").
 
 ### Technical retention: what survives a delete for a while, and why
 
@@ -96,6 +102,9 @@ None of this is a legal duty to keep. It is how the systems work, and it ends by
 - **Soft deletes.** Receipts has none for a company's rows. A receipt row has an archive flag
   (`_archived`) that hides it from the lists; an erasure removes archived rows like any other,
   because it drops the whole table.
+After a company erasure this is ALL that is retained, and it is bounded: database backups for
+seven days on the server and at most thirty days off the server; stored files not at all.
+
 - **Database backups.** Dumps of the Receipts database are taken every six hours. They are kept
   seven days on the server and up to thirty days in two copies off the server (an object store
   in the European Union and a second machine), per `docs/plans/2026-10-09-production-backups.md`.
@@ -222,32 +231,37 @@ more keeps nothing: the file is deleted and the stray reference with it.
 
 `company_exports`: one row per export handed to the company (a count and two hashes, no content).
 Erased, last, because the rule for guest names reads it first. That an export existed at the
-time of the erasure stays visible in the ledger (`exportCoverage`).
+time of the erasure is not recorded any more: the erasure does not depend on it.
 
-### Held, not erased (1 table): see the open question
+### Printed guest names (1 table): erased, with one exception left to the purge
 
-`meal_guests`: the names of guests as printed on business meal receipts. Removed when the
-company's newest export is identical to the register, otherwise held for ten years with the link
-to the contact cleared. Reported in every answer. Two things were tightened in this plan, both
-in the direction of holding:
+`meal_guests`: the names of guests as printed on business meal receipts. A company erasure
+removes the company's own names outright, whatever it exported (the owner's decision of
+2026-11-21). The company's own names are the ones stamped with it and the ones without a stamp
+in a workspace the delivery names.
 
-- **A name that is held stays held.** "Identical export" never removes a name that already
-  carries a date; only the purge does, after the date. Without this a repeat could delete what
-  the first run held: the first run holds the names and removes the receipts, the register is
-  then empty, and an empty register equals an export the company took before its first meal.
-- **A name that never had a contact is held too** on a company erasure, with a date. Its meal
-  goes with the company, so without a date it would stay for ever.
-- **Only the company's own printed names are removed or held.** Until now the rule also took
-  every printed name that pointed at one of the company's contacts, wherever it lay. Such a name
-  can lie in another company's meal or in a workspace the delivery does not name: the normal
-  write paths do not produce it (a meal takes guests from its own company's contacts, and the
-  workspace move refuses to leave a guest pointing across companies), but it exists after a
-  workspace changed company in auth-brain while its rows here did not follow. That printed
-  name is the other register's record. It now only loses its link to the erased contact, and the
+- **The exception: a name that already carries a date.** It was held by an earlier erasure of
+  ONE contact, under the rule that still applies there. A company erasure leaves it, and the
+  purge removes it after its date. Why it is not removed: a held row looks the same whichever
+  erasure held it (no contact link, a date, nothing else), so the code cannot tell a name held
+  for a company that still owed its records from anything else, and the instruction for this
+  change was to leave what cannot be told apart to the purge. The answer counts these names
+  (`guest_copies_held_earlier`), so they are never silent. Whether a company erasure should
+  remove them too is on the roadmap; by the owner's reasoning it should, and it is one condition
+  in one statement.
+- **A printed name elsewhere that names one of the company's contacts only loses its link.**
+  Until this plan the rule took every printed name that pointed at one of the company's
+  contacts, wherever it lay. Such a name can lie in another company's meal or in a workspace the
+  delivery does not name: the normal write paths do not produce it (a meal takes guests from its
+  own company's contacts, and the workspace move refuses to leave a guest pointing across
+  companies), but it exists after a workspace changed company in auth-brain while its rows here
+  did not follow. That printed name is the other register's record. It is not removed, and the
   answer counts it (`guestLinksCleared`).
 
-All of this exists only because the hold exists. If the owner decides to drop the hold on a
-company erasure (the open question), the names are simply removed and the first two points are moot.
+Before the owner's decision this branch held the names on a company erasure too, and two review
+findings were about making that hold safe on a repeat. With the hold gone on a company erasure
+they are moot there; the part that still matters is kept in the rule for one contact (a name
+that is held stays held: an identical export never removes a name that carries a date).
 
 ### Kept on purpose (1 table)
 
@@ -321,7 +335,7 @@ treated as not done.
 
 | Situation | Status | Body |
 | --- | --- | --- |
-| Everything of the company is gone, or only held guest names remain | 200 | `erased` (counts per kind and per table) and `notErased` |
+| Everything of the company is gone, or only guest names an earlier contact erasure held remain | 200 | `erased` (counts per kind and per table) and `notErased` |
 | The body does not say what kind of event it is | 400 | nothing is erased |
 | Another erasure (of any company) is at work | 409 | `reason: already_running`; this delivery touched nothing, the event keeps its status |
 | The run's lease ran out or was taken | 502 | `reason: lease_lost`; the run stopped at its next step |
@@ -342,12 +356,14 @@ contacts in the shared contacts database.
 
 `notErased` is part of every 200 answer, so an acknowledgement never claims more than was done:
 
-- `guest_copies_held` with the count and the date they may go (only when there are any);
+- `guest_copies_held_earlier` with the count and the date they may go (only when there are any):
+  names an earlier erasure of one contact held, left to the purge;
 - `stored_files_shown_elsewhere` with the count (only when there are any);
 - `bank_sessions_not_closed` with the count (only when there are any): the connection is removed
   here and nothing is read any more, but the session at the bank could not be closed and runs
   out by itself;
-- `database_backups` with `days: 30`: technical retention, ends by rotation;
+- `database_backups` with `daysOnServer: 7` and `days: 30`: the only retention after a company
+  erasure, technical, ends by rotation (the thirty days off the server per the backup plan);
 - `uploads_never_attached_to_a_receipt`: cannot be assigned to a company.
 
 A non-2xx answer makes auth-brain send the delivery again (eight times with growing pauses, then
@@ -468,12 +484,13 @@ route itself against the real erasure and ledger (the file store refuses, then a
    there for this to be honest.
 8. **Backups are not rewritten.** They rotate out within thirty days (by the backup plan, see above), which the data processing
    agreement allows. Rewriting dumps would break the recovery they exist for.
-9. **A held guest name stays held, and a name without a contact is held too.** No run turns
-   "held" into "removed": an identical export removes only names without a date. A printed name
-   that never had a contact gets its date on a company erasure, because its meal goes. No date
-   is ever moved.
-10. **The readme inside the export zip stays as it is.** It describes the hold, which is unchanged
-    until the open question is answered.
+9. **In the rule for ONE erased contact, a held guest name stays held.** An identical export
+   removes only names without a date; only the purge removes a held one. (For a company erasure
+   this no longer arises: see "Decided by the owner".)
+10. **The readme inside the export zip says what is true now.** Keeping records is the company's
+    duty; when the company is deleted everything goes; backups keep deleted rows for seven days
+    on the server and at most thirty days off it; stored files have no backup copy; and the rule
+    for one erased contact.
 
 11. **The table removal is written here and does not call the data-table package's
     `deleteTable`.** That method does the same steps (file references, links, choices, the
@@ -507,31 +524,40 @@ route itself against the real erasure and ledger (the file store refuses, then a
     our own words. Not kept as an ignored file with the instructions elsewhere, because every
     agent harness looks for `AGENTS.md` first.
 
+## Decided by the owner (2026-11-21)
+
+**A company erasure keeps nothing. The ten-year hold on printed guest names no longer applies
+to it.**
+
+- The owner's reasoning, in substance: keeping records is the company's responsibility; Lumitra
+  is only the software provider. When a company deletes its organization, all its data is
+  deleted, with only a bounded technical retention, as the large providers do it.
+- What was built from it: `eraseCompanyContacts` removes the company's printed guest names
+  outright and no longer looks at exports; the export coverage and its reason codes are gone
+  from the company erasure's answer and ledger entries; the readme inside the export zip and
+  the answer's `notErased` list say what is true now.
+- What stays: the erasure of ONE contact of a company that goes on existing keeps its rule
+  (identical export removes, otherwise a ten-year hold), with its screens and wording unchanged.
+- How "with a retention period" was read: as the bounded technical retention that exists
+  anyway, namely database backups for seven days on the server and at most thirty days off the
+  server (the latter per the backup plan, not verified against the real copies), and no copy at
+  all of stored files. The other possible reading, a grace period before an erasure runs (the
+  data stays restorable for some days after the deletion is asked for), is NOT built and not
+  decided.
+- This is the same position as auth-brain's decision 8 of 2026-11-07, now stated for the one
+  place in Receipts that still held something.
+
 ## Open question for the owner
 
-**Should a company erasure still hold printed guest names for ten years when no identical export
-exists?**
-
-- What it decides: after a company is erased, either nothing of it remains in Receipts, or the
-  names of its meal guests (name and company as printed, no date, no place, no amount) remain for
-  ten years.
-- Why it is not decided here: the hold was built on purpose, it is described to the company in
-  the readme of the export zip, and the retention period itself still waits for a lawyer (roadmap).
-  Removing personal data cannot be undone; holding it can.
-- Recommendation: **drop the hold on a company erasure, keep it for the erasure of one contact.**
-  Decision 8 says the duty is the company's and that nothing sets a hold automatically; this is
-  an automatic hold. After this change the meal rows are gone, so a held name is a name without
-  its meal and no longer the tax record it was held for. For one erased contact of a company that
-  still exists the meal is still there, and the hold keeps the company's own record complete.
-- If yes to the recommendation: `eraseCompany` removes the guest copies outright, the readme in
-  the export zip is reworded, and the answer no longer lists `guest_copies_held`. Small change.
-- For the company erased on 2026-11-21 the question changes nothing: it had no guest copies.
+None for this plan. Waiting for the owner, separately: the yes or no on erasing the leftovers
+of 2026-11-21 (roadmap decision line).
 
 ## Reality
 
 Status `in-progress`: built and reviewed on a branch, not merged. Gates still open before it is
-completed: the owner's answer to the open question above, the push and merge, the deploy with
-migration `0053_erasure_events`, and the decision on the leftovers of 2026-11-21 (roadmap).
+completed: the push and merge (after the auth-brain change that names deleted workspaces is
+live), the deploy with migration `0053_erasure_events`, and the decision on the leftovers of
+2026-11-21 (roadmap).
 
 - 2026-11-21: built on branch `feat/company-erasure-register`, not pushed. `src/lib/company-erasure.ts`
   (`eraseCompany`, the classification, the recount), `src/lib/erasure-ledger.ts`, the receiver in
@@ -552,10 +578,12 @@ migration `0053_erasure_events`, and the decision on the leftovers of 2026-11-21
   has a time limit, more lease checkpoints and a time limit on the bank, the lease is given back
   when a run cannot be recorded, a left file reference is named in the ledger, and `AGENTS.md`
   says when a kept test database has to be recreated.
+- 2026-11-21: the owner decided the open question. The hold on printed guest names is removed
+  from the company erasure; the erasure of one contact keeps it.
 - Not done, each on the roadmap: the leftovers of the company erased on 2026-11-21 are still in
   production (a decision of its own, nothing is deleted until the owner says yes;
   auth-brain will not send that delivery again by itself, because it was acknowledged);
-  the open question above; Storage Brain's own delete behaviour and backups are unverified; no
+  whether a company erasure also removes names an earlier contact erasure held; Storage Brain's own delete behaviour and backups are unverified; no
   run against a company with many files; uploads that never became a receipt are not counted;
   `user.erased` is not received; auth-brain naming a company's deleted workspaces is being built
   on its branch `fix/erasure-invitations-and-coverage`. For the leftovers of 2026-11-21 the

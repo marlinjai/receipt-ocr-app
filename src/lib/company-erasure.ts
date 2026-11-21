@@ -2,7 +2,7 @@ import 'server-only';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { safeTableName } from '@marlinjai/data-table-adapter-shared';
 import { companyContacts } from './contacts/db';
-import { eraseCompanyContacts, type ErasureCounts, type NotErased, type RegisterHasher } from './erasure';
+import { eraseCompanyContacts, type ErasureCounts, type NotErased } from './erasure';
 import { stampedModels, type StampedModel } from './workspace-move';
 
 /**
@@ -20,14 +20,15 @@ import { stampedModels, type StampedModel } from './workspace-move';
  *    ANOTHER company, or a row with THIS company's stamp lies in a workspace the
  *    delivery does not name (also when it names none). Either way auth-brain and the rows say different
  *    things about whose data it is, and a person looks.
- * 2. The contact data, by the existing rule (`eraseCompanyContacts`): contacts
- *    go, printed guest names go or are held.
+ * 2. The contact data (`eraseCompanyContacts`): the printed guest names on the
+ *    company's meals and its contacts go.
  * 3. Bank connections and account shares end (closing the session at the bank
  *    needs the connection row, so this runs before the rows go).
  * 4. The register: every stored receipt file, then every receipts table with its
  *    rows, then every row of every table that carries the company stamp.
  * 5. A recount, also of the tables below a receipts table and of the contacts
- *    database. Anything left that is not a held guest name fails the run
+ *    database. Anything left fails the run, except guest names an earlier
+ *    erasure of one contact had held (they stay until their date)
  *    (`ErasureIncompleteError`), so the delivery is answered non-2xx and sent again.
  *
  * Which rows are the company's: a row stamped with the company
@@ -51,7 +52,7 @@ export type ErasureClass =
   | 'via_table'
   /** Hangs below a stamped row by a cascading foreign key. */
   | 'via_parent'
-  /** Printed guest names: removed or held by the export rule (`settleGuestCopies`). */
+  /** Printed guest names: removed, except the ones an earlier erasure of one contact held (they carry a date). */
   | 'guest_rule'
   /** A record about the company itself, keyed by the company alone: deleted. */
   | 'company_record'
@@ -213,8 +214,6 @@ export interface CompanyErasureDeps {
   tableLockWaitMs?: number;
   /** How many contacts the company still has in the shared contacts database. Injected in tests. */
   countContacts?: (tenantId: string) => Promise<number>;
-  now?: Date;
-  hasher?: RegisterHasher;
 }
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -516,15 +515,16 @@ export async function eraseCompanyRegister(
   );
   counts.records = records;
 
-  // 5. The records of exports handed over. Last: the export rule for guest names read them before.
+  // 5. The records of exports handed over.
   counts.companyExports = (await db.companyExport.deleteMany({ where: { authTenantId: tenantId } })).count;
 
   return { counts, erased: { tableIds, rowIds: [...erasedRows] } };
 }
 
 /**
- * What the company still has here, by table. Held guest names are counted
- * apart (`heldGuestCopies`): they are the one thing an erasure may leave.
+ * What the company still has here, by table. Guest names an earlier erasure of
+ * one contact held are counted apart (`heldGuestCopies`): they are the one thing
+ * an erasure leaves, for the purge.
  *
  * `erased` (the tables and rows this run removed) lets the count also look at
  * the tables that carry no stamp and hang below a receipts table: a file
@@ -572,10 +572,13 @@ export async function countCompanyRemainder(
 }
 
 /**
- * How long a dump of the database is kept at most (docs/plans/2026-10-09-production-backups.md:
- * seven days on the server, thirty days in the two copies off the server).
+ * How long a dump of the database is kept (docs/plans/2026-10-09-production-backups.md): seven
+ * days on the server, and at most thirty days in the two copies off the server. This is the
+ * whole retention after a company erasure, and it is technical: the dumps rotate out by
+ * themselves. Stored files have no such copy.
  */
 export const BACKUP_RETENTION_DAYS = 30;
+export const BACKUP_RETENTION_DAYS_ON_SERVER = 7;
 
 /**
  * What an erasure does not remove, said in every answer so that an
@@ -585,12 +588,12 @@ export const BACKUP_RETENTION_DAYS = 30;
 export function notErasedAfter(input: { heldGuestCopies: number; retainUntil: Date | null; storedFilesKept: number; bankSessionsLeftOpen: number }): NotErased[] {
   const out: NotErased[] = [];
   if (input.heldGuestCopies > 0) {
-    out.push({ what: 'guest_copies_held', count: input.heldGuestCopies, ...(input.retainUntil ? { until: input.retainUntil.toISOString().slice(0, 10) } : {}) });
+    out.push({ what: 'guest_copies_held_earlier', count: input.heldGuestCopies, ...(input.retainUntil ? { until: input.retainUntil.toISOString().slice(0, 10) } : {}) });
   }
   if (input.storedFilesKept > 0) out.push({ what: 'stored_files_shown_elsewhere', count: input.storedFilesKept });
   if (input.bankSessionsLeftOpen > 0) out.push({ what: 'bank_sessions_not_closed', count: input.bankSessionsLeftOpen });
   // Technical retention, not a legal one: the dumps of the database rotate out by themselves.
-  out.push({ what: 'database_backups', days: BACKUP_RETENTION_DAYS });
+  out.push({ what: 'database_backups', daysOnServer: BACKUP_RETENTION_DAYS_ON_SERVER, days: BACKUP_RETENTION_DAYS });
   // An upload that never became a receipt has no row and so no company: this app cannot find it.
   out.push({ what: 'uploads_never_attached_to_a_receipt' });
   return out;
@@ -604,7 +607,6 @@ const guestTable = { workspaceField: 'authWorkspaceId' as const };
  * before it stopped, counts only.
  */
 export async function eraseCompany(db: PrismaClient, tenantId: string, workspaceIds: readonly string[], deps: CompanyErasureDeps): Promise<ErasureCounts> {
-  const now = deps.now ?? new Date();
   classifyModels();
   const partial: Partial<ErasureCounts> = {};
   const checkpoint = async () => {
@@ -615,7 +617,7 @@ export async function eraseCompany(db: PrismaClient, tenantId: string, workspace
     await checkpoint();
     await assertStampsMatchDelivery(db, tenantId, workspaceIds);
 
-    const contacts = await eraseCompanyContacts(db, tenantId, workspaceIds, now, deps.hasher, { holdUnlinked: true, checkpoint });
+    const contacts = await eraseCompanyContacts(db, tenantId, workspaceIds, { checkpoint });
     Object.assign(partial, contacts);
 
     await checkpoint();
@@ -646,7 +648,7 @@ export async function eraseCompany(db: PrismaClient, tenantId: string, workspace
 
     return {
       ...contacts,
-      guestCopiesHeld: heldGuestCopies,
+      guestCopiesHeldEarlier: heldGuestCopies,
       bankConnections: bank.connections,
       accountShares: shares.shares,
       crossCompanyLinks: shares.links,

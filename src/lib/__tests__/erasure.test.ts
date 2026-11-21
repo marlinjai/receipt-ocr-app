@@ -9,6 +9,7 @@ import {
   purgeExpiredRetainedGuests,
   receiveErasureDelivery,
   retainUntilFrom,
+  settleGuestCopies,
   type ErasureCounts,
   type ErasureLease,
   type ErasureLedger,
@@ -34,7 +35,7 @@ function delivery(payload: Record<string, unknown>) {
   return JSON.stringify({ event_id: 'evt_1', kind: 'tenant.erased', tenant_id: 'tnt_a', requested_at: '2026-10-09T00:00:00Z', ...payload });
 }
 
-const COUNTS: ErasureCounts = { guestCopies: 2, guestCopiesHeld: 0, sharedContacts: 3, exportCoverage: 'identical' };
+const COUNTS: ErasureCounts = { guestCopies: 2, sharedContacts: 3 };
 
 describe('receiveErasureDelivery (the decisions, before any data is touched)', () => {
   it('refuses with 503 and erases nothing when the secret is not configured', async () => {
@@ -94,7 +95,7 @@ describe('receiveErasureDelivery (the decisions, before any data is touched)', (
   });
 
   it('is repeat-safe: a second identical delivery is acknowledged again', async () => {
-    const erase = vi.fn(async (): Promise<ErasureCounts> => ({ guestCopies: 0, guestCopiesHeld: 0, sharedContacts: 0, exportCoverage: 'no_export' }));
+    const erase = vi.fn(async (): Promise<ErasureCounts> => ({ guestCopies: 0, sharedContacts: 0 }));
     const body = delivery({});
     const first = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, log: () => {} });
     const second = await receiveErasureDelivery({ rawBody: body, signature: signed(body), secret: SECRET, erase, log: () => {} });
@@ -130,9 +131,9 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
   const LEASE: ErasureLease = { token: 'lease-1', renew: vi.fn(async () => {}) };
   const FULL: ErasureCounts = {
     ...COUNTS,
-    guestCopiesHeld: 4,
+    guestCopiesHeldEarlier: 4,
     register: { tables: 2, receipts: 9, storedFiles: 7, storedFilesAlreadyGone: 0, storedFilesKept: 1, records: { receipt_reviews: 6, tax_payments: 3 }, companyExports: 1 },
-    notErased: [{ what: 'guest_copies_held', count: 4, until: '2036-11-21' }, { what: 'database_backups', days: 30 }],
+    notErased: [{ what: 'guest_copies_held_earlier', count: 4, until: '2036-11-21' }, { what: 'database_backups', daysOnServer: 7, days: 30 }],
   };
 
   it('answers 200 with what was removed and, apart from it, what was not', async () => {
@@ -143,7 +144,8 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
     expect(res.body.notErased).toEqual(FULL.notErased);
     const line = lines.join('\n');
     expect(line).toContain('removed 2 receipts tables with 9 rows, 7 stored files (0 were gone already, 1 kept because a receipt elsewhere shows them), 9 other rows and 1 export records');
-    expect(line).toContain('not erased: guest_copies_held 4, database_backups');
+    expect(line).toContain('removed 2 guest copies (4 held by an earlier contact erasure left to the purge), 3 contacts');
+    expect(line).toContain('not erased: guest_copies_held_earlier 4, database_backups');
   });
 
   it('records the start and the completion, and erases over every workspace the ledger knows', async () => {
@@ -273,7 +275,7 @@ describe('receiveErasureDelivery (the answer says what was not erased, and every
   });
 });
 
-describe('eraseCompanyContacts (what is removed, company-scoped)', () => {
+describe('eraseCompanyContacts (a company erasure keeps no printed guest names)', () => {
   /** The company's contacts in the shared contacts database, the only contact store. */
   function sharedWith(ids: string[] = []) {
     return { list: vi.fn(async () => ids.map((id) => ({ id }))), eraseAll: vi.fn(async () => ids.length) };
@@ -286,141 +288,107 @@ describe('eraseCompanyContacts (what is removed, company-scoped)', () => {
     migrateMock.mockClear();
   });
 
-  /** `exportHash`: undefined = no export on record, null = an export from before the hash existed. */
-  function fakeDb(opts: { exportHash?: string | null; guestsLinked?: number } = {}) {
+  function fakeDb(guests = 0) {
     return {
-      companyExport: {
-        findFirst: vi.fn(async () => (opts.exportHash === undefined ? null : { registerSha256: opts.exportHash })),
-      },
+      companyExport: { findFirst: vi.fn() },
       mealGuest: {
-        deleteMany: vi.fn(async () => ({ count: opts.guestsLinked ?? 0 })),
-        updateMany: vi.fn(async () => ({ count: opts.guestsLinked ?? 0 })),
+        deleteMany: vi.fn(async () => ({ count: guests })),
+        updateMany: vi.fn(async () => ({ count: 0 })),
       },
     } as unknown as PrismaClient & {
       companyExport: { findFirst: ReturnType<typeof vi.fn> };
       mealGuest: { deleteMany: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn> };
     };
   }
-  const now = new Date('2026-10-09T12:00:00Z');
-  const registerIs = (hash: string): RegisterHasher => vi.fn(async () => hash);
 
-  it('without an export, holds the printed copies: the contact link is cleared and a retention date is set', async () => {
-    const db = fakeDb({ guestsLinked: 2 });
-    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'));
-    expect(counts).toEqual({ guestCopies: 0, guestCopiesHeld: 2, sharedContacts: 0, exportCoverage: 'no_export', guestLinksCleared: 0 });
-    expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
-    const call = db.mealGuest.updateMany.mock.calls[0][0] as { where: Record<string, unknown>; data: Record<string, unknown> };
-    expect(call.where).toMatchObject({ contactId: { not: null } });
-    expect(call.data).toEqual({ contactId: null, retainUntil: new Date('2036-10-09T12:00:00Z') });
-  });
-
-  it('export, then no change: the register equals the export, so the printed copies are removed', async () => {
-    const db = fakeDb({ exportHash: 'h1', guestsLinked: 3 });
-    const hasher = registerIs('h1');
-    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, hasher);
-    expect(counts).toMatchObject({ guestCopies: 3, guestCopiesHeld: 0, exportCoverage: 'identical' });
-    expect(db.mealGuest.updateMany).not.toHaveBeenCalled();
-    expect(hasher).toHaveBeenCalledWith(db, ['ws_1']);
-    // The NEWEST export is the one compared.
-    expect(db.companyExport.findFirst).toHaveBeenCalledWith({
-      where: { authTenantId: 'tnt_a' },
-      orderBy: { createdAt: 'desc' },
-      select: { registerSha256: true },
-    });
-  });
-
-  it('export, then a change (a correction or a new guest): the register differs, so the printed copies are held', async () => {
-    const db = fakeDb({ exportHash: 'h1', guestsLinked: 3 });
-    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h2'));
-    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 3, exportCoverage: 'changed' });
-    expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
-  });
-
-  it('an export from before the hash existed never counts: held', async () => {
-    const db = fakeDb({ exportHash: null, guestsLinked: 1 });
-    const hasher = registerIs('h1');
-    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, hasher);
-    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 1, exportCoverage: 'no_hash' });
-    expect(hasher).not.toHaveBeenCalled();
-  });
-
-  it('when the register cannot be recomputed, holds (the safe direction) and does not fail the erasure', async () => {
-    const db = fakeDb({ exportHash: 'h1', guestsLinked: 2 });
-    const failing: RegisterHasher = vi.fn(async () => {
-      throw new Error('data layer unreachable');
-    });
-    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, failing);
-    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 2, exportCoverage: 'recompute_failed' });
-    expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
-  });
-
-  it('without workspace ids there is nothing to compare the export with: held', async () => {
-    const db = fakeDb({ exportHash: 'h1', guestsLinked: 2 });
-    const hasher = registerIs('h1');
-    const counts = await eraseCompanyContacts(db, 'tnt_a', [], now, hasher);
-    expect(counts).toMatchObject({ guestCopies: 0, guestCopiesHeld: 2, exportCoverage: 'no_workspaces' });
-    expect(hasher).not.toHaveBeenCalled();
-  });
-
-  it('repeat-safe: a second run after a hold finds no linked copy and holds nothing more', async () => {
-    const first = await eraseCompanyContacts(fakeDb({ guestsLinked: 2 }), 'tnt_a', ['ws_1'], now, registerIs('h1'));
-    const second = await eraseCompanyContacts(fakeDb({ guestsLinked: 0 }), 'tnt_a', ['ws_1'], now, registerIs('h1'));
-    expect(first.guestCopiesHeld).toBe(2);
-    expect(second).toMatchObject({ guestCopies: 0, guestCopiesHeld: 0 });
-  });
-
-  it('applies the layout, then removes the company contacts and their printed copies by contact id', async () => {
+  it('removes the company\'s printed copies outright: no export is looked at, nothing is held', async () => {
     const shared = sharedWith(['c1', 'c2']);
     companyContactsMock.mockReturnValue(shared);
-    const db = fakeDb({ exportHash: 'h1' });
-    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'));
+    const db = fakeDb(3);
+    const counts = await eraseCompanyContacts(db, 'tnt_a', ['ws_1']);
     expect(migrateMock).toHaveBeenCalledWith('sql-handle');
     expect(companyContactsMock).toHaveBeenCalledWith('tnt_a');
-    expect(counts.sharedContacts).toBe(2);
+    expect(counts).toEqual({ guestCopies: 3, sharedContacts: 2, guestLinksCleared: 0 });
+    // The company's own copies: its stamp, or no stamp in a named workspace. A copy an earlier
+    // erasure of one contact held (it carries a date) is left to the purge.
     expect(db.mealGuest.deleteMany).toHaveBeenCalledWith({
-      // `retainUntil: null`: a name an earlier erasure held is never removed here, only by the purge.
       where: { OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] }, authTenantId: null }], retainUntil: null },
     });
-    // A copy elsewhere that names one of the contacts only loses its link.
+    // Whether the company ever exported is not asked: keeping its records is the company's duty.
+    expect(db.companyExport.findFirst).not.toHaveBeenCalled();
+    // A copy elsewhere that names one of the contacts only loses its link; no date is set on anything.
+    expect(db.mealGuest.updateMany).toHaveBeenCalledTimes(1);
     expect(db.mealGuest.updateMany).toHaveBeenCalledWith({ where: { contactId: { in: ['c1', 'c2'] } }, data: { contactId: null } });
-    expect(counts.guestLinksCleared).toBe(0);
     expect(shared.eraseAll).toHaveBeenCalledTimes(1);
   });
 
-  it('calls the checkpoint between its steps and stops where it rejects: before the copies are settled, nothing is settled', async () => {
+  it('without workspace ids only the stamped copies are the company\'s', async () => {
+    const db = fakeDb();
+    await eraseCompanyContacts(db, 'tnt_a', []);
+    expect(db.mealGuest.deleteMany).toHaveBeenCalledWith({ where: { OR: [{ authTenantId: 'tnt_a' }], retainUntil: null } });
+  });
+
+  it('repeat-safe: a second run finds nothing', async () => {
+    const db = fakeDb(0);
+    expect(await eraseCompanyContacts(db, 'tnt_a', ['ws_1'])).toEqual({ guestCopies: 0, sharedContacts: 0, guestLinksCleared: 0 });
+  });
+
+  it('calls the checkpoint between its steps and stops where it rejects: before the copies go, nothing goes', async () => {
     const shared = sharedWith(['c1']);
     companyContactsMock.mockReturnValue(shared);
-    const db = fakeDb({});
-    let calls = 0;
+    const db = fakeDb();
     const checkpoint = vi.fn(async () => {
-      if (++calls === 2) throw new Error('lease gone');
+      throw new Error('lease gone');
     });
-    await expect(eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'), { checkpoint })).rejects.toThrow('lease gone');
+    await expect(eraseCompanyContacts(db, 'tnt_a', ['ws_1'], { checkpoint })).rejects.toThrow('lease gone');
     expect(db.mealGuest.updateMany).not.toHaveBeenCalled();
     expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
     expect(shared.eraseAll).not.toHaveBeenCalled();
 
     const through = vi.fn(async () => {});
-    await eraseCompanyContacts(fakeDb({}), 'tnt_a', ['ws_1'], now, registerIs('h1'), { checkpoint: through });
-    expect(through).toHaveBeenCalledTimes(3);
-  });
-
-  it('the whole company erasure also holds printed names that never had a contact; the erasure of one contact does not', async () => {
-    const db = fakeDb({});
-    await eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, undefined, { holdUnlinked: true });
-    expect(db.mealGuest.updateMany.mock.calls[0][0].where).toEqual({ OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] }, authTenantId: null }], retainUntil: null });
-    const plain = fakeDb({});
-    await eraseCompanyContacts(plain, 'tnt_a', ['ws_1'], now);
-    expect(plain.mealGuest.updateMany.mock.calls[0][0].where).toEqual({ OR: [{ authTenantId: 'tnt_a' }, { authWorkspaceId: { in: ['ws_1'] }, authTenantId: null }], retainUntil: null, contactId: { not: null } });
+    await eraseCompanyContacts(fakeDb(), 'tnt_a', ['ws_1'], { checkpoint: through });
+    expect(through).toHaveBeenCalledTimes(2);
   });
 
   it('fails loudly when the shared contacts database is not configured, and touches nothing', async () => {
     contactsDbMock.mockImplementation(() => {
       throw new Error('CONTACTS_DATABASE_URL is not set: the shared contacts database is the only contact store');
     });
-    const db = fakeDb({ guestsLinked: 2 });
-    await expect(eraseCompanyContacts(db, 'tnt_a', ['ws_1'], now, registerIs('h1'))).rejects.toThrow('CONTACTS_DATABASE_URL');
+    const db = fakeDb();
+    await expect(eraseCompanyContacts(db, 'tnt_a', ['ws_1'])).rejects.toThrow(/CONTACTS_DATABASE_URL/);
+    expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('settleGuestCopies (the rule when ONE contact is erased and the company goes on)', () => {
+  function fakeDb(count = 2) {
+    return {
+      mealGuest: { deleteMany: vi.fn(async () => ({ count })), updateMany: vi.fn(async () => ({ count })) },
+    } as unknown as PrismaClient & { mealGuest: { deleteMany: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn> } };
+  }
+  const now = new Date('2026-10-09T12:00:00Z');
+  const scope = [{ contactId: 'c1' }];
+
+  it('covered by an identical export: the copies are removed, but never one that is already held', async () => {
+    const db = fakeDb();
+    expect(await settleGuestCopies(db, scope, true, now)).toEqual({ removed: 2, held: 0 });
+    expect(db.mealGuest.deleteMany).toHaveBeenCalledWith({ where: { OR: scope, retainUntil: null } });
     expect(db.mealGuest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('not covered: the copies are held, the link cleared and the date set ten years out; a copy without a contact or with a date is left alone', async () => {
+    const db = fakeDb();
+    expect(await settleGuestCopies(db, scope, false, now)).toEqual({ removed: 0, held: 2 });
+    expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
+    expect(db.mealGuest.updateMany).toHaveBeenCalledWith({
+      where: { OR: scope, retainUntil: null, contactId: { not: null } },
+      data: { contactId: null, retainUntil: new Date('2036-10-09T12:00:00Z') },
+    });
+  });
+
+  it('an empty scope touches nothing', async () => {
+    const db = fakeDb();
+    expect(await settleGuestCopies(db, [], true, now)).toEqual({ removed: 0, held: 0 });
     expect(db.mealGuest.deleteMany).not.toHaveBeenCalled();
   });
 });

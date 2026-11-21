@@ -3,17 +3,23 @@ import { FileNotFoundError } from '@marlinjai/storage-brain-sdk';
 import { getStorageClient } from '@/lib/storage';
 
 /**
- * Remove one object from the file store for good. A file that is already gone
- * counts as removed (a retry after a half-finished delete must succeed);
- * anything else rejects, and the caller keeps the receipt.
+ * Remove one object from the file store for good, and say whether it was there.
+ * A file that is already gone is not an error (a retry after a half-finished
+ * delete must succeed); anything else rejects, and the caller keeps the receipt.
  */
-export async function deleteStoredFile(fileId: string): Promise<void> {
+export async function eraseStoredFile(fileId: string): Promise<'removed' | 'already_gone'> {
   try {
     await getStorageClient().deleteFile(fileId);
+    return 'removed';
   } catch (e) {
-    if (e instanceof FileNotFoundError || (e as { statusCode?: number })?.statusCode === 404) return;
+    if (e instanceof FileNotFoundError || (e as { statusCode?: number })?.statusCode === 404) return 'already_gone';
     throw e;
   }
+}
+
+/** `eraseStoredFile` for callers that do not need to know whether the file was still there. */
+export async function deleteStoredFile(fileId: string): Promise<void> {
+  await eraseStoredFile(fileId);
 }
 
 /** How long the download of one receipt file may take before the reading goes on without the page. */

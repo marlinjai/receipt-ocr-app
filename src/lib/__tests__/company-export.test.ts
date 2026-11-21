@@ -31,6 +31,16 @@ describe('export archive', () => {
     expect(text).toContain('2 files');
     expect(text).toContain('4 contacts');
     expect(text).toContain('ten years');
+    // What happens when the company is deleted, and the bounded technical retention, said plainly.
+    expect(text).toContain('Keeping them is your duty as the company');
+    expect(text).toContain('everything it holds in Lumitra Receipts is deleted with it');
+    expect(text).toContain('7 days on the server and at most 30 days in the copies off the server');
+    // What is known about stored files, and no more: deleted, retried when that fails, not restorable by us.
+    expect(text).toContain('stored files are deleted from the file store when');
+    expect(text).toContain('a removal that fails is tried again, and a deleted file cannot be');
+    expect(text).toContain('restored by us.');
+    // No claim about backups of files: whether the object store keeps old versions is not known.
+    expect(text).not.toMatch(/no backup copy|gone at once/);
     expect(text).toContain('2026-10-09T10:00:00.000Z');
   });
 });

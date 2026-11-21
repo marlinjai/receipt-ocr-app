@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // `next dev` would write a managed block into AGENTS.md on every start. That file is ours
+  // (it names the check command, `pnpm verify`) and already carries the advice of that block.
+  agentRules: false,
   // An account export is sent to a server action as text; the default limit of
   // one megabyte is below a year of bank transactions.
   experimental: { serverActions: { bodySizeLimit: "10mb" } },

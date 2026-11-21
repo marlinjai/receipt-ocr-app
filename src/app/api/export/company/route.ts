@@ -7,10 +7,12 @@ import { prisma } from '@/lib/prisma';
 
 /**
  * The company's data export: the business meal register and the contacts, as one
- * zip. The company keeps it; it is the copy that lets the company's printed guest
- * names be removed from this app, as long as the register has not changed since
- * (see exportCoversRegister in erasure.ts). Each download is recorded with its file
- * count, the hash of the zip and the hash of its register files.
+ * zip. The company keeps it: its records are its own duty, and a company erasure
+ * deletes everything here without asking for an export. The export also decides
+ * whether the printed guest names of ONE erased contact are removed or held, as
+ * long as the register has not changed since (see exportCoversRegister in
+ * erasure.ts). Each download is recorded with its file count, the hash of the zip
+ * and the hash of its register files.
  */
 export const dynamic = 'force-dynamic';
 

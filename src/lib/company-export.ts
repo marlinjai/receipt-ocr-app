@@ -10,9 +10,14 @@ import { getTaxSettings, loadMealRecords } from './meals/service';
 import type { MealRecord } from './meals/types';
 
 /**
- * The export a company takes with it before its data is erased: the business
- * meal register per workspace and year (CSV), its contacts (JSON), and a readme
- * that says what the files are. Packed into one zip.
+ * The export a company takes with it: the business meal register per workspace
+ * and year (CSV), its contacts (JSON), and a readme that says what the files are
+ * and what happens to the data when the company is deleted. Packed into one zip.
+ *
+ * A company erasure does not ask whether an export was taken: keeping its
+ * records is the company's duty, and this export is how it can. The export
+ * still decides one thing: whether the printed guest names of ONE erased contact
+ * are removed or held (`exportCoversRegister` in erasure.ts).
  *
  * Only what the company owns is included, and no names are written to logs.
  */
@@ -129,9 +134,22 @@ export function buildReadme(now: Date, counts: { registerFiles: number; contacts
     'contacts/      The contact list: ' + counts.contacts + ' contacts.',
     '',
     'Keep this export. German tax law (the Abgabenordnung, AO) requires business records, including',
-    'business meal records, to be kept for ten years. Printed guest names are removed from Lumitra',
-    'Receipts on an erasure only while the register is still identical to this export. After any',
-    'later change they are kept there for ten years, until a new export is taken.',
+    'business meal records, to be kept for ten years. Keeping them is your duty as the company:',
+    'Lumitra Receipts is the software, not your archive.',
+    '',
+    'When your company is deleted, everything it holds in Lumitra Receipts is deleted with it:',
+    'receipts and their files, the meal register with the printed guest names, payments, contacts.',
+    'Nothing is kept for you after that. Your stored files are deleted from the file store when',
+    'the company is deleted; a removal that fails is tried again, and a deleted file cannot be',
+    'restored by us.',
+    'Backups of the database still contain the deleted rows until they are replaced in the',
+    'regular rotation: 7 days on the server and at most 30 days in the copies off the server.',
+    '',
+    'When you erase one single contact while the company goes on, the names printed on your',
+    'meals are removed only while the register is still identical to your newest export. After',
+    'any later change they are kept for ten years, without the link to the contact, so that',
+    'your own register stays complete; take a new export first if you want them removed.',
+    'Names kept that way are deleted with everything else when the company itself is deleted.',
     '',
   ].join('\n');
 }

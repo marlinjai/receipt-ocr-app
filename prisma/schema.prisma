@@ -297,6 +297,36 @@ model MealGuest {
   @@map("meal_guests")
 }
 
+// The record that a company erasure was received and what each run of it did
+// (plan docs/plans/2026-11-21-company-erasure-register.md). One row per delivery
+// id of auth-brain's `tenant.erased`. Ids, counts and reason codes only, never a
+// name. It is the one table a company erasure leaves behind on purpose, so the
+// company is named in `company_id` and not in the stamp `auth_tenant_id`, which
+// marks rows an erasure removes.
+// `status`: received (a run started and did not finish), completed, failed.
+// `runs`: one entry per run, `{ at, outcome, counts?, notErased?, reason?, detail? }`.
+// A failed run records its reason and what it had removed before it stopped (`detail.partial`).
+// An event id belongs to one company.
+// `lease_token`, `lease_until`: the run that is at work on this event right now. Only one
+// erasure works at a time in the whole app; a lease that is not renewed runs out by itself.
+model ErasureEvent {
+  eventId      String    @id @map("event_id")
+  kind         String
+  companyId    String    @map("company_id")
+  workspaceIds String[]  @map("workspace_ids")
+  status       String
+  attempts     Int       @default(1)
+  runs         Json      @default("[]")
+  leaseToken   String?   @map("lease_token")
+  leaseUntil   DateTime? @map("lease_until")
+  receivedAt   DateTime  @default(now()) @map("received_at")
+  completedAt  DateTime? @map("completed_at")
+  updatedAt    DateTime  @default(now()) @map("updated_at")
+
+  @@index([companyId])
+  @@map("erasure_events")
+}
+
 // One row per data export handed to a company (see src/lib/company-export.ts).
 model CompanyExport {
   id             String   @id @default(uuid())
